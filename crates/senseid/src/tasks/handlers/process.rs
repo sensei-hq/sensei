@@ -156,9 +156,28 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
         ctx.pg().set_folder_project(fid, &pid, "primary", None).await.ok();
     }
 
-    if let Some(ref fid) = folder_uuid {
-        ctx.pg().delete_nodes_by_folder(fid).await.ok();
+    // Record the indexed git branch in props.branch — preferred from the
+    // BranchSwitch task that triggered this re-index, otherwise read from
+    // .git/HEAD. Lets the UI show which branch is indexed and gives a later
+    // switch the prior branch for context. (Quasi-repos have no HEAD → skipped.)
+    if let Some(fid) = &folder_uuid {
+        let branch = task.branch.clone()
+            .or_else(|| crate::watcher::root_watcher::read_git_head(&format!("{}/.git/HEAD", task.path)));
+        if let Some(br) = branch {
+            ctx.pg().set_folder_props(fid, &serde_json::json!({ "branch": br })).await.ok();
+        }
     }
+
+    // Incremental index: load the prior per-file fingerprints so we only
+    // re-process files whose mtime changed (edited / new / pulled / brought in
+    // by a branch switch), skip unchanged files (their nodes + embeddings stay
+    // valid), and drop files no longer on disk. The first index sees an empty
+    // scan_state and processes everything, populating it. This replaces the old
+    // blanket `delete_nodes_by_folder` wipe + full re-parse on every scan.
+    let prior_state: std::collections::HashMap<String, i64> = match &folder_uuid {
+        Some(fid) => ctx.pg().list_scan_state(fid).await.unwrap_or_default().into_iter().collect(),
+        None => std::collections::HashMap::new(),
+    };
 
     // Detect workspace members
     let workspace_members = crate::config::detector::detect_workspace_members(repo_path);
@@ -189,49 +208,70 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
         }
     }
 
-    // Enqueue folder + file tasks first, collecting all file task IDs
+    // Enumerate the working tree's indexable files with mtimes (one read_dir
+    // pass per discovered dir), keyed by abs path → rel path.
+    let mut current_meta: std::collections::HashMap<std::path::PathBuf, String> = std::collections::HashMap::new();
+    let mut current: Vec<(String, i64)> = Vec::new();
+    for dir in &dirs {
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                if !entry.path().is_file() { continue; }
+                let ext = entry.path().extension().and_then(|e| e.to_str()).unwrap_or("").to_string();
+                if ext.is_empty() || is_binary_ext(&ext) { continue; }
+                let rel = entry.path().strip_prefix(repo_path).unwrap_or(&entry.path())
+                    .to_string_lossy().to_string();
+                let mtime = super::helpers::file_mtime_ms(&entry.path()).unwrap_or(0);
+                current.push((rel.clone(), mtime));
+                current_meta.insert(entry.path(), rel);
+            }
+        }
+    }
+    // Diff against the last index → which files to (re)process, which to drop.
+    let plan = super::scan_logic::incremental_plan(&current, &prior_state);
+
+    // Enqueue ProcessFolder + ProcessFile only for changed files, grouped by dir
+    // so each gets its module/package context. Unchanged dirs enqueue nothing.
     let mut all_file_task_ids: Vec<u64> = Vec::new();
     let root_pkg_id = format!("pkg:{}:(root)", folder_name);
     for dir in &dirs {
-        let rel_dir = dir.strip_prefix(repo_path).unwrap_or(dir)
-            .to_string_lossy().to_string();
-        let abs_dir = dir.to_string_lossy().to_string();
+        let changed_here: Vec<&std::path::PathBuf> = current_meta.iter()
+            .filter(|(abs, rel)| abs.parent() == Some(dir.as_path()) && plan.changed.contains(*rel))
+            .map(|(abs, _)| abs)
+            .collect();
+        if changed_here.is_empty() {
+            continue;
+        }
 
-        // Determine parent package
+        let rel_dir = dir.strip_prefix(repo_path).unwrap_or(dir).to_string_lossy().to_string();
+        let abs_dir = dir.to_string_lossy().to_string();
         let pkg_id = workspace_members.iter()
             .find(|pkg| rel_dir.starts_with(&pkg.path))
             .map(|pkg| format!("pkg:{}:{}", folder_name, pkg.name))
             .unwrap_or_else(|| root_pkg_id.clone());
 
-        let folder_task = Task::new(TaskKind::ProcessFolder, folder_path, &abs_dir)
+        let mut ft = Task::new(TaskKind::ProcessFolder, folder_path, &abs_dir)
             .with_parent(task.id);
-        // Store pkg_id in module_id field for folder processing
-        let mut ft = folder_task;
         ft.module_id = Some(pkg_id);
         let folder_id = ctx.queue.enqueue(ft).await;
 
-        // Enumerate files in this directory (non-recursive)
-        if let Ok(entries) = std::fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                if !entry.path().is_file() { continue; }
-                let ext = entry.path().extension()
-                    .and_then(|e| e.to_str())
-                    .unwrap_or("")
-                    .to_string();
-                if ext.is_empty() { continue; }
-                if is_binary_ext(&ext) { continue; }
+        let rel_dir_name = if rel_dir.is_empty() { "(root)".to_string() } else { rel_dir.replace('\\', "/") };
+        let mod_id = format!("mod:{}:{}", folder_name, rel_dir_name);
+        for abs in changed_here {
+            let file_task = Task::new(TaskKind::ProcessFile, folder_path, &abs.to_string_lossy())
+                .with_parent(folder_id)
+                .with_module(&mod_id);
+            all_file_task_ids.push(ctx.queue.enqueue(file_task).await);
+        }
+    }
 
-                let rel_dir_name = if rel_dir.is_empty() { "(root)".to_string() } else { rel_dir.replace('\\', "/") };
-                let mod_id = format!("mod:{}:{}", folder_name, rel_dir_name);
-
-                let file_task = Task::new(TaskKind::ProcessFile, folder_path, &entry.path().to_string_lossy())
-                    .with_parent(folder_id)
-                    .with_module(&mod_id);
-                let file_id = ctx.queue.enqueue(file_task).await;
-                all_file_task_ids.push(file_id);
-
-                // file_id collected in all_file_task_ids for barrier
-            }
+    // Files indexed before but gone now (deleted on disk, or removed by a branch
+    // switch): un-resolve inbound edges, drop their nodes (cascades their edges),
+    // and clear their scan-state rows.
+    if let Some(ref fid) = folder_uuid {
+        for path in &plan.removed {
+            ctx.pg().unresolve_edges_to_file(fid, path).await.ok();
+            ctx.pg().delete_nodes_by_file(fid, path).await.ok();
+            ctx.pg().delete_scan_state_file(fid, path).await.ok();
         }
     }
 
@@ -269,37 +309,40 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
         }
     );
 
-    // Remove the sentinel dependency from resolve_edges now that real deps are wired
-    // (the sentinel u64::MAX will never complete, so we need to remove it)
-    // Simplest: if we have real deps, the sentinel is harmless — it just means
-    // resolve won't run until all file tasks AND the sentinel complete.
-    // Now create barrier tasks with REAL dependencies (no sentinel)
-    let resolve_id = ctx.queue.enqueue(
-        Task::new(TaskKind::ResolveEdges, folder_path, "")
-            .with_parent(task.id)
-            .blocked_by(all_file_task_ids.clone())
-    ).await;
+    // Folder-level barriers (edge/lib resolution, connections, embeddings) only
+    // need to run when this folder's nodes actually changed — files were
+    // (re)indexed or removed. On an unchanged incremental re-scan (e.g. a branch
+    // switch elsewhere) the folder's edges + embeddings are already valid, so we
+    // skip the barriers entirely. This keeps a no-op re-scan cheap.
+    let has_changes = !all_file_task_ids.is_empty() || !plan.removed.is_empty();
+    if has_changes {
+        let resolve_id = ctx.queue.enqueue(
+            Task::new(TaskKind::ResolveEdges, folder_path, "")
+                .with_parent(task.id)
+                .blocked_by(all_file_task_ids.clone())
+        ).await;
 
-    let libs_id = ctx.queue.enqueue(
-        Task::new(TaskKind::ResolveLibs, folder_path, "")
-            .with_parent(task.id)
-            .blocked_by(vec![resolve_id])
-    ).await;
+        let libs_id = ctx.queue.enqueue(
+            Task::new(TaskKind::ResolveLibs, folder_path, "")
+                .with_parent(task.id)
+                .blocked_by(vec![resolve_id])
+        ).await;
 
-    ctx.queue.enqueue(
-        Task::new(TaskKind::BuildConnections, folder_path, "")
-            .with_parent(task.id)
-            .blocked_by(vec![libs_id])
-    ).await;
+        ctx.queue.enqueue(
+            Task::new(TaskKind::BuildConnections, folder_path, "")
+                .with_parent(task.id)
+                .blocked_by(vec![libs_id])
+        ).await;
 
-    // Embed code-graph nodes for semantic search + duplicate detection. Barrier
-    // on the file tasks so every node exists before we embed it; independent of
-    // edge/connection resolution, so it can run in parallel with those.
-    ctx.queue.enqueue(
-        Task::new(TaskKind::EmbedNodes, folder_path, "")
-            .with_parent(task.id)
-            .blocked_by(all_file_task_ids.clone())
-    ).await;
+        // Embed code-graph nodes for semantic search + duplicate detection.
+        // Barrier on the file tasks so every node exists before we embed it;
+        // independent of edge/connection resolution so it runs in parallel.
+        ctx.queue.enqueue(
+            Task::new(TaskKind::EmbedNodes, folder_path, "")
+                .with_parent(task.id)
+                .blocked_by(all_file_task_ids.clone())
+        ).await;
+    }
 
     // Detect subtrees → register as separate repos
     {
@@ -343,7 +386,7 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
     // Self-healing reconcile: re-tag orphaned discovery projects (no delete).
     ctx.pg().mark_orphaned_projects().await.ok();
 
-    tracing::info!("process_git_folder: {} — {} dirs, {} file tasks, barrier=#{}", folder_name, dirs.len(), all_file_task_ids.len(), resolve_id);
+    tracing::info!("process_git_folder: {} — {} dirs, {} changed files, {} removed", folder_name, dirs.len(), all_file_task_ids.len(), plan.removed.len());
     Ok(all_file_task_ids.len() as u32)
 }
 
@@ -560,6 +603,13 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
     let symbols_count = result.symbols.len();
     if let Some(folder) = folder
         && let Some(folder_id) = crate::api::util::json_uuid(&folder["id"]) {
+            // Re-indexing this file: un-resolve inbound edges (preserve their
+            // target_name so resolve_edges re-points them to the new nodes) and
+            // drop the file's prior nodes (cascading their outgoing edges) so the
+            // rewrite is clean. No-op for a brand-new file.
+            ctx.pg().unresolve_edges_to_file(&folder_id, &result.rel_path).await.ok();
+            ctx.pg().delete_nodes_by_file(&folder_id, &result.rel_path).await.ok();
+
             // Write file node
             let file_node_id = ctx.pg().upsert_node(
                 &folder_id, &result.kind, &result.rel_path, &result.rel_path, None, None, None, None
@@ -606,6 +656,12 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
                         ctx.pg().insert_edge(&folder_id, fid, None, Some(fn_ref), "references").await.ok();
                     }
                 }
+
+            // Record this file's fingerprint so the next scan skips it when
+            // unchanged. Written last so a row exists only for a fully-indexed file.
+            if let Some((mtime, hash)) = super::helpers::file_fingerprint(fpath) {
+                ctx.pg().upsert_scan_state(&folder_id, &result.rel_path, mtime, &hash).await.ok();
+            }
         }
 
     Ok(symbols_count as u32)
@@ -694,6 +750,49 @@ mod tests {
         process_folder(&ctx, &task).await.unwrap();
 
         // TODO: verify module node once module writes are implemented
+    }
+
+    #[tokio::test]
+    async fn scan_state_list_and_delete_file_roundtrip() {
+        let ctx = make_ctx().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let repo_path = tmp.path().to_string_lossy().to_string();
+        let root_id = ctx.pg().add_watch_root(&repo_path, "ss", &serde_json::json!([])).await.unwrap();
+        let fid = ctx.pg().upsert_repo(&root_id, "ss-repo", &repo_path).await.unwrap();
+
+        ctx.pg().upsert_scan_state(&fid, "a.rs", 111, "hashA").await.unwrap();
+        ctx.pg().upsert_scan_state(&fid, "b.rs", 222, "hashB").await.unwrap();
+        let state = ctx.pg().list_scan_state(&fid).await.unwrap();
+        assert_eq!(state.len(), 2, "two fingerprints recorded");
+
+        ctx.pg().delete_scan_state_file(&fid, "a.rs").await.unwrap();
+        let after = ctx.pg().list_scan_state(&fid).await.unwrap();
+        assert_eq!(after.len(), 1);
+        assert!(after.iter().all(|(p, _)| p != "a.rs"), "a.rs dropped, b.rs kept");
+    }
+
+    #[tokio::test]
+    async fn unresolve_edges_to_file_nulls_target_keeps_name() {
+        let ctx = make_ctx().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let repo_path = tmp.path().to_string_lossy().to_string();
+        let root_id = ctx.pg().add_watch_root(&repo_path, "ur", &serde_json::json!([])).await.unwrap();
+        let fid = ctx.pg().upsert_repo(&root_id, "ur-repo", &repo_path).await.unwrap();
+
+        // funcA lives in a.rs; funcB in b.rs calls it (resolved edge B → A).
+        let node_a = ctx.pg().upsert_node(&fid, "function", "funcA", "a.rs", None, None, None, None).await.unwrap();
+        let node_b = ctx.pg().upsert_node(&fid, "function", "funcB", "b.rs", None, None, None, None).await.unwrap();
+        ctx.pg().insert_edge(&fid, &node_b, Some(&node_a), Some("funcA"), "calls").await.unwrap();
+
+        // Re-indexing a.rs un-resolves inbound edges instead of letting the
+        // cascade delete them: target_id cleared, target_name preserved.
+        let n = ctx.pg().unresolve_edges_to_file(&fid, "a.rs").await.unwrap();
+        assert_eq!(n, 1, "the one inbound edge should be un-resolved");
+
+        let edges = ctx.pg().get_edges_by_kind(&fid, "calls").await.unwrap();
+        assert_eq!(edges.len(), 1);
+        assert!(edges[0]["target_id"].is_null(), "target_id cleared");
+        assert_eq!(edges[0]["target_name"].as_str(), Some("funcA"), "target_name preserved for re-resolution");
     }
 
     #[tokio::test]
