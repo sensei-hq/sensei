@@ -180,22 +180,19 @@ pub async fn branch_switch(ctx: &TaskContext, task: &Task) -> Result<u32, String
     let folder_name = folder.as_ref()
         .and_then(|f| f["name"].as_str())
         .unwrap_or_else(|| task.folder_name());
-    let folder_uuid = folder.as_ref()
-        .and_then(|f| f["id"].as_str())
-        .and_then(|s| uuid::Uuid::parse_str(s).ok());
 
-    if let Some(ref fid) = folder_uuid {
-        // TODO: ctx.pg().snapshot_graph(fid, "branch_switch").await.ok();
-        ctx.pg().delete_nodes_by_folder(fid).await.ok();
-    }
-
-    // Re-index on the new branch
+    // No wipe. A branch switch is just an incremental re-index: git rewrites
+    // exactly the files that differ between the two branches (updating their
+    // mtime), so process_git_folder's scan_state diff re-indexes only those —
+    // unchanged files keep their nodes + embeddings, and files that exist on the
+    // old branch but not the new one are dropped as "removed". process_git_folder
+    // records the new branch (from the task) in props.branch.
     let git_task = Task::new(TaskKind::ProcessGitFolder, &task.folder_path, &task.path)
         .with_parent(task.id)
         .with_branch(new_branch);
     ctx.queue.enqueue(git_task).await;
 
-    tracing::info!("branch_switch: {} → {}", folder_name, new_branch);
+    tracing::info!("branch_switch: {} → {} (incremental)", folder_name, new_branch);
     Ok(0)
 }
 
