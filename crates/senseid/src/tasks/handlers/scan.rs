@@ -63,7 +63,19 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
             FolderKind::Standalone => "standalone",
         };
         let path_str = f.path.to_string_lossy();
-        ctx.pg().upsert_repo_kind(&root_id, kind, &f.name, &path_str).await.ok();
+        if let Ok(fid) = ctx.pg().upsert_repo_kind(&root_id, kind, &f.name, &path_str).await {
+            // A quasi-repo with no manifest (loose source / docs) is a likely-but-
+            // unconfirmed project — flag it `needs-review` so it surfaces for the
+            // user to keep / organise / discard. Manifest-backed roots and real git
+            // repos are confident; clear any stale flag on them.
+            let needs_review = f.kind == FolderKind::Standalone
+                && matches!(scan_logic::classify_quasi_repo(&f.path), Some(scan_logic::QuasiKind::LooseCode));
+            if needs_review {
+                ctx.pg().tag_folder(&fid, "needs-review").await.ok();
+            } else {
+                ctx.pg().untag_folder(&fid, "needs-review").await.ok();
+            }
+        }
         let process_task = Task::new(TaskKind::ProcessGitFolder, &path_str, &path_str)
             .with_parent(task.id);
         ctx.queue.enqueue(process_task).await;
@@ -350,6 +362,50 @@ mod tests {
         ctx.pg().upsert_folder(&root_id, "subtree", "b", "b", &p2, None, None).await.unwrap();
         ctx.pg().upsert_repo_kind(&root_id, "git", "b", &p2).await.unwrap();
         assert_eq!(ctx.pg().get_repo_by_path(&p2).await.unwrap().unwrap()["kind"], "subtree");
+    }
+
+    #[tokio::test]
+    async fn scan_flags_loose_quasi_repos_and_skips_data_only() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        // manifest-backed quasi-repo → confident, no flag
+        std::fs::create_dir_all(root.join("manifest-proj")).unwrap();
+        std::fs::write(root.join("manifest-proj/Cargo.toml"), "[package]\nname=\"m\"").unwrap();
+        // loose source, no manifest → flagged needs-review
+        std::fs::create_dir_all(root.join("loose-code")).unwrap();
+        std::fs::write(root.join("loose-code/run.py"), "print('hi')\n").unwrap();
+        // data only → not a project root at all
+        std::fs::create_dir_all(root.join("data-only")).unwrap();
+        std::fs::write(root.join("data-only/rows.csv"), "a,b\n1,2\n").unwrap();
+
+        let ctx = make_ctx().await;
+        let task = Task::new(TaskKind::ScanRoot, "", &root.to_string_lossy());
+        scan_root(&ctx, &task).await.unwrap();
+
+        let tags_of = |row: &serde_json::Value| -> Vec<String> {
+            row["tags"].as_array().map(|a| a.iter().filter_map(|t| t.as_str().map(String::from)).collect())
+                .unwrap_or_default()
+        };
+
+        // manifest → standalone, NOT flagged
+        let manifest = ctx.pg().get_repo_by_path(&root.join("manifest-proj").to_string_lossy())
+            .await.unwrap().expect("manifest quasi-repo should be registered");
+        assert_eq!(manifest["kind"], "standalone");
+        assert!(!tags_of(&manifest).contains(&"needs-review".to_string()),
+            "manifest-backed quasi-repo should not be flagged");
+
+        // loose code → standalone, flagged needs-review
+        let loose = ctx.pg().get_repo_by_path(&root.join("loose-code").to_string_lossy())
+            .await.unwrap().expect("loose quasi-repo should be registered");
+        assert_eq!(loose["kind"], "standalone");
+        assert!(tags_of(&loose).contains(&"needs-review".to_string()),
+            "loose-code quasi-repo should be flagged needs-review");
+
+        // data only → not promoted
+        assert!(
+            ctx.pg().get_repo_by_path(&root.join("data-only").to_string_lossy()).await.unwrap().is_none(),
+            "data-only folder should not be promoted to a project root"
+        );
     }
 
     #[tokio::test]
