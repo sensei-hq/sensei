@@ -280,6 +280,38 @@ pub fn is_monorepo(path: &Path) -> bool {
     false
 }
 
+/// The incremental re-index decision for a folder: which files to (re)process
+/// and which to drop. Pure output of [`incremental_plan`].
+#[derive(Debug, Default, PartialEq)]
+pub struct IncrementalPlan {
+    /// Files to (re)index: new, or whose mtime changed since the last index.
+    pub changed: std::collections::HashSet<String>,
+    /// Files indexed before but no longer present on disk — drop their nodes.
+    pub removed: Vec<String>,
+}
+
+/// Diff the working tree against the last index. `current` is the set of
+/// indexable files as `(rel_path, mtime_ms)` found on disk now; `prior` maps
+/// each previously-indexed `rel_path` to its recorded mtime. A file is
+/// `changed` when it is new or its mtime differs; `removed` when it was indexed
+/// before but is gone now. An empty `prior` (first index) marks everything
+/// changed. Pure — all I/O happens in the caller.
+pub fn incremental_plan(
+    current: &[(String, i64)],
+    prior: &std::collections::HashMap<String, i64>,
+) -> IncrementalPlan {
+    let current_set: std::collections::HashSet<&String> = current.iter().map(|(p, _)| p).collect();
+    let changed = current.iter()
+        .filter(|(path, mtime)| prior.get(path).is_none_or(|prev| prev != mtime))
+        .map(|(path, _)| path.clone())
+        .collect();
+    let removed = prior.keys()
+        .filter(|path| !current_set.contains(*path))
+        .cloned()
+        .collect();
+    IncrementalPlan { changed, removed }
+}
+
 /// Detect technology stack from config files in a git folder.
 pub fn detect_stack(path: &Path) -> Vec<String> {
     let mut stack = vec![];
@@ -718,6 +750,36 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(tmp.path().join("package.json"), r#"{"dependencies":{"svelte":"^5"}}"#).unwrap();
         assert_eq!(detect_stack(tmp.path()), vec!["svelte"]);
+    }
+
+    #[test]
+    fn incremental_plan_classifies_new_changed_unchanged_removed() {
+        use std::collections::HashMap;
+        let prior: HashMap<String, i64> = [
+            ("src/a.rs".to_string(), 100i64),
+            ("src/b.rs".to_string(), 200i64),
+            ("src/gone.rs".to_string(), 300i64),
+        ].into_iter().collect();
+        let current = vec![
+            ("src/a.rs".to_string(), 100),   // unchanged
+            ("src/b.rs".to_string(), 250),   // mtime changed
+            ("src/new.rs".to_string(), 400), // new
+        ];
+        let plan = incremental_plan(&current, &prior);
+        assert!(plan.changed.contains("src/b.rs"), "mtime change → reindex");
+        assert!(plan.changed.contains("src/new.rs"), "new file → index");
+        assert!(!plan.changed.contains("src/a.rs"), "unchanged mtime → skip");
+        assert_eq!(plan.removed, vec!["src/gone.rs".to_string()], "vanished file → removed");
+    }
+
+    #[test]
+    fn incremental_plan_first_index_marks_everything_changed() {
+        use std::collections::HashMap;
+        let prior: HashMap<String, i64> = HashMap::new();
+        let current = vec![("a.rs".to_string(), 1), ("b.rs".to_string(), 2)];
+        let plan = incremental_plan(&current, &prior);
+        assert_eq!(plan.changed.len(), 2, "empty prior → full index");
+        assert!(plan.removed.is_empty());
     }
 
     #[test]
