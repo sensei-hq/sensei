@@ -172,6 +172,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/knowledge/proposals/{id}/reject",   post(knowledge::reject_proposal))
         .route("/api/knowledge/outcomes",                post(knowledge::record_outcomes))
         .route("/api/knowledge/context",                 get(knowledge::get_context))
+        .route("/api/knowledge/rules",                   get(knowledge::get_rules))
         // Stop
         .route("/stop", post(workspace::stop))
         .with_state(state)
