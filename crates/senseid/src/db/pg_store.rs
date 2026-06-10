@@ -2191,6 +2191,45 @@ impl PgStore {
 
     /// Assemble a blended context blob: project-scoped + stack-scoped + global memories.
     /// Only active/reinforced/battle_tested/challenged memories are included.
+    /// Governance Tier-1 resolution: the active rules that apply to a repo,
+    /// ordered strongest-first. A rule applies when it sits on one of the repo's
+    /// member namespaces (`folder_namespaces`), on an always-on `general`/`user`
+    /// scope, or is unscoped (`namespace_id IS NULL`). Ordering is the two-axis
+    /// precedence — enforcement desc (mandatory first), then scope level desc
+    /// (most-specific first), then strength. Structuring (dedup + mandatory-lock)
+    /// is done by `crate::governance::structure_ruleset` so it stays pure.
+    pub async fn resolve_rules_raw(&self, folder_id: &uuid::Uuid) -> Result<Vec<crate::governance::RawRule>, String> {
+        let rows: Vec<(uuid::Uuid, String, String, Option<String>, String, String, Option<String>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT m.id, m.title, m.content, m.impact, m.enforcement::text,
+                        COALESCE(n.scope_key, 'general') AS scope,
+                        n.name AS namespace
+                   FROM sensei.memories m
+                   LEFT JOIN sensei.namespaces n ON n.id = m.namespace_id
+                   LEFT JOIN sensei.scopes s ON s.key = n.scope_key
+                  WHERE m.status IN ('active'::sensei.memory_status,
+                                     'reinforced'::sensei.memory_status,
+                                     'battle_tested'::sensei.memory_status)
+                    AND ( m.namespace_id IS NULL
+                          OR n.scope_key IN ('general', 'user')
+                          OR m.namespace_id IN (
+                                SELECT namespace_id FROM sensei.folder_namespaces WHERE folder_id = $1
+                          ) )
+                  ORDER BY m.enforcement DESC,
+                           COALESCE(n.level, s.level, 0) DESC,
+                           m.strength DESC",
+            )
+            .bind(folder_id)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id, title, content, impact, enforcement, scope, namespace)| {
+            crate::governance::RawRule {
+                id: id.to_string(), title, content, impact, enforcement, scope, namespace,
+            }
+        }).collect())
+    }
+
     pub async fn assemble_context(
         &self,
         project_id: uuid::Uuid,
