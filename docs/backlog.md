@@ -54,6 +54,7 @@ Layered scope×enforcement rule model, `scopes`+`namespaces` (level-based set me
 |-------|---------|
 | [#40](https://github.com/sensei-hq/sensei/issues/40) | Scan pipeline: progress + edge/connection events (pairs with #33) |
 | [#41](https://github.com/sensei-hq/sensei/issues/41) | API alignment: missing endpoints (scan roots CRUD, libs configure, mcp registry/configure, projects merge) |
+| _(file issue)_ | Surface stale / orphaned / unused projects & folders for cleanup. Scan reconcile already tags dead-but-ambiguous folders `stale` and empty projects `orphaned` (never auto-deletes). Needs: list endpoints + a gated purge action + a housekeeping UI (Observatory Configure or Projects setup). Last `~/Developer` rescan: 6 stale folders, 44 orphaned projects. |
 | [#39](https://github.com/sensei-hq/sensei/issues/39) | Bootstrap diagnostic logging + debug mode (trace, log viewer, app menu, GitHub submit) |
 | [#42](https://github.com/sensei-hq/sensei/issues/42) | E2E: configure Tauri-mode local E2E |
 
