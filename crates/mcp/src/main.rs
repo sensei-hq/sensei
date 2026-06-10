@@ -154,6 +154,7 @@ fn handle_list_tools() -> Value {
             ], &[]),
             tool("get_duplicates", "Find duplicate or very similar functions across different files. Use during /sensei:review to catch code duplication.", &[], &[]),
             tool("get_project_conventions", "Analyze project conventions — naming patterns, directory structure, design patterns. Use to understand how this project is structured.", &[], &[]),
+            tool("get_rules", "Get the governance rules that apply to this repository, resolved across its scopes (organization / project / technology / …) and ranked by enforcement. Rules flagged mandatory are non-negotiable and cannot be overridden. Call at the start of a task to learn the constraints you must obey.", &[], &[]),
             // Inference
             tool("infer", "Run inference using the gateway — chat, classify, summarize, or reason about text. Routes to the best available model automatically.", &[
                 ("prompt", "string", "The text prompt or question"),
@@ -498,6 +499,14 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
     }
     if tool_name == "get_project_conventions" {
         let result = client.get(format!("{}/api/patterns/{}/conventions", daemon_url(), repo_id)).send();
+        return daemon_result(result);
+    }
+
+    if tool_name == "get_rules" {
+        // Resolve governance rules for the session's repo (its cwd abs_path).
+        let result = client.get(format!("{}/api/knowledge/rules", daemon_url()))
+            .query(&[("folder", cwd)])
+            .send();
         return daemon_result(result);
     }
 
