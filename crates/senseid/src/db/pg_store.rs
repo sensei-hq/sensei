@@ -311,8 +311,26 @@ impl PgStore {
 
     /// Register a project root with an explicit folder kind — `git` for real
     /// repos, `standalone` for quasi-repos (non-git project roots).
+    ///
+    /// Unlike [`upsert_folder`]'s sticky-kind upsert, a root's git↔standalone
+    /// classification is **authoritative on every scan**: a repo that lost its
+    /// `.git` (now a quasi-repo) is relabelled `standalone`, and one that gained
+    /// a `.git` flips back to `git`. `subtree`/`folder` kinds are never clobbered
+    /// here — those are owned by subtree detection and tree materialisation.
     pub async fn upsert_repo_kind(&self, root_id: &uuid::Uuid, kind: &str, name: &str, abs_path: &str) -> Result<uuid::Uuid, String> {
-        self.upsert_folder(root_id, kind, name, name, abs_path, None, None).await
+        let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path)
+             VALUES($1, $2::sensei.folder_kind, $3, $3, $4)
+             ON CONFLICT(abs_path) DO UPDATE SET
+                kind = CASE WHEN folders.kind IN ('git'::sensei.folder_kind, 'standalone'::sensei.folder_kind)
+                            THEN EXCLUDED.kind ELSE folders.kind END,
+                name = EXCLUDED.name,
+                modified_at = now()
+             RETURNING id"
+        )
+            .bind(root_id).bind(kind).bind(name).bind(abs_path)
+            .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.0)
     }
 
     /// Upsert a structural subfolder (`kind='folder'`) within a project, linked
@@ -415,6 +433,25 @@ impl PgStore {
         sqlx_core::query::query(
             "UPDATE sensei.folders SET status = 'indexed'::sensei.folder_status, props = props || $2, modified_at = now() WHERE id = $1"
         ).bind(folder_id).bind(&props).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Append a tag to a folder's `tags` array, idempotently (no duplicates).
+    /// Used by the scan reconcile to flag a former project root that still has
+    /// on-disk content but no live owner (`stale`) for the user to triage,
+    /// rather than deleting content the scan can't account for.
+    pub async fn tag_folder(&self, folder_id: &uuid::Uuid, tag: &str) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE sensei.folders
+                SET tags = array(SELECT DISTINCT unnest(tags || ARRAY[$2])),
+                    modified_at = now()
+              WHERE id = $1",
+        )
+        .bind(folder_id)
+        .bind(tag)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(())
     }
 
