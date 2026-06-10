@@ -295,7 +295,30 @@ pub fn detect_stack(path: &Path) -> Vec<String> {
     if path.join("pyproject.toml").exists() || path.join("requirements.txt").exists() { stack.push("python".into()); }
     if path.join("Package.swift").exists() { stack.push("swift".into()); }
     if path.join("Gemfile").exists() { stack.push("ruby".into()); }
+    // .NET — solution/project manifests use globbed names (Foo.sln, Bar.csproj),
+    // so scan the directory rather than checking a fixed filename. A fixed
+    // global.json (SDK pin) also marks a .NET root.
+    if path.join("global.json").exists() || dir_has_ext(path, &["sln", "csproj", "fsproj", "vbproj"]) {
+        stack.push("dotnet".into());
+    }
     stack
+}
+
+/// True if the directory directly contains a file with one of the given
+/// (lowercase, no-dot) extensions. Used for manifests whose names are globbed
+/// rather than fixed (e.g. .NET `*.csproj` / `*.sln`).
+fn dir_has_ext(path: &Path, exts: &[&str]) -> bool {
+    let Ok(entries) = std::fs::read_dir(path) else { return false; };
+    for entry in entries.flatten() {
+        let p = entry.path();
+        if !p.is_file() { continue; }
+        if let Some(ext) = p.extension().and_then(|e| e.to_str())
+            && exts.contains(&ext.to_ascii_lowercase().as_str())
+        {
+            return true;
+        }
+    }
+    false
 }
 
 /// Count indexable files in a git folder (respecting ignore patterns).
@@ -695,6 +718,24 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(tmp.path().join("package.json"), r#"{"dependencies":{"svelte":"^5"}}"#).unwrap();
         assert_eq!(detect_stack(tmp.path()), vec!["svelte"]);
+    }
+
+    #[test]
+    fn detect_stack_dotnet() {
+        // Globbed project file
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("WebApi.csproj"), "<Project Sdk=\"Microsoft.NET.Sdk\" />").unwrap();
+        assert_eq!(detect_stack(tmp.path()), vec!["dotnet"]);
+        // Solution file
+        let tmp2 = tempfile::tempdir().unwrap();
+        std::fs::write(tmp2.path().join("App.sln"), "Microsoft Visual Studio Solution File").unwrap();
+        assert_eq!(detect_stack(tmp2.path()), vec!["dotnet"]);
+        // global.json SDK pin
+        let tmp3 = tempfile::tempdir().unwrap();
+        std::fs::write(tmp3.path().join("global.json"), "{\"sdk\":{\"version\":\"8.0.0\"}}").unwrap();
+        assert_eq!(detect_stack(tmp3.path()), vec!["dotnet"]);
+        // A .NET project root is a confident (manifest) quasi-repo, not loose code
+        assert_eq!(classify_quasi_repo(tmp.path()), Some(QuasiKind::Manifest));
     }
 
     #[test]
