@@ -13,6 +13,33 @@ fn err(status: StatusCode, msg: &str) -> (StatusCode, Json<serde_json::Value>) {
     (status, Json(serde_json::json!({ "error": msg })))
 }
 
+/// Resolve a governance namespace from either an explicit `namespace_id` or a
+/// `(gov_scope, folder)` pair against the repo's namespace memberships. Shared
+/// by rule authoring and promotion so the resolution rule lives in one place.
+async fn resolve_target_namespace(
+    state: &AppState,
+    namespace_id: Option<&str>,
+    gov_scope: Option<&str>,
+    folder: Option<&str>,
+) -> Result<Option<uuid::Uuid>, (StatusCode, Json<serde_json::Value>)> {
+    if let Some(ns) = namespace_id.filter(|s| !s.is_empty()) {
+        return Ok(Some(uuid::Uuid::parse_str(ns).map_err(|_| err(StatusCode::BAD_REQUEST, "bad namespace_id"))?));
+    }
+    if let (Some(scope), Some(folder)) =
+        (gov_scope.filter(|s| !s.is_empty()), folder.filter(|s| !s.is_empty()))
+    {
+        let fid = state.pg.get_repo_by_path(folder).await
+            .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
+            .and_then(|f| crate::api::util::json_uuid(&f["id"]));
+        return match fid {
+            Some(fid) => state.pg.namespace_for_folder_scope(&fid, scope).await
+                .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e)),
+            None => Ok(None), // unknown repo → unscoped (general)
+        };
+    }
+    Ok(None)
+}
+
 // ============================================================================
 // GET /api/knowledge/memories?status=&scope=&project_id=&limit=
 // ============================================================================
@@ -196,22 +223,9 @@ async fn insert_with_status(
     };
     // Governance namespace: explicit namespace_id wins; else resolve gov_scope
     // against the repo's namespace memberships.
-    let namespace_id = if let Some(ns) = body.namespace_id.as_deref().filter(|s| !s.is_empty()) {
-        Some(uuid::Uuid::parse_str(ns).map_err(|_| err(StatusCode::BAD_REQUEST, "bad namespace_id"))?)
-    } else if let (Some(scope), Some(folder)) =
-        (body.gov_scope.as_deref().filter(|s| !s.is_empty()), body.folder.as_deref().filter(|s| !s.is_empty()))
-    {
-        let fid = state.pg.get_repo_by_path(folder).await
-            .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
-            .and_then(|f| crate::api::util::json_uuid(&f["id"]));
-        match fid {
-            Some(fid) => state.pg.namespace_for_folder_scope(&fid, scope).await
-                .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?,
-            None => None, // unknown repo → unscoped (general)
-        }
-    } else {
-        None
-    };
+    let namespace_id = resolve_target_namespace(
+        &state, body.namespace_id.as_deref(), body.gov_scope.as_deref(), body.folder.as_deref(),
+    ).await?;
     let id = state.pg.insert_memory(&InsertMemory {
         project_id:    pid,
         scope:         body.scope,
@@ -242,6 +256,48 @@ pub(crate) async fn save_memory(
     Json(body):   Json<MemoryBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     insert_with_status(state, body, "active", false, "authored").await
+}
+
+// ============================================================================
+// POST /api/knowledge/memories/{id}/promote  — elevate to a broader scope
+// GET  /api/knowledge/promotion-candidates    — battle_tested, not yet promoted
+// ============================================================================
+
+#[derive(Deserialize)]
+pub(crate) struct PromoteBody {
+    pub namespace_id: Option<String>,
+    pub gov_scope:    Option<String>,
+    pub folder:       Option<String>,
+    pub enforcement:  Option<String>,
+}
+
+/// Promote a proven memory to a broader scope. Creates a `proposed` copy on the
+/// target namespace (origin=promoted, source_id=original); accepting it through
+/// the normal proposal flow is the approval gate, so it never auto-applies.
+pub(crate) async fn promote_memory(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<PromoteBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let sid = uuid::Uuid::parse_str(&id).map_err(|_| err(StatusCode::BAD_REQUEST, "bad memory id"))?;
+    let target = resolve_target_namespace(
+        &state, body.namespace_id.as_deref(), body.gov_scope.as_deref(), body.folder.as_deref(),
+    ).await?;
+    let new_id = state.pg.promote_memory(sid, target, body.enforcement.as_deref().filter(|s| !s.is_empty())).await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
+        .ok_or_else(|| err(StatusCode::CONFLICT,
+            "memory not found or not promotable (must be active/reinforced/battle_tested)"))?;
+    Ok(Json(serde_json::json!({ "id": new_id, "status": "proposed", "origin": "promoted" })))
+}
+
+/// List battle_tested memories that have not yet been promoted — the candidates
+/// a UI surfaces for "elevate to a broader scope".
+pub(crate) async fn promotion_candidates(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let rows = state.pg.list_promotion_candidates().await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+    Ok(Json(serde_json::json!({ "candidates": rows })))
 }
 
 // ============================================================================
