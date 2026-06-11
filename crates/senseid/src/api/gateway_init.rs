@@ -420,6 +420,19 @@ fn baseline_production_config() -> GatewayConfig {
         max_output_tokens: 0,
         pricing: None,
     });
+    // Local chat model (Ollama gemma4). The PRIMARY TextChat candidate so the
+    // gateway works offline / without a cloud API key — used by infer, consensus,
+    // and the governance Tier-2 consolidation merge. Cloud models remain as
+    // fallback. The DB-driven config (Layer 2) can re-prioritise per role.
+    models.insert("gemma4".into(), ModelConfig {
+        id: "gemma4".into(),
+        api_model_id: Some("gemma4:latest".into()),
+        provider: "ollama".into(),
+        capabilities: vec![Capability::TextChat],
+        context_window: 8_192,
+        max_output_tokens: 4_096,
+        pricing: None,
+    });
 
     let mut chains: HashMap<String, FallbackChainConfig> = HashMap::new();
     chains.insert("image_generate".into(), FallbackChainConfig {
@@ -437,17 +450,24 @@ fn baseline_production_config() -> GatewayConfig {
         id: "text_chat".into(),
         capability: Capability::TextChat,
         models: vec![
+            // Local gemma4 first — works without a cloud key; cloud models fall back.
+            ChainEntry {
+                model: "gemma4".into(),
+                router: Some("ollama".into()),
+                api_model_id: None,
+                priority: 1,
+            },
             ChainEntry {
                 model: "claude-sonnet".into(),
                 router: Some("anthropic".into()),
                 api_model_id: None,
-                priority: 1,
+                priority: 2,
             },
             ChainEntry {
                 model: "gpt-4o-mini".into(),
                 router: Some("openai".into()),
                 api_model_id: None,
-                priority: 2,
+                priority: 3,
             },
         ],
         fallback_triggers: vec![FallbackTrigger::RateLimit, FallbackTrigger::Timeout, FallbackTrigger::ProviderError],
