@@ -115,6 +115,32 @@ pub(crate) async fn get_rules(
     })))
 }
 
+/// Resolve the global ruleset (user + general scope) and write it to
+/// `<dir>/rules.md`, returning the path and rule count. `dir` is injected so the
+/// daemon passes `~/.sensei` and tests can pass a temp dir.
+pub(crate) async fn materialize_global_rules(
+    pg: &crate::db::pg_store::PgStore,
+    dir: &std::path::Path,
+) -> Result<(std::path::PathBuf, usize), String> {
+    let raw = pg.resolve_global_rules().await?;
+    let ruleset = crate::governance::structure_ruleset(raw);
+    let md = crate::governance::render_rules_md(&ruleset);
+    std::fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
+    let path = dir.join("rules.md");
+    std::fs::write(&path, md).map_err(|e| format!("write {}: {e}", path.display()))?;
+    Ok((path, ruleset.total))
+}
+
+/// POST /api/knowledge/rules/materialize — regenerate the global ~/.sensei/rules.md now.
+pub(crate) async fn materialize_rules(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let dir = crate::paths::sensei_dir();
+    let (path, count) = materialize_global_rules(&state.pg, &dir).await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+    Ok(Json(serde_json::json!({ "path": path.display().to_string(), "rules": count })))
+}
+
 // ============================================================================
 // POST /api/knowledge/proposals  — propose_memory
 // POST /api/knowledge/memories   — save_memory (explicit)
@@ -271,4 +297,21 @@ pub(crate) async fn record_outcomes(
         "recorded": total - skipped.len(),
         "skipped":  skipped,
     })))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn materialize_writes_managed_global_rules_file() {
+        let pg = crate::db::pg_store::PgStore::connect_test().await.unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        // Writes to the injected temp dir, never the real ~/.sensei.
+        let (path, _count) = materialize_global_rules(&pg, tmp.path()).await.unwrap();
+        assert_eq!(path, tmp.path().join("rules.md"));
+        let body = std::fs::read_to_string(&path).unwrap();
+        assert!(body.contains("Managed by sensei"), "managed header present");
+        assert!(body.contains("# Sensei Rules"), "title present");
+    }
 }
