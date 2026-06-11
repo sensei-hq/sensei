@@ -20,6 +20,10 @@ pub struct InsertMemory {
     pub tags:          Vec<String>,
     pub triage_signal: Option<String>,
     pub status:        String,    // memory_status enum value
+    // Governance plane: where the rule applies (namespace) + its authority.
+    pub namespace_id:  Option<uuid::Uuid>,
+    pub enforcement:   Option<String>, // enforcement enum value; None → DB default 'recommended'
+    pub origin:        Option<String>, // None → DB default 'learned'
 }
 
 pub struct OutcomeRow {
@@ -2036,15 +2040,18 @@ impl PgStore {
         let id: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.memories
                 (project_id, scope, scope_filter, type, title, content, impact,
-                 tags, triage_signal, status)
+                 tags, triage_signal, status, namespace_id, enforcement, origin)
              VALUES ($1, $2::sensei.memory_scope, $3, $4::sensei.memory_type, $5, $6, $7,
-                     $8, $9, $10::sensei.memory_status)
+                     $8, $9, $10::sensei.memory_status, $11,
+                     COALESCE($12::sensei.enforcement, 'recommended'::sensei.enforcement),
+                     COALESCE($13, 'learned'))
              RETURNING id"
         )
             .bind(m.project_id)
             .bind(&m.scope).bind(&m.scope_filter)
             .bind(&m.mtype).bind(&m.title).bind(&m.content).bind(&m.impact)
             .bind(&m.tags).bind(&m.triage_signal).bind(&m.status)
+            .bind(m.namespace_id).bind(&m.enforcement).bind(&m.origin)
             .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(id.0)
     }
@@ -2228,6 +2235,31 @@ impl PgStore {
                 id: id.to_string(), title, content, impact, enforcement, scope, namespace,
             }
         }).collect())
+    }
+
+    /// Resolve a repo's namespace at a governance scope — e.g. "this repo's
+    /// `project` namespace" or "its `organization` namespace". Used when
+    /// authoring a rule so the caller can say "scope this to the project" and we
+    /// attach the right namespace_id from the repo's memberships. Returns None
+    /// for always-on scopes (`general`/`user`) or when the repo has no namespace
+    /// at that scope.
+    pub async fn namespace_for_folder_scope(&self, folder_id: &uuid::Uuid, scope_key: &str) -> Result<Option<uuid::Uuid>, String> {
+        if matches!(scope_key, "general" | "user") {
+            return Ok(None); // always-on scopes are unscoped (namespace_id NULL)
+        }
+        let row: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
+            "SELECT n.id
+               FROM sensei.folder_namespaces fn
+               JOIN sensei.namespaces n ON n.id = fn.namespace_id
+              WHERE fn.folder_id = $1 AND n.scope_key = $2
+              LIMIT 1",
+        )
+        .bind(folder_id)
+        .bind(scope_key)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(row.map(|(id,)| id))
     }
 
     /// The global, repo-independent ruleset: rules at the always-on `general`
@@ -3568,11 +3600,13 @@ mod knowledge_tests {
             project_id: Some(project_id), scope: "project".into(), scope_filter: None,
             mtype: "convention".into(), title: "t1".into(), content: "c1".into(),
             impact: None, tags: vec![], triage_signal: None, status: "proposed".into(),
+            namespace_id: None, enforcement: None, origin: None,
         }).await.unwrap();
         let _m2 = pg.insert_memory(&InsertMemory {
             project_id: Some(project_id), scope: "project".into(), scope_filter: None,
             mtype: "convention".into(), title: "t2".into(), content: "c2".into(),
             impact: None, tags: vec![], triage_signal: None, status: "active".into(),
+            namespace_id: None, enforcement: None, origin: None,
         }).await.unwrap();
 
         let proposed = pg.list_memories(Some(project_id), Some("proposed"), None, 50).await.unwrap();
@@ -3590,6 +3624,7 @@ mod knowledge_tests {
             mtype: "convention".into(), title: "t".into(), content: "c".into(),
             impact: None, tags: vec![], triage_signal: Some("revert".into()),
             status: "proposed".into(),
+            namespace_id: None, enforcement: None, origin: None,
         }).await.unwrap();
 
         let new_status = pg.set_memory_status(mid, "active", &["proposed"]).await.unwrap();
@@ -3609,6 +3644,7 @@ mod knowledge_tests {
             project_id: Some(pid), scope: "project".into(), scope_filter: None,
             mtype: "convention".into(), title: "t".into(), content: "c".into(),
             impact: None, tags: vec![], triage_signal: None, status: "active".into(),
+            namespace_id: None, enforcement: None, origin: None,
         }).await.unwrap();
         let skipped = pg.record_outcomes_batch(&[
             OutcomeRow { memory_id: mid, session_id: None, outcome: "applied".into(), context: None }
@@ -3630,16 +3666,19 @@ mod knowledge_tests {
             project_id: Some(pid), scope: "project".into(), scope_filter: None,
             mtype: "convention".into(), title: "P".into(), content: "p".into(),
             impact: None, tags: vec![], triage_signal: None, status: "active".into(),
+            namespace_id: None, enforcement: None, origin: None,
         }).await.unwrap();
         pg.insert_memory(&InsertMemory {
             project_id: None, scope: "stack".into(), scope_filter: Some("rust".into()),
             mtype: "convention".into(), title: "S".into(), content: "s".into(),
             impact: None, tags: vec![], triage_signal: None, status: "active".into(),
+            namespace_id: None, enforcement: None, origin: None,
         }).await.unwrap();
         pg.insert_memory(&InsertMemory {
             project_id: None, scope: "global".into(), scope_filter: None,
             mtype: "convention".into(), title: "G".into(), content: "g".into(),
             impact: None, tags: vec![], triage_signal: None, status: "active".into(),
+            namespace_id: None, enforcement: None, origin: None,
         }).await.unwrap();
 
         let blob = pg.assemble_context(pid, &["rust".into()], None, 50).await.unwrap();
@@ -3655,6 +3694,7 @@ mod knowledge_tests {
             mtype: "convention".into(), title: "PROP".into(), content: "x".into(),
             impact: None, tags: vec![], triage_signal: Some("revert".into()),
             status: "proposed".into(),
+            namespace_id: None, enforcement: None, origin: None,
         }).await.unwrap();
         let blob2 = pg.assemble_context(pid, &["rust".into()], None, 50).await.unwrap();
         let titles2: Vec<String> = blob2["memories"].as_array().unwrap().iter()

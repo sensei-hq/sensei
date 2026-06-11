@@ -159,6 +159,16 @@ pub(crate) struct MemoryBody {
     #[serde(default)]
     pub tags:          Vec<String>,
     pub triage_signal: Option<String>,
+    // ── Governance plane (optional) ──────────────────────────────────────
+    /// Explicit namespace this rule applies to (wins over gov_scope/folder).
+    pub namespace_id:  Option<String>,
+    /// Governance scope key (general/user/organization/client/technology/team/
+    /// project/repository); resolved against `folder`'s namespace memberships.
+    pub gov_scope:     Option<String>,
+    /// Repo abs_path used to resolve `gov_scope` to a namespace.
+    pub folder:        Option<String>,
+    /// Authority: advisory|recommended|required|mandatory (default recommended).
+    pub enforcement:   Option<String>,
 }
 
 async fn insert_with_status(
@@ -166,6 +176,7 @@ async fn insert_with_status(
     body:  MemoryBody,
     status: &str,
     require_triage_signal: bool,
+    origin: &str,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     if body.title.trim().is_empty() {
         return Err(err(StatusCode::BAD_REQUEST, "title must not be empty"));
@@ -179,9 +190,27 @@ async fn insert_with_status(
     if require_triage_signal && body.triage_signal.as_deref().unwrap_or("").is_empty() {
         return Err(err(StatusCode::BAD_REQUEST, "triage_signal required for proposals"));
     }
-    let pid = match body.project_id {
-        Some(s) => Some(uuid::Uuid::parse_str(&s).map_err(|_| err(StatusCode::BAD_REQUEST, "bad project_id"))?),
+    let pid = match &body.project_id {
+        Some(s) => Some(uuid::Uuid::parse_str(s).map_err(|_| err(StatusCode::BAD_REQUEST, "bad project_id"))?),
         None => None,
+    };
+    // Governance namespace: explicit namespace_id wins; else resolve gov_scope
+    // against the repo's namespace memberships.
+    let namespace_id = if let Some(ns) = body.namespace_id.as_deref().filter(|s| !s.is_empty()) {
+        Some(uuid::Uuid::parse_str(ns).map_err(|_| err(StatusCode::BAD_REQUEST, "bad namespace_id"))?)
+    } else if let (Some(scope), Some(folder)) =
+        (body.gov_scope.as_deref().filter(|s| !s.is_empty()), body.folder.as_deref().filter(|s| !s.is_empty()))
+    {
+        let fid = state.pg.get_repo_by_path(folder).await
+            .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
+            .and_then(|f| crate::api::util::json_uuid(&f["id"]));
+        match fid {
+            Some(fid) => state.pg.namespace_for_folder_scope(&fid, scope).await
+                .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?,
+            None => None, // unknown repo → unscoped (general)
+        }
+    } else {
+        None
     };
     let id = state.pg.insert_memory(&InsertMemory {
         project_id:    pid,
@@ -194,6 +223,9 @@ async fn insert_with_status(
         tags:          body.tags,
         triage_signal: body.triage_signal,
         status:        status.into(),
+        namespace_id,
+        enforcement:   body.enforcement.filter(|s| !s.is_empty()),
+        origin:        Some(origin.to_string()),
     }).await.map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
     Ok(Json(serde_json::json!({ "id": id, "status": status })))
 }
@@ -202,14 +234,14 @@ pub(crate) async fn propose_memory(
     State(state): State<AppState>,
     Json(body):   Json<MemoryBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    insert_with_status(state, body, "proposed", true).await
+    insert_with_status(state, body, "proposed", true, "learned").await
 }
 
 pub(crate) async fn save_memory(
     State(state): State<AppState>,
     Json(body):   Json<MemoryBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    insert_with_status(state, body, "active", false).await
+    insert_with_status(state, body, "active", false, "authored").await
 }
 
 // ============================================================================
