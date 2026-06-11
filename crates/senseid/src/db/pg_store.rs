@@ -2056,6 +2056,67 @@ impl PgStore {
         Ok(id.0)
     }
 
+    /// Promote a proven memory to a higher (broader) scope: copy it as a
+    /// `proposed` memory on `target_namespace_id` with `origin='promoted'` and
+    /// `source_id` pointing back at the original. The copy lands in the triage
+    /// queue — accepting it (set_memory_status proposed→active) is the approval
+    /// gate, so a promotion never auto-applies at the new scope. Only an
+    /// established source (active/reinforced/battle_tested) is promotable;
+    /// returns Ok(None) otherwise. `enforcement` overrides the source's when set.
+    pub async fn promote_memory(
+        &self,
+        source_id: uuid::Uuid,
+        target_namespace_id: Option<uuid::Uuid>,
+        enforcement: Option<&str>,
+    ) -> Result<Option<uuid::Uuid>, String> {
+        let row: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.memories
+                (project_id, scope, scope_filter, type, title, content, impact, tags,
+                 status, namespace_id, enforcement, origin, source_id)
+             SELECT project_id, scope, scope_filter, type, title, content, impact, tags,
+                    'proposed'::sensei.memory_status,
+                    $2,
+                    COALESCE($3::sensei.enforcement, enforcement),
+                    'promoted', $1
+               FROM sensei.memories
+              WHERE id = $1
+                AND status IN ('active'::sensei.memory_status,
+                               'reinforced'::sensei.memory_status,
+                               'battle_tested'::sensei.memory_status)
+             RETURNING id"
+        )
+            .bind(source_id)
+            .bind(target_namespace_id)
+            .bind(enforcement)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(row.map(|(id,)| id))
+    }
+
+    /// Memories that have proven themselves (`battle_tested`) and have not
+    /// already been promoted — the candidates a UI surfaces for "promote to a
+    /// broader scope".
+    pub async fn list_promotion_candidates(&self) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, String, String, Option<uuid::Uuid>, String)> =
+            sqlx_core::query_as::query_as(
+                "SELECT m.id, m.title, m.content, m.namespace_id, m.enforcement::text
+                   FROM sensei.memories m
+                  WHERE m.status = 'battle_tested'::sensei.memory_status
+                    AND NOT EXISTS (
+                          SELECT 1 FROM sensei.memories c WHERE c.source_id = m.id
+                    )
+                  ORDER BY m.strength DESC, m.modified_at DESC",
+            )
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id, title, content, ns, enforcement)| {
+            serde_json::json!({ "id": id, "title": title, "content": content,
+                "namespace_id": ns, "enforcement": enforcement })
+        }).collect())
+    }
+
     pub async fn list_memories(
         &self,
         project_id: Option<uuid::Uuid>,
