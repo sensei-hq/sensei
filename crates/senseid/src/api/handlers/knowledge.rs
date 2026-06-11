@@ -149,9 +149,12 @@ pub(crate) async fn materialize_global_rules(
     pg: &crate::db::pg_store::PgStore,
     dir: &std::path::Path,
 ) -> Result<(std::path::PathBuf, usize), String> {
-    let raw = pg.resolve_global_rules().await?;
-    let ruleset = crate::governance::structure_ruleset(raw);
-    let md = crate::governance::render_rules_md(&ruleset);
+    let ruleset = crate::governance::structure_ruleset(pg.resolve_global_rules().await?);
+    // Prefer an approved Tier-2 (LLM-merged) ruleset; fall back to the Tier-1 render.
+    let md = match pg.get_consolidated_ruleset("global", Some("approved")).await? {
+        Some(row) => crate::governance::wrap_managed(row["content"].as_str().unwrap_or_default()),
+        None => crate::governance::render_rules_md(&ruleset),
+    };
     std::fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
     let path = dir.join("rules.md");
     std::fs::write(&path, md).map_err(|e| format!("write {}: {e}", path.display()))?;
@@ -298,6 +301,101 @@ pub(crate) async fn promotion_candidates(
     let rows = state.pg.list_promotion_candidates().await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
     Ok(Json(serde_json::json!({ "candidates": rows })))
+}
+
+// ============================================================================
+// Governance Tier-2 — LLM consolidation merge of the global ruleset
+// POST /api/knowledge/rules/consolidate            — run the merge → proposed
+// GET  /api/knowledge/rules/consolidated           — current merged ruleset
+// POST /api/knowledge/rules/consolidate/{id}/approve — approve → feeds rules.md
+// ============================================================================
+
+/// Run the Tier-2 consolidation for the global ruleset: gather the Tier-1
+/// rules, ask the chat model (gemma4) to merge them into one coherent markdown
+/// ruleset, and store it as a new `proposed` version. Skips when there are no
+/// rules or the input is unchanged since the last consolidation.
+pub(crate) async fn consolidate_rules(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    use gateway::types::capability::Capability;
+    use gateway::types::request::*;
+
+    let set = crate::governance::structure_ruleset(
+        state.pg.resolve_global_rules().await.map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?,
+    );
+    if set.total == 0 {
+        return Ok(Json(serde_json::json!({ "skipped": true, "reason": "no global rules to merge" })));
+    }
+    let hash = crate::governance::ruleset_source_hash(&set);
+    if state.pg.latest_ruleset_source_hash("global").await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))? == Some(hash.clone())
+    {
+        return Ok(Json(serde_json::json!({ "skipped": true, "reason": "unchanged since last consolidation" })));
+    }
+
+    let prompt = crate::governance::build_merge_prompt(&set);
+    let request = InferenceRequest {
+        capability: Capability::TextChat,
+        model: None, router: None, chain: None,
+        payload: Payload::Chat {
+            messages: vec![Message::text(MessageRole::User, prompt)],
+            system: Some("You merge governance rules into a single clean markdown ruleset.".to_string()),
+            max_tokens: Some(1500),
+            temperature: None,
+            tools: Vec::new(),
+        },
+        budget: None,
+    };
+    let resp = state.gateway.execute(&request).await
+        .map_err(|e| err(StatusCode::BAD_GATEWAY, &format!("merge model call failed: {e}")))?;
+    let content = match (resp.success, resp.content) {
+        (true, Some(c)) if !c.trim().is_empty() => c,
+        _ => return Err(err(StatusCode::BAD_GATEWAY, "merge model returned no content")),
+    };
+
+    let version = state.pg.next_ruleset_version("global").await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+    let id = state.pg.insert_consolidated_ruleset(
+        "global", version, &content, &serde_json::json!([]), resp.model.as_deref(), &hash, "proposed",
+    ).await.map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+
+    Ok(Json(serde_json::json!({
+        "id": id, "version": version, "status": "proposed", "model": resp.model, "content": content,
+    })))
+}
+
+/// Fetch the global consolidated ruleset — the approved one if present, else the
+/// latest proposed.
+pub(crate) async fn get_consolidated(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let approved = state.pg.get_consolidated_ruleset("global", Some("approved")).await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+    let row = match approved {
+        Some(r) => Some(r),
+        None => state.pg.get_consolidated_ruleset("global", None).await
+            .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?,
+    };
+    Ok(Json(row.unwrap_or(serde_json::Value::Null)))
+}
+
+/// Approve a consolidated ruleset version (the approval gate). Supersedes the
+/// prior approved version and re-materializes ~/.sensei/rules.md from the
+/// approved merge.
+pub(crate) async fn approve_consolidated(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let rid = uuid::Uuid::parse_str(&id).map_err(|_| err(StatusCode::BAD_REQUEST, "bad ruleset id"))?;
+    let (scope, _content) = state.pg.approve_consolidated_ruleset(&rid).await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "ruleset not found"))?;
+    // The approved global merge now feeds ~/.sensei/rules.md.
+    if scope == "global" {
+        materialize_global_rules(&state.pg, &crate::paths::sensei_dir()).await
+            .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+    }
+    Ok(Json(serde_json::json!({ "id": rid, "status": "approved", "scope": scope })))
 }
 
 // ============================================================================
