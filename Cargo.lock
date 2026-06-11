@@ -1301,8 +1301,8 @@ dependencies = [
 
 [[package]]
 name = "dbd-core"
-version = "0.4.1"
-source = "git+https://github.com/sensei-hq/dbd?tag=v0.4.1#6e99965ea5c0ffeb9efcfbb4496c48be300e60ea"
+version = "0.4.4"
+source = "git+https://github.com/sensei-hq/dbd?tag=v0.4.4#70bbf72df8517c46032930e32687d1bdeb2d1887"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2115,6 +2115,15 @@ dependencies = [
  "thiserror",
  "ureq",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "hive-protocol"
+version = "0.2.17"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
 ]
 
 [[package]]
