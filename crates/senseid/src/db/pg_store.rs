@@ -2354,6 +2354,76 @@ impl PgStore {
         }).collect())
     }
 
+    // ── Governance Tier-2: consolidated (LLM-merged, approved) rulesets ──
+
+    /// Next version number for a scope's consolidated ruleset (max+1, or 1).
+    pub async fn next_ruleset_version(&self, scope: &str) -> Result<i32, String> {
+        let row: (Option<i32>,) = sqlx_core::query_as::query_as(
+            "SELECT max(version) FROM sensei.consolidated_rulesets WHERE scope = $1",
+        ).bind(scope).fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.0.unwrap_or(0) + 1)
+    }
+
+    /// The source_hash of a scope's most recent consolidation (any status), so a
+    /// re-merge can be skipped when the Tier-1 input is unchanged.
+    pub async fn latest_ruleset_source_hash(&self, scope: &str) -> Result<Option<String>, String> {
+        let row: Option<(String,)> = sqlx_core::query_as::query_as(
+            "SELECT source_hash FROM sensei.consolidated_rulesets WHERE scope = $1 ORDER BY version DESC LIMIT 1",
+        ).bind(scope).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.map(|(h,)| h))
+    }
+
+    /// Insert a new consolidated ruleset version.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn insert_consolidated_ruleset(
+        &self, scope: &str, version: i32, content: &str, conflicts: &serde_json::Value,
+        model: Option<&str>, source_hash: &str, status: &str,
+    ) -> Result<uuid::Uuid, String> {
+        let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.consolidated_rulesets
+                (scope, version, content, conflicts, model, source_hash, status)
+             VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id",
+        )
+            .bind(scope).bind(version).bind(content).bind(conflicts)
+            .bind(model).bind(source_hash).bind(status)
+            .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.0)
+    }
+
+    /// Fetch a scope's consolidated ruleset: the row with `status` when given
+    /// (e.g. "approved"), else the latest version.
+    pub async fn get_consolidated_ruleset(&self, scope: &str, status: Option<&str>) -> Result<Option<serde_json::Value>, String> {
+        let row: Option<(uuid::Uuid, i32, String, serde_json::Value, Option<String>, String)> = match status {
+            Some(s) => sqlx_core::query_as::query_as(
+                "SELECT id, version, content, conflicts, model, status FROM sensei.consolidated_rulesets
+                  WHERE scope = $1 AND status = $2 ORDER BY version DESC LIMIT 1",
+            ).bind(scope).bind(s).fetch_optional(&self.pool).await,
+            None => sqlx_core::query_as::query_as(
+                "SELECT id, version, content, conflicts, model, status FROM sensei.consolidated_rulesets
+                  WHERE scope = $1 ORDER BY version DESC LIMIT 1",
+            ).bind(scope).fetch_optional(&self.pool).await,
+        }.map_err(|e| e.to_string())?;
+        Ok(row.map(|(id, version, content, conflicts, model, status)| serde_json::json!({
+            "id": id, "version": version, "content": content,
+            "conflicts": conflicts, "model": model, "status": status,
+        })))
+    }
+
+    /// Approve a consolidated ruleset: supersede the scope's prior approved
+    /// version, then mark this one approved. Returns (scope, content).
+    pub async fn approve_consolidated_ruleset(&self, id: &uuid::Uuid) -> Result<Option<(String, String)>, String> {
+        sqlx_core::query::query(
+            "UPDATE sensei.consolidated_rulesets SET status = 'superseded'
+              WHERE status = 'approved'
+                AND scope = (SELECT scope FROM sensei.consolidated_rulesets WHERE id = $1)
+                AND id <> $1",
+        ).bind(id).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        let row: Option<(String, String)> = sqlx_core::query_as::query_as(
+            "UPDATE sensei.consolidated_rulesets SET status = 'approved' WHERE id = $1 RETURNING scope, content",
+        ).bind(id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row)
+    }
+
     pub async fn assemble_context(
         &self,
         project_id: uuid::Uuid,
