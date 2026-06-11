@@ -136,8 +136,9 @@ pub fn deploy(db_name: &str, app_version: &str) -> Result<(), String> {
         tracing::info!("dbd phase: apply");
         design.apply(
             &adapter,
-            None,
-            false,
+            None,           // entity-name filter
+            false,          // dry_run
+            None,           // scope: Option<&ResolvedScope> — daemon applies the full schema
             |desc: &str| tracing::debug!(dbd_step = "apply", desc, "starting"),
             |desc: &str, err: Option<&str>| match err {
                 Some(e) => tracing::warn!(dbd_step = "apply", desc, error = e, "failed"),
@@ -151,6 +152,7 @@ pub fn deploy(db_name: &str, app_version: &str) -> Result<(), String> {
             &adapter,
             None,
             false,
+            None,           // scope
             |desc: &str| tracing::debug!(dbd_step = "import", desc, "starting"),
             |desc: &str, err: Option<&str>| match err {
                 Some(e) => tracing::warn!(dbd_step = "import", desc, error = e, "failed"),
