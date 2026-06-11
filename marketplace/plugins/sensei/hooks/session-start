@@ -42,6 +42,20 @@ else
 No rules file found. Run /sensei:rules to create one."
 fi
 
+# ── Global rules (governance plane, materialized by the daemon) ──────────────
+# ~/.sensei/rules.md holds always-on user/general rules resolved + rendered by
+# the daemon. Repository-specific rules (org/project/technology) resolve live —
+# the agent calls the get_rules MCP tool.
+GLOBAL_RULES_FILE="${HOME}/.sensei/rules.md"
+GLOBAL_RULES_SECTION=""
+if [ -f "$GLOBAL_RULES_FILE" ]; then
+  GLOBAL_RULES_SECTION="## Global Rules (always-on)
+
+$(sed -e '/^<!--/,/-->/d' "$GLOBAL_RULES_FILE" | head -80)
+
+Repository-specific rules resolve live — call the \`get_rules\` MCP tool."
+fi
+
 # ── Mindsets (shipped as subagents — lean reminder only) ─────────────────────
 # Mindsets are agents (plugin agents/). Inject a lean pointer, not the full
 # question set — the detail lives in each agent and loads on demand.
@@ -89,6 +103,8 @@ Daemon: ${DAEMON_STATUS}
 
 ${STATE_SECTION}
 
+${GLOBAL_RULES_SECTION}
+
 ${RULES_SECTION}
 
 ${MINDSETS_SECTION}
@@ -100,6 +116,7 @@ ${PERSONAS_SECTION}
 You MUST use sensei MCP tools instead of grep/glob for code navigation. These tools use the indexed code graph and return richer results. If MCP tools fail, fall back to grep/glob and report the failure.
 
 **Before implementing any change**, call:
+- \`get_rules()\` — the governance rules for this repo (mandatory rules are non-negotiable). Check FIRST.
 - \`get_patterns(pattern)\` — check existing patterns FIRST. Do not implement without checking.
 - \`get_project_summary()\` — understand the codebase structure
 
