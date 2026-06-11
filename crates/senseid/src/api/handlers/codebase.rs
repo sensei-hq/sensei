@@ -253,12 +253,30 @@ pub(crate) async fn pattern_for_symbol(
     Json(serde_json::json!({"pattern": null, "message": "symbol does not belong to any detected pattern"}))
 }
 
+#[derive(Deserialize)]
+pub(crate) struct DuplicatesQuery {
+    pub min_similarity: Option<f64>,
+    pub limit: Option<i64>,
+}
+
+/// GET /api/patterns/{project}/duplicates — near-duplicate functions found by
+/// cosine similarity on code embeddings. `min_similarity` (default 0.92) and
+/// `limit` (default 50) are query params.
 pub(crate) async fn find_duplicates_handler(
-    State(_state): State<AppState>,
-    Path(_project): Path<String>,
+    State(state): State<AppState>,
+    Path(project): Path<String>,
+    Query(q): Query<DuplicatesQuery>,
 ) -> Json<serde_json::Value> {
-    // TODO: implement duplicate detection via graph analysis
-    Json(serde_json::json!({"duplicates": [], "count": 0}))
+    let folder = state.pg.get_repo_by_name(&project).await.ok().flatten();
+    let Some(folder_id) = folder.as_ref().and_then(|f| crate::api::util::json_uuid(&f["id"])) else {
+        return Json(serde_json::json!({ "duplicates": [], "count": 0, "message": "project not indexed" }));
+    };
+    let min_similarity = q.min_similarity.unwrap_or(0.92).clamp(0.0, 1.0);
+    let limit = q.limit.unwrap_or(50).clamp(1, 500);
+    match state.pg.find_duplicates(&folder_id, min_similarity, limit).await {
+        Ok(dups) => Json(serde_json::json!({ "count": dups.len(), "min_similarity": min_similarity, "duplicates": dups })),
+        Err(e) => Json(serde_json::json!({ "duplicates": [], "count": 0, "error": e })),
+    }
 }
 
 // ── Conventions ───────────────────────────────────────────────────────────────
