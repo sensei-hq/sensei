@@ -129,6 +129,61 @@ pub fn slugify(s: &str) -> String {
     out.trim_end_matches('-').to_string()
 }
 
+/// Split a markdown document into its leading YAML frontmatter mapping (empty
+/// if none) and the body that follows. Tolerates BOM and CRLF. Used by
+/// [`merge_frontmatter`] so unmanaged keys + the body survive a write-back.
+fn split_frontmatter(content: &str) -> (serde_yaml::Mapping, String) {
+    let c = content.strip_prefix('\u{feff}').unwrap_or(content).replace("\r\n", "\n");
+    if let Some(rest) = c.strip_prefix("---\n") {
+        // Closing fence is a line that is exactly `---`: match `\n---\n` (body
+        // follows) or `\n---` at end of file.
+        if let Some(idx) = rest.find("\n---\n") {
+            let map = serde_yaml::from_str::<serde_yaml::Mapping>(&rest[..idx]).unwrap_or_default();
+            return (map, rest[idx + 5..].to_string());
+        }
+        if let Some(stripped) = rest.strip_suffix("\n---") {
+            let map = serde_yaml::from_str::<serde_yaml::Mapping>(stripped).unwrap_or_default();
+            return (map, String::new());
+        }
+    }
+    (serde_yaml::Mapping::new(), c)
+}
+
+/// Merge sensei's managed identity fields (organization, client, project, team,
+/// role, stack, summary, tagline, icon, icon_dark) into a README's YAML
+/// frontmatter, preserving the body and any unmanaged keys the user added, and
+/// writing a `# sensei:frontmatter` marker as the first line of the block. Only
+/// fields that are `Some`/non-empty are written (a cleared field is left as-is
+/// rather than emitting an empty value). Pure — returns the full new README
+/// content.
+pub fn merge_frontmatter(existing: &str, fm: &Frontmatter) -> String {
+    use serde_yaml::Value;
+    let (mut map, body) = split_frontmatter(existing);
+
+    let mut set = |key: &str, val: &Option<String>| {
+        if let Some(v) = val.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            map.insert(Value::from(key), Value::from(v));
+        }
+    };
+    set("organization", &fm.organization);
+    set("client", &fm.client);
+    set("project", &fm.project);
+    set("team", &fm.team);
+    set("role", &fm.role);
+    set("summary", &fm.summary);
+    set("tagline", &fm.tagline);
+    set("icon", &fm.icon);
+    set("icon_dark", &fm.icon_dark);
+    if !fm.stack.is_empty() {
+        let seq: Vec<Value> = fm.stack.iter().map(|s| Value::from(s.as_str())).collect();
+        map.insert(Value::from("stack"), Value::Sequence(seq));
+    }
+
+    let yaml = serde_yaml::to_string(&map).unwrap_or_default();
+    // serde_yaml emits a trailing newline after the mapping; the body carries its own.
+    format!("---\n# sensei:frontmatter\n{yaml}---\n{body}")
+}
+
 /// Read and parse frontmatter from a repo's root README, if present.
 pub fn read_frontmatter(repo_path: &Path) -> Option<Frontmatter> {
     for name in &["README.md", "readme.md", "Readme.md", "README"] {
@@ -204,6 +259,42 @@ mod tests {
         assert_eq!(slugify("rust"), "rust");
         assert_eq!(slugify("  A / B  C "), "a-b-c");
         assert_eq!(slugify("C++"), "c");
+    }
+
+    #[test]
+    fn merge_into_readme_without_frontmatter_prepends_block() {
+        let fm = Frontmatter { project: Some("sensei".into()), role: Some("monorepo".into()),
+            stack: vec!["rust".into(), "svelte".into()], ..Default::default() };
+        let out = merge_frontmatter("# Title\n\nBody text.\n", &fm);
+        assert!(out.starts_with("---\n# sensei:frontmatter\n"), "marker comment first");
+        assert!(out.contains("project: sensei"));
+        assert!(out.contains("role: monorepo"));
+        assert!(out.ends_with("# Title\n\nBody text.\n"), "body preserved verbatim");
+        // Round-trips back through the parser.
+        let parsed = parse_frontmatter(&out).unwrap();
+        assert_eq!(parsed.project.as_deref(), Some("sensei"));
+        assert_eq!(parsed.stack, vec!["rust", "svelte"]);
+    }
+
+    #[test]
+    fn merge_preserves_unmanaged_keys_and_body_and_overwrites_managed() {
+        let existing = "---\nproject: oldname\ncustom_key: keep-me\n---\n# Heading\n\nProse.\n";
+        let fm = Frontmatter { project: Some("newname".into()), ..Default::default() };
+        let out = merge_frontmatter(existing, &fm);
+        let parsed = parse_frontmatter(&out).unwrap();
+        assert_eq!(parsed.project.as_deref(), Some("newname"), "managed key overwritten");
+        assert!(out.contains("custom_key: keep-me"), "unmanaged key preserved");
+        assert!(out.contains("# Heading\n\nProse.\n"), "body preserved");
+        assert!(out.contains("# sensei:frontmatter"), "marker added");
+    }
+
+    #[test]
+    fn merge_skips_empty_fields() {
+        // An all-empty frontmatter should not emit blank keys, just the marker.
+        let out = merge_frontmatter("body only\n", &Frontmatter::default());
+        assert!(!out.contains("project:"));
+        assert!(out.contains("# sensei:frontmatter"));
+        assert!(out.ends_with("body only\n"));
     }
 
     #[test]
