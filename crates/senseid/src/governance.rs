@@ -127,6 +127,52 @@ pub fn render_rules_md(set: &ResolvedRuleset) -> String {
     out
 }
 
+/// Wrap merged ruleset markdown with the managed header (so a Tier-2 approved
+/// ruleset written to `~/.sensei/rules.md` carries the same "managed by sensei"
+/// banner as the Tier-1 render).
+pub fn wrap_managed(body: &str) -> String {
+    format!("{RULES_MD_HEADER}\n\n{}\n", body.trim())
+}
+
+/// Build the Tier-2 consolidation prompt: instruct the model to merge the
+/// ordered Tier-1 rules into one coherent markdown ruleset — collapsing
+/// duplicates, grouping by enforcement, never weakening a mandatory rule, and
+/// surfacing contradictions. Pure.
+pub fn build_merge_prompt(set: &ResolvedRuleset) -> String {
+    let mut p = String::new();
+    p.push_str(
+        "You are consolidating a coding assistant's governing rules into one clear ruleset.\n\n\
+         The rules below are ordered strongest-authority first. Produce GitHub-flavored \
+         markdown that:\n\
+         - merges duplicate or overlapping rules into single clear statements,\n\
+         - groups them under headings by enforcement: Mandatory, Required, Recommended, Advisory,\n\
+         - NEVER weakens, softens, or drops a Mandatory rule,\n\
+         - ends with a `## Conflicts` section listing any rules that contradict each other, or `None`.\n\
+         Output ONLY the markdown ruleset — no preamble, no code fences.\n\n\
+         Rules:\n",
+    );
+    for r in &set.rules {
+        let impact = r.impact.as_deref().map(|i| format!(" (impact: {})", i.trim())).unwrap_or_default();
+        p.push_str(&format!("- [{}] {} — {}{}\n", r.enforcement, r.title.trim(), r.content.trim(), impact));
+    }
+    p
+}
+
+/// Stable SHA-256 of a ruleset's content — lets a consolidation be skipped when
+/// the Tier-1 input is unchanged since the last merge (a normal hash map hasher
+/// is seeded per-process and would not be stable across daemon restarts).
+pub fn ruleset_source_hash(set: &ResolvedRuleset) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    for r in &set.rules {
+        h.update(r.enforcement.as_bytes());
+        h.update(b"|");
+        h.update(r.content.trim().as_bytes());
+        h.update(b"\n");
+    }
+    format!("{:x}", h.finalize())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -203,5 +249,34 @@ mod tests {
         let md = render_rules_md(&structure_ruleset(vec![]));
         assert!(md.contains("No global rules yet"));
         assert!(!md.contains("## Mandatory"));
+    }
+
+    #[test]
+    fn merge_prompt_lists_rules_and_instructs() {
+        let set = structure_ruleset(vec![
+            raw("never log secrets", "mandatory", "user"),
+            raw("prefer early returns", "recommended", "general"),
+        ]);
+        let p = build_merge_prompt(&set);
+        assert!(p.contains("Mandatory"), "instructs grouping by enforcement");
+        assert!(p.contains("`## Conflicts`"), "asks for a conflicts section");
+        assert!(p.contains("[mandatory] never log secrets — never log secrets"));
+        assert!(p.contains("[recommended] prefer early returns"));
+    }
+
+    #[test]
+    fn source_hash_stable_and_content_sensitive() {
+        let a = structure_ruleset(vec![raw("x", "required", "user")]);
+        let b = structure_ruleset(vec![raw("x", "required", "user")]);
+        let c = structure_ruleset(vec![raw("y", "required", "user")]);
+        assert_eq!(ruleset_source_hash(&a), ruleset_source_hash(&b), "same content → same hash");
+        assert_ne!(ruleset_source_hash(&a), ruleset_source_hash(&c), "different content → different hash");
+    }
+
+    #[test]
+    fn wrap_managed_adds_header() {
+        let w = wrap_managed("# Merged\n- a rule");
+        assert!(w.starts_with("<!-- Managed by sensei"));
+        assert!(w.contains("# Merged"));
     }
 }
