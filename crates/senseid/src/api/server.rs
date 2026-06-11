@@ -163,6 +163,18 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
 
     spawn_root_watchers(&state, task_queue.clone()).await;
 
+    // Materialize the global rules file (~/.sensei/rules.md) from the governance
+    // plane on startup so the session-start hook injects a fresh, resolved set.
+    {
+        let pg = state.pg.clone();
+        tokio::spawn(async move {
+            match crate::api::handlers::knowledge::materialize_global_rules(&pg, &crate::paths::sensei_dir()).await {
+                Ok((path, n)) => tracing::info!("startup: materialized {n} global rule(s) → {}", path.display()),
+                Err(e) => tracing::warn!("startup: global rules materialize failed: {e}"),
+            }
+        });
+    }
+
     // Log retention: prune public.logs rows older than 30 days, on startup and
     // then daily. The task logger writes two rows per task, so large scans add
     // hundreds of thousands of rows; this keeps the table bounded.

@@ -77,6 +77,56 @@ pub fn structure_ruleset(rows: Vec<RawRule>) -> ResolvedRuleset {
     ResolvedRuleset { rules, total, mandatory_count }
 }
 
+/// Header marking the global rules file as daemon-managed.
+const RULES_MD_HEADER: &str = "<!-- Managed by sensei — regenerated from the governance plane on daemon \
+start and on demand. Do not edit by hand: add rules via the knowledge plane \
+(save_memory / propose_memory) and they appear here. Repository-specific rules \
+resolve live — call the `get_rules` MCP tool at the start of a task. -->";
+
+/// Render the global, always-on ruleset (user + general scope) to the Markdown
+/// written to `~/.sensei/rules.md`. Rules are grouped by enforcement, strongest
+/// first, so the constitution tier reads at the top. Pure.
+pub fn render_rules_md(set: &ResolvedRuleset) -> String {
+    let mut out = String::new();
+    out.push_str(RULES_MD_HEADER);
+    out.push_str("\n\n# Sensei Rules\n\n");
+    out.push_str(
+        "Your always-on rules (user + general scope). Repository-specific rules \
+         (organization / project / technology) are **not** listed here — call the \
+         `get_rules` MCP tool in a repo to resolve them.\n",
+    );
+
+    if set.rules.is_empty() {
+        out.push_str("\n_No global rules yet. Save a user- or general-scope rule and it will appear here._\n");
+        return out;
+    }
+
+    // Group by enforcement, strongest first. Input is already ordered, but
+    // section headers make authority explicit.
+    for (level, heading) in [
+        ("mandatory", "## Mandatory — non-negotiable"),
+        ("required", "## Required"),
+        ("recommended", "## Recommended"),
+        ("advisory", "## Advisory"),
+    ] {
+        let group: Vec<&ResolvedRule> = set.rules.iter().filter(|r| r.enforcement == level).collect();
+        if group.is_empty() {
+            continue;
+        }
+        out.push('\n');
+        out.push_str(heading);
+        out.push('\n');
+        for r in group {
+            let scope = if r.scope.is_empty() { "general".to_string() } else { r.scope.clone() };
+            out.push_str(&format!("- **{}** — {} _({})_\n", r.title.trim(), r.content.trim(), scope));
+            if let Some(impact) = r.impact.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+                out.push_str(&format!("  > {impact}\n"));
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -129,5 +179,29 @@ mod tests {
         assert_eq!(set.mandatory_count, 1);
         assert!(set.rules.iter().find(|r| r.content == "b").unwrap().mandatory);
         assert!(!set.rules.iter().find(|r| r.content == "a").unwrap().mandatory);
+    }
+
+    #[test]
+    fn render_groups_by_enforcement_strongest_first() {
+        let set = structure_ruleset(vec![
+            raw("never log secrets", "mandatory", "user"),
+            raw("prefer early returns", "recommended", "general"),
+            raw("tabs over spaces", "advisory", "user"),
+        ]);
+        let md = render_rules_md(&set);
+        assert!(md.contains("Managed by sensei"), "has managed header");
+        assert!(md.contains("get_rules"), "points at the live per-repo tool");
+        let mand = md.find("## Mandatory").unwrap();
+        let rec = md.find("## Recommended").unwrap();
+        let adv = md.find("## Advisory").unwrap();
+        assert!(mand < rec && rec < adv, "sections ordered by authority");
+        assert!(md.contains("**never log secrets**"));
+    }
+
+    #[test]
+    fn render_empty_ruleset_has_placeholder_not_sections() {
+        let md = render_rules_md(&structure_ruleset(vec![]));
+        assert!(md.contains("No global rules yet"));
+        assert!(!md.contains("## Mandatory"));
     }
 }
