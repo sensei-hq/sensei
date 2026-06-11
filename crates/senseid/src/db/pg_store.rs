@@ -570,6 +570,49 @@ impl PgStore {
         Ok(())
     }
 
+    /// Find near-duplicate function/method pairs within a folder by cosine
+    /// similarity on their code embeddings (HNSW `<=>` cosine distance). Each
+    /// pair is returned once (`a.id < b.id`) at or above `min_similarity`,
+    /// strongest first. Trivial functions (< 4 lines) are skipped — they bound
+    /// the O(n²) self-join and avoid false positives from boilerplate. On-demand
+    /// review query, not a hot path.
+    pub async fn find_duplicates(&self, folder_id: &uuid::Uuid, min_similarity: f64, limit: i64) -> Result<Vec<serde_json::Value>, String> {
+        let max_distance = 1.0 - min_similarity;
+        let rows: Vec<(String, String, Option<i32>, String, String, Option<i32>, f64)> =
+            sqlx_core::query_as::query_as(
+                "SELECT a.name, a.file_path, a.line_start,
+                        b.name, b.file_path, b.line_start,
+                        1 - (a.embedding <=> b.embedding) AS similarity
+                   FROM sensei.nodes a
+                   JOIN sensei.nodes b
+                     ON b.folder_id = a.folder_id
+                    AND a.id < b.id
+                    AND b.kind IN ('function'::sensei.node_kind, 'method'::sensei.node_kind)
+                    AND b.embedding IS NOT NULL
+                    AND (b.line_end - b.line_start) >= 3
+                  WHERE a.folder_id = $1
+                    AND a.kind IN ('function'::sensei.node_kind, 'method'::sensei.node_kind)
+                    AND a.embedding IS NOT NULL
+                    AND (a.line_end - a.line_start) >= 3
+                    AND (a.embedding <=> b.embedding) <= $2
+                  ORDER BY similarity DESC
+                  LIMIT $3",
+            )
+            .bind(folder_id)
+            .bind(max_distance)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(na, fa, la, nb, fb, lb, sim)| {
+            serde_json::json!({
+                "a": { "name": na, "file": fa, "line": la },
+                "b": { "name": nb, "file": fb, "line": lb },
+                "similarity": (sim * 10000.0).round() / 10000.0,
+            })
+        }).collect())
+    }
+
     /// Abs paths of folders that still have embeddable nodes without an
     /// embedding. Used by the backfill endpoint to enqueue `EmbedNodes` for
     /// already-indexed folders (which a normal incremental scan won't revisit).
