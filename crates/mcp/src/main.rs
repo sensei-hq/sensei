@@ -213,6 +213,8 @@ fn handle_list_tools() -> Value {
                     ("scope_filter", "string", "Required when scope=stack (e.g. 'rust')"),
                     ("impact",       "string", "What breaks if ignored"),
                     ("tags",         "string", "Comma-separated tag list (e.g. 'security,performance')"),
+                    ("gov_scope",    "string", "Governance scope this rule governs: general|user|organization|client|technology|team|project|repository (resolved against the current repo)"),
+                    ("enforcement",  "string", "Authority: advisory|recommended|required|mandatory (default recommended; mandatory = non-overridable)"),
                 ]),
             tool("save_memory",
                 "Explicit memory save — used when the user runs /save. Goes straight into active state. \
@@ -228,6 +230,8 @@ fn handle_list_tools() -> Value {
                     ("scope_filter", "string", "Required when scope=stack"),
                     ("impact",       "string", "What breaks if ignored"),
                     ("tags",         "string", "Comma-separated tags"),
+                    ("gov_scope",    "string", "Governance scope this rule governs: general|user|organization|client|technology|team|project|repository (resolved against the current repo)"),
+                    ("enforcement",  "string", "Authority: advisory|recommended|required|mandatory (default recommended; mandatory = non-overridable)"),
                 ]),
             tool("accept_proposal",
                 "Accept a proposed memory — moves it from triage to active.",
@@ -561,6 +565,17 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
             body["project_id"] = serde_json::json!(pid);
         } else if scope == "project" && !repo_id.is_empty() {
             body["project_id"] = serde_json::json!(repo_id);
+        }
+
+        // Governance: scope the rule to one of this repo's namespaces and set its
+        // authority. gov_scope (general/user/organization/.../repository) is
+        // resolved by the daemon against the repo at `folder` (the session cwd).
+        if let Some(gs) = args["gov_scope"].as_str().filter(|s| !s.is_empty()) {
+            body["gov_scope"] = serde_json::json!(gs);
+            if !cwd.is_empty() { body["folder"] = serde_json::json!(cwd); }
+        }
+        if let Some(enf) = args["enforcement"].as_str().filter(|s| !s.is_empty()) {
+            body["enforcement"] = serde_json::json!(enf);
         }
 
         let path = if tool_name == "propose_memory" {
