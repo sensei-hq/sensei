@@ -233,6 +233,14 @@ fn handle_list_tools() -> Value {
                     ("gov_scope",    "string", "Governance scope this rule governs: general|user|organization|client|technology|team|project|repository (resolved against the current repo)"),
                     ("enforcement",  "string", "Authority: advisory|recommended|required|mandatory (default recommended; mandatory = non-overridable)"),
                 ]),
+            tool("promote_memory",
+                "Promote a proven (battle-tested) rule to a broader governance scope, e.g. project → organization. \
+                 Creates a proposal at the new scope for the user to accept; it never auto-applies.",
+                &[("id", "string", "Memory id (UUID) to promote")],
+                &[
+                    ("gov_scope",   "string", "Target scope: organization|client|technology|team|project (resolved against the current repo)"),
+                    ("enforcement", "string", "Authority at the new scope: advisory|recommended|required|mandatory"),
+                ]),
             tool("accept_proposal",
                 "Accept a proposed memory — moves it from triage to active.",
                 &[("id", "string", "Proposal memory id (UUID)")],
@@ -584,6 +592,21 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
             "/api/knowledge/memories"
         };
         let result = client.post(format!("{}{}", daemon_url(), path))
+            .json(&body).send();
+        return daemon_result(result);
+    }
+
+    if tool_name == "promote_memory" {
+        let id = args["id"].as_str().unwrap_or("");
+        let mut body = serde_json::json!({});
+        if let Some(gs) = args["gov_scope"].as_str().filter(|s| !s.is_empty()) {
+            body["gov_scope"] = serde_json::json!(gs);
+            if !cwd.is_empty() { body["folder"] = serde_json::json!(cwd); }
+        }
+        if let Some(enf) = args["enforcement"].as_str().filter(|s| !s.is_empty()) {
+            body["enforcement"] = serde_json::json!(enf);
+        }
+        let result = client.post(format!("{}/api/knowledge/memories/{}/promote", daemon_url(), id))
             .json(&body).send();
         return daemon_result(result);
     }
