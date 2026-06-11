@@ -2118,6 +2118,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "hive-mind"
+version = "0.2.17"
+dependencies = [
+ "dbd-core",
+ "hive-protocol",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "hive-protocol"
 version = "0.2.17"
 dependencies = [

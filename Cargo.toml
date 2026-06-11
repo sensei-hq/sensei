@@ -8,6 +8,7 @@ members = [
     "crates/gateway-embedded",
     "crates/logger",
     "crates/hive-protocol",
+    "crates/hive-mind",
 ]
 resolver = "2"
 
