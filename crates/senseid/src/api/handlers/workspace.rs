@@ -177,6 +177,79 @@ pub(crate) async fn remove_project_tag(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
+// ── README frontmatter write-back (opt-in) ──────────────────────────────────
+
+#[derive(Deserialize)]
+pub(crate) struct FrontmatterSyncBody {
+    /// Absolute path of the repo whose README to update.
+    pub folder: String,
+    pub organization: Option<String>,
+    pub client: Option<String>,
+    pub project: Option<String>,
+    pub team: Option<String>,
+    pub role: Option<String>,
+    #[serde(default)]
+    pub stack: Vec<String>,
+    pub summary: Option<String>,
+    pub tagline: Option<String>,
+    pub icon: Option<String>,
+    pub icon_dark: Option<String>,
+}
+
+/// POST /api/repos/sync-frontmatter — write sensei's managed identity fields
+/// into a repo's README frontmatter (preserving the body + unmanaged keys).
+///
+/// This is the ONLY path that writes a user's README; scanning stays read-only.
+/// It is opt-in: refuses with 409 unless the `sync_readme_frontmatter`
+/// preference is enabled (the UI hides the action when it is off). Triggered
+/// explicitly from the UI, never by the scanner.
+pub(crate) async fn sync_readme_frontmatter(
+    State(state): State<AppState>,
+    Json(body): Json<FrontmatterSyncBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    // Opt-in gate.
+    let enabled = state.pg.get_config("sync_readme_frontmatter").await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
+        .as_deref() == Some("true");
+    if !enabled {
+        return Err((StatusCode::CONFLICT, "sync_readme_frontmatter is not enabled".to_string()));
+    }
+
+    let folder = state.pg.get_repo_by_path(&body.folder).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
+        .ok_or((StatusCode::NOT_FOUND, "folder not indexed".to_string()))?;
+    let folder_id = crate::api::util::json_uuid(&folder["id"])
+        .ok_or((StatusCode::INTERNAL_SERVER_ERROR, "folder has no id".to_string()))?;
+
+    let fm = crate::tasks::processors::metadata::Frontmatter {
+        organization: body.organization, client: body.client, project: body.project,
+        team: body.team, role: body.role, stack: body.stack,
+        summary: body.summary, tagline: body.tagline, icon: body.icon, icon_dark: body.icon_dark,
+    };
+
+    // Merge into the existing README (or create README.md if none exists).
+    let repo = std::path::Path::new(&body.folder);
+    let readme = ["README.md", "readme.md", "Readme.md", "README"].iter()
+        .map(|n| repo.join(n))
+        .find(|p| p.exists())
+        .unwrap_or_else(|| repo.join("README.md"));
+    let existing = std::fs::read_to_string(&readme).unwrap_or_default();
+    let merged = crate::tasks::processors::metadata::merge_frontmatter(&existing, &fm);
+    std::fs::write(&readme, &merged)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("write {}: {e}", readme.display())))?;
+
+    // Echo-loop guard: update the stored frontmatter snapshot so the watcher's
+    // reconcile_identity (DB-only — it never writes the README) sees no change
+    // and skips the redundant re-reconcile our own write would otherwise trigger.
+    let snapshot = serde_json::json!({
+        "frontmatter": serde_json::to_value(&fm).unwrap_or(serde_json::Value::Null),
+    });
+    state.pg.set_folder_props(&folder_id, &snapshot).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    Ok(Json(serde_json::json!({ "ok": true, "readme": readme.display().to_string() })))
+}
+
 // ── Scan ────────────────────────────────────────────────────────────────────
 
 fn expand_tilde(path: &str) -> String {
