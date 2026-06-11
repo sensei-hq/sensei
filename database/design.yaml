@@ -6,6 +6,8 @@ source:
 target:
   postgres:
     url: $DATABASE_URL
+    skip_schemas:
+      - hive
     extensions:
       - name: uuid-ossp
         schema: extensions
