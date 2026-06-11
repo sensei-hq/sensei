@@ -177,6 +177,9 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/knowledge/context",                 get(knowledge::get_context))
         .route("/api/knowledge/rules",                   get(knowledge::get_rules))
         .route("/api/knowledge/rules/materialize",       post(knowledge::materialize_rules))
+        .route("/api/knowledge/rules/consolidate",       post(knowledge::consolidate_rules))
+        .route("/api/knowledge/rules/consolidated",      get(knowledge::get_consolidated))
+        .route("/api/knowledge/rules/consolidate/{id}/approve", post(knowledge::approve_consolidated))
         // Stop
         .route("/stop", post(workspace::stop))
         .with_state(state)
