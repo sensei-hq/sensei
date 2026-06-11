@@ -46,6 +46,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/gateway/image/generate",                post(gateway_image::image_generate))
         // Repos (individual git repos)
         .route("/api/repos", get(workspace::list_projects).post(workspace::create_project))
+        .route("/api/repos/sync-frontmatter", post(workspace::sync_readme_frontmatter))
         .route("/api/repos/{repo_id}", put(workspace::update_project).delete(workspace::delete_project))
         .route("/api/repos/{repo_id}/tags", post(workspace::add_project_tag))
         .route("/api/repos/{repo_id}/tags/{tag}", delete(workspace::remove_project_tag))
