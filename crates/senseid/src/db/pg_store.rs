@@ -2230,6 +2230,37 @@ impl PgStore {
         }).collect())
     }
 
+    /// The global, repo-independent ruleset: rules at the always-on `general`
+    /// and `user` scopes (plus unscoped). These apply everywhere and are what
+    /// the daemon materializes into `~/.sensei/rules.md`. Same ordering as
+    /// `resolve_rules_raw` but with no folder dimension.
+    pub async fn resolve_global_rules(&self) -> Result<Vec<crate::governance::RawRule>, String> {
+        let rows: Vec<(uuid::Uuid, String, String, Option<String>, String, String, Option<String>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT m.id, m.title, m.content, m.impact, m.enforcement::text,
+                        COALESCE(n.scope_key, 'general') AS scope,
+                        n.name AS namespace
+                   FROM sensei.memories m
+                   LEFT JOIN sensei.namespaces n ON n.id = m.namespace_id
+                   LEFT JOIN sensei.scopes s ON s.key = n.scope_key
+                  WHERE m.status IN ('active'::sensei.memory_status,
+                                     'reinforced'::sensei.memory_status,
+                                     'battle_tested'::sensei.memory_status)
+                    AND ( m.namespace_id IS NULL OR n.scope_key IN ('general', 'user') )
+                  ORDER BY m.enforcement DESC,
+                           COALESCE(n.level, s.level, 0) DESC,
+                           m.strength DESC",
+            )
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id, title, content, impact, enforcement, scope, namespace)| {
+            crate::governance::RawRule {
+                id: id.to_string(), title, content, impact, enforcement, scope, namespace,
+            }
+        }).collect())
+    }
+
     pub async fn assemble_context(
         &self,
         project_id: uuid::Uuid,
