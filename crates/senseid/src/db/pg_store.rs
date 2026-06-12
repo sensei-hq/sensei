@@ -24,6 +24,7 @@ pub struct InsertMemory {
     pub namespace_id:  Option<uuid::Uuid>,
     pub enforcement:   Option<String>, // enforcement enum value; None → DB default 'recommended'
     pub origin:        Option<String>, // None → DB default 'learned'
+    pub source_id:     Option<uuid::Uuid>, // provenance: knowledge_sources.id for origin='federated'
 }
 
 pub struct OutcomeRow {
@@ -2107,18 +2108,18 @@ impl PgStore {
         let id: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.memories
                 (project_id, scope, scope_filter, type, title, content, impact,
-                 tags, triage_signal, status, namespace_id, enforcement, origin)
+                 tags, triage_signal, status, namespace_id, enforcement, origin, source_id)
              VALUES ($1, $2::sensei.memory_scope, $3, $4::sensei.memory_type, $5, $6, $7,
                      $8, $9, $10::sensei.memory_status, $11,
                      COALESCE($12::sensei.enforcement, 'recommended'::sensei.enforcement),
-                     COALESCE($13, 'learned'))
+                     COALESCE($13, 'learned'), $14)
              RETURNING id"
         )
             .bind(m.project_id)
             .bind(&m.scope).bind(&m.scope_filter)
             .bind(&m.mtype).bind(&m.title).bind(&m.content).bind(&m.impact)
             .bind(&m.tags).bind(&m.triage_signal).bind(&m.status)
-            .bind(m.namespace_id).bind(&m.enforcement).bind(&m.origin)
+            .bind(m.namespace_id).bind(&m.enforcement).bind(&m.origin).bind(m.source_id)
             .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(id.0)
     }
@@ -3863,13 +3864,13 @@ mod knowledge_tests {
             project_id: Some(project_id), scope: "project".into(), scope_filter: None,
             mtype: "convention".into(), title: "t1".into(), content: "c1".into(),
             impact: None, tags: vec![], triage_signal: None, status: "proposed".into(),
-            namespace_id: None, enforcement: None, origin: None,
+            namespace_id: None, enforcement: None, origin: None, source_id: None,
         }).await.unwrap();
         let _m2 = pg.insert_memory(&InsertMemory {
             project_id: Some(project_id), scope: "project".into(), scope_filter: None,
             mtype: "convention".into(), title: "t2".into(), content: "c2".into(),
             impact: None, tags: vec![], triage_signal: None, status: "active".into(),
-            namespace_id: None, enforcement: None, origin: None,
+            namespace_id: None, enforcement: None, origin: None, source_id: None,
         }).await.unwrap();
 
         let proposed = pg.list_memories(Some(project_id), Some("proposed"), None, 50).await.unwrap();
@@ -3887,7 +3888,7 @@ mod knowledge_tests {
             mtype: "convention".into(), title: "t".into(), content: "c".into(),
             impact: None, tags: vec![], triage_signal: Some("revert".into()),
             status: "proposed".into(),
-            namespace_id: None, enforcement: None, origin: None,
+            namespace_id: None, enforcement: None, origin: None, source_id: None,
         }).await.unwrap();
 
         let new_status = pg.set_memory_status(mid, "active", &["proposed"]).await.unwrap();
@@ -3907,7 +3908,7 @@ mod knowledge_tests {
             project_id: Some(pid), scope: "project".into(), scope_filter: None,
             mtype: "convention".into(), title: "t".into(), content: "c".into(),
             impact: None, tags: vec![], triage_signal: None, status: "active".into(),
-            namespace_id: None, enforcement: None, origin: None,
+            namespace_id: None, enforcement: None, origin: None, source_id: None,
         }).await.unwrap();
         let skipped = pg.record_outcomes_batch(&[
             OutcomeRow { memory_id: mid, session_id: None, outcome: "applied".into(), context: None }
@@ -3929,19 +3930,19 @@ mod knowledge_tests {
             project_id: Some(pid), scope: "project".into(), scope_filter: None,
             mtype: "convention".into(), title: "P".into(), content: "p".into(),
             impact: None, tags: vec![], triage_signal: None, status: "active".into(),
-            namespace_id: None, enforcement: None, origin: None,
+            namespace_id: None, enforcement: None, origin: None, source_id: None,
         }).await.unwrap();
         pg.insert_memory(&InsertMemory {
             project_id: None, scope: "stack".into(), scope_filter: Some("rust".into()),
             mtype: "convention".into(), title: "S".into(), content: "s".into(),
             impact: None, tags: vec![], triage_signal: None, status: "active".into(),
-            namespace_id: None, enforcement: None, origin: None,
+            namespace_id: None, enforcement: None, origin: None, source_id: None,
         }).await.unwrap();
         pg.insert_memory(&InsertMemory {
             project_id: None, scope: "global".into(), scope_filter: None,
             mtype: "convention".into(), title: "G".into(), content: "g".into(),
             impact: None, tags: vec![], triage_signal: None, status: "active".into(),
-            namespace_id: None, enforcement: None, origin: None,
+            namespace_id: None, enforcement: None, origin: None, source_id: None,
         }).await.unwrap();
 
         let blob = pg.assemble_context(pid, &["rust".into()], None, 50).await.unwrap();
@@ -3957,12 +3958,30 @@ mod knowledge_tests {
             mtype: "convention".into(), title: "PROP".into(), content: "x".into(),
             impact: None, tags: vec![], triage_signal: Some("revert".into()),
             status: "proposed".into(),
-            namespace_id: None, enforcement: None, origin: None,
+            namespace_id: None, enforcement: None, origin: None, source_id: None,
         }).await.unwrap();
         let blob2 = pg.assemble_context(pid, &["rust".into()], None, 50).await.unwrap();
         let titles2: Vec<String> = blob2["memories"].as_array().unwrap().iter()
             .map(|m| m["title"].as_str().unwrap().to_string()).collect();
         assert!(!titles2.contains(&"PROP".to_string()));
         let _ = m_prop;
+    }
+
+    #[tokio::test]
+    async fn insert_memory_persists_source_id() {
+        let Ok(pg) = PgStore::connect_test().await else { return; };
+        let src = uuid::Uuid::new_v4();
+        let id = pg.insert_memory(&InsertMemory {
+            project_id: None, scope: "global".into(), scope_filter: None,
+            mtype: "convention".into(), title: "fed".into(), content: "federated content".into(),
+            impact: None, tags: vec![], triage_signal: None, status: "active".into(),
+            namespace_id: None, enforcement: Some("recommended".into()),
+            origin: Some("federated".into()), source_id: Some(src),
+        }).await.unwrap();
+        let got: (Option<uuid::Uuid>,) = sqlx_core::query_as::query_as(
+            "SELECT source_id FROM sensei.memories WHERE id = $1")
+            .bind(id).fetch_one(pg.pool()).await.unwrap();
+        assert_eq!(got.0, Some(src));
+        sqlx_core::query::query("DELETE FROM sensei.memories WHERE id = $1").bind(id).execute(pg.pool()).await.unwrap();
     }
 }

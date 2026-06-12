@@ -243,6 +243,7 @@ async fn insert_with_status(
         namespace_id,
         enforcement:   body.enforcement.filter(|s| !s.is_empty()),
         origin:        Some(origin.to_string()),
+        source_id:     None,
     }).await.map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
     Ok(Json(serde_json::json!({ "id": id, "status": status })))
 }
