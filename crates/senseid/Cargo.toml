@@ -74,6 +74,7 @@ gateway = { path = "../gateway" }
 # Registry + trait types only by default — engine adapters land via the
 # `embedded-*` cargo features above.
 gateway-embedded = { path = "../gateway-embedded" }
+hive-protocol = { path = "../hive-protocol" }
 sensei-bootstrap = { path = "../bootstrap" }
 sensei-logger = { path = "../logger" }
 
