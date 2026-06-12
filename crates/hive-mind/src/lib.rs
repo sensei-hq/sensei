@@ -1,2 +1,3 @@
-// modules added in later tasks (store, auth, api, keygen, config)
+// modules added in later tasks (auth, api, keygen, config)
 pub mod db;
+pub mod store;
