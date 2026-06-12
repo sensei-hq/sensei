@@ -93,6 +93,11 @@ pub async fn pull_source(pg: &PgStore, client: &reqwest::Client, src: &Knowledge
         let tombstoned = pulled.status == "tombstoned";
         match existing {
             Some(link) => {
+                // Staleness guard: skip a non-tombstone delta we've already applied at or
+                // beyond this remote seq (defensive against cursor resets / reordering).
+                if !tombstoned && pulled.seq <= link.remote_seq {
+                    continue;
+                }
                 if tombstoned {
                     if let Some(mid) = link.memory_id
                         && pg.archive_federated_memory(&mid).await? {
