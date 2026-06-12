@@ -62,3 +62,30 @@ async fn no_key_is_unauthorized() {
     let res = app.oneshot(Request::get("/v1/rules?since=0").body(Body::empty()).unwrap()).await.unwrap();
     assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
 }
+
+#[tokio::test]
+async fn publish_attribution_is_server_controlled() {
+    // A publisher cannot spoof who/when: the body's published_by + a backdated
+    // published_at must both be ignored in favor of server-side values.
+    let (app, pub_key, _mem) = app_with_keys().await; // publisher member is named "Pub"
+    let body = serde_json::json!({
+        "content_hash": hive_protocol::content_hash("attributed rule"),
+        "scope_key": "organization", "namespace_slug": "sensei-hq", "namespace_name": "Sensei HQ",
+        "rule_type": "convention", "title": "Attr", "content": "attributed rule",
+        "impact": null, "enforcement": "advisory",
+        "origin_repo": null, "published_by": "someone-else", "published_at": "2000-01-01T00:00:00Z"
+    }).to_string();
+    let res = app.clone().oneshot(Request::post("/v1/rules")
+        .header("authorization", format!("Bearer {pub_key}")).header("content-type", "application/json")
+        .body(Body::from(body)).unwrap()).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let res = app.oneshot(Request::get("/v1/rules?since=0")
+        .header("authorization", format!("Bearer {pub_key}")).body(Body::empty()).unwrap()).await.unwrap();
+    let bytes = res.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let r = &v["rules"][0];
+    assert_eq!(r["published_by"], "Pub", "published_by must come from the authenticated caller, not the body");
+    assert!(!r["published_at"].as_str().unwrap().starts_with("2000"),
+        "published_at must be server-stamped, not the backdated body value (got {})", r["published_at"]);
+}
