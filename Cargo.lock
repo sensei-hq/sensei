@@ -4808,6 +4808,8 @@ dependencies = [
  "gateway-embedded",
  "globset",
  "hex",
+ "hive-mind",
+ "hive-protocol",
  "ignore",
  "json5",
  "notify",

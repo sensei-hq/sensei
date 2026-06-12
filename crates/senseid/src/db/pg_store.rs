@@ -24,6 +24,7 @@ pub struct InsertMemory {
     pub namespace_id:  Option<uuid::Uuid>,
     pub enforcement:   Option<String>, // enforcement enum value; None → DB default 'recommended'
     pub origin:        Option<String>, // None → DB default 'learned'
+    pub source_id:     Option<uuid::Uuid>, // provenance: knowledge_sources.id for origin='federated'
 }
 
 pub struct OutcomeRow {
@@ -31,6 +32,51 @@ pub struct OutcomeRow {
     pub session_id: Option<uuid::Uuid>,
     pub outcome:    String,
     pub context:    Option<String>,
+}
+
+/// Input for registering a federation endpoint.
+pub struct NewKnowledgeSource {
+    pub kind:           String,
+    pub name:           String,
+    pub url:            String,
+    pub namespace_id:   Option<uuid::Uuid>,
+    pub credential_ref: String,
+    pub direction:      String, // push | pull | both
+}
+
+/// A registered federation endpoint (row of sensei.knowledge_sources).
+#[derive(Debug, Clone)]
+pub struct KnowledgeSource {
+    pub id:             uuid::Uuid,
+    pub kind:           String,
+    pub name:           String,
+    pub url:            String,
+    pub namespace_id:   Option<uuid::Uuid>,
+    pub credential_ref: String,
+    pub direction:      String,
+    pub last_seq:       i64,
+    pub enabled:        bool,
+}
+
+/// A federated_memories ledger row.
+#[derive(Debug, Clone)]
+pub struct FederatedLink {
+    pub memory_id:  Option<uuid::Uuid>,
+    pub remote_seq: i64,
+}
+
+/// Snapshot needed to publish a memory to a hive (+ namespace identity + origin/scope_key for gating).
+#[derive(Debug, Clone)]
+pub struct MemoryPushPayload {
+    pub title:       String,
+    pub content:     String,
+    pub impact:      Option<String>,
+    pub enforcement: String,
+    pub rule_type:   String,
+    pub origin:      String,
+    pub scope_key:   String,
+    pub slug:        String,
+    pub name:        String,
 }
 
 #[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
@@ -2083,18 +2129,18 @@ impl PgStore {
         let id: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.memories
                 (project_id, scope, scope_filter, type, title, content, impact,
-                 tags, triage_signal, status, namespace_id, enforcement, origin)
+                 tags, triage_signal, status, namespace_id, enforcement, origin, source_id)
              VALUES ($1, $2::sensei.memory_scope, $3, $4::sensei.memory_type, $5, $6, $7,
                      $8, $9, $10::sensei.memory_status, $11,
                      COALESCE($12::sensei.enforcement, 'recommended'::sensei.enforcement),
-                     COALESCE($13, 'learned'))
+                     COALESCE($13, 'learned'), $14)
              RETURNING id"
         )
             .bind(m.project_id)
             .bind(&m.scope).bind(&m.scope_filter)
             .bind(&m.mtype).bind(&m.title).bind(&m.content).bind(&m.impact)
             .bind(&m.tags).bind(&m.triage_signal).bind(&m.status)
-            .bind(m.namespace_id).bind(&m.enforcement).bind(&m.origin)
+            .bind(m.namespace_id).bind(&m.enforcement).bind(&m.origin).bind(m.source_id)
             .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(id.0)
     }
@@ -2818,6 +2864,110 @@ impl PgStore {
         .await
         .map_err(|e| format!("fail_task_execution: {}", e))?;
         Ok(())
+    }
+
+    // ── Knowledge Sources (federation endpoints) ──────────────────────
+
+    pub async fn create_knowledge_source(&self, s: &NewKnowledgeSource) -> Result<uuid::Uuid, String> {
+        let (id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.knowledge_sources(kind, name, url, namespace_id, credential_ref, direction)
+             VALUES($1,$2,$3,$4,$5,$6) RETURNING id")
+            .bind(&s.kind).bind(&s.name).bind(&s.url).bind(s.namespace_id).bind(&s.credential_ref).bind(&s.direction)
+            .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(id)
+    }
+
+    pub async fn list_knowledge_sources(&self) -> Result<Vec<KnowledgeSource>, String> {
+        let rows: Vec<(uuid::Uuid, String, String, String, Option<uuid::Uuid>, String, String, i64, bool)> =
+            sqlx_core::query_as::query_as(
+                "SELECT id, kind, name, url, namespace_id, credential_ref, direction, last_seq, enabled
+                   FROM sensei.knowledge_sources ORDER BY created_at")
+            .fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id,kind,name,url,namespace_id,credential_ref,direction,last_seq,enabled)|
+            KnowledgeSource { id,kind,name,url,namespace_id,credential_ref,direction,last_seq,enabled }).collect())
+    }
+
+    pub async fn get_knowledge_source(&self, id: &uuid::Uuid) -> Result<Option<KnowledgeSource>, String> {
+        let row: Option<(uuid::Uuid, String, String, String, Option<uuid::Uuid>, String, String, i64, bool)> =
+            sqlx_core::query_as::query_as(
+                "SELECT id, kind, name, url, namespace_id, credential_ref, direction, last_seq, enabled
+                   FROM sensei.knowledge_sources WHERE id = $1")
+            .bind(id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.map(|(id,kind,name,url,namespace_id,credential_ref,direction,last_seq,enabled)|
+            KnowledgeSource { id,kind,name,url,namespace_id,credential_ref,direction,last_seq,enabled }))
+    }
+
+    pub async fn set_source_cursor(&self, id: &uuid::Uuid, last_seq: i64) -> Result<(), String> {
+        sqlx_core::query::query("UPDATE sensei.knowledge_sources SET last_seq = $2 WHERE id = $1")
+            .bind(id).bind(last_seq).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub async fn delete_knowledge_source(&self, id: &uuid::Uuid) -> Result<bool, String> {
+        let res = sqlx_core::query::query("DELETE FROM sensei.knowledge_sources WHERE id = $1")
+            .bind(id).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    // ── Federation ledger ─────────────────────────────────────────────
+
+    pub async fn namespace_is_shareable(&self, namespace_id: &uuid::Uuid) -> Result<bool, String> {
+        let row: Option<(bool,)> = sqlx_core::query_as::query_as(
+            "SELECT s.shareable FROM sensei.namespaces n JOIN sensei.scopes s ON s.key = n.scope_key
+              WHERE n.id = $1")
+            .bind(namespace_id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.map(|(b,)| b).unwrap_or(false))
+    }
+
+    pub async fn upsert_federated_memory(
+        &self, source_id: &uuid::Uuid, remote_rule_id: &uuid::Uuid,
+        content_hash: &str, memory_id: Option<&uuid::Uuid>, remote_seq: i64,
+    ) -> Result<(), String> {
+        sqlx_core::query::query(
+            "INSERT INTO sensei.federated_memories(knowledge_source_id, remote_rule_id, content_hash, memory_id, remote_seq)
+             VALUES($1,$2,$3,$4,$5)
+             ON CONFLICT(knowledge_source_id, remote_rule_id) DO UPDATE SET
+               content_hash = EXCLUDED.content_hash,
+               memory_id = COALESCE(EXCLUDED.memory_id, sensei.federated_memories.memory_id),
+               remote_seq = EXCLUDED.remote_seq, synced_at = now()")
+            .bind(source_id).bind(remote_rule_id).bind(content_hash).bind(memory_id).bind(remote_seq)
+            .execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub async fn find_federated_memory(
+        &self, source_id: &uuid::Uuid, remote_rule_id: &uuid::Uuid,
+    ) -> Result<Option<FederatedLink>, String> {
+        let row: Option<(Option<uuid::Uuid>, i64)> = sqlx_core::query_as::query_as(
+            "SELECT memory_id, remote_seq FROM sensei.federated_memories
+              WHERE knowledge_source_id = $1 AND remote_rule_id = $2")
+            .bind(source_id).bind(remote_rule_id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.map(|(memory_id, remote_seq)| FederatedLink { memory_id, remote_seq }))
+    }
+
+    /// Retire a federated memory (tombstone pulled from upstream). Only archives
+    /// federated-origin rows, so a locally-authored/promoted memory is never force-archived.
+    pub async fn archive_federated_memory(&self, memory_id: &uuid::Uuid) -> Result<bool, String> {
+        let res = sqlx_core::query::query(
+            "UPDATE sensei.memories SET status = 'archived'::sensei.memory_status
+              WHERE id = $1 AND origin = 'federated'")
+            .bind(memory_id).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    /// Fields to build a PublishedRule for a memory + its namespace identity.
+    /// None if the memory has no namespace (unscoped).
+    pub async fn memory_push_payload(&self, memory_id: &uuid::Uuid)
+        -> Result<Option<MemoryPushPayload>, String> {
+        let row: Option<(String, String, Option<String>, String, String, String, String, String, String)> =
+            sqlx_core::query_as::query_as(
+            "SELECT m.title, m.content, m.impact, m.enforcement::text, m.type::text, m.origin,
+                    n.scope_key, n.slug, n.name
+               FROM sensei.memories m JOIN sensei.namespaces n ON n.id = m.namespace_id
+              WHERE m.id = $1")
+            .bind(memory_id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.map(|(title, content, impact, enforcement, rule_type, origin, scope_key, slug, name)|
+            MemoryPushPayload { title, content, impact, enforcement, rule_type, origin, scope_key, slug, name }))
     }
 }
 
@@ -3754,6 +3904,28 @@ mod tests {
             .unwrap();
         assert!(row.0, "sensei.memories table must exist — run `dbd apply` first");
     }
+
+    // ── Knowledge Sources tests ───────────────────────────────────────
+
+    #[tokio::test]
+    async fn knowledge_source_crud_roundtrip() {
+        let Ok(pg) = PgStore::connect_test().await else { return; };
+        let id = pg.create_knowledge_source(&NewKnowledgeSource {
+            kind: "hive_mind".into(), name: "Org Hive".into(), url: "https://hive.example".into(),
+            namespace_id: None, credential_ref: "hive-test".into(), direction: "both".into(),
+        }).await.unwrap();
+
+        let all = pg.list_knowledge_sources().await.unwrap();
+        assert!(all.iter().any(|s| s.id == id && s.last_seq == 0 && s.enabled));
+
+        pg.set_source_cursor(&id, 42).await.unwrap();
+        let one = pg.get_knowledge_source(&id).await.unwrap().unwrap();
+        assert_eq!(one.last_seq, 42);
+        assert_eq!(one.direction, "both");
+
+        assert!(pg.delete_knowledge_source(&id).await.unwrap());
+        assert!(pg.get_knowledge_source(&id).await.unwrap().is_none());
+    }
 }
 
 #[cfg(test)]
@@ -3774,13 +3946,13 @@ mod knowledge_tests {
             project_id: Some(project_id), scope: "project".into(), scope_filter: None,
             mtype: "convention".into(), title: "t1".into(), content: "c1".into(),
             impact: None, tags: vec![], triage_signal: None, status: "proposed".into(),
-            namespace_id: None, enforcement: None, origin: None,
+            namespace_id: None, enforcement: None, origin: None, source_id: None,
         }).await.unwrap();
         let _m2 = pg.insert_memory(&InsertMemory {
             project_id: Some(project_id), scope: "project".into(), scope_filter: None,
             mtype: "convention".into(), title: "t2".into(), content: "c2".into(),
             impact: None, tags: vec![], triage_signal: None, status: "active".into(),
-            namespace_id: None, enforcement: None, origin: None,
+            namespace_id: None, enforcement: None, origin: None, source_id: None,
         }).await.unwrap();
 
         let proposed = pg.list_memories(Some(project_id), Some("proposed"), None, 50).await.unwrap();
@@ -3798,7 +3970,7 @@ mod knowledge_tests {
             mtype: "convention".into(), title: "t".into(), content: "c".into(),
             impact: None, tags: vec![], triage_signal: Some("revert".into()),
             status: "proposed".into(),
-            namespace_id: None, enforcement: None, origin: None,
+            namespace_id: None, enforcement: None, origin: None, source_id: None,
         }).await.unwrap();
 
         let new_status = pg.set_memory_status(mid, "active", &["proposed"]).await.unwrap();
@@ -3818,7 +3990,7 @@ mod knowledge_tests {
             project_id: Some(pid), scope: "project".into(), scope_filter: None,
             mtype: "convention".into(), title: "t".into(), content: "c".into(),
             impact: None, tags: vec![], triage_signal: None, status: "active".into(),
-            namespace_id: None, enforcement: None, origin: None,
+            namespace_id: None, enforcement: None, origin: None, source_id: None,
         }).await.unwrap();
         let skipped = pg.record_outcomes_batch(&[
             OutcomeRow { memory_id: mid, session_id: None, outcome: "applied".into(), context: None }
@@ -3840,19 +4012,19 @@ mod knowledge_tests {
             project_id: Some(pid), scope: "project".into(), scope_filter: None,
             mtype: "convention".into(), title: "P".into(), content: "p".into(),
             impact: None, tags: vec![], triage_signal: None, status: "active".into(),
-            namespace_id: None, enforcement: None, origin: None,
+            namespace_id: None, enforcement: None, origin: None, source_id: None,
         }).await.unwrap();
         pg.insert_memory(&InsertMemory {
             project_id: None, scope: "stack".into(), scope_filter: Some("rust".into()),
             mtype: "convention".into(), title: "S".into(), content: "s".into(),
             impact: None, tags: vec![], triage_signal: None, status: "active".into(),
-            namespace_id: None, enforcement: None, origin: None,
+            namespace_id: None, enforcement: None, origin: None, source_id: None,
         }).await.unwrap();
         pg.insert_memory(&InsertMemory {
             project_id: None, scope: "global".into(), scope_filter: None,
             mtype: "convention".into(), title: "G".into(), content: "g".into(),
             impact: None, tags: vec![], triage_signal: None, status: "active".into(),
-            namespace_id: None, enforcement: None, origin: None,
+            namespace_id: None, enforcement: None, origin: None, source_id: None,
         }).await.unwrap();
 
         let blob = pg.assemble_context(pid, &["rust".into()], None, 50).await.unwrap();
@@ -3868,12 +4040,85 @@ mod knowledge_tests {
             mtype: "convention".into(), title: "PROP".into(), content: "x".into(),
             impact: None, tags: vec![], triage_signal: Some("revert".into()),
             status: "proposed".into(),
-            namespace_id: None, enforcement: None, origin: None,
+            namespace_id: None, enforcement: None, origin: None, source_id: None,
         }).await.unwrap();
         let blob2 = pg.assemble_context(pid, &["rust".into()], None, 50).await.unwrap();
         let titles2: Vec<String> = blob2["memories"].as_array().unwrap().iter()
             .map(|m| m["title"].as_str().unwrap().to_string()).collect();
         assert!(!titles2.contains(&"PROP".to_string()));
         let _ = m_prop;
+    }
+
+    #[tokio::test]
+    async fn insert_memory_persists_source_id() {
+        let Ok(pg) = PgStore::connect_test().await else { return; };
+        let src = uuid::Uuid::new_v4();
+        let id = pg.insert_memory(&InsertMemory {
+            project_id: None, scope: "global".into(), scope_filter: None,
+            mtype: "convention".into(), title: "fed".into(), content: "federated content".into(),
+            impact: None, tags: vec![], triage_signal: None, status: "active".into(),
+            namespace_id: None, enforcement: Some("recommended".into()),
+            origin: Some("federated".into()), source_id: Some(src),
+        }).await.unwrap();
+        let got: (Option<uuid::Uuid>,) = sqlx_core::query_as::query_as(
+            "SELECT source_id FROM sensei.memories WHERE id = $1")
+            .bind(id).fetch_one(pg.pool()).await.unwrap();
+        assert_eq!(got.0, Some(src));
+        sqlx_core::query::query("DELETE FROM sensei.memories WHERE id = $1").bind(id).execute(pg.pool()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn federated_ledger_and_shareability() {
+        let Ok(pg) = PgStore::connect_test().await else { return; };
+        // Seed the scopes used by the test (sensei_test is empty; production data
+        // is seeded via staging.import_scopes — we replicate the two rows we need).
+        sqlx_core::query::query(
+            "INSERT INTO sensei.scopes(key, name, level, shareable)
+             VALUES ('organization', 'Organization', 20, true),
+                    ('technology',   'Technology',   40, false)
+             ON CONFLICT (key) DO UPDATE SET shareable = EXCLUDED.shareable")
+            .execute(pg.pool()).await.unwrap();
+
+        // organization is shareable; technology is not (seeded scopes ladder).
+        let org_ns = pg.upsert_namespace("organization", "Test Org", "test-org-fed").await.unwrap();
+        let tech_ns = pg.upsert_namespace("technology", "Rust", "rust-fed").await.unwrap();
+        assert!(pg.namespace_is_shareable(&org_ns).await.unwrap());
+        assert!(!pg.namespace_is_shareable(&tech_ns).await.unwrap());
+
+        let src = pg.create_knowledge_source(&NewKnowledgeSource {
+            kind: "hive_mind".into(), name: "H".into(), url: "u".into(), namespace_id: None,
+            credential_ref: "c".into(), direction: "both".into() }).await.unwrap();
+        let remote = uuid::Uuid::new_v4();
+        let mem = pg.insert_memory(&InsertMemory {
+            project_id: None, scope: "global".into(), scope_filter: None, mtype: "convention".into(),
+            title: "t".into(), content: "c".into(), impact: None, tags: vec![], triage_signal: None,
+            status: "active".into(), namespace_id: Some(org_ns), enforcement: Some("recommended".into()),
+            origin: Some("federated".into()), source_id: Some(src) }).await.unwrap();
+        pg.upsert_federated_memory(&src, &remote, "hash1", Some(&mem), 5).await.unwrap();
+        pg.upsert_federated_memory(&src, &remote, "hash1", Some(&mem), 9).await.unwrap(); // idempotent
+        let link = pg.find_federated_memory(&src, &remote).await.unwrap().unwrap();
+        assert_eq!(link.memory_id, Some(mem));
+        assert_eq!(link.remote_seq, 9);
+
+        // push payload: returns snapshot + namespace identity (incl. name) + origin/scope_key
+        let payload = pg.memory_push_payload(&mem).await.unwrap().unwrap();
+        assert_eq!(payload.scope_key, "organization");
+        assert_eq!(payload.slug, "test-org-fed");
+        assert_eq!(payload.name, "Test Org");
+        assert_eq!(payload.origin, "federated");
+
+        // archive retires a federated memory (drops out of resolution)
+        assert!(pg.archive_federated_memory(&mem).await.unwrap());
+        let (status,): (String,) = sqlx_core::query_as::query_as("SELECT status::text FROM sensei.memories WHERE id=$1")
+            .bind(mem).fetch_one(pg.pool()).await.unwrap();
+        assert_eq!(status, "archived");
+
+        pg.delete_knowledge_source(&src).await.unwrap(); // cascades the ledger row
+        sqlx_core::query::query("DELETE FROM sensei.memories WHERE id=$1").bind(mem).execute(pg.pool()).await.unwrap();
+        // clean up namespaces and seeded scopes
+        sqlx_core::query::query("DELETE FROM sensei.namespaces WHERE id = ANY($1::uuid[])")
+            .bind(vec![org_ns, tech_ns]).execute(pg.pool()).await.unwrap();
+        sqlx_core::query::query("DELETE FROM sensei.scopes WHERE key IN ('organization','technology')")
+            .execute(pg.pool()).await.unwrap();
     }
 }

@@ -74,6 +74,7 @@ gateway = { path = "../gateway" }
 # Registry + trait types only by default — engine adapters land via the
 # `embedded-*` cargo features above.
 gateway-embedded = { path = "../gateway-embedded" }
+hive-protocol = { path = "../hive-protocol" }
 sensei-bootstrap = { path = "../bootstrap" }
 sensei-logger = { path = "../logger" }
 
@@ -84,3 +85,4 @@ cc = "1"
 tempfile = "3"
 tokio-test = "0.4"
 tower = { version = "0.5", features = ["util"] }
+hive-mind = { path = "../hive-mind" }

@@ -193,6 +193,9 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
         });
     }
 
+    // Federation: poll registered hive-mind sources for applicable rule deltas.
+    crate::federation::run_pull_loop(state.pg.clone(), 300);
+
     (create_router(state), task_queue)
 }
 
