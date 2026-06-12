@@ -175,4 +175,79 @@ mod tests {
         assert_eq!(pr.rule_type, "convention");
         assert_eq!(pr.origin_repo.as_deref(), Some("sensei/daemon"));
     }
+
+    #[tokio::test]
+    async fn e2e_daemon_pulls_a_rule_published_on_the_hive() {
+        use crate::db::pg_store::{NewKnowledgeSource, PgStore};
+        let Ok(pg) = PgStore::connect_test().await else { return; }; // skip if no test DB
+
+        // Seed the `organization` scope used by the pulled rule (sensei_test is empty;
+        // production data is seeded via staging.import_scopes — we replicate the one row
+        // we need so the namespaces.scope_key FK is satisfiable). Same idiom as the
+        // sibling `federated_ledger_and_shareability` test.
+        sqlx_core::query::query(
+            "INSERT INTO sensei.scopes(key, name, level, shareable)
+             VALUES ('organization', 'Organization', 20, true)
+             ON CONFLICT (key) DO UPDATE SET shareable = EXCLUDED.shareable")
+            .execute(pg.pool()).await.unwrap();
+
+        // 1. Start an in-process sensei-hive on an ephemeral port (embedded PG cached).
+        let db = hive_mind::db::HiveDb::bootstrap_temp().await.expect("hive db");
+        let store = hive_mind::store::HiveStore::new(db.pool().clone());
+        let member = store.create_member("e2e", None, "publisher").await.unwrap();
+        let key = store.issue_key(&member, None).await.unwrap().plaintext;
+        Box::leak(Box::new(db)); // keep the embedded PG alive for the spawned server
+        let app = hive_mind::api::build_router(std::sync::Arc::new(
+            hive_mind::api::SharedState { store }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap(); });
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        let hive_url = format!("http://{addr}");
+
+        // 2. Publish a rule on the hive (unique content so reruns don't collide).
+        let client = reqwest::Client::new();
+        let content = format!("e2e federated rule {}", uuid::Uuid::new_v4());
+        let body = serde_json::json!({
+            "content_hash": hive_protocol::content_hash(&content),
+            "scope_key": "organization", "namespace_slug": "e2e-org", "namespace_name": "E2E Org",
+            "rule_type": "convention", "title": "E2E", "content": content,
+            "impact": null, "enforcement": "mandatory", "origin_repo": null,
+            "published_by": "x", "published_at": "1970-01-01T00:00:00Z"
+        });
+        let r = client.post(format!("{hive_url}/v1/rules")).bearer_auth(&key).json(&body).send().await.unwrap();
+        assert!(r.status().is_success(), "publish failed: {}", r.status());
+
+        // 3. Register the source on the daemon (key in the Keychain, row in PG).
+        let cref = format!("hive-e2e-{}", uuid::Uuid::new_v4());
+        crate::gateway_keys::set_key(&cref, &key).unwrap();
+        let src_id = pg.create_knowledge_source(&NewKnowledgeSource {
+            kind: "hive_mind".into(), name: "E2E".into(), url: hive_url,
+            namespace_id: None, credential_ref: cref.clone(), direction: "pull".into(),
+        }).await.unwrap();
+        let src = pg.get_knowledge_source(&src_id).await.unwrap().unwrap();
+
+        // 4. Pull.
+        let stats = pull_source(&pg, &client, &src).await.expect("pull");
+        assert_eq!(stats.applied, 1, "one federated memory created");
+        assert!(stats.new_cursor > 0);
+
+        // 5. The pulled rule is a federated, active memory with our content.
+        let (cnt,): (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*) FROM sensei.memories WHERE origin='federated' AND content=$1 AND status='active'")
+            .bind(&content).fetch_one(pg.pool()).await.unwrap();
+        assert_eq!(cnt, 1);
+
+        // 6. Cleanup (cascade ledger via source delete; remove memory + keychain entry,
+        // the namespace the pull created, and the seeded scope row).
+        sqlx_core::query::query("DELETE FROM sensei.memories WHERE content=$1")
+            .bind(&content).execute(pg.pool()).await.unwrap();
+        pg.delete_knowledge_source(&src_id).await.unwrap();
+        let _ = crate::gateway_keys::delete_key(&cref);
+        sqlx_core::query::query(
+            "DELETE FROM sensei.namespaces WHERE scope_key='organization' AND slug='e2e-org'")
+            .execute(pg.pool()).await.unwrap();
+        sqlx_core::query::query("DELETE FROM sensei.scopes WHERE key='organization'")
+            .execute(pg.pool()).await.unwrap();
+    }
 }
