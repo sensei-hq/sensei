@@ -124,6 +124,13 @@ pub fn deploy(db_name: &str, app_version: &str) -> Result<(), String> {
             .map_err(|e| format!("dbd config load failed: {e}"))?;
         tracing::debug!(entities = design.entities().len(), "dbd design loaded");
 
+        // The daemon deploys the `default` scope (everything EXCEPT the `hive`
+        // schema, which only `sensei-hive` materializes). resolve_scope(None)
+        // returns the `default` scope when one is defined in design.yaml.
+        let scope = design
+            .resolve_scope(None, None)
+            .map_err(|e| format!("dbd scope resolution failed: {e}"))?;
+
         let adapter = PostgresAdapter::new(&db_url, "sensei")
             .await
             .map_err(|e| format!("dbd database connection failed: {e}"))?;
@@ -136,8 +143,9 @@ pub fn deploy(db_name: &str, app_version: &str) -> Result<(), String> {
         tracing::info!("dbd phase: apply");
         design.apply(
             &adapter,
-            None,
-            false,
+            None,           // entity-name filter
+            false,          // dry_run
+            Some(&scope),   // scope: the `default` scope — everything except the hive schema
             |desc: &str| tracing::debug!(dbd_step = "apply", desc, "starting"),
             |desc: &str, err: Option<&str>| match err {
                 Some(e) => tracing::warn!(dbd_step = "apply", desc, error = e, "failed"),
@@ -151,6 +159,7 @@ pub fn deploy(db_name: &str, app_version: &str) -> Result<(), String> {
             &adapter,
             None,
             false,
+            Some(&scope),   // scope: the `default` scope — everything except the hive schema
             |desc: &str| tracing::debug!(dbd_step = "import", desc, "starting"),
             |desc: &str, err: Option<&str>| match err {
                 Some(e) => tracing::warn!(dbd_step = "import", desc, error = e, "failed"),
