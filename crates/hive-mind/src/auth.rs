@@ -35,6 +35,7 @@ pub fn role_satisfies(have: Role, floor: Role) -> bool {
 #[derive(Clone)]
 pub struct AuthCaller {
     pub member_id: uuid::Uuid,
+    pub name: String,
     pub role: Role,
 }
 
@@ -63,6 +64,7 @@ pub async fn require(
     let role = Role::parse(&caller.role).ok_or(StatusCode::UNAUTHORIZED)?;
     req.extensions_mut().insert(AuthCaller {
         member_id: caller.member_id,
+        name: caller.name,
         role,
     });
     Ok(next.run(req).await)

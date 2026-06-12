@@ -39,14 +39,22 @@ async fn health() -> impl IntoResponse {
 async fn publish_rule(
     State(state): State<AppState>,
     Extension(caller): Extension<AuthCaller>,
-    Json(rule): Json<PublishedRule>,
+    Json(mut rule): Json<PublishedRule>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     require_role(&caller, Role::Publisher)?;
+    // Attribution comes from the authenticated caller, not the request body —
+    // a publisher can't spoof who published a rule. (published_at is stamped
+    // server-side in the store.)
+    rule.published_by = caller.name.clone();
     let resp = state
         .store
         .publish(&rule)
         .await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+    // Audit-write failures are intentionally swallowed on the request path: the
+    // publish already succeeded, and a failed audit insert shouldn't fail it.
+    // (keygen.rs uses `?` instead — a failed audit there fails key creation,
+    // acceptable for the one-off CLI bootstrap.)
     let _ = state
         .store
         .record_audit(
