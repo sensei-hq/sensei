@@ -33,6 +33,30 @@ pub struct OutcomeRow {
     pub context:    Option<String>,
 }
 
+/// Input for registering a federation endpoint.
+pub struct NewKnowledgeSource {
+    pub kind:           String,
+    pub name:           String,
+    pub url:            String,
+    pub namespace_id:   Option<uuid::Uuid>,
+    pub credential_ref: String,
+    pub direction:      String, // push | pull | both
+}
+
+/// A registered federation endpoint (row of sensei.knowledge_sources).
+#[derive(Debug, Clone)]
+pub struct KnowledgeSource {
+    pub id:             uuid::Uuid,
+    pub kind:           String,
+    pub name:           String,
+    pub url:            String,
+    pub namespace_id:   Option<uuid::Uuid>,
+    pub credential_ref: String,
+    pub direction:      String,
+    pub last_seq:       i64,
+    pub enabled:        bool,
+}
+
 #[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
 // PgStore API surface — methods wired up incrementally; SQLx tuple return types
 // are inherently verbose and adding an extra layer of type aliases would
@@ -2819,6 +2843,49 @@ impl PgStore {
         .map_err(|e| format!("fail_task_execution: {}", e))?;
         Ok(())
     }
+
+    // ── Knowledge Sources (federation endpoints) ──────────────────────
+
+    pub async fn create_knowledge_source(&self, s: &NewKnowledgeSource) -> Result<uuid::Uuid, String> {
+        let (id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.knowledge_sources(kind, name, url, namespace_id, credential_ref, direction)
+             VALUES($1,$2,$3,$4,$5,$6) RETURNING id")
+            .bind(&s.kind).bind(&s.name).bind(&s.url).bind(s.namespace_id).bind(&s.credential_ref).bind(&s.direction)
+            .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(id)
+    }
+
+    pub async fn list_knowledge_sources(&self) -> Result<Vec<KnowledgeSource>, String> {
+        let rows: Vec<(uuid::Uuid, String, String, String, Option<uuid::Uuid>, String, String, i64, bool)> =
+            sqlx_core::query_as::query_as(
+                "SELECT id, kind, name, url, namespace_id, credential_ref, direction, last_seq, enabled
+                   FROM sensei.knowledge_sources ORDER BY created_at")
+            .fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id,kind,name,url,namespace_id,credential_ref,direction,last_seq,enabled)|
+            KnowledgeSource { id,kind,name,url,namespace_id,credential_ref,direction,last_seq,enabled }).collect())
+    }
+
+    pub async fn get_knowledge_source(&self, id: &uuid::Uuid) -> Result<Option<KnowledgeSource>, String> {
+        let row: Option<(uuid::Uuid, String, String, String, Option<uuid::Uuid>, String, String, i64, bool)> =
+            sqlx_core::query_as::query_as(
+                "SELECT id, kind, name, url, namespace_id, credential_ref, direction, last_seq, enabled
+                   FROM sensei.knowledge_sources WHERE id = $1")
+            .bind(id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.map(|(id,kind,name,url,namespace_id,credential_ref,direction,last_seq,enabled)|
+            KnowledgeSource { id,kind,name,url,namespace_id,credential_ref,direction,last_seq,enabled }))
+    }
+
+    pub async fn set_source_cursor(&self, id: &uuid::Uuid, last_seq: i64) -> Result<(), String> {
+        sqlx_core::query::query("UPDATE sensei.knowledge_sources SET last_seq = $2 WHERE id = $1")
+            .bind(id).bind(last_seq).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub async fn delete_knowledge_source(&self, id: &uuid::Uuid) -> Result<bool, String> {
+        let res = sqlx_core::query::query("DELETE FROM sensei.knowledge_sources WHERE id = $1")
+            .bind(id).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(res.rows_affected() > 0)
+    }
 }
 
 #[cfg(test)]
@@ -3753,6 +3820,28 @@ mod tests {
             .await
             .unwrap();
         assert!(row.0, "sensei.memories table must exist — run `dbd apply` first");
+    }
+
+    // ── Knowledge Sources tests ───────────────────────────────────────
+
+    #[tokio::test]
+    async fn knowledge_source_crud_roundtrip() {
+        let Ok(pg) = PgStore::connect_test().await else { return; };
+        let id = pg.create_knowledge_source(&NewKnowledgeSource {
+            kind: "hive_mind".into(), name: "Org Hive".into(), url: "https://hive.example".into(),
+            namespace_id: None, credential_ref: "hive-test".into(), direction: "both".into(),
+        }).await.unwrap();
+
+        let all = pg.list_knowledge_sources().await.unwrap();
+        assert!(all.iter().any(|s| s.id == id && s.last_seq == 0 && s.enabled));
+
+        pg.set_source_cursor(&id, 42).await.unwrap();
+        let one = pg.get_knowledge_source(&id).await.unwrap().unwrap();
+        assert_eq!(one.last_seq, 42);
+        assert_eq!(one.direction, "both");
+
+        assert!(pg.delete_knowledge_source(&id).await.unwrap());
+        assert!(pg.get_knowledge_source(&id).await.unwrap().is_none());
     }
 }
 
