@@ -5,6 +5,17 @@
 use crate::db::pg_store::{InsertMemory, KnowledgeSource, MemoryPushPayload, PgStore};
 use hive_protocol::{content_hash, PublishedRule, PullResponse};
 
+/// HTTP client for all federation calls. Bounded connect + total timeouts so a
+/// hung/unreachable hive can never wedge the (sequential) pull loop or pile up
+/// push tasks — same liveness discipline as the daemon's other outbound clients.
+pub fn http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(5))
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .unwrap_or_default()
+}
+
 /// Build the wire payload for a memory being published. `published_by`/`published_at`
 /// are stamped server-side by the hive (the hive overrides them from the API key's
 /// member + now()), so we send harmless best-effort placeholders.
@@ -39,7 +50,7 @@ pub async fn push_promoted(pg: &PgStore, memory_id: uuid::Uuid) {
     if !matches!(pg.namespace_is_shareable(&namespace_id).await, Ok(true)) { return; }
     let sources = match pg.list_knowledge_sources().await { Ok(s) => s, Err(_) => return };
     let pr = build_published_rule(&payload, None);
-    let client = reqwest::Client::new();
+    let client = http_client();
     for src in sources.into_iter().filter(|s| s.enabled
         && matches!(s.direction.as_str(), "push" | "both")
         && (s.namespace_id.is_none() || s.namespace_id == Some(namespace_id))) {
@@ -88,53 +99,87 @@ pub async fn pull_source(pg: &PgStore, client: &reqwest::Client, src: &Knowledge
     let mut stats = PullStats { new_cursor: page.cursor, ..Default::default() };
 
     for pulled in &page.rules {
-        let remote_id = uuid::Uuid::parse_str(&pulled.id).map_err(|e| e.to_string())?;
-        let existing = pg.find_federated_memory(&src.id, &remote_id).await?;
-        let tombstoned = pulled.status == "tombstoned";
-        match existing {
-            Some(link) => {
-                // Staleness guard: skip a non-tombstone delta we've already applied at or
-                // beyond this remote seq (defensive against cursor resets / reordering).
-                if !tombstoned && pulled.seq <= link.remote_seq {
-                    continue;
-                }
-                if tombstoned {
-                    if let Some(mid) = link.memory_id
-                        && pg.archive_federated_memory(&mid).await? {
-                        stats.tombstoned += 1;
-                    }
-                } else {
-                    stats.linked += 1; // content re-sync of already-known rules = follow-up (#55-adjacent)
-                }
-                pg.upsert_federated_memory(&src.id, &remote_id, &pulled.rule.content_hash, link.memory_id.as_ref(), pulled.seq).await?;
-            }
-            None if tombstoned => {
-                pg.upsert_federated_memory(&src.id, &remote_id, &pulled.rule.content_hash, None, pulled.seq).await?;
-            }
-            None => {
-                let ns = pg.upsert_namespace(&pulled.rule.scope_key, &pulled.rule.namespace_name, &pulled.rule.namespace_slug).await?;
-                let mem = pg.insert_memory(&InsertMemory {
-                    project_id: None, scope: "global".into(), scope_filter: None,
-                    mtype: pulled.rule.rule_type.clone(),
-                    title: pulled.rule.title.clone(), content: pulled.rule.content.clone(),
-                    impact: pulled.rule.impact.clone(), tags: vec![], triage_signal: None,
-                    status: "active".into(), namespace_id: Some(ns),
-                    enforcement: Some(pulled.rule.enforcement.clone()),
-                    origin: Some("federated".into()), source_id: Some(src.id),
-                }).await?;
-                pg.upsert_federated_memory(&src.id, &remote_id, &pulled.rule.content_hash, Some(&mem), pulled.seq).await?;
-                stats.applied += 1;
-            }
+        match apply_pulled_rule(pg, src, pulled).await {
+            Ok(RuleOutcome::Applied) => stats.applied += 1,
+            Ok(RuleOutcome::Tombstoned) => stats.tombstoned += 1,
+            Ok(RuleOutcome::Linked) => stats.linked += 1,
+            Ok(RuleOutcome::Skipped) => {}
+            // Per-rule isolation: a single malformed delta (bad uuid/enum value, a
+            // scope_key absent locally, etc.) is logged and skipped — never a poison
+            // pill that stalls the source or the rules ordered after it in the page.
+            Err(e) => tracing::warn!(rule = %pulled.id, source = %src.name, error = %e,
+                "federation: skipping malformed pulled rule"),
         }
     }
     pg.set_source_cursor(&src.id, page.cursor).await?;
     Ok(stats)
 }
 
+/// Outcome of applying one pulled delta — drives `PullStats`.
+enum RuleOutcome {
+    Applied,
+    Tombstoned,
+    Linked,
+    Skipped,
+}
+
+/// Apply one pulled delta to the local store. Idempotent via the `federated_memories`
+/// ledger (also the echo-guard for rules this daemon pushed). Errors are returned so
+/// the caller can isolate a single bad delta without stalling the whole pull.
+async fn apply_pulled_rule(
+    pg: &PgStore,
+    src: &KnowledgeSource,
+    pulled: &hive_protocol::PulledRule,
+) -> Result<RuleOutcome, String> {
+    let remote_id = uuid::Uuid::parse_str(&pulled.id).map_err(|e| e.to_string())?;
+    let existing = pg.find_federated_memory(&src.id, &remote_id).await?;
+    let tombstoned = pulled.status == "tombstoned";
+    match existing {
+        Some(link) => {
+            // Staleness guard: skip a non-tombstone delta we've already applied at or
+            // beyond this remote seq (defensive against cursor resets / reordering).
+            if !tombstoned && pulled.seq <= link.remote_seq {
+                return Ok(RuleOutcome::Skipped);
+            }
+            let outcome = if tombstoned {
+                if let Some(mid) = link.memory_id
+                    && pg.archive_federated_memory(&mid).await?
+                {
+                    RuleOutcome::Tombstoned
+                } else {
+                    RuleOutcome::Skipped
+                }
+            } else {
+                RuleOutcome::Linked // content re-sync of already-known rules = follow-up (#55-adjacent)
+            };
+            pg.upsert_federated_memory(&src.id, &remote_id, &pulled.rule.content_hash, link.memory_id.as_ref(), pulled.seq).await?;
+            Ok(outcome)
+        }
+        None if tombstoned => {
+            pg.upsert_federated_memory(&src.id, &remote_id, &pulled.rule.content_hash, None, pulled.seq).await?;
+            Ok(RuleOutcome::Skipped)
+        }
+        None => {
+            let ns = pg.upsert_namespace(&pulled.rule.scope_key, &pulled.rule.namespace_name, &pulled.rule.namespace_slug).await?;
+            let mem = pg.insert_memory(&InsertMemory {
+                project_id: None, scope: "global".into(), scope_filter: None,
+                mtype: pulled.rule.rule_type.clone(),
+                title: pulled.rule.title.clone(), content: pulled.rule.content.clone(),
+                impact: pulled.rule.impact.clone(), tags: vec![], triage_signal: None,
+                status: "active".into(), namespace_id: Some(ns),
+                enforcement: Some(pulled.rule.enforcement.clone()),
+                origin: Some("federated".into()), source_id: Some(src.id),
+            }).await?;
+            pg.upsert_federated_memory(&src.id, &remote_id, &pulled.rule.content_hash, Some(&mem), pulled.seq).await?;
+            Ok(RuleOutcome::Applied)
+        }
+    }
+}
+
 /// Spawned background task: every `interval_secs`, pull every pull-capable source.
 pub fn run_pull_loop(pg: PgStore, interval_secs: u64) {
     tokio::spawn(async move {
-        let client = reqwest::Client::new();
+        let client = http_client();
         let mut tick = tokio::time::interval(std::time::Duration::from_secs(interval_secs));
         loop {
             tick.tick().await;
