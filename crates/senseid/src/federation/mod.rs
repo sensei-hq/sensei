@@ -94,8 +94,9 @@ pub async fn pull_source(pg: &PgStore, client: &reqwest::Client, src: &Knowledge
         match existing {
             Some(link) => {
                 if tombstoned {
-                    if let Some(mid) = link.memory_id {
-                        if pg.archive_federated_memory(&mid).await? { stats.tombstoned += 1; }
+                    if let Some(mid) = link.memory_id
+                        && pg.archive_federated_memory(&mid).await? {
+                        stats.tombstoned += 1;
                     }
                 } else {
                     stats.linked += 1; // content re-sync of already-known rules = follow-up (#55-adjacent)
