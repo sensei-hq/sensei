@@ -85,3 +85,4 @@ cc = "1"
 tempfile = "3"
 tokio-test = "0.4"
 tower = { version = "0.5", features = ["util"] }
+hive-mind = { path = "../hive-mind" }
