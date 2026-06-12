@@ -2127,8 +2127,10 @@ dependencies = [
 name = "hive-mind"
 version = "0.2.17"
 dependencies = [
+ "axum",
  "dbd-core",
  "hive-protocol",
+ "http-body-util",
  "postgresql_embedded",
  "rand 0.8.6",
  "serde",
@@ -2140,6 +2142,8 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "tower",
+ "tower-http",
  "tracing",
  "uuid",
 ]
