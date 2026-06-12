@@ -58,6 +58,27 @@ pub struct KnowledgeSource {
     pub enabled:        bool,
 }
 
+/// A federated_memories ledger row.
+#[derive(Debug, Clone)]
+pub struct FederatedLink {
+    pub memory_id:  Option<uuid::Uuid>,
+    pub remote_seq: i64,
+}
+
+/// Snapshot needed to publish a memory to a hive (+ namespace identity + origin/scope_key for gating).
+#[derive(Debug, Clone)]
+pub struct MemoryPushPayload {
+    pub title:       String,
+    pub content:     String,
+    pub impact:      Option<String>,
+    pub enforcement: String,
+    pub rule_type:   String,
+    pub origin:      String,
+    pub scope_key:   String,
+    pub slug:        String,
+    pub name:        String,
+}
+
 #[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
 // PgStore API surface — methods wired up incrementally; SQLx tuple return types
 // are inherently verbose and adding an extra layer of type aliases would
@@ -2887,6 +2908,67 @@ impl PgStore {
             .bind(id).execute(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(res.rows_affected() > 0)
     }
+
+    // ── Federation ledger ─────────────────────────────────────────────
+
+    pub async fn namespace_is_shareable(&self, namespace_id: &uuid::Uuid) -> Result<bool, String> {
+        let row: Option<(bool,)> = sqlx_core::query_as::query_as(
+            "SELECT s.shareable FROM sensei.namespaces n JOIN sensei.scopes s ON s.key = n.scope_key
+              WHERE n.id = $1")
+            .bind(namespace_id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.map(|(b,)| b).unwrap_or(false))
+    }
+
+    pub async fn upsert_federated_memory(
+        &self, source_id: &uuid::Uuid, remote_rule_id: &uuid::Uuid,
+        content_hash: &str, memory_id: Option<&uuid::Uuid>, remote_seq: i64,
+    ) -> Result<(), String> {
+        sqlx_core::query::query(
+            "INSERT INTO sensei.federated_memories(knowledge_source_id, remote_rule_id, content_hash, memory_id, remote_seq)
+             VALUES($1,$2,$3,$4,$5)
+             ON CONFLICT(knowledge_source_id, remote_rule_id) DO UPDATE SET
+               content_hash = EXCLUDED.content_hash,
+               memory_id = COALESCE(EXCLUDED.memory_id, sensei.federated_memories.memory_id),
+               remote_seq = EXCLUDED.remote_seq, synced_at = now()")
+            .bind(source_id).bind(remote_rule_id).bind(content_hash).bind(memory_id).bind(remote_seq)
+            .execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub async fn find_federated_memory(
+        &self, source_id: &uuid::Uuid, remote_rule_id: &uuid::Uuid,
+    ) -> Result<Option<FederatedLink>, String> {
+        let row: Option<(Option<uuid::Uuid>, i64)> = sqlx_core::query_as::query_as(
+            "SELECT memory_id, remote_seq FROM sensei.federated_memories
+              WHERE knowledge_source_id = $1 AND remote_rule_id = $2")
+            .bind(source_id).bind(remote_rule_id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.map(|(memory_id, remote_seq)| FederatedLink { memory_id, remote_seq }))
+    }
+
+    /// Retire a federated memory (tombstone pulled from upstream). Only archives
+    /// federated-origin rows, so a locally-authored/promoted memory is never force-archived.
+    pub async fn archive_federated_memory(&self, memory_id: &uuid::Uuid) -> Result<bool, String> {
+        let res = sqlx_core::query::query(
+            "UPDATE sensei.memories SET status = 'archived'::sensei.memory_status
+              WHERE id = $1 AND origin = 'federated'")
+            .bind(memory_id).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    /// Fields to build a PublishedRule for a memory + its namespace identity.
+    /// None if the memory has no namespace (unscoped).
+    pub async fn memory_push_payload(&self, memory_id: &uuid::Uuid)
+        -> Result<Option<MemoryPushPayload>, String> {
+        let row: Option<(String, String, Option<String>, String, String, String, String, String, String)> =
+            sqlx_core::query_as::query_as(
+            "SELECT m.title, m.content, m.impact, m.enforcement::text, m.type::text, m.origin,
+                    n.scope_key, n.slug, n.name
+               FROM sensei.memories m JOIN sensei.namespaces n ON n.id = m.namespace_id
+              WHERE m.id = $1")
+            .bind(memory_id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.map(|(title, content, impact, enforcement, rule_type, origin, scope_key, slug, name)|
+            MemoryPushPayload { title, content, impact, enforcement, rule_type, origin, scope_key, slug, name }))
+    }
 }
 
 #[cfg(test)]
@@ -3983,5 +4065,60 @@ mod knowledge_tests {
             .bind(id).fetch_one(pg.pool()).await.unwrap();
         assert_eq!(got.0, Some(src));
         sqlx_core::query::query("DELETE FROM sensei.memories WHERE id = $1").bind(id).execute(pg.pool()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn federated_ledger_and_shareability() {
+        let Ok(pg) = PgStore::connect_test().await else { return; };
+        // Seed the scopes used by the test (sensei_test is empty; production data
+        // is seeded via staging.import_scopes — we replicate the two rows we need).
+        sqlx_core::query::query(
+            "INSERT INTO sensei.scopes(key, name, level, shareable)
+             VALUES ('organization', 'Organization', 20, true),
+                    ('technology',   'Technology',   40, false)
+             ON CONFLICT (key) DO UPDATE SET shareable = EXCLUDED.shareable")
+            .execute(pg.pool()).await.unwrap();
+
+        // organization is shareable; technology is not (seeded scopes ladder).
+        let org_ns = pg.upsert_namespace("organization", "Test Org", "test-org-fed").await.unwrap();
+        let tech_ns = pg.upsert_namespace("technology", "Rust", "rust-fed").await.unwrap();
+        assert!(pg.namespace_is_shareable(&org_ns).await.unwrap());
+        assert!(!pg.namespace_is_shareable(&tech_ns).await.unwrap());
+
+        let src = pg.create_knowledge_source(&NewKnowledgeSource {
+            kind: "hive_mind".into(), name: "H".into(), url: "u".into(), namespace_id: None,
+            credential_ref: "c".into(), direction: "both".into() }).await.unwrap();
+        let remote = uuid::Uuid::new_v4();
+        let mem = pg.insert_memory(&InsertMemory {
+            project_id: None, scope: "global".into(), scope_filter: None, mtype: "convention".into(),
+            title: "t".into(), content: "c".into(), impact: None, tags: vec![], triage_signal: None,
+            status: "active".into(), namespace_id: Some(org_ns), enforcement: Some("recommended".into()),
+            origin: Some("federated".into()), source_id: Some(src) }).await.unwrap();
+        pg.upsert_federated_memory(&src, &remote, "hash1", Some(&mem), 5).await.unwrap();
+        pg.upsert_federated_memory(&src, &remote, "hash1", Some(&mem), 9).await.unwrap(); // idempotent
+        let link = pg.find_federated_memory(&src, &remote).await.unwrap().unwrap();
+        assert_eq!(link.memory_id, Some(mem));
+        assert_eq!(link.remote_seq, 9);
+
+        // push payload: returns snapshot + namespace identity (incl. name) + origin/scope_key
+        let payload = pg.memory_push_payload(&mem).await.unwrap().unwrap();
+        assert_eq!(payload.scope_key, "organization");
+        assert_eq!(payload.slug, "test-org-fed");
+        assert_eq!(payload.name, "Test Org");
+        assert_eq!(payload.origin, "federated");
+
+        // archive retires a federated memory (drops out of resolution)
+        assert!(pg.archive_federated_memory(&mem).await.unwrap());
+        let (status,): (String,) = sqlx_core::query_as::query_as("SELECT status::text FROM sensei.memories WHERE id=$1")
+            .bind(mem).fetch_one(pg.pool()).await.unwrap();
+        assert_eq!(status, "archived");
+
+        pg.delete_knowledge_source(&src).await.unwrap(); // cascades the ledger row
+        sqlx_core::query::query("DELETE FROM sensei.memories WHERE id=$1").bind(mem).execute(pg.pool()).await.unwrap();
+        // clean up namespaces and seeded scopes
+        sqlx_core::query::query("DELETE FROM sensei.namespaces WHERE id = ANY($1::uuid[])")
+            .bind(vec![org_ns, tech_ns]).execute(pg.pool()).await.unwrap();
+        sqlx_core::query::query("DELETE FROM sensei.scopes WHERE key IN ('organization','technology')")
+            .execute(pg.pool()).await.unwrap();
     }
 }
