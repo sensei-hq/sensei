@@ -516,7 +516,12 @@ pub(crate) async fn create_source(
     Json(b): Json<NewSourceBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let url = b.url.trim().to_string();
-    if !url.starts_with("https://") && !url.contains("://127.0.0.1") && !url.contains("://localhost") {
+    // Parse the URL rather than substring-match: require https unless the host is
+    // exactly a loopback (so `http://127.0.0.1.evil.com` can't smuggle the bearer
+    // token to an attacker host in cleartext).
+    let parsed = reqwest::Url::parse(&url).map_err(|_| err(StatusCode::BAD_REQUEST, "invalid source url"))?;
+    let is_loopback = matches!(parsed.host_str(), Some("127.0.0.1") | Some("::1") | Some("localhost"));
+    if parsed.scheme() != "https" && !is_loopback {
         return Err(err(StatusCode::BAD_REQUEST, "non-loopback source url must be https"));
     }
     let namespace_id = match b.namespace_id.as_deref() {
@@ -558,7 +563,11 @@ pub(crate) async fn delete_source(
     let sid = uuid::Uuid::parse_str(&id).map_err(|_| err(StatusCode::BAD_REQUEST, "bad id"))?;
     if let Ok(Some(s)) = state.pg.get_knowledge_source(&sid).await {
         let cref = s.credential_ref.clone();
-        let _ = tokio::task::spawn_blocking(move || crate::gateway_keys::delete_key(&cref)).await;
+        match tokio::task::spawn_blocking(move || crate::gateway_keys::delete_key(&cref)).await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => tracing::warn!(source = %s.name, error = %e, "federation: keychain delete failed; entry may be orphaned"),
+            Err(e) => tracing::warn!(source = %s.name, error = %e, "federation: keychain delete task join failed"),
+        }
     }
     let removed = state.pg.delete_knowledge_source(&sid).await.map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
     if removed { Ok(Json(serde_json::json!({ "deleted": true }))) } else { Err(err(StatusCode::NOT_FOUND, "no such source")) }
@@ -571,7 +580,7 @@ pub(crate) async fn sync_source(
     let sid = uuid::Uuid::parse_str(&id).map_err(|_| err(StatusCode::BAD_REQUEST, "bad id"))?;
     let src = state.pg.get_knowledge_source(&sid).await.map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
         .ok_or_else(|| err(StatusCode::NOT_FOUND, "no such source"))?;
-    let client = reqwest::Client::new();
+    let client = crate::federation::http_client();
     let stats = crate::federation::pull_source(&state.pg, &client, &src).await
         .map_err(|e| err(StatusCode::BAD_GATEWAY, &e))?;
     Ok(Json(serde_json::to_value(stats).unwrap()))
