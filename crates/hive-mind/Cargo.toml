@@ -20,6 +20,10 @@ postgresql_embedded = { version = "0.18", features = ["tokio"] }
 sqlx-core = { version = "0.8", features = ["_rt-tokio", "chrono", "uuid", "json"] }
 sqlx-postgres = { version = "0.8", features = ["chrono", "uuid", "json"] }
 thiserror = "2"
+uuid = { version = "1", features = ["v4"] }
+sha2 = "0.10"
+rand = "0.8"
+subtle = "2"
 
 [dev-dependencies]
 tempfile = "3"
