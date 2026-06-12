@@ -16,7 +16,7 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "fs", "sync"] 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tracing = "0.1"
-postgresql_embedded = "0.18"
+postgresql_embedded = { version = "0.18", features = ["tokio"] }
 sqlx-core = { version = "0.8", features = ["_rt-tokio", "chrono", "uuid", "json"] }
 sqlx-postgres = { version = "0.8", features = ["chrono", "uuid", "json"] }
 thiserror = "2"
