@@ -11,11 +11,15 @@ path = "src/main.rs"
 
 [dependencies]
 hive-protocol = { path = "../hive-protocol" }
-dbd-core = { git = "https://github.com/sensei-hq/dbd", tag = "v0.4.4" }
+dbd-core = { git = "https://github.com/sensei-hq/dbd", tag = "v0.4.5" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "fs", "sync"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tracing = "0.1"
+postgresql_embedded = "0.18"
+sqlx-core = { version = "0.8", features = ["_rt-tokio", "chrono", "uuid", "json"] }
+sqlx-postgres = { version = "0.8", features = ["chrono", "uuid", "json"] }
+thiserror = "2"
 
 [dev-dependencies]
 tempfile = "3"
