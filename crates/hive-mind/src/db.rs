@@ -71,10 +71,16 @@ impl HiveDb {
         Ok(Self { _pg: pg, pool })
     }
 
-    /// Convenience for tests: boot into a per-process temp data dir using the
-    /// workspace `database/` tree.
+    /// Convenience for tests: boot into a unique temp data dir using the
+    /// workspace `database/` tree. The dir is unique per call (process id +
+    /// monotonic counter) so multiple `#[tokio::test]`s in one test binary do
+    /// not collide on the same embedded-Postgres data directory.
     pub async fn bootstrap_temp() -> Result<Self, DbError> {
-        let tmp = std::env::temp_dir().join(format!("sensei-hive-test-{}", std::process::id()));
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        let n = SEQ.fetch_add(1, Ordering::Relaxed);
+        let tmp = std::env::temp_dir()
+            .join(format!("sensei-hive-test-{}-{n}", std::process::id()));
         Self::bootstrap(tmp, workspace_database_dir()).await
     }
 }
