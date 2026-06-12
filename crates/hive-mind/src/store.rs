@@ -8,10 +8,18 @@ use sqlx_postgres::PgPool;
 use subtle::ConstantTimeEq;
 use uuid::Uuid;
 
+/// Fixed key for the txn-scoped advisory lock that serializes `seq` assignment
+/// (publish + retract). With `nextval` → write → commit all held under this lock,
+/// seq order equals commit order, so the monotonic pull cursor is gap-free: a
+/// puller that has advanced past seq N has necessarily already seen every
+/// committed row with seq < N (no row can commit out of seq order and be skipped).
+const SHARED_RULES_SEQ_LOCK: i64 = 0x6869_7665_5f73_6571; // ascii "hive_seq"
+
 /// The authenticated identity resolved from a presented API key.
 #[derive(Debug, Clone)]
 pub struct Caller {
     pub member_id: Uuid,
+    pub name: String,
     pub role: String,
 }
 
@@ -48,35 +56,36 @@ impl HiveStore {
         Self { pool }
     }
 
-    /// Insert-or-update a namespace identity, returning its id.
-    async fn upsert_namespace(
-        &self,
-        scope_key: &str,
-        slug: &str,
-        name: &str,
-    ) -> Result<Uuid, String> {
-        let (id,): (Uuid,) = sqlx_core::query_as::query_as(
+    /// Publish a rule: upsert its namespace, then insert-or-bump the shared rule.
+    /// First publish → version 1; republish of the same (namespace, content_hash)
+    /// bumps the version and advances `seq`.
+    ///
+    /// Runs in one transaction holding `SHARED_RULES_SEQ_LOCK` so `seq` assignment
+    /// is serialized with commit (gap-free pull cursor). `published_at` is stamped
+    /// server-side (`now()`) — the client value is never trusted, so attribution
+    /// timestamps can't be backdated. `published_by` is set by the
+    /// caller-authenticated handler (see `api::publish_rule`).
+    pub async fn publish(&self, r: &PublishedRule) -> Result<PublishResponse, String> {
+        let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
+
+        sqlx_core::query::query("SELECT pg_advisory_xact_lock($1)")
+            .bind(SHARED_RULES_SEQ_LOCK)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let (namespace_id,): (Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.namespaces(scope_key, slug, name)
              VALUES($1, $2, $3)
              ON CONFLICT(scope_key, slug) DO UPDATE SET name = EXCLUDED.name
              RETURNING id",
         )
-        .bind(scope_key)
-        .bind(slug)
-        .bind(name)
-        .fetch_one(&self.pool)
+        .bind(&r.scope_key)
+        .bind(&r.namespace_slug)
+        .bind(&r.namespace_name)
+        .fetch_one(&mut *tx)
         .await
         .map_err(|e| e.to_string())?;
-        Ok(id)
-    }
-
-    /// Publish a rule: upsert its namespace, then insert-or-bump the shared rule.
-    /// First publish → version 1; republish of the same (namespace, content_hash)
-    /// bumps the version and advances `seq`.
-    pub async fn publish(&self, r: &PublishedRule) -> Result<PublishResponse, String> {
-        let namespace_id = self
-            .upsert_namespace(&r.scope_key, &r.namespace_slug, &r.namespace_name)
-            .await?;
 
         let (id, version, seq): (Uuid, i32, i64) = sqlx_core::query_as::query_as(
             "INSERT INTO hive.shared_rules
@@ -84,7 +93,7 @@ impl HiveStore {
                 enforcement, status, version, origin_repo, published_by, published_at,
                 seq, updated_at)
              VALUES
-               ($1, $2, $3, $4, $5, $6, $7::sensei.enforcement, 'active', 1, $8, $9, $10::timestamptz,
+               ($1, $2, $3, $4, $5, $6, $7::sensei.enforcement, 'active', 1, $8, $9, now(),
                 nextval('hive.shared_rules_seq'), now())
              ON CONFLICT(namespace_id, content_hash) DO UPDATE SET
                rule_type = EXCLUDED.rule_type,
@@ -94,7 +103,7 @@ impl HiveStore {
                enforcement = EXCLUDED.enforcement,
                origin_repo = EXCLUDED.origin_repo,
                published_by = EXCLUDED.published_by,
-               published_at = EXCLUDED.published_at,
+               published_at = now(),
                status = 'active',
                version = hive.shared_rules.version + 1,
                seq = nextval('hive.shared_rules_seq'),
@@ -110,10 +119,11 @@ impl HiveStore {
         .bind(&r.enforcement)
         .bind(&r.origin_repo)
         .bind(&r.published_by)
-        .bind(&r.published_at)
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *tx)
         .await
         .map_err(|e| e.to_string())?;
+
+        tx.commit().await.map_err(|e| e.to_string())?;
 
         Ok(PublishResponse {
             id: id.to_string(),
@@ -214,6 +224,13 @@ impl HiveStore {
     /// Returns `true` if a (non-already-tombstoned) row was updated.
     pub async fn retract(&self, id: &str) -> Result<bool, String> {
         let uuid = Uuid::parse_str(id).map_err(|e| e.to_string())?;
+        let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
+        // Same lock as publish: serialize seq assignment with commit (gap-free cursor).
+        sqlx_core::query::query("SELECT pg_advisory_xact_lock($1)")
+            .bind(SHARED_RULES_SEQ_LOCK)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?;
         let res = sqlx_core::query::query(
             "UPDATE hive.shared_rules
              SET status = 'tombstoned',
@@ -222,9 +239,10 @@ impl HiveStore {
              WHERE id = $1 AND status <> 'tombstoned'",
         )
         .bind(uuid)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| e.to_string())?;
+        tx.commit().await.map_err(|e| e.to_string())?;
         Ok(res.rows_affected() > 0)
     }
 
@@ -276,8 +294,8 @@ impl HiveStore {
     /// `last_used_at` is stamped.
     pub async fn find_member_by_key(&self, presented: &str) -> Result<Option<Caller>, String> {
         let presented_hash = hash_key(presented);
-        let rows: Vec<(Uuid, Uuid, String, String)> = sqlx_core::query_as::query_as(
-            "SELECT k.id, m.id, m.role, k.key_hash
+        let rows: Vec<(Uuid, Uuid, String, String, String)> = sqlx_core::query_as::query_as(
+            "SELECT k.id, m.id, m.name, m.role, k.key_hash
              FROM hive.api_keys k
              JOIN hive.members m ON m.id = k.member_id
              WHERE k.revoked_at IS NULL AND m.disabled_at IS NULL",
@@ -286,7 +304,7 @@ impl HiveStore {
         .await
         .map_err(|e| e.to_string())?;
 
-        for (key_id, member_id, role, key_hash) in rows {
+        for (key_id, member_id, name, role, key_hash) in rows {
             let matches: bool = key_hash
                 .as_bytes()
                 .ct_eq(presented_hash.as_bytes())
@@ -299,7 +317,11 @@ impl HiveStore {
                 .execute(&self.pool)
                 .await
                 .map_err(|e| e.to_string())?;
-                return Ok(Some(Caller { member_id, role }));
+                return Ok(Some(Caller {
+                    member_id,
+                    name,
+                    role,
+                }));
             }
         }
         Ok(None)
