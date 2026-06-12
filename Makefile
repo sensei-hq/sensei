@@ -59,6 +59,10 @@ crates-all:
 	cargo build --release --workspace
 	cargo build --release --manifest-path app/src-tauri/Cargo.toml
 
+.PHONY: hive
+hive:  ## Build the sensei-hive service binary
+	cargo build --release -p hive-mind
+
 # ── Install ───────────────────────────────────────────────────────────────────
 #
 # `make install` does the full install: the service binaries (CLI, daemon,
