@@ -19,7 +19,7 @@ Layered scope×enforcement rule model, `scopes`+`namespaces` (level-based set me
 - **P1 — Tool routing** (no schema change, first): [#11](https://github.com/sensei-hq/sensei/issues/11) agents→MCP tools · [#12](https://github.com/sensei-hq/sensei/issues/12) `get_duplicates`/`get_project_conventions` · [#13](https://github.com/sensei-hq/sensei/issues/13) `~/.sensei/rules.md` + CLAUDE.md pointer · [#14](https://github.com/sensei-hq/sensei/issues/14) agents.md doc
 - **P2 — Scopes/namespaces/resolution**: [#15](https://github.com/sensei-hq/sensei/issues/15) [#16](https://github.com/sensei-hq/sensei/issues/16) [#17](https://github.com/sensei-hq/sensei/issues/17) [#18](https://github.com/sensei-hq/sensei/issues/18) [#19](https://github.com/sensei-hq/sensei/issues/19) [#20](https://github.com/sensei-hq/sensei/issues/20)
 - **P3 — README identity + promotion**: [#21](https://github.com/sensei-hq/sensei/issues/21) [#22](https://github.com/sensei-hq/sensei/issues/22) [#23](https://github.com/sensei-hq/sensei/issues/23) [#24](https://github.com/sensei-hq/sensei/issues/24)
-- **P4 — Hive-mind federation**: [#25](https://github.com/sensei-hq/sensei/issues/25) [#26](https://github.com/sensei-hq/sensei/issues/26) [#27](https://github.com/sensei-hq/sensei/issues/27)
+- **P4 — Hive-mind federation**: [#25](https://github.com/sensei-hq/sensei/issues/25) ✅ `sensei-hive` service · [#26](https://github.com/sensei-hq/sensei/issues/26) ✅ daemon federation module (`knowledge_sources` + `federated_memories` ledger, push-on-approve + poll-pull; federated rules are ordinary `memories(origin='federated')` so resolution is unchanged) · [#27](https://github.com/sensei-hq/sensei/issues/27) Configure UI (remaining)
 
 ---
 
