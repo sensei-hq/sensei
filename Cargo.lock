@@ -2128,11 +2128,13 @@ name = "hive-mind"
 version = "0.2.17"
 dependencies = [
  "axum",
+ "clap",
  "dbd-core",
  "hive-protocol",
  "http-body-util",
  "postgresql_embedded",
  "rand 0.8.6",
+ "reqwest",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -2145,6 +2147,7 @@ dependencies = [
  "tower",
  "tower-http",
  "tracing",
+ "tracing-subscriber",
  "uuid",
 ]
 
