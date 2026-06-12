@@ -3963,6 +3963,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "56eae883251fb55f23ff8e9f16121cfb2b00a56ebe62c56183c67904af26fa1d"
 dependencies = [
  "thiserror 2.0.18",
+ "tokio",
  "tracing",
 ]
 
