@@ -413,7 +413,13 @@ pub(crate) async fn accept_proposal(
     let new_status = state.pg.set_memory_status(mid, "active", &["proposed"]).await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
     match new_status {
-        Some(s) => Ok(Json(serde_json::json!({ "id": mid, "status": s }))),
+        Some(s) => {
+            // Federation: if this was a promoted rule at a shareable scope, push it.
+            // Fire-and-forget — federation must not block or fail the approval.
+            let pg = state.pg.clone();
+            tokio::spawn(async move { crate::federation::push_promoted(&pg, mid).await; });
+            Ok(Json(serde_json::json!({ "id": mid, "status": s })))
+        }
         None => Err(err(StatusCode::CONFLICT, "proposal not in 'proposed' state")),
     }
 }
@@ -484,6 +490,102 @@ pub(crate) async fn record_outcomes(
         "recorded": total - skipped.len(),
         "skipped":  skipped,
     })))
+}
+
+// ============================================================================
+// Federation sources — /api/knowledge/sources*
+// GET    /api/knowledge/sources             — list registered hive-mind sources
+// POST   /api/knowledge/sources             — register a source (+ Keychain cred)
+// DELETE /api/knowledge/sources/{id}         — deregister (+ purge Keychain cred)
+// POST   /api/knowledge/sources/{id}/sync    — pull this source now
+// GET    /api/knowledge/sources/{id}/status  — current cursor / enabled state
+// ============================================================================
+
+#[derive(serde::Deserialize)]
+pub(crate) struct NewSourceBody {
+    pub kind: Option<String>,
+    pub name: String,
+    pub url: String,
+    pub namespace_id: Option<String>,
+    pub direction: Option<String>,
+    pub api_key: String,
+}
+
+pub(crate) async fn create_source(
+    State(state): State<AppState>,
+    Json(b): Json<NewSourceBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let url = b.url.trim().to_string();
+    if !url.starts_with("https://") && !url.contains("://127.0.0.1") && !url.contains("://localhost") {
+        return Err(err(StatusCode::BAD_REQUEST, "non-loopback source url must be https"));
+    }
+    let namespace_id = match b.namespace_id.as_deref() {
+        Some(s) => Some(uuid::Uuid::parse_str(s).map_err(|_| err(StatusCode::BAD_REQUEST, "bad namespace_id"))?),
+        None => None,
+    };
+    let credential_ref = format!("hive-{}", uuid::Uuid::new_v4());
+    let cref = credential_ref.clone();
+    let api_key = b.api_key.clone();
+    tokio::task::spawn_blocking(move || crate::gateway_keys::set_key(&cref, &api_key))
+        .await.map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?;
+    let id = state.pg.create_knowledge_source(&crate::db::pg_store::NewKnowledgeSource {
+        kind: b.kind.unwrap_or_else(|| "hive_mind".into()),
+        name: b.name,
+        url,
+        namespace_id,
+        credential_ref,
+        direction: b.direction.unwrap_or_else(|| "both".into()),
+    }).await.map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+    Ok(Json(serde_json::json!({ "id": id.to_string() })))
+}
+
+pub(crate) async fn list_sources(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let rows = state.pg.list_knowledge_sources().await.map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+    let out: Vec<_> = rows.into_iter().map(|s| serde_json::json!({
+        "id": s.id, "kind": s.kind, "name": s.name, "url": s.url,
+        "namespace_id": s.namespace_id, "direction": s.direction,
+        "last_seq": s.last_seq, "enabled": s.enabled })).collect();
+    Ok(Json(serde_json::json!({ "sources": out })))
+}
+
+pub(crate) async fn delete_source(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let sid = uuid::Uuid::parse_str(&id).map_err(|_| err(StatusCode::BAD_REQUEST, "bad id"))?;
+    if let Ok(Some(s)) = state.pg.get_knowledge_source(&sid).await {
+        let cref = s.credential_ref.clone();
+        let _ = tokio::task::spawn_blocking(move || crate::gateway_keys::delete_key(&cref)).await;
+    }
+    let removed = state.pg.delete_knowledge_source(&sid).await.map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+    if removed { Ok(Json(serde_json::json!({ "deleted": true }))) } else { Err(err(StatusCode::NOT_FOUND, "no such source")) }
+}
+
+pub(crate) async fn sync_source(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let sid = uuid::Uuid::parse_str(&id).map_err(|_| err(StatusCode::BAD_REQUEST, "bad id"))?;
+    let src = state.pg.get_knowledge_source(&sid).await.map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "no such source"))?;
+    let client = reqwest::Client::new();
+    let stats = crate::federation::pull_source(&state.pg, &client, &src).await
+        .map_err(|e| err(StatusCode::BAD_GATEWAY, &e))?;
+    Ok(Json(serde_json::to_value(stats).unwrap()))
+}
+
+pub(crate) async fn source_status(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let sid = uuid::Uuid::parse_str(&id).map_err(|_| err(StatusCode::BAD_REQUEST, "bad id"))?;
+    let src = state.pg.get_knowledge_source(&sid).await.map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "no such source"))?;
+    Ok(Json(serde_json::json!({ "id": src.id, "name": src.name, "url": src.url,
+        "direction": src.direction, "last_seq": src.last_seq, "enabled": src.enabled })))
 }
 
 #[cfg(test)]
