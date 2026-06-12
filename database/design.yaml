@@ -18,6 +18,22 @@ schemas:
   - history
   - inference
   - gateway
+# Governance federation (issue #25): the `hive` schema lives in this one DDL tree
+# but is selectively applied. `sensei-hive` deploys the `hive` scope (its tables +
+# the shared governance closure, and NO extensions — its embedded Postgres has no
+# pgvector). The daemon deploys the `default` scope: everything except the hive
+# schema, with all extensions (vector) as before.
+scopes:
+  hive:
+    # deps:include pulls FK-referenced tables (sensei.namespaces → sensei.scopes)
+    # automatically; the enforcement ENUM is a column *type*, not an FK, so dbd's
+    # closure can't reach it — include it explicitly.
+    includes: [hive, sensei.enforcement]
+    deps: include
+    extensions: []      # vector-free: the embedded hive PG lacks pgvector
+  default:
+    excludes: [hive]
+    deps: include
 import:
   staging:
     - staging
