@@ -47,7 +47,8 @@ Sections: Nav, Hero, Portfolio (products), Incubation, Approach, OpenSource, Foo
 - `.github/workflows/deploy-website.yml`: **remove `BASE_PATH: /sensei`** (serve at root). One Pages deploy.
 - Custom domain: **apex `sensei-hq.com`** (Pages CNAME). Add a `website/static/CNAME` with `sensei-hq.com` if not already present.
 - **Drop `sensei.sensei-hq.com`** — remove the subdomain DNS record + from Pages config. **Manual/DNS step** (out-of-repo); called out in the plan, not automated.
-- Old top-level Sensei URLs move: `/docs` → `/sensei/docs`, `/faq` → `/sensei/faq`. Young site → acceptable. Add minimal prerendered redirect stubs at `/docs` and `/faq` (meta-refresh → `/sensei/...`) for bookmarks. `/privacy`, `/terms` unchanged.
+- **Canonical domain = `.com`; `sensei-hq.org` 301-redirects to `sensei-hq.com`** (not served interchangeably — avoids duplicate-content SEO and GitHub Pages' one-custom-domain limit). Implemented as **registrar/DNS domain forwarding** (or a Cloudflare redirect rule), not in-repo. The repo `CNAME` and app stay `.com`-only.
+- **Fresh release — no redirects.** Old top-level Sensei URLs (`/docs`, `/faq`) simply move to `/sensei/*`; no redirect stubs for old paths. `/privacy`, `/terms` remain at root.
 
 ## Testing
 Playwright e2e (site already has Playwright + `tests/`):
