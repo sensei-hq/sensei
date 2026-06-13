@@ -2969,6 +2969,9 @@ impl PgStore {
     ///   3. `ident` matches a repo/folder by name → if folder has a project_id,
     ///      return that project's folders; else return `[folder.id]`.
     ///   4. No match → empty Vec.
+    /// Note: a bare child-folder name (kind='folder') is not resolvable here —
+    /// `get_repo_by_name` only matches git/subtree/standalone roots — so it falls
+    /// through to the empty Vec. Callers pass a project name/UUID or a repo name.
     pub async fn scope_folder_ids(&self, ident: &str) -> Result<Vec<uuid::Uuid>, String> {
         // (1) Try project name lookup first.
         if let Some(proj) = self.get_project_by_name(ident).await? {
@@ -3005,6 +3008,9 @@ impl PgStore {
             .iter()
             .filter_map(|f| crate::api::util::json_uuid(&f["id"]))
             .collect();
+        // folders.id is the PK so dupes can't occur today, but sort+dedup keeps
+        // this robust if list_folders_by_project ever grows a join.
+        ids.sort_unstable();
         ids.dedup();
         Ok(ids)
     }
