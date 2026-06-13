@@ -66,11 +66,18 @@ pub(crate) async fn unified_query(
     Ok(Json(result))
 }
 
-/// Resolve a repo_id string to a folder UUID, returning None if not found.
+/// Resolve a repo_id / project name / project UUID to a list of folder UUIDs
+/// (project-scoped). Returns an empty Vec if unknown.
+pub(crate) async fn resolve_scope_ids(state: &AppState, repo_id: &str) -> Vec<uuid::Uuid> {
+    if repo_id.is_empty() { return vec![]; }
+    state.pg.scope_folder_ids(repo_id).await.unwrap_or_default()
+}
+
+/// Resolve a repo_id string to a single folder UUID.
+/// Kept for callers that still need a single UUID (e.g. session/community ops).
 pub(crate) async fn resolve_folder_id(state: &AppState, repo_id: &str) -> Option<uuid::Uuid> {
-    if repo_id.is_empty() { return None; }
-    state.pg.get_repo_by_name(repo_id).await.ok().flatten()
-        .and_then(|f| crate::api::util::json_uuid(&f["id"]))
+    let ids = resolve_scope_ids(state, repo_id).await;
+    ids.into_iter().next()
 }
 
 pub(crate) async fn query_libs(state: &AppState, q: &str, repo_id: &str, _solution_id: &Option<String>) -> serde_json::Value {
@@ -110,8 +117,9 @@ pub(crate) async fn query_libs(state: &AppState, q: &str, repo_id: &str, _soluti
 
 pub(crate) async fn query_functions(state: &AppState, q: &str, repo_id: &str) -> serde_json::Value {
     let term = extract_search_term(q);
-    let results = if let Some(fid) = resolve_folder_id(state, repo_id).await {
-        state.pg.search_functions(&fid, &term).await.unwrap_or_default()
+    let ids = resolve_scope_ids(state, repo_id).await;
+    let results = if !ids.is_empty() {
+        state.pg.search_functions_scoped(&ids, &term).await.unwrap_or_default()
     } else {
         vec![]
     };
@@ -124,8 +132,9 @@ pub(crate) async fn query_functions(state: &AppState, q: &str, repo_id: &str) ->
 
 pub(crate) async fn query_types(state: &AppState, q: &str, repo_id: &str) -> serde_json::Value {
     let term = extract_search_term(q);
-    let results = if let Some(fid) = resolve_folder_id(state, repo_id).await {
-        state.pg.search_types(&fid, &term).await.unwrap_or_default()
+    let ids = resolve_scope_ids(state, repo_id).await;
+    let results = if !ids.is_empty() {
+        state.pg.search_types_scoped(&ids, &term).await.unwrap_or_default()
     } else {
         vec![]
     };
@@ -185,11 +194,13 @@ pub(crate) async fn query_docs(state: &AppState, q: &str, repo_id: &str) -> serd
 }
 
 pub(crate) async fn query_communities(state: &AppState, repo_id: &str) -> serde_json::Value {
-    let communities = if let Some(fid) = resolve_folder_id(state, repo_id).await {
-        state.pg.list_communities(&fid).await.unwrap_or_default()
-    } else {
-        vec![]
-    };
+    // Communities are stored per-folder; iterate over all scoped folders.
+    let ids = resolve_scope_ids(state, repo_id).await;
+    let mut communities = Vec::new();
+    for fid in ids {
+        let mut c = state.pg.list_communities(&fid).await.unwrap_or_default();
+        communities.append(&mut c);
+    }
     serde_json::json!({
         "type": "communities",
         "results": communities,
@@ -198,9 +209,10 @@ pub(crate) async fn query_communities(state: &AppState, repo_id: &str) -> serde_
 
 pub(crate) async fn query_general(state: &AppState, q: &str, repo_id: &str) -> serde_json::Value {
     let term = extract_search_term(q);
-    let (functions, types) = if let Some(fid) = resolve_folder_id(state, repo_id).await {
-        let fns = state.pg.search_functions(&fid, &term).await.unwrap_or_default();
-        let tys = state.pg.search_types(&fid, &term).await.unwrap_or_default();
+    let ids = resolve_scope_ids(state, repo_id).await;
+    let (functions, types) = if !ids.is_empty() {
+        let fns = state.pg.search_functions_scoped(&ids, &term).await.unwrap_or_default();
+        let tys = state.pg.search_types_scoped(&ids, &term).await.unwrap_or_default();
         (fns, tys)
     } else {
         (vec![], vec![])
