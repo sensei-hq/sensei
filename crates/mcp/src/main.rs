@@ -673,65 +673,19 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
     daemon_result(result)
 }
 
-/// Resolve a project name/library name to a repo_id by querying the daemon.
+/// Resolve a project name/library name to a project **name** by querying the daemon.
 ///
 /// Returns `None` when no project matches the hint so callers can return a
 /// clear error to the LLM rather than silently forwarding an arbitrary string.
 fn resolve_project(hint: &str, client: &reqwest::blocking::Client) -> Option<String> {
     let projects = get_projects(client);
-    let hint_lower = hint.to_lowercase();
-
-    // Exact repo_id match
-    if let Some(p) = projects.iter().find(|p| p["repo_id"].as_str() == Some(hint)) {
-        return Some(p["repo_id"].as_str().unwrap_or("").to_string());
-    }
-
-    // Exact name match (case insensitive)
-    if let Some(p) = projects.iter().find(|p| {
-        p["name"].as_str().map(|n| n.to_lowercase()) == Some(hint_lower.clone())
-    }) {
-        return Some(p["repo_id"].as_str().unwrap_or("").to_string());
-    }
-
-    // Partial name match
-    if let Some(p) = projects.iter().find(|p| {
-        p["name"].as_str().map(|n| n.to_lowercase().contains(&hint_lower)) == Some(true)
-    }) {
-        return Some(p["repo_id"].as_str().unwrap_or("").to_string());
-    }
-
-    // Library-name match: find the project that owns the lib
-    if projects.iter().any(|p| {
-        p["libs"].as_array().map(|libs| {
-            libs.iter().any(|l| l.as_str().map(|s| s.to_lowercase()) == Some(hint_lower.clone()))
-        }).unwrap_or(false)
-    }) && let Some(lib_project) = projects.iter().find(|p2| {
-        p2["name"].as_str().map(|n| n.to_lowercase()) == Some(hint_lower.clone())
-    }) {
-        return Some(lib_project["repo_id"].as_str().unwrap_or("").to_string());
-    }
-
-    None
+    resolve_project_in(&projects, hint)
 }
 
-/// Resolve current project from CWD by matching against registered project paths.
+/// Resolve current project name from CWD by matching against registered project folder paths.
 fn resolve_project_from_cwd(cwd: &str, client: &reqwest::blocking::Client) -> String {
     let projects = get_projects(client);
-
-    // Find project whose path is a prefix of (or equal to) CWD
-    let mut best_match = String::new();
-    let mut best_len = 0;
-
-    for p in &projects {
-        if let Some(path) = p["path"].as_str()
-            && cwd.starts_with(path) && path.len() > best_len
-        {
-            best_match = p["repo_id"].as_str().unwrap_or("").to_string();
-            best_len = path.len();
-        }
-    }
-
-    best_match
+    resolve_from_cwd_in(&projects, cwd)
 }
 
 fn get_projects(client: &reqwest::blocking::Client) -> Vec<Value> {
@@ -740,6 +694,67 @@ fn get_projects(client: &reqwest::blocking::Client) -> Vec<Value> {
         .ok()
         .and_then(|r| r.json::<Vec<Value>>().ok())
         .unwrap_or_default()
+}
+
+/// Pure function: resolve a project hint to a project **name** from a slice of
+/// `/api/projects` rows.  Matching order:
+///   1. Exact `id` (UUID) match
+///   2. Exact `name` match (case-insensitive)
+///   3. Partial `name` match (`contains`, case-insensitive)
+///
+/// Returns `None` when nothing matches.
+fn resolve_project_in(projects: &[Value], hint: &str) -> Option<String> {
+    let hint_lower = hint.to_lowercase();
+
+    // 1. Exact id match
+    if let Some(p) = projects.iter().find(|p| p["id"].as_str() == Some(hint)) {
+        if let Some(name) = p["name"].as_str() {
+            return Some(name.to_string());
+        }
+    }
+
+    // 2. Exact name match (case-insensitive)
+    if let Some(p) = projects.iter().find(|p| {
+        p["name"].as_str().map(|n| n.to_lowercase()) == Some(hint_lower.clone())
+    }) {
+        if let Some(name) = p["name"].as_str() {
+            return Some(name.to_string());
+        }
+    }
+
+    // 3. Partial name match
+    if let Some(p) = projects.iter().find(|p| {
+        p["name"].as_str().map(|n| n.to_lowercase().contains(&hint_lower)) == Some(true)
+    }) {
+        if let Some(name) = p["name"].as_str() {
+            return Some(name.to_string());
+        }
+    }
+
+    None
+}
+
+/// Pure function: resolve a project name from `cwd` by matching against each
+/// project's `folders[].abs_path`.  Picks the project whose folder has the
+/// longest `abs_path` that is a prefix of `cwd`.  Returns "" if no match.
+fn resolve_from_cwd_in(projects: &[Value], cwd: &str) -> String {
+    let mut best_name = String::new();
+    let mut best_len = 0usize;
+
+    for p in projects {
+        if let Some(folders) = p["folders"].as_array() {
+            for folder in folders {
+                if let Some(abs_path) = folder["abs_path"].as_str() {
+                    if cwd.starts_with(abs_path) && abs_path.len() > best_len {
+                        best_len = abs_path.len();
+                        best_name = p["name"].as_str().unwrap_or("").to_string();
+                    }
+                }
+            }
+        }
+    }
+
+    best_name
 }
 
 fn tool(name: &str, description: &str, required: &[(&str, &str, &str)], optional: &[(&str, &str, &str)]) -> Value {
@@ -763,4 +778,43 @@ fn tool(name: &str, description: &str, required: &[(&str, &str, &str)], optional
             "required": req_names,
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn sample() -> Vec<serde_json::Value> {
+        vec![json!({
+            "id": "11111111-1111-1111-1111-111111111111",
+            "name": "sensei",
+            "folders": [
+                {"abs_path": "/Users/x/dev/sensei", "name": "sensei"},
+                {"abs_path": "/Users/x/dev/sensei/crates/senseid", "name": "senseid"}
+            ]
+        })]
+    }
+
+    #[test]
+    fn resolve_project_matches_by_name_not_empty() {
+        assert_eq!(resolve_project_in(&sample(), "sensei"), Some("sensei".into()));
+        assert_eq!(resolve_project_in(&sample(), "SENSEI"), Some("sensei".into()));
+        assert_eq!(resolve_project_in(&sample(), "sens"), Some("sensei".into())); // partial
+        assert_eq!(
+            resolve_project_in(&sample(), "11111111-1111-1111-1111-111111111111"),
+            Some("sensei".into())
+        ); // by id
+        assert_eq!(resolve_project_in(&sample(), "nope"), None);
+    }
+
+    #[test]
+    fn resolve_from_cwd_matches_longest_folder_prefix() {
+        // deeper path → senseid folder wins, but both belong to same project "sensei"
+        assert_eq!(
+            resolve_from_cwd_in(&sample(), "/Users/x/dev/sensei/crates/senseid/src"),
+            "sensei".to_string()
+        );
+        assert_eq!(resolve_from_cwd_in(&sample(), "/tmp/other"), "".to_string());
+    }
 }
