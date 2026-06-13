@@ -306,34 +306,15 @@ impl PgStore {
     }
 
     pub async fn search_functions(&self, folder_id: &uuid::Uuid, query: &str) -> Result<Vec<serde_json::Value>, String> {
-        let rows: Vec<(uuid::Uuid, String, String, Option<String>, Option<i32>)> = sqlx_core::query_as::query_as(
-            "SELECT id, name, file_path, signature, line_start FROM sensei.nodes
-             WHERE folder_id = $1 AND kind IN ('function'::sensei.node_kind, 'method'::sensei.node_kind)
-             AND (name ILIKE '%' || $2 || '%' OR signature ILIKE '%' || $2 || '%')
-             ORDER BY name LIMIT 50"
-        ).bind(folder_id).bind(query).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
-        Ok(rows.into_iter().map(|(id, name, fp, sig, line)| {
-            serde_json::json!({ "id": id, "name": name, "file_path": fp, "signature": sig, "line_start": line })
-        }).collect())
+        self.search_functions_scoped(std::slice::from_ref(folder_id), query).await
     }
 
     pub async fn search_types(&self, folder_id: &uuid::Uuid, query: &str) -> Result<Vec<serde_json::Value>, String> {
-        let rows: Vec<(uuid::Uuid, String, String, Option<i32>)> = sqlx_core::query_as::query_as(
-            "SELECT id, name, file_path, line_start FROM sensei.nodes
-             WHERE folder_id = $1 AND kind IN ('class'::sensei.node_kind, 'struct'::sensei.node_kind, 'interface'::sensei.node_kind, 'enum'::sensei.node_kind, 'type'::sensei.node_kind)
-             AND name ILIKE '%' || $2 || '%'
-             ORDER BY name LIMIT 50"
-        ).bind(folder_id).bind(query).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
-        Ok(rows.into_iter().map(|(id, name, fp, line)| {
-            serde_json::json!({ "id": id, "name": name, "file_path": fp, "line_start": line })
-        }).collect())
+        self.search_types_scoped(std::slice::from_ref(folder_id), query).await
     }
 
     pub async fn count_nodes_by_kind(&self, folder_id: &uuid::Uuid) -> Result<std::collections::HashMap<String, i64>, String> {
-        let rows: Vec<(String, i64)> = sqlx_core::query_as::query_as(
-            "SELECT kind::text, COUNT(*) FROM sensei.nodes WHERE folder_id = $1 GROUP BY kind"
-        ).bind(folder_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
-        Ok(rows.into_iter().collect())
+        self.count_nodes_by_kind_scoped(std::slice::from_ref(folder_id)).await
     }
 
     pub async fn delete_node(&self, node_id: &uuid::Uuid) -> Result<(), String> {
@@ -554,12 +535,7 @@ impl PgStore {
     }
 
     pub async fn get_nodes_by_folder(&self, folder_id: &uuid::Uuid) -> Result<Vec<serde_json::Value>, String> {
-        let rows: Vec<(uuid::Uuid, String, String, String, Option<uuid::Uuid>, Option<i32>, Option<i32>)> = sqlx_core::query_as::query_as(
-            "SELECT id, kind::text, name, file_path, parent_id, line_start, line_end FROM sensei.nodes WHERE folder_id = $1 ORDER BY file_path, line_start"
-        ).bind(folder_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
-        Ok(rows.into_iter().map(|(id, kind, name, fp, pid, ls, le)| {
-            serde_json::json!({ "id": id, "kind": kind, "name": name, "file_path": fp, "parent_id": pid, "line_start": ls, "line_end": le })
-        }).collect())
+        self.get_nodes_scoped(std::slice::from_ref(folder_id)).await
     }
 
     /// Nodes in a folder that still need an embedding, restricted to the kinds
@@ -755,37 +731,46 @@ impl PgStore {
     }
 
     pub async fn get_edges_by_kind(&self, folder_id: &uuid::Uuid, kind: &str) -> Result<Vec<serde_json::Value>, String> {
-        let rows: Vec<(uuid::Uuid, uuid::Uuid, Option<uuid::Uuid>, Option<String>)> = sqlx_core::query_as::query_as(
-            "SELECT id, source_id, target_id, target_name FROM sensei.edges WHERE folder_id = $1 AND kind = $2::sensei.edge_kind"
-        ).bind(folder_id).bind(kind).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
-        Ok(rows.into_iter().map(|(id, src, tgt, name)| {
-            serde_json::json!({ "id": id, "source_id": src, "target_id": tgt, "target_name": name })
-        }).collect())
+        self.get_edges_scoped(std::slice::from_ref(folder_id), kind).await
     }
 
     // ── View-based graph queries ────────────────────────────────────
 
     /// Find callers of a function by name via the call_graph view.
-    pub async fn get_callers_by_name(&self, folder_name: &str, target: &str) -> Result<Vec<serde_json::Value>, String> {
+    /// `scope` is resolved via [`scope_folder_ids`]: a project name/UUID expands
+    /// to all of that project's folders; a bare folder name falls back to just
+    /// that folder.
+    pub async fn get_callers_by_name(&self, scope: &str, target: &str) -> Result<Vec<serde_json::Value>, String> {
+        let folder_ids = self.scope_folder_ids(scope).await?;
+        if folder_ids.is_empty() {
+            return Ok(vec![]);
+        }
         let rows: Vec<(String, String, String, Option<i32>)> = sqlx_core::query_as::query_as(
             "SELECT source_name, source_kind::text, source_file, source_line
                FROM sensei.call_graph
-              WHERE folder = $1 AND target_name = $2 AND edge_kind = 'calls'
+              WHERE folder_id = ANY($1) AND target_name = $2 AND edge_kind = 'calls'
               ORDER BY source_file, source_line LIMIT 100"
-        ).bind(folder_name).bind(target).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        ).bind(&folder_ids[..]).bind(target).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(|(name, kind, file, line)| {
             serde_json::json!({ "name": name, "kind": kind, "file_path": file, "line_start": line })
         }).collect())
     }
 
     /// Find callees of a function by name via the call_graph view.
-    pub async fn get_callees_by_name(&self, folder_name: &str, source: &str) -> Result<Vec<serde_json::Value>, String> {
+    /// `scope` is resolved via [`scope_folder_ids`]: a project name/UUID expands
+    /// to all of that project's folders; a bare folder name falls back to just
+    /// that folder.
+    pub async fn get_callees_by_name(&self, scope: &str, source: &str) -> Result<Vec<serde_json::Value>, String> {
+        let folder_ids = self.scope_folder_ids(scope).await?;
+        if folder_ids.is_empty() {
+            return Ok(vec![]);
+        }
         let rows: Vec<(Option<String>, Option<String>, Option<String>, Option<i32>, Option<String>)> = sqlx_core::query_as::query_as(
             "SELECT target_name, target_kind::text, target_file, target_line, unresolved_target
                FROM sensei.call_graph
-              WHERE folder = $1 AND source_name = $2 AND edge_kind = 'calls'
+              WHERE folder_id = ANY($1) AND source_name = $2 AND edge_kind = 'calls'
               ORDER BY target_file, target_line LIMIT 100"
-        ).bind(folder_name).bind(source).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        ).bind(&folder_ids[..]).bind(source).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(|(name, kind, file, line, unresolved)| {
             let display_name = name.or(unresolved).unwrap_or_default();
             serde_json::json!({ "name": display_name, "kind": kind, "file_path": file, "line_start": line })
@@ -2969,6 +2954,116 @@ impl PgStore {
         Ok(row.map(|(title, content, impact, enforcement, rule_type, origin, scope_key, slug, name)|
             MemoryPushPayload { title, content, impact, enforcement, rule_type, origin, scope_key, slug, name }))
     }
+
+    // ── Scoped query helpers (#60) ─────────────────────────────────────
+
+    /// Resolve a scope identifier (project name, project UUID, or folder name)
+    /// to the set of folder ids to query.  A project expands to ALL its folders
+    /// (children included).  A bare folder name that has a project expands to
+    /// that project's folders; a folder with no project falls back to just
+    /// itself.  Returns an empty Vec if nothing matches.
+    ///
+    /// Resolution order:
+    ///   1. `ident` matches a project by name → all that project's folder ids.
+    ///   2. `ident` is a valid UUID + project with that id exists → its folders.
+    ///   3. `ident` matches a repo/folder by name → if folder has a project_id,
+    ///      return that project's folders; else return `[folder.id]`.
+    ///   4. No match → empty Vec.
+    pub async fn scope_folder_ids(&self, ident: &str) -> Result<Vec<uuid::Uuid>, String> {
+        // (1) Try project name lookup first.
+        if let Some(proj) = self.get_project_by_name(ident).await? {
+            let pid = crate::api::util::json_uuid(&proj["id"])
+                .ok_or_else(|| format!("scope_folder_ids: project row missing id for '{}'", ident))?;
+            return self.folder_ids_for_project(&pid).await;
+        }
+
+        // (2) Try parsing ident as a UUID and look up the project directly.
+        if let Ok(uid) = uuid::Uuid::parse_str(ident)
+            && self.get_project(&uid).await?.is_some()
+        {
+            return self.folder_ids_for_project(&uid).await;
+        }
+
+        // (3) Try folder/repo lookup by name.
+        if let Some(folder) = self.get_repo_by_name(ident).await? {
+            let fid = crate::api::util::json_uuid(&folder["id"])
+                .ok_or_else(|| format!("scope_folder_ids: folder row missing id for '{}'", ident))?;
+            if let Some(pid) = crate::api::util::json_uuid(&folder["project_id"]) {
+                return self.folder_ids_for_project(&pid).await;
+            }
+            return Ok(vec![fid]);
+        }
+
+        // (4) No match.
+        Ok(vec![])
+    }
+
+    /// Collect all folder ids belonging to a project, deduped.
+    async fn folder_ids_for_project(&self, project_id: &uuid::Uuid) -> Result<Vec<uuid::Uuid>, String> {
+        let folders = self.list_folders_by_project(project_id).await?;
+        let mut ids: Vec<uuid::Uuid> = folders
+            .iter()
+            .filter_map(|f| crate::api::util::json_uuid(&f["id"]))
+            .collect();
+        ids.dedup();
+        Ok(ids)
+    }
+
+    // ── Project-scoped query variants (#60) ───────────────────────────
+
+    /// Search functions across multiple folders (project-scoped variant).
+    pub async fn search_functions_scoped(&self, folder_ids: &[uuid::Uuid], query: &str) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, String, String, Option<String>, Option<i32>)> = sqlx_core::query_as::query_as(
+            "SELECT id, name, file_path, signature, line_start FROM sensei.nodes
+             WHERE folder_id = ANY($1) AND kind IN ('function'::sensei.node_kind, 'method'::sensei.node_kind)
+             AND (name ILIKE '%' || $2 || '%' OR signature ILIKE '%' || $2 || '%')
+             ORDER BY name LIMIT 50"
+        ).bind(folder_ids).bind(query).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id, name, fp, sig, line)| {
+            serde_json::json!({ "id": id, "name": name, "file_path": fp, "signature": sig, "line_start": line })
+        }).collect())
+    }
+
+    /// Search types across multiple folders (project-scoped variant).
+    pub async fn search_types_scoped(&self, folder_ids: &[uuid::Uuid], query: &str) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, String, String, Option<i32>)> = sqlx_core::query_as::query_as(
+            "SELECT id, name, file_path, line_start FROM sensei.nodes
+             WHERE folder_id = ANY($1) AND kind IN ('class'::sensei.node_kind, 'struct'::sensei.node_kind, 'interface'::sensei.node_kind, 'enum'::sensei.node_kind, 'type'::sensei.node_kind)
+             AND name ILIKE '%' || $2 || '%'
+             ORDER BY name LIMIT 50"
+        ).bind(folder_ids).bind(query).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id, name, fp, line)| {
+            serde_json::json!({ "id": id, "name": name, "file_path": fp, "line_start": line })
+        }).collect())
+    }
+
+    /// Count nodes by kind across multiple folders (project-scoped variant).
+    pub async fn count_nodes_by_kind_scoped(&self, folder_ids: &[uuid::Uuid]) -> Result<std::collections::HashMap<String, i64>, String> {
+        let rows: Vec<(String, i64)> = sqlx_core::query_as::query_as(
+            "SELECT kind::text, COUNT(*) FROM sensei.nodes WHERE folder_id = ANY($1) GROUP BY kind"
+        ).bind(folder_ids).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().collect())
+    }
+
+    /// Get all nodes across multiple folders (project-scoped variant).
+    pub async fn get_nodes_scoped(&self, folder_ids: &[uuid::Uuid]) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, String, String, String, Option<uuid::Uuid>, Option<i32>, Option<i32>)> = sqlx_core::query_as::query_as(
+            "SELECT id, kind::text, name, file_path, parent_id, line_start, line_end FROM sensei.nodes WHERE folder_id = ANY($1) ORDER BY file_path, line_start"
+        ).bind(folder_ids).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id, kind, name, fp, pid, ls, le)| {
+            serde_json::json!({ "id": id, "kind": kind, "name": name, "file_path": fp, "parent_id": pid, "line_start": ls, "line_end": le })
+        }).collect())
+    }
+
+    /// Get edges by kind across multiple folders (project-scoped variant).
+    pub async fn get_edges_scoped(&self, folder_ids: &[uuid::Uuid], kind: &str) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, uuid::Uuid, Option<uuid::Uuid>, Option<String>)> = sqlx_core::query_as::query_as(
+            "SELECT id, source_id, target_id, target_name FROM sensei.edges WHERE folder_id = ANY($1) AND kind = $2::sensei.edge_kind"
+        ).bind(folder_ids).bind(kind).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id, src, tgt, name)| {
+            serde_json::json!({ "id": id, "source_id": src, "target_id": tgt, "target_name": name })
+        }).collect())
+    }
 }
 
 #[cfg(test)]
@@ -3925,6 +4020,121 @@ mod tests {
 
         assert!(pg.delete_knowledge_source(&id).await.unwrap());
         assert!(pg.get_knowledge_source(&id).await.unwrap().is_none());
+    }
+
+    // ── scope_folder_ids tests (#60) ─────────────────────────────────
+
+    /// Build an isolated project + root folder + child subfolder for scope tests.
+    async fn setup_scope_test(s: &PgStore, suffix: &str) -> (uuid::Uuid, uuid::Uuid, uuid::Uuid) {
+        let proj_name = format!("_test:scope:{}", suffix);
+        let proj_id = s.create_project(&proj_name, None, None).await.unwrap();
+
+        // Root folder: upsert into folders_to_watch first (foreign-key for root_id).
+        let watch_path = format!("/_test/scope_{}", suffix);
+        let watch_id = s.add_watch_root(&watch_path, &format!("scope_root_{}", suffix), &serde_json::json!([])).await.unwrap();
+
+        // Root repo folder (kind='git', owns root_id = watch_id).
+        let root_abs = format!("/_test/scope_{}/root", suffix);
+        let root_name = format!("scope_root_{}", suffix);
+        let root_id = s.upsert_repo(&watch_id, &root_name, &root_abs).await.unwrap();
+        s.set_folder_project(&root_id, &proj_id, "main", None).await.unwrap();
+
+        // Child subfolder (kind='folder', parent = root, project = proj_id).
+        let child_abs = format!("/_test/scope_{}/root/child", suffix);
+        let child_name = format!("scope_child_{}", suffix);
+        let child_id = s.upsert_subfolder(&watch_id, &child_name, &child_name, &child_abs, Some(&root_id), Some(&proj_id)).await.unwrap();
+
+        (proj_id, root_id, child_id)
+    }
+
+    #[tokio::test]
+    async fn scope_folder_ids_by_project_name_returns_all_folders() {
+        let s = pg_store().await;
+        let uid = uuid::Uuid::new_v4().to_string().replace('-', "")[..8].to_string();
+        let (proj_id, root_id, child_id) = setup_scope_test(&s, &uid).await;
+        let proj_name = format!("_test:scope:{}", uid);
+
+        let ids = s.scope_folder_ids(&proj_name).await.unwrap();
+        assert!(ids.contains(&root_id), "root folder must be in scope ids; got {:?}", ids);
+        assert!(ids.contains(&child_id), "child folder must be in scope ids; got {:?}", ids);
+
+        // Also test by UUID string.
+        let by_uuid = s.scope_folder_ids(&proj_id.to_string()).await.unwrap();
+        assert!(by_uuid.contains(&child_id), "UUID lookup must find child; got {:?}", by_uuid);
+
+        // Nonexistent ident returns empty.
+        let empty = s.scope_folder_ids("nonexistent-xyz-scope-test-noop").await.unwrap();
+        assert!(empty.is_empty(), "nonexistent must be empty; got {:?}", empty);
+
+        // Cleanup.
+        s.delete_nodes_by_folder(&root_id).await.unwrap();
+        s.delete_nodes_by_folder(&child_id).await.unwrap();
+        sqlx_core::query::query("DELETE FROM sensei.folders WHERE id = ANY($1::uuid[])")
+            .bind(vec![child_id, root_id]).execute(s.pool()).await.unwrap();
+        s.delete_project(&proj_id).await.unwrap();
+    }
+
+    // ── project-scoped query variants tests (#60) ─────────────────────
+
+    #[tokio::test]
+    async fn scoped_search_and_count_across_child_folder() {
+        let s = pg_store().await;
+        let uid = uuid::Uuid::new_v4().to_string().replace('-', "")[..8].to_string();
+        let (proj_id, root_id, child_id) = setup_scope_test(&s, &uid).await;
+        let proj_name = format!("_test:scope:{}", uid);
+
+        // Insert a function node in the CHILD folder.
+        let fn_id = s.upsert_node(&child_id, "function", "widget_builder", "src/widget.rs", None, Some("fn widget_builder()"), Some(1), Some(10)).await.unwrap();
+        // Insert a callee node (target) in child folder.
+        let tgt_id = s.upsert_node(&child_id, "function", "render_widget", "src/widget.rs", None, Some("fn render_widget()"), Some(12), Some(20)).await.unwrap();
+        // Insert resolved edge: widget_builder calls render_widget.
+        s.insert_edge(&child_id, &fn_id, Some(&tgt_id), Some("render_widget"), "calls").await.unwrap();
+
+        // Resolve scope.
+        let ids = s.scope_folder_ids(&proj_name).await.unwrap();
+        assert!(!ids.is_empty());
+
+        // search_functions_scoped must find widget_builder.
+        let fns = s.search_functions_scoped(&ids, "widget_builder").await.unwrap();
+        assert!(
+            fns.iter().any(|f| f["name"] == "widget_builder"),
+            "expected widget_builder in {:?}", fns
+        );
+
+        // count_nodes_by_kind_scoped must report at least 2 functions.
+        let counts = s.count_nodes_by_kind_scoped(&ids).await.unwrap();
+        let fn_count = counts.get("function").copied().unwrap_or(0);
+        assert!(fn_count >= 2, "expected >=2 function nodes, got {:?}", counts);
+
+        // get_nodes_scoped must include child nodes.
+        let nodes = s.get_nodes_scoped(&ids).await.unwrap();
+        assert!(nodes.iter().any(|n| n["name"] == "widget_builder"), "nodes_scoped missing widget_builder");
+
+        // get_edges_scoped must return the calls edge.
+        let edges = s.get_edges_scoped(&ids, "calls").await.unwrap();
+        assert!(!edges.is_empty(), "expected >=1 calls edge in scoped result");
+
+        // get_callers_by_name with project name: render_widget is called by widget_builder.
+        let callers = s.get_callers_by_name(&proj_name, "render_widget").await.unwrap();
+        assert!(
+            callers.iter().any(|c| c["name"] == "widget_builder"),
+            "expected widget_builder as caller of render_widget; got {:?}", callers
+        );
+
+        // get_callees_by_name with project name: widget_builder calls render_widget.
+        let callees = s.get_callees_by_name(&proj_name, "widget_builder").await.unwrap();
+        assert!(
+            callees.iter().any(|c| c["name"] == "render_widget"),
+            "expected render_widget as callee of widget_builder; got {:?}", callees
+        );
+
+        // Cleanup.
+        s.delete_nodes_by_folder(&child_id).await.unwrap(); // cascades edges
+        s.delete_nodes_by_folder(&root_id).await.unwrap();
+        sqlx_core::query::query("DELETE FROM sensei.folders WHERE id = ANY($1::uuid[])")
+            .bind(vec![child_id, root_id]).execute(s.pool()).await.unwrap();
+        s.delete_project(&proj_id).await.unwrap();
+        let _ = (fn_id, tgt_id);
     }
 }
 
