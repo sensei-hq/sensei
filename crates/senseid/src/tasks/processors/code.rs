@@ -73,6 +73,7 @@ pub fn process(abs_path: &str, rel_path: &str, ext: &str, content: &str, _repo_i
     let unresolved_calls: Vec<UnresolvedCall> = parsed.edges.iter()
         .map(|e| UnresolvedCall {
             caller_name: e.caller_name.clone(),
+            caller_line: e.caller_line,
             callee_name: e.callee_name.clone(),
         }).collect();
 

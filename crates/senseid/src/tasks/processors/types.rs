@@ -42,6 +42,7 @@ pub struct SymbolResult {
 #[derive(Debug, Clone, Serialize)]
 pub struct UnresolvedCall {
     pub caller_name: String,
+    pub caller_line: u32,
     pub callee_name: String,
 }
 
