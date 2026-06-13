@@ -705,30 +705,26 @@ fn get_projects(client: &reqwest::blocking::Client) -> Vec<Value> {
 /// Returns `None` when nothing matches.
 fn resolve_project_in(projects: &[Value], hint: &str) -> Option<String> {
     let hint_lower = hint.to_lowercase();
+    let name_of = |p: &Value| p["name"].as_str().map(str::to_string);
 
     // 1. Exact id match
-    if let Some(p) = projects.iter().find(|p| p["id"].as_str() == Some(hint)) {
-        if let Some(name) = p["name"].as_str() {
-            return Some(name.to_string());
-        }
+    if let Some(p) = projects.iter().find(|p| p["id"].as_str() == Some(hint))
+        && let Some(name) = name_of(p) {
+        return Some(name);
     }
 
     // 2. Exact name match (case-insensitive)
     if let Some(p) = projects.iter().find(|p| {
         p["name"].as_str().map(|n| n.to_lowercase()) == Some(hint_lower.clone())
-    }) {
-        if let Some(name) = p["name"].as_str() {
-            return Some(name.to_string());
-        }
+    }) && let Some(name) = name_of(p) {
+        return Some(name);
     }
 
     // 3. Partial name match
     if let Some(p) = projects.iter().find(|p| {
         p["name"].as_str().map(|n| n.to_lowercase().contains(&hint_lower)) == Some(true)
-    }) {
-        if let Some(name) = p["name"].as_str() {
-            return Some(name.to_string());
-        }
+    }) && let Some(name) = name_of(p) {
+        return Some(name);
     }
 
     None
@@ -744,11 +740,10 @@ fn resolve_from_cwd_in(projects: &[Value], cwd: &str) -> String {
     for p in projects {
         if let Some(folders) = p["folders"].as_array() {
             for folder in folders {
-                if let Some(abs_path) = folder["abs_path"].as_str() {
-                    if cwd.starts_with(abs_path) && abs_path.len() > best_len {
-                        best_len = abs_path.len();
-                        best_name = p["name"].as_str().unwrap_or("").to_string();
-                    }
+                if let Some(abs_path) = folder["abs_path"].as_str()
+                    && cwd.starts_with(abs_path) && abs_path.len() > best_len {
+                    best_len = abs_path.len();
+                    best_name = p["name"].as_str().unwrap_or("").to_string();
                 }
             }
         }
