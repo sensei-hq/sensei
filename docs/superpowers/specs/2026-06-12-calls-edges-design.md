@@ -105,6 +105,7 @@ lookup; it is unavoidable, not call-specific.
   - `identifier` → itself (`foo`)
   - `scoped_identifier` (`a::b::c`) → last segment (`c`)
   - `field_expression` (`x.m`) → the `field` (`m`)
+  - `generic_function` (turbofish, `foo::<T>()`) → recurse into its inner `function` node, yielding the bare name
   - `macro_invocation` (`println!`, `vec!`, …) → **skipped** (not `call_expression`; noise).
 - **Denylist** — private `const RUST_CALL_DENYLIST: &[&str]` (~20 entries):
   `clone, unwrap, expect, into, to_string, to_owned, as_str, as_ref, iter, into_iter, map,
@@ -183,6 +184,11 @@ walk fn bodies                    upsert file + symbol nodes          for each u
   inference / method-receiver resolution. Accepted per #57.
 - **Not extracted/resolved**: macros, closures stored as values then invoked, function
   pointers, trait-dynamic-dispatch targets.
+- **Calls inside macro argument token-trees** (e.g. `vec![make()]`, `assert_eq!(compute(), 3)`)
+  are invisible — tree-sitter exposes macro args as an opaque `token_tree`, not `call_expression`.
+- **Nested free fns** (`fn outer() { fn inner() {…} }`): `collect_calls` does not descend into a
+  nested `function_item`, so the nested fn's calls are dropped rather than mis-attributed to the
+  outer fn (closures, which are `closure_expression`, are still captured under the enclosing fn).
 - **Other languages** (Python, Svelte, TS) deferred to follow-up issues; they adopt the
   cross-adapter contract above with their own denylists.
 - **No `get_callers` unresolved matching** this increment (decision A).
