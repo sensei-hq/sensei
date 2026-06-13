@@ -1,6 +1,6 @@
 use super::common::field_text;
 use tree_sitter::{Parser, Node};
-use crate::types::{ParsedFile, ParsedSymbol, ParsedImport, SymbolKind};
+use crate::types::{ParsedFile, ParsedSymbol, ParsedImport, ParsedEdge, SymbolKind};
 use crate::ir::{IRBase, IRModule, IRFunction, IRClass, IRMethod, IRParam, IRImport, IRConstant, IRParsedFile, ClassKind, Visibility};
 use super::LanguageAdapter;
 
@@ -29,13 +29,15 @@ impl LanguageAdapter for RustAdapter {
 
         let mut symbols = Vec::new();
         let mut imports = Vec::new();
-        walk_nodes(&root, src, &lines, &mut symbols, &mut imports, None);
+        let mut edges = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        walk_nodes(&root, src, &lines, &mut symbols, &mut imports, &mut edges, &mut seen, None);
 
         ParsedFile {
             file_path: file_path.to_string(),
             language: "rust".to_string(),
             symbols,
-            edges: vec![],
+            edges,
             imports,
         }
     }
@@ -410,7 +412,64 @@ fn empty(path: &str) -> ParsedFile {
     ParsedFile { file_path: path.into(), language: "rust".into(), symbols: vec![], edges: vec![], imports: vec![] }
 }
 
-fn walk_nodes(node: &Node, src: &[u8], lines: &[&str], symbols: &mut Vec<ParsedSymbol>, imports: &mut Vec<ParsedImport>, impl_type: Option<&str>) {
+/// Ubiquitous std/library methods whose call-sites carry no navigation signal.
+/// Skipped at extraction to keep unresolvable noise out of `calls` edges.
+/// Per-adapter by design — each language owns its own list.
+const RUST_CALL_DENYLIST: &[&str] = &[
+    "clone", "unwrap", "expect", "into", "to_string", "to_owned",
+    "as_str", "as_ref", "iter", "into_iter", "map", "unwrap_or",
+    "unwrap_or_default", "ok", "len", "is_empty", "push", "collect",
+    "next", "borrow", "borrow_mut", "lock", "read", "write",
+];
+
+/// Extract the bare callee name from a `call_expression`'s `function` field.
+/// `foo()` → "foo"; `a::b::c()` → "c"; `recv.method()` → "method".
+/// Returns None for unsupported call forms (e.g. calling a closure value).
+fn callee_name(call: &Node, src: &[u8]) -> Option<String> {
+    let func = call.child_by_field_name("function")?;
+    match func.kind() {
+        "identifier" => Some(source_text(&func, src)),
+        "scoped_identifier" => func
+            .child_by_field_name("name")
+            .map(|n| source_text(&n, src))
+            .or_else(|| source_text(&func, src).rsplit("::").next().map(|s| s.to_string())),
+        "field_expression" => func.child_by_field_name("field").map(|n| source_text(&n, src)),
+        _ => None,
+    }
+}
+
+/// Recursively collect call-sites under `node`, attributing each to `caller`.
+/// Descends through all children (incl. closures and nested blocks) so calls
+/// made anywhere in the function body attribute to the enclosing fn.
+/// Dedups per (caller, caller_line, callee) via `seen`.
+fn collect_calls(
+    node: &Node,
+    src: &[u8],
+    caller: &str,
+    caller_line: u32,
+    edges: &mut Vec<ParsedEdge>,
+    seen: &mut std::collections::HashSet<String>,
+) {
+    for i in 0..node.child_count() {
+        let child = node.child(i).unwrap();
+        if child.kind() == "call_expression"
+            && let Some(name) = callee_name(&child, src)
+            && !RUST_CALL_DENYLIST.contains(&name.as_str())
+            && seen.insert(format!("{caller}:{caller_line}:{name}"))
+        {
+            edges.push(ParsedEdge {
+                caller_name: caller.to_string(),
+                caller_line,
+                callee_name: name,
+                callee_file: None,
+            });
+        }
+        collect_calls(&child, src, caller, caller_line, edges, seen);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn walk_nodes(node: &Node, src: &[u8], lines: &[&str], symbols: &mut Vec<ParsedSymbol>, imports: &mut Vec<ParsedImport>, edges: &mut Vec<ParsedEdge>, seen: &mut std::collections::HashSet<String>, impl_type: Option<&str>) {
     for i in 0..node.child_count() {
         let child = node.child(i).unwrap();
         match child.kind() {
@@ -418,12 +477,16 @@ fn walk_nodes(node: &Node, src: &[u8], lines: &[&str], symbols: &mut Vec<ParsedS
                 let name = field_text(&child, "name", src);
                 let is_pub = has_child_kind(&child, "visibility_modifier");
                 let kind = if impl_type.is_some() { SymbolKind::Method } else { SymbolKind::Function };
+                let caller_line = child.start_position().row as u32 + 1;
+                if let Some(body) = child.child_by_field_name("body") {
+                    collect_calls(&body, src, &name, caller_line, edges, seen);
+                }
                 symbols.push(ParsedSymbol {
                     name,
                     kind,
                     signature: line_at(lines, child.start_position().row),
                     docstring: collect_doc_comments(&child, src),
-                    line_start: child.start_position().row as u32 + 1,
+                    line_start: caller_line,
                     line_end: child.end_position().row as u32 + 1,
                     is_exported: is_pub,
                     parent: impl_type.map(|s| s.to_string()),
@@ -494,7 +557,7 @@ fn walk_nodes(node: &Node, src: &[u8], lines: &[&str], symbols: &mut Vec<ParsedS
                 let type_name = field_text(&child, "type", src);
                 let type_name_ref = if type_name.is_empty() { None } else { Some(type_name.as_str()) };
                 if let Some(body) = child.child_by_field_name("body") {
-                    walk_nodes(&body, src, lines, symbols, imports, type_name_ref);
+                    walk_nodes(&body, src, lines, symbols, imports, edges, seen, type_name_ref);
                 }
             }
             "use_declaration" => {
@@ -637,6 +700,73 @@ mod tests {
                 assert!(sym.parent.is_none(), "{} should have no parent", sym.name);
             }
         }
+    }
+
+    // ── Call-site extraction tests ────────────────────────────────────
+
+    #[test]
+    fn extracts_free_function_call() {
+        let pf = parse("pub fn caller() { callee(); }\npub fn callee() {}");
+        assert!(pf.edges.iter().any(|e| e.caller_name == "caller" && e.callee_name == "callee"),
+            "expected caller→callee edge, got {:?}", pf.edges);
+    }
+
+    #[test]
+    fn extracts_path_call_last_segment() {
+        let pf = parse("pub fn f() { std::mem::swap(); }");
+        assert!(pf.edges.iter().any(|e| e.caller_name == "f" && e.callee_name == "swap"),
+            "scoped call should yield last segment 'swap', got {:?}", pf.edges);
+    }
+
+    #[test]
+    fn extracts_method_call() {
+        let pf = parse("pub fn f(pg: Pg) { pg.insert_memory(); }");
+        assert!(pf.edges.iter().any(|e| e.caller_name == "f" && e.callee_name == "insert_memory"),
+            "method call should yield 'insert_memory', got {:?}", pf.edges);
+    }
+
+    #[test]
+    fn skips_denylisted_methods() {
+        let pf = parse("pub fn f(x: String) { let _ = x.clone(); let _ = x.len(); }");
+        assert!(!pf.edges.iter().any(|e| e.callee_name == "clone"), "clone denylisted");
+        assert!(!pf.edges.iter().any(|e| e.callee_name == "len"), "len denylisted");
+    }
+
+    #[test]
+    fn skips_macros() {
+        let pf = parse("pub fn f() { println!(\"hi\"); }");
+        assert!(!pf.edges.iter().any(|e| e.callee_name == "println"), "macros are not call_expressions");
+    }
+
+    #[test]
+    fn dedups_repeated_calls() {
+        let pf = parse("pub fn f() { g(); g(); g(); }\npub fn g() {}");
+        let count = pf.edges.iter().filter(|e| e.caller_name == "f" && e.callee_name == "g").count();
+        assert_eq!(count, 1, "repeated calls to g dedup to one edge");
+    }
+
+    #[test]
+    fn captures_calls_inside_closures() {
+        let pf = parse("pub fn f(v: Vec<u32>) { v.iter().for_each(|_| helper()); }\npub fn helper() {}");
+        assert!(pf.edges.iter().any(|e| e.caller_name == "f" && e.callee_name == "helper"),
+            "call inside a closure attributes to the enclosing fn, got {:?}", pf.edges);
+    }
+
+    #[test]
+    fn same_named_methods_get_distinct_caller_lines() {
+        // Two `new` methods in separate impls each call `setup`.
+        let src = "pub struct A;\nimpl A { pub fn new() -> Self { setup(); A } }\n\npub struct B;\nimpl B { pub fn new() -> Self { setup(); B } }\npub fn setup() {}";
+        let lines = pf_caller_lines(&parse(src), "new", "setup");
+        assert_eq!(lines.len(), 2, "two distinct new→setup edges, got lines {:?}", lines);
+        assert_ne!(lines[0], lines[1], "the two `new` callers have different caller_line");
+    }
+
+    // Helper: collect caller_line for every (caller,callee) edge matching names.
+    fn pf_caller_lines(pf: &ParsedFile, caller: &str, callee: &str) -> Vec<u32> {
+        pf.edges.iter()
+            .filter(|e| e.caller_name == caller && e.callee_name == callee)
+            .map(|e| e.caller_line)
+            .collect()
     }
 
     // ── IR Tests ──────────────────────────────────────────────────────
