@@ -423,17 +423,23 @@ const RUST_CALL_DENYLIST: &[&str] = &[
 ];
 
 /// Extract the bare callee name from a `call_expression`'s `function` field.
-/// `foo()` → "foo"; `a::b::c()` → "c"; `recv.method()` → "method".
+/// `foo()` → "foo"; `a::b::c()` → "c"; `recv.method()` → "method";
+/// `foo::<T>()` (turbofish) → unwraps the `generic_function` to its inner name.
 /// Returns None for unsupported call forms (e.g. calling a closure value).
 fn callee_name(call: &Node, src: &[u8]) -> Option<String> {
-    let func = call.child_by_field_name("function")?;
+    name_of_fn_expr(&call.child_by_field_name("function")?, src)
+}
+
+/// Resolve the bare/last-segment name of a node in function position.
+fn name_of_fn_expr(func: &Node, src: &[u8]) -> Option<String> {
     match func.kind() {
-        "identifier" => Some(source_text(&func, src)),
+        "identifier" => Some(source_text(func, src)),
         "scoped_identifier" => func
             .child_by_field_name("name")
             .map(|n| source_text(&n, src))
-            .or_else(|| source_text(&func, src).rsplit("::").next().map(|s| s.to_string())),
+            .or_else(|| source_text(func, src).rsplit("::").next().map(|s| s.to_string())),
         "field_expression" => func.child_by_field_name("field").map(|n| source_text(&n, src)),
+        "generic_function" => func.child_by_field_name("function").and_then(|f| name_of_fn_expr(&f, src)),
         _ => None,
     }
 }
@@ -442,6 +448,8 @@ fn callee_name(call: &Node, src: &[u8]) -> Option<String> {
 /// Descends through all children (incl. closures and nested blocks) so calls
 /// made anywhere in the function body attribute to the enclosing fn.
 /// Dedups per (caller, caller_line, callee) via `seen`.
+/// Note: calls inside macro argument token-trees (e.g. `vec![f()]`) are not captured —
+/// tree-sitter exposes macro args as an opaque token_tree.
 fn collect_calls(
     node: &Node,
     src: &[u8],
@@ -452,6 +460,12 @@ fn collect_calls(
 ) {
     for i in 0..node.child_count() {
         let child = node.child(i).unwrap();
+        // A nested fn's calls belong to that fn, not the enclosing one.
+        // (Closures are `closure_expression`, not `function_item`, so this
+        // does NOT affect the desirable closure-capture behavior.)
+        if child.kind() == "function_item" {
+            continue;
+        }
         if child.kind() == "call_expression"
             && let Some(name) = callee_name(&child, src)
             && !RUST_CALL_DENYLIST.contains(&name.as_str())
@@ -888,5 +902,28 @@ mod tests {
         assert_eq!(foo.parent.as_deref(), Some("A"));
         let bar = pf.symbols.iter().find(|s| s.name == "bar").unwrap();
         assert_eq!(bar.parent.as_deref(), Some("B"));
+    }
+
+    #[test]
+    fn extracts_turbofish_call() {
+        let pf = parse("pub fn f() { parse::<u32>(); }");
+        assert!(pf.edges.iter().any(|e| e.caller_name == "f" && e.callee_name == "parse"),
+            "turbofish call should yield 'parse', got {:?}", pf.edges);
+    }
+
+    #[test]
+    fn turbofish_associated_fn() {
+        let pf = parse("pub fn f() { Vec::<u8>::new(); }");
+        assert!(pf.edges.iter().any(|e| e.caller_name == "f" && e.callee_name == "new"),
+            "turbofish assoc fn should yield 'new', got {:?}", pf.edges);
+    }
+
+    #[test]
+    fn nested_fn_calls_not_attributed_to_outer() {
+        let pf = parse("pub fn outer() { fn inner() { deep(); } inner(); }\npub fn deep() {}");
+        assert!(pf.edges.iter().any(|e| e.caller_name == "outer" && e.callee_name == "inner"),
+            "outer→inner edge expected, got {:?}", pf.edges);
+        assert!(!pf.edges.iter().any(|e| e.caller_name == "outer" && e.callee_name == "deep"),
+            "deep() must NOT be attributed to outer, got {:?}", pf.edges);
     }
 }
