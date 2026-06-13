@@ -3058,11 +3058,11 @@ impl PgStore {
 
     /// Get all nodes across multiple folders (project-scoped variant).
     pub async fn get_nodes_scoped(&self, folder_ids: &[uuid::Uuid]) -> Result<Vec<serde_json::Value>, String> {
-        let rows: Vec<(uuid::Uuid, String, String, String, Option<uuid::Uuid>, Option<i32>, Option<i32>)> = sqlx_core::query_as::query_as(
-            "SELECT id, kind::text, name, file_path, parent_id, line_start, line_end FROM sensei.nodes WHERE folder_id = ANY($1) ORDER BY file_path, line_start"
+        let rows: Vec<(uuid::Uuid, String, String, String, Option<uuid::Uuid>, Option<i32>, Option<i32>, uuid::Uuid)> = sqlx_core::query_as::query_as(
+            "SELECT id, kind::text, name, file_path, parent_id, line_start, line_end, folder_id FROM sensei.nodes WHERE folder_id = ANY($1) ORDER BY file_path, line_start"
         ).bind(folder_ids).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
-        Ok(rows.into_iter().map(|(id, kind, name, fp, pid, ls, le)| {
-            serde_json::json!({ "id": id, "kind": kind, "name": name, "file_path": fp, "parent_id": pid, "line_start": ls, "line_end": le })
+        Ok(rows.into_iter().map(|(id, kind, name, fp, pid, ls, le, folder_id)| {
+            serde_json::json!({ "id": id, "kind": kind, "name": name, "file_path": fp, "parent_id": pid, "line_start": ls, "line_end": le, "folder_id": folder_id })
         }).collect())
     }
 
