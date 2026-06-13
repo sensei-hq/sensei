@@ -61,8 +61,12 @@ both: call-sites are extracted **and** sourced from the caller function node.
    function's node**, not the file node. This is what makes *both* `get_callers` and
    `get_callees` work as advertised.
 5. **Caller attribution by `(name, line_start)`** — same-named methods across `impl` blocks
-   are legal in Rust, so the caller→node lookup keys on `(name, line_start)`, which is
-   exact. Falls back to the file node only when a call has no enclosing named symbol.
+   are legal in Rust, so the caller→node lookup keys on `(name, line_start)`. This is exact
+   in practice — it would only collide if two same-named definitions began on the *same
+   source row* (impossible under normal formatting; the DB node identity is finer, including
+   `kind` and `parent`). The key is drift-free because the adapter computes one `caller_line`
+   variable and uses it for both the symbol's `line_start` and the emitted edge's
+   `caller_line`. Falls back to the file node only when a call has no enclosing named symbol.
 6. **Callee names are bare / last-segment** — `Type::assoc()` → `assoc`, `recv.method()` →
    `method`. Nodes are stored under bare names, so a bare callee maximizes resolution
    matches; a qualified callee would never resolve. Same-named callees resolving to one
@@ -195,5 +199,9 @@ walk fn bodies                    upsert file + symbol nodes          for each u
 
 ## Out of scope but worth a follow-up issue
 
-- Per-language adapters populating `calls` edges (one issue per language).
+- Per-language adapters populating `calls` edges (one issue per language). When they adopt
+  the `(name,line)→id` contract, add a `debug_assert!`/`tracing::debug!` on the file-fallback
+  branch in process.rs (non-empty `caller_name` but no map hit) — those adapters compute
+  symbol lines and caller lines in separate code paths, so the silent fallback could otherwise
+  mask a keying mismatch and quietly regress `get_callees`.
 - Optional: revisit the `get_callers` unresolved quick-win if precision proves too narrow.
