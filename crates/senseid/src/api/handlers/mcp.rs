@@ -5,7 +5,7 @@ use axum::{
 };
 use crate::api::state::AppState;
 use crate::api::util::json_uuid;
-use super::query::resolve_folder_id;
+use super::query::{resolve_folder_id, resolve_scope_ids};
 
 // ── MCP Tool Proxy ──────────────────────────────────────────────────────────
 
@@ -41,9 +41,10 @@ pub(crate) async fn mcp_call_tool(
 
     let result = match tool {
         "search" => {
-            let (fns, types) = if let Some(fid) = resolve_folder_id(&state, repo_id).await {
-                let f = state.pg.search_functions(&fid, query).await.unwrap_or_default();
-                let t = state.pg.search_types(&fid, query).await.unwrap_or_default();
+            let ids = resolve_scope_ids(&state, repo_id).await;
+            let (fns, types) = if !ids.is_empty() {
+                let f = state.pg.search_functions_scoped(&ids, query).await.unwrap_or_default();
+                let t = state.pg.search_types_scoped(&ids, query).await.unwrap_or_default();
                 (f, t)
             } else {
                 (vec![], vec![])
@@ -51,8 +52,9 @@ pub(crate) async fn mcp_call_tool(
             serde_json::json!({"functions": fns, "types": types})
         }
         "get_symbol" => {
-            let fns = if let Some(fid) = resolve_folder_id(&state, repo_id).await {
-                state.pg.search_functions(&fid, query).await.unwrap_or_default()
+            let ids = resolve_scope_ids(&state, repo_id).await;
+            let fns = if !ids.is_empty() {
+                state.pg.search_functions_scoped(&ids, query).await.unwrap_or_default()
             } else {
                 vec![]
             };
@@ -187,9 +189,9 @@ pub(crate) async fn mcp_call_tool(
             serde_json::json!({"hint": "Use POST /api/query directly"})
         }
         "get_project_summary" => {
-            let folder = state.pg.get_repo_by_name(repo_id).await.ok().flatten();
-            let (fns, types) = if let Some(fid) = resolve_folder_id(&state, repo_id).await {
-                let counts = state.pg.count_nodes_by_kind(&fid).await.unwrap_or_default();
+            let ids = resolve_scope_ids(&state, repo_id).await;
+            let (fns, types) = if !ids.is_empty() {
+                let counts = state.pg.count_nodes_by_kind_scoped(&ids).await.unwrap_or_default();
                 let f = counts.get("function").copied().unwrap_or(0)
                     + counts.get("method").copied().unwrap_or(0);
                 let t = counts.get("class").copied().unwrap_or(0)
@@ -199,8 +201,14 @@ pub(crate) async fn mcp_call_tool(
             } else {
                 (0, 0)
             };
+            // Prefer project row for name/metadata; fall back to folder row.
+            let project = if let Ok(Some(proj)) = state.pg.get_project_by_name(repo_id).await {
+                Some(proj)
+            } else {
+                state.pg.get_repo_by_name(repo_id).await.ok().flatten()
+            };
             serde_json::json!({
-                "project": folder,
+                "project": project,
                 "functions": fns,
                 "types": types,
             })

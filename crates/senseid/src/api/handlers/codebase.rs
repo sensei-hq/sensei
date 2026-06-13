@@ -22,14 +22,13 @@ pub(crate) async fn graph_nodes(
     if repo_id.is_empty() {
         return Ok(Json(serde_json::json!({"nodes": [], "edges": []})));
     }
-    let folder = state.pg.get_repo_by_name(&repo_id).await.ok().flatten();
-    if let Some(folder) = folder
-        && let Some(folder_id) = crate::api::util::json_uuid(&folder["id"]) {
-            let nodes = state.pg.get_nodes_by_folder(&folder_id).await.unwrap_or_default();
-            let edges = state.pg.get_edges_by_kind(&folder_id, "calls").await.unwrap_or_default();
-            return Ok(Json(serde_json::json!({"nodes": nodes, "edges": edges})));
-        }
-    Ok(Json(serde_json::json!({"nodes": [], "edges": []})))
+    let ids = state.pg.scope_folder_ids(&repo_id).await.unwrap_or_default();
+    if ids.is_empty() {
+        return Ok(Json(serde_json::json!({"nodes": [], "edges": []})));
+    }
+    let nodes = state.pg.get_nodes_scoped(&ids).await.unwrap_or_default();
+    let edges = state.pg.get_edges_scoped(&ids, "calls").await.unwrap_or_default();
+    Ok(Json(serde_json::json!({"nodes": nodes, "edges": edges})))
 }
 
 #[derive(Deserialize)]
@@ -44,26 +43,24 @@ pub(crate) async fn search_functions(
     State(state): State<AppState>,
     Query(q): Query<SymbolQuery>,
 ) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
-    let folder = state.pg.get_repo_by_name(&q.repo_id).await.ok().flatten();
-    if let Some(folder) = folder
-        && let Some(folder_id) = crate::api::util::json_uuid(&folder["id"]) {
-            let results = state.pg.search_functions(&folder_id, &q.query).await.unwrap_or_default();
-            return Ok(Json(results));
-        }
-    Ok(Json(vec![]))
+    let ids = state.pg.scope_folder_ids(&q.repo_id).await.unwrap_or_default();
+    if ids.is_empty() {
+        return Ok(Json(vec![]));
+    }
+    let results = state.pg.search_functions_scoped(&ids, &q.query).await.unwrap_or_default();
+    Ok(Json(results))
 }
 
 pub(crate) async fn search_types(
     State(state): State<AppState>,
     Query(q): Query<SymbolQuery>,
 ) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
-    let folder = state.pg.get_repo_by_name(&q.repo_id).await.ok().flatten();
-    if let Some(folder) = folder
-        && let Some(folder_id) = crate::api::util::json_uuid(&folder["id"]) {
-            let results = state.pg.search_types(&folder_id, &q.query).await.unwrap_or_default();
-            return Ok(Json(results));
-        }
-    Ok(Json(vec![]))
+    let ids = state.pg.scope_folder_ids(&q.repo_id).await.unwrap_or_default();
+    if ids.is_empty() {
+        return Ok(Json(vec![]));
+    }
+    let results = state.pg.search_types_scoped(&ids, &q.query).await.unwrap_or_default();
+    Ok(Json(results))
 }
 
 #[derive(Deserialize)]
@@ -118,30 +115,29 @@ pub(crate) async fn call_flow(
     Query(q): Query<GraphQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let repo_id = q.repo_id.unwrap_or_default();
-    let folder = state.pg.get_repo_by_name(&repo_id).await.ok().flatten();
-    if let Some(folder) = folder
-        && let Some(folder_id) = crate::api::util::json_uuid(&folder["id"]) {
-            let edges = state.pg.get_edges_by_kind(&folder_id, "calls").await.unwrap_or_default();
-            let nodes = state.pg.get_nodes_by_folder(&folder_id).await.unwrap_or_default();
-            let modules: Vec<serde_json::Value> = nodes.iter()
-                .filter(|n| n["kind"].as_str() == Some("file"))
-                .map(|n| serde_json::json!({
-                    "path": n["file_path"],
-                    "exports": nodes.iter()
-                        .filter(|c| c["file_path"] == n["file_path"] && c["is_exported"].as_bool() == Some(true))
-                        .filter_map(|c| c["name"].as_str())
-                        .collect::<Vec<_>>(),
-                }))
-                .collect();
-            return Ok(Json(serde_json::json!({
-                "modules": modules,
-                "calls": edges,
-                "moduleCount": modules.len(),
-                "exportCount": modules.iter().map(|m| m["exports"].as_array().map_or(0, |a| a.len())).sum::<usize>(),
-                "callCount": edges.len(),
-            })));
-        }
-    Ok(Json(serde_json::json!({"modules": [], "calls": [], "moduleCount": 0, "exportCount": 0, "callCount": 0})))
+    let ids = state.pg.scope_folder_ids(&repo_id).await.unwrap_or_default();
+    if ids.is_empty() {
+        return Ok(Json(serde_json::json!({"modules": [], "calls": [], "moduleCount": 0, "exportCount": 0, "callCount": 0})));
+    }
+    let edges = state.pg.get_edges_scoped(&ids, "calls").await.unwrap_or_default();
+    let nodes = state.pg.get_nodes_scoped(&ids).await.unwrap_or_default();
+    let modules: Vec<serde_json::Value> = nodes.iter()
+        .filter(|n| n["kind"].as_str() == Some("file"))
+        .map(|n| serde_json::json!({
+            "path": n["file_path"],
+            "exports": nodes.iter()
+                .filter(|c| c["file_path"] == n["file_path"] && c["is_exported"].as_bool() == Some(true))
+                .filter_map(|c| c["name"].as_str())
+                .collect::<Vec<_>>(),
+        }))
+        .collect();
+    Ok(Json(serde_json::json!({
+        "modules": modules,
+        "calls": edges,
+        "moduleCount": modules.len(),
+        "exportCount": modules.iter().map(|m| m["exports"].as_array().map_or(0, |a| a.len())).sum::<usize>(),
+        "callCount": edges.len(),
+    })))
 }
 
 pub(crate) async fn detect_communities(
@@ -463,18 +459,22 @@ pub(crate) async fn project_conventions_handler(
     State(state): State<AppState>,
     Path(project): Path<String>,
 ) -> Json<serde_json::Value> {
-    let folder = state.pg.get_repo_by_name(&project).await.ok().flatten();
-    if let Some(folder) = folder
-        && let Some(folder_id) = crate::api::util::json_uuid(&folder["id"]) {
-            let nodes = state.pg.get_nodes_by_folder(&folder_id).await.unwrap_or_default();
-            let patterns = state.pg.list_patterns_by_folder(&folder_id).await.unwrap_or_default();
-            return Json(derive_conventions(&nodes, &patterns));
-        }
-    Json(serde_json::json!({
-        "naming": [],
-        "structure": {"file_count": 0, "directories": [], "languages": {}},
-        "patterns": []
-    }))
+    let ids = state.pg.scope_folder_ids(&project).await.unwrap_or_default();
+    if ids.is_empty() {
+        return Json(serde_json::json!({
+            "naming": [],
+            "structure": {"file_count": 0, "directories": [], "languages": {}},
+            "patterns": []
+        }));
+    }
+    let nodes = state.pg.get_nodes_scoped(&ids).await.unwrap_or_default();
+    // Patterns are still per-folder; aggregate across all folders in scope.
+    let mut patterns = Vec::new();
+    for fid in &ids {
+        let mut fp = state.pg.list_patterns_by_folder(fid).await.unwrap_or_default();
+        patterns.append(&mut fp);
+    }
+    Json(derive_conventions(&nodes, &patterns))
 }
 
 #[cfg(test)]

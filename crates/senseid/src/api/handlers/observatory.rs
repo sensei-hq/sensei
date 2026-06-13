@@ -186,17 +186,16 @@ pub(crate) async fn project_summary(
     State(state): State<AppState>,
     Path(repo_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let folder = state.pg.get_repo_by_name(&repo_id).await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
+    // Resolve to project-scoped folder ids; fall back to NOT_FOUND only if
+    // neither a project name/UUID nor a repo name matches.
+    let ids = state.pg.scope_folder_ids(&repo_id).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if ids.is_empty() {
+        return Err(StatusCode::NOT_FOUND);
+    }
 
-    // Derive counts from PgStore count_nodes_by_kind
-    let folder_id_opt = crate::api::util::json_uuid(&folder["id"]);
-    let counts = if let Some(fid) = &folder_id_opt {
-        state.pg.count_nodes_by_kind(fid).await.unwrap_or_default()
-    } else {
-        std::collections::HashMap::new()
-    };
+    // Derive counts across all folders in scope.
+    let counts = state.pg.count_nodes_by_kind_scoped(&ids).await.unwrap_or_default();
     let fn_count = counts.get("function").copied().unwrap_or(0)
         + counts.get("method").copied().unwrap_or(0);
     let type_count = counts.get("class").copied().unwrap_or(0)
@@ -204,21 +203,55 @@ pub(crate) async fn project_summary(
         + counts.get("interface").copied().unwrap_or(0)
         + counts.get("enum").copied().unwrap_or(0)
         + counts.get("type").copied().unwrap_or(0);
-    let edge_count = if let Some(fid) = &folder_id_opt {
-        state.pg.count_edges(fid).await.unwrap_or(0)
-    } else { 0 };
+    let edge_count = state.pg.count_edges_scoped(&ids).await.unwrap_or(0);
     let pkg_count = counts.get("package").copied().unwrap_or(0);
     let mod_count = counts.get("module").copied().unwrap_or(0);
 
+    // Resolve name/path: prefer project row if repo_id is a project name/UUID,
+    // else fall back to the first (root) folder row.
+    let (name, path, stack, libs, tags, status, indexed_at) =
+        if let Ok(Some(proj)) = state.pg.get_project_by_name(&repo_id).await {
+            (
+                proj["name"].clone(),
+                proj.get("path").cloned().unwrap_or(serde_json::Value::Null),
+                proj.get("stack").cloned().unwrap_or(serde_json::json!([])),
+                serde_json::json!([]),
+                proj.get("tags").cloned().unwrap_or(serde_json::json!([])),
+                serde_json::json!("active"),
+                serde_json::Value::Null,
+            )
+        } else if let Ok(Some(folder)) = state.pg.get_repo_by_name(&repo_id).await {
+            (
+                folder["name"].clone(),
+                folder["abs_path"].clone(),
+                folder.get("stack").cloned().unwrap_or(serde_json::json!([])),
+                folder.get("libs").cloned().unwrap_or(serde_json::json!([])),
+                folder.get("tags").cloned().unwrap_or(serde_json::json!([])),
+                folder.get("status").cloned().unwrap_or(serde_json::json!("active")),
+                folder.get("indexed_at").cloned().unwrap_or(serde_json::Value::Null),
+            )
+        } else {
+            // UUID project lookup
+            (
+                serde_json::Value::String(repo_id.clone()),
+                serde_json::Value::Null,
+                serde_json::json!([]),
+                serde_json::json!([]),
+                serde_json::json!([]),
+                serde_json::json!("active"),
+                serde_json::Value::Null,
+            )
+        };
+
     Ok(Json(serde_json::json!({
-        "repoId": folder["name"],
-        "name": folder["name"],
-        "path": folder["abs_path"],
-        "stack": folder.get("stack").unwrap_or(&serde_json::json!([])),
-        "libs": folder.get("libs").unwrap_or(&serde_json::json!([])),
-        "tags": folder.get("tags").unwrap_or(&serde_json::json!([])),
-        "status": folder.get("status").unwrap_or(&serde_json::json!("active")),
-        "indexedAt": folder.get("indexed_at"),
+        "repoId": name,
+        "name": name,
+        "path": path,
+        "stack": stack,
+        "libs": libs,
+        "tags": tags,
+        "status": status,
+        "indexedAt": indexed_at,
         "functions": fn_count,
         "types": type_count,
         "packages": pkg_count,
@@ -250,34 +283,52 @@ pub(crate) async fn solution_graph(
 
     let mut all_nodes = Vec::new();
     let mut all_edges = Vec::new();
-    let mut seen_repo_ids = std::collections::HashSet::new();
 
+    // Collect folder ids for all member repos, preserving per-repo metadata.
+    let mut folder_ids: Vec<uuid::Uuid> = Vec::new();
+    let mut folder_id_to_repo: std::collections::HashMap<uuid::Uuid, (&serde_json::Value, String)> =
+        std::collections::HashMap::new();
+    let mut seen_repo_ids = std::collections::HashSet::new();
     for repo in &project_repos {
-        let repo_name = repo["name"].as_str().unwrap_or("");
-        if !seen_repo_ids.insert(repo_name.to_string()) {
+        let repo_name = repo["name"].as_str().unwrap_or("").to_string();
+        if !seen_repo_ids.insert(repo_name.clone()) {
             continue;
         }
-
-        // Look up folder UUID for this repo to query PgStore
-        if let Some(folder_id) = crate::api::util::json_uuid(&repo["id"]) {
-            let nodes = state.pg.get_nodes_by_folder(&folder_id).await.unwrap_or_default();
-            let edges = state.pg.get_edges_by_kind(&folder_id, "calls").await.unwrap_or_default();
-            let role = repo["role"].as_str().unwrap_or("unknown");
-            for node in nodes {
-                all_nodes.push(serde_json::json!({
-                    "id": node["id"], "name": node["name"], "kind": node["kind"],
-                    "file": node["file"], "line": node["line"], "complexity": node["complexity"],
-                    "doc_type": node["doc_type"], "level": node["level"], "parent_id": node["parent_id"],
-                    "repoId": repo_name, "role": role,
-                }));
-            }
-            for edge in edges {
-                all_edges.push(serde_json::json!({
-                    "source": edge["source"], "target": edge["target"],
-                    "type": edge["kind"], "repoId": repo_name,
-                }));
-            }
+        if let Some(fid) = crate::api::util::json_uuid(&repo["id"]) {
+            folder_ids.push(fid);
+            folder_id_to_repo.insert(fid, (repo, repo_name));
         }
+    }
+
+    // Fetch nodes and edges in one scoped call each.
+    let scoped_nodes = state.pg.get_nodes_scoped(&folder_ids).await.unwrap_or_default();
+    let scoped_edges = state.pg.get_edges_scoped(&folder_ids, "calls").await.unwrap_or_default();
+
+    // Re-annotate nodes with repoId/role from folder metadata.
+    // get_nodes_scoped returns folder_id — use it to look up the repo.
+    for node in scoped_nodes {
+        let fid_opt = node.get("folder_id")
+            .and_then(|v| v.as_str())
+            .and_then(|s| uuid::Uuid::parse_str(s).ok());
+        let (repo_name, role) = fid_opt
+            .and_then(|fid| folder_id_to_repo.get(&fid))
+            .map(|(r, rn)| (rn.as_str(), r["role"].as_str().unwrap_or("unknown")))
+            .unwrap_or(("", "unknown"));
+        all_nodes.push(serde_json::json!({
+            "id": node["id"], "name": node["name"], "kind": node["kind"],
+            "file": node["file_path"], "line": node["line_start"],
+            "complexity": node.get("complexity"),
+            "doc_type": node.get("doc_type"), "level": node.get("level"),
+            "parent_id": node["parent_id"],
+            "repoId": repo_name, "role": role,
+        }));
+    }
+    for edge in scoped_edges {
+        // edges don't carry folder_id in the scoped result shape; repoId is best-effort
+        all_edges.push(serde_json::json!({
+            "source": edge["source_id"], "target": edge["target_id"],
+            "type": "calls",
+        }));
     }
 
     // Inject project-level hierarchy: soln -> repo nodes for each member
