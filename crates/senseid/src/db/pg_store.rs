@@ -2974,6 +2974,7 @@ impl PgStore {
     ///   3. `ident` matches a repo/folder by name → if folder has a project_id,
     ///      return that project's folders; else return `[folder.id]`.
     ///   4. No match → empty Vec.
+    ///
     /// Note: a bare child-folder name (kind='folder') is not resolvable here —
     /// `get_repo_by_name` only matches git/subtree/standalone roots — so it falls
     /// through to the empty Vec. Callers pass a project name/UUID or a repo name.
