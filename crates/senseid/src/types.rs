@@ -255,6 +255,7 @@ pub struct ParsedSymbol {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParsedEdge {
     pub caller_name: String,
+    pub caller_line: u32,
     pub callee_name: String,
     pub callee_file: Option<String>,
 }
