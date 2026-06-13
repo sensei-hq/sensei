@@ -375,6 +375,70 @@ mod tests {
         assert!(json["queue"].is_object());
     }
 
+    /// #60 Part A — handler-level scoping: index a 2-folder project (root + child
+    /// with a function in the child) and assert that search_functions and
+    /// project_summary scoped to the PROJECT NAME include the child-folder data.
+    #[tokio::test]
+    async fn scoped_search_includes_child_folders() {
+        let (app, state) = test_app().await;
+
+        // Use a unique suffix to avoid conflicts with parallel test runs on the shared DB.
+        let uniq = uuid::Uuid::new_v4().simple().to_string();
+        let proj_name = format!("ScopeTestProject-{}", &uniq[..8]);
+        let root_path = format!("/_test/scope_{}", &uniq[..8]);
+        let root_name = format!("scope-root-{}", &uniq[..8]);
+        let child_name = format!("scope-child-{}", &uniq[..8]);
+        let fn_name = format!("scope_child_fn_{}", &uniq[..8]);
+
+        // Setup: root + child folders registered under a project.
+        let root_id = state.pg.add_watch_root(&root_path, "test", &serde_json::json!([])).await.unwrap();
+        let root_fid = state.pg.upsert_repo(&root_id, &root_name, &format!("{}/{}", root_path, root_name)).await.unwrap();
+        let child_fid = state.pg.upsert_subfolder(
+            &root_id, &child_name,
+            &format!("{}/{}", root_name, child_name),
+            &format!("{}/{}/{}", root_path, root_name, child_name),
+            Some(&root_fid), None,
+        ).await.unwrap();
+
+        let proj_id = state.pg.create_project(&proj_name, None, None).await.unwrap();
+        state.pg.set_folder_project(&root_fid, &proj_id, "backend", None).await.unwrap();
+        state.pg.set_folder_project(&child_fid, &proj_id, "backend", None).await.unwrap();
+
+        // Insert a function only in the child folder.
+        state.pg.upsert_node(
+            &child_fid, "function", &fn_name, "src/lib.rs",
+            None, Some(&format!("fn {}()", fn_name)), Some(1), Some(5),
+        ).await.unwrap();
+
+        // GET /api/graph/functions?repoId=<proj>&q=<fn>
+        let resp = app.clone().oneshot(
+            Request::builder()
+                .uri(format!("/api/graph/functions?repoId={}&q={}", proj_name, fn_name))
+                .body(Body::empty())
+                .unwrap()
+        ).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK, "search_functions should succeed");
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let results: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
+        assert!(
+            results.iter().any(|r| r["name"] == fn_name),
+            "child-folder function must appear when searching by project name; got: {:?}", results
+        );
+
+        // GET /api/repos/{repo_id}/summary — scoped counts should include child.
+        let resp = app.clone().oneshot(
+            Request::builder()
+                .uri(format!("/api/repos/{}/summary", proj_name))
+                .body(Body::empty())
+                .unwrap()
+        ).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK, "project_summary should succeed");
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let summary: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let fn_count = summary["functions"].as_i64().unwrap_or(0);
+        assert!(fn_count >= 1, "summary must count child-folder function; got functions={}", fn_count);
+    }
+
     #[tokio::test]
     async fn scan_folder_finds_repos() {
         let (app, _) = test_app().await;

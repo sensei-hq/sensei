@@ -802,12 +802,17 @@ impl PgStore {
         }).collect())
     }
 
+    /// Count all edges across multiple folders (project-scoped variant).
+    pub async fn count_edges_scoped(&self, folder_ids: &[uuid::Uuid]) -> Result<i64, String> {
+        let row: (i64,) = sqlx_core::query_as::query_as(
+            "SELECT COUNT(*) FROM sensei.edges WHERE folder_id = ANY($1)"
+        ).bind(folder_ids).fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.0)
+    }
+
     /// Count all edges for a folder.
     pub async fn count_edges(&self, folder_id: &uuid::Uuid) -> Result<i64, String> {
-        let row: (i64,) = sqlx_core::query_as::query_as(
-            "SELECT COUNT(*) FROM sensei.edges WHERE folder_id = $1"
-        ).bind(folder_id).fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
-        Ok(row.0)
+        self.count_edges_scoped(&[*folder_id]).await
     }
 
     /// Delete nodes whose file_path starts with a given prefix (for folder deletion).
