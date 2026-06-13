@@ -615,14 +615,22 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
                 &folder_id, &result.kind, &result.rel_path, &result.rel_path, None, None, None, None
             ).await.ok();
 
-            // Write symbol nodes (functions, classes, types, etc.)
+            // Write symbol nodes (functions, classes, types, etc.), capturing
+            // each id keyed by (name, line_start) so call edges can be sourced
+            // from the caller node — not the file. Generic graph-wiring; reused
+            // by any symbol-sourced edge kind. Keyed on line because same-named
+            // methods across impl blocks are legal in Rust.
+            let mut sym_ids: std::collections::HashMap<(String, i32), uuid::Uuid> =
+                std::collections::HashMap::new();
             for sym in &result.symbols {
                 let parent_uuid = file_node_id; // symbols are children of the file
-                ctx.pg().upsert_node(
+                if let Ok(id) = ctx.pg().upsert_node(
                     &folder_id, &sym.kind, &sym.name, &result.rel_path,
                     parent_uuid.as_ref(), sym.signature.as_deref(),
                     Some(sym.line as i32), Some(sym.line_end as i32),
-                ).await.ok();
+                ).await {
+                    sym_ids.insert((sym.name.clone(), sym.line as i32), id);
+                }
             }
 
             // Write unresolved import edges
@@ -632,10 +640,16 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
                 }
             }
 
-            // Write unresolved call edges
+            // Write unresolved call edges, sourced from the caller function node
+            // (falling back to the file node when the call has no enclosing named
+            // symbol). target stays unresolved for resolve_edges to point.
             for call in &result.unresolved_calls {
-                if let Some(ref fid) = file_node_id {
-                    ctx.pg().insert_edge(&folder_id, fid, None, Some(&call.callee_name), "calls").await.ok();
+                let source = sym_ids
+                    .get(&(call.caller_name.clone(), call.caller_line as i32))
+                    .copied()
+                    .or(file_node_id);
+                if let Some(src_id) = source {
+                    ctx.pg().insert_edge(&folder_id, &src_id, None, Some(&call.callee_name), "calls").await.ok();
                 }
             }
 
@@ -825,5 +839,41 @@ mod tests {
 
         let task = Task::new(TaskKind::DeleteFolder, repo_path, "/tmp/myrepo/src");
         delete_folder(&ctx, &task).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn calls_edge_sourced_from_caller_function_node() {
+        let ctx = make_ctx().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let src_dir = tmp.path().join("src");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        let file_abs = src_dir.join("lib.rs");
+        std::fs::write(&file_abs, "pub fn caller() { callee(); }\npub fn callee() {}").unwrap();
+
+        let repo_path = tmp.path().to_string_lossy().to_string();
+        let root_id = ctx.pg().add_watch_root(&repo_path, "cg", &serde_json::json!([])).await.unwrap();
+        let fid = ctx.pg().upsert_repo(&root_id, "cg-repo", &repo_path).await.unwrap();
+
+        let task = Task::new(TaskKind::ProcessFile, &repo_path, &file_abs.to_string_lossy());
+        process_file(&ctx, &task).await.unwrap();
+
+        let nodes = ctx.pg().get_nodes_by_folder(&fid).await.unwrap();
+        let caller_id = nodes.iter()
+            .find(|n| n["name"].as_str() == Some("caller") && n["kind"].as_str() == Some("function"))
+            .and_then(|n| crate::api::util::json_uuid(&n["id"]))
+            .expect("caller function node exists");
+        let file_id = nodes.iter()
+            .find(|n| n["kind"].as_str() == Some("file"))
+            .and_then(|n| crate::api::util::json_uuid(&n["id"]))
+            .expect("file node exists");
+
+        let edges = ctx.pg().get_edges_by_kind(&fid, "calls").await.unwrap();
+        let edge = edges.iter()
+            .find(|e| e["target_name"].as_str() == Some("callee"))
+            .expect("a calls edge to callee exists");
+        let source_id = crate::api::util::json_uuid(&edge["source_id"]).unwrap();
+
+        assert_eq!(source_id, caller_id, "edge sourced from the caller fn node");
+        assert_ne!(source_id, file_id, "edge NOT sourced from the file node");
     }
 }
