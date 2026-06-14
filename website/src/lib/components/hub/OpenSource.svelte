@@ -1,0 +1,75 @@
+<script lang="ts">
+  import { REPOS } from '$lib/hub-data.js';
+</script>
+
+<section id="open" class="opensource-wrap mx-auto px-7 py-24">
+  <div class="opensource-grid gap-8">
+    <div>
+      <div class="flex items-baseline gap-3 mb-4">
+        <span class="kanji text-accent" style="font-size:40px;line-height:1">公</span>
+        <span class="mono text-ink-mute" style="font-size:11px;letter-spacing:0.12em;text-transform:uppercase">Kō · in the open</span>
+      </div>
+      <h2 class="display text-ink m-0" style="font-size:28px;font-weight:400;letter-spacing:-0.015em;line-height:1.3">
+        Two of our tools are built in the open.
+      </h2>
+      <p class="text-ink-soft mt-4" style="font-size:14px;line-height:1.7;max-width:420px">
+        Rokkit and Kavach are MIT-licensed and developed in public. Read the
+        source, file an issue, or send a pull request — the workshop door is open.
+      </p>
+      <a href="https://github.com/sensei-hq" target="_blank" rel="noopener"
+         class="mt-5 inline-flex items-center gap-3 border border-paper-edge rounded-md px-4 py-2 text-ink-soft text-sm no-underline"
+         style="transition:border-color 0.15s">
+        <span class="kanji text-ink-soft" style="font-size:14px;line-height:1">叉</span>
+        Browse the repositories
+      </a>
+    </div>
+
+    <div class="border border-paper-edge rounded-lg bg-paper" style="overflow:hidden">
+      <div class="divide-y">
+        {#each REPOS as r (r.name)}
+          <a href={r.href} target="_blank" rel="noopener"
+             class="repo-row gap-4 px-5 py-4 no-underline">
+            <span class="repo-dot {r.accentClass}"></span>
+            <span>
+              <span class="mono text-ink block" style="font-size:13px">{r.name}</span>
+              <span class="text-ink-mute text-xs">{r.note}</span>
+            </span>
+            <span class="mono text-ink-mute" style="font-size:11px">{r.lang}</span>
+          </a>
+        {/each}
+      </div>
+    </div>
+  </div>
+</section>
+
+<style>
+  .opensource-wrap {
+    max-width: 1120px;
+  }
+  .opensource-grid {
+    display: grid;
+    grid-template-columns: 1fr 1.2fr;
+    align-items: center;
+  }
+  .repo-row {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: center;
+    transition: background 0.15s;
+  }
+  .repo-row:hover {
+    background: var(--paper-soft);
+  }
+  .repo-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  @media (max-width: 768px) {
+    .opensource-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
