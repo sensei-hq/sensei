@@ -1,0 +1,112 @@
+<script lang="ts">
+  import { base } from '$app/paths';
+  import { PRODUCTS } from '$lib/hub-data.js';
+
+  const meta = ['Independent studio', 'Est. 2024', 'Four tools in the workshop'];
+
+  function productHref(p: typeof PRODUCTS[number]): string {
+    if (p.id === 'sensei') return `${base}/sensei`;
+    return p.href;
+  }
+
+  function isExternal(p: typeof PRODUCTS[number]): boolean {
+    return p.id !== 'sensei';
+  }
+</script>
+
+<header id="top" class="hero-wrap mx-auto px-7 pt-7 pb-9">
+  <div class="hero-grid gap-8">
+    <!-- Statement -->
+    <div>
+      <div class="flex items-baseline gap-3 mb-5">
+        <span class="kanji text-accent" style="font-size:44px;line-height:1">道</span>
+        <span class="mono text-ink-mute" style="font-size:11px;letter-spacing:0.12em;text-transform:uppercase">Dō · the way — an independent studio</span>
+      </div>
+      <h1 class="display text-ink m-0 hero-h1">
+        We build quiet, sharp tools for the people who build software.
+      </h1>
+      <p class="text-ink-soft mt-5" style="font-size:17px;line-height:1.6;max-width:540px">
+        Sensei HQ is a small workshop of developer tools — four instruments,
+        one temperament. Restraint over noise, craft over scale, and a deep
+        respect for the person on the other side of the screen.
+      </p>
+      <div class="flex items-center flex-wrap gap-3 mt-6">
+        <a href="#products" class="bg-primary text-on-primary rounded-md px-5 py-3 font-medium flex items-center gap-3 no-underline" style="font-size:15px">
+          <span class="kanji" style="font-size:15px;line-height:1">見</span>
+          See the tools
+        </a>
+        <a href="#approach" class="text-ink-soft text-sm no-underline">How we work ↓</a>
+      </div>
+      <div class="flex flex-wrap gap-4 mt-7">
+        {#each meta as m (m)}
+          <span class="mono text-ink-mute" style="font-size:11px">{m}</span>
+        {/each}
+      </div>
+    </div>
+
+    <!-- In the workshop -->
+    <aside class="border border-paper-edge rounded-lg bg-paper-soft" style="overflow:hidden">
+      <div class="px-5 py-4 border-b border-paper-edge flex items-center justify-between">
+        <span class="mono text-ink-mute" style="font-size:11px;letter-spacing:0.12em;text-transform:uppercase">In the workshop</span>
+        <span class="mono text-ink-faint" style="font-size:11px">04</span>
+      </div>
+      <div class="divide-y">
+        {#each PRODUCTS as p (p.id)}
+          <a href={productHref(p)}
+             target={isExternal(p) ? '_blank' : undefined}
+             rel={isExternal(p) ? 'noopener' : undefined}
+             class="workshop-row gap-4 px-5 py-4 no-underline text-{p.id}">
+            <span class="kanji" style="font-size:26px;line-height:1;width:30px;text-align:center">{p.kanji}</span>
+            <span>
+              <span class="display text-ink block" style="font-size:15px">{p.name}</span>
+              <span class="text-ink-mute text-xs">{p.category}</span>
+            </span>
+            <span class="product-dot" style="background:var(--{p.id})"></span>
+          </a>
+        {/each}
+      </div>
+    </aside>
+  </div>
+</header>
+
+<style>
+  .hero-wrap {
+    max-width: 1120px;
+  }
+  .hero-grid {
+    display: grid;
+    grid-template-columns: 1.55fr 1fr;
+    align-items: start;
+  }
+  .hero-h1 {
+    font-size: 60px;
+    font-weight: 300;
+    line-height: 1.08;
+    letter-spacing: -0.025em;
+    max-width: 640px;
+  }
+  .workshop-row {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: center;
+    transition: background 0.15s;
+  }
+  .workshop-row:hover {
+    background: var(--paper-mute);
+  }
+  .product-dot {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  @media (max-width: 768px) {
+    .hero-grid {
+      grid-template-columns: 1fr;
+    }
+    .hero-h1 {
+      font-size: 38px;
+    }
+  }
+</style>
