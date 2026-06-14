@@ -3,6 +3,7 @@ import { sumiPalette } from './sumi-palette.js';
 export default {
   skin: {
     surface:   'sumi',
+    ink:       'sumi',
     primary:   'shu',
     secondary: 'murasaki',
     accent:    'fuji',
