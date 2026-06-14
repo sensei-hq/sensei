@@ -1,6 +1,7 @@
 // Sensei — Assignments step (priority per role).
-// Comes AFTER Inference. For each reasoning role (inference · consolidation · embedding · voice · fallback)
+// Comes AFTER Inference. For each reasoning role (inference · consolidation · embedding · voice · image)
 // the user builds an ordered list of models. First entry is primary; the rest are fallbacks.
+// (Every role carries its own fallback chain, so there is no separate "fallback" role.)
 //
 // Layout: left nav of roles with live counts; right panel for the selected role.
 // The right panel is the "RoleBoard" — ordered list of model chips with
@@ -19,8 +20,8 @@ const ROLES_A = [
     hint: "index sessions, memories, code refs for retrieval" },
   { id: "voice",         label: "Voice",         kanji: "話",
     hint: "sensei speaks & listens — surfaced in the observatory, not here" },
-  { id: "fallback",      label: "Fallback",      kanji: "備",
-    hint: "takes over when primary is down or rate-limited" }
+  { id: "image",         label: "Image",         kanji: "画",
+    hint: "reads screenshots, diagrams & mockups dropped into a session" }
 ];
 
 // ═══════════════════════════════════════════════════════════════

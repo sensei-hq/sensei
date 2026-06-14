@@ -10,6 +10,7 @@ const { useState: psS } = React;
 // ─── Project-window sidebar (used inside every variation) ───
 const PROJ_SIDEBAR_SECTIONS = [
   { id: "overview",     kanji: "全", label: "Overview"    },
+  { id: "atlas",        kanji: "図", label: "Atlas",        badge: "4"  },
   { id: "sessions",     kanji: "刻", label: "Sessions",     badge: "28" },
   { id: "memories",     kanji: "覚", label: "Memories",     badge: "11" },
   { id: "traceability", kanji: "巻", label: "Traceability", badge: "4"  },
