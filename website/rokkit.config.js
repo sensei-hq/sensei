@@ -6,7 +6,7 @@ export default {
     ink:       { light: 'sumi', dark: 'sumiDark' },
     primary:   'shu',
     secondary: 'murasaki',
-    accent:    'fuji',
+    accent:    'shu',  // HQ/root brand accent = vermillion (purple is reserved for Kavach)
     success:   'jade',
     warning:   'amber',
     danger:    'beni',
