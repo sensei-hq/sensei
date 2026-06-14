@@ -2,7 +2,7 @@
   import { base } from '$app/paths';
   import { PRODUCTS } from '$lib/hub-data.js';
 
-  const meta = ['Independent studio', 'Est. 2024', 'Four tools in the workshop'];
+  const meta = ['Independent studio', 'Est. 2026', 'Four tools in the workshop'];
 
   function productHref(p: typeof PRODUCTS[number]): string {
     if (p.id === 'sensei') return `${base}/sensei`;
@@ -19,7 +19,7 @@
     <!-- Statement -->
     <div>
       <div class="flex items-baseline gap-3 mb-5">
-        <span class="kanji text-accent" style="font-size:44px;line-height:1">道</span>
+        <span class="kanji text-primary" style="font-size:44px;line-height:1">道</span>
         <span class="mono text-ink-mute" style="font-size:11px;letter-spacing:0.12em;text-transform:uppercase">Dō · the way — an independent studio</span>
       </div>
       <h1 class="display text-ink m-0 hero-h1">
