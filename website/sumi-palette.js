@@ -131,8 +131,26 @@ const fuji = {
   950: '#2E1065',
 };
 
+// Dark surface/ink partner — the sumi ladder authored inverted (50=darkest …
+// 950=lightest) so the same shade index reads correctly in dark mode. Used as
+// `surface.dark`/`ink.dark` in rokkit.config.js for native dual-palette dark mode.
+const sumiDark = {
+  50:  '#1C1914',
+  100: '#2B2620',
+  200: '#3D3730',
+  300: '#524B43',
+  400: '#6B635A',
+  500: '#8A8278',
+  600: '#B5ADA2',
+  700: '#D6CFC6',
+  800: '#E8E3DC',
+  900: '#F3F0EB',
+  950: '#FAF8F5',
+};
+
 export const sumiPalette = {
   sumi,
+  sumiDark,
   shu,
   jade,
   amber,

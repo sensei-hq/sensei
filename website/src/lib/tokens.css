@@ -1,9 +1,17 @@
 /*
- * Sensei — zen/sumi design tokens for the marketing site.
+ * Sensei marketing site — bridge layer.
  *
- * Layers on top of Rokkit's z0-z10 color system.
- * Rokkit handles: utility classes, dark mode inversion, z-scale.
- * This file adds: semantic aliases, typography, spacing, zen aesthetic.
+ * Rokkit (rokkit.config.js + @rokkit/themes, imported before this file in
+ * app.css) now owns the color system: --paper / --paper-soft / --paper-mute /
+ * --paper-edge / --ink / --ink-soft / --ink-mute / --ink-faint / --primary /
+ * --accent / status tokens, with dual-palette (sumi/sumiDark) dark-mode flip.
+ * Per-product accents (--sensei / --dbd / --rokkit / --kavach / ...) come from
+ * rokkit.config.js `overrides:` and also flip per mode.
+ *
+ * This file only adds: (1) legacy aliases so the existing Sensei pages that use
+ * --sumi / --shu / --paper-2 etc. keep working without per-page edits, and
+ * (2) typography + small utility classes. No color values or dark block live
+ * here anymore — rokkit is the single source of truth.
  */
 
 @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500;9..144,600&family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
@@ -14,57 +22,30 @@
   --font-ui: 'Inter', system-ui, -apple-system, sans-serif;
   --font-mono: 'JetBrains Mono', 'SF Mono', Menlo, monospace;
 
-  /* ── Paper (surface) ────────────────────────────────────── */
-  --paper:      oklch(0.975 0.008 85);
-  --paper-2:    oklch(0.955 0.010 85);
-  --paper-3:    oklch(0.92 0.012 85);
-  --paper-edge: oklch(0.22 0.012 50 / 0.08);
-
-  /* ── Sumi (ink) ─────────────────────────────────────────── */
-  --sumi:   oklch(0.22 0.012 50);
-  --sumi-2: oklch(0.38 0.012 50);
-  --sumi-3: oklch(0.58 0.010 50);
-  --sumi-4: oklch(0.75 0.008 50);
-
-  /* ── Accent colors ──────────────────────────────────────── */
-  --shu:       oklch(0.58 0.15 35);
-  --shu-soft:  oklch(0.58 0.15 35 / 0.10);
-  --kanji-watermark: oklch(0.58 0.15 35 / 0.06);
-  --jade:      oklch(0.62 0.08 160);
-  --jade-soft: oklch(0.62 0.08 160 / 0.14);
-  --amber:      oklch(0.72 0.12 75);
-  --amber-soft: oklch(0.72 0.12 75 / 0.15);
+  /* ── Legacy aliases → Rokkit named tokens ───────────────────
+     Existing pages reference these names; map them onto rokkit's
+     tokens so they inherit themeing + dark-mode flip for free. */
+  --paper-2: var(--paper-soft);
+  --paper-3: var(--paper-mute);
+  --sumi:    var(--ink);
+  --sumi-2:  var(--ink-soft);
+  --sumi-3:  var(--ink-mute);
+  --sumi-4:  var(--ink-faint);
+  --shu:       var(--primary);
+  --shu-soft:  color-mix(in oklch, var(--primary) 10%, transparent);
+  --jade:      var(--success);
+  --jade-soft: color-mix(in oklch, var(--success) 14%, transparent);
+  --amber:      var(--warning);
+  --amber-soft: color-mix(in oklch, var(--warning) 15%, transparent);
+  --kanji-watermark: color-mix(in oklch, var(--primary) 6%, transparent);
 
   /* ── Borders ────────────────────────────────────────────── */
   --hairline: 1px solid var(--paper-edge);
-  --ink-line: 1px solid oklch(0.22 0.012 50 / 0.12);
+  --ink-line: 1px solid color-mix(in oklch, var(--ink) 12%, transparent);
 
-  /* ── Radii ──────────────────────────────────────────────── */
+  /* ── Radii (existing pages use --radius / --radius-lg) ──── */
   --radius:    6px;
   --radius-lg: 10px;
-}
-
-/* ── Dark mode ────────────────────────────────────────────── */
-[data-mode="dark"] {
-  --paper:      oklch(0.17 0.010 50);
-  --paper-2:    oklch(0.21 0.012 50);
-  --paper-3:    oklch(0.25 0.012 50);
-  --paper-edge: oklch(0.94 0.008 85 / 0.08);
-
-  --sumi:   oklch(0.94 0.008 85);
-  --sumi-2: oklch(0.78 0.008 85);
-  --sumi-3: oklch(0.60 0.010 85);
-  --sumi-4: oklch(0.42 0.012 85);
-
-  --shu:       oklch(0.70 0.15 35);
-  --shu-soft:  oklch(0.70 0.15 35 / 0.10);
-  --kanji-watermark: oklch(0.70 0.15 35 / 0.05);
-  --jade:      oklch(0.72 0.09 160);
-  --jade-soft: oklch(0.72 0.09 160 / 0.18);
-  --amber:      oklch(0.78 0.12 75);
-  --amber-soft: oklch(0.78 0.12 75 / 0.20);
-
-  --ink-line: 1px solid oklch(0.94 0.008 85 / 0.12);
 }
 
 /* ── Typography classes ───────────────────────────────────── */
@@ -105,7 +86,7 @@
 /* ── Scrollbar ────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-thumb { background: transparent; border-radius: 3px; }
-*:hover::-webkit-scrollbar-thumb { background: oklch(0.5 0.01 50 / 0.2); }
+*:hover::-webkit-scrollbar-thumb { background: color-mix(in oklch, var(--ink) 20%, transparent); }
 
 /* ── Smooth scroll ────────────────────────────────────────── */
 html { scroll-behavior: smooth; }
@@ -119,7 +100,7 @@ html { scroll-behavior: smooth; }
   font-size: 15px;
   font-weight: 500;
   color: var(--paper);
-  background: var(--sumi);
+  background: var(--ink);
   border: none;
   border-radius: 8px;
   cursor: pointer;
@@ -127,7 +108,7 @@ html { scroll-behavior: smooth; }
   text-decoration: none;
   transition: opacity 0.14s;
   white-space: nowrap;
-  box-shadow: 0 6px 20px -8px rgba(20,18,14,0.4);
+  box-shadow: 0 6px 20px -8px color-mix(in oklch, var(--ink) 40%, transparent);
 }
 .btn-solid:hover { opacity: 0.85; }
 
@@ -138,8 +119,8 @@ html { scroll-behavior: smooth; }
   padding: 14px 28px;
   font-size: 14px;
   font-weight: 500;
-  color: var(--paper);
-  background: var(--shu);
+  color: var(--on-primary);
+  background: var(--primary);
   border: none;
   border-radius: 8px;
   cursor: pointer;
