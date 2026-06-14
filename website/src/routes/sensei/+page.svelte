@@ -1,5 +1,6 @@
 <script lang="ts">
   import { browser } from '$app/environment';
+  import { base } from '$app/paths';
   import { vibe } from '@rokkit/states';
   import MockToday from '$lib/components/mock/MockToday.svelte';
   import MockSessions from '$lib/components/mock/MockSessions.svelte';
@@ -93,13 +94,13 @@
   const footerCols = [
     { title: 'Product', links: [
       { label: 'Download', href: '#' },
-      { label: 'FAQ', href: '/faq' },
-      { label: 'Docs', href: '/docs' },
+      { label: 'FAQ', href: `${base}/sensei/faq` },
+      { label: 'Docs', href: `${base}/sensei/docs` },
       { label: 'Changelog', href: `${GITHUB}/releases` },
     ]},
     { title: 'Legal', links: [
-      { label: 'Privacy', href: '/privacy' },
-      { label: 'Terms', href: '/terms' },
+      { label: 'Privacy', href: `${base}/privacy` },
+      { label: 'Terms', href: `${base}/terms` },
     ]},
     { title: 'Source', links: [
       { label: 'GitHub', href: GITHUB },
@@ -114,7 +115,7 @@
   <!-- ═══ Nav ═══ -->
   <nav class="nav">
     <div class="nav-inner">
-      <a href="/" class="logo-link">
+      <a href="{base}/sensei" class="logo-link">
         <span class="kanji logo-kanji">先生</span>
         <span class="display logo-text">Sensei</span>
       </a>
@@ -356,7 +357,7 @@
           </div>
         {/each}
       </div>
-      <a href="/faq" class="faq-more">All questions & answers →</a>
+      <a href="{base}/sensei/faq" class="faq-more">All questions & answers →</a>
     </div>
   </section>
 
