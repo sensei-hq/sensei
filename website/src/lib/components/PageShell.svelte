@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
+  import { base } from '$app/paths';
 
   let { title, children }: { title: string; children: Snippet } = $props();
 </script>
@@ -10,7 +11,7 @@
 
 <div class="page">
   <nav class="page-nav">
-    <a href="/" class="back-link">
+    <a href="{base}/sensei" class="back-link">
       <span class="kanji" style="font-size: 18px; color: var(--shu);">先生</span>
       <span class="display" style="font-size: 15px;">Sensei</span>
     </a>
