@@ -36,11 +36,8 @@
       <!-- Brand -->
       <div>
         <div class="flex items-center gap-3 mb-3">
-          <svg viewBox="0 0 48 48" width="24" height="24" aria-hidden="true" class="block flex-shrink-0">
-            <circle cx="24" cy="24" r="18" fill="none" stroke="var(--accent)"
-                    stroke-width="2.6" stroke-linecap="round"
-                    stroke-dasharray="92 34" transform="rotate(125 24 24)" />
-          </svg>
+          <!-- Sensei HQ brushed-ensō mark (i-brand:sensei-hq), tinted to the brand vermillion -->
+          <span class="i-brand:sensei-hq text-primary block flex-shrink-0" style="width:26px;height:26px" aria-hidden="true"></span>
           <span class="flex items-baseline gap-2">
             <span class="display text-ink" style="font-size:16px">Sensei</span>
             <span class="mono text-ink-mute" style="font-size:11px;letter-spacing:0.08em">HQ</span>
