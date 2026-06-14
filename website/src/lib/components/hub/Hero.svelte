@@ -50,7 +50,7 @@
         <span class="mono text-ink-mute" style="font-size:11px;letter-spacing:0.12em;text-transform:uppercase">In the workshop</span>
         <span class="mono text-ink-faint" style="font-size:11px">04</span>
       </div>
-      <div class="divide-y">
+      <div class="divide-y divide-paper-edge">
         {#each PRODUCTS as p (p.id)}
           <a href={productHref(p)}
              target={isExternal(p) ? '_blank' : undefined}

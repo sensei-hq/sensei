@@ -25,7 +25,7 @@
     </div>
 
     <div class="border border-paper-edge rounded-lg bg-paper" style="overflow:hidden">
-      <div class="divide-y">
+      <div class="divide-y divide-paper-edge">
         {#each REPOS as r (r.name)}
           <a href={r.href} target="_blank" rel="noopener"
              class="repo-row gap-4 px-5 py-4 no-underline">
