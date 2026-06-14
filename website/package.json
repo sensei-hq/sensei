@@ -9,10 +9,12 @@
     "preview": "vite preview",
     "prepare": "svelte-kit sync || echo ''",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.check.json",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "icons:bundle": "rokkit-cli bundle -i icons -o src/lib/icons"
   },
   "devDependencies": {
     "@playwright/test": "^1.59.1",
+    "@rokkit/cli": "^1.1.17",
     "@sveltejs/adapter-auto": "^7.0.1",
     "@sveltejs/kit": "^2.57.1",
     "@sveltejs/vite-plugin-svelte": "^7.0.0",
