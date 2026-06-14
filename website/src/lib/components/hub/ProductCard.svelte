@@ -52,7 +52,7 @@
       </div>
     </div>
     <!-- Kanji panel -->
-    <div class="kanji-panel">
+    <div class="kanji-panel border-l border-paper-edge">
       <span class="kanji text-{p.id}" style="font-size:220px;line-height:1;opacity:0.92">{p.kanji}</span>
       <span class="mono" style="position:absolute;bottom:18px;right:20px;font-size:10.5px;letter-spacing:0.18em;text-transform:uppercase;color:var(--ink-faint)">Kan · to observe</span>
     </div>
@@ -102,7 +102,6 @@
     align-items: center;
     justify-content: center;
     background: var(--paper-mute);
-    border-left: var(--hairline);
     position: relative;
     min-height: 320px;
     overflow: hidden;
