@@ -403,9 +403,6 @@ function Splash({ state }) {
                   <span className="kanji" style={{ fontSize: 22, color: 'var(--ink-3)', lineHeight: 1, flexShrink: 0 }}>手</span>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--ink)' }}>Run this in your terminal</div>
-                    <div style={{ fontSize: 11.5, color: 'var(--ink-3)', marginTop: 3, lineHeight: 1.5 }}>
-                      Homebrew isn't here yet. Run the script to install it, then re-check.
-                    </div>
                   </div>
                   <a style={{ fontSize: 12, color: 'var(--ink-3)', cursor: 'pointer', flexShrink: 0, textDecoration: 'none' }}>Learn more</a>
                 </div>
@@ -442,7 +439,7 @@ sensei db:create && sensei daemon:start`}</pre>
             {state === 'all-green' &&
               <div aria-hidden="true" style={{
                 flex: 1, minHeight: 80, position: 'relative', marginTop: 18
-              }} data-comment-anchor="92c5792b83-div-415-15">
+              }}>
                 <div style={{
                   position: 'absolute', inset: 0,
                   background: 'var(--ink)',

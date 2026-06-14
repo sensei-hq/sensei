@@ -318,7 +318,13 @@ window.SENSEI_SETUP = {
         note: "heaviest · only if you have the RAM headroom",   pulled: false },
       { id: "qwen-coder-7b",     name: "Qwen2.5-Coder 7B",     role: "voice",
         sizeGB: 4.7,  tag: "7b-instruct-q5_K_M",  recommended: false,
-        note: "light · conversational · good for voice",       pulled: false }
+        note: "light · conversational · good for voice",       pulled: false },
+      { id: "qwen2-vl-7b",       name: "Qwen2-VL 7B",          role: "image",
+        sizeGB: 6.1,  tag: "7b-instruct-q4_K_M",  recommended: true,
+        note: "vision · reads screenshots, diagrams & mockups", pulled: false },
+      { id: "llava-1.6-13b",     name: "LLaVA 1.6 13B",        role: "image",
+        sizeGB: 8.0,  tag: "1.6-vicuna-13b-q4",   recommended: false,
+        note: "vision · general image understanding",          pulled: false }
     ],
     providers: [
       { id: "anthropic", name: "Anthropic",  kanji: "人",
@@ -349,7 +355,13 @@ window.SENSEI_SETUP = {
             note: "required · indexes sessions & memories" },
           { id: "qwen-coder-7b",    name: "Qwen2.5-Coder 7B",   role: "voice",
             sizeGB: 4.7,  pulled: false, recommended: false,
-            note: "light · conversational · good for voice" }
+            note: "light · conversational · good for voice" },
+          { id: "qwen2-vl-7b",      name: "Qwen2-VL 7B",        role: "image",
+            sizeGB: 6.1,  pulled: false, recommended: true,
+            note: "vision · screenshots, diagrams & mockups" },
+          { id: "llava-1.6-13b",    name: "LLaVA 1.6 13B",      role: "image",
+            sizeGB: 8.0,  pulled: false, recommended: false,
+            note: "vision · general image understanding" }
         ]},
       { id: "openai",    name: "OpenAI",     kanji: "開",
         kind: "cloud",  envVar: "OPENAI_API_KEY",
@@ -377,7 +389,7 @@ window.SENSEI_SETUP = {
       consolidation: ["deepseek-r1-14b"],
       embedding:     ["nomic-embed-v1.5"],
       voice:         ["claude-haiku-4", "qwen-coder-7b"],
-      fallback:      ["qwen-coder-32b"]
+      image:         ["qwen2-vl-7b", "claude-sonnet-4.5"]
     },
 
     // Providers sensei knows about but the user hasn't added yet
