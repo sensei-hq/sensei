@@ -1,0 +1,669 @@
+// ───────────────────────────────────────────────────────────────────
+// SENSEI HQ — company / studio site
+// An independent studio that ships small, sharp developer tools.
+// Same Zen-Sumi world as the Sensei app: washi paper, sumi ink,
+// Fraunces display, kanji glyphs, hairline rules, rationed color.
+// Each product carries its own accent hue (system L/C, varied hue).
+// ───────────────────────────────────────────────────────────────────
+
+const { useState: hS, useEffect: hE } = React;
+const { TweaksPanel, useTweaks, TweakSection, TweakToggle, TweakRadio } = window;
+
+// ─── Per-product accent hues (shared lightness & chroma, varied hue) ──
+const ACCENTS = {
+  light: {
+    sensei: 'oklch(0.580 0.150 35)',
+    dbd:    'oklch(0.560 0.130 255)',
+    rokkit: 'oklch(0.560 0.110 162)',
+    kavach: 'oklch(0.520 0.150 305)',
+    magpie: 'oklch(0.560 0.110 200)',
+    kata:   'oklch(0.560 0.120 145)',
+    burne:  'oklch(0.580 0.140 50)',
+  },
+  dark: {
+    sensei: 'oklch(0.700 0.150 35)',
+    dbd:    'oklch(0.700 0.130 255)',
+    rokkit: 'oklch(0.730 0.110 162)',
+    kavach: 'oklch(0.700 0.150 305)',
+    magpie: 'oklch(0.720 0.110 200)',
+    kata:   'oklch(0.720 0.120 145)',
+    burne:  'oklch(0.730 0.140 50)',
+  },
+};
+
+// ─── Content ──────────────────────────────────────────────────────────
+const PRODUCTS = [
+  {
+    id: 'sensei', index: '01', kanji: '観', name: 'Sensei',
+    category: 'Desktop · Observability',
+    tagline: 'A quiet companion for AI-assisted work.',
+    blurb: 'Observes your sessions with AI assistants and surfaces the patterns you are too close to see. Local-first, no account, speaks only when it has something to say.',
+    meta: ['macOS · Windows · Linux', 'Tauri', 'Local-first'],
+    status: 'Available', href: 'Sensei Site.html',
+    featured: true,
+    highlights: ['Watches sessions locally', 'Surfaces recurring patterns', 'Adopts memories on your terms'],
+  },
+  {
+    id: 'dbd', index: '02', kanji: '構', name: 'DBD',
+    category: 'CLI · Schema design',
+    tagline: 'Schema design that lives in your terminal.',
+    blurb: 'Model your database in DBML, then generate, diff and sync it across Postgres, SQLite, Convex and Supabase — all from the command line.',
+    meta: ['CLI · DBML', 'Postgres · SQLite', 'Convex · Supabase'],
+    status: 'Stable', href: '#dbd',
+  },
+  {
+    id: 'rokkit', index: '03', kanji: '速', name: 'Rokkit',
+    category: 'Svelte · Components',
+    tagline: 'Data-driven components for Svelte.',
+    blurb: 'Bind a source and get a table, chart or form that just works. Headless where you need control, batteries-included where you do not.',
+    meta: ['Svelte 5', 'MIT licensed', 'Open source'],
+    status: 'Open source', href: '#rokkit',
+  },
+  {
+    id: 'kavach', index: '04', kanji: '守', name: 'Kavach',
+    category: 'Svelte · Authentication',
+    tagline: 'Auth for Svelte, without the ceremony.',
+    blurb: 'Sessions, providers and route guards in a few lines. Sane defaults, escape hatches everywhere, and no vendor lock-in.',
+    meta: ['SvelteKit', 'OAuth · Passkeys', 'MIT licensed'],
+    status: 'Open source', href: '#kavach',
+  },
+];
+
+const PRINCIPLES = [
+  { kanji: '一', label: 'Ichi · one', title: 'One thing, done well',
+    text: 'Each tool has a single job and a clear edge. We would rather ship one sharp instrument than ten blunt features.' },
+  { kanji: '蔵', label: 'Zō · to keep', title: 'Yours to keep',
+    text: 'Local-first wherever it makes sense. Your data lives on your machine, in formats you can read, export and delete.' },
+  { kanji: '静', label: 'Sei · stillness', title: 'Quiet by default',
+    text: 'No nags, no dark patterns, no telemetry you did not ask for. Our tools stay out of the way until you reach for them.' },
+];
+
+// Earlier-stage experiments — rougher edges, same temperament.
+const INCUBATING = [
+  { id: 'magpie', kanji: '集', name: 'Magpie', label: 'Shū · to gather',
+    category: 'Local-first · Library',
+    tagline: 'Your whole library, in one nest.',
+    blurb: 'Books, comics, manga and webtoons — collected, organized and read in one place. No accounts, no clouds, just your shelf.' },
+  { id: 'kata', kanji: '型', name: 'Kata', label: 'Kata · form',
+    category: 'Local-first · Fitness',
+    tagline: 'Training that meets you where you are.',
+    blurb: 'AI programs your workouts and adapts to your real progress. No cloud subscription, no rented streaks — your training stays yours.' },
+  { id: 'burne', kanji: '燃', name: 'Burn-E', label: 'Nen · to burn',
+    category: 'Desktop · Fabrication',
+    tagline: 'A visual G-code editor for laser work.',
+    blurb: 'Design, preview and tune toolpaths for laser cutting and engraving — see the burn before you commit the material.' },
+];
+
+// ═══════════════════════════════════════════════════════════════════════
+// Primitives
+// ═══════════════════════════════════════════════════════════════════════
+
+// Ensō — an open brushed circle. Simple stroked circle with a gap.
+function Enso({ size = 26, stroke = 'var(--accent)', width = 2.6 }) {
+  return (
+    <svg viewBox="0 0 48 48" width={size} height={size} aria-hidden="true"
+         style={{ display: 'block', flexShrink: 0 }}>
+      <circle cx="24" cy="24" r="18" fill="none" stroke={stroke}
+              strokeWidth={width} strokeLinecap="round"
+              strokeDasharray="92 34" transform="rotate(125 24 24)" />
+    </svg>
+  );
+}
+
+function Eyebrow({ children, style }) {
+  return (
+    <div className="zs-eyebrow" style={style}>{children}</div>
+  );
+}
+
+const MAXW = 1120;
+
+// ═══════════════════════════════════════════════════════════════════════
+// Nav
+// ═══════════════════════════════════════════════════════════════════════
+function Nav() {
+  const links = [
+    ['#products', 'Products'],
+    ['#incubation', 'Incubation'],
+    ['#approach', 'Approach'],
+    ['#open', 'Open source'],
+    ['#contact', 'Contact'],
+  ];
+  return (
+    <div style={{ position: 'sticky', top: 0, zIndex: 50,
+                  background: 'color-mix(in oklch, var(--paper) 80%, transparent)',
+                  backdropFilter: 'blur(14px) saturate(150%)',
+                  WebkitBackdropFilter: 'blur(14px) saturate(150%)',
+                  WebkitMaskImage: 'linear-gradient(to bottom, #000 72%, transparent)',
+                  maskImage: 'linear-gradient(to bottom, #000 72%, transparent)',
+                  paddingBottom: 6 }}>
+      <nav style={{ maxWidth: MAXW, display: 'flex', alignItems: 'center',
+                    justifyContent: 'space-between' }}
+           className="mx-auto px-7 py-4">
+        <a href="#top" style={{ display: 'flex', alignItems: 'center' }} className="gap-3">
+          <Enso size={26} stroke="var(--accent)" />
+          <span style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2">
+            <span className="display text-ink" style={{ fontSize: 18, letterSpacing: '-0.01em' }}>Sensei</span>
+            <span className="mono text-ink-mute" style={{ fontSize: 11, letterSpacing: '0.08em' }}>HQ</span>
+          </span>
+        </a>
+        <div style={{ display: 'flex', alignItems: 'center' }} className="gap-6">
+          {links.map(([href, label]) => (
+            <a key={href} href={href} className="text-ink-soft text-sm"
+               style={{ transition: 'color .15s' }}
+               onMouseEnter={(e) => e.currentTarget.style.color = 'var(--ink)'}
+               onMouseLeave={(e) => e.currentTarget.style.color = 'var(--ink-soft)'}>
+              {label}
+            </a>
+          ))}
+          <a href="#open" className="zs-btn zs-btn-secondary zs-btn-sm" style={{ marginLeft: 4 }}>
+            GitHub
+          </a>
+        </div>
+      </nav>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Hero — studio statement + "in the workshop" preview
+// ═══════════════════════════════════════════════════════════════════════
+function Hero() {
+  return (
+    <header id="top" style={{ maxWidth: MAXW }} className="mx-auto px-7 pt-7 pb-9">
+      <div style={{ display: 'grid', gridTemplateColumns: '1.55fr 1fr',
+                    alignItems: 'start' }} className="gap-8">
+        {/* Statement */}
+        <div>
+          <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-3 mb-5">
+            <span className="kanji text-accent" style={{ fontSize: 44, lineHeight: 1 }}>道</span>
+            <Eyebrow>Dō · the way — an independent studio</Eyebrow>
+          </div>
+          <h1 className="display text-ink m-0"
+              style={{ fontSize: 60, fontWeight: 300, lineHeight: 1.08,
+                       letterSpacing: '-0.025em', maxWidth: 640 }}>
+            We build quiet, sharp tools for the people who build software.
+          </h1>
+          <p className="text-ink-soft mt-5" style={{ fontSize: 17, lineHeight: 1.6, maxWidth: 540 }}>
+            Sensei HQ is a small workshop of developer tools — four instruments,
+            one temperament. Restraint over noise, craft over scale, and a deep
+            respect for the person on the other side of the screen.
+          </p>
+          <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap' }}
+               className="gap-3 mt-6">
+            <a href="#products" className="zs-btn zs-btn-primary zs-btn-lg">
+              <span className="kanji" style={{ fontSize: 15, lineHeight: 1, color: 'var(--on-primary)' }}>見</span>
+              See the tools
+            </a>
+            <a href="#approach" className="text-ink-soft text-sm">How we work ↓</a>
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap' }} className="gap-4 mt-7">
+            {['Independent studio', 'Est. 2024', 'Four tools in the workshop'].map((m) => (
+              <span key={m} className="mono text-ink-mute" style={{ fontSize: 11 }}>{m}</span>
+            ))}
+          </div>
+        </div>
+
+        {/* In the workshop */}
+        <aside className="border-1px border-paper-edge rounded-lg bg-paper-soft"
+               style={{ overflow: 'hidden' }}>
+          <div className="px-5 py-4 border-b border-paper-edge"
+               style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <Eyebrow>In the workshop</Eyebrow>
+            <span className="mono text-ink-faint" style={{ fontSize: 11 }}>04</span>
+          </div>
+          <div className="divide-y">
+            {PRODUCTS.map((p) => (
+              <a key={p.id} href={p.href}
+                 style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto',
+                          alignItems: 'center', '--accent': `var(--acc-${p.id})`,
+                          transition: 'background .15s' }}
+                 className="gap-4 px-5 py-4"
+                 onMouseEnter={(e) => e.currentTarget.style.background = 'var(--paper-mute)'}
+                 onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}>
+                <span className="kanji text-accent" style={{ fontSize: 26, lineHeight: 1, width: 30, textAlign: 'center' }}>{p.kanji}</span>
+                <span>
+                  <span className="display text-ink block" style={{ fontSize: 15 }}>{p.name}</span>
+                  <span className="text-ink-mute text-xs">{p.category}</span>
+                </span>
+                <span className="zs-dot" style={{ background: 'var(--accent)' }} />
+              </a>
+            ))}
+          </div>
+        </aside>
+      </div>
+    </header>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Portfolio
+// ═══════════════════════════════════════════════════════════════════════
+function StatusBadge({ status }) {
+  const cls = status === 'Available' ? 'zs-badge zs-badge-accent'
+            : status === 'Beta' ? 'zs-badge zs-badge-warning'
+            : 'zs-badge zs-badge-success';
+  return <span className={cls} style={{ whiteSpace: 'nowrap' }}>{status}</span>;
+}
+
+function MetaChips({ meta }) {
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap' }} className="gap-2">
+      {meta.map((m) => (
+        <span key={m} className="mono text-ink-mute border-1px border-paper-edge rounded-sm"
+              style={{ fontSize: 10.5, padding: '2px 7px', whiteSpace: 'nowrap' }}>{m}</span>
+      ))}
+    </div>
+  );
+}
+
+function FeaturedCard({ p }) {
+  return (
+    <a href={p.href}
+       style={{ display: 'grid', gridTemplateColumns: '1.3fr 1fr',
+                '--accent': `var(--acc-${p.id})`, overflow: 'hidden',
+                transition: 'border-color .18s, transform .18s' }}
+       className="zs-card-flush"
+       onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--accent)'; }}
+       onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--paper-edge)'; }}>
+      <div className="p-7">
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }} className="mb-5">
+          <span className="mono text-ink-faint" style={{ fontSize: 12 }}>{p.index}</span>
+          <StatusBadge status={p.status} />
+        </div>
+        <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-3 mb-2">
+          <span className="display text-ink" style={{ fontSize: 32, fontWeight: 400, letterSpacing: '-0.02em' }}>{p.name}</span>
+          <span className="zs-eyebrow">{p.category}</span>
+        </div>
+        <p className="display text-ink m-0" style={{ fontSize: 22, fontWeight: 300, letterSpacing: '-0.015em', lineHeight: 1.3 }}>
+          {p.tagline}
+        </p>
+        <p className="text-ink-soft mt-3" style={{ fontSize: 14, lineHeight: 1.65, maxWidth: 460 }}>{p.blurb}</p>
+        <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-2 mt-5 mb-6">
+          {p.highlights.map((h) => (
+            <div key={h} style={{ display: 'flex', alignItems: 'center' }} className="gap-3">
+              <span className="zs-dot" style={{ background: 'var(--accent)' }} />
+              <span className="text-ink-soft text-sm">{h}</span>
+            </div>
+          ))}
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap' }} className="gap-4">
+          <MetaChips meta={p.meta} />
+          <span className="text-accent text-sm" style={{ fontWeight: 500 }}>Explore Sensei →</span>
+        </div>
+      </div>
+      {/* Kanji panel */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    background: 'var(--paper-mute)', borderLeft: 'var(--hairline)',
+                    position: 'relative', minHeight: 320, overflow: 'hidden' }}>
+        <span className="kanji" style={{ fontSize: 220, lineHeight: 1, color: 'var(--accent)',
+                       opacity: 0.92 }}>{p.kanji}</span>
+        <span className="mono" style={{ position: 'absolute', bottom: 18, right: 20,
+                       fontSize: 10.5, letterSpacing: '0.18em', textTransform: 'uppercase',
+                       color: 'var(--ink-faint)' }}>Kan · to observe</span>
+      </div>
+    </a>
+  );
+}
+
+function ProductCard({ p }) {
+  return (
+    <a href={p.href}
+       style={{ display: 'flex', flexDirection: 'column',
+                '--accent': `var(--acc-${p.id})`,
+                transition: 'border-color .18s, transform .18s' }}
+       className="zs-card p-0"
+       onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--accent)'; e.currentTarget.style.transform = 'translateY(-2px)'; }}
+       onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--paper-edge)'; e.currentTarget.style.transform = 'translateY(0)'; }}>
+      <div className="p-6" style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span className="mono text-ink-faint" style={{ fontSize: 12 }}>{p.index}</span>
+          <StatusBadge status={p.status} />
+        </div>
+        <span className="kanji text-accent" style={{ fontSize: 56, lineHeight: 1, margin: '20px 0 16px' }}>{p.kanji}</span>
+        <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2 mb-1">
+          <span className="display text-ink" style={{ fontSize: 22, fontWeight: 400, letterSpacing: '-0.02em' }}>{p.name}</span>
+        </div>
+        <span className="zs-eyebrow mb-3">{p.category}</span>
+        <p className="display text-ink m-0" style={{ fontSize: 17, fontWeight: 400, lineHeight: 1.3 }}>{p.tagline}</p>
+        <p className="text-ink-soft mt-2" style={{ fontSize: 13.5, lineHeight: 1.6 }}>{p.blurb}</p>
+        <div style={{ flex: 1 }} />
+        <div className="mt-5 mb-4"><MetaChips meta={p.meta} /></div>
+        <div className="border-t border-paper-edge pt-4"
+             style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span className="text-accent text-sm" style={{ fontWeight: 500 }}>Explore {p.name} →</span>
+        </div>
+      </div>
+    </a>
+  );
+}
+
+function Portfolio() {
+  const featured = PRODUCTS.find((p) => p.featured);
+  const rest = PRODUCTS.filter((p) => !p.featured);
+  return (
+    <section id="products" className="bg-paper-soft">
+      <div style={{ maxWidth: MAXW }} className="mx-auto px-7 sec">
+        <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between',
+                      flexWrap: 'wrap' }} className="gap-4 mb-7">
+          <div>
+            <Eyebrow style={{ marginBottom: 12 }}>The portfolio</Eyebrow>
+            <h2 className="display text-ink m-0" style={{ fontSize: 40, fontWeight: 300, letterSpacing: '-0.02em' }}>
+              Four tools, one workshop.
+            </h2>
+          </div>
+          <p className="text-ink-soft" style={{ fontSize: 14, lineHeight: 1.6, maxWidth: 360 }}>
+            Each carries its own mark and its own accent — but they share a
+            temperament, a type system, and a refusal to get in your way.
+          </p>
+        </div>
+
+        <div className="mb-5"><FeaturedCard p={featured} /></div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)' }} className="gap-5">
+          {rest.map((p) => <ProductCard key={p.id} p={p} />)}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Incubation — earlier-stage experiments (dashed, distinct from portfolio)
+// ═══════════════════════════════════════════════════════════════════════
+function IncubationCard({ p }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', flex: 1,
+                  '--accent': `var(--acc-${p.id})`,
+                  background: 'transparent',
+                  transition: 'border-color .18s, background .18s' }}
+         className="zs-card border-dashed p-0"
+         onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--accent)'; e.currentTarget.style.background = 'var(--paper-soft)'; }}
+         onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--paper-edge)'; e.currentTarget.style.background = 'transparent'; }}>
+      <div className="p-6" style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span className="kanji text-accent" style={{ fontSize: 44, lineHeight: 1 }}>{p.kanji}</span>
+          <span className="zs-badge" style={{ whiteSpace: 'nowrap' }}>
+            <span className="zs-dot" style={{ background: 'var(--accent)', width: 6, height: 6 }} />
+            Incubating
+          </span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2 mt-5 mb-1">
+          <span className="display text-ink" style={{ fontSize: 20, fontWeight: 400, letterSpacing: '-0.02em' }}>{p.name}</span>
+          <span className="mono text-ink-faint" style={{ fontSize: 10.5, whiteSpace: 'nowrap' }}>{p.label}</span>
+        </div>
+        <span className="zs-eyebrow mb-3">{p.category}</span>
+        <p className="display text-ink m-0" style={{ fontSize: 16, fontWeight: 400, lineHeight: 1.3 }}>{p.tagline}</p>
+        <p className="text-ink-soft mt-2" style={{ fontSize: 13.5, lineHeight: 1.6 }}>{p.blurb}</p>
+      </div>
+    </div>
+  );
+}
+
+function Incubation() {
+  return (
+    <section id="incubation" style={{ maxWidth: MAXW }} className="mx-auto px-7 sec">
+      <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between',
+                    flexWrap: 'wrap' }} className="gap-4 mb-7">
+        <div>
+          <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-3 mb-3">
+            <span className="kanji text-accent" style={{ fontSize: 40, lineHeight: 1 }}>育</span>
+            <Eyebrow>Iku · to nurture — in incubation</Eyebrow>
+          </div>
+          <h2 className="display text-ink m-0" style={{ fontSize: 40, fontWeight: 300, letterSpacing: '-0.02em' }}>
+            Still taking shape.
+          </h2>
+        </div>
+        <p className="text-ink-soft" style={{ fontSize: 14, lineHeight: 1.6, maxWidth: 380 }}>
+          Experiments we are nurturing in the workshop. Rougher edges, same
+          temperament — these may grow into the next tools we ship.
+        </p>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)' }} className="gap-5">
+        {INCUBATING.map((p) => <IncubationCard key={p.id} p={p} />)}
+      </div>
+    </section>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Approach
+// ═══════════════════════════════════════════════════════════════════════
+function Approach() {
+  return (
+    <section id="approach" className="bg-paper-soft">
+      <div style={{ maxWidth: MAXW }} className="mx-auto px-7 sec">
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.5fr',
+                      alignItems: 'start' }} className="gap-8">
+          <div>
+            <Eyebrow style={{ marginBottom: 12 }}>The approach</Eyebrow>
+            <h2 className="display text-ink m-0" style={{ fontSize: 32, fontWeight: 400, letterSpacing: '-0.015em', lineHeight: 1.25 }}>
+              The master observes for a long time before teaching.
+            </h2>
+            <p className="text-ink-soft mt-4" style={{ fontSize: 14, lineHeight: 1.7, maxWidth: 360 }}>
+              The kanji on each tool name a phase of practice — observe, build,
+              hasten, guard. They are what we ask of the people who use our
+              tools, and what we ask of ourselves while making them.
+            </p>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-0">
+            {PRINCIPLES.map((pr, i) => (
+              <div key={pr.title}
+                   style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', alignItems: 'start',
+                            borderTop: i === 0 ? 'none' : 'var(--hairline)' }}
+                   className="gap-5 py-5">
+                <div style={{ width: 56 }}>
+                  <span className="kanji text-accent" style={{ fontSize: 40, lineHeight: 1 }}>{pr.kanji}</span>
+                </div>
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-3 mb-1">
+                    <span className="display text-ink" style={{ fontSize: 18 }}>{pr.title}</span>
+                    <span className="mono text-ink-faint" style={{ fontSize: 11 }}>{pr.label}</span>
+                  </div>
+                  <p className="text-ink-soft m-0" style={{ fontSize: 14, lineHeight: 1.65 }}>{pr.text}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Open source band
+// ═══════════════════════════════════════════════════════════════════════
+function OpenSource() {
+  const repos = [
+    { name: 'sensei-hq/rokkit', dot: 'var(--acc-rokkit)', lang: 'Svelte', note: 'Data-driven components' },
+    { name: 'sensei-hq/kavach', dot: 'var(--acc-kavach)', lang: 'TypeScript', note: 'Auth for SvelteKit' },
+  ];
+  return (
+    <section id="open" style={{ maxWidth: MAXW }} className="mx-auto px-7 sec">
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.2fr',
+                    alignItems: 'center' }} className="gap-8">
+        <div>
+          <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-3 mb-4">
+            <span className="kanji text-accent" style={{ fontSize: 40, lineHeight: 1 }}>公</span>
+            <Eyebrow>Kō · in the open</Eyebrow>
+          </div>
+          <h2 className="display text-ink m-0" style={{ fontSize: 28, fontWeight: 400, letterSpacing: '-0.015em', lineHeight: 1.3 }}>
+            Two of our tools are built in the open.
+          </h2>
+          <p className="text-ink-soft mt-4" style={{ fontSize: 14, lineHeight: 1.7, maxWidth: 420 }}>
+            Rokkit and Kavach are MIT-licensed and developed in public. Read the
+            source, file an issue, or send a pull request — the workshop door is open.
+          </p>
+          <a href="#github" className="zs-btn zs-btn-secondary mt-5">
+            <span className="kanji text-ink-soft" style={{ fontSize: 14, lineHeight: 1 }}>叉</span>
+            Browse the repositories
+          </a>
+        </div>
+        <div className="border-1px border-paper-edge rounded-lg bg-paper" style={{ overflow: 'hidden' }}>
+          <div className="divide-y">
+            {repos.map((r) => (
+              <a key={r.name} href="#github"
+                 style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto', alignItems: 'center' }}
+                 className="gap-4 px-5 py-4">
+                <span className="zs-dot" style={{ background: r.dot }} />
+                <span>
+                  <span className="mono text-ink block" style={{ fontSize: 13 }}>{r.name}</span>
+                  <span className="text-ink-mute text-xs">{r.note}</span>
+                </span>
+                <span className="mono text-ink-mute" style={{ fontSize: 11 }}>{r.lang}</span>
+              </a>
+            ))}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Contact + Footer
+// ═══════════════════════════════════════════════════════════════════════
+function Contact() {
+  return (
+    <section id="contact" className="bg-paper-soft">
+      <div style={{ maxWidth: 720, textAlign: 'center' }} className="mx-auto px-7 sec">
+        <div style={{ display: 'flex', justifyContent: 'center' }} className="mb-5">
+          <Enso size={40} stroke="var(--accent)" width={2.4} />
+        </div>
+        <h2 className="display text-ink m-0" style={{ fontSize: 32, fontWeight: 300, letterSpacing: '-0.02em', lineHeight: 1.2 }}>
+          Building something quiet and sharp?
+        </h2>
+        <p className="text-ink-soft mt-4" style={{ fontSize: 15, lineHeight: 1.7 }}>
+          We like talking to people who care about the craft. Tell us what you
+          are working on, or follow along as the workshop grows.
+        </p>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap' }}
+             className="gap-3 mt-6">
+          <a href="mailto:hi@sensei-hq.com" className="zs-btn zs-btn-primary zs-btn-lg">
+            <span className="kanji" style={{ fontSize: 15, lineHeight: 1, color: 'var(--on-primary)' }}>文</span>
+            Leave a note
+          </a>
+          <a href="#newsletter" className="zs-btn zs-btn-secondary zs-btn-lg">Join the newsletter</a>
+        </div>
+        <a href="mailto:hi@sensei-hq.com" className="mono text-ink-mute mt-4"
+           style={{ display: 'inline-block', fontSize: 12, letterSpacing: '0.02em', whiteSpace: 'nowrap' }}>
+          hi@sensei-hq.com
+        </a>
+      </div>
+    </section>
+  );
+}
+
+function Footer() {
+  const cols = [
+    ['Products', [['Sensei', 'Sensei Site.html'], ['DBD', '#dbd'], ['Rokkit', '#rokkit'], ['Kavach', '#kavach']]],
+    ['Studio', [['Approach', '#approach'], ['Open source', '#open'], ['Contact', '#contact']]],
+    ['Connect', [['GitHub', '#github'], ['Twitter', '#twitter'], ['hi@sensei-hq.com', 'mailto:hi@sensei-hq.com']]],
+  ];
+  return (
+    <footer>
+      <div style={{ maxWidth: MAXW }} className="mx-auto px-7 py-8">
+        <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr 1fr 1fr',
+                      alignItems: 'start' }} className="gap-7">
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center' }} className="gap-3 mb-3">
+              <Enso size={24} stroke="var(--accent)" />
+              <span style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2">
+                <span className="display text-ink" style={{ fontSize: 16 }}>Sensei</span>
+                <span className="mono text-ink-mute" style={{ fontSize: 11, letterSpacing: '0.08em' }}>HQ</span>
+              </span>
+            </div>
+            <p className="text-ink-mute m-0" style={{ fontSize: 13, lineHeight: 1.6, maxWidth: 280 }}>
+              A small workshop of developer tools. Built quietly, in Tennessee.
+            </p>
+          </div>
+          {cols.map(([title, items]) => (
+            <div key={title}>
+              <Eyebrow style={{ marginBottom: 14 }}>{title}</Eyebrow>
+              <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-2">
+                {items.map(([label, href]) => (
+                  <a key={label} href={href} className="text-ink-soft text-sm"
+                     style={{ transition: 'color .15s' }}
+                     onMouseEnter={(e) => e.currentTarget.style.color = 'var(--ink)'}
+                     onMouseLeave={(e) => e.currentTarget.style.color = 'var(--ink-soft)'}>{label}</a>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="border-t border-paper-edge mt-7 pt-5"
+             style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
+          <span className="mono text-ink-faint" style={{ fontSize: 11 }}>© 2026 Sensei HQ · All rights reserved</span>
+          <span className="mono text-ink-faint" style={{ fontSize: 11 }}>道 · the way</span>
+        </div>
+      </div>
+    </footer>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Root
+// ═══════════════════════════════════════════════════════════════════════
+const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+  "dark": false,
+  "density": "airy",
+  "accentMode": "distinct"
+}/*EDITMODE-END*/;
+
+function HQSite() {
+  const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
+
+  hE(() => {
+    document.documentElement.setAttribute('data-theme', t.dark ? 'dark' : 'light');
+  }, [t.dark]);
+
+  // Per-product accent custom properties, resolved against theme + mode.
+  const accentVars = {};
+  const set = ACCENTS[t.dark ? 'dark' : 'light'];
+  [...PRODUCTS, ...INCUBATING].forEach((p) => {
+    accentVars[`--acc-${p.id}`] = t.accentMode === 'distinct' ? set[p.id] : 'var(--accent)';
+  });
+
+  const secPad = t.density === 'compact' ? 56 : 92;
+
+  return (
+    <div className="sensei" style={{ minHeight: '100%', background: 'var(--paper)', position: 'relative', ...accentVars }}>
+      <style>{`
+        .sensei .sec{ padding-top:${secPad}px; padding-bottom:${secPad}px; }
+        .sensei .display, .sensei .zs-display, .sensei .zs-h1, .sensei .zs-h2,
+        .sensei .zs-h3, .sensei h1, .sensei h2, .sensei h3,
+        .sensei .zs-hero, .sensei .zs-display-lg{
+          font-optical-sizing:none;
+          font-variation-settings:"opsz" 16;
+          font-feature-settings:"ss01" 0;
+        }
+      `}</style>
+      <div style={{ position: 'relative', zIndex: 1 }}>
+        <Nav />
+        <Hero />
+        <Portfolio />
+        <Incubation />
+        <Approach />
+        <OpenSource />
+        <Contact />
+        <Footer />
+      </div>
+
+      <TweaksPanel title="Tweaks">
+        <TweakSection label="Theme" />
+        <TweakToggle label="Dark mode" value={t.dark} onChange={(v) => setTweak('dark', v)} />
+        <TweakSection label="Layout" />
+        <TweakRadio label="Density" value={t.density}
+                    options={['airy', 'compact']}
+                    onChange={(v) => setTweak('density', v)} />
+        <TweakSection label="Product color" />
+        <TweakRadio label="Accents" value={t.accentMode}
+                    options={[{ value: 'distinct', label: 'Distinct' }, { value: 'unified', label: 'Unified' }]}
+                    onChange={(v) => setTweak('accentMode', v)} />
+      </TweaksPanel>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<HQSite />);
