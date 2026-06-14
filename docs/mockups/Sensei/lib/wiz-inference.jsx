@@ -86,7 +86,7 @@ function WizInference({ state, upd }) {
                      display: 'flex', justifyContent: 'space-between', alignItems: 'center'
 }} className="mt-4 pt-4" >
         <div style={{ fontSize: 13, color: 'var(--ink-3)', lineHeight: 1.6 }}>
-          Role assignments come next — decide which models handle inference, consolidation, embedding, voice, and fallback.
+          Role assignments come next — decide which models handle inference, consolidation, embedding, voice, and image.
         </div>
         <button style={{
  fontSize: 13, color: 'var(--ink-2)', border: 'var(--hairline)',

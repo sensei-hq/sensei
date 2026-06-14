@@ -66,6 +66,7 @@
   <script type="text/babel" src="lib/observatory.jsx"></script>
   <script type="text/babel" src="lib/project-shared.jsx"></script>
   <script type="text/babel" src="lib/perspective-split.jsx"></script>
+  <script type="text/babel" src="lib/project-atlas.jsx"></script>
   <script type="text/babel" src="lib/project-logs.jsx"></script>
   <script type="text/babel" src="lib/project-pages.jsx"></script>
   <script type="text/babel" src="lib/project-lite-panes.jsx"></script>
@@ -204,6 +205,9 @@
               </DCArtboard>
               <DCArtboard id="psplit-b" label="B · Project window standalone" width={1280} height={780}>
                 <div className="artboard-shell"><PerspectiveSplitB/></div>
+              </DCArtboard>
+              <DCArtboard id="proj-atlas" label="Atlas · code graph · repos → packages → modules → symbols + docs layer" width={1280} height={820}>
+                <div className="artboard-shell"><ProjectAtlasWindow/></div>
               </DCArtboard>
               <DCArtboard id="psplit-c" label="C · The launch moment · cascaded over collective" width={1480} height={860}>
                 <div className="artboard-shell"><PerspectiveSplitC/></div>
