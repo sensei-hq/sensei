@@ -52,6 +52,9 @@
 .display {
   font-family: var(--font-display);
   font-feature-settings: "ss01";
+  /* Pin a lower optical size so headings use Fraunces' calmer text-range
+     letterforms (tames the exaggerated descending hook on f/j at display opsz). */
+  font-variation-settings: "opsz" 22;
   letter-spacing: -0.02em;
 }
 
