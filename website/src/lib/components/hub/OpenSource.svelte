@@ -1,5 +1,6 @@
 <script lang="ts">
   import { REPOS } from '$lib/hub-data.js';
+  import { Button } from '@rokkit/ui';
 </script>
 
 <section id="open" class="opensource-wrap mx-auto px-7 py-24">
@@ -16,12 +17,11 @@
         Rokkit and Kavach are MIT-licensed and developed in public. Read the
         source, file an issue, or send a pull request — the workshop door is open.
       </p>
-      <a href="https://github.com/sensei-hq" target="_blank" rel="noopener"
-         class="mt-5 inline-flex items-center gap-3 border border-paper-edge rounded-md px-4 py-2 text-ink-soft text-sm no-underline"
-         style="transition:border-color 0.15s">
-        <span class="kanji text-ink-soft" style="font-size:14px;line-height:1">叉</span>
+      <Button href="https://github.com/sensei-hq" target="_blank" rel="noopener"
+              style="outline" size="md" class="mt-5">
+        <span class="kanji" style="font-size:14px;line-height:1">叉</span>
         Browse the repositories
-      </a>
+      </Button>
     </div>
 
     <div class="border border-paper-edge rounded-lg bg-paper" style="overflow:hidden">

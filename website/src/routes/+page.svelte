@@ -6,6 +6,7 @@
   import Approach from '$lib/components/hub/Approach.svelte';
   import OpenSource from '$lib/components/hub/OpenSource.svelte';
   import Footer from '$lib/components/hub/Footer.svelte';
+  import { Button } from '@rokkit/ui';
 </script>
 
 <svelte:head>
@@ -26,11 +27,7 @@
   <section id="contact" class="bg-paper-soft">
     <div class="contact-inner mx-auto px-7 py-24" style="text-align:center">
       <div class="flex justify-center mb-5">
-        <svg viewBox="0 0 48 48" width="40" height="40" aria-hidden="true" class="block">
-          <circle cx="24" cy="24" r="18" fill="none" stroke="var(--accent)"
-                  stroke-width="2.4" stroke-linecap="round"
-                  stroke-dasharray="92 34" transform="rotate(125 24 24)" />
-        </svg>
+        <span class="i-brand:sensei-hq text-primary block" style="width:40px;height:40px" aria-hidden="true"></span>
       </div>
       <h2 class="display text-ink m-0" style="font-size:32px;font-weight:300;letter-spacing:-0.02em;line-height:1.2">
         Building something quiet and sharp?
@@ -40,17 +37,11 @@
         are working on, or follow along as the workshop grows.
       </p>
       <div class="flex items-center justify-center flex-wrap gap-3 mt-6">
-        <a href="mailto:hi@sensei-hq.com"
-           class="bg-primary text-on-primary rounded-md px-5 py-3 font-medium flex items-center gap-3 no-underline"
-           style="font-size:15px">
+        <Button href="mailto:hi@sensei-hq.com" variant="primary" size="md">
           <span class="kanji" style="font-size:15px;line-height:1">文</span>
           Leave a note
-        </a>
-        <a href="mailto:hi@sensei-hq.com"
-           class="border border-paper-edge rounded-md px-5 py-3 text-ink-soft text-sm no-underline"
-           style="font-size:15px">
-          Join the newsletter
-        </a>
+        </Button>
+        <Button href="mailto:hi@sensei-hq.com" variant="default" size="md" label="Join the newsletter" />
       </div>
       <a href="mailto:hi@sensei-hq.com"
          class="mono text-ink-mute mt-4 no-underline"
