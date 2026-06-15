@@ -739,8 +739,8 @@ dependencies = [
 
 [[package]]
 name = "dbd-core"
-version = "0.4.1"
-source = "git+https://github.com/sensei-hq/dbd?tag=v0.4.1#6e99965ea5c0ffeb9efcfbb4496c48be300e60ea"
+version = "0.4.5"
+source = "git+https://github.com/sensei-hq/dbd?tag=v0.4.5#006983aed4d6f625408f2f63328e3fa1d6e05925"
 dependencies = [
  "async-trait",
  "chrono",
@@ -3690,7 +3690,7 @@ dependencies = [
 
 [[package]]
 name = "sensei-bootstrap"
-version = "0.2.17"
+version = "0.2.18"
 dependencies = [
  "chrono",
  "dbd-core",
@@ -3705,7 +3705,7 @@ dependencies = [
 
 [[package]]
 name = "sensei-desktop"
-version = "0.2.17"
+version = "0.2.18"
 dependencies = [
  "chrono",
  "sensei-bootstrap",
