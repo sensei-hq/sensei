@@ -12,7 +12,7 @@
 <div class="page">
   <nav class="page-nav">
     <a href="{base}/sensei" class="back-link">
-      <span class="kanji" style="font-size: 18px; color: var(--shu);">先生</span>
+      <span class="i-brand:sensei text-sensei" style="width:20px;height:20px;flex-shrink:0" aria-hidden="true"></span>
       <span class="display" style="font-size: 15px;">Sensei</span>
     </a>
   </nav>
@@ -35,7 +35,7 @@
   }
   .back-link {
     display: inline-flex;
-    align-items: baseline;
+    align-items: center;
     gap: 8px;
     text-decoration: none;
   }
