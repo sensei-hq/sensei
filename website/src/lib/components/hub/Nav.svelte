@@ -1,5 +1,6 @@
 <script lang="ts">
   import { base } from '$app/paths';
+  import { Button } from '@rokkit/ui';
   import { NAV_LINKS } from '$lib/hub-data.js';
 </script>
 
@@ -18,11 +19,8 @@
       {#each NAV_LINKS as [href, label] (href)}
         <a {href} class="text-ink-soft text-sm nav-link no-underline">{label}</a>
       {/each}
-      <a href="https://github.com/sensei-hq" target="_blank" rel="noopener"
-         class="border border-paper-edge rounded-md px-3 py-1 text-ink-soft text-sm no-underline"
-         style="margin-left:4px">
-        GitHub
-      </a>
+      <Button href="https://github.com/sensei-hq" target="_blank" rel="noopener"
+              variant="default" size="sm" label="GitHub" class="ml-1" />
     </div>
   </nav>
 </div>
