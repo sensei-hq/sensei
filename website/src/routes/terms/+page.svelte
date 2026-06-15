@@ -46,7 +46,7 @@
 
     <h2>Sponsorship and donations</h2>
     <p>
-      Donations via Ko-fi or GitHub Sponsors are voluntary and non-refundable.
+      Donations via GitHub Sponsors are voluntary and non-refundable.
       Donations do not grant additional features, support, or guarantees beyond
       what is available in the free software.
     </p>

@@ -91,45 +91,8 @@
 /* ── Smooth scroll ────────────────────────────────────────── */
 html { scroll-behavior: smooth; }
 
-/* ── Button styles ────────────────────────────────────────── */
-.btn-solid {
-  display: inline-flex;
-  align-items: center;
-  gap: 12px;
-  padding: 16px 28px;
-  font-size: 15px;
-  font-weight: 500;
-  color: var(--paper);
-  background: var(--ink);
-  border: none;
-  border-radius: 8px;
-  cursor: pointer;
-  font-family: var(--font-ui);
-  text-decoration: none;
-  transition: opacity 0.14s;
-  white-space: nowrap;
-  box-shadow: 0 6px 20px -8px color-mix(in oklch, var(--ink) 40%, transparent);
-}
-.btn-solid:hover { opacity: 0.85; }
-
-.btn-shu {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  padding: 14px 28px;
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--on-primary);
-  background: var(--primary);
-  border: none;
-  border-radius: 8px;
-  cursor: pointer;
-  font-family: var(--font-ui);
-  text-decoration: none;
-  transition: opacity 0.14s;
-  white-space: nowrap;
-}
-.btn-shu:hover { opacity: 0.85; }
+/* Button styles now come from rokkit's <Button> component (@rokkit/ui) +
+   @rokkit/themes button.css — see app.css imports. */
 
 /* ── Details/summary reset ────────────────────────────────── */
 details summary { list-style: none; }

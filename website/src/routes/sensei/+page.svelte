@@ -2,6 +2,7 @@
   import { browser } from '$app/environment';
   import { base } from '$app/paths';
   import { vibe } from '@rokkit/states';
+  import { Button } from '@rokkit/ui';
   import MockToday from '$lib/components/mock/MockToday.svelte';
   import MockSessions from '$lib/components/mock/MockSessions.svelte';
   import MockInsights from '$lib/components/mock/MockInsights.svelte';
@@ -116,7 +117,7 @@
   <nav class="nav">
     <div class="nav-inner">
       <a href="{base}/sensei" class="logo-link">
-        <span class="kanji logo-kanji">先生</span>
+        <span class="i-brand:sensei text-sensei logo-mark" aria-hidden="true"></span>
         <span class="display logo-text">Sensei</span>
       </a>
       <div class="nav-links">
@@ -152,10 +153,10 @@
         chatbot. Not a copilot. A patient observer.
       </p>
       <div class="hero-actions">
-        <a href="{RELEASE_BASE}/{dlFile}" class="btn-solid">
-          <span class="kanji" style="font-size: 19px; color: var(--shu);">下</span>
+        <Button href="{RELEASE_BASE}/{dlFile}" variant="primary" size="lg">
+          <span class="kanji" style="font-size: 19px; line-height: 1;">下</span>
           Download for {os}
-        </a>
+        </Button>
         <a href="#how" class="hero-link">See how it works ↓</a>
       </div>
       <div class="hero-note">Free preview · Local-first · No account required</div>
@@ -329,10 +330,10 @@
         No surprises.
       </p>
       <div style="margin-top: 44px;">
-        <a href="{RELEASE_BASE}/{dlFile}" class="btn-solid">
-          <span class="kanji" style="font-size: 19px; color: var(--shu);">下</span>
+        <Button href="{RELEASE_BASE}/{dlFile}" variant="primary" size="lg">
+          <span class="kanji" style="font-size: 19px; line-height: 1;">下</span>
           Download for {os}
-        </a>
+        </Button>
       </div>
     </div>
   </section>
@@ -370,11 +371,12 @@
         If sensei has earned a place in your practice, you can help keep it growing.
       </h2>
       <p class="support-body">
-        Sensei is built by a small team. Every coffee buys an hour of focused work.
+        Sensei is built by a small team. A sponsorship funds the focused hours
+        that keep it sharp.
       </p>
-      <a href="https://ko-fi.com/senseidev" target="_blank" rel="noopener" class="btn-shu">
-        ♥ Buy me a coffee
-      </a>
+      <Button href="https://github.com/sponsors/sensei-hq" target="_blank" rel="noopener" variant="primary" size="md">
+        ♥ Sponsor on GitHub
+      </Button>
     </div>
   </section>
 
@@ -383,7 +385,7 @@
     <div class="footer-inner">
       <div class="footer-brand">
         <div class="footer-logo">
-          <span class="kanji" style="font-size: 18px; color: var(--shu); letter-spacing: -0.04em;">先生</span>
+          <span class="i-brand:sensei text-sensei" style="width:22px;height:22px;flex-shrink:0" aria-hidden="true"></span>
           <span class="display" style="font-size: 16px; color: var(--sumi-2);">Sensei</span>
         </div>
         <div class="footer-desc">
@@ -446,14 +448,14 @@
   }
   .logo-link {
     display: flex;
-    align-items: baseline;
+    align-items: center;
     gap: 10px;
     text-decoration: none;
   }
-  .logo-kanji {
-    font-size: 24px;
-    color: var(--shu);
-    letter-spacing: -0.04em;
+  .logo-mark {
+    width: 30px;
+    height: 30px;
+    flex-shrink: 0;
   }
   .logo-text {
     font-size: 19px;
@@ -917,7 +919,7 @@
   }
   .footer-logo {
     display: flex;
-    align-items: baseline;
+    align-items: center;
     gap: 10px;
     margin-bottom: 12px;
   }
