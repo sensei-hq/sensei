@@ -87,3 +87,11 @@ Layered scope×enforcement rule model, `scopes`+`namespaces` (level-based set me
 |-------|---------|
 | [#51](https://github.com/sensei-hq/sensei/issues/51) | ACP config: JSONC comment loss on rewrite |
 | [#52](https://github.com/sensei-hq/sensei/issues/52) | Database DDL upgrades: no rollback for partial/failed upgrades (offload to dbd) |
+
+## 10. Website (`website/`)
+
+| Item | Summary |
+|------|---------|
+| ✅ FIXED | **Screens gallery used kanji `先` instead of the logo SVG.** `MockSidebar.svelte:17` (shared by all `Mock*` gallery components) hardcoded `<span class="kanji">先</span>` as the brand mark. Replaced with the sensei logo icon (`i-brand:sensei text-sensei`) + center-aligned `.logo`, matching the real page header at `routes/sensei/+page.svelte:120`. Verified via dev-server screenshot. |
+| ⚠️ 1 known error (upstream) | **`svelte-check` baseline cleanup.** `bun run check` had 20 pre-existing errors; **19 fixed** (`app.d.ts`: `__APP_VERSION__` global + `ButtonProps.rel` augmentation + `@types/rokkit__states` shim via `typeRoots`; added `@types/node`; `HTMLElement` casts in `dark-mode.spec.ts`). **1 remaining is upstream rokkit** ([jerrythomas/rokkit#139](https://github.com/jerrythomas/rokkit/issues/139)): `@rokkit/ui`'s `CommandPalette.svelte` ships as plain JS → implicit-any TS7016 with no clean consumer-side fix. **Accepted exception** (user-signed-off) until #139 ships; then remove the `@types/rokkit__states` shim + `typeRoots` too (both only needed for the same upstream gap). |
+| _(file issue)_ | **On-page SEO gaps** (from SEO checklist audit): (a) canonical tag missing — add `<link rel="canonical" href="…">`; (b) OpenGraph tags missing — `og:title`, `og:description`, `og:image`; (c) Twitter Card tags missing — `twitter:card`, `twitter:title`, `twitter:description`, `twitter:image`; (d) not yet indexed by Google — submit sitemap to Google Search Console and request indexing for key pages. Likely all belong in the root `+layout.svelte`/`app.html` `<svelte:head>` so every route inherits them, plus a generated `sitemap.xml`. |
