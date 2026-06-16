@@ -14,7 +14,7 @@
 
 <aside class="sidebar">
   <div class="logo">
-    <span class="kanji" style="font-size: 16px; color: var(--shu);">先</span>
+    <span class="i-brand:sensei text-sensei" style="font-size: 16px; width: 16px; height: 16px;" aria-hidden="true"></span>
     <span class="display" style="font-size: 13px;">Sensei</span>
   </div>
 
@@ -60,7 +60,7 @@
   }
   .logo {
     display: flex;
-    align-items: baseline;
+    align-items: center;
     gap: 6px;
     padding: 0 6px;
   }

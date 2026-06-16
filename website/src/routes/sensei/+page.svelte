@@ -9,8 +9,6 @@
   import MockMemory from '$lib/components/mock/MockMemory.svelte';
   import MockInstruments from '$lib/components/mock/MockInstruments.svelte';
 
-  declare const __APP_VERSION__: string;
-
   const GITHUB = 'https://github.com/sensei-hq/sensei';
   const RELEASES = 'https://github.com/sensei-hq/sensei-releases';
   const RELEASE_BASE = `${RELEASES}/releases/latest/download`;
