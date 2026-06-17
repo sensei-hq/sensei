@@ -42,10 +42,6 @@ impl std::fmt::Display for SymbolKind {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum NodeKind {
-    // Structural grouping
-    Repo,
-    CodeGroup,
-    DocGroup,
     // Code hierarchy
     Package,
     Module,
@@ -69,9 +65,6 @@ pub enum NodeKind {
 impl NodeKind {
     pub fn as_str(&self) -> &'static str {
         match self {
-            Self::Repo => "repo",
-            Self::CodeGroup => "code-group",
-            Self::DocGroup => "doc-group",
             Self::Package => "package",
             Self::Module => "module",
             Self::Function => "function",
@@ -93,9 +86,6 @@ impl NodeKind {
     #[allow(dead_code)]
     pub fn from_str(s: &str) -> Self {
         match s {
-            "repo" => Self::Repo,
-            "code-group" => Self::CodeGroup,
-            "doc-group" => Self::DocGroup,
             "package" => Self::Package,
             "module" => Self::Module,
             "function" => Self::Function,
@@ -145,10 +135,11 @@ impl NodeKind {
 
     /// Every node kind, in declaration order. Backs the schema-consistency
     /// guard test and any exhaustive enumeration of kinds.
+    #[allow(dead_code)]
     pub fn all() -> &'static [NodeKind] {
         use NodeKind::*;
         &[
-            Repo, CodeGroup, DocGroup, Package, Module, Function, Method,
+            Package, Module, Function, Method,
             Class, Struct, Interface, Enum, Const, Type, Component, Hook,
             File, Doc, Extension,
         ]
