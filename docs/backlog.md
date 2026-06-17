@@ -34,6 +34,8 @@ Layered scope×enforcement rule model, `scopes`+`namespaces` (level-based set me
 | [#33](https://github.com/sensei-hq/sensei/issues/33) | Scan emits no progress events after initial queue + discover-message substring mismatch |
 | [#34](https://github.com/sensei-hq/sensei/issues/34) | Test fixture projects pollute the dev DB (`ensure_test_project`) |
 | [#35](https://github.com/sensei-hq/sensei/issues/35) | Scan stats: queued cumulative vs processed current-state |
+| _(spec — in progress)_ | **`node_kind` enum silently drops `doc`/`struct`/`component`/`hook`/`extension` nodes.** `upsert_node` enum cast fails for kinds not in the DDL enum; `.ok()` swallows it. Live: those kinds + `covers`/`references` edges = 0 rows (doc/traceability dead). Add the 5 kinds as first-class enum values + log the swallow + embed new kinds + prod backfill. Spec: [`docs/superpowers/specs/2026-06-16-node-kind-drops-design.md`](./superpowers/specs/2026-06-16-node-kind-drops-design.md). |
+| _(follow-up)_ | **Codebase-wide silent-error audit.** Find & fix every place that discards an error without logging (`.ok()`, `let _ =`, empty catch, masking `unwrap_or_default`) — errors must be logged so they can be inspected/rectified. Directed after the node_kind fix; the latter is one instance. |
 
 ## 3. Setup wizard
 
