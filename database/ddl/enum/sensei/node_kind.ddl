@@ -9,4 +9,5 @@ create type node_kind
       , 'type', 'const', 'enum', 'enum_variant'
       , 'section'
       , 'rationale'
+      , 'struct', 'component', 'hook', 'doc', 'extension'
     );
