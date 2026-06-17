@@ -554,7 +554,8 @@ impl PgStore {
                   WHERE folder_id = $1
                     AND embedding IS NULL
                     AND kind IN ('file','function','method','class','interface',
-                                 'type','const','enum','enum_variant','section')
+                                 'type','const','enum','enum_variant','section',
+                                 'struct','component','hook','doc','extension')
                   ORDER BY file_path, line_start
                   LIMIT $2",
             )
@@ -645,7 +646,8 @@ impl PgStore {
                JOIN sensei.folders f ON f.id = n.folder_id
               WHERE n.embedding IS NULL
                 AND n.kind IN ('file','function','method','class','interface',
-                               'type','const','enum','enum_variant','section')",
+                               'type','const','enum','enum_variant','section',
+                               'struct','component','hook','doc','extension')",
         )
         .fetch_all(&self.pool)
         .await
@@ -3260,6 +3262,20 @@ mod tests {
         for kind in ["doc", "struct", "component", "hook", "extension"] {
             assert_eq!(kinds.get(kind), Some(&1), "missing {kind} node");
         }
+        s.delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn doc_nodes_are_embeddable() {
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("embed_{}", uuid::Uuid::new_v4())).await;
+        s.upsert_node(&fid, "doc", "README", "README.md", None, None, Some(1), Some(2))
+            .await.unwrap();
+        let pending = s.nodes_without_embeddings(&fid, 100).await.unwrap();
+        assert!(
+            pending.iter().any(|(_, kind, name, _, _)| kind == "doc" && name == "README"),
+            "doc node not returned by nodes_without_embeddings"
+        );
         s.delete_nodes_by_folder(&fid).await.unwrap();
     }
 
