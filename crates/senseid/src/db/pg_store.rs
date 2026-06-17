@@ -3241,6 +3241,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn upsert_persists_doc_and_symbol_kinds() {
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("kinds_{}", uuid::Uuid::new_v4())).await;
+        // Each of these failed the enum cast before the fix and was dropped.
+        for (kind, name, path) in [
+            ("doc", "README", "README.md"),
+            ("struct", "Point", "src/geo.rs"),
+            ("component", "Button", "src/Button.svelte"),
+            ("hook", "useState", "src/Button.svelte"),
+            ("extension", "review", "marketplace/commands/review.md"),
+        ] {
+            s.upsert_node(&fid, kind, name, path, None, None, Some(1), Some(2))
+                .await
+                .unwrap_or_else(|e| panic!("upsert {kind} failed: {e}"));
+        }
+        let kinds = s.count_nodes_by_kind(&fid).await.unwrap();
+        for kind in ["doc", "struct", "component", "hook", "extension"] {
+            assert_eq!(kinds.get(kind), Some(&1), "missing {kind} node");
+        }
+        s.delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
     async fn edge_insert_and_query() {
         let s = pg_store().await;
         let fid = create_test_folder(&s, &format!("edge_{}", uuid::Uuid::new_v4())).await;
