@@ -50,13 +50,25 @@ pub async fn load_window(pg: &PgStore) -> CaptureWindow {
     parse_window(hours.as_deref(), weekends.as_deref())
 }
 
-/// Compute health for every configured adapter, appending the DB-backed
+/// Whether the watchdog should monitor an adapter: it's in the user's opt-in
+/// list (`SenseiLocalConfig.configured_assistants`, persisted by `configure()`).
+/// Pure so it's unit-testable. NOTE: we deliberately scope on the durable opt-in
+/// list, NOT live `is_configured()` — otherwise a WIPED plugin reads
+/// `configured=false` and gets skipped, so the watchdog could never detect or
+/// repair the exact breakage it exists to catch.
+fn is_opted_in(adapter_id: &str, opted_in: &[String]) -> bool {
+    opted_in.iter().any(|id| id == adapter_id)
+}
+
+/// Compute health for every adapter the user opted into, appending the DB-backed
 /// `events` freshness check to the `claude` family.
 pub async fn health_report(pg: &PgStore, now_ms: i64) -> Vec<AdapterHealth> {
     let window = load_window(pg).await;
+    let opted_in = sensei_bootstrap::SenseiLocalConfig::load(&crate::paths::sensei_dir())
+        .configured_assistants;
     let mut out = Vec::new();
     for status in crate::assistants::detect() {
-        if !status.configured { continue; }
+        if !is_opted_in(&status.id, &opted_in) { continue; }
         let mut checks = config_health_for(&status.id);
         if status.family == CLAUDE_FAMILY {
             let last = pg.latest_hook_event_ts(CLAUDE_FAMILY).await
@@ -230,6 +242,15 @@ mod tests {
         assert_eq!(w2.hours, 24.0);
         assert!(w2.exclude_weekends);
     }
+    #[test]
+    fn is_opted_in_matches_only_listed_ids() {
+        let opted = vec!["claude-code".to_string(), "cursor".to_string()];
+        assert!(is_opted_in("claude-code", &opted));
+        assert!(is_opted_in("cursor", &opted));
+        assert!(!is_opted_in("zed", &opted));
+        assert!(!is_opted_in("claude-code", &[]));
+    }
+
     #[test]
     fn parse_window_reads_values() {
         let w = parse_window(Some("6"), Some("false"));
