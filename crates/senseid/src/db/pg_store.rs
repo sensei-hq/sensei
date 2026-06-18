@@ -1792,6 +1792,20 @@ impl PgStore {
         Ok(row.0)
     }
 
+    /// Newest hook_event timestamp (epoch ms) for an assistant family, or None
+    /// when the daemon has never recorded one for it. `assistant_family` is a
+    /// Postgres enum, so bind with the explicit cast.
+    pub async fn latest_hook_event_ts(&self, family: &str) -> Result<Option<i64>, String> {
+        let row: (Option<i64>,) = sqlx_core::query_as::query_as(
+            "SELECT max(ts) FROM activity.hook_events WHERE assistant_family = $1::sensei.assistant_family"
+        )
+        .bind(family)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(row.0)
+    }
+
     // ── Projects ──────────────────────────────────────────────────────
 
     pub async fn create_project(&self, name: &str, description: Option<&str>, client: Option<&str>) -> Result<uuid::Uuid, String> {
@@ -4381,5 +4395,19 @@ mod knowledge_tests {
             .bind(vec![org_ns, tech_ns]).execute(pg.pool()).await.unwrap();
         sqlx_core::query::query("DELETE FROM sensei.scopes WHERE key IN ('organization','technology')")
             .execute(pg.pool()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn latest_hook_event_ts_returns_max_for_family() {
+        let pg = PgStore::connect_test().await.unwrap();
+        let base = 1_900_000_000_000_i64; // far-future, won't collide with seeded data
+        for (i, off) in [0_i64, 5000, 2000].iter().enumerate() {
+            pg.insert_hook_event(
+                &format!("sess-test-{i}"), "claude", "PreToolUse", Some("Bash"),
+                Some("/tmp"), base + off, Some(true), &serde_json::json!({"t": i}),
+            ).await.unwrap();
+        }
+        let max = pg.latest_hook_event_ts("claude").await.unwrap().unwrap();
+        assert!(max >= base + 5000, "expected >= {} got {max}", base + 5000);
     }
 }
