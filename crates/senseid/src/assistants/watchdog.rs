@@ -3,8 +3,11 @@
 //! breaker, and fires notifications. The pure parts (config keys, tick policy)
 //! are unit-tested; the loop is thin glue.
 
+use std::collections::HashMap;
+use std::sync::Mutex;
 use crate::assistants::health::{capture_freshness, AdapterCheck, AdapterHealth, CheckStatus};
 use crate::db::pg_store::PgStore;
+use crate::notifications::{Notifier, NotifyLevel};
 
 pub const DEFAULT_WINDOW_HOURS: f64 = 24.0;
 pub const DEFAULT_EXCLUDE_WEEKENDS: bool = true;
@@ -73,10 +76,6 @@ fn config_health_for(adapter_id: &str) -> Vec<AdapterCheck> {
             Some(format!("unknown adapter {adapter_id}")))])
 }
 
-use std::collections::HashMap;
-use std::sync::Mutex;
-use crate::notifications::{Notifier, NotifyLevel};
-
 /// Per-adapter watchdog state. `suspended` short-circuits future ticks;
 /// `stale_notified` dedups the events-stale warning so it fires once per
 /// stale episode, not every hour.
@@ -105,22 +104,23 @@ fn events_failing(h: &AdapterHealth) -> bool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TickOutcome { Skipped, Healthy, StaleWarned, StaleAlreadyNotified, Resolved, Suspended }
 
-/// Decide + act for one adapter. `resolve_fn` runs the reinstall and returns
-/// whether it succeeded; `recheck_fn` recomputes health afterward. Sync + pure
-/// of IO except via the injected closures + notifier, so it's fully
-/// unit-testable; all `.await` logging happens in the caller off the return.
+/// Decide + act for one adapter. `resolve_fn` runs the reinstall for its side
+/// effect; whether repair worked is judged by `recheck_fn` (the oracle), not by
+/// the resolver's own report. Sync + pure of IO except via the injected
+/// closures + notifier, so it's fully unit-testable; all `.await` logging
+/// happens in the caller off the returned `TickOutcome`.
 #[allow(dead_code)] // used by run_sweep (Task 9)
 pub fn tick_adapter(
     health: &AdapterHealth,
     watch: &mut AdapterWatch,
     notifier: &dyn Notifier,
-    resolve_fn: &dyn Fn() -> bool,
+    resolve_fn: &dyn Fn(),
     recheck_fn: &dyn Fn() -> AdapterHealth,
 ) -> TickOutcome {
     if watch.suspended.is_some() { return TickOutcome::Skipped; }
 
     if config_side_failing(health) {
-        let _ran = resolve_fn();
+        resolve_fn();
         let after = recheck_fn();
         if config_side_failing(&after) {
             let reason = "auto-repair failed; manual action needed".to_string();
@@ -181,9 +181,6 @@ mod tests {
         assert_eq!(parse_window(Some("NaN"), None).hours, 24.0);
     }
 
-    use crate::notifications::{Notifier, NotifyLevel};
-    use std::sync::Mutex;
-
     struct Rec(Mutex<Vec<(NotifyLevel, String)>>);
     impl Notifier for Rec {
         fn notify(&self, l: NotifyLevel, t: &str, _b: &str) { self.0.lock().unwrap().push((l, t.into())); }
@@ -199,7 +196,7 @@ mod tests {
         let mut w = AdapterWatch::default();
         let bad = health(vec![("plugin", CheckStatus::Fail), ("events", CheckStatus::Ok)]);
         let good = health(vec![("plugin", CheckStatus::Ok), ("events", CheckStatus::Ok)]);
-        tick_adapter(&bad, &mut w, &rec, &|| true, &|| good.clone());
+        tick_adapter(&bad, &mut w, &rec, &|| {}, &|| good.clone());
         assert!(w.suspended.is_none());
         assert_eq!(rec.0.lock().unwrap()[0].0, NotifyLevel::Info);
     }
@@ -209,7 +206,7 @@ mod tests {
         let rec = Rec(Mutex::new(vec![]));
         let mut w = AdapterWatch::default();
         let bad = health(vec![("plugin", CheckStatus::Fail)]);
-        tick_adapter(&bad, &mut w, &rec, &|| true, &|| bad.clone());
+        tick_adapter(&bad, &mut w, &rec, &|| {}, &|| bad.clone());
         assert!(w.suspended.is_some());
         assert_eq!(rec.0.lock().unwrap()[0].0, NotifyLevel::Critical);
     }
@@ -233,5 +230,23 @@ mod tests {
         let calls = rec.0.lock().unwrap();
         assert_eq!(calls.len(), 1, "stale should warn once, not every tick");
         assert_eq!(calls[0].0, NotifyLevel::Warn);
+    }
+
+    #[test]
+    fn stale_then_healthy_then_stale_rewarns() {
+        // Guards the stale_notified reset: a recovered-then-stale-again adapter
+        // must produce a fresh Warn, not stay silent.
+        let rec = Rec(Mutex::new(vec![]));
+        let mut w = AdapterWatch::default();
+        let stale   = health(vec![("plugin", CheckStatus::Ok), ("events", CheckStatus::Fail)]);
+        let healthy = health(vec![("plugin", CheckStatus::Ok), ("events", CheckStatus::Ok)]);
+        tick_adapter(&stale, &mut w, &rec, &|| panic!("must not resolve"), &|| stale.clone());
+        assert!(w.stale_notified, "set after first warn");
+        tick_adapter(&healthy, &mut w, &rec, &|| panic!("must not resolve"), &|| stale.clone());
+        assert!(!w.stale_notified, "reset on healthy tick");
+        tick_adapter(&stale, &mut w, &rec, &|| panic!("must not resolve"), &|| stale.clone());
+        let calls = rec.0.lock().unwrap();
+        assert_eq!(calls.len(), 2, "second stale episode must re-warn");
+        assert_eq!(calls[1].0, NotifyLevel::Warn);
     }
 }
