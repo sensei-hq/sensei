@@ -359,7 +359,13 @@ pub fn installed_mcp_keys() -> HashSet<String> {
     for asst in all_assistants() {
         let path = asst.config_path();
         if !path.exists() { continue; }
-        let Some(content) = std::fs::read_to_string(&path).ok() else { continue };
+        let content = match std::fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!(error = %e, path = %path.display(), "failed to read assistant MCP config");
+                continue;
+            }
+        };
         // Configs are JSONC for some assistants — fall back to json5 if strict JSON fails.
         let value: serde_json::Value = match serde_json::from_str(&content) {
             Ok(v) => v,

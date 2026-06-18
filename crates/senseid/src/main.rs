@@ -172,10 +172,14 @@ fn start_daemon(port: u16) {
 
 async fn run_foreground(port: u16) {
     let db_dir = sensei_dir();
-    std::fs::create_dir_all(&db_dir).ok();
+    if let Err(e) = std::fs::create_dir_all(&db_dir) {
+        tracing::warn!(error = %e, dir = %db_dir.display(), "run_foreground: failed to create data dir");
+    }
 
     let pid_path = db_dir.join("serve.pid");
-    std::fs::write(&pid_path, std::process::id().to_string()).ok();
+    if let Err(e) = std::fs::write(&pid_path, std::process::id().to_string()) {
+        tracing::warn!(error = %e, path = %pid_path.display(), "run_foreground: failed to write PID file");
+    }
 
     println!("[senseid] Listening on :{}", port);
 
@@ -202,7 +206,9 @@ async fn stop_daemon(port: u16) {
     if let Ok(pid_str) = std::fs::read_to_string(&pid_path)
         && let Ok(_pid) = pid_str.trim().parse::<u32>() {
             // Send SIGTERM via nix or command
-            let _ = std::process::Command::new("kill").arg(pid_str.trim()).status();
+            if let Err(e) = std::process::Command::new("kill").arg(pid_str.trim()).status() {
+                tracing::warn!(error = %e, pid = %pid_str.trim(), "stop_daemon: failed to send SIGTERM");
+            }
             println!("senseid: sent SIGTERM to pid {}", pid_str.trim());
             std::fs::remove_file(&pid_path).ok();
             return;

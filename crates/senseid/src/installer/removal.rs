@@ -36,7 +36,10 @@ fn remove_plugin_artifacts(result: &mut RemoveResult) {
     // Plugin directory (hooks + binaries)
     let plugin = plugin_dir();
     if plugin.exists() {
-        fs::remove_dir_all(&plugin).ok();
+        if let Err(e) = fs::remove_dir_all(&plugin) {
+            tracing::warn!(error = %e, path = %plugin.display(), "failed to remove plugin directory during uninstall");
+            result.errors.push(format!("plugin dir {}: {}", plugin.display(), e));
+        }
         result.plugin_removed = true;
         result.hooks_removed = true;
     }
@@ -62,7 +65,10 @@ fn remove_plugin_artifacts(result: &mut RemoveResult) {
 fn remove_cache(result: &mut RemoveResult) {
     let cache = cache_dir();
     if cache.exists() {
-        fs::remove_dir_all(&cache).ok();
+        if let Err(e) = fs::remove_dir_all(&cache) {
+            tracing::warn!(error = %e, path = %cache.display(), "failed to clear marketplace cache during uninstall");
+            result.errors.push(format!("cache {}: {}", cache.display(), e));
+        }
         result.cache_cleared = true;
     }
 }
@@ -73,12 +79,25 @@ fn remove_registered_projects(result: &mut RemoveResult) {
     // projects.json stores a root JSON array of path strings (Vec<String>).
     // Do NOT read it as a serde_json::Value and then index ["projects"] —
     // that key does not exist and always returns null.
-    let projects: Vec<String> = projects_file
-        .exists()
-        .then(|| fs::read_to_string(&projects_file).ok())
-        .flatten()
-        .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
-        .unwrap_or_default();
+    let projects: Vec<String> = if projects_file.exists() {
+        match fs::read_to_string(&projects_file) {
+            Ok(s) => match serde_json::from_str::<Vec<String>>(&s) {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::warn!(error = %e, path = %projects_file.display(), "failed to parse projects.json during purge; skipping project cleanup");
+                    result.errors.push(format!("projects.json parse: {}", e));
+                    Vec::new()
+                }
+            },
+            Err(e) => {
+                tracing::warn!(error = %e, path = %projects_file.display(), "failed to read projects.json during purge; skipping project cleanup");
+                result.errors.push(format!("projects.json read: {}", e));
+                Vec::new()
+            }
+        }
+    } else {
+        Vec::new()
+    };
 
     for path in &projects {
         remove_project_scope(path, result);
@@ -92,9 +111,11 @@ fn remove_project_scope(project_path: &str, result: &mut RemoveResult) {
 
     // .sensei/ directory
     let sensei = root.join(".sensei");
-    if sensei.exists() {
-        fs::remove_dir_all(&sensei).ok();
-    }
+    if sensei.exists()
+        && let Err(e) = fs::remove_dir_all(&sensei) {
+            tracing::warn!(error = %e, path = %sensei.display(), "failed to remove project .sensei directory during purge");
+            result.errors.push(format!(".sensei {}: {}", sensei.display(), e));
+        }
 
     // .claude/commands/, .claude/skills/, .claude/agents/
     for subdir in &["commands", "skills", "agents"] {
@@ -112,19 +133,38 @@ fn remove_project_scope(project_path: &str, result: &mut RemoveResult) {
 
     // Remove sensei entry from .mcp.json (preserve other servers)
     let mcp_file = root.join(".mcp.json");
-    if mcp_file.exists()
-        && let Ok(content) = fs::read_to_string(&mcp_file)
-            && let Ok(mut config) = serde_json::from_str::<serde_json::Value>(&content)
-                && let Some(servers) = config
-                    .get_mut("mcpServers")
-                    .and_then(|s| s.as_object_mut())
-                    && servers.remove("sensei").is_some() {
-                        if servers.is_empty() {
-                            fs::remove_file(&mcp_file).ok();
-                        } else {
-                            fs::write(&mcp_file, serde_json::to_string_pretty(&config).unwrap()).ok();
+    if mcp_file.exists() {
+        match fs::read_to_string(&mcp_file) {
+            Ok(content) => {
+                match serde_json::from_str::<serde_json::Value>(&content) {
+                    Ok(mut config) => {
+                        if let Some(servers) = config
+                            .get_mut("mcpServers")
+                            .and_then(|s| s.as_object_mut())
+                            && servers.remove("sensei").is_some()
+                        {
+                            if servers.is_empty() {
+                                if let Err(e) = fs::remove_file(&mcp_file) {
+                                    tracing::warn!(error = %e, path = %mcp_file.display(), "failed to delete .mcp.json after removing sensei server");
+                                    result.errors.push(format!(".mcp.json delete: {}", e));
+                                }
+                            } else if let Err(e) = fs::write(&mcp_file, serde_json::to_string_pretty(&config).unwrap()) {
+                                tracing::warn!(error = %e, path = %mcp_file.display(), "failed to rewrite .mcp.json after removing sensei server");
+                                result.errors.push(format!(".mcp.json write: {}", e));
+                            }
                         }
                     }
+                    Err(e) => {
+                        tracing::warn!(error = %e, path = %mcp_file.display(), "failed to parse .mcp.json; leaving sensei server entry in place");
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, path = %mcp_file.display(), "failed to read .mcp.json; leaving sensei server entry in place");
+                result.errors.push(format!(".mcp.json read: {}", e));
+            }
+        }
+    }
 
     result.projects_cleaned.push(project_path.to_string());
 }
@@ -136,8 +176,11 @@ fn remove_md_files_in(dir: &std::path::Path) -> u32 {
     if let Ok(entries) = fs::read_dir(dir) {
         for entry in entries.flatten() {
             if entry.path().extension().is_some_and(|e| e == "md") {
-                fs::remove_file(entry.path()).ok();
-                count += 1;
+                if let Err(e) = fs::remove_file(entry.path()) {
+                    tracing::warn!(error = %e, path = %entry.path().display(), "failed to remove .md file during uninstall");
+                } else {
+                    count += 1;
+                }
             }
         }
     }
