@@ -611,9 +611,15 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
             ctx.pg().delete_nodes_by_file(&folder_id, &result.rel_path).await.ok();
 
             // Write file node
-            let file_node_id = ctx.pg().upsert_node(
+            let file_node_id = match ctx.pg().upsert_node(
                 &folder_id, &result.kind, &result.rel_path, &result.rel_path, None, None, None, None
-            ).await.ok();
+            ).await {
+                Ok(id) => Some(id),
+                Err(e) => {
+                    tracing::warn!(kind = %result.kind, file = %result.rel_path, error = %e, "upsert file node failed; skipping file");
+                    None
+                }
+            };
 
             // Write symbol nodes (functions, classes, types, etc.), capturing
             // each id keyed by (name, line_start) so call edges can be sourced
@@ -624,12 +630,13 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
                 std::collections::HashMap::new();
             for sym in &result.symbols {
                 let parent_uuid = file_node_id; // symbols are children of the file
-                if let Ok(id) = ctx.pg().upsert_node(
+                match ctx.pg().upsert_node(
                     &folder_id, &sym.kind, &sym.name, &result.rel_path,
                     parent_uuid.as_ref(), sym.signature.as_deref(),
                     Some(sym.line as i32), Some(sym.line_end as i32),
                 ).await {
-                    sym_ids.insert((sym.name.clone(), sym.line as i32), id);
+                    Ok(id) => { sym_ids.insert((sym.name.clone(), sym.line as i32), id); }
+                    Err(e) => tracing::warn!(kind = %sym.kind, name = %sym.name, file = %result.rel_path, error = %e, "upsert symbol node failed; skipping symbol"),
                 }
             }
 
@@ -722,6 +729,7 @@ mod tests {
             pg: crate::db::pg_store::PgStore::connect_test().await.unwrap(),
             gateway,
             event_tx: { let (tx, _) = tokio::sync::broadcast::channel(16); tx },
+            breaker: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         });
         Arc::new(TaskContext {
             queue,

@@ -51,6 +51,13 @@ Enum "sensei"."edge_kind" {
   "similar_to"
 }
 
+Enum "sensei"."enforcement" {
+  "advisory"
+  "recommended"
+  "required"
+  "mandatory"
+}
+
 Enum "sensei"."event_type" {
   "tool_call"
   "api_request"
@@ -92,6 +99,7 @@ Enum "sensei"."folder_kind" {
   "subtree"
   "sibling"
   "standalone"
+  "folder"
 }
 
 Enum "sensei"."folder_role" {
@@ -100,6 +108,11 @@ Enum "sensei"."folder_role" {
   "library"
   "docs"
   "infra"
+  "website"
+  "desktop"
+  "mobile"
+  "config"
+  "packaging"
 }
 
 Enum "sensei"."folder_status" {
@@ -145,6 +158,13 @@ Enum "sensei"."library_source_type" {
   "local"
 }
 
+Enum "sensei"."memory_outcome" {
+  "applied"
+  "consulted"
+  "violated"
+  "ignored"
+}
+
 Enum "sensei"."memory_scope" {
   "global"
   "project"
@@ -154,11 +174,13 @@ Enum "sensei"."memory_scope" {
 }
 
 Enum "sensei"."memory_status" {
+  "proposed"
   "active"
   "reinforced"
   "challenged"
   "battle_tested"
   "archived"
+  "rejected"
 }
 
 Enum "sensei"."memory_type" {
@@ -298,6 +320,79 @@ Enum "sensei"."watch_status" {
   "scanning"
   "watching"
   "paused"
+}
+
+Table "activity"."hook_events" {
+  "id" bigserial [pk, increment, not null, note: 'Surrogate primary key (bigserial — high write volume).']
+  "session_id" TEXT [not null, default: '', note: 'Assistant session ID string. Not a FK — not a DB UUID.']
+  "assistant_family" assistant_family [not null, default: 'claude', note: 'Which assistant emitted this event: claude, cursor, zed, codex, aider, etc.']
+  "event_type" TEXT [not null, note: 'hook_event_name from payload: SessionStart, PreToolUse, PostToolUse, Stop, etc.']
+  "tool_name" TEXT [note: 'tool_name from payload. Populated for PreToolUse and PostToolUse events only.']
+  "cwd" TEXT [note: 'Working directory at the time of the hook event.']
+  "ts" BIGINT [not null, note: 'Unix epoch milliseconds when the hook fired (client clock).']
+  "success" BOOLEAN [note: 'For PostToolUse: true if exit_code == 0. Null for all other event types.']
+  "payload" JSONB [not null, default: '{}', note: 'Full JSON payload received from stdin — complete hook event data.']
+  "created_at" TIMESTAMPTZ [not null, default: `now()`, note: 'Server-side timestamp when this row was inserted.']
+
+  indexes {
+    (session_id, created_at) [name: 'hook_events_session_id_idx']
+    (event_type, created_at) [name: 'hook_events_event_type_idx']
+    created_at [name: 'hook_events_created_at_idx']
+    (assistant_family, created_at) [name: 'hook_events_family_idx']
+  }
+
+  Note: '''
+Raw hook event log — one row per hook invocation, from any assistant family.
+Captures event types emitted by hooks from Claude Code, Cursor, Zed, etc.
+session_id is the assistant string session ID, not a DB UUID.
+assistant_family identifies the source assistant (claude, cursor, zed, …).
+payload stores the full JSON payload received from stdin.
+'''
+}
+
+Table "activity"."task_executions" {
+  "id" UUID [pk, not null, default: `gen_random_uuid()`]
+  "task_id" BIGINT [not null, note: 'In-memory queue task ID. Unique per daemon session (resets on restart).']
+  "parent_task_id" BIGINT [note: 'Parent task ID for hierarchy. process_file → process_git_folder → scan_root.']
+  "task_kind" TEXT [not null, note: 'TaskKind::to_string() — scan_root, process_file, resolve_edges, etc.']
+  "folder_path" TEXT [not null, default: '', note: 'Git folder abs path — groups all tasks for a repo.']
+  "path" TEXT [not null, default: '', note: 'Specific path this task operates on (file, folder, URL).']
+  "status" TEXT [not null, default: 'running', note: 'running, completed, or failed.']
+  "items_processed" INTEGER [note: 'Count of items handled: symbols parsed, edges resolved, files queued, etc.']
+  "duration_ms" INTEGER [note: 'Wall-clock milliseconds from start to completion.']
+  "retry_number" INTEGER [not null, default: 0, note: '0 for first attempt. Incremented if the same task is retried.']
+  "error_message" TEXT [note: 'Error detail if status = failed.']
+  "started_at" TIMESTAMPTZ [not null, default: `now()`]
+  "completed_at" TIMESTAMPTZ
+
+  indexes {
+    task_kind [name: 'task_executions_task_kind_idx']
+    folder_path [name: 'task_executions_folder_path_idx']
+    parent_task_id [name: 'task_executions_parent_task_id_idx']
+    started_at [name: 'task_executions_started_at_idx']
+    status [name: 'task_executions_status_idx']
+  }
+
+  Note: '''
+Task execution history — one row per task run. Forms a tree via parent_task_id.
+
+status: running → completed | failed
+retry_number: 0 for first attempt, incremented on retry.
+duration_ms and items_processed set on completion.
+started_at vs completed_at shows wall-clock execution time.
+
+Common queries:
+  -- Execution tree for a scan
+  WITH RECURSIVE tree AS (
+    SELECT * FROM task_executions WHERE task_id = $1
+    UNION ALL
+    SELECT e.* FROM task_executions e JOIN tree t ON e.parent_task_id = t.task_id
+  ) SELECT * FROM tree ORDER BY started_at
+  -- Slowest tasks
+  SELECT task_kind, avg(duration_ms), max(duration_ms) FROM task_executions WHERE status = 'completed' GROUP BY task_kind
+  -- Failed tasks in last hour
+  SELECT * FROM task_executions WHERE status = 'failed' AND started_at > now() - interval '1h'
+'''
 }
 
 Table "gateway"."fallback_chains" {
@@ -449,6 +544,43 @@ Collective intelligence send batches. Groups insights shared together.
 '''
 }
 
+Table "public"."logs" {
+  "id" UUID [pk, not null, default: `gen_random_uuid()`]
+  "level" VARCHAR [not null]
+  "running_on" VARCHAR [not null]
+  "logged_at" TIMESTAMPTZ [not null]
+  "message" VARCHAR
+  "context" JSONB [not null, default: '{}']
+  "data" JSONB
+  "error" JSONB
+  "written_at" TIMESTAMPTZ [not null, default: `now()`]
+
+  indexes {
+    level [name: 'logs_level_idx']
+    running_on [name: 'logs_running_on_idx']
+    logged_at [name: 'logs_logged_at_idx']
+    (context ->> 'module') [name: 'logs_context_module_idx']
+  }
+
+  Note: '''
+Generic structured log table — shared across daemon, CLI, MCP, and app.
+Follows the kavach logger pattern: level, running_on, context jsonb, data jsonb, error jsonb.
+
+running_on: daemon, cli, mcp, app — identifies which component wrote the log.
+context: flexible jsonb bag — callers inject attributes like module, method, task_id, tool, etc.
+data: structured payload — task metrics (duration_ms, items_processed), API params, etc.
+error: structured error — message, stack, code.
+
+Common queries:
+  -- All task executions sorted by duration
+  SELECT * FROM logs WHERE context->>'module' = 'tasks' ORDER BY (data->>'duration_ms')::int DESC
+  -- Errors in the last hour
+  SELECT * FROM logs WHERE level = 'error' AND logged_at > now() - interval '1h'
+  -- All activity from a specific component
+  SELECT * FROM logs WHERE running_on = 'mcp' ORDER BY logged_at DESC
+'''
+}
+
 Table "sensei"."assistants" {
   "id" UUID [pk, not null, default: `gen_random_uuid()`, note: 'Surrogate primary key (UUID).']
   "family" assistant_family [not null, note: 'Assistant product family: claude, cursor, zed, continue, codex, aider, opencode, kiro.']
@@ -491,6 +623,31 @@ Table "sensei"."config" {
   Note: '''
 Key-value user preferences.
 setup_complete, active_project, sidebar_max_items, etc.
+'''
+}
+
+Table "sensei"."consolidated_rulesets" {
+  "id" UUID [pk, not null, default: `gen_random_uuid()`]
+  "scope" TEXT [not null, note: 'What was merged: \'global\' (always-on user/general rules) in v1; later a repo abs_path or namespace key.']
+  "version" INTEGER [not null, note: 'Monotonic per scope. New consolidation = max(version)+1.']
+  "content" TEXT [not null, note: 'The merged markdown ruleset produced by the model.']
+  "conflicts" JSONB [not null, default: '[]', note: 'Conflicts the model surfaced during the merge (JSON array). Empty when none/unextracted.']
+  "model" TEXT [note: 'Model that produced this merge (e.g. gemma4).']
+  "source_hash" TEXT [not null, note: 'Hash of the Tier-1 input rules. A consolidate is skipped when the latest version already has this hash (no change to merge).']
+  "status" TEXT [not null, default: 'proposed', note: 'proposed (awaiting approval) | approved (active, feeds rules.md) | superseded (an older approved version).']
+  "created_at" TIMESTAMPTZ [not null, default: `now()`, note: 'When this version was produced.']
+
+  indexes {
+    (scope, status) [name: 'consolidated_rulesets_scope_status_idx']
+  }
+
+  Note: '''
+Governance Tier-2 output: an LLM-merged, human-approved ruleset for a scope.
+Tier-1 resolution (resolve_rules_raw / resolve_global_rules) gathers + orders the
+raw rules; Tier-2 asks a model to merge them into one coherent, deduped,
+conflict-flagged markdown ruleset. Each consolidation is a kept version; the row
+with status=approved for a scope is the active merged ruleset (it feeds
+~/.sensei/rules.md). Versioning IS the history — no separate history table.
 '''
 }
 
@@ -623,6 +780,24 @@ One project per git/subtree folder by default, but users can merge or split.
 '''
 }
 
+Table "sensei"."scopes" {
+  "key" TEXT [pk, not null, note: 'Stable identifier (e.g. general, user, organization, client, technology, team, project, repository).']
+  "name" TEXT [not null, note: 'Human-readable label.']
+  "level" INTEGER [not null, note: 'Precedence rank. Higher = more specific = wins. general=0 … repository=70.']
+  "shareable" BOOLEAN [not null, default: false, note: 'Whether knowledge at this scope federates to a shared hive-mind (organization/client/team = true).']
+  "description" TEXT [note: 'What this scope is for.']
+  "modified_at" TIMESTAMPTZ [not null, default: `now()`, note: 'Timestamp of the last modification to this row.']
+
+  Note: '''
+The governance scope ladder. Each row is one level at which rules/knowledge
+and identity can apply. Precedence is the integer `level` — higher = more
+specific = wins on conflict (most-specific-scope-wins), with enforcement as a
+separate override axis (see governance concept doc). A repo is a member of a
+SET of namespaces across these scopes (no single-parent tree); resolution
+orders by level. Seeded via staging.import_scopes().
+'''
+}
+
 Table "sensei"."services" {
   "id" UUID [pk, not null, default: `gen_random_uuid()`, note: 'Surrogate primary key (UUID).']
   "name" TEXT [not null, unique, note: 'Unique identifier for the service (e.g. "postgres-mcp").']
@@ -723,6 +898,27 @@ Table "staging"."fallback_chains" {
   "modified_at" TIMESTAMPTZ [not null, default: `now()`]
 }
 
+Table "staging"."hook_events" {
+  "session_id" TEXT
+  "assistant_family" TEXT [default: 'claude']
+  "event_type" TEXT
+  "tool_name" TEXT
+  "cwd" TEXT
+  "ts" BIGINT
+  "success" BOOLEAN
+  "payload" JSONB
+  "created_at" TIMESTAMPTZ
+
+  Note: '''
+Staging buffer for activity.hook_events.
+assistant_family is text here (cast to enum during import).
+Load via dbd import or CALL staging.import_jsonb_to_table('_temp', 'staging.hook_events').
+The hook script enriches payload with event_type (mapped from hook_event_name)
+so that import_jsonb_to_table can map field names directly.
+Then call: CALL staging.import_hook_events() to move into activity.hook_events.
+'''
+}
+
 Table "staging"."libraries" {
   "name" TEXT
   "ecosystem" TEXT
@@ -804,6 +1000,15 @@ Table "staging"."routers" {
   "config" JSONB [default: '{}']
   "is_active" BOOLEAN [default: true]
   "sequence" INTEGER [default: 0]
+  "modified_at" TIMESTAMPTZ [not null, default: `now()`]
+}
+
+Table "staging"."scopes" {
+  "key" TEXT
+  "name" TEXT
+  "level" INTEGER
+  "shareable" BOOLEAN [default: false]
+  "description" TEXT
   "modified_at" TIMESTAMPTZ [not null, default: `now()`]
 }
 
@@ -917,6 +1122,27 @@ MOE consensus panel reasoning traces. Stores the full debate between local model
 '''
 }
 
+Table "sensei"."extension_projects" {
+  "extension_id" UUID [not null]
+  "project_id" UUID
+  "enabled" BOOLEAN [not null, default: true]
+  "props" JSONB [not null, default: '{}']
+  "modified_at" TIMESTAMPTZ [not null, default: `now()`]
+
+  indexes {
+    extension_id [unique, name: 'extension_projects_global_uniq']
+    (extension_id, project_id) [unique, name: 'extension_projects_scoped_uniq']
+    project_id [name: 'extension_projects_project_id_idx']
+  }
+
+  Note: '''
+Many-to-many: extensions (skills/commands/agents/hooks) associated with projects or global.
+project_id NULL = global (active in every project).
+project_id = X  = active only in that project.
+extensions.scope column is a seeding hint only; this table is authoritative at runtime.
+'''
+}
+
 Table "sensei"."folders" {
   "id" UUID [pk, not null, default: `gen_random_uuid()`, note: 'Surrogate primary key (UUID).']
   "root_id" UUID [not null, note: 'Foreign key to folders_to_watch — which watched root this folder was discovered under.']
@@ -971,6 +1197,7 @@ Table "sensei"."library_pages" {
   "modified_at" TIMESTAMPTZ [not null, default: `now()`, note: 'Timestamp of the last modification to this row.']
 
   indexes {
+    (library_id, title) [unique, name: 'library_pages_library_title_uq']
     library_id [name: 'library_pages_library_id_idx']
     embedding [name: 'library_pages_embedding_hnsw']
   }
@@ -986,39 +1213,46 @@ Consolidates the former lib_doc_sections, shared_lib_sections, and lib_docs tabl
 '''
 }
 
-Table "sensei"."memories" {
+Table "sensei"."namespaces" {
   "id" UUID [pk, not null, default: `gen_random_uuid()`, note: 'Surrogate primary key (UUID).']
-  "project_id" UUID [note: 'Foreign key to projects. Null = global memory (applies to all projects).']
-  "scope" memory_scope [not null, default: 'project', note: 'When to surface: global (always), project (this project), stack (matching tech), task_type (matching task), module (matching code area).']
-  "scope_filter" TEXT [note: 'Qualifier for scope: stack name (e.g. "rust"), task type (e.g. "fix"), module path (e.g. "src/api"). Null for global/project scope.']
-  "type" memory_type [not null, note: 'Knowledge category: decision (architectural), pattern (code convention), convention (team norm), preference (style rule), continuity (session handoff), question (open issue).']
-  "title" TEXT [not null, note: 'Short label used as heading in context output.']
-  "content" TEXT [not null, note: 'The rule or learning — full body text surfaced to the agent.']
-  "impact" TEXT [note: 'Consequence of ignoring this memory. Answers "what breaks if you skip this?"']
-  "strength" REAL [not null, default: 1.0, note: 'Confidence score 0–5. Created at 1.0, reinforced +1.0, confirmed = 5.0, decayed over time. Below 1.0 = auto-archived.']
-  "status" memory_status [not null, default: 'active', note: 'Lifecycle: active (newly learned), reinforced (evidence accumulated), challenged (violated recently), battle_tested (high strength + zero violations over time), archived (retained for history, not surfaced).']
-  "reinforced_count" INTEGER [not null, default: 0, note: 'Number of times evidence has confirmed this memory.']
-  "violated_count" INTEGER [not null, default: 0, note: 'Number of times this memory was violated (assistant acted contrary to it).']
-  "last_relevant_at" TIMESTAMPTZ [note: 'Timestamp of last reinforcement or violation. Used for recency-based surfacing.']
-  "session_id" UUID [note: 'Session that created this memory. Null for imported or collective memories.']
+  "scope_key" TEXT [not null, note: 'Which scope this namespace instantiates (FK to scopes.key).']
+  "name" TEXT [not null, note: 'Display name (e.g. "Sensei HQ").']
+  "slug" TEXT [not null, note: 'Normalized identifier, unique within a scope (e.g. "sensei-hq").']
+  "level" INTEGER [note: 'Optional per-namespace override of scopes.level. Null = inherit from scope.']
+  "props" JSONB [not null, default: '{}', note: 'Extensible metadata (icons, source, etc.).']
   "modified_at" TIMESTAMPTZ [not null, default: `now()`, note: 'Timestamp of the last modification to this row.']
 
   indexes {
-    (project_id, scope, status) [name: 'memories_project_id_idx']
-    (scope, scope_filter) [name: 'memories_scope_idx']
-    strength [name: 'memories_strength_idx']
+    scope_key [name: 'namespaces_scope_key_idx']
   }
 
   Note: '''
-Multi-level, reasoned, evolving knowledge system.
-Replaces memory_items (project-scoped only) and inference.preferences (style rules).
-- scope: determines when this memory is surfaced — global, project, stack, task_type, module
-- scope_filter: qualifier for non-global scopes (stack name, task type, module path)
-- impact: consequence of ignoring this memory — the "why"
-- strength: 0–5 score, reinforced by evidence, decayed by time
-- session_id: session that created this memory (provenance)
+Concrete instances of a scope — e.g. (organization, "Sensei HQ"),
+(project, "sensei"), (technology, "rust"). A repo belongs to a SET of these
+(via folder_namespaces); there is no parent_id tree — precedence comes from the
+scope level (optionally overridden per namespace). Created at scan time from
+README frontmatter (organization/project/team) and detected stack.
+'''
+}
 
-Context assembly: SELECT active memories matching scope hierarchy for current session.
+Table "sensei"."project_libraries" {
+  "library_id" UUID [not null]
+  "project_id" UUID
+  "enabled" BOOLEAN [not null, default: true]
+  "props" JSONB [not null, default: '{}']
+  "modified_at" TIMESTAMPTZ [not null, default: `now()`]
+
+  indexes {
+    library_id [unique, name: 'project_libraries_global_uniq']
+    (library_id, project_id) [unique, name: 'project_libraries_scoped_uniq']
+    project_id [name: 'project_libraries_project_id_idx']
+  }
+
+  Note: '''
+Many-to-many: libraries associated with projects or marked global.
+project_id NULL = global (available in every project).
+project_id = X  = scoped to that project only.
+Populated by daemon indexer from referenced_libraries; editable by user.
 '''
 }
 
@@ -1274,6 +1508,24 @@ Table "sensei"."benchmark_runs" {
   Note: 'One row per benchmark execution (paired: same task + branch, sensei_enabled true/false).'
 }
 
+Table "sensei"."folder_namespaces" {
+  "folder_id" UUID [pk, not null, note: 'FK to sensei.folders — the repo.']
+  "namespace_id" UUID [pk, not null, note: 'FK to sensei.namespaces — a scope instance the repo belongs to.']
+  "modified_at" TIMESTAMPTZ [not null, default: `now()`, note: 'Timestamp of the last modification to this row.']
+
+  indexes {
+    namespace_id [name: 'folder_namespaces_namespace_id_idx']
+  }
+
+  Note: '''
+Set membership: which namespaces a repo (folder) belongs to. A repo typically
+joins one namespace per applicable scope — organization, project, team, plus a
+technology namespace per detected language. Resolution gathers rules/identity
+across every member namespace + the implicit user/general scopes, ordered by
+scope level. Populated at scan time from README frontmatter + detected stack.
+'''
+}
+
 Table "sensei"."index_errors" {
   "id" serial [pk, increment, not null, note: 'Surrogate primary key (serial).']
   "folder_id" UUID [not null, note: 'Foreign key to folders — which folder this error occurred in.']
@@ -1290,66 +1542,67 @@ Table "sensei"."index_errors" {
   Note: 'Files that failed during indexing. Persisted for debugging.'
 }
 
-Table "sensei"."memory_evidence" {
-  "id" UUID [pk, not null, default: `gen_random_uuid()`, note: 'Surrogate primary key (UUID).']
-  "memory_id" UUID [not null, note: 'Foreign key to memories — which memory this evidence supports.']
-  "session_id" UUID [not null, note: 'References activity.sessions.id. No FK — cross-schema reference.']
-  "note" TEXT [note: 'What happened: correction, reinforcement, or contradiction.']
-  "modified_at" TIMESTAMPTZ [not null, default: `now()`, note: 'Timestamp of the last modification to this row.']
-
-  indexes {
-    memory_id [name: 'memory_evidence_memory_id_idx']
-  }
+Table "sensei"."knowledge_sources" {
+  "id" UUID [pk, not null, default: `gen_random_uuid()`]
+  "kind" TEXT [not null]
+  "name" TEXT [not null]
+  "url" TEXT [not null]
+  "namespace_id" UUID
+  "credential_ref" TEXT [not null]
+  "direction" TEXT [not null, default: 'both']
+  "last_seq" BIGINT [not null, default: 0]
+  "enabled" BOOLEAN [not null, default: true]
+  "created_at" TIMESTAMPTZ [not null, default: `now()`]
 
   Note: '''
-Sessions that prove or reinforce a memory.
-Each row is one piece of evidence — a session where the memory was learned,
-confirmed, or contradicted. Used for strength scoring.
-
-- session_id: references activity.sessions.id. No FK — sessions may be in a separate schema/DB.
-- note: what happened in this session (e.g. "user corrected indentation twice")
+Registered federation endpoints (governance P4). Mirrors gateway-router
+registration: the row holds connection metadata; the API key is in the OS
+Keychain referenced by credential_ref. direction gates push vs pull; last_seq
+is the per-source monotonic pull cursor.
 '''
 }
 
-Table "sensei"."memory_examples" {
+Table "sensei"."memories" {
   "id" UUID [pk, not null, default: `gen_random_uuid()`, note: 'Surrogate primary key (UUID).']
-  "memory_id" UUID [not null, note: 'Foreign key to memories — which memory this example supports.']
-  "node_id" TEXT [not null, note: 'References hierarchy_nodes.id. No FK — survives node deletion.']
-  "is_good" BOOLEAN [not null, note: 'True = good example (follow this), false = bad example (avoid this).']
-  "note" TEXT [note: 'Why this code is a good or bad example for this memory.']
+  "project_id" UUID [note: 'Foreign key to projects. Null = global memory (applies to all projects).']
+  "scope" memory_scope [not null, default: 'project', note: 'When to surface: global (always), project (this project), stack (matching tech), task_type (matching task), module (matching code area). Legacy axis — superseded by namespace_id for governance resolution.']
+  "scope_filter" TEXT [note: 'Qualifier for scope: stack name (e.g. "rust"), task type (e.g. "fix"), module path (e.g. "src/api"). Null for global/project scope.']
+  "namespace_id" UUID [note: 'Governance scope instance this rule applies to (organization/project/technology/...). Null = unscoped (general). Resolution gathers rules across a repo\'s member namespaces + always-on general/user.']
+  "enforcement" enforcement [not null, default: 'recommended', note: 'Authority axis: advisory < recommended < required < mandatory. mandatory = non-overridable constitution tier (a more specific scope cannot weaken it).']
+  "origin" TEXT [not null, default: 'learned', note: 'Provenance: learned (knowledge plane), authored (written directly), promoted (elevated from a narrower scope), federated (pulled from a hive-mind).']
+  "source_id" UUID [note: 'When origin=promoted/federated, the id of the source memory (or remote record) this was derived from. Null otherwise.']
+  "type" memory_type [not null, note: 'Knowledge category: decision (architectural), pattern (code convention), convention (team norm), preference (style rule), continuity (session handoff), question (open issue).']
+  "title" TEXT [not null, note: 'Short label used as heading in context output.']
+  "content" TEXT [not null, note: 'The rule or learning — full body text surfaced to the agent.']
+  "impact" TEXT [note: 'Consequence of ignoring this memory. Answers "what breaks if you skip this?"']
+  "strength" REAL [not null, default: 1.0, note: 'Confidence score 0–5. Created at 1.0, reinforced +1.0, confirmed = 5.0, decayed over time. Below 1.0 = auto-archived.']
+  "status" memory_status [not null, default: 'active', note: 'Lifecycle: active (newly learned), reinforced (evidence accumulated), challenged (violated recently), battle_tested (high strength + zero violations over time), archived (retained for history, not surfaced).']
+  "reinforced_count" INTEGER [not null, default: 0, note: 'Number of times evidence has confirmed this memory.']
+  "violated_count" INTEGER [not null, default: 0, note: 'Number of times this memory was violated (assistant acted contrary to it).']
+  "last_relevant_at" TIMESTAMPTZ [note: 'Timestamp of last reinforcement or violation. Used for recency-based surfacing.']
+  "session_id" UUID [note: 'Session that created this memory. Null for imported or collective memories.']
+  "tags" TEXT[] [not null, default: '{}', note: 'Free-form tags (e.g. security, performance, compliance). GIN-indexed for &&/@> filters.']
+  "triage_signal" TEXT [note: 'Which capture heuristic surfaced this memory (revert/correction/actually/repeat_pattern/override/test_failure). Null for explicit /save.']
   "modified_at" TIMESTAMPTZ [not null, default: `now()`, note: 'Timestamp of the last modification to this row.']
 
   indexes {
-    memory_id [name: 'memory_examples_memory_id_idx']
+    (project_id, scope, status) [name: 'memories_project_id_idx']
+    (scope, scope_filter) [name: 'memories_scope_idx']
+    (namespace_id, enforcement, status) [name: 'memories_namespace_idx']
+    strength [name: 'memories_strength_idx']
+    tags [name: 'memories_tags_idx']
   }
 
   Note: '''
-Code examples grounding a memory in real code.
-- node_id: references a hierarchy node (file, function, class, etc.)
-- is_good: true = canonical implementation to follow, false = divergence to avoid
-- note: why this example matters for this memory
+Multi-level, reasoned, evolving knowledge system.
+Replaces memory_items (project-scoped only) and inference.preferences (style rules).
+- scope: determines when this memory is surfaced — global, project, stack, task_type, module
+- scope_filter: qualifier for non-global scopes (stack name, task type, module path)
+- impact: consequence of ignoring this memory — the "why"
+- strength: 0–5 score, reinforced by evidence, decayed by time
+- session_id: session that created this memory (provenance)
 
-No FK on node_id — nodes may be deleted when code changes, but the example record
-stays as historical evidence. The note should describe the example independently.
-'''
-}
-
-Table "sensei"."memory_links" {
-  "parent_id" UUID [pk, not null, note: 'The consolidated memory that replaced the children.']
-  "child_id" UUID [pk, not null, note: 'An original memory that was merged into the parent.']
-  "modified_at" TIMESTAMPTZ [not null, default: `now()`, note: 'Timestamp of the last modification to this row.']
-
-  indexes {
-    child_id [name: 'memory_links_child_id_idx']
-  }
-
-  Note: '''
-Memory-to-memory relationships for consolidation.
-When multiple memories are combined into one, the combined memory becomes the parent
-and the originals become children. Children are then historized into past_memories.
-
-- parent_id: the consolidated/surviving memory
-- child_id: the original memory that was merged in
+Context assembly: SELECT active memories matching scope hierarchy for current session.
 '''
 }
 
@@ -1623,16 +1876,119 @@ target_name and target_file provide lookup info for unresolved edges.
 '''
 }
 
+Table "sensei"."federated_memories" {
+  "knowledge_source_id" UUID [pk, not null]
+  "remote_rule_id" UUID [pk, not null]
+  "content_hash" TEXT [not null]
+  "memory_id" UUID
+  "remote_seq" BIGINT [not null]
+  "synced_at" TIMESTAMPTZ [not null, default: `now()`]
+
+  Note: '''
+Local↔remote rule mapping + per-rule cursor (federation sync bookkeeping — NOT
+a parallel rules table). Pull upserts by (knowledge_source_id, remote_rule_id),
+making ingestion idempotent; it is also the echo-guard — a rule this daemon
+pushed is recorded here, so pulling it back links to the existing memory instead
+of creating a federated duplicate. memory_id is the local memory; null after the
+linked memory is hard-deleted.
+'''
+}
+
+Table "sensei"."memory_evidence" {
+  "id" UUID [pk, not null, default: `gen_random_uuid()`, note: 'Surrogate primary key (UUID).']
+  "memory_id" UUID [not null, note: 'Foreign key to memories — which memory this evidence supports.']
+  "session_id" UUID [not null, note: 'References activity.sessions.id. No FK — cross-schema reference.']
+  "note" TEXT [note: 'What happened: correction, reinforcement, or contradiction.']
+  "modified_at" TIMESTAMPTZ [not null, default: `now()`, note: 'Timestamp of the last modification to this row.']
+
+  indexes {
+    memory_id [name: 'memory_evidence_memory_id_idx']
+  }
+
+  Note: '''
+Sessions that prove or reinforce a memory.
+Each row is one piece of evidence — a session where the memory was learned,
+confirmed, or contradicted. Used for strength scoring.
+
+- session_id: references activity.sessions.id. No FK — sessions may be in a separate schema/DB.
+- note: what happened in this session (e.g. "user corrected indentation twice")
+'''
+}
+
+Table "sensei"."memory_examples" {
+  "id" UUID [pk, not null, default: `gen_random_uuid()`, note: 'Surrogate primary key (UUID).']
+  "memory_id" UUID [not null, note: 'Foreign key to memories — which memory this example supports.']
+  "node_id" TEXT [not null, note: 'References hierarchy_nodes.id. No FK — survives node deletion.']
+  "is_good" BOOLEAN [not null, note: 'True = good example (follow this), false = bad example (avoid this).']
+  "note" TEXT [note: 'Why this code is a good or bad example for this memory.']
+  "modified_at" TIMESTAMPTZ [not null, default: `now()`, note: 'Timestamp of the last modification to this row.']
+
+  indexes {
+    memory_id [name: 'memory_examples_memory_id_idx']
+  }
+
+  Note: '''
+Code examples grounding a memory in real code.
+- node_id: references a hierarchy node (file, function, class, etc.)
+- is_good: true = canonical implementation to follow, false = divergence to avoid
+- note: why this example matters for this memory
+
+No FK on node_id — nodes may be deleted when code changes, but the example record
+stays as historical evidence. The note should describe the example independently.
+'''
+}
+
+Table "sensei"."memory_links" {
+  "parent_id" UUID [pk, not null, note: 'The consolidated memory that replaced the children.']
+  "child_id" UUID [pk, not null, note: 'An original memory that was merged into the parent.']
+  "modified_at" TIMESTAMPTZ [not null, default: `now()`, note: 'Timestamp of the last modification to this row.']
+
+  indexes {
+    child_id [name: 'memory_links_child_id_idx']
+  }
+
+  Note: '''
+Memory-to-memory relationships for consolidation.
+When multiple memories are combined into one, the combined memory becomes the parent
+and the originals become children. Children are then historized into past_memories.
+
+- parent_id: the consolidated/surviving memory
+- child_id: the original memory that was merged in
+'''
+}
+
+Table "sensei"."memory_outcomes" {
+  "id" UUID [pk, not null, default: `gen_random_uuid()`]
+  "memory_id" UUID [not null, note: 'Foreign key to memories — which memory this event is about.']
+  "session_id" UUID [note: 'Foreign key to activity.sessions. Null when unknown or after the session is deleted.']
+  "outcome" memory_outcome [not null, note: 'What happened: applied (used in output), consulted (loaded but not used), violated (user overruled), ignored (loaded but discarded).']
+  "context" TEXT [note: 'Optional free-form note (e.g. file path, brief reason).']
+  "recorded_at" TIMESTAMPTZ [not null, default: `now()`, note: 'When the event was recorded (server clock).']
+
+  indexes {
+    (memory_id, recorded_at) [name: 'memory_outcomes_memory_id_idx']
+  }
+
+  Note: '''
+Per-memory event log: applied/consulted/violated/ignored.
+Insert triggers update memories.reinforced_count / violated_count / strength / status.
+'''
+}
+
 Ref: "sensei"."extensions"."plugin_id" > "sensei"."extensions"."id" [delete: cascade]
 Ref: "gateway"."inference_assignments"."chain_id" > "gateway"."fallback_chains"."id" [delete: cascade]
 Ref: "gateway"."models"."provider_id" > "gateway"."providers"."id" [delete: cascade]
 Ref: "inference"."insights"."batch_id" > "inference"."insight_batches"."id" [delete: set null]
 Ref: "inference"."reasoning_traces"."project_id" > "sensei"."projects"."id" [delete: set null]
+Ref: "sensei"."extension_projects"."extension_id" > "sensei"."extensions"."id" [delete: cascade]
+Ref: "sensei"."extension_projects"."project_id" > "sensei"."projects"."id" [delete: cascade]
 Ref: "sensei"."folders"."root_id" > "sensei"."folders_to_watch"."id" [delete: cascade]
 Ref: "sensei"."folders"."parent_id" > "sensei"."folders"."id" [delete: cascade]
 Ref: "sensei"."folders"."project_id" > "sensei"."projects"."id" [delete: set null]
 Ref: "sensei"."library_pages"."library_id" > "sensei"."libraries"."id" [delete: cascade]
-Ref: "sensei"."memories"."project_id" > "sensei"."projects"."id" [delete: cascade]
+Ref: "sensei"."namespaces"."scope_key" > "sensei"."scopes"."key"
+Ref: "sensei"."project_libraries"."library_id" > "sensei"."libraries"."id" [delete: cascade]
+Ref: "sensei"."project_libraries"."project_id" > "sensei"."projects"."id" [delete: cascade]
 Ref: "activity"."sessions"."folder_id" > "sensei"."folders"."id" [delete: cascade]
 Ref: "activity"."sessions"."project_id" > "sensei"."projects"."id" [delete: set null]
 Ref: "gateway"."fallback_chain_models"."chain_id" > "gateway"."fallback_chains"."id" [delete: cascade]
@@ -1648,11 +2004,12 @@ Ref: "inference"."recommendations"."project_id" > "sensei"."projects"."id" [dele
 Ref: "inference"."recommendations"."reasoning_trace_id" > "inference"."reasoning_traces"."id" [delete: set null]
 Ref: "sensei"."benchmark_reports"."folder_id" > "sensei"."folders"."id" [delete: set null]
 Ref: "sensei"."benchmark_runs"."folder_id" > "sensei"."folders"."id" [delete: cascade]
+Ref: "sensei"."folder_namespaces"."folder_id" > "sensei"."folders"."id" [delete: cascade]
+Ref: "sensei"."folder_namespaces"."namespace_id" > "sensei"."namespaces"."id" [delete: cascade]
 Ref: "sensei"."index_errors"."folder_id" > "sensei"."folders"."id" [delete: cascade]
-Ref: "sensei"."memory_evidence"."memory_id" > "sensei"."memories"."id" [delete: cascade]
-Ref: "sensei"."memory_examples"."memory_id" > "sensei"."memories"."id" [delete: cascade]
-Ref: "sensei"."memory_links"."parent_id" > "sensei"."memories"."id" [delete: cascade]
-Ref: "sensei"."memory_links"."child_id" > "sensei"."memories"."id" [delete: cascade]
+Ref: "sensei"."knowledge_sources"."namespace_id" > "sensei"."namespaces"."id" [delete: set null]
+Ref: "sensei"."memories"."project_id" > "sensei"."projects"."id" [delete: cascade]
+Ref: "sensei"."memories"."namespace_id" > "sensei"."namespaces"."id" [delete: set null]
 Ref: "sensei"."nodes"."folder_id" > "sensei"."folders"."id" [delete: cascade]
 Ref: "sensei"."nodes"."parent_id" > "sensei"."nodes"."id" [delete: cascade]
 Ref: "sensei"."referenced_libraries"."folder_id" > "sensei"."folders"."id" [delete: cascade]
@@ -1672,3 +2029,11 @@ Ref: "inference"."hyperedge_members"."node_id" > "sensei"."nodes"."id" [delete: 
 Ref: "sensei"."edges"."folder_id" > "sensei"."folders"."id" [delete: cascade]
 Ref: "sensei"."edges"."source_id" > "sensei"."nodes"."id" [delete: cascade]
 Ref: "sensei"."edges"."target_id" > "sensei"."nodes"."id" [delete: cascade]
+Ref: "sensei"."federated_memories"."knowledge_source_id" > "sensei"."knowledge_sources"."id" [delete: cascade]
+Ref: "sensei"."federated_memories"."memory_id" > "sensei"."memories"."id" [delete: set null]
+Ref: "sensei"."memory_evidence"."memory_id" > "sensei"."memories"."id" [delete: cascade]
+Ref: "sensei"."memory_examples"."memory_id" > "sensei"."memories"."id" [delete: cascade]
+Ref: "sensei"."memory_links"."parent_id" > "sensei"."memories"."id" [delete: cascade]
+Ref: "sensei"."memory_links"."child_id" > "sensei"."memories"."id" [delete: cascade]
+Ref: "sensei"."memory_outcomes"."memory_id" > "sensei"."memories"."id" [delete: cascade]
+Ref: "sensei"."memory_outcomes"."session_id" > "activity"."sessions"."id" [delete: set null]
