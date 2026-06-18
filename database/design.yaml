@@ -18,6 +18,7 @@ schemas:
   - history
   - inference
   - gateway
+  - export
 # Governance federation (issue #25): the `hive` schema lives in this one DDL tree
 # but is selectively applied. `sensei-hive` deploys the `hive` scope (its tables +
 # the shared governance closure, and NO extensions — its embedded Postgres has no

@@ -91,7 +91,11 @@ enum Commands {
 
     /// Diagnose bootstrap state: check + auto-fix dependencies with full
     /// step-by-step trace output. Exits 0 if everything is healthy.
-    Doctor,
+    Doctor {
+        /// Attempt to auto-resolve failing adapters (reinstall plugin/marketplace).
+        #[arg(long)]
+        fix: bool,
+    },
 }
 
 fn main() -> ExitCode {
@@ -117,7 +121,7 @@ fn main() -> ExitCode {
         Commands::Status => daemon_cmd("status", None),
         Commands::Scan { path } => scan(&path),
         Commands::AddLib { name, url } => add_lib(&name, url.as_deref()),
-        Commands::Doctor => return ExitCode::from(doctor::run() as u8),
+        Commands::Doctor { fix } => return ExitCode::from(doctor::run(fix) as u8),
     }
     ExitCode::SUCCESS
 }

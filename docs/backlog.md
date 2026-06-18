@@ -34,6 +34,8 @@ Layered scope×enforcement rule model, `scopes`+`namespaces` (level-based set me
 | [#33](https://github.com/sensei-hq/sensei/issues/33) | Scan emits no progress events after initial queue + discover-message substring mismatch |
 | [#34](https://github.com/sensei-hq/sensei/issues/34) | Test fixture projects pollute the dev DB (`ensure_test_project`) |
 | [#35](https://github.com/sensei-hq/sensei/issues/35) | Scan stats: queued cumulative vs processed current-state |
+| ✅ SHIPPED + DEPLOYED (2026-06-17) | **`node_kind` enum silently dropped `doc`/`struct`/`component`/`hook`/`extension` nodes** (`upsert_node` enum cast failed; `.ok()` swallowed). Fixed on develop (`9b01da2f`→`95af9848`, DDL `171ad9b4`): 5 kinds added to enum, dead variants removed, guard test, embedding allowlist widened, `.ok()` swallow → `tracing::warn!`. Prod reset+rebuilt + validated live (doc 263, hook 152, component 103, struct 5, extension 49; covers 150, references 3421 — all were 0). Plus export/import infra for capture preservation. Full `/Users/Jerry/Developer` rescan still running. Spec/plan: `docs/superpowers/{specs,plans}/2026-06-16-node-kind-drops*`. |
+| _(follow-up)_ | **Codebase-wide silent-error audit.** Find & fix every place that discards an error without logging (`.ok()`, `let _ =`, empty catch, masking `unwrap_or_default`) — errors must be logged so they can be inspected/rectified. Directed after the node_kind fix; the latter is one instance. |
 
 ## 3. Setup wizard
 
@@ -87,3 +89,11 @@ Layered scope×enforcement rule model, `scopes`+`namespaces` (level-based set me
 |-------|---------|
 | [#51](https://github.com/sensei-hq/sensei/issues/51) | ACP config: JSONC comment loss on rewrite |
 | [#52](https://github.com/sensei-hq/sensei/issues/52) | Database DDL upgrades: no rollback for partial/failed upgrades (offload to dbd) |
+
+## 10. Website (`website/`)
+
+| Item | Summary |
+|------|---------|
+| ✅ FIXED | **Screens gallery used kanji `先` instead of the logo SVG.** `MockSidebar.svelte:17` (shared by all `Mock*` gallery components) hardcoded `<span class="kanji">先</span>` as the brand mark. Replaced with the sensei logo icon (`i-brand:sensei text-sensei`) + center-aligned `.logo`, matching the real page header at `routes/sensei/+page.svelte:120`. Verified via dev-server screenshot. |
+| ⚠️ 1 known error (upstream) | **`svelte-check` baseline cleanup.** `bun run check` had 20 pre-existing errors; **19 fixed** (`app.d.ts`: `__APP_VERSION__` global + `ButtonProps.rel` augmentation + `@types/rokkit__states` shim via `typeRoots`; added `@types/node`; `HTMLElement` casts in `dark-mode.spec.ts`). **1 remaining is upstream rokkit** ([jerrythomas/rokkit#139](https://github.com/jerrythomas/rokkit/issues/139)): `@rokkit/ui`'s `CommandPalette.svelte` ships as plain JS → implicit-any TS7016 with no clean consumer-side fix. **Accepted exception** (user-signed-off) until #139 ships; then remove the `@types/rokkit__states` shim + `typeRoots` too (both only needed for the same upstream gap). |
+| _(file issue)_ | **On-page SEO gaps** (from SEO checklist audit): (a) canonical tag missing — add `<link rel="canonical" href="…">`; (b) OpenGraph tags missing — `og:title`, `og:description`, `og:image`; (c) Twitter Card tags missing — `twitter:card`, `twitter:title`, `twitter:description`, `twitter:image`; (d) not yet indexed by Google — submit sitemap to Google Search Console and request indexing for key pages. Likely all belong in the root `+layout.svelte`/`app.html` `<svelte:head>` so every route inherits them, plus a generated `sitemap.xml`. |

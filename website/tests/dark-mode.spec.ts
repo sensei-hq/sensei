@@ -66,7 +66,7 @@ test.describe('Dark mode switching', () => {
     // Click the last toggle item (dark) via JS — items may be icon-only and tiny
     await page.evaluate(() => {
       const items = document.querySelectorAll('[data-toggle] [data-path]');
-      if (items.length > 0) items[items.length - 1].click();
+      if (items.length > 0) (items[items.length - 1] as HTMLElement).click();
     });
 
     await page.waitForFunction(
@@ -83,14 +83,14 @@ test.describe('Dark mode switching', () => {
     // Click dark (last item)
     await page.evaluate(() => {
       const items = document.querySelectorAll('[data-toggle] [data-path]');
-      if (items.length > 0) items[items.length - 1].click();
+      if (items.length > 0) (items[items.length - 1] as HTMLElement).click();
     });
     await page.waitForFunction(() => document.body.dataset.mode === 'dark', null, { timeout: 3000 });
 
     // Click light (middle item)
     await page.evaluate(() => {
       const items = document.querySelectorAll('[data-toggle] [data-path]');
-      if (items.length >= 2) items[1].click();
+      if (items.length >= 2) (items[1] as HTMLElement).click();
     });
     await page.waitForFunction(() => document.body.dataset.mode === 'light', null, { timeout: 3000 });
 
