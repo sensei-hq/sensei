@@ -554,7 +554,8 @@ impl PgStore {
                   WHERE folder_id = $1
                     AND embedding IS NULL
                     AND kind IN ('file','function','method','class','interface',
-                                 'type','const','enum','enum_variant','section')
+                                 'type','const','enum','enum_variant','section',
+                                 'struct','component','hook','doc','extension')
                   ORDER BY file_path, line_start
                   LIMIT $2",
             )
@@ -645,7 +646,8 @@ impl PgStore {
                JOIN sensei.folders f ON f.id = n.folder_id
               WHERE n.embedding IS NULL
                 AND n.kind IN ('file','function','method','class','interface',
-                               'type','const','enum','enum_variant','section')",
+                               'type','const','enum','enum_variant','section',
+                               'struct','component','hook','doc','extension')",
         )
         .fetch_all(&self.pool)
         .await
@@ -1784,6 +1786,20 @@ impl PgStore {
         .bind(ts)
         .bind(success)
         .bind(payload)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(row.0)
+    }
+
+    /// Newest hook_event timestamp (epoch ms) for an assistant family, or None
+    /// when the daemon has never recorded one for it. `assistant_family` is a
+    /// Postgres enum, so bind with the explicit cast.
+    pub async fn latest_hook_event_ts(&self, family: &str) -> Result<Option<i64>, String> {
+        let row: (Option<i64>,) = sqlx_core::query_as::query_as(
+            "SELECT max(ts) FROM activity.hook_events WHERE assistant_family = $1::sensei.assistant_family"
+        )
+        .bind(family)
         .fetch_one(&self.pool)
         .await
         .map_err(|e| e.to_string())?;
@@ -3241,6 +3257,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn upsert_persists_doc_and_symbol_kinds() {
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("kinds_{}", uuid::Uuid::new_v4())).await;
+        // Each of these failed the enum cast before the fix and was dropped.
+        for (kind, name, path) in [
+            ("doc", "README", "README.md"),
+            ("struct", "Point", "src/geo.rs"),
+            ("component", "Button", "src/Button.svelte"),
+            ("hook", "useState", "src/Button.svelte"),
+            ("extension", "review", "marketplace/commands/review.md"),
+        ] {
+            s.upsert_node(&fid, kind, name, path, None, None, Some(1), Some(2))
+                .await
+                .unwrap_or_else(|e| panic!("upsert {kind} failed: {e}"));
+        }
+        let kinds = s.count_nodes_by_kind(&fid).await.unwrap();
+        for kind in ["doc", "struct", "component", "hook", "extension"] {
+            assert_eq!(kinds.get(kind), Some(&1), "missing {kind} node");
+        }
+        s.delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn doc_nodes_are_embeddable() {
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("embed_{}", uuid::Uuid::new_v4())).await;
+        s.upsert_node(&fid, "doc", "README", "README.md", None, None, Some(1), Some(2))
+            .await.unwrap();
+        let pending = s.nodes_without_embeddings(&fid, 100).await.unwrap();
+        assert!(
+            pending.iter().any(|(_, kind, name, _, _)| kind == "doc" && name == "README"),
+            "doc node not returned by nodes_without_embeddings"
+        );
+        s.delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
     async fn edge_insert_and_query() {
         let s = pg_store().await;
         let fid = create_test_folder(&s, &format!("edge_{}", uuid::Uuid::new_v4())).await;
@@ -4342,5 +4395,19 @@ mod knowledge_tests {
             .bind(vec![org_ns, tech_ns]).execute(pg.pool()).await.unwrap();
         sqlx_core::query::query("DELETE FROM sensei.scopes WHERE key IN ('organization','technology')")
             .execute(pg.pool()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn latest_hook_event_ts_returns_max_for_family() {
+        let pg = PgStore::connect_test().await.unwrap();
+        let base = 1_900_000_000_000_i64; // far-future, won't collide with seeded data
+        for (i, off) in [0_i64, 5000, 2000].iter().enumerate() {
+            pg.insert_hook_event(
+                &format!("sess-test-{i}"), "claude", "PreToolUse", Some("Bash"),
+                Some("/tmp"), base + off, Some(true), &serde_json::json!({"t": i}),
+            ).await.unwrap();
+        }
+        let max = pg.latest_hook_event_ts("claude").await.unwrap().unwrap();
+        assert!(max >= base + 5000, "expected >= {} got {max}", base + 5000);
     }
 }
