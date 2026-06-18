@@ -3,10 +3,12 @@ mod trait_def;
 mod claude_code;
 mod mcp_file;
 mod health;
+mod watchdog;
 pub use health::{
     business_elapsed_hours, capture_freshness,
     AdapterCheck, AdapterHealth, AdapterResolveReport, CheckStatus,
 };
+pub use watchdog::{health_report, CaptureWindow};
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -161,6 +163,11 @@ pub struct ConfigureResult {
 
 pub fn detect() -> Vec<AssistantStatus> {
     all_assistants().iter().map(|a| a.status()).collect()
+}
+
+/// config_health for a single adapter id, or None if not registered.
+pub fn config_health_for_id(adapter_id: &str) -> Option<Vec<crate::assistants::AdapterCheck>> {
+    all_assistants().iter().find(|a| a.id() == adapter_id).map(|a| a.config_health())
 }
 
 /// Grouped view — one entry per family for the UI.
