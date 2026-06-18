@@ -2,6 +2,8 @@ mod helpers;
 mod trait_def;
 mod claude_code;
 mod mcp_file;
+mod health;
+pub use health::{AdapterCheck, AdapterHealth, AdapterResolveReport, CheckStatus};
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
