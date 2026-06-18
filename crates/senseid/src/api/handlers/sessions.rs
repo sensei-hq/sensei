@@ -170,9 +170,15 @@ pub(crate) async fn ingest_hook_event(
         .and_then(|v| v.as_i64())
         .map(|c| c == 0);
 
-    let _ = state.pg.insert_hook_event(
+    // Always return 200 so a DB hiccup never blocks the hook — but DON'T
+    // swallow the error silently: a failing capture insert is exactly how
+    // capture dies invisibly (the bug the capture watchdog exists to catch).
+    // Log it so it's inspectable in the daemon log / public.logs.
+    if let Err(e) = state.pg.insert_hook_event(
         session_id, assistant_family, event_type, tool_name, cwd, ts, success, &payload,
-    ).await;
+    ).await {
+        tracing::warn!(error = %e, event_type, assistant_family, "ingest_hook_event: insert failed");
+    }
 
     StatusCode::OK
 }
