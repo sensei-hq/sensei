@@ -73,6 +73,85 @@ fn config_health_for(adapter_id: &str) -> Vec<AdapterCheck> {
             Some(format!("unknown adapter {adapter_id}")))])
 }
 
+use std::collections::HashMap;
+use std::sync::Mutex;
+use crate::notifications::{Notifier, NotifyLevel};
+
+/// Per-adapter watchdog state. `suspended` short-circuits future ticks;
+/// `stale_notified` dedups the events-stale warning so it fires once per
+/// stale episode, not every hour.
+#[allow(dead_code)] // used by run_sweep (Task 9)
+#[derive(Default)]
+pub struct AdapterWatch { pub suspended: Option<String>, pub stale_notified: bool }
+
+#[allow(dead_code)] // used by run_sweep (Task 9)
+pub type BreakerMap = Mutex<HashMap<String, AdapterWatch>>;
+
+/// The config-side checks whose failure justifies an auto-reinstall.
+#[allow(dead_code)] // used by run_sweep (Task 9)
+fn config_side_failing(h: &AdapterHealth) -> bool {
+    h.checks.iter().any(|c| c.status == CheckStatus::Fail
+        && matches!(c.id.as_str(), "marketplace" | "plugin" | "enabled" | "hooks"))
+}
+
+#[allow(dead_code)] // used by run_sweep (Task 9)
+fn events_failing(h: &AdapterHealth) -> bool {
+    h.checks.iter().any(|c| c.id == "events" && c.status == CheckStatus::Fail)
+}
+
+/// What a tick did — returned so the async caller (`run_sweep`) can write the
+/// DB audit trail without `tick_adapter` itself needing to be async.
+#[allow(dead_code)] // used by run_sweep (Task 9)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TickOutcome { Skipped, Healthy, StaleWarned, StaleAlreadyNotified, Resolved, Suspended }
+
+/// Decide + act for one adapter. `resolve_fn` runs the reinstall and returns
+/// whether it succeeded; `recheck_fn` recomputes health afterward. Sync + pure
+/// of IO except via the injected closures + notifier, so it's fully
+/// unit-testable; all `.await` logging happens in the caller off the return.
+#[allow(dead_code)] // used by run_sweep (Task 9)
+pub fn tick_adapter(
+    health: &AdapterHealth,
+    watch: &mut AdapterWatch,
+    notifier: &dyn Notifier,
+    resolve_fn: &dyn Fn() -> bool,
+    recheck_fn: &dyn Fn() -> AdapterHealth,
+) -> TickOutcome {
+    if watch.suspended.is_some() { return TickOutcome::Skipped; }
+
+    if config_side_failing(health) {
+        let _ran = resolve_fn();
+        let after = recheck_fn();
+        if config_side_failing(&after) {
+            let reason = "auto-repair failed; manual action needed".to_string();
+            notifier.notify(NotifyLevel::Critical,
+                &format!("{} capture broken", health.family),
+                &format!("Config checks still failing after reinstall. Run `sensei doctor --fix`. ({reason})"));
+            watch.suspended = Some(reason);
+            return TickOutcome::Suspended;
+        } else {
+            notifier.notify(NotifyLevel::Info,
+                &format!("{} capture auto-resolved", health.family),
+                "A config check failed and was repaired by reinstalling the plugin.");
+            watch.stale_notified = false;
+            return TickOutcome::Resolved;
+        }
+    }
+
+    if events_failing(health) {
+        if !watch.stale_notified {
+            notifier.notify(NotifyLevel::Warn,
+                &format!("{} capture stale", health.family),
+                "No hook events within the inactivity window. Config looks fine — a session restart may be needed.");
+            watch.stale_notified = true;
+            return TickOutcome::StaleWarned;
+        }
+        return TickOutcome::StaleAlreadyNotified;
+    }
+    watch.stale_notified = false;
+    TickOutcome::Healthy
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -100,5 +179,59 @@ mod tests {
         assert_eq!(parse_window(Some("inf"), None).hours, 24.0);
         assert_eq!(parse_window(Some("infinity"), None).hours, 24.0);
         assert_eq!(parse_window(Some("NaN"), None).hours, 24.0);
+    }
+
+    use crate::notifications::{Notifier, NotifyLevel};
+    use std::sync::Mutex;
+
+    struct Rec(Mutex<Vec<(NotifyLevel, String)>>);
+    impl Notifier for Rec {
+        fn notify(&self, l: NotifyLevel, t: &str, _b: &str) { self.0.lock().unwrap().push((l, t.into())); }
+    }
+    fn health(checks: Vec<(&str, CheckStatus)>) -> AdapterHealth {
+        let cs = checks.into_iter().map(|(id, s)| AdapterCheck::new(id, id, s, None)).collect();
+        AdapterHealth::new("claude-code", "claude", cs, true)
+    }
+
+    #[test]
+    fn config_fail_then_resolve_ok_notifies_info_and_stays_active() {
+        let rec = Rec(Mutex::new(vec![]));
+        let mut w = AdapterWatch::default();
+        let bad = health(vec![("plugin", CheckStatus::Fail), ("events", CheckStatus::Ok)]);
+        let good = health(vec![("plugin", CheckStatus::Ok), ("events", CheckStatus::Ok)]);
+        tick_adapter(&bad, &mut w, &rec, &|| true, &|| good.clone());
+        assert!(w.suspended.is_none());
+        assert_eq!(rec.0.lock().unwrap()[0].0, NotifyLevel::Info);
+    }
+
+    #[test]
+    fn config_fail_then_still_fail_notifies_critical_and_suspends() {
+        let rec = Rec(Mutex::new(vec![]));
+        let mut w = AdapterWatch::default();
+        let bad = health(vec![("plugin", CheckStatus::Fail)]);
+        tick_adapter(&bad, &mut w, &rec, &|| true, &|| bad.clone());
+        assert!(w.suspended.is_some());
+        assert_eq!(rec.0.lock().unwrap()[0].0, NotifyLevel::Critical);
+    }
+
+    #[test]
+    fn suspended_adapter_is_skipped() {
+        let rec = Rec(Mutex::new(vec![]));
+        let mut w = AdapterWatch { suspended: Some("x".into()), stale_notified: false };
+        let bad = health(vec![("plugin", CheckStatus::Fail)]);
+        tick_adapter(&bad, &mut w, &rec, &|| panic!("must not resolve"), &|| bad.clone());
+        assert!(rec.0.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn pure_events_stale_warns_once_never_resolves() {
+        let rec = Rec(Mutex::new(vec![]));
+        let mut w = AdapterWatch::default();
+        let stale = health(vec![("plugin", CheckStatus::Ok), ("events", CheckStatus::Fail)]);
+        tick_adapter(&stale, &mut w, &rec, &|| panic!("must not resolve"), &|| stale.clone());
+        tick_adapter(&stale, &mut w, &rec, &|| panic!("must not resolve"), &|| stale.clone());
+        let calls = rec.0.lock().unwrap();
+        assert_eq!(calls.len(), 1, "stale should warn once, not every tick");
+        assert_eq!(calls[0].0, NotifyLevel::Warn);
     }
 }
