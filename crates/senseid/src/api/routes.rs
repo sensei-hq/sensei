@@ -126,6 +126,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/assistants/families", get(config::assistant_detect_families))
         .route("/api/assistants/configure", post(config::assistant_configure))
         .route("/api/assistants/remove", post(config::assistant_remove))
+        .route("/api/assistants/health", get(config::assistants_health))
+        .route("/api/assistants/resolve", post(config::assistants_resolve))
         // Installer — hooks, skills, commands, install/remove
         .route("/api/install", post(config::install_all))
         .route("/api/install/hooks", post(config::install_hooks))
@@ -245,6 +247,7 @@ mod tests {
             pg: crate::db::pg_store::PgStore::connect_test().await.unwrap(),
             gateway,
             event_tx,
+            breaker: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         });
         let router = create_router(state.clone());
         (router, state)
@@ -437,6 +440,19 @@ mod tests {
         let summary: serde_json::Value = serde_json::from_slice(&body).unwrap();
         let fn_count = summary["functions"].as_i64().unwrap_or(0);
         assert!(fn_count >= 1, "summary must count child-folder function; got functions={}", fn_count);
+    }
+
+    #[tokio::test]
+    async fn assistants_health_endpoint_returns_status_and_adapters() {
+        let (app, _) = test_app().await;
+        let resp = app.oneshot(
+            Request::builder().uri("/api/assistants/health").body(Body::empty()).unwrap()
+        ).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(json["status"].is_string());
+        assert!(json["adapters"].is_array());
     }
 
     #[tokio::test]

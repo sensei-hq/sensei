@@ -10,6 +10,8 @@ pub struct SharedState {
     pub task_queue: Arc<TaskQueue>,
     pub gateway: Arc<Gateway>,
     pub event_tx: broadcast::Sender<StateEvent>,
+    /// Per-adapter capture-watchdog circuit-breaker state (in-memory; resets on restart).
+    pub breaker: std::sync::Arc<crate::assistants::BreakerMap>,
 }
 
 pub type AppState = Arc<SharedState>;

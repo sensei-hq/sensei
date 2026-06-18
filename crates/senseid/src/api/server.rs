@@ -130,6 +130,7 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
         task_queue: task_queue.clone(),
         gateway,
         event_tx,
+        breaker: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
     });
 
     let task_logger = sensei_logger::Logger::new(
@@ -195,6 +196,32 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
 
     // Federation: poll registered hive-mind sources for applicable rule deltas.
     crate::federation::run_pull_loop(state.pg.clone(), 300);
+
+    // Capture watchdog: hourly sweep over configured ACP adapters. Auto-resolves
+    // config-side failures (reinstall), trips a per-adapter breaker on give-up,
+    // and notifies the user (the only signal once an adapter is suspended).
+    {
+        let pg = state.pg.clone();
+        let breaker = state.breaker.clone();
+        let notifier: std::sync::Arc<dyn crate::notifications::Notifier> =
+            std::sync::Arc::new(crate::notifications::DesktopNotifier);
+        // DB audit logger (writes to public.logs), mirrors the task_logger above.
+        let watchdog_logger = sensei_logger::Logger::new(
+            sensei_logger::LogWriter::pg(state.pg.pool().clone()),
+            sensei_logger::LogLevel::Info,
+            "daemon",
+            "watchdog",
+        );
+        tokio::spawn(async move {
+            // Small initial delay so startup churn settles before the first sweep.
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            loop {
+                let now_ms = chrono::Utc::now().timestamp_millis();
+                crate::assistants::run_sweep(&pg, &notifier, &breaker, &watchdog_logger, now_ms).await;
+                tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+            }
+        });
+    }
 
     (create_router(state), task_queue)
 }

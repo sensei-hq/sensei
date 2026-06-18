@@ -11,8 +11,6 @@ pub trait Notifier: Send + Sync {
 
 /// Production notifier backed by notify-rust. Failures are logged, never
 /// propagated — a missing notification daemon must not break the watchdog.
-// constructed in server.rs (Task 10)
-#[allow(dead_code)]
 pub struct DesktopNotifier;
 
 impl Notifier for DesktopNotifier {
