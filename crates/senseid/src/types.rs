@@ -42,10 +42,6 @@ impl std::fmt::Display for SymbolKind {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum NodeKind {
-    // Structural grouping
-    Repo,
-    CodeGroup,
-    DocGroup,
     // Code hierarchy
     Package,
     Module,
@@ -69,9 +65,6 @@ pub enum NodeKind {
 impl NodeKind {
     pub fn as_str(&self) -> &'static str {
         match self {
-            Self::Repo => "repo",
-            Self::CodeGroup => "code-group",
-            Self::DocGroup => "doc-group",
             Self::Package => "package",
             Self::Module => "module",
             Self::Function => "function",
@@ -93,9 +86,6 @@ impl NodeKind {
     #[allow(dead_code)]
     pub fn from_str(s: &str) -> Self {
         match s {
-            "repo" => Self::Repo,
-            "code-group" => Self::CodeGroup,
-            "doc-group" => Self::DocGroup,
             "package" => Self::Package,
             "module" => Self::Module,
             "function" => Self::Function,
@@ -141,6 +131,18 @@ impl NodeKind {
             SymbolKind::Hook => Self::Hook,
             SymbolKind::Unknown => Self::Function,
         }
+    }
+
+    /// Every node kind, in declaration order. Backs the schema-consistency
+    /// guard test and any exhaustive enumeration of kinds.
+    #[allow(dead_code)]
+    pub fn all() -> &'static [NodeKind] {
+        use NodeKind::*;
+        &[
+            Package, Module, Function, Method,
+            Class, Struct, Interface, Enum, Const, Type, Component, Hook,
+            File, Doc, Extension,
+        ]
     }
 }
 
@@ -316,5 +318,31 @@ mod tests {
         assert_eq!(pf2.symbols.len(), 1);
         assert_eq!(pf2.symbols[0].name, "hello");
         assert_eq!(pf2.imports[0].target_path, "os");
+    }
+}
+
+#[cfg(test)]
+mod node_kind_schema_tests {
+    use super::NodeKind;
+    use std::collections::HashSet;
+
+    /// Every NodeKind::as_str() must be a value in the node_kind DDL enum.
+    /// Otherwise upsert_node's `$2::sensei.node_kind` cast fails and the node
+    /// is dropped. Reading the DDL keeps code and schema from drifting.
+    #[test]
+    fn every_node_kind_is_a_valid_enum_value() {
+        let ddl = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../database/ddl/enum/sensei/node_kind.ddl"
+        ));
+        // Enum labels are the only single-quoted tokens in this file.
+        let enum_values: HashSet<&str> = ddl.split('\'').skip(1).step_by(2).collect();
+        for k in NodeKind::all() {
+            assert!(
+                enum_values.contains(k.as_str()),
+                "NodeKind::{:?} emits {:?}, absent from node_kind.ddl: {:?}",
+                k, k.as_str(), enum_values
+            );
+        }
     }
 }

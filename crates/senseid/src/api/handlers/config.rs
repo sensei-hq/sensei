@@ -114,6 +114,29 @@ pub(crate) async fn assistant_remove(
     serde_json::json!({"assistants_removed": removed, "errors": []}).into()
 }
 
+/// GET /api/assistants/health — current per-adapter health (config + freshness).
+pub(crate) async fn assistants_health(
+    State(state): State<AppState>,
+) -> Json<serde_json::Value> {
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    let report = crate::assistants::health_report(&state.pg, now_ms).await;
+    let overall = report.iter().map(|h| h.status)
+        .fold(crate::assistants::CheckStatus::Ok, |acc, s| acc.worse(s));
+    Json(serde_json::json!({ "status": overall, "adapters": report }))
+}
+
+#[derive(serde::Deserialize)]
+pub(crate) struct ResolveBody { pub adapter_id: String }
+
+/// POST /api/assistants/resolve — reinstall one adapter, clear its breaker.
+pub(crate) async fn assistants_resolve(
+    State(state): State<AppState>,
+    Json(body): Json<ResolveBody>,
+) -> Json<crate::assistants::AdapterResolveReport> {
+    let report = crate::assistants::resolve_adapter(&body.adapter_id, &state.breaker);
+    Json(report)
+}
+
 // ── Installer ───────────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]

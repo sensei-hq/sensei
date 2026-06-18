@@ -1,9 +1,10 @@
 .env.local
 
-# Personal capture — staged for import via `dbd import hook_events …`. May
-# contain session payloads (prompts, file paths, tool output) and varies
-# per developer, so it must never be committed.
+# Personal capture — staged for import via `dbd import …`. May contain session
+# payloads (prompts, file paths, tool output) and per-developer knowledge, so
+# these exported capture files must never be committed.
 import/staging/hook_events.jsonl
+import/staging/memories.jsonl
 
 # Local DB snapshots produced by `make db-backup` (and by every `make
 # install*` invocation, which hooks db-backup first). One pg_dump custom-
