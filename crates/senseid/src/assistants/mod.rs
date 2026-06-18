@@ -3,7 +3,10 @@ mod trait_def;
 mod claude_code;
 mod mcp_file;
 mod health;
-pub use health::{AdapterCheck, AdapterHealth, AdapterResolveReport, CheckStatus};
+pub use health::{
+    business_elapsed_hours, capture_freshness,
+    AdapterCheck, AdapterHealth, AdapterResolveReport, CheckStatus,
+};
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
