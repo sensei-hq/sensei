@@ -890,8 +890,8 @@ mod tests {
     fn check_enabled_unknown_when_malformed() {
         let tmp = make_tmp_home();
         let s = tmp.path().join("settings.json");
-        std::fs::write(&s, "{ not json").unwrap();
-        // json5 is lenient; use clearly invalid content.
+        // json5 is lenient (accepts `{ not json` partially), so use content no
+        // parser will accept.
         std::fs::write(&s, "}{").unwrap();
         assert_eq!(check_enabled(&s).status, CheckStatus::Unknown);
     }
@@ -910,6 +910,11 @@ mod tests {
         assert_eq!(check_marketplace(&s).status, CheckStatus::Fail);
     }
     #[test]
+    fn check_marketplace_fail_when_file_missing() {
+        let tmp = make_tmp_home();
+        assert_eq!(check_marketplace(&tmp.path().join("missing.json")).status, CheckStatus::Fail);
+    }
+    #[test]
     fn check_plugin_reuses_verify() {
         let tmp = make_tmp_home();
         let m = tmp.path().join("installed_plugins.json");
@@ -917,11 +922,28 @@ mod tests {
         assert_eq!(check_plugin(&m).status, CheckStatus::Ok);
     }
     #[test]
+    fn check_plugin_fail_when_absent() {
+        // Wrapping of verify_plugin_installed's false result into Fail.
+        let tmp = make_tmp_home();
+        let m = tmp.path().join("installed_plugins.json");
+        std::fs::write(&m, r#"{"plugins":{"other@mp":[]}}"#).unwrap();
+        assert_eq!(check_plugin(&m).status, CheckStatus::Fail);
+    }
+    #[test]
     fn plugin_install_path_reads_first_entry() {
         let tmp = make_tmp_home();
         let m = tmp.path().join("installed_plugins.json");
         std::fs::write(&m, r#"{"plugins":{"sensei@sensei-marketplace":[{"installPath":"/foo/bar"}]}}"#).unwrap();
         assert_eq!(plugin_install_path(&m), Some(PathBuf::from("/foo/bar")));
+    }
+    #[test]
+    fn plugin_install_path_none_on_empty_entries() {
+        // Plugin key present but no install entry recorded → None (caller treats
+        // this the same as "not installed", which is the right escalation).
+        let tmp = make_tmp_home();
+        let m = tmp.path().join("installed_plugins.json");
+        std::fs::write(&m, r#"{"plugins":{"sensei@sensei-marketplace":[]}}"#).unwrap();
+        assert_eq!(plugin_install_path(&m), None);
     }
     #[test]
     fn check_hooks_ok_when_both_events_declared() {
