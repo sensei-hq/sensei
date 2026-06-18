@@ -123,12 +123,21 @@ async fn run(
                     ));
 
                     // Was this the last folder for the project? If so, flip the project to active.
-                    let all_indexed = uuid::Uuid::parse_str(&project_id_str)
-                        .ok()
-                        .map(|uid| pg.count_unindexed_folders(uid))
-                        .map(|fut| async { fut.await == Ok(0) });
+                    let all_indexed = match uuid::Uuid::parse_str(&project_id_str) {
+                        Ok(uid) => match pg.count_unindexed_folders(uid).await {
+                            Ok(remaining) => Some(remaining == 0),
+                            Err(e) => {
+                                tracing::warn!(error = %e, project_id = %project_id_str, "count_unindexed_folders failed; skipping project-active check");
+                                None
+                            }
+                        },
+                        Err(e) => {
+                            tracing::warn!(error = %e, project_id = %project_id_str, "invalid project_id; skipping project-active check");
+                            None
+                        }
+                    };
                     if let Some(check) = all_indexed
-                        && check.await {
+                        && check {
                         let _ = state_events.send(StateEvent::project_update(
                             crate::api::events::ScanProject {
                                 id: project_id_str.clone(),
@@ -162,7 +171,13 @@ async fn build_tracker(
     folder_path: &str,
     files_total: u32,
 ) -> Option<FolderTracker> {
-    let row = pg.get_repo_by_path(folder_path).await.ok().flatten()?;
+    let row = match pg.get_repo_by_path(folder_path).await {
+        Ok(row) => row,
+        Err(e) => {
+            tracing::warn!(error = %e, folder_path, "get_repo_by_path failed; cannot build progress tracker");
+            return None;
+        }
+    }?;
     let folder_id   = row.get("id")?.as_str()?.to_string();
     // project_id may be null (folder not yet assigned to a project)
     let project_id  = row.get("project_id")

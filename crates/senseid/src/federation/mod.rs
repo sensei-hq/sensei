@@ -13,7 +13,7 @@ pub fn http_client() -> reqwest::Client {
         .connect_timeout(std::time::Duration::from_secs(5))
         .timeout(std::time::Duration::from_secs(30))
         .build()
-        .unwrap_or_default()
+        .unwrap_or_else(|e| { tracing::warn!(error = %e, "federation: http client build failed, using default client without timeouts"); reqwest::Client::new() })
 }
 
 /// Build the wire payload for a memory being published. `published_by`/`published_at`
@@ -47,8 +47,12 @@ pub async fn push_promoted(pg: &PgStore, memory_id: uuid::Uuid) {
     };
     if payload.origin != "promoted" { return; }
     let namespace_id = match resolve_memory_namespace_id(pg, &memory_id).await { Some(id) => id, None => return };
-    if !matches!(pg.namespace_is_shareable(&namespace_id).await, Ok(true)) { return; }
-    let sources = match pg.list_knowledge_sources().await { Ok(s) => s, Err(_) => return };
+    match pg.namespace_is_shareable(&namespace_id).await {
+        Ok(true) => {}
+        Ok(false) => return,
+        Err(e) => { tracing::warn!(error = %e, "federation: namespace shareability check failed"); return; }
+    }
+    let sources = match pg.list_knowledge_sources().await { Ok(s) => s, Err(e) => { tracing::warn!(error = %e, "federation: list sources failed"); return; } };
     let pr = build_published_rule(&payload, None);
     let client = http_client();
     for src in sources.into_iter().filter(|s| s.enabled
@@ -61,9 +65,12 @@ pub async fn push_promoted(pg: &PgStore, memory_id: uuid::Uuid) {
 }
 
 async fn resolve_memory_namespace_id(pg: &PgStore, memory_id: &uuid::Uuid) -> Option<uuid::Uuid> {
-    let row: Option<(Option<uuid::Uuid>,)> = sqlx_core::query_as::query_as(
+    let row: Option<(Option<uuid::Uuid>,)> = match sqlx_core::query_as::query_as(
         "SELECT namespace_id FROM sensei.memories WHERE id = $1")
-        .bind(memory_id).fetch_optional(pg.pool()).await.ok()?;
+        .bind(memory_id).fetch_optional(pg.pool()).await {
+        Ok(r) => r,
+        Err(e) => { tracing::warn!(error = %e, "federation: resolve namespace query failed"); return None; }
+    };
     row.and_then(|(n,)| n)
 }
 

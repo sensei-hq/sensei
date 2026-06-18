@@ -76,7 +76,9 @@ fn install_hooks() -> Result<u32, String> {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).ok();
+            if let Err(e) = fs::set_permissions(&path, fs::Permissions::from_mode(0o755)) {
+                tracing::warn!(hook = %name, error = %e, "failed to set executable permissions on hook script");
+            }
         }
         count += 1;
     }
@@ -104,9 +106,10 @@ pub fn install_item(name: &str, kind: &str) -> Result<String, String> {
         _ => return Err(format!("unsupported kind: {}", kind)),
     };
 
-    if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent).ok();
-    }
+    if let Some(parent) = dest.parent()
+        && let Err(e) = fs::create_dir_all(parent) {
+            tracing::warn!(dir = %parent.display(), error = %e, "failed to create parent dir for installed item");
+        }
     fs::write(&dest, &content).map_err(|e| e.to_string())?;
     Ok(dest.to_string_lossy().into_owned())
 }

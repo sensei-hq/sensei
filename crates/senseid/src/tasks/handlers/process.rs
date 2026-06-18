@@ -80,7 +80,7 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
             // Create new project
             let id = ctx.pg().create_project(project_name, None, None).await
                 .map(|id| id.to_string())
-                .unwrap_or_else(|_| format!("p-{}", project_name));
+                .unwrap_or_else(|e| { tracing::error!(project = %project_name, error = %e, "create_project failed; using fallback id"); format!("p-{}", project_name) });
 
             // Emit: project add
             emit(crate::api::events::StateEvent::project_add(crate::api::events::ScanProject {
@@ -101,9 +101,10 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
     // as a real repo). The folder kind=standalone already marks the folder; this
     // marks the project. Idempotent (tag union).
     if is_quasi
-        && let Ok(pid) = uuid::Uuid::parse_str(&project_id) {
-            ctx.pg().set_project_identity(&pid, None, None, &[], &["quasi-repo".to_string()]).await.ok();
-        }
+        && let Ok(pid) = uuid::Uuid::parse_str(&project_id)
+            && let Err(e) = ctx.pg().set_project_identity(&pid, None, None, &[], &["quasi-repo".to_string()]).await {
+                tracing::warn!(project_id = %pid, error = %e, "set_project_identity (quasi-repo tag) failed");
+            }
 
     // ── 4. Emit: folder add with stack + file count ──────────────────
     // Reuse the lookup we already did to derive folder_name. abs_path is
@@ -152,9 +153,10 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
     // ── Persist project_id on the folder record ──────────────────────
     // upsert_repo does not set project_id; do it now so that
     // progress_emitter::build_tracker can read it via get_repo_by_path.
-    if let (Some(fid), Ok(pid)) = (&folder_uuid, uuid::Uuid::parse_str(&project_id)) {
-        ctx.pg().set_folder_project(fid, &pid, "primary", None).await.ok();
-    }
+    if let (Some(fid), Ok(pid)) = (&folder_uuid, uuid::Uuid::parse_str(&project_id))
+        && let Err(e) = ctx.pg().set_folder_project(fid, &pid, "primary", None).await {
+            tracing::warn!(folder_id = %fid, project_id = %pid, error = %e, "set_folder_project failed");
+        }
 
     // Record the indexed git branch in props.branch — preferred from the
     // BranchSwitch task that triggered this re-index, otherwise read from
@@ -163,9 +165,10 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
     if let Some(fid) = &folder_uuid {
         let branch = task.branch.clone()
             .or_else(|| crate::watcher::root_watcher::read_git_head(&format!("{}/.git/HEAD", task.path)));
-        if let Some(br) = branch {
-            ctx.pg().set_folder_props(fid, &serde_json::json!({ "branch": br })).await.ok();
-        }
+        if let Some(br) = branch
+            && let Err(e) = ctx.pg().set_folder_props(fid, &serde_json::json!({ "branch": br })).await {
+                tracing::warn!(folder_id = %fid, branch = %br, error = %e, "set_folder_props (branch) failed");
+            }
     }
 
     // Incremental index: load the prior per-file fingerprints so we only
@@ -269,9 +272,15 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
     // and clear their scan-state rows.
     if let Some(ref fid) = folder_uuid {
         for path in &plan.removed {
-            ctx.pg().unresolve_edges_to_file(fid, path).await.ok();
-            ctx.pg().delete_nodes_by_file(fid, path).await.ok();
-            ctx.pg().delete_scan_state_file(fid, path).await.ok();
+            if let Err(e) = ctx.pg().unresolve_edges_to_file(fid, path).await {
+                tracing::warn!(folder_id = %fid, file = %path, error = %e, "unresolve_edges_to_file (removed) failed");
+            }
+            if let Err(e) = ctx.pg().delete_nodes_by_file(fid, path).await {
+                tracing::warn!(folder_id = %fid, file = %path, error = %e, "delete_nodes_by_file (removed) failed");
+            }
+            if let Err(e) = ctx.pg().delete_scan_state_file(fid, path).await {
+                tracing::warn!(folder_id = %fid, file = %path, error = %e, "delete_scan_state_file (removed) failed");
+            }
         }
     }
 
@@ -292,11 +301,12 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
             let name = dir.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
             let rel = dir.strip_prefix(repo_path).unwrap_or(&dir).to_string_lossy().to_string();
             let abs = dir.to_string_lossy().to_string();
-            if let Ok(fid) = ctx.pg()
+            match ctx.pg()
                 .upsert_subfolder(&root_uuid, &name, &rel, &abs, Some(&parent_id), Some(&pid))
                 .await
             {
-                path_to_id.insert(dir, fid);
+                Ok(fid) => { path_to_id.insert(dir, fid); }
+                Err(e) => tracing::warn!(name = %name, rel = %rel, error = %e, "upsert_subfolder failed"),
             }
         }
     }
@@ -359,7 +369,9 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
                 if let Some(root_id) = root_id {
                     for (name, subtree_path) in &subtrees {
                         let subtree_folder_name = format!("{}:{}", folder_name, name);
-                        ctx.pg().upsert_repo(&root_id, &subtree_folder_name, subtree_path).await.ok();
+                        if let Err(e) = ctx.pg().upsert_repo(&root_id, &subtree_folder_name, subtree_path).await {
+                            tracing::warn!(name = %subtree_folder_name, path = %subtree_path, error = %e, "upsert_repo (subtree) failed");
+                        }
                     }
                 }
 
@@ -381,10 +393,14 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
     // Repo-level metadata + identity reconcile from README frontmatter
     // (filesystem-only, READ-ONLY). Extracted into reconcile_repo_identity so
     // the watcher can re-run it incrementally on a README change.
-    let _ = reconcile_repo_identity(ctx, &task.path).await;
+    if let Err(e) = reconcile_repo_identity(ctx, &task.path).await {
+        tracing::warn!(path = %task.path, error = %e, "reconcile_repo_identity failed");
+    }
 
     // Self-healing reconcile: re-tag orphaned discovery projects (no delete).
-    ctx.pg().mark_orphaned_projects().await.ok();
+    if let Err(e) = ctx.pg().mark_orphaned_projects().await {
+        tracing::warn!(error = %e, "mark_orphaned_projects failed");
+    }
 
     tracing::info!("process_git_folder: {} — {} dirs, {} changed files, {} removed", folder_name, dirs.len(), all_file_task_ids.len(), plan.removed.len());
     Ok(all_file_task_ids.len() as u32)
@@ -426,7 +442,9 @@ pub async fn reconcile_repo_identity(ctx: &TaskContext, repo_abs_path: &str) -> 
         "summary": summary,
         "frontmatter": serde_json::to_value(&fm).unwrap_or(serde_json::Value::Null),
     });
-    ctx.pg().set_folder_props(&folder_id, &meta).await.ok();
+    if let Err(e) = ctx.pg().set_folder_props(&folder_id, &meta).await {
+        tracing::warn!(folder_id = %folder_id, error = %e, "set_folder_props (reconcile meta) failed");
+    }
 
     // Icon variants + URL-vs-repo-relative classification (root READMEs only).
     if let Some(icon_path) = fm.icon.as_deref() {
@@ -438,7 +456,9 @@ pub async fn reconcile_repo_identity(ctx: &TaskContext, repo_abs_path: &str) -> 
             icons["custom_dark"] = serde_json::json!(dark);
             icons["custom_dark_is_url"] = serde_json::json!(metadata::icon_is_url(dark));
         }
-        ctx.pg().set_folder_icons(&folder_id, &icons).await.ok();
+        if let Err(e) = ctx.pg().set_folder_icons(&folder_id, &icons).await {
+            tracing::warn!(folder_id = %folder_id, error = %e, "set_folder_icons failed");
+        }
     }
 
     // Project identity + role + namespaces (only when linked to a project).
@@ -459,15 +479,18 @@ pub async fn reconcile_repo_identity(ctx: &TaskContext, repo_abs_path: &str) -> 
             // roles onto the folder.role enum column.
             tags.push(format!("role:{role}"));
             if let Some(fr) = metadata::folder_role_from_frontmatter(role) {
-                ctx.pg().update_folder_role(&folder_id, Some(fr)).await.ok();
+                ctx.pg().update_folder_role(&folder_id, Some(fr)).await
+                    .unwrap_or_else(|e| tracing::warn!(folder_id = %folder_id, error = %e, "update_folder_role failed"));
             }
         }
         if let Some(org) = fm.organization.as_deref() {
             tags.push(format!("org:{}", metadata::slugify(org)));
         }
-        ctx.pg().set_project_identity(
+        if let Err(e) = ctx.pg().set_project_identity(
             &pid, fm.summary.as_deref(), fm.client.as_deref(), &id_stack, &tags,
-        ).await.ok();
+        ).await {
+            tracing::warn!(project_id = %pid, error = %e, "set_project_identity (reconcile) failed");
+        }
 
         let mut ns: Vec<(&str, String)> = Vec::new();
         if let Some(org) = fm.organization.as_deref() { ns.push(("organization", org.to_string())); }
@@ -478,7 +501,8 @@ pub async fn reconcile_repo_identity(ctx: &TaskContext, repo_abs_path: &str) -> 
             let slug = metadata::slugify(name);
             if slug.is_empty() { continue; }
             if let Ok(ns_id) = ctx.pg().upsert_namespace(scope, name, &slug).await {
-                ctx.pg().link_folder_namespace(&folder_id, &ns_id).await.ok();
+                ctx.pg().link_folder_namespace(&folder_id, &ns_id).await
+                    .unwrap_or_else(|e| tracing::warn!(folder_id = %folder_id, ns_id = %ns_id, error = %e, "link_folder_namespace failed"));
             }
         }
     }
@@ -527,7 +551,9 @@ pub async fn process_folder(ctx: &TaskContext, task: &Task) -> Result<u32, Strin
     // Write module node to PG
     if let Some(ref fid) = folder_id {
         let mod_name = if rel_dir.is_empty() { "(root)".to_string() } else { rel_dir.replace('\\', "/") };
-        ctx.pg().upsert_node(fid, "module", &mod_name, &task.path, None, None, None, None).await.ok();
+        if let Err(e) = ctx.pg().upsert_node(fid, "module", &mod_name, &task.path, None, None, None, None).await {
+            tracing::warn!(folder_id = %fid, module = %mod_name, error = %e, "upsert_node (module) failed");
+        }
     }
 
     Ok(0)
@@ -607,8 +633,12 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
             // target_name so resolve_edges re-points them to the new nodes) and
             // drop the file's prior nodes (cascading their outgoing edges) so the
             // rewrite is clean. No-op for a brand-new file.
-            ctx.pg().unresolve_edges_to_file(&folder_id, &result.rel_path).await.ok();
-            ctx.pg().delete_nodes_by_file(&folder_id, &result.rel_path).await.ok();
+            if let Err(e) = ctx.pg().unresolve_edges_to_file(&folder_id, &result.rel_path).await {
+                tracing::warn!(folder_id = %folder_id, file = %result.rel_path, error = %e, "unresolve_edges_to_file (reindex) failed");
+            }
+            if let Err(e) = ctx.pg().delete_nodes_by_file(&folder_id, &result.rel_path).await {
+                tracing::warn!(folder_id = %folder_id, file = %result.rel_path, error = %e, "delete_nodes_by_file (reindex) failed");
+            }
 
             // Write file node
             let file_node_id = match ctx.pg().upsert_node(
@@ -642,9 +672,10 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
 
             // Write unresolved import edges
             for import in &result.unresolved_imports {
-                if let Some(ref fid) = file_node_id {
-                    ctx.pg().insert_edge(&folder_id, fid, None, Some(import), "imports").await.ok();
-                }
+                if let Some(ref fid) = file_node_id
+                    && let Err(e) = ctx.pg().insert_edge(&folder_id, fid, None, Some(import), "imports").await {
+                        tracing::warn!(folder_id = %folder_id, import = %import, error = %e, "insert_edge (imports) failed");
+                    }
             }
 
             // Write unresolved call edges, sourced from the caller function node
@@ -655,33 +686,40 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
                     .get(&(call.caller_name.clone(), call.caller_line as i32))
                     .copied()
                     .or(file_node_id);
-                if let Some(src_id) = source {
-                    ctx.pg().insert_edge(&folder_id, &src_id, None, Some(&call.callee_name), "calls").await.ok();
-                }
+                if let Some(src_id) = source
+                    && let Err(e) = ctx.pg().insert_edge(&folder_id, &src_id, None, Some(&call.callee_name), "calls").await {
+                        tracing::warn!(folder_id = %folder_id, callee = %call.callee_name, error = %e, "insert_edge (calls) failed");
+                    }
             }
 
             // Write parent refs (HAS_METHOD: type → method)
             for pref in &result.parent_refs {
-                if let Some(ref fid) = file_node_id {
-                    ctx.pg().insert_edge(&folder_id, fid, None, Some(&pref.parent_name), "extends").await.ok();
-                }
+                if let Some(ref fid) = file_node_id
+                    && let Err(e) = ctx.pg().insert_edge(&folder_id, fid, None, Some(&pref.parent_name), "extends").await {
+                        tracing::warn!(folder_id = %folder_id, parent = %pref.parent_name, error = %e, "insert_edge (extends) failed");
+                    }
             }
 
             // Write doc references (file_refs → COVERS, fn_mentions → references)
             if result.kind == "doc"
                 && let Some(ref fid) = file_node_id {
                     for file_ref in &result.file_refs {
-                        ctx.pg().insert_edge(&folder_id, fid, None, Some(file_ref), "covers").await.ok();
+                        if let Err(e) = ctx.pg().insert_edge(&folder_id, fid, None, Some(file_ref), "covers").await {
+                            tracing::warn!(folder_id = %folder_id, file_ref = %file_ref, error = %e, "insert_edge (covers) failed");
+                        }
                     }
                     for fn_ref in &result.fn_mentions {
-                        ctx.pg().insert_edge(&folder_id, fid, None, Some(fn_ref), "references").await.ok();
+                        if let Err(e) = ctx.pg().insert_edge(&folder_id, fid, None, Some(fn_ref), "references").await {
+                            tracing::warn!(folder_id = %folder_id, fn_ref = %fn_ref, error = %e, "insert_edge (references) failed");
+                        }
                     }
                 }
 
             // Record this file's fingerprint so the next scan skips it when
             // unchanged. Written last so a row exists only for a fully-indexed file.
             if let Some((mtime, hash)) = super::helpers::file_fingerprint(fpath) {
-                ctx.pg().upsert_scan_state(&folder_id, &result.rel_path, mtime, &hash).await.ok();
+                ctx.pg().upsert_scan_state(&folder_id, &result.rel_path, mtime, &hash).await
+                    .unwrap_or_else(|e| tracing::warn!(folder_id = %folder_id, file = %result.rel_path, error = %e, "upsert_scan_state failed"));
             }
         }
 
@@ -694,9 +732,10 @@ pub async fn delete_file(ctx: &TaskContext, task: &Task) -> Result<u32, String> 
     // folder_path is the repo abs_path (Task contract).
     let folder = ctx.pg().get_repo_by_path(&task.folder_path).await.ok().flatten();
     if let Some(folder) = folder
-        && let Some(folder_id) = crate::api::util::json_uuid(&folder["id"]) {
-            ctx.pg().delete_nodes_by_file(&folder_id, &task.path).await.ok();
-        }
+        && let Some(folder_id) = crate::api::util::json_uuid(&folder["id"])
+            && let Err(e) = ctx.pg().delete_nodes_by_file(&folder_id, &task.path).await {
+                tracing::warn!(folder_id = %folder_id, file = %task.path, error = %e, "delete_nodes_by_file (delete_file) failed");
+            }
     tracing::info!("delete_file: {}", task.path);
     Ok(0)
 }
@@ -704,9 +743,10 @@ pub async fn delete_file(ctx: &TaskContext, task: &Task) -> Result<u32, String> 
 pub async fn delete_folder(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     let folder = ctx.pg().get_repo_by_path(&task.folder_path).await.ok().flatten();
     if let Some(folder) = folder
-        && let Some(folder_id) = crate::api::util::json_uuid(&folder["id"]) {
-            ctx.pg().delete_nodes_by_path_prefix(&folder_id, &task.path).await.ok();
-        }
+        && let Some(folder_id) = crate::api::util::json_uuid(&folder["id"])
+            && let Err(e) = ctx.pg().delete_nodes_by_path_prefix(&folder_id, &task.path).await {
+                tracing::warn!(folder_id = %folder_id, path = %task.path, error = %e, "delete_nodes_by_path_prefix (delete_folder) failed");
+            }
     tracing::info!("delete_folder: {}", task.path);
     Ok(0)
 }
