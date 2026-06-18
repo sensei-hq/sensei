@@ -15,7 +15,7 @@
 //! Exit code: 0 if the terminal payload is Ok, 1 otherwise.
 
 use owo_colors::{OwoColorize, Stream};
-use sensei_bootstrap::{self as bootstrap, Component, HealthEvent, HealthPayload, HealthStatus, ComponentStatus};
+use sensei_bootstrap::{self as bootstrap, Component, HealthEvent, HealthPayload, HealthStatus, ComponentStatus, SenseiConfig};
 
 const CARGO_PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -37,7 +37,7 @@ fn verb_for_component(c: &Component) -> &str { &c.installing_verb }
 
 // ── Entry point ─────────────────────────────────────────────────────────────
 
-pub fn run() -> i32 {
+pub fn run(fix: bool) -> i32 {
     bootstrap::tracing_init::install_console("sensei_bootstrap=warn");
 
     println!("{}", bold(&format!("sensei doctor  {}", dim(&format!("v{CARGO_PKG_VERSION}")))));
@@ -53,7 +53,8 @@ pub fn run() -> i32 {
     println!();
     print_terminal(&terminal);
 
-    if terminal.status == HealthStatus::Ok { 0 } else { 1 }
+    let capture_pressure = print_capture_section(fix);
+    if terminal.status == HealthStatus::Ok && capture_pressure == 0 { 0 } else { 1 }
 }
 
 // ── Event printer ───────────────────────────────────────────────────────────
@@ -134,6 +135,87 @@ fn print_event(ev: HealthEvent) {
             };
             println!("  {} {}", blue("⤳"), bold(&label));
         }
+    }
+}
+
+// ── Capture / Assistants section ────────────────────────────────────────────
+
+/// Render the Capture / Assistants section by querying the daemon. Returns
+/// extra exit-code pressure: 1 if any adapter is failing, else 0.
+fn print_capture_section(fix: bool) -> i32 {
+    let cfg = SenseiConfig::from_env();
+    let base = format!("http://127.0.0.1:{}", cfg.daemon_port);
+    println!();
+    println!("{}", bold("Capture / Assistants"));
+
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .expect("build http client");
+
+    let health: serde_json::Value = match client.get(format!("{base}/api/assistants/health")).send() {
+        Ok(r) => match r.json() { Ok(j) => j, Err(e) => { println!("  {} {}", red("✗"), dim(&format!("bad response: {e}"))); return 1; } },
+        Err(_) => {
+            println!("  {} {}", red("✗"), dim("daemon unreachable — cannot verify capture. Is senseid running? `sensei start`"));
+            return 1;
+        }
+    };
+
+    let adapters = health["adapters"].as_array().cloned().unwrap_or_default();
+    if adapters.is_empty() {
+        println!("  {} {}", dim("·"), dim("no configured assistants detected"));
+        return 0;
+    }
+
+    let mut worst_fail = 0;
+    let mut failing_ids: Vec<String> = vec![];
+    for a in &adapters {
+        let id = a["adapter_id"].as_str().unwrap_or("?");
+        let astatus = a["status"].as_str().unwrap_or("unknown");
+        let (icon, _) = status_glyph(astatus);
+        println!("  {} {}", icon, bold(id));
+        for c in a["checks"].as_array().cloned().unwrap_or_default() {
+            let cid = c["id"].as_str().unwrap_or("?");
+            let cstatus = c["status"].as_str().unwrap_or("unknown");
+            let detail = c["detail"].as_str().unwrap_or("");
+            let (gi, _) = status_glyph(cstatus);
+            println!("    {} {:<12} {}", gi, cid, dim(detail));
+        }
+        if astatus == "fail" { worst_fail = 1; failing_ids.push(id.to_string()); }
+    }
+
+    if fix && !failing_ids.is_empty() {
+        println!();
+        for id in &failing_ids {
+            println!("  {} resolving {}…", yellow("…"), id);
+            let body = serde_json::json!({ "adapter_id": id });
+            match client.post(format!("{base}/api/assistants/resolve")).json(&body).send()
+                .and_then(|r| r.json::<serde_json::Value>())
+            {
+                Ok(rep) => {
+                    let ok = rep["ok"].as_bool().unwrap_or(false);
+                    if ok { println!("    {} resolved", green("✓")); }
+                    else { println!("    {} failed: {}", red("✗"), dim(&rep["errors"].to_string())); }
+                }
+                Err(e) => println!("    {} request failed: {}", red("✗"), dim(&e.to_string())),
+            }
+        }
+        println!("{}", dim("Re-run `sensei doctor` to confirm."));
+    } else if worst_fail == 1 {
+        println!();
+        println!("{}", dim("Run `sensei doctor --fix` to auto-resolve, or restart your Claude session if only `events` is stale."));
+    }
+
+    worst_fail
+}
+
+/// Map a status string to a coloured glyph.
+fn status_glyph(s: &str) -> (String, &'static str) {
+    match s {
+        "ok"   => (green("✓"), "ok"),
+        "warn" => (yellow("⚠"), "warn"),
+        "fail" => (red("✗"), "fail"),
+        _       => (dim("·"), "unknown"),
     }
 }
 
