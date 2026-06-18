@@ -11,6 +11,7 @@ mod governance;
 pub mod assistants;
 pub mod instruments;
 pub mod installer;
+pub mod notifications;
 pub mod paths;
 pub mod ir;
 pub mod gateway_keys;
