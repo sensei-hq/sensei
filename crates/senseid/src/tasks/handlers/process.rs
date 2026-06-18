@@ -729,6 +729,7 @@ mod tests {
             pg: crate::db::pg_store::PgStore::connect_test().await.unwrap(),
             gateway,
             event_tx: { let (tx, _) = tokio::sync::broadcast::channel(16); tx },
+            breaker: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         });
         Arc::new(TaskContext {
             queue,

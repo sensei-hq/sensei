@@ -29,7 +29,6 @@ pub(crate) trait Assistant {
 
     /// Auto-resolve: default = re-run `configure()` (the install/reinstall flow)
     /// and map its result. `mcp_cmd` is resolved by the caller.
-    #[allow(dead_code)]
     fn resolve(&self, mcp_cmd: &str) -> AdapterResolveReport {
         match self.configure(mcp_cmd) {
             Ok(ok) => AdapterResolveReport {

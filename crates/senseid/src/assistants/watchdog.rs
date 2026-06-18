@@ -79,28 +79,23 @@ fn config_health_for(adapter_id: &str) -> Vec<AdapterCheck> {
 /// Per-adapter watchdog state. `suspended` short-circuits future ticks;
 /// `stale_notified` dedups the events-stale warning so it fires once per
 /// stale episode, not every hour.
-#[allow(dead_code)] // used by run_sweep (Task 9)
 #[derive(Default)]
 pub struct AdapterWatch { pub suspended: Option<String>, pub stale_notified: bool }
 
-#[allow(dead_code)] // used by run_sweep (Task 9)
 pub type BreakerMap = Mutex<HashMap<String, AdapterWatch>>;
 
 /// The config-side checks whose failure justifies an auto-reinstall.
-#[allow(dead_code)] // used by run_sweep (Task 9)
 fn config_side_failing(h: &AdapterHealth) -> bool {
     h.checks.iter().any(|c| c.status == CheckStatus::Fail
         && matches!(c.id.as_str(), "marketplace" | "plugin" | "enabled" | "hooks"))
 }
 
-#[allow(dead_code)] // used by run_sweep (Task 9)
 fn events_failing(h: &AdapterHealth) -> bool {
     h.checks.iter().any(|c| c.id == "events" && c.status == CheckStatus::Fail)
 }
 
 /// What a tick did — returned so the async caller (`run_sweep`) can write the
 /// DB audit trail without `tick_adapter` itself needing to be async.
-#[allow(dead_code)] // used by run_sweep (Task 9)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TickOutcome { Skipped, Healthy, StaleWarned, StaleAlreadyNotified, Resolved, Suspended }
 
@@ -109,7 +104,6 @@ pub enum TickOutcome { Skipped, Healthy, StaleWarned, StaleAlreadyNotified, Reso
 /// the resolver's own report. Sync + pure of IO except via the injected
 /// closures + notifier, so it's fully unit-testable; all `.await` logging
 /// happens in the caller off the returned `TickOutcome`.
-#[allow(dead_code)] // used by run_sweep (Task 9)
 pub fn tick_adapter(
     health: &AdapterHealth,
     watch: &mut AdapterWatch,
@@ -150,6 +144,73 @@ pub fn tick_adapter(
     }
     watch.stale_notified = false;
     TickOutcome::Healthy
+}
+
+use std::sync::Arc;
+
+/// Resolve a single adapter by id (re-run configure) and return the report.
+/// Clears any breaker suspension for that adapter (explicit manual retry).
+pub fn resolve_adapter(adapter_id: &str, breaker: &BreakerMap) -> crate::assistants::AdapterResolveReport {
+    if let Ok(mut map) = breaker.lock() {
+        let e = map.entry(adapter_id.to_string()).or_default();
+        e.suspended = None;
+        e.stale_notified = false;
+    }
+    crate::assistants::resolve_by_id(adapter_id).unwrap_or_else(|| crate::assistants::AdapterResolveReport {
+        adapter_id: adapter_id.to_string(), ok: false, actions: vec![],
+        errors: vec![format!("unknown adapter {adapter_id}")],
+    })
+}
+
+/// One full sweep over configured adapters: compute health, log each verdict
+/// to the DB (via `logger` → public.logs), run the tick policy (auto-resolve
+/// config-fails, notify, trip breaker). Used by the hourly loop. `breaker`
+/// persists circuit-breaker state across ticks.
+pub async fn run_sweep(
+    pg: &PgStore,
+    notifier: &Arc<dyn Notifier>,
+    breaker: &Arc<BreakerMap>,
+    logger: &sensei_logger::Logger,
+    now_ms: i64,
+) {
+    let report = health_report(pg, now_ms).await;
+    for h in report {
+        // DB audit trail (the user-requested "log in db" → public.logs via the
+        // daemon logger). Warn on any non-Ok verdict so it's queryable; info
+        // otherwise. Logger methods are async, so all logging stays here in the
+        // async body — `tick_adapter` is sync and returns what it did.
+        let summary = format!("adapter {} status={:?} checks=[{}]", h.adapter_id, h.status,
+            h.checks.iter().map(|c| format!("{}:{:?}", c.id, c.status)).collect::<Vec<_>>().join(","));
+        if h.status == CheckStatus::Ok {
+            logger.info(&summary, None).await;
+        } else {
+            logger.warn(&summary, None).await;
+        }
+
+        // Pull state out under the lock, run the (sync) policy, write back.
+        let mut watch = {
+            let mut map = breaker.lock().unwrap();
+            std::mem::take(map.entry(h.adapter_id.clone()).or_default())
+        };
+        let id = h.adapter_id.clone();
+        let recheck_health = AdapterHealth::new(&h.adapter_id, &h.family, config_health_for(&id), true);
+        let outcome = tick_adapter(
+            &h, &mut watch, notifier.as_ref(),
+            &|| { crate::assistants::resolve_by_id(&id); },
+            &|| recheck_health.clone(),
+        );
+        breaker.lock().unwrap().insert(h.adapter_id.clone(), watch);
+
+        // Log what the policy decided (resolution / suspension is the important
+        // audit signal — it means the daemon mutated the user's config or gave up).
+        match outcome {
+            TickOutcome::Resolved  => logger.warn(&format!("watchdog auto-resolved {}", h.adapter_id), None).await,
+            TickOutcome::Suspended => logger.error(
+                &format!("watchdog SUSPENDED {} — auto-repair failed, manual action needed", h.adapter_id),
+                None, None).await,
+            _ => {}
+        }
+    }
 }
 
 #[cfg(test)]
