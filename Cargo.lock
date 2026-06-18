@@ -1449,10 +1449,11 @@ dependencies = [
 
 [[package]]
 name = "dbd-core"
-version = "0.4.5"
-source = "git+https://github.com/sensei-hq/dbd?tag=v0.4.5#006983aed4d6f625408f2f63328e3fa1d6e05925"
+version = "0.8.1"
+source = "git+https://github.com/sensei-hq/dbd?tag=v0.8.1#5fe28f8dca95753113c76d7bff8e13e8401d73f1"
 dependencies = [
  "async-trait",
+ "base64 0.22.1",
  "chrono",
  "dirs",
  "flate2",
