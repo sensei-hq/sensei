@@ -123,9 +123,10 @@ pub(crate) async fn exclude_project(
         .to_string();
 
     // Clear indexed nodes before deleting the folder record
-    if let Some(folder_id) = folder.as_ref().and_then(|f| crate::api::util::json_uuid(&f["id"])) {
-        state.pg.delete_nodes_by_folder(&folder_id).await.ok();
-    }
+    if let Some(folder_id) = folder.as_ref().and_then(|f| crate::api::util::json_uuid(&f["id"]))
+        && let Err(e) = state.pg.delete_nodes_by_folder(&folder_id).await {
+            tracing::warn!(error = %e, %folder_id, "exclude_project: failed to delete nodes for folder");
+        }
 
     // Delete the folder record (exclusions now handled by watcher)
     state.pg.delete_repo_by_name(&repo_id).await
@@ -370,9 +371,13 @@ pub(crate) async fn backfill_embeddings(
 
 /// Return project grouping suggestions from the last scan.
 pub(crate) async fn scan_suggestions(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let suggestions = state.pg.get_config("solution_suggestions").await
-        .ok()
-        .flatten()
+    let suggestions = match state.pg.get_config("solution_suggestions").await {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!(error = %e, "scan_suggestions: get_config failed");
+            None
+        }
+    }
         .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
         .unwrap_or(serde_json::json!([]));
     Json(suggestions)
@@ -380,10 +385,16 @@ pub(crate) async fn scan_suggestions(State(state): State<AppState>) -> Json<serd
 
 /// List configured scan roots with their scan status.
 pub(crate) async fn scan_roots(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let mut roots = state.pg.list_watch_roots().await.unwrap_or_default();
+    let mut roots = state.pg.list_watch_roots().await.unwrap_or_else(|e| {
+        tracing::warn!(error = %e, "scan_roots: list_watch_roots failed");
+        Vec::new()
+    });
 
     // Enrich with repo count per root
-    let repos = state.pg.list_repositories().await.unwrap_or_default();
+    let repos = state.pg.list_repositories().await.unwrap_or_else(|e| {
+        tracing::warn!(error = %e, "scan_roots: list_repositories failed");
+        Vec::new()
+    });
     for root in &mut roots {
         let root_path = root["path"].as_str().unwrap_or("");
         let count = repos.iter().filter(|r| {
@@ -413,9 +424,10 @@ pub(crate) async fn index_project(
     Json(body): Json<IndexBody>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     // Clear errors for this project (PgStore expects UUID)
-    if let Ok(folder_id) = uuid::Uuid::parse_str(&body.repo_id) {
-        state.pg.clear_index_errors(&folder_id).await.ok();
-    }
+    if let Ok(folder_id) = uuid::Uuid::parse_str(&body.repo_id)
+        && let Err(e) = state.pg.clear_index_errors(&folder_id).await {
+            tracing::warn!(error = %e, %folder_id, "index_project: failed to clear index errors");
+        }
 
     let task = crate::tasks::Task::new(
         crate::tasks::TaskKind::ProcessGitFolder, &body.repo_id, &body.repo_path,
