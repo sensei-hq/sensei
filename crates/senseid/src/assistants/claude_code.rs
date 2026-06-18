@@ -69,8 +69,11 @@ pub(super) fn check_plugin(manifest_path: &Path) -> AdapterCheck {
     }
 }
 
-/// The plugin's installPath exists and its hooks/hooks.json declares both
-/// PreToolUse and PostToolUse. `install_path` is read from installed_plugins.json.
+/// The plugin's installPath exists and its `.claude-plugin/plugin.json` declares
+/// both PreToolUse and PostToolUse hooks. The sensei plugin registers all hooks via
+/// the plugin manifest's `hooks` field (it ships no separate hooks/hooks.json), so
+/// this reads the same manifest Claude Code loads — otherwise a healthy install
+/// false-positive-fails. `install_path` is read from installed_plugins.json.
 pub(super) fn check_hooks(install_path: Option<&Path>) -> AdapterCheck {
     let id = "hooks"; let label = "hooks registered";
     let Some(dir) = install_path else {
@@ -79,19 +82,19 @@ pub(super) fn check_hooks(install_path: Option<&Path>) -> AdapterCheck {
     if !dir.exists() {
         return AdapterCheck::new(id, label, CheckStatus::Fail, Some(format!("installPath missing: {}", dir.display())));
     }
-    let hooks_file = dir.join("hooks/hooks.json");
-    let Some(content) = std::fs::read_to_string(&hooks_file).ok() else {
-        return AdapterCheck::new(id, label, CheckStatus::Fail, Some("hooks/hooks.json missing".into()));
+    let manifest = dir.join(".claude-plugin/plugin.json");
+    let Some(content) = std::fs::read_to_string(&manifest).ok() else {
+        return AdapterCheck::new(id, label, CheckStatus::Fail, Some(".claude-plugin/plugin.json missing".into()));
     };
     let Some(v) = json5::from_str::<serde_json::Value>(&content).ok() else {
-        return AdapterCheck::new(id, label, CheckStatus::Unknown, Some("hooks.json unparseable".into()));
+        return AdapterCheck::new(id, label, CheckStatus::Unknown, Some("plugin.json unparseable".into()));
     };
     let hooks = v.get("hooks");
     let has = |evt: &str| hooks.and_then(|h| h.get(evt)).is_some();
     if has("PreToolUse") && has("PostToolUse") {
         AdapterCheck::new(id, label, CheckStatus::Ok, None)
     } else {
-        AdapterCheck::new(id, label, CheckStatus::Fail, Some("PreToolUse/PostToolUse not declared in hooks.json".into()))
+        AdapterCheck::new(id, label, CheckStatus::Fail, Some("PreToolUse/PostToolUse not declared in plugin.json hooks".into()))
     }
 }
 
@@ -958,11 +961,14 @@ mod tests {
         assert_eq!(plugin_install_path(&m), None);
     }
     #[test]
-    fn check_hooks_ok_when_both_events_declared() {
+    fn check_hooks_ok_when_declared_in_plugin_manifest() {
+        // The real sensei plugin declares hooks in `.claude-plugin/plugin.json`'s
+        // `hooks` field and ships NO hooks/hooks.json. The check must read the same
+        // manifest Claude Code loads, or it false-positive-fails on a healthy install.
         let tmp = make_tmp_home();
         let dir = tmp.path().join("plugin");
-        std::fs::create_dir_all(dir.join("hooks")).unwrap();
-        std::fs::write(dir.join("hooks/hooks.json"),
+        std::fs::create_dir_all(dir.join(".claude-plugin")).unwrap();
+        std::fs::write(dir.join(".claude-plugin/plugin.json"),
             r#"{"hooks":{"PreToolUse":[{}],"PostToolUse":[{}],"SessionStart":[{}]}}"#).unwrap();
         assert_eq!(check_hooks(Some(&dir)).status, CheckStatus::Ok);
     }
@@ -976,8 +982,8 @@ mod tests {
     fn check_hooks_fail_when_events_absent() {
         let tmp = make_tmp_home();
         let dir = tmp.path().join("plugin");
-        std::fs::create_dir_all(dir.join("hooks")).unwrap();
-        std::fs::write(dir.join("hooks/hooks.json"), r#"{"hooks":{"SessionStart":[{}]}}"#).unwrap();
+        std::fs::create_dir_all(dir.join(".claude-plugin")).unwrap();
+        std::fs::write(dir.join(".claude-plugin/plugin.json"), r#"{"hooks":{"SessionStart":[{}]}}"#).unwrap();
         assert_eq!(check_hooks(Some(&dir)).status, CheckStatus::Fail);
     }
 }
