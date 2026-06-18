@@ -318,6 +318,18 @@ impl Assistant for ClaudeCodeAssistant {
         verify_plugin_installed(&installed_plugins_manifest(), "sensei")
     }
 
+    fn config_health(&self) -> Vec<AdapterCheck> {
+        let settings = self.config_path();                 // ~/.claude/settings.json
+        let manifest = installed_plugins_manifest();       // ~/.claude/plugins/installed_plugins.json
+        let install_path = plugin_install_path(&manifest);
+        vec![
+            check_marketplace(&settings),
+            check_plugin(&manifest),
+            check_enabled(&settings),
+            check_hooks(install_path.as_deref()),
+        ]
+    }
+
     fn configure(&self, _mcp_cmd: &str) -> Result<AssistantConfigureOk, String> {
         let claude_bin = find_claude_binary()
             .ok_or_else(|| "claude binary not found on PATH".to_string())?;
