@@ -47,7 +47,9 @@ pub(crate) fn remove_sensei_from_json(path: &std::path::Path, mcp_key: &str) -> 
     let mut v = match read_json_or_jsonc(path) { Some(v) => v, None => return false };
     if let Some(servers) = v.get_mut(mcp_key).and_then(|s| s.as_object_mut())
         && servers.remove(MCP_REGISTRY_KEY).is_some() {
-            std::fs::write(path, serde_json::to_string_pretty(&v).unwrap()).ok();
+            if let Err(e) = std::fs::write(path, serde_json::to_string_pretty(&v).unwrap()) {
+                tracing::warn!(error = %e, path = %path.display(), "remove_sensei_from_json: failed to write config back");
+            }
             return true;
         }
     false

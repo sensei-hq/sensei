@@ -58,13 +58,19 @@ async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
         }));
 
     // Record execution start in task_executions (fire-and-forget on failure)
-    let exec_id = ctx.pg().start_task_execution(
+    let exec_id = match ctx.pg().start_task_execution(
         task.id as i64,
         task.parent_task_id.map(|id| id as i64),
         &task.kind.to_string(),
         &task.folder_path,
         &task.path,
-    ).await.ok();
+    ).await {
+        Ok(id) => Some(id),
+        Err(e) => {
+            tracing::warn!(error = %e, task_id = task.id, kind = %task.kind, "failed to record task_execution start");
+            None
+        }
+    };
 
     task_logger.info("task_started", None).await;
 
@@ -112,18 +118,20 @@ async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     // Update task_executions + log to public.logs
     match &result {
         Ok(items) => {
-            if let Some(eid) = &exec_id {
-                let _ = ctx.pg().complete_task_execution(eid, *items as i32, duration_ms).await;
-            }
+            if let Some(eid) = &exec_id
+                && let Err(e) = ctx.pg().complete_task_execution(eid, *items as i32, duration_ms).await {
+                    tracing::warn!(error = %e, task_id = task.id, kind = %task.kind, "failed to record task_execution completion");
+                }
             task_logger.info("task_completed", Some(serde_json::json!({
                 "duration_ms": duration_ms,
                 "items_processed": items,
             }))).await;
         }
         Err(e) => {
-            if let Some(eid) = &exec_id {
-                let _ = ctx.pg().fail_task_execution(eid, duration_ms, e).await;
-            }
+            if let Some(eid) = &exec_id
+                && let Err(db_err) = ctx.pg().fail_task_execution(eid, duration_ms, e).await {
+                    tracing::warn!(error = %db_err, task_id = task.id, kind = %task.kind, "failed to record task_execution failure");
+                }
             task_logger.error("task_failed", Some(serde_json::json!({
                 "duration_ms": duration_ms,
             })), Some(serde_json::json!({"message": e}))).await;

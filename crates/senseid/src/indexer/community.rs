@@ -51,8 +51,16 @@ pub async fn detect_communities_for_folder(
 
         // Update nodes.community_id for each member
         for &idx in members {
-            let node_id = uuid::Uuid::parse_str(&node_ids[idx]).unwrap_or_default();
-            pg.update_node_community(&node_id, *community_id as i32).await.ok();
+            let node_id = match uuid::Uuid::parse_str(&node_ids[idx]) {
+                Ok(id) => id,
+                Err(e) => {
+                    tracing::warn!(error = %e, node_id = %node_ids[idx], "detect_communities: skipping member with unparseable node id");
+                    continue;
+                }
+            };
+            if let Err(e) = pg.update_node_community(&node_id, *community_id as i32).await {
+                tracing::warn!(error = %e, node_id = %node_id, community_id = *community_id, "detect_communities: failed to update node community_id");
+            }
         }
 
         community_count += 1;
