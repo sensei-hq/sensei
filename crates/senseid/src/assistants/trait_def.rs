@@ -97,7 +97,8 @@ pub(crate) trait Assistant {
 mod tests {
     use super::*;
 
-    struct StubAssistant { configured: bool }
+    #[derive(Default)]
+    struct StubAssistant { configured: bool, configure_fails: bool }
     impl Assistant for StubAssistant {
         fn id(&self) -> &str { "stub" }
         fn name(&self) -> &str { "Stub" }
@@ -105,7 +106,11 @@ mod tests {
         fn config_path(&self) -> PathBuf { PathBuf::from("/dev/null") }
         fn detect(&self) -> bool { true }
         fn configure(&self, _mcp_cmd: &str) -> Result<AssistantConfigureOk, String> {
-            Ok(AssistantConfigureOk { plugin: false, warnings: vec![] })
+            if self.configure_fails {
+                Err("configure boom".to_string())
+            } else {
+                Ok(AssistantConfigureOk { plugin: false, warnings: vec![] })
+            }
         }
         fn remove(&self) -> bool { true }
         fn is_configured(&self) -> bool { self.configured }
@@ -113,14 +118,26 @@ mod tests {
 
     #[test]
     fn default_config_health_reflects_is_configured() {
-        assert_eq!(StubAssistant { configured: true }.config_health()[0].status, CheckStatus::Ok);
-        assert_eq!(StubAssistant { configured: false }.config_health()[0].status, CheckStatus::Fail);
+        assert_eq!(StubAssistant { configured: true, ..Default::default() }.config_health()[0].status, CheckStatus::Ok);
+        assert_eq!(StubAssistant { configured: false, ..Default::default() }.config_health()[0].status, CheckStatus::Fail);
     }
 
     #[test]
     fn default_resolve_maps_configure_success() {
-        let r = StubAssistant { configured: false }.resolve("sensei-mcp");
+        let r = StubAssistant { configured: false, ..Default::default() }.resolve("sensei-mcp");
         assert!(r.ok);
         assert_eq!(r.adapter_id, "stub");
+        assert!(r.errors.is_empty());
+    }
+
+    #[test]
+    fn default_resolve_maps_configure_error() {
+        // The ok=false / errors mapping is load-bearing: Task 6's watchdog reads
+        // `ok` to decide whether auto-repair succeeded.
+        let r = StubAssistant { configured: false, configure_fails: true }.resolve("sensei-mcp");
+        assert!(!r.ok);
+        assert_eq!(r.adapter_id, "stub");
+        assert_eq!(r.errors, vec!["configure boom".to_string()]);
+        assert!(r.actions.is_empty());
     }
 }
