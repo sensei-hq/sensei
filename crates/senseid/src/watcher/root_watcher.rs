@@ -119,7 +119,9 @@ impl RootWatcher {
             }).expect("failed to create watcher");
 
             for root in &roots {
-                watcher.watch(root, RecursiveMode::Recursive).ok();
+                if let Err(e) = watcher.watch(root, RecursiveMode::Recursive) {
+                    tracing::warn!(error = %e, root = %root.display(), "failed to watch root");
+                }
             }
 
             tracing::info!("RootWatcher started: {} roots", roots.len());
@@ -199,9 +201,10 @@ impl RootWatcher {
             return;
         }
         self.stop_flag.store(true, std::sync::atomic::Ordering::Release);
-        if let Some(handle) = self.thread.take() {
-            handle.join().ok();
-        }
+        if let Some(handle) = self.thread.take()
+            && handle.join().is_err() {
+                tracing::error!("RootWatcher thread panicked during shutdown");
+            }
         self.status = WatcherStatus::Stopped("manual".into());
     }
 
