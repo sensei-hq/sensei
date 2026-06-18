@@ -230,7 +230,10 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
 async fn spawn_root_watchers(state: &Arc<SharedState>, queue: Arc<TaskQueue>) {
     // Get all watch roots from PgStore — (id, path) for roots that still exist
     // on disk (skip stale rows pointing at deleted dirs).
-    let roots = state.pg.list_watch_roots().await.unwrap_or_default();
+    let roots = state.pg.list_watch_roots().await.unwrap_or_else(|e| {
+        tracing::warn!(error = %e, "spawn_root_watchers: list_watch_roots failed; no roots will be watched");
+        Vec::new()
+    });
     let live: Vec<(uuid::Uuid, String)> = roots.iter()
         .filter_map(|r| {
             let path = r["path"].as_str()?.to_string();
@@ -263,7 +266,9 @@ async fn spawn_root_watchers(state: &Arc<SharedState>, queue: Arc<TaskQueue>) {
     // 'watching' instead of being stuck at 'scanning' (the restart-watch gap).
     if started {
         for (id, _) in &live {
-            state.pg.update_watch_status(id, "watching").await.ok();
+            if let Err(e) = state.pg.update_watch_status(id, "watching").await {
+                tracing::warn!(error = %e, %id, "failed to update watch status to 'watching'");
+            }
         }
     }
 }

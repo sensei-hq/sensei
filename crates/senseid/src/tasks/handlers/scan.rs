@@ -63,18 +63,23 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
             FolderKind::Standalone => "standalone",
         };
         let path_str = f.path.to_string_lossy();
-        if let Ok(fid) = ctx.pg().upsert_repo_kind(&root_id, kind, &f.name, &path_str).await {
-            // A quasi-repo with no manifest (loose source / docs) is a likely-but-
-            // unconfirmed project — flag it `needs-review` so it surfaces for the
-            // user to keep / organise / discard. Manifest-backed roots and real git
-            // repos are confident; clear any stale flag on them.
-            let needs_review = f.kind == FolderKind::Standalone
-                && matches!(scan_logic::classify_quasi_repo(&f.path), Some(scan_logic::QuasiKind::LooseCode));
-            if needs_review {
-                ctx.pg().tag_folder(&fid, "needs-review").await.ok();
-            } else {
-                ctx.pg().untag_folder(&fid, "needs-review").await.ok();
+        match ctx.pg().upsert_repo_kind(&root_id, kind, &f.name, &path_str).await {
+            Ok(fid) => {
+                // A quasi-repo with no manifest (loose source / docs) is a likely-but-
+                // unconfirmed project — flag it `needs-review` so it surfaces for the
+                // user to keep / organise / discard. Manifest-backed roots and real git
+                // repos are confident; clear any stale flag on them.
+                let needs_review = f.kind == FolderKind::Standalone
+                    && matches!(scan_logic::classify_quasi_repo(&f.path), Some(scan_logic::QuasiKind::LooseCode));
+                if needs_review {
+                    if let Err(e) = ctx.pg().tag_folder(&fid, "needs-review").await {
+                        tracing::warn!(error = %e, folder_id = %fid, "scan_root: tag_folder needs-review failed");
+                    }
+                } else if let Err(e) = ctx.pg().untag_folder(&fid, "needs-review").await {
+                    tracing::warn!(error = %e, folder_id = %fid, "scan_root: untag_folder needs-review failed");
+                }
             }
+            Err(e) => tracing::warn!(error = %e, path = %path_str, "scan_root: upsert_repo_kind failed"),
         }
         let process_task = Task::new(TaskKind::ProcessGitFolder, &path_str, &path_str)
             .with_parent(task.id);
@@ -87,7 +92,7 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     let live: std::collections::HashSet<std::path::PathBuf> =
         classified.iter().map(|f| f.path.clone()).collect();
     let (removed, marked) = reconcile_roots(ctx.pg(), &root_id, &live).await;
-    let orphaned = ctx.pg().mark_orphaned_projects().await.unwrap_or(0);
+    let orphaned = ctx.pg().mark_orphaned_projects().await.unwrap_or_else(|e| { tracing::warn!(error = %e, "scan_root: mark_orphaned_projects failed"); 0 });
     if removed > 0 || marked > 0 {
         emit(StateEvent::activity(ActivityEvent::new(
             ActivityLevel::Info,
@@ -100,8 +105,9 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     // 5. Register watcher
     {
         let watcher = crate::watcher::root_watcher::RootWatcher::instance(ctx.queue.clone());
-        if let Ok(mut w) = watcher.lock() {
-            w.register(std::path::PathBuf::from(&task.path), vec![]);
+        match watcher.lock() {
+            Ok(mut w) => w.register(std::path::PathBuf::from(&task.path), vec![]),
+            Err(e) => tracing::warn!(error = %e, path = %task.path, "scan_root: RootWatcher lock poisoned, watch root not registered"),
         }
     }
 
@@ -133,7 +139,7 @@ async fn reconcile_roots(
     live: &std::collections::HashSet<std::path::PathBuf>,
 ) -> (u32, u32) {
     use scan_logic::StaleAction;
-    let recorded = pg.list_folders_by_root(root_id).await.unwrap_or_default();
+    let recorded = pg.list_folders_by_root(root_id).await.unwrap_or_else(|e| { tracing::warn!(error = %e, root_id = %root_id, "reconcile_roots: list_folders_by_root failed, skipping reconcile"); Vec::new() });
     let (mut removed, mut marked) = (0u32, 0u32);
     for r in &recorded {
         // Only project roots are reconciled here; kind=folder rows are owned by
@@ -155,15 +161,15 @@ async fn reconcile_roots(
         match scan_logic::classify_stale_root(&p, live, exists, has_content) {
             StaleAction::Keep => {}
             StaleAction::Remove => {
-                if pg.delete_folder_tree(&id).await.is_ok() {
-                    removed += 1;
-                    tracing::info!("reconcile: removed stale root {abs}");
+                match pg.delete_folder_tree(&id).await {
+                    Ok(_) => { removed += 1; tracing::info!("reconcile: removed stale root {abs}"); }
+                    Err(e) => tracing::warn!(error = %e, path = %abs, "reconcile: delete_folder_tree failed"),
                 }
             }
             StaleAction::MarkStale => {
-                if pg.tag_folder(&id, "stale").await.is_ok() {
-                    marked += 1;
-                    tracing::info!("reconcile: flagged stale root {abs}");
+                match pg.tag_folder(&id, "stale").await {
+                    Ok(_) => { marked += 1; tracing::info!("reconcile: flagged stale root {abs}"); }
+                    Err(e) => tracing::warn!(error = %e, path = %abs, "reconcile: tag_folder stale failed"),
                 }
             }
         }
@@ -176,7 +182,8 @@ async fn reconcile_roots(
 pub async fn branch_switch(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     let new_branch = task.branch.as_deref().ok_or("branch_switch requires branch field")?;
 
-    let folder = ctx.pg().get_repo_by_path(&task.folder_path).await.ok().flatten();
+    let folder = ctx.pg().get_repo_by_path(&task.folder_path).await
+        .unwrap_or_else(|e| { tracing::warn!(error = %e, path = %task.folder_path, "branch_switch: get_repo_by_path failed"); None });
     let folder_name = folder.as_ref()
         .and_then(|f| f["name"].as_str())
         .unwrap_or_else(|| task.folder_name());
