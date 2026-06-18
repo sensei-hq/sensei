@@ -1,6 +1,7 @@
 //! Pure, DB-free health vocabulary + freshness math for ACP adapters.
 //! Everything here is unit-testable without a daemon, DB, or network.
 
+use chrono::{Datelike, TimeZone, Utc, Weekday};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -60,8 +61,6 @@ pub struct AdapterResolveReport {
     pub actions: Vec<String>,
     pub errors: Vec<String>,
 }
-
-use chrono::{Datelike, TimeZone, Utc, Weekday};
 
 /// Hours elapsed between two epoch-millis instants. When `exclude_weekends`,
 /// any whole or partial Saturday/Sunday is removed from the elapsed total, so a
@@ -172,6 +171,15 @@ mod tests {
         let mon = ms("2026-06-15T10:00:00Z");
         let h = business_elapsed_hours(fri, mon, false);
         assert!((h - 66.0).abs() < 0.5, "expected ~66 wall-clock hours, got {h}");
+    }
+
+    #[test]
+    fn business_elapsed_all_weekend_span_is_zero() {
+        // 2026-06-13 is Saturday, 2026-06-14 is Sunday. A span entirely within
+        // the weekend contributes no business time.
+        let sat = ms("2026-06-13T12:00:00Z");
+        let sun = ms("2026-06-14T12:00:00Z");
+        assert_eq!(business_elapsed_hours(sat, sun, true), 0.0);
     }
 
     #[test]
