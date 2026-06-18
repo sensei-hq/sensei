@@ -4,6 +4,7 @@ use super::trait_def::{Assistant, AssistantConfigureOk};
 use super::helpers::{home, find_claude_binary};
 use super::AssistantPart;
 
+use crate::assistants::{AdapterCheck, CheckStatus};
 use crate::paths::MARKETPLACE_REPO as SENSEI_MARKETPLACE_REPO;
 
 /// Pure helper: read `installed_plugins.json` and confirm that a plugin
@@ -17,6 +18,91 @@ fn verify_plugin_installed(manifest_path: &Path, plugin_name: &str) -> bool {
     let Some(plugins) = value.get("plugins").and_then(|p| p.as_object()) else { return false };
     let prefix = format!("{}@", plugin_name);
     plugins.keys().any(|k| k.starts_with(&prefix))
+}
+
+/// settings.json → enabledPlugins["sensei@sensei-marketplace"] == true.
+pub(super) fn check_enabled(settings_path: &Path) -> AdapterCheck {
+    let id = "enabled"; let label = "plugin enabled";
+    let Some(content) = std::fs::read_to_string(settings_path).ok() else {
+        return AdapterCheck::new(id, label, CheckStatus::Fail, Some("settings.json missing".into()));
+    };
+    let Some(v) = json5::from_str::<serde_json::Value>(&content).ok() else {
+        return AdapterCheck::new(id, label, CheckStatus::Unknown, Some("settings.json unparseable".into()));
+    };
+    let enabled = v.get("enabledPlugins")
+        .and_then(|m| m.get("sensei@sensei-marketplace"))
+        .and_then(|b| b.as_bool())
+        .unwrap_or(false);
+    if enabled {
+        AdapterCheck::new(id, label, CheckStatus::Ok, None)
+    } else {
+        AdapterCheck::new(id, label, CheckStatus::Fail, Some("enabledPlugins[sensei@sensei-marketplace] != true".into()))
+    }
+}
+
+/// settings.json → extraKnownMarketplaces["sensei-marketplace"] present.
+pub(super) fn check_marketplace(settings_path: &Path) -> AdapterCheck {
+    let id = "marketplace"; let label = "marketplace registered";
+    let Some(content) = std::fs::read_to_string(settings_path).ok() else {
+        return AdapterCheck::new(id, label, CheckStatus::Fail, Some("settings.json missing".into()));
+    };
+    let Some(v) = json5::from_str::<serde_json::Value>(&content).ok() else {
+        return AdapterCheck::new(id, label, CheckStatus::Unknown, Some("settings.json unparseable".into()));
+    };
+    let present = v.get("extraKnownMarketplaces")
+        .and_then(|m| m.get("sensei-marketplace"))
+        .is_some();
+    if present {
+        AdapterCheck::new(id, label, CheckStatus::Ok, None)
+    } else {
+        AdapterCheck::new(id, label, CheckStatus::Fail, Some("sensei-marketplace not registered".into()))
+    }
+}
+
+/// installed_plugins.json records sensei (reuses verify_plugin_installed).
+pub(super) fn check_plugin(manifest_path: &Path) -> AdapterCheck {
+    if verify_plugin_installed(manifest_path, "sensei") {
+        AdapterCheck::new("plugin", "plugin installed", CheckStatus::Ok, None)
+    } else {
+        AdapterCheck::new("plugin", "plugin installed", CheckStatus::Fail,
+            Some("sensei not recorded in installed_plugins.json".into()))
+    }
+}
+
+/// The plugin's installPath exists and its hooks/hooks.json declares both
+/// PreToolUse and PostToolUse. `install_path` is read from installed_plugins.json.
+pub(super) fn check_hooks(install_path: Option<&Path>) -> AdapterCheck {
+    let id = "hooks"; let label = "hooks registered";
+    let Some(dir) = install_path else {
+        return AdapterCheck::new(id, label, CheckStatus::Fail, Some("no plugin installPath recorded".into()));
+    };
+    if !dir.exists() {
+        return AdapterCheck::new(id, label, CheckStatus::Fail, Some(format!("installPath missing: {}", dir.display())));
+    }
+    let hooks_file = dir.join("hooks/hooks.json");
+    let Some(content) = std::fs::read_to_string(&hooks_file).ok() else {
+        return AdapterCheck::new(id, label, CheckStatus::Fail, Some("hooks/hooks.json missing".into()));
+    };
+    let Some(v) = json5::from_str::<serde_json::Value>(&content).ok() else {
+        return AdapterCheck::new(id, label, CheckStatus::Unknown, Some("hooks.json unparseable".into()));
+    };
+    let hooks = v.get("hooks");
+    let has = |evt: &str| hooks.and_then(|h| h.get(evt)).is_some();
+    if has("PreToolUse") && has("PostToolUse") {
+        AdapterCheck::new(id, label, CheckStatus::Ok, None)
+    } else {
+        AdapterCheck::new(id, label, CheckStatus::Fail, Some("PreToolUse/PostToolUse not declared in hooks.json".into()))
+    }
+}
+
+/// Read the recorded installPath for `sensei@*` from installed_plugins.json.
+pub(super) fn plugin_install_path(manifest_path: &Path) -> Option<PathBuf> {
+    let content = std::fs::read_to_string(manifest_path).ok()?;
+    let v = serde_json::from_str::<serde_json::Value>(&content).ok()?;
+    let plugins = v.get("plugins")?.as_object()?;
+    let (_k, entries) = plugins.iter().find(|(k, _)| k.starts_with("sensei@"))?;
+    let first = entries.as_array()?.first()?;
+    first.get("installPath").and_then(|p| p.as_str()).map(PathBuf::from)
 }
 
 /// Path to Claude Code's `installed_plugins.json` (under the user's home).
@@ -783,4 +869,81 @@ mod tests {
         assert!(read_tracked_projects(&f).is_empty());
     }
 
+    // ── config probes ──────────────────────────────────────────────────
+    #[test]
+    fn check_enabled_true_when_flag_set() {
+        let tmp = make_tmp_home();
+        let s = tmp.path().join("settings.json");
+        std::fs::write(&s, r#"{"enabledPlugins":{"sensei@sensei-marketplace":true}}"#).unwrap();
+        assert_eq!(check_enabled(&s).status, CheckStatus::Ok);
+    }
+    #[test]
+    fn check_enabled_fail_when_false_or_missing() {
+        let tmp = make_tmp_home();
+        let s = tmp.path().join("settings.json");
+        std::fs::write(&s, r#"{"enabledPlugins":{"sensei@sensei-marketplace":false}}"#).unwrap();
+        assert_eq!(check_enabled(&s).status, CheckStatus::Fail);
+        let s2 = tmp.path().join("missing.json");
+        assert_eq!(check_enabled(&s2).status, CheckStatus::Fail);
+    }
+    #[test]
+    fn check_enabled_unknown_when_malformed() {
+        let tmp = make_tmp_home();
+        let s = tmp.path().join("settings.json");
+        std::fs::write(&s, "{ not json").unwrap();
+        // json5 is lenient; use clearly invalid content.
+        std::fs::write(&s, "}{").unwrap();
+        assert_eq!(check_enabled(&s).status, CheckStatus::Unknown);
+    }
+    #[test]
+    fn check_marketplace_ok_when_registered() {
+        let tmp = make_tmp_home();
+        let s = tmp.path().join("settings.json");
+        std::fs::write(&s, r#"{"extraKnownMarketplaces":{"sensei-marketplace":{"source":{}}}}"#).unwrap();
+        assert_eq!(check_marketplace(&s).status, CheckStatus::Ok);
+    }
+    #[test]
+    fn check_marketplace_fail_when_absent() {
+        let tmp = make_tmp_home();
+        let s = tmp.path().join("settings.json");
+        std::fs::write(&s, r#"{"extraKnownMarketplaces":{}}"#).unwrap();
+        assert_eq!(check_marketplace(&s).status, CheckStatus::Fail);
+    }
+    #[test]
+    fn check_plugin_reuses_verify() {
+        let tmp = make_tmp_home();
+        let m = tmp.path().join("installed_plugins.json");
+        std::fs::write(&m, r#"{"plugins":{"sensei@sensei-marketplace":[{"installPath":"/x"}]}}"#).unwrap();
+        assert_eq!(check_plugin(&m).status, CheckStatus::Ok);
+    }
+    #[test]
+    fn plugin_install_path_reads_first_entry() {
+        let tmp = make_tmp_home();
+        let m = tmp.path().join("installed_plugins.json");
+        std::fs::write(&m, r#"{"plugins":{"sensei@sensei-marketplace":[{"installPath":"/foo/bar"}]}}"#).unwrap();
+        assert_eq!(plugin_install_path(&m), Some(PathBuf::from("/foo/bar")));
+    }
+    #[test]
+    fn check_hooks_ok_when_both_events_declared() {
+        let tmp = make_tmp_home();
+        let dir = tmp.path().join("plugin");
+        std::fs::create_dir_all(dir.join("hooks")).unwrap();
+        std::fs::write(dir.join("hooks/hooks.json"),
+            r#"{"hooks":{"PreToolUse":[{}],"PostToolUse":[{}],"SessionStart":[{}]}}"#).unwrap();
+        assert_eq!(check_hooks(Some(&dir)).status, CheckStatus::Ok);
+    }
+    #[test]
+    fn check_hooks_fail_when_path_missing() {
+        assert_eq!(check_hooks(None).status, CheckStatus::Fail);
+        let tmp = make_tmp_home();
+        assert_eq!(check_hooks(Some(&tmp.path().join("nope"))).status, CheckStatus::Fail);
+    }
+    #[test]
+    fn check_hooks_fail_when_events_absent() {
+        let tmp = make_tmp_home();
+        let dir = tmp.path().join("plugin");
+        std::fs::create_dir_all(dir.join("hooks")).unwrap();
+        std::fs::write(dir.join("hooks/hooks.json"), r#"{"hooks":{"SessionStart":[{}]}}"#).unwrap();
+        assert_eq!(check_hooks(Some(&dir)).status, CheckStatus::Fail);
+    }
 }
