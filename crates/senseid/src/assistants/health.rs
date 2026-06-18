@@ -61,6 +61,60 @@ pub struct AdapterResolveReport {
     pub errors: Vec<String>,
 }
 
+use chrono::{Datelike, TimeZone, Utc, Weekday};
+
+/// Hours elapsed between two epoch-millis instants. When `exclude_weekends`,
+/// any whole or partial Saturday/Sunday is removed from the elapsed total, so a
+/// Friday-afternoon → Monday-morning gap counts only the working hours.
+///
+/// Implementation: walk the span in UTC and sum only the milliseconds that fall
+/// on Mon–Fri. Coarse (1-minute step) on purpose — freshness thresholds are in
+/// hours, so minute granularity is precise enough and keeps the loop cheap.
+pub fn business_elapsed_hours(from_ms: i64, to_ms: i64, exclude_weekends: bool) -> f64 {
+    if to_ms <= from_ms { return 0.0; }
+    if !exclude_weekends {
+        return (to_ms - from_ms) as f64 / 3_600_000.0;
+    }
+    const STEP_MS: i64 = 60_000; // 1 minute
+    let mut counted_ms: i64 = 0;
+    let mut t = from_ms;
+    while t < to_ms {
+        let dt = Utc.timestamp_millis_opt(t).single();
+        let is_weekend = dt.map(|d| matches!(d.weekday(), Weekday::Sat | Weekday::Sun)).unwrap_or(false);
+        let next = (t + STEP_MS).min(to_ms);
+        if !is_weekend { counted_ms += next - t; }
+        t = next;
+    }
+    counted_ms as f64 / 3_600_000.0
+}
+
+/// The capture-freshness check for an assistant family.
+/// `last_ts` = newest hook_event ts (epoch ms) for the family, or None if the
+/// daemon has never recorded one. `now_ms` = current epoch ms.
+pub fn capture_freshness(
+    last_ts: Option<i64>,
+    now_ms: i64,
+    window_hours: f64,
+    exclude_weekends: bool,
+) -> AdapterCheck {
+    match last_ts {
+        None => AdapterCheck::new(
+            "events", "events flowing", CheckStatus::Warn,
+            Some("never captured — no hook events recorded yet".into()),
+        ),
+        Some(ts) => {
+            let elapsed = business_elapsed_hours(ts, now_ms, exclude_weekends);
+            if elapsed <= window_hours {
+                AdapterCheck::new("events", "events flowing", CheckStatus::Ok,
+                    Some(format!("last event {:.1}h ago", elapsed)))
+            } else {
+                AdapterCheck::new("events", "events flowing", CheckStatus::Fail,
+                    Some(format!("stale: last event {:.1}h ago (window {}h)", elapsed, window_hours)))
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -96,5 +150,50 @@ mod tests {
     fn check_status_serializes_lowercase() {
         assert_eq!(serde_json::to_string(&CheckStatus::Fail).unwrap(), "\"fail\"");
         assert_eq!(serde_json::to_string(&CheckStatus::Ok).unwrap(), "\"ok\"");
+    }
+
+    // 2026-06-12 is a Friday. 16:00Z Fri → 10:00Z Mon.
+    fn ms(s: &str) -> i64 {
+        chrono::DateTime::parse_from_rfc3339(s).unwrap().timestamp_millis()
+    }
+
+    #[test]
+    fn business_elapsed_excludes_weekend() {
+        let fri = ms("2026-06-12T16:00:00Z");
+        let mon = ms("2026-06-15T10:00:00Z");
+        // Wall-clock ~66h; business time = 8h (Fri 16→24) + 10h (Mon 0→10) = 18h.
+        let h = business_elapsed_hours(fri, mon, true);
+        assert!((h - 18.0).abs() < 0.5, "expected ~18 business hours, got {h}");
+    }
+
+    #[test]
+    fn business_elapsed_full_clock_when_not_excluding() {
+        let fri = ms("2026-06-12T16:00:00Z");
+        let mon = ms("2026-06-15T10:00:00Z");
+        let h = business_elapsed_hours(fri, mon, false);
+        assert!((h - 66.0).abs() < 0.5, "expected ~66 wall-clock hours, got {h}");
+    }
+
+    #[test]
+    fn freshness_none_is_warn_never_captured() {
+        let c = capture_freshness(None, ms("2026-06-15T10:00:00Z"), 24.0, true);
+        assert_eq!(c.status, CheckStatus::Warn);
+        assert!(c.detail.unwrap().contains("never captured"));
+    }
+
+    #[test]
+    fn freshness_within_window_is_ok() {
+        let now = ms("2026-06-15T10:00:00Z");
+        let two_h_ago = ms("2026-06-15T08:00:00Z");
+        assert_eq!(capture_freshness(Some(two_h_ago), now, 24.0, true).status, CheckStatus::Ok);
+    }
+
+    #[test]
+    fn freshness_weekend_gap_stays_ok_but_full_clock_fails() {
+        let mon = ms("2026-06-15T10:00:00Z");
+        let fri = ms("2026-06-12T16:00:00Z");
+        // 18 business hours < 24 → Ok; 66 wall-clock hours > 24 → Fail.
+        assert_eq!(capture_freshness(Some(fri), mon, 24.0, true).status, CheckStatus::Ok);
+        assert_eq!(capture_freshness(Some(fri), mon, 24.0, false).status, CheckStatus::Fail);
     }
 }
