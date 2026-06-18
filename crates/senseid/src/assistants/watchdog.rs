@@ -193,11 +193,15 @@ pub async fn run_sweep(
             std::mem::take(map.entry(h.adapter_id.clone()).or_default())
         };
         let id = h.adapter_id.clone();
-        let recheck_health = AdapterHealth::new(&h.adapter_id, &h.family, config_health_for(&id), true);
+        let fam = h.family.clone();
         let outcome = tick_adapter(
             &h, &mut watch, notifier.as_ref(),
             &|| { crate::assistants::resolve_by_id(&id); },
-            &|| recheck_health.clone(),
+            // Re-read config health LAZILY inside the closure so the recheck
+            // reflects state AFTER the reinstall. A snapshot computed before
+            // tick_adapter would always equal the pre-resolve (failing) state
+            // and force a spurious Suspend, making the Resolved path unreachable.
+            &|| AdapterHealth::new(&id, &fam, config_health_for(&id), true),
         );
         breaker.lock().unwrap().insert(h.adapter_id.clone(), watch);
 
