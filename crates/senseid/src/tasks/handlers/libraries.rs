@@ -12,7 +12,8 @@ pub async fn resolve_libs(ctx: &TaskContext, task: &Task) -> Result<u32, String>
     // once and reuse for both repo_path and the later mark_folder_indexed
     // call. folder_name comes from the DB row so subtree composite names
     // like "sensei:homebrew" survive in log messages.
-    let folder = ctx.pg().get_repo_by_path(&task.folder_path).await.ok().flatten();
+    let folder = ctx.pg().get_repo_by_path(&task.folder_path).await
+        .map_err(|e| tracing::warn!(error = %e, path = %task.folder_path, "resolve_libs: get_repo_by_path failed")).ok().flatten();
     let folder_name = folder.as_ref()
         .and_then(|f| f["name"].as_str())
         .unwrap_or_else(|| task.folder_name());
@@ -80,19 +81,21 @@ pub async fn resolve_libs(ctx: &TaskContext, task: &Task) -> Result<u32, String>
         let mut v: Vec<String> = lib_set.into_iter().collect();
         v.sort();
         v
-    }).await.unwrap_or_default();
+    }).await.unwrap_or_else(|e| { tracing::warn!(error = %e, "resolve_libs: spawn_blocking walk task failed"); Vec::new() });
 
     // Check which libs are internal (match another repo in a project)
-    let all_repos = ctx.pg().list_repositories().await.unwrap_or_default();
+    let all_repos = ctx.pg().list_repositories().await
+        .unwrap_or_else(|e| { tracing::warn!(error = %e, "resolve_libs: list_repositories failed"); Vec::new() });
     let _internal_repos: std::collections::HashSet<String> = all_repos.iter()
         .filter_map(|p| p["name"].as_str().map(|s| s.to_lowercase()))
         .collect();
 
     // Update folder libs via PgStore (reusing the folder row from above)
     if let Some(folder) = folder.as_ref()
-        && let Some(folder_id) = crate::api::util::json_uuid(&folder["id"]) {
-            ctx.pg().mark_folder_indexed(&folder_id, &libs).await.ok();
-        }
+        && let Some(folder_id) = crate::api::util::json_uuid(&folder["id"])
+            && let Err(e) = ctx.pg().mark_folder_indexed(&folder_id, &libs).await {
+                tracing::warn!(error = %e, folder = %folder_name, "resolve_libs: mark_folder_indexed failed");
+            }
 
     // Enqueue ExtractDeps to parse manifest files and populate referenced_libraries
     let extract_task = super::super::Task::new(
@@ -180,7 +183,9 @@ pub async fn index_library(ctx: &TaskContext, task: &Task) -> Result<u32, String
     }
 
     // Update denormalized page_count
-    ctx.pg().update_library_page_count(&lib_id).await.ok();
+    if let Err(e) = ctx.pg().update_library_page_count(&lib_id).await {
+        tracing::warn!(error = %e, lib = %lib_name, "index_library: update_library_page_count failed");
+    }
 
     tracing::info!(
         "index_library: {} — {} pages stored (parsed {} sections) from {}",
@@ -260,7 +265,10 @@ pub async fn extract_deps(ctx: &TaskContext, task: &Task) -> Result<u32, String>
         };
 
         // Link folder → library via referenced_libraries
-        ctx.pg().upsert_referenced_library(&folder_id, &lib_id, Some(&dep.version)).await.ok();
+        if let Err(e) = ctx.pg().upsert_referenced_library(&folder_id, &lib_id, Some(&dep.version)).await {
+            tracing::warn!(error = %e, lib = %dep.lib_name, folder = %folder_name, "extract_deps: upsert_referenced_library failed");
+            continue;
+        }
         count += 1;
     }
 

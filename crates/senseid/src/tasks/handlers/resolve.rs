@@ -7,7 +7,10 @@ use super::super::Task;
 
 /// Resolve unresolved edges by matching target_name against existing nodes.
 pub async fn resolve_edges(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
-    let folder = ctx.pg().get_repo_by_path(&task.folder_path).await.ok().flatten();
+    let folder = match ctx.pg().get_repo_by_path(&task.folder_path).await {
+        Ok(f) => f,
+        Err(e) => { tracing::warn!(error = %e, path = %task.folder_path, "resolve_edges: get_repo_by_path failed"); None }
+    };
     let folder_name = folder.as_ref()
         .and_then(|f| f["name"].as_str())
         .unwrap_or_else(|| task.folder_name());
@@ -21,10 +24,10 @@ pub async fn resolve_edges(ctx: &TaskContext, task: &Task) -> Result<u32, String
     let unresolved: Vec<serde_json::Value> = ctx.pg().execute_raw_query(
         "SELECT id, source_id, target_name, kind::text FROM sensei.edges WHERE folder_id = $1 AND target_id IS NULL AND target_name IS NOT NULL",
         &folder_id,
-    ).await.unwrap_or_default();
+    ).await.unwrap_or_else(|e| { tracing::warn!(error = %e, folder = %folder_name, "resolve_edges: query unresolved edges failed"); Vec::new() });
 
     // Get all nodes for name matching
-    let nodes = ctx.pg().get_nodes_by_folder(&folder_id).await.unwrap_or_default();
+    let nodes = ctx.pg().get_nodes_by_folder(&folder_id).await.unwrap_or_else(|e| { tracing::warn!(error = %e, folder = %folder_name, "resolve_edges: get_nodes_by_folder failed"); Vec::new() });
 
     // Build lookup maps
     let node_by_name: std::collections::HashMap<&str, &serde_json::Value> = nodes.iter()
@@ -61,7 +64,9 @@ pub async fn resolve_edges(ctx: &TaskContext, task: &Task) -> Result<u32, String
         };
 
         if let Some(target_id) = matched_id {
-            ctx.pg().resolve_edge(&edge_id, &target_id).await.ok();
+            if let Err(e) = ctx.pg().resolve_edge(&edge_id, &target_id).await {
+                tracing::warn!(error = %e, edge_id = %edge_id, "resolve_edges: resolve_edge failed");
+            }
             resolved += 1;
         }
     }
@@ -76,7 +81,10 @@ pub async fn resolve_edges(ctx: &TaskContext, task: &Task) -> Result<u32, String
 pub async fn build_connections(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     let folder_path = &task.folder_path;
     // abs_path lookup avoids name collisions across roots.
-    let folder = ctx.pg().get_repo_by_path(folder_path).await.ok().flatten();
+    let folder = match ctx.pg().get_repo_by_path(folder_path).await {
+        Ok(f) => f,
+        Err(e) => { tracing::warn!(error = %e, path = %folder_path, "build_connections: get_repo_by_path failed"); None }
+    };
     let folder_name = folder.as_ref()
         .and_then(|f| f["name"].as_str())
         .unwrap_or_else(|| task.folder_name());
@@ -86,7 +94,7 @@ pub async fn build_connections(ctx: &TaskContext, task: &Task) -> Result<u32, St
         None => { tracing::info!("build_connections: {} — folder not found", folder_path); return Ok(0); }
     };
 
-    let nodes = ctx.pg().get_nodes_by_folder(&folder_id).await.unwrap_or_default();
+    let nodes = ctx.pg().get_nodes_by_folder(&folder_id).await.unwrap_or_else(|e| { tracing::warn!(error = %e, folder = %folder_name, "build_connections: get_nodes_by_folder failed"); Vec::new() });
 
     // Separate docs and code nodes
     let docs: Vec<&serde_json::Value> = nodes.iter()
@@ -119,14 +127,16 @@ pub async fn build_connections(ctx: &TaskContext, task: &Task) -> Result<u32, St
                 .file_stem().and_then(|s| s.to_str()).unwrap_or("");
             if file_stem == doc_stem && file_path != &doc_path
                 && let Some(file_id) = crate::api::util::json_uuid(&file_node["id"]) {
-                    ctx.pg().insert_edge(&folder_id, &doc_id, Some(&file_id), None, "covers").await.ok();
+                    if let Err(e) = ctx.pg().insert_edge(&folder_id, &doc_id, Some(&file_id), None, "covers").await {
+                        tracing::warn!(error = %e, doc_id = %doc_id, file_id = %file_id, "build_connections: insert covers edge failed");
+                    }
                     edges_created += 1;
                 }
         }
     }
 
     // Collect libs from detected import targets
-    let edges = ctx.pg().get_edges_by_kind(&folder_id, "imports").await.unwrap_or_default();
+    let edges = ctx.pg().get_edges_by_kind(&folder_id, "imports").await.unwrap_or_else(|e| { tracing::warn!(error = %e, folder = %folder_name, "build_connections: get_edges_by_kind failed"); Vec::new() });
     let mut lib_set = std::collections::HashSet::new();
     for edge in &edges {
         if let Some(target_name) = edge["target_name"].as_str() {
@@ -139,7 +149,9 @@ pub async fn build_connections(ctx: &TaskContext, task: &Task) -> Result<u32, St
     let libs: Vec<String> = lib_set.into_iter().collect();
 
     // Mark as indexed
-    ctx.pg().mark_folder_indexed(&folder_id, &libs).await.ok();
+    if let Err(e) = ctx.pg().mark_folder_indexed(&folder_id, &libs).await {
+        tracing::warn!(error = %e, folder = %folder_name, "build_connections: mark_folder_indexed failed");
+    }
 
     tracing::info!("build_connections: {} — {} traceability edges, {} libs detected", folder_name, edges_created, libs.len());
     Ok(edges_created)
@@ -150,7 +162,10 @@ pub async fn build_connections(ctx: &TaskContext, task: &Task) -> Result<u32, St
 /// Re-evaluate cross-repo edges after a branch switch or repo update.
 /// Detects shared symbols across repos in the same project.
 pub async fn reconcile_connections(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
-    let folder = ctx.pg().get_repo_by_path(&task.folder_path).await.ok().flatten();
+    let folder = match ctx.pg().get_repo_by_path(&task.folder_path).await {
+        Ok(f) => f,
+        Err(e) => { tracing::warn!(error = %e, path = %task.folder_path, "reconcile_connections: get_repo_by_path failed"); None }
+    };
     let folder_name = folder.as_ref()
         .and_then(|f| f["name"].as_str())
         .unwrap_or_else(|| task.folder_name());
@@ -162,7 +177,7 @@ pub async fn reconcile_connections(ctx: &TaskContext, task: &Task) -> Result<u32
     // Rebuild doc↔code traceability for this repo
     let mut edges = 0u32;
     if let Some(ref fid) = folder_id {
-        let nodes = ctx.pg().get_nodes_by_folder(fid).await.unwrap_or_default();
+        let nodes = ctx.pg().get_nodes_by_folder(fid).await.unwrap_or_else(|e| { tracing::warn!(error = %e, folder = %folder_name, "reconcile_connections: get_nodes_by_folder failed"); Vec::new() });
         let docs: Vec<_> = nodes.iter().filter(|n| n["kind"].as_str() == Some("doc")).collect();
         let code_files: Vec<_> = nodes.iter().filter(|n| n["kind"].as_str() == Some("file")).collect();
 
@@ -175,7 +190,9 @@ pub async fn reconcile_connections(ctx: &TaskContext, task: &Task) -> Result<u32
                     .file_stem().and_then(|s| s.to_str()).unwrap_or("");
                 if !doc_stem.is_empty() && doc_stem == code_stem
                     && let Some(code_id) = crate::api::util::json_uuid(&code["id"]) {
-                        ctx.pg().insert_edge(fid, &doc_id, Some(&code_id), None, "covers").await.ok();
+                        if let Err(e) = ctx.pg().insert_edge(fid, &doc_id, Some(&code_id), None, "covers").await {
+                            tracing::warn!(error = %e, doc_id = %doc_id, code_id = %code_id, "reconcile_connections: insert covers edge failed");
+                        }
                         edges += 1;
                     }
             }
