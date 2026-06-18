@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use super::helpers::check_mcp_in_config;
 use super::{AssistantPart, AssistantStatus};
-use crate::assistants::health::{AdapterCheck, AdapterHealth, AdapterResolveReport, CheckStatus};
+use crate::assistants::health::{AdapterCheck, AdapterResolveReport, CheckStatus};
 
 /// Result of configuring an Assistant. `plugin` is true when `claude plugin install` succeeded.
 pub(crate) struct AssistantConfigureOk {
@@ -21,7 +21,6 @@ pub(crate) trait Assistant {
 
     /// Pure, filesystem-only health probes for this adapter. Default = one
     /// check derived from `is_configured()`. Override for richer adapters.
-    #[allow(dead_code)]
     fn config_health(&self) -> Vec<AdapterCheck> {
         let status = if self.is_configured() { CheckStatus::Ok } else { CheckStatus::Fail };
         let detail = (status == CheckStatus::Fail).then(|| "sensei not configured in this assistant".to_string());
@@ -50,12 +49,6 @@ pub(crate) trait Assistant {
                 errors: vec![e],
             },
         }
-    }
-
-    /// Convenience: the adapter's config-side AdapterHealth (no DB checks).
-    #[allow(dead_code)]
-    fn config_health_report(&self) -> AdapterHealth {
-        AdapterHealth::new(self.id(), self.family(), self.config_health(), true)
     }
 
     /// Family ID for UI grouping. Assistants in the same family show as one card.
