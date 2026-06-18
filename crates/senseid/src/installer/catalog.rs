@@ -82,7 +82,9 @@ pub(super) fn save_marketplace_version(version: &str) {
     let dir = sensei_dir();
     let mut cfg = sensei_bootstrap::SenseiLocalConfig::load(&dir);
     cfg.marketplace_version = Some(version.to_string());
-    cfg.save(&dir).ok();
+    if let Err(e) = cfg.save(&dir) {
+        tracing::warn!(error = %e, "installer catalog: save marketplace_version failed");
+    }
 }
 
 #[cfg(test)]

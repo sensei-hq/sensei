@@ -47,9 +47,8 @@ pub(super) fn install_marketplace(
             }
             _ => continue,
         };
-        if let Some(parent) = dest.parent() {
-            fs::create_dir_all(parent).ok();
-        }
+        if let Some(parent) = dest.parent()
+            && let Err(e) = fs::create_dir_all(parent) { tracing::warn!(dir = %parent.display(), error = %e, "failed to create marketplace dest directory"); }
         fs::write(&dest, &content).map_err(|e| e.to_string())?;
     }
 
