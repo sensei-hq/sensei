@@ -211,10 +211,10 @@ export class ScanActivityState extends ReactiveStageContext<ActivityEvent> {
 
   /**
    * Maximum elapsed value across received events. Using max rather than
-   * "latest" keeps the displayed time monotonically increasing — the
-   * daemon emits queue activity with elapsed=0.0 (no scan-start reference
-   * in process_git_folder), which would otherwise reset the visible clock
-   * every time a new queue event arrived.
+   * "latest" keeps the displayed time monotonically increasing — each daemon
+   * handler times from its own start (scan_root is scan-relative and grows;
+   * process_git_folder reports small per-folder durations), so "latest" could
+   * jump backwards. Max tracks the leading (scan-relative) clock.
    */
   get totalElapsed() {
     return this.items.reduce((max, e) => (e.elapsed > max ? e.elapsed : max), 0);
