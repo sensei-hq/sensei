@@ -5,6 +5,7 @@ create table if not exists sessions (
 , project_id               uuid        references sensei.projects(id) on delete set null
 , task                     text        not null default ''
 , acp_id                   text
+, client_session_id        text
 , outcome                  session_outcome
 , ftr                      boolean
 , turns                    integer     not null default 0
@@ -30,6 +31,12 @@ create index if not exists sessions_ftr_idx
     on sessions(ftr)
  where ftr is not null;
 
+-- One session row per assistant session id (hook-derived sessions upsert by it;
+-- MCP-created sessions leave it NULL and are excluded from the unique index).
+create unique index if not exists sessions_client_session_id_uniq
+    on sessions(client_session_id)
+ where client_session_id is not null;
+
 comment on table sessions is
 'AI coding sessions captured by hooks.
 - outcome: completed (no corrections), corrected, blocked, partial (crash), abandoned
@@ -47,6 +54,8 @@ comment on column sessions.task
      is 'Task description passed at get_session_context.';
 comment on column sessions.acp_id
      is 'Assistant family name (matches sensei.assistants.family): claude, cursor, codex, aider, etc.';
+comment on column sessions.client_session_id
+     is 'The assistant''s own session id (e.g. Claude session_id from hooks). Correlates all hook events of one session to a single row; NULL for MCP-created sessions.';
 comment on column sessions.outcome
      is 'Session outcome: completed, corrected, blocked, partial, abandoned.';
 comment on column sessions.ftr

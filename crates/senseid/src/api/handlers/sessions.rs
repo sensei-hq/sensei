@@ -180,6 +180,26 @@ pub(crate) async fn ingest_hook_event(
         tracing::warn!(error = %e, event_type, assistant_family, "ingest_hook_event: insert failed");
     }
 
+    // Derive/maintain the activity.sessions row from the hook stream (#31).
+    // A session is one assistant session_id, attributed to the indexed folder
+    // its cwd resolves to; Stop/SessionEnd marks it completed. Best-effort —
+    // events whose cwd is under no indexed folder simply aren't attributed.
+    if !session_id.is_empty()
+        && let Some(cwd) = cwd {
+            match state.pg.find_folder_for_path(cwd).await {
+                Ok(Some((folder_id, project_id))) => {
+                    let is_end = matches!(event_type, "Stop" | "SessionEnd");
+                    if let Err(e) = state.pg.record_session_event(
+                        session_id, &folder_id, project_id.as_ref(), assistant_family, is_end,
+                    ).await {
+                        tracing::warn!(error = %e, event_type, "ingest_hook_event: record_session_event failed");
+                    }
+                }
+                Ok(None) => {} // cwd not under any indexed folder — nothing to attribute
+                Err(e) => tracing::warn!(error = %e, "ingest_hook_event: find_folder_for_path failed"),
+            }
+        }
+
     StatusCode::OK
 }
 
