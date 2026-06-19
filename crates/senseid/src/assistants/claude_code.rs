@@ -713,12 +713,14 @@ mod tests {
         assert!(!verify_plugin_installed(&manifest, "sensei"));
     }
 
-    // ── clean_sensei_from_mcp_file: auto-cleanup of stale sensei MCP entries ────────
+    // ── clean_sensei_from_mcp_file: auto-cleanup of a stale sensei MCP entry ────────
     //
-    // ~/.claude/mcp.json accumulates broken `sensei` entries from prior
-    // install attempts (e.g. command="bun /old/path" pointing at a moved
-    // repo). configure() runs cleanup_stale() first so a re-run heals these
-    // without the user having to edit JSON by hand. The daemon owns the
+    // A single stale `sensei` entry can linger in ~/.claude/mcp.json from the
+    // pre-plugin era — a path-based `command` (e.g. "bun /old/path") pointing at
+    // a moved repo. The MCP key is fixed (`sensei`), so a re-install overwrites
+    // it rather than accumulating duplicates; this just removes the dead entry
+    // up front. configure() calls clean_sensei_from_mcp_file() first so a re-run
+    // heals it without the user editing JSON by hand. The daemon owns the
     // `sensei` MCP key, so removing any entry under that key is authorised.
 
     #[test]
