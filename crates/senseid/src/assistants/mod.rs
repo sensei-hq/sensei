@@ -177,6 +177,14 @@ pub fn resolve_by_id(adapter_id: &str) -> Option<crate::assistants::AdapterResol
     all_assistants().iter().find(|a| a.id() == adapter_id).map(|a| a.resolve(&mcp_cmd))
 }
 
+/// Refresh an adapter's keep-alive (e.g. Claude Code's plugin in-use marker) by
+/// id. No-op for adapters that don't override `keep_alive` or aren't registered.
+pub fn keep_alive_by_id(adapter_id: &str) {
+    if let Some(a) = all_assistants().iter().find(|a| a.id() == adapter_id) {
+        a.keep_alive();
+    }
+}
+
 /// Grouped view — one entry per family for the UI.
 /// Claude Desktop + Claude Code become a single "Claude" family card.
 ///

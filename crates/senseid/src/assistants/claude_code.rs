@@ -69,8 +69,11 @@ pub(super) fn check_plugin(manifest_path: &Path) -> AdapterCheck {
     }
 }
 
-/// The plugin's installPath exists and its hooks/hooks.json declares both
-/// PreToolUse and PostToolUse. `install_path` is read from installed_plugins.json.
+/// The plugin's installPath exists and its `.claude-plugin/plugin.json` declares
+/// both PreToolUse and PostToolUse hooks. The sensei plugin registers all hooks via
+/// the plugin manifest's `hooks` field (it ships no separate hooks/hooks.json), so
+/// this reads the same manifest Claude Code loads — otherwise a healthy install
+/// false-positive-fails. `install_path` is read from installed_plugins.json.
 pub(super) fn check_hooks(install_path: Option<&Path>) -> AdapterCheck {
     let id = "hooks"; let label = "hooks registered";
     let Some(dir) = install_path else {
@@ -79,19 +82,19 @@ pub(super) fn check_hooks(install_path: Option<&Path>) -> AdapterCheck {
     if !dir.exists() {
         return AdapterCheck::new(id, label, CheckStatus::Fail, Some(format!("installPath missing: {}", dir.display())));
     }
-    let hooks_file = dir.join("hooks/hooks.json");
-    let Some(content) = std::fs::read_to_string(&hooks_file).ok() else {
-        return AdapterCheck::new(id, label, CheckStatus::Fail, Some("hooks/hooks.json missing".into()));
+    let manifest = dir.join(".claude-plugin/plugin.json");
+    let Some(content) = std::fs::read_to_string(&manifest).ok() else {
+        return AdapterCheck::new(id, label, CheckStatus::Fail, Some(".claude-plugin/plugin.json missing".into()));
     };
     let Some(v) = json5::from_str::<serde_json::Value>(&content).ok() else {
-        return AdapterCheck::new(id, label, CheckStatus::Unknown, Some("hooks.json unparseable".into()));
+        return AdapterCheck::new(id, label, CheckStatus::Unknown, Some("plugin.json unparseable".into()));
     };
     let hooks = v.get("hooks");
     let has = |evt: &str| hooks.and_then(|h| h.get(evt)).is_some();
     if has("PreToolUse") && has("PostToolUse") {
         AdapterCheck::new(id, label, CheckStatus::Ok, None)
     } else {
-        AdapterCheck::new(id, label, CheckStatus::Fail, Some("PreToolUse/PostToolUse not declared in hooks.json".into()))
+        AdapterCheck::new(id, label, CheckStatus::Fail, Some("PreToolUse/PostToolUse not declared in plugin.json hooks".into()))
     }
 }
 
@@ -108,6 +111,47 @@ pub(super) fn plugin_install_path(manifest_path: &Path) -> Option<PathBuf> {
 /// Path to Claude Code's `installed_plugins.json` (under the user's home).
 fn installed_plugins_manifest() -> PathBuf {
     home().join(".claude/plugins/installed_plugins.json")
+}
+
+// ── in-use marker (keep-alive) ───────────────────────────────────────────────
+//
+// Claude Code's periodic plugin "in-use sweep" prunes any plugin whose
+// `<install>/.in_use/<pid>` markers are all stale (no live owning process). The
+// daemon installs the plugin out-of-band, so the only marker is the short-lived
+// `claude plugin install` process — once it exits the sweep reaps the plugin
+// (anthropics/claude-code#69626). We refresh a marker for the long-lived daemon
+// process so the sweep always sees a live owner and never prunes it.
+
+/// The exact compact JSON Claude Code writes per marker: `{"pid":N,"procStart":"..."}`.
+fn in_use_marker_json(pid: u32, proc_start: &str) -> String {
+    format!(r#"{{"pid":{pid},"procStart":"{proc_start}"}}"#)
+}
+
+/// Trim `ps -o lstart=` output (right-padded) to the bare asctime string.
+/// `None` when empty (process gone / ps failed).
+fn clean_lstart(raw: &str) -> Option<String> {
+    let t = raw.trim();
+    (!t.is_empty()).then(|| t.to_string())
+}
+
+/// `pid`'s start time formatted exactly as Claude stores it in `.in_use`
+/// markers: UTC asctime (`%a %b %e %H:%M:%S %Y`). Obtained via `TZ=UTC ps -o
+/// lstart=` so it is byte-identical to what Claude derives for the same pid.
+fn proc_start_utc(pid: u32) -> Option<String> {
+    let out = std::process::Command::new("ps")
+        .env("TZ", "UTC")
+        .args(["-o", "lstart=", "-p", &pid.to_string()])
+        .output().ok()?;
+    if !out.status.success() { return None; }
+    clean_lstart(&String::from_utf8_lossy(&out.stdout))
+}
+
+/// Write/refresh `<install_path>/.in_use/<pid>` so Claude Code's sweep treats
+/// the plugin as live.
+fn write_in_use_marker(install_path: &Path, pid: u32, proc_start: &str) -> std::io::Result<()> {
+    let dir = install_path.join(".in_use");
+    std::fs::create_dir_all(&dir)?;
+    std::fs::write(dir.join(pid.to_string()), in_use_marker_json(pid, proc_start))
 }
 
 /// MCP server registry keys the daemon owns. Any entry under these keys in a
@@ -330,6 +374,22 @@ impl Assistant for ClaudeCodeAssistant {
         ]
     }
 
+    /// Refresh the in-use marker for the long-lived daemon process so Claude
+    /// Code's plugin sweep keeps the out-of-band install alive
+    /// (anthropics/claude-code#69626). No-op if the plugin isn't installed
+    /// (the next resolve reinstalls it, then a later tick marks it).
+    fn keep_alive(&self) {
+        let Some(install_path) = plugin_install_path(&installed_plugins_manifest()) else { return };
+        let pid = std::process::id();
+        let Some(proc_start) = proc_start_utc(pid) else {
+            warn!("keep_alive: could not read daemon process start time; in-use marker not refreshed");
+            return;
+        };
+        if let Err(e) = write_in_use_marker(&install_path, pid, &proc_start) {
+            warn!(error = %e, "keep_alive: failed to write plugin in-use marker");
+        }
+    }
+
     fn configure(&self, _mcp_cmd: &str) -> Result<AssistantConfigureOk, String> {
         let claude_bin = find_claude_binary()
             .ok_or_else(|| "claude binary not found on PATH".to_string())?;
@@ -534,6 +594,48 @@ mod tests {
         tempfile::tempdir().unwrap()
     }
 
+    // ── in-use marker (keep-alive against Claude Code's plugin sweep) ─────────
+    #[test]
+    fn in_use_marker_json_matches_claude_compact_format() {
+        assert_eq!(
+            in_use_marker_json(86189, "Thu Jun 18 14:15:10 2026"),
+            r#"{"pid":86189,"procStart":"Thu Jun 18 14:15:10 2026"}"#
+        );
+    }
+
+    #[test]
+    fn clean_lstart_trims_padding_and_rejects_empty() {
+        // `ps -o lstart=` right-pads its output; the marker must store the bare string.
+        assert_eq!(clean_lstart("Thu Jun 18 14:15:10 2026    \n").as_deref(),
+            Some("Thu Jun 18 14:15:10 2026"));
+        assert_eq!(clean_lstart("   "), None);
+        assert_eq!(clean_lstart(""), None);
+    }
+
+    #[test]
+    fn write_in_use_marker_creates_marker_with_exact_contents() {
+        let tmp = make_tmp_home();
+        let install = tmp.path().join("plugin");
+        std::fs::create_dir_all(&install).unwrap();
+        write_in_use_marker(&install, 4242, "Thu Jun 18 14:15:10 2026").unwrap();
+        let marker = install.join(".in_use/4242");
+        assert!(marker.exists(), "marker file not written");
+        assert_eq!(std::fs::read_to_string(&marker).unwrap(),
+            r#"{"pid":4242,"procStart":"Thu Jun 18 14:15:10 2026"}"#);
+    }
+
+    #[test]
+    fn proc_start_utc_returns_asctime_for_current_process() {
+        // Live: our own pid exists, so `ps` yields a 5-token asctime
+        // (Wday Mon Day HH:MM:SS Year) with no surrounding whitespace.
+        let s = proc_start_utc(std::process::id()).expect("own process start time");
+        assert_eq!(s, s.trim(), "must be trimmed");
+        let toks: Vec<&str> = s.split_whitespace().collect();
+        assert_eq!(toks.len(), 5, "expected 5-token asctime, got {s:?}");
+        assert_eq!(toks[4].len(), 4, "year should be 4 digits, got {s:?}");
+        assert!(toks[4].chars().all(|c| c.is_ascii_digit()), "year not numeric: {s:?}");
+    }
+
     // ── verify_plugin_installed: the post-condition gate ─────────────────────
     //
     // `claude plugin install` can exit 0 without actually installing the plugin
@@ -611,12 +713,14 @@ mod tests {
         assert!(!verify_plugin_installed(&manifest, "sensei"));
     }
 
-    // ── clean_sensei_from_mcp_file: auto-cleanup of stale sensei MCP entries ────────
+    // ── clean_sensei_from_mcp_file: auto-cleanup of a stale sensei MCP entry ────────
     //
-    // ~/.claude/mcp.json accumulates broken `sensei` entries from prior
-    // install attempts (e.g. command="bun /old/path" pointing at a moved
-    // repo). configure() runs cleanup_stale() first so a re-run heals these
-    // without the user having to edit JSON by hand. The daemon owns the
+    // A single stale `sensei` entry can linger in ~/.claude/mcp.json from the
+    // pre-plugin era — a path-based `command` (e.g. "bun /old/path") pointing at
+    // a moved repo. The MCP key is fixed (`sensei`), so a re-install overwrites
+    // it rather than accumulating duplicates; this just removes the dead entry
+    // up front. configure() calls clean_sensei_from_mcp_file() first so a re-run
+    // heals it without the user editing JSON by hand. The daemon owns the
     // `sensei` MCP key, so removing any entry under that key is authorised.
 
     #[test]
@@ -958,11 +1062,14 @@ mod tests {
         assert_eq!(plugin_install_path(&m), None);
     }
     #[test]
-    fn check_hooks_ok_when_both_events_declared() {
+    fn check_hooks_ok_when_declared_in_plugin_manifest() {
+        // The real sensei plugin declares hooks in `.claude-plugin/plugin.json`'s
+        // `hooks` field and ships NO hooks/hooks.json. The check must read the same
+        // manifest Claude Code loads, or it false-positive-fails on a healthy install.
         let tmp = make_tmp_home();
         let dir = tmp.path().join("plugin");
-        std::fs::create_dir_all(dir.join("hooks")).unwrap();
-        std::fs::write(dir.join("hooks/hooks.json"),
+        std::fs::create_dir_all(dir.join(".claude-plugin")).unwrap();
+        std::fs::write(dir.join(".claude-plugin/plugin.json"),
             r#"{"hooks":{"PreToolUse":[{}],"PostToolUse":[{}],"SessionStart":[{}]}}"#).unwrap();
         assert_eq!(check_hooks(Some(&dir)).status, CheckStatus::Ok);
     }
@@ -976,8 +1083,8 @@ mod tests {
     fn check_hooks_fail_when_events_absent() {
         let tmp = make_tmp_home();
         let dir = tmp.path().join("plugin");
-        std::fs::create_dir_all(dir.join("hooks")).unwrap();
-        std::fs::write(dir.join("hooks/hooks.json"), r#"{"hooks":{"SessionStart":[{}]}}"#).unwrap();
+        std::fs::create_dir_all(dir.join(".claude-plugin")).unwrap();
+        std::fs::write(dir.join(".claude-plugin/plugin.json"), r#"{"hooks":{"SessionStart":[{}]}}"#).unwrap();
         assert_eq!(check_hooks(Some(&dir)).status, CheckStatus::Fail);
     }
 }
