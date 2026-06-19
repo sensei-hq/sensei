@@ -1,6 +1,7 @@
 //! Process phase: index repos, folders, and files; handle deletions.
 
 use std::path::Path;
+use std::time::Instant;
 use super::super::executor::TaskContext;
 use super::super::{Task, TaskKind};
 use super::helpers::{is_binary_ext, is_probably_binary, build_globset};
@@ -13,6 +14,9 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
     if !repo_path.exists() {
         return Err(format!("Repo path does not exist: {}", task.path));
     }
+    // Timer for the queue activity's elapsed (was hardcoded 0.0 → SSE showed
+    // +0.00s for every queue event). Local start, same idiom as scan_root.
+    let start = Instant::now();
 
     let folder_path = &task.folder_path;
     let emit = |evt: crate::api::events::StateEvent| { let _ = ctx.app_state.event_tx.send(evt); };
@@ -140,7 +144,7 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
     emit(crate::api::events::StateEvent::activity(crate::api::events::ActivityEvent::new(
         crate::api::events::ActivityLevel::Queue,
         &format!("{} · {} files queued · {}", folder_name, files_total, stack.join(", ")),
-        0.0,
+        start.elapsed().as_secs_f64(),
     )));
 
     // ── Existing logic: look up folder by path, clear stale data ─────
