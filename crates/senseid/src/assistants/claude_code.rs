@@ -113,6 +113,47 @@ fn installed_plugins_manifest() -> PathBuf {
     home().join(".claude/plugins/installed_plugins.json")
 }
 
+// ── in-use marker (keep-alive) ───────────────────────────────────────────────
+//
+// Claude Code's periodic plugin "in-use sweep" prunes any plugin whose
+// `<install>/.in_use/<pid>` markers are all stale (no live owning process). The
+// daemon installs the plugin out-of-band, so the only marker is the short-lived
+// `claude plugin install` process — once it exits the sweep reaps the plugin
+// (anthropics/claude-code#69626). We refresh a marker for the long-lived daemon
+// process so the sweep always sees a live owner and never prunes it.
+
+/// The exact compact JSON Claude Code writes per marker: `{"pid":N,"procStart":"..."}`.
+fn in_use_marker_json(pid: u32, proc_start: &str) -> String {
+    format!(r#"{{"pid":{pid},"procStart":"{proc_start}"}}"#)
+}
+
+/// Trim `ps -o lstart=` output (right-padded) to the bare asctime string.
+/// `None` when empty (process gone / ps failed).
+fn clean_lstart(raw: &str) -> Option<String> {
+    let t = raw.trim();
+    (!t.is_empty()).then(|| t.to_string())
+}
+
+/// `pid`'s start time formatted exactly as Claude stores it in `.in_use`
+/// markers: UTC asctime (`%a %b %e %H:%M:%S %Y`). Obtained via `TZ=UTC ps -o
+/// lstart=` so it is byte-identical to what Claude derives for the same pid.
+fn proc_start_utc(pid: u32) -> Option<String> {
+    let out = std::process::Command::new("ps")
+        .env("TZ", "UTC")
+        .args(["-o", "lstart=", "-p", &pid.to_string()])
+        .output().ok()?;
+    if !out.status.success() { return None; }
+    clean_lstart(&String::from_utf8_lossy(&out.stdout))
+}
+
+/// Write/refresh `<install_path>/.in_use/<pid>` so Claude Code's sweep treats
+/// the plugin as live.
+fn write_in_use_marker(install_path: &Path, pid: u32, proc_start: &str) -> std::io::Result<()> {
+    let dir = install_path.join(".in_use");
+    std::fs::create_dir_all(&dir)?;
+    std::fs::write(dir.join(pid.to_string()), in_use_marker_json(pid, proc_start))
+}
+
 /// MCP server registry keys the daemon owns. Any entry under these keys in a
 /// user/project MCP config is presumed to be sensei's and gets removed during
 /// cleanup so the plugin install can re-register cleanly.
@@ -333,6 +374,22 @@ impl Assistant for ClaudeCodeAssistant {
         ]
     }
 
+    /// Refresh the in-use marker for the long-lived daemon process so Claude
+    /// Code's plugin sweep keeps the out-of-band install alive
+    /// (anthropics/claude-code#69626). No-op if the plugin isn't installed
+    /// (the next resolve reinstalls it, then a later tick marks it).
+    fn keep_alive(&self) {
+        let Some(install_path) = plugin_install_path(&installed_plugins_manifest()) else { return };
+        let pid = std::process::id();
+        let Some(proc_start) = proc_start_utc(pid) else {
+            warn!("keep_alive: could not read daemon process start time; in-use marker not refreshed");
+            return;
+        };
+        if let Err(e) = write_in_use_marker(&install_path, pid, &proc_start) {
+            warn!(error = %e, "keep_alive: failed to write plugin in-use marker");
+        }
+    }
+
     fn configure(&self, _mcp_cmd: &str) -> Result<AssistantConfigureOk, String> {
         let claude_bin = find_claude_binary()
             .ok_or_else(|| "claude binary not found on PATH".to_string())?;
@@ -535,6 +592,48 @@ mod tests {
 
     fn make_tmp_home() -> TempDir {
         tempfile::tempdir().unwrap()
+    }
+
+    // ── in-use marker (keep-alive against Claude Code's plugin sweep) ─────────
+    #[test]
+    fn in_use_marker_json_matches_claude_compact_format() {
+        assert_eq!(
+            in_use_marker_json(86189, "Thu Jun 18 14:15:10 2026"),
+            r#"{"pid":86189,"procStart":"Thu Jun 18 14:15:10 2026"}"#
+        );
+    }
+
+    #[test]
+    fn clean_lstart_trims_padding_and_rejects_empty() {
+        // `ps -o lstart=` right-pads its output; the marker must store the bare string.
+        assert_eq!(clean_lstart("Thu Jun 18 14:15:10 2026    \n").as_deref(),
+            Some("Thu Jun 18 14:15:10 2026"));
+        assert_eq!(clean_lstart("   "), None);
+        assert_eq!(clean_lstart(""), None);
+    }
+
+    #[test]
+    fn write_in_use_marker_creates_marker_with_exact_contents() {
+        let tmp = make_tmp_home();
+        let install = tmp.path().join("plugin");
+        std::fs::create_dir_all(&install).unwrap();
+        write_in_use_marker(&install, 4242, "Thu Jun 18 14:15:10 2026").unwrap();
+        let marker = install.join(".in_use/4242");
+        assert!(marker.exists(), "marker file not written");
+        assert_eq!(std::fs::read_to_string(&marker).unwrap(),
+            r#"{"pid":4242,"procStart":"Thu Jun 18 14:15:10 2026"}"#);
+    }
+
+    #[test]
+    fn proc_start_utc_returns_asctime_for_current_process() {
+        // Live: our own pid exists, so `ps` yields a 5-token asctime
+        // (Wday Mon Day HH:MM:SS Year) with no surrounding whitespace.
+        let s = proc_start_utc(std::process::id()).expect("own process start time");
+        assert_eq!(s, s.trim(), "must be trimmed");
+        let toks: Vec<&str> = s.split_whitespace().collect();
+        assert_eq!(toks.len(), 5, "expected 5-token asctime, got {s:?}");
+        assert_eq!(toks[4].len(), 4, "year should be 4 digits, got {s:?}");
+        assert!(toks[4].chars().all(|c| c.is_ascii_digit()), "year not numeric: {s:?}");
     }
 
     // ── verify_plugin_installed: the post-condition gate ─────────────────────
