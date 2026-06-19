@@ -153,11 +153,15 @@ install-app: db-backup
 
 # Fast iteration variant — debug binaries into the brew prefix (no app).
 install-debug: db-backup crates-debug
-	@if pgrep -x senseid > /dev/null; then \
-	  echo "Stopping senseid (pid $$(pgrep -x senseid))..."; \
-	  pkill -x senseid; \
-	  sleep 1; \
-	fi
+	@# Stop via brew services FIRST, then pkill any stragglers. `pkill` alone is
+	@# not enough: launchd's keep_alive in the brew service plist respawns the
+	@# daemon within a few ms, so the cp lands while a stale process is still up
+	@# and launchd keeps serving the OLD binary. Restart at the end so the new
+	@# binary is the one serving requests.
+	@echo "Stopping sensei service (so the new binary actually takes effect)..."
+	-@brew services stop sensei >/dev/null 2>&1
+	-@pkill -x senseid 2>/dev/null
+	@sleep 1
 	@DEST=$$(brew --prefix sensei)/bin && \
 	rm -f "$$DEST/senseid" "$$DEST/sensei" "$$DEST/sensei-mcp" && \
 	cp target/debug/senseid    "$$DEST/senseid" && \
@@ -167,6 +171,8 @@ install-debug: db-backup crates-debug
 	codesign --sign - --options runtime --force "$$DEST/sensei" && \
 	codesign --sign - --options runtime --force "$$DEST/sensei-mcp" && \
 	echo "Overlaid debug binaries into $$DEST (codesigned)"
+	@echo "Restarting sensei service so the new daemon is live..."
+	-@brew services start sensei
 
 # ── Desktop app dev / e2e ─────────────────────────────────────────────────────
 
