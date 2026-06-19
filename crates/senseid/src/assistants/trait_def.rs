@@ -50,6 +50,12 @@ pub(crate) trait Assistant {
         }
     }
 
+    /// Keep this assistant's integration alive against external janitorial
+    /// processes. Default = no-op. Claude Code overrides it to refresh its
+    /// plugin in-use marker so the editor's periodic sweep doesn't prune a
+    /// plugin the daemon installed out-of-band.
+    fn keep_alive(&self) {}
+
     /// Family ID for UI grouping. Assistants in the same family show as one card.
     /// Default: same as id (each Assistant is its own family).
     fn family(&self) -> &str { self.id() }

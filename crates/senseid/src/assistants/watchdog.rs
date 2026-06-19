@@ -217,6 +217,12 @@ pub async fn run_sweep(
         );
         breaker.lock().unwrap().insert(h.adapter_id.clone(), watch);
 
+        // Refresh the keep-alive marker so Claude Code's plugin in-use sweep
+        // doesn't prune the daemon-installed plugin (anthropics/claude-code#69626).
+        // Runs after the tick so a just-resolved (reinstalled) plugin is marked,
+        // and is refreshed hourly while healthy. No-op for non-Claude adapters.
+        crate::assistants::keep_alive_by_id(&h.adapter_id);
+
         // Log what the policy decided (resolution / suspension is the important
         // audit signal — it means the daemon mutated the user's config or gave up).
         match outcome {
