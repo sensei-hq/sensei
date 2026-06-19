@@ -240,6 +240,11 @@ pub async fn extract_deps(ctx: &TaskContext, task: &Task) -> Result<u32, String>
         .unwrap_or_else(|| task.folder_name());
     let folder_id = crate::api::util::json_uuid(&folder["id"])
         .ok_or("Invalid folder id")?;
+    // The folder's project (NULL for standalone folders) — used to roll each
+    // detected dependency up to project_libraries so it shows on the Projects
+    // screen (#30). project_libraries is the project↔library M2M the indexer
+    // owns; referenced_libraries below is only folder-grained.
+    let project_id = crate::api::util::json_uuid(&folder["project_id"]);
 
     let repo_path = folder["abs_path"].as_str()
         .ok_or("Folder has no abs_path")?;
@@ -270,6 +275,14 @@ pub async fn extract_deps(ctx: &TaskContext, task: &Task) -> Result<u32, String>
             continue;
         }
         count += 1;
+
+        // Roll the reference up to the project so it surfaces in
+        // project_libraries_resolved (the Projects screen). Idempotent;
+        // skips folders with no project (standalone).
+        if let Some(pid) = project_id
+            && let Err(e) = ctx.pg().upsert_project_library(&lib_id, &pid).await {
+                tracing::warn!(error = %e, lib = %dep.lib_name, folder = %folder_name, "extract_deps: upsert_project_library failed");
+            }
     }
 
     tracing::info!("extract_deps: {} — {} deps from manifests", folder_name, count);
