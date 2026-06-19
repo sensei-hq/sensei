@@ -1713,6 +1713,42 @@ impl PgStore {
         Ok(())
     }
 
+    /// Nearest-ancestor folder for an absolute path: the folder whose `abs_path`
+    /// is the path itself or its closest parent. Attributes a hook event (which
+    /// carries a `cwd`) to the indexed folder it ran in. `None` when uncovered.
+    pub async fn find_folder_for_path(
+        &self, path: &str,
+    ) -> Result<Option<(uuid::Uuid, Option<uuid::Uuid>)>, String> {
+        let row: Option<(uuid::Uuid, Option<uuid::Uuid>)> = sqlx_core::query_as::query_as(
+            "SELECT id, project_id FROM sensei.folders
+             WHERE $1 = abs_path OR $1 LIKE abs_path || '/%'
+             ORDER BY length(abs_path) DESC
+             LIMIT 1"
+        ).bind(path).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row)
+    }
+
+    /// Find-or-create the `activity.sessions` row for an assistant
+    /// `client_session_id`, attributing it to `folder_id`/`project_id`. Marks it
+    /// completed when `is_end` (Stop / SessionEnd). Idempotent per
+    /// client_session_id so every hook event of a session folds into one row (#31).
+    pub async fn record_session_event(
+        &self, client_session_id: &str, folder_id: &uuid::Uuid,
+        project_id: Option<&uuid::Uuid>, family: &str, is_end: bool,
+    ) -> Result<uuid::Uuid, String> {
+        let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO activity.sessions (client_session_id, folder_id, project_id, acp_id, completed_at)
+             VALUES ($1, $2, $3, $4, CASE WHEN $5 THEN now() ELSE NULL END)
+             ON CONFLICT (client_session_id) WHERE client_session_id IS NOT NULL
+             DO UPDATE SET
+               completed_at = CASE WHEN $5 THEN now() ELSE activity.sessions.completed_at END,
+               project_id   = COALESCE(activity.sessions.project_id, EXCLUDED.project_id)
+             RETURNING id"
+        ).bind(client_session_id).bind(folder_id).bind(project_id).bind(family).bind(is_end)
+         .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.0)
+    }
+
     pub async fn get_session(&self, id: &uuid::Uuid) -> Result<Option<serde_json::Value>, String> {
         let row: Option<(uuid::Uuid, uuid::Uuid, String, Option<String>, Option<String>, Option<bool>, i32, i32, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>)> =
             sqlx_core::query_as::query_as(
@@ -3750,6 +3786,39 @@ mod tests {
         let proj = s.get_project(&a).await.unwrap().unwrap();
         assert_eq!(proj["name"], "_test:dup-check", "test projects must be _test:-namespaced");
         s.delete_project(&a).await.ok();
+    }
+
+    #[tokio::test]
+    async fn find_folder_for_path_returns_nearest_ancestor() {
+        // #31: a hook's cwd (often a subdir) must resolve to its indexed folder.
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, "sess-nearest").await; // abs_path /_test/sess-nearest
+        assert_eq!(s.find_folder_for_path("/_test/sess-nearest/src/auth").await.unwrap()
+            .map(|(id, _)| id), Some(fid), "subdir cwd resolves to ancestor folder");
+        assert_eq!(s.find_folder_for_path("/_test/sess-nearest").await.unwrap()
+            .map(|(id, _)| id), Some(fid), "exact path resolves too");
+        assert_eq!(s.find_folder_for_path("/_test/nonexistent-xyz/deep").await.unwrap(), None,
+            "uncovered path resolves to nothing");
+    }
+
+    #[tokio::test]
+    async fn record_session_event_folds_into_one_row_and_completes() {
+        // #31: every hook event of a session folds into one row keyed by the
+        // assistant session id; Stop/SessionEnd marks it completed.
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, "sess-record").await;
+        let sid = format!("_test-sid-{}", uuid::Uuid::new_v4());
+        let id1 = s.record_session_event(&sid, &fid, None, "claude", false).await.unwrap();
+        let id2 = s.record_session_event(&sid, &fid, None, "claude", false).await.unwrap();
+        assert_eq!(id1, id2, "same client_session_id must fold into one session row");
+        assert!(s.get_session(&id1).await.unwrap().unwrap()["completed_at"].is_null(),
+            "not completed before an end event");
+        let id3 = s.record_session_event(&sid, &fid, None, "claude", true).await.unwrap();
+        assert_eq!(id3, id1, "end event updates the same row");
+        assert!(!s.get_session(&id1).await.unwrap().unwrap()["completed_at"].is_null(),
+            "Stop/SessionEnd sets completed_at");
+        sqlx_core::query::query("DELETE FROM activity.sessions WHERE id = $1")
+            .bind(id1).execute(s.pool()).await.unwrap();
     }
 
     #[tokio::test]
