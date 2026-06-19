@@ -2139,12 +2139,21 @@ impl PgStore {
     }
 
     pub async fn ensure_test_project(&self, name: &str) -> Result<uuid::Uuid, String> {
+        // Namespace fixtures under `_test:` so leaked rows are identifiable
+        // (and filterable by the Projects screen) and never masquerade as real
+        // projects. Find-or-create by name so repeated test runs reuse one row
+        // instead of minting a fresh UUID each call (#34). Each fixture name is
+        // owned by a single test, so the SELECT-then-INSERT is race-free here.
+        let name = format!("_test:{name}");
+        if let Some(row) = sqlx_core::query_as::query_as::<_, (uuid::Uuid,)>(
+            "SELECT id FROM sensei.projects WHERE name = $1"
+        ).bind(&name).fetch_optional(&self.pool).await.map_err(|e| e.to_string())? {
+            return Ok(row.0);
+        }
         let id = uuid::Uuid::new_v4();
         sqlx_core::query::query(
-            "INSERT INTO sensei.projects (id, name)
-             VALUES ($1, $2)
-             ON CONFLICT (id) DO NOTHING"
-        ).bind(id).bind(name)
+            "INSERT INTO sensei.projects (id, name) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING"
+        ).bind(id).bind(&name)
          .execute(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(id)
     }
@@ -3728,6 +3737,19 @@ mod tests {
         let hits = libs.iter().filter(|l| l["name"] == "_test:@rokkit/core").count();
         assert_eq!(hits, 1, "promoted scoped lib should appear exactly once in resolved view; got {libs:?}");
         s.delete_library(&lib).await.unwrap(); // FK CASCADE removes the project_libraries row
+    }
+
+    #[tokio::test]
+    async fn ensure_test_project_is_namespaced_and_idempotent() {
+        // #34: test fixtures must not accrete a new row per run, nor look like
+        // real projects. Reuse one `_test:`-namespaced row per name.
+        let s = pg_store().await;
+        let a = s.ensure_test_project("dup-check").await.unwrap();
+        let b = s.ensure_test_project("dup-check").await.unwrap();
+        assert_eq!(a, b, "repeated ensure_test_project must reuse one row, not create a new one");
+        let proj = s.get_project(&a).await.unwrap().unwrap();
+        assert_eq!(proj["name"], "_test:dup-check", "test projects must be _test:-namespaced");
+        s.delete_project(&a).await.ok();
     }
 
     #[tokio::test]
