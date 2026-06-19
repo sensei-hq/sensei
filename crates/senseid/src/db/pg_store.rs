@@ -1539,6 +1539,24 @@ impl PgStore {
         Ok(())
     }
 
+    /// Roll a folder-level library reference up to a project-level association
+    /// (sensei.project_libraries), scoped to `project_id`. `referenced_libraries`
+    /// is folder-grained; `project_libraries` is the project↔library M2M the
+    /// indexer owns and which `project_libraries_resolved` (the Projects screen)
+    /// reads. Idempotent and non-destructive: `ON CONFLICT DO NOTHING` preserves
+    /// any user edits to `enabled`/`props` on re-scan.
+    pub async fn upsert_project_library(
+        &self, library_id: &uuid::Uuid, project_id: &uuid::Uuid,
+    ) -> Result<(), String> {
+        sqlx_core::query::query(
+            "INSERT INTO sensei.project_libraries(library_id, project_id)
+             VALUES($1, $2)
+             ON CONFLICT (library_id, project_id) WHERE project_id IS NOT NULL DO NOTHING"
+        ).bind(library_id).bind(project_id)
+            .execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     // ── Verdict measurement ────────────────────────────────────────────
 
     /// Recompute FTR deltas for accepted recommendations with pending verdict.
@@ -3693,6 +3711,23 @@ mod tests {
         assert_eq!(lib["ecosystem"], "cargo");
         assert_eq!(lib["version"], "1.0");
         s.delete_library(&id).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn project_library_promotion_shows_in_resolved_and_is_idempotent() {
+        // #30: referenced_libraries (folder-grained) must roll up to
+        // project_libraries so detected libs — incl. scoped @rokkit/* — show in
+        // project_libraries_resolved (the Projects screen). Was never populated.
+        let s = pg_store().await;
+        let pid = s.ensure_test_project("proj-lib-promo").await.unwrap();
+        let lib = s.upsert_library("_test:@rokkit/core", "npm", Some("1.2"), None, None, None).await.unwrap();
+        // Promote twice — must be idempotent (no error, no duplicate row).
+        s.upsert_project_library(&lib, &pid).await.unwrap();
+        s.upsert_project_library(&lib, &pid).await.unwrap();
+        let libs = s.get_project_libraries(&pid).await.unwrap();
+        let hits = libs.iter().filter(|l| l["name"] == "_test:@rokkit/core").count();
+        assert_eq!(hits, 1, "promoted scoped lib should appear exactly once in resolved view; got {libs:?}");
+        s.delete_library(&lib).await.unwrap(); // FK CASCADE removes the project_libraries row
     }
 
     #[tokio::test]
