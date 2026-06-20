@@ -7,6 +7,7 @@ import type {
   ProjectMemory, DriftItem, PatternEntry, Recommendation,
   ProjectSession, CallFlowModule, CallFlowCall,
   ProjectListItem,
+  KnowledgeSource, NewKnowledgeSourceBody, SyncStats,
 } from './types.js';
 import type {
   MemoryListResponse, MemoryDetail, ContextResponse,
@@ -547,6 +548,19 @@ export function senseiApi(port: number) {
 
     recordOutcomes: (outcomes: OutcomeBody[]) =>
       tryPost<OutcomesBatchResponse>('/api/knowledge/outcomes', { outcomes }),
+
+    // ── Knowledge plane — federation sources ─────────────────────────────
+    listKnowledgeSources: () =>
+      get<{ sources: KnowledgeSource[] }>('/api/knowledge/sources', { sources: [] }),
+
+    createKnowledgeSource: (body: NewKnowledgeSourceBody) =>
+      tryPost<KnowledgeSource>('/api/knowledge/sources', body),
+
+    deleteKnowledgeSource: (id: string) =>
+      tryDelete(`/api/knowledge/sources/${encodeURIComponent(id)}`),
+
+    syncKnowledgeSource: (id: string) =>
+      tryPost<SyncStats>(`/api/knowledge/sources/${encodeURIComponent(id)}/sync`, {}),
 
     // ── Lifecycle ────────────────────────────────────────────────────────
     stop: () => post('/stop', {}, {}),
