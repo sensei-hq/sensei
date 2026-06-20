@@ -576,3 +576,27 @@ export interface LogSession {
     duration_ms: number;
     traces:      (BootstrapTrace | LogEntry)[];
 }
+
+// ─── Knowledge plane — federation sources ────────────────────────────────────
+
+export interface KnowledgeSource {
+  id: string;
+  kind: string;
+  name: string;
+  url: string;
+  namespace_id: string | null;
+  direction: string;
+  last_seq: number | null;
+  enabled: boolean;
+}
+
+export interface NewKnowledgeSourceBody {
+  url: string;
+  key?: string;
+  name?: string;
+  namespace_id?: string;
+}
+
+export interface SyncStats {
+  [k: string]: unknown;
+}
