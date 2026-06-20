@@ -255,7 +255,12 @@ mod tests {
         let store = hive_mind::store::HiveStore::new(db.pool().clone());
         let member = store.create_member("e2e", None, "publisher").await.unwrap();
         let key = store.issue_key(&member, None).await.unwrap().plaintext;
-        Box::leak(Box::new(db)); // keep the embedded PG alive for the spawned server
+        // Hold `db` for the rest of the test (the spawned hive server uses a clone
+        // of its pool) and let it drop at function end, which tears the embedded
+        // postmaster down. The previous `Box::leak` kept it alive forever, orphaning
+        // one postgres process + one SysV shm segment per run — eventually exhausting
+        // SHMMNI and breaking this very test. `_db` keeps the binding live to scope end.
+        let _db = db;
         let app = hive_mind::api::build_router(std::sync::Arc::new(
             hive_mind::api::SharedState { store }));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
