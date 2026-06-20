@@ -22,6 +22,7 @@
     ];
 
     const BOTTOM_ITEMS = [
+        { href: '/knowledge-sources', kanji: '連', label: 'Sources' },
         { href: '/logs',     kanji: '録', label: 'Logs' },
         { href: '/settings', kanji: '設', label: 'Settings' },
     ];
