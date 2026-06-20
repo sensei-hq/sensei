@@ -1,6 +1,7 @@
 //! Remove sensei artifacts — uninstall logic.
 
 use std::fs;
+use std::path::Path;
 
 use super::{cache_dir, home, plugin_dir, sensei_dir, RemoveRequest, RemoveResult};
 
@@ -9,34 +10,48 @@ use super::{cache_dir, home, plugin_dir, sensei_dir, RemoveRequest, RemoveResult
 /// Remove sensei artifacts. With purge=true, also removes project data.
 /// Data directory (~/.sensei/) deletion is handled by the CLI after stopping the daemon.
 pub fn remove(req: &RemoveRequest) -> RemoveResult {
+    // Resolve the real locations once and delegate. The path-injected core lets
+    // tests exercise the logic against a temp dir without uninstalling the
+    // developer's own plugin (the real `claude plugin uninstall` + ~/.claude
+    // deletes would otherwise wipe the running install on every test run).
+    remove_with(req, &home(), &plugin_dir(), &cache_dir(), &sensei_dir(), true)
+}
+
+/// Path-injected core. `run_uninstall` gates the external
+/// `claude plugin uninstall` (skipped in tests so it never touches real config).
+fn remove_with(
+    req: &RemoveRequest,
+    home: &Path,
+    plugin: &Path,
+    cache: &Path,
+    sensei_dir: &Path,
+    run_uninstall: bool,
+) -> RemoveResult {
     let mut result = RemoveResult {
         // CLI uninstall path — no SSE consumer.
-        acps_removed: crate::assistants::remove_selected(&[], None),
+        acps_removed: if run_uninstall { crate::assistants::remove_selected(&[], None) } else { vec![] },
         ..Default::default()
     };
 
     // 2. Remove plugin artifacts (commands, skills, agents, hooks)
-    remove_plugin_artifacts(&mut result);
+    remove_plugin_artifacts(&mut result, home, plugin);
 
     // 3. Clear marketplace cache
-    remove_cache(&mut result);
+    remove_cache(&mut result, cache);
 
     // 4. If purge: remove project .sensei/ dirs
     if req.purge {
-        remove_registered_projects(&mut result);
+        remove_registered_projects(&mut result, sensei_dir);
     }
 
     result
 }
 
 /// Remove plugin directory, commands, skills, agents, hooks config.
-fn remove_plugin_artifacts(result: &mut RemoveResult) {
-    let h = home();
-
+fn remove_plugin_artifacts(result: &mut RemoveResult, h: &Path, plugin: &Path) {
     // Plugin directory (hooks + binaries)
-    let plugin = plugin_dir();
     if plugin.exists() {
-        if let Err(e) = fs::remove_dir_all(&plugin) {
+        if let Err(e) = fs::remove_dir_all(plugin) {
             tracing::warn!(error = %e, path = %plugin.display(), "failed to remove plugin directory during uninstall");
             result.errors.push(format!("plugin dir {}: {}", plugin.display(), e));
         }
@@ -62,10 +77,9 @@ fn remove_plugin_artifacts(result: &mut RemoveResult) {
 }
 
 /// Clear marketplace cache.
-fn remove_cache(result: &mut RemoveResult) {
-    let cache = cache_dir();
+fn remove_cache(result: &mut RemoveResult, cache: &Path) {
     if cache.exists() {
-        if let Err(e) = fs::remove_dir_all(&cache) {
+        if let Err(e) = fs::remove_dir_all(cache) {
             tracing::warn!(error = %e, path = %cache.display(), "failed to clear marketplace cache during uninstall");
             result.errors.push(format!("cache {}: {}", cache.display(), e));
         }
@@ -74,8 +88,8 @@ fn remove_cache(result: &mut RemoveResult) {
 }
 
 /// Remove .sensei/ dirs from all registered projects.
-fn remove_registered_projects(result: &mut RemoveResult) {
-    let projects_file = sensei_dir().join("projects.json");
+fn remove_registered_projects(result: &mut RemoveResult, sensei_dir: &Path) {
+    let projects_file = sensei_dir.join("projects.json");
     // projects.json stores a root JSON array of path strings (Vec<String>).
     // Do NOT read it as a serde_json::Value and then index ["projects"] —
     // that key does not exist and always returns null.
@@ -411,8 +425,19 @@ mod tests {
 
     #[test]
     fn remove_without_purge_does_not_clean_projects() {
-        let req = RemoveRequest { purge: false };
-        let result = remove(&req);
+        // Run the path-injected core against a temp home with the external
+        // `claude plugin uninstall` skipped — calling the real remove() here used
+        // to uninstall sensei from the developer's own ~/.claude on every test run.
+        let tmp = tempfile::tempdir().unwrap();
+        let h = tmp.path();
+        let result = remove_with(
+            &RemoveRequest { purge: false },
+            h,
+            &h.join(".claude/plugins/sensei"),
+            &h.join(".sensei/cache/marketplace"),
+            &h.join(".sensei"),
+            false,
+        );
         assert!(result.projects_cleaned.is_empty());
     }
 
