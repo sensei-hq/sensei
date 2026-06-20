@@ -1,15 +1,11 @@
 <script lang="ts">
     import { page } from '$app/state';
     import { Eyebrow } from '$lib/components';
-    import { openProjectWindow } from '$lib/stores/windows.svelte.js';
-
-    type SidebarProject = { id: string; name: string; kanji: string };
 
     interface Props {
-        projects: SidebarProject[];
         port: number;
     }
-    let { projects, port }: Props = $props();
+    let { port }: Props = $props();
 
     const NAV_ITEMS = [
         { href: '/',            kanji: '家', label: 'Today' },
@@ -75,45 +71,12 @@
         </a>
     {/snippet}
 
-    {#snippet projectItem(proj: SidebarProject, isCollapsed: boolean)}
-        {@const active = !isCollapsed && isActive(`/projects/${proj.id}`)}
-        <button
-            type="button"
-            class="nav-item flex items-center py-2 rounded-md text-sm text-ink-mute no-underline transition-colors duration-fast hover:bg-paper-mute bg-none border-none cursor-pointer w-full"
-            class:justify-center={isCollapsed}
-            class:gap-2.5={!isCollapsed}
-            class:px-2.5={!isCollapsed}
-            class:text-left={!isCollapsed}
-            onclick={() =>
-                openProjectWindow(proj.id, proj.name).catch(console.error)}
-            title={isCollapsed ? `${proj.name} ↗` : `${proj.name} ↗ opens in its own window`}
-        >
-            <span
-                class="kanji text-sm w-3.5 text-ink-soft"
-                class:nav-kanji-active={active}
-            >{proj.kanji}</span>
-            {#if !isCollapsed}
-                <span class="nav-label">{proj.name}</span>
-                <span class="text-xs opacity-40 ml-auto">↗</span>
-            {/if}
-        </button>
-    {/snippet}
-
     {#if collapsed}
         <nav class="flex flex-col gap-px">
             {#each NAV_ITEMS as item (item.href)}
                 {@render navItem(item, true)}
             {/each}
         </nav>
-
-        {#if projects.length > 0}
-            <div class="h-px bg-paper-mute mx-2.5"></div>
-            <nav class="flex flex-col gap-px">
-                {#each projects as proj (proj.id)}
-                    {@render projectItem(proj, true)}
-                {/each}
-            </nav>
-        {/if}
 
         <div class="mt-auto pt-2.5 border-t border-paper-mute">
             <button
@@ -131,17 +94,6 @@
                 {/each}
             </nav>
         </div>
-
-        {#if projects.length > 0}
-            <div class="flex flex-col gap-0.5">
-                <p class="px-2.5 pb-2 m-0"><Eyebrow>Projects</Eyebrow></p>
-                <nav class="flex flex-col gap-px">
-                    {#each projects as proj (proj.id)}
-                        {@render projectItem(proj, false)}
-                    {/each}
-                </nav>
-            </div>
-        {/if}
 
         <div class="flex flex-col gap-0.5 mt-auto">
             <nav class="flex flex-col gap-px">
