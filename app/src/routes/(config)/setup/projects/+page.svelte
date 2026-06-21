@@ -157,11 +157,12 @@
                 <span class="font-mono inline-flex items-center gap-2 text-[11px] py-1 pl-2 pr-1 bg-paper-soft border border-paper-mute rounded-sm">
                   <span class="text-ink-mute">{folder.name}</span>
                   <select
-                    value={folder.role ?? 'backend'}
+                    value={folder.role ?? ''}
                     onchange={(e) => setRole(folder, (e.target as HTMLSelectElement).value)}
                     aria-label={`Role for ${folder.name}`}
                     class="role-select font-mono text-[11px] py-0.5 px-1.5 rounded-sm border-none outline-none cursor-pointer font-semibold {roleClass(folder.role)}"
                   >
+                    <option value="">Unassigned</option>
                     {#each ROLES as r}
                       <option value={r.id}>{r.label}</option>
                     {/each}
