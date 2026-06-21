@@ -851,15 +851,34 @@ impl PgStore {
 
     /// List all sessions across all folders.
     pub async fn list_all_sessions(&self, limit: i64) -> Result<Vec<serde_json::Value>, String> {
-        let rows: Vec<(uuid::Uuid, uuid::Uuid, String, Option<String>, Option<bool>, i32, chrono::DateTime<chrono::Utc>)> =
-            sqlx_core::query_as::query_as(
-                "SELECT id, folder_id, task, outcome::text, ftr, turns, started_at
-                 FROM activity.sessions ORDER BY started_at DESC LIMIT $1"
-            ).bind(limit).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
-        Ok(rows.into_iter().map(|(id, fid, task, outcome, ftr, turns, started)| {
+        // Join the project name so each session can be labelled, and return the
+        // timestamps in the camelCase shape the SessionData wire type and the
+        // observatory components actually read (startedAt / completedAt). The
+        // old shape returned folder_id (a bare uuid, never a project name) and
+        // snake_case `started_at` with no `completed_at`, so every displayed
+        // column — project, task time, duration — came back blank (#61).
+        type SessionRow = (
+            uuid::Uuid, Option<String>, String, Option<String>, Option<String>,
+            Option<bool>, i32, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>,
+        );
+        let rows: Vec<SessionRow> = sqlx_core::query_as::query_as(
+            "SELECT s.id, p.name, s.task, s.summary, s.outcome::text, s.ftr, s.turns,
+                    s.started_at, s.completed_at
+             FROM activity.sessions s
+             LEFT JOIN sensei.projects p ON p.id = s.project_id
+             ORDER BY s.started_at DESC LIMIT $1"
+        ).bind(limit).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id, project, task, summary, outcome, ftr, turns, started, completed)| {
             serde_json::json!({
-                "id": id, "folder_id": fid, "task": task, "outcome": outcome,
-                "ftr": ftr, "turns": turns, "started_at": started.to_rfc3339(),
+                "id": id,
+                "project": project,
+                "task": task,
+                "summary": summary,
+                "outcome": outcome,
+                "ftr": ftr,
+                "turns": turns,
+                "startedAt": started.to_rfc3339(),
+                "completedAt": completed.map(|c| c.to_rfc3339()),
             })
         }).collect())
     }
@@ -3819,6 +3838,37 @@ mod tests {
             "Stop/SessionEnd sets completed_at");
         sqlx_core::query::query("DELETE FROM activity.sessions WHERE id = $1")
             .bind(id1).execute(s.pool()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn list_all_sessions_joins_project_and_uses_camelcase_times() {
+        // #61: the observatory reads project name + startedAt/completedAt. The
+        // returned row must carry the joined project NAME (not a bare folder
+        // uuid) under camelCase timestamp keys, with completedAt set once the
+        // session ends — otherwise every displayed column renders blank.
+        let s = pg_store().await;
+        let proj_name = format!("_test:obs-{}", uuid::Uuid::new_v4());
+        let pid = s.create_project(&proj_name, None, None).await.unwrap();
+        let fid = create_test_folder(&s, "obs-sess").await;
+        let sid = format!("_test-sid-{}", uuid::Uuid::new_v4());
+        let session_id = s.record_session_event(&sid, &fid, Some(&pid), "claude", false).await.unwrap();
+        s.record_session_event(&sid, &fid, Some(&pid), "claude", true).await.unwrap();
+
+        let all = s.list_all_sessions(500).await.unwrap();
+        let row = all.iter()
+            .find(|r| r["id"].as_str() == Some(session_id.to_string().as_str()))
+            .expect("our session is listed");
+
+        assert_eq!(row["project"], serde_json::json!(proj_name), "project name is joined, not a folder uuid");
+        assert!(row["startedAt"].as_str().is_some(), "startedAt present (camelCase)");
+        assert!(row.get("started_at").is_none(), "no stale snake_case started_at key");
+        assert!(row["completedAt"].as_str().is_some(), "completedAt set after the end event");
+        assert!(row.get("folder_id").is_none(), "folder_id no longer leaks in place of the project");
+
+        sqlx_core::query::query("DELETE FROM activity.sessions WHERE id = $1")
+            .bind(session_id).execute(s.pool()).await.unwrap();
+        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+            .bind(pid).execute(s.pool()).await.unwrap();
     }
 
     #[tokio::test]

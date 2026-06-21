@@ -1,6 +1,7 @@
 import type { PageLoad } from './$types.js';
 import { senseiApi } from '$lib/api.js';
 import { appState } from '$lib/appstate.svelte.js';
+import { toRecentSessions } from './recent-sessions.js';
 
 export const load: PageLoad = async () => {
   const api = senseiApi(appState.port);
@@ -41,7 +42,10 @@ export const load: PageLoad = async () => {
   // early-mode hero body ("Sensei has watched N sessions so far…"). The
   // daemon returns sessions newest-first; no extra sort needed.
   const allSessions = sessionsData.sessions ?? [];
-  const recentSessions = allSessions.slice(0, 4);
+  // Shape into the RecentSessions display contract: real project name + label,
+  // dropping contentless ghost rows (#61). sessionsTotal still counts every
+  // captured session (drives the early-mode hero), independent of display.
+  const recentSessions = toRecentSessions(allSessions, 4);
   const sessionsTotal  = allSessions.length;
 
   return {
