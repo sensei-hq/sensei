@@ -19,7 +19,10 @@
 
     onMount(async () => {
         const api = senseiApi(appState.port);
-        const data = await api.getLibs({ shared: true });
+        // Show every detected library annotated with its usage count (repoCount),
+        // not just those shared across ≥2 repos — `shared: true` hid single-repo
+        // libs entirely, which is why most @rokkit/* packages never appeared (#63).
+        const data = await api.getLibs({});
         libs = data.libs;
         loading = false;
     });

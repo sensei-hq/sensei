@@ -255,7 +255,7 @@ pub async fn extract_deps(ctx: &TaskContext, task: &Task) -> Result<u32, String>
     for dep in &deps {
         let ecosystem = match dep.source.as_str() {
             "package.json" => "npm",
-            "Cargo.toml" => "crates",
+            "Cargo.toml" => "cargo",
             "pyproject.toml" => "pypi",
             _ => "npm",
         };
@@ -285,6 +285,87 @@ pub async fn extract_deps(ctx: &TaskContext, task: &Task) -> Result<u32, String>
             }
     }
 
-    tracing::info!("extract_deps: {} — {} deps from manifests", folder_name, count);
-    Ok(count)
+    // First-party workspace packages are libraries this project PROVIDES — a
+    // monorepo's own publishable packages (e.g. every @scope/* under
+    // packages/*). Register the PUBLIC ones so they appear in the Libraries
+    // view attributed to this folder, independent of whether any indexed repo
+    // depends on them. Private (non-publishable) members are skipped (#63).
+    let members = crate::config::detector::detect_workspace_members(std::path::Path::new(repo_path));
+    let mut member_count = 0u32;
+    for (name, ecosystem, version) in public_member_libs(&members) {
+        let lib_id = match ctx.pg().upsert_library(&name, ecosystem, version.as_deref(), None, None, None).await {
+            Ok(id) => id,
+            Err(e) => {
+                tracing::warn!(error = %e, lib = %name, "extract_deps: upsert_library (workspace member) failed");
+                continue;
+            }
+        };
+        if let Err(e) = ctx.pg().upsert_referenced_library(&folder_id, &lib_id, version.as_deref()).await {
+            tracing::warn!(error = %e, lib = %name, folder = %folder_name, "extract_deps: upsert_referenced_library (workspace member) failed");
+            continue;
+        }
+        member_count += 1;
+        if let Some(pid) = project_id
+            && let Err(e) = ctx.pg().upsert_project_library(&lib_id, &pid).await {
+                tracing::warn!(error = %e, lib = %name, "extract_deps: upsert_project_library (workspace member) failed");
+            }
+    }
+
+    tracing::info!(
+        "extract_deps: {} — {} deps from manifests, {} first-party workspace packages",
+        folder_name, count, member_count,
+    );
+    Ok(count + member_count)
+}
+
+/// Public (non-private) workspace members mapped to `(name, ecosystem, version)`
+/// for registration as first-party libraries. Private members are excluded so
+/// only publishable packages reach the global Libraries view (#63).
+fn public_member_libs(
+    members: &[crate::types::PackageInfo],
+) -> Vec<(String, &'static str, Option<String>)> {
+    members.iter()
+        .filter(|m| !m.private)
+        .map(|m| {
+            let ecosystem = match m.pkg_type.as_str() {
+                "cargo_crate" => "cargo",
+                "go_module"   => "go",
+                _              => "npm", // npm_workspace + any future JS variant
+            };
+            (m.name.clone(), ecosystem, m.version.clone())
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::PackageInfo;
+
+    fn member(name: &str, pkg_type: &str, private: bool) -> PackageInfo {
+        PackageInfo {
+            name: name.into(), path: name.into(), version: Some("1.0.0".into()),
+            pkg_type: pkg_type.into(), private,
+        }
+    }
+
+    #[test]
+    fn public_member_libs_skips_private_and_maps_valid_ecosystems() {
+        let members = vec![
+            member("@m/ui", "npm_workspace", false),
+            member("@m/secret", "npm_workspace", true), // private → excluded
+            member("my-crate", "cargo_crate", false),
+            member("example.com/mod", "go_module", false),
+        ];
+        let libs = public_member_libs(&members);
+        let names: Vec<&str> = libs.iter().map(|(n, _, _)| n.as_str()).collect();
+        assert!(names.contains(&"@m/ui"));
+        assert!(!names.contains(&"@m/secret"), "private members are excluded");
+        let eco = |n: &str| libs.iter().find(|(name, _, _)| name == n).map(|(_, e, _)| *e);
+        // Must be valid `library_ecosystem` enum labels (npm/cargo/go) — NOT
+        // "crates", which silently failed the cast and dropped every cargo lib.
+        assert_eq!(eco("@m/ui"), Some("npm"));
+        assert_eq!(eco("my-crate"), Some("cargo"));
+        assert_eq!(eco("example.com/mod"), Some("go"));
+    }
 }

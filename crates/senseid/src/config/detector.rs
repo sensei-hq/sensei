@@ -13,18 +13,22 @@ pub fn detect_workspace_members(repo_path: &Path) -> Vec<crate::types::PackageIn
                 for entry in resolve_glob_members(repo_path, pattern) {
                     let pkg_json = repo_path.join(&entry).join("package.json");
                     if pkg_json.exists() {
-                        let name = std::fs::read_to_string(&pkg_json).ok()
-                            .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
+                        let pkg = std::fs::read_to_string(&pkg_json).ok()
+                            .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok());
+                        let name = pkg.as_ref()
                             .and_then(|v| v.get("name").and_then(|n| n.as_str()).map(|s| s.to_string()))
                             .unwrap_or_else(|| entry.clone());
-                        let version = std::fs::read_to_string(&pkg_json).ok()
-                            .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
+                        let version = pkg.as_ref()
                             .and_then(|v| v.get("version").and_then(|n| n.as_str()).map(|s| s.to_string()));
+                        let private = pkg.as_ref()
+                            .and_then(|v| v.get("private").and_then(|b| b.as_bool()))
+                            .unwrap_or(false);
                         members.push(crate::types::PackageInfo {
                             name,
                             path: entry,
                             version,
                             pkg_type: "npm_workspace".to_string(),
+                            private,
                         });
                     }
                 }
@@ -41,15 +45,22 @@ pub fn detect_workspace_members(repo_path: &Path) -> Vec<crate::types::PackageIn
                             for entry in resolve_glob_members(repo_path, pattern) {
                                 let pkg_json = repo_path.join(&entry).join("package.json");
                                 if pkg_json.exists() {
-                                    let name = std::fs::read_to_string(&pkg_json).ok()
-                                        .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
+                                    let pkg = std::fs::read_to_string(&pkg_json).ok()
+                                        .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok());
+                                    let name = pkg.as_ref()
                                         .and_then(|v| v.get("name").and_then(|n| n.as_str()).map(|s| s.to_string()))
                                         .unwrap_or_else(|| entry.clone());
+                                    let version = pkg.as_ref()
+                                        .and_then(|v| v.get("version").and_then(|n| n.as_str()).map(|s| s.to_string()));
+                                    let private = pkg.as_ref()
+                                        .and_then(|v| v.get("private").and_then(|b| b.as_bool()))
+                                        .unwrap_or(false);
                                     members.push(crate::types::PackageInfo {
                                         name,
                                         path: entry,
-                                        version: None,
+                                        version,
                                         pkg_type: "npm_workspace".to_string(),
+                                        private,
                                     });
                                 }
                             }
@@ -67,18 +78,21 @@ pub fn detect_workspace_members(repo_path: &Path) -> Vec<crate::types::PackageIn
                             for entry in resolve_glob_members(repo_path, pattern) {
                                 let cargo_toml = repo_path.join(&entry).join("Cargo.toml");
                                 if cargo_toml.exists() {
-                                    let name = std::fs::read_to_string(&cargo_toml).ok()
-                                        .and_then(|c| c.parse::<toml::Value>().ok())
-                                        .and_then(|v| v.get("package").and_then(|p| p.get("name")).and_then(|n| n.as_str()).map(|s| s.to_string()))
+                                    let manifest = std::fs::read_to_string(&cargo_toml).ok()
+                                        .and_then(|c| c.parse::<toml::Value>().ok());
+                                    let pkg = manifest.as_ref().and_then(|v| v.get("package"));
+                                    let name = pkg
+                                        .and_then(|p| p.get("name")).and_then(|n| n.as_str()).map(|s| s.to_string())
                                         .unwrap_or_else(|| entry.clone());
-                                    let version = std::fs::read_to_string(&cargo_toml).ok()
-                                        .and_then(|c| c.parse::<toml::Value>().ok())
-                                        .and_then(|v| v.get("package").and_then(|p| p.get("version")).and_then(|n| n.as_str()).map(|s| s.to_string()));
+                                    let version = pkg
+                                        .and_then(|p| p.get("version")).and_then(|n| n.as_str()).map(|s| s.to_string());
+                                    let private = cargo_publish_disabled(pkg);
                                     members.push(crate::types::PackageInfo {
                                         name,
                                         path: entry,
                                         version,
                                         pkg_type: "cargo_crate".to_string(),
+                                        private,
                                     });
                                 }
                             }
@@ -102,18 +116,21 @@ pub fn detect_workspace_members(repo_path: &Path) -> Vec<crate::types::PackageIn
                     if !cargo_toml.exists() { continue; }
                     let rel_path = format!("{}/{}", dir_name, entry.file_name().to_string_lossy());
                     if cargo_member_paths.contains(&rel_path) { continue; } // already found via workspace
-                    let name = std::fs::read_to_string(&cargo_toml).ok()
-                        .and_then(|c| c.parse::<toml::Value>().ok())
-                        .and_then(|v| v.get("package").and_then(|p| p.get("name")).and_then(|n| n.as_str()).map(|s| s.to_string()));
+                    let manifest = std::fs::read_to_string(&cargo_toml).ok()
+                        .and_then(|c| c.parse::<toml::Value>().ok());
+                    let pkg = manifest.as_ref().and_then(|v| v.get("package"));
+                    let name = pkg
+                        .and_then(|p| p.get("name")).and_then(|n| n.as_str()).map(|s| s.to_string());
                     if let Some(name) = name {
-                        let version = std::fs::read_to_string(&cargo_toml).ok()
-                            .and_then(|c| c.parse::<toml::Value>().ok())
-                            .and_then(|v| v.get("package").and_then(|p| p.get("version")).and_then(|n| n.as_str()).map(|s| s.to_string()));
+                        let version = pkg
+                            .and_then(|p| p.get("version")).and_then(|n| n.as_str()).map(|s| s.to_string());
+                        let private = cargo_publish_disabled(pkg);
                         members.push(crate::types::PackageInfo {
                             name,
                             path: rel_path,
                             version,
                             pkg_type: "cargo_crate".to_string(),
+                            private,
                         });
                     }
                 }
@@ -140,6 +157,7 @@ pub fn detect_workspace_members(repo_path: &Path) -> Vec<crate::types::PackageIn
                         path: dir.to_string(),
                         version: None,
                         pkg_type: "go_module".to_string(),
+                        private: false,
                     });
                 }
             }
@@ -147,6 +165,15 @@ pub fn detect_workspace_members(repo_path: &Path) -> Vec<crate::types::PackageIn
     }
 
     members
+}
+
+/// A Cargo package is non-publishable when `publish = false` or `publish = []`.
+fn cargo_publish_disabled(pkg: Option<&toml::Value>) -> bool {
+    match pkg.and_then(|p| p.get("publish")) {
+        Some(toml::Value::Boolean(false)) => true,
+        Some(toml::Value::Array(a)) => a.is_empty(),
+        _ => false,
+    }
 }
 
 /// Extract workspace glob patterns from package.json.
@@ -261,6 +288,35 @@ mod tests {
         let members = detect_workspace_members(dir.path());
         assert_eq!(members.len(), 1);
         assert_eq!(members[0].name, "@yarn/lib");
+    }
+
+    #[test]
+    fn captures_private_npm_members_and_publishes_the_rest() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join("package.json"), r#"{"name":"mono","workspaces":["packages/*"]}"#).unwrap();
+        std::fs::create_dir_all(dir.path().join("packages/pub")).unwrap();
+        std::fs::write(dir.path().join("packages/pub/package.json"), r#"{"name":"@m/pub","version":"1.2.3"}"#).unwrap();
+        std::fs::create_dir_all(dir.path().join("packages/secret")).unwrap();
+        std::fs::write(dir.path().join("packages/secret/package.json"), r#"{"name":"@m/secret","private":true}"#).unwrap();
+        let members = detect_workspace_members(dir.path());
+        let pubm = members.iter().find(|m| m.name == "@m/pub").expect("public member found");
+        let secret = members.iter().find(|m| m.name == "@m/secret").expect("private member found");
+        assert!(!pubm.private, "a publishable package is public");
+        assert_eq!(pubm.version.as_deref(), Some("1.2.3"));
+        assert!(secret.private, "private:true package is marked private");
+    }
+
+    #[test]
+    fn cargo_publish_false_marks_member_private() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join("Cargo.toml"), "[workspace]\nmembers = [\"crates/*\"]").unwrap();
+        std::fs::create_dir_all(dir.path().join("crates/internal")).unwrap();
+        std::fs::write(dir.path().join("crates/internal/Cargo.toml"), "[package]\nname = \"internal\"\nversion = \"0.1.0\"\npublish = false").unwrap();
+        std::fs::create_dir_all(dir.path().join("crates/public")).unwrap();
+        std::fs::write(dir.path().join("crates/public/Cargo.toml"), "[package]\nname = \"public\"\nversion = \"0.1.0\"").unwrap();
+        let members = detect_workspace_members(dir.path());
+        assert!(members.iter().find(|m| m.name == "internal").unwrap().private, "publish=false ⇒ private");
+        assert!(!members.iter().find(|m| m.name == "public").unwrap().private, "no publish key ⇒ public");
     }
 
     #[test]
