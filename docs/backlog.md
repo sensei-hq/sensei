@@ -31,9 +31,12 @@ Layered scope×enforcement rule model, `scopes`+`namespaces` (level-based set me
 | [#30](https://github.com/sensei-hq/sensei/issues/30) | Rokkit not detected as a library (scoped `@rokkit/*` packages missed by resolver) |
 | [#31](https://github.com/sensei-hq/sensei/issues/31) | `activity.sessions` empty despite Claude hooks firing |
 | [#32](https://github.com/sensei-hq/sensei/issues/32) | Queue activity event hardcodes `elapsed=0.0` (`process.rs:80`) |
-| [#33](https://github.com/sensei-hq/sensei/issues/33) | Scan emits no progress events after initial queue + discover-message substring mismatch |
+| [#33](https://github.com/sensei-hq/sensei/issues/33) | Scan live-feed: emit `Process`-level activity events during indexing + align discover/summary message vocabulary (`quasi-repo`→`standalone`). **Down-scoped** — the original two halves shipped: client counts by `level`/`status` (no message scraping, `scan-state.svelte.ts`) and `progress_emitter.rs` emits running `folder_update`/final `indexed`/`project_update→active`. Remaining gap: `ActivityLevel::Process` is defined but never emitted, so the textual activity log goes silent through the indexing phase even though the bars animate. |
 | [#34](https://github.com/sensei-hq/sensei/issues/34) | Test fixture projects pollute the dev DB (`ensure_test_project`) |
 | [#35](https://github.com/sensei-hq/sensei/issues/35) | Scan stats: queued cumulative vs processed current-state |
+| [#62](https://github.com/sensei-hq/sensei/issues/62) | Single repo w/ multiple folders misclassified as multi-repo — every folder promoted to a repo + generic tags (Acolytes). Needs root-cause analysis |
+| [#63](https://github.com/sensei-hq/sensei/issues/63) | rokkit monorepo: only some `@rokkit/*` packages detected as libraries (#30 follow-up — partial fix) |
+| [#64](https://github.com/sensei-hq/sensei/issues/64) | Task-queue "blocked" logs don't identify what was blocked or why |
 | ✅ SHIPPED + DEPLOYED (2026-06-17) | **`node_kind` enum silently dropped `doc`/`struct`/`component`/`hook`/`extension` nodes** (`upsert_node` enum cast failed; `.ok()` swallowed). Fixed on develop (`9b01da2f`→`95af9848`, DDL `171ad9b4`): 5 kinds added to enum, dead variants removed, guard test, embedding allowlist widened, `.ok()` swallow → `tracing::warn!`. Prod reset+rebuilt + validated live (doc 263, hook 152, component 103, struct 5, extension 49; covers 150, references 3421 — all were 0). Plus export/import infra for capture preservation. Full `/Users/Jerry/Developer` rescan still running. Spec/plan: `docs/superpowers/{specs,plans}/2026-06-16-node-kind-drops*`. |
 | _(follow-up)_ | **Codebase-wide silent-error audit.** Find & fix every place that discards an error without logging (`.ok()`, `let _ =`, empty catch, masking `unwrap_or_default`) — errors must be logged so they can be inspected/rectified. Directed after the node_kind fix; the latter is one instance. |
 
@@ -49,12 +52,14 @@ Layered scope×enforcement rule model, `scopes`+`namespaces` (level-based set me
 | Issue | Summary |
 |-------|---------|
 | [#38](https://github.com/sensei-hq/sensei/issues/38) | Learnings vs Insights overlap — decide `/insights` purpose |
+| [#61](https://github.com/sensei-hq/sensei/issues/61) | Recent sessions renders empty/ghost rows — session API contract drift + render contentless rows. **Fixing now** |
 
 ## 5. Daemon pipeline & API + tooling (features)
 
 | Issue | Summary |
 |-------|---------|
 | [#40](https://github.com/sensei-hq/sensei/issues/40) | Scan pipeline: progress + edge/connection events (pairs with #33) |
+| [#65](https://github.com/sensei-hq/sensei/issues/65) | Periodic session/log analyzer → findings, learnings/memory, recommendations (recommendation/pattern writers — tables exist, no writers; needs analysis + design) |
 | [#41](https://github.com/sensei-hq/sensei/issues/41) | API alignment: missing endpoints (scan roots CRUD, libs configure, mcp registry/configure, projects merge) |
 | _(file issue)_ | Surface stale / orphaned / unused projects & folders for cleanup. Scan reconcile already tags dead-but-ambiguous folders `stale` and empty projects `orphaned` (never auto-deletes). Needs: list endpoints + a gated purge action + a housekeeping UI (Observatory Configure or Projects setup). Last `~/Developer` rescan: 6 stale folders, 44 orphaned projects. |
 | [#39](https://github.com/sensei-hq/sensei/issues/39) | Bootstrap diagnostic logging + debug mode (trace, log viewer, app menu, GitHub submit) |
