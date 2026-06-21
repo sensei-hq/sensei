@@ -43,7 +43,7 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
         if f.kind == FolderKind::Standalone {
             emit(StateEvent::activity(ActivityEvent::new(
                 ActivityLevel::Discover,
-                &format!("{} · quasi-repo (no .git)", f.path.display()),
+                &format!("{} · standalone folder", f.path.display()),
                 start.elapsed().as_secs_f64(),
             )));
         }
@@ -117,11 +117,11 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
 
     emit(StateEvent::activity(ActivityEvent::new(
         ActivityLevel::Info,
-        &format!("{} git · {} quasi-repo project roots discovered", git_count, quasi_count),
+        &format!("{} git · {} standalone project roots discovered", git_count, quasi_count),
         start.elapsed().as_secs_f64(),
     )));
 
-    tracing::info!("scan_root: {} git, {} quasi-repo project roots in {}",
+    tracing::info!("scan_root: {} git, {} standalone project roots in {}",
         git_count, quasi_count, task.path);
     Ok((git_count + quasi_count) as u32)
 }
@@ -450,6 +450,6 @@ mod tests {
         assert_eq!(infos.len(), 1);
         let msg = infos[0].data["message"].as_str().unwrap();
         assert!(msg.contains("2 git"), "summary: {}", msg);
-        assert!(msg.contains("1 quasi-repo"), "summary: {}", msg);
+        assert!(msg.contains("1 standalone"), "summary: {}", msg);
     }
 }
