@@ -279,6 +279,11 @@ pub struct PackageInfo {
     pub version: Option<String>,
     /// npm_workspace, cargo_crate, pip_package, go_module, etc.
     pub pkg_type: String,
+    /// True when the package is marked non-publishable — npm `"private": true`
+    /// or Cargo `publish = false` / `publish = []`. First-party but not public,
+    /// so excluded from the global Libraries view (#63).
+    #[serde(default)]
+    pub private: bool,
 }
 
 #[cfg(test)]
