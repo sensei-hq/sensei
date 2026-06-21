@@ -2728,9 +2728,15 @@ impl PgStore {
     }
 
     pub async fn get_project_repos(&self, project_id: &uuid::Uuid) -> Result<Vec<serde_json::Value>, String> {
+        // Only project ROOTS are repos. `kind='folder'` rows are the navigable
+        // subfolder tree (materialized by process_git_folder) and must NOT be
+        // listed as repos — otherwise a single-repo project with N subfolders
+        // renders as an N+1-repo "multi-repo" project (#62). The data is correct;
+        // this read path was projecting the subfolder tree as repos.
         let rows: Vec<(uuid::Uuid, String, String, Option<String>)> =
             sqlx_core::query_as::query_as(
-                "SELECT id, name, abs_path, kind::text FROM sensei.folders WHERE project_id = $1 ORDER BY name"
+                "SELECT id, name, abs_path, kind::text FROM sensei.folders
+                 WHERE project_id = $1 AND kind::text <> 'folder' ORDER BY name"
             ).bind(project_id)
             .fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
 
@@ -3869,6 +3875,33 @@ mod tests {
             .bind(session_id).execute(s.pool()).await.unwrap();
         sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
             .bind(pid).execute(s.pool()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn get_project_repos_excludes_subfolder_tree() {
+        // #62: a single-repo project with subfolders must list only its repo
+        // root(s), never the kind='folder' subfolder tree — else the UI shows it
+        // as a multi-repo project with every folder as a repo.
+        let s = pg_store().await;
+        let pid = s.create_project(&format!("_test:repos-{}", uuid::Uuid::new_v4()), None, None).await.unwrap();
+        s.execute_raw(
+            "INSERT INTO sensei.folders_to_watch(id, path, name, status) VALUES('00000000-0000-0000-0000-000000000001', '/_test', '_test', 'watching'::sensei.watch_status) ON CONFLICT DO NOTHING"
+        ).await.unwrap();
+        let git_abs = format!("/_test/repos-git-{}", uuid::Uuid::new_v4());
+        let sub_abs = format!("/_test/repos-sub-{}", uuid::Uuid::new_v4());
+        sqlx_core::query::query(
+            "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path, project_id) VALUES
+               ('00000000-0000-0000-0000-000000000001','git'::sensei.folder_kind,'the-repo','the-repo',$1,$3),
+               ('00000000-0000-0000-0000-000000000001','folder'::sensei.folder_kind,'subdir','subdir',$2,$3)"
+        ).bind(&git_abs).bind(&sub_abs).bind(pid).execute(s.pool()).await.unwrap();
+
+        let repos = s.get_project_repos(&pid).await.unwrap();
+        let kinds: Vec<String> = repos.iter().filter_map(|r| r["kind"].as_str().map(str::to_string)).collect();
+        assert!(kinds.iter().any(|k| k == "git"), "the repo root is listed: {kinds:?}");
+        assert!(!kinds.iter().any(|k| k == "folder"), "kind=folder subfolders excluded: {kinds:?}");
+
+        sqlx_core::query::query("DELETE FROM sensei.folders WHERE project_id = $1").bind(pid).execute(s.pool()).await.unwrap();
+        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1").bind(pid).execute(s.pool()).await.unwrap();
     }
 
     #[tokio::test]
