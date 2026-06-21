@@ -445,7 +445,9 @@ export interface DepVersion {
 export interface SessionData {
   stats: Record<string, unknown> | null;
   sessions: Array<{
-    id: string; task: string; project: string; startedAt: string;
+    // project is LEFT JOINed from the session's project_id, so it can be null
+    // for a session whose folder isn't linked to a project yet.
+    id: string; task: string; project: string | null; startedAt: string;
     completedAt?: string; outcome?: string; summary?: string;
     cost?: number; tokensIn?: number; tokensOut?: number; ftr?: number | null;
   }>;
