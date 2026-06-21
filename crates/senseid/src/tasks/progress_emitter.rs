@@ -7,7 +7,7 @@
 //! files (whichever fires first). When the terminal BuildConnections task
 //! for a folder completes, emits a final folder_update with status=Indexed.
 
-use crate::api::events::{StateEvent, ScanFolder, FolderKind, FolderStatus};
+use crate::api::events::{StateEvent, ScanFolder, FolderKind, FolderStatus, ActivityEvent, ActivityLevel};
 use crate::tasks::progress::TaskEvent;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -35,6 +35,12 @@ struct FolderTracker {
     files_failed:    u32,
     last_emit_at:    Instant,
     last_emit_count: u32,
+    /// Set the first time a file result (completed or failed) arrives for this
+    /// folder, so the queued→indexing transition emits exactly one Process
+    /// activity. Without a Process-level event during the (longest) indexing
+    /// phase the scan activity stream goes quiet and the `totalElapsed` timer
+    /// the UI derives from it freezes (#33).
+    announced_indexing: bool,
 }
 
 impl FolderTracker {
@@ -42,6 +48,36 @@ impl FolderTracker {
         now.duration_since(self.last_emit_at) >= THROTTLE_DURATION
             || (self.files_completed.saturating_sub(self.last_emit_count)) >= THROTTLE_FILE_DELTA
     }
+
+    /// Returns `true` exactly once — the first call marks the queued→indexing
+    /// transition so a single Process activity is emitted when real work starts
+    /// on this folder. Idempotent thereafter.
+    fn take_indexing_announcement(&mut self) -> bool {
+        if self.announced_indexing {
+            false
+        } else {
+            self.announced_indexing = true;
+            true
+        }
+    }
+}
+
+/// Per-folder Process activity messages. Kept as pure builders so the wire
+/// strings are unit-testable and live in one place.
+fn indexing_message(folder_name: &str, files_total: u32) -> String {
+    format!("{folder_name} · indexing {files_total} files")
+}
+
+fn indexed_message(folder_name: &str, files_completed: u32) -> String {
+    format!("{folder_name} · indexed {files_completed} files")
+}
+
+/// Elapsed (seconds) since the current scan's first folder was queued. The UI's
+/// `totalElapsed` takes the max elapsed across activity events; emitting Process
+/// events with this scan-relative clock keeps the displayed timer advancing
+/// through the indexing phase instead of freezing at the discovery-phase value.
+fn scan_elapsed(scan_start: Option<Instant>) -> f64 {
+    scan_start.map(|s| s.elapsed().as_secs_f64()).unwrap_or(0.0)
 }
 
 fn scan_folder_from(t: &FolderTracker, status: FolderStatus) -> ScanFolder {
@@ -76,11 +112,18 @@ async fn run(
     pg: Arc<crate::db::pg_store::PgStore>,
 ) {
     let mut trackers: HashMap<String, FolderTracker> = HashMap::new();
+    // Wall-clock start of the current scan batch — set when the first folder is
+    // queued, reset when the last folder finishes. Drives the scan-relative
+    // elapsed on Process activity events (#33).
+    let mut scan_start: Option<Instant> = None;
 
     while let Ok(evt) = task_events.recv().await {
         match evt {
             TaskEvent::FolderQueued { folder_path, files_total } => {
                 if let Some(t) = build_tracker(&pg, &folder_path, files_total).await {
+                    if scan_start.is_none() {
+                        scan_start = Some(Instant::now());
+                    }
                     trackers.insert(folder_path, t);
                 }
             }
@@ -91,6 +134,13 @@ async fn run(
             TaskEvent::Completed { kind, folder_path, .. } if kind == "process_file" => {
                 if let Some(t) = trackers.get_mut(&folder_path) {
                     t.files_completed += 1;
+                    if t.take_indexing_announcement() {
+                        let _ = state_events.send(StateEvent::activity(ActivityEvent::new(
+                            ActivityLevel::Process,
+                            &indexing_message(&t.folder_name, t.files_total),
+                            scan_elapsed(scan_start),
+                        )));
+                    }
                     let now = Instant::now();
                     if t.should_emit(now) {
                         t.last_emit_at = now;
@@ -105,6 +155,13 @@ async fn run(
                 if let Some(t) = trackers.get_mut(&folder_path) {
                     t.files_completed += 1;
                     t.files_failed += 1;
+                    if t.take_indexing_announcement() {
+                        let _ = state_events.send(StateEvent::activity(ActivityEvent::new(
+                            ActivityLevel::Process,
+                            &indexing_message(&t.folder_name, t.files_total),
+                            scan_elapsed(scan_start),
+                        )));
+                    }
                     let now = Instant::now();
                     if t.should_emit(now) {
                         t.last_emit_at = now;
@@ -121,6 +178,11 @@ async fn run(
                     let _ = state_events.send(StateEvent::folder_update(
                         scan_folder_from(&t, FolderStatus::Indexed),
                     ));
+                    let _ = state_events.send(StateEvent::activity(ActivityEvent::new(
+                        ActivityLevel::Process,
+                        &indexed_message(&t.folder_name, t.files_completed),
+                        scan_elapsed(scan_start),
+                    )));
 
                     // Was this the last folder for the project? If so, flip the project to active.
                     let all_indexed = match uuid::Uuid::parse_str(&project_id_str) {
@@ -149,6 +211,11 @@ async fn run(
                             },
                         ));
                     }
+                }
+                // Last folder of the batch finished — reset the scan clock so the
+                // next scan's Process events start from zero again.
+                if trackers.is_empty() {
+                    scan_start = None;
                 }
             }
             _ => {}
@@ -201,6 +268,7 @@ async fn build_tracker(
         files_failed: 0,
         last_emit_at: Instant::now(),
         last_emit_count: 0,
+        announced_indexing: false,
     })
 }
 
@@ -223,6 +291,7 @@ mod tests {
             files_failed: 0,
             last_emit_at: now,
             last_emit_count: 0,
+            announced_indexing: false,
         }
     }
 
@@ -267,5 +336,34 @@ mod tests {
         // files_completed = 25, last_emit_count = 25.
         for _ in 0..24 { assert!(!tick(&mut t, t0)); }  // 49 files total, delta of 24 — no emit
         assert!(tick(&mut t, t0));                       // 50 files, delta of 25 — emit
+    }
+
+    #[test]
+    fn indexing_and_indexed_messages_format() {
+        assert_eq!(indexing_message("app", 842), "app · indexing 842 files");
+        assert_eq!(indexed_message("app", 840), "app · indexed 840 files");
+    }
+
+    #[test]
+    fn announces_indexing_exactly_once() {
+        let mut t = fresh_tracker(10, Instant::now());
+        assert!(t.take_indexing_announcement(), "first file announces indexing");
+        assert!(!t.take_indexing_announcement(), "subsequent files do not re-announce");
+        assert!(!t.take_indexing_announcement());
+    }
+
+    #[test]
+    fn process_activity_serializes_with_process_level() {
+        // Pin the wire contract: the front-end ActivityLevel union includes
+        // 'process'; a mismatch here would silently drop the event client-side.
+        let evt = ActivityEvent::new(ActivityLevel::Process, &indexing_message("app", 5), 1.5);
+        let json = serde_json::to_value(&evt).unwrap();
+        assert_eq!(json["level"], "process");
+        assert_eq!(json["message"], "app · indexing 5 files");
+    }
+
+    #[test]
+    fn scan_elapsed_is_zero_when_unset() {
+        assert_eq!(scan_elapsed(None), 0.0);
     }
 }

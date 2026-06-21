@@ -243,7 +243,7 @@ describe('ScanActivityState', () => {
     state.add(activity('a1', 'discover', '/code/lumen · git folder', 0.1));
     state.add(activity('a2', 'discover', '/code/lumen/app · git folder', 0.18));
     state.add(activity('a3', 'discover', '/code/canvas · standalone folder', 0.22));
-    state.add(activity('a4', 'info', '3 git · 0 sibling · 1 standalone folders discovered', 0.30));
+    state.add(activity('a4', 'info', '3 git · 1 standalone project roots discovered', 0.30));
     expect(state.discovered).toBe(3);
   });
 
