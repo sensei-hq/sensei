@@ -1879,6 +1879,47 @@ impl PgStore {
         Ok(row.0)
     }
 
+    /// All hook events for one assistant session (by its string `session_id`),
+    /// oldest-first, projected to the fields session enrichment reads (#66).
+    pub async fn get_hook_events_for_session(&self, client_session_id: &str) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(String, Option<String>, i64, serde_json::Value)> = sqlx_core::query_as::query_as(
+            "SELECT event_type, tool_name, ts, payload FROM activity.hook_events
+             WHERE session_id = $1 ORDER BY ts"
+        ).bind(client_session_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(event_type, tool_name, ts, payload)| {
+            serde_json::json!({ "event_type": event_type, "tool_name": tool_name, "ts": ts, "payload": payload })
+        }).collect())
+    }
+
+    /// `(session uuid, client_session_id)` for every attributed session of a
+    /// project that can be enriched from the hook stream (#66).
+    pub async fn get_project_session_ids(&self, project_id: &uuid::Uuid) -> Result<Vec<(uuid::Uuid, String)>, String> {
+        let rows: Vec<(uuid::Uuid, String)> = sqlx_core::query_as::query_as(
+            "SELECT id, client_session_id FROM activity.sessions
+             WHERE project_id = $1 AND client_session_id IS NOT NULL"
+        ).bind(project_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows)
+    }
+
+    /// Write enrichment metrics onto a session (#66). Sets the derived fields
+    /// and merges `tool_usage` into `props` — deliberately does NOT touch
+    /// `completed_at` (owned by the hook-stream session derivation, #31).
+    pub async fn update_session_metrics(
+        &self, session_id: &uuid::Uuid, turns: i32, corrections: i32, outcome: &str,
+        ftr: bool, duration_ms: i64, module: Option<&str>, tool_usage: &serde_json::Value,
+    ) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE activity.sessions
+                SET outcome = $2::sensei.session_outcome, ftr = $3, turns = $4,
+                    corrections = $5, duration_ms = $6, module = $7,
+                    props = props || jsonb_build_object('tool_usage', $8::jsonb)
+              WHERE id = $1"
+        ).bind(session_id).bind(outcome).bind(ftr).bind(turns).bind(corrections)
+            .bind(duration_ms as i32).bind(module).bind(tool_usage)
+            .execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     // ── Projects ──────────────────────────────────────────────────────
 
     pub async fn create_project(&self, name: &str, description: Option<&str>, client: Option<&str>) -> Result<uuid::Uuid, String> {

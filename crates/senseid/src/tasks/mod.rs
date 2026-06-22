@@ -42,6 +42,9 @@ pub enum TaskKind {
     /// Re-reconcile a project root's identity from its README frontmatter
     /// (watcher-triggered on a root README change). Lightweight: no file walk.
     ReconcileIdentity,
+    /// Enrich a project's sessions from the captured hook-event stream —
+    /// derive turns/corrections/outcome/ftr/duration/module (analyzer L0, #66).
+    AnalyzeProject,
 }
 
 impl std::fmt::Display for TaskKind {
@@ -66,6 +69,7 @@ impl std::fmt::Display for TaskKind {
             Self::ExtractDeps => write!(f, "extract_deps"),
             Self::MeasureVerdicts => write!(f, "measure_verdicts"),
             Self::ReconcileIdentity => write!(f, "reconcile_identity"),
+            Self::AnalyzeProject => write!(f, "analyze_project"),
         }
     }
 }
@@ -101,7 +105,8 @@ impl TaskKind {
             | TaskKind::EmbedNodes
             | TaskKind::IndexLibrary
             | TaskKind::IndexLibraryPage
-            | TaskKind::DetectCommunities => Duration::from_secs(600),
+            | TaskKind::DetectCommunities
+            | TaskKind::AnalyzeProject => Duration::from_secs(600),
         }
     }
 }
