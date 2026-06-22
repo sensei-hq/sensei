@@ -1901,6 +1901,17 @@ impl PgStore {
         Ok(rows)
     }
 
+    /// `(project_id, latest_session_activity)` for every project with attributed
+    /// sessions — drives the analyzer scheduler's "what changed since last run"
+    /// check (#67).
+    pub async fn get_projects_with_session_activity(&self) -> Result<Vec<(uuid::Uuid, chrono::DateTime<chrono::Utc>)>, String> {
+        let rows: Vec<(uuid::Uuid, chrono::DateTime<chrono::Utc>)> = sqlx_core::query_as::query_as(
+            "SELECT project_id, max(GREATEST(started_at, COALESCE(completed_at, started_at)))
+             FROM activity.sessions WHERE project_id IS NOT NULL GROUP BY project_id"
+        ).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows)
+    }
+
     /// Write enrichment metrics onto a session (#66). Sets the derived fields
     /// and merges `tool_usage` into `props` — deliberately does NOT touch
     /// `completed_at` (owned by the hook-stream session derivation, #31).
@@ -3942,6 +3953,24 @@ mod tests {
         assert!(!kinds.iter().any(|k| k == "folder"), "kind=folder subfolders excluded: {kinds:?}");
 
         sqlx_core::query::query("DELETE FROM sensei.folders WHERE project_id = $1").bind(pid).execute(s.pool()).await.unwrap();
+        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1").bind(pid).execute(s.pool()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn projects_with_session_activity_reports_the_project() {
+        // #67: the scheduler reads (project_id, latest activity) to decide what
+        // to re-analyze. A project with attributed sessions must appear.
+        let s = pg_store().await;
+        let pid = s.create_project(&format!("_test:act-{}", uuid::Uuid::new_v4()), None, None).await.unwrap();
+        let fid = create_test_folder(&s, &format!("act-{}", uuid::Uuid::new_v4())).await;
+        let sid = format!("_test-sid-{}", uuid::Uuid::new_v4());
+        s.record_session_event(&sid, &fid, Some(&pid), "claude", true).await.unwrap();
+
+        let activity = s.get_projects_with_session_activity().await.unwrap();
+        let row = activity.iter().find(|(p, _)| *p == pid).expect("project appears in session-activity");
+        assert!(row.1.timestamp() > 0, "carries a real latest-activity timestamp");
+
+        sqlx_core::query::query("DELETE FROM activity.sessions WHERE project_id = $1").bind(pid).execute(s.pool()).await.unwrap();
         sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1").bind(pid).execute(s.pool()).await.unwrap();
     }
 
