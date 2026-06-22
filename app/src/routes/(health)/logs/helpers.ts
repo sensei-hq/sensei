@@ -39,12 +39,17 @@ export function fmtMs(ms: number): string {
 }
 
 export function outcomeColor(o: string): string {
-    return o === 'success' ? 'var(--success)' : o === 'partial' ? 'var(--warning)' : 'var(--accent)';
+    if (o === 'success') return 'var(--success)';
+    // 'blocked' (legacy) is a needs-action state, not a hard failure — amber.
+    if (o === 'partial' || o === 'blocked') return 'var(--warning)';
+    return 'var(--accent)';
 }
 
 export type DotStatus = 'ok' | 'warn' | 'fail';
 export function outcomeStatus(o: string): DotStatus {
-    return o === 'success' ? 'ok' : o === 'partial' ? 'warn' : 'fail';
+    if (o === 'success') return 'ok';
+    if (o === 'partial' || o === 'blocked') return 'warn';
+    return 'fail';
 }
 
 export const anonymize = (s: string): string => s.replace(/\/Users\/[^/]+\//g, '~/');
@@ -72,10 +77,14 @@ export function timeOfDay(ts: string): string {
     return formatTime(ts).split(' · ')[1] ?? '';
 }
 
-/** One-line summary for the sidebar: "3.2s · 12 steps · 2 fixes". */
+/** One-line summary for the sidebar: "3.2s · 12 steps · 2 fixes".
+ *  Counts only renderable (BootstrapTrace) steps so the sidebar never claims
+ *  "N steps" while the detail pane renders zero — legacy sessions whose traces
+ *  lack `action_type` (health-gate records) correctly read "0 steps" (#64). */
 export function sessionSummary(s: LogSession): string {
-    const fixes = s.traces.filter(t => isBootstrapTrace(t) && (t as BootstrapTrace).fix_attempted).length;
-    const parts = [fmtMs(s.duration_ms), `${s.traces.length} steps`];
+    const bt = s.traces.filter(isBootstrapTrace);
+    const fixes = bt.filter(t => (t as BootstrapTrace).fix_attempted).length;
+    const parts = [fmtMs(s.duration_ms), `${bt.length} steps`];
     if (fixes > 0) parts.push(`${fixes} fix${fixes > 1 ? 'es' : ''}`);
     return parts.join(' · ');
 }
