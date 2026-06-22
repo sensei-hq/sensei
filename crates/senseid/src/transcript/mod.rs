@@ -11,6 +11,10 @@ use crate::tasks::executor::TaskContext;
 use crate::tasks::Task;
 use std::path::{Path, PathBuf};
 
+/// Skip transcript files larger than this (logged). A multi-hundred-MB file
+/// would spike memory on read and block the executor on parse; rare outlier.
+const MAX_TRANSCRIPT_BYTES: u64 = 64 * 1024 * 1024;
+
 /// One user-prompt -> assistant-response turn parsed from a transcript.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TranscriptTurn {
@@ -76,6 +80,13 @@ pub async fn backfill(
                 report.files_skipped += 1;
                 continue;
             };
+            // skip pathological oversized transcripts (logged, not silent).
+            let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+            if size > MAX_TRANSCRIPT_BYTES {
+                tracing::warn!(file = %path_str, size_mb = size / 1_048_576, "transcript backfill: skipping oversized transcript");
+                report.files_skipped += 1;
+                continue;
+            }
             let content = match std::fs::read_to_string(&path) {
                 Ok(c) => c,
                 Err(e) => {
