@@ -1647,7 +1647,7 @@ impl PgStore {
 
     pub async fn get_quality_signals(&self, project_id: &uuid::Uuid) -> Result<serde_json::Value, String> {
         let row: Option<(f64, Option<f64>, i64, Option<f64>)> = sqlx_core::query_as::query_as(
-            "SELECT ftr_7d, pattern_compliance, open_drift_count, test_pass_rate
+            "SELECT ftr_7d::float8, pattern_compliance::float8, open_drift_count, test_pass_rate::float8
              FROM sensei.project_quality_signals WHERE project_id = $1"
         ).bind(project_id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(match row {
@@ -1663,7 +1663,7 @@ impl PgStore {
 
     pub async fn get_tool_usage_stats(&self) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(String, i64, i64, Option<f64>, chrono::DateTime<chrono::Utc>)> = sqlx_core::query_as::query_as(
-            "SELECT tool_name, call_count, error_count, avg_duration_ms, last_used_at
+            "SELECT tool_name, call_count, error_count, avg_duration_ms::float8, last_used_at
              FROM sensei.tool_usage_stats ORDER BY call_count DESC LIMIT 50"
         ).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(|(name, calls, errors, dur, last)| {
@@ -2159,7 +2159,10 @@ impl PgStore {
     pub async fn get_project_ftr(&self, project_id: &uuid::Uuid) -> Result<serde_json::Value, String> {
         let row: Option<(Option<f64>, Option<f64>, i64)> =
             sqlx_core::query_as::query_as(
-                "SELECT ftr_14d, ftr_14d_prev, sessions_7d
+                // ftr_14d / ftr_14d_prev are NUMERIC in the view; cast to float8
+                // so sqlx decodes them into f64 (a NUMERIC→f64 mismatch was
+                // 500-ing this endpoint, masked by the client's default-on-error).
+                "SELECT ftr_14d::float8, ftr_14d_prev::float8, sessions_7d
                  FROM sensei.project_ftr_metrics WHERE project_id = $1"
             ).bind(project_id)
             .fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
@@ -3972,6 +3975,21 @@ mod tests {
 
         sqlx_core::query::query("DELETE FROM activity.sessions WHERE project_id = $1").bind(pid).execute(s.pool()).await.unwrap();
         sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1").bind(pid).execute(s.pool()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn project_ftr_and_quality_decode_numeric_metrics() {
+        // Regression: project_ftr_metrics.ftr_14d / project_quality_signals.ftr_7d
+        // are NUMERIC; without ::float8 casts sqlx fails to decode into f64 and
+        // the endpoint 500s (masked by the client's default-on-error). These must
+        // return Ok.
+        let s = pg_store().await;
+        let pid = s.create_project(&format!("_test:ftr-{}", uuid::Uuid::new_v4()), None, None).await.unwrap();
+        let ftr = s.get_project_ftr(&pid).await.expect("get_project_ftr decodes numeric metrics");
+        assert!(ftr.get("ftr14d").is_some());
+        s.get_quality_signals(&pid).await.expect("get_quality_signals decodes numeric metrics");
+        s.get_tool_usage_stats().await.expect("get_tool_usage_stats decodes numeric avg_duration_ms");
+        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1").bind(pid).execute(s.pool()).await.ok();
     }
 
     #[tokio::test]
