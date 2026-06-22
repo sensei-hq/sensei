@@ -2,16 +2,28 @@
 //!
 //! `activity.events` is empty and sessions are created metric-less by the #31
 //! hook derivation, so the captured `activity.hook_events` stream is the only
-//! signal. This stage turns a session's events (UserPromptSubmit / PreToolUse /
-//! PostToolUse / Stop …) into `turns`, `corrections`, `outcome`, `ftr`,
-//! `duration_ms`, `module`, and a per-tool usage breakdown, then writes them
-//! back onto `activity.sessions`. It is what makes FTR/outcomes non-null across
-//! the product. Pure derivation (`derive_session_metrics`) is decoupled from
-//! the DB so it is unit-testable over an in-memory slice; the orchestrators
-//! (`enrich_session`, `analyze_project`) handle the I/O.
+//! signal. This stage turns a session's events into per-turn rows
+//! (`activity.turns`) + session aggregates (`activity.sessions`):
+//!
+//! * a **turn** spans one `UserPromptSubmit` to the next; it carries a
+//!   `segment` marker that increments after an idle gap > [`IDLE_GAP_MS`], so a
+//!   multi-day *resumed* session splits into work segments (sub-sessions) while
+//!   staying one session row;
+//! * the session's **duration** is gap-aware *active* time (idle/away gaps
+//!   excluded), so a session resumed across days reports real work, not its
+//!   calendar span; `started_at`..`completed_at` still hold the full span.
+//!
+//! Pure derivation is decoupled from the DB so it is unit-testable over an
+//! in-memory slice; the orchestrators (`enrich_session`, `analyze_project`)
+//! handle the I/O.
 
 use super::super::executor::TaskContext;
 use super::super::Task;
+
+/// Idle gap (ms) that separates "still working" from "came back later" — turns
+/// further apart than this start a new segment, and the gap is excluded from
+/// active duration. 30 minutes.
+const IDLE_GAP_MS: i64 = 30 * 60 * 1000;
 
 /// One hook event projected to just the fields the heuristics read — decoupled
 /// from the DB row so derivation is a pure function.
@@ -25,23 +37,37 @@ pub struct HookEvent {
     pub tool_failed: bool,
 }
 
-/// Derived per-session metrics written to `activity.sessions`.
+/// One turn: a `UserPromptSubmit` and the work until the next prompt.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Turn {
+    pub turn_number: i32,
+    pub segment: i32,
+    pub started_ms: i64,
+    pub ended_ms: i64,
+    pub duration_ms: i64,
+    pub is_correction: bool,
+    pub triage_signal: Option<&'static str>,
+    pub tool_calls: i32,
+}
+
+/// Derived per-session metrics written to `activity.sessions` (+ the per-turn
+/// detail written to `activity.turns`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct SessionMetrics {
-    pub turns: i32,
+    pub turns: Vec<Turn>,
     pub corrections: i32,
     pub outcome: &'static str, // a `sensei.session_outcome` label
     pub ftr: bool,
-    pub duration_ms: i64,
+    pub duration_ms: i64, // session-level gap-aware active time
     pub module: Option<String>,
-    pub tool_usage: serde_json::Value, // { "<tool>": { "pre": n, "post": n, "failed": n } }
+    pub tool_usage: serde_json::Value, // { "<tool>": { "pre", "post", "failed" } }
 }
 
 /// A user prompt that signals the previous turn needed correcting — the FTR
-/// detractor. Maps onto the schema's `triage_signal` vocabulary. Text-only,
-/// lowercased, and deliberately PRECISION-favoring: a false correction wrongly
-/// tanks FTR, so only unambiguous phrasings count (e.g. plain instructions like
-/// "don't forget the test" must NOT match). Tunable as we see real data.
+/// detractor. Maps onto the schema's `triage_signal` vocabulary. PRECISION-
+/// favoring: a false correction wrongly tanks FTR, so only unambiguous
+/// phrasings count (plain instructions like "don't forget the test" must not
+/// match). Tunable as we see real data.
 pub fn correction_signal(prompt: &str) -> Option<&'static str> {
     let p = prompt.trim().to_lowercase();
     const REVERT: &[&str] = &["revert", "roll back", "undo that", "undo the", "undo your"];
@@ -64,21 +90,63 @@ pub fn correction_signal(prompt: &str) -> Option<&'static str> {
     None
 }
 
-fn count_turns(events: &[HookEvent]) -> i32 {
-    events.iter().filter(|e| e.event_type == "UserPromptSubmit").count() as i32
+/// Sum of consecutive-event gaps below the idle threshold — active time, with
+/// idle/away gaps (segment boundaries, multi-day resumes) excluded. Events are
+/// assumed oldest-first (the DB returns them ordered by ts).
+fn active_duration_ms(events: &[HookEvent], idle_ms: i64) -> i64 {
+    events
+        .windows(2)
+        .map(|w| {
+            let gap = w[1].ts - w[0].ts;
+            if gap > 0 && gap <= idle_ms { gap } else { 0 }
+        })
+        .sum()
 }
 
-fn count_corrections(events: &[HookEvent]) -> i32 {
-    events
+/// Split a session's events into turns at `UserPromptSubmit` boundaries and
+/// assign segment numbers (a new segment after an idle gap > `idle_ms`). Events
+/// before the first prompt (SessionStart, etc.) are not a turn.
+fn split_into_turns(events: &[HookEvent], idle_ms: i64) -> Vec<Turn> {
+    let starts: Vec<usize> = events
         .iter()
-        .filter(|e| e.event_type == "UserPromptSubmit")
-        .filter(|e| e.prompt.as_deref().and_then(correction_signal).is_some())
-        .count() as i32
+        .enumerate()
+        .filter(|(_, e)| e.event_type == "UserPromptSubmit")
+        .map(|(i, _)| i)
+        .collect();
+
+    let mut turns: Vec<Turn> = starts
+        .iter()
+        .enumerate()
+        .map(|(k, &si)| {
+            let end = starts.get(k + 1).copied().unwrap_or(events.len()); // exclusive
+            let slice = &events[si..end];
+            let triage_signal = events[si].prompt.as_deref().and_then(correction_signal);
+            Turn {
+                turn_number: (k + 1) as i32,
+                segment: 1,
+                started_ms: events[si].ts,
+                ended_ms: slice.last().map(|e| e.ts).unwrap_or(events[si].ts),
+                duration_ms: active_duration_ms(slice, idle_ms),
+                is_correction: triage_signal.is_some(),
+                triage_signal,
+                tool_calls: slice.iter().filter(|e| e.event_type == "PostToolUse").count() as i32,
+            }
+        })
+        .collect();
+
+    for i in 1..turns.len() {
+        let gap = turns[i].started_ms - turns[i - 1].ended_ms;
+        turns[i].segment = if gap > idle_ms {
+            turns[i - 1].segment + 1
+        } else {
+            turns[i - 1].segment
+        };
+    }
+    turns
 }
 
 /// Failed `PostToolUse` events among the last few events — an error cluster at
-/// the tail of a session with no clean end suggests it was blocked, not merely
-/// abandoned.
+/// the tail of a session with no clean end suggests it was blocked.
 fn trailing_failures(events: &[HookEvent]) -> usize {
     let window = events.len().min(5);
     events[events.len() - window..]
@@ -87,7 +155,7 @@ fn trailing_failures(events: &[HookEvent]) -> usize {
         .count()
 }
 
-/// `session_outcome` label. A clean end (Stop/SessionEnd) → `corrected` if the
+/// `session_outcome` label. Clean end (Stop/SessionEnd) → `corrected` if the
 /// user had to correct, else `completed`. No end → `blocked` on a tail error
 /// cluster, else `abandoned`.
 fn derive_outcome(events: &[HookEvent], corrections: i32) -> &'static str {
@@ -147,31 +215,48 @@ fn tally_tool_usage(events: &[HookEvent]) -> serde_json::Value {
     serde_json::Value::Object(obj)
 }
 
-/// Derive metrics for one session from its hook events. Returns `None` for an
-/// empty stream (don't fabricate an outcome for a session we saw nothing of).
+/// Derive metrics for one session from its hook events. `None` for an empty
+/// stream (don't fabricate an outcome for a session we saw nothing of).
 pub fn derive_session_metrics(events: &[HookEvent]) -> Option<SessionMetrics> {
     if events.is_empty() {
         return None;
     }
-    let turns = count_turns(events);
-    let corrections = count_corrections(events);
-    let outcome = derive_outcome(events, corrections);
-    let (min_ts, max_ts) = events
-        .iter()
-        .fold((i64::MAX, i64::MIN), |(lo, hi), e| (lo.min(e.ts), hi.max(e.ts)));
+    let turns = split_into_turns(events, IDLE_GAP_MS);
+    let corrections = turns.iter().filter(|t| t.is_correction).count() as i32;
     Some(SessionMetrics {
-        turns,
-        corrections,
-        outcome,
+        outcome: derive_outcome(events, corrections),
         ftr: corrections == 0,
-        duration_ms: (max_ts - min_ts).max(0),
+        duration_ms: active_duration_ms(events, IDLE_GAP_MS),
         module: dominant_module(events),
         tool_usage: tally_tool_usage(events),
+        corrections,
+        turns,
     })
 }
 
-/// Map a `{event_type, tool_name, ts, payload}` hook_events row to a HookEvent,
-/// extracting the prompt / file path / tool-failure signal from the payload.
+/// Serialize turns to the JSON array shape `replace_session_turns` expands into
+/// rows (ms epochs / ms durations → timestamptz / interval in SQL).
+fn turns_to_json(turns: &[Turn]) -> serde_json::Value {
+    serde_json::Value::Array(
+        turns
+            .iter()
+            .map(|t| {
+                serde_json::json!({
+                    "turn_number": t.turn_number,
+                    "segment": t.segment,
+                    "started_ms": t.started_ms,
+                    "ended_ms": t.ended_ms,
+                    "duration_ms": t.duration_ms,
+                    "is_correction": t.is_correction,
+                    "triage_signal": t.triage_signal,
+                    "tool_calls": t.tool_calls,
+                })
+            })
+            .collect(),
+    )
+}
+
+/// Map a `{event_type, tool_name, ts, payload}` hook_events row to a HookEvent.
 /// `success` column is unreliable for PostToolUse (NULL at ingest), so failure
 /// is read from `tool_response.is_error` / an `error` key instead.
 fn hook_event_from_row(row: &serde_json::Value) -> HookEvent {
@@ -198,9 +283,9 @@ fn hook_event_from_row(row: &serde_json::Value) -> HookEvent {
     }
 }
 
-/// Enrich one session in place. Returns `true` if metrics were written, `false`
-/// if the session had no hook events (left untouched). Idempotent — recompute
-/// overwrites, never duplicates.
+/// Enrich one session in place: write the session aggregates and replace its
+/// turn rows. Returns `true` if metrics were written, `false` if the session
+/// had no hook events (left untouched). Idempotent — recompute overwrites.
 pub async fn enrich_session(
     ctx: &TaskContext,
     session_id: &uuid::Uuid,
@@ -212,10 +297,11 @@ pub async fn enrich_session(
         Some(m) => {
             ctx.pg()
                 .update_session_metrics(
-                    session_id, m.turns, m.corrections, m.outcome, m.ftr,
+                    session_id, m.turns.len() as i32, m.corrections, m.outcome, m.ftr,
                     m.duration_ms, m.module.as_deref(), &m.tool_usage,
                 )
                 .await?;
+            ctx.pg().replace_session_turns(session_id, &turns_to_json(&m.turns)).await?;
             Ok(true)
         }
         None => Ok(false),
@@ -258,12 +344,9 @@ mod tests {
         HookEvent { prompt: Some(text.into()), ..ev("UserPromptSubmit", ts) }
     }
     fn tool_ev(event_type: &str, tool: &str, ts: i64, failed: bool) -> HookEvent {
-        HookEvent {
-            tool_name: Some(tool.into()),
-            tool_failed: failed,
-            ..ev(event_type, ts)
-        }
+        HookEvent { tool_name: Some(tool.into()), tool_failed: failed, ..ev(event_type, ts) }
     }
+    const MIN: i64 = 60 * 1000;
 
     #[test]
     fn empty_stream_yields_no_metrics() {
@@ -279,11 +362,11 @@ mod tests {
             ev("Stop", 4000),
         ];
         let m = derive_session_metrics(&events).unwrap();
-        assert_eq!(m.turns, 3);
+        assert_eq!(m.turns.len(), 3);
         assert_eq!(m.corrections, 0);
         assert!(m.ftr);
         assert_eq!(m.outcome, "completed");
-        assert_eq!(m.duration_ms, 3000);
+        assert_eq!(m.duration_ms, 3000, "all gaps under idle ⇒ full span is active");
     }
 
     #[test]
@@ -294,14 +377,15 @@ mod tests {
             ev("Stop", 3000),
         ];
         let m = derive_session_metrics(&events).unwrap();
-        assert_eq!(m.corrections, 1, "the revert/actually prompt counts as a correction");
+        assert_eq!(m.turns.len(), 2);
+        assert_eq!(m.corrections, 1);
         assert!(!m.ftr);
         assert_eq!(m.outcome, "corrected");
+        assert!(m.turns[1].is_correction && m.turns[1].triage_signal == Some("revert"));
     }
 
     #[test]
     fn benign_imperative_prompts_are_not_corrections() {
-        // Precision guard: ordinary instructions must not look like corrections.
         for p in ["don't forget the test", "no rush on this", "add error handling"] {
             assert!(correction_signal(p).is_none(), "false positive on: {p}");
         }
@@ -323,6 +407,30 @@ mod tests {
             tool_ev("PostToolUse", "Bash", 3000, true),
         ];
         assert_eq!(derive_session_metrics(&events).unwrap().outcome, "blocked");
+    }
+
+    #[test]
+    fn idle_gap_splits_segments_and_excludes_idle_from_duration() {
+        // Two prompts close together, then a 2-hour break, then a third prompt.
+        let events = vec![
+            prompt_ev("a", 0),
+            tool_ev("PostToolUse", "Edit", MIN, false),
+            prompt_ev("b", 2 * MIN),
+            tool_ev("PostToolUse", "Edit", 3 * MIN, false),
+            // ── 2-hour idle gap (came back later) ──
+            prompt_ev("c", 123 * MIN),
+            ev("Stop", 124 * MIN),
+        ];
+        let m = derive_session_metrics(&events).unwrap();
+        assert_eq!(m.turns.len(), 3);
+        assert_eq!(
+            m.turns.iter().map(|t| t.segment).collect::<Vec<_>>(),
+            vec![1, 1, 2],
+            "the 2h gap before turn 3 starts a new segment"
+        );
+        // active = 1m + 1m + 1m (within/between the first two turns) + 1m (turn 3) = 4 min;
+        // the ~2h idle gap is excluded.
+        assert_eq!(m.duration_ms, 4 * MIN, "idle gap excluded from active duration");
     }
 
     #[test]
@@ -383,7 +491,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn analyze_project_enriches_sessions_from_hooks_idempotently() {
+    async fn analyze_project_enriches_sessions_and_writes_turns() {
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let pid = pg.create_project(&format!("_test:analyze-{}", uuid::Uuid::new_v4()), None, None).await.unwrap();
@@ -392,37 +500,41 @@ mod tests {
         let csid = format!("_test-sid-{}", uuid::Uuid::new_v4());
         let sid = pg.record_session_event(&csid, &fid, Some(&pid), "claude", true).await.unwrap();
 
-        // hook stream: 2 prompts (one a correction) + an edit + a Stop.
+        // 2 prompts (one a correction) + an edit + a Stop.
         let prompt = |t: &str| serde_json::json!({ "prompt": t });
         pg.insert_hook_event(&csid, "claude", "UserPromptSubmit", None, None, 1000, None, &prompt("build the thing")).await.unwrap();
         pg.insert_hook_event(&csid, "claude", "UserPromptSubmit", None, None, 2000, None, &prompt("actually, revert that")).await.unwrap();
         pg.insert_hook_event(&csid, "claude", "PostToolUse", Some("Edit"), None, 2500, None, &serde_json::json!({})).await.unwrap();
         pg.insert_hook_event(&csid, "claude", "Stop", None, None, 3000, None, &serde_json::json!({})).await.unwrap();
 
-        // Task::new(kind, folder_path, path) — the handler reads the project id
-        // from `task.path` (the last arg).
         let task = Task::new(TaskKind::AnalyzeProject, "", &pid.to_string());
         assert_eq!(analyze_project(&ctx, &task).await.unwrap(), 1, "one session enriched");
 
-        let metrics = || async {
-            let row: (i32, i32, Option<bool>, Option<String>, Option<i32>) = sqlx_core::query_as::query_as(
-                "SELECT turns, corrections, ftr, outcome::text, duration_ms FROM activity.sessions WHERE id = $1"
-            ).bind(sid).fetch_one(pg.pool()).await.unwrap();
-            row
-        };
-        let (turns, corrections, ftr, outcome, duration) = metrics().await;
-        assert_eq!(turns, 2);
-        assert_eq!(corrections, 1, "the 'revert' prompt is a correction");
-        assert_eq!(ftr, Some(false));
-        assert_eq!(outcome.as_deref(), Some("corrected"), "has Stop + a correction");
-        assert_eq!(duration, Some(2000));
+        // session aggregates — duration is now an interval; read back as ms.
+        let row: (i32, i32, Option<bool>, Option<String>, Option<f64>) = sqlx_core::query_as::query_as(
+            "SELECT turns, corrections, ftr, outcome::text,
+                    (extract(epoch from duration)*1000)::float8 AS duration_ms
+             FROM activity.sessions WHERE id = $1"
+        ).bind(sid).fetch_one(pg.pool()).await.unwrap();
+        assert_eq!(row.0, 2, "two turns");
+        assert_eq!(row.1, 1, "the 'revert' prompt is a correction");
+        assert_eq!(row.2, Some(false));
+        assert_eq!(row.3.as_deref(), Some("corrected"));
+        assert_eq!(row.4, Some(2000.0), "gap-aware active duration");
 
-        // Idempotent: a second run leaves identical values.
+        // turn rows written, ordered, segmented.
+        let turns: Vec<(i32, i32, bool)> = sqlx_core::query_as::query_as(
+            "SELECT turn_number, segment, is_correction FROM activity.turns WHERE session_id = $1 ORDER BY turn_number"
+        ).bind(sid).fetch_all(pg.pool()).await.unwrap();
+        assert_eq!(turns, vec![(1, 1, false), (2, 1, true)]);
+
+        // idempotent — re-run yields the same turn count (no dupes).
         analyze_project(&ctx, &task).await.unwrap();
-        let (turns2, corrections2, ..) = metrics().await;
-        assert_eq!((turns2, corrections2), (2, 1));
+        let n: (i64,) = sqlx_core::query_as::query_as("SELECT count(*) FROM activity.turns WHERE session_id = $1")
+            .bind(sid).fetch_one(pg.pool()).await.unwrap();
+        assert_eq!(n.0, 2, "re-enrich replaces, not duplicates");
 
-        // cleanup
+        // cleanup (turns cascade on session delete)
         let pool = pg.pool();
         sqlx_core::query::query("DELETE FROM activity.hook_events WHERE session_id = $1").bind(&csid).execute(pool).await.ok();
         sqlx_core::query::query("DELETE FROM activity.sessions WHERE id = $1").bind(sid).execute(pool).await.ok();
