@@ -172,6 +172,21 @@ describe('sessionSummary', () => {
         const s = makeSession({ traces: [makeTrace({ fix_attempted: false })] });
         expect(sessionSummary(s)).not.toContain('fix');
     });
+
+    it('counts only renderable steps — legacy traces without action_type read "0 steps" (#64)', () => {
+        // A legacy bootstrap session whose traces are health-gate records (no
+        // action_type) must NOT claim "N steps" while the detail pane is empty.
+        const gateRecords = [{ id: 'g1' }, { id: 'g2' }] as unknown as LogSession['traces'];
+        const s = makeSession({ duration_ms: 0, outcome: 'blocked', traces: gateRecords });
+        expect(sessionSummary(s)).toBe('0ms · 0 steps');
+    });
+});
+
+describe('outcomeColor / outcomeStatus — blocked', () => {
+    it('maps the legacy "blocked" outcome to a warning, not the generic fail', () => {
+        expect(outcomeColor('blocked')).toBe('var(--warning)');
+        expect(outcomeColor('failed')).toBe('var(--accent)');
+    });
 });
 
 // ── groupByDate ───────────────────────────────────────────────────────────

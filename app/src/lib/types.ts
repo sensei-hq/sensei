@@ -574,7 +574,10 @@ export interface LogSession {
     started_at:  string;
     app_version: string;
     system_info: SystemInfo;
-    outcome:     'success' | 'partial' | 'failed';
+    // 'blocked' is a legacy bootstrap-engine (≤v0.2.2) outcome still present in
+    // old session files — kept so the viewer can label it instead of falling
+    // through to the generic "fail" styling.
+    outcome:     'success' | 'partial' | 'failed' | 'blocked';
     duration_ms: number;
     traces:      (BootstrapTrace | LogEntry)[];
 }
