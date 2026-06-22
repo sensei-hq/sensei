@@ -7,6 +7,7 @@ mod config;
 mod watcher;
 mod api;
 mod tasks;
+mod transcript;
 mod governance;
 pub mod assistants;
 pub mod instruments;

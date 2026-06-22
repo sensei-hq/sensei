@@ -102,6 +102,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/graph/call-flow", get(codebase::call_flow))
         // Project analysis
         .route("/api/projects/{id}/analyze", post(observatory::analyze_solution))
+        .route("/api/transcripts/backfill", post(observatory::backfill_transcripts))
         .route("/api/projects/{id}/graph", get(observatory::solution_graph))
         .route("/api/projects/{id}/roles", get(observatory::solution_roles))
         // Folder mutations (setup wizard — Projects stage)
