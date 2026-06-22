@@ -25,9 +25,19 @@ use super::super::Task;
 /// active duration. 30 minutes.
 const IDLE_GAP_MS: i64 = 30 * 60 * 1000;
 
-/// A file with at least this many failed Edit/Write/MultiEdit ops across a
-/// project is flagged as a rework anti-pattern by the SignalDeriver (#68).
-const ANTI_PATTERN_MIN_FAILS: i64 = 3;
+/// A file re-edited at least this many times within a SINGLE session is a
+/// rework/churn anti-pattern — the agent kept returning to it (#68). Tool
+/// failures aren't captured by the hooks, so re-edit churn is the derivable
+/// "the result needed follow-ups" signal (~16% of (session,file) pairs in the
+/// live corpus hit 5+).
+const CHURN_MIN_EDITS: i64 = 5;
+
+/// A folder needs at least this many corrective prompts to be flagged
+/// "correction-prone".
+const CORRECTION_MIN: usize = 2;
+
+/// Max chars of a prompt stored in a pattern instance (keep rows small).
+const PROMPT_SNIPPET_MAX: usize = 200;
 
 /// One hook event projected to just the fields the heuristics read — decoupled
 /// from the DB row so derivation is a pure function.
@@ -80,10 +90,15 @@ pub fn correction_signal(prompt: &str) -> Option<&'static str> {
         "that's not what", "thats not what", "not what i asked", "you missed",
         "doesn't work", "does not work", "didn't work", "did not work",
         "still broken", "still failing", "still fails", "you broke", "that broke it",
+        "is incorrect", "is wrong",
     ];
+    const WHY: &[&str] = &["why did you", "why are you", "why'd you", "why would you"];
     const ACTUALLY: &[&str] = &["actually,", "actually ", "wait,", "wait ", "no, that"];
     if REVERT.iter().any(|s| p.contains(s)) {
         return Some("revert");
+    }
+    if WHY.iter().any(|s| p.contains(s)) {
+        return Some("why");
     }
     if WRONG.iter().any(|s| p.contains(s)) {
         return Some("correction");
@@ -92,6 +107,21 @@ pub fn correction_signal(prompt: &str) -> Option<&'static str> {
         return Some("actually");
     }
     None
+}
+
+/// Detect an imperative *principle/rule* in a user prompt — the user stating a
+/// durable "do X / never Y" expectation (a teaching/rule candidate, distinct
+/// from a one-off correction). Keyword match; an LLM classifier (L2) refines
+/// precision later. Returns the matched cue.
+pub fn principle_signal(prompt: &str) -> Option<&'static str> {
+    let p = prompt.trim().to_lowercase();
+    const CUES: &[&str] = &[
+        "you should always", "you should never", "you must always", "you must never",
+        "always make sure", "make sure to", "make sure you", "make sure we",
+        "from now on", "going forward", "as a rule", "don't ever", "never forget",
+        "you should", "you must", "please always", "please never",
+    ];
+    CUES.iter().copied().find(|s| p.contains(*s))
 }
 
 /// Sum of consecutive-event gaps below the idle threshold — active time, with
@@ -336,50 +366,96 @@ pub async fn analyze_project(ctx: &TaskContext, task: &Task) -> Result<u32, Stri
     Ok(enriched)
 }
 
-/// Rework anti-pattern name for a file.
-fn anti_pattern_name(file: &str) -> String {
+/// Rework/churn anti-pattern name for a file.
+fn churn_pattern_name(file: &str) -> String {
     format!("rework: {file}")
 }
 
-/// Failure rate as a 0..1 confidence (fails / attempts), clamped.
-fn failure_confidence(fails: i64, attempts: i64) -> f64 {
-    if attempts <= 0 {
-        0.0
+/// Churn confidence from the max re-edits in a single session (caps at 10).
+fn churn_confidence(max_session_edits: i64) -> f64 {
+    (max_session_edits as f64 / 10.0).clamp(0.0, 1.0)
+}
+
+/// Truncate a prompt for storage in a pattern instance.
+fn prompt_snippet(prompt: &str) -> String {
+    let t = prompt.trim();
+    if t.chars().count() > PROMPT_SNIPPET_MAX {
+        let mut s: String = t.chars().take(PROMPT_SNIPPET_MAX).collect();
+        s.push('…');
+        s
     } else {
-        (fails as f64 / attempts as f64).clamp(0.0, 1.0)
+        t.to_string()
     }
 }
 
 /// SignalDeriver (L1, #68): derive detected patterns from a project's enriched
-/// events. v1 = rework anti-patterns — files whose failed Edit/Write/MultiEdit
-/// ops reach `ANTI_PATTERN_MIN_FAILS` become `is_anti_pattern` rows that F4
-/// (#69) turns into "fix this" recommendations. Idempotent (upsert by
-/// folder+name). Returns the number of patterns written.
+/// events. Tool failures aren't captured by the hooks, so the signals are
+/// behavioral:
+///   - **re-edit churn** — a file re-edited `>= CHURN_MIN_EDITS` times in one
+///     session (anti-pattern, file-scoped) — the agent kept returning to it;
+///   - **correction-prone** — folders with `>= CORRECTION_MIN` corrective
+///     prompts (anti-pattern); and
+///   - **rule-candidates** — imperative-principle prompts ("you should always",
+///     "make sure", …) that may promote to rules (pattern, non-anti).
+///
+/// These become F4 (#69) recommendations/teachings. Idempotent (upsert by
+/// folder+name). Returns the number of pattern rows written.
 pub async fn derive_signals(ctx: &TaskContext, project_id: &uuid::Uuid) -> Result<u32, String> {
-    let stats = ctx
-        .pg()
-        .get_file_failure_stats(project_id, ANTI_PATTERN_MIN_FAILS)
-        .await?;
     let mut count = 0u32;
-    for (folder_id, file, attempts, fails) in stats {
-        let instances = serde_json::json!([{ "file": file, "fails": fails, "attempts": attempts }]);
+
+    // 1. Re-edit churn anti-patterns (file-scoped).
+    for (folder_id, file, max_edits, total_edits) in
+        ctx.pg().get_file_churn_stats(project_id, CHURN_MIN_EDITS).await?
+    {
+        let instances = serde_json::json!([{
+            "file": file, "max_session_edits": max_edits, "total_edits": total_edits
+        }]);
         match ctx
             .pg()
-            .upsert_pattern(
-                &folder_id,
-                &anti_pattern_name(&file),
-                true,
-                Some(failure_confidence(fails, attempts)),
-                &instances,
-            )
+            .upsert_pattern(&folder_id, &churn_pattern_name(&file), true, Some(churn_confidence(max_edits)), &instances)
             .await
         {
             Ok(_) => count += 1,
-            Err(e) => tracing::warn!(error = %e, file = %file, "derive_signals: upsert_pattern failed"),
+            Err(e) => tracing::warn!(error = %e, file = %file, "derive_signals: churn upsert failed"),
         }
     }
+
+    // 2. Prompt-derived signals: corrections (anti) + rule candidates (pattern),
+    // grouped per folder.
+    let mut corrections: std::collections::HashMap<uuid::Uuid, Vec<serde_json::Value>> = Default::default();
+    let mut principles: std::collections::HashMap<uuid::Uuid, Vec<serde_json::Value>> = Default::default();
+    for (folder_id, session_id, prompt) in ctx.pg().get_project_prompts(project_id).await? {
+        if let Some(sig) = correction_signal(&prompt) {
+            corrections.entry(folder_id).or_default().push(serde_json::json!({
+                "signal": sig, "session": session_id, "prompt": prompt_snippet(&prompt)
+            }));
+        } else if let Some(cue) = principle_signal(&prompt) {
+            principles.entry(folder_id).or_default().push(serde_json::json!({
+                "cue": cue, "session": session_id, "prompt": prompt_snippet(&prompt)
+            }));
+        }
+    }
+    for (folder_id, items) in corrections {
+        if items.len() >= CORRECTION_MIN {
+            let instances = serde_json::Value::Array(items);
+            match ctx.pg().upsert_pattern(&folder_id, "correction-prone", true, None, &instances).await {
+                Ok(_) => count += 1,
+                Err(e) => tracing::warn!(error = %e, folder = %folder_id, "derive_signals: correction upsert failed"),
+            }
+        }
+    }
+    for (folder_id, items) in principles {
+        if !items.is_empty() {
+            let instances = serde_json::Value::Array(items);
+            match ctx.pg().upsert_pattern(&folder_id, "rule-candidates", false, None, &instances).await {
+                Ok(_) => count += 1,
+                Err(e) => tracing::warn!(error = %e, folder = %folder_id, "derive_signals: rule-candidate upsert failed"),
+            }
+        }
+    }
+
     if count > 0 {
-        tracing::info!("derive_signals: {} — {} rework anti-patterns", project_id, count);
+        tracing::info!("derive_signals: {} — {} pattern rows", project_id, count);
     }
     Ok(count)
 }
@@ -530,15 +606,35 @@ mod tests {
     }
 
     #[test]
-    fn anti_pattern_name_prefixes_file() {
-        assert_eq!(anti_pattern_name("src/x.rs"), "rework: src/x.rs");
+    fn churn_pattern_name_prefixes_file() {
+        assert_eq!(churn_pattern_name("src/x.rs"), "rework: src/x.rs");
     }
 
     #[test]
-    fn failure_confidence_is_fails_over_attempts() {
-        assert_eq!(failure_confidence(3, 4), 0.75);
-        assert_eq!(failure_confidence(0, 0), 0.0, "no attempts ⇒ zero, no div-by-zero");
-        assert_eq!(failure_confidence(5, 4), 1.0, "clamped to 1.0");
+    fn churn_confidence_scales_with_edits() {
+        assert_eq!(churn_confidence(5), 0.5);
+        assert_eq!(churn_confidence(10), 1.0);
+        assert_eq!(churn_confidence(25), 1.0, "clamped to 1.0");
+        assert_eq!(churn_confidence(0), 0.0);
+    }
+
+    #[test]
+    fn principle_signal_flags_imperative_rules_only() {
+        assert_eq!(principle_signal("you should always run the tests first"), Some("you should always"));
+        assert_eq!(principle_signal("make sure to use vite snapshots"), Some("make sure to"));
+        assert_eq!(principle_signal("from now on, branch off develop"), Some("from now on"));
+        // normal feature requests are not principles
+        assert!(principle_signal("add a login page").is_none());
+        assert!(principle_signal("the colors don't match").is_none());
+    }
+
+    #[test]
+    fn prompt_snippet_truncates_long_prompts() {
+        let long = "x".repeat(PROMPT_SNIPPET_MAX + 50);
+        let s = prompt_snippet(&long);
+        assert_eq!(s.chars().count(), PROMPT_SNIPPET_MAX + 1, "PROMPT_SNIPPET_MAX chars + ellipsis");
+        assert!(s.ends_with('…'));
+        assert_eq!(prompt_snippet("  short  "), "short", "trims, no ellipsis when under cap");
     }
 
     // ── DB-backed orchestrator test ──────────────────────────────────────
@@ -615,7 +711,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn derive_signals_flags_rework_files() {
+    async fn derive_signals_flags_churn_corrections_and_principles() {
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let pid = pg.create_project(&format!("_test:sig-{}", uuid::Uuid::new_v4()), None, None).await.unwrap();
@@ -624,35 +720,45 @@ mod tests {
         let csid = format!("_test-sid-{}", uuid::Uuid::new_v4());
         let sid = pg.record_session_event(&csid, &fid, Some(&pid), "claude", true).await.unwrap();
 
-        let fail = |fp: &str| serde_json::json!({ "tool_input": {"file_path": fp}, "tool_response": {"is_error": true} });
-        let ok = |fp: &str| serde_json::json!({ "tool_input": {"file_path": fp}, "tool_response": {"is_error": false} });
-        // hot.rs: 3 failed edits + 1 ok ⇒ flagged (3 >= ANTI_PATTERN_MIN_FAILS).
-        pg.insert_hook_event(&csid, "claude", "UserPromptSubmit", None, None, 1000, None, &serde_json::json!({"prompt":"fix hot.rs"})).await.unwrap();
-        pg.insert_hook_event(&csid, "claude", "PostToolUse", Some("Edit"), None, 1100, None, &fail("src/hot.rs")).await.unwrap();
-        pg.insert_hook_event(&csid, "claude", "PostToolUse", Some("Edit"), None, 1200, None, &fail("src/hot.rs")).await.unwrap();
-        pg.insert_hook_event(&csid, "claude", "PostToolUse", Some("Edit"), None, 1300, None, &fail("src/hot.rs")).await.unwrap();
-        pg.insert_hook_event(&csid, "claude", "PostToolUse", Some("Edit"), None, 1400, None, &ok("src/hot.rs")).await.unwrap();
-        // cold.rs: only 1 failed edit ⇒ below threshold, not flagged.
-        pg.insert_hook_event(&csid, "claude", "PostToolUse", Some("Edit"), None, 1500, None, &fail("src/cold.rs")).await.unwrap();
+        let edit = |fp: &str| serde_json::json!({ "tool_input": {"file_path": fp} });
+        let prompt = |t: &str| serde_json::json!({ "prompt": t });
+        // hot.rs: 5 edits in one session ⇒ churn anti-pattern (5 >= CHURN_MIN_EDITS).
+        for ts in [1100, 1200, 1300, 1400, 1500] {
+            pg.insert_hook_event(&csid, "claude", "PostToolUse", Some("Edit"), None, ts, None, &edit("src/hot.rs")).await.unwrap();
+        }
+        // cold.rs: only 2 edits ⇒ below threshold, not flagged.
+        pg.insert_hook_event(&csid, "claude", "PostToolUse", Some("Edit"), None, 1600, None, &edit("src/cold.rs")).await.unwrap();
+        pg.insert_hook_event(&csid, "claude", "PostToolUse", Some("Edit"), None, 1700, None, &edit("src/cold.rs")).await.unwrap();
+        // prompts: 2 corrections (⇒ correction-prone) + 1 principle (⇒ rule-candidates) + 1 neutral.
+        pg.insert_hook_event(&csid, "claude", "UserPromptSubmit", None, None, 1000, None, &prompt("fix hot.rs")).await.unwrap();
+        pg.insert_hook_event(&csid, "claude", "UserPromptSubmit", None, None, 1050, None, &prompt("revert that change")).await.unwrap();
+        pg.insert_hook_event(&csid, "claude", "UserPromptSubmit", None, None, 1075, None, &prompt("that's not right, try again")).await.unwrap();
+        pg.insert_hook_event(&csid, "claude", "UserPromptSubmit", None, None, 1090, None, &prompt("you should always run the tests first")).await.unwrap();
         pg.insert_hook_event(&csid, "claude", "Stop", None, None, 2000, None, &serde_json::json!({})).await.unwrap();
 
         // full wiring: analyze_project enriches (enriched>0) then derives signals.
         let task = Task::new(TaskKind::AnalyzeProject, "", &pid.to_string());
         assert_eq!(analyze_project(&ctx, &task).await.unwrap(), 1, "one session enriched");
 
-        let pats: Vec<(String, bool, f64)> = sqlx_core::query_as::query_as(
-            "SELECT name, is_anti_pattern, confidence::float8 FROM inference.detected_patterns WHERE folder_id = $1 ORDER BY name"
+        let pats: Vec<(String, bool, Option<f64>, i32)> = sqlx_core::query_as::query_as(
+            "SELECT name, is_anti_pattern, confidence::float8, instance_count FROM inference.detected_patterns WHERE folder_id = $1 ORDER BY name"
         ).bind(fid).fetch_all(pg.pool()).await.unwrap();
-        assert_eq!(pats.len(), 1, "only the file over the failure threshold is flagged");
-        assert_eq!(pats[0].0, "rework: src/hot.rs");
-        assert!(pats[0].1, "is an anti-pattern");
-        assert_eq!(pats[0].2, 0.75, "3 fails / 4 attempts");
+        assert_eq!(pats.len(), 3, "churn + correction-prone + rule-candidates (cold.rs below churn threshold)");
+        assert_eq!(pats[0].0, "correction-prone");
+        assert!(pats[0].1, "correction-prone is an anti-pattern");
+        assert_eq!(pats[0].3, 2, "two corrective prompts");
+        assert_eq!(pats[1].0, "rework: src/hot.rs");
+        assert!(pats[1].1, "churn is an anti-pattern");
+        assert_eq!(pats[1].2, Some(0.5), "5 edits / 10");
+        assert_eq!(pats[2].0, "rule-candidates");
+        assert!(!pats[2].1, "rule candidate is a pattern, not anti");
+        assert_eq!(pats[2].3, 1, "one principle prompt");
 
-        // idempotent: deriving again upserts, no duplicate row.
-        assert_eq!(derive_signals(&ctx, &pid).await.unwrap(), 1);
+        // idempotent: deriving again upserts the same 3 rows.
+        assert_eq!(derive_signals(&ctx, &pid).await.unwrap(), 3);
         let n: (i64,) = sqlx_core::query_as::query_as("SELECT count(*) FROM inference.detected_patterns WHERE folder_id = $1")
             .bind(fid).fetch_one(pg.pool()).await.unwrap();
-        assert_eq!(n.0, 1, "upsert, not insert");
+        assert_eq!(n.0, 3, "upsert, not insert");
 
         // cleanup
         let pool = pg.pool();
