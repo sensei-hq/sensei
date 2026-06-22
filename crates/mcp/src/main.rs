@@ -523,19 +523,11 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
     }
 
     if tool_name == "log_event" {
-        let event_type = args["type"].as_str().unwrap_or("unknown");
-        let data_str = args["data"].as_str().unwrap_or("{}");
-        let session_id = args["session_id"].as_str();
-        let body = json!({
-            "project": repo_id,
-            "event_type": event_type,
-            "session_id": session_id,
-            "data": serde_json::from_str::<serde_json::Value>(data_str).unwrap_or(json!(data_str)),
-        });
-        let result = client.post(format!("{}/api/events", daemon_url()))
-            .json(&body)
-            .send();
-        return daemon_result(result);
+        // The activity.events sink was retired (#68) — nothing consumed it, and
+        // the session analyzer derives its signals from the hook stream
+        // (activity.assistant_events) instead. Kept as a success no-op so the
+        // workflow skills that call log_event as a mandatory step don't error.
+        return json!({"content": [{"type": "text", "text": "{\"ok\":true,\"noop\":\"events sink retired (#68)\"}"}]});
     }
 
     // ── Knowledge plane ─────────────────────────────────────────────────
