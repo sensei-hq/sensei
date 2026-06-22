@@ -1,8 +1,8 @@
-//! Session enrichment — analyzer layer L0 (#66).
+//! Session enrichment — analyzer layer L0 (#66) + signal derivation L1 (#68).
 //!
-//! `activity.events` is empty and sessions are created metric-less by the #31
-//! hook derivation, so the captured `activity.hook_events` stream is the only
-//! signal. This stage turns a session's events into per-turn rows
+//! Sessions are created metric-less by the #31 hook derivation, so the captured
+//! `activity.assistant_events` stream is the only signal. This stage turns a
+//! session's events into per-turn rows
 //! (`activity.turns`) + session aggregates (`activity.sessions`):
 //!
 //! * a **turn** spans one `UserPromptSubmit` to the next; it carries a
@@ -24,6 +24,10 @@ use super::super::Task;
 /// further apart than this start a new segment, and the gap is excluded from
 /// active duration. 30 minutes.
 const IDLE_GAP_MS: i64 = 30 * 60 * 1000;
+
+/// A file with at least this many failed Edit/Write/MultiEdit ops across a
+/// project is flagged as a rework anti-pattern by the SignalDeriver (#68).
+const ANTI_PATTERN_MIN_FAILS: i64 = 3;
 
 /// One hook event projected to just the fields the heuristics read — decoupled
 /// from the DB row so derivation is a pure function.
@@ -323,7 +327,61 @@ pub async fn analyze_project(ctx: &TaskContext, task: &Task) -> Result<u32, Stri
         }
     }
     tracing::info!("analyze_project: {} — enriched {} sessions", project_id, enriched);
+    // L1: derive signals (anti-patterns) once the project's sessions are fresh.
+    if enriched > 0
+        && let Err(e) = derive_signals(ctx, &project_id).await
+    {
+        tracing::warn!(error = %e, project = %project_id, "analyze_project: derive_signals failed");
+    }
     Ok(enriched)
+}
+
+/// Rework anti-pattern name for a file.
+fn anti_pattern_name(file: &str) -> String {
+    format!("rework: {file}")
+}
+
+/// Failure rate as a 0..1 confidence (fails / attempts), clamped.
+fn failure_confidence(fails: i64, attempts: i64) -> f64 {
+    if attempts <= 0 {
+        0.0
+    } else {
+        (fails as f64 / attempts as f64).clamp(0.0, 1.0)
+    }
+}
+
+/// SignalDeriver (L1, #68): derive detected patterns from a project's enriched
+/// events. v1 = rework anti-patterns — files whose failed Edit/Write/MultiEdit
+/// ops reach `ANTI_PATTERN_MIN_FAILS` become `is_anti_pattern` rows that F4
+/// (#69) turns into "fix this" recommendations. Idempotent (upsert by
+/// folder+name). Returns the number of patterns written.
+pub async fn derive_signals(ctx: &TaskContext, project_id: &uuid::Uuid) -> Result<u32, String> {
+    let stats = ctx
+        .pg()
+        .get_file_failure_stats(project_id, ANTI_PATTERN_MIN_FAILS)
+        .await?;
+    let mut count = 0u32;
+    for (folder_id, file, attempts, fails) in stats {
+        let instances = serde_json::json!([{ "file": file, "fails": fails, "attempts": attempts }]);
+        match ctx
+            .pg()
+            .upsert_pattern(
+                &folder_id,
+                &anti_pattern_name(&file),
+                true,
+                Some(failure_confidence(fails, attempts)),
+                &instances,
+            )
+            .await
+        {
+            Ok(_) => count += 1,
+            Err(e) => tracing::warn!(error = %e, file = %file, "derive_signals: upsert_pattern failed"),
+        }
+    }
+    if count > 0 {
+        tracing::info!("derive_signals: {} — {} rework anti-patterns", project_id, count);
+    }
+    Ok(count)
 }
 
 #[cfg(test)]
@@ -471,6 +529,18 @@ mod tests {
         assert!(e.tool_failed);
     }
 
+    #[test]
+    fn anti_pattern_name_prefixes_file() {
+        assert_eq!(anti_pattern_name("src/x.rs"), "rework: src/x.rs");
+    }
+
+    #[test]
+    fn failure_confidence_is_fails_over_attempts() {
+        assert_eq!(failure_confidence(3, 4), 0.75);
+        assert_eq!(failure_confidence(0, 0), 0.0, "no attempts ⇒ zero, no div-by-zero");
+        assert_eq!(failure_confidence(5, 4), 1.0, "clamped to 1.0");
+    }
+
     // ── DB-backed orchestrator test ──────────────────────────────────────
     use std::sync::Arc;
     use crate::tasks::queue::TaskQueue;
@@ -537,6 +607,56 @@ mod tests {
 
         // cleanup (turns cascade on session delete)
         let pool = pg.pool();
+        sqlx_core::query::query("DELETE FROM activity.assistant_events WHERE session_id = $1").bind(&csid).execute(pool).await.ok();
+        sqlx_core::query::query("DELETE FROM activity.sessions WHERE id = $1").bind(sid).execute(pool).await.ok();
+        sqlx_core::query::query("DELETE FROM sensei.folders WHERE root_id = $1").bind(root).execute(pool).await.ok();
+        sqlx_core::query::query("DELETE FROM sensei.folders_to_watch WHERE id = $1").bind(root).execute(pool).await.ok();
+        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1").bind(pid).execute(pool).await.ok();
+    }
+
+    #[tokio::test]
+    async fn derive_signals_flags_rework_files() {
+        let ctx = make_ctx().await;
+        let pg = ctx.pg();
+        let pid = pg.create_project(&format!("_test:sig-{}", uuid::Uuid::new_v4()), None, None).await.unwrap();
+        let root = pg.add_watch_root(&format!("/_test/sig-root-{}", uuid::Uuid::new_v4()), "t", &serde_json::json!([])).await.unwrap();
+        let fid = pg.upsert_repo(&root, "sig-repo", &format!("/_test/sig-{}", uuid::Uuid::new_v4())).await.unwrap();
+        let csid = format!("_test-sid-{}", uuid::Uuid::new_v4());
+        let sid = pg.record_session_event(&csid, &fid, Some(&pid), "claude", true).await.unwrap();
+
+        let fail = |fp: &str| serde_json::json!({ "tool_input": {"file_path": fp}, "tool_response": {"is_error": true} });
+        let ok = |fp: &str| serde_json::json!({ "tool_input": {"file_path": fp}, "tool_response": {"is_error": false} });
+        // hot.rs: 3 failed edits + 1 ok ⇒ flagged (3 >= ANTI_PATTERN_MIN_FAILS).
+        pg.insert_hook_event(&csid, "claude", "UserPromptSubmit", None, None, 1000, None, &serde_json::json!({"prompt":"fix hot.rs"})).await.unwrap();
+        pg.insert_hook_event(&csid, "claude", "PostToolUse", Some("Edit"), None, 1100, None, &fail("src/hot.rs")).await.unwrap();
+        pg.insert_hook_event(&csid, "claude", "PostToolUse", Some("Edit"), None, 1200, None, &fail("src/hot.rs")).await.unwrap();
+        pg.insert_hook_event(&csid, "claude", "PostToolUse", Some("Edit"), None, 1300, None, &fail("src/hot.rs")).await.unwrap();
+        pg.insert_hook_event(&csid, "claude", "PostToolUse", Some("Edit"), None, 1400, None, &ok("src/hot.rs")).await.unwrap();
+        // cold.rs: only 1 failed edit ⇒ below threshold, not flagged.
+        pg.insert_hook_event(&csid, "claude", "PostToolUse", Some("Edit"), None, 1500, None, &fail("src/cold.rs")).await.unwrap();
+        pg.insert_hook_event(&csid, "claude", "Stop", None, None, 2000, None, &serde_json::json!({})).await.unwrap();
+
+        // full wiring: analyze_project enriches (enriched>0) then derives signals.
+        let task = Task::new(TaskKind::AnalyzeProject, "", &pid.to_string());
+        assert_eq!(analyze_project(&ctx, &task).await.unwrap(), 1, "one session enriched");
+
+        let pats: Vec<(String, bool, f64)> = sqlx_core::query_as::query_as(
+            "SELECT name, is_anti_pattern, confidence::float8 FROM inference.detected_patterns WHERE folder_id = $1 ORDER BY name"
+        ).bind(fid).fetch_all(pg.pool()).await.unwrap();
+        assert_eq!(pats.len(), 1, "only the file over the failure threshold is flagged");
+        assert_eq!(pats[0].0, "rework: src/hot.rs");
+        assert!(pats[0].1, "is an anti-pattern");
+        assert_eq!(pats[0].2, 0.75, "3 fails / 4 attempts");
+
+        // idempotent: deriving again upserts, no duplicate row.
+        assert_eq!(derive_signals(&ctx, &pid).await.unwrap(), 1);
+        let n: (i64,) = sqlx_core::query_as::query_as("SELECT count(*) FROM inference.detected_patterns WHERE folder_id = $1")
+            .bind(fid).fetch_one(pg.pool()).await.unwrap();
+        assert_eq!(n.0, 1, "upsert, not insert");
+
+        // cleanup
+        let pool = pg.pool();
+        sqlx_core::query::query("DELETE FROM inference.detected_patterns WHERE folder_id = $1").bind(fid).execute(pool).await.ok();
         sqlx_core::query::query("DELETE FROM activity.assistant_events WHERE session_id = $1").bind(&csid).execute(pool).await.ok();
         sqlx_core::query::query("DELETE FROM activity.sessions WHERE id = $1").bind(sid).execute(pool).await.ok();
         sqlx_core::query::query("DELETE FROM sensei.folders WHERE root_id = $1").bind(root).execute(pool).await.ok();

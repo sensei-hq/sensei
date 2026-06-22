@@ -1795,44 +1795,9 @@ impl PgStore {
         }).collect())
     }
 
-    // ── Events (activity) ────────────────────────────────────────────
+    // ── Assistant events ───────────────────────────────────────────────
 
-    pub async fn insert_event(
-        &self, session_id: &uuid::Uuid, folder_id: &uuid::Uuid,
-        event_type: &str, turn_number: Option<i32>, data: &serde_json::Value,
-    ) -> Result<uuid::Uuid, String> {
-        let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
-            "INSERT INTO activity.events(session_id, folder_id, event_type, turn_number, data) VALUES($1, $2, $3::sensei.event_type, $4, $5) RETURNING id"
-        ).bind(session_id).bind(folder_id).bind(event_type).bind(turn_number).bind(data)
-            .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
-        Ok(row.0)
-    }
-
-    pub async fn get_events_by_session(&self, session_id: &uuid::Uuid) -> Result<Vec<serde_json::Value>, String> {
-        let rows: Vec<(uuid::Uuid, String, Option<i32>, serde_json::Value, chrono::DateTime<chrono::Utc>)> =
-            sqlx_core::query_as::query_as(
-                "SELECT id, event_type::text, turn_number, data, created_at FROM activity.events WHERE session_id = $1 ORDER BY created_at"
-            ).bind(session_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
-
-        Ok(rows.into_iter().map(|(id, etype, turn, data, ts)| {
-            serde_json::json!({ "id": id, "event_type": etype, "turn_number": turn, "data": data, "created_at": ts.to_rfc3339() })
-        }).collect())
-    }
-
-    pub async fn get_events_by_type(&self, folder_id: &uuid::Uuid, event_type: &str) -> Result<Vec<serde_json::Value>, String> {
-        let rows: Vec<(uuid::Uuid, uuid::Uuid, serde_json::Value, chrono::DateTime<chrono::Utc>)> =
-            sqlx_core::query_as::query_as(
-                "SELECT id, session_id, data, created_at FROM activity.events WHERE folder_id = $1 AND event_type = $2::sensei.event_type ORDER BY created_at DESC"
-            ).bind(folder_id).bind(event_type).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
-
-        Ok(rows.into_iter().map(|(id, sid, data, ts)| {
-            serde_json::json!({ "id": id, "session_id": sid, "data": data, "created_at": ts.to_rfc3339() })
-        }).collect())
-    }
-
-    // ── Hook events ───────────────────────────────────────────────────
-
-    /// Insert a hook event payload into activity.hook_events.
+    /// Insert a hook event payload into activity.assistant_events.
     /// session_id is the assistant's string session ID (not a DB UUID).
     /// assistant_family identifies the source (claude, cursor, zed, …); defaults to 'claude'.
     pub async fn insert_hook_event(
@@ -1916,6 +1881,28 @@ impl PgStore {
             "SELECT project_id, max(GREATEST(started_at, COALESCE(completed_at, started_at)))
              FROM activity.sessions WHERE project_id IS NOT NULL GROUP BY project_id"
         ).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows)
+    }
+
+    /// Per-(folder, file) edit failure stats across a project's sessions — the
+    /// SignalDeriver's anti-pattern source (#68, L1). Returns `(folder_id, file,
+    /// attempts, fails)` only for files whose FAILED Edit/Write/MultiEdit ops
+    /// reach `min_fails` (a rework anti-pattern). Failure = tool_response.is_error.
+    pub async fn get_file_failure_stats(&self, project_id: &uuid::Uuid, min_fails: i64) -> Result<Vec<(uuid::Uuid, String, i64, i64)>, String> {
+        let rows: Vec<(uuid::Uuid, String, i64, i64)> = sqlx_core::query_as::query_as(
+            "SELECT s.folder_id,
+                    ae.payload->'tool_input'->>'file_path' AS file,
+                    count(*)::bigint AS attempts,
+                    count(*) FILTER (WHERE (ae.payload->'tool_response'->>'is_error')::boolean)::bigint AS fails
+             FROM activity.assistant_events ae
+             JOIN activity.sessions s ON s.client_session_id = ae.session_id
+             WHERE s.project_id = $1
+               AND ae.event_type = 'PostToolUse'
+               AND ae.tool_name IN ('Edit', 'Write', 'MultiEdit')
+               AND ae.payload->'tool_input'->>'file_path' IS NOT NULL
+             GROUP BY s.folder_id, ae.payload->'tool_input'->>'file_path'
+             HAVING count(*) FILTER (WHERE (ae.payload->'tool_response'->>'is_error')::boolean) >= $2"
+        ).bind(project_id).bind(min_fails).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(rows)
     }
 
@@ -4099,31 +4086,6 @@ mod tests {
         s.create_session(&fid, "task 2", None).await.unwrap();
         let sessions = s.list_sessions_by_folder(&fid, 10).await.unwrap();
         assert_eq!(sessions.len(), 2);
-    }
-
-    #[tokio::test]
-    async fn event_insert_and_get() {
-        let s = pg_store().await;
-        let fid = create_test_folder(&s, "evt_insert").await;
-        let sid = s.create_session(&fid, "test", None).await.unwrap();
-        let data = serde_json::json!({"tool_name": "search", "duration_ms": 42});
-        s.insert_event(&sid, &fid, "tool_call", Some(1), &data).await.unwrap();
-        let events = s.get_events_by_session(&sid).await.unwrap();
-        assert_eq!(events.len(), 1);
-        assert_eq!(events[0]["event_type"], "tool_call");
-        assert_eq!(events[0]["data"]["tool_name"], "search");
-    }
-
-    #[tokio::test]
-    async fn event_get_by_type() {
-        let s = pg_store().await;
-        let fid = create_test_folder(&s, &format!("evt_type_{}", uuid::Uuid::new_v4())).await;
-        let sid = s.create_session(&fid, "test", None).await.unwrap();
-        s.insert_event(&sid, &fid, "correction", None, &serde_json::json!({"description": "wrong indent"})).await.unwrap();
-        s.insert_event(&sid, &fid, "tool_call", Some(1), &serde_json::json!({"tool_name": "grep"})).await.unwrap();
-        let corrections = s.get_events_by_type(&fid, "correction").await.unwrap();
-        assert_eq!(corrections.len(), 1);
-        assert_eq!(corrections[0]["data"]["description"], "wrong indent");
     }
 
     #[tokio::test]

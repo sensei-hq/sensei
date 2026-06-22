@@ -149,9 +149,6 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/patterns/{project}/for/{symbol}", get(codebase::pattern_for_symbol))
         .route("/api/patterns/{project}/duplicates", get(codebase::find_duplicates_handler))
         .route("/api/patterns/{project}/conventions", get(codebase::project_conventions_handler))
-        // Events
-        .route("/api/events", post(sessions::create_event))
-        .route("/api/events/{project}", get(sessions::list_events))
         // Hook event ingestion (from sensei-hook.ts)
         .route("/hook/event", post(sessions::ingest_hook_event))
         // Structured logging (remote writers: CLI, MCP, app)

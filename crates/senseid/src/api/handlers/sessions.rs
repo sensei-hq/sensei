@@ -3,7 +3,6 @@ use axum::{
     http::StatusCode,
     response::Json,
 };
-use serde::Deserialize;
 use crate::api::state::AppState;
 
 // ── Sessions ────────────────────────────────────────────────────────────────
@@ -80,80 +79,9 @@ pub(crate) async fn update_session_handler(
     }
 }
 
-// ── Events ──────────────────────────────────────────────────────────────────
-
-pub(crate) async fn create_event(
-    State(state): State<AppState>,
-    Json(body): Json<serde_json::Value>,
-) -> (StatusCode, Json<serde_json::Value>) {
-    let event_type = match body["event_type"].as_str().or(body["type"].as_str()) {
-        Some(t) => t,
-        None => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "event_type is required"}))),
-    };
-
-    // PgStore insert_event expects session_uuid, folder_uuid, event_type, turn_number, json data
-    let session_id = match body["session_id"].as_str().map(uuid::Uuid::parse_str) {
-        Some(Ok(uid)) => uid,
-        _ => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "session_id (UUID) is required"}))),
-    };
-    let folder_id = match body["project"].as_str().or(body["folder_id"].as_str()).map(uuid::Uuid::parse_str) {
-        Some(Ok(uid)) => uid,
-        _ => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "project/folder_id (UUID) is required"}))),
-    };
-    let turn_number = body["turn_number"].as_i64().map(|n| n as i32);
-    let data = body.get("data").cloned().unwrap_or(serde_json::json!({}));
-
-    match state.pg.insert_event(&session_id, &folder_id, event_type, turn_number, &data).await {
-        Ok(id) => (StatusCode::CREATED, Json(serde_json::json!({"ok": true, "id": id}))),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"ok": false, "error": e}))),
-    }
-}
-
-#[derive(Deserialize)]
-pub(crate) struct EventQuery {
-    #[serde(rename = "type")]
-    event_type: Option<String>,
-    session: Option<String>,
-    #[allow(dead_code)]
-    limit: Option<u32>,
-}
-
-pub(crate) async fn list_events(
-    State(state): State<AppState>,
-    Path(project): Path<String>,
-    Query(q): Query<EventQuery>,
-) -> Json<serde_json::Value> {
-    // PgStore offers get_events_by_session or get_events_by_type — route based on query params.
-    // If session filter is provided, use that; otherwise filter by folder + event_type.
-    if let Some(session_str) = &q.session
-        && let Ok(session_id) = uuid::Uuid::parse_str(session_str) {
-            return match state.pg.get_events_by_session(&session_id).await {
-                Ok(events) => {
-                    let count = events.len();
-                    Json(serde_json::json!({"events": events, "count": count}))
-                }
-                Err(e) => Json(serde_json::json!({"error": e})),
-            };
-        }
-
-    // Fall back to folder + event_type query
-    if let (Ok(folder_id), Some(etype)) = (uuid::Uuid::parse_str(&project), &q.event_type) {
-        return match state.pg.get_events_by_type(&folder_id, etype).await {
-            Ok(events) => {
-                let count = events.len();
-                Json(serde_json::json!({"events": events, "count": count}))
-            }
-            Err(e) => Json(serde_json::json!({"error": e})),
-        };
-    }
-
-    // TODO: need a broader query method for listing all events by folder.
-    Json(serde_json::json!({"events": [], "count": 0}))
-}
-
 // ── Hook event ingestion ────────────────────────────────────────────────────
 
-/// Accepts a hook payload from any assistant and stores it in activity.hook_events.
+/// Accepts a hook payload from any assistant and stores it in activity.assistant_events.
 /// Called by hook scripts (sensei-hook.ts or equivalent) for every event type.
 /// Returns 200 OK always — hook scripts must not block on errors.
 pub(crate) async fn ingest_hook_event(
