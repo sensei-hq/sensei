@@ -313,7 +313,7 @@ pub async fn enrich_session(
 pub async fn analyze_project(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     let project_id = uuid::Uuid::parse_str(&task.path)
         .map_err(|_| format!("AnalyzeProject: invalid project id '{}'", task.path))?;
-    let sessions = ctx.pg().get_project_session_ids(&project_id).await?;
+    let sessions = ctx.pg().get_project_sessions_needing_enrichment(&project_id).await?;
     let mut enriched = 0u32;
     for (id, client_session_id) in sessions {
         match enrich_session(ctx, &id, &client_session_id).await {
@@ -528,15 +528,16 @@ mod tests {
         ).bind(sid).fetch_all(pg.pool()).await.unwrap();
         assert_eq!(turns, vec![(1, 1, false), (2, 1, true)]);
 
-        // idempotent — re-run yields the same turn count (no dupes).
-        analyze_project(&ctx, &task).await.unwrap();
+        // incremental — no assistant_events newer than analyzed_at ⇒ the
+        // session is skipped on the next run (cost scales with new activity).
+        assert_eq!(analyze_project(&ctx, &task).await.unwrap(), 0, "unchanged session is skipped");
         let n: (i64,) = sqlx_core::query_as::query_as("SELECT count(*) FROM activity.turns WHERE session_id = $1")
             .bind(sid).fetch_one(pg.pool()).await.unwrap();
-        assert_eq!(n.0, 2, "re-enrich replaces, not duplicates");
+        assert_eq!(n.0, 2, "turns from the first enrichment remain (no dupes)");
 
         // cleanup (turns cascade on session delete)
         let pool = pg.pool();
-        sqlx_core::query::query("DELETE FROM activity.hook_events WHERE session_id = $1").bind(&csid).execute(pool).await.ok();
+        sqlx_core::query::query("DELETE FROM activity.assistant_events WHERE session_id = $1").bind(&csid).execute(pool).await.ok();
         sqlx_core::query::query("DELETE FROM activity.sessions WHERE id = $1").bind(sid).execute(pool).await.ok();
         sqlx_core::query::query("DELETE FROM sensei.folders WHERE root_id = $1").bind(root).execute(pool).await.ok();
         sqlx_core::query::query("DELETE FROM sensei.folders_to_watch WHERE id = $1").bind(root).execute(pool).await.ok();
