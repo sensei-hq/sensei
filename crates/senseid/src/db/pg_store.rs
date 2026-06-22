@@ -1884,25 +1884,50 @@ impl PgStore {
         Ok(rows)
     }
 
-    /// Per-(folder, file) edit failure stats across a project's sessions — the
-    /// SignalDeriver's anti-pattern source (#68, L1). Returns `(folder_id, file,
-    /// attempts, fails)` only for files whose FAILED Edit/Write/MultiEdit ops
-    /// reach `min_fails` (a rework anti-pattern). Failure = tool_response.is_error.
-    pub async fn get_file_failure_stats(&self, project_id: &uuid::Uuid, min_fails: i64) -> Result<Vec<(uuid::Uuid, String, i64, i64)>, String> {
+    /// Per-(folder, file) re-edit churn across a project's sessions — the
+    /// SignalDeriver's rework anti-pattern source (#68, L1). Tool failures aren't
+    /// captured, so churn (the same file edited many times in ONE session) is the
+    /// "result needed follow-ups" signal. Returns `(folder_id, file,
+    /// max_session_edits, total_edits)` only for files whose busiest single
+    /// session reaches `min_session_edits`.
+    pub async fn get_file_churn_stats(&self, project_id: &uuid::Uuid, min_session_edits: i64) -> Result<Vec<(uuid::Uuid, String, i64, i64)>, String> {
         let rows: Vec<(uuid::Uuid, String, i64, i64)> = sqlx_core::query_as::query_as(
-            "SELECT s.folder_id,
-                    ae.payload->'tool_input'->>'file_path' AS file,
-                    count(*)::bigint AS attempts,
-                    count(*) FILTER (WHERE (ae.payload->'tool_response'->>'is_error')::boolean)::bigint AS fails
+            "WITH per_session AS (
+                 SELECT s.folder_id,
+                        ae.payload->'tool_input'->>'file_path' AS file,
+                        ae.session_id,
+                        count(*) AS edits
+                 FROM activity.assistant_events ae
+                 JOIN activity.sessions s ON s.client_session_id = ae.session_id
+                 WHERE s.project_id = $1
+                   AND ae.event_type = 'PostToolUse'
+                   AND ae.tool_name IN ('Edit', 'Write', 'MultiEdit')
+                   AND ae.payload->'tool_input'->>'file_path' IS NOT NULL
+                 GROUP BY s.folder_id, ae.payload->'tool_input'->>'file_path', ae.session_id
+             )
+             SELECT folder_id, file,
+                    max(edits)::bigint AS max_session_edits,
+                    sum(edits)::bigint AS total_edits
+             FROM per_session
+             GROUP BY folder_id, file
+             HAVING max(edits) >= $2"
+        ).bind(project_id).bind(min_session_edits).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows)
+    }
+
+    /// User-prompt text across a project's sessions — the SignalDeriver's
+    /// correction / rule-candidate source (#68, L1). Returns `(folder_id,
+    /// session_id, prompt)` for every UserPromptSubmit carrying prompt text.
+    pub async fn get_project_prompts(&self, project_id: &uuid::Uuid) -> Result<Vec<(uuid::Uuid, String, String)>, String> {
+        let rows: Vec<(uuid::Uuid, String, String)> = sqlx_core::query_as::query_as(
+            "SELECT s.folder_id, ae.session_id, ae.payload->>'prompt'
              FROM activity.assistant_events ae
              JOIN activity.sessions s ON s.client_session_id = ae.session_id
              WHERE s.project_id = $1
-               AND ae.event_type = 'PostToolUse'
-               AND ae.tool_name IN ('Edit', 'Write', 'MultiEdit')
-               AND ae.payload->'tool_input'->>'file_path' IS NOT NULL
-             GROUP BY s.folder_id, ae.payload->'tool_input'->>'file_path'
-             HAVING count(*) FILTER (WHERE (ae.payload->'tool_response'->>'is_error')::boolean) >= $2"
-        ).bind(project_id).bind(min_fails).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+               AND ae.event_type = 'UserPromptSubmit'
+               AND ae.payload->>'prompt' IS NOT NULL
+             ORDER BY ae.ts"
+        ).bind(project_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(rows)
     }
 
