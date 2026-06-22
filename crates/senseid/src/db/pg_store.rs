@@ -1922,12 +1922,34 @@ impl PgStore {
         sqlx_core::query::query(
             "UPDATE activity.sessions
                 SET outcome = $2::sensei.session_outcome, ftr = $3, turns = $4,
-                    corrections = $5, duration_ms = $6, module = $7,
+                    corrections = $5, duration = make_interval(secs => $6::float8 / 1000.0),
+                    module = $7,
                     props = props || jsonb_build_object('tool_usage', $8::jsonb)
               WHERE id = $1"
         ).bind(session_id).bind(outcome).bind(ftr).bind(turns).bind(corrections)
-            .bind(duration_ms as i32).bind(module).bind(tool_usage)
+            .bind(duration_ms).bind(module).bind(tool_usage)
             .execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Replace a session's per-turn rows (#66). Deletes the session's existing
+    /// turns and re-inserts from a JSON array `[{turn_number, segment,
+    /// started_ms, ended_ms, duration_ms, is_correction, triage_signal,
+    /// tool_calls}]` — ms epochs/durations are converted to timestamptz/interval
+    /// here. Idempotent (delete + reinsert), so re-enrichment never duplicates.
+    pub async fn replace_session_turns(&self, session_id: &uuid::Uuid, turns: &serde_json::Value) -> Result<(), String> {
+        sqlx_core::query::query("DELETE FROM activity.turns WHERE session_id = $1")
+            .bind(session_id).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        sqlx_core::query::query(
+            "INSERT INTO activity.turns
+               (session_id, turn_number, segment, started_at, ended_at, duration, is_correction, triage_signal, tool_calls)
+             SELECT $1, (t->>'turn_number')::int, (t->>'segment')::int,
+                    to_timestamp((t->>'started_ms')::bigint / 1000.0),
+                    to_timestamp((t->>'ended_ms')::bigint / 1000.0),
+                    make_interval(secs => (t->>'duration_ms')::bigint / 1000.0),
+                    (t->>'is_correction')::bool, t->>'triage_signal', (t->>'tool_calls')::int
+             FROM jsonb_array_elements($2::jsonb) t"
+        ).bind(session_id).bind(turns).execute(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(())
     }
 
