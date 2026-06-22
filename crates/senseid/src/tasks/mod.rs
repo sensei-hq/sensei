@@ -10,6 +10,7 @@ pub mod executor;
 pub mod handlers;
 pub mod progress;
 pub mod progress_emitter;
+pub mod analyzer_scheduler;
 pub mod processors;
 pub mod resume;
 

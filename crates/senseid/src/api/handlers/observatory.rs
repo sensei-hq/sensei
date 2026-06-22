@@ -172,6 +172,13 @@ pub(crate) async fn analyze_solution(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
+    // On-demand analyzer trigger (#67): enqueue session enrichment / analysis
+    // for this project (the scheduler does this periodically). Task::new(kind,
+    // folder_path, path) — the handler reads the project id from `path`.
+    state.task_queue.enqueue(
+        crate::tasks::Task::new(crate::tasks::TaskKind::AnalyzeProject, "", &id),
+    ).await;
+
     // TODO: implement full cross-repo analysis
     Ok(Json(serde_json::json!({
         "project": project,
