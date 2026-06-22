@@ -1847,8 +1847,8 @@ impl PgStore {
         payload: &serde_json::Value,
     ) -> Result<i64, String> {
         let row: (i64,) = sqlx_core::query_as::query_as(
-            "INSERT INTO activity.hook_events \
-             (session_id, assistant_family, event_type, tool_name, cwd, ts, success, payload) \
+            "INSERT INTO activity.assistant_events \
+             (session_id, family, event_type, tool_name, cwd, ts, success, payload) \
              VALUES($1, $2::sensei.assistant_family, $3, $4, $5, $6, $7, $8) RETURNING id"
         )
         .bind(session_id)
@@ -1870,7 +1870,7 @@ impl PgStore {
     /// Postgres enum, so bind with the explicit cast.
     pub async fn latest_hook_event_ts(&self, family: &str) -> Result<Option<i64>, String> {
         let row: (Option<i64>,) = sqlx_core::query_as::query_as(
-            "SELECT max(ts) FROM activity.hook_events WHERE assistant_family = $1::sensei.assistant_family"
+            "SELECT max(ts) FROM activity.assistant_events WHERE family = $1::sensei.assistant_family"
         )
         .bind(family)
         .fetch_one(&self.pool)
@@ -1879,11 +1879,11 @@ impl PgStore {
         Ok(row.0)
     }
 
-    /// All hook events for one assistant session (by its string `session_id`),
+    /// All assistant events for one session (by its string `session_id`),
     /// oldest-first, projected to the fields session enrichment reads (#66).
     pub async fn get_hook_events_for_session(&self, client_session_id: &str) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(String, Option<String>, i64, serde_json::Value)> = sqlx_core::query_as::query_as(
-            "SELECT event_type, tool_name, ts, payload FROM activity.hook_events
+            "SELECT event_type, tool_name, ts, payload FROM activity.assistant_events
              WHERE session_id = $1 ORDER BY ts"
         ).bind(client_session_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(|(event_type, tool_name, ts, payload)| {
@@ -1891,12 +1891,19 @@ impl PgStore {
         }).collect())
     }
 
-    /// `(session uuid, client_session_id)` for every attributed session of a
-    /// project that can be enriched from the hook stream (#66).
-    pub async fn get_project_session_ids(&self, project_id: &uuid::Uuid) -> Result<Vec<(uuid::Uuid, String)>, String> {
+    /// `(session uuid, client_session_id)` for a project's sessions that NEED
+    /// (re)enrichment — never analyzed (`analyzed_at IS NULL`), or with
+    /// assistant_events newer than the last analysis. Lets the scheduler skip
+    /// unchanged sessions so enrichment cost scales with NEW activity, not total
+    /// history (#67 incremental).
+    pub async fn get_project_sessions_needing_enrichment(&self, project_id: &uuid::Uuid) -> Result<Vec<(uuid::Uuid, String)>, String> {
         let rows: Vec<(uuid::Uuid, String)> = sqlx_core::query_as::query_as(
-            "SELECT id, client_session_id FROM activity.sessions
-             WHERE project_id = $1 AND client_session_id IS NOT NULL"
+            "SELECT s.id, s.client_session_id FROM activity.sessions s
+             WHERE s.project_id = $1 AND s.client_session_id IS NOT NULL
+               AND (s.analyzed_at IS NULL
+                    OR EXISTS (SELECT 1 FROM activity.assistant_events e
+                               WHERE e.session_id = s.client_session_id
+                                 AND to_timestamp(e.ts / 1000.0) > s.analyzed_at))"
         ).bind(project_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(rows)
     }
@@ -1923,7 +1930,7 @@ impl PgStore {
             "UPDATE activity.sessions
                 SET outcome = $2::sensei.session_outcome, ftr = $3, turns = $4,
                     corrections = $5, duration = make_interval(secs => $6::float8 / 1000.0),
-                    module = $7,
+                    module = $7, analyzed_at = now(),
                     props = props || jsonb_build_object('tool_usage', $8::jsonb)
               WHERE id = $1"
         ).bind(session_id).bind(outcome).bind(ftr).bind(turns).bind(corrections)
