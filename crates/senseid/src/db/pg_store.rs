@@ -2173,7 +2173,7 @@ impl PgStore {
         let daily: Vec<(chrono::NaiveDate, Option<f64>)> =
             sqlx_core::query_as::query_as(
                 "SELECT date_trunc('day', started_at)::date AS day,
-                        AVG(CASE WHEN ftr THEN 1.0 ELSE 0.0 END) AS daily_ftr
+                        AVG(CASE WHEN ftr THEN 1.0 ELSE 0.0 END)::float8 AS daily_ftr
                  FROM activity.sessions
                  WHERE project_id = $1 AND started_at > now() - interval '14d'
                  GROUP BY day ORDER BY day"
@@ -3979,16 +3979,26 @@ mod tests {
 
     #[tokio::test]
     async fn project_ftr_and_quality_decode_numeric_metrics() {
-        // Regression: project_ftr_metrics.ftr_14d / project_quality_signals.ftr_7d
-        // are NUMERIC; without ::float8 casts sqlx fails to decode into f64 and
-        // the endpoint 500s (masked by the client's default-on-error). These must
-        // return Ok.
+        // Regression: ftr_14d / ftr_7d / daily AVG(...) / avg_duration_ms are all
+        // NUMERIC; without ::float8 casts sqlx fails to decode into f64 and the
+        // endpoint 500s (masked by the client's default-on-error). The project
+        // must have an ENRICHED session in the 14d window — an empty project
+        // yields NULLs that short-circuit decode and hide the bug (which is how
+        // the first cut of this test passed while the live endpoint still 500'd).
         let s = pg_store().await;
         let pid = s.create_project(&format!("_test:ftr-{}", uuid::Uuid::new_v4()), None, None).await.unwrap();
+        let fid = create_test_folder(&s, &format!("ftr-{}", uuid::Uuid::new_v4())).await;
+        let sid = format!("_test-sid-{}", uuid::Uuid::new_v4());
+        let session_id = s.record_session_event(&sid, &fid, Some(&pid), "claude", true).await.unwrap();
+        s.update_session_metrics(&session_id, 3, 0, "completed", true, 1000, None, &serde_json::json!({})).await.unwrap();
+
         let ftr = s.get_project_ftr(&pid).await.expect("get_project_ftr decodes numeric metrics");
-        assert!(ftr.get("ftr14d").is_some());
+        assert!(ftr["ftr14d"].as_f64().is_some(), "ftr14d present");
+        assert!(ftr["ftrTrend"].as_array().is_some_and(|a| !a.is_empty()), "daily trend decodes a numeric row");
         s.get_quality_signals(&pid).await.expect("get_quality_signals decodes numeric metrics");
         s.get_tool_usage_stats().await.expect("get_tool_usage_stats decodes numeric avg_duration_ms");
+
+        sqlx_core::query::query("DELETE FROM activity.sessions WHERE project_id = $1").bind(pid).execute(s.pool()).await.ok();
         sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1").bind(pid).execute(s.pool()).await.ok();
     }
 
