@@ -296,6 +296,15 @@
                         {/if}
                     </div>
                 {/each}
+                {#if bt.length === 0}
+                    <div class="py-10 text-center text-sm text-ink-soft">
+                        {#if s.traces.length > 0}
+                            Legacy bootstrap session — {s.traces.length} record{s.traces.length === 1 ? "" : "s"} with no detailed step traces.
+                        {:else}
+                            No steps recorded for this session.
+                        {/if}
+                    </div>
+                {/if}
                 <div class="h-8"></div>
             </div>
         {:else}
@@ -312,6 +321,7 @@
 {#if state.showModal && state.session}
     {@const s = state.session}
     {@const si = s.system_info}
+    {@const bt = s.traces.filter(isBootstrapTrace)}
     <div
         class="modal-overlay fixed inset-0 flex items-center justify-center z-30 p-6"
         role="dialog"
@@ -335,10 +345,8 @@
                         Report session
                     </div>
                     <div class="text-xs text-ink-soft">
-                        {formatTime(s.started_at)} · {s.traces.length} traces ·
-                        {s.traces.filter(
-                            (t) => isBootstrapTrace(t) && t.fix_attempted,
-                        ).length} auto-fixes
+                        {formatTime(s.started_at)} · {bt.length} traces ·
+                        {bt.filter((t) => t.fix_attempted).length} auto-fixes
                     </div>
                 </div>
                 <button
@@ -369,7 +377,7 @@
                         class="bg-paper-mute border border-paper-mute rounded-md px-3.5 py-3"
                     >
                         <div class="mb-2"><Eyebrow>Included in report</Eyebrow></div>
-                        {#each [["Session", formatTime(s.started_at)], ["OS", anonymize(si.os)], ["Arch", si.arch], ["RAM", `${si.ram_gb} GB`], ["Traces", String(s.traces.length)], ["Fixes", String(s.traces.filter((t) => isBootstrapTrace(t) && t.fix_attempted).length)], ["App", `v${s.app_version}`]] as [k, v]}
+                        {#each [["Session", formatTime(s.started_at)], ["OS", anonymize(si.os)], ["Arch", si.arch], ["RAM", `${si.ram_gb} GB`], ["Traces", String(bt.length)], ["Fixes", String(bt.filter((t) => t.fix_attempted).length)], ["App", `v${s.app_version}`]] as [k, v]}
                             <div class="flex justify-between text-xs mb-1">
                                 <span class="text-ink-soft">{k}</span>
                                 <span class="text-ink-mute font-mono text-xs"
