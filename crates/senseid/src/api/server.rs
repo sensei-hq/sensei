@@ -153,6 +153,13 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
         Arc::new(state.pg.clone()),
     );
 
+    // Periodically enrich/analyze projects whose sessions changed (#67). First
+    // tick fires immediately, so a freshly-started daemon backfills enrichment.
+    crate::tasks::analyzer_scheduler::spawn(
+        task_queue.clone(),
+        Arc::new(state.pg.clone()),
+    );
+
     // Re-enqueue tasks for folders left in a non-terminal state by a
     // previous daemon session. Must run after workers and the progress
     // emitter are live so resumed tasks get picked up immediately and
