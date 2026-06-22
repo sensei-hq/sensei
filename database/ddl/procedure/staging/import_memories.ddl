@@ -11,7 +11,7 @@ set search_path to staging, sensei, extensions;
 -- duplicates from the junk-project bug #60). Unresolved keys yield NULL (a global /
 -- unscoped memory). Enum columns are cast from text here.
 --
--- Mirrors import_hook_events: a plain insert intended for a freshly-reset/empty
+-- Mirrors import_assistant_events: a plain insert intended for a freshly-reset/empty
 -- target (the reset → apply → import workflow). id/source_id/session_id are not
 -- carried; ids regenerate, source_id/session_id stay NULL.
 --
@@ -64,4 +64,4 @@ end;
 $$;
 
 comment on procedure staging.import_memories() is
-'Import staging.memories into sensei.memories. Regenerates FK ids from natural keys (project_name; namespace_scope_key+slug) via scalar lookups; casts enum columns from text. Plain insert for the reset→apply→import workflow (mirrors import_hook_events).';
+'Import staging.memories into sensei.memories. Regenerates FK ids from natural keys (project_name; namespace_scope_key+slug) via scalar lookups; casts enum columns from text. Plain insert for the reset→apply→import workflow (mirrors import_assistant_events).';

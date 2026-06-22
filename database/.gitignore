@@ -3,7 +3,7 @@
 # Personal capture — staged for import via `dbd import …`. May contain session
 # payloads (prompts, file paths, tool output) and per-developer knowledge, so
 # these exported capture files must never be committed.
-import/staging/hook_events.jsonl
+import/staging/assistant_events.jsonl
 import/staging/memories.jsonl
 
 # Local DB snapshots produced by `make db-backup` (and by every `make

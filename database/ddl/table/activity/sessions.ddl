@@ -18,6 +18,7 @@ create table if not exists sessions (
 , props                    jsonb       not null default '{}'
 , started_at               timestamptz not null default now()
 , completed_at             timestamptz
+, analyzed_at              timestamptz
 );
 
 create index if not exists sessions_folder_id_idx
@@ -82,3 +83,6 @@ comment on column sessions.started_at
      is 'When this session started.';
 comment on column sessions.completed_at
      is 'When this session ended.';
+comment on column sessions.analyzed_at
+     is 'When the analyzer last enriched this session (#67). The scheduler skips a
+session whose assistant_events are no newer than this — incremental re-analysis.';
