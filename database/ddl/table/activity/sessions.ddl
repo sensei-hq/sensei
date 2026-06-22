@@ -12,7 +12,7 @@ create table if not exists sessions (
 , corrections              integer     not null default 0
 , tokens_in                integer
 , tokens_out               integer
-, duration_ms              integer
+, duration                 interval
 , module                   text
 , summary                  text
 , props                    jsonb       not null default '{}'
@@ -68,8 +68,10 @@ comment on column sessions.tokens_in
      is 'Total input tokens consumed.';
 comment on column sessions.tokens_out
      is 'Total output tokens generated.';
-comment on column sessions.duration_ms
-     is 'Session duration in milliseconds.';
+comment on column sessions.duration
+     is 'Gap-aware active work time (excludes idle gaps > threshold). The full
+wall-clock span is started_at..completed_at; per-turn/segment detail lives in
+activity.turns.';
 comment on column sessions.module
      is 'Primary code module touched. For per-module FTR.';
 comment on column sessions.summary
