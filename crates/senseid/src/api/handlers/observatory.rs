@@ -187,6 +187,17 @@ pub(crate) async fn analyze_solution(
     })))
 }
 
+/// Enqueue a transcript backfill (#73) — ingest assistant/user prose from the
+/// agent transcript caches into activity.transcript_turns. Resumable, so this
+/// is safe to call repeatedly; only changed transcripts do work.
+pub(crate) async fn backfill_transcripts(State(state): State<AppState>) -> Json<serde_json::Value> {
+    state
+        .task_queue
+        .enqueue(crate::tasks::Task::new(crate::tasks::TaskKind::BackfillTranscripts, "", ""))
+        .await;
+    Json(serde_json::json!({ "ok": true, "enqueued": "backfill_transcripts" }))
+}
+
 // ── Per-Repo Summary ────────────────────────────────────────────────────────
 
 pub(crate) async fn project_summary(
