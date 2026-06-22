@@ -10,6 +10,10 @@ use std::path::{Path, PathBuf};
 /// Cap stored assistant prose per turn (safety net for pathological turns).
 const MAX_TURN_CHARS: usize = 50_000;
 
+/// Skip any single transcript line larger than this — a line this big is a
+/// base64 attachment / blob, not prose, and parsing it stalls the executor.
+const MAX_LINE_BYTES: usize = 4 * 1024 * 1024;
+
 /// Leading markers that mark an injected (non-human) "user" message — harness
 /// notifications, hook context, slash-command echoes. These are not turn
 /// boundaries.
@@ -80,7 +84,9 @@ pub fn parse_claude_transcript(content: &str) -> Vec<TranscriptTurn> {
 
     for line in content.lines() {
         let line = line.trim();
-        if line.is_empty() {
+        // skip blank lines and oversized (blob/attachment) lines — parsing a
+        // multi-MB JSON line would stall the executor.
+        if line.is_empty() || line.len() > MAX_LINE_BYTES {
             continue;
         }
         let v: serde_json::Value = match serde_json::from_str(line) {
