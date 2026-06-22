@@ -33,7 +33,7 @@
         test test-fast test-crates test-crates-fast \
         test-app test-app-unit test-app-e2e test-app-e2e-cold app-e2e-build \
         _e2e-cold-pre _e2e-cold-post reset-e2e-db \
-        setup-hooks update bump tap-push marketplace-push clean
+        setup-hooks update bump dbd-cache-clear tap-push marketplace-push clean
 
 VERSION := $(shell cat VERSION)
 
@@ -382,8 +382,24 @@ bump:
 	@git push origin HEAD
 	@git push origin v$(_v)
 	@echo "Pushed v$(_v) — GitHub Actions will build release artifacts and update tap SHA256s"
+	@# Invalidate the dbd schema-source cache now that the DDL version changed,
+	@# so the next daemon deploy fetches v$(_v)'s DDL instead of serving the
+	@# previous version's cached bundle (which would re-apply the old schema).
+	@$(MAKE) dbd-cache-clear
 	@echo "Syncing homebrew-tap and marketplace..."
 	@$(MAKE) tap-push marketplace-push
+
+# Clear the dbd schema-source cache. The daemon resolves its DDL from
+# `sensei-hq/sensei/database@v<VERSION>` and dbd caches resolved sources per
+# version under ~/Library/Caches/dbd/. While we're pre-stable and NOT yet using
+# dbd snapshots/migrations (the schema is reapplied declaratively each deploy),
+# a stale cache entry makes a post-bump deploy reapply the PREVIOUS version's
+# DDL — recreating dropped objects / reverting view changes. `bump` invokes this
+# so the next deploy refetches the freshly tagged DDL. Revisit once migrations
+# land (then dbd tracks state in _dbd_meta and the cache is no longer a hazard).
+dbd-cache-clear:
+	@rm -rf "$(HOME)/Library/Caches/dbd"/sensei-hq-sensei-* 2>/dev/null || true
+	@echo "Cleared dbd schema-source cache (next deploy refetches the tagged DDL)"
 
 # Sync homebrew/ files to the tap repo (sensei-hq/homebrew-tap).
 # Uses a temporary clone so it works regardless of subtree/squash history.
