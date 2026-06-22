@@ -10,6 +10,7 @@ mod embed;
 mod libraries;
 mod community;
 mod verdicts;
+mod analyze;
 pub(crate) mod helpers;
 
 pub use scan::{scan_root, branch_switch};
@@ -19,3 +20,4 @@ pub use embed::embed_nodes;
 pub use libraries::{resolve_libs, import_lib, index_library, index_library_page, extract_deps};
 pub use community::detect_communities;
 pub use verdicts::measure_verdicts;
+pub use analyze::analyze_project;
