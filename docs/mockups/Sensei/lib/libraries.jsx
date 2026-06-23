@@ -264,7 +264,7 @@ function LibRow({ item, onClick, active }) {
 // A library is a library. No split between detected and imported.
 // Tiny chip on the row hints at origin, but doesn't segment.
 // ═════════════════════════════════════════════════════════════
-function LibrariesVariantA() {
+function LibrariesVariantA({ embedded = false } = {}) {
   const D = window.LIBRARIES_DATA;
   const all = D.groups.flatMap(g => g.items.map(i => ({ ...i, kind: g.id })));
   const [kind, setKind] = lS("all");      // all | code | service
@@ -297,32 +297,17 @@ function LibrariesVariantA() {
     <div className="sensei" data-screen-label="Libraries · Unified"
          style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column',
                   background: 'var(--paper)', overflow: 'hidden' }}>
-      <TauriChrome title="Sensei  先生  ·  libraries"/>
+      {!embedded && <TauriChrome title="Sensei  先生  ·  libraries"/>}
 
-      <div style={{
- borderBottom: 'var(--hairline)',
-                     display: 'flex', alignItems: 'flex-end'
-}} className="gap-4 pt-5 pb-4 px-7" >
-        <div className="kanji" style={{ fontSize: 56, color: 'var(--accent)', lineHeight: 1 }}>庫</div>
-        <div style={{ flex: 1 }}>
-          <div style={{
- fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
-                         textTransform: 'uppercase'
-}} className="mb-1" >Libraries</div>
-          <h1 className="display m-0" style={{ fontSize: 28, fontWeight: 400 }}>
-            Tools the student uses. Kept close.
-          </h1>
-          <p style={{ fontSize: 13, color: 'var(--ink-2)', maxWidth: 620 }} className="mt-1 mb-0" >
-            Sensei watches imports and flags docs that drift. Ask it anything about how
-            you actually use each library — through any assistant that speaks MCP.
-          </p>
-        </div>
-        <button style={{
- fontSize: 13,
-                          background: 'var(--ink)', color: 'var(--paper)',
-                          borderRadius: 5
-}} className="py-2 px-3" >+ add library</button>
-      </div>
+      <ScreenHeader
+        kanji="庫"
+        eyebrow="Libraries"
+        title="Tools the student uses. Kept close."
+        sub="Sensei watches imports and flags docs that drift. Ask it anything about how you actually use each library — through any assistant that speaks MCP."
+        right={
+          <button style={{ fontSize: 13, background: 'var(--ink)', color: 'var(--paper)',
+                           borderRadius: 5 }} className="py-2 px-3" >+ add library</button>
+        }/>
 
       {/* Filter row */}
       <div style={{

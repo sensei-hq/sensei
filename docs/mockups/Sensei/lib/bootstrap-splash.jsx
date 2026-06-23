@@ -98,17 +98,23 @@ const { useEffect: splashUseE } = React;
 
 const SPLASH_GATES = [
 { id: 'homebrew', n: '一', name: 'Homebrew', detail: 'package manager', check: 'which brew',
-  zen: 'The gardener who tends the tools.' },
+  why: 'Installs and updates everything else below from one manifest.',
+  ifMissing: 'The only thing you may have to install by hand — one script does it.' },
 { id: 'postgres', n: '二', name: 'PostgreSQL', detail: 'storage · @16', check: 'brew list postgresql@16',
-  zen: 'A still pond where memories settle.' },
+  why: 'The local database where every session and memory is stored.',
+  ifMissing: 'Installed automatically · nothing is sent anywhere.' },
 { id: 'ollama', n: '三', name: 'Ollama', detail: 'local models', check: 'brew list ollama',
-  zen: 'A mind that thinks without leaving the room.' },
+  why: 'Runs the models on-device so your code never leaves the machine.',
+  ifMissing: 'Installed automatically · models pulled on first use.' },
 { id: 'sensei', n: '四', name: 'Sensei components', detail: 'cli · mcp · daemon', check: 'sensei --version',
-  zen: 'Three hands of the practice — speak, listen, attend.' },
+  why: 'The CLI, the MCP server assistants talk to, and the watcher.',
+  ifMissing: 'Installed automatically from the tap.' },
 { id: 'database', n: '五', name: 'Database', detail: 'schema · pgvector', check: 'sensei db:create',
-  zen: 'Shelves shaped to the form of each memory.' },
+  why: 'Creates the schema and vector index memories are searched through.',
+  ifMissing: 'Created automatically once PostgreSQL is up.' },
 { id: 'daemon', n: '六', name: 'Daemon', detail: 'background', check: 'sensei daemon:start',
-  zen: 'The quiet breath that keeps watch.' }];
+  why: 'Watches sessions in the background — nothing works without it.',
+  ifMissing: 'Started automatically · restarts with your machine.' }];
 
 
 const SPLASH_STATE_STATUSES = {
@@ -289,12 +295,20 @@ function SplashGateRow({ gate, status, delay = 0 }) {
             </span>
             <span style={{ fontSize: 10.5, color: 'var(--ink-4)' }}>· {gate.detail}</span>
           </div>
-          {gate.zen &&
+          {gate.why &&
           <div style={{
-            fontSize: 10.5, color: 'var(--ink-3)',
-            fontStyle: 'italic', lineHeight: 1.35
+            fontSize: 10.5, color: 'var(--ink-3)', lineHeight: 1.4
           }}>
-              {gate.zen}
+              {gate.why}
+            </div>
+          }
+          {/* What happens if this one isn't satisfied — answers the "no why" gap. */}
+          {gate.ifMissing &&
+          <div style={{
+            fontSize: 10, lineHeight: 1.35,
+            color: isBlocked ? 'var(--accent)' : 'var(--ink-4)'
+          }}>
+              {isBlocked ? '→ ' : ''}{gate.ifMissing}
             </div>
           }
         </div>
@@ -388,49 +402,127 @@ function Splash({ state }) {
               {c.sub}
             </div>
 
-            {/* Manual state · remedy card — header / script / footer */}
+            {/* Probing / auto-fixing · framing card — answers "what is all this,
+                and what happens if something's missing" while the ledger runs.
+                Fills the otherwise-empty left column in these states. */}
+            {state === 'probing' &&
+              <div style={{
+                marginTop: 18, maxWidth: 300,
+                border: '1px solid var(--edge)', borderRadius: 8,
+                padding: '12px 14px', background: 'var(--paper-2)'
+              }}>
+                <div style={{
+                  fontSize: 10, letterSpacing: '0.16em', textTransform: 'uppercase',
+                  color: 'var(--ink-4)', fontWeight: 500, marginBottom: 6
+                }}>
+                  What this is
+                </div>
+                <div style={{ fontSize: 11.5, color: 'var(--ink-2)', lineHeight: 1.55 }}>
+                  Sensei runs on a small local foundation — a database, a model
+                  runtime, and a background watcher. This check confirms each
+                  piece is present before opening.
+                </div>
+                <div style={{
+                  display: 'flex', gap: 8, marginTop: 10, paddingTop: 10,
+                  borderTop: '1px solid var(--edge)', alignItems: 'flex-start'
+                }}>
+                  <span className="kanji" style={{ fontSize: 14, color: 'var(--accent)', lineHeight: 1.2 }}>修</span>
+                  <div style={{ fontSize: 11, color: 'var(--ink-3)', lineHeight: 1.5 }}>
+                    Anything missing is installed for you — usually automatically,
+                    occasionally with one script to paste. Nothing leaves your machine.
+                  </div>
+                </div>
+              </div>
+              }
+
+            {/* Auto-fixing · progress panel — install cost (time + size) and a
+                live activity line, so a long install reads as motion, not a hang. */}
+            {state === 'auto-fixing' &&
+              <div style={{
+                marginTop: 18, maxWidth: 320,
+                border: '1px solid var(--edge)', borderRadius: 8,
+                padding: '14px 16px', background: 'var(--paper-2)'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 10 }}>
+                  <span style={{ fontSize: 10, letterSpacing: '0.16em', textTransform: 'uppercase',
+                                 color: 'var(--ink-4)', fontWeight: 500 }}>Installing</span>
+                  <span className="mono" style={{ fontSize: 10.5, color: 'var(--ink-3)' }}>≈ 2 min left</span>
+                </div>
+                <div style={{ height: 4, borderRadius: 2, background: 'var(--paper-3)', overflow: 'hidden' }}>
+                  <div style={{ width: '58%', height: '100%', background: 'var(--accent)', borderRadius: 2 }} />
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6 }}>
+                  <span className="mono" style={{ fontSize: 10, color: 'var(--ink-4)' }}>3 of 6 ready</span>
+                  <span className="mono" style={{ fontSize: 10, color: 'var(--ink-4)' }}>1.4 / 2.1 GB</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12,
+                              paddingTop: 12, borderTop: '1px solid var(--edge)' }}>
+                  <SplashSpinner size={11} color="var(--accent)" />
+                  <span className="mono splash-tickle" style={{ fontSize: 10.5, color: 'var(--ink-2)',
+                                 whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    ==&gt; Pouring ollama--0.5.1.arm64.bottle.tar.gz
+                  </span>
+                </div>
+                <div style={{ fontSize: 10.5, color: 'var(--ink-4)', lineHeight: 1.45, marginTop: 10 }}>
+                  Runs once · future launches skip straight through. Nothing leaves your machine.
+                </div>
+              </div>
+              }
+
+            {/* Manual state · guided step-by-step — the one hand-run action, then
+                what Sensei does automatically, plus an offline / proxy path. */}
             {state === 'manual' &&
               <div style={{
                 marginTop: 14, flex: 1, minHeight: 0,
-                display: 'flex', flexDirection: 'column',
-                border: '1px solid var(--edge)', borderRadius: 8, overflow: 'hidden',
+                display: 'flex', flexDirection: 'column', gap: 10
               }}>
-                {/* Header */}
-                <div style={{
-                  display: 'flex', alignItems: 'flex-start', gap: 12,
-                  padding: '14px 16px', borderBottom: '1px solid var(--edge)',
-                }}>
-                  <span className="kanji" style={{ fontSize: 22, color: 'var(--ink-3)', lineHeight: 1, flexShrink: 0 }}>手</span>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--ink)' }}>Run this in your terminal</div>
+                {/* Step 1 — the only manual action */}
+                <div style={{ border: '1px solid var(--edge)', borderRadius: 8, overflow: 'hidden' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10,
+                                padding: '10px 14px', borderBottom: '1px solid var(--edge)' }}>
+                    <span style={{ width: 18, height: 18, borderRadius: '50%', background: 'var(--accent)',
+                                   color: 'var(--paper)', fontSize: 11, fontWeight: 600, display: 'flex',
+                                   alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>1</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--ink)' }}>Install Homebrew</div>
+                      <div style={{ fontSize: 10.5, color: 'var(--ink-4)' }}>The one thing to run by hand · ~1 min</div>
+                    </div>
+                    <button style={{ fontSize: 11, padding: '5px 10px', background: 'var(--ink)', color: 'var(--paper)',
+                                     border: 'none', borderRadius: 'var(--radius-sm)', cursor: 'pointer', letterSpacing: 0.2 }}>Copy</button>
                   </div>
-                  <a style={{ fontSize: 12, color: 'var(--ink-3)', cursor: 'pointer', flexShrink: 0, textDecoration: 'none' }}>Learn more</a>
+                  <pre className="splash-script" style={{ borderRadius: 0, padding: '12px 14px', maxHeight: 'none' }}>{`/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"`}</pre>
                 </div>
 
-                {/* Script */}
-                <pre className="splash-script" style={{
-                  flex: 1, minHeight: 0, maxHeight: 'none',
-                  borderRadius: 0, padding: '14px 16px',
-                }}>{`/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-brew bundle --file=https://raw.githubusercontent.com/sensei-hq/homebrew-tap/main/Brewfile
-sensei db:create && sensei daemon:start`}</pre>
+                {/* Step 2 — automatic */}
+                <div style={{ border: '1px solid var(--edge)', borderRadius: 8, padding: '10px 14px',
+                              display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                  <span style={{ width: 18, height: 18, borderRadius: '50%', background: 'var(--paper-3)',
+                                 color: 'var(--ink-3)', fontSize: 11, fontWeight: 600, display: 'flex',
+                                 alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>2</span>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--ink)' }}>Sensei takes it from here</div>
+                    <div style={{ fontSize: 10.5, color: 'var(--ink-3)', lineHeight: 1.5, marginTop: 2 }}>
+                      The moment Homebrew is in, PostgreSQL · Ollama · components · the database · the daemon install on their own. No more commands.
+                    </div>
+                  </div>
+                </div>
 
-                {/* Footer */}
-                <div style={{
-                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                  gap: 6, padding: '12px 16px', borderTop: '1px solid var(--edge)',
-                }}>
-                  <button style={{
-                    fontSize: 11, padding: '5px 10px',
-                    background: 'var(--ink)', color: 'var(--paper)',
-                    border: 'none', borderRadius: 'var(--radius-sm)', cursor: 'pointer',
-                    letterSpacing: 0.2
-                  }}>Copy script</button>
-                  <button style={{
-                    fontSize: 11, padding: '5px 10px',
-                    background: 'transparent', color: 'var(--accent)',
-                    border: '1px solid var(--accent)', borderRadius: 'var(--radius-sm)', cursor: 'pointer'
-                  }}>I've run it · re-check</button>
+                {/* Offline / proxy path */}
+                <div style={{ border: '1px dashed var(--edge)', borderRadius: 8, padding: '10px 12px' }}>
+                  <div style={{ fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase',
+                                color: 'var(--ink-4)', fontWeight: 500, marginBottom: 5 }}>No internet · behind a proxy</div>
+                  <div style={{ fontSize: 10.5, color: 'var(--ink-3)', lineHeight: 1.5 }}>
+                    Set <span className="mono" style={{ color: 'var(--ink-2)' }}>HTTPS_PROXY</span> first, or grab the offline bundle — both install the same foundation without a live connection.
+                  </div>
+                  <a style={{ fontSize: 10.5, color: 'var(--accent)', cursor: 'pointer', display: 'inline-block', marginTop: 6, textDecoration: 'none' }}>Offline install guide →</a>
+                </div>
+
+                {/* Re-check */}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, marginTop: 'auto' }}>
+                  <button style={{ fontSize: 11.5, padding: '6px 12px', background: 'var(--accent)', color: 'var(--paper)',
+                                   border: 'none', borderRadius: 'var(--radius-sm)', cursor: 'pointer', letterSpacing: 0.2 }}>
+                    I've run it · re-check
+                  </button>
                 </div>
               </div>
               }
@@ -450,6 +542,12 @@ sensei db:create && sensei daemon:start`}</pre>
                   WebkitMaskPosition: 'center', maskPosition: 'center',
                   opacity: 0.08, pointerEvents: 'none', userSelect: 'none'
                 }} />
+                <div className="kanji" style={{
+                  position: 'absolute', inset: 0,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  color: 'var(--ink)', fontSize: 64, letterSpacing: '-0.04em',
+                  lineHeight: 1, opacity: 0.1, pointerEvents: 'none', userSelect: 'none'
+                }}>先生</div>
               </div>
               }
 
@@ -512,7 +610,18 @@ sensei db:create && sensei daemon:start`}</pre>
                   kanji="支"
                   eyebrow="foundation"
                   title={title}
-                  right={<SplashStatusDisc status={o} size={32} />} />);
+                  right={
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <button title="Re-run the foundation check and repair anything missing"
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 10.5,
+                                 fontFamily: 'var(--font-ui)', color: 'var(--ink-3)', background: 'transparent',
+                                 border: '1px solid var(--edge)', borderRadius: 'var(--radius-sm)',
+                                 padding: '4px 9px', cursor: 'pointer', letterSpacing: 0.2 }}>
+                        <span style={{ fontSize: 11, lineHeight: 1 }}>↻</span> Re-check
+                      </button>
+                      <SplashStatusDisc status={o} size={32} />
+                    </div>
+                  } />);
 
             })()}
 

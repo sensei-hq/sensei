@@ -1,116 +1,12 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8"/>
-  <title>Sensei — startup splash · boot log</title>
-  <meta name="viewport" content="width=1600"/>
-  <link rel="stylesheet" href="lib/tokens.css"/>
-  <script>
-    (function() {
-      const isROLoop = (m) => typeof m === 'string' && m.includes('ResizeObserver loop');
-      window.onerror = function(message) { if (isROLoop(message)) return true; return false; };
-      window.addEventListener('error', function(e) {
-        if (e && (isROLoop(e.message) || (e.error && isROLoop(e.error.message)))) {
-          e.stopImmediatePropagation();
-          e.preventDefault();
-          return false;
-        }
-      }, true);
-      const origErr = console.error;
-      console.error = function(...args) {
-        if (args.some(a => isROLoop(typeof a === 'string' ? a : (a && a.message)))) return;
-        return origErr.apply(this, args);
-      };
-      if (typeof window.ResizeObserver === 'undefined') return;
-      const NativeRO = window.ResizeObserver;
-      window.ResizeObserver = class extends NativeRO {
-        constructor(cb) {
-          super((entries, observer) => {
-            window.requestAnimationFrame(() => {
-              try { cb(entries, observer); } catch (e) {
-                if (!isROLoop(e && e.message)) throw e;
-              }
-            });
-          });
-        }
-      };
-    })();
-  </script>
-  <style>
-    html, body { margin: 0; padding: 0; height: 100%; background: #f0eee9; font-family: 'Inter', system-ui, sans-serif; }
-    #root { height: 100vh; }
-    .artboard-shell {
-      width: 100%; height: 100%;
-      border-radius: 8px; overflow: hidden;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.06), 0 12px 32px rgba(40,30,20,0.08);
-    }
+// Startup splash · two-column health-check — SHARED MODULE
+// Lifted verbatim out of the old "Sensei Splash" standalone canvas so the
+// exploration lives in the Experiments board instead of a root file.
+// Wrapped in an IIFE so its many primitive names (Spinner, GateRow,
+// StatusDisc, Wordmark, GATES…) don't collide with the bootstrap modules'
+// globals. Exposes one symbol: window.SplashHealthCheck.
 
-    @keyframes splashFade   { 0%,100% { opacity: 0.4; } 50% { opacity: 1; } }
-    @keyframes splashInk    { 0% { opacity: 0; transform: translateY(3px); } 100% { opacity: 1; transform: translateY(0); } }
-    @keyframes splashSpin   { to { transform: rotate(360deg); } }
-    @keyframes splashTickle { 0%,100% { transform: scaleX(0.92); opacity: 0.6; }
-                              50%     { transform: scaleX(1);    opacity: 1; } }
-    @keyframes splashRevealCol {
-      0%   { opacity: 0; transform: translateX(-6px); }
-      100% { opacity: 1; transform: translateX(0); }
-    }
-
-    .splash-fade    { animation: splashFade 1.8s var(--ease) infinite; }
-    .splash-ink     { animation: splashInk 0.6s var(--ease) both; }
-    .splash-tickle  { transform-origin: left center; animation: splashTickle 2.4s var(--ease) infinite; }
-    .splash-reveal  { animation: splashRevealCol 0.5s var(--ease) both; }
-
-    .splash-window {
-      width: 100%; height: 100%;
-      display: flex; flex-direction: column;
-      background: var(--paper);
-      color: var(--ink);
-      overflow: hidden;
-      position: relative;
-    }
-    .splash-chrome {
-      height: 26px; display: flex; align-items: center;
-      padding: 0 12px; flex-shrink: 0;
-    }
-    .splash-chrome .tauri-traffic { opacity: 0.45; }
-
-    /* The inline remedy block for a blocked gate */
-    .splash-remedy {
-      background: var(--paper);
-      border: 1px solid var(--accent);
-      border-radius: 6px;
-      padding: 10px 12px;
-      margin-top: 8px;
-    }
-    .splash-script {
-      font-family: var(--font-mono);
-      font-size: 11px;
-      line-height: 1.65;
-      color: var(--ink);
-      background: var(--paper-3);
-      padding: 8px 10px;
-      border-radius: 4px;
-      white-space: pre-wrap;
-      word-break: break-word;
-      max-height: 110px;
-      overflow: auto;
-      margin: 0;
-    }
-  </style>
-</head>
-<body>
-  <div id="root"></div>
-
-  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
-  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
-  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
-
-  <script src="lib/data.js"></script>
-  <script type="text/babel" src="lib/design-canvas.jsx"></script>
-  <script type="text/babel" src="lib/primitives.jsx"></script>
-
-  <script type="text/babel" data-presets="env,react">
-    const { useState, useEffect } = React;
+(function () {
+const { useState, useEffect } = React;
 
     /* ─────────────────────────────────────────────────────────────
        MODEL
@@ -619,48 +515,5 @@ sensei db:create && sensei daemon:start`}</pre>
       );
     }
 
-    /* ─────────────────────────────────────────────────────────────
-       Canvas
-       ───────────────────────────────────────────────────────────── */
-    const App = () => {
-      useEffect(() => {
-        document.documentElement.setAttribute('data-theme', 'light');
-      }, []);
-
-      // All three are variants of the same health-check screen, same size.
-      const W = 880, H = 480;
-
-      return (
-        <DesignCanvas initialZoom={0.65}>
-          <DCSection id="health-check"
-                     title="Health check · three variants"
-                     subtitle="Two columns. Left says what's happening in words (and holds the remedy when there is one); right just lists the items with their status. No headers on the right — the left side is the header for both panes.">
-            <DCArtboard id="probing"
-                        label="① probing · initial detect"
-                        width={W} height={H}>
-              <div className="artboard-shell"><Splash state="probing"/></div>
-            </DCArtboard>
-            <DCArtboard id="auto-fixing"
-                        label="② auto-fixing · running Brewfile"
-                        width={W} height={H}>
-              <div className="artboard-shell"><Splash state="auto-fixing"/></div>
-            </DCArtboard>
-            <DCArtboard id="manual"
-                        label="③ manual fallback · remedy on the left, status on the right"
-                        width={W} height={H}>
-              <div className="artboard-shell"><Splash state="manual"/></div>
-            </DCArtboard>
-            <DCArtboard id="all-green"
-                        label="★ ④ all green · foundation holds"
-                        width={W} height={H}>
-              <div className="artboard-shell"><Splash state="all-green"/></div>
-            </DCArtboard>
-          </DCSection>
-        </DesignCanvas>
-      );
-    };
-
-    ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
-  </script>
-</body>
-</html>
+  window.SplashHealthCheck = Splash;
+})();

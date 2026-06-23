@@ -1,0 +1,524 @@
+// Dōjō · in-app integration touchpoints (mocks).
+// These are Observatory (desktop) screens — the moments where the app meets
+// the company Dōjō: join, connect, bind, share, the global↔company toggle,
+// and the downstream lane. Standalone mocks for review; wired later.
+// Reuses globals from primitives.jsx (TauriChrome, Kanji, Avatar, StatusDot)
+// and dojo-console.jsx (DojoChip, OriginChip).
+
+const { useState: iaS } = React;
+
+function InappFrame({ label, title, children }) {
+  return (
+    <div className="sensei" data-screen-label={label} style={{
+      width: "100%", height: "100%", display: "flex", flexDirection: "column",
+      background: "var(--paper)", overflow: "hidden",
+    }}>
+      <TauriChrome title={title} />
+      <div style={{ flex: 1, minHeight: 0, overflow: "auto", display: "flex", flexDirection: "column" }}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function IaHead({ kanji, eyebrow, title, sub, right }) {
+  return (
+    <div style={{ display: "flex", alignItems: "flex-start", gap: 18, padding: "22px 32px 18px",
+                  borderBottom: "var(--hairline)", flexShrink: 0 }}>
+      <span className="kanji" style={{ fontSize: 38, color: "var(--accent)", lineHeight: 1, flexShrink: 0 }}>{kanji}</span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 11, letterSpacing: ".18em", textTransform: "uppercase", color: "var(--ink-3)", marginBottom: 4 }}>{eyebrow}</div>
+        <h1 className="display" style={{ fontSize: 23, fontWeight: 400, letterSpacing: "-0.015em", margin: 0, lineHeight: 1.05 }}>{title}</h1>
+        {sub && <p style={{ fontSize: 13, color: "var(--ink-2)", lineHeight: 1.55, margin: "6px 0 0", maxWidth: 700 }}>{sub}</p>}
+      </div>
+      {right && <div style={{ flexShrink: 0 }}>{right}</div>}
+    </div>
+  );
+}
+
+const btnPrimary = { background: "var(--ink)", color: "var(--paper)", border: "none", borderRadius: 8,
+  padding: "10px 18px", fontSize: 13, fontWeight: 500, cursor: "pointer", fontFamily: "inherit",
+  display: "inline-flex", alignItems: "center", gap: 8 };
+const btnGhost = { background: "var(--paper-2)", color: "var(--ink-2)", border: "var(--hairline)", borderRadius: 8,
+  padding: "10px 18px", fontSize: 13, cursor: "pointer", fontFamily: "inherit" };
+
+/* ─── 1 · Bootstrap — join your org ──────────────────────── */
+function InappJoin({ onContinue }) {
+  return (
+    <InappFrame label="First run · join your org" title="Sensei  先生  ·  first run">
+      <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: 40 }}>
+        <div style={{ width: 560, background: "var(--paper-2)", border: "var(--hairline)", borderRadius: 16,
+                      padding: "36px 40px", textAlign: "center", boxShadow: "var(--shadow)" }}>
+          <div style={{ position: "relative", height: 64, marginBottom: 8 }}>
+            <span className="kanji" style={{ fontSize: 52, color: "var(--accent)", lineHeight: 1 }}>結</span>
+          </div>
+          <div style={{ fontSize: 11, letterSpacing: ".2em", textTransform: "uppercase", color: "var(--ink-3)", marginBottom: 8 }}>A Dōjō was detected</div>
+          <h1 className="display" style={{ fontSize: 28, fontWeight: 300, letterSpacing: "-0.02em", margin: "0 0 10px", lineHeight: 1.15 }}>
+            <span className="kanji" style={{ fontSize: 24, color: "var(--accent)" }}>社</span> Acme Corp runs a Dōjō.
+          </h1>
+          <p style={{ fontSize: 13.5, color: "var(--ink-2)", lineHeight: 1.6, margin: "0 0 18px", maxWidth: 420, marginInline: "auto" }}>
+            Join to inherit your team's standards on day one — and contribute what you learn back. Nothing here interrupts you; this card waits in Today and Preferences until you're ready.
+          </p>
+          {/* Resolution (Discover): pull, not push — multiple orgs, ranked by signal */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, margin: "0 0 18px", textAlign: "left" }}>
+            {[["社", "Acme Corp", "via SSO domain", "keiko@acme.com", true], ["客", "Globex", "via invite link", "engagement workspace", false]].map(([k, n, sig, detail, primary]) => (
+              <div key={n} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", borderRadius: 10,
+                            background: primary ? "var(--accent-soft)" : "var(--paper)",
+                            border: primary ? "1px solid oklch(0.58 0.15 35/.3)" : "var(--hairline)" }}>
+                <span className="kanji" style={{ fontSize: 20, color: "var(--accent)", width: 24, textAlign: "center" }}>{k}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13.5, color: "var(--ink)", display: "flex", alignItems: "center", gap: 8 }}>{n}<DojoChip>{sig}</DojoChip></div>
+                  <div className="mono" style={{ fontSize: 10.5, color: "var(--ink-3)", marginTop: 3 }}>{detail}</div>
+                </div>
+                <button onClick={onContinue} style={primary ? { ...btnPrimary, padding: "8px 14px" } : { ...btnGhost, padding: "8px 14px" }}>
+                  {primary && <span className="kanji" style={{ fontSize: 12, color: "var(--accent)" }}>結</span>} Join
+                </button>
+              </div>
+            ))}
+          </div>
+          <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
+            <button onClick={onContinue} style={btnGhost}>Not now · keep in Preferences</button>
+          </div>
+          <div style={{ fontSize: 11, color: "var(--ink-4)", marginTop: 16, lineHeight: 1.5 }}>
+            Authenticated by SSO · nothing is shared until you choose to. Highest-confidence signal listed first.
+          </div>
+        </div>
+      </div>
+    </InappFrame>
+  );
+}
+
+/* ─── 2 · Preferences — Connection pane ──────────────────── */
+function InappConnection() {
+  const memberships = [
+    { k: "社", name: "Acme Corp", kind: "employer", scopes: "all your repos", on: true },
+    { k: "客", name: "Globex", kind: "client", scopes: "lumen-auth · billing", on: true },
+    { k: "客", name: "Initech", kind: "client", scopes: "initech-portal", on: true },
+    { k: "群", name: "Rust Guild", kind: "community", scopes: "rust · tokio", on: false },
+    { k: "己", name: "Personal", kind: "personal", scopes: "side projects", on: true },
+  ];
+  return (
+    <InappFrame label="Preferences · Connection" title="Sensei  先生  ·  preferences">
+      <IaHead kanji="鍵" eyebrow="Preferences · connection" title="Connections"
+        sub="Pair with a company-hosted Dōjō, authenticate, and choose which scopes you follow. You can belong to several at once."
+        right={<button style={btnGhost}>+ Add connection</button>} />
+      <div style={{ flex: 1, overflow: "auto", padding: 32 }}>
+        {/* connected server — Resolution (Authenticate): SSO = access, git = attribution */}
+        <div style={{ background: "var(--paper-2)", border: "1px solid var(--success-edge)", borderRadius: 12, padding: "16px 18px", marginBottom: 22 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <span className="kanji" style={{ fontSize: 22, color: "var(--accent)" }}>結</span>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 14, color: "var(--ink)" }}>dojo.acme.internal</div>
+              <div className="mono" style={{ fontSize: 11, color: "var(--ink-3)", marginTop: 2 }}>session refreshes silently · device-code for the CLI</div>
+            </div>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--success)" }}>
+              <StatusDot tone="success" /> connected
+            </span>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 14, paddingTop: 14, borderTop: "1px solid var(--edge)" }}>
+            {[["鍵", "Identity · access", "Work SSO", "keiko@acme.com"], ["署", "Attribution only", "Linked git", "github.com/keiko-t"]].map(([k, role, kind, who]) => (
+              <div key={role} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span className="kanji" style={{ fontSize: 16, color: "var(--accent)", width: 20, textAlign: "center" }}>{k}</span>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 9, letterSpacing: ".1em", textTransform: "uppercase", color: "var(--ink-4)", fontWeight: 600 }}>{role}</div>
+                  <div style={{ fontSize: 12.5, color: "var(--ink)", marginTop: 1 }}>{kind} <span className="mono" style={{ fontSize: 10.5, color: "var(--ink-3)" }}>· {who}</span></div>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12, fontSize: 11.5, color: "var(--ink-3)", lineHeight: 1.5 }}>
+            <span>SSO grants access; git only signs your attribution — it never grants access.</span>
+            <span style={{ flex: 1 }} />
+            <button className="mono" style={{ fontSize: 11, color: "var(--accent)", background: "none", border: "none", cursor: "pointer", whiteSpace: "nowrap" }}>Air-gapped? Use an offline token →</button>
+          </div>
+        </div>
+
+        <div style={{ fontSize: 11, letterSpacing: ".14em", textTransform: "uppercase", color: "var(--ink-3)", fontWeight: 600, marginBottom: 10 }}>Your memberships</div>
+        <div style={{ background: "var(--paper-2)", border: "var(--hairline)", borderRadius: 12, overflow: "hidden" }}>
+          {memberships.map((m, i) => (
+            <div key={m.name} style={{ display: "grid", gridTemplateColumns: "auto 1fr auto auto", gap: 14, alignItems: "center",
+                          padding: "13px 18px", borderBottom: i < memberships.length - 1 ? "1px solid var(--edge)" : "none" }}>
+              <span className="kanji" style={{ fontSize: 18, color: "var(--accent)", width: 22, textAlign: "center" }}>{m.k}</span>
+              <div>
+                <div style={{ fontSize: 13.5, color: "var(--ink)", display: "flex", alignItems: "center", gap: 8 }}>
+                  {m.name}<DojoChip>{m.kind}</DojoChip>
+                </div>
+                <div className="mono" style={{ fontSize: 11, color: "var(--ink-3)", marginTop: 3 }}>following · {m.scopes}</div>
+              </div>
+              <button className="mono" style={{ fontSize: 11, color: "var(--accent)", background: "none", border: "none", cursor: "pointer" }}>scopes ▾</button>
+              <span style={{ width: 38, height: 22, borderRadius: 20, background: m.on ? "var(--ink)" : "var(--paper-3)",
+                            position: "relative", display: "inline-block", transition: "background .15s" }}>
+                <span style={{ position: "absolute", top: 2, left: m.on ? 18 : 2, width: 18, height: 18, borderRadius: "50%", background: "var(--paper)", transition: "left .15s" }} />
+              </span>
+            </div>
+          ))}
+        </div>
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 9, marginTop: 14, fontSize: 12, color: "var(--ink-3)", lineHeight: 1.5, maxWidth: 720 }}>
+          <span className="kanji" style={{ fontSize: 14, color: "var(--accent)" }}>客</span>
+          <span>When a project belongs to a client engagement, that client connection takes precedence over your employer for what's shared and how it's attributed.</span>
+        </div>
+      </div>
+    </InappFrame>
+  );
+}
+
+/* ─── 3 · Project · About — bind to org ──────────────────── */
+function InappBind() {
+  return (
+    <InappFrame label="Project · About — bind to org" title="Sensei  先生  ·  lumen-auth">
+      <IaHead kanji="識" eyebrow="lumen-auth · about" title="Membership &amp; routing"
+        sub="Bind this project to a connection so its findings route to the right Dōjō — and never pollute another. A project can span more than one client." />
+      <div style={{ flex: 1, overflow: "auto", padding: 32, maxWidth: 860 }}>
+        {/* Resolution (Bind): explicit-confirm, multiple bindings, re-bind forward-only */}
+        <div style={{ display: "flex", alignItems: "baseline", marginBottom: 6 }}>
+          <span style={{ fontSize: 11, letterSpacing: ".14em", textTransform: "uppercase", color: "var(--ink-3)", fontWeight: 600 }}>Bindings</span>
+          <span style={{ flex: 1 }} />
+          <button style={{ ...btnGhost, padding: "6px 12px", fontSize: 12 }}>+ Add binding</button>
+        </div>
+        <div style={{ fontSize: 12, color: "var(--ink-3)", lineHeight: 1.5, marginBottom: 12 }}>A default is inferred from each git remote and <b style={{ fontWeight: 600, color: "var(--ink-2)" }}>confirmed at first scan</b> — never silently. Route different paths to different connections.</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {/* confirmed binding */}
+          <div style={{ display: "flex", alignItems: "center", gap: 12, background: "var(--paper-2)", border: "1px solid var(--accent)", borderRadius: 11, padding: "14px 18px" }}>
+            <span className="kanji" style={{ fontSize: 22, color: "var(--accent)" }}>客</span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 14, color: "var(--ink)" }}>Client · Acme</div>
+              <div className="mono" style={{ fontSize: 11, color: "var(--ink-3)", marginTop: 2 }}>repo root · github.com/acme/lumen-auth</div>
+            </div>
+            <DojoChip tone="var(--success)" soft="var(--success-soft)">✓ confirmed</DojoChip>
+            <button className="mono" style={{ fontSize: 11, color: "var(--ink-3)", background: "none", border: "none", cursor: "pointer" }}>change ▾</button>
+          </div>
+          {/* inferred binding awaiting confirm */}
+          <div style={{ display: "flex", alignItems: "center", gap: 12, background: "var(--paper-2)", border: "var(--hairline)", borderRadius: 11, padding: "14px 18px" }}>
+            <span className="kanji" style={{ fontSize: 22, color: "var(--ink-3)" }}>客</span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 14, color: "var(--ink)" }}>Client · Globex</div>
+              <div className="mono" style={{ fontSize: 11, color: "var(--ink-3)", marginTop: 2 }}>path · /integrations/globex-sdk</div>
+            </div>
+            <DojoChip tone="oklch(0.52 0.13 60)" soft="var(--warning-soft)">inferred</DojoChip>
+            <button style={{ ...btnPrimary, padding: "7px 13px", fontSize: 12 }}>Confirm</button>
+          </div>
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "16px 0", padding: "13px 16px",
+                      background: "var(--accent-soft)", border: "1px solid oklch(0.58 0.15 35/.25)", borderRadius: 10 }}>
+          <span className="kanji" style={{ fontSize: 16, color: "var(--accent)" }}>盾</span>
+          <div style={{ fontSize: 12.5, color: "var(--ink)", lineHeight: 1.55 }}>
+            Findings route by the path they came from. Anything shared upstream from a client binding is <b style={{ fontWeight: 600 }}>dereferenced</b> — the lesson travels, the source is dropped.
+          </div>
+        </div>
+
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 9, fontSize: 12, color: "var(--ink-3)", lineHeight: 1.5 }}>
+          <span className="kanji" style={{ fontSize: 14, color: "var(--ink-3)" }}>時</span>
+          <span>Re-binding routes <b style={{ fontWeight: 600, color: "var(--ink-2)" }}>future findings only</b> — past shares stay where they went, and history is never re-routed.</span>
+        </div>
+      </div>
+    </InappFrame>
+  );
+}
+
+/* ─── 4 · Project — ready to share lane ──────────────────── */
+function InappShare() {
+  const items = [
+    { k: "守", title: "Validate webhook signatures before parsing", type: "Guard", origin: "client", scope: "Client · Acme", attrib: "dereferenced", on: true, conf: 0.91 },
+    { k: "問", title: "Integration-test persona for auth flows", type: "Prompt", origin: "employer", scope: "Stack · React", attrib: "Aiko N.", on: true, conf: 0.84 },
+    { k: "紋", title: "Refresh-token rotation on device re-pair", type: "Pattern", origin: "client", scope: "Client · Acme", attrib: "dereferenced", on: false, conf: 0.78 },
+  ];
+  const forming = { k: "芽", title: "Local fix for the staging seed script", reason: "too project-specific · hasn't generalised", conf: 0.41 };
+  return (
+    <InappFrame label="Project · ready to share" title="Sensei  先生  ·  lumen-auth · memories">
+      <IaHead kanji="共" eyebrow="lumen-auth · memories" title="Ready to share"
+        sub="Lessons generalised cleanly enough to leave this project. Pick a scope; attribution and dereferencing are applied automatically by origin."
+        right={<button style={btnPrimary}><span className="kanji" style={{ fontSize: 13, color: "var(--accent)" }}>共</span> Share 2 to Dōjō</button>} />
+      <div style={{ flex: 1, overflow: "auto", padding: 32 }}>
+        {/* policy bar — Resolution (Share): org policy is the floor */}
+        <div style={{ display: "flex", alignItems: "center", gap: 10, background: "var(--paper-2)", border: "var(--hairline)",
+                      borderRadius: 10, padding: "11px 15px", marginBottom: 6 }}>
+          <span className="kanji" style={{ fontSize: 14, color: "var(--ink-3)" }}>規</span>
+          <span style={{ fontSize: 12, color: "var(--ink-2)" }}>Org floor</span>
+          <DojoChip tone="var(--success)" soft="var(--success-soft)">always share · test personas</DojoChip>
+          <DojoChip tone="oklch(0.52 0.13 60)" soft="var(--warning-soft)">never share · infra notes</DojoChip>
+          <span style={{ flex: 1 }} />
+          <button className="mono" style={{ fontSize: 11, color: "var(--accent)", background: "none", border: "none", cursor: "pointer" }}>edit policy</button>
+        </div>
+        <div style={{ fontSize: 11.5, color: "var(--ink-3)", marginBottom: 16, lineHeight: 1.5 }}>Your org's policy is the floor — you can be stricter per item, never looser.</div>
+
+        {/* Resolution (A finding forms): only past the bar surfaces here */}
+        <div style={{ fontSize: 11.5, color: "var(--ink-3)", marginBottom: 9, lineHeight: 1.5 }}>
+          <span className="kanji" style={{ color: "var(--accent)", marginRight: 6 }}>芽</span>
+          Only lessons past the <b style={{ fontWeight: 600, color: "var(--ink-2)" }}>generalize + confidence bar</b> surface here — nothing is shareable by default.
+        </div>
+
+        <div style={{ background: "var(--paper-2)", border: "var(--hairline)", borderRadius: 12, overflow: "hidden" }}>
+          {items.map((it, i) => (
+            <div key={i} style={{ display: "grid", gridTemplateColumns: "auto auto 1fr auto auto", gap: 13, alignItems: "center",
+                          padding: "14px 16px", borderBottom: i < items.length - 1 ? "1px solid var(--edge)" : "none", opacity: it.on ? 1 : 0.55 }}>
+              <span style={{ width: 18, height: 18, borderRadius: 4, border: "1.5px solid " + (it.on ? "var(--accent)" : "var(--ink-4)"),
+                            background: it.on ? "var(--accent)" : "transparent", color: "var(--paper)", fontSize: 11, lineHeight: "15px", textAlign: "center" }}>{it.on ? "✓" : ""}</span>
+              <span className="kanji" style={{ fontSize: 17, color: "var(--accent)", width: 20, textAlign: "center" }}>{it.k}</span>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 13.5, color: "var(--ink)" }}>{it.title}</div>
+                <div style={{ display: "flex", gap: 7, marginTop: 4, alignItems: "center", flexWrap: "wrap" }}>
+                  <DojoChip>{it.type}</DojoChip><OriginChip origin={it.origin} />
+                  <span className="mono" style={{ fontSize: 10, color: "var(--ink-4)" }}>{it.attrib === "dereferenced" ? "source dropped" : it.attrib}</span>
+                  <DojoChip tone="var(--success)" soft="var(--success-soft)">generalised · {Math.round(it.conf * 100)}%</DojoChip>
+                  {it.origin === "client" && <button className="mono" style={{ fontSize: 10, color: "var(--accent)", background: "none", border: "none", cursor: "pointer", padding: 0 }}>preview redaction →</button>}
+                </div>
+              </div>
+              <button style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "var(--paper)", border: "var(--hairline)",
+                            borderRadius: 7, padding: "6px 10px", cursor: "pointer" }}>
+                <span className="kanji" style={{ fontSize: 12, color: "var(--accent)" }}>{it.scope.startsWith("Client") ? "客" : "技"}</span>
+                <span style={{ fontSize: 12, color: "var(--ink-2)" }}>{it.scope}</span>
+                <span style={{ fontSize: 8, color: "var(--ink-4)" }}>▾</span>
+              </button>
+              <span className="mono" style={{ fontSize: 11, color: "var(--ink-4)" }}>→ triage</span>
+            </div>
+          ))}
+        </div>
+        {/* Resolution (A finding forms): below-the-bar items stay out of the lane */}
+        <div style={{ marginTop: 18 }}>
+          <div style={{ fontSize: 10.5, letterSpacing: ".12em", textTransform: "uppercase", color: "var(--ink-4)", fontWeight: 600, marginBottom: 8 }}>Still forming — below the bar</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 13, background: "var(--paper)", border: "1px dashed var(--ink-4)", borderRadius: 11, padding: "13px 16px", opacity: 0.85 }}>
+            <span className="kanji" style={{ fontSize: 17, color: "var(--ink-4)", width: 20, textAlign: "center" }}>{forming.k}</span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13, color: "var(--ink-2)" }}>{forming.title}</div>
+              <div className="mono" style={{ fontSize: 10.5, color: "var(--ink-4)", marginTop: 3 }}>{forming.reason}</div>
+            </div>
+            <DojoChip>generalised · {Math.round(forming.conf * 100)}%</DojoChip>
+          </div>
+        </div>
+        <div style={{ fontSize: 11.5, color: "var(--ink-3)", marginTop: 16, lineHeight: 1.5 }}>
+          You'll see the redacted preview — raw vs stripped — before anything leaves. Shared items enter the org's triage queue; a maintainer approves before distribution, and you can recall a share until it's approved.
+        </div>
+      </div>
+    </InappFrame>
+  );
+}
+
+/* ─── 5b · Contributions — watch it travel ──────────────── */
+// Resolution (Watch it travel): a status timeline per contribution, a decision
+// notification with a reason on decline, and credit when adopted.
+function InappTravel() {
+  const steps = ["Queued", "Triaged", "Decided"];
+  const contribs = [
+    { k: "守", title: "Validate webhook signatures before parsing", scope: "Client · Acme", origin: "client", at: 2, outcome: "approved", note: "Approved by Keiko T. · adopted by 4 repos — credited to you internally.", when: "1d ago" },
+    { k: "問", title: "Integration-test persona for auth flows", scope: "Stack · React", origin: "employer", at: 1, outcome: null, note: "In review with Sven K. · 2 ahead in the queue.", when: "3d ago" },
+    { k: "紋", title: "Retry-on-429 for the billing client", scope: "Team · Payments", origin: "employer", at: 2, outcome: "declined", note: "Declined — duplicates an existing guard; merged into the canonical one.", when: "5d ago" },
+  ];
+  const Stat = ({ value, label }) => (
+    <div style={{ flex: 1 }}>
+      <div className="display" style={{ fontSize: 26, fontWeight: 300, color: "var(--ink)" }}>{value}</div>
+      <div style={{ fontSize: 10.5, letterSpacing: ".1em", textTransform: "uppercase", color: "var(--ink-3)", marginTop: 2 }}>{label}</div>
+    </div>
+  );
+  return (
+    <InappFrame label="Contributions · watch it travel" title="Sensei  先生  ·  contributions">
+      <IaHead kanji="旅" eyebrow="contributions" title="Where your shares went"
+        sub="Every contribution carries a status timeline — and tells you the decision, with a reason on decline and credit when it's adopted. No silence after sharing." />
+      <div style={{ flex: 1, overflow: "auto", padding: 32 }}>
+        <div style={{ display: "flex", gap: 22, background: "var(--paper-2)", border: "var(--hairline)", borderRadius: 12, padding: "16px 20px", marginBottom: 20 }}>
+          <Stat value="12" label="Shared · 30d" />
+          <Stat value="9" label="Approved" />
+          <Stat value="27" label="Repos adopting" />
+          <Stat value="1" label="Declined" />
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 11 }}>
+          {contribs.map((c, idx) => {
+            const decTone = c.outcome === "approved" ? "var(--success)" : c.outcome === "declined" ? "oklch(0.52 0.13 60)" : "var(--accent)";
+            const decSoft = c.outcome === "approved" ? "var(--success-soft)" : c.outcome === "declined" ? "var(--warning-soft)" : "var(--accent-soft)";
+            return (
+            <div key={idx} style={{ background: "var(--paper-2)", border: "var(--hairline)", borderRadius: 12, padding: "16px 18px" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "auto 1fr auto", gap: 14, alignItems: "start" }}>
+                <span className="kanji" style={{ fontSize: 20, color: "var(--accent)" }}>{c.k}</span>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 14, color: "var(--ink)" }}>{c.title}</div>
+                  <div style={{ display: "flex", gap: 7, marginTop: 5, alignItems: "center" }}>
+                    <DojoChip>{c.scope}</DojoChip><OriginChip origin={c.origin} />
+                  </div>
+                </div>
+                <span className="mono" style={{ fontSize: 10.5, color: "var(--ink-4)" }}>{c.when}</span>
+              </div>
+              {/* status stepper */}
+              <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "13px 0 11px", flexWrap: "wrap" }}>
+                {steps.map((s, i) => {
+                  const done = i <= c.at;
+                  const isFinal = i === steps.length - 1;
+                  const tone = isFinal && c.outcome ? decTone : "var(--accent)";
+                  const soft = isFinal && c.outcome ? decSoft : "var(--accent-soft)";
+                  const label = isFinal && c.outcome ? (c.outcome === "approved" ? "Approved" : "Declined") : s;
+                  return (
+                    <React.Fragment key={s}>
+                      <span className="mono" style={{ fontSize: 11, padding: "3px 10px", borderRadius: 20,
+                                    color: done ? tone : "var(--ink-4)", background: done ? soft : "var(--paper-3)",
+                                    border: done ? "1px solid transparent" : "var(--hairline)" }}>{done ? "✓ " : ""}{label}</span>
+                      {i < steps.length - 1 && <span style={{ fontSize: 12, color: i < c.at ? "var(--accent)" : "var(--ink-4)" }}>→</span>}
+                    </React.Fragment>
+                  );
+                })}
+              </div>
+              <div style={{ display: "flex", alignItems: "flex-start", gap: 8, paddingTop: 11, borderTop: "1px solid var(--edge)" }}>
+                <span className="kanji" style={{ fontSize: 13, color: decTone }}>{c.outcome === "declined" ? "返" : c.outcome === "approved" ? "果" : "待"}</span>
+                <span style={{ fontSize: 12.5, color: "var(--ink-2)", lineHeight: 1.5 }}>{c.note}</span>
+              </div>
+            </div>
+            );
+          })}
+        </div>
+      </div>
+    </InappFrame>
+  );
+}
+
+/* ─── 5 · Collective — global ↔ company toggle ───────────── */
+function InappCollective() {
+  const [src, setSrc] = iaS("dojo");
+  const cats = [
+    { name: "Patterns & rules", g: true, d: true },
+    { name: "Guards & lints", g: true, d: true },
+    { name: "Prompts & personas", g: false, d: true },
+    { name: "Skills & agents", g: false, d: true },
+  ];
+  const isDojo = src === "dojo";
+  return (
+    <InappFrame label="Collective · global ↔ company" title="Sensei  先生  ·  collective intel">
+      <IaHead kanji="群" eyebrow="collective intelligence" title="Where your knowledge flows"
+        sub="Two destinations, each with its own controls — the public Collective, and your company Dōjō. They never share settings." />
+      <div style={{ flex: 1, overflow: "auto", padding: 32, maxWidth: 860 }}>
+        {/* segmented toggle */}
+        <div style={{ display: "inline-flex", background: "var(--paper-3)", borderRadius: 9, padding: 3, marginBottom: 22 }}>
+          {[["collective", "群 Public Collective"], ["dojo", "結 Acme Dōjō"]].map(([id, label]) => {
+            const on = src === id;
+            return (
+              <button key={id} onClick={() => setSrc(id)} style={{
+                padding: "8px 16px", borderRadius: 7, border: "none", cursor: "pointer", fontFamily: "inherit", fontSize: 13,
+                background: on ? "var(--paper)" : "transparent", color: on ? "var(--ink)" : "var(--ink-3)",
+                boxShadow: on ? "var(--shadow-sm)" : "none" }}>{label}</button>
+            );
+          })}
+        </div>
+
+        <div style={{ background: "var(--paper-2)", border: "var(--hairline)", borderRadius: 12, padding: "20px 22px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+            <span className="kanji" style={{ fontSize: 20, color: "var(--accent)" }}>{isDojo ? "結" : "群"}</span>
+            <div>
+              <div style={{ fontSize: 15, color: "var(--ink)" }}>{isDojo ? "Acme Dōjō" : "Public Collective"}</div>
+              <div style={{ fontSize: 11.5, color: "var(--ink-3)" }}>{isDojo ? "private · governed · attributed to you internally" : "public commons · anonymized"}</div>
+            </div>
+            <span style={{ flex: 1 }} />
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--ink-2)" }}>
+              <StatusDot tone={isDojo ? "accent" : "ink-3"} /> sharing {isDojo ? "on · weekly" : "on · review first"}
+            </span>
+          </div>
+          <div style={{ fontSize: 10.5, letterSpacing: ".12em", textTransform: "uppercase", color: "var(--ink-4)", fontWeight: 600, marginBottom: 8 }}>Categories shared {isDojo ? "to this Dōjō" : "publicly"}</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+            {cats.map(c => {
+              const on = isDojo ? c.d : c.g;
+              return (
+                <div key={c.name} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: "1px solid var(--edge)" }}>
+                  <span style={{ fontSize: 13, color: "var(--ink)", flex: 1 }}>{c.name}</span>
+                  {isDojo && <span className="mono" style={{ fontSize: 10, color: "var(--ink-4)" }}>scoped by binding</span>}
+                  <span style={{ width: 36, height: 20, borderRadius: 20, background: on ? "var(--ink)" : "var(--paper-3)", position: "relative", display: "inline-block" }}>
+                    <span style={{ position: "absolute", top: 2, left: on ? 18 : 2, width: 16, height: 16, borderRadius: "50%", background: "var(--paper)" }} />
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+          {isDojo && (
+            <div style={{ fontSize: 11.5, color: "var(--ink-3)", marginTop: 14, lineHeight: 1.5 }}>
+              Client-bound projects are dereferenced automatically before anything leaves. Separate cadence and filters from the public Collective.
+            </div>
+          )}
+        </div>
+      </div>
+    </InappFrame>
+  );
+}
+
+/* ─── 6 · Today / Upgrades — from your Dōjō ──────────────── */
+function InappDownstream() {
+  const iconBtn = { background: "var(--paper)", border: "var(--hairline)", borderRadius: 7, padding: "8px 9px", cursor: "pointer", fontFamily: "var(--font-kanji)", fontSize: 13, color: "var(--ink-3)", lineHeight: 1 };
+  const dojo = [
+    { k: "守", title: "Never log refresh tokens, even at debug", scope: "Company", by: "approved by Keiko T.", impact: "+ prevents a known leak class", sup: true },
+    { k: "紋", title: "Idempotency key on money-moving mutations", scope: "Team · Payments", by: "approved by Marco D.", impact: "+ matches 6 of your repos" },
+  ];
+  const global = [
+    { k: "技", title: "Skill: explain a slow query plan", scope: "Postgres" },
+  ];
+  return (
+    <InappFrame label="Upgrades · from your Dōjō" title="Sensei  先生  ·  upgrades">
+      <IaHead kanji="贈" eyebrow="upgrades" title="What's arrived for you"
+        sub="Approved practice from your Dōjō lands here first — attributed and scoped to where you work — kept distinct from the public Collective. Mute or pin any scope; when rules conflict, the more specific scope wins." />
+      <div style={{ flex: 1, overflow: "auto", padding: 32 }}>
+        {/* Resolution (Receive downstream): precedence ladder */}
+        <div style={{ display: "flex", alignItems: "center", gap: 10, background: "var(--paper-2)", border: "var(--hairline)", borderRadius: 10, padding: "11px 15px", marginBottom: 18 }}>
+          <span className="kanji" style={{ fontSize: 14, color: "var(--accent)" }}>序</span>
+          <span style={{ fontSize: 12, color: "var(--ink-2)" }}>Precedence</span>
+          <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+            {["Org", "Team", "Global", "Personal"].map((s, i) => (
+              <React.Fragment key={s}>
+                <span className="mono" style={{ fontSize: 11, color: i < 2 ? "var(--accent)" : "var(--ink-3)" }}>{s}</span>
+                {i < 3 && <span style={{ color: "var(--ink-4)", fontSize: 11 }}>›</span>}
+              </React.Fragment>
+            ))}
+          </div>
+          <span style={{ flex: 1 }} />
+          <span style={{ fontSize: 11, color: "var(--ink-3)" }}>the more specific scope wins</span>
+        </div>
+        {/* Dōjō lane */}
+        <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 11 }}>
+          <span className="kanji" style={{ fontSize: 16, color: "var(--accent)" }}>結</span>
+          <span style={{ fontSize: 12, letterSpacing: ".12em", textTransform: "uppercase", color: "var(--accent)", fontWeight: 600 }}>From your Dōjō · Acme</span>
+          <span className="mono" style={{ fontSize: 11, color: "var(--ink-4)" }}>2 new</span>
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 11, marginBottom: 28 }}>
+          {dojo.map((u, i) => (
+            <div key={i} style={{ background: "var(--paper-2)", border: "1px solid oklch(0.58 0.15 35/.22)", borderRadius: 12, padding: "16px 18px",
+                          display: "grid", gridTemplateColumns: "auto 1fr auto", gap: 14, alignItems: "center" }}>
+              <span className="kanji" style={{ fontSize: 20, color: "var(--accent)" }}>{u.k}</span>
+              <div>
+                <div style={{ fontSize: 14, color: "var(--ink)" }}>{u.title}</div>
+                <div style={{ display: "flex", gap: 8, marginTop: 5, alignItems: "center", flexWrap: "wrap" }}>
+                  <DojoChip tone="var(--accent)" soft="var(--accent-soft)">{u.scope}</DojoChip>
+                  <span className="mono" style={{ fontSize: 10.5, color: "var(--ink-3)" }}>{u.by}</span>
+                  <span style={{ fontSize: 11, color: "var(--success)" }}>{u.impact}</span>
+                  {u.sup && <DojoChip tone="var(--ink-2)">supersedes a Collective rule</DojoChip>}
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 7, alignItems: "center" }}>
+                <button title="Pin this scope" style={iconBtn}>留</button>
+                <button title="Mute this scope" style={iconBtn}>消</button>
+                <button style={{ ...btnPrimary, padding: "8px 14px" }}>Adopt</button>
+                <button style={{ ...btnGhost, padding: "8px 12px" }}>Defer</button>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Global lane */}
+        <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 11 }}>
+          <span className="kanji" style={{ fontSize: 16, color: "var(--ink-3)" }}>群</span>
+          <span style={{ fontSize: 12, letterSpacing: ".12em", textTransform: "uppercase", color: "var(--ink-3)", fontWeight: 600 }}>From the Collective · public</span>
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 11 }}>
+          {global.map((u, i) => (
+            <div key={i} style={{ background: "var(--paper-2)", border: "var(--hairline)", borderRadius: 12, padding: "16px 18px",
+                          display: "grid", gridTemplateColumns: "auto 1fr auto", gap: 14, alignItems: "center" }}>
+              <span className="kanji" style={{ fontSize: 20, color: "var(--ink-3)" }}>{u.k}</span>
+              <div>
+                <div style={{ fontSize: 14, color: "var(--ink)" }}>{u.title}</div>
+                <div style={{ marginTop: 5 }}><DojoChip>{u.scope}</DojoChip></div>
+              </div>
+              <div style={{ display: "flex", gap: 7 }}>
+                <button style={{ ...btnGhost, padding: "8px 14px" }}>Review</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </InappFrame>
+  );
+}
+
+Object.assign(window, {
+  InappJoin, InappConnection, InappBind, InappShare, InappTravel, InappCollective, InappDownstream,
+});

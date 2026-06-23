@@ -17,31 +17,12 @@ const { useState: l2S, useMemo: l2M } = React;
 // ═══════════════════════════════════════════════════════════════════════
 // Shared little bits
 // ═══════════════════════════════════════════════════════════════════════
+// Delegates to the shared ScreenHeader so the Learnings band is identical to
+// every other destination's pinned header.
 function L2Hero({ title, sub, kanji, right }) {
   return (
-    <div style={{
- borderBottom: 'var(--hairline)',
-                   display: 'flex', alignItems: 'center', background: 'var(--paper)'
-}} className="gap-5 pt-5 pb-4 px-6" >
-      <div className="kanji" style={{ fontSize: 40, color: 'var(--accent)', lineHeight: 1 }}>{kanji}</div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{
- fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
-                       textTransform: 'uppercase'
-}} className="mb-1" >
-          Observatory · Learnings
-        </div>
-        <h1 className="display m-0" style={{
- fontSize: 22, fontWeight: 400,
-                                          color: 'var(--ink)'
-}}>{title}</h1>
-        <p style={{
- fontSize: 13, color: 'var(--ink-2)',
-                     maxWidth: 720, lineHeight: 1.55
-}} className="mt-1 mb-0" >{sub}</p>
-      </div>
-      {right}
-    </div>
+    <ScreenHeader kanji={kanji} eyebrow="Observatory · Learnings"
+                  title={title} sub={sub} right={right}/>
   );
 }
 
@@ -139,8 +120,8 @@ function LearningsTriage() {
           title="Now"
           sub="violations · high-impact recs · this week"
           count={now.violations.length + now.recs.length + now.corrections.length}>
-          {now.violations.map(m => <ViolationCard key={m.id} memory={m}/>)}
-          {now.recs.map(r => <RecCardSlim key={r.id} rec={r}/>)}
+          {now.violations.map((m, i) => <ViolationCard key={m.id} memory={m} focal={i === 0}/>)}
+          {now.recs.map((r, i) => <RecCardSlim key={r.id} rec={r} focal={i === 0 && now.violations.length === 0}/>)}
           {now.corrections.map(c => <CorrectionMini key={c.id} c={c}/>)}
           {(now.violations.length + now.recs.length + now.corrections.length === 0) &&
             <Quiet text="nothing urgent."/>}
@@ -231,8 +212,32 @@ function Quiet({ text }) {
   );
 }
 
-function ViolationCard({ memory }) {
+function ViolationCard({ memory, focal = false }) {
   const how = inferHow(memory);
+  const [status, setStatus] = l2S(null); // null | "applied" | "dismissed"
+
+  if (status) {
+    const applied = status === "applied";
+    return (
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 8,
+        background: applied ? 'var(--success-soft)' : 'var(--paper-2)',
+        border: 'var(--hairline)', borderRadius: 5, opacity: applied ? 1 : 0.6
+      }} className="py-2 px-3" >
+        <span className="kanji" style={{ fontSize: 12,
+                      color: applied ? 'var(--success)' : 'var(--ink-4)' }}>
+          {applied ? "✓" : "—"}
+        </span>
+        <span style={{ flex: 1, fontSize: 11, color: 'var(--ink-2)', lineHeight: 1.4, minWidth: 0,
+                       overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {applied ? <>Reinforced · <span className="mono">{how.target}</span></> : "Muted for now"}
+        </span>
+        <button onClick={() => setStatus(null)}
+                style={{ fontSize: 11, color: 'var(--ink-3)' }}>Undo</button>
+      </div>
+    );
+  }
+
   return (
     <div style={{
  background: 'var(--accent-soft)', border: '1px solid transparent',
@@ -244,41 +249,134 @@ function ViolationCard({ memory }) {
           violated · {memory.violated}×
         </span>
         <span style={{ flex: 1 }}/>
-        <span className="mono" style={{ fontSize: 11, color: 'var(--ink-4)' }}>{memory.lastRelevant}</span>
+        {focal
+          ? <span style={{ fontSize: 11, letterSpacing: '0.12em', textTransform: 'uppercase',
+                           color: 'var(--accent)', fontWeight: 500 }}>do first</span>
+          : <span className="mono" style={{ fontSize: 11, color: 'var(--ink-4)' }}>{memory.lastRelevant}</span>}
       </div>
       <div style={{ fontSize: 13, color: 'var(--ink)', lineHeight: 1.4, fontWeight: 500 }}>
         {memory.what}
       </div>
-      <div style={{ fontSize: 11, color: 'var(--ink-3)' }} className="mt-1" >
+      <div style={{ fontSize: 11, color: 'var(--ink-4)', lineHeight: 1.4 }} className="mt-2" >
         <span className="kanji" style={{ color: 'var(--accent)' }}>{how.glyph}</span>{" "}
-        reinforce in <span className="mono">{how.target}</span>
+        Reinforces it in <span className="mono" style={{ color: 'var(--ink-3)' }}>{how.target}</span>
+      </div>
+
+      {/* same action row as recommendations — one clear default everywhere */}
+      <div style={{ display: 'flex', alignItems: 'center' }} className="gap-2 mt-2" >
+        <button onClick={() => setStatus("applied")}
+                style={{ fontSize: 12, background: 'var(--ink)', color: 'var(--paper)',
+                         borderRadius: 5, letterSpacing: 0.2 }} className="py-1 px-3" >
+          Reinforce
+        </button>
+        <button style={{ fontSize: 12, color: 'var(--ink-2)', border: 'var(--ink-line)',
+                         borderRadius: 5 }} className="py-1 px-3" >
+          Review
+        </button>
+        <span style={{ flex: 1 }}/>
+        <button onClick={() => setStatus("dismissed")}
+                style={{ fontSize: 11, color: 'var(--ink-4)' }} className="py-1 px-1" >
+          Mute
+        </button>
       </div>
     </div>
   );
 }
 
-function RecCardSlim({ rec }) {
-  const kindGlyph = {
-    "promote-pattern": "昇", "create-agent": "作", "write-skill": "技",
-    "archive-memory": "納", "enrich-memory": "育", "cross-project": "渡"
-  }[rec.kind] || "?";
+// Every recommendation collapses to ONE decision, identical on every card:
+//   Apply   — accept sensei's suggestion (the consistent default)
+//   Review  — open / edit the target before committing
+//   Dismiss — decline
+// The old per-rec verb (promote · draft · scaffold · archive · reinforce ·
+// clone) is no longer THE action — it becomes a typed descriptor chip plus a
+// plain caption of exactly what Apply will do. The single highest-impact rec
+// is marked "do first", so there's always one obvious next move.
+const REC_KINDS = {
+  "promote-pattern": { tag: "rule",    glyph: "則", effect: "Promotes the pattern to a rule in" },
+  "create-agent":    { tag: "agent",   glyph: "作", effect: "Drafts the agent" },
+  "write-skill":     { tag: "skill",   glyph: "技", effect: "Scaffolds" },
+  "archive-memory":  { tag: "memory",  glyph: "納", effect: "Archives" },
+  "cross-project":   { tag: "project", glyph: "渡", effect: "Clones it into" },
+  "enrich-memory":   { tag: "memory",  glyph: "育", effect: "Reinforces" },
+};
+
+function RecCardSlim({ rec, focal = false }) {
+  const k = REC_KINDS[rec.kind] || { tag: rec.targetKind, glyph: "•", effect: "Applies to" };
+  const [status, setStatus] = l2S(null); // null | "applied" | "dismissed"
+
+  // Resolved state — the card collapses to a quiet one-liner so handled
+  // recommendations stop competing for attention.
+  if (status) {
+    const applied = status === "applied";
+    return (
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 8,
+        background: applied ? 'var(--success-soft)' : 'var(--paper-2)',
+        border: 'var(--hairline)', borderRadius: 5, opacity: applied ? 1 : 0.6
+      }} className="py-2 px-3" >
+        <span className="kanji" style={{ fontSize: 12,
+                      color: applied ? 'var(--success)' : 'var(--ink-4)' }}>
+          {applied ? "✓" : "—"}
+        </span>
+        <span style={{ flex: 1, fontSize: 11, color: 'var(--ink-2)', lineHeight: 1.4, minWidth: 0,
+                       overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {applied ? <>Applied · <span className="mono">{rec.targetName}</span></> : "Dismissed"}
+        </span>
+        <button onClick={() => setStatus(null)}
+                style={{ fontSize: 11, color: 'var(--ink-3)' }}>Undo</button>
+      </div>
+    );
+  }
+
   return (
     <div style={{
- background: 'var(--paper-2)', border: 'var(--hairline)',
-                   borderRadius: 5
-}} className="py-2 px-3" >
-      <div style={{ display: 'flex', alignItems: 'center' }} className="gap-1 mb-1" >
-        <span className="kanji" style={{ fontSize: 13, color: 'var(--accent)' }}>{kindGlyph}</span>
-        <span style={{ fontSize: 11, color: 'var(--ink-3)', letterSpacing: '0.14em',
-                        textTransform: 'uppercase' }}>{rec.action}</span>
+      background: 'var(--paper-2)', border: 'var(--hairline)',
+      borderLeft: focal ? '2px solid var(--accent)' : 'var(--hairline)',
+      borderRadius: 5
+    }} className="py-2 px-3" >
+      {/* typed descriptor + (focal) do-first marker — the kind, not the verb */}
+      <div style={{ display: 'flex', alignItems: 'center' }} className="gap-2 mb-1" >
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4,
+                       fontSize: 11, color: 'var(--ink-3)' }}>
+          <span className="kanji" style={{ fontSize: 12, color: 'var(--accent)' }}>{k.glyph}</span>
+          <span style={{ letterSpacing: '0.08em', textTransform: 'uppercase' }}>{k.tag}</span>
+        </span>
         <span style={{ flex: 1 }}/>
-        <span className="mono" style={{ fontSize: 11, color: 'var(--ink-4)' }}>{rec.targetKind}</span>
+        {focal && (
+          <span style={{ fontSize: 11, letterSpacing: '0.12em', textTransform: 'uppercase',
+                         color: 'var(--accent)', fontWeight: 500 }}>do first</span>
+        )}
       </div>
+
       <div style={{ fontSize: 13, color: 'var(--ink)', lineHeight: 1.4 }}>{rec.title}</div>
-      <div style={{
- fontSize: 11, color: 'var(--ink-3)',
-                     lineHeight: 1.5
-}} className="mt-1" >{rec.reasoning}</div>
+      <div style={{ fontSize: 11, color: 'var(--ink-3)', lineHeight: 1.5,
+                    display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
+                    overflow: 'hidden' }} className="mt-1" >
+        {rec.reasoning}
+      </div>
+
+      {/* exactly what Apply will do — the old verb, demoted to a caption */}
+      <div style={{ fontSize: 11, color: 'var(--ink-4)', lineHeight: 1.4 }} className="mt-2" >
+        {k.effect} <span className="mono" style={{ color: 'var(--ink-3)' }}>{rec.targetName}</span>
+      </div>
+
+      {/* one consistent action row — identical on every card */}
+      <div style={{ display: 'flex', alignItems: 'center' }} className="gap-2 mt-2" >
+        <button onClick={() => setStatus("applied")}
+                style={{ fontSize: 12, background: 'var(--ink)', color: 'var(--paper)',
+                         borderRadius: 5, letterSpacing: 0.2 }} className="py-1 px-3" >
+          Apply
+        </button>
+        <button style={{ fontSize: 12, color: 'var(--ink-2)', border: 'var(--ink-line)',
+                         borderRadius: 5 }} className="py-1 px-3" >
+          Review
+        </button>
+        <span style={{ flex: 1 }}/>
+        <button onClick={() => setStatus("dismissed")}
+                style={{ fontSize: 11, color: 'var(--ink-4)' }} className="py-1 px-1" >
+          Dismiss
+        </button>
+      </div>
     </div>
   );
 }

@@ -39,7 +39,7 @@ const PRODUCTS = [
     tagline: 'A quiet companion for AI-assisted work.',
     blurb: 'Observes your sessions with AI assistants and surfaces the patterns you are too close to see. Local-first, no account, speaks only when it has something to say.',
     meta: ['macOS · Windows · Linux', 'Tauri', 'Local-first'],
-    status: 'Available', href: 'Sensei Site.html',
+    status: 'Available', href: 'Sensei.html',
     featured: true,
     highlights: ['Watches sessions locally', 'Surfaces recurring patterns', 'Adopts memories on your terms'],
   },
@@ -98,15 +98,17 @@ const INCUBATING = [
 // Primitives
 // ═══════════════════════════════════════════════════════════════════════
 
-// Ensō — an open brushed circle. Simple stroked circle with a gap.
-function Enso({ size = 26, stroke = 'var(--accent)', width = 2.6 }) {
+// Sensei brand mark — SVG used as a CSS mask so it fills with any brand color.
+function Enso({ size = 26, stroke = 'var(--accent)' }) {
   return (
-    <svg viewBox="0 0 48 48" width={size} height={size} aria-hidden="true"
-         style={{ display: 'block', flexShrink: 0 }}>
-      <circle cx="24" cy="24" r="18" fill="none" stroke={stroke}
-              strokeWidth={width} strokeLinecap="round"
-              strokeDasharray="92 34" transform="rotate(125 24 24)" />
-    </svg>
+    <span aria-hidden="true"
+          style={{ display: 'block', flexShrink: 0, width: size, height: size,
+                   background: stroke,
+                   WebkitMaskImage: 'url(site/sensei-logo.svg)',
+                   maskImage: 'url(site/sensei-logo.svg)',
+                   WebkitMaskSize: 'contain', maskSize: 'contain',
+                   WebkitMaskRepeat: 'no-repeat', maskRepeat: 'no-repeat',
+                   WebkitMaskPosition: 'center', maskPosition: 'center' }} />
   );
 }
 
@@ -557,7 +559,7 @@ function Contact() {
 
 function Footer() {
   const cols = [
-    ['Products', [['Sensei', 'Sensei Site.html'], ['DBD', '#dbd'], ['Rokkit', '#rokkit'], ['Kavach', '#kavach']]],
+    ['Products', [['Sensei', 'Sensei.html'], ['DBD', '#dbd'], ['Rokkit', '#rokkit'], ['Kavach', '#kavach']]],
     ['Studio', [['Approach', '#approach'], ['Open source', '#open'], ['Contact', '#contact']]],
     ['Connect', [['GitHub', '#github'], ['Twitter', '#twitter'], ['hi@sensei-hq.com', 'mailto:hi@sensei-hq.com']]],
   ];
