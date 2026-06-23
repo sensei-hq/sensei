@@ -225,6 +225,66 @@ function KanjiHeader({ variant = 'h1', kanji, eyebrow, title, description, right
   );
 }
 
+// ─── Screen header + shell ──────────────────────────────────
+// The ONE pinned header band every destination screen uses. Sits at the top
+// of a ScreenShell and never scrolls. Skeleton: 40px accent kanji · eyebrow ·
+// 22px display title · 13px sub. `right` is an inline cluster aligned to the
+// band (stats, range filter, actions); `below` renders under the title block
+// (e.g. a filter row). This replaces the per-screen L2Hero / ZenHero /
+// InstrHero copies so the header is identical across the observatory.
+function ScreenHeader({ kanji, eyebrow, title, sub, right, below,
+                        accent = 'var(--accent)', className = '', style }) {
+  return (
+    <div style={{ borderBottom: 'var(--hairline)', display: 'flex',
+                  alignItems: 'center', background: 'var(--paper)',
+                  flexShrink: 0, ...style }}
+         className={'gap-5 pt-5 pb-4 px-7 ' + className}>
+      {kanji && (
+        <span className="kanji" style={{ fontSize: 40, color: accent,
+                      lineHeight: 1, flexShrink: 0 }}>{kanji}</span>
+      )}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        {eyebrow && (
+          <div style={{ fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
+                        textTransform: 'uppercase' }} className="mb-1" >{eyebrow}</div>
+        )}
+        {title && (
+          <h1 className="display m-0" style={{ fontSize: 22, fontWeight: 400,
+                        color: 'var(--ink)' }}>{title}</h1>
+        )}
+        {sub && (
+          <p style={{ fontSize: 13, color: 'var(--ink-2)', maxWidth: 720,
+                      lineHeight: 1.55 }} className="mt-1 mb-0" >{sub}</p>
+        )}
+        {below && <div className="mt-3" >{below}</div>}
+      </div>
+      {right}
+    </div>
+  );
+}
+
+// Full-height screen scaffold: a pinned header + ONE independent scroll body.
+// Use for every destination so the header stays fixed and the body is the
+// only scroll container (no nested scrolling when mounted inside a shell's
+// main region). Pass the header element (usually <ScreenHeader/>) as `header`;
+// children are the scrolling content.
+function ScreenShell({ header, children, scrollRef, label,
+                       bodyClassName = '', bodyStyle, className = '', style }) {
+  return (
+    <div className={'sensei ' + className} data-screen-label={label}
+         style={{ width: '100%', height: '100%', display: 'flex',
+                  flexDirection: 'column', background: 'var(--paper)',
+                  overflow: 'hidden', ...style }}>
+      {header}
+      <div ref={scrollRef} className={bodyClassName}
+           style={{ flex: 1, minHeight: 0, overflow: 'auto',
+                    position: 'relative', ...bodyStyle }}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
 // Small section label used inside sidebars and column heads.
 // Same shape as Eyebrow but with built-in horizontal padding for the typical
 // sidebar group context.
@@ -267,4 +327,5 @@ Object.assign(window, {
   KANJI, PAGES, pct, signedPct,
   // Zen-Sumi primitives
   Eyebrow, Kanji, KanjiHeader, SectionLabel, StatusDot, KANJI_SIZE,
+  ScreenHeader, ScreenShell,
 });

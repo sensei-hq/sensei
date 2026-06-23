@@ -254,8 +254,9 @@ Object.assign(window, {
 //  Overview · Sessions · Memories · Traceability · Libraries ·
 //  Instruments · Patterns · Impact · Logs · Settings)
 // ═══════════════════════════════════════════════════════════
-function ProjectPageSidebar({ initialSection = "overview", embedded = false, onBack, onSwitchProject } = {}) {
-  const project = window.PROJECT_DATA.projects[window.PROJECT_DATA.active];
+function ProjectPageSidebar({ initialSection = "overview", embedded = false, onBack, onSwitchProject, projectId } = {}) {
+  const project = window.PROJECT_DATA.projects[projectId || window.PROJECT_DATA.active]
+                  || window.PROJECT_DATA.projects[window.PROJECT_DATA.active];
   const [sec, setSec] = ppS(initialSection);
   const { drawer, openAction, close } = useActionDrawer();
 

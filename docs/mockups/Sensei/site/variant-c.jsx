@@ -758,9 +758,9 @@ function SupportC() {
  fontSize: 13, color: 'var(--ink-2)',
                      lineHeight: 1.7
 }} className="mt-0 mb-5" >
-          Built by a small team. Every coffee buys an hour of focused work.
+          Built by a small team. GitHub Sponsors keeps the work focused and independent.
         </p>
-        <a href="#sponsor" style={{
+        <a href="https://github.com/sponsors/sensei-hq" target="_blank" rel="noopener" style={{
           display: 'inline-flex', alignItems: 'center',
           background: 'linear-gradient(180deg, var(--accent) 0%, oklch(0.52 0.16 30) 100%)',
           color: 'var(--paper)',
@@ -769,7 +769,7 @@ function SupportC() {
           textDecoration: 'none',
           boxShadow: '0 8px 20px -8px var(--accent)'
 }} className="gap-2 py-3 px-5" >
-          ♥ Buy me a coffee
+          ♥ Sponsor on GitHub
         </a>
       </div>
     </section>
