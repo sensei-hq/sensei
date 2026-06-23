@@ -128,15 +128,21 @@ async fn ingest_one(
 ) -> Result<IngestOutcome, String> {
     let path_str = path.to_string_lossy().to_string();
     let mtime = mtime_ns(path);
-    // resumable: skip files unchanged since last ingest.
-    if let Ok(Some(prev)) = pg.get_transcript_cursor(adapter.source(), &path_str).await
-        && prev >= mtime
-    {
-        return Ok(IngestOutcome::skipped());
-    }
     let Some(session_id) = adapter.session_id_for(path) else {
         return Ok(IngestOutcome::skipped());
     };
+    // The cursor gates the expensive PROSE re-ingest; synthesis (#75) gates on
+    // whether the session has events yet (so an already-prose-ingested but
+    // never-synthesized historical session still gets imported). Read the file
+    // only if there's something to do.
+    let prose_fresh = matches!(
+        pg.get_transcript_cursor(adapter.source(), &path_str).await,
+        Ok(Some(prev)) if prev >= mtime
+    );
+    let needs_synth = !pg.session_has_events(&session_id).await.unwrap_or(true);
+    if prose_fresh && !needs_synth {
+        return Ok(IngestOutcome::skipped());
+    }
     // skip pathological oversized transcripts (logged, not silent).
     let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
     if size > MAX_TRANSCRIPT_BYTES {
@@ -144,17 +150,24 @@ async fn ingest_one(
         return Ok(IngestOutcome::skipped());
     }
     let content = std::fs::read_to_string(path).map_err(|e| format!("read {path_str}: {e}"))?;
-    // 1. prose turns (#73)
-    let turns = adapter.parse(&content);
-    let n = pg
-        .upsert_transcript_turns(adapter.source(), &session_id, adapter.family(), &turns)
-        .await?;
-    pg.set_transcript_cursor(adapter.source(), &path_str, Some(&session_id), mtime, turns.len() as i32)
-        .await?;
+    // 1. prose turns (#73) — only when stale.
+    let mut turns = 0u32;
+    if !prose_fresh {
+        let parsed = adapter.parse(&content);
+        turns = pg
+            .upsert_transcript_turns(adapter.source(), &session_id, adapter.family(), &parsed)
+            .await?;
+        pg.set_transcript_cursor(adapter.source(), &path_str, Some(&session_id), mtime, parsed.len() as i32)
+            .await?;
+    }
     // 2. historical-bootstrap: synthesize the session + events if not already
     // captured (#75), so the existing enricher can derive its metrics.
-    let analyze_project = synthesize_session(pg, adapter, &session_id, &content).await;
-    Ok(IngestOutcome { skipped: false, turns: n, analyze_project })
+    let analyze_project = if needs_synth {
+        synthesize_session(pg, adapter, &session_id, &content).await
+    } else {
+        None
+    };
+    Ok(IngestOutcome { skipped: false, turns, analyze_project })
 }
 
 /// Historical-bootstrap (#75): if this session has no events yet (not
@@ -250,37 +263,28 @@ pub async fn backfill_all(
 /// Skips files unchanged since last ingest (the per-file task re-checks to stay
 /// race-safe). Returns the number of files enqueued.
 pub async fn run_backfill(ctx: &TaskContext, _task: &Task) -> Result<u32, String> {
-    let (_seen, enqueued) = dispatch(ctx.pg(), &ctx.queue).await;
+    let (_seen, enqueued) = dispatch(&ctx.queue).await;
     Ok(enqueued)
 }
 
 /// Scan all adapters and enqueue one `BackfillTranscriptFile` task per
-/// changed/new transcript. Returns `(files_seen, enqueued)`. Callable from the
-/// dispatcher task or directly from the trigger endpoint (for immediate feedback).
-pub async fn dispatch(
-    pg: &crate::db::pg_store::PgStore,
-    queue: &crate::tasks::queue::TaskQueue,
-) -> (u32, u32) {
-    let mut files_seen = 0u32;
-    let mut enqueued = 0u32;
+/// transcript. Returns `(files_seen, enqueued)`. Each per-file task does the
+/// smart skip (cursor for prose + session-has-events for synthesis), so the
+/// dispatcher stays trivial and correct across upgrades. Callable from the
+/// dispatcher task or directly from the trigger endpoint (immediate feedback).
+pub async fn dispatch(queue: &crate::tasks::queue::TaskQueue) -> (u32, u32) {
+    let mut count = 0u32;
     for ad in adapters() {
         for path in ad.transcript_files() {
-            files_seen += 1;
-            let path_str = path.to_string_lossy().to_string();
-            if let Ok(Some(prev)) = pg.get_transcript_cursor(ad.source(), &path_str).await
-                && prev >= mtime_ns(&path)
-            {
-                continue;
-            }
             // folder_path = capture source, path = transcript file path.
             queue
-                .enqueue(Task::new(TaskKind::BackfillTranscriptFile, ad.source(), &path_str))
+                .enqueue(Task::new(TaskKind::BackfillTranscriptFile, ad.source(), &path.to_string_lossy()))
                 .await;
-            enqueued += 1;
+            count += 1;
         }
     }
-    tracing::info!(files_seen, enqueued, "transcript backfill: dispatched per-file tasks");
-    (files_seen, enqueued)
+    tracing::info!(count, "transcript backfill: dispatched per-file tasks");
+    (count, count)
 }
 
 /// Handler for `TaskKind::BackfillTranscriptFile`: ingest one transcript.
@@ -322,6 +326,10 @@ mod tests {
         std::fs::create_dir_all(&proj).unwrap();
         std::fs::write(proj.join(format!("{sid}.jsonl")), SAMPLE).unwrap();
 
+        // pre-existing event ⇒ session already captured, so this test isolates
+        // the PROSE cursor-skip path (synthesis is a dedup no-op).
+        pg.insert_hook_event(&sid, "claude", "Stop", None, None, 1, None, &serde_json::json!({})).await.unwrap();
+
         let ads: Vec<Box<dyn TranscriptAdapter>> =
             vec![Box::new(claude::ClaudeAdapter::new(root.clone()))];
 
@@ -345,6 +353,7 @@ mod tests {
 
         // cleanup
         let pool = pg.pool();
+        sqlx_core::query::query("DELETE FROM activity.assistant_events WHERE session_id=$1").bind(&sid).execute(pool).await.ok();
         sqlx_core::query::query("DELETE FROM activity.transcript_turns WHERE session_id=$1").bind(&sid).execute(pool).await.ok();
         sqlx_core::query::query("DELETE FROM activity.transcript_cursor WHERE session_id=$1").bind(&sid).execute(pool).await.ok();
         std::fs::remove_dir_all(&root).ok();
