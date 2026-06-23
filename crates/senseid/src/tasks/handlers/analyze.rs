@@ -443,7 +443,8 @@ pub async fn derive_signals(ctx: &TaskContext, project_id: &uuid::Uuid) -> Resul
     let mut corrections: std::collections::HashMap<uuid::Uuid, Vec<serde_json::Value>> = Default::default();
     let mut principles: std::collections::HashMap<uuid::Uuid, Vec<serde_json::Value>> = Default::default();
     for (i, (folder_id, session_id, prompt, regex_class)) in candidates.iter().enumerate() {
-        let class = refined.as_ref().and_then(|r| r.get(i).copied()).unwrap_or(*regex_class);
+        // LLM-refined class when available for this prompt, else the regex class.
+        let class = refined.get(i).copied().flatten().unwrap_or(*regex_class);
         let instance = serde_json::json!({ "session": session_id, "prompt": prompt_snippet(prompt) });
         match class {
             PromptClass::Correction => corrections.entry(*folder_id).or_default().push(instance),
