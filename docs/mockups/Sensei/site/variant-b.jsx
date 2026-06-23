@@ -29,7 +29,8 @@ function VariantB() {
       <StatsB/>
       <WhatItIsB/>
       <HowItWorksB/>
-      <GalleryB/>
+      <Surfaces/>
+      <DojoForTeams/>
       <PhilosophyB/>
       <PrivacyB/>
       <PricingB/>
@@ -49,8 +50,10 @@ function NavB() {
       borderBottom: 'var(--hairline)'
 }} className="py-5 px-7 mx-auto" >
       <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2" >
-        <span className="kanji" style={{ fontSize: 22,
-                       color: 'var(--accent)', letterSpacing: '-0.04em' }}>先生</span>
+        <span style={{ display: 'inline-block', width: 26, height: 26, background: 'var(--accent)',
+                       WebkitMaskImage: 'url(site/sensei-logo.svg)', maskImage: 'url(site/sensei-logo.svg)',
+                       WebkitMaskSize: 'contain', maskSize: 'contain', WebkitMaskRepeat: 'no-repeat', maskRepeat: 'no-repeat',
+                       WebkitMaskPosition: 'center', maskPosition: 'center', alignSelf: 'center', flexShrink: 0 }} />
         <span className="display" style={{ fontSize: 22,
                        letterSpacing: '-0.01em',
                        color: 'var(--ink)' }}>Sensei</span>
@@ -141,12 +144,12 @@ function HeroB() {
         </div>
       </div>
 
-      {/* Hero screen */}
+      {/* Hero centerpiece — the product's voice, not a screenshot */}
       <div style={{
  display: 'flex',
                      justifyContent: 'center', position: 'relative'
 }} className="mt-8" >
-        <MockToday width={1040} height={620}/>
+        <HeroBrief/>
       </div>
     </section>
   );
@@ -358,13 +361,13 @@ function GalleryB() {
       el: <MockSessions width={920} height={580}/> },
     { caption: "Insights",
       sub: "What sensei has noticed. Patterns with confidence and provenance. You decide which become memories.",
-      el: <MockInsights width={920} height={580}/> },
+      el: <AppFrame title="Sensei · Insights" width={920} height={580}><MockSidebar active="insights"/><div style={{ flex: 1, minWidth: 0, display: 'flex' }}><LearningsTriage/></div></AppFrame> },
     { caption: "Memories",
       sub: "Adopted teachings. Each one named, dated, and traceable to the sessions it came from. No black box.",
-      el: <MockMemory width={920} height={580}/> },
+      el: <AppFrame title="Sensei · Memories" width={920} height={580}><MockSidebar active="memories"/><div style={{ flex: 1, minWidth: 0, display: 'flex' }}><LearningsAnatomyV2/></div></AppFrame> },
     { caption: "Instruments",
       sub: "Your tools, observed. Try them in isolation, replay what the assistant did, watch toolset health over time.",
-      el: <MockInstruments width={920} height={580}/> }
+      el: <AppFrame title="Sensei · Instruments" width={920} height={580}><MockSidebar active="instruments"/><div style={{ flex: 1, minWidth: 0, display: 'flex' }}><InstrumentsPlaygroundSimple/></div></AppFrame> }
   ];
   return (
     <section id="gallery" className="pt-9 pb-8 px-7" >
@@ -663,9 +666,9 @@ function SupportB() {
  fontSize: 13, color: 'var(--ink-2)',
                      lineHeight: 1.7
 }} className="mt-0 mb-6" >
-          Sensei is built by a small team. Every coffee buys an hour of focused work.
+          Sensei is built by a small team. GitHub Sponsors keeps the work focused and independent.
         </p>
-        <a href="#sponsor" style={{
+        <a href="https://github.com/sponsors/sensei-hq" target="_blank" rel="noopener" style={{
           display: 'inline-flex', alignItems: 'center',
           background: 'var(--accent)',
           color: 'var(--paper)',
@@ -673,7 +676,7 @@ function SupportB() {
           fontSize: 13, fontWeight: 500,
           textDecoration: 'none'
 }} className="gap-2 py-3 px-5" >
-          ♥ Buy me a coffee
+          ♥ Sponsor on GitHub
         </a>
       </div>
     </section>
@@ -695,8 +698,10 @@ function FooterB() {
           <div style={{
  display: 'flex', alignItems: 'baseline'
 }} className="gap-2 mb-3" >
-            <span className="kanji" style={{ fontSize: 17,
-                           color: 'var(--accent)', letterSpacing: '-0.04em' }}>先生</span>
+            <span style={{ display: 'inline-block', width: 22, height: 22, background: 'var(--accent)',
+                           WebkitMaskImage: 'url(site/sensei-logo.svg)', maskImage: 'url(site/sensei-logo.svg)',
+                           WebkitMaskSize: 'contain', maskSize: 'contain', WebkitMaskRepeat: 'no-repeat', maskRepeat: 'no-repeat',
+                           WebkitMaskPosition: 'center', maskPosition: 'center', alignSelf: 'center', flexShrink: 0 }} />
             <span className="display" style={{ fontSize: 15,
                            color: 'var(--ink-2)' }}>Sensei</span>
           </div>

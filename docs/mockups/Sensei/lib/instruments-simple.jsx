@@ -19,41 +19,10 @@ const { useState: isS, useEffect: isE } = React;
 // ═══════════════════════════════════════════════════════════════════════
 // Shared slim hero
 // ═══════════════════════════════════════════════════════════════════════
+// Delegates to the shared ScreenHeader for a band identical to every other screen.
 function InstrHero({ kanji, eyebrow, title, sub, right }) {
   return (
-    <div style={{
- borderBottom: 'var(--hairline)',
-                   display: 'flex', alignItems: 'center', background: 'var(--paper)'
-}} className="gap-4 pt-5 pb-4 px-7" >
-      <div className="kanji" style={{ fontSize: 40, color: 'var(--accent)', lineHeight: 1 }}>
-        {kanji}
-      </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{
- fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
-                       textTransform: 'uppercase'
-}} className="mb-1" >
-          {eyebrow}
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
-          <h1 className="display m-0" style={{
- fontSize: 22, fontWeight: 400,
-                                            color: 'var(--ink)'
-}}>
-            {title}
-          </h1>
-          {sub && (
-            <p style={{
- fontSize: 13, color: 'var(--ink-2)',
-                         maxWidth: 680, lineHeight: 1.55
-}} className="m-0" >
-              {sub}
-            </p>
-          )}
-        </div>
-      </div>
-      {right}
-    </div>
+    <ScreenHeader kanji={kanji} eyebrow={eyebrow} title={title} sub={sub} right={right}/>
   );
 }
 

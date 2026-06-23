@@ -47,7 +47,7 @@ function writeSenseiSettings(patch) {
 // short complete sentences, lowercase sensei, second-person, periods.
 const WIZ_STAGES = [
   { id: "welcome",     n: "礼",  title: "Welcome",         sub: "A quiet observer. Nothing more." },
-  { id: "preferences", n: "名",  title: "Preferences",     sub: "A few small choices before you step in." },
+  { id: "preferences", n: "名",  title: "Profile",          sub: "Your name, sharing, and how forward sensei is." },
   { id: "acps",        n: "連",  title: "Assistants",      sub: "Connect the AI tools you already use." },
   { id: "folders",     n: "庵",  title: "Folders",         sub: "Where your work lives." },
   { id: "scan",        n: "観",  title: "Scan",            sub: "Workers recurse. Repos surface." },
@@ -59,12 +59,25 @@ const WIZ_STAGES = [
   { id: "done",        n: "入",  title: "Enter",           sub: "The observatory is ready." }
 ];
 
-// ─────────────────────────────────────────────────────────────
-// Root wizard
-function SetupWizard({ onDone, onExit }) {
+// Preferences mode reorders the same stages so Scan sits first ("two ways
+// to reach the scan: on first load, and here when changes are needed") and
+// drops the onboarding-only bookends (Welcome / Enter). Everything else is
+// the same screens — just reachable for editing, not as a linear gate.
+const PREF_ORDER = ["scan", "folders", "projects", "acps",
+                    "libraries", "registry", "inference", "assignments", "preferences"];
+
+// ─────────────────────────────────────────────────────────────────
+// Root wizard. mode:
+//   "setup"        — linear first-time gate (legacy / reference)
+//   "preferences"  — settings surface; scan first, free navigation, no gate
+function SetupWizard({ onDone, onExit, mode = "setup" }) {
   const D = window.SENSEI_SETUP;
+  const isPrefs = mode === "preferences";
+  const stages = isPrefs
+    ? PREF_ORDER.map(id => WIZ_STAGES.find(s => s.id === id)).filter(Boolean)
+    : WIZ_STAGES;
   const [stageIdx, setStageIdx] = useS(0);
-  const stage = WIZ_STAGES[stageIdx];
+  const stage = stages[stageIdx];
 
   // accumulated state — realistic enough to read as "a thing being configured"
   const [state, setState] = useS({
@@ -118,23 +131,25 @@ function SetupWizard({ onDone, onExit }) {
   });
   const upd = (patch) => setState(prev => ({ ...prev, ...patch }));
 
-  const next = () => setStageIdx(i => Math.min(i + 1, WIZ_STAGES.length - 1));
+  const next = () => setStageIdx(i => Math.min(i + 1, stages.length - 1));
   const back = () => setStageIdx(i => Math.max(i - 1, 0));
+  const saveAndClose = () => { writeSenseiSettings(state.prefs || {}); onDone && onDone(); };
 
   return (
-    <div className="sensei" data-screen-label="Setup Wizard"
+    <div className="sensei" data-screen-label={isPrefs ? "Preferences" : "Setup Wizard"}
          style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column',
                   background: 'var(--paper)', overflow: 'hidden' }}>
-      <TauriChrome title="Sensei  先生  ·  setup"/>
+      <TauriChrome title={isPrefs ? "Sensei  先生  ·  preferences" : "Sensei  先生  ·  setup"}/>
       <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '260px 1fr', minHeight: 0 }}>
-        <WizRail stages={WIZ_STAGES} stageIdx={stageIdx} setStageIdx={setStageIdx} onExit={onExit}/>
+        <WizRail stages={stages} stageIdx={stageIdx} setStageIdx={setStageIdx} onExit={onExit}
+                 freeNav={isPrefs} railTitle={isPrefs ? "Preferences" : "Setup"}/>
         <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0 }}>
           <div style={{ flex: 1, overflow: 'auto' }} className="pt-7 pb-6 px-8" >
             {stage.id === "welcome"    && <WizWelcome/>}
             {stage.id === "components" && <WizComponents state={state} upd={upd}/>}
             {stage.id === "acps"       && <WizAcps state={state} upd={upd}/>}
             {stage.id === "folders"    && <WizFolders state={state} upd={upd}/>}
-            {stage.id === "scan"       && <WizScan state={state} upd={upd}/>}
+            {stage.id === "scan"       && <WizScan state={state} upd={upd} context={isPrefs ? "preferences" : "setup"}/>}
             {stage.id === "projects"   && <WizProjects state={state} upd={upd}/>}
             {stage.id === "libraries"  && <WizLibraries state={state} upd={upd}/>}
             {stage.id === "registry"   && <WizRegistry state={state} upd={upd}/>}
@@ -143,14 +158,10 @@ function SetupWizard({ onDone, onExit }) {
             {stage.id === "preferences" && <WizPreferences state={state} upd={upd}/>}
             {stage.id === "done"        && <WizDone state={state}/>}
           </div>
-          <WizBottom stage={stage} stageIdx={stageIdx} total={WIZ_STAGES.length}
-                     back={back} next={next}
-                     onDone={() => {
-                       // Persist whatever the user landed on in Preferences
-                       // before handing control back to the host.
-                       writeSenseiSettings(state.prefs || {});
-                       onDone && onDone();
-                     }}
+          <WizBottom stage={stage} stageIdx={stageIdx} total={stages.length}
+                     back={back} next={next} mode={mode}
+                     onSaveClose={saveAndClose}
+                     onDone={saveAndClose}
                      state={state}/>
         </div>
       </div>
@@ -190,7 +201,25 @@ function ServicesStatus() {
 }
 
 // ─── Left rail ───────────────────────────────────────────────
-function WizRail({ stages, stageIdx, setStageIdx, onExit }) {
+function WizRail({ stages, stageIdx, setStageIdx, onExit, freeNav = false, railTitle = "Setup" }) {
+  const [q, setQ] = useS("");
+  const ql = q.trim().toLowerCase();
+  // Keyword index so a search hits the setting inside a stage, not just its title.
+  const KW = {
+    scan: "folders repos rescan index roots",
+    folders: "folders paths exclude roots watch",
+    projects: "projects repos merge split roles",
+    acps: "assistants claude cursor copilot mcp connect",
+    libraries: "libraries wrap docs dependencies",
+    registry: "instruments mcp tools playground",
+    inference: "inference models ollama cloud routing moe deliberation",
+    assignments: "assignments roles model which",
+    preferences: "profile name sharing collective tone digest telemetry privacy regression",
+  };
+  const REVIEW = new Set(["preferences", "inference"]);  // what most users change first
+  const matches = (s) => !ql || s.title.toLowerCase().includes(ql)
+    || (s.sub || "").toLowerCase().includes(ql) || (KW[s.id] || "").includes(ql);
+  const anyVisible = stages.some(s => matches(s));
   return (
     <aside style={{
  borderRight: 'var(--hairline)',
@@ -210,16 +239,35 @@ function WizRail({ stages, stageIdx, setStageIdx, onExit }) {
       <div style={{
  fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
                     textTransform: 'uppercase'
-}} className="mb-3" >Setup</div>
+}} className={freeNav ? "mb-1" : "mb-3"} >{railTitle}</div>
+
+      {freeNav && (
+        <>
+          <div style={{ fontSize: 11, color: 'var(--ink-4)', lineHeight: 1.45 }} className="mb-3" >
+            Everything Sensei can be told — search or browse.
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'var(--paper)',
+                        border: 'var(--hairline)', borderRadius: 6, padding: '6px 8px' }} className="mb-3" >
+            <span className="kanji" style={{ fontSize: 11, color: 'var(--ink-3)' }}>探</span>
+            <input value={q} onChange={e => setQ(e.target.value)}
+                   placeholder="search settings…"
+                   style={{ border: 'none', outline: 'none', background: 'transparent',
+                            fontSize: 12, flex: 1, color: 'var(--ink)' }}/>
+            {q && <button onClick={() => setQ("")} style={{ fontSize: 12, color: 'var(--ink-4)' }}>×</button>}
+          </div>
+        </>
+      )}
 
       <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
         {stages.map((s, i) => {
+          if (freeNav && !matches(s)) return null;
           const isCur = i === stageIdx;
           const isDone = i < stageIdx;
+          const locked = !freeNav && i > stageIdx;
           return (
             <button key={s.id}
                     onClick={() => setStageIdx(i)}
-                    disabled={i > stageIdx}
+                    disabled={locked}
                     style={{
                       display: 'grid',
                       gridTemplateColumns: '24px 1fr 14px', alignItems: 'center',
@@ -228,7 +276,7 @@ function WizRail({ stages, stageIdx, setStageIdx, onExit }) {
                       background: isCur ? 'var(--paper)' : 'transparent',
                       border: isCur ? 'var(--hairline)' : '1px solid transparent',
                       color: isCur ? 'var(--ink)' : isDone ? 'var(--ink-2)' : 'var(--ink-4)',
-                      cursor: i > stageIdx ? 'default' : 'pointer',
+                      cursor: locked ? 'default' : 'pointer',
                       transition: 'all .14s'
 }} className="gap-2" >
               {/* Always show the stage's kanji label so re-entering the
@@ -240,7 +288,13 @@ function WizRail({ stages, stageIdx, setStageIdx, onExit }) {
                               : 'var(--ink-4)'
               }}>{s.n}</span>
               <div style={{ overflow: 'hidden' }}>
-                <div style={{ fontSize: 13 }}>{s.title}</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: 13 }}>{s.title}</span>
+                  {freeNav && !ql && REVIEW.has(s.id) && (
+                    <span className="mono" style={{ fontSize: 9, letterSpacing: '0.06em', textTransform: 'uppercase',
+                          color: 'var(--accent)', background: 'var(--accent-soft)', borderRadius: 10, padding: '1px 5px' }}>review</span>
+                  )}
+                </div>
                 {isCur && (
                   <div className="mono mt-1" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
                     {s.sub}
@@ -260,6 +314,12 @@ function WizRail({ stages, stageIdx, setStageIdx, onExit }) {
         })}
       </div>
 
+      {freeNav && ql && !anyVisible && (
+        <div style={{ fontSize: 12, color: 'var(--ink-4)', fontStyle: 'italic' }} className="py-3 px-2" >
+          No settings match “{q}”.
+        </div>
+      )}
+
       <div style={{ flex: 1 }}/>
 
       <div style={{ borderTop: 'var(--hairline)' }} className="pt-3" >
@@ -270,10 +330,12 @@ function WizRail({ stages, stageIdx, setStageIdx, onExit }) {
 }
 
 // ─── Bottom bar ──────────────────────────────────────────────
-function WizBottom({ stage, stageIdx, total, back, next, onDone, state }) {
+function WizBottom({ stage, stageIdx, total, back, next, onDone, onSaveClose, mode = "setup", state }) {
   const isLast = stageIdx === total - 1;
   const isFirst = stageIdx === 0;
+  const isPrefs = mode === "preferences";
   const canAdvance = (() => {
+    if (isPrefs) return true;   // settings: jump freely, no gates
     if (stage.id === "folders") return state.folders.length > 0;
     if (stage.id === "scan") return state.scan.done;
     if (stage.id === "preferences") {
@@ -316,7 +378,24 @@ function WizBottom({ stage, stageIdx, total, back, next, onDone, state }) {
         ← Back
       </button>
 
-      {isLast ? (
+      {isPrefs ? (
+        <>
+          {!isLast && (
+            <button onClick={next}
+                    style={{ fontSize: 13, color: 'var(--ink-2)',
+                             border: 'var(--ink-line)', borderRadius: 6 }}
+                    className="py-2 px-4" >
+              Next →
+            </button>
+          )}
+          <button onClick={onSaveClose}
+                  style={{
+ fontSize: 13, background: 'var(--ink)', color: 'var(--paper)', borderRadius: 6, letterSpacing: 0.2
+}} className="py-2 px-5" >
+            Save &amp; close
+          </button>
+        </>
+      ) : isLast ? (
         <button onClick={onDone}
                 style={{
  fontSize: 13, background: 'var(--ink)', color: 'var(--paper)', borderRadius: 6, letterSpacing: 0.2
@@ -712,10 +791,50 @@ function WizFolders({ state, upd }) {
 }
 
 // ─── 5 Scan (SSE-style live view) ────────────────────────────
-function WizScan({ state, upd }) {
+// context: "first-run" (empty start → must add a root) · "preferences"
+// (pre-seeded roots → "Re-scan") · "setup" (legacy linear). The not-started
+// state is a folder-input surface; the running/done views are identical
+// across contexts.
+function WizScan({ state, upd, context = "setup", onComplete }) {
   const D = window.SENSEI_SETUP;
   const [tick, setTick] = useS(0);
+  const [dragActive, setDragActive] = useS(false);
+  const fileInputRef = useR(null);
   const { started, done } = state.scan;
+
+  // Add a root folder (deduped). Demo-friendly: accepts a path string.
+  const addRoot = (raw) => {
+    const path = (raw || "").trim();
+    if (!path || state.folders.some(f => f.path === path)) { upd({ newFolder: "" }); return; }
+    upd({ folders: [...state.folders, { id: "n" + Date.now(), path, note: "added" }], newFolder: "" });
+  };
+  const removeRoot = (id) => upd({ folders: state.folders.filter(f => f.id !== id) });
+
+  // Drag/drop — pull a folder name from the drop if the browser exposes one,
+  // otherwise fall back to a representative root so the gesture still lands.
+  const DEMO_ROOTS = ["~/code", "~/work", "~/projects", "~/src"];
+  const onDrop = (e) => {
+    e.preventDefault(); setDragActive(false);
+    let name = "";
+    try {
+      const it = e.dataTransfer && e.dataTransfer.items && e.dataTransfer.items[0];
+      const entry = it && it.webkitGetAsEntry && it.webkitGetAsEntry();
+      if (entry && entry.name) name = entry.name;
+      else if (e.dataTransfer.files && e.dataTransfer.files[0]) name = e.dataTransfer.files[0].name;
+    } catch {}
+    addRoot(name ? `~/${name}`
+                 : (DEMO_ROOTS.find(r => !state.folders.some(f => f.path === r)) || `~/code-${state.folders.length + 1}`));
+  };
+  const onBrowse = (e) => {
+    const files = e.target.files;
+    let name = "";
+    if (files && files.length) {
+      const rel = files[0].webkitRelativePath || files[0].name;
+      name = rel.split("/")[0];
+    }
+    if (name) addRoot(`~/${name}`);
+    e.target.value = "";
+  };
 
   useE(() => {
     if (!started || done) return;
@@ -746,31 +865,136 @@ function WizScan({ state, upd }) {
   };
 
   if (!started) {
+    const hasRoots = state.folders.length > 0;
+    const isPrefs = context === "preferences";
+    const isFirstRun = context === "first-run";
+    // First-run and Preferences carry distinct header copy — the old separate
+    // welcome strip / footer message now live here in the step header itself.
+    const hdr = isFirstRun
+      ? { eyebrow: "Welcome · one step",
+          title: "Welcome to Sensei",
+          tagline: "Point sensei at the folders your code lives in — the one step to begin. Everything else (libraries, instruments, models, your profile) starts on sensible defaults you can change anytime in Preferences." }
+      : isPrefs
+      ? { eyebrow: "Preferences",
+          title: "Scan",
+          tagline: hasRoots
+            ? "Re-scan to pick up new, moved, or renamed repositories."
+            : "Point sensei at where your code lives." }
+      : { eyebrow: "Step",
+          title: "Scan",
+          tagline: hasRoots
+            ? `Ready to scan ${state.folders.length} ${state.folders.length === 1 ? "root" : "roots"}.`
+            : "Point sensei at where your code lives." };
     return (
-      <div style={{ maxWidth: 820 }} className="mx-auto" >
-        <WizHeader n="観" title="Scan" tagline={`Ready to scan ${state.folders.length} ${state.folders.length === 1 ? "root" : "roots"}.`}/>
-        <div style={{
- background: 'var(--paper-2)',
-                       borderRadius: 10, border: 'var(--hairline)', textAlign: 'center'
-}} className="py-7 px-6" >
-          <div className="kanji mb-4" style={{
- fontSize: 56, color: 'var(--accent)', opacity: 0.4
-}}>探</div>
-          <p style={{
- fontSize: 15, color: 'var(--ink-2)',
-                       lineHeight: 1.6, maxWidth: 440
-}} className="mt-0 mb-4 mx-auto" >
-            The daemon will recurse your folders, identify repositories, and extract the
-            code graph. Two workers, ~2M files / minute on this machine.
-          </p>
-          <button onClick={start}
-                  style={{
- fontSize: 13, background: 'var(--ink)',
-                           color: 'var(--paper)', borderRadius: 6
-}} className="py-3 px-5" >
-            Begin scan →
-          </button>
+      <div style={{ maxWidth: 720 }} className="mx-auto" >
+        <WizHeader n="観" eyebrow={hdr.eyebrow} title={hdr.title} tagline={hdr.tagline}/>
+
+        {/* What sensei does with these folders — so the ask is clear up front */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr',
+                      border: 'var(--hairline)', borderRadius: 8, background: 'var(--paper-2)',
+                      overflow: 'hidden' }} className="mb-4" >
+          {[
+            { k: "探", t: "Recurses", s: "walks every subfolder to find each repo" },
+            { k: "図", t: "Maps",     s: "extracts the code graph — files, symbols, docs" },
+            { k: "観", t: "Watches",  s: "observes future sessions in these folders" },
+          ].map((x, i) => (
+            <div key={x.k} style={{ borderRight: i < 2 ? 'var(--hairline)' : 'none' }} className="py-3 px-4" >
+              <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2" >
+                <span className="kanji" style={{ fontSize: 15, color: 'var(--accent)' }}>{x.k}</span>
+                <span style={{ fontSize: 13, color: 'var(--ink)', fontWeight: 500 }}>{x.t}</span>
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--ink-3)', lineHeight: 1.45 }} className="mt-1" >{x.s}</div>
+            </div>
+          ))}
         </div>
+
+        {/* Dropzone — doubles as the quiet empty room until a root is added */}
+        <div
+          onDragOver={e => { e.preventDefault(); setDragActive(true); }}
+          onDragLeave={e => { e.preventDefault(); setDragActive(false); }}
+          onDrop={onDrop}
+          style={{
+            border: `1.5px dashed ${dragActive ? 'var(--accent)' : 'var(--edge)'}`,
+            background: dragActive ? 'var(--accent-soft)' : 'var(--paper-2)',
+            borderRadius: 10, textAlign: 'center', transition: 'all .15s'
+          }} className={hasRoots ? "py-5 px-6" : "py-8 px-6"} >
+          <div className="kanji" style={{ fontSize: hasRoots ? 30 : 52, color: 'var(--accent)',
+                        opacity: dragActive ? 0.75 : 0.4, lineHeight: 1 }} >庵</div>
+          <div style={{ fontSize: 15, color: 'var(--ink)', fontWeight: 500 }} className="mt-3" >
+            {dragActive ? "Drop to add this folder" : "Drag a code folder here"}
+          </div>
+          <div style={{ fontSize: 13, color: 'var(--ink-3)', lineHeight: 1.6, maxWidth: 440 }}
+               className="mt-1 mx-auto" >
+            Add the top-level folders your projects live in — like <span className="mono">~/code</span> or{" "}
+            <span className="mono">~/work</span>. Not individual repos; sensei recurses to find them.
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+               className="gap-2 mt-4" >
+            <button onClick={() => fileInputRef.current && fileInputRef.current.click()}
+                    style={{ fontSize: 13, background: 'var(--ink)', color: 'var(--paper)',
+                             borderRadius: 6 }} className="py-2 px-4" >
+              Browse…
+            </button>
+            <span style={{ fontSize: 11, color: 'var(--ink-4)' }}>or</span>
+            <div style={{ display: 'flex', alignItems: 'center', background: 'var(--paper)',
+                          border: 'var(--hairline)', borderRadius: 6 }} className="gap-1 pl-2 pr-1 py-1" >
+              <input value={state.newFolder}
+                     onChange={e => upd({ newFolder: e.target.value })}
+                     onKeyDown={e => e.key === "Enter" && addRoot(state.newFolder)}
+                     placeholder="paste a path…"
+                     className="mono"
+                     style={{ border: 'none', outline: 'none', background: 'transparent',
+                              fontSize: 12, width: 156, color: 'var(--ink)' }}/>
+              <button onClick={() => addRoot(state.newFolder)}
+                      style={{ fontSize: 11, color: 'var(--ink-2)', border: 'var(--hairline)',
+                               borderRadius: 4 }} className="py-1 px-2" >add</button>
+            </div>
+          </div>
+          <input ref={fileInputRef} type="file" webkitdirectory="" directory=""
+                 onChange={onBrowse} style={{ display: 'none' }}/>
+        </div>
+
+        {/* Added roots */}
+        {hasRoots && (
+          <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1 mt-4" >
+            {state.folders.map(f => (
+              <div key={f.id} style={{
+                display: 'grid', gridTemplateColumns: 'auto 1fr auto auto', alignItems: 'center',
+                border: 'var(--hairline)', borderRadius: 6, background: 'var(--paper-2)'
+              }} className="gap-3 py-2 px-3" >
+                <span className="kanji" style={{ fontSize: 13, color: 'var(--accent)' }}>庵</span>
+                <span className="mono" style={{ fontSize: 13, color: 'var(--ink)' }}>{f.path}</span>
+                <span className="mono py-1 px-2" style={{ fontSize: 11, color: 'var(--ink-3)',
+                              background: 'var(--paper)', borderRadius: 3, border: 'var(--hairline)' }}>recursive</span>
+                <button onClick={() => removeRoot(f.id)}
+                        style={{ fontSize: 11, color: 'var(--ink-4)' }} className="py-1 px-2" >remove</button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Begin — gated on at least one root */}
+        <div style={{ display: 'flex', alignItems: 'center' }} className="gap-3 mt-5" >
+          <button onClick={start} disabled={!hasRoots}
+                  style={{ fontSize: 13,
+                           background: hasRoots ? 'var(--ink)' : 'var(--edge)',
+                           color: hasRoots ? 'var(--paper)' : 'var(--ink-4)',
+                           borderRadius: 6, cursor: hasRoots ? 'pointer' : 'default' }}
+                  className="py-3 px-5" >
+            {isPrefs ? "Re-scan" : "Begin scan"} →
+          </button>
+          <span style={{ fontSize: 11, color: 'var(--ink-3)', lineHeight: 1.5 }}>
+            {hasRoots
+              ? `Two workers · ~2M files / minute on this machine.${isPrefs ? " Re-scanning picks up new repos." : ""}`
+              : "Add at least one folder to begin."}
+          </span>
+        </div>
+
+        {isFirstRun && (
+          <div style={{ fontSize: 11, color: 'var(--ink-3)', lineHeight: 1.6 }} className="mt-4" >
+            Scanning is entirely local — nothing leaves your machine.
+          </div>
+        )}
       </div>
     );
   }
@@ -948,9 +1172,20 @@ function WizScan({ state, upd }) {
  borderRadius: 8,
                        background: 'var(--success-soft)', fontSize: 13, color: 'var(--ink)',
                        display: 'flex', alignItems: 'center'
-}} className="mt-4 py-3 px-4 gap-2" >
+}} className="mt-4 py-3 px-4 gap-3" >
           <span className="kanji" style={{ fontSize: 17, color: 'var(--success)' }}>✓</span>
-          8 repos indexed across 3 roots · graph extracted · you may continue.
+          <span style={{ flex: 1, lineHeight: 1.5 }}>
+            8 repos indexed across {state.folders.length} {state.folders.length === 1 ? "root" : "roots"} · graph extracted
+            {context === "first-run" ? " · your projects are ready." : " · you may continue."}
+          </span>
+          {context === "first-run" && onComplete && (
+            <button onClick={onComplete}
+                    style={{ fontSize: 13, background: 'var(--ink)', color: 'var(--paper)',
+                             borderRadius: 6, letterSpacing: 0.2, whiteSpace: 'nowrap' }}
+                    className="py-2 px-4" >
+              Open {discoveredSolutions.length} projects →
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -2066,8 +2301,8 @@ function WizPreferences({ state, upd }) {
 
   return (
     <div style={{ maxWidth: 760 }} className="mx-auto" >
-      <WizHeader n="名" title="Preferences"
-                 tagline="A few small choices before you step in. Anything here can be changed later by re-opening this wizard."/>
+      <WizHeader n="名" title="Profile &amp; sharing"
+                 tagline="A few small choices. Anything here can be changed later from Preferences."/>
 
       <div className="divide-y">
       {/* ── What should sensei call you ──────────────────────────────
@@ -2180,8 +2415,8 @@ function WizPreferences({ state, upd }) {
  fontSize: 13, color: 'var(--ink-3)',
                    fontStyle: 'italic', lineHeight: 1.6, textAlign: 'center'
 }} className="mt-5 mb-0" >
-        These save when you press <span style={{ color: 'var(--ink-2)' }}>Enter observatory</span>.
-        Re-open this wizard from the sidebar's <span style={{ color: 'var(--ink-2)' }}>調 Configure</span> link to change them later.
+        Saved when you press <span style={{ color: 'var(--ink-2)' }}>Save &amp; close</span>.
+        Re-open from the sidebar's <span style={{ color: 'var(--ink-2)' }}>調 Preferences</span> link anytime.
       </p>
     </div>
   );
@@ -2246,7 +2481,7 @@ function DoneStat({ label, value, last }) {
 }
 
 // ─── Shared: step header ─────────────────────────────────────
-function WizHeader({ n, title, tagline }) {
+function WizHeader({ n, title, tagline, eyebrow = "Step" }) {
   // Sticky to the top of the stage's scroll container so the step title +
   // tagline stay anchored as the user scrolls long stages.
   return (
@@ -2256,7 +2491,7 @@ function WizHeader({ n, title, tagline }) {
            background: 'var(--paper)',
            borderBottom: 'var(--hairline)',
 }}>
-      <KanjiHeader variant="h1" kanji={n} eyebrow="Step" title={title} description={tagline}/>
+      <KanjiHeader variant="h1" kanji={n} eyebrow={eyebrow} title={title} description={tagline}/>
     </div>
   );
 }
@@ -2405,6 +2640,51 @@ function EmptyToWizardApp() {
   return <EmptyObservatoryApp onBeginSetup={() => setMode("wizard")}/>;
 }
 
+// ─────────────────────────────────────────────────────────────
+// First run — the ENTIRE first-time gate is now just the scan.
+// Bootstrap (splash) has already confirmed the foundation; here we point
+// sensei at the folders and watch projects materialize. Everything else
+// (libraries, instruments, inference, assignments, profile) starts on
+// sensible defaults the user can revisit in Preferences. On completion we
+// hand off to the observatory, which lands on Projects (not an empty Today)
+// until the first insights form.
+function FirstRunScan({ onDone }) {
+  const [state, setState] = useS({
+    folders: [],   // first run starts empty — you add a root before scanning
+    newFolder: "",
+    scan: { started: false, done: false, tick: 0 }
+  });
+  const upd = (patch) => setState(prev => ({ ...prev, ...patch }));
+
+  // No separate welcome strip or footer — the scan's own header carries the
+  // welcome + "defaults live in Preferences" copy, and the only forward action
+  // (Open projects) lives in the scan-results banner once the scan completes.
+  return (
+    <div className="sensei" data-screen-label="First run · Scan"
+         style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column',
+                  background: 'var(--paper)', overflow: 'hidden' }}>
+      <TauriChrome title="Sensei  先生  ·  welcome"/>
+      <div style={{ flex: 1, overflow: 'auto' }} className="pt-7 pb-7 px-8" >
+        <WizScan state={state} upd={upd} context="first-run" onComplete={() => onDone && onDone()}/>
+      </div>
+    </div>
+  );
+}
+
+// Harness — first-run scan, then the observatory landing on Projects (early).
+function FirstRunApp() {
+  // join (detect the org Dōjō) → scan → enter the observatory
+  const [phase, setPhase] = useS("join");
+  if (phase === "join" && window.InappJoin) {
+    return <InappJoin onContinue={() => setPhase("scan")}/>;
+  }
+  if (phase === "entered" && window.ObservatoryDaily) {
+    return <window.ObservatoryDaily stateMode="early" firstEntry={true}/>;
+  }
+  return <FirstRunScan onDone={() => setPhase("entered")}/>;
+}
+
 Object.assign(window, {
-  SetupWizard, EmptyObservatoryApp, EmptyToWizardApp, WIZ_STAGES
+  SetupWizard, EmptyObservatoryApp, EmptyToWizardApp, WIZ_STAGES,
+  FirstRunScan, FirstRunApp
 });
