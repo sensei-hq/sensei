@@ -1986,6 +1986,40 @@ impl PgStore {
         Ok(())
     }
 
+    // ── Historical-bootstrap import (#75) ────────────────────────────────────
+
+    /// Resolve `(folder_id, project_id)` for a repo path — the importer's
+    /// project mapping from a transcript's cwd. None if the path isn't a tracked folder.
+    pub async fn get_folder_ids_by_path(&self, abs_path: &str) -> Result<Option<(uuid::Uuid, Option<uuid::Uuid>)>, String> {
+        let row: Option<(uuid::Uuid, Option<uuid::Uuid>)> = sqlx_core::query_as::query_as(
+            "SELECT id, project_id FROM sensei.folders WHERE abs_path = $1"
+        ).bind(abs_path).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row)
+    }
+
+    /// True if a session already has captured/imported events — the dedup guard
+    /// so the importer never double-counts a live-captured (or already-imported) session.
+    pub async fn session_has_events(&self, client_session_id: &str) -> Result<bool, String> {
+        let row: (bool,) = sqlx_core::query_as::query_as(
+            "SELECT EXISTS(SELECT 1 FROM activity.assistant_events WHERE session_id = $1)"
+        ).bind(client_session_id).fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.0)
+    }
+
+    /// Mark a session as synthesized from a historical transcript (#75) and set
+    /// its real historical start/end from the transcript timestamps (so it
+    /// doesn't masquerade as "today" in the FTR/quality time windows).
+    pub async fn set_session_history(&self, client_session_id: &str, started_ms: i64, completed_ms: i64) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE activity.sessions SET backfilled = true,
+                 started_at   = to_timestamp($2::float8 / 1000.0),
+                 completed_at = to_timestamp($3::float8 / 1000.0)
+             WHERE client_session_id = $1"
+        ).bind(client_session_id).bind(started_ms).bind(completed_ms)
+            .execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     /// Write enrichment metrics onto a session (#66). Sets the derived fields
     /// and merges `tool_usage` into `props` — deliberately does NOT touch
     /// `completed_at` (owned by the hook-stream session derivation, #31).
