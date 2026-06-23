@@ -46,7 +46,10 @@ impl TranscriptAdapter for ClaudeAdapter {
     }
 
     fn transcript_files(&self) -> Vec<PathBuf> {
-        // layout: <root>/<project-dir>/<session_id>.jsonl
+        // layout: <root>/<project-dir>/<session_id>.jsonl — the main session
+        // transcripts (direct children). INTENTIONALLY does not recurse into
+        // <session_id>/subagents/agent-*.jsonl (subagent sidechains belong to a
+        // parent session; ingesting/attributing them is a #73 follow-up).
         let mut files = Vec::new();
         let Ok(projects) = std::fs::read_dir(&self.root) else {
             return files;
