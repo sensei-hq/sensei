@@ -153,24 +153,37 @@ pub async fn backfill_all(
 /// Skips files unchanged since last ingest (the per-file task re-checks to stay
 /// race-safe). Returns the number of files enqueued.
 pub async fn run_backfill(ctx: &TaskContext, _task: &Task) -> Result<u32, String> {
+    let (_seen, enqueued) = dispatch(ctx.pg(), &ctx.queue).await;
+    Ok(enqueued)
+}
+
+/// Scan all adapters and enqueue one `BackfillTranscriptFile` task per
+/// changed/new transcript. Returns `(files_seen, enqueued)`. Callable from the
+/// dispatcher task or directly from the trigger endpoint (for immediate feedback).
+pub async fn dispatch(
+    pg: &crate::db::pg_store::PgStore,
+    queue: &crate::tasks::queue::TaskQueue,
+) -> (u32, u32) {
+    let mut files_seen = 0u32;
     let mut enqueued = 0u32;
     for ad in adapters() {
         for path in ad.transcript_files() {
+            files_seen += 1;
             let path_str = path.to_string_lossy().to_string();
-            if let Ok(Some(prev)) = ctx.pg().get_transcript_cursor(ad.source(), &path_str).await
+            if let Ok(Some(prev)) = pg.get_transcript_cursor(ad.source(), &path_str).await
                 && prev >= mtime_ns(&path)
             {
                 continue;
             }
             // folder_path = capture source, path = transcript file path.
-            ctx.queue
+            queue
                 .enqueue(Task::new(TaskKind::BackfillTranscriptFile, ad.source(), &path_str))
                 .await;
             enqueued += 1;
         }
     }
-    tracing::info!(enqueued, "transcript backfill: dispatched per-file tasks");
-    Ok(enqueued)
+    tracing::info!(files_seen, enqueued, "transcript backfill: dispatched per-file tasks");
+    (files_seen, enqueued)
 }
 
 /// Handler for `TaskKind::BackfillTranscriptFile`: ingest one transcript.
