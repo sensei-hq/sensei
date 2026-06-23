@@ -103,8 +103,17 @@ pub async fn init_gateway() -> Arc<Gateway> {
             ),
         }
     }
+    // Resolve the chat GGUF: explicit `SENSEI_LLAMA_CPP_CHAT_GGUF` override, else
+    // the stable managed path `<data-dir>/models/chat.gguf`. The managed path
+    // makes embedded chat the default with NO env/plist wiring — drop a
+    // single-modality chat GGUF there and a feature-built daemon serves it
+    // in-process (the text_chat/reasoning chains list it first). Absent ⇒ the
+    // chain falls through to ollama/cloud.
     #[cfg(feature = "embedded-llama-cpp")]
-    if let Ok(path) = std::env::var("SENSEI_LLAMA_CPP_CHAT_GGUF") {
+    if let Some(path) = std::env::var("SENSEI_LLAMA_CPP_CHAT_GGUF").ok().or_else(|| {
+        let p = crate::paths::sensei_dir().join("models/chat.gguf");
+        p.exists().then(|| p.to_string_lossy().into_owned())
+    }) {
         let model_id = std::env::var("SENSEI_LLAMA_CPP_CHAT_MODEL_ID")
             .unwrap_or_else(|_| "llama-cpp-chat-default".to_string());
         match crate::api::gateway_embedded::register_llama_cpp_chat(
@@ -117,7 +126,7 @@ pub async fn init_gateway() -> Arc<Gateway> {
                 id, model_id, path
             ),
             Err(e) => tracing::warn!(
-                "Gateway: LlamaCppAdapter (chat) from SENSEI_LLAMA_CPP_CHAT_GGUF={} failed: {}",
+                "Gateway: LlamaCppAdapter (chat) from {} failed: {}",
                 path, e
             ),
         }
