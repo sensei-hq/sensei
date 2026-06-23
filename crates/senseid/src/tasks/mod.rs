@@ -46,9 +46,12 @@ pub enum TaskKind {
     /// Enrich a project's sessions from the captured hook-event stream —
     /// derive turns/corrections/outcome/ftr/duration/module (analyzer L0, #66).
     AnalyzeProject,
-    /// Backfill assistant/user prose from agent transcripts into
-    /// activity.transcript_turns (resumable, per-file cursor) (#73).
+    /// Dispatcher: enqueue one `BackfillTranscriptFile` per changed transcript
+    /// so ingestion chunks + interleaves with other work (#73).
     BackfillTranscripts,
+    /// Ingest one transcript file into activity.transcript_turns (resumable,
+    /// per-file cursor). folder_path = capture source, path = file (#73).
+    BackfillTranscriptFile,
 }
 
 impl std::fmt::Display for TaskKind {
@@ -75,6 +78,7 @@ impl std::fmt::Display for TaskKind {
             Self::ReconcileIdentity => write!(f, "reconcile_identity"),
             Self::AnalyzeProject => write!(f, "analyze_project"),
             Self::BackfillTranscripts => write!(f, "backfill_transcripts"),
+            Self::BackfillTranscriptFile => write!(f, "backfill_transcript_file"),
         }
     }
 }
@@ -97,6 +101,10 @@ impl TaskKind {
             | TaskKind::ExtractDeps
             | TaskKind::BranchSwitch
             | TaskKind::ReconcileIdentity
+            // Transcript ingestion is chunked per-file; the dispatcher just
+            // lists + enqueues, each per-file task parses one transcript.
+            | TaskKind::BackfillTranscripts
+            | TaskKind::BackfillTranscriptFile
             | TaskKind::MeasureVerdicts => Duration::from_secs(180),
             // Whole-repo, barrier, embedding and network-bound doc-indexing
             // tasks can legitimately run for minutes on a large repository.
@@ -112,9 +120,6 @@ impl TaskKind {
             | TaskKind::IndexLibraryPage
             | TaskKind::DetectCommunities
             | TaskKind::AnalyzeProject => Duration::from_secs(600),
-            // First backfill walks the whole transcript cache (hundreds of MB);
-            // subsequent runs are incremental via the per-file cursor.
-            TaskKind::BackfillTranscripts => Duration::from_secs(1800),
         }
     }
 }
