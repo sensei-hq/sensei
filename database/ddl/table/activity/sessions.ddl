@@ -19,6 +19,7 @@ create table if not exists sessions (
 , started_at               timestamptz not null default now()
 , completed_at             timestamptz
 , analyzed_at              timestamptz
+, backfilled               boolean     not null default false  -- synthesized from a historical transcript (#75), not live-captured
 );
 
 create index if not exists sessions_folder_id_idx
