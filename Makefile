@@ -44,11 +44,17 @@ VERSION := $(shell cat VERSION)
 
 # ── Rust crates ───────────────────────────────────────────────────────────────
 
+# Opt-in: `make <target> EMBED=1` builds the daemon with the in-process embedded
+# chat model (llama.cpp) so the gateway serves chat locally without the external
+# Ollama daemon. Off by default — it compiles llama.cpp natively (slower, +deps),
+# so the release build (and CI) stay lean unless you ask for it.
+CRATE_FEATURES := $(if $(EMBED),--features senseid/embedded-llama-cpp,)
+
 crates:
-	cargo build --release -p senseid -p sensei-cli -p sensei-mcp
+	cargo build --release -p senseid -p sensei-cli -p sensei-mcp $(CRATE_FEATURES)
 
 crates-debug:
-	cargo build -p senseid -p sensei-cli -p sensei-mcp
+	cargo build -p senseid -p sensei-cli -p sensei-mcp $(CRATE_FEATURES)
 
 # Full-coverage build — exercises every Rust crate, including the Tauri
 # sidecar (which lives in its own `[workspace]` and so is skipped by the
