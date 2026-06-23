@@ -4,7 +4,7 @@
 //! spans one genuine human prompt to the next, and the assistant prose is the
 //! `text` content blocks (tool_use / thinking excluded).
 
-use super::{TranscriptAdapter, TranscriptTurn};
+use super::{SynthEvent, SynthSession, TranscriptAdapter, TranscriptTurn};
 use std::path::{Path, PathBuf};
 
 /// Cap stored assistant prose per turn (safety net for pathological turns).
@@ -75,6 +75,93 @@ impl TranscriptAdapter for ClaudeAdapter {
     fn parse(&self, content: &str) -> Vec<TranscriptTurn> {
         parse_claude_transcript(content)
     }
+
+    fn parse_session(&self, content: &str) -> Option<SynthSession> {
+        parse_claude_session(content)
+    }
+}
+
+/// Reconstruct a session's event stream from a Claude transcript (#75): a
+/// `UserPromptSubmit` per genuine human prompt, a `PostToolUse` per `tool_use`
+/// block (name + file_path), and a synthetic terminal `Stop` (transcripts carry
+/// no end marker). Also collects distinct `cwd`s for project resolution. Pure.
+pub fn parse_claude_session(content: &str) -> Option<SynthSession> {
+    let mut cwds: Vec<String> = Vec::new();
+    let mut events: Vec<SynthEvent> = Vec::new();
+    let mut max_ts: i64 = 0;
+
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.len() > MAX_LINE_BYTES {
+            continue;
+        }
+        let v: serde_json::Value = match serde_json::from_str(line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        if let Some(cwd) = v.get("cwd").and_then(|c| c.as_str())
+            && !cwd.is_empty()
+            && !cwds.iter().any(|c| c == cwd)
+        {
+            cwds.push(cwd.to_string());
+        }
+        let Some(ts) = parse_ts(&v).map(|d| d.timestamp_millis()) else {
+            continue;
+        };
+        match v.get("type").and_then(|t| t.as_str()).unwrap_or("") {
+            "user" => {
+                if let Some(prompt) = human_prompt_text(&v) {
+                    events.push(SynthEvent {
+                        event_type: "UserPromptSubmit".into(),
+                        tool_name: None,
+                        file_path: None,
+                        prompt: Some(prompt),
+                        ts,
+                    });
+                    max_ts = max_ts.max(ts);
+                }
+            }
+            "assistant" => {
+                if let Some(serde_json::Value::Array(blocks)) =
+                    v.get("message").and_then(|m| m.get("content"))
+                {
+                    for b in blocks {
+                        if b.get("type").and_then(|t| t.as_str()) == Some("tool_use") {
+                            let tool_name = b.get("name").and_then(|n| n.as_str()).map(str::to_string);
+                            let file_path = b
+                                .get("input")
+                                .and_then(|i| i.get("file_path").or_else(|| i.get("path")))
+                                .and_then(|p| p.as_str())
+                                .map(str::to_string);
+                            events.push(SynthEvent {
+                                event_type: "PostToolUse".into(),
+                                tool_name,
+                                file_path,
+                                prompt: None,
+                                ts,
+                            });
+                            max_ts = max_ts.max(ts);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if events.is_empty() {
+        return None;
+    }
+    // Transcripts have no explicit end marker — synthesize a terminal Stop so
+    // the enricher derives outcome=completed.
+    events.push(SynthEvent {
+        event_type: "Stop".into(),
+        tool_name: None,
+        file_path: None,
+        prompt: None,
+        ts: max_ts,
+    });
+    Some(SynthSession { cwds, events })
 }
 
 /// Parse a Claude transcript (JSONL) into user-prompt-bounded turns. A new turn
@@ -275,5 +362,30 @@ mod tests {
         let turns = parse_claude_transcript("not json\n\n{\"type\":\"user\",\"message\":{\"content\":\"hello\"}}\n");
         assert_eq!(turns.len(), 1);
         assert_eq!(turns[0].user_text.as_deref(), Some("hello"));
+    }
+
+    const SESS: &str = r#"
+{"type":"user","cwd":"/repo","timestamp":"2026-06-22T10:00:00.000Z","message":{"role":"user","content":"fix the parser"}}
+{"type":"assistant","cwd":"/repo","timestamp":"2026-06-22T10:00:02.000Z","message":{"role":"assistant","content":[{"type":"tool_use","name":"Edit","input":{"file_path":"/repo/src/x.rs"}}]}}
+{"type":"assistant","cwd":"/repo","timestamp":"2026-06-22T10:00:03.000Z","message":{"role":"assistant","content":[{"type":"tool_use","name":"Bash","input":{"command":"cargo test"}}]}}
+"#;
+
+    #[test]
+    fn parse_session_reconstructs_events() {
+        let s = parse_claude_session(SESS).unwrap();
+        assert_eq!(s.cwds, vec!["/repo".to_string()], "collects distinct cwd for project resolution");
+        let kinds: Vec<&str> = s.events.iter().map(|e| e.event_type.as_str()).collect();
+        assert_eq!(kinds, vec!["UserPromptSubmit", "PostToolUse", "PostToolUse", "Stop"], "prompts + tool_uses + synthetic Stop");
+        assert_eq!(s.events[0].prompt.as_deref(), Some("fix the parser"));
+        let edit = s.events.iter().find(|e| e.tool_name.as_deref() == Some("Edit")).unwrap();
+        assert_eq!(edit.file_path.as_deref(), Some("/repo/src/x.rs"), "Edit carries file_path (the churn signal)");
+        let stop = s.events.last().unwrap();
+        assert_eq!(stop.ts, s.events.iter().map(|e| e.ts).max().unwrap(), "Stop at the last timestamp");
+    }
+
+    #[test]
+    fn parse_session_none_when_no_events() {
+        assert!(parse_claude_session("").is_none());
+        assert!(parse_claude_session("{\"type\":\"summary\"}\n").is_none());
     }
 }

@@ -28,6 +28,26 @@ pub struct TranscriptTurn {
     pub started_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
+/// A synthesized hook-stream event reconstructed from a transcript (#75) — the
+/// transcript is a superset of the live hook stream, so we can rebuild the
+/// events the analyzer enriches from.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SynthEvent {
+    pub event_type: String, // UserPromptSubmit | PostToolUse | Stop
+    pub tool_name: Option<String>,
+    pub file_path: Option<String>,
+    pub prompt: Option<String>,
+    pub ts: i64, // ms epoch
+}
+
+/// A session reconstructed from a transcript: the cwds seen (for project
+/// resolution) + the synthesized event stream (#75).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct SynthSession {
+    pub cwds: Vec<String>,
+    pub events: Vec<SynthEvent>,
+}
+
 /// A per-source transcript reader. Parsing is pure + deterministic (testable);
 /// the coordinator owns IO + DB so new sources (Zed, ACP) are drop-in.
 pub trait TranscriptAdapter: Send + Sync {
@@ -39,8 +59,13 @@ pub trait TranscriptAdapter: Send + Sync {
     fn transcript_files(&self) -> Vec<PathBuf>;
     /// Session id for a transcript file (Claude: the filename stem).
     fn session_id_for(&self, path: &Path) -> Option<String>;
-    /// Parse file content into turns.
+    /// Parse file content into prose turns.
     fn parse(&self, content: &str) -> Vec<TranscriptTurn>;
+    /// Reconstruct a session's event stream for the historical-bootstrap import
+    /// (#75). Adapters that can't synthesize return None.
+    fn parse_session(&self, _content: &str) -> Option<SynthSession> {
+        None
+    }
 }
 
 #[cfg(test)]
@@ -53,9 +78,18 @@ pub struct BackfillReport {
 }
 
 /// Outcome of ingesting one transcript file.
-enum Ingest {
-    Ingested(u32),
-    Skipped,
+struct IngestOutcome {
+    #[cfg_attr(not(test), allow(dead_code))] // read by backfill_all (test helper)
+    skipped: bool,
+    turns: u32,
+    /// Project to (re)analyze because a historical session was synthesized (#75).
+    analyze_project: Option<uuid::Uuid>,
+}
+
+impl IngestOutcome {
+    fn skipped() -> Self {
+        Self { skipped: true, turns: 0, analyze_project: None }
+    }
 }
 
 fn mtime_ns(path: &Path) -> i64 {
@@ -91,32 +125,95 @@ async fn ingest_one(
     pg: &crate::db::pg_store::PgStore,
     adapter: &dyn TranscriptAdapter,
     path: &Path,
-) -> Result<Ingest, String> {
+) -> Result<IngestOutcome, String> {
     let path_str = path.to_string_lossy().to_string();
     let mtime = mtime_ns(path);
     // resumable: skip files unchanged since last ingest.
     if let Ok(Some(prev)) = pg.get_transcript_cursor(adapter.source(), &path_str).await
         && prev >= mtime
     {
-        return Ok(Ingest::Skipped);
+        return Ok(IngestOutcome::skipped());
     }
     let Some(session_id) = adapter.session_id_for(path) else {
-        return Ok(Ingest::Skipped);
+        return Ok(IngestOutcome::skipped());
     };
     // skip pathological oversized transcripts (logged, not silent).
     let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
     if size > MAX_TRANSCRIPT_BYTES {
         tracing::warn!(file = %path_str, size_mb = size / 1_048_576, "transcript ingest: skipping oversized transcript");
-        return Ok(Ingest::Skipped);
+        return Ok(IngestOutcome::skipped());
     }
     let content = std::fs::read_to_string(path).map_err(|e| format!("read {path_str}: {e}"))?;
+    // 1. prose turns (#73)
     let turns = adapter.parse(&content);
     let n = pg
         .upsert_transcript_turns(adapter.source(), &session_id, adapter.family(), &turns)
         .await?;
     pg.set_transcript_cursor(adapter.source(), &path_str, Some(&session_id), mtime, turns.len() as i32)
         .await?;
-    Ok(Ingest::Ingested(n))
+    // 2. historical-bootstrap: synthesize the session + events if not already
+    // captured (#75), so the existing enricher can derive its metrics.
+    let analyze_project = synthesize_session(pg, adapter, &session_id, &content).await;
+    Ok(IngestOutcome { skipped: false, turns: n, analyze_project })
+}
+
+/// Historical-bootstrap (#75): if this session has no events yet (not
+/// live-captured / not already imported), reconstruct it from the transcript —
+/// resolve the project from a cwd, create the session, and synthesize its event
+/// stream so `analyze_project` can enrich it. Returns the project to analyze.
+async fn synthesize_session(
+    pg: &crate::db::pg_store::PgStore,
+    adapter: &dyn TranscriptAdapter,
+    session_id: &str,
+    content: &str,
+) -> Option<uuid::Uuid> {
+    let synth = adapter.parse_session(content)?;
+    // dedup: never double-count a live-captured / already-imported session.
+    match pg.session_has_events(session_id).await {
+        Ok(true) => return None,
+        Ok(false) => {}
+        Err(e) => {
+            tracing::warn!(error = %e, "synthesize_session: events check failed");
+            return None;
+        }
+    }
+    // project mapping: first cwd that is a tracked folder wins.
+    let mut resolved = None;
+    for cwd in &synth.cwds {
+        if let Ok(Some((folder_id, project_id))) = pg.get_folder_ids_by_path(cwd).await {
+            resolved = Some((cwd.clone(), folder_id, project_id));
+            break;
+        }
+    }
+    let Some((cwd, folder_id, project_id)) = resolved else {
+        tracing::debug!(session = %session_id, "synthesize_session: no tracked folder for cwds — skipping");
+        return None;
+    };
+    if let Err(e) = pg
+        .record_session_event(session_id, &folder_id, project_id.as_ref(), adapter.family(), true)
+        .await
+    {
+        tracing::warn!(error = %e, "synthesize_session: record_session_event failed");
+        return None;
+    }
+    let started = synth.events.iter().map(|e| e.ts).min().unwrap_or(0);
+    let completed = synth.events.iter().map(|e| e.ts).max().unwrap_or(0);
+    let _ = pg.set_session_history(session_id, started, completed).await;
+    for ev in &synth.events {
+        let payload = match ev.event_type.as_str() {
+            "UserPromptSubmit" => serde_json::json!({ "prompt": ev.prompt }),
+            "PostToolUse" => serde_json::json!({ "tool_input": { "file_path": ev.file_path } }),
+            _ => serde_json::json!({}),
+        };
+        if let Err(e) = pg
+            .insert_hook_event(session_id, adapter.family(), &ev.event_type, ev.tool_name.as_deref(), Some(&cwd), ev.ts, None, &payload)
+            .await
+        {
+            tracing::warn!(error = %e, session = %session_id, "synthesize_session: insert_hook_event failed");
+        }
+    }
+    tracing::info!(session = %session_id, events = synth.events.len(), "synthesize_session: imported historical session");
+    project_id
 }
 
 /// Ingest every file across all adapters in-process (no queue). Test helper
@@ -132,11 +229,11 @@ pub async fn backfill_all(
         for path in ad.transcript_files() {
             report.files_seen += 1;
             match ingest_one(pg, ad.as_ref(), &path).await {
-                Ok(Ingest::Ingested(n)) => {
+                Ok(o) if o.skipped => report.files_skipped += 1,
+                Ok(o) => {
                     report.files_ingested += 1;
-                    report.turns_upserted += n;
+                    report.turns_upserted += o.turns;
                 }
-                Ok(Ingest::Skipped) => report.files_skipped += 1,
                 Err(e) => {
                     tracing::warn!(error = %e, "transcript backfill: ingest failed");
                     report.files_skipped += 1;
@@ -192,10 +289,15 @@ pub async fn run_backfill_file(ctx: &TaskContext, task: &Task) -> Result<u32, St
     let Some(adapter) = adapter_for_source(&task.folder_path) else {
         return Err(format!("unknown transcript source '{}'", task.folder_path));
     };
-    match ingest_one(ctx.pg(), adapter.as_ref(), Path::new(&task.path)).await? {
-        Ingest::Ingested(n) => Ok(n),
-        Ingest::Skipped => Ok(0),
+    let outcome = ingest_one(ctx.pg(), adapter.as_ref(), Path::new(&task.path)).await?;
+    // A freshly-synthesized historical session needs enrichment to light up its
+    // FTR/churn/correction signals (#75). AnalyzeProject is idempotent + incremental.
+    if let Some(project_id) = outcome.analyze_project {
+        ctx.queue
+            .enqueue(Task::new(TaskKind::AnalyzeProject, "", &project_id.to_string()))
+            .await;
     }
+    Ok(outcome.turns)
 }
 
 #[cfg(test)]
@@ -246,5 +348,67 @@ mod tests {
         sqlx_core::query::query("DELETE FROM activity.transcript_turns WHERE session_id=$1").bind(&sid).execute(pool).await.ok();
         sqlx_core::query::query("DELETE FROM activity.transcript_cursor WHERE session_id=$1").bind(&sid).execute(pool).await.ok();
         std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[tokio::test]
+    async fn synthesize_imports_historical_session() {
+        let pg = crate::db::pg_store::PgStore::connect_test().await.unwrap();
+        let pid = pg.create_project(&format!("_test:imp-{}", uuid::Uuid::new_v4()), None, None).await.unwrap();
+        let root = pg.add_watch_root(&format!("/_test/imp-root-{}", uuid::Uuid::new_v4()), "t", &serde_json::json!([])).await.unwrap();
+        let repo_path = format!("/_test/imp-repo-{}", uuid::Uuid::new_v4());
+        let fid = pg.upsert_repo(&root, "imp-repo", &repo_path).await.unwrap();
+        // link folder → project (scan/reconcile does this in production; the
+        // importer resolves project_id from the folder via cwd).
+        sqlx_core::query::query("UPDATE sensei.folders SET project_id=$1 WHERE id=$2")
+            .bind(pid).bind(fid).execute(pg.pool()).await.unwrap();
+        let sid = format!("_test-imp-{}", uuid::Uuid::new_v4());
+
+        // a historical transcript whose cwd == the tracked folder's abs_path
+        let content = format!(
+            "{{\"type\":\"user\",\"cwd\":\"{cwd}\",\"timestamp\":\"2026-06-20T10:00:00.000Z\",\"message\":{{\"role\":\"user\",\"content\":\"add the parser\"}}}}\n\
+             {{\"type\":\"assistant\",\"cwd\":\"{cwd}\",\"timestamp\":\"2026-06-20T10:00:05.000Z\",\"message\":{{\"role\":\"assistant\",\"content\":[{{\"type\":\"tool_use\",\"name\":\"Edit\",\"input\":{{\"file_path\":\"{cwd}/src/x.rs\"}}}}]}}}}\n",
+            cwd = repo_path
+        );
+        let root_dir = std::env::temp_dir().join(format!("sensei-imp-{}", uuid::Uuid::new_v4()));
+        let proj = root_dir.join("proj");
+        std::fs::create_dir_all(&proj).unwrap();
+        std::fs::write(proj.join(format!("{sid}.jsonl")), &content).unwrap();
+
+        let ads: Vec<Box<dyn TranscriptAdapter>> = vec![Box::new(claude::ClaudeAdapter::new(root_dir.clone()))];
+        backfill_all(&pg, &ads).await;
+
+        // session synthesized, attributed to the project, flagged backfilled,
+        // with a historical started_at (not "today").
+        let s: (Option<uuid::Uuid>, bool, bool) = sqlx_core::query_as::query_as(
+            "SELECT project_id, backfilled, (started_at < now() - interval '1 day') FROM activity.sessions WHERE client_session_id=$1"
+        ).bind(&sid).fetch_one(pg.pool()).await.unwrap();
+        assert_eq!(s.0, Some(pid), "attributed to the project resolved from cwd");
+        assert!(s.1, "flagged backfilled");
+        assert!(s.2, "started_at set from the transcript timestamp, not now()");
+
+        // events synthesized: prompt + tool-edit + terminal Stop.
+        let kinds: Vec<(String,)> = sqlx_core::query_as::query_as(
+            "SELECT event_type FROM activity.assistant_events WHERE session_id=$1 ORDER BY ts"
+        ).bind(&sid).fetch_all(pg.pool()).await.unwrap();
+        let kinds: Vec<&str> = kinds.iter().map(|k| k.0.as_str()).collect();
+        assert!(kinds.contains(&"UserPromptSubmit") && kinds.contains(&"PostToolUse") && kinds.contains(&"Stop"), "got {kinds:?}");
+        let n_before = kinds.len();
+
+        // re-run: file unchanged ⇒ cursor-skip, no duplicate events.
+        backfill_all(&pg, &ads).await;
+        let n: (i64,) = sqlx_core::query_as::query_as("SELECT count(*) FROM activity.assistant_events WHERE session_id=$1")
+            .bind(&sid).fetch_one(pg.pool()).await.unwrap();
+        assert_eq!(n.0, n_before as i64, "re-run does not duplicate events");
+
+        // cleanup
+        let pool = pg.pool();
+        sqlx_core::query::query("DELETE FROM activity.assistant_events WHERE session_id=$1").bind(&sid).execute(pool).await.ok();
+        sqlx_core::query::query("DELETE FROM activity.transcript_turns WHERE session_id=$1").bind(&sid).execute(pool).await.ok();
+        sqlx_core::query::query("DELETE FROM activity.transcript_cursor WHERE session_id=$1").bind(&sid).execute(pool).await.ok();
+        sqlx_core::query::query("DELETE FROM activity.sessions WHERE client_session_id=$1").bind(&sid).execute(pool).await.ok();
+        sqlx_core::query::query("DELETE FROM sensei.folders WHERE id=$1").bind(fid).execute(pool).await.ok();
+        sqlx_core::query::query("DELETE FROM sensei.folders_to_watch WHERE id=$1").bind(root).execute(pool).await.ok();
+        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id=$1").bind(pid).execute(pool).await.ok();
+        std::fs::remove_dir_all(&root_dir).ok();
     }
 }
