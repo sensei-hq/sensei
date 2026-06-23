@@ -19,6 +19,7 @@
 
 use super::super::executor::TaskContext;
 use super::super::Task;
+use super::prompt_classify::{classify_batch, PromptClass};
 
 /// Idle gap (ms) that separates "still working" from "came back later" — turns
 /// further apart than this start a new segment, and the gap is excluded from
@@ -420,19 +421,34 @@ pub async fn derive_signals(ctx: &TaskContext, project_id: &uuid::Uuid) -> Resul
         }
     }
 
-    // 2. Prompt-derived signals: corrections (anti) + rule candidates (pattern),
-    // grouped per folder.
+    // 2. Prompt-derived signals: corrections (anti) + rule candidates (pattern).
+    // Cheap regex RECALL → L2 LLM PRECISION (#70): the regex flags candidates,
+    // then one model pass refines them (drops false positives, fixes
+    // correction↔principle mislabels). Falls back to the regex class when no
+    // chat model is configured, so this never blocks the analyzer.
+    let mut candidates: Vec<(uuid::Uuid, String, String, PromptClass)> = Vec::new();
+    for (folder_id, session_id, prompt) in ctx.pg().get_project_prompts(project_id).await? {
+        let regex_class = if correction_signal(&prompt).is_some() {
+            PromptClass::Correction
+        } else if principle_signal(&prompt).is_some() {
+            PromptClass::Principle
+        } else {
+            continue;
+        };
+        candidates.push((folder_id, session_id, prompt, regex_class));
+    }
+    let texts: Vec<&str> = candidates.iter().map(|(_, _, p, _)| p.as_str()).collect();
+    let refined = classify_batch(&ctx.app_state.gateway, &texts).await;
+
     let mut corrections: std::collections::HashMap<uuid::Uuid, Vec<serde_json::Value>> = Default::default();
     let mut principles: std::collections::HashMap<uuid::Uuid, Vec<serde_json::Value>> = Default::default();
-    for (folder_id, session_id, prompt) in ctx.pg().get_project_prompts(project_id).await? {
-        if let Some(sig) = correction_signal(&prompt) {
-            corrections.entry(folder_id).or_default().push(serde_json::json!({
-                "signal": sig, "session": session_id, "prompt": prompt_snippet(&prompt)
-            }));
-        } else if let Some(cue) = principle_signal(&prompt) {
-            principles.entry(folder_id).or_default().push(serde_json::json!({
-                "cue": cue, "session": session_id, "prompt": prompt_snippet(&prompt)
-            }));
+    for (i, (folder_id, session_id, prompt, regex_class)) in candidates.iter().enumerate() {
+        let class = refined.as_ref().and_then(|r| r.get(i).copied()).unwrap_or(*regex_class);
+        let instance = serde_json::json!({ "session": session_id, "prompt": prompt_snippet(prompt) });
+        match class {
+            PromptClass::Correction => corrections.entry(*folder_id).or_default().push(instance),
+            PromptClass::Principle => principles.entry(*folder_id).or_default().push(instance),
+            PromptClass::Neither => {} // LLM rejected the regex candidate — a false positive
         }
     }
     for (folder_id, items) in corrections {
