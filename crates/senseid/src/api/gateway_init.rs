@@ -255,6 +255,19 @@ fn baseline_production_config() -> GatewayConfig {
         timeout_ms: Some(120_000),
         headers: HashMap::new(),
     });
+    // In-process embedded chat (llama.cpp GGUF). Only serves requests when the
+    // daemon is built with `embedded-llama-cpp` AND SENSEI_LLAMA_CPP_CHAT_GGUF is
+    // set (see init_gateway) — otherwise the adapter is absent and the chain
+    // falls through to ollama. Listed so the chain prefers local in-process when
+    // available (the preferred path; removes the external Ollama dependency).
+    routers.insert("llama-cpp-chat".into(), RouterConfig {
+        url: "embedded://llama-cpp-chat".into(),
+        api_key_env: None,
+        api_key: None,
+        enabled: true,
+        timeout_ms: Some(120_000),
+        headers: HashMap::new(),
+    });
     // OpenAI-compatible aggregators. The adapter implementation is the
     // same as OpenAI's; each router has its own base URL + key env var.
     routers.insert("openrouter".into(), RouterConfig {
@@ -433,6 +446,19 @@ fn baseline_production_config() -> GatewayConfig {
         max_output_tokens: 4_096,
         pricing: None,
     });
+    // In-process embedded chat (llama.cpp). PREFERRED candidate when registered
+    // (no external Ollama dependency); absent unless the daemon is built with
+    // `embedded-llama-cpp` + SENSEI_LLAMA_CPP_CHAT_GGUF, in which case the chains
+    // below use it first and fall through to ollama gemma4 otherwise.
+    models.insert("gemma-embedded".into(), ModelConfig {
+        id: "gemma-embedded".into(),
+        api_model_id: Some("llama-cpp-chat-default".into()),
+        provider: "llama-cpp-chat".into(),
+        capabilities: vec![Capability::TextChat],
+        context_window: 8_192,
+        max_output_tokens: 4_096,
+        pricing: None,
+    });
 
     let mut chains: HashMap<String, FallbackChainConfig> = HashMap::new();
     chains.insert("image_generate".into(), FallbackChainConfig {
@@ -446,31 +472,31 @@ fn baseline_production_config() -> GatewayConfig {
         }],
         fallback_triggers: vec![FallbackTrigger::RateLimit, FallbackTrigger::Timeout],
     });
+    // Shared TextChat fallback order: in-process embedded → local ollama → cloud.
+    // `text_chat` serves lightweight tasks (e.g. the L2 prompt classifier);
+    // `reasoning` serves heavier analysis (#70 consolidation / recommendations).
+    // Both share the same candidate order — embedded preferred (no external
+    // daemon), gemma4 the working local default today, cloud as last resort.
+    let chat_candidates = || {
+        vec![
+            ChainEntry { model: "gemma-embedded".into(), router: Some("llama-cpp-chat".into()), api_model_id: None, priority: 1 },
+            ChainEntry { model: "gemma4".into(),         router: Some("ollama".into()),         api_model_id: None, priority: 2 },
+            ChainEntry { model: "claude-sonnet".into(),  router: Some("anthropic".into()),      api_model_id: None, priority: 3 },
+            ChainEntry { model: "gpt-4o-mini".into(),    router: Some("openai".into()),         api_model_id: None, priority: 4 },
+        ]
+    };
+    let chat_triggers = || vec![FallbackTrigger::RateLimit, FallbackTrigger::Timeout, FallbackTrigger::ProviderError];
     chains.insert("text_chat".into(), FallbackChainConfig {
         id: "text_chat".into(),
         capability: Capability::TextChat,
-        models: vec![
-            // Local gemma4 first — works without a cloud key; cloud models fall back.
-            ChainEntry {
-                model: "gemma4".into(),
-                router: Some("ollama".into()),
-                api_model_id: None,
-                priority: 1,
-            },
-            ChainEntry {
-                model: "claude-sonnet".into(),
-                router: Some("anthropic".into()),
-                api_model_id: None,
-                priority: 2,
-            },
-            ChainEntry {
-                model: "gpt-4o-mini".into(),
-                router: Some("openai".into()),
-                api_model_id: None,
-                priority: 3,
-            },
-        ],
-        fallback_triggers: vec![FallbackTrigger::RateLimit, FallbackTrigger::Timeout, FallbackTrigger::ProviderError],
+        models: chat_candidates(),
+        fallback_triggers: chat_triggers(),
+    });
+    chains.insert("reasoning".into(), FallbackChainConfig {
+        id: "reasoning".into(),
+        capability: Capability::TextChat,
+        models: chat_candidates(),
+        fallback_triggers: chat_triggers(),
     });
     // Embedding chain — intentionally 384-dim models only, to honour the
     // sensei.nodes.embedding vector(384) contract. Do NOT add a 768-dim model
