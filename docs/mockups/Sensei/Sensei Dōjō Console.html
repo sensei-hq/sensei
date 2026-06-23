@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <title>Sensei · Dōjō — console (site design)</title>
+  <meta name="viewport" content="width=1600"/>
+  <link rel="stylesheet" href="lib/tokens.css"/>
+  <link rel="stylesheet" href="fonts.css"/>
+  <script>
+    (function(){
+      window.addEventListener('error', function(e){
+        if (e && e.message && String(e.message).includes('ResizeObserver loop')) { e.stopImmediatePropagation(); e.preventDefault(); }
+      });
+      if (typeof window.ResizeObserver === 'undefined') return;
+      const N = window.ResizeObserver;
+      window.ResizeObserver = class extends N { constructor(cb){ super((en,ob)=>{ window.requestAnimationFrame(()=>{ try{cb(en,ob);}catch(e){ if(!String(e&&e.message).includes('ResizeObserver loop')) throw e; } }); }); } };
+    })();
+  </script>
+  <style>
+    html, body { margin: 0; padding: 0; height: 100%; background: #f0eee9; font-family: 'Inter', system-ui, sans-serif; }
+    #root { height: 100vh; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+  <script type="text/babel" src="lib/design-canvas.jsx"></script>
+  <script type="text/babel" src="lib/primitives.jsx"></script>
+  <script src="lib/dojo-data.js"></script>
+  <script type="text/babel" src="lib/dojo-console.jsx"></script>
+  <script type="text/babel" src="lib/dojo-saas.jsx"></script>
+  <script type="text/babel" src="lib/dojo-inapp.jsx"></script>
+
+  <script type="text/babel" data-presets="env,react">
+    const W = 1340, H = 940;
+
+    function App() {
+      return (
+        <DesignCanvas initialZoom={0.5}>
+          <DCSection id="dojo-saas"
+                     title="Dōjō · SaaS entry"
+                     subtitle="Now that Dōjō has a hosted SaaS (dojo.sensei-hq.com) alongside optional self-hosted servers, two screens precede the console: a welcome-back / sign-in page with insight into the org's shared mind, and the multi-org picker. GitHub is the primary login; the same sign-in works for self-hosted Dōjōs.">
+            <DCArtboard id="saas-signin" label="★ Welcome back · sign in" width={W} height={H}>
+              <DojoSignIn/>
+            </DCArtboard>
+            <DCArtboard id="saas-orgs" label="★ Your organizations · multi-membership" width={W} height={H}>
+              <DojoOrgs/>
+            </DCArtboard>
+          </DCSection>
+
+          <DCSection id="dojo-console"
+                     title="Dōjō · Console"
+                     subtitle="The company-hosted governance site — first design pass. A browser app (not the desktop Observatory). Each frame is the full console; click the nav to move between sections, and click a triage row to open a candidate.">
+            <DCArtboard id="overview" label="★ Overview · the org's shared mind" width={W} height={H}>
+              <DojoConsole initial="overview"/>
+            </DCArtboard>
+            <DCArtboard id="triage" label="Triage queue · grouped by scope" width={W} height={H}>
+              <DojoConsole initial="triage"/>
+            </DCArtboard>
+            <DCArtboard id="candidate" label="★ Candidate · evaluate → decide" width={W} height={H}>
+              <DojoConsole initial="triage" initialCandidate="c2"/>
+            </DCArtboard>
+            <DCArtboard id="members" label="Members & roles · derived from git" width={W} height={H}>
+              <DojoConsole initial="members"/>
+            </DCArtboard>
+            <DCArtboard id="scopes" label="★ Scopes & policies · precedence ladder" width={W} height={H}>
+              <DojoConsole initial="scopes"/>
+            </DCArtboard>
+            <DCArtboard id="clients" label="★ Clients · dereferencing oversight" width={W} height={H}>
+              <DojoConsole initial="clients"/>
+            </DCArtboard>
+            <DCArtboard id="monitor" label="★ Monitor · hive-mind health" width={W} height={H}>
+              <DojoConsole initial="monitor"/>
+            </DCArtboard>
+            <DCArtboard id="audit" label="★ Audit trail · ledger + incident path" width={W} height={H}>
+              <DojoConsole initial="audit"/>
+            </DCArtboard>
+          </DCSection>
+
+          <DCSection id="dojo-inapp"
+                     title="Dōjō · In-app touchpoints"
+                     subtitle="Where the Observatory (desktop) meets the company Dōjō — the six moments that close the org-boundary gaps in the audit. Mocks for review, in connect-first order; wired into the live app in a later pass.">
+            <DCArtboard id="ia-join" label="① Bootstrap · join your org" width={1340} height={900}>
+              <InappJoin/>
+            </DCArtboard>
+            <DCArtboard id="ia-connect" label="② Preferences · Connection" width={1340} height={900}>
+              <InappConnection/>
+            </DCArtboard>
+            <DCArtboard id="ia-bind" label="③ Project · About — bind to org" width={1340} height={900}>
+              <InappBind/>
+            </DCArtboard>
+            <DCArtboard id="ia-share" label="④ Project · ready to share → Dōjō" width={1340} height={900}>
+              <InappShare/>
+            </DCArtboard>
+            <DCArtboard id="ia-travel" label="⑤ Contributions · watch it travel" width={1340} height={900}>
+              <InappTravel/>
+            </DCArtboard>
+            <DCArtboard id="ia-collective" label="⑥ Collective · global ↔ company" width={1340} height={900}>
+              <InappCollective/>
+            </DCArtboard>
+            <DCArtboard id="ia-downstream" label="⑦ Upgrades · from your Dōjō" width={1340} height={900}>
+              <InappDownstream/>
+            </DCArtboard>
+          </DCSection>
+        </DesignCanvas>
+      );
+    }
+    ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+  </script>
+</body>
+</html>

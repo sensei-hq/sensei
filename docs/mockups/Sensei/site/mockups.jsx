@@ -59,77 +59,51 @@ function AppFrame({ children, title = "Sensei", width, height,
   );
 }
 
-// Sidebar shell that the per-screen mocks reuse. Highlight active row.
-function MockSidebar({ active = "home", showInstruments = false }) {
-  const items = [
-    { id: "home",      kanji: "今", label: "Today" },
-    { id: "projects",  kanji: "場", label: "Projects",  badge: 4 },
-    { id: "sessions",  kanji: "録", label: "Sessions",  badge: 41 },
-    { id: "insights",  kanji: "察", label: "Insights",  badge: 6 },
-    { id: "memories",  kanji: "覚", label: "Memories",  badge: 24 },
-    { id: "libraries", kanji: "庫", label: "Libraries", badge: 14 }
+// Sidebar shell that the per-screen mocks reuse — mirrors the current app:
+// Anchors · Needs you · Review · Settings clusters, with the All|Focus toggle.
+function MockSidebar({ active = "home" }) {
+  const clusters = [
+    { label: null, items: [["home","家","Today"],["projects","場","Projects",4]] },
+    { label: "Needs you", items: [["insights","今","Insights",6],["memories","覚","Memories",7],["impact","果","Impact",3],["traceability","巻","Traceability",4],["upgrades","贈","Upgrades",5]] },
+    { label: "Review", items: [["sessions","録","Sessions",41],["libraries","庫","Libraries",14],["instruments","具","Instruments"],["logs","診","Logs"]] },
+    { label: "Settings", items: [["connection","鍵","Connection"],["collective","群","Collective"],["configure","調","Preferences"]] },
   ];
+  const Row = (it) => {
+    const [id, kanji, label, badge] = it;
+    return (
+      <div key={id} style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto', alignItems: 'center',
+            borderRadius: 5, background: active === id ? 'var(--paper-3)' : 'transparent', fontSize: 11 }} className="gap-2 py-1 px-2" >
+        <span className="kanji" style={{ fontSize: 11, color: active === id ? 'var(--accent)' : 'var(--ink-3)' }}>{kanji}</span>
+        <span style={{ color: active === id ? 'var(--ink)' : 'var(--ink-2)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{label}</span>
+        {badge != null && <span className="mono" style={{ fontSize: 10, color: 'var(--ink-4)' }}>{badge}</span>}
+      </div>
+    );
+  };
   return (
-    <aside style={{
-      width: 168,
-      background: 'var(--paper-2)',
-      borderRight: 'var(--hairline)',
-      display: 'flex', flexDirection: 'column'
-}} className="py-4 px-2 gap-3" >
-      <div style={{
- display: 'flex', alignItems: 'baseline'
-}} className="gap-1 px-1" >
-        <span className="kanji" style={{ fontSize: 15,
-                       color: 'var(--accent)' }}>先</span>
-        <span className="display" style={{ fontSize: 13 }}>Sensei</span>
+    <aside style={{ width: 178, background: 'var(--paper-2)', borderRight: 'var(--hairline)',
+                    display: 'flex', flexDirection: 'column', overflow: 'hidden' }} className="py-4 px-2 gap-2" >
+      <div style={{ display: 'flex', alignItems: 'center' }} className="gap-2 px-1 mb-1" >
+        <span style={{ display: 'inline-block', width: 18, height: 18, background: 'var(--accent)',
+                       WebkitMaskImage: 'url(site/sensei-logo.svg)', maskImage: 'url(site/sensei-logo.svg)',
+                       WebkitMaskSize: 'contain', maskSize: 'contain', WebkitMaskRepeat: 'no-repeat', maskRepeat: 'no-repeat',
+                       WebkitMaskPosition: 'center', maskPosition: 'center', flexShrink: 0 }} />
+        <span className="display" style={{ fontSize: 14, lineHeight: 1 }}>Sensei</span>
       </div>
-      <div>
-        <div style={{
- fontSize: 11, letterSpacing: '0.18em',
-                       color: 'var(--ink-3)', textTransform: 'uppercase'
-}} className="pt-0 pb-1 px-2" >
-          Observatory
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
-          {items.map(it => (
-            <div key={it.id} style={{
-              display: 'grid',
-              gridTemplateColumns: 'auto 1fr auto',
-              alignItems: 'center', borderRadius: 5,
-              background: active === it.id ? 'var(--paper-3)' : 'transparent',
-              fontSize: 11
-}} className="gap-2 py-1 px-2" >
-              <span className="kanji" style={{ fontSize: 11,
-                       color: active === it.id ? 'var(--accent)' : 'var(--ink-3)' }}>
-                {it.kanji}
-              </span>
-              <span style={{ color: active === it.id
-                                ? 'var(--ink)' : 'var(--ink-2)' }}>
-                {it.label}
-              </span>
-              {it.badge != null && (
-                <span className="mono" style={{ fontSize: 11,
-                              color: 'var(--ink-3)' }}>{it.badge}</span>
-              )}
-            </div>
-          ))}
-        </div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }} className="px-2" >
+        <span style={{ fontSize: 9, letterSpacing: '0.16em', color: 'var(--ink-3)', textTransform: 'uppercase' }}>Observatory</span>
+        <span style={{ display: 'flex', background: 'var(--paper-3)', borderRadius: 4, padding: 2, fontSize: 8.5 }}>
+          <span style={{ padding: '1px 6px', borderRadius: 3, background: 'var(--paper)', color: 'var(--ink)' }}>All</span>
+          <span style={{ padding: '1px 6px', color: 'var(--ink-3)' }}>Focus</span>
+        </span>
       </div>
-      <div>
-        <div style={{
- fontSize: 11, letterSpacing: '0.18em',
-                       color: 'var(--ink-3)', textTransform: 'uppercase'
-}} className="pt-0 pb-1 px-2" >
-          Active
-        </div>
-        <div style={{
- display: 'flex', flexDirection: 'column', fontSize: 11,
-                       color: 'var(--ink-2)'
-}} className="gap-1 px-2" >
-          <div>kazoku-app</div>
-          <div>tea-ceremony</div>
-          <div>shoji-ui</div>
-        </div>
+      <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-2" >
+        {clusters.map((c, ci) => (
+          <div key={ci} style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
+            {c.label && <div style={{ fontSize: 8.5, letterSpacing: '0.12em', color: 'var(--ink-4)',
+                          textTransform: 'uppercase', fontWeight: 600 }} className="px-2" >{c.label}</div>}
+            {c.items.map(Row)}
+          </div>
+        ))}
       </div>
     </aside>
   );
@@ -537,55 +511,59 @@ function MockInstruments({ width = 720, height = 460 }) {
           ))}
         </div>
 
-        <div style={{ flex: 1, overflow: 'hidden' }} className="py-4 px-5" >
-          <div style={{
- fontSize: 11, color: 'var(--ink-2)', maxWidth: 480
-}} className="mb-3" >
-            What can these tools do? Try them in isolation; sensei watches
-            usage in the background.
-          </div>
-
-          {/* MCP chooser */}
-          <div style={{ display: 'flex' }} className="gap-1 mb-4" >
-            {["filesystem", "git", "shell", "search", "sensei"].map((m, i) => (
-              <div key={i} style={{
- fontSize: 11,
-                borderRadius: 4, border: 'var(--hairline)',
-                background: i === 0 ? 'var(--paper-3)' : 'transparent',
-                color: i === 0 ? 'var(--ink)' : 'var(--ink-2)'
-}} className="py-1 px-2" >{m}</div>
-            ))}
-          </div>
-
-          {/* Tool list */}
-          <div style={{
- display: 'grid', gridTemplateColumns: '1fr 1fr'
-}} className="gap-1" >
-            {tools.map((t, i) => (
-              <div key={i} style={{
-                display: 'grid',
-                gridTemplateColumns: 'auto 1fr auto', alignItems: 'center',
-                fontSize: 11,
-                borderBottom: 'var(--ink-line)'
-}} className="py-2 px-2 gap-2" >
-                <span className="mono py-1 px-1" style={{
- fontSize: 11, borderRadius: 2,
-                              background: t.kind === "action"
-                                ? 'var(--accent-soft)' : 'var(--paper-3)',
-                              color: t.kind === "action"
-                                ? 'var(--accent)' : 'var(--ink-3)',
-                              textTransform: 'uppercase',
-                              letterSpacing: '0.08em'
-}}>
-                  {t.kind}
-                </span>
-                <span className="mono" style={{ color: 'var(--ink)' }}>
-                  {t.name}
-                </span>
-                <span style={{ fontSize: 11,
-                              color: 'var(--ink-3)' }}>try →</span>
+        <div style={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: '208px 1fr' }}>
+          {/* tree of MCP groups → tools */}
+          <div style={{ borderRight: 'var(--hairline)', overflow: 'hidden' }} className="py-3 px-3" >
+            {[
+              ["filesystem", [["fs.read","query"],["fs.write","action"]]],
+              ["git",        [["git.log","query"],["git.diff","query"]]],
+              ["shell",      [["shell.run","action"]]],
+              ["search",     [["search.code","query"]]],
+              ["sensei",     [["pattern.promote","action"]]],
+            ].map(([grp, gtools]) => (
+              <div key={grp} className="mb-2" >
+                <div style={{ display: 'flex', alignItems: 'center' }} className="gap-2 mb-1" >
+                  <span style={{ fontSize: 8, color: 'var(--ink-4)' }}>▾</span>
+                  <span className="mono" style={{ fontSize: 11, color: 'var(--ink-2)' }}>{grp}</span>
+                  <span className="mono" style={{ fontSize: 9, color: 'var(--ink-4)', marginLeft: 'auto' }}>{gtools.length}</span>
+                </div>
+                {gtools.map(([name, kind]) => {
+                  const sel = name === "git.diff";
+                  return (
+                    <div key={name} style={{ display: 'flex', alignItems: 'center', borderRadius: 4,
+                          background: sel ? 'var(--paper-3)' : 'transparent' }} className="gap-2 py-1 px-2 ml-3" >
+                      <span style={{ width: 5, height: 5, borderRadius: 1, background: kind === 'action' ? 'var(--accent)' : 'var(--ink-4)', flexShrink: 0 }}/>
+                      <span className="mono" style={{ fontSize: 11, color: sel ? 'var(--ink)' : 'var(--ink-2)' }}>{name}</span>
+                    </div>
+                  );
+                })}
               </div>
             ))}
+          </div>
+          {/* playground for the selected tool */}
+          <div style={{ overflow: 'hidden', display: 'flex', flexDirection: 'column' }} className="py-3 px-4 gap-3" >
+            <div style={{ display: 'flex', alignItems: 'center' }} className="gap-2" >
+              <span className="mono" style={{ fontSize: 12, color: 'var(--ink)' }}>git.diff</span>
+              <span className="mono" style={{ fontSize: 9, padding: '1px 6px', borderRadius: 3, background: 'var(--paper-3)',
+                            color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>query</span>
+              <span style={{ flex: 1 }}/>
+              <span style={{ fontSize: 11, padding: '4px 13px', borderRadius: 5, background: 'var(--ink)', color: 'var(--paper)' }}>Run</span>
+            </div>
+            <div style={{ fontSize: 10.5, color: 'var(--ink-3)', lineHeight: 1.5 }}>
+              Diff a file against HEAD. Run a tool in isolation; sensei watches every call to learn which ones work.
+            </div>
+            <div>
+              <div style={{ fontSize: 8.5, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--ink-4)', fontWeight: 600 }} className="mb-1" >Arguments</div>
+              <div style={{ background: 'var(--paper-2)', border: 'var(--hairline)', borderRadius: 6, fontSize: 10.5, color: 'var(--ink-2)' }} className="mono py-2 px-3" >{`{ "path": "src/auth/refresh.ts" }`}</div>
+            </div>
+            <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+              <div style={{ fontSize: 8.5, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--ink-4)', fontWeight: 600 }} className="mb-1" >Result · 18ms</div>
+              <div style={{ background: 'var(--paper-2)', border: 'var(--hairline)', borderRadius: 6, fontSize: 10, lineHeight: 1.6, flex: 1, overflow: 'hidden' }} className="mono py-2 px-3" >
+                <div style={{ color: 'var(--ink-3)' }}>@@ -12,7 +12,9 @@ refreshToken()</div>
+                <div style={{ color: 'var(--accent)' }}>- if (token.expired)</div>
+                <div style={{ color: 'var(--success)' }}>+ if (token.expired &amp;&amp; !token.revoked)</div>
+              </div>
+            </div>
           </div>
         </div>
       </main>

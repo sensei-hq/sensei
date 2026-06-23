@@ -5,168 +5,65 @@
 
 const { useState: oS, useEffect: oE, useMemo: oM } = React;
 
-// ─── Fake daily data ─────────────────────────────────────────
-window.OBS_DATA = {
-  today: "Wed · 22 Apr",
-  greetings: {
-    morning: ["Good morning", "おはよう", "Settled in?"],
-    afternoon: ["Good afternoon", "こんにちは"],
-    evening: ["Evening", "こんばんは"]
-  },
-
-  // Signature metric — "First-Try-Right" rate, last 14 days
-  ftr: {
-    value: 0.78,
-    delta: +0.06,           // vs prior 14d
-    prev: 0.72,
-    trend14: [0.71, 0.69, 0.74, 0.72, 0.68, 0.70, 0.73,
-              0.75, 0.72, 0.78, 0.74, 0.79, 0.76, 0.78]
-  },
-
-  // The hero teaching — always exactly one, the most important thing right now.
-  hero: {
-    mature: {
-      kanji: "聴",
-      koan: "The AI does not know your auth.",
-      body: "Three sessions corrected this week in lumen-auth — all touched refresh or device flow. There is no integration-test persona for this module yet.",
-      impact: "Projected FTR + 14% in Lumen Cloud",
-      action: "Draft a persona",
-      source: "from s-2891 · s-2889 · s-2886",
-      noticed: "noticed 2 days ago"
-    },
-    early: {
-      kanji: "観",
-      koan: "Still listening.",
-      body: "Sensei has watched 4 sessions so far. A few early signals are forming in lumen-auth, but nothing confident enough to teach yet.",
-      impact: "~2–3 more sessions until first lesson",
-      action: null,
-      source: "s-2891 · s-2890 · s-2889 · s-2888",
-      noticed: "since setup · 2d ago"
-    }
-  },
-
-  // Insights behind the hero — things worth seeing, never more than 3
-  insights: {
-    mature: [
-      { kanji: "繰", label: "Pattern recurring",
-        text: "Cache invalidation missed again in session s-2891.",
-        tag: "3rd time", tone: "warn" },
-      { kanji: "昇", label: "Teaching adopted",
-        text: "Canvas smoothing pattern promoted to rule — applied in 4 subsequent sessions.",
-        tag: "+7% FTR", tone: "good" },
-      { kanji: "探", label: "Drift detected",
-        text: "brand-tokens README is 47 days old. 3 APIs have drifted.",
-        tag: "low urgency", tone: "mute" }
-    ],
-    early: [
-      { kanji: "耳", label: "Listening",
-        text: "Watching prompt style in lumen-canvas. Early signal: you prefer terse instructions.",
-        tag: "forming", tone: "mute" },
-      { kanji: "試", label: "Calibrating",
-        text: "Sensei is still learning your correction cadence. Too early to suggest rules.",
-        tag: "—", tone: "mute" }
-    ]
-  },
-
-  // Rules/skills sensei has actually adopted (learning → system behavior)
-  adopted: {
-    mature: [
-      { when: "2d ago", what: "Canvas smoothing pattern → rule",
-        scope: "lumen-studio", source: "from session s-2890" },
-      { when: "5d ago", what: "Auth refresh · clock-skew tolerance",
-        scope: "lumen-cloud", source: "from session s-2891" },
-      { when: "1w ago", what: "Token drift watchdog enabled",
-        scope: "brand-kit", source: "manual + sensei recommend" }
-    ],
-    early: []
-  },
-
-  // Recent sessions — tight list
-  recentSessions: [
-    { id: "s-2891", project: "lumen-auth",   title: "Fix refresh token rotation",
-      time: "10:42", duration: "38m", ftr: false, corrections: 3 },
-    { id: "s-2890", project: "lumen-canvas", title: "Bezier smoothing tool",
-      time: "09:15", duration: "22m", ftr: true,  corrections: 0 },
-    { id: "s-2889", project: "lumen-auth",   title: "OAuth device flow",
-      time: "Yesterday", duration: "1h 12m", ftr: false, corrections: 4 },
-    { id: "s-2888", project: "brand-tokens", title: "Dark-mode color ramps",
-      time: "Yesterday", duration: "18m", ftr: true,  corrections: 0 }
-  ],
-
-  projects: {
-    active: [
-      { id: "lumen-studio", kanji: "工", name: "Lumen Studio", ftr: 0.82, sessions7d: 41, warn: false },
-      { id: "lumen-cloud",  kanji: "雲", name: "Lumen Cloud",  ftr: 0.64, sessions7d: 28, warn: true  },
-      { id: "brand-kit",    kanji: "紋", name: "Brand Kit",    ftr: 0.91, sessions7d: 12, warn: false }
-    ],
-    recent: [
-      { id: "sketch-tool",  kanji: "筆", name: "Sketch tool",   lastSeen: "3w ago",  sessions: 6 },
-      { id: "old-docs",     kanji: "巻", name: "Docs site",     lastSeen: "2mo ago", sessions: 14 }
-    ],
-    archived: [
-      { id: "prototype-x",  kanji: "試", name: "Prototype X",   archived: "6mo ago" }
-    ]
-  }
-};
-
-// ─── Small helpers ───────────────────────────────────────────
-function ObsSparkline({ data, width = 120, height = 30, color = 'var(--accent)' }) {
-  const min = Math.min(...data), max = Math.max(...data);
-  const range = max - min || 1;
-  const pad = 2;
-  const step = (width - pad*2) / (data.length - 1);
-  const pts = data.map((v,i) => [
-    pad + i*step,
-    pad + (height - pad*2) * (1 - (v - min)/range)
-  ]);
-  const d = pts.map((p,i) => (i ? "L" : "M") + p[0].toFixed(1) + " " + p[1].toFixed(1)).join(" ");
-  return (
-    <svg width={width} height={height} style={{ color, display: 'block', overflow: 'visible' }}>
-      <path d={d} className="sparkline-path"/>
-      <circle cx={pts[pts.length-1][0]} cy={pts[pts.length-1][1]} r={2.5} fill="currentColor"/>
-    </svg>
-  );
-}
-
-// 14-day FTR strip — one tall bar per day, height = FTR rate.
-// Shows the actual shape of the last two weeks, not just a single average.
-function ObsFtrStrip({ data, value, delta, dim = false }) {
-  const w = 168, h = 56, n = data.length;
-  const gap = 2, barW = (w - gap * (n - 1)) / n;
-  const baseColor = dim ? 'var(--ink-3)' : 'var(--accent)';
-  const bgColor   = dim ? 'var(--ink-4)' : 'var(--edge)';
-  return (
-    <svg width={w} height={h + 14} style={{ display: 'block', overflow: 'visible' }}>
-      {/* faint baseline rule at 50% to anchor reading */}
-      <line x1="0" x2={w} y1={h - h*0.5} y2={h - h*0.5}
-            stroke="var(--edge)" strokeDasharray="2 3"/>
-      {data.map((v, i) => {
-        const bh = Math.max(3, v * h);
-        const isLast = i === n - 1;
-        return (
-          <g key={i}>
-            <rect x={i * (barW + gap)} y={0} width={barW} height={h}
-                  fill={bgColor} opacity="0.35"/>
-            <rect x={i * (barW + gap)} y={h - bh} width={barW} height={bh}
-                  fill={isLast ? baseColor : bgColor}
-                  opacity={isLast ? 1 : 0.85}/>
-          </g>
-        );
-      })}
-      {/* day-of-week tick markers — only first, mid, last */}
-      <text x={0} y={h + 11} fontSize="9" fill="var(--ink-3)"
-             fontFamily="var(--font-ui)" letterSpacing="0.08em">14d ago</text>
-      <text x={w} y={h + 11} fontSize="9" fill="var(--ink-3)" textAnchor="end"
-             fontFamily="var(--font-ui)" letterSpacing="0.08em">today</text>
-    </svg>
-  );
-}
+// ─── Daily data + Today screen → lib/observatory-today.jsx ───
+// OBS_DATA and the Today screen (ObsHome/ObsHero/ObsInsights/ObsAdopted/
+// ObsRecentSessions + ObsSparkline/ObsFtrStrip) now live in the shared module
+// observatory-today.jsx so the website renders the same Today. Loaded first;
+// referenced here as globals.
 
 // ─── Observatory (daily) ─────────────────────────────────────
+// Sub-section tabs — flattens the old nested sidebar groups (Memories,
+// Impact, Instruments) into single rail items, surfacing their sibling
+// views as an in-content tab strip instead of a collapsible nest.
+const SUBNAV = {
+  memories:    { items: [["memories","Anatomy"],["share-review","Sharing","4"],["consolidation","Consolidate","3"]] },
+  impact:      { items: [["impact","Reports","3"],["impact-alert","Regressions","1","danger"]] },
+  instruments: { items: [["instruments-playground","Playground"],["instruments-replay","Replay"],["instruments-health","Health"]] },
+};
+function groupKeyOf(section) {
+  for (const k in SUBNAV) if (SUBNAV[k].items.some(it => it[0] === section)) return k;
+  return null;
+}
+function ObsSubTabs({ group, section, setSection }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '10px 24px',
+                  borderBottom: 'var(--hairline)', background: 'var(--paper)', flexShrink: 0 }}>
+      {group.items.map(([id, label, badge, tone]) => {
+        const on = section === id;
+        return (
+          <button key={id} onClick={() => setSection(id)}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12,
+                           padding: '5px 11px', borderRadius: 6, border: 'none', cursor: 'pointer',
+                           background: on ? 'var(--ink)' : 'var(--paper-3)',
+                           color: on ? 'var(--paper)' : 'var(--ink-2)', fontFamily: 'inherit' }}>
+            {label}
+            {badge != null && (
+              <span className="mono" style={{ fontSize: 10, fontWeight: 600,
+                    color: tone === 'danger' ? (on ? 'var(--paper)' : 'var(--danger)')
+                                             : (on ? 'var(--paper)' : 'var(--ink-3)'),
+                    background: (tone === 'danger' && !on) ? 'var(--danger-soft)' : 'transparent',
+                    borderRadius: 10, padding: tone === 'danger' ? '0 5px' : '0' }}>{badge}</span>
+            )}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function ObservatoryDaily({ stateMode = "mature", firstEntry = false, onBack }) {
   const [mode, setMode] = oS(stateMode);       // "mature" | "early"
-  const [section, setSection] = oS("home");    // "home" | "projects" | "project" | "sessions" | "patterns" | "libraries" | "registry" | "teachings" | "settings"
+  // Sections actually routed below: home · projects · project · sessions · logs
+  // · libraries · insights · memories · upgrades · share-review · consolidation
+  // · traceability · impact · impact-alert · collective · instruments-* · configure
+  // Landing section depends on maturity: until insights exist we open on
+  // Projects (the real payoff of the scan), not an empty Today. Once sensei
+  // is "mature" (insights formed) Today becomes the home view.
+  const [section, setSection] = oS(stateMode === "early" ? "projects" : "home");
   const [activeProjectId, setActiveProjectId] = oS(null);
+  // Where the user opened the current project FROM, so "back" returns there
+  // (Today / Projects index / wherever) instead of always dumping on Projects.
+  const [projectOrigin, setProjectOrigin] = oS("projects");
   const [toast, setToast] = oS(() => {
     if (!firstEntry) return null;
     // Honor the "Don't show again" preference from Settings.
@@ -178,7 +75,11 @@ function ObservatoryDaily({ stateMode = "mature", firstEntry = false, onBack }) 
   });
   const D = window.OBS_DATA;
 
-  const openProject = (id) => { setActiveProjectId(id); setSection("project"); };
+  const openProject = (id) => {
+    setProjectOrigin(section === "project" ? projectOrigin : section);
+    setActiveProjectId(id);
+    setSection("project");
+  };
 
   oE(() => { setMode(stateMode); }, [stateMode]);
   oE(() => {
@@ -191,21 +92,17 @@ function ObservatoryDaily({ stateMode = "mature", firstEntry = false, onBack }) 
   const insights = D.insights[mode];
   const adopted = D.adopted[mode];
 
-  // Configure is a *redirect* to the setup wizard — not an embedded view.
-  // The wizard brings its own Tauri chrome and full-bleed layout, so we
-  // short-circuit the observatory shell entirely.
-  //   • onExit  → user bailed; return to home in their current mode
-  //   • onDone  → user completed setup; drop them in "early · still
-  //               listening" with the welcome toast, mirroring what the
-  //               First-entry-from-setup artboard shows.
+  // Preferences (was "Configure") is a redirect to the settings surface — the
+  // former setup wizard, reframed: scan first, free navigation, no gate. It
+  // brings its own Tauri chrome and full-bleed layout, so we short-circuit
+  // the observatory shell entirely. On close we return to the maturity-
+  // appropriate landing (Projects while early, Today once mature).
   if (section === "configure") {
+    const home = mode === "early" ? "projects" : "home";
     return (
-      <SetupWizard onExit={() => setSection("home")}
-                    onDone={() => {
-                      setMode("early");
-                      setToast("welcome");
-                      setSection("home");
-                    }}/>
+      <SetupWizard mode="preferences"
+                   onExit={() => setSection(home)}
+                   onDone={() => setSection(home)}/>
     );
   }
 
@@ -220,23 +117,35 @@ function ObservatoryDaily({ stateMode = "mature", firstEntry = false, onBack }) 
                     activeProjectId={activeProjectId}
                     onOpenProject={openProject}
                     mode={mode} setMode={setMode}/>
-        <main style={{ overflow: 'auto', position: 'relative' }}>
+        <main style={{ overflow: 'hidden', position: 'relative', display: 'flex', flexDirection: 'column' }}>
+          {SUBNAV[groupKeyOf(section)] && <ObsSubTabs group={SUBNAV[groupKeyOf(section)]} section={section} setSection={setSection}/>}
+          <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
           {section === "home"      && <ObsHome mode={mode} hero={hero} insights={insights} adopted={adopted} D={D} onOpenProject={openProject}/>}
-          {section === "projects"  && <ProjectsIndexA embedded={true} onOpenProject={openProject}/>}
-          {section === "project"   && <ProjectPageTopTabs embedded={true} projectId={activeProjectId}
-                                                          onBack={() => setSection("projects")}/>}
+          {section === "projects"  && (
+            <div style={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+              {mode === "early" && <FirstSessionGuide onOpenToday={() => setSection("home")}
+                                                      onOpenProject={openProject}/>}
+              <div style={{ flex: 1, minHeight: 0 }}>
+                <ProjectsIndexA embedded={true} onOpenProject={openProject}/>
+              </div>
+            </div>
+          )}
+          {section === "project"   && <ProjectPageSidebar embedded={true} projectId={activeProjectId}
+                                                          onBack={() => setSection(projectOrigin)}
+                                                          onSwitchProject={() => setSection("projects")}/>}
           {section === "sessions"  && <SessionsDigestZen/>}
           {section === "logs"      && <ObsLogs/>}
-          {section === "libraries" && <LibrariesVariantA/>}
+          {section === "libraries" && <LibrariesVariantA embedded={true}/>}
           {section === "insights" && <LearningsTriage/>}
           {section === "memories" && <LearningsAnatomyV2/>}
-          {section === "upgrades" && <ObsUpgrades/>}
-          {section === "share-review"  && <ObsSharingReview/>}
+          {section === "upgrades" && <InappDownstream/>}
+          {section === "share-review"  && <InappShare/>}
           {section === "consolidation" && <ObsConsolidation/>}
           {section === "traceability" && <ObsTraceability/>}
           {section === "impact"        && <ObsImpact/>}
           {section === "impact-alert"  && <ObsNegativeAlert/>}
-          {section === "collective"    && <ObsCollectiveSettings/>}
+          {section === "collective"    && <InappCollective/>}
+          {section === "connection"    && <InappConnection/>}
           {section === "instruments-playground" && <InstrumentsPlaygroundSimple/>}
           {section === "instruments-replay"     && <InstrumentsReplaySimple/>}
           {section === "instruments-health"     && <InstrumentsHealthSimple/>}
@@ -248,10 +157,12 @@ function ObservatoryDaily({ stateMode = "mature", firstEntry = false, onBack }) 
            section !== "upgrades" && section !== "share-review" && section !== "consolidation" &&
            section !== "traceability" && section !== "impact" && section !== "impact-alert" &&
            section !== "collective" &&
+           section !== "connection" &&
            section !== "instruments-playground" &&
            section !== "instruments-replay" &&
            section !== "instruments-health" &&
             <ObsPlaceholder section={section} onBack={() => setSection("home")}/>}
+          </div>
 
           {toast === "welcome" && (
             <FirstEntryToast onDismiss={() => setToast(null)} mode={mode}/>
@@ -265,23 +176,72 @@ function ObservatoryDaily({ stateMode = "mature", firstEntry = false, onBack }) 
 // ─── Sidebar ────────────────────────────────────────────────
 function ObsSidebar({ section, setSection, activeProjectId, onOpenProject, mode, setMode }) {
   const D = window.OBS_DATA;
-  const NavItem = ({ id, kanji, label, badge }) => (
+  const [focus, setFocus] = oS(false);  // "Focus" collapses the rail to what needs a decision
+  const Cluster = ({ label }) => (
+    <div style={{ fontSize: 9.5, letterSpacing: '0.14em', textTransform: 'uppercase',
+                  color: 'var(--ink-4)', fontWeight: 600 }} className="pt-3 pb-1 px-2" >{label}</div>
+  );
+  const NavItem = ({ id, kanji, label, badge, badgeTone, alert, match }) => {
+    const active = section === id || (match && match.includes(section));
+    return (
     <button onClick={() => setSection(id)}
             style={{
               display: 'grid', gridTemplateColumns: 'auto 1fr auto',
               alignItems: 'center', width: '100%', borderRadius: 6, textAlign: 'left',
-              background: section === id ? 'var(--paper-3)' : 'transparent',
-              color: section === id ? 'var(--ink)' : 'var(--ink-2)',
+              background: active ? 'var(--paper-3)' : 'transparent',
+              color: active ? 'var(--ink)' : 'var(--ink-2)',
               fontSize: 13
 }} className="gap-2 py-2 px-2" >
       <span className="kanji" style={{ fontSize: 13, width: 14,
-                    color: section === id ? 'var(--accent)' : 'var(--ink-3)' }}>{kanji}</span>
-      <span>{label}</span>
+                    color: active ? 'var(--accent)' : 'var(--ink-3)' }}>{kanji}</span>
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>{label}
+        {alert && <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--danger)', flexShrink: 0 }} title="needs attention"/>}
+      </span>
       {badge != null && (
-        <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>{badge}</span>
+        badgeTone
+          ? <span className="mono" style={{ fontSize: 10, fontWeight: 600, color: 'var(--paper)',
+                          background: badgeTone, borderRadius: 10, padding: '0 6px', lineHeight: '16px' }}>{badge}</span>
+          : <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>{badge}</span>
       )}
     </button>
-  );
+    );
+  };
+
+  // Collapsible group: a header button that shows/hides its child NavItems.
+  // Opens automatically when one of its children is the active section.
+  const NavGroup = ({ kanji, label, count, items, alert }) => {
+    const hasActive = items.some(it => it.id === section);
+    const [open, setOpen] = oS(hasActive);
+    oE(() => { if (hasActive) setOpen(true); }, [hasActive]);
+    return (
+      <div className="py-1 px-2" >
+        <button onClick={() => setOpen(o => !o)}
+                style={{
+                  display: 'grid', gridTemplateColumns: 'auto 1fr auto auto',
+                  alignItems: 'center', width: '100%', textAlign: 'left',
+                  background: 'transparent', color: 'var(--ink-2)', fontSize: 13,
+                  borderRadius: 6
+}} className="gap-2 py-2 px-0" >
+          <span className="kanji" style={{ fontSize: 13, width: 14,
+                        color: 'var(--ink-3)' }}>{kanji}</span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>{label}
+            {alert && <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--danger)',
+                            flexShrink: 0 }} title="needs attention"/>}
+          </span>
+          <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>{count}</span>
+          <span style={{ fontSize: 9, color: 'var(--ink-3)', width: 12,
+                         display: 'inline-block', textAlign: 'center',
+                         transform: open ? 'rotate(90deg)' : 'none',
+                         transition: 'transform .15s ease' }}>▶</span>
+        </button>
+        {open && (
+          <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1 pl-5" >
+            {items.map(it => <NavItem key={it.id} {...it}/>)}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <aside style={{
@@ -296,129 +256,58 @@ function ObsSidebar({ section, setSection, activeProjectId, onOpenProject, mode,
       </div>
 
       <div>
-        <div style={{
- fontSize: 11, letterSpacing: '0.16em', color: 'var(--ink-3)',
-                       textTransform: 'uppercase'
-}} className="pt-0 pb-2 px-2" >Observatory</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }} className="pt-0 pb-2 px-2" >
+          <span style={{ fontSize: 11, letterSpacing: '0.16em', color: 'var(--ink-3)',
+                         textTransform: 'uppercase' }}>Observatory</span>
+          <span style={{ flex: 1 }}/>
+          {/* Focus — tame the surface on busy mornings to just what needs a decision */}
+          <div style={{ display: 'flex', background: 'var(--paper-3)', borderRadius: 5, padding: 2 }}>
+            {[['all', 'All'], ['focus', 'Focus']].map(([v, l]) => {
+              const on = (v === 'focus') === focus;
+              return (
+                <button key={v} onClick={() => setFocus(v === 'focus')}
+                        style={{ fontSize: 10, padding: '2px 7px', borderRadius: 3, border: 'none',
+                                 background: on ? 'var(--paper)' : 'transparent',
+                                 color: on ? 'var(--ink)' : 'var(--ink-3)', cursor: 'pointer',
+                                 fontFamily: 'inherit' }}>{l}</button>
+              );
+            })}
+          </div>
+        </div>
         <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
+          {/* Anchors — where every day starts */}
           <NavItem id="home"      kanji="家" label="Today"/>
           <NavItem id="projects"  kanji="場" label="Projects"   badge={D.projects.active.length + D.projects.recent.length}/>
-          <NavItem id="sessions"  kanji="録" label="Sessions"   badge="41"/>
-          <NavItem id="logs"      kanji="診" label="Logs"/>
+          {/* Needs you — the daily payoff: everything with a pending decision */}
+          <Cluster label="Needs you"/>
           <NavItem id="insights"  kanji="今" label="Insights"   badge="6"/>
-          <div className="py-1 px-2" >
-            <div style={{
- display: 'grid', gridTemplateColumns: 'auto 1fr auto',
-                           alignItems: 'center',
-                           color: 'var(--ink-2)', fontSize: 13
-}} className="gap-2 py-2 px-0" >
-              <span className="kanji" style={{ fontSize: 13, width: 14,
-                            color: 'var(--ink-3)' }}>覚</span>
-              <span>Memories</span>
-              <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>24</span>
-            </div>
-            <div style={{
- display: 'flex', flexDirection: 'column'
-}} className="gap-1 pl-5" >
-              <NavItem id="memories"      kanji="解" label="Anatomy"/>
-              <NavItem id="share-review"  kanji="共" label="Sharing"      badge="4"/>
-              <NavItem id="consolidation" kanji="結" label="Consolidate"  badge="3"/>
-            </div>
-          </div>
+          <NavItem id="memories"  kanji="覚" label="Memories"   badge="7"
+                   match={["memories","share-review","consolidation"]}/>
+          <NavItem id="impact"    kanji="果" label="Impact"     badge="3" alert={true}
+                   match={["impact","impact-alert"]}/>
+          <NavItem id="traceability" kanji="巻" label="Traceability" badge="4"/>
           <NavItem id="upgrades"     kanji="贈" label="Upgrades"   badge="5"/>
-          <NavItem id="impact"       kanji="果" label="Impact"     badge="3"/>
-          <NavItem id="libraries" kanji="庫" label="Libraries"  badge="14"/>
-          <div className="py-1 px-2" >
-            <div style={{
- display: 'grid', gridTemplateColumns: 'auto 1fr auto',
-                           alignItems: 'center',
-                           color: 'var(--ink-2)', fontSize: 13
-}} className="gap-2 py-2 px-0" >
-              <span className="kanji" style={{ fontSize: 13, width: 14,
-                            color: 'var(--ink-3)' }}>具</span>
-              <span>Instruments</span>
-              <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>7</span>
+          {/* Review & diagnostics — reached periodically, hidden in Focus */}
+          {!focus &&
+            <>
+              <Cluster label="Review"/>
+              <NavItem id="sessions"     kanji="録" label="Sessions"     badge="41"/>
+              <NavItem id="libraries"    kanji="庫" label="Libraries"    badge="14"/>
+              <NavItem id="instruments-playground" kanji="具" label="Instruments"
+                       match={["instruments-playground","instruments-replay","instruments-health"]}/>
+              <NavItem id="logs"      kanji="診" label="Logs"/>
+            </>
+          }
+          {/* Settings — visited when something needs changing, hidden in Focus */}
+          {!focus &&
+            <div style={{ borderTop: 'var(--hairline)' }} className="mt-2 pt-2" >
+              <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
+                <NavItem id="connection" kanji="鍵" label="Connection"/>
+                <NavItem id="collective" kanji="群" label="Collective intel"/>
+                <NavItem id="configure" kanji="調" label="Preferences"/>
+              </div>
             </div>
-            <div style={{
- display: 'flex', flexDirection: 'column'
-}} className="gap-1 pl-5" >
-              <NavItem id="instruments-playground" kanji="試" label="Playground"/>
-              <NavItem id="instruments-replay"     kanji="録" label="Replay"/>
-              <NavItem id="instruments-health"     kanji="健" label="Health"/>
-            </div>
-          </div>
-          <NavItem id="collective" kanji="群" label="Collective intel"/>
-          <NavItem id="configure" kanji="調" label="Configure"/>
-        </div>
-      </div>
-
-      <div>
-        <div style={{
- display: 'flex', alignItems: 'baseline', justifyContent: 'space-between'
-}} className="pt-0 pb-2 px-2" >
-          <span style={{ fontSize: 11, letterSpacing: '0.16em', color: 'var(--ink-3)',
-                          textTransform: 'uppercase' }}>Active projects</span>
-          <span className="mono" style={{ fontSize: 11, color: 'var(--ink-4)' }}>
-            {D.projects.active.length}
-          </span>
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
-          {D.projects.active.map(p => {
-            const on = section === "project" && activeProjectId === p.id;
-            return (
-              <button key={p.id} onClick={() => onOpenProject && onOpenProject(p.id)}
-                      style={{
-                display: 'grid', gridTemplateColumns: 'auto 1fr auto',
-                alignItems: 'center', width: '100%', borderRadius: 6, textAlign: 'left',
-                background: on ? 'var(--paper-3)' : 'transparent',
-                color: on ? 'var(--ink)' : 'var(--ink-2)', fontSize: 13,
-                cursor: 'pointer'
-}} className="gap-2 py-2 px-2" >
-                <span className="kanji" style={{ fontSize: 13, width: 14,
-                            color: p.warn ? 'var(--warning)' : 'var(--accent)' }}>{p.kanji}</span>
-                <span>{p.name}</span>
-                <span className="mono" style={{ fontSize: 11,
-                              color: p.warn ? 'var(--warning)' : 'var(--ink-3)' }}>
-                  {Math.round(p.ftr * 100)}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      <div>
-        <div style={{
- fontSize: 11, letterSpacing: '0.16em', color: 'var(--ink-3)',
-                       textTransform: 'uppercase'
-}} className="pt-0 pb-2 px-2" >Dormant</div>
-        <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
-          {D.projects.recent.map(p => {
-            const on = section === "project" && activeProjectId === p.id;
-            return (
-              <button key={p.id} onClick={() => onOpenProject && onOpenProject(p.id)}
-                      style={{
-                display: 'grid', gridTemplateColumns: 'auto 1fr auto',
-                alignItems: 'center', width: '100%', borderRadius: 6, textAlign: 'left',
-                background: on ? 'var(--paper-3)' : 'transparent',
-                color: on ? 'var(--ink-2)' : 'var(--ink-3)', fontSize: 13,
-                opacity: on ? 1 : 0.82, cursor: 'pointer'
-}} className="gap-2 py-2 px-2" >
-                <span className="kanji" style={{ fontSize: 13, width: 14, opacity: 0.6 }}>{p.kanji}</span>
-                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {p.name}
-                </span>
-                <span className="mono" style={{ fontSize: 11, color: 'var(--ink-4)' }}>
-                  {p.lastSeen.split(' ')[0]}
-                </span>
-              </button>
-            );
-          })}
-          <button style={{
- fontSize: 11, color: 'var(--ink-4)', textAlign: 'left'
-}} className="py-1 px-2" >
-            + {D.projects.archived.length} archived
-          </button>
+          }
         </div>
       </div>
 
@@ -432,319 +321,6 @@ function ObsSidebar({ section, setSection, activeProjectId, onOpenProject, mode,
         <span style={{ color: 'var(--ink-4)' }}>last heartbeat 2s ago</span>
       </div>
     </aside>
-  );
-}
-
-// ─── Home (today) ───────────────────────────────────────────
-function ObsHome({ mode, hero, insights, adopted, D }) {
-  return (
-    <div style={{ maxWidth: 1060 }} className="pt-6 pb-7 px-7 mx-auto" >
-      {/* Greeting strip */}
-      <div style={{
- display: 'flex', alignItems: 'baseline', justifyContent: 'space-between'
-}} className="mb-6" >
-        <div>
-          <div style={{
- fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
-                         textTransform: 'uppercase'
-}} className="mb-1" >
-            {D.today}
-          </div>
-          <h1 className="display m-0" style={{
- fontSize: 28, fontWeight: 400,
-                        letterSpacing: '-0.01em'
-}}>
-            Good morning, {(() => {
-              // Honor whatever name the user committed in the wizard's
-              // Preferences stage. Falls back to the prototype's default
-              // persona "Aiko" when no override is stored.
-              try {
-                const raw = localStorage.getItem("sensei-settings");
-                const n = raw && JSON.parse(raw).displayName;
-                if (n && n.trim()) return n.trim();
-              } catch {}
-              return "Aiko";
-            })()}.
-          </h1>
-        </div>
-        <div style={{
- display: 'flex', alignItems: 'flex-end',
-                       color: mode === "early" ? 'var(--ink-3)' : 'var(--ink-2)'
-}} className="gap-5" >
-          <div style={{ textAlign: 'right' }}>
-            <div style={{ fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
-                           textTransform: 'uppercase' }}>
-              First-Try-Right · 14d
-            </div>
-            <div style={{
- display: 'flex', alignItems: 'baseline',
-                           justifyContent: 'flex-end'
-}} className="gap-2 mt-1" >
-              <span className="display"
-                     style={{ fontSize: 40, fontWeight: 400, lineHeight: 1,
-                               color: mode === "early" ? 'var(--ink-3)' : 'var(--ink)' }}>
-                {Math.round(D.ftr.value * 100)}
-              </span>
-              <span style={{ fontSize: 13, color: 'var(--ink-3)' }}>%</span>
-              <span className="mono ml-1"
-                     style={{
- fontSize: 11,
-                               color: D.ftr.delta >= 0 ? 'var(--success)' : 'var(--warning)'
-}}>
-                {D.ftr.delta >= 0 ? "↑" : "↓"} {Math.abs(Math.round(D.ftr.delta * 100))}%
-              </span>
-            </div>
-          </div>
-          <ObsFtrStrip data={D.ftr.trend14} value={D.ftr.value}
-                        delta={D.ftr.delta} dim={mode === "early"}/>
-        </div>
-      </div>
-
-      {/* Hero koan — the one focal thing */}
-      <ObsHero hero={hero} mode={mode}/>
-
-      {/* Two columns: Insights + Adopted teachings */}
-      <div style={{
- display: 'grid', gridTemplateColumns: '1.4fr 1fr'
-}} className="mt-6 gap-6" >
-        <ObsInsights items={insights} mode={mode}/>
-        <ObsAdopted items={adopted} mode={mode}/>
-      </div>
-
-      {/* Recent sessions — compact */}
-      <ObsRecentSessions sessions={D.recentSessions}/>
-    </div>
-  );
-}
-
-function ObsHero({ hero, mode }) {
-  return (
-    <div style={{
-      position: 'relative',
-      background: 'var(--paper-2)', border: 'var(--hairline)', borderRadius: 12,
-      display: 'grid', gridTemplateColumns: 'auto 1fr'
-}} className="gap-5 py-6 px-6" >
-      {/* Giant kanji — still the focal anchor */}
-      <div style={{ position: 'relative' }}>
-        <div className="kanji" style={{
-          fontSize: 56, color: 'var(--accent)', lineHeight: 1,
-          opacity: mode === "early" ? 0.55 : 1
-        }}>{hero.kanji}</div>
-        <div style={{
-          position: 'absolute', left: -6, top: -4,
-          fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
-          textTransform: 'uppercase', writingMode: 'vertical-rl',
-          transform: 'rotate(180deg)', height: 96
-        }}>
-          {mode === "early" ? "sensei is listening" : "sensei speaks"}
-        </div>
-      </div>
-
-      <div style={{ display: 'flex', flexDirection: 'column' }}>
-        <div className="display mb-3" style={{
-          fontSize: 28, fontWeight: 400, letterSpacing: '-0.01em',
-          lineHeight: 1.2, color: 'var(--ink)'
-}}>
-          {hero.koan}
-        </div>
-        <p style={{
- fontSize: 15, color: 'var(--ink-2)', lineHeight: 1.65, maxWidth: 620
-}} className="mt-0 mb-4" >
-          {hero.body}
-        </p>
-
-        <div style={{
- display: 'flex', alignItems: 'center', flexWrap: 'wrap',
-                       marginTop: 'auto'
-}} className="gap-4" >
-          {hero.action && (
-            <button style={{
- fontSize: 13, background: 'var(--ink)',
-              color: 'var(--paper)', borderRadius: 6, letterSpacing: 0.2,
-              display: 'inline-flex', alignItems: 'center'
-}} className="py-2 px-4 gap-2" >
-              {hero.action} →
-            </button>
-          )}
-          <div style={{
- fontSize: 13, color: 'var(--accent)',
-                         display: 'flex', alignItems: 'center'
-}} className="gap-1" >
-            <span style={{ width: 5, height: 5, borderRadius: '50%', background: 'var(--accent)' }}/>
-            {hero.impact}
-          </div>
-          <span style={{ flex: 1 }}/>
-          <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
-            {hero.source} · {hero.noticed}
-          </span>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function ObsInsights({ items, mode }) {
-  return (
-    <div>
-      <div style={{
- display: 'flex', alignItems: 'baseline', justifyContent: 'space-between'
-}} className="mb-4" >
-        <h2 className="display m-0" style={{
- fontSize: 17, fontWeight: 400,
-                      letterSpacing: '-0.005em'
-}}>
-          {mode === "early" ? "Early signals" : "Also worth noticing"}
-        </h2>
-        <button style={{ fontSize: 11, color: 'var(--ink-3)' }}>all insights →</button>
-      </div>
-      <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
-        {items.map((x, i) => {
-          const toneColor =
-            x.tone === "warn" ? 'var(--warning)' :
-            x.tone === "good" ? 'var(--success)'  : 'var(--ink-3)';
-          return (
-            <button key={i} style={{
-              display: 'grid', gridTemplateColumns: 'auto 1fr auto',
-              alignItems: 'start', textAlign: 'left',
-              borderRadius: 6, borderBottom: 'var(--hairline)'
-}} className="gap-3 py-3 px-4" >
-              <span className="kanji" style={{ fontSize: 22, color: toneColor,
-                            width: 26 }}>{x.kanji}</span>
-              <div>
-                <div style={{
- fontSize: 11, letterSpacing: '0.14em',
-                               textTransform: 'uppercase', color: 'var(--ink-3)'
-}} className="mb-1" >
-                  {x.label}
-                </div>
-                <div style={{ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.55 }}>
-                  {x.text}
-                </div>
-              </div>
-              <span className="mono py-1 px-2" style={{
- fontSize: 11, color: toneColor, borderRadius: 3,
-                            background: x.tone === "warn" ? 'var(--warning-soft)' :
-                                         x.tone === "good" ? 'var(--success-soft)' :
-                                         'var(--paper-3)',
-                            whiteSpace: 'nowrap'
-}}>
-                {x.tag}
-              </span>
-            </button>
-          );
-        })}
-        {items.length === 0 && (
-          <div style={{
- fontSize: 13, color: 'var(--ink-4)', fontStyle: 'italic',
-                         textAlign: 'center',
-                         border: '1px dashed var(--edge)', borderRadius: 8
-}} className="p-4" >
-            Nothing yet. Keep working — sensei watches.
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function ObsAdopted({ items, mode }) {
-  return (
-    <div>
-      <div style={{
- display: 'flex', alignItems: 'baseline', justifyContent: 'space-between'
-}} className="mb-4" >
-        <h2 className="display m-0" style={{
- fontSize: 17, fontWeight: 400,
-                      letterSpacing: '-0.005em'
-}}>
-          System has learned
-        </h2>
-        <button style={{ fontSize: 11, color: 'var(--ink-3)' }}>all teachings →</button>
-      </div>
-      <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-2" >
-        {items.map((x, i) => (
-          <div key={i} style={{
- borderRadius: 6,
-            background: 'var(--paper-2)', border: 'var(--hairline)',
-            borderLeft: '2px solid var(--accent)'
-}} className="py-3 px-3" >
-            <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2 mb-1" >
-              <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
-                {x.when}
-              </span>
-              <span style={{ fontSize: 11, color: 'var(--ink-4)' }}>·</span>
-              <span className="mono" style={{ fontSize: 11, color: 'var(--accent)' }}>
-                {x.scope}
-              </span>
-            </div>
-            <div style={{ fontSize: 13, color: 'var(--ink)', lineHeight: 1.45 }}>
-              {x.what}
-            </div>
-            <div style={{ fontSize: 11, color: 'var(--ink-4)' }} className="mt-1" >
-              {x.source}
-            </div>
-          </div>
-        ))}
-        {items.length === 0 && (
-          <div style={{
-                         border: '1px dashed var(--edge)', borderRadius: 8,
-                         textAlign: 'center'
-}} className="py-5 px-4" >
-            <div className="kanji mb-2" style={{
- fontSize: 28, color: 'var(--ink-4)'
-}}>空</div>
-            <div style={{ fontSize: 13, color: 'var(--ink-3)', lineHeight: 1.5 }}>
-              No teachings adopted yet.<br/>
-              Sensei needs a few more sessions to be confident.
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function ObsRecentSessions({ sessions }) {
-  return (
-    <div className="mt-6" >
-      <div style={{
- display: 'flex', alignItems: 'baseline', justifyContent: 'space-between'
-}} className="mb-3" >
-        <h2 className="display m-0" style={{ fontSize: 17, fontWeight: 400 }}>
-          Recent sessions
-        </h2>
-        <button style={{ fontSize: 11, color: 'var(--ink-3)' }}>all sessions →</button>
-      </div>
-      <div style={{ display: 'flex', flexDirection: 'column' }}>
-        {sessions.map(s => (
-          <button key={s.id} style={{
-            display: 'grid',
-            gridTemplateColumns: 'auto 120px 1fr auto auto auto', alignItems: 'center', textAlign: 'left',
-            borderBottom: 'var(--hairline)'
-}} className="gap-4 py-3 px-1" >
-            <span style={{ width: 8, height: 8, borderRadius: '50%',
-                            background: s.ftr ? 'var(--success)' : 'var(--warning)' }}/>
-            <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
-              {s.project}
-            </span>
-            <span style={{ fontSize: 13, color: 'var(--ink-2)',
-                            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {s.title}
-            </span>
-            <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
-              {s.corrections === 0 ? "first-try" : `${s.corrections}×`}
-            </span>
-            <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)',
-                          minWidth: 50, textAlign: 'right' }}>
-              {s.duration}
-            </span>
-            <span className="mono" style={{ fontSize: 11, color: 'var(--ink-4)' }}>
-              {s.time}
-            </span>
-          </button>
-        ))}
-      </div>
-    </div>
   );
 }
 
@@ -836,6 +412,164 @@ function FirstEntryToast({ onDismiss, mode }) {
         from { opacity: 0; transform: translate(-50%, -12px) }
         to { opacity: 1; transform: translateX(-50%) }
       }`}</style>
+    </div>
+  );
+}
+
+// Guided first session — replaces the slim notice on the early Projects
+// landing. The "quiet first days" gap: after the scan there's nothing to DO
+// until sessions accrue. This makes the next action concrete — go run one
+// real session so sensei has something to watch — and shows how close the
+// first lesson is (≈ 3 sessions). Once sessions start landing it gives way
+// to the normal "still listening" early signals.
+function FirstSessionGuide({ onOpenToday, onOpenProject }) {
+  const fs = window.OBS_DATA.firstSession;
+  const [copied, setCopied] = oS(false);
+  const copyCmd = () => {
+    try { navigator.clipboard && navigator.clipboard.writeText(fs.command); } catch {}
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+
+  const steps = [
+    { n: "場", t: "Pick a project",
+      body: (
+        <>Any of the {fs.projectsFound} sensei just found.{" "}
+          <button onClick={() => onOpenProject && onOpenProject(fs.suggested.id)}
+                  style={{ color: 'var(--accent)', fontSize: 12, padding: 0,
+                           borderBottom: '1px solid color-mix(in srgb, var(--accent) 40%, transparent)' }}>
+            {fs.suggested.name}
+          </button>{" "}is the busiest.</>
+      ) },
+    { n: "連", t: `Open ${fs.assistant}`,
+      body: (
+        <div style={{ display: 'flex', alignItems: 'center' }} className="gap-2 mt-1" >
+          <code className="mono" style={{
+            fontSize: 11, color: 'var(--ink-2)', background: 'var(--paper)',
+            border: 'var(--hairline)', borderRadius: 4, padding: '3px 7px',
+            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 230
+          }}>{fs.command}</code>
+          <button onClick={copyCmd}
+                  style={{ fontSize: 11, color: copied ? 'var(--success)' : 'var(--ink-3)',
+                           border: 'var(--hairline)', borderRadius: 4, whiteSpace: 'nowrap' }}
+                  className="py-1 px-2" >
+            {copied ? "copied ✓" : "copy"}
+          </button>
+        </div>
+      ) },
+    { n: "観", t: "Just work",
+      body: "Code as you normally would. Sensei watches in the background — nothing to launch." }
+  ];
+
+  const ticks = Array.from({ length: fs.target });
+
+  return (
+    <div style={{ background: 'var(--accent-soft)', borderBottom: 'var(--hairline)' }}
+         className="py-5 px-7" >
+      <div style={{ display: 'grid', gridTemplateColumns: '300px 1fr 196px',
+                    alignItems: 'start', maxWidth: 1120 }} className="gap-7 mx-auto" >
+
+        {/* ── Framing ── */}
+        <div>
+          <div style={{ fontSize: 11, letterSpacing: '0.18em', color: 'var(--accent)',
+                        textTransform: 'uppercase' }} className="mb-2" >
+            Your first session
+          </div>
+          <div style={{ display: 'flex', alignItems: 'flex-start' }} className="gap-3" >
+            <span className="kanji" style={{ fontSize: 34, color: 'var(--accent)', lineHeight: 1 }}>稽</span>
+            <div>
+              <h2 className="display m-0" style={{ fontSize: 20, fontWeight: 400,
+                            letterSpacing: '-0.01em', lineHeight: 1.2 }}>
+                Give sensei something<br/>to watch.
+              </h2>
+            </div>
+          </div>
+          <p style={{ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.6 }} className="mt-3 mb-0" >
+            It learns from how you and your assistant actually work — there's nothing
+            to teach yet. Run a few real sessions and the first lesson forms.
+          </p>
+        </div>
+
+        {/* ── The three steps ── */}
+        <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-3" >
+          {steps.map((s, i) => (
+            <div key={i} style={{ display: 'grid', gridTemplateColumns: 'auto 1fr',
+                                  alignItems: 'start' }} className="gap-3" >
+              <span style={{ width: 26, height: 26, borderRadius: '50%',
+                             background: 'var(--paper)', border: 'var(--hairline)',
+                             display: 'flex', alignItems: 'center', justifyContent: 'center',
+                             flexShrink: 0 }}>
+                <span className="kanji" style={{ fontSize: 14, color: 'var(--accent)', lineHeight: 1 }}>{s.n}</span>
+              </span>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 13, color: 'var(--ink)', fontWeight: 500 }}>{s.t}</div>
+                <div style={{ fontSize: 12, color: 'var(--ink-2)', lineHeight: 1.5 }} className="mt-1" >
+                  {s.body}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* ── Progress toward the first lesson ── */}
+        <div style={{ borderLeft: 'var(--hairline)' }} className="pl-6" >
+          <div style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
+                        textTransform: 'uppercase' }}>
+            Sessions watched
+          </div>
+          <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-1 mt-1" >
+            <span className="display" style={{ fontSize: 34, fontWeight: 400, lineHeight: 1,
+                          color: 'var(--ink)' }}>{fs.watched}</span>
+            <span style={{ fontSize: 15, color: 'var(--ink-3)' }}>/ {fs.target}</span>
+          </div>
+          <div style={{ display: 'flex' }} className="gap-1 mt-2" >
+            {ticks.map((_, i) => (
+              <span key={i} style={{ flex: 1, height: 4, borderRadius: 2,
+                            background: i < fs.watched ? 'var(--accent)' : 'var(--edge)' }}/>
+            ))}
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--ink-3)', lineHeight: 1.5 }} className="mt-2" >
+            The first lesson tends to form around the third session.
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center' }} className="gap-2 mt-3" >
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--success)',
+                           animation: 'fsPulse 1.6s ease-in-out infinite' }}/>
+            <span className="mono" style={{ fontSize: 11, color: 'var(--ink-2)' }}>daemon listening</span>
+          </div>
+          <button onClick={onOpenToday}
+                  style={{ fontSize: 11, color: 'var(--ink-3)' }} className="mt-3 p-0" >
+            Peek at Today →
+          </button>
+          <style>{`@keyframes fsPulse { 0%,100% { opacity: 1 } 50% { opacity: 0.3 } }`}</style>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Slim banner shown above Projects while sensei is still early (no insights
+// yet). Explains why Today is quiet and that it will open on its own —
+// addresses the "where did my dashboard go?" risk of landing on Projects.
+function EarlyProjectsNotice({ onOpenToday }) {
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 12,
+      background: 'var(--accent-soft)', borderBottom: 'var(--hairline)'
+    }} className="py-3 px-7" >
+      <span className="kanji" style={{ fontSize: 17, color: 'var(--accent)', lineHeight: 1 }}>観</span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <span style={{ fontSize: 13, color: 'var(--ink)' }}>
+          Sensei is still listening.
+        </span>
+        <span style={{ fontSize: 13, color: 'var(--ink-2)' }} className="ml-2" >
+          Here are the projects it found. Today’s brief opens on its own once the first insights form — a few sessions away.
+        </span>
+      </div>
+      <button onClick={onOpenToday}
+              style={{ fontSize: 11, color: 'var(--ink-2)', border: 'var(--ink-line)',
+                       borderRadius: 5, whiteSpace: 'nowrap' }} className="py-1 px-3" >
+        Peek at Today →
+      </button>
     </div>
   );
 }
