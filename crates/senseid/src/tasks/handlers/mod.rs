@@ -11,6 +11,7 @@ mod libraries;
 mod community;
 mod verdicts;
 mod analyze;
+mod prompt_classify;
 pub(crate) mod helpers;
 
 pub use scan::{scan_root, branch_switch};
