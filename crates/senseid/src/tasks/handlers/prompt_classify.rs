@@ -57,9 +57,33 @@ fn parse_response(content: &str, n: usize) -> Option<Vec<PromptClass>> {
     )
 }
 
-/// Classify a batch of candidate prompts via the gateway. `None` ⇒ caller falls
-/// back to the regex class (no chat model / call failed / unparseable reply).
-pub async fn classify_batch(gateway: &Gateway, prompts: &[&str]) -> Option<Vec<PromptClass>> {
+/// Max prompts per LLM call. Small batches keep each response bounded + reliable
+/// — the chat model reasons before emitting the JSON array, and a long array
+/// risks truncation past the token budget.
+const CHUNK: usize = 10;
+/// Token budget per chunk — headroom for a reasoning model's thinking plus the
+/// label array (gemma4 e.g. spends ~200+ tokens reasoning before the answer).
+const MAX_TOKENS: u32 = 1024;
+
+/// Classify candidate prompts via the gateway, in bounded chunks. Returns one
+/// slot per input: `Some(class)` when the model classified it, `None` when that
+/// chunk was unavailable / unparseable (caller falls back to the regex class).
+/// Pins the `text_chat` chain (lightweight) so it's unambiguous vs `reasoning`.
+pub async fn classify_batch(gateway: &Gateway, prompts: &[&str]) -> Vec<Option<PromptClass>> {
+    let mut out: Vec<Option<PromptClass>> = vec![None; prompts.len()];
+    for (ci, chunk) in prompts.chunks(CHUNK).enumerate() {
+        if let Some(classes) = classify_chunk(gateway, chunk).await {
+            let base = ci * CHUNK;
+            for (j, c) in classes.into_iter().enumerate() {
+                out[base + j] = Some(c);
+            }
+        }
+    }
+    out
+}
+
+/// Classify one chunk. `None` ⇒ caller falls back to regex for these prompts.
+async fn classify_chunk(gateway: &Gateway, prompts: &[&str]) -> Option<Vec<PromptClass>> {
     if prompts.is_empty() {
         return Some(Vec::new());
     }
@@ -70,11 +94,11 @@ pub async fn classify_batch(gateway: &Gateway, prompts: &[&str]) -> Option<Vec<P
         capability: Capability::TextChat,
         model: None,
         router: None,
-        chain: None,
+        chain: Some("text_chat".into()),
         payload: Payload::Chat {
             messages: vec![Message::text(MessageRole::User, build_user_message(prompts))],
             system: Some(SYSTEM.to_string()),
-            max_tokens: Some(512),
+            max_tokens: Some(MAX_TOKENS),
             temperature: None,
             tools: Vec::new(),
         },
@@ -85,13 +109,13 @@ pub async fn classify_batch(gateway: &Gateway, prompts: &[&str]) -> Option<Vec<P
         Ok(resp) if resp.success => {
             let classes = resp.content.as_deref().and_then(|c| parse_response(c, prompts.len()));
             if classes.is_none() {
-                tracing::warn!("prompt_classify: unparseable LLM response — falling back to regex");
+                tracing::warn!("prompt_classify: unparseable/short LLM response — chunk falls back to regex");
             }
             classes
         }
         Ok(_) => None,
         Err(e) => {
-            tracing::debug!(error = %e, "prompt_classify: gateway unavailable — falling back to regex");
+            tracing::debug!(error = %e, "prompt_classify: gateway unavailable — chunk falls back to regex");
             None
         }
     }
