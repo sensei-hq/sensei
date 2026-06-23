@@ -191,11 +191,8 @@ pub(crate) async fn analyze_solution(
 /// agent transcript caches into activity.transcript_turns. Resumable, so this
 /// is safe to call repeatedly; only changed transcripts do work.
 pub(crate) async fn backfill_transcripts(State(state): State<AppState>) -> Json<serde_json::Value> {
-    state
-        .task_queue
-        .enqueue(crate::tasks::Task::new(crate::tasks::TaskKind::BackfillTranscripts, "", ""))
-        .await;
-    Json(serde_json::json!({ "ok": true, "enqueued": "backfill_transcripts" }))
+    let (files_seen, enqueued) = crate::transcript::dispatch(&state.pg, &state.task_queue).await;
+    Json(serde_json::json!({ "ok": true, "files_seen": files_seen, "enqueued": enqueued }))
 }
 
 // ── Per-Repo Summary ────────────────────────────────────────────────────────
