@@ -1202,12 +1202,13 @@ impl PgStore {
     pub async fn create_recommendation_full(
         &self, project_id: &uuid::Uuid, title: &str, why: &str, impact: Option<&str>,
         action_type: &str, urgency: &str, based_on: &serde_json::Value,
+        reasoning_trace_id: Option<&uuid::Uuid>, prompt: Option<&str>,
     ) -> Result<uuid::Uuid, String> {
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
-            "INSERT INTO inference.recommendations(project_id, title, why, impact, action_type, urgency, based_on)
-             VALUES($1, $2, $3, $4, $5, $6::sensei.recommendation_urgency, $7::jsonb) RETURNING id"
+            "INSERT INTO inference.recommendations(project_id, title, why, impact, action_type, urgency, based_on, reasoning_trace_id, prompt)
+             VALUES($1, $2, $3, $4, $5, $6::sensei.recommendation_urgency, $7::jsonb, $8, $9) RETURNING id"
         ).bind(project_id).bind(title).bind(why).bind(impact).bind(action_type).bind(urgency)
-            .bind(based_on.to_string())
+            .bind(based_on.to_string()).bind(reasoning_trace_id).bind(prompt)
             .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(row.0)
     }
@@ -1252,13 +1253,23 @@ impl PgStore {
     // ── Reasoning Traces (inference) ─────────────────────────────────
 
     pub async fn insert_reasoning_trace(
-        &self, project_id: Option<&uuid::Uuid>, trigger_event: &str,
+        &self, project_id: Option<&uuid::Uuid>, trigger_event: &str, trigger_detail: &serde_json::Value,
         models_used: &[String], exchanges: &serde_json::Value, consensus: &serde_json::Value,
     ) -> Result<uuid::Uuid, String> {
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
-            "INSERT INTO inference.reasoning_traces(project_id, trigger_event, models_used, exchanges, consensus) VALUES($1, $2, $3, $4, $5) RETURNING id"
-        ).bind(project_id).bind(trigger_event).bind(models_used).bind(exchanges).bind(consensus)
+            "INSERT INTO inference.reasoning_traces(project_id, trigger_event, trigger_detail, models_used, exchanges, consensus) VALUES($1, $2, $3, $4, $5, $6) RETURNING id"
+        ).bind(project_id).bind(trigger_event).bind(trigger_detail).bind(models_used).bind(exchanges).bind(consensus)
             .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.0)
+    }
+
+    /// True if a reasoning trace for `project_id` already carries this
+    /// finding-set `signature` (in `trigger_detail`). The consolidation tier's
+    /// idempotency guard — keeps the LLM call from re-firing on the same signals.
+    pub async fn reasoning_trace_exists_with_signature(&self, project_id: &uuid::Uuid, signature: &str) -> Result<bool, String> {
+        let row: (bool,) = sqlx_core::query_as::query_as(
+            "SELECT EXISTS(SELECT 1 FROM inference.reasoning_traces WHERE project_id = $1 AND trigger_detail->>'signature' = $2)"
+        ).bind(project_id).bind(signature).fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(row.0)
     }
 
@@ -3919,7 +3930,7 @@ mod tests {
         let s = pg_store().await;
         let pid = s.create_project("_test:rt_proj", None, None).await.unwrap();
         let tid = s.insert_reasoning_trace(
-            Some(&pid), "pattern_emerging", &["gemma4:27b".into()],
+            Some(&pid), "pattern_emerging", &serde_json::json!({}), &["gemma4:27b".into()],
             &serde_json::json!([{"model":"gemma4","role":"proposer","content":"analyze"}]),
             &serde_json::json!({"conclusion":"adopt adapter pattern","confidence":0.9}),
         ).await.unwrap();

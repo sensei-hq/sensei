@@ -253,6 +253,8 @@ pub async fn generate_for_project(
                         &action_type,
                         &urgency,
                         &based_on,
+                        None, // heuristic tier — no reasoning trace
+                        None, // no ready-to-send prompt
                     )
                     .await
                 {

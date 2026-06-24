@@ -373,6 +373,12 @@ pub async fn analyze_project(ctx: &TaskContext, task: &Task) -> Result<u32, Stri
     if let Err(e) = super::generate::generate_for_project(ctx, &project_id).await {
         tracing::warn!(error = %e, project = %project_id, "analyze_project: generate failed");
     }
+    // L2 consolidation (#70): batch the strongest findings through the
+    // `reasoning` chain for one synthesized recommendation + a reasoning trace.
+    // Idempotent (signature-guarded) + degrades to no-op without a model.
+    if let Err(e) = super::consolidate::consolidate_for_project(ctx, &project_id).await {
+        tracing::warn!(error = %e, project = %project_id, "analyze_project: consolidate failed");
+    }
     Ok(enriched)
 }
 
