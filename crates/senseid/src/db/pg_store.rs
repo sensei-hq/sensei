@@ -1490,6 +1490,155 @@ impl PgStore {
         Ok(rows)
     }
 
+    // ── Corrections aggregation (#65 step 5) ─────────────────────────────────
+
+    /// All captured user prompts across every project: (project_id, project_name,
+    /// session_id, ts_ms, prompt). Ordered by ts so the handler's clustering seeds
+    /// on the earliest member. The handler filters to corrections.
+    pub async fn get_all_user_prompts(
+        &self,
+    ) -> Result<Vec<(uuid::Uuid, String, String, i64, String)>, String> {
+        let rows: Vec<(uuid::Uuid, String, String, i64, String)> = sqlx_core::query_as::query_as(
+            "SELECT s.project_id, COALESCE(p.name, ''), ae.session_id, ae.ts, ae.payload->>'prompt'
+               FROM activity.assistant_events ae
+               JOIN activity.sessions s ON s.client_session_id = ae.session_id
+               JOIN sensei.projects p ON p.id = s.project_id
+              WHERE ae.event_type = 'UserPromptSubmit'
+                AND ae.payload->>'prompt' IS NOT NULL
+                AND s.project_id IS NOT NULL
+              ORDER BY ae.ts",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(rows)
+    }
+
+    /// Active memories offered to the corrections summarizer for linking: (id,
+    /// title). Bounded; most-recent first.
+    pub async fn get_learned_memories_for_matching(
+        &self,
+    ) -> Result<Vec<(uuid::Uuid, String)>, String> {
+        let rows: Vec<(uuid::Uuid, String)> = sqlx_core::query_as::query_as(
+            "SELECT id, title FROM sensei.memories
+              WHERE status = 'active'
+              ORDER BY created_at DESC
+              LIMIT 100",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(rows)
+    }
+
+    /// Upsert one aggregated correction, keyed by its stable `signature` (so `id`
+    /// stays constant across re-derivations).
+    pub async fn upsert_correction(
+        &self,
+        row: &crate::corrections::CorrectionRow,
+    ) -> Result<uuid::Uuid, String> {
+        let r: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO inference.corrections
+                (signature, text, suggestion, count, project_ids, last_seen, memory_id, instances, modified_at)
+             VALUES($1, $2, $3, $4, $5, $6, $7, $8, now())
+             ON CONFLICT(signature) DO UPDATE SET
+               text = EXCLUDED.text,
+               suggestion = EXCLUDED.suggestion,
+               count = EXCLUDED.count,
+               project_ids = EXCLUDED.project_ids,
+               last_seen = EXCLUDED.last_seen,
+               memory_id = EXCLUDED.memory_id,
+               instances = EXCLUDED.instances,
+               modified_at = now()
+             RETURNING id",
+        )
+        .bind(&row.signature)
+        .bind(&row.text)
+        .bind(&row.suggestion)
+        .bind(row.count)
+        .bind(&row.project_ids)
+        .bind(row.last_seen)
+        .bind(&row.memory_id)
+        .bind(&row.instances)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(r.0)
+    }
+
+    /// Delete corrections whose signature is not in `keep`. With an empty slice
+    /// this clears the table (no corrections currently recur). Returns row count.
+    pub async fn delete_corrections_not_in(&self, keep: &[String]) -> Result<u64, String> {
+        let res = sqlx_core::query::query(
+            "DELETE FROM inference.corrections WHERE signature <> ALL($1)",
+        )
+        .bind(keep)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(res.rows_affected())
+    }
+
+    /// Global corrections list (camelCase, projects resolved to {id, name}).
+    pub async fn list_corrections(&self) -> Result<serde_json::Value, String> {
+        self.query_corrections(None).await
+    }
+
+    /// Corrections touching a specific project.
+    pub async fn list_corrections_for_project(
+        &self,
+        project_id: &uuid::Uuid,
+    ) -> Result<serde_json::Value, String> {
+        self.query_corrections(Some(project_id)).await
+    }
+
+    /// Shared read: optionally filter to a project, resolve `project_ids` → a JSON
+    /// array of {id, name}. The projects array is aggregated as text and parsed in
+    /// Rust (the codebase avoids decoding json columns directly).
+    async fn query_corrections(
+        &self,
+        project_filter: Option<&uuid::Uuid>,
+    ) -> Result<serde_json::Value, String> {
+        let rows: Vec<(
+            uuid::Uuid,
+            String,
+            i32,
+            Option<chrono::DateTime<chrono::Utc>>,
+            Option<uuid::Uuid>,
+            Option<String>,
+            String,
+        )> = sqlx_core::query_as::query_as(
+            "SELECT c.id, c.text, c.count, c.last_seen, c.memory_id, c.suggestion,
+                    COALESCE((SELECT json_agg(json_build_object('id', p.id, 'name', p.name) ORDER BY p.name)
+                              FROM sensei.projects p WHERE p.id = ANY(c.project_ids)), '[]'::json)::text
+               FROM inference.corrections c
+              WHERE ($1::uuid IS NULL OR $1 = ANY(c.project_ids))
+              ORDER BY c.count DESC, c.last_seen DESC NULLS LAST",
+        )
+        .bind(project_filter)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        let out: Vec<serde_json::Value> = rows
+            .into_iter()
+            .map(|(id, text, count, last_seen, memory_id, suggestion, projects_json)| {
+                let projects: serde_json::Value =
+                    serde_json::from_str(&projects_json).unwrap_or_else(|_| serde_json::json!([]));
+                serde_json::json!({
+                    "id": id,
+                    "text": text,
+                    "count": count,
+                    "lastSeen": last_seen.map(|t| t.to_rfc3339()),
+                    "projects": projects,
+                    "memoryId": memory_id,
+                    "suggestion": suggestion,
+                })
+            })
+            .collect();
+        Ok(serde_json::json!({ "corrections": out }))
+    }
+
     // ── Libraries ────────────────────────────────────────────────────
 
     pub async fn upsert_library(
@@ -4069,6 +4218,40 @@ mod tests {
         assert_eq!(p["instance_count"], 2);
         sqlx_core::query::query("DELETE FROM inference.detected_patterns WHERE id = $1")
             .bind(id1).execute(s.pool()).await.unwrap();
+    }
+
+    // ── Corrections aggregation tests ──────────────────────────────────
+
+    #[tokio::test]
+    async fn correction_upsert_is_idempotent_by_signature() {
+        let s = pg_store().await;
+        let p = uuid::Uuid::new_v4();
+        let sig = format!("corr-test-{}", uuid::Uuid::new_v4());
+        let row = crate::corrections::CorrectionRow {
+            signature: sig.clone(),
+            text: "Use $state for reactive locals".into(),
+            suggestion: Some("Reinforce the svelte5 memory".into()),
+            count: 3,
+            project_ids: vec![p],
+            last_seen: chrono::Utc::now(),
+            memory_id: None,
+            instances: serde_json::json!([{"session_id": "s1", "ts": 1, "prompt": "use $state"}]),
+        };
+        let id1 = s.upsert_correction(&row).await.unwrap();
+        let mut row2 = row.clone();
+        row2.count = 4;
+        let id2 = s.upsert_correction(&row2).await.unwrap();
+        assert_eq!(id1, id2, "same signature updates the same row");
+
+        let global = s.list_corrections().await.unwrap();
+        let found = global["corrections"].as_array().unwrap().iter()
+            .find(|c| c["id"] == id1.to_string()).unwrap().clone();
+        assert_eq!(found["count"], 4);
+        assert_eq!(found["text"], "Use $state for reactive locals");
+
+        // prune everything except a non-existent signature → our row is deleted
+        let pruned = s.delete_corrections_not_in(&["corr-nope".to_string()]).await.unwrap();
+        assert!(pruned >= 1);
     }
 
     // ── Libraries tests ──────────────────────────────────────────────
