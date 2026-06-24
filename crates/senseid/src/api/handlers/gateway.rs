@@ -35,6 +35,9 @@ pub(crate) struct InferRequest {
     pub texts:        Option<Vec<String>>,
     pub model:        Option<String>,
     pub max_tokens:   Option<u32>,
+    /// Optional named chain to resolve through (e.g. "classify", "reasoning").
+    /// Omit to resolve by capability (tier-3).
+    pub chain:        Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -102,7 +105,10 @@ pub(crate) async fn infer(
         capability,
         model: body.model,
         router: None,
-        chain: None,
+        // Optional explicit chain. Without it, the engine resolves by
+        // capability (tier-3), which is non-deterministic when several chains
+        // share a capability — so callers that care should pin a named chain.
+        chain: body.chain,
         payload,
         budget: None,
     };

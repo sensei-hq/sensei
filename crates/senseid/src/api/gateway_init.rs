@@ -81,64 +81,35 @@ pub async fn init_gateway(db_config: Option<GatewayConfig>) -> Arc<Gateway> {
             ),
         }
     }
-    // LlamaCpp has two distinct modes (embedding + chat). The daemon
-    // can register either or both, depending on which GGUF files the
-    // operator supplies. Each call shares the same process-singleton
-    // LlamaBackend behind the scenes, so loading two adapters is safe.
-    // Resolve the embed GGUF: explicit `SENSEI_LLAMA_CPP_EMBED_GGUF` override,
-    // else the stable managed path `<data-dir>/models/embed.gguf` (mirrors the
-    // chat resolution below). Makes embedded 384-dim embeddings the default
-    // with NO env/plist wiring — drop a 384-dim GGUF (e.g. all-MiniLM-L6-v2)
-    // there and a feature-built daemon serves it in-process (the embed chain
-    // lists it first). Absent ⇒ the chain falls through to ollama all-minilm.
+    // Embedded in-process llama.cpp, exposed as a single `embedded-llama`
+    // router that serves many models across capabilities (#79) — the same
+    // shape as the `ollama` router. Model bytes are resolved through a
+    // registry: sensei-managed files first (`~/.sensei/models` index), then a
+    // read-through view of the local Ollama cache (`~/.ollama/models`), so a
+    // model already pulled by Ollama is reused in place and nothing has to be
+    // shipped with the binary. Per-model workers load lazily on first use; a
+    // model the resolver can't find degrades to the chain's next leg.
     #[cfg(feature = "embedded-llama-cpp")]
-    if let Some(path) = std::env::var("SENSEI_LLAMA_CPP_EMBED_GGUF").ok().or_else(|| {
-        let p = crate::paths::sensei_dir().join("models/embed.gguf");
-        p.exists().then(|| p.to_string_lossy().into_owned())
-    }) {
-        let model_id = std::env::var("SENSEI_LLAMA_CPP_EMBED_MODEL_ID")
-            .unwrap_or_else(|_| "llama-cpp-embed-default".to_string());
-        match crate::api::gateway_embedded::register_llama_cpp_embed(
-            &adapters, &path, &model_id,
-        )
-        .await
-        {
-            Ok(id) => tracing::info!(
-                "Gateway: LlamaCppAdapter (embed) registered as '{}' for model '{}' from {}",
-                id, model_id, path
-            ),
-            Err(e) => tracing::warn!(
-                "Gateway: LlamaCppAdapter (embed) from {} failed: {}",
-                path, e
-            ),
-        }
-    }
-    // Resolve the chat GGUF: explicit `SENSEI_LLAMA_CPP_CHAT_GGUF` override, else
-    // the stable managed path `<data-dir>/models/chat.gguf`. The managed path
-    // makes embedded chat the default with NO env/plist wiring — drop a
-    // single-modality chat GGUF there and a feature-built daemon serves it
-    // in-process (the text_chat/reasoning chains list it first). Absent ⇒ the
-    // chain falls through to ollama/cloud.
-    #[cfg(feature = "embedded-llama-cpp")]
-    if let Some(path) = std::env::var("SENSEI_LLAMA_CPP_CHAT_GGUF").ok().or_else(|| {
-        let p = crate::paths::sensei_dir().join("models/chat.gguf");
-        p.exists().then(|| p.to_string_lossy().into_owned())
-    }) {
-        let model_id = std::env::var("SENSEI_LLAMA_CPP_CHAT_MODEL_ID")
-            .unwrap_or_else(|_| "llama-cpp-chat-default".to_string());
-        match crate::api::gateway_embedded::register_llama_cpp_chat(
-            &adapters, &path, &model_id,
-        )
-        .await
-        {
-            Ok(id) => tracing::info!(
-                "Gateway: LlamaCppAdapter (chat) registered as '{}' for model '{}' from {}",
-                id, model_id, path
-            ),
-            Err(e) => tracing::warn!(
-                "Gateway: LlamaCppAdapter (chat) from {} failed: {}",
-                path, e
-            ),
+    {
+        use gateway_embedded::adapters::EmbeddedLlamaAdapter;
+        use gateway_embedded::registry::{ChainedResolver, ManagedResolver, OllamaResolver};
+        let resolver = ChainedResolver::new()
+            .push(Arc::new(ManagedResolver::new(
+                crate::paths::sensei_dir().join("models"),
+            )))
+            .push(Arc::new(OllamaResolver::new(
+                crate::paths::home().join(".ollama/models"),
+            )));
+        match EmbeddedLlamaAdapter::with_shared_backend("embedded-llama", Arc::new(resolver)) {
+            Ok(adapter) => {
+                tracing::info!(
+                    "Gateway: embedded-llama adapter registered (resolver: managed → ollama)"
+                );
+                adapters
+                    .register(Arc::new(adapter) as Arc<dyn InferenceAdapter>)
+                    .await;
+            }
+            Err(e) => tracing::warn!("Gateway: embedded-llama adapter unavailable: {e}"),
         }
     }
 
@@ -290,13 +261,13 @@ fn baseline_production_config() -> GatewayConfig {
         timeout_ms: Some(120_000),
         headers: HashMap::new(),
     });
-    // In-process embedded chat (llama.cpp GGUF). Only serves requests when the
-    // daemon is built with `embedded-llama-cpp` AND SENSEI_LLAMA_CPP_CHAT_GGUF is
-    // set (see init_gateway) — otherwise the adapter is absent and the chain
-    // falls through to ollama. Listed so the chain prefers local in-process when
-    // available (the preferred path; removes the external Ollama dependency).
-    routers.insert("llama-cpp-chat".into(), RouterConfig {
-        url: "embedded://llama-cpp-chat".into(),
+    // In-process embedded llama.cpp, exposed as a single `embedded-llama`
+    // router (#79). Only serves requests when the daemon is built with
+    // `embedded-llama-cpp` and the registry can resolve the model bytes
+    // (managed dir or ollama cache) — otherwise the adapter is absent / the
+    // model unresolvable and the chain falls through to ollama.
+    routers.insert("embedded-llama".into(), RouterConfig {
+        url: "embedded://embedded-llama".into(),
         api_key_env: None,
         api_key: None,
         enabled: true,
@@ -481,14 +452,14 @@ fn baseline_production_config() -> GatewayConfig {
         max_output_tokens: 4_096,
         pricing: None,
     });
-    // In-process embedded chat (llama.cpp). PREFERRED candidate when registered
-    // (no external Ollama dependency); absent unless the daemon is built with
-    // `embedded-llama-cpp` + SENSEI_LLAMA_CPP_CHAT_GGUF, in which case the chains
-    // below use it first and fall through to ollama gemma4 otherwise.
+    // In-process embedded chat (llama.cpp via the `embedded-llama` router).
+    // PREFERRED candidate when registered; the `embedded-llama` adapter
+    // resolves `gemma2:2b` from the managed dir or the ollama cache. Absent /
+    // unresolvable ⇒ the chains below fall through to ollama gemma4.
     models.insert("gemma-embedded".into(), ModelConfig {
         id: "gemma-embedded".into(),
-        api_model_id: Some("llama-cpp-chat-default".into()),
-        provider: "llama-cpp-chat".into(),
+        api_model_id: Some("gemma2:2b".into()),
+        provider: "embedded-llama".into(),
         capabilities: vec![Capability::TextChat],
         context_window: 8_192,
         max_output_tokens: 4_096,
@@ -514,7 +485,7 @@ fn baseline_production_config() -> GatewayConfig {
     // daemon), gemma4 the working local default today, cloud as last resort.
     let chat_candidates = || {
         vec![
-            ChainEntry { model: "gemma-embedded".into(), router: Some("llama-cpp-chat".into()), api_model_id: None, priority: 1 },
+            ChainEntry { model: "gemma-embedded".into(), router: Some("embedded-llama".into()), api_model_id: None, priority: 1 },
             ChainEntry { model: "gemma4".into(),         router: Some("ollama".into()),         api_model_id: None, priority: 2 },
             ChainEntry { model: "claude-sonnet".into(),  router: Some("anthropic".into()),      api_model_id: None, priority: 3 },
             ChainEntry { model: "gpt-4o-mini".into(),    router: Some("openai".into()),         api_model_id: None, priority: 4 },

@@ -573,8 +573,8 @@ mod tests {
             .expect("load ok")
             .expect("DB has chains");
 
-        // Embedded + cloud routers loaded.
-        for r in ["llama-cpp-chat", "llama-cpp-embed", "nvidia", "ollama"] {
+        // Embedded (single router) + cloud routers loaded.
+        for r in ["embedded-llama", "nvidia", "ollama"] {
             assert!(cfg.routers.contains_key(r), "router {r} missing");
         }
         // Lightweight text chains lead with the in-process embedded adapter.
@@ -583,7 +583,7 @@ mod tests {
             assert_eq!(c.capability, Capability::TextChat, "{chain} capability");
             assert_eq!(
                 c.models[0].router.as_deref(),
-                Some("llama-cpp-chat"),
+                Some("embedded-llama"),
                 "{chain} should lead with embedded"
             );
             assert!(c.models.len() >= 4, "{chain} should have a cloud tail");
@@ -605,7 +605,7 @@ mod tests {
         // Embed chain: embedded first, 384-dim all-minilm on both legs.
         let embed = &cfg.chains["embed"];
         assert_eq!(embed.capability, Capability::TextEmbed);
-        assert_eq!(embed.models[0].router.as_deref(), Some("llama-cpp-embed"));
+        assert_eq!(embed.models[0].router.as_deref(), Some("embedded-llama"));
         assert!(embed.models.iter().all(|e| e.model == "all-minilm-l6-v2"));
         // Embedded chat model carries TextChat.
         assert!(cfg.models["gemma2:2b"].capabilities.contains(&Capability::TextChat));
