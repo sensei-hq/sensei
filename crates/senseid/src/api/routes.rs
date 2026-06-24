@@ -24,6 +24,7 @@ use crate::api::handlers::instruments;
 use crate::api::handlers::gateway_routers;
 use crate::api::handlers::gateway_image;
 use crate::api::handlers::knowledge;
+use crate::api::handlers::corrections;
 
 pub fn create_router(state: AppState) -> Router {
     Router::new()
@@ -78,6 +79,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/projects/{id}/hotspots",            get(observatory::project_hotspots))
         .route("/api/projects/{id}/quality-signals",     get(observatory::project_quality_signals))
         .route("/api/projects/{id}/maturity",            get(observatory::project_maturity))
+        .route("/api/corrections", get(corrections::list_corrections))
+        .route("/api/projects/{id}/corrections", get(corrections::project_corrections))
         .route("/api/projects/{id}/teachings",           get(observatory::project_teachings))
         .route("/api/libs/{id}/usage",                   get(observatory::library_usage))
         // Indexing
