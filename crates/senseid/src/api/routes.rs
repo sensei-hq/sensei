@@ -77,6 +77,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/projects/{id}/ftr-daily",           get(observatory::project_ftr_daily))
         .route("/api/projects/{id}/hotspots",            get(observatory::project_hotspots))
         .route("/api/projects/{id}/quality-signals",     get(observatory::project_quality_signals))
+        .route("/api/projects/{id}/maturity",            get(observatory::project_maturity))
         .route("/api/projects/{id}/teachings",           get(observatory::project_teachings))
         .route("/api/libs/{id}/usage",                   get(observatory::library_usage))
         // Indexing
