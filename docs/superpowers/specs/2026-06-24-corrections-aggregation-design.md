@@ -50,11 +50,13 @@ API for the Observatory.
 
 ## Why these decisions
 
-- **Why a dedicated table, not `detected_patterns`?** `detected_patterns` is
-  folder-scoped (`unique(folder_id, name, is_anti_pattern)`); a cross-project
-  cluster can't be one row, and there's no natural home for canonical text /
-  suggestion / memory link. `recommendations.based_on` already reserves
-  `corrections:[ref]`, so corrections need a stable identity to be referenceable.
+- **Why a dedicated table, not `detected_patterns`?** A correction cluster spans
+  **multiple** projects (`projects[]`), so a one-row-per-scope pattern can't hold
+  it — this holds whether `detected_patterns` stays folder-scoped or moves to
+  project scope (the latter is its own change, #82). There's also no natural home
+  in `detected_patterns` for the canonical text / suggestion / memory link.
+  `recommendations.based_on` already reserves `corrections:[ref]`, so corrections
+  need a stable identity to be referenceable.
 - **Why a dedicated global task, not inside `analyze_project`?** The analyzer
   scheduler is per-project; global clustering needs cross-project data, and running
   it inside every per-project pass would re-cluster N times per cycle. A single
