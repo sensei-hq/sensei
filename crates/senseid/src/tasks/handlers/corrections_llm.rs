@@ -1,8 +1,8 @@
 //! Per-cluster canonicalization (#65 step 5): one gateway call turns a cluster of
-//! similar corrective prompts into a clean rule statement + an advisory suggestion
-//! + an optional link to an existing memory. Mirrors `prompt_classify`: pure
-//! build/parse + a graceful async call that degrades to `None` (caller then falls
-//! back to the cluster's representative snippet).
+//! similar corrective prompts into a clean rule statement, an advisory suggestion,
+//! and an optional link to an existing memory. Mirrors `prompt_classify`: pure
+//! build/parse plus a graceful async call that degrades to `None` (the caller
+//! then falls back to the cluster's representative snippet).
 
 use gateway::Gateway;
 

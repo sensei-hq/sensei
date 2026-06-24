@@ -1558,7 +1558,7 @@ impl PgStore {
         .bind(row.count)
         .bind(&row.project_ids)
         .bind(row.last_seen)
-        .bind(&row.memory_id)
+        .bind(row.memory_id)
         .bind(&row.instances)
         .fetch_one(&self.pool)
         .await
