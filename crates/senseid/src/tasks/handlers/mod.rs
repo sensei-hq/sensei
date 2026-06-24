@@ -13,6 +13,7 @@ mod verdicts;
 mod analyze;
 mod generate;
 mod consolidate;
+mod corrections_llm;
 mod prompt_classify;
 pub(crate) mod helpers;
 
