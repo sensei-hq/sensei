@@ -15,3 +15,4 @@ pub(crate) mod instruments;
 pub(crate) mod gateway_routers;
 pub(crate) mod gateway_image;
 pub(crate) mod knowledge;
+pub(crate) mod corrections;
