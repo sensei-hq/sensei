@@ -94,7 +94,10 @@ async fn classify_chunk(gateway: &Gateway, prompts: &[&str]) -> Option<Vec<Promp
         capability: Capability::TextChat,
         model: None,
         router: None,
-        chain: Some("text_chat".into()),
+        // The L2 prompt classifier is lightweight classification — pin the
+        // seed `classify` chain (embedded → ollama → cloud), not a
+        // bare/code-only chain name (#76).
+        chain: Some("classify".into()),
         payload: Payload::Chat {
             messages: vec![Message::text(MessageRole::User, build_user_message(prompts))],
             system: Some(SYSTEM.to_string()),

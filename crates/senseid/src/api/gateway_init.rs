@@ -23,12 +23,13 @@ pub fn keychain_api_key(router_id: &str) -> Option<String> {
     gateway_keys::get_key(router_id).ok()
 }
 
-/// Initialize the gateway with detected adapters but NO config.
+/// Initialize the gateway with detected adapters and a config.
 ///
-/// The gateway starts unconfigured — it will return `NotConfigured` for any
-/// inference calls until config is set via `gateway.update_config()`.
-/// Config comes from the database (settings/services tables), set during
-/// `sensei init` or through the API.
+/// `db_config` is the table-driven config loaded from the `gateway.*` tables
+/// (see [`crate::api::gateway_config_loader`]). When `None` — the DB has no
+/// chains configured, or the load failed — the in-code
+/// [`baseline_production_config`] is used as a last-resort fallback so the
+/// daemon always starts with *some* working routing.
 ///
 /// Adapters (providers) are auto-detected at startup:
 /// - Ollama: probed at localhost:11434
@@ -36,7 +37,7 @@ pub fn keychain_api_key(router_id: &str) -> Option<String> {
 /// - OpenAI: OPENAI_API_KEY env var
 /// - Grok: XAI_API_KEY env var
 /// - Noop: always registered as graceful degradation fallback
-pub async fn init_gateway() -> Arc<Gateway> {
+pub async fn init_gateway(db_config: Option<GatewayConfig>) -> Arc<Gateway> {
     let adapters = AdapterRegistry::new();
 
     // Always register noop as fallback
@@ -84,8 +85,17 @@ pub async fn init_gateway() -> Arc<Gateway> {
     // can register either or both, depending on which GGUF files the
     // operator supplies. Each call shares the same process-singleton
     // LlamaBackend behind the scenes, so loading two adapters is safe.
+    // Resolve the embed GGUF: explicit `SENSEI_LLAMA_CPP_EMBED_GGUF` override,
+    // else the stable managed path `<data-dir>/models/embed.gguf` (mirrors the
+    // chat resolution below). Makes embedded 384-dim embeddings the default
+    // with NO env/plist wiring — drop a 384-dim GGUF (e.g. all-MiniLM-L6-v2)
+    // there and a feature-built daemon serves it in-process (the embed chain
+    // lists it first). Absent ⇒ the chain falls through to ollama all-minilm.
     #[cfg(feature = "embedded-llama-cpp")]
-    if let Ok(path) = std::env::var("SENSEI_LLAMA_CPP_EMBED_GGUF") {
+    if let Some(path) = std::env::var("SENSEI_LLAMA_CPP_EMBED_GGUF").ok().or_else(|| {
+        let p = crate::paths::sensei_dir().join("models/embed.gguf");
+        p.exists().then(|| p.to_string_lossy().into_owned())
+    }) {
         let model_id = std::env::var("SENSEI_LLAMA_CPP_EMBED_MODEL_ID")
             .unwrap_or_else(|_| "llama-cpp-embed-default".to_string());
         match crate::api::gateway_embedded::register_llama_cpp_embed(
@@ -98,7 +108,7 @@ pub async fn init_gateway() -> Arc<Gateway> {
                 id, model_id, path
             ),
             Err(e) => tracing::warn!(
-                "Gateway: LlamaCppAdapter (embed) from SENSEI_LLAMA_CPP_EMBED_GGUF={} failed: {}",
+                "Gateway: LlamaCppAdapter (embed) from {} failed: {}",
                 path, e
             ),
         }
@@ -203,12 +213,28 @@ pub async fn init_gateway() -> Arc<Gateway> {
         Err(e) => tracing::warn!("Gateway: Bedrock adapter failed: {}", e),
     }
 
-    // Baseline production config — ships the known router/model entries
-    // that the setup wizard's Inference stage exposes. Without these,
-    // refresh_router_keys would have no routers to populate even after the
-    // user pastes a key. A future DB-load path can replace this via
-    // `gw.update_config(...)` once table-driven configuration lands.
-    let config = baseline_production_config();
+    // Config source: the table-driven config loaded from the `gateway.*`
+    // tables (the source of truth, #76). The in-code baseline is only the
+    // fallback for a fresh/unseeded DB or a load failure — without some
+    // config, refresh_router_keys would have no routers to populate even
+    // after the user pastes a key.
+    let config = match db_config {
+        Some(mut db) => {
+            // The DB `model_capability` enum can't yet express image
+            // generation, so it has no image_generate chain. Graft the
+            // baseline's chains for any capability the DB doesn't cover so
+            // those features (e.g. image generation) don't regress when the
+            // DB becomes the source of truth. Tracked by #77 (seed an image
+            // chain once the enum gains an `image` value), after which this
+            // is a no-op.
+            merge_baseline_capability_gaps(&mut db, &baseline_production_config());
+            db
+        }
+        None => {
+            tracing::info!("Gateway: no DB config — using in-code baseline");
+            baseline_production_config()
+        }
+    };
 
     let cb = CircuitBreakerManager::new(CircuitBreakerConfig::default());
 
@@ -525,6 +551,43 @@ fn baseline_production_config() -> GatewayConfig {
     GatewayConfig { routers, models, chains }
 }
 
+/// Graft baseline chains for any [`Capability`] the DB config doesn't cover.
+///
+/// The DB is the source of truth for every capability it can express. Some
+/// capabilities (image generation) have no `model_capability` enum value yet,
+/// so they can't be seeded — without this, switching to table-driven config
+/// would silently drop them. For each baseline chain whose capability is
+/// absent from `db`, this copies the chain plus any models/routers it
+/// references that `db` lacks. It never overwrites existing DB entries.
+fn merge_baseline_capability_gaps(db: &mut GatewayConfig, baseline: &GatewayConfig) {
+    use std::collections::HashSet;
+
+    let covered: HashSet<_> = db.chains.values().map(|c| c.capability.clone()).collect();
+    for (name, chain) in &baseline.chains {
+        if covered.contains(&chain.capability) || db.chains.contains_key(name) {
+            continue;
+        }
+        for entry in &chain.models {
+            if !db.models.contains_key(&entry.model)
+                && let Some(m) = baseline.models.get(&entry.model)
+            {
+                db.models.insert(entry.model.clone(), m.clone());
+            }
+            if let Some(router) = &entry.router
+                && !db.routers.contains_key(router)
+                && let Some(r) = baseline.routers.get(router)
+            {
+                db.routers.insert(router.clone(), r.clone());
+            }
+        }
+        tracing::info!(
+            "Gateway: grafting baseline chain '{}' ({:?}) — DB config has no chain for that capability",
+            name, chain.capability
+        );
+        db.chains.insert(name.clone(), chain.clone());
+    }
+}
+
 /// Register an OpenAI-compatible adapter under the given router id.
 ///
 /// The adapter shares the OpenAI wire format and per-request URL +
@@ -681,5 +744,73 @@ mod tests {
                 "expected at least one model with provider='{id}'"
             );
         }
+    }
+
+    /// A DB config that only covers text capabilities must still get the
+    /// baseline image_generate chain grafted (the enum can't express it yet),
+    /// pulling in the model + router that chain needs — without clobbering the
+    /// DB's own text chains.
+    #[test]
+    fn merge_baseline_capability_gaps_grafts_image_chain_only() {
+        use gateway::types::capability::Capability;
+        use gateway::types::config::*;
+        use std::collections::HashMap;
+
+        let mut db = GatewayConfig {
+            routers: HashMap::from([(
+                "ollama".to_string(),
+                RouterConfig {
+                    url: "http://localhost:11434".into(),
+                    api_key_env: None,
+                    api_key: None,
+                    enabled: true,
+                    timeout_ms: None,
+                    headers: HashMap::new(),
+                },
+            )]),
+            models: HashMap::from([(
+                "gemma2:2b".to_string(),
+                ModelConfig {
+                    id: "gemma2:2b".into(),
+                    api_model_id: None,
+                    provider: "ollama".into(),
+                    capabilities: vec![Capability::TextChat],
+                    context_window: 8192,
+                    max_output_tokens: 4096,
+                    pricing: None,
+                },
+            )]),
+            chains: HashMap::from([(
+                "classify".to_string(),
+                FallbackChainConfig {
+                    id: "classify".into(),
+                    capability: Capability::TextChat,
+                    models: vec![ChainEntry {
+                        model: "gemma2:2b".into(),
+                        router: Some("ollama".into()),
+                        api_model_id: None,
+                        priority: 1,
+                    }],
+                    fallback_triggers: vec![],
+                },
+            )]),
+        };
+
+        let baseline = baseline_production_config();
+        merge_baseline_capability_gaps(&mut db, &baseline);
+
+        // image_generate (no DB enum value) is grafted, with its model+router.
+        let img = db.chains.get("image_generate").expect("image chain grafted");
+        assert_eq!(img.capability, Capability::ImageGenerate);
+        let m = &img.models[0].model;
+        assert!(db.models.contains_key(m), "grafted image model {m} present");
+        if let Some(r) = &img.models[0].router {
+            assert!(db.routers.contains_key(r), "grafted image router {r} present");
+        }
+
+        // The DB's own text chain is untouched and no extra text chain is added.
+        assert_eq!(db.chains["classify"].models.len(), 1);
+        assert!(!db.chains.contains_key("text_chat"), "text-capability chains NOT grafted");
+        assert!(!db.chains.contains_key("reasoning"), "text-capability chains NOT grafted");
     }
 }

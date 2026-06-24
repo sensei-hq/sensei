@@ -44,11 +44,13 @@ VERSION := $(shell cat VERSION)
 
 # ── Rust crates ───────────────────────────────────────────────────────────────
 
-# Opt-in: `make <target> EMBED=1` builds the daemon with the in-process embedded
-# chat model (llama.cpp) so the gateway serves chat locally without the external
-# Ollama daemon. Off by default — it compiles llama.cpp natively (slower, +deps),
-# so the release build (and CI) stay lean unless you ask for it.
-CRATE_FEATURES := $(if $(EMBED),--features senseid/embedded-llama-cpp,)
+# Embedded inference (in-process llama.cpp) is built into ALL daemon builds by
+# default (#76): the gateway serves chat + embeddings locally without the
+# external Ollama daemon, and the seed chains list the embedded adapter first.
+# It compiles llama.cpp natively, so the build needs a C/C++ toolchain
+# (cmake + clang) on the build host. Opt OUT with `make <target> EMBED=0` for a
+# lean Ollama-only build on a host without that toolchain.
+CRATE_FEATURES := $(if $(filter 0 no off,$(EMBED)),,--features senseid/embedded-llama-cpp)
 
 crates:
 	cargo build --release -p senseid -p sensei-cli -p sensei-mcp $(CRATE_FEATURES)
@@ -64,6 +66,10 @@ crates-debug:
 crates-all:
 	cargo build --release --workspace
 	cargo build --release --manifest-path app/src-tauri/Cargo.toml
+	# Embedded inference is built into shipped daemons by default (#76), so the
+	# release gate must compile that path too — catches drift in the
+	# embedded-llama-cpp code that the plain --workspace build skips.
+	cargo build --release -p senseid --features senseid/embedded-llama-cpp
 
 .PHONY: hive
 hive:  ## Build the sensei-hive service binary
