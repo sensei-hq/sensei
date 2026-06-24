@@ -122,7 +122,27 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
             task_queue.set_max_concurrent_repos(max);
         }
 
-    let gateway = super::gateway_init::init_gateway().await;
+    // Table-driven gateway config (#76): load routers/models/chains from the
+    // `gateway.*` tables. A load error is logged and degrades to the in-code
+    // baseline rather than failing daemon startup.
+    let db_config = match super::gateway_config_loader::load_gateway_config(pg.pool()).await {
+        Ok(Some(cfg)) => {
+            tracing::info!(
+                "Gateway: loaded table-driven config ({} routers, {} models, {} chains)",
+                cfg.routers.len(), cfg.models.len(), cfg.chains.len()
+            );
+            Some(cfg)
+        }
+        Ok(None) => {
+            tracing::info!("Gateway: no chains in DB — falling back to baseline config");
+            None
+        }
+        Err(e) => {
+            tracing::warn!("Gateway: failed to load table-driven config ({e}); using baseline");
+            None
+        }
+    };
+    let gateway = super::gateway_init::init_gateway(db_config).await;
 
     let (event_tx, _) = tokio::sync::broadcast::channel(1024);
     let state = Arc::new(SharedState {

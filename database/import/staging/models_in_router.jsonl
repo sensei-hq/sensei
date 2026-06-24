@@ -9,3 +9,6 @@
 {"router_name":"anthropic","model_full_name":"claude-sonnet-4-5","router_model_id":"claude-sonnet-4-5-20251022","cost_per_input_token":0.000003,"cost_per_output_token":0.000015,"is_default":true,"modified_at":"2026-04-23"}
 {"router_name":"openai","model_full_name":"gpt-4o-mini","router_model_id":"gpt-4o-mini","cost_per_input_token":0.00000015,"cost_per_output_token":0.0000006,"is_default":true,"modified_at":"2026-04-23"}
 {"router_name":"openai","model_full_name":"gpt-4o","router_model_id":"gpt-4o","cost_per_input_token":0.0000025,"cost_per_output_token":0.00001,"is_default":true,"modified_at":"2026-04-23"}
+{"router_name":"llama-cpp-chat","model_full_name":"gemma2:2b","router_model_id":"llama-cpp-chat-default","cost_per_input_token":0,"cost_per_output_token":0,"is_default":true,"modified_at":"2026-06-23"}
+{"router_name":"llama-cpp-embed","model_full_name":"all-minilm-l6-v2","router_model_id":"llama-cpp-embed-default","cost_per_input_token":0,"cost_per_output_token":0,"is_default":false,"modified_at":"2026-06-23"}
+{"router_name":"nvidia","model_full_name":"llama-3.1-70b-instruct","router_model_id":"meta/llama-3.1-70b-instruct","cost_per_input_token":0,"cost_per_output_token":0,"is_default":true,"modified_at":"2026-06-23"}
