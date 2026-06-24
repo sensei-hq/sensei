@@ -28,3 +28,4 @@ firebase-debug.log
 
 # dbd-generated artifacts (do not commit — generated from ddl/ on apply)
 database/init.sql
+docs/mockups/Sensei/.thumbnail
