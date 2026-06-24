@@ -25,6 +25,8 @@ create table if not exists memories (
 , session_id               uuid
 , tags                     text[]        not null default '{}'
 , triage_signal            text
+, category                 memory_category
+, created_at               timestamptz   not null default now()
 , modified_at              timestamptz   not null default now()
 );
 
@@ -100,3 +102,7 @@ comment on column memories.tags
      is 'Free-form tags (e.g. security, performance, compliance). GIN-indexed for &&/@> filters.';
 comment on column memories.triage_signal
      is 'Which capture heuristic surfaced this memory (revert/correction/actually/repeat_pattern/override/test_failure). Null for explicit /save.';
+comment on column memories.category
+     is 'Quality dimension for the learnings UI anatomy, orthogonal to `type`: correctness, convention, pattern, preference. Null until classified.';
+comment on column memories.created_at
+     is 'When this memory was first learned/created (stable). Distinct from modified_at, which moves on every reinforcement; the UI shows this as "learned".';
