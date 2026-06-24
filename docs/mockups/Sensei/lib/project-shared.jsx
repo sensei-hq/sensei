@@ -520,7 +520,21 @@ function ProjPatterns({ openAction }) {
   const focus = list.find(x => x.id === focusId) || list[0];
 
   return (
-    <div className="py-5 px-7" >
+    <div style={{ padding: '32px 40px 48px' }}>
+      {/* Section header — matches the other project panes */}
+      <div style={{ display: 'flex', alignItems: 'flex-end' }} className="gap-4 mb-5" >
+        <span className="kanji" style={{ fontSize: 56, color: 'var(--accent)', lineHeight: 1 }}>紋</span>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
+                         textTransform: 'uppercase' }} className="mb-1" >
+            This project · patterns sensei sees
+          </div>
+          <h1 className="display m-0" style={{ fontSize: 28, fontWeight: 400, letterSpacing: '-0.01em' }}>
+            Patterns
+          </h1>
+        </div>
+      </div>
+
       {/* Toggle */}
       <div style={{ display: 'flex', alignItems: 'center' }} className="gap-3 mb-4" >
         <div style={{
@@ -1210,6 +1224,7 @@ function ProjSettingsV2({ project }) {
           ))}
           <button style={{ fontSize: 13, color: 'var(--accent)' }} className="mt-2" >+ add repo</button>
         </V2Block>
+
 
         <V2Block id="links" title="Links" desc="Docs, dashboards, runbooks — anything sensei should remember.">
           {S.links.map(l => (

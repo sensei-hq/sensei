@@ -40,21 +40,21 @@ function writeSenseiSettings(patch) {
 //   組 projects    · "assemble / group" repos into a project
 //   書 libraries   · "writing / book" — the libs sensei wraps
 //   器 instruments · "vessel / instrument" — sensei's tools
-//   想 inference   · "thought / reasoning" — what models do
+//   路 routers     · "route / path" — where models come from
 //   任 assignments · "entrust / assign" roles to models
 //   入 done        · "enter" — the door at the end
 // Rail subs are written in the same voice as the page taglines —
 // short complete sentences, lowercase sensei, second-person, periods.
 const WIZ_STAGES = [
   { id: "welcome",     n: "礼",  title: "Welcome",         sub: "A quiet observer. Nothing more." },
-  { id: "preferences", n: "名",  title: "Profile",          sub: "Your name, sharing, and how forward sensei is." },
+  { id: "preferences", n: "名",  title: "Profile",          sub: "Your name, and how forward sensei is." },
   { id: "acps",        n: "連",  title: "Assistants",      sub: "Connect the AI tools you already use." },
   { id: "folders",     n: "庵",  title: "Folders",         sub: "Where your work lives." },
   { id: "scan",        n: "観",  title: "Scan",            sub: "Workers recurse. Repos surface." },
   { id: "projects",    n: "組",  title: "Projects",        sub: "Each project, one or more repos." },
   { id: "libraries",   n: "書",  title: "Libraries",       sub: "What sensei should wrap." },
   { id: "registry",    n: "器",  title: "Instruments",     sub: "Tools sensei can reach for." },
-  { id: "inference",   n: "想",  title: "Inference",       sub: "Local models, and a few clouds." },
+  { id: "inference",   n: "路",  title: "Routers",          sub: "Where models come from — local and cloud." },
   { id: "assignments", n: "任",  title: "Assignments",     sub: "Which model handles which role." },
   { id: "done",        n: "入",  title: "Enter",           sub: "The observatory is ready." }
 ];
@@ -212,9 +212,9 @@ function WizRail({ stages, stageIdx, setStageIdx, onExit, freeNav = false, railT
     acps: "assistants claude cursor copilot mcp connect",
     libraries: "libraries wrap docs dependencies",
     registry: "instruments mcp tools playground",
-    inference: "inference models ollama cloud routing moe deliberation",
+    inference: "routers inference models ollama embedded cloud routing moe deliberation",
     assignments: "assignments roles model which",
-    preferences: "profile name sharing collective tone digest telemetry privacy regression",
+    preferences: "profile name tone digest telemetry privacy regression",
   };
   const REVIEW = new Set(["preferences", "inference"]);  // what most users change first
   const matches = (s) => !ql || s.title.toLowerCase().includes(ql)
@@ -226,9 +226,8 @@ function WizRail({ stages, stageIdx, setStageIdx, onExit, freeNav = false, railT
                     display: 'flex', flexDirection: 'column',
                     background: 'var(--paper-2)', overflow: 'hidden'
 }} className="py-5 px-5" >
-      <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2 mb-5" >
-        <span className="kanji" style={{ fontSize: 22, color: 'var(--accent)' }}>先生</span>
-        <span className="display" style={{ fontSize: 17 }}>Sensei</span>
+      <div style={{ display: 'flex', alignItems: 'center' }} className="gap-2 mb-5" >
+        <Wordmark size={24}/>
         <span style={{ flex: 1 }}/>
         <button onClick={onExit} title="Exit setup"
                 style={{ fontSize: 11, color: 'var(--ink-3)', letterSpacing: '0.1em' }}>
@@ -1320,6 +1319,15 @@ function WizProjects({ state, upd }) {
   const [repoMenu, setRepoMenu] = useS(null); // { sid, pid } for repo action menu
   const [mergeMenu, setMergeMenu] = useS(null); // sid whose merge-target picker is open
 
+  // Exclude an accidentally-detected project. It stays inside its watch folder,
+  // but sensei stops treating it as a project — recorded as a folder exclusion.
+  const excludedIds = state.excludedProjects || [];
+  const setExcludedIds = (ids) => upd({ excludedProjects: ids });
+  const exclude = (id) => { setExcludedIds([...excludedIds, id]); setSelected(null); setMergeMenu(null); };
+  const restore = (id) => setExcludedIds(excludedIds.filter(i => i !== id));
+  const activeSols   = sols.filter(s => !excludedIds.includes(s.id));
+  const excludedSols = sols.filter(s =>  excludedIds.includes(s.id));
+
   const toggle = (id) => upd({
     solutions: sols.map(s => s.id === id ? { ...s, confirmed: !s.confirmed } : s)
   });
@@ -1407,7 +1415,7 @@ function WizProjects({ state, upd }) {
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-3" >
-        {sols.map(s => {
+        {activeSols.map(s => {
           const isMulti = s.projects.length > 1;
           const isExpanded = selected === s.id;
           const isMergeOpen = mergeMenu === s.id;
@@ -1420,7 +1428,7 @@ function WizProjects({ state, upd }) {
 }} className="p-4" >
             <div style={{
  display: 'grid',
-                           gridTemplateColumns: 'auto 1fr auto auto auto auto', alignItems: 'center'
+                           gridTemplateColumns: 'auto 1fr auto auto auto auto auto', alignItems: 'center'
 }} className="gap-3" >
               <div className="kanji" style={{
                 fontSize: 28, color: 'var(--accent)',
@@ -1472,6 +1480,12 @@ function WizProjects({ state, upd }) {
                 {isExpanded ? "hide" : "edit"}
                 <span style={{ fontSize: 11, transform: isExpanded ? 'rotate(180deg)' : 'none',
                                 transition: 'transform .2s' }}>▾</span>
+              </button>
+              <button onClick={() => exclude(s.id)}
+                      title="Not a project — exclude from scan"
+                      style={{ fontSize: 11, color: 'var(--ink-3)', borderRadius: 4 }}
+                      className="py-1 px-2" >
+                exclude
               </button>
               <button onClick={() => toggle(s.id)}
                       style={{
@@ -1659,6 +1673,36 @@ function WizProjects({ state, upd }) {
           @keyframes expandIn { from { opacity: 0; max-height: 0 } to { opacity: 1; max-height: 400px } }
         `}</style>
       </div>
+
+      {excludedSols.length > 0 && (
+        <div className="mt-5" >
+          <div style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
+                         textTransform: 'uppercase' }} className="mb-2" >
+            Excluded from scan · {excludedSols.length}
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--ink-3)', lineHeight: 1.5, maxWidth: 620 }} className="mb-3" >
+            These folders sit inside a watched folder but aren't projects. Sensei keeps watching the
+            folder and skips them — recorded as exclusions on the folder.
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
+            {excludedSols.map(s => (
+              <div key={s.id} style={{
+                     display: 'grid', gridTemplateColumns: 'auto 1fr auto', alignItems: 'center',
+                     background: 'var(--paper-2)', border: 'var(--hairline)', borderRadius: 6, opacity: 0.85
+}} className="gap-3 py-2 px-3" >
+                <span className="kanji" style={{ fontSize: 15, color: 'var(--ink-4)' }}>{s.kanji}</span>
+                <div>
+                  <div style={{ fontSize: 13, color: 'var(--ink-2)' }}>{s.renamed ?? s.name}</div>
+                  <div className="mono mt-1" style={{ fontSize: 11, color: 'var(--ink-4)' }}>{s.path}</div>
+                </div>
+                <button onClick={() => restore(s.id)}
+                        style={{ fontSize: 11, color: 'var(--accent)', borderRadius: 4 }}
+                        className="py-1 px-2" >restore</button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div style={{ fontSize: 13, color: 'var(--ink-3)' }} className="mt-4" >
         More options — external integrations, clients, custom rules — per project later from its Settings.
@@ -2257,7 +2301,7 @@ function WizPreferences({ state, upd }) {
     <button onClick={() => onChange(!value)}
             style={{
  width: 36, height: 20, borderRadius: 999,
-                      background: value ? 'var(--accent)' : 'var(--edge)',
+                      background: value ? 'var(--ink)' : 'var(--paper-3)',
                       position: 'relative', cursor: 'pointer',
                       transition: 'background 0.15s',
                       border: 'none'
@@ -2301,7 +2345,7 @@ function WizPreferences({ state, upd }) {
 
   return (
     <div style={{ maxWidth: 760 }} className="mx-auto" >
-      <WizHeader n="名" title="Profile &amp; sharing"
+      <WizHeader n="名" title="Profile"
                  tagline="A few small choices. Anything here can be changed later from Preferences."/>
 
       <div className="divide-y">
@@ -2329,40 +2373,7 @@ function WizPreferences({ state, upd }) {
                }/>
 
       {/* ── Shared learnings ─────────────────────────────────────── */}
-      <Section kanji="共" title="Shared learnings"
-               sub="Sensei can contribute the patterns it finds to a collective pool — and pull what others have learned back into your library.">
-        <Row label="Contribute my learnings"
-             hint="Anonymized patterns only. No code, no commit messages, no project names.">
-          <Toggle value={p.contributeLearnings}
-                   onChange={v => setP({ contributeLearnings: v })}/>
-        </Row>
-        <Row label="Review before sharing"
-             hint="Each learning shows up in a queue for your approval before it leaves your machine.">
-          <Toggle value={p.reviewBeforeShare}
-                   onChange={v => setP({ reviewBeforeShare: v })}/>
-        </Row>
-        <Row label="Sharing schedule">
-          <Sel value={p.shareSchedule}
-                onChange={v => setP({ shareSchedule: v })}
-                options={[
-                  { value: "off",             label: "Off · manual only" },
-                  { value: "daily",           label: "Daily" },
-                  { value: "weekly-saturday", label: "Every Saturday" },
-                  { value: "monthly",         label: "Monthly" }
-                ]}/>
-        </Row>
-        <Row label="Download collective learnings"
-             hint="Reviewed before they enter your library.">
-          <Sel value={p.downloadCollective}
-                onChange={v => setP({ downloadCollective: v })}
-                options={[
-                  { value: "never",     label: "Never" },
-                  { value: "weekly",    label: "Weekly" },
-                  { value: "daily",     label: "Daily" },
-                  { value: "on-demand", label: "On demand" }
-                ]}/>
-        </Row>
-      </Section>
+      {/* Sharing + collective controls now live in the Observatory's Dōjō section. */}
 
       {/* ── Sensei behavior ──────────────────────────────────────── */}
       <Section kanji="師" title="Sensei behavior"
