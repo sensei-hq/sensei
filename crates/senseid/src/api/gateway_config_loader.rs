@@ -577,8 +577,8 @@ mod tests {
         for r in ["llama-cpp-chat", "llama-cpp-embed", "nvidia", "ollama"] {
             assert!(cfg.routers.contains_key(r), "router {r} missing");
         }
-        // The text chains lead with the in-process embedded adapter.
-        for chain in ["classify", "reasoning", "summarize"] {
+        // Lightweight text chains lead with the in-process embedded adapter.
+        for chain in ["classify", "summarize"] {
             let c = &cfg.chains[chain];
             assert_eq!(c.capability, Capability::TextChat, "{chain} capability");
             assert_eq!(
@@ -590,6 +590,17 @@ mod tests {
             for e in &c.models {
                 assert!(cfg.models.contains_key(&e.model), "{} model {} missing", chain, e.model);
             }
+        }
+        // Reasoning is heavy synthesis — it leads with ollama gemma4 (a strong
+        // local model; gemma4 is multimodal and can't be embedded), then
+        // escalates to larger local models + cloud.
+        let reasoning = &cfg.chains["reasoning"];
+        assert_eq!(reasoning.capability, Capability::TextChat);
+        assert_eq!(reasoning.models[0].router.as_deref(), Some("ollama"));
+        assert_eq!(reasoning.models[0].model, "gemma4");
+        assert!(reasoning.models.len() >= 4, "reasoning should have a cloud tail");
+        for e in &reasoning.models {
+            assert!(cfg.models.contains_key(&e.model), "reasoning model {} missing", e.model);
         }
         // Embed chain: embedded first, 384-dim all-minilm on both legs.
         let embed = &cfg.chains["embed"];
