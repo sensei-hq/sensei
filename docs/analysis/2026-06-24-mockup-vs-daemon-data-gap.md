@@ -89,7 +89,43 @@ UI drives the whole Observatory on **early vs mature** + `firstSession { watched
 5. **L2 consolidation (F5/#70)** + impact reasoning_traces + extra deltas (uses the embedded `reasoning` chain from #79).
 6. **Contract hygiene** (case + outcome vocab) as the last step before UI wiring.
 
-## Open decisions for the user
-- **Schema fork**: extend DDL for memory `references` + recommendation `based_on`/taxonomy, vs API-layer transform? (Recommend: extend DDL — it's derived data, not presentation.)
-- **Enum reconciliation**: align `recommendation.action_type` and `memory.type`/`category` between UI and DB (pick the canonical set).
-- **maturity vocab**: keep discovery|active|maintenance|archived and derive early/mature from it, or replace?
+## Decisions (Rev 1) — RESOLVED by user 2026-06-24
+- ✅ **Schema fork**: EXTEND the DDL (memory `references` jsonb + structured fields; recommendation `based_on` links + reconciled `action_type`). Derived data, not presentation.
+- ✅ **Enum reconciliation**: go ahead — canonical sets chosen below.
+- ✅ **maturity**: DERIVE early/mature (don't replace the enum wholesale; compute the binary signal from enriched-session count + insight presence).
+
+### Canonical enums (chosen)
+- `recommendation.action_type` (union, UI-leaning): `promote_pattern | create_agent | write_skill | archive_memory | enrich_memory | cross_project | revise_rule | audit_stale`.
+- `memory.type` keeps the structural kind (`pattern|convention|preference|decision|continuity|question`); add a separate `category` (`correctness|convention|pattern|preference`) for the UI's anatomy grouping, OR fold into `type` — to finalize at build time, leaning two fields (type=structural, category=nature).
+
+---
+
+## Revision 2 (2026-06-24) — updated mockups + journey maps
+
+Re-surveyed the refreshed mockups (Dōjō console + new in-app Dōjō, hive **site**, project-logs, inference settings) and the journey maps (main app, Dōjō, flow walkthrough). The Rev-1 core gap (L2/L3 unwired + memory/recommendation shape) **still stands and is still the top priority**. New surfaces + bigger picture below.
+
+### New surfaces the daemon must back
+
+1. **Inference settings ⇄ gateway config (ties directly to #76/#79).** `wiz-inference.jsx`/`setup-data.js` model inference as **roles** with fallback chains: `inference | consolidation | embedding | voice | image` (each = primary→secondary→tertiary), plus per-provider config (`detected`, `configured`, `envVar`, `kind: cloud|local|custom`) and per-local-model **pull status**. This is the UI for the table-driven gateway I just built. Gaps: roles `voice` + `image` have no seed chains; there's no **config read/write API** for routers/models/role-chains and no **model-pull-progress** endpoint. Map: inference→reasoning/chat, consolidation→reasoning, embedding→embed; add voice (audio) + image chains.
+2. **Project Logs / diagnostics (#39).** `project-logs.jsx` + `PLOG_SESSIONS`: diagnostic runs with `trace[]` = `{ts, action_type: check|resolve|instruct, step, desc, cmd, exit, out, err, ms, ok, fix_attempted, fix_approach, fix_ok}`, `system_info{os,arch,ram_gb,cpu_cores}`, `module: bootstrap|session|scan|wizard`, `outcome`, + an anonymized **GitHub-issue export**. `/api/logs` ingest exists but not this rich trace shape/export. Ties to the sensei-logger crate.
+3. **Dōjō governance — big expansion (federation client ⇄ hive server).** Journey defines a full pipeline: multi-org membership; **project→org binding** (forward-only routing history); **upstream share with anonymization/dereferencing + redaction preview**; **contribution status timeline** (queued→triaged→approved/declined→adopted); **downstream receive** with **scope-ladder conflict resolution** (org›team›global›personal, both rules shown); maintainer triage (conflict diffs, dedup ≥0.9 auto / 0.75–0.9 flagged, approval thresholds, distribution **dry-run**); **client confidentiality** (universal anonymization, immutable **audit log**, **leak-guard** + quarantine/retract); observability (contribution/approval/adoption rates). Much exists in skeleton (knowledge sources/proposals/promotion/namespaces/enforcement) but the anonymization+audit, status timeline, scope-ladder, leak-guard, and dry-run are not built. **Architectural split to confirm: which is daemon (client) vs sensei-hive (server)?**
+4. **Hive site (`hq/site.jsx`).** Public product/portfolio/philosophy site (Sensei/DBD/Rokkit/Kavach + incubating + principles). Static content — **minimal daemon impact** (no derived data), unless collective stats shown there are dynamic.
+5. **Bootstrap/provisioning telemetry.** Journey wants live setup progress (step, %, size, time), component detect+remediate, "calm when green," multi-pass setup. Health checks exist; **model-pull progress streaming** (ties to the #79 provisioner) does not.
+6. **Today's koan / one-decision triage.** One focal koan/day + Apply|Review|Dismiss per insight → reinforces the L2 recommendation work (a ranked pick + a primary action per recommendation).
+
+### New open decisions (to resolve before "daemon covers all gaps")
+- **Inference roles ↔ gateway chains**: confirm roles == named chains; add `voice` + `image` chains; and build the **inference-config read/write API + model-pull-status API** the settings UI needs (a real chunk, building on #76/#79). 
+- **Daemon vs sensei-hive split for governance**: the journey's triage/approval/distribution/audit is largely **server-side (hive)**; the daemon does anonymize-before-send, binding, status-poll, downstream-receive+conflict-resolution, local audit. Confirm the boundary + whether hive-server work is in scope here or in the `sensei-hive` repo (raise as a cross-repo issue per house rule).
+- **Project-logs (#39)**: build the rich `trace` capture + anonymized export now, or defer? (Diagnostic value is high; it's self-contained.)
+- **Provisioning telemetry**: add pull-progress events (small) alongside the #79 provisioner trigger when wired.
+
+### Updated build order (daemon-side, supersedes Rev 1)
+1. Resolve the shape forks (memory `references` + recommendation taxonomy/`based_on`) — small DDL.  ← decisions made; ready.
+2. **L2 Generator (F4/#69)** → recommendations + learned memories (+ koan pick). Lights up the most UI.
+3. **L3 maturity (F6/#71)** — early/mature + watched/target.
+4. **Inference-config + pull-status APIs** (back the inference-settings UI; add voice/image chains).
+5. Pattern effectiveness (ftrDelta + lifecycle) + corrections aggregation.
+6. **L2 consolidation (F5/#70)** + impact reasoning_traces.
+7. **Project-logs (#39)** rich trace capture + export (independent; can slot earlier).
+8. Dōjō governance expansion — **after the daemon/hive split is confirmed** (likely a cross-repo effort).
+9. Contract hygiene (snake/camel, outcome vocab) before UI wiring.
