@@ -2408,17 +2408,30 @@ impl PgStore {
     }
 
     pub async fn get_project_patterns(&self, project_id: &uuid::Uuid) -> Result<serde_json::Value, String> {
-        let rows: Vec<(uuid::Uuid, String, Option<String>, bool, String, f64, i64)> =
+        // Project baseline FTR — average First-Try-Right across the project's
+        // FTR-scored sessions. `ftrDelta` per pattern is its folder's FTR minus this.
+        let project_ftr: Option<f64> = sqlx_core::query_as::query_as::<_, (Option<f64>,)>(
+            "SELECT avg(CASE WHEN ftr THEN 1.0 ELSE 0.0 END)::float8
+             FROM activity.sessions WHERE project_id = $1 AND ftr IS NOT NULL"
+        ).bind(project_id).fetch_one(&self.pool).await.map_err(|e| e.to_string())?.0;
+
+        // Each pattern + its folder's average FTR (locus signal).
+        let rows: Vec<(uuid::Uuid, String, Option<String>, bool, String, f64, i64, Option<f64>)> =
             sqlx_core::query_as::query_as(
-                "SELECT id, name, family, is_anti_pattern, lifecycle::text, confidence, instance_count
-                 FROM sensei.project_patterns WHERE project_id = $1
-                 ORDER BY is_anti_pattern, name"
+                "SELECT pp.id, pp.name, pp.family, pp.is_anti_pattern, pp.lifecycle::text, pp.confidence, pp.instance_count,
+                        (SELECT avg(CASE WHEN s.ftr THEN 1.0 ELSE 0.0 END)::float8
+                           FROM activity.sessions s
+                          WHERE s.folder_id = pp.folder_id AND s.ftr IS NOT NULL) AS folder_ftr
+                 FROM sensei.project_patterns pp WHERE pp.project_id = $1
+                 ORDER BY pp.is_anti_pattern, pp.name"
             ).bind(project_id)
             .fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
 
         let (followed, anti): (Vec<_>, Vec<_>) = rows.into_iter().partition(|r| !r.3);
-        let map_row = |(id, name, family, is_anti, lifecycle, confidence, count): (uuid::Uuid, String, Option<String>, bool, String, f64, i64)| {
-            serde_json::json!({ "id": id, "name": name, "family": family, "isAntiPattern": is_anti, "lifecycle": lifecycle, "confidence": confidence, "instanceCount": count })
+        let map_row = |(id, name, family, is_anti, lifecycle, confidence, count, folder_ftr): (uuid::Uuid, String, Option<String>, bool, String, f64, i64, Option<f64>)| {
+            let kind = crate::pattern_effectiveness::pattern_kind(is_anti, &lifecycle);
+            let ftr_delta = crate::pattern_effectiveness::ftr_delta(folder_ftr, project_ftr);
+            serde_json::json!({ "id": id, "name": name, "family": family, "isAntiPattern": is_anti, "lifecycle": lifecycle, "confidence": confidence, "instanceCount": count, "kind": kind, "ftrDelta": ftr_delta })
         };
         Ok(serde_json::json!({
             "followed": followed.into_iter().map(map_row).collect::<Vec<_>>(),
