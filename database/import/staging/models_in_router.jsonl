@@ -12,3 +12,4 @@
 {"router_name":"llama-cpp-chat","model_full_name":"gemma2:2b","router_model_id":"llama-cpp-chat-default","cost_per_input_token":0,"cost_per_output_token":0,"is_default":true,"modified_at":"2026-06-23"}
 {"router_name":"llama-cpp-embed","model_full_name":"all-minilm-l6-v2","router_model_id":"llama-cpp-embed-default","cost_per_input_token":0,"cost_per_output_token":0,"is_default":false,"modified_at":"2026-06-23"}
 {"router_name":"nvidia","model_full_name":"llama-3.1-70b-instruct","router_model_id":"meta/llama-3.1-70b-instruct","cost_per_input_token":0,"cost_per_output_token":0,"is_default":true,"modified_at":"2026-06-23"}
+{"router_name":"ollama","model_full_name":"gemma4","router_model_id":"gemma4:latest","cost_per_input_token":0,"cost_per_output_token":0,"is_default":true,"modified_at":"2026-06-23"}
