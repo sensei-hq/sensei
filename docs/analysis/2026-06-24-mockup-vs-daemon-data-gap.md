@@ -129,3 +129,24 @@ Re-surveyed the refreshed mockups (Dōjō console + new in-app Dōjō, hive **si
 7. **Project-logs (#39)** rich trace capture + export (independent; can slot earlier).
 8. Dōjō governance expansion — **after the daemon/hive split is confirmed** (likely a cross-repo effort).
 9. Contract hygiene (snake/camel, outcome vocab) before UI wiring.
+
+---
+
+## Revision 3 (2026-06-24) — scope LOCKED by user
+
+- **No anonymization / dereferencing / redaction / leak-guard.** By construction, generated memories/patterns **never reference real code** — they carry only synthetic/suitable examples. So "see what's shared" is fine; there is **no** UI redaction-preview or anonymization pipeline to build. Drop all of that from the Dōjō scope (Rev-2 item 3's confidentiality machinery is OUT). The mockups already reflect this.
+- **Standalone Sensei first; Dōjō/hive deferred.** Focus all daemon work on the single-user app surfaces. The Dōjō/federation/governance pieces (and the daemon-vs-hive split question) start **after standalone is complete** — not now.
+- **Inference roles:** `inference → reasoning` chain. **Add `voice` + `image` chains** to the seed (voice = `audio` capability; image generation still needs `model_capability` `image` per #77). Build the inference-config + model-pull-status APIs as part of standalone.
+- **Logs:** make them **richer** — today only the `bootstrap` module is captured; add `session`/`scan`/`wizard` modules + the rich `trace` shape + anonymized GitHub-issue export (#39). **Add a TTL/retention for logs** (ties to #74 retention/pruning).
+- **Website `/sensei` site:** updated mockup (focused sections, covers Dōjō) → tracked in **#81**, done **after** the daemon is complete; Dōjō section held until Dōjō ships.
+
+### Standalone-completion build order (the active plan)
+1. **Shape-forks DDL** — memory `references` (good/bad example path:line — synthetic, `related[]`, `evidence[]`, `doc`) + what/because/consequence split + `scope.level`; recommendation reconciled `action_type` + `based_on{patterns,memories,corrections}`; (decisions made).
+2. **L2 Generator (F4/#69)** → recommendations + learned memories (+ today's-koan ranked pick). Biggest UI unlock.
+3. **L3 maturity (F6/#71)** — derive early/mature + sessions watched/target.
+4. **Inference**: add `voice`+`image` chains; inference-config + pull-status APIs (on #76/#79).
+5. **Pattern effectiveness** (ftrDelta + emerging/adopted/promote-candidate lifecycle) + **corrections aggregation**.
+6. **L2 consolidation (F5/#70)** + impact `reasoning_traces` + extra deltas (uses the embedded `reasoning` chain).
+7. **Project-logs (#39)** richer capture (all modules + trace) + **log TTL (#74)** + anonymized export.
+8. **Contract hygiene** (snake/camel, outcome vocab) before UI wiring.
+9. **DEFERRED:** all Dōjō/hive/federation governance + the daemon-vs-hive split + website Dōjō section (#81) — after standalone.
