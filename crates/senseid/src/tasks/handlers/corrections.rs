@@ -14,6 +14,10 @@ use crate::corrections::{self, Cluster, CorrItem, CorrectionRow, CORRECTION_CLUS
 const EMBED_BATCH: usize = 64;
 /// Per-batch embedding wall-clock cap — a stalled backend must not wedge the task.
 const EMBED_TIMEOUT_SECS: u64 = 30;
+/// Expected embedding width (the pinned 384-dim `embed` chain). A different width
+/// means a misconfigured chain — fall back to lexical rather than cluster on
+/// semantically wrong vectors.
+const EMBED_DIM: usize = 384;
 
 /// Pure: assemble upsert rows from clusters + their (aligned) summaries. Drops
 /// clusters below `CORRECTION_CLUSTER_MIN`. `summaries[i]` corresponds to
@@ -88,6 +92,10 @@ async fn embed_items(ctx: &TaskContext, items: &[CorrItem]) -> Option<Vec<Vec<f3
                 if embs.len() != chunk.len() {
                     return None;
                 }
+                if embs.iter().any(|e| e.len() != EMBED_DIM) {
+                    tracing::warn!("aggregate_corrections: unexpected embedding width — lexical fallback");
+                    return None;
+                }
                 out.extend(embs);
             }
             _ => return None,
@@ -127,6 +135,13 @@ pub async fn aggregate_corrections(ctx: &TaskContext, _task: &Task) -> Result<u3
         .map(|(_, c)| c)
         .collect();
 
+    // If the LLM confidently rejected every regex candidate, do NOT prune: a
+    // single (fallible) classification pass shouldn't wipe existing corrections.
+    if items.is_empty() {
+        tracing::info!("aggregate_corrections: LLM filtered all candidates — preserving existing rows");
+        return Ok(0);
+    }
+
     // Deterministic order: earliest ts seeds each cluster (session tiebreak).
     items.sort_by(|a, b| a.ts.cmp(&b.ts).then_with(|| a.session_id.cmp(&b.session_id)));
 
@@ -160,16 +175,21 @@ pub async fn aggregate_corrections(ctx: &TaskContext, _task: &Task) -> Result<u3
     // 5. Upsert + prune. `keep` is built from the rows we intend to persist; when
     // genuinely no corrections recur it is empty and the table is cleared.
     let rows = build_rows(&clusters, &summaries, &items);
+    // `keep` lists EVERY intended row (even if its upsert transiently fails) so a
+    // failed re-upsert never prunes an already-persisted row. `written` counts
+    // only the upserts that actually succeeded, for a faithful return/log.
     let mut keep: Vec<String> = Vec::with_capacity(rows.len());
+    let mut written = 0u32;
     for row in &rows {
         keep.push(row.signature.clone());
-        if let Err(e) = ctx.pg().upsert_correction(row).await {
-            tracing::warn!(error = %e, signature = %row.signature, "aggregate_corrections: upsert failed");
+        match ctx.pg().upsert_correction(row).await {
+            Ok(_) => written += 1,
+            Err(e) => tracing::warn!(error = %e, signature = %row.signature, "aggregate_corrections: upsert failed"),
         }
     }
     let pruned = ctx.pg().delete_corrections_not_in(&keep).await.unwrap_or(0);
-    tracing::info!("aggregate_corrections: {} upserted, {} pruned", rows.len(), pruned);
-    Ok(rows.len() as u32)
+    tracing::info!("aggregate_corrections: {written} upserted ({} rows), {pruned} pruned", rows.len());
+    Ok(written)
 }
 
 #[cfg(test)]
