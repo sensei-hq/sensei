@@ -27,23 +27,23 @@ function useInferenceState() {
   const [keys, setKeys] = iUseS(() =>
     D.providers.reduce((a, p) => (a[p.id] = "", a), {})
   );
+  // Every local router (Embedded Ollama, Ollama, …) has pullable models.
+  const localModels = D.providers.filter(p => p.kind === "local").flatMap(p => p.models);
   const [progress, setProgress] = iUseS(() =>
-    D.providers.find(p => p.id === "ollama").models
-      .reduce((a, m) => (a[m.id] = m.pulled ? 100 : 0, a), {})
+    localModels.reduce((a, m) => (a[m.id] = m.pulled ? 100 : 0, a), {})
   );
   const [pullQueue, setPullQueue] = iUseS(() =>
-    D.providers.find(p => p.id === "ollama").models
-      .reduce((a, m) => (a[m.id] = !!m.recommended || !!m.pulled, a), {})
+    localModels.reduce((a, m) => (a[m.id] = !!m.recommended || !!m.pulled, a), {})
   );
   const [showAdd, setShowAdd] = iUseS(false);
 
-  // Tick pull progress
+  // Tick pull progress across all local routers
   iUseE(() => {
-    const ollama = D.providers.find(p => p.id === "ollama");
+    const lm = D.providers.filter(p => p.kind === "local").flatMap(p => p.models);
     const t = setInterval(() => {
       setProgress(p => {
         const next = { ...p };
-        ollama.models.forEach(m => {
+        lm.forEach(m => {
           if (m.pulled) { next[m.id] = 100; return; }
           if (pullQueue[m.id] && next[m.id] < 100) {
             const bump = Math.max(0.8, 6 - m.sizeGB * 0.12);
@@ -73,8 +73,8 @@ function WizInference({ state, upd }) {
   return (
     <div style={{ maxWidth: 980 }} className="mx-auto" >
       <div className="mb-4" >
-        <WizHeader n="想" title="Inference"
-                   tagline="Providers give sensei models for reasoning — inferring insights, consolidating memory, and making recommendations. Add providers, pull local models, leave assignment for the next step."/>
+        <WizHeader n="路" title="Routers"
+                   tagline="Routers give sensei models for reasoning — inferring insights, consolidating memory, and making recommendations. Add a router, pull local models, leave assignment for the next step."/>
       </div>
 
       <SystemStrip sys={s.sys}/>
@@ -341,7 +341,7 @@ function InferenceSplit(s) {
           <div style={{
  display: 'flex', alignItems: 'center', justifyContent: 'space-between'
 }} className="mb-2" >
-            <SectionLabel>providers</SectionLabel>
+            <SectionLabel>routers</SectionLabel>
             <button onClick={() => setShowAdd(true)}
                     style={{
  fontSize: 11, color: 'var(--ink-2)',
@@ -353,7 +353,7 @@ function InferenceSplit(s) {
             {D.providers.map(p => {
               const active = p.id === focusId;
               const cfg = configured[p.id];
-              const count = p.id === "ollama"
+              const count = p.kind === "local"
                 ? p.models.filter(m => m.pulled || pullQueue[m.id]).length
                 : (cfg ? p.models.length : 0);
               return (
@@ -402,7 +402,7 @@ function InferenceSplit(s) {
             <div className="display" style={{ fontSize: 17 }}>{focus.name}</div>
             <span style={{ fontSize: 11, letterSpacing: '0.1em', textTransform: 'uppercase',
                             color: 'var(--ink-4)' }}>
-              {focus.kind === "local" ? "local · ollama" : "cloud"}
+              {focus.kind === "local" ? "local" : "cloud"}
             </span>
           </div>
           <div style={{ fontSize: 13, color: 'var(--ink-3)' }} className="mb-3" >
@@ -416,7 +416,7 @@ function InferenceSplit(s) {
                            onSave={() => setConfigured(c => ({ ...c, [focus.id]: true }))}/>
           )}
 
-          {focus.id === "ollama" ? (
+          {focus.kind === "local" ? (
             <OllamaModelTable models={focus.models}
                               progress={progress}
                               pullQueue={pullQueue}
@@ -460,9 +460,9 @@ function AddProviderModal({ D, onAdd, onClose }) {
                      borderRadius: 8, width: 420,
                      boxShadow: '0 16px 40px rgba(0,0,0,.18)'
 }} className="p-5" >
-        <div className="display mb-1" style={{ fontSize: 15 }}>Add provider</div>
+        <div className="display mb-1" style={{ fontSize: 15 }}>Add router</div>
         <div style={{ fontSize: 13, color: 'var(--ink-3)' }} className="mb-4" >
-          Pick a provider; paste a key on the next step.
+          Pick a router; paste a key on the next step.
         </div>
         <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
           {D.addable.map(p => (

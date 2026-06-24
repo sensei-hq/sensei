@@ -7,13 +7,13 @@
 
 const { useState: iaS } = React;
 
-function InappFrame({ label, title, children }) {
+function InappFrame({ label, title, children, embedded }) {
   return (
     <div className="sensei" data-screen-label={label} style={{
       width: "100%", height: "100%", display: "flex", flexDirection: "column",
       background: "var(--paper)", overflow: "hidden",
     }}>
-      <TauriChrome title={title} />
+      {!embedded && <TauriChrome title={title} />}
       <div style={{ flex: 1, minHeight: 0, overflow: "auto", display: "flex", flexDirection: "column" }}>
         {children}
       </div>
@@ -39,7 +39,7 @@ function IaHead({ kanji, eyebrow, title, sub, right }) {
 const btnPrimary = { background: "var(--ink)", color: "var(--paper)", border: "none", borderRadius: 8,
   padding: "10px 18px", fontSize: 13, fontWeight: 500, cursor: "pointer", fontFamily: "inherit",
   display: "inline-flex", alignItems: "center", gap: 8 };
-const btnGhost = { background: "var(--paper-2)", color: "var(--ink-2)", border: "var(--hairline)", borderRadius: 8,
+const btnGhost = { background: "var(--paper-3)", color: "var(--ink-2)", border: "none", borderRadius: 8,
   padding: "10px 18px", fontSize: 13, cursor: "pointer", fontFamily: "inherit" };
 
 /* ─── 1 · Bootstrap — join your org ──────────────────────── */
@@ -89,7 +89,7 @@ function InappJoin({ onContinue }) {
 }
 
 /* ─── 2 · Preferences — Connection pane ──────────────────── */
-function InappConnection() {
+function InappConnection({ embedded }) {
   const memberships = [
     { k: "社", name: "Acme Corp", kind: "employer", scopes: "all your repos", on: true },
     { k: "客", name: "Globex", kind: "client", scopes: "lumen-auth · billing", on: true },
@@ -98,7 +98,7 @@ function InappConnection() {
     { k: "己", name: "Personal", kind: "personal", scopes: "side projects", on: true },
   ];
   return (
-    <InappFrame label="Preferences · Connection" title="Sensei  先生  ·  preferences">
+    <InappFrame label="Preferences · Connection" title="Sensei  先生  ·  preferences" embedded={embedded}>
       <IaHead kanji="鍵" eyebrow="Preferences · connection" title="Connections"
         sub="Pair with a company-hosted Dōjō, authenticate, and choose which scopes you follow. You can belong to several at once."
         right={<button style={btnGhost}>+ Add connection</button>} />
@@ -146,9 +146,9 @@ function InappConnection() {
                 <div className="mono" style={{ fontSize: 11, color: "var(--ink-3)", marginTop: 3 }}>following · {m.scopes}</div>
               </div>
               <button className="mono" style={{ fontSize: 11, color: "var(--accent)", background: "none", border: "none", cursor: "pointer" }}>scopes ▾</button>
-              <span style={{ width: 38, height: 22, borderRadius: 20, background: m.on ? "var(--ink)" : "var(--paper-3)",
+              <span style={{ width: 36, height: 20, borderRadius: 20, background: m.on ? "var(--ink)" : "var(--paper-3)",
                             position: "relative", display: "inline-block", transition: "background .15s" }}>
-                <span style={{ position: "absolute", top: 2, left: m.on ? 18 : 2, width: 18, height: 18, borderRadius: "50%", background: "var(--paper)", transition: "left .15s" }} />
+                <span style={{ position: "absolute", top: 2, left: m.on ? 18 : 2, width: 16, height: 16, borderRadius: "50%", background: "var(--paper)", transition: "left .15s" }} />
               </span>
             </div>
           ))}
@@ -217,7 +217,7 @@ function InappBind() {
 }
 
 /* ─── 4 · Project — ready to share lane ──────────────────── */
-function InappShare() {
+function InappShare({ embedded }) {
   const items = [
     { k: "守", title: "Validate webhook signatures before parsing", type: "Guard", origin: "client", scope: "Client · Acme", attrib: "dereferenced", on: true, conf: 0.91 },
     { k: "問", title: "Integration-test persona for auth flows", type: "Prompt", origin: "employer", scope: "Stack · React", attrib: "Aiko N.", on: true, conf: 0.84 },
@@ -225,7 +225,7 @@ function InappShare() {
   ];
   const forming = { k: "芽", title: "Local fix for the staging seed script", reason: "too project-specific · hasn't generalised", conf: 0.41 };
   return (
-    <InappFrame label="Project · ready to share" title="Sensei  先生  ·  lumen-auth · memories">
+    <InappFrame label="Project · ready to share" title="Sensei  先生  ·  lumen-auth · memories" embedded={embedded}>
       <IaHead kanji="共" eyebrow="lumen-auth · memories" title="Ready to share"
         sub="Lessons generalised cleanly enough to leave this project. Pick a scope; attribution and dereferencing are applied automatically by origin."
         right={<button style={btnPrimary}><span className="kanji" style={{ fontSize: 13, color: "var(--accent)" }}>共</span> Share 2 to Dōjō</button>} />
@@ -435,8 +435,8 @@ function InappCollective() {
 }
 
 /* ─── 6 · Today / Upgrades — from your Dōjō ──────────────── */
-function InappDownstream() {
-  const iconBtn = { background: "var(--paper)", border: "var(--hairline)", borderRadius: 7, padding: "8px 9px", cursor: "pointer", fontFamily: "var(--font-kanji)", fontSize: 13, color: "var(--ink-3)", lineHeight: 1 };
+function InappDownstream({ embedded }) {
+  const iconBtn = { background: "var(--paper-3)", border: "none", borderRadius: 7, padding: "8px 9px", cursor: "pointer", fontFamily: "var(--font-kanji)", fontSize: 13, color: "var(--ink-3)", lineHeight: 1 };
   const dojo = [
     { k: "守", title: "Never log refresh tokens, even at debug", scope: "Company", by: "approved by Keiko T.", impact: "+ prevents a known leak class", sup: true },
     { k: "紋", title: "Idempotency key on money-moving mutations", scope: "Team · Payments", by: "approved by Marco D.", impact: "+ matches 6 of your repos" },
@@ -445,7 +445,7 @@ function InappDownstream() {
     { k: "技", title: "Skill: explain a slow query plan", scope: "Postgres" },
   ];
   return (
-    <InappFrame label="Upgrades · from your Dōjō" title="Sensei  先生  ·  upgrades">
+    <InappFrame label="Upgrades · from your Dōjō" title="Sensei  先生  ·  upgrades" embedded={embedded}>
       <IaHead kanji="贈" eyebrow="upgrades" title="What's arrived for you"
         sub="Approved practice from your Dōjō lands here first — attributed and scoped to where you work — kept distinct from the public Collective. Mute or pin any scope; when rules conflict, the more specific scope wins." />
       <div style={{ flex: 1, overflow: "auto", padding: 32 }}>

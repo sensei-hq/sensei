@@ -84,7 +84,7 @@ function MockSidebar({ active = "home" }) {
                     display: 'flex', flexDirection: 'column', overflow: 'hidden' }} className="py-4 px-2 gap-2" >
       <div style={{ display: 'flex', alignItems: 'center' }} className="gap-2 px-1 mb-1" >
         <span style={{ display: 'inline-block', width: 18, height: 18, background: 'var(--accent)',
-                       WebkitMaskImage: 'url(site/sensei-logo.svg)', maskImage: 'url(site/sensei-logo.svg)',
+                       WebkitMaskImage: 'url(uploads/sensei.svg?v=2)', maskImage: 'url(uploads/sensei.svg?v=2)',
                        WebkitMaskSize: 'contain', maskSize: 'contain', WebkitMaskRepeat: 'no-repeat', maskRepeat: 'no-repeat',
                        WebkitMaskPosition: 'center', maskPosition: 'center', flexShrink: 0 }} />
         <span className="display" style={{ fontSize: 14, lineHeight: 1 }}>Sensei</span>

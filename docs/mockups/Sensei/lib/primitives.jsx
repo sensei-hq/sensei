@@ -322,10 +322,29 @@ const PAGES = [
   { id: "onboarding",   label: "Setup",        kanji: "初" },
 ];
 
+// ─── Wordmark / Brand lockup ─────────────────────────────────
+// The single source of truth for the Sensei mark + wordmark. Change the
+// logo or wordmark here and every surface updates. The mark (uploads/sensei.svg?v=2)
+// uses currentColor (tintable if inlined) and carries the brand vermillion as
+// its own default color, so it renders correctly as a plain <img> here.
+function Wordmark({ size = 22, textSize, gap = 9, color, showText = true }) {
+  const ts = textSize || (size <= 18 ? 13 : size >= 28 ? 22 : 17);
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap }}>
+      <img src="uploads/sensei.svg?v=2" alt="Sensei" width={size} height={size}
+           style={{ display: 'block', flexShrink: 0 }}/>
+      {showText && (
+        <span className="display" style={{ fontSize: ts, fontWeight: 400,
+                       letterSpacing: '-0.01em', color }}>Sensei</span>
+      )}
+    </span>
+  );
+}
+
 Object.assign(window, {
   Sparkline, EnsoRing, BarRow, TauriChrome, Avatar, EventGlyph,
   KANJI, PAGES, pct, signedPct,
   // Zen-Sumi primitives
   Eyebrow, Kanji, KanjiHeader, SectionLabel, StatusDot, KANJI_SIZE,
-  ScreenHeader, ScreenShell,
+  ScreenHeader, ScreenShell, Wordmark,
 });
