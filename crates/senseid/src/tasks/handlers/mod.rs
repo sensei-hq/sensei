@@ -12,6 +12,7 @@ mod community;
 mod verdicts;
 mod analyze;
 mod generate;
+mod consolidate;
 mod prompt_classify;
 pub(crate) mod helpers;
 
