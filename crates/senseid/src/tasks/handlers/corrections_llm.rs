@@ -164,7 +164,7 @@ mod tests {
         assert!(msg.contains(&id.to_string()));
         let long = "x".repeat(500);
         let msg = build_user_message(&[&long], &[]);
-        // 300 snippet chars + 1 'x' in "Existing memories: (none)"
+        // 300 snippet chars + 1 'x' from "Existing" in the memories header
         assert_eq!(msg.matches('x').count(), 301, "prompt bounded to 300 chars");
         assert!(msg.contains("(none)"));
     }

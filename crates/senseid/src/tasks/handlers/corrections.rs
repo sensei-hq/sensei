@@ -90,6 +90,10 @@ async fn embed_items(ctx: &TaskContext, items: &[CorrItem]) -> Option<Vec<Vec<f3
             Ok(Ok(resp)) => {
                 let embs = resp.embeddings.unwrap_or_default();
                 if embs.len() != chunk.len() {
+                    tracing::warn!(
+                        got = embs.len(), expected = chunk.len(),
+                        "aggregate_corrections: embedding count mismatch — lexical fallback"
+                    );
                     return None;
                 }
                 if embs.iter().any(|e| e.len() != EMBED_DIM) {
@@ -98,7 +102,14 @@ async fn embed_items(ctx: &TaskContext, items: &[CorrItem]) -> Option<Vec<Vec<f3
                 }
                 out.extend(embs);
             }
-            _ => return None,
+            Ok(Err(e)) => {
+                tracing::warn!(error = %e, "aggregate_corrections: embed gateway error — lexical fallback");
+                return None;
+            }
+            Err(_) => {
+                tracing::warn!("aggregate_corrections: embed timed out — lexical fallback");
+                return None;
+            }
         }
     }
     Some(out)
@@ -155,7 +166,13 @@ pub async fn aggregate_corrections(ctx: &TaskContext, _task: &Task) -> Result<u3
     };
 
     // 4. Per-cluster summary (graceful), only for clusters that will surface.
-    let memories = ctx.pg().get_learned_memories_for_matching().await.unwrap_or_default();
+    let memories = match ctx.pg().get_learned_memories_for_matching().await {
+        Ok(m) => m,
+        Err(e) => {
+            tracing::warn!(error = %e, "aggregate_corrections: could not load memories — memory_id will be null");
+            Vec::new()
+        }
+    };
     let mut summaries: Vec<Option<ClusterSummary>> = Vec::with_capacity(clusters.len());
     for c in &clusters {
         if c.count < CORRECTION_CLUSTER_MIN {
