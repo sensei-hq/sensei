@@ -10,6 +10,7 @@ create table if not exists recommendations (
 , why                      text                      not null
 , impact                   text
 , evidence                 jsonb                     not null default '[]'
+, based_on                 jsonb                     not null default '{}'
 , action_type              text                      not null
 , action_detail            jsonb                     not null default '{}'
 , prompt                   text
@@ -65,9 +66,11 @@ comment on column recommendations.why
 comment on column recommendations.impact
      is 'Projected impact (e.g. "Projected FTR +14%").';
 comment on column recommendations.evidence
-     is 'JSON array: [{session_id, file, description}] — what triggered this.';
+     is 'JSON array: [{session_id, file, description}] — the raw activity that triggered this.';
+comment on column recommendations.based_on
+     is 'Provenance links to the derived artifacts this recommendation was built from: {patterns:[id], memories:[id], corrections:[ref]}. Distinct from `evidence` (raw session/file activity) — `based_on` points at the L1/L2 outputs the generator reasoned over.';
 comment on column recommendations.action_type
-     is 'What to do: create_persona, promote_pattern, enable_skill, fix_anti_pattern, audit_stale, revise_rule.';
+     is 'What to do (free text; the generator enforces the canonical set): promote_pattern, create_agent, write_skill, archive_memory, enrich_memory, cross_project, revise_rule, audit_stale.';
 comment on column recommendations.action_detail
      is 'Specifics: {persona_name, pattern_id, skill_id, cwd, ...}.';
 comment on column recommendations.prompt
