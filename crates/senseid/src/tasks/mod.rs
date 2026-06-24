@@ -292,6 +292,8 @@ mod tests {
             TaskKind::BranchSwitch, TaskKind::BuildConnections, TaskKind::ReconcileConnections,
             TaskKind::EmbedNodes, TaskKind::IndexLibrary, TaskKind::IndexLibraryPage,
             TaskKind::DetectCommunities, TaskKind::ExtractDeps, TaskKind::MeasureVerdicts,
+            TaskKind::ReconcileIdentity, TaskKind::AnalyzeProject, TaskKind::BackfillTranscripts,
+            TaskKind::BackfillTranscriptFile, TaskKind::AggregateCorrections,
         ] {
             assert!(k.watchdog_timeout().as_secs() > 0, "{k} must have a positive cap");
         }
