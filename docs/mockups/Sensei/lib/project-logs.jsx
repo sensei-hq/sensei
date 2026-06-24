@@ -430,16 +430,16 @@ function PLogIssueModal({ session, project, onClose }) {
             <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-2" >
               <button onClick={() => alert('Opens github.com/sensei-hq/app/issues/new')}
                       style={{
- width: '100%', borderRadius: 6,
-                                fontSize: 13, fontWeight: 500, border: 'none', cursor: 'pointer',
+ width: '100%', borderRadius: 5,
+                                fontSize: 13, letterSpacing: '0.04em', border: 'none', cursor: 'pointer',
                                 background: 'var(--ink)', color: 'var(--paper)'
 }} className="py-2 px-4" >
                 Submit to GitHub ↗
               </button>
               <button onClick={copy}
                       style={{
- width: '100%', borderRadius: 6,
-                                fontSize: 13, fontWeight: 500, cursor: 'pointer',
+ width: '100%', borderRadius: 5,
+                                fontSize: 13, letterSpacing: '0.04em', cursor: 'pointer',
                                 background: 'transparent', border: 'var(--hairline)',
                                 color: copied ? 'var(--success)' : 'var(--ink-2)',
                                 transition: 'color 0.2s'
@@ -525,10 +525,9 @@ function ProjLogs({ project, scope = "project" }) {
                   <button key={f.id} onClick={() => setModuleFilter(f.id)}
                           style={{
  borderRadius: 4, cursor: 'pointer',
-                                    border: 'var(--hairline)', fontSize: 11,
-                                    background: on ? 'var(--ink)' : 'transparent',
-                                    color: on ? 'var(--paper)' : 'var(--ink-2)',
-                                    borderColor: on ? 'var(--ink)' : undefined
+                                    border: 'none', fontSize: 11,
+                                    background: on ? 'var(--ink)' : 'var(--paper-3)',
+                                    color: on ? 'var(--paper)' : 'var(--ink-2)'
 }} className="py-1 px-2" >
                     {f.label}
                   </button>
@@ -694,11 +693,11 @@ function ProjLogs({ project, scope = "project" }) {
             </div>
             <button onClick={() => setShowReport(true)}
                     style={{
- flexShrink: 0, borderRadius: 6,
+ flexShrink: 0, borderRadius: 5,
                               border: 'none', cursor: 'pointer',
                               background: 'var(--ink)', color: 'var(--paper)',
-                              fontSize: 13, fontWeight: 500
-}} className="py-2 px-4" >
+                              fontSize: 13, letterSpacing: '0.04em'
+}} className="py-1 px-3" >
               Report this session ↗
             </button>
           </div>
