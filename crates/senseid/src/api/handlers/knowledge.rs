@@ -337,7 +337,11 @@ pub(crate) async fn consolidate_rules(
     let prompt = crate::governance::build_merge_prompt(&set);
     let request = InferenceRequest {
         capability: Capability::TextChat,
-        model: None, router: None, chain: None,
+        model: None, router: None,
+        // Governance Tier-2 consolidation is heavy synthesis — pin the seed
+        // `reasoning` chain (embedded → ollama → cloud) rather than relying on
+        // non-deterministic capability resolution across the text chains (#76).
+        chain: Some("reasoning".into()),
         payload: Payload::Chat {
             messages: vec![Message::text(MessageRole::User, prompt)],
             system: Some("You merge governance rules into a single clean markdown ruleset.".to_string()),
