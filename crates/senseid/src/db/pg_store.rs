@@ -4249,9 +4249,22 @@ mod tests {
         assert_eq!(found["count"], 4);
         assert_eq!(found["text"], "Use $state for reactive locals");
 
-        // prune everything except a non-existent signature → our row is deleted
-        let pruned = s.delete_corrections_not_in(&["corr-nope".to_string()]).await.unwrap();
-        assert!(pruned >= 1);
+        // prune keeping our signature → the row survives.
+        s.delete_corrections_not_in(&[sig.clone()]).await.unwrap();
+        let kept = s.list_corrections().await.unwrap();
+        assert!(
+            kept["corrections"].as_array().unwrap().iter().any(|c| c["id"] == id1.to_string()),
+            "a kept signature survives the prune"
+        );
+
+        // prune excluding our signature → the row is deleted (also leaves the
+        // test DB clean — this clears the derived corrections table).
+        s.delete_corrections_not_in(&["corr-nope".to_string()]).await.unwrap();
+        let after = s.list_corrections().await.unwrap();
+        assert!(
+            !after["corrections"].as_array().unwrap().iter().any(|c| c["id"] == id1.to_string()),
+            "a signature not in the keep set is pruned"
+        );
     }
 
     // ── Libraries tests ──────────────────────────────────────────────
