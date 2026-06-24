@@ -2485,6 +2485,19 @@ impl PgStore {
         Ok(())
     }
 
+    /// Inputs for the L3 maturity signal (#71): `(enriched_session_count,
+    /// has_insights)`. `has_insights` is true once the analyzer has produced any
+    /// recommendation or learned memory for the project.
+    pub async fn get_project_maturity_inputs(&self, project_id: &uuid::Uuid) -> Result<(i64, bool), String> {
+        let row: (i64, bool) = sqlx_core::query_as::query_as(
+            "SELECT
+               (SELECT count(*) FROM activity.sessions WHERE project_id = $1 AND analyzed_at IS NOT NULL),
+               (EXISTS(SELECT 1 FROM inference.recommendations WHERE project_id = $1)
+                OR EXISTS(SELECT 1 FROM sensei.memories WHERE project_id = $1 AND origin = 'learned'))"
+        ).bind(project_id).fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row)
+    }
+
     /// True if a learned memory already sources `source_id` (a detected-pattern
     /// id). The L2 generator's idempotency guard for memories.
     pub async fn memory_exists_with_source(&self, source_id: &uuid::Uuid) -> Result<bool, String> {

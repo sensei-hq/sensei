@@ -494,6 +494,29 @@ pub(crate) async fn project_quality_signals(
     Ok(Json(data))
 }
 
+/// GET /api/projects/{id}/maturity — the derived early/mature signal (#71)
+/// plus watched/target progress. Not the stored `projects.maturity` lifecycle
+/// enum; computed on read from enriched-session count + insight presence.
+pub(crate) async fn project_maturity(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let project_id = uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let (watched, has_insights) = state
+        .pg
+        .get_project_maturity_inputs(&project_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let sig =
+        crate::maturity::maturity_signal(watched, has_insights, crate::maturity::MATURITY_TARGET);
+    Ok(Json(serde_json::json!({
+        "stage": sig.stage,
+        "watched": sig.watched,
+        "target": sig.target,
+        "hasInsights": sig.has_insights,
+    })))
+}
+
 /// GET /api/observatory/tool-usage — tool usage across all sessions
 pub(crate) async fn tool_usage(
     State(state): State<AppState>,
