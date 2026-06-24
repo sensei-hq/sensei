@@ -1196,6 +1196,37 @@ impl PgStore {
         }).collect())
     }
 
+    /// Insert a recommendation with provenance (#69 L2 generator). `based_on`
+    /// links the L1/L2 artifacts reasoned over (`{patterns,memories,corrections}`),
+    /// distinct from raw session/file `evidence`. Used for idempotency.
+    pub async fn create_recommendation_full(
+        &self, project_id: &uuid::Uuid, title: &str, why: &str, impact: Option<&str>,
+        action_type: &str, urgency: &str, based_on: &serde_json::Value,
+    ) -> Result<uuid::Uuid, String> {
+        let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO inference.recommendations(project_id, title, why, impact, action_type, urgency, based_on)
+             VALUES($1, $2, $3, $4, $5, $6::sensei.recommendation_urgency, $7::jsonb) RETURNING id"
+        ).bind(project_id).bind(title).bind(why).bind(impact).bind(action_type).bind(urgency)
+            .bind(based_on.to_string())
+            .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.0)
+    }
+
+    /// True if any recommendation for `project_id` already cites `pattern_id` in
+    /// `based_on.patterns`. The L2 generator's idempotency guard.
+    pub async fn recommendation_exists_for_pattern(
+        &self, project_id: &uuid::Uuid, pattern_id: &uuid::Uuid,
+    ) -> Result<bool, String> {
+        let row: (bool,) = sqlx_core::query_as::query_as(
+            "SELECT EXISTS(
+               SELECT 1 FROM inference.recommendations
+                WHERE project_id = $1 AND based_on->'patterns' @> to_jsonb($2::text)
+             )"
+        ).bind(project_id).bind(pattern_id.to_string())
+            .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.0)
+    }
+
     // ── Communities (inference) ───────────────────────────────────────
 
     pub async fn upsert_community(&self, folder_id: &uuid::Uuid, community_id: i32, label: &str, node_count: i32) -> Result<uuid::Uuid, String> {
@@ -1420,6 +1451,32 @@ impl PgStore {
                 "modified_at": modified.to_rfc3339(),
             })
         }).collect())
+    }
+
+    /// Read a project's detected patterns for the L2 generator: `(id, folder_id,
+    /// folder_label, name, is_anti_pattern, instance_count, instances_json_text)`.
+    /// `instances` is returned as text (parsed by the caller) to avoid a sqlx
+    /// json-feature dependency.
+    ///
+    /// Attribution matches L1 (`derive_signals`): patterns belong to a project
+    /// via the **folders that have sessions for that project** (`sessions.project_id`),
+    /// not `folders.project_id` — the two can diverge, and L1 keys off the
+    /// session path, so the generator must read the same set.
+    pub async fn get_patterns_for_generation(
+        &self, project_id: &uuid::Uuid,
+    ) -> Result<Vec<(uuid::Uuid, uuid::Uuid, String, String, bool, i32, String)>, String> {
+        let rows: Vec<(uuid::Uuid, uuid::Uuid, String, String, bool, i32, String)> =
+            sqlx_core::query_as::query_as(
+                "SELECT dp.id, dp.folder_id, COALESCE(f.name, ''), dp.name, dp.is_anti_pattern, dp.instance_count, dp.instances::text
+                   FROM inference.detected_patterns dp
+                   JOIN sensei.folders f ON f.id = dp.folder_id
+                  WHERE dp.folder_id IN (
+                          SELECT DISTINCT folder_id FROM activity.sessions
+                           WHERE project_id = $1 AND folder_id IS NOT NULL
+                        )
+                  ORDER BY dp.instance_count DESC"
+            ).bind(project_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows)
     }
 
     // ── Libraries ────────────────────────────────────────────────────
@@ -2416,6 +2473,25 @@ impl PgStore {
             .bind(m.namespace_id).bind(&m.enforcement).bind(&m.origin).bind(m.source_id)
             .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(id.0)
+    }
+
+    /// Set the learnings-anatomy `category` on a memory (correctness/convention/
+    /// pattern/preference). Separate from `insert_memory` so the existing
+    /// callers (API, federation) need no change (#69).
+    pub async fn set_memory_category(&self, id: &uuid::Uuid, category: &str) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE sensei.memories SET category = $2::sensei.memory_category WHERE id = $1"
+        ).bind(id).bind(category).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// True if a learned memory already sources `source_id` (a detected-pattern
+    /// id). The L2 generator's idempotency guard for memories.
+    pub async fn memory_exists_with_source(&self, source_id: &uuid::Uuid) -> Result<bool, String> {
+        let row: (bool,) = sqlx_core::query_as::query_as(
+            "SELECT EXISTS(SELECT 1 FROM sensei.memories WHERE source_id = $1 AND origin = 'learned')"
+        ).bind(source_id).fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.0)
     }
 
     /// Promote a proven memory to a higher (broader) scope: copy it as a

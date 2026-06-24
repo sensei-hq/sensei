@@ -11,6 +11,7 @@ mod libraries;
 mod community;
 mod verdicts;
 mod analyze;
+mod generate;
 mod prompt_classify;
 pub(crate) mod helpers;
 
