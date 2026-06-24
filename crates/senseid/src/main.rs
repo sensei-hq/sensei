@@ -20,6 +20,7 @@ pub mod gateway_routers;
 pub mod model_provision;
 pub mod maturity;
 pub mod pattern_effectiveness;
+pub mod corrections;
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
