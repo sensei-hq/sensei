@@ -1,12 +1,12 @@
-{"chain_name":"embed","router_name":"llama-cpp-embed","model_full_name":"all-minilm-l6-v2","sequence_order":1,"modified_at":"2026-06-23"}
+{"chain_name":"embed","router_name":"embedded-llama","model_full_name":"all-minilm-l6-v2","sequence_order":1,"modified_at":"2026-06-24"}
 {"chain_name":"embed","router_name":"ollama","model_full_name":"all-minilm-l6-v2","sequence_order":2,"modified_at":"2026-06-23"}
-{"chain_name":"classify","router_name":"llama-cpp-chat","model_full_name":"gemma2:2b","sequence_order":1,"modified_at":"2026-06-23"}
+{"chain_name":"classify","router_name":"embedded-llama","model_full_name":"gemma2:2b","sequence_order":1,"modified_at":"2026-06-24"}
 {"chain_name":"classify","router_name":"ollama","model_full_name":"gemma3:12b","sequence_order":2,"modified_at":"2026-06-23"}
 {"chain_name":"classify","router_name":"ollama","model_full_name":"qwen3:8b","sequence_order":3,"modified_at":"2026-06-23"}
 {"chain_name":"classify","router_name":"anthropic","model_full_name":"claude-haiku-4-5","sequence_order":4,"modified_at":"2026-06-23"}
 {"chain_name":"classify","router_name":"openai","model_full_name":"gpt-4o-mini","sequence_order":5,"modified_at":"2026-06-23"}
 {"chain_name":"classify","router_name":"nvidia","model_full_name":"llama-3.1-70b-instruct","sequence_order":6,"modified_at":"2026-06-23"}
-{"chain_name":"summarize","router_name":"llama-cpp-chat","model_full_name":"gemma2:2b","sequence_order":1,"modified_at":"2026-06-23"}
+{"chain_name":"summarize","router_name":"embedded-llama","model_full_name":"gemma2:2b","sequence_order":1,"modified_at":"2026-06-24"}
 {"chain_name":"summarize","router_name":"ollama","model_full_name":"gemma3:27b","sequence_order":2,"modified_at":"2026-06-23"}
 {"chain_name":"summarize","router_name":"ollama","model_full_name":"gemma3:12b","sequence_order":3,"modified_at":"2026-06-23"}
 {"chain_name":"summarize","router_name":"anthropic","model_full_name":"claude-haiku-4-5","sequence_order":4,"modified_at":"2026-06-23"}
