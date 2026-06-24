@@ -52,6 +52,9 @@ pub enum TaskKind {
     /// Ingest one transcript file into activity.transcript_turns (resumable,
     /// per-file cursor). folder_path = capture source, path = file (#73).
     BackfillTranscriptFile,
+    /// Global: cluster recurring corrective prompts across all projects into
+    /// inference.corrections (analyzer #65 step 5). Enqueued once per scheduler tick.
+    AggregateCorrections,
 }
 
 impl std::fmt::Display for TaskKind {
@@ -79,6 +82,7 @@ impl std::fmt::Display for TaskKind {
             Self::AnalyzeProject => write!(f, "analyze_project"),
             Self::BackfillTranscripts => write!(f, "backfill_transcripts"),
             Self::BackfillTranscriptFile => write!(f, "backfill_transcript_file"),
+            Self::AggregateCorrections => write!(f, "aggregate_corrections"),
         }
     }
 }
@@ -119,7 +123,8 @@ impl TaskKind {
             | TaskKind::IndexLibrary
             | TaskKind::IndexLibraryPage
             | TaskKind::DetectCommunities
-            | TaskKind::AnalyzeProject => Duration::from_secs(600),
+            | TaskKind::AnalyzeProject
+            | TaskKind::AggregateCorrections => Duration::from_secs(600),
         }
     }
 }
