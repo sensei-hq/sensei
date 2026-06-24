@@ -358,11 +358,20 @@ pub async fn analyze_project(ctx: &TaskContext, task: &Task) -> Result<u32, Stri
         }
     }
     tracing::info!("analyze_project: {} — enriched {} sessions", project_id, enriched);
-    // L1: derive signals (anti-patterns) once the project's sessions are fresh.
+    // L1: derive signals (detected_patterns) when the project's sessions are
+    // fresh — needs new activity to recompute.
     if enriched > 0
         && let Err(e) = derive_signals(ctx, &project_id).await
     {
         tracing::warn!(error = %e, project = %project_id, "analyze_project: derive_signals failed");
+    }
+    // L2: generate recommendations + learned memories from whatever patterns
+    // exist (#69). Runs every analysis pass, not just when sessions were
+    // enriched — it's idempotent (skips patterns that already produced an
+    // artifact), so existing patterns still surface after a fresh deploy.
+    // Degrades independently — a failure here is logged, not fatal.
+    if let Err(e) = super::generate::generate_for_project(ctx, &project_id).await {
+        tracing::warn!(error = %e, project = %project_id, "analyze_project: generate failed");
     }
     Ok(enriched)
 }
