@@ -67,9 +67,18 @@ async fn run(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
         ticker.tick().await;
         match pg.get_projects_with_session_activity().await {
             Ok(activity) => {
-                for pid in projects_due(&activity, &mut watermark) {
+                let due = projects_due(&activity, &mut watermark);
+                let any_due = !due.is_empty();
+                for pid in due {
                     queue
                         .enqueue(Task::new(TaskKind::AnalyzeProject, "", &pid.to_string()))
+                        .await;
+                }
+                // Corrections cluster globally across projects, so derive once per
+                // tick after the per-project analyses — only when something changed.
+                if any_due {
+                    queue
+                        .enqueue(Task::new(TaskKind::AggregateCorrections, "", ""))
                         .await;
                 }
             }
