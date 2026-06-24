@@ -1485,7 +1485,7 @@ impl PgStore {
                           SELECT DISTINCT folder_id FROM activity.sessions
                            WHERE project_id = $1 AND folder_id IS NOT NULL
                         )
-                  ORDER BY dp.instance_count DESC"
+                  ORDER BY dp.instance_count DESC, dp.id"
             ).bind(project_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(rows)
     }
