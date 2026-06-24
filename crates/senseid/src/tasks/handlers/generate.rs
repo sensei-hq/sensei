@@ -20,6 +20,9 @@ use crate::tasks::executor::TaskContext;
 const TITLE_MAX: usize = 72;
 /// Correction count at/above which the recommendation is high-urgency.
 const CORRECTION_HIGH_URGENCY: i32 = 4;
+/// Single-session re-edits at/above which a churn hotspot earns a recommendation.
+/// L1 detects churn from 5 re-edits (for the UI); only the severe ones get a rec.
+const REWORK_REC_MIN_EDITS: i64 = 8;
 
 /// A detected-pattern row as the generator sees it. `folder_label` is the
 /// folder's human name/path (for titles); `instances` is the jsonb evidence
@@ -120,6 +123,17 @@ fn rework_file(name: &str) -> Option<&str> {
     name.strip_prefix("rework: ").map(str::trim)
 }
 
+/// Max single-session re-edits recorded on a churn pattern's instances
+/// (L1 writes `[{file, max_session_edits, total_edits}]`). 0 if absent.
+fn rework_max_edits(instances: &serde_json::Value) -> i64 {
+    instances
+        .as_array()
+        .and_then(|a| a.first())
+        .and_then(|i| i.get("max_session_edits"))
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0)
+}
+
 /// Heuristic L2 mapping: detected patterns → recommendations + learned
 /// memories. Pure + deterministic. A pattern that doesn't map to anything
 /// (unknown name, empty rule-candidate) produces nothing.
@@ -179,8 +193,14 @@ pub(crate) fn plan_artifacts(patterns: &[PatternRow]) -> Vec<Planned> {
                     urgency: urgency.to_string(),
                 });
             }
-            // Re-edit churn (file-scoped): high rework → audit the hotspot.
+            // Re-edit churn (file-scoped): recommend an audit only for SEVERE
+            // hotspots. L1 flags churn at >= CHURN_MIN_EDITS (5) re-edits so the
+            // UI can show every hot file, but a recommendation per ≥5-edit file
+            // floods the inbox — only the worst (>= REWORK_REC_MIN_EDITS) earn a rec.
             other if other.starts_with("rework: ") => {
+                if rework_max_edits(&p.instances) < REWORK_REC_MIN_EDITS {
+                    continue;
+                }
                 let file = rework_file(other).unwrap_or(other);
                 out.push(Planned::Recommendation {
                     source_pattern: p.id,
@@ -404,8 +424,9 @@ mod tests {
     }
 
     #[test]
-    fn rework_churn_yields_audit_recommendation() {
-        let planned = plan_artifacts(&[row("rework: src/api/server.rs", true, 7, serde_json::json!([]))]);
+    fn severe_rework_churn_yields_audit_recommendation() {
+        let inst = serde_json::json!([{ "file": "src/api/server.rs", "max_session_edits": 9, "total_edits": 12 }]);
+        let planned = plan_artifacts(&[row("rework: src/api/server.rs", true, 1, inst)]);
         assert_eq!(planned.len(), 1);
         match &planned[0] {
             Planned::Recommendation { action_type, title, .. } => {
@@ -414,6 +435,13 @@ mod tests {
             }
             _ => unreachable!(),
         }
+    }
+
+    #[test]
+    fn marginal_rework_churn_is_skipped() {
+        // Detected as churn (>=5) but below the rec threshold (<8) → no inbox noise.
+        let inst = serde_json::json!([{ "file": "src/x.rs", "max_session_edits": 6, "total_edits": 6 }]);
+        assert!(plan_artifacts(&[row("rework: src/x.rs", true, 1, inst)]).is_empty());
     }
 
     #[test]
