@@ -158,12 +158,12 @@ pub fn cluster(items: &[CorrItem], embeddings: &[Vec<f32>], threshold: f32) -> V
         let mut joined = false;
         if let Some(emb) = embeddings.get(i) {
             for acc in accs.iter_mut() {
-                if let Some(seed_emb) = embeddings.get(acc.seed_idx) {
-                    if cosine(emb, seed_emb) >= threshold {
-                        acc.push(i, item);
-                        joined = true;
-                        break;
-                    }
+                if let Some(seed_emb) = embeddings.get(acc.seed_idx)
+                    && cosine(emb, seed_emb) >= threshold
+                {
+                    acc.push(i, item);
+                    joined = true;
+                    break;
                 }
             }
         }
