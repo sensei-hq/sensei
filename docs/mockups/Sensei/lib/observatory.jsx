@@ -19,6 +19,7 @@ const SUBNAV = {
   memories:    { items: [["memories","Anatomy"],["share-review","Sharing","4"],["consolidation","Consolidate","3"]] },
   impact:      { items: [["impact","Reports","3"],["impact-alert","Regressions","1","danger"]] },
   instruments: { items: [["instruments-playground","Playground"],["instruments-replay","Replay"],["instruments-health","Health"]] },
+  dojo:        { items: [["dojo-connections","Connections"],["dojo-sharing","Sharing"]] },
 };
 function groupKeyOf(section) {
   for (const k in SUBNAV) if (SUBNAV[k].items.some(it => it[0] === section)) return k;
@@ -138,14 +139,14 @@ function ObservatoryDaily({ stateMode = "mature", firstEntry = false, onBack }) 
           {section === "libraries" && <LibrariesVariantA embedded={true}/>}
           {section === "insights" && <LearningsTriage/>}
           {section === "memories" && <LearningsAnatomyV2/>}
-          {section === "upgrades" && <InappDownstream/>}
-          {section === "share-review"  && <InappShare/>}
+          {section === "upgrades" && <InappDownstream embedded={true}/>}
+          {section === "share-review"  && <InappShare embedded={true}/>}
           {section === "consolidation" && <ObsConsolidation/>}
           {section === "traceability" && <ObsTraceability/>}
           {section === "impact"        && <ObsImpact/>}
           {section === "impact-alert"  && <ObsNegativeAlert/>}
-          {section === "collective"    && <InappCollective/>}
-          {section === "connection"    && <InappConnection/>}
+          {section === "dojo-connections" && <InappConnection embedded={true}/>}
+          {section === "dojo-sharing"     && <ObsCollectiveSettings/>}
           {section === "instruments-playground" && <InstrumentsPlaygroundSimple/>}
           {section === "instruments-replay"     && <InstrumentsReplaySimple/>}
           {section === "instruments-health"     && <InstrumentsHealthSimple/>}
@@ -156,8 +157,8 @@ function ObservatoryDaily({ stateMode = "mature", firstEntry = false, onBack }) 
            section !== "insights" && section !== "memories" &&
            section !== "upgrades" && section !== "share-review" && section !== "consolidation" &&
            section !== "traceability" && section !== "impact" && section !== "impact-alert" &&
-           section !== "collective" &&
-           section !== "connection" &&
+           section !== "dojo-connections" &&
+           section !== "dojo-sharing" &&
            section !== "instruments-playground" &&
            section !== "instruments-replay" &&
            section !== "instruments-health" &&
@@ -250,9 +251,8 @@ function ObsSidebar({ section, setSection, activeProjectId, onOpenProject, mode,
                      display: 'flex', flexDirection: 'column',
                      overflow: 'auto'
 }} className="py-5 px-3 gap-4" >
-      <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2 px-1" >
-        <span className="kanji" style={{ fontSize: 22, color: 'var(--accent)' }}>先</span>
-        <span className="display" style={{ fontSize: 17 }}>Sensei</span>
+      <div className="px-1" >
+        <Wordmark size={22}/>
       </div>
 
       <div>
@@ -302,8 +302,8 @@ function ObsSidebar({ section, setSection, activeProjectId, onOpenProject, mode,
           {!focus &&
             <div style={{ borderTop: 'var(--hairline)' }} className="mt-2 pt-2" >
               <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
-                <NavItem id="connection" kanji="鍵" label="Connection"/>
-                <NavItem id="collective" kanji="群" label="Collective intel"/>
+                <NavItem id="dojo-connections" kanji="結" label="Dōjō"
+                         match={["dojo-connections","dojo-sharing"]}/>
                 <NavItem id="configure" kanji="調" label="Preferences"/>
               </div>
             </div>

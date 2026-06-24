@@ -8,7 +8,7 @@ const PROJ_SECTIONS = [
   { id: "graph",     kanji: "構", label: "Graph"     },
   { id: "patterns",  kanji: "紋", label: "Patterns"  },
   { id: "sessions",  kanji: "録", label: "Sessions"  },
-  { id: "settings",  kanji: "設", label: "Settings"  }
+  { id: "settings",  kanji: "識", label: "About"     }
 ];
 
 function renderSection(id, project, openAction) {
@@ -338,7 +338,7 @@ function ProjectSidebarRouted({ project, active, onChange, onSwitchProject }) {
         <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
           {[
             { id: "overview",     kanji: "全", label: "Overview"    },
-            { id: "sessions",     kanji: "刻", label: "Sessions",     badge: "28" },
+            { id: "sessions",     kanji: "録", label: "Sessions",     badge: "28" },
             { id: "memories",     kanji: "覚", label: "Memories",     badge: "11" },
             { id: "traceability", kanji: "巻", label: "Traceability", badge: "4"  },
             { id: "libraries",    kanji: "庫", label: "Libraries",    badge: "5"  },

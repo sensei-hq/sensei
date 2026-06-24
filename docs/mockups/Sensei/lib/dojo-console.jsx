@@ -69,7 +69,7 @@ const DOJO_NAV = [
     { id: "audit",   kanji: "録", label: "Audit trail" },
   ]},
 ];
-const DOJO_BUILT = new Set(["overview", "triage", "members", "clients", "scopes", "audit", "monitor"]);
+const DOJO_BUILT = new Set(["overview", "triage", "knowledge", "members", "clients", "scopes", "audit", "monitor"]);
 
 function DojoTopBar({ org, onSwitch }) {
   const D = window.DOJO;
@@ -105,6 +105,15 @@ function DojoTopBar({ org, onSwitch }) {
         {D.org.members} members
       </span>
       <Avatar name="Keiko" size={28} />
+      <button title="Log out" style={{
+        display: "inline-flex", alignItems: "center", gap: 6,
+        background: "transparent", border: "var(--hairline)", borderRadius: 7,
+        padding: "6px 11px", cursor: "pointer", color: "var(--ink-2)",
+        fontFamily: "inherit", fontSize: 12,
+      }}>
+        <span className="kanji" style={{ fontSize: 12, color: "var(--ink-3)" }}>出</span>
+        Log out
+      </button>
     </div>
   );
 }
@@ -1210,7 +1219,7 @@ function DojoConsole({ initial = "overview", initialCandidate = null }) {
   else if (section === "scopes") screen = <DojoScopes />;
   else if (section === "audit") screen = <DojoAudit />;
   else if (section === "monitor") screen = <DojoMonitor go={go} />;
-  else if (section === "knowledge") screen = <DojoSoon kanji="蔵" label="Knowledge — the published library" />;
+  else if (section === "knowledge") screen = <DojoKnowledge />;
   else screen = <DojoOverview go={go} />;
 
   return (
@@ -1224,6 +1233,102 @@ function DojoConsole({ initial = "overview", initialCandidate = null }) {
   );
 }
 
+function DojoKnowledge() {
+  const active = [
+    { k: "守", title: "Never log refresh tokens, even at debug level", scope: "Company",     used: "142 repos", age: "8mo" },
+    { k: "紋", title: "Idempotency key on money-moving mutations",      scope: "Team · Payments", used: "6 repos", age: "5mo" },
+    { k: "盾", title: "Validate webhook signatures before parsing",     scope: "Stack",        used: "23 repos", age: "3mo" },
+    { k: "理", title: "Public APIs stay backward-compatible two minors", scope: "Company",     used: "31 repos", age: "6mo" },
+  ];
+  const disabled = [
+    { k: "技", title: "Skill: explain a slow query plan",          scope: "Stack · Postgres", reason: "superseded by a newer skill", left: 18 },
+    { k: "問", title: "Persona: integration-test author (auth)",   scope: "Stack · React",    reason: "deprecated — flows changed",  left: 4 },
+  ];
+  const [pruneDays, setPruneDays] = dS("30");
+
+  const HeadCard = ({ children }) => (
+    <div style={{ background: "var(--paper-2)", border: "var(--hairline)", borderRadius: 12, padding: "16px 18px" }}>{children}</div>
+  );
+  const Row = ({ it, tone }) => (
+    <div style={{ display: "grid", gridTemplateColumns: "auto 1fr auto", gap: 13, alignItems: "center",
+                  padding: "13px 16px", borderBottom: "1px solid var(--edge)" }}>
+      <span className="kanji" style={{ fontSize: 17, color: tone || "var(--accent)", width: 20, textAlign: "center" }}>{it.k}</span>
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: 13.5, color: "var(--ink)" }}>{it.title}</div>
+        <div style={{ display: "flex", gap: 8, marginTop: 4, alignItems: "center", flexWrap: "wrap" }}>
+          <span className="mono" style={{ fontSize: 10.5, color: "var(--ink-3)" }}>{it.scope}</span>
+          {it.used && <span className="mono" style={{ fontSize: 10.5, color: "var(--ink-4)" }}>· {it.used}</span>}
+          {it.reason && <span style={{ fontSize: 11, color: "var(--ink-3)" }}>· {it.reason}</span>}
+        </div>
+      </div>
+      {it.age && <span className="mono" style={{ fontSize: 11, color: "var(--ink-4)" }}>{it.age}</span>}
+      {it.left != null && (
+        <span className="mono" style={{ fontSize: 11, color: it.left <= 7 ? "var(--accent)" : "var(--ink-3)" }}>
+          evicted in {it.left}d
+        </span>
+      )}
+    </div>
+  );
+
+  return (
+    <div style={{ height: "100%", overflow: "auto" }}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 16, padding: "22px 28px 18px", borderBottom: "var(--hairline)" }}>
+        <span className="kanji" style={{ fontSize: 38, color: "var(--accent)", lineHeight: 1, flexShrink: 0 }}>蔵</span>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 11, letterSpacing: ".18em", textTransform: "uppercase", color: "var(--ink-3)", marginBottom: 4 }}>Govern · published library</div>
+          <h1 className="display" style={{ fontSize: 23, fontWeight: 400, letterSpacing: "-0.015em", margin: 0, lineHeight: 1.05 }}>Knowledge</h1>
+          <p style={{ fontSize: 13, color: "var(--ink-2)", lineHeight: 1.55, margin: "6px 0 0", maxWidth: 720 }}>
+            The Dōjō holds only active, derived intelligence — guards, patterns, principles, skills and personas. As practice
+            moves on, a maintainer disables what's gone redundant; disabled knowledge is then evicted automatically.
+          </p>
+        </div>
+      </div>
+
+      <div style={{ padding: 28 }}>
+        {/* Lifecycle policy */}
+        <HeadCard>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <span className="kanji" style={{ fontSize: 18, color: "var(--accent)" }}>時</span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 14, color: "var(--ink)" }}>Prune disabled knowledge</div>
+              <div style={{ fontSize: 12, color: "var(--ink-3)", marginTop: 2, lineHeight: 1.5 }}>
+                How long an item stays recoverable after a maintainer disables it. After the window it's evicted from the library for good.
+              </div>
+            </div>
+            <select value={pruneDays} onChange={e => setPruneDays(e.target.value)}
+                    style={{ fontSize: 13, border: "var(--hairline)", borderRadius: 5, background: "var(--paper)",
+                             color: "var(--ink)", cursor: "pointer", fontFamily: "inherit", padding: "6px 10px" }}>
+              <option value="7">7 days</option>
+              <option value="30">30 days · default</option>
+              <option value="90">90 days</option>
+              <option value="never">Never · keep disabled</option>
+            </select>
+          </div>
+        </HeadCard>
+
+        {/* Active */}
+        <div style={{ fontSize: 11, letterSpacing: ".14em", textTransform: "uppercase", color: "var(--ink-3)", fontWeight: 600, margin: "22px 0 10px" }}>
+          Active · {active.length}
+        </div>
+        <div style={{ background: "var(--paper-2)", border: "var(--hairline)", borderRadius: 12, overflow: "hidden" }}>
+          {active.map((it, i) => <Row key={i} it={it}/>)}
+        </div>
+
+        {/* Disabled */}
+        <div style={{ fontSize: 11, letterSpacing: ".14em", textTransform: "uppercase", color: "var(--ink-3)", fontWeight: 600, margin: "22px 0 10px", display: "flex", alignItems: "center", gap: 8 }}>
+          Disabled · pending pruning
+          <span className="mono" style={{ fontSize: 10.5, color: "var(--ink-4)", letterSpacing: 0, textTransform: "none" }}>
+            {pruneDays === "never" ? "retained — pruning off" : `evicting ${pruneDays}d after disable`}
+          </span>
+        </div>
+        <div style={{ background: "var(--paper-2)", border: "var(--hairline)", borderRadius: 12, overflow: "hidden", opacity: 0.92 }}>
+          {disabled.map((it, i) => <Row key={i} it={it} tone="var(--ink-4)"/>)}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 Object.assign(window, {
-  DojoConsole, DojoOverview, DojoTriage, DojoCandidate, DojoMembers, DojoClients, DojoScopes, DojoAudit, DojoMonitor,
+  DojoConsole, DojoOverview, DojoTriage, DojoCandidate, DojoMembers, DojoClients, DojoScopes, DojoAudit, DojoMonitor, DojoKnowledge,
 });

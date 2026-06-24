@@ -151,12 +151,7 @@ function SplashChrome() {
 function SplashWordmark({ size = 'md' }) {
   const k = size === 'lg' ? 32 : size === 'sm' ? 18 : 26;
   const w = size === 'lg' ? 26 : size === 'sm' ? 14 : 20;
-  return (
-    <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
-      <span className="kanji" style={{ fontSize: k, color: 'var(--accent)', lineHeight: 1 }}>先生</span>
-      <span className="display" style={{ fontSize: w, fontWeight: 400, letterSpacing: '-0.01em' }}>Sensei</span>
-    </div>);
-
+  return <Wordmark size={k} textSize={w}/>;
 }
 
 function SplashSpinner({ size = 10, color = 'currentColor' }) {
@@ -535,19 +530,13 @@ function Splash({ state }) {
                 <div style={{
                   position: 'absolute', inset: 0,
                   background: 'var(--ink)',
-                  WebkitMaskImage: 'url(site/sensei-logo.svg)',
-                  maskImage: 'url(site/sensei-logo.svg)',
+                  WebkitMaskImage: 'url(uploads/sensei.svg?v=2)',
+                  maskImage: 'url(uploads/sensei.svg?v=2)',
                   WebkitMaskSize: '62%', maskSize: '62%',
                   WebkitMaskRepeat: 'no-repeat', maskRepeat: 'no-repeat',
                   WebkitMaskPosition: 'center', maskPosition: 'center',
                   opacity: 0.08, pointerEvents: 'none', userSelect: 'none'
                 }} />
-                <div className="kanji" style={{
-                  position: 'absolute', inset: 0,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  color: 'var(--ink)', fontSize: 64, letterSpacing: '-0.04em',
-                  lineHeight: 1, opacity: 0.1, pointerEvents: 'none', userSelect: 'none'
-                }}>先生</div>
               </div>
               }
 
