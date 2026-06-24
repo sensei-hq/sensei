@@ -59,7 +59,9 @@ pub fn normalize(prompt: &str) -> String {
         if ch.is_alphanumeric() {
             s.push(ch);
             prev_space = false;
-        } else if (ch.is_whitespace() || ch.is_ascii_punctuation()) && !prev_space && !s.is_empty() {
+        } else if !prev_space && !s.is_empty() {
+            // any non-alphanumeric run (whitespace, ASCII or Unicode punctuation,
+            // symbols like em-dash/ellipsis/curly quotes) collapses to one space
             s.push(' ');
             prev_space = true;
         }
@@ -146,6 +148,11 @@ impl ClusterAcc {
 /// cluster. Each item joins the first existing cluster whose **seed** embedding is
 /// within `threshold`, else it seeds a new cluster.
 pub fn cluster(items: &[CorrItem], embeddings: &[Vec<f32>], threshold: f32) -> Vec<Cluster> {
+    debug_assert_eq!(
+        items.len(),
+        embeddings.len(),
+        "cluster: embeddings must be parallel to items"
+    );
     let mut accs: Vec<ClusterAcc> = Vec::new();
     for (i, item) in items.iter().enumerate() {
         let mut joined = false;
@@ -272,6 +279,13 @@ mod tests {
         let c = cluster(&items, &embs, 0.82);
         assert_eq!(c.len(), 1);
         assert_eq!(c[0].project_ids.len(), 2, "two distinct projects, deduped");
+    }
+
+    #[test]
+    fn normalize_treats_unicode_symbols_as_word_boundaries() {
+        assert_eq!(super::normalize("fix—this"), "fix this", "em-dash is a boundary, not dropped");
+        assert_eq!(super::normalize("use \u{201c}state\u{201d} now"), "use state now", "curly quotes");
+        assert_eq!(super::normalize("a…b"), "a b", "ellipsis is a boundary");
     }
 
     #[test]
