@@ -10,14 +10,11 @@
 //! with other work (scans, etc.) and one huge/bad file can't block the rest.
 
 pub mod claude;
+pub mod zed;
 
 use crate::tasks::executor::TaskContext;
 use crate::tasks::{Task, TaskKind};
-use std::path::{Path, PathBuf};
-
-/// Skip transcript files larger than this (logged). A multi-hundred-MB file
-/// would spike memory on read and block the executor on parse; rare outlier.
-const MAX_TRANSCRIPT_BYTES: u64 = 64 * 1024 * 1024;
+use std::path::PathBuf;
 
 /// One user-prompt -> assistant-response turn parsed from a transcript.
 #[derive(Debug, Clone, PartialEq)]
@@ -48,22 +45,45 @@ pub struct SynthSession {
     pub events: Vec<SynthEvent>,
 }
 
+/// A logical ingest unit — a transcript file (Claude) or a DB row (Zed) — with a
+/// monotonic change-stamp the cursor uses to skip unchanged units. `key`
+/// uniquely identifies the unit within its source.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UnitRef {
+    pub key: String,
+    pub stamp: i64,
+}
+
 /// A per-source transcript reader. Parsing is pure + deterministic (testable);
-/// the coordinator owns IO + DB so new sources (Zed, ACP) are drop-in.
+/// the coordinator owns the cursor + DB writes. Sources expose their content as
+/// logical *units* (files for Claude, threads-in-a-SQLite-DB for Zed) rather
+/// than assuming a file-per-session layout, so new sources are drop-in.
 pub trait TranscriptAdapter: Send + Sync {
-    /// Capture origin (distinct from the model `family`), e.g. "claude_code".
+    /// Capture origin (distinct from the model `family`), e.g. "claude_code" / "zed".
     fn source(&self) -> &'static str;
-    /// Model family, e.g. "claude".
+    /// Harness/agent family (the `sensei.assistant_family` enum: "claude", "zed", …).
+    /// The precise per-unit model, when known, comes from `model_for`.
     fn family(&self) -> &'static str;
-    /// Transcript files this adapter can ingest.
-    fn transcript_files(&self) -> Vec<PathBuf>;
-    /// Session id for a transcript file (Claude: the filename stem).
-    fn session_id_for(&self, path: &Path) -> Option<String>;
-    /// Parse file content into prose turns.
+    /// Units this adapter can ingest, each with a change-stamp for cursor skipping.
+    fn units(&self) -> Vec<UnitRef>;
+    /// Cheap change-stamp for a unit key (no content read) — the cursor
+    /// pre-check reads this. `None` ⇒ the unit no longer exists.
+    fn stamp_for(&self, key: &str) -> Option<i64>;
+    /// Session id for a unit key (Claude: filename stem; Zed: `zed-<thread_id>`).
+    fn session_id_for(&self, key: &str) -> Option<String>;
+    /// Load a unit's raw content (the expensive read/decompress). `None` ⇒ gone
+    /// or oversized (logged, never panics on bad data).
+    fn load_content(&self, key: &str) -> Option<String>;
+    /// Parse unit content into prose turns.
     fn parse(&self, content: &str) -> Vec<TranscriptTurn>;
     /// Reconstruct a session's event stream for the historical-bootstrap import
     /// (#75). Adapters that can't synthesize return None.
     fn parse_session(&self, _content: &str) -> Option<SynthSession> {
+        None
+    }
+    /// Optional `(provider, model)` captured for a unit's content — Zed records
+    /// it per thread; Claude returns `None`.
+    fn model_for(&self, _content: &str) -> Option<(String, String)> {
         None
     }
 }
@@ -92,72 +112,75 @@ impl IngestOutcome {
     }
 }
 
-fn mtime_ns(path: &Path) -> i64 {
-    std::fs::metadata(path)
-        .and_then(|m| m.modified())
-        .ok()
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| d.as_nanos() as i64)
-        .unwrap_or(0)
-}
-
 fn claude_root() -> PathBuf {
     crate::paths::home().join(".claude/projects")
 }
 
-/// All configured transcript adapters.
-fn adapters() -> Vec<Box<dyn TranscriptAdapter>> {
-    vec![Box::new(claude::ClaudeAdapter::new(claude_root()))]
+fn zed_db_path() -> PathBuf {
+    crate::paths::home().join("Library/Application Support/Zed/threads/threads.db")
 }
 
-/// Resolve an adapter for a capture source (used by the per-file handler — the
-/// root only matters for `transcript_files`, which the per-file path doesn't use).
+/// All configured transcript adapters.
+fn adapters() -> Vec<Box<dyn TranscriptAdapter>> {
+    vec![
+        Box::new(claude::ClaudeAdapter::new(claude_root())),
+        Box::new(zed::ZedAdapter::new(zed_db_path())),
+    ]
+}
+
+/// Resolve an adapter for a capture source (used by the per-unit handler — the
+/// root/db-path only matters for `units`, which the per-unit path doesn't use).
 fn adapter_for_source(source: &str) -> Option<Box<dyn TranscriptAdapter>> {
     match source {
         "claude_code" => Some(Box::new(claude::ClaudeAdapter::new(claude_root()))),
+        "zed" => Some(Box::new(zed::ZedAdapter::new(zed_db_path()))),
         _ => None,
     }
 }
 
-/// Ingest one transcript file: skip if unchanged since last ingest (cursor) or
-/// oversized, else parse + upsert turns + advance the cursor. Idempotent.
+/// Ingest one transcript unit (a file for Claude, a thread row for Zed): skip if
+/// unchanged since last ingest (cursor) or gone/oversized, else parse + upsert
+/// turns + advance the cursor. Idempotent.
 async fn ingest_one(
     pg: &crate::db::pg_store::PgStore,
     adapter: &dyn TranscriptAdapter,
-    path: &Path,
+    key: &str,
 ) -> Result<IngestOutcome, String> {
-    let path_str = path.to_string_lossy().to_string();
-    let mtime = mtime_ns(path);
-    let Some(session_id) = adapter.session_id_for(path) else {
+    let Some(session_id) = adapter.session_id_for(key) else {
         return Ok(IngestOutcome::skipped());
+    };
+    let Some(stamp) = adapter.stamp_for(key) else {
+        return Ok(IngestOutcome::skipped()); // unit gone
     };
     // The cursor gates the expensive PROSE re-ingest; synthesis (#75) gates on
     // whether the session has events yet (so an already-prose-ingested but
-    // never-synthesized historical session still gets imported). Read the file
-    // only if there's something to do.
+    // never-synthesized historical session still gets imported). Load the
+    // content only if there's something to do.
     let prose_fresh = matches!(
-        pg.get_transcript_cursor(adapter.source(), &path_str).await,
-        Ok(Some(prev)) if prev >= mtime
+        pg.get_transcript_cursor(adapter.source(), key).await,
+        Ok(Some(prev)) if prev >= stamp
     );
     let needs_synth = !pg.session_has_events(&session_id).await.unwrap_or(true);
     if prose_fresh && !needs_synth {
         return Ok(IngestOutcome::skipped());
     }
-    // skip pathological oversized transcripts (logged, not silent).
-    let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
-    if size > MAX_TRANSCRIPT_BYTES {
-        tracing::warn!(file = %path_str, size_mb = size / 1_048_576, "transcript ingest: skipping oversized transcript");
+    // Adapter owns the read + its own oversize/format guards (returns None to skip).
+    let Some(content) = adapter.load_content(key) else {
         return Ok(IngestOutcome::skipped());
-    }
-    let content = std::fs::read_to_string(path).map_err(|e| format!("read {path_str}: {e}"))?;
+    };
     // 1. prose turns (#73) — only when stale.
     let mut turns = 0u32;
     if !prose_fresh {
         let parsed = adapter.parse(&content);
+        let model = adapter.model_for(&content);
+        let (provider, model_name) = match &model {
+            Some((p, m)) => (Some(p.as_str()), Some(m.as_str())),
+            None => (None, None),
+        };
         turns = pg
-            .upsert_transcript_turns(adapter.source(), &session_id, adapter.family(), &parsed)
+            .upsert_transcript_turns(adapter.source(), &session_id, adapter.family(), provider, model_name, &parsed)
             .await?;
-        pg.set_transcript_cursor(adapter.source(), &path_str, Some(&session_id), mtime, parsed.len() as i32)
+        pg.set_transcript_cursor(adapter.source(), key, Some(&session_id), stamp, parsed.len() as i32)
             .await?;
     }
     // 2. historical-bootstrap: synthesize the session + events if not already
@@ -239,9 +262,9 @@ pub async fn backfill_all(
 ) -> BackfillReport {
     let mut report = BackfillReport::default();
     for ad in adapters {
-        for path in ad.transcript_files() {
+        for unit in ad.units() {
             report.files_seen += 1;
-            match ingest_one(pg, ad.as_ref(), &path).await {
+            match ingest_one(pg, ad.as_ref(), &unit.key).await {
                 Ok(o) if o.skipped => report.files_skipped += 1,
                 Ok(o) => {
                     report.files_ingested += 1;
@@ -275,15 +298,15 @@ pub async fn run_backfill(ctx: &TaskContext, _task: &Task) -> Result<u32, String
 pub async fn dispatch(queue: &crate::tasks::queue::TaskQueue) -> (u32, u32) {
     let mut count = 0u32;
     for ad in adapters() {
-        for path in ad.transcript_files() {
-            // folder_path = capture source, path = transcript file path.
+        for unit in ad.units() {
+            // folder_path = capture source, path = unit key (file path or thread id).
             queue
-                .enqueue(Task::new(TaskKind::BackfillTranscriptFile, ad.source(), &path.to_string_lossy()))
+                .enqueue(Task::new(TaskKind::BackfillTranscriptFile, ad.source(), &unit.key))
                 .await;
             count += 1;
         }
     }
-    tracing::info!(count, "transcript backfill: dispatched per-file tasks");
+    tracing::info!(count, "transcript backfill: dispatched per-unit tasks");
     (count, count)
 }
 
@@ -293,7 +316,7 @@ pub async fn run_backfill_file(ctx: &TaskContext, task: &Task) -> Result<u32, St
     let Some(adapter) = adapter_for_source(&task.folder_path) else {
         return Err(format!("unknown transcript source '{}'", task.folder_path));
     };
-    let outcome = ingest_one(ctx.pg(), adapter.as_ref(), Path::new(&task.path)).await?;
+    let outcome = ingest_one(ctx.pg(), adapter.as_ref(), &task.path).await?;
     // A freshly-synthesized historical session needs enrichment to light up its
     // FTR/churn/correction signals (#75). AnalyzeProject is idempotent + incremental.
     if let Some(project_id) = outcome.analyze_project {
