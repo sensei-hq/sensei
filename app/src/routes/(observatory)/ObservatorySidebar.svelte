@@ -1,128 +1,113 @@
 <script lang="ts">
-    import { page } from '$app/state';
-    import { Eyebrow } from '$lib/components';
+    import { List } from '@rokkit/ui';
+    import type { ProxyItem } from '@rokkit/states';
+    import { Eyebrow, Wordmark } from '$lib/components';
+    import { buildNavItems, resolveActiveHref } from './observatory-nav';
 
     interface Props {
+        /** Daemon port, shown in the footer. */
         port: number;
+        /** Current route, passed from the layout (keeps this component pure). */
+        pathname: string;
     }
-    let { port }: Props = $props();
+    let { port, pathname }: Props = $props();
 
-    const NAV_ITEMS = [
-        { href: '/',            kanji: '家', label: 'Today' },
-        { href: '/projects',    kanji: '場', label: 'Projects' },
-        { href: '/sessions',    kanji: '刻', label: 'Sessions' },
-        { href: '/learnings',   kanji: '憶', label: 'Learnings' },
-        { href: '/insights',    kanji: '學', label: 'Insights' },
-        { href: '/libraries',   kanji: '書', label: 'Libraries' },
-        { href: '/instruments', kanji: '具', label: 'Instruments' },
+    // Focus tames the rail to anchors + "Needs you" — just what needs a decision.
+    let focus = $state(false);
+
+    const items = $derived(buildNavItems({ focus }));
+    const activeHref = $derived(resolveActiveHref(pathname));
+
+    // List reads these keys off each entry; `value` mirrors `href` so the
+    // current route lights up via List's value-match. `type` enables separators.
+    const fields = {
+        value: 'value',
+        href: 'href',
+        text: 'text',
+        badge: 'badge',
+        children: 'children',
+        type: 'type',
+    };
+
+    const SEGMENTS = [
+        { value: false, label: 'All' },
+        { value: true, label: 'Focus' },
     ];
-
-    const BOTTOM_ITEMS = [
-        { href: '/knowledge-sources', kanji: '連', label: 'Sources' },
-        { href: '/logs',     kanji: '録', label: 'Logs' },
-        { href: '/settings', kanji: '設', label: 'Settings' },
-    ];
-
-    let collapsed = $state(false);
-    const widthClass = $derived(collapsed ? 'w-[52px]' : 'w-[220px]');
-
-    function isActive(href: string): boolean {
-        return (
-            page.url.pathname === href ||
-            page.url.pathname.startsWith(href + '/')
-        );
-    }
 </script>
 
 <aside
     data-component="observatory-sidebar"
-    class="border-r border-paper-mute px-3.5 py-6 bg-paper-mute flex flex-col gap-5 overflow-auto transition-[width] duration {widthClass}"
+    class="w-[220px] shrink-0 flex flex-col gap-4 overflow-auto border-r border-paper-edge bg-paper-soft px-3 py-5"
 >
-    <div class="flex items-center gap-2 px-1.5">
-        <img src="/sensei.svg" alt="" class="h-5 w-5 select-none shrink-0" draggable="false" />
-        {#if !collapsed}
-            <span class="font-display text-base">sensei</span>
-            <button
-                class="collapse-btn ml-auto bg-none border-none text-ink-soft cursor-pointer text-sm px-1.5 py-0.5 rounded-md"
-                onclick={() => (collapsed = true)}
-                aria-label="Collapse sidebar"
-            >‹</button>
-        {/if}
+    <div class="px-1">
+        <Wordmark />
     </div>
 
-    {#snippet navItem(item: typeof NAV_ITEMS[number], isCollapsed: boolean)}
-        {@const active = isActive(item.href)}
-        <a
-            href={item.href}
-            class="nav-item flex items-center py-2 rounded-md text-sm text-ink-mute no-underline transition-colors duration-fast hover:bg-paper-mute"
-            class:justify-center={isCollapsed}
-            class:gap-2.5={!isCollapsed}
-            class:px-2.5={!isCollapsed}
-            class:active
-            title={isCollapsed ? item.label : undefined}
-        >
-            <span
-                class="kanji text-sm w-3.5 text-ink-soft"
-                class:nav-kanji-active={active}
-            >{item.kanji}</span>
-            {#if !isCollapsed}
-                <span>{item.label}</span>
-            {/if}
-        </a>
-    {/snippet}
-
-    {#if collapsed}
-        <nav class="flex flex-col gap-px">
-            {#each NAV_ITEMS as item (item.href)}
-                {@render navItem(item, true)}
-            {/each}
-        </nav>
-
-        <div class="mt-auto pt-2.5 border-t border-paper-mute">
-            <button
-                class="collapse-btn bg-none border-none text-ink-soft cursor-pointer text-sm px-1.5 py-0.5 rounded-md"
-                onclick={() => (collapsed = false)}
-                aria-label="Expand sidebar"
-            >›</button>
-        </div>
-    {:else}
-        <div class="flex flex-col gap-0.5">
-            <p class="px-2.5 pb-2 m-0"><Eyebrow>Observatory</Eyebrow></p>
-            <nav class="flex flex-col gap-px">
-                {#each NAV_ITEMS as item (item.href)}
-                    {@render navItem(item, false)}
+    <div>
+        <div class="flex items-center gap-2 px-2 pb-2">
+            <Eyebrow>Observatory</Eyebrow>
+            <span class="flex-1"></span>
+            <div class="flex rounded bg-paper-mute p-0.5">
+                {#each SEGMENTS as seg (seg.label)}
+                    {@const on = seg.value === focus}
+                    <button
+                        type="button"
+                        class="rounded-sm px-1.5 py-0.5 text-xs {on
+                            ? 'bg-paper text-ink'
+                            : 'text-ink-mute'}"
+                        aria-pressed={on}
+                        onclick={() => (focus = seg.value)}
+                    >{seg.label}</button>
                 {/each}
-            </nav>
+            </div>
         </div>
 
-        <div class="flex flex-col gap-0.5 mt-auto">
-            <nav class="flex flex-col gap-px">
-                {#each BOTTOM_ITEMS as item (item.href)}
-                    {@render navItem(item, false)}
-                {/each}
-            </nav>
-        </div>
+        <List {items} {fields} value={activeHref} collapsible={false} class="gap-px">
+            {#snippet itemContent(proxy: ProxyItem)}
+                {@const active = proxy.value === activeHref}
+                <span
+                    class="kanji w-3.5 shrink-0 text-center text-sm {active
+                        ? 'text-accent'
+                        : 'text-ink-mute'}">{proxy.get('kanji')}</span
+                >
+                <span class="inline-flex flex-1 items-center gap-1.5">
+                    {proxy.get('text')}
+                    {#if proxy.get('alert')}
+                        <span
+                            class="h-1.5 w-1.5 shrink-0 rounded-full bg-danger"
+                            title="needs attention"
+                        ></span>
+                    {/if}
+                </span>
+                {#if proxy.get('badge') != null}
+                    <span class="font-mono text-xs text-ink-mute">{proxy.get('badge')}</span>
+                {/if}
+            {/snippet}
 
-        <div class="pt-2.5 border-t border-paper-mute">
-            <span class="font-mono text-xs text-ink-soft">daemon · port {port}</span>
-        </div>
-    {/if}
+            {#snippet groupContent(proxy: ProxyItem)}
+                <span class="text-ink-faint">{proxy.get('text')}</span>
+            {/snippet}
+        </List>
+    </div>
+
+    <div class="flex-1"></div>
+
+    <div class="border-t border-paper-edge pt-2 text-xs leading-relaxed">
+        <span class="font-mono text-ink-mute">daemon · running</span><br />
+        <span class="font-mono text-ink-faint">port {port}</span>
+    </div>
 </aside>
 
 <style>
-    /* Active nav state styles — kept as scoped CSS against class:active
-       and class:nav-kanji-active bindings rather than Tailwind class:*
-       chains (color + bg on the same property conflict, similar to the
-       WizardRail rationale). */
-    .nav-item.active {
-        background: var(--paper-mute);
+    /* The rokkit List owns the <a data-list-item> wrappers, so these target its
+       DOM via :global. Geometry (rounded rows) + lifting the at-rest active wash
+       to paper-mute (zen-sumi's at-rest active is paper-soft — invisible on this
+       paper-soft rail). Token vars only, no color literals. */
+    aside :global([data-list-item]) {
+        border-radius: 6px;
+    }
+    aside :global([data-list-item][data-active='true']) {
+        background-color: var(--paper-mute);
         color: var(--ink);
-    }
-    .nav-kanji-active {
-        color: var(--accent);
-    }
-    .collapse-btn:hover {
-        background: var(--paper-mute);
-        color: var(--ink-mute);
     }
 </style>

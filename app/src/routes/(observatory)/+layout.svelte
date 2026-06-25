@@ -1,5 +1,6 @@
 <script lang="ts">
     import { onMount } from 'svelte';
+    import { page } from '$app/state';
     import { appState } from '$lib/appstate.svelte.js';
     import ObservatorySidebar from './ObservatorySidebar.svelte';
 
@@ -14,7 +15,7 @@
     <div class="drag-region h-8 shrink-0"></div>
 
     <div class="flex-1 flex min-h-0">
-        <ObservatorySidebar port={appState.port} />
+        <ObservatorySidebar port={appState.port} pathname={page.url.pathname} />
 
         <main class="flex-1 overflow-auto">
             {@render children()}
