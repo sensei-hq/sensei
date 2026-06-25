@@ -7,19 +7,13 @@ let cleanup: Array<() => void> = [];
 afterEach(() => { cleanup.forEach((fn) => fn()); cleanup = []; });
 
 describe('Wordmark', () => {
-  it('renders the kanji 先生 and the word Sensei', () => {
+  it('renders the sensei.svg mark and the lowercase word', () => {
     const m = mountComponent(WordmarkHarness, { size: 'md' });
     cleanup.push(m.destroy);
-    expect(m.container.textContent).toContain('先生');
-    expect(m.container.textContent).toContain('Sensei');
-  });
-
-  it('uses accent color for the kanji', () => {
-    const m = mountComponent(WordmarkHarness, { size: 'md' });
-    cleanup.push(m.destroy);
-    const kanji = m.container.querySelector('[data-component="wordmark-kanji"]') as HTMLElement;
-    expect(kanji.className).toMatch(/\btext-accent\b/);
-    expect(kanji.className).toMatch(/\bfont-kanji\b/);
+    const mark = m.container.querySelector('[data-component="wordmark-mark"]') as HTMLImageElement;
+    expect(mark).not.toBeNull();
+    expect(mark.getAttribute('src')).toBe('/sensei.svg');
+    expect(m.container.textContent).toContain('sensei');
   });
 
   it('uses the display font for the word', () => {
@@ -32,14 +26,14 @@ describe('Wordmark', () => {
   it('applies sm size classes', () => {
     const m = mountComponent(WordmarkHarness, { size: 'sm' });
     cleanup.push(m.destroy);
-    const kanji = m.container.querySelector('[data-component="wordmark-kanji"]') as HTMLElement;
-    expect(kanji.className).toMatch(/\btext-lg\b/);
+    const mark = m.container.querySelector('[data-component="wordmark-mark"]') as HTMLElement;
+    expect(mark.className).toMatch(/\bh-5\b/);
   });
 
   it('applies lg size classes', () => {
     const m = mountComponent(WordmarkHarness, { size: 'lg' });
     cleanup.push(m.destroy);
-    const kanji = m.container.querySelector('[data-component="wordmark-kanji"]') as HTMLElement;
-    expect(kanji.className).toMatch(/\btext-3xl\b/);
+    const mark = m.container.querySelector('[data-component="wordmark-mark"]') as HTMLElement;
+    expect(mark.className).toMatch(/\bh-9\b/);
   });
 });
