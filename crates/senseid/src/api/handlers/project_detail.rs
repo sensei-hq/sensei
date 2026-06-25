@@ -121,6 +121,19 @@ pub(crate) async fn get_project_recommendations(
     Ok(Json(serde_json::json!(recs)))
 }
 
+/// GET /api/projects/{id}/impact — acted-on / consolidation recommendations
+/// joined to their reasoning trace (before/after FTR + MOE reasoning). Powers
+/// the Observatory Impact view (#70 read-path).
+pub(crate) async fn get_project_impact(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let uuid = uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let data = state.pg.get_project_impact(&uuid).await
+        .map_err(|e| { tracing::error!(error = %e, project = %uuid, "get_project_impact failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    Ok(Json(serde_json::json!(data)))
+}
+
 pub(crate) async fn get_project_sessions(
     State(state): State<AppState>,
     Path(id): Path<String>,
