@@ -2245,6 +2245,7 @@ impl PgStore {
     /// (source, session_id, turn_index). Returns the number of rows written.
     pub async fn upsert_transcript_turns(
         &self, source: &str, session_id: &str, family: &str,
+        provider: Option<&str>, model: Option<&str>,
         turns: &[crate::transcript::TranscriptTurn],
     ) -> Result<u32, String> {
         let mut n = 0u32;
@@ -2252,15 +2253,17 @@ impl PgStore {
             let char_count = t.assistant_text.chars().count() as i32;
             sqlx_core::query::query(
                 "INSERT INTO activity.transcript_turns
-                    (source, session_id, family, turn_index, user_text, assistant_text, char_count, started_at)
-                 VALUES($1, $2, $3, $4, $5, $6, $7, $8)
+                    (source, session_id, family, provider, model, turn_index, user_text, assistant_text, char_count, started_at)
+                 VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
                  ON CONFLICT(source, session_id, turn_index) DO UPDATE SET
+                   provider       = EXCLUDED.provider,
+                   model          = EXCLUDED.model,
                    user_text      = EXCLUDED.user_text,
                    assistant_text = EXCLUDED.assistant_text,
                    char_count     = EXCLUDED.char_count,
                    started_at     = EXCLUDED.started_at"
             )
-            .bind(source).bind(session_id).bind(family).bind(t.turn_index)
+            .bind(source).bind(session_id).bind(family).bind(provider).bind(model).bind(t.turn_index)
             .bind(&t.user_text).bind(&t.assistant_text).bind(char_count).bind(t.started_at)
             .execute(&self.pool).await.map_err(|e| e.to_string())?;
             n += 1;
