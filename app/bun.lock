@@ -11,15 +11,15 @@
         "@iconify-json/simple-icons": "^1.2.84",
         "@iconify-json/solar": "^1.2.5",
         "@iconify/svelte": "^5.2.1",
-        "@rokkit/actions": "^1.1.1",
-        "@rokkit/app": "^1.1.1",
-        "@rokkit/chart": "^1.1.1",
-        "@rokkit/core": "^1.1.1",
-        "@rokkit/icons": "^1.1.1",
-        "@rokkit/states": "^1.1.1",
-        "@rokkit/themes": "^1.1.1",
-        "@rokkit/ui": "^1.1.1",
-        "@rokkit/unocss": "^1.1.1",
+        "@rokkit/actions": "^1.3.0",
+        "@rokkit/app": "^1.3.0",
+        "@rokkit/chart": "^1.3.0",
+        "@rokkit/core": "^1.3.0",
+        "@rokkit/icons": "^1.3.0",
+        "@rokkit/states": "^1.3.0",
+        "@rokkit/themes": "^1.3.0",
+        "@rokkit/ui": "^1.3.0",
+        "@rokkit/unocss": "^1.3.0",
         "@tauri-apps/api": "^2.11.0",
         "@tauri-apps/plugin-opener": "^2.5.4",
         "@tauri-apps/plugin-shell": "^2.3.5",
@@ -56,9 +56,6 @@
         "vitest": "^4.1.5",
       },
     },
-  },
-  "patchedDependencies": {
-    "@rokkit/ui@1.1.1": "patches/@rokkit%2Fui@1.1.1.patch",
   },
   "packages": {
     "@adobe/css-tools": ["@adobe/css-tools@4.4.4", "", {}, "sha512-Elp+iwUx5rN5+Y8xLt5/GRoG20WGoDCQ/1Fb+1LiGtvwbDavuSk0jhD/eZdckHAuzcDzccnkv+rEjyWfRx18gg=="],
@@ -241,25 +238,25 @@
 
     "@quansync/fs": ["@quansync/fs@1.0.0", "", { "dependencies": { "quansync": "^1.0.0" } }, "sha512-4TJ3DFtlf1L5LDMaM6CanJ/0lckGNtJcMjQ1NAV6zDmA0tEHKZtxNKin8EgPaVX1YzljbxckyT2tJrpQKAtngQ=="],
 
-    "@rokkit/actions": ["@rokkit/actions@1.1.1", "", { "dependencies": { "@rokkit/core": "latest", "ramda": "^0.32.0" } }, "sha512-MGHzntlsBCR/tD/h9Ss2RGQY9Wl6K8R99TW6mT1UY0nuVx+FAy7tFV3m8fAgBqgrQUJ2wRxiMa4tvl3cxRpXpA=="],
+    "@rokkit/actions": ["@rokkit/actions@1.3.0", "", { "dependencies": { "@rokkit/core": "latest", "ramda": "^0.32.0" } }, "sha512-Yb8uybCM0C2zNB/D0jO4IkCDmb+rhdokzkZxL/+xYocwLLkC1hmgBjiBKLTNmfo+PBaDS3CPLOYJnTTqrHp8rg=="],
 
-    "@rokkit/app": ["@rokkit/app@1.1.1", "", { "dependencies": { "@rokkit/actions": "1.1.1", "@rokkit/core": "1.1.1", "@rokkit/states": "1.1.1", "@rokkit/ui": "1.1.1" }, "peerDependencies": { "svelte": "^5.0.0" } }, "sha512-UHLfm2qqJ0C+avTAcimuFaODa70dbyLYb9jly+wY+pGzNMkEwHX2LJp6bsj7/ZZdOPXBp4h16cOOHCMXhbGKbA=="],
+    "@rokkit/app": ["@rokkit/app@1.3.0", "", { "dependencies": { "@rokkit/actions": "1.3.0", "@rokkit/core": "1.3.0", "@rokkit/states": "1.3.0", "@rokkit/ui": "1.3.0" }, "peerDependencies": { "svelte": "^5.0.0" } }, "sha512-CuZB0KJFEl8/i+mDXcFn01IaL+RdxLfdALLf88vpZeGJqfUEDLdFnh+5Xjl7IvtLtYW0YxBAy39dkOWpJrrb/g=="],
 
-    "@rokkit/chart": ["@rokkit/chart@1.1.1", "", { "dependencies": { "@rokkit/core": "latest", "@rokkit/data": "latest", "@rokkit/states": "latest", "d3-array": "^3.2.4", "d3-axis": "^3.0.0", "d3-format": "^3.1.2", "d3-scale": "^4.0.2", "d3-scale-chromatic": "^3.1.0", "d3-selection": "^3.0.0", "d3-shape": "^3.2.0", "d3-transition": "^3.0.1", "d3-zoom": "^3.0.0", "ramda": "^0.32.0" } }, "sha512-5vOF20giBAQGtjpmaiKN2TyWAj9iqWeemrCMOXYTsqggnVIstyNMoslYlxYPK79Xwt45m7ePBqLU5mgQSwF4bw=="],
+    "@rokkit/chart": ["@rokkit/chart@1.3.0", "", { "dependencies": { "@rokkit/core": "latest", "@rokkit/data": "latest", "@rokkit/states": "latest", "d3-array": "^3.2.4", "d3-axis": "^3.0.0", "d3-format": "^3.1.2", "d3-scale": "^4.0.2", "d3-scale-chromatic": "^3.1.0", "d3-selection": "^3.0.0", "d3-shape": "^3.2.0", "d3-transition": "^3.0.1", "d3-zoom": "^3.0.0", "ramda": "^0.32.0" }, "peerDependencies": { "svelte": "^5.0.0" } }, "sha512-z7s9SCeHyTUqnok7mPwNdqJSTqR8UjmO6oCLrUQM2K3bTJMA74IxPxSkteE4SHRLdElIRThOMWEMv3hYVUIlug=="],
 
-    "@rokkit/core": ["@rokkit/core@1.1.1", "", { "dependencies": { "@unocss/preset-mini": "^66.6.1", "date-fns": "^4.1.0", "ramda": "^0.32.0" } }, "sha512-XvHosOs+jNzcQVT1AkcoSaaO4t8GHPK6/ni1BUTL1k6sPChJc6vC08rGrN4B/EWfYnTrZyVPOay+NSZnq0mxDQ=="],
+    "@rokkit/core": ["@rokkit/core@1.3.0", "", { "dependencies": { "@unocss/preset-mini": "^66.6.1", "date-fns": "^4.1.0", "ramda": "^0.32.0" } }, "sha512-5KIt4KbDG8mSwhgqqNzZaNMvD+hWsKXcjG14TqB8nrc8t+QY+KEt/8lvAu1rlz6mZ8AN953VxCljLshvtrl4KA=="],
 
-    "@rokkit/data": ["@rokkit/data@1.1.1", "", { "dependencies": { "@lukeed/uuid": "^2.0.1", "@rokkit/core": "1.1.1", "d3-array": "^3.2.4", "d3-collection": "^1.0.7", "ramda": "^0.32.0", "svelte": "^5.53.5" } }, "sha512-K1vECgpnhmy0VWuDhyM2ByrBDph3Jtz22fXs8OXCDRoikOlnWfiGNrI2CytURFvYryQQyU+w1/cCDX4UtNW+Kg=="],
+    "@rokkit/data": ["@rokkit/data@1.3.0", "", { "dependencies": { "@lukeed/uuid": "^2.0.1", "@rokkit/core": "1.3.0", "d3-array": "^3.2.4", "d3-collection": "^1.0.7", "ramda": "^0.32.0", "svelte": "^5.53.5" } }, "sha512-FNcY5mD5OWUNNBQZIwIPR7RpaNnhAcKOjEqdCvJtkjWlHoL1X1IGZ7xij0wTaPqbY7FiPSAYSNab00FVAsSO4w=="],
 
-    "@rokkit/icons": ["@rokkit/icons@1.1.1", "", {}, "sha512-z8gRWIzjx2DrOIaEuViOpveOVuiq+q6J7P6GBJ+N0HU5Fx9b1gm6OoP0TaDZiYOLSE7Vcabs3FMgSuvpq1kAcw=="],
+    "@rokkit/icons": ["@rokkit/icons@1.3.0", "", {}, "sha512-+TVtzgKGleLbtA21Y4hvBmVmF3rlJ7EiyIlCqrd9GHfeBddBsuyRkXi+opap+QrZYa7kWFh1R4+hkgjufxTUzQ=="],
 
-    "@rokkit/states": ["@rokkit/states@1.1.1", "", { "dependencies": { "@rokkit/core": "1.1.1", "@rokkit/data": "1.1.1", "d3-array": "^3.2.4", "ramda": "^0.32.0", "svelte": "^5.53.5" } }, "sha512-89li2xxHaX+MZ01PPSz7LLZWMgHRRQfIIxGNjPvxFyp7hUWy+DQ19YykpH5VpqnzkAcuid7Xzn2m5sc5T1wROQ=="],
+    "@rokkit/states": ["@rokkit/states@1.3.0", "", { "dependencies": { "@rokkit/core": "1.3.0", "@rokkit/data": "1.3.0", "d3-array": "^3.2.4", "ramda": "^0.32.0", "svelte": "^5.53.5" } }, "sha512-TR+TLD8RoKPHZ3h9mHJ7peuozX+UyMaSkIKUyacaSerysE6iuXNxRcR64wpA/ePsprd/KVN7lkepUOX0MutwGA=="],
 
-    "@rokkit/themes": ["@rokkit/themes@1.1.1", "", { "dependencies": { "@rokkit/core": "1.1.1" } }, "sha512-yiOuc1Gy5eHQ7k7l8mHK7qTfEDrR8Rj3rEt0zPoBt01e7Y1qqvCGDeSAeYN/PY5t4cmoI4Atcl49PKRSSWbErQ=="],
+    "@rokkit/themes": ["@rokkit/themes@1.3.0", "", { "dependencies": { "@rokkit/core": "1.3.0" } }, "sha512-/7i1DWIp5g362orPfqWPG1BV5e4LYKZjyfAQc3uJWR2mK5C42sDX/bc4bPO0oMNThog7t0r4dzfIlOa+H/ubCg=="],
 
-    "@rokkit/ui": ["@rokkit/ui@1.1.1", "", { "dependencies": { "@rokkit/actions": "1.1.1", "@rokkit/core": "1.1.1", "@rokkit/data": "1.1.1", "@rokkit/states": "1.1.1", "dompurify": "^3.0.0", "marked": "^15.0.0" }, "peerDependencies": { "shiki": "^3.23.0", "svelte": "^5.0.0" } }, "sha512-SA7Gmm9ZUOcFgjKWpPSFiu7mpCuIdSz8TOGlyBei7JMyhySLpO4J+SmyfmN/Dq6289vpKE/tXH949PFqr6tP7w=="],
+    "@rokkit/ui": ["@rokkit/ui@1.3.0", "", { "dependencies": { "@rokkit/actions": "1.3.0", "@rokkit/core": "1.3.0", "@rokkit/data": "1.3.0", "@rokkit/states": "1.3.0", "dompurify": "^3.0.0", "marked": "^15.0.0" }, "peerDependencies": { "shiki": "^3.23.0", "svelte": "^5.0.0" } }, "sha512-FB4gQ5QMRT/t9Yd3kJWDrosFPmYzucdMnGmWkSoAied/W7+K1ihsj2lw4RmUqbPNYdmO1VwXW4lU1WjPLk00MQ=="],
 
-    "@rokkit/unocss": ["@rokkit/unocss@1.1.1", "", { "dependencies": { "@rokkit/core": "1.1.1", "@rokkit/icons": "1.1.1", "@unocss/extractor-svelte": "^66.6.1", "unocss": "^66.6.1" } }, "sha512-8pwzfoHuQv4LQJ+EFDP90oDP6SQH5ef98nRNzfg0UCTysBRL8ffbAVwKx5/m+ltOdArlVEEQPNnrU03XPC503g=="],
+    "@rokkit/unocss": ["@rokkit/unocss@1.3.0", "", { "dependencies": { "@rokkit/core": "1.3.0", "@rokkit/icons": "1.3.0", "@unocss/extractor-svelte": "^66.6.1", "unocss": "^66.6.1" }, "peerDependencies": { "@sveltejs/kit": "^2.0.0" }, "optionalPeers": ["@sveltejs/kit"] }, "sha512-xKCtXkjMfC+tNFaVONxKUf57WRqw//Mb+/F32TvLB9x2ElZ4xPtF+rIlldPzori3FhHOeeIzFg2hrKVIhmkNQQ=="],
 
     "@rolldown/binding-android-arm64": ["@rolldown/binding-android-arm64@1.0.0-rc.17", "", { "os": "android", "cpu": "arm64" }, "sha512-s70pVGhw4zqGeFnXWvAzJDlvxhlRollagdCCKRgOsgUOH3N1l0LIxf83AtGzmb5SiVM4Hjl5HyarMRfdfj3DaQ=="],
 
