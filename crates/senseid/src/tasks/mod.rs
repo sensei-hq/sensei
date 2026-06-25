@@ -11,6 +11,7 @@ pub mod handlers;
 pub mod progress;
 pub mod progress_emitter;
 pub mod analyzer_scheduler;
+pub mod log_pruner;
 pub mod processors;
 pub mod resume;
 
