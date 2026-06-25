@@ -14,18 +14,19 @@ const COMPONENT_DEFAULTS: Record<ComponentId, { label: string; note: string | nu
   daemon:   { label: 'Background daemon',  note: null,                            installingVerb: 'starting' },
 };
 
-/** Poetic one-liner per gate, shown beneath the label in the ledger. Frontend
- *  owns this copy — it never travels on the wire. apply() and #patch() rewrite
- *  the field on every state mutation so wire payloads that carry a stale or
- *  missing value can't pollute the UI. */
+/** Plain one-liner per gate — what each piece does — shown beneath the label in
+ *  the ledger (simplified from the mockup). Frontend owns this copy; it never
+ *  travels on the wire. apply() and #patch() rewrite the field on every state
+ *  mutation so wire payloads that carry a stale or missing value can't pollute
+ *  the UI. */
 const DESCRIPTIONS: Record<ComponentId | PackageManagerId, string> = {
-  homebrew: 'The gardener who tends the tools.',
-  winget:   'The gardener who tends the tools.',
-  postgres: 'A still pond where memories settle.',
-  ollama:   'A mind that thinks without leaving the room.',
-  sensei:   'Three hands of the practice — speak, listen, attend.',
-  database: 'Shelves shaped to the form of each memory.',
-  daemon:   'The quiet breath that keeps watch.',
+  homebrew: 'Installs and updates everything else from one manifest.',
+  winget:   'Installs and updates everything else from one manifest.',
+  postgres: 'The local database where every session and memory is stored.',
+  ollama:   'Runs the models on-device, so your code never leaves the machine.',
+  sensei:   'The CLI, the MCP server assistants talk to, and the watcher.',
+  database: 'Creates the schema and vector index memories are searched through.',
+  daemon:   'Watches sessions in the background — nothing works without it.',
 };
 
 function emptyComponent(id: ComponentId): Component {
