@@ -1228,6 +1228,71 @@ impl PgStore {
         Ok(row.0)
     }
 
+    // ── Recommendation ranking (ranking.rs) ──────────────────────────
+
+    /// Pending recs for a project with the scoring factors joined from their
+    /// source patterns (`based_on.patterns` → `detected_patterns`): returns
+    /// `(id, action_type, urgency, avg_confidence, max_recurrence)`. A rec with
+    /// no joinable pattern yields `avg_confidence = None`, `max_recurrence = 0`.
+    pub async fn get_pending_recs_for_ranking(
+        &self, project_id: &uuid::Uuid,
+    ) -> Result<Vec<(uuid::Uuid, String, String, Option<f64>, i32)>, String> {
+        let rows: Vec<(uuid::Uuid, String, String, Option<f64>, i32)> = sqlx_core::query_as::query_as(
+            "SELECT r.id, r.action_type, r.urgency::text,
+                    avg(dp.confidence)::float8 AS avg_conf,
+                    COALESCE(max(dp.instance_count), 0)::int4 AS max_recur
+               FROM inference.recommendations r
+               LEFT JOIN LATERAL jsonb_array_elements_text(
+                     CASE WHEN jsonb_typeof(r.based_on->'patterns') = 'array'
+                          THEN r.based_on->'patterns' ELSE '[]'::jsonb END
+                   ) AS pid(v) ON true
+               LEFT JOIN inference.detected_patterns dp ON dp.id = pid.v::uuid
+              WHERE r.project_id = $1 AND r.status = 'pending'
+              GROUP BY r.id, r.action_type, r.urgency",
+        )
+        .bind(project_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(rows)
+    }
+
+    /// Clear the focal flag across a project (before a fresh ranking pass marks a
+    /// new one) so a previously-focal rec that has since been acted on or
+    /// out-scored never stays flagged.
+    pub async fn clear_project_focal(&self, project_id: &uuid::Uuid) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE inference.recommendations SET focal = false WHERE project_id = $1 AND focal",
+        )
+        .bind(project_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Persist a rec's computed `score` + `focal`, mirroring the factor
+    /// breakdown into `based_on.score_factors` for explainability.
+    pub async fn set_recommendation_rank(
+        &self, id: &uuid::Uuid, score: f64, focal: bool, factors: &serde_json::Value,
+    ) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE inference.recommendations
+                SET score = $2::float8::numeric(5,2),
+                    focal = $3,
+                    based_on = jsonb_set(based_on, '{score_factors}', $4::jsonb, true)
+              WHERE id = $1",
+        )
+        .bind(id)
+        .bind(score)
+        .bind(focal)
+        .bind(factors.to_string())
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     // ── Communities (inference) ───────────────────────────────────────
 
     pub async fn upsert_community(&self, folder_id: &uuid::Uuid, community_id: i32, label: &str, node_count: i32) -> Result<uuid::Uuid, String> {
@@ -3253,23 +3318,27 @@ impl PgStore {
 
     pub async fn get_project_recommendations(&self, project_id: &uuid::Uuid, status: Option<&str>) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(uuid::Uuid, String, String, String, Option<String>, String, Option<String>,
-                        Option<f64>, Option<f64>, Option<chrono::DateTime<chrono::Utc>>, Option<chrono::DateTime<chrono::Utc>>)> =
+                        Option<f64>, Option<f64>, Option<chrono::DateTime<chrono::Utc>>, Option<chrono::DateTime<chrono::Utc>>,
+                        Option<f64>, bool)> =
             sqlx_core::query_as::query_as(
                 "SELECT id, title, urgency::text, status::text, verdict::text, why, impact,
-                        baseline_ftr::float8, current_ftr::float8, acted_at, measured_at
+                        baseline_ftr::float8, current_ftr::float8, acted_at, measured_at,
+                        score::float8, focal
                  FROM inference.recommendations WHERE project_id = $1
                    AND ($2::text IS NULL OR status::text = $2)
-                 ORDER BY CASE urgency WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, id
+                 ORDER BY focal DESC, score DESC NULLS LAST,
+                          CASE urgency WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, id
                  LIMIT 50"
             ).bind(project_id).bind(status)
             .fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
 
-        Ok(rows.into_iter().map(|(id, title, urgency, status, verdict, why, impact, baseline, current, acted, measured)| {
+        Ok(rows.into_iter().map(|(id, title, urgency, status, verdict, why, impact, baseline, current, acted, measured, score, focal)| {
             serde_json::json!({
                 "id": id, "title": title, "urgency": urgency, "status": status, "verdict": verdict,
                 "why": why, "impact": impact,
                 "baseline_ftr": baseline, "current_ftr": current,
                 "acted_at": acted.map(|t| t.to_rfc3339()), "measured_at": measured.map(|t| t.to_rfc3339()),
+                "score": score, "focal": focal,
             })
         }).collect())
     }
