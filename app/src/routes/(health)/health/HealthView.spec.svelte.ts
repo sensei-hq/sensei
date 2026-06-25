@@ -10,7 +10,7 @@ import { mountComponent } from '$lib/test-mount.js';
 import HealthView from './HealthView.svelte';
 import { HealthState } from '$lib/health-state.svelte.js';
 import { COMPONENT_ORDER } from '$lib/health-types.js';
-import type { HealthPayload, Remedy } from '$lib/health-types.js';
+import type { HealthPayload, Remedy, ComponentStatus } from '$lib/health-types.js';
 
 let cleanup: Array<() => void> = [];
 afterEach(() => { cleanup.forEach((fn) => fn()); cleanup = []; });
@@ -56,12 +56,13 @@ describe('HealthView', () => {
     expect(m.container.querySelector('pre')).not.toBeNull();
   });
 
-  it('renders the foundation note only while checking (not ok, not needs-action)', () => {
+  it('renders the foundation note only while checking (not ok, resolving, or needs-action)', () => {
     // default HealthState status is 'checking'
     const checking = new HealthState();
     const m1 = mountComponent(HealthView, { state: checking });
     cleanup.push(m1.destroy);
     expect(m1.container.querySelector('[data-component="foundation-note"]')).not.toBeNull();
+    expect(m1.container.querySelector('[data-component="progress-card"]')).toBeNull();
 
     const okM = mountComponent(HealthView, { state: new HealthState(ok()) });
     cleanup.push(okM.destroy);
@@ -70,6 +71,24 @@ describe('HealthView', () => {
     const naM = mountComponent(HealthView, { state: new HealthState(needsAction()) });
     cleanup.push(naM.destroy);
     expect(naM.container.querySelector('[data-component="foundation-note"]')).toBeNull();
+  });
+
+  it('renders the progress card (not the foundation note) while resolving', () => {
+    const resolving: HealthPayload = {
+      ...ok(),
+      status: 'resolving',
+      remedy: null,
+      components: COMPONENT_ORDER.map((id, i) => {
+        const status: ComponentStatus = i < 2 ? 'ready' : i === 2 ? 'installing' : 'pending';
+        return { id, label: String(id), note: null, status, version: null, detail: null, installingVerb: 'installing', description: '' };
+      }),
+    };
+    const m = mountComponent(HealthView, { state: new HealthState(resolving) });
+    cleanup.push(m.destroy);
+    const card = m.container.querySelector('[data-component="progress-card"]') as HTMLElement;
+    expect(card).not.toBeNull();
+    expect(card.textContent).toContain('ready'); // "N of M ready"
+    expect(m.container.querySelector('[data-component="foundation-note"]')).toBeNull();
   });
 
   // When status=ok the right column stays visible (all six gates ready); the
