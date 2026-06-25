@@ -15,6 +15,8 @@ create table if not exists sessions (
 , duration                 interval
 , module                   text
 , summary                  text
+, provider                 text
+, model                    text
 , props                    jsonb       not null default '{}'
 , started_at               timestamptz not null default now()
 , completed_at             timestamptz
@@ -76,6 +78,10 @@ wall-clock span is started_at..completed_at; per-turn/segment detail lives in
 activity.turns.';
 comment on column sessions.module
      is 'Primary code module touched. For per-module FTR.';
+comment on column sessions.provider
+     is 'Inference provider that ran this session (e.g. anthropic, openai, copilot_chat, ollama). Captured from the transcript at synthesis (#75); NULL for live hook-captured sessions whose model the hook stream doesn''t carry. Powers effectiveness-by-model.';
+comment on column sessions.model
+     is 'Specific model that ran this session (e.g. claude-opus-4, GPT-5, Grok Code Fast 1). See provider. Powers effectiveness-by-model insights.';
 comment on column sessions.summary
      is 'Brief summary of what happened in this session. Populated at checkpoint time by the assistant.';
 comment on column sessions.props
