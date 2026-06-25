@@ -41,15 +41,15 @@
     const n = data.sessionsTotal;
     const p = data.projectFtrs.length;
     if (n === 0 && p === 0) {
-      return 'Sensei is ready to watch. Start a session with your assistant — sensei watches in silence, learns the shape of each project, and later begins to teach.';
+      return 'sensei is ready to watch. Start a session with your assistant — sensei watches in silence, learns the shape of each project, and later begins to teach.';
     }
     if (n === 0) {
       const projects = p === 1 ? '1 project' : `${p} projects`;
-      return `Sensei is watching ${projects}. Run a session with your assistant to give it something to learn from.`;
+      return `sensei is watching ${projects}. Run a session with your assistant to give it something to learn from.`;
     }
     const sessions = n === 1 ? '1 session' : `${n} sessions`;
     const projects = p === 1 ? '1 project' : `${p} projects`;
-    return `Sensei has watched ${sessions} across ${projects} so far. A few early signals are forming, but nothing confident enough to teach yet.`;
+    return `sensei has watched ${sessions} across ${projects} so far. A few early signals are forming, but nothing confident enough to teach yet.`;
   });
 
   const earlyHint = $derived.by(() => {
@@ -153,7 +153,7 @@
           <span class="block mb-2"><Kanji char="空" size="2xl" tone="muted" /></span>
           <p class="text-xs text-ink-soft leading-snug m-0">
             No teachings adopted yet.<br />
-            Sensei needs a few more sessions.
+            sensei needs a few more sessions.
           </p>
         </div>
       </div>
@@ -220,7 +220,7 @@
             <span class="block mb-2"><Kanji char="空" size="2xl" tone="muted" /></span>
             <p class="text-xs text-ink-soft leading-snug m-0">
               No teachings adopted yet.<br />
-              Sensei needs a few more sessions.
+              sensei needs a few more sessions.
             </p>
           </div>
         {/if}
