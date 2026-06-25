@@ -526,6 +526,17 @@ pub(crate) async fn tool_usage(
     Ok(Json(serde_json::json!({ "tools": data })))
 }
 
+/// GET /api/observatory/model-effectiveness — FTR / corrections / volume per
+/// (provider, model) across the multi-model corpus (Zed + Claude). Powers the
+/// "which models work best here" view.
+pub(crate) async fn model_effectiveness(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let data = state.pg.get_model_effectiveness().await
+        .map_err(|e| { tracing::error!("model_effectiveness error: {}", e); StatusCode::INTERNAL_SERVER_ERROR })?;
+    Ok(Json(serde_json::json!({ "models": data })))
+}
+
 /// GET /api/libraries/{id}/usage — per-library usage across folders
 pub(crate) async fn library_usage(
     State(state): State<AppState>,

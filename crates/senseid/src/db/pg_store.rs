@@ -2331,6 +2331,58 @@ impl PgStore {
         Ok(())
     }
 
+    /// Set the inference `provider` + `model` that ran a session (captured from
+    /// the transcript at synthesis, #75). Idempotent. Powers effectiveness-by-model.
+    pub async fn set_session_model(
+        &self, client_session_id: &str, provider: &str, model: &str,
+    ) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE activity.sessions SET provider = $2, model = $3 WHERE client_session_id = $1",
+        )
+        .bind(client_session_id)
+        .bind(provider)
+        .bind(model)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Effectiveness aggregated by model: per (provider, model), how many
+    /// enriched sessions, the First-Try Rate, average corrections, and average
+    /// turns. The cross-model comparison the multi-model corpus (Zed + Claude)
+    /// unlocks. Ordered by session volume.
+    pub async fn get_model_effectiveness(&self) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(Option<String>, Option<String>, i64, Option<f64>, Option<f64>, Option<f64>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT provider, model,
+                        count(*) AS sessions,
+                        avg(CASE WHEN ftr THEN 1.0 ELSE 0.0 END)::float8 AS ftr_rate,
+                        avg(corrections)::float8 AS avg_corrections,
+                        avg(turns)::float8 AS avg_turns
+                   FROM activity.sessions
+                  WHERE model IS NOT NULL AND analyzed_at IS NOT NULL
+                  GROUP BY provider, model
+                  ORDER BY count(*) DESC",
+            )
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(rows
+            .into_iter()
+            .map(|(provider, model, sessions, ftr_rate, avg_corr, avg_turns)| {
+                serde_json::json!({
+                    "provider": provider,
+                    "model": model,
+                    "sessions": sessions,
+                    "ftrRate": ftr_rate.map(|r| (r * 1000.0).round() / 1000.0),
+                    "avgCorrections": avg_corr.map(|c| (c * 100.0).round() / 100.0),
+                    "avgTurns": avg_turns.map(|t| (t * 10.0).round() / 10.0),
+                })
+            })
+            .collect())
+    }
+
     /// Write enrichment metrics onto a session (#66). Sets the derived fields
     /// and merges `tool_usage` into `props` — deliberately does NOT touch
     /// `completed_at` (owned by the hook-stream session derivation, #31).
