@@ -4257,7 +4257,7 @@ mod tests {
         );
 
         // prune keeping our signature → the row survives.
-        s.delete_corrections_not_in(&[sig.clone()]).await.unwrap();
+        s.delete_corrections_not_in(std::slice::from_ref(&sig)).await.unwrap();
         let kept = s.list_corrections().await.unwrap();
         assert!(
             kept["corrections"].as_array().unwrap().iter().any(|c| c["id"] == id1.to_string()),
