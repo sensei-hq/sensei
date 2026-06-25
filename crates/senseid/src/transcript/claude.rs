@@ -112,6 +112,39 @@ impl TranscriptAdapter for ClaudeAdapter {
     fn parse_session(&self, content: &str) -> Option<SynthSession> {
         parse_claude_session(content)
     }
+
+    fn model_for(&self, content: &str) -> Option<(String, String)> {
+        claude_model(content).map(|m| ("anthropic".to_string(), m))
+    }
+}
+
+/// The model that ran a Claude transcript: the most frequent `message.model`
+/// across assistant records (a session can switch models mid-run; the dominant
+/// one wins). `None` if no assistant record carries a model. Pure.
+pub fn claude_model(content: &str) -> Option<String> {
+    use std::collections::HashMap;
+    let mut counts: HashMap<String, u32> = HashMap::new();
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.len() > MAX_LINE_BYTES {
+            continue;
+        }
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        if v.get("type").and_then(|t| t.as_str()) == Some("assistant")
+            && let Some(model) = v.get("message").and_then(|m| m.get("model")).and_then(|m| m.as_str())
+            && !model.is_empty()
+            && model != "<synthetic>"
+        {
+            *counts.entry(model.to_string()).or_default() += 1;
+        }
+    }
+    // Most frequent; ties broken by model name for determinism.
+    counts
+        .into_iter()
+        .max_by(|a, b| a.1.cmp(&b.1).then_with(|| b.0.cmp(&a.0)))
+        .map(|(model, _)| model)
 }
 
 /// Reconstruct a session's event stream from a Claude transcript (#75): a
@@ -420,5 +453,17 @@ mod tests {
     fn parse_session_none_when_no_events() {
         assert!(parse_claude_session("").is_none());
         assert!(parse_claude_session("{\"type\":\"summary\"}\n").is_none());
+    }
+
+    #[test]
+    fn claude_model_picks_dominant_model() {
+        let t = r#"
+{"type":"user","message":{"content":"hi"}}
+{"type":"assistant","message":{"model":"claude-opus-4-8","content":[{"type":"text","text":"a"}]}}
+{"type":"assistant","message":{"model":"claude-opus-4-8","content":[{"type":"text","text":"b"}]}}
+{"type":"assistant","message":{"model":"claude-sonnet-4-6","content":[{"type":"text","text":"c"}]}}
+"#;
+        assert_eq!(claude_model(t).as_deref(), Some("claude-opus-4-8"), "most frequent model wins");
+        assert_eq!(claude_model("{\"type\":\"user\",\"message\":{\"content\":\"hi\"}}").as_deref(), None, "no model ⇒ None");
     }
 }

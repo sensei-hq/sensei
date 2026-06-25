@@ -235,6 +235,13 @@ async fn synthesize_session(
     let started = synth.events.iter().map(|e| e.ts).min().unwrap_or(0);
     let completed = synth.events.iter().map(|e| e.ts).max().unwrap_or(0);
     let _ = pg.set_session_history(session_id, started, completed).await;
+    // Capture the inference model that ran this session (Zed: per-thread; Claude:
+    // dominant transcript model) so insights can be attributed by model.
+    if let Some((provider, model)) = adapter.model_for(content)
+        && let Err(e) = pg.set_session_model(session_id, &provider, &model).await
+    {
+        tracing::warn!(error = %e, session = %session_id, "synthesize_session: set_session_model failed");
+    }
     for ev in &synth.events {
         let payload = match ev.event_type.as_str() {
             "UserPromptSubmit" => serde_json::json!({ "prompt": ev.prompt }),
@@ -398,7 +405,7 @@ mod tests {
         // a historical transcript whose cwd == the tracked folder's abs_path
         let content = format!(
             "{{\"type\":\"user\",\"cwd\":\"{cwd}\",\"timestamp\":\"2026-06-20T10:00:00.000Z\",\"message\":{{\"role\":\"user\",\"content\":\"add the parser\"}}}}\n\
-             {{\"type\":\"assistant\",\"cwd\":\"{cwd}\",\"timestamp\":\"2026-06-20T10:00:05.000Z\",\"message\":{{\"role\":\"assistant\",\"content\":[{{\"type\":\"tool_use\",\"name\":\"Edit\",\"input\":{{\"file_path\":\"{cwd}/src/x.rs\"}}}}]}}}}\n",
+             {{\"type\":\"assistant\",\"cwd\":\"{cwd}\",\"timestamp\":\"2026-06-20T10:00:05.000Z\",\"message\":{{\"role\":\"assistant\",\"model\":\"claude-opus-4-8\",\"content\":[{{\"type\":\"tool_use\",\"name\":\"Edit\",\"input\":{{\"file_path\":\"{cwd}/src/x.rs\"}}}}]}}}}\n",
             cwd = repo_path
         );
         let root_dir = std::env::temp_dir().join(format!("sensei-imp-{}", uuid::Uuid::new_v4()));
@@ -411,12 +418,14 @@ mod tests {
 
         // session synthesized, attributed to the project, flagged backfilled,
         // with a historical started_at (not "today").
-        let s: (Option<uuid::Uuid>, bool, bool) = sqlx_core::query_as::query_as(
-            "SELECT project_id, backfilled, (started_at < now() - interval '1 day') FROM activity.sessions WHERE client_session_id=$1"
+        let s: (Option<uuid::Uuid>, bool, bool, Option<String>, Option<String>) = sqlx_core::query_as::query_as(
+            "SELECT project_id, backfilled, (started_at < now() - interval '1 day'), provider, model FROM activity.sessions WHERE client_session_id=$1"
         ).bind(&sid).fetch_one(pg.pool()).await.unwrap();
         assert_eq!(s.0, Some(pid), "attributed to the project resolved from cwd");
         assert!(s.1, "flagged backfilled");
         assert!(s.2, "started_at set from the transcript timestamp, not now()");
+        assert_eq!(s.3.as_deref(), Some("anthropic"), "provider captured at synthesis");
+        assert_eq!(s.4.as_deref(), Some("claude-opus-4-8"), "model captured from the transcript");
 
         // events synthesized: prompt + tool-edit + terminal Stop.
         let kinds: Vec<(String,)> = sqlx_core::query_as::query_as(
