@@ -379,9 +379,15 @@ pub async fn analyze_project(ctx: &TaskContext, task: &Task) -> Result<u32, Stri
     if let Err(e) = super::consolidate::consolidate_for_project(ctx, &project_id).await {
         tracing::warn!(error = %e, project = %project_id, "analyze_project: consolidate failed");
     }
-    // Ranking pass (#65 tail): now that generate + consolidate have written all
-    // recs, score every pending one and mark the focal "do first" pick. Runs
-    // last so the whole pending set is ranked together; idempotent.
+    // Model-effectiveness rec (#65): if one model clearly out-performs others on
+    // this project's FTR, recommend preferring it. Idempotent; degrades to no-op
+    // without enough model-tagged sessions.
+    if let Err(e) = super::model_insight::model_insight_for_project(ctx, &project_id).await {
+        tracing::warn!(error = %e, project = %project_id, "analyze_project: model_insight failed");
+    }
+    // Ranking pass (#65 tail): now that generate + consolidate + model_insight
+    // have written all recs, score every pending one and mark the focal "do
+    // first" pick. Runs last so the whole pending set is ranked together; idempotent.
     if let Err(e) = super::rank::rank_for_project(ctx, &project_id).await {
         tracing::warn!(error = %e, project = %project_id, "analyze_project: rank failed");
     }
