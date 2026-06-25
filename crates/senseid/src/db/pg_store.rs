@@ -2383,6 +2383,50 @@ impl PgStore {
             .collect())
     }
 
+    /// Per-(provider, model) FTR over a project's enriched, model-tagged sessions
+    /// — the input to the model-effectiveness recommendation (model_insight.rs).
+    pub async fn get_project_model_stats(
+        &self, project_id: &uuid::Uuid,
+    ) -> Result<Vec<(String, String, i64, f64)>, String> {
+        let rows: Vec<(Option<String>, String, i64, Option<f64>)> = sqlx_core::query_as::query_as(
+            "SELECT provider, model, count(*) AS sessions,
+                    avg(CASE WHEN ftr THEN 1.0 ELSE 0.0 END)::float8 AS ftr_rate
+               FROM activity.sessions
+              WHERE project_id = $1 AND model IS NOT NULL AND analyzed_at IS NOT NULL
+              GROUP BY provider, model",
+        )
+        .bind(project_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(rows
+            .into_iter()
+            .map(|(provider, model, sessions, ftr)| {
+                (provider.unwrap_or_default(), model, sessions, ftr.unwrap_or(0.0))
+            })
+            .collect())
+    }
+
+    /// True if a pending recommendation already proposes `model` for this project
+    /// (the model-insight generator's idempotency guard).
+    pub async fn model_recommendation_exists(
+        &self, project_id: &uuid::Uuid, model: &str,
+    ) -> Result<bool, String> {
+        let row: (bool,) = sqlx_core::query_as::query_as(
+            "SELECT EXISTS(
+               SELECT 1 FROM inference.recommendations
+                WHERE project_id = $1 AND status = 'pending'
+                  AND based_on->>'recommended_model' = $2
+             )",
+        )
+        .bind(project_id)
+        .bind(model)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(row.0)
+    }
+
     /// Write enrichment metrics onto a session (#66). Sets the derived fields
     /// and merges `tool_usage` into `props` — deliberately does NOT touch
     /// `completed_at` (owned by the hook-stream session derivation, #31).
