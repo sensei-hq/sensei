@@ -56,6 +56,22 @@ describe('HealthView', () => {
     expect(m.container.querySelector('pre')).not.toBeNull();
   });
 
+  it('renders the foundation note only while checking (not ok, not needs-action)', () => {
+    // default HealthState status is 'checking'
+    const checking = new HealthState();
+    const m1 = mountComponent(HealthView, { state: checking });
+    cleanup.push(m1.destroy);
+    expect(m1.container.querySelector('[data-component="foundation-note"]')).not.toBeNull();
+
+    const okM = mountComponent(HealthView, { state: new HealthState(ok()) });
+    cleanup.push(okM.destroy);
+    expect(okM.container.querySelector('[data-component="foundation-note"]')).toBeNull();
+
+    const naM = mountComponent(HealthView, { state: new HealthState(needsAction()) });
+    cleanup.push(naM.destroy);
+    expect(naM.container.querySelector('[data-component="foundation-note"]')).toBeNull();
+  });
+
   // When status=ok the right column stays visible (all six gates ready); the
   // +page.svelte auto-navigates via goto() so a separate Continue button is
   // not needed. The watermark logo fills the empty space in the left column.
