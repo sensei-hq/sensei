@@ -38,10 +38,10 @@
     data-component="observatory-sidebar"
     class="border-r border-paper-mute px-3.5 py-6 bg-paper-mute flex flex-col gap-5 overflow-auto transition-[width] duration {widthClass}"
 >
-    <div class="flex items-baseline gap-2 px-1.5">
-        <span class="kanji text-xl text-accent">先</span>
+    <div class="flex items-center gap-2 px-1.5">
+        <img src="/sensei.svg" alt="" class="h-5 w-5 select-none shrink-0" draggable="false" />
         {#if !collapsed}
-            <span class="font-display text-base">Sensei</span>
+            <span class="font-display text-base">sensei</span>
             <button
                 class="collapse-btn ml-auto bg-none border-none text-ink-soft cursor-pointer text-sm px-1.5 py-0.5 rounded-md"
                 onclick={() => (collapsed = true)}
