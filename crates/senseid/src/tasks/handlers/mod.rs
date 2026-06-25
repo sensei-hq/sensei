@@ -15,6 +15,7 @@ mod corrections;
 mod generate;
 mod consolidate;
 mod rank;
+mod model_insight;
 mod corrections_llm;
 mod prompt_classify;
 pub(crate) mod helpers;
