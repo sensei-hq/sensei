@@ -12,6 +12,8 @@ create table if not exists activity.transcript_turns (
   , source         text not null
   , session_id     text not null
   , family         text
+  , provider       text
+  , model          text
   , turn_index     integer not null
   , user_text      text
   , assistant_text text
