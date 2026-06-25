@@ -6,7 +6,7 @@
 //! before ranking. Idempotent: skips if a pending rec already proposes that model.
 
 use super::super::executor::TaskContext;
-use crate::model_insight::{self, ModelStat};
+use crate::model_insight;
 
 /// Generate the per-project "prefer model X" recommendation if the data warrants
 /// it. Returns 1 if a rec was written, else 0.
@@ -14,13 +14,8 @@ pub async fn model_insight_for_project(
     ctx: &TaskContext,
     project_id: &uuid::Uuid,
 ) -> Result<u32, String> {
-    let stats: Vec<ModelStat> = ctx
-        .pg()
-        .get_project_model_stats(project_id)
-        .await?
-        .into_iter()
-        .map(|(provider, model, sessions, ftr_rate)| ModelStat { provider, model, sessions, ftr_rate })
-        .collect();
+    // Stats are already folded to canonical models (label variants merged).
+    let stats = ctx.pg().get_project_model_stats(project_id).await?;
 
     let Some(reco) = model_insight::recommend_model(&stats, model_insight::MIN_SESSIONS, model_insight::MIN_GAIN)
     else {
