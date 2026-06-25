@@ -19,6 +19,8 @@ create table if not exists recommendations (
 , current_ftr              numeric(4,3)
 , verdict                  recommendation_verdict    not null default 'pending'
 , props                    jsonb                     not null default '{}'
+, score                    numeric(5,2)
+, focal                    boolean                   not null default false
 , acted_at                 timestamptz
 , measured_at              timestamptz
 );
@@ -28,6 +30,9 @@ create index if not exists recommendations_project_id_idx
 
 create index if not exists recommendations_urgency_idx
     on recommendations(urgency);
+
+create index if not exists recommendations_score_idx
+    on recommendations(project_id, score desc nulls last);
 
 create index if not exists recommendations_verdict_idx
     on recommendations(verdict)
@@ -85,6 +90,10 @@ comment on column recommendations.verdict
      is 'Impact: positive (FTR improved), negative (FTR dropped), neutral, pending.';
 comment on column recommendations.props
      is 'Extensible: {baseline_corrections_avg, current_corrections_avg, tool_usage_delta, ...}.';
+comment on column recommendations.score
+     is 'Analyzer-computed priority score 0–100 (ranking.rs): weighted sum of action leverage, urgency, source-pattern confidence, and recurrence. Null until the project is ranked. Read path orders by this. Breakdown is mirrored into based_on.score_factors.';
+comment on column recommendations.focal
+     is 'The single highest-scoring pending recommendation per project — the "do first" / today''s koan pick the Observatory surfaces. Exactly one per project (or zero if none pending).';
 comment on column recommendations.acted_at
      is 'Timestamp when the user accepted — the point-in-time marker for before/after FTR comparison.';
 comment on column recommendations.measured_at

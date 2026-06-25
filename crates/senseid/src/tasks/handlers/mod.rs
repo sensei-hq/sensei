@@ -14,6 +14,7 @@ mod analyze;
 mod corrections;
 mod generate;
 mod consolidate;
+mod rank;
 mod corrections_llm;
 mod prompt_classify;
 pub(crate) mod helpers;
