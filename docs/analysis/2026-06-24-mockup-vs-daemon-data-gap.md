@@ -150,3 +150,16 @@ Re-surveyed the refreshed mockups (Dōjō console + new in-app Dōjō, hive **si
 7. **Project-logs (#39)** richer capture (all modules + trace) + **log TTL (#74)** + anonymized export.
 8. **Contract hygiene** (snake/camel, outcome vocab) before UI wiring.
 9. **DEFERRED:** all Dōjō/hive/federation governance + the daemon-vs-hive split + website Dōjō section (#81) — after standalone.
+
+---
+
+## Contract conventions (P2.3) — decided 2026-06-25
+
+The UI is not yet wired, so there's no consumer to break — a blind retroactive casing sweep across ~80 endpoints is high-churn/low-value and risks the wrong shape. Decision: **document the convention now; normalize each endpoint to it *as its UI surface is wired*** (safer — the exact shape is known at that point).
+
+- **Casing: camelCase at the API boundary** (matches the mockup fixtures). New analyzer/observatory endpoints already comply: `maturity` (`stage/watched/target/hasInsights`), patterns (`ftrDelta`, `kind`, `isAntiPattern`), `impact` (`actionType`, `baselineFtr`, `currentFtr`, `ftrDelta`). Legacy endpoints are mixed (e.g. `get_memory_detail` is snake_case: `project_id`, `scope_filter`, `last_relevant_at`); convert per-surface during wiring.
+- **Session `outcome`: daemon keeps the 4-value DB enum** (`completed | corrected | blocked | abandoned`) — it's richer than the mockup's `shipped | abandoned`. The UI maps for display and computes good/bad/ugly from `outcome + ftr + corrections` client-side (as the mockup already does). No daemon change.
+- **Nulls/Options**: nullable numerics (`ftrDelta`, `baselineFtr`, `confidence`) serialize as JSON `null` when unknown — the UI treats `null` as "no data yet", not 0.
+
+## UI-wiring readiness (2026-06-25)
+Core Observatory surfaces are now wireable: sessions, FTR, recommendations (+`based_on`), **memory anatomy** (refs/category/created_at/related), **patterns** (+`ftrDelta`/`kind`), **corrections**, **maturity**, **impact** (recs+reasoning). Remaining are *separate screens / non-blocking*: inference-settings APIs (Settings→Inference), #39 richer diagnostic logs, #74 activity-data GC, Dōjō (post-standalone). Follow-up (not blocking): L2 generator could populate `memory_examples`/`memory_evidence` so the anatomy refs aren't empty.
