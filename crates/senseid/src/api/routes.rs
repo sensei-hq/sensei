@@ -71,6 +71,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/projects/{id}/instruments",     get(project_detail::get_project_instruments))
         .route("/api/projects/{id}/memories",        get(project_detail::get_project_memories))
         .route("/api/projects/{id}/recommendations", get(project_detail::get_project_recommendations))
+        .route("/api/projects/{id}/impact",          get(project_detail::get_project_impact))
         .route("/api/projects/{id}/sessions",        get(project_detail::get_project_sessions))
         // Observatory chart data
         .route("/api/observatory/ftr-daily",             get(observatory::holistic_ftr_daily))
