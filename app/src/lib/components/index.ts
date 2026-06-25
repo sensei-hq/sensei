@@ -5,6 +5,7 @@ export { default as Kanji } from './Kanji.svelte';
 export { default as KanjiHeader } from './KanjiHeader.svelte';
 export { default as MemoryList } from './MemoryList.svelte';
 export { default as PageHeader } from './PageHeader.svelte';
+export { default as ProgressCard } from './ProgressCard.svelte';
 export { default as Spinner } from './Spinner.svelte';
 export { default as StatusDisc } from './StatusDisc.svelte';
 export { default as StatusDot } from './StatusDot.svelte';

@@ -16,7 +16,7 @@ function makeGate(overrides: Partial<Component> = {}): Component {
     status: 'pending',
     version: null,
     installingVerb: 'installing',
-    description: 'A still pond where memories settle.',
+    description: 'The local database where every session and memory is stored.',
     ...overrides,
   };
 }
@@ -28,7 +28,7 @@ describe('GateRow', () => {
     expect(m.container.textContent).toContain('二');
     expect(m.container.textContent).toContain('PostgreSQL');
     expect(m.container.textContent).toContain('storage · @16');
-    expect(m.container.textContent).toContain('A still pond where memories settle.');
+    expect(m.container.textContent).toContain('The local database where every session and memory is stored.');
   });
 
   it('shows description in italic with ink-soft', () => {

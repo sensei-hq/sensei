@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { HealthState } from '$lib/health-state.svelte.js';
-  import { KanjiHeader, StatusDisc, GateRow } from '$lib/components';
+  import { KanjiHeader, StatusDisc, GateRow, ProgressCard } from '$lib/components';
   import Header from './Header.svelte';
   import Footer from './Footer.svelte';
   import Remedy from './Remedy.svelte';
@@ -27,6 +27,13 @@
     if (state.status === 'needs-action') return 'failed' as const;
     return 'checking' as const;
   });
+
+  // Coarse install progress for the resolving-state ProgressCard: share of gates
+  // already ready. The daemon doesn't emit byte/eta granularity, so those props
+  // are omitted (the card degrades to label + bar + count + activity).
+  const installPercent = $derived(
+    state.total ? Math.round((state.readyCount / state.total) * 100) : 0,
+  );
 </script>
 
 <div class="flex-1 min-h-0 overflow-y-auto px-8 py-10">
@@ -35,13 +42,22 @@
     <div class="relative flex flex-col min-w-0">
       <Header {state} />
 
+      <!-- Left-column body, one per state: blocked → remedy; installing →
+           live progress card; checking → "what this is" framing card. The ok
+           state shows the watermark + handoff below. -->
       {#if state.needsAction && state.remedy}
         <Remedy remedy={state.remedy} {onVerify} />
-      {/if}
-
-      <!-- While still checking (neither green nor blocked), the left column
-           would otherwise be empty — fill it with the foundation framing card. -->
-      {#if !state.isOk && !state.needsAction}
+      {:else if state.status === 'resolving'}
+        <div class="mt-4 max-w-[320px]">
+          <ProgressCard
+            label="Setting up"
+            percent={installPercent}
+            left={`${state.readyCount} of ${state.total} ready`}
+            activity={state.activeLabel}
+            note="Runs once · future launches skip straight through. Nothing leaves your machine."
+          />
+        </div>
+      {:else if !state.isOk}
         <FoundationNote />
       {/if}
 
