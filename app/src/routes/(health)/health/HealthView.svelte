@@ -4,6 +4,7 @@
   import Header from './Header.svelte';
   import Footer from './Footer.svelte';
   import Remedy from './Remedy.svelte';
+  import FoundationNote from './FoundationNote.svelte';
 
   interface Props {
     state: HealthState;
@@ -36,6 +37,12 @@
 
       {#if state.needsAction && state.remedy}
         <Remedy remedy={state.remedy} {onVerify} />
+      {/if}
+
+      <!-- While still checking (neither green nor blocked), the left column
+           would otherwise be empty — fill it with the foundation framing card. -->
+      {#if !state.isOk && !state.needsAction}
+        <FoundationNote />
       {/if}
 
       {#if state.status === 'ok' && auto}
