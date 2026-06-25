@@ -64,7 +64,7 @@
             </div>
         </div>
 
-        <List {items} {fields} value={activeHref} collapsible={false} class="gap-px">
+        <List {items} {fields} value={activeHref} collapsible={false}>
             {#snippet itemContent(proxy: ProxyItem)}
                 {@const active = proxy.value === activeHref}
                 <span
@@ -99,14 +99,3 @@
         <span class="font-mono text-ink-faint">port {port}</span>
     </div>
 </aside>
-
-<style>
-    /* Geometry only. The rokkit List owns the <a data-list-item> wrappers, so a
-       utility class can't reach them to round the hover/active wash — this is the
-       one case utilities can't cover. Colour (hover/active/at-rest) comes from the
-       zen-sumi list theme; the rail sits on `bg-paper` so the theme's at-rest
-       active (paper-soft) and hover (paper-mute) washes read clearly. */
-    aside :global([data-list-item]) {
-        border-radius: 6px;
-    }
-</style>
