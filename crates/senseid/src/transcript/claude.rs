@@ -4,11 +4,26 @@
 //! spans one genuine human prompt to the next, and the assistant prose is the
 //! `text` content blocks (tool_use / thinking excluded).
 
-use super::{SynthEvent, SynthSession, TranscriptAdapter, TranscriptTurn};
+use super::{SynthEvent, SynthSession, TranscriptAdapter, TranscriptTurn, UnitRef};
 use std::path::{Path, PathBuf};
 
 /// Cap stored assistant prose per turn (safety net for pathological turns).
 const MAX_TURN_CHARS: usize = 50_000;
+
+/// Skip transcript files larger than this (logged). A multi-hundred-MB file
+/// would spike memory on read and block the executor on parse; rare outlier.
+const MAX_TRANSCRIPT_BYTES: u64 = 64 * 1024 * 1024;
+
+/// File mtime as epoch nanoseconds (the cursor change-stamp). `None` if the file
+/// is gone / unreadable.
+fn mtime_ns(path: &Path) -> Option<i64> {
+    std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .map(|d| d.as_nanos() as i64)
+}
 
 /// Skip any single transcript line larger than this — a line this big is a
 /// base64 attachment / blob, not prose, and parsing it stalls the executor.
@@ -45,14 +60,14 @@ impl TranscriptAdapter for ClaudeAdapter {
         "claude"
     }
 
-    fn transcript_files(&self) -> Vec<PathBuf> {
+    fn units(&self) -> Vec<UnitRef> {
         // layout: <root>/<project-dir>/<session_id>.jsonl — the main session
         // transcripts (direct children). INTENTIONALLY does not recurse into
         // <session_id>/subagents/agent-*.jsonl (subagent sidechains belong to a
         // parent session; ingesting/attributing them is a #73 follow-up).
-        let mut files = Vec::new();
+        let mut units = Vec::new();
         let Ok(projects) = std::fs::read_dir(&self.root) else {
-            return files;
+            return units;
         };
         for proj in projects.flatten() {
             let Ok(entries) = std::fs::read_dir(proj.path()) else {
@@ -60,16 +75,34 @@ impl TranscriptAdapter for ClaudeAdapter {
             };
             for e in entries.flatten() {
                 let p = e.path();
-                if p.extension().and_then(|x| x.to_str()) == Some("jsonl") {
-                    files.push(p);
+                if p.extension().and_then(|x| x.to_str()) == Some("jsonl")
+                    && let Some(stamp) = mtime_ns(&p)
+                {
+                    units.push(UnitRef { key: p.to_string_lossy().into_owned(), stamp });
                 }
             }
         }
-        files
+        units
     }
 
-    fn session_id_for(&self, path: &Path) -> Option<String> {
-        path.file_stem().and_then(|s| s.to_str()).map(str::to_string)
+    fn stamp_for(&self, key: &str) -> Option<i64> {
+        mtime_ns(Path::new(key))
+    }
+
+    fn session_id_for(&self, key: &str) -> Option<String> {
+        Path::new(key).file_stem().and_then(|s| s.to_str()).map(str::to_string)
+    }
+
+    fn load_content(&self, key: &str) -> Option<String> {
+        let path = Path::new(key);
+        let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+        if size > MAX_TRANSCRIPT_BYTES {
+            tracing::warn!(file = key, size_mb = size / 1_048_576, "transcript ingest: skipping oversized transcript");
+            return None;
+        }
+        std::fs::read_to_string(path)
+            .map_err(|e| tracing::debug!(error = %e, file = key, "claude: read transcript failed"))
+            .ok()
     }
 
     fn parse(&self, content: &str) -> Vec<TranscriptTurn> {

@@ -42,6 +42,12 @@ oxc_allocator = "0.124"
 # SQL parsing
 sqlparser = { version = "0.57", features = ["visitor"] }
 
+# Zed transcript adapter: read its threads.db (SQLite) + zstd-compressed thread blobs.
+# `bundled` compiles SQLite from source (no system-sqlite linkage risk); ruzstd is
+# a pure-Rust zstd decompressor (no C toolchain).
+rusqlite = { version = "0.32", features = ["bundled"] }
+ruzstd = "0.7"
+
 # Serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
