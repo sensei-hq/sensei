@@ -1273,6 +1273,32 @@ impl PgStore {
         Ok(row.0)
     }
 
+    /// Impact reports (#70 read-path): recommendations that have been acted on
+    /// or carry a consolidation trace, joined to that trace. Powers the
+    /// Observatory Impact view (before/after FTR + the MOE-style reasoning).
+    pub async fn get_project_impact(&self, project_id: &uuid::Uuid) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, String, String, String, String, Option<f64>, Option<f64>, serde_json::Value, Option<Vec<String>>, Option<serde_json::Value>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT r.id, r.title, r.action_type, r.status::text, r.verdict::text,
+                        r.baseline_ftr::float8, r.current_ftr::float8, r.props,
+                        t.models_used, t.consensus
+                   FROM inference.recommendations r
+                   LEFT JOIN inference.reasoning_traces t ON t.id = r.reasoning_trace_id
+                  WHERE r.project_id = $1
+                    AND (r.reasoning_trace_id IS NOT NULL OR r.verdict <> 'pending'::sensei.recommendation_verdict)
+                  ORDER BY r.measured_at DESC NULLS LAST"
+            ).bind(project_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id, title, action_type, status, verdict, baseline, current, props, models, consensus)| {
+            serde_json::json!({
+                "id": id, "title": title, "actionType": action_type, "status": status,
+                "verdict": verdict, "baselineFtr": baseline, "currentFtr": current,
+                "ftrDelta": match (current, baseline) { (Some(c), Some(b)) => Some(((c - b) * 1000.0).round() / 1000.0), _ => None },
+                "props": props,
+                "reasoning": consensus.map(|c| serde_json::json!({ "models": models.unwrap_or_default(), "consensus": c })),
+            })
+        }).collect())
+    }
+
     pub async fn get_reasoning_traces_by_project(&self, project_id: &uuid::Uuid) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(uuid::Uuid, String, Vec<String>, serde_json::Value, serde_json::Value)> = sqlx_core::query_as::query_as(
             "SELECT id, trigger_event, models_used, exchanges, consensus FROM inference.reasoning_traces WHERE project_id = $1"
@@ -2824,6 +2850,12 @@ impl PgStore {
                    FROM sensei.memories WHERE id = $1"
             ).bind(id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
         let r = row.ok_or_else(|| format!("memory {id} not found"))?;
+        // category + created_at fetched separately (the main row tuple is at
+        // sqlx's 16-element FromRow limit).
+        let (category, created_at): (Option<String>, chrono::DateTime<chrono::Utc>) =
+            sqlx_core::query_as::query_as(
+                "SELECT category::text, created_at FROM sensei.memories WHERE id = $1"
+            ).bind(id).fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
         let memory = serde_json::json!({
             "id":               r.0,
             "project_id":       r.1,
@@ -2841,7 +2873,16 @@ impl PgStore {
             "tags":             r.13,
             "triage_signal":    r.14,
             "modified_at":      r.15.to_rfc3339(),
+            "category":         category,
+            "created_at":       created_at.to_rfc3339(),
         });
+
+        // Related memories (the anatomy "related" links — both directions).
+        let related: Vec<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
+            "SELECT child_id  FROM sensei.memory_links WHERE parent_id = $1
+             UNION
+             SELECT parent_id FROM sensei.memory_links WHERE child_id = $1"
+        ).bind(id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
 
         // Evidence — table has: session_id, note, modified_at (no url column).
         let evidence: Vec<(Option<uuid::Uuid>, Option<String>, chrono::DateTime<chrono::Utc>)> =
@@ -2881,6 +2922,7 @@ impl PgStore {
             "outcomes": outcomes.into_iter().map(|(outcome, sess, ctx, ts)|
                 serde_json::json!({ "outcome": outcome, "session_id": sess, "context": ctx, "recorded_at": ts.to_rfc3339() })
             ).collect::<Vec<_>>(),
+            "related": related.into_iter().map(|(rid,)| rid).collect::<Vec<_>>(),
         }))
     }
 
