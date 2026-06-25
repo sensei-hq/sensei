@@ -66,13 +66,13 @@ function busyPayload(status: Extract<HealthStatus, 'checking' | 'resolving'>): H
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe('Header', () => {
-  it('renders the Sensei wordmark', () => {
+  it('renders the sensei wordmark', () => {
     const state = makeState(emptyPayload);
     const m = mountComponent(Header, { state });
     cleanup.push(m.destroy);
-    expect(m.container.textContent).toContain('Sensei');
-    // The kanji 先生 lives in the wordmark
-    expect(m.container.textContent).toContain('先生');
+    expect(m.container.textContent).toContain('sensei');
+    // The logo mark (sensei.svg) lives in the wordmark
+    expect(m.container.querySelector('[data-component="wordmark-mark"]')).not.toBeNull();
   });
 
   it.each([

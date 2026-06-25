@@ -2,10 +2,11 @@
   interface Props { size?: 'sm' | 'md' | 'lg'; }
   let { size = 'md' }: Props = $props();
 
-  const kanjiSizeClass = $derived(
-    size === 'sm' ? 'text-lg'
-    : size === 'lg' ? 'text-3xl'
-    :                 'text-2xl',
+  // The mark is a square icon (sensei.svg). Size it to sit beside the word.
+  const markSizeClass = $derived(
+    size === 'sm' ? 'h-5 w-5'
+    : size === 'lg' ? 'h-9 w-9'
+    :                 'h-7 w-7',
   );
   const wordSizeClass = $derived(
     size === 'sm' ? 'text-sm'
@@ -14,13 +15,16 @@
   );
 </script>
 
-<div class="flex items-baseline gap-2">
-  <span
-    data-component="wordmark-kanji"
-    class="font-kanji text-accent leading-none {kanjiSizeClass}"
-  >先生</span>
+<div class="flex items-center gap-2">
+  <img
+    data-component="wordmark-mark"
+    src="/sensei.svg"
+    alt=""
+    class="{markSizeClass} select-none"
+    draggable="false"
+  />
   <span
     data-component="wordmark-word"
     class="font-display font-normal tracking-tight text-ink {wordSizeClass}"
-  >Sensei</span>
+  >sensei</span>
 </div>
