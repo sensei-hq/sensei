@@ -379,6 +379,12 @@ pub async fn analyze_project(ctx: &TaskContext, task: &Task) -> Result<u32, Stri
     if let Err(e) = super::consolidate::consolidate_for_project(ctx, &project_id).await {
         tracing::warn!(error = %e, project = %project_id, "analyze_project: consolidate failed");
     }
+    // Ranking pass (#65 tail): now that generate + consolidate have written all
+    // recs, score every pending one and mark the focal "do first" pick. Runs
+    // last so the whole pending set is ranked together; idempotent.
+    if let Err(e) = super::rank::rank_for_project(ctx, &project_id).await {
+        tracing::warn!(error = %e, project = %project_id, "analyze_project: rank failed");
+    }
     Ok(enriched)
 }
 

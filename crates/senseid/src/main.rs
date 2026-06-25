@@ -21,6 +21,7 @@ pub mod model_provision;
 pub mod maturity;
 pub mod pattern_effectiveness;
 pub mod corrections;
+pub mod ranking;
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
