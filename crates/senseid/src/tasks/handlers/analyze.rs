@@ -350,20 +350,27 @@ pub async fn analyze_project(ctx: &TaskContext, task: &Task) -> Result<u32, Stri
         .map_err(|_| format!("AnalyzeProject: invalid project id '{}'", task.path))?;
     let sessions = ctx.pg().get_project_sessions_needing_enrichment(&project_id).await?;
     let mut enriched = 0u32;
-    for (id, client_session_id) in sessions {
+    // Folders touched by sessions enriched THIS pass — derivation is scoped to
+    // them so we don't recompute every folder's patterns on each new session.
+    let mut affected: std::collections::HashSet<uuid::Uuid> = std::collections::HashSet::new();
+    for (id, client_session_id, folder_id) in sessions {
         match enrich_session(ctx, &id, &client_session_id).await {
-            Ok(true) => enriched += 1,
+            Ok(true) => {
+                enriched += 1;
+                affected.insert(folder_id);
+            }
             Ok(false) => {}
             Err(e) => tracing::warn!(error = %e, session = %id, "analyze_project: enrich_session failed"),
         }
     }
     tracing::info!("analyze_project: {} — enriched {} sessions", project_id, enriched);
-    // L1: derive signals (detected_patterns) when the project's sessions are
-    // fresh — needs new activity to recompute.
-    if enriched > 0
-        && let Err(e) = derive_signals(ctx, &project_id).await
-    {
-        tracing::warn!(error = %e, project = %project_id, "analyze_project: derive_signals failed");
+    // L1: derive signals (detected_patterns) for the folders that changed — needs
+    // new activity to recompute, and only the affected folders' aggregates moved.
+    if enriched > 0 {
+        let folders: Vec<uuid::Uuid> = affected.into_iter().collect();
+        if let Err(e) = derive_signals(ctx, &project_id, Some(&folders)).await {
+            tracing::warn!(error = %e, project = %project_id, "analyze_project: derive_signals failed");
+        }
     }
     // L2: generate recommendations + learned memories from whatever patterns
     // exist (#69). Runs every analysis pass, not just when sessions were
@@ -428,12 +435,16 @@ fn prompt_snippet(prompt: &str) -> String {
 ///
 /// These become F4 (#69) recommendations/teachings. Idempotent (upsert by
 /// folder+name). Returns the number of pattern rows written.
-pub async fn derive_signals(ctx: &TaskContext, project_id: &uuid::Uuid) -> Result<u32, String> {
+///
+/// `affected = Some(folders)` re-derives only those folders (the incremental
+/// path — patterns are folder aggregates, so untouched folders keep theirs);
+/// `None` re-derives the whole project (full / on-demand).
+pub async fn derive_signals(ctx: &TaskContext, project_id: &uuid::Uuid, affected: Option<&[uuid::Uuid]>) -> Result<u32, String> {
     let mut count = 0u32;
 
     // 1. Re-edit churn anti-patterns (file-scoped).
     for (folder_id, file, max_edits, total_edits) in
-        ctx.pg().get_file_churn_stats(project_id, CHURN_MIN_EDITS).await?
+        ctx.pg().get_file_churn_stats(project_id, CHURN_MIN_EDITS, affected).await?
     {
         let instances = serde_json::json!([{
             "file": file, "max_session_edits": max_edits, "total_edits": total_edits
@@ -454,7 +465,7 @@ pub async fn derive_signals(ctx: &TaskContext, project_id: &uuid::Uuid) -> Resul
     // correction↔principle mislabels). Falls back to the regex class when no
     // chat model is configured, so this never blocks the analyzer.
     let mut candidates: Vec<(uuid::Uuid, String, String, PromptClass)> = Vec::new();
-    for (folder_id, session_id, prompt) in ctx.pg().get_project_prompts(project_id).await? {
+    for (folder_id, session_id, prompt) in ctx.pg().get_project_prompts(project_id, affected).await? {
         let regex_class = if correction_signal(&prompt).is_some() {
             PromptClass::Correction
         } else if principle_signal(&prompt).is_some() {
@@ -798,8 +809,8 @@ mod tests {
         assert!(!pats[2].1, "rule candidate is a pattern, not anti");
         assert_eq!(pats[2].3, 1, "one principle prompt");
 
-        // idempotent: deriving again upserts the same 3 rows.
-        assert_eq!(derive_signals(&ctx, &pid).await.unwrap(), 3);
+        // idempotent: deriving again (whole-project path) upserts the same 3 rows.
+        assert_eq!(derive_signals(&ctx, &pid, None).await.unwrap(), 3);
         let n: (i64,) = sqlx_core::query_as::query_as("SELECT count(*) FROM inference.detected_patterns WHERE folder_id = $1")
             .bind(fid).fetch_one(pg.pool()).await.unwrap();
         assert_eq!(n.0, 3, "upsert, not insert");

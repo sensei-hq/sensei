@@ -2169,9 +2169,9 @@ impl PgStore {
     /// assistant_events newer than the last analysis. Lets the scheduler skip
     /// unchanged sessions so enrichment cost scales with NEW activity, not total
     /// history (#67 incremental).
-    pub async fn get_project_sessions_needing_enrichment(&self, project_id: &uuid::Uuid) -> Result<Vec<(uuid::Uuid, String)>, String> {
-        let rows: Vec<(uuid::Uuid, String)> = sqlx_core::query_as::query_as(
-            "SELECT s.id, s.client_session_id FROM activity.sessions s
+    pub async fn get_project_sessions_needing_enrichment(&self, project_id: &uuid::Uuid) -> Result<Vec<(uuid::Uuid, String, uuid::Uuid)>, String> {
+        let rows: Vec<(uuid::Uuid, String, uuid::Uuid)> = sqlx_core::query_as::query_as(
+            "SELECT s.id, s.client_session_id, s.folder_id FROM activity.sessions s
              WHERE s.project_id = $1 AND s.client_session_id IS NOT NULL
                AND (s.analyzed_at IS NULL
                     OR EXISTS (SELECT 1 FROM activity.assistant_events e
@@ -2198,7 +2198,10 @@ impl PgStore {
     /// "result needed follow-ups" signal. Returns `(folder_id, file,
     /// max_session_edits, total_edits)` only for files whose busiest single
     /// session reaches `min_session_edits`.
-    pub async fn get_file_churn_stats(&self, project_id: &uuid::Uuid, min_session_edits: i64) -> Result<Vec<(uuid::Uuid, String, i64, i64)>, String> {
+    /// `folders = Some(ids)` scopes derivation to just those folders (incremental
+    /// re-derive — only folders touched by newly-enriched sessions); `None` =
+    /// the whole project (full refresh / on-demand).
+    pub async fn get_file_churn_stats(&self, project_id: &uuid::Uuid, min_session_edits: i64, folders: Option<&[uuid::Uuid]>) -> Result<Vec<(uuid::Uuid, String, i64, i64)>, String> {
         let rows: Vec<(uuid::Uuid, String, i64, i64)> = sqlx_core::query_as::query_as(
             "WITH per_session AS (
                  SELECT s.folder_id,
@@ -2208,6 +2211,7 @@ impl PgStore {
                  FROM activity.assistant_events ae
                  JOIN activity.sessions s ON s.client_session_id = ae.session_id
                  WHERE s.project_id = $1
+                   AND ($3::uuid[] IS NULL OR s.folder_id = ANY($3))
                    AND ae.event_type = 'PostToolUse'
                    AND ae.tool_name IN ('Edit', 'Write', 'MultiEdit')
                    AND ae.payload->'tool_input'->>'file_path' IS NOT NULL
@@ -2219,23 +2223,26 @@ impl PgStore {
              FROM per_session
              GROUP BY folder_id, file
              HAVING max(edits) >= $2"
-        ).bind(project_id).bind(min_session_edits).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        ).bind(project_id).bind(min_session_edits).bind(folders.map(<[uuid::Uuid]>::to_vec)).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(rows)
     }
 
     /// User-prompt text across a project's sessions — the SignalDeriver's
     /// correction / rule-candidate source (#68, L1). Returns `(folder_id,
     /// session_id, prompt)` for every UserPromptSubmit carrying prompt text.
-    pub async fn get_project_prompts(&self, project_id: &uuid::Uuid) -> Result<Vec<(uuid::Uuid, String, String)>, String> {
+    /// `folders = Some(ids)` scopes to those folders (incremental re-derive);
+    /// `None` = whole project.
+    pub async fn get_project_prompts(&self, project_id: &uuid::Uuid, folders: Option<&[uuid::Uuid]>) -> Result<Vec<(uuid::Uuid, String, String)>, String> {
         let rows: Vec<(uuid::Uuid, String, String)> = sqlx_core::query_as::query_as(
             "SELECT s.folder_id, ae.session_id, ae.payload->>'prompt'
              FROM activity.assistant_events ae
              JOIN activity.sessions s ON s.client_session_id = ae.session_id
              WHERE s.project_id = $1
+               AND ($2::uuid[] IS NULL OR s.folder_id = ANY($2))
                AND ae.event_type = 'UserPromptSubmit'
                AND ae.payload->>'prompt' IS NOT NULL
              ORDER BY ae.ts"
-        ).bind(project_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        ).bind(project_id).bind(folders.map(<[uuid::Uuid]>::to_vec)).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(rows)
     }
 
@@ -2353,44 +2360,39 @@ impl PgStore {
     /// turns. The cross-model comparison the multi-model corpus (Zed + Claude)
     /// unlocks. Ordered by session volume.
     pub async fn get_model_effectiveness(&self) -> Result<Vec<serde_json::Value>, String> {
-        let rows: Vec<(Option<String>, Option<String>, i64, Option<f64>, Option<f64>, Option<f64>)> =
-            sqlx_core::query_as::query_as(
-                "SELECT provider, model,
-                        count(*) AS sessions,
-                        avg(CASE WHEN ftr THEN 1.0 ELSE 0.0 END)::float8 AS ftr_rate,
-                        avg(corrections)::float8 AS avg_corrections,
-                        avg(turns)::float8 AS avg_turns
-                   FROM activity.sessions
-                  WHERE model IS NOT NULL AND analyzed_at IS NOT NULL
-                  GROUP BY provider, model
-                  ORDER BY count(*) DESC",
-            )
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| e.to_string())?;
-        Ok(rows
+        // Raw per-(provider, raw-model) SUMS; folded by canonical model in Rust
+        // (re-weighting FTR) so label variants aggregate — see model_insight.
+        let rows: Vec<(Option<String>, String, i64, i64, i64, i64)> = sqlx_core::query_as::query_as(
+            "SELECT provider, model,
+                    count(*) AS sessions,
+                    count(*) FILTER (WHERE ftr)::int8 AS ftr_sessions,
+                    sum(corrections)::int8 AS corrections,
+                    sum(turns)::int8 AS turns
+               FROM activity.sessions
+              WHERE model IS NOT NULL AND analyzed_at IS NOT NULL
+              GROUP BY provider, model",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        let raw = rows
             .into_iter()
-            .map(|(provider, model, sessions, ftr_rate, avg_corr, avg_turns)| {
-                serde_json::json!({
-                    "provider": provider,
-                    "model": model,
-                    "sessions": sessions,
-                    "ftrRate": ftr_rate.map(|r| (r * 1000.0).round() / 1000.0),
-                    "avgCorrections": avg_corr.map(|c| (c * 100.0).round() / 100.0),
-                    "avgTurns": avg_turns.map(|t| (t * 10.0).round() / 10.0),
-                })
+            .map(|(provider, model, sessions, ftr, corr, turns)| {
+                (provider.unwrap_or_default(), model, sessions, ftr, corr, turns)
             })
-            .collect())
+            .collect();
+        Ok(crate::model_insight::fold_effectiveness(raw))
     }
 
-    /// Per-(provider, model) FTR over a project's enriched, model-tagged sessions
-    /// — the input to the model-effectiveness recommendation (model_insight.rs).
+    /// Per-(provider, canonical-model) FTR over a project's enriched, model-tagged
+    /// sessions — the input to the model-effectiveness recommendation. Label
+    /// variants are folded to a canonical model (model_insight::fold_model_stats).
     pub async fn get_project_model_stats(
         &self, project_id: &uuid::Uuid,
-    ) -> Result<Vec<(String, String, i64, f64)>, String> {
-        let rows: Vec<(Option<String>, String, i64, Option<f64>)> = sqlx_core::query_as::query_as(
+    ) -> Result<Vec<crate::model_insight::ModelStat>, String> {
+        let rows: Vec<(Option<String>, String, i64, i64)> = sqlx_core::query_as::query_as(
             "SELECT provider, model, count(*) AS sessions,
-                    avg(CASE WHEN ftr THEN 1.0 ELSE 0.0 END)::float8 AS ftr_rate
+                    count(*) FILTER (WHERE ftr)::int8 AS ftr_sessions
                FROM activity.sessions
               WHERE project_id = $1 AND model IS NOT NULL AND analyzed_at IS NOT NULL
               GROUP BY provider, model",
@@ -2399,12 +2401,11 @@ impl PgStore {
         .fetch_all(&self.pool)
         .await
         .map_err(|e| e.to_string())?;
-        Ok(rows
+        let raw = rows
             .into_iter()
-            .map(|(provider, model, sessions, ftr)| {
-                (provider.unwrap_or_default(), model, sessions, ftr.unwrap_or(0.0))
-            })
-            .collect())
+            .map(|(provider, model, sessions, ftr)| (provider.unwrap_or_default(), model, sessions, ftr))
+            .collect();
+        Ok(crate::model_insight::fold_model_stats(raw))
     }
 
     /// True if a pending recommendation already proposes `model` for this project
