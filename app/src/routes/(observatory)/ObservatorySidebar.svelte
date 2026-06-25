@@ -9,13 +9,15 @@
         port: number;
         /** Current route, passed from the layout (keeps this component pure). */
         pathname: string;
+        /** Cached project count for the Projects badge; omit until loaded. */
+        projectCount?: number;
     }
-    let { port, pathname }: Props = $props();
+    let { port, pathname, projectCount }: Props = $props();
 
     // Focus tames the rail to anchors + "Needs you" — just what needs a decision.
     let focus = $state(false);
 
-    const items = $derived(buildNavItems({ focus }));
+    const items = $derived(buildNavItems({ focus, projectCount }));
     const activeHref = $derived(resolveActiveHref(pathname));
 
     // List reads these keys off each entry; `value` mirrors `href` so the
@@ -37,7 +39,7 @@
 
 <aside
     data-component="observatory-sidebar"
-    class="w-[220px] shrink-0 flex flex-col gap-4 overflow-auto border-r border-paper-edge bg-paper-soft px-3 py-5"
+    class="w-[220px] shrink-0 flex flex-col gap-4 overflow-auto border-r border-paper-edge bg-paper px-3 py-5"
 >
     <div class="px-1">
         <Wordmark />
@@ -99,15 +101,12 @@
 </aside>
 
 <style>
-    /* The rokkit List owns the <a data-list-item> wrappers, so these target its
-       DOM via :global. Geometry (rounded rows) + lifting the at-rest active wash
-       to paper-mute (zen-sumi's at-rest active is paper-soft — invisible on this
-       paper-soft rail). Token vars only, no color literals. */
+    /* Geometry only. The rokkit List owns the <a data-list-item> wrappers, so a
+       utility class can't reach them to round the hover/active wash — this is the
+       one case utilities can't cover. Colour (hover/active/at-rest) comes from the
+       zen-sumi list theme; the rail sits on `bg-paper` so the theme's at-rest
+       active (paper-soft) and hover (paper-mute) washes read clearly. */
     aside :global([data-list-item]) {
         border-radius: 6px;
-    }
-    aside :global([data-list-item][data-active='true']) {
-        background-color: var(--paper-mute);
-        color: var(--ink);
     }
 </style>
