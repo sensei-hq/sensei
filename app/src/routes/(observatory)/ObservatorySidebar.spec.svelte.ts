@@ -62,6 +62,23 @@ describe('ObservatorySidebar', () => {
     expect(t).toContain('Projects');
   });
 
+  it('shows the project count badge when provided', () => {
+    const m = mountComponent(ObservatorySidebar, { port: 7744, pathname: '/', projectCount: 12 });
+    cleanup.push(m.destroy);
+    flushSync();
+    const projectsLink = m.container.querySelector('a[href="/projects"]');
+    expect(projectsLink?.textContent).toContain('12');
+  });
+
+  it('omits the project badge when the count is not yet loaded', () => {
+    const m = mountComponent(ObservatorySidebar, { port: 7744, pathname: '/' });
+    cleanup.push(m.destroy);
+    flushSync();
+    const projectsLink = m.container.querySelector('a[href="/projects"]');
+    // No digits in the Projects row before the count loads.
+    expect(projectsLink?.textContent).not.toMatch(/\d/);
+  });
+
   it('shows the daemon footer with the live port', () => {
     const { container } = mount('/');
     const t = container.textContent ?? '';
