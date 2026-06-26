@@ -1,6 +1,5 @@
 <script lang="ts">
-    import { List } from '@rokkit/ui';
-    import type { ProxyItem } from '@rokkit/states';
+    import { List, Toggle } from '@rokkit/ui';
     import { Eyebrow, Wordmark } from '$lib/components';
     import { buildNavItems, resolveActiveHref } from './observatory-nav';
 
@@ -20,20 +19,24 @@
     const items = $derived(buildNavItems({ focus, projectCount }));
     const activeHref = $derived(resolveActiveHref(pathname));
 
-    // List reads these keys off each entry; `value` mirrors `href` so the
-    // current route lights up via List's value-match. `type` enables separators.
+    // Field mapping for List's default rendering: kanji → icon, text → label,
+    // plus href (→ <a>), value (active-route match), badge, children (groups),
+    // type (separators). List handles icon + label + badge — no item/group snippets.
     const fields = {
         value: 'value',
         href: 'href',
-        text: 'text',
+        icon: 'kanji',
+        label: 'text',
         badge: 'badge',
         children: 'children',
         type: 'type',
     };
 
-    const SEGMENTS = [
-        { value: false, label: 'All' },
-        { value: true, label: 'Focus' },
+    // All|Focus segmented control (rokkit Toggle); its value is the focus flag.
+    // Toggle reads proxy.label → the default 'label' field, so key on `label`.
+    const DENSITY = [
+        { label: 'All', value: false },
+        { label: 'Focus', value: true },
     ];
 </script>
 
@@ -45,52 +48,13 @@
         <Wordmark />
     </div>
 
-    <div>
-        <div class="flex items-center gap-2 px-2 pb-2">
-            <Eyebrow>Observatory</Eyebrow>
-            <span class="flex-1"></span>
-            <div class="flex rounded bg-paper-mute p-0.5">
-                {#each SEGMENTS as seg (seg.label)}
-                    {@const on = seg.value === focus}
-                    <button
-                        type="button"
-                        class="rounded-sm px-1.5 py-0.5 text-xs {on
-                            ? 'bg-paper text-ink'
-                            : 'text-ink-mute'}"
-                        aria-pressed={on}
-                        onclick={() => (focus = seg.value)}
-                    >{seg.label}</button>
-                {/each}
-            </div>
-        </div>
-
-        <List {items} {fields} value={activeHref} collapsible={false}>
-            {#snippet itemContent(proxy: ProxyItem)}
-                {@const active = proxy.value === activeHref}
-                <span
-                    class="kanji w-3.5 shrink-0 text-center text-sm {active
-                        ? 'text-accent'
-                        : 'text-ink-mute'}">{proxy.get('kanji')}</span
-                >
-                <span class="inline-flex flex-1 items-center gap-1.5">
-                    {proxy.get('text')}
-                    {#if proxy.get('alert')}
-                        <span
-                            class="h-1.5 w-1.5 shrink-0 rounded-full bg-danger"
-                            title="needs attention"
-                        ></span>
-                    {/if}
-                </span>
-                {#if proxy.get('badge') != null}
-                    <span class="font-mono text-xs text-ink-mute">{proxy.get('badge')}</span>
-                {/if}
-            {/snippet}
-
-            {#snippet groupContent(proxy: ProxyItem)}
-                <span class="text-ink-faint">{proxy.get('text')}</span>
-            {/snippet}
-        </List>
+    <div class="flex items-center gap-2 px-2">
+        <Eyebrow>Observatory</Eyebrow>
+        <span class="flex-1"></span>
+        <Toggle options={DENSITY} bind:value={focus} size="sm" />
     </div>
+
+    <List {items} {fields} value={activeHref} collapsible={false} />
 
     <div class="flex-1"></div>
 
