@@ -121,7 +121,9 @@ button {
 [data-component="observatory-sidebar"] [data-list] [data-list-separator] {
     margin-block: 8px; /* breathing room before the Preferences section */
 }
-/* Header eyebrow ("OBSERVATORY") — wider tracking than the shared default. */
+/* Header eyebrow ("Observatory") — size it to match the cluster labels
+   ([data-list-group]) so the section header isn't larger than the clusters. */
 [data-component="observatory-sidebar"] [data-component="eyebrow"] {
-    letter-spacing: 0.16em; /* mockup header letterSpacing 0.16em */
+    font-size: 9.5px;
+    letter-spacing: 0.14em;
 }
