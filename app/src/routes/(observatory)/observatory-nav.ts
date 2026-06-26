@@ -65,7 +65,8 @@ const MOCK = {
  */
 export function buildNavItems({ focus, projectCount }: NavOptions): NavEntry[] {
   const entries: NavEntry[] = [
-    // Anchors — where every day starts.
+    // Anchors — where every day starts (top-level; the "Observatory" header +
+    // All|Focus toggle live in the sidebar chrome, not the List).
     link('家', 'Today', '/'),
     link('場', 'Projects', '/projects', { badge: projectCount }),
     // Needs you — the daily payoff: everything with a pending decision.

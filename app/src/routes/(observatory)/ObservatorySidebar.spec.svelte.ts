@@ -19,8 +19,11 @@ const mount = (pathname = '/') => {
   return m;
 };
 
+// The All|Focus control is a rokkit Toggle — its options are [data-toggle-option].
 const segButton = (container: HTMLElement, label: string) =>
-  [...container.querySelectorAll('button')].find((b) => b.textContent?.trim() === label);
+  [...container.querySelectorAll('[data-toggle-option]')].find(
+    (b) => b.textContent?.trim() === label,
+  ) as HTMLElement | undefined;
 
 describe('ObservatorySidebar', () => {
   it('renders every rail entry and both cluster labels in All mode', () => {

@@ -19,16 +19,15 @@ const byHref = (entries: ReturnType<typeof buildNavItems>, href: string) =>
   allLinks(entries).find((l) => l.href === href);
 
 describe('buildNavItems', () => {
-  it('shows anchors + every group in the full (All) rail', () => {
+  it('shows anchors (top-level) + every cluster in the full (All) rail', () => {
     const entries = buildNavItems({ focus: false });
-    const labels = groups(entries).map((g) => g.text);
-    expect(labels).toEqual(['Needs you', 'Review']);
+    expect(groups(entries).map((g) => g.text)).toEqual(['Needs you', 'Review']);
 
-    // Anchors are top-level links, not inside a group.
+    // Anchors are top-level links; Preferences is the trailing top-level link.
     const topHrefs = links(entries).map((l) => l.href);
     expect(topHrefs).toContain('/'); // Today
     expect(topHrefs).toContain('/projects');
-    expect(topHrefs).toContain('/settings'); // Preferences (trailing)
+    expect(topHrefs).toContain('/settings'); // Preferences
   });
 
   it('hides Review group, separator and Preferences in Focus', () => {
