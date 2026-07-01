@@ -17,6 +17,7 @@
 use crate::indexer::lib_indexer::DepVersion;
 
 mod cargo;
+mod go;
 mod npm;
 mod pyproject;
 
@@ -71,6 +72,7 @@ fn registered_adapters() -> &'static [&'static dyn ManifestAdapter] {
         &npm::NpmManifestAdapter,
         &cargo::CargoManifestAdapter,
         &pyproject::PyprojectManifestAdapter,
+        &go::GoManifestAdapter,
     ]
 }
 
@@ -103,9 +105,8 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_does_not_match_go_mod_yet() {
-        // Step 6 will land the GoManifestAdapter — the first new-capability
-        // impl (go.mod has never been parsed for versions).
-        assert!(manifest_adapter_for_filename("go.mod").is_none());
+    fn dispatch_returns_go_for_go_mod() {
+        let a = manifest_adapter_for_filename("go.mod").unwrap();
+        assert_eq!(a.ecosystem(), "go");
     }
 }
