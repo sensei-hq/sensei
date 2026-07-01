@@ -17,8 +17,44 @@ use crate::ir::IRParsedFile;
 pub trait LanguageAdapter: Send + Sync {
     #[allow(dead_code)]
     fn language(&self) -> &str;
+    /// UI-facing label. Defaults to Title-Casing `language()`; override where
+    /// the natural label diverges (acronyms like SQL, single letters like C).
+    /// Currently exercised only from tests + planned Track 3 Libraries screen —
+    /// silence dead-code until a call site lands.
+    #[allow(dead_code)]
+    fn display_name(&self) -> &str {
+        // Best-effort default: Title-Case the language slug. Overrides in
+        // each impl are the right home for acronym / short-word exceptions.
+        title_case_static(self.language())
+    }
     fn parse(&self, source: &str, file_path: &str) -> ParsedFile;
     fn parse_to_ir(&self, source: &str, file_path: &str) -> IRParsedFile;
+}
+
+/// Title-Case a lowercase language slug for the default `display_name`.
+///
+/// Returns a `&'static str` for the common single-word cases so the default
+/// works without allocation. Non-matching inputs fall back to the slug —
+/// concrete adapters that need a different casing must override
+/// `display_name`.
+#[allow(dead_code)]
+fn title_case_static(slug: &str) -> &str {
+    match slug {
+        "rust" => "Rust",
+        "typescript" => "TypeScript",
+        "javascript" => "JavaScript",
+        "python" => "Python",
+        "java" => "Java",
+        "swift" => "Swift",
+        "kotlin" => "Kotlin",
+        "svelte" => "Svelte",
+        "vue" => "Vue",
+        "go" => "Go",
+        "ruby" => "Ruby",
+        "shell" => "Shell",
+        "markdown" => "Markdown",
+        other => other,
+    }
 }
 
 /// Get the adapter for a file extension, or None if unsupported.
@@ -83,5 +119,32 @@ mod tests {
     #[test]
     fn adapter_for_unknown_extension() {
         assert!(adapter_for_ext(".xyz").is_none());
+    }
+
+    // ── display_name (1b Step 1) ────────────────────────────────────────
+
+    #[test]
+    fn display_name_default_title_cases_common_slugs() {
+        // Adapters that don't override display_name get the Title-Cased slug.
+        assert_eq!(adapter_for_ext(".rs").unwrap().display_name(), "Rust");
+        assert_eq!(adapter_for_ext(".ts").unwrap().display_name(), "TypeScript");
+        assert_eq!(adapter_for_ext(".js").unwrap().display_name(), "JavaScript");
+        assert_eq!(adapter_for_ext(".py").unwrap().display_name(), "Python");
+        assert_eq!(adapter_for_ext(".java").unwrap().display_name(), "Java");
+        assert_eq!(adapter_for_ext(".svelte").unwrap().display_name(), "Svelte");
+        assert_eq!(adapter_for_ext(".vue").unwrap().display_name(), "Vue");
+        assert_eq!(adapter_for_ext(".swift").unwrap().display_name(), "Swift");
+        assert_eq!(adapter_for_ext(".kt").unwrap().display_name(), "Kotlin");
+    }
+
+    #[test]
+    fn display_name_overrides_for_acronyms_and_single_letters() {
+        // SQL and C need explicit overrides — the default Title-Case would
+        // give "Sql" and "C" (the C case is fine but exercised for the assert).
+        assert_eq!(adapter_for_ext(".sql").unwrap().display_name(), "SQL");
+        assert_eq!(adapter_for_ext(".ddl").unwrap().display_name(), "SQL");
+        assert_eq!(adapter_for_ext(".c").unwrap().display_name(), "C");
+        assert_eq!(adapter_for_ext(".cpp").unwrap().display_name(), "C");
+        assert_eq!(adapter_for_ext(".h").unwrap().display_name(), "C");
     }
 }
