@@ -213,24 +213,12 @@ pub enum QuasiKind {
 /// recognise without a parser adapter, or Markdown docs. Data, config, and
 /// binaries (`.csv`, `.json`, `.txt`, `.png`, …) deliberately do NOT count — a
 /// folder of only those is not a project.
+///
+/// Thin wrapper over `classifiers::file_classifier()` — the source-ext list
+/// itself now lives in the classifier module so adding a new language is one
+/// edit, not two.
 pub fn is_project_source_ext(ext: &str) -> bool {
-    let e = ext.trim_start_matches('.').to_ascii_lowercase();
-    // Markdown docs: a docs-only folder is a documentation project.
-    if matches!(e.as_str(), "md" | "mdx") {
-        return true;
-    }
-    // Anything the parser has a language adapter for is code.
-    if crate::languages::adapter_for_ext(&format!(".{e}")).is_some() {
-        return true;
-    }
-    // Common source languages we recognise as code even without a parser adapter.
-    matches!(
-        e.as_str(),
-        "go" | "rb" | "sh" | "bash" | "zsh" | "fish" | "pl" | "pm" | "php"
-            | "lua" | "r" | "jl" | "scala" | "ex" | "exs" | "erl" | "hs" | "ml"
-            | "dart" | "cs" | "fs" | "fsx" | "clj" | "cljs" | "groovy" | "m" | "mm"
-            | "cxx" | "hh" | "hxx" | "swift" | "scss" | "css" | "html"
-    )
+    crate::classifiers::file_classifier().is_source_file(ext)
 }
 
 /// Classify a non-git directory as a quasi-repo (a project the developer never
