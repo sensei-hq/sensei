@@ -30,7 +30,7 @@ impl LanguageAdapter for PythonAdapter {
         let mut symbols = Vec::new();
         let mut imports = Vec::new();
 
-        extract_symbols(&root, &lines, &mut symbols, None);
+        extract_symbols(&root, src, &lines, &mut symbols, None);
         extract_imports(&root, src, &mut imports);
 
         let edges = extract_edges(&root, &symbols);
@@ -100,10 +100,10 @@ fn walk_ir_py(
                                     .unwrap_or_default();
                                 let mut class = ir_class(name, &cls, ClassKind::Class,
                                     !cls.child_by_field_name("name").map(|n| n.utf8_text(src).unwrap_or_default().starts_with('_')).unwrap_or(false),
-                                    extract_docstring(&cls, lines), collect_py_decorators(&child, src));
+                                    extract_docstring(&cls, src), collect_py_decorators(&child, src));
                                 class.extends = extract_py_base_class(&cls, src);
                                 if let Some(body) = cls.child_by_field_name("body") {
-                                    walk_ir_py_methods(&body, src, lines, &mut class);
+                                    walk_ir_py_methods(&body, src, &mut class);
                                 }
                                 classes.push(class);
                             }
@@ -120,7 +120,7 @@ fn walk_ir_py(
                 let is_exported = !name.starts_with('_');
                 let params = extract_py_params(&func_node, src);
                 let return_type = extract_py_return_type(&func_node, src);
-                let docstring = extract_docstring(&func_node, lines);
+                let docstring = extract_docstring(&func_node, src);
                 let is_async = node_text(&func_node, src).starts_with("async ");
                 let body_text = node_text(&func_node, src);
 
@@ -135,10 +135,10 @@ fn walk_ir_py(
                     .unwrap_or_default();
                 let is_exported = !name.starts_with('_');
                 let mut class = ir_class(name, &child, ClassKind::Class, is_exported,
-                    extract_docstring(&child, lines), Vec::new());
+                    extract_docstring(&child, src), Vec::new());
                 class.extends = extract_py_base_class(&child, src);
                 if let Some(body) = child.child_by_field_name("body") {
-                    walk_ir_py_methods(&body, src, lines, &mut class);
+                    walk_ir_py_methods(&body, src, &mut class);
                 }
                 classes.push(class);
             }
@@ -170,7 +170,7 @@ fn walk_ir_py(
     }
 }
 
-fn walk_ir_py_methods(body: &Node, src: &[u8], lines: &[&str], class: &mut IRClass) {
+fn walk_ir_py_methods(body: &Node, src: &[u8], class: &mut IRClass) {
     for i in 0..body.child_count() {
         let child = body.child(i).unwrap();
         let (func_node, decorators) = match child.kind() {
@@ -197,7 +197,7 @@ fn walk_ir_py_methods(body: &Node, src: &[u8], lines: &[&str], class: &mut IRCla
             name, &func_node, is_exported, is_async, is_static,
             extract_py_params(&func_node, src),
             extract_py_return_type(&func_node, src),
-            extract_docstring(&func_node, lines),
+            extract_docstring(&func_node, src),
             decorators,
             if is_exported { Visibility::Public } else { Visibility::Private },
             &body_text,
@@ -320,18 +320,18 @@ fn empty_file(path: &str) -> ParsedFile {
     }
 }
 
-fn extract_symbols(node: &Node, lines: &[&str], symbols: &mut Vec<ParsedSymbol>, class_name: Option<&str>) {
+fn extract_symbols(node: &Node, src: &[u8], lines: &[&str], symbols: &mut Vec<ParsedSymbol>, class_name: Option<&str>) {
     for i in 0..node.child_count() {
         let child = node.child(i).unwrap();
         match child.kind() {
             "function_definition" => {
                 let name = child.child_by_field_name("name")
-                    .map(|n| n.utf8_text(lines.join("\n").as_bytes()).unwrap_or_default().to_string())
+                    .map(|n| n.utf8_text(src).unwrap_or_default().to_string())
                     .unwrap_or_default();
                 let kind = if class_name.is_some() { SymbolKind::Method } else { SymbolKind::Function };
                 let sig = lines.get(child.start_position().row)
                     .map(|l| l.trim().to_string());
-                let docstring = extract_docstring(&child, lines);
+                let docstring = extract_docstring(&child, src);
                 symbols.push(ParsedSymbol {
                     name: name.clone(),
                     kind,
@@ -345,11 +345,11 @@ fn extract_symbols(node: &Node, lines: &[&str], symbols: &mut Vec<ParsedSymbol>,
             }
             "class_definition" => {
                 let name = child.child_by_field_name("name")
-                    .map(|n| n.utf8_text(lines.join("\n").as_bytes()).unwrap_or_default().to_string())
+                    .map(|n| n.utf8_text(src).unwrap_or_default().to_string())
                     .unwrap_or_default();
                 let sig = lines.get(child.start_position().row)
                     .map(|l| l.trim().to_string());
-                let docstring = extract_docstring(&child, lines);
+                let docstring = extract_docstring(&child, src);
                 symbols.push(ParsedSymbol {
                     name: name.clone(),
                     kind: SymbolKind::Class,
@@ -362,7 +362,7 @@ fn extract_symbols(node: &Node, lines: &[&str], symbols: &mut Vec<ParsedSymbol>,
                 });
                 // Recurse into class body for methods
                 if let Some(body) = child.child_by_field_name("body") {
-                    extract_symbols(&body, lines, symbols, Some(&name));
+                    extract_symbols(&body, src, lines, symbols, Some(&name));
                 }
             }
             "expression_statement" if class_name.is_none() => {
@@ -370,8 +370,7 @@ fn extract_symbols(node: &Node, lines: &[&str], symbols: &mut Vec<ParsedSymbol>,
                 if let Some(expr) = child.child(0)
                     && expr.kind() == "assignment"
                         && let Some(left) = expr.child_by_field_name("left") {
-                            let src = lines.join("\n");
-                            let name = left.utf8_text(src.as_bytes()).unwrap_or_default().to_string();
+                            let name = left.utf8_text(src).unwrap_or_default().to_string();
                             if left.kind() == "identifier" && name == name.to_uppercase() && name.len() > 1 {
                                 symbols.push(ParsedSymbol {
                                     name,
@@ -391,15 +390,14 @@ fn extract_symbols(node: &Node, lines: &[&str], symbols: &mut Vec<ParsedSymbol>,
     }
 }
 
-fn extract_docstring(node: &Node, lines: &[&str]) -> Option<String> {
+fn extract_docstring(node: &Node, src: &[u8]) -> Option<String> {
     let body = node.child_by_field_name("body")?;
     let first = body.child(0)?;
     if first.kind() != "expression_statement" { return None; }
     let str_node = first.child(0)?;
     if str_node.kind() != "string" { return None; }
 
-    let src = lines.join("\n");
-    let text = str_node.utf8_text(src.as_bytes()).ok()?;
+    let text = str_node.utf8_text(src).ok()?;
     let trimmed = if text.starts_with("\"\"\"") || text.starts_with("'''") {
         text[3..text.len()-3].trim()
     } else if text.starts_with('"') || text.starts_with('\'') {
@@ -493,6 +491,26 @@ mod tests {
 
     fn parse(source: &str) -> ParsedFile {
         PythonAdapter.parse(source, "test.py")
+    }
+
+    #[test]
+    fn crlf_source_does_not_panic_on_utf8_extraction() {
+        // Regression: the tree is parsed on `source` (CRLF bytes) but symbol
+        // extraction used to slice `lines.join("\n")` (CR-stripped, shorter) →
+        // node byte-offsets overshot the buffer and panicked in Node::utf8_text.
+        // Put a symbol AFTER many CRLF lines so its offset exceeds the LF length.
+        let mut source = String::new();
+        for i in 0..400 {
+            source.push_str(&format!("x{i} = {i}\r\n"));
+        }
+        source.push_str("def last_fn():\r\n    return 1\r\n");
+        source.push_str("class LastClass:\r\n    def method(self):\r\n        pass\r\n");
+
+        let pf = parse(&source); // must not panic
+        let names: Vec<&str> = pf.symbols.iter().map(|s| s.name.as_str()).collect();
+        assert!(names.contains(&"last_fn"), "expected last_fn, got {:?}", &names[names.len().saturating_sub(5)..]);
+        assert!(names.contains(&"LastClass"), "expected LastClass");
+        assert!(names.contains(&"method"), "expected method");
     }
 
     #[test]
