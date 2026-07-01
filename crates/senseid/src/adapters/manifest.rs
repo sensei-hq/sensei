@@ -16,6 +16,7 @@
 
 use crate::indexer::lib_indexer::DepVersion;
 
+mod cargo;
 mod npm;
 
 /// Adapter for a specific ecosystem's manifest format.
@@ -65,7 +66,7 @@ pub fn manifest_adapter_for_filename(filename: &str) -> Option<&'static dyn Mani
 
 /// All registered ManifestAdapter impls. Add new ecosystems here.
 fn registered_adapters() -> &'static [&'static dyn ManifestAdapter] {
-    &[&npm::NpmManifestAdapter]
+    &[&npm::NpmManifestAdapter, &cargo::CargoManifestAdapter]
 }
 
 #[cfg(test)]
@@ -85,10 +86,15 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_does_not_match_cargo_toml_yet() {
-        // Step 4 will land the CargoManifestAdapter. Until then dispatch
-        // returns None and callers keep the legacy path — asserting so a
-        // premature migration doesn't slip through.
-        assert!(manifest_adapter_for_filename("Cargo.toml").is_none());
+    fn dispatch_returns_cargo_for_cargo_toml() {
+        let a = manifest_adapter_for_filename("Cargo.toml").unwrap();
+        assert_eq!(a.ecosystem(), "cargo");
+    }
+
+    #[test]
+    fn dispatch_does_not_match_pyproject_toml_yet() {
+        // Step 5 will land the PyprojectManifestAdapter. Until then dispatch
+        // returns None and callers keep the legacy path.
+        assert!(manifest_adapter_for_filename("pyproject.toml").is_none());
     }
 }
