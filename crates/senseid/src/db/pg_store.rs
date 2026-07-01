@@ -2776,6 +2776,35 @@ impl PgStore {
         }).collect())
     }
 
+    /// List libraries pinned to different versions across folders of a project.
+    ///
+    /// Reads `sensei.project_library_version_conflicts` — excludes local-
+    /// protocol deps so only registry-version drift surfaces. Returns one row
+    /// per conflicting (project, library) pair with the distinct versions and
+    /// the folders where each version was seen.
+    pub async fn list_project_library_version_conflicts(
+        &self, project_id: &uuid::Uuid,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, String, String, Vec<String>, Vec<String>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT library_id, library_name, ecosystem, versions, folders
+                   FROM sensei.project_library_version_conflicts
+                  WHERE project_id = $1
+                  ORDER BY library_name"
+            ).bind(project_id)
+            .fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+
+        Ok(rows.into_iter().map(|(lib_id, name, ecosystem, versions, folders)| {
+            serde_json::json!({
+                "library_id": lib_id,
+                "library_name": name,
+                "ecosystem": ecosystem,
+                "versions": versions,
+                "folders": folders,
+            })
+        }).collect())
+    }
+
     /// List outgoing project → project edges for a project.
     ///
     /// Returns one row per edge with the target project's name joined in.
@@ -4673,6 +4702,52 @@ mod tests {
             .bind(from_fid).execute(s.pool()).await.unwrap();
         s.delete_project(&from_pid).await.ok();
         s.delete_project(&to_pid).await.ok();
+    }
+
+    #[tokio::test]
+    async fn version_conflicts_view_flags_multi_version_pins_and_excludes_local() {
+        // 1a Step 7-8: two folders in the same project pin the same library
+        // at DIFFERENT versions → surfaces as a conflict. A third row tagged
+        // local_source (as if declared via link:) with a different version
+        // must NOT contribute to the conflict.
+        let s = pg_store().await;
+        let suffix = uuid::Uuid::new_v4();
+        let pid = s.ensure_test_project(&format!("vc-{suffix}")).await.unwrap();
+        let lib = s.upsert_library(&format!("_test:vc-lib-{suffix}"), "npm", Some("1.0"), None, None, None).await.unwrap();
+
+        // Two folders in the same project, different versions.
+        let fid_a = create_test_folder(&s, &format!("vc-a-{suffix}")).await;
+        let fid_b = create_test_folder(&s, &format!("vc-b-{suffix}")).await;
+        // Attach folders to the project.
+        sqlx_core::query::query("UPDATE sensei.folders SET project_id = $1 WHERE id IN ($2, $3)")
+            .bind(pid).bind(fid_a).bind(fid_b)
+            .execute(s.pool()).await.unwrap();
+
+        s.upsert_referenced_library(&fid_a, &lib, Some("1.2.0"), None).await.unwrap();
+        s.upsert_referenced_library(&fid_b, &lib, Some("1.3.0"), None).await.unwrap();
+
+        // Third folder pins a local-source variant. This must be excluded.
+        let fid_local = create_test_folder(&s, &format!("vc-local-{suffix}")).await;
+        sqlx_core::query::query("UPDATE sensei.folders SET project_id = $1 WHERE id = $2")
+            .bind(pid).bind(fid_local).execute(s.pool()).await.unwrap();
+        s.upsert_referenced_library(
+            &fid_local, &lib, Some("workspace-42"),
+            Some(serde_json::json!({"local_source": "../lib"})),
+        ).await.unwrap();
+
+        let rows = s.list_project_library_version_conflicts(&pid).await.unwrap();
+        assert_eq!(rows.len(), 1, "one lib with two registry-version pins → one row");
+        let r = &rows[0];
+        assert_eq!(r["library_id"].as_str().unwrap(), lib.to_string());
+        let versions: Vec<String> = r["versions"].as_array().unwrap()
+            .iter().map(|v| v.as_str().unwrap().to_string()).collect();
+        assert_eq!(versions, vec!["1.2.0".to_string(), "1.3.0".to_string()],
+                   "versions must be sorted + distinct; workspace-42 excluded because local_source is tagged");
+
+        // Cleanup — library FK cascades referenced_libraries; then delete
+        // project (folders cascade because project_id set null).
+        s.delete_library(&lib).await.unwrap();
+        s.delete_project(&pid).await.ok();
     }
 
     #[tokio::test]
