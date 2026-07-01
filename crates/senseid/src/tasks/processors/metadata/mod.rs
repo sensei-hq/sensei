@@ -4,7 +4,7 @@
 //! Called from process_git_folder after file discovery, before task enqueuing.
 
 mod icons;
-mod external_links;
+pub(crate) mod external_links;
 mod frontmatter;
 mod solutions;
 mod summary;
