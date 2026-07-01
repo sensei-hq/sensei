@@ -5,8 +5,11 @@
 //! step is genuinely a refactor: no duplicated logic and existing tests keep
 //! covering the parser.
 
+use super::workspace::{extract_npm_workspace_patterns, resolve_glob_members};
 use super::{FsSignals, ManifestAdapter, ParsedManifest};
 use crate::indexer::lib_indexer::{parse_npm_deps, DepVersion};
+use crate::types::PackageInfo;
+use std::path::Path;
 
 pub struct NpmManifestAdapter;
 
@@ -105,6 +108,72 @@ impl ManifestAdapter for NpmManifestAdapter {
         }
         None
     }
+
+    fn detect_workspace_members(&self, repo_root: &Path) -> Vec<PackageInfo> {
+        let mut members = Vec::new();
+
+        // 1. Root package.json declares `workspaces`
+        if let Ok(content) = std::fs::read_to_string(repo_root.join("package.json"))
+            && let Ok(json) = serde_json::from_str::<serde_json::Value>(&content)
+        {
+            for pattern in extract_npm_workspace_patterns(&json) {
+                for entry in resolve_glob_members(repo_root, &pattern) {
+                    if let Some(member) = package_json_member(repo_root, &entry) {
+                        members.push(member);
+                    }
+                }
+            }
+        }
+
+        // 2. pnpm-workspace.yaml — only used if no root package.json workspaces
+        if members.is_empty()
+            && let Ok(content) = std::fs::read_to_string(repo_root.join("pnpm-workspace.yaml"))
+            && let Ok(yaml) = serde_yaml::from_str::<serde_json::Value>(&content)
+            && let Some(packages) = yaml.get("packages").and_then(|p| p.as_array())
+        {
+            for p in packages {
+                if let Some(pattern) = p.as_str() {
+                    for entry in resolve_glob_members(repo_root, pattern) {
+                        if let Some(member) = package_json_member(repo_root, &entry) {
+                            members.push(member);
+                        }
+                    }
+                }
+            }
+        }
+
+        members
+    }
+}
+
+/// Build a `PackageInfo` for a workspace-member folder that contains a
+/// `package.json`. Returns `None` if the folder has no `package.json`.
+fn package_json_member(repo_root: &Path, rel_path: &str) -> Option<PackageInfo> {
+    let pkg_json = repo_root.join(rel_path).join("package.json");
+    if !pkg_json.exists() {
+        return None;
+    }
+    let pkg = std::fs::read_to_string(&pkg_json)
+        .ok()
+        .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok());
+    let name = pkg
+        .as_ref()
+        .and_then(|v| v.get("name").and_then(|n| n.as_str()).map(|s| s.to_string()))
+        .unwrap_or_else(|| rel_path.to_string());
+    let version = pkg
+        .as_ref()
+        .and_then(|v| v.get("version").and_then(|n| n.as_str()).map(|s| s.to_string()));
+    let private = pkg
+        .as_ref()
+        .and_then(|v| v.get("private").and_then(|b| b.as_bool()))
+        .unwrap_or(false);
+    Some(PackageInfo {
+        name,
+        path: rel_path.to_string(),
+        version,
+        pkg_type: "npm_workspace".to_string(),
+        private,
+    })
 }
 
 #[cfg(test)]
