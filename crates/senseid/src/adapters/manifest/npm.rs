@@ -5,7 +5,7 @@
 //! step is genuinely a refactor: no duplicated logic and existing tests keep
 //! covering the parser.
 
-use super::{ManifestAdapter, ParsedManifest};
+use super::{FsSignals, ManifestAdapter, ParsedManifest};
 use crate::indexer::lib_indexer::{parse_npm_deps, DepVersion};
 
 pub struct NpmManifestAdapter;
@@ -51,6 +51,59 @@ impl ManifestAdapter for NpmManifestAdapter {
             version: pkg.get("version").and_then(|v| v.as_str()).map(|s| s.to_string()),
             description: pkg.get("description").and_then(|v| v.as_str()).map(|s| s.to_string()),
         }
+    }
+
+    fn stack_labels(&self, content: &str) -> Vec<&'static str> {
+        // Framework-detection precedence matches the legacy inline block in
+        // scan_logic.rs so historical outputs stay stable. Cheap substring
+        // check on the raw text — the pattern is unambiguous enough in practice
+        // (a dep named "svelte" is a Svelte project) and avoids parsing JSON
+        // for every scanned folder.
+        if content.contains("\"svelte\"") || content.contains("\"@sveltejs/kit\"") {
+            vec!["svelte"]
+        } else if content.contains("\"react\"") {
+            vec!["react"]
+        } else if content.contains("\"vue\"") {
+            vec!["vue"]
+        } else if content.contains("\"next\"") {
+            vec!["nextjs"]
+        } else {
+            vec!["typescript"]
+        }
+    }
+
+    fn infer_role(
+        &self,
+        parsed: &ParsedManifest,
+        content: &str,
+        fs: &FsSignals,
+    ) -> Option<&'static str> {
+        // 1. Tool — a node package that ships a CLI (`bin` field).
+        if content.contains("\"bin\"") {
+            return Some("tool");
+        }
+
+        // 2. Website — a web-app framework (checked before library: an app's
+        //    package.json also has a name, but it is not a publishable lib).
+        //    For SvelteKit/Vite require an actual `src/routes` app tree.
+        let is_web_app = content.contains("\"next\"")
+            || content.contains("\"astro\"")
+            || (fs.has_src_routes
+                && (content.contains("\"@sveltejs/kit\"") || content.contains("\"vite\"")));
+        if is_web_app {
+            return Some("website");
+        }
+
+        // 3. Library — publishable package (has a name plus an entry point).
+        let node_lib = parsed.name.is_some()
+            && (content.contains("\"exports\"")
+                || content.contains("\"main\"")
+                || content.contains("\"module\":")
+                || content.contains("\"svelte\""));
+        if node_lib {
+            return Some("library");
+        }
+        None
     }
 }
 
@@ -130,5 +183,70 @@ mod tests {
     fn parse_manifest_defaults_for_missing_fields() {
         let p = NpmManifestAdapter.parse_manifest(r#"{}"#);
         assert_eq!(p, ParsedManifest::default());
+    }
+
+    #[test]
+    fn stack_labels_svelte_before_react_vue_next_typescript() {
+        // A svelte package.json → "svelte" even when other deps are present.
+        assert_eq!(
+            NpmManifestAdapter.stack_labels(r#"{"dependencies":{"svelte":"^5"}}"#),
+            vec!["svelte"]
+        );
+        assert_eq!(
+            NpmManifestAdapter
+                .stack_labels(r#"{"devDependencies":{"@sveltejs/kit":"^2"}}"#),
+            vec!["svelte"]
+        );
+        assert_eq!(
+            NpmManifestAdapter.stack_labels(r#"{"dependencies":{"react":"^18"}}"#),
+            vec!["react"]
+        );
+        assert_eq!(
+            NpmManifestAdapter.stack_labels(r#"{"dependencies":{"vue":"^3"}}"#),
+            vec!["vue"]
+        );
+        assert_eq!(
+            NpmManifestAdapter.stack_labels(r#"{"dependencies":{"next":"^14"}}"#),
+            vec!["nextjs"]
+        );
+        // No framework markers → generic typescript label.
+        assert_eq!(
+            NpmManifestAdapter.stack_labels(r#"{"name":"plain"}"#),
+            vec!["typescript"]
+        );
+    }
+
+    #[test]
+    fn infer_role_tool_from_bin_field() {
+        let content = r#"{"name":"c","bin":{"c":"./c.js"}}"#;
+        let parsed = NpmManifestAdapter.parse_manifest(content);
+        let fs = FsSignals::default();
+        assert_eq!(NpmManifestAdapter.infer_role(&parsed, content, &fs), Some("tool"));
+    }
+
+    #[test]
+    fn infer_role_website_from_sveltekit_with_routes() {
+        let content = r#"{"name":"learn","devDependencies":{"@sveltejs/kit":"^2"}}"#;
+        let parsed = NpmManifestAdapter.parse_manifest(content);
+        let fs = FsSignals { has_src_routes: true, ..Default::default() };
+        assert_eq!(NpmManifestAdapter.infer_role(&parsed, content, &fs), Some("website"));
+    }
+
+    #[test]
+    fn infer_role_library_when_no_routes_even_with_sveltekit_dep() {
+        // A UnoCSS preset that peer-deps @sveltejs/kit but has no `src/routes`
+        // is a library, not a website.
+        let content = r#"{"name":"@rokkit/unocss","exports":{".":"./i.js"},"peerDependencies":{"@sveltejs/kit":"^2"}}"#;
+        let parsed = NpmManifestAdapter.parse_manifest(content);
+        let fs = FsSignals::default();
+        assert_eq!(NpmManifestAdapter.infer_role(&parsed, content, &fs), Some("library"));
+    }
+
+    #[test]
+    fn infer_role_none_when_name_present_but_no_entry_point() {
+        // `type:module` alone is not enough — needs exports/main/module/svelte.
+        let content = r#"{"name":"x","type":"module"}"#;
+        let parsed = NpmManifestAdapter.parse_manifest(content);
+        assert_eq!(NpmManifestAdapter.infer_role(&parsed, content, &FsSignals::default()), None);
     }
 }

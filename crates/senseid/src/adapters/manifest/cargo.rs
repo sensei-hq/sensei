@@ -4,7 +4,7 @@
 //! step remains a refactor. Workspace detection reads the `[workspace]`
 //! section directly.
 
-use super::{ManifestAdapter, ParsedManifest};
+use super::{FsSignals, ManifestAdapter, ParsedManifest};
 use crate::indexer::lib_indexer::{parse_cargo_deps, DepVersion};
 
 pub struct CargoManifestAdapter;
@@ -49,6 +49,30 @@ impl ManifestAdapter for CargoManifestAdapter {
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string()),
         }
+    }
+
+    fn stack_labels(&self, _content: &str) -> Vec<&'static str> {
+        vec!["rust"]
+    }
+
+    fn infer_role(
+        &self,
+        _parsed: &ParsedManifest,
+        content: &str,
+        fs: &FsSignals,
+    ) -> Option<&'static str> {
+        // Explicit [[bin]] target → tool. A bare `main.rs` is deliberately not
+        // enough: a daemon (e.g. senseid, axum-based) is a binary too, so
+        // requiring an explicit bin declaration avoids mislabeling a backend
+        // service as a CLI tool.
+        if content.contains("[[bin]]") {
+            return Some("tool");
+        }
+        // Library crate: `src/lib.rs` present or explicit `[lib]` section.
+        if fs.has_lib_rs || content.contains("[lib]") {
+            return Some("library");
+        }
+        None
     }
 }
 
@@ -132,5 +156,47 @@ mod tests {
             members = ["crates/*"]
         "#;
         assert_eq!(CargoManifestAdapter.parse_manifest(src), ParsedManifest::default());
+    }
+
+    #[test]
+    fn stack_labels_always_rust() {
+        assert_eq!(CargoManifestAdapter.stack_labels(""), vec!["rust"]);
+        assert_eq!(
+            CargoManifestAdapter.stack_labels("[workspace]\nmembers=[]"),
+            vec!["rust"]
+        );
+    }
+
+    #[test]
+    fn infer_role_tool_from_explicit_bin() {
+        let content = "[package]\nname=\"c\"\n\n[[bin]]\nname=\"c\"";
+        let parsed = CargoManifestAdapter.parse_manifest(content);
+        let fs = FsSignals::default();
+        assert_eq!(CargoManifestAdapter.infer_role(&parsed, content, &fs), Some("tool"));
+    }
+
+    #[test]
+    fn infer_role_library_from_lib_rs_or_lib_section() {
+        let content = "[package]\nname=\"core\"";
+        let parsed = CargoManifestAdapter.parse_manifest(content);
+        let fs = FsSignals { has_lib_rs: true, ..Default::default() };
+        assert_eq!(CargoManifestAdapter.infer_role(&parsed, content, &fs), Some("library"));
+
+        let lib_content = "[package]\nname=\"c\"\n\n[lib]";
+        let parsed = CargoManifestAdapter.parse_manifest(lib_content);
+        let fs = FsSignals::default();
+        assert_eq!(
+            CargoManifestAdapter.infer_role(&parsed, lib_content, &fs),
+            Some("library")
+        );
+    }
+
+    #[test]
+    fn infer_role_none_for_service_daemon_without_bin_or_lib() {
+        // A daemon binary (main.rs, no [[bin]]/[lib], server deps) stays unclassified.
+        let content = "[package]\nname=\"senseid\"\n\n[dependencies]\naxum = \"0.7\"";
+        let parsed = CargoManifestAdapter.parse_manifest(content);
+        let fs = FsSignals::default();
+        assert_eq!(CargoManifestAdapter.infer_role(&parsed, content, &fs), None);
     }
 }
