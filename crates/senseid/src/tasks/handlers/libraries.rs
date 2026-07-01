@@ -261,6 +261,7 @@ pub async fn extract_deps(ctx: &TaskContext, task: &Task) -> Result<u32, String>
     let deps = crate::indexer::lib_indexer::extract_dep_versions(folder_name, repo_path)?;
 
     let mut count = 0u32;
+    let mut local_edge_count = 0u32;
     for dep in &deps {
         let ecosystem = match dep.source.as_str() {
             "package.json" => "npm",
@@ -268,6 +269,33 @@ pub async fn extract_deps(ctx: &TaskContext, task: &Task) -> Result<u32, String>
             "pyproject.toml" => "pypi",
             _ => "npm",
         };
+
+        // Local-protocol deps (link: / workspace: / file: / path=) do NOT
+        // resolve to external registry libraries; skip the library upsert and
+        // try to record a project → project edge instead. If resolution
+        // fails (target not indexed yet, workspace-name lookup, etc.), log
+        // and move on — the next scan will retry.
+        if let Some(target) = &dep.local_source {
+            let protocol = local_source_protocol(&dep.source, &dep.raw_version);
+            let resolved = resolve_local_target(repo_path, protocol, target);
+            if let Some(pid) = project_id
+                && let Some(abs_target) = resolved.as_ref().and_then(|p| p.to_str())
+                && let Ok(Some(target_folder)) = ctx.pg().get_repo_by_path(abs_target).await
+                && let Some(to_pid) = crate::api::util::json_uuid(&target_folder["project_id"])
+                && to_pid != pid
+                && let Err(e) = ctx.pg().upsert_project_dependency(
+                    &pid, &to_pid, &folder_id, protocol, &dep.source, Some(target),
+                ).await {
+                    tracing::warn!(
+                        error = %e, lib = %dep.lib_name, folder = %folder_name,
+                        "extract_deps: upsert_project_dependency failed"
+                    );
+                }
+            if resolved.is_some() {
+                local_edge_count += 1;
+            }
+            continue;
+        }
 
         // Upsert the library record (creates if not exists)
         let lib_id = match ctx.pg().upsert_library(&dep.lib_name, ecosystem, Some(&dep.version), None, None, None).await {
@@ -321,10 +349,70 @@ pub async fn extract_deps(ctx: &TaskContext, task: &Task) -> Result<u32, String>
     }
 
     tracing::info!(
-        "extract_deps: {} — {} deps from manifests, {} first-party workspace packages",
-        folder_name, count, member_count,
+        "extract_deps: {} — {} deps from manifests, {} first-party workspace packages, {} local-protocol edges",
+        folder_name, count, member_count, local_edge_count,
     );
-    Ok(count + member_count)
+    Ok(count + member_count + local_edge_count)
+}
+
+/// Classify a `DepVersion` with a `local_source` into a protocol tag.
+///
+/// The protocol drives how the target is looked up:
+/// - `path` → filesystem path relative to the declaring folder (Cargo).
+/// - `link` / `file` → filesystem path relative to the declaring folder (npm).
+/// - `workspace` → name lookup inside the same monorepo (intra-project by
+///   design — no cross-project edge).
+fn local_source_protocol(source: &str, raw_version: &str) -> &'static str {
+    if source == "Cargo.toml" {
+        return "path";
+    }
+    if raw_version.starts_with("link:") {
+        return "link";
+    }
+    if raw_version.starts_with("workspace:") {
+        return "workspace";
+    }
+    if raw_version.starts_with("file:") {
+        return "file";
+    }
+    "path"
+}
+
+/// Resolve a manifest-relative local-source target to an absolute filesystem
+/// path.
+///
+/// - `link:` / `path=` / `file:` payloads are filesystem paths; resolve
+///   against the declaring folder's abs_path and normalize `..` / `.` segments.
+/// - `workspace:` payloads name a member (not a path); return `None` so the
+///   caller knows to fall back to the name-based lookup path.
+///
+/// The result is NOT `.canonicalize`d — canonicalization requires the target
+/// to exist and follows symlinks in a way that surprises the caller when the
+/// folder is symlinked. Lexical normalization is enough for looking up in
+/// `sensei.folders` by `abs_path`, which itself stores the pre-canonical path.
+fn resolve_local_target(from_abs_path: &str, protocol: &str, target: &str) -> Option<std::path::PathBuf> {
+    if protocol == "workspace" {
+        return None;
+    }
+    let base = std::path::Path::new(from_abs_path);
+    let joined = base.join(target);
+    Some(lexical_normalize(&joined))
+}
+
+/// Lexical `..` / `.` normalization — no filesystem access. Behaves like
+/// `Path::canonicalize` for lexically absolute inputs but does not require the
+/// target to exist.
+fn lexical_normalize(p: &std::path::Path) -> std::path::PathBuf {
+    use std::path::Component;
+    let mut out = std::path::PathBuf::new();
+    for comp in p.components() {
+        match comp {
+            Component::ParentDir => { out.pop(); }
+            Component::CurDir => {}
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
 }
 
 /// Extract the library name from an import path. Preserves scoped npm package
@@ -428,6 +516,50 @@ mod tests {
     #[test]
     fn extract_lib_name_empty_input_returns_empty() {
         assert_eq!(extract_lib_name(""), "");
+    }
+
+    // ── local_source_protocol + resolve_local_target (1a Step 5) ──────
+
+    #[test]
+    fn local_source_protocol_maps_cargo_and_npm_prefixes() {
+        assert_eq!(local_source_protocol("Cargo.toml", "1.2.3"), "path");
+        assert_eq!(local_source_protocol("package.json", "link:../actions"), "link");
+        assert_eq!(local_source_protocol("package.json", "workspace:*"), "workspace");
+        assert_eq!(local_source_protocol("package.json", "file:./x.tgz"), "file");
+    }
+
+    #[test]
+    fn resolve_local_target_joins_relative_and_normalizes() {
+        let resolved = resolve_local_target(
+            "/Users/j/Developer/rokkit/packages/ui",
+            "link",
+            "../actions",
+        );
+        assert_eq!(
+            resolved.as_deref(),
+            Some(std::path::Path::new("/Users/j/Developer/rokkit/packages/actions"))
+        );
+    }
+
+    #[test]
+    fn resolve_local_target_handles_double_parent() {
+        let resolved = resolve_local_target(
+            "/root/proj/a/b",
+            "path",
+            "../../other/c",
+        );
+        assert_eq!(
+            resolved.as_deref(),
+            Some(std::path::Path::new("/root/proj/other/c"))
+        );
+    }
+
+    #[test]
+    fn resolve_local_target_workspace_returns_none() {
+        // workspace: is a name-based lookup, not a path — caller must
+        // fall back to member-name resolution when it wants intra-project
+        // routing. For 1a this branch is intentionally not wired.
+        assert_eq!(resolve_local_target("/x/y", "workspace", "*"), None);
     }
 
     // ── public_member_libs (existing) ─────────────────────────────────
