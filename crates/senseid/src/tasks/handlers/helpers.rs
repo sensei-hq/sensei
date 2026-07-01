@@ -3,25 +3,12 @@
 /// Check if a file extension indicates a binary (non-text) file. This is a
 /// fast first pass; `is_probably_binary` (content sniff) is the robust net for
 /// anything not on this list.
+///
+/// Thin wrapper over `classifiers::file_classifier()` — the extension list
+/// itself lives in the classifier module so a single edit adds a new binary
+/// type across every caller.
 pub(crate) fn is_binary_ext(ext: &str) -> bool {
-    [
-        // images
-        "png","jpg","jpeg","gif","ico","svg","webp","avif","bmp","tiff","tif","icns","heic",
-        // fonts
-        "woff","woff2","ttf","eot","otf",
-        // archives
-        "zip","tar","gz","tgz","bz2","xz","7z","rar","z",
-        // compiled / binaries
-        "exe","dll","so","dylib","o","a","lib","class","jar","pyc","pyo","pdb","wasm",
-        // databases / columnar data
-        "db","sqlite","sqlite3","profraw","parquet","arrow","feather",
-        // office documents
-        "pdf","doc","docx","xls","xlsx","ppt","pptx",
-        // media
-        "mp4","mov","avi","webm","mkv","mp3","wav","flac","ogg",
-        // misc binary
-        "bin","dat","pack","idx","map","DS_Store","lock",
-    ].contains(&ext)
+    crate::classifiers::file_classifier().is_binary(ext)
 }
 
 /// File modification time as Unix epoch milliseconds — a cheap stat (no read)
