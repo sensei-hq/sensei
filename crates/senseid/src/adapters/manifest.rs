@@ -10,11 +10,14 @@
 //! impl is a zero-sized type so there's no allocation on the hot path.
 
 use crate::indexer::lib_indexer::DepVersion;
+use crate::types::PackageInfo;
+use std::path::Path;
 
 mod cargo;
 mod go;
 mod npm;
 mod pyproject;
+pub(crate) mod workspace;
 
 /// Adapter for a specific ecosystem's manifest format.
 pub trait ManifestAdapter: Send + Sync {
@@ -58,6 +61,13 @@ pub trait ManifestAdapter: Send + Sync {
         _fs: &FsSignals,
     ) -> Option<&'static str> {
         None
+    }
+
+    /// Enumerate workspace-member packages of a repo root. Default: none —
+    /// ecosystems that don't have a workspace concept (pyproject today) return
+    /// an empty vector. Called by `config::detector::detect_workspace_members`.
+    fn detect_workspace_members(&self, _repo_root: &Path) -> Vec<PackageInfo> {
+        Vec::new()
     }
 }
 
