@@ -16,6 +16,7 @@ export interface NavLink {
   text: string;
   href: string;
   value: string;
+  snippet?: string;
   badge?: string | number;
   alert?: boolean;
 }
@@ -28,7 +29,7 @@ export interface NavGroup {
 
 /** Thin divider rendered by List as `<hr data-list-separator>`. */
 export interface NavSeparator {
-  type: 'separator';
+  type: "separator";
 }
 
 export type NavEntry = NavLink | NavGroup | NavSeparator;
@@ -44,18 +45,18 @@ const link = (
   kanji: string,
   text: string,
   href: string,
-  extra: Partial<Pick<NavLink, 'badge' | 'alert'>> = {},
+  extra: Partial<Pick<NavLink, "badge" | "alert">> = {},
 ): NavLink => ({ kanji, text, href, value: href, ...extra });
 
 // MOCK: badge counts are placeholders until wired to the daemon API.
 const MOCK = {
-  insights: '6',
-  memories: '7',
-  impact: '3',
-  traceability: '4',
-  upgrades: '5',
-  sessions: '41',
-  libraries: '14',
+  insights: "6",
+  memories: "7",
+  impact: "3",
+  traceability: "4",
+  upgrades: "5",
+  sessions: "41",
+  libraries: "14",
 } as const;
 
 /**
@@ -66,18 +67,21 @@ const MOCK = {
 export function buildNavItems({ focus, projectCount }: NavOptions): NavEntry[] {
   const entries: NavEntry[] = [
     // Anchors — where every day starts (top-level; the "Observatory" header +
-    // All|Focus toggle live in the sidebar chrome, not the List).
-    link('家', 'Today', '/'),
-    link('場', 'Projects', '/projects', { badge: projectCount }),
+    // All|Focus toggle live in the sidebar chrome, not the List — the toggle
+    // can't live in a group header until rokkit stops disabling them).
+    link("家", "Today", "/"),
+    link("場", "Projects", "/projects", { badge: projectCount }),
     // Needs you — the daily payoff: everything with a pending decision.
     {
-      text: 'Needs you',
+      text: "Needs you",
       children: [
-        link('今', 'Insights', '/insights', { badge: MOCK.insights }),
-        link('覚', 'Memories', '/learnings', { badge: MOCK.memories }),
-        link('果', 'Impact', '/impact', { badge: MOCK.impact, alert: true }),
-        link('巻', 'Traceability', '/traceability', { badge: MOCK.traceability }),
-        link('贈', 'Upgrades', '/upgrades', { badge: MOCK.upgrades }),
+        link("今", "Insights", "/insights", { badge: MOCK.insights }),
+        link("覚", "Memories", "/learnings", { badge: MOCK.memories }),
+        link("果", "Impact", "/impact", { badge: MOCK.impact, alert: true }),
+        link("巻", "Traceability", "/traceability", {
+          badge: MOCK.traceability,
+        }),
+        link("贈", "Upgrades", "/upgrades", { badge: MOCK.upgrades }),
       ],
     },
   ];
@@ -85,17 +89,17 @@ export function buildNavItems({ focus, projectCount }: NavOptions): NavEntry[] {
   if (!focus) {
     // Review & diagnostics — reached periodically, hidden in Focus.
     entries.push({
-      text: 'Review',
+      text: "Review",
       children: [
-        link('録', 'Sessions', '/sessions', { badge: MOCK.sessions }),
-        link('庫', 'Libraries', '/libraries', { badge: MOCK.libraries }),
-        link('具', 'Instruments', '/instruments'),
-        link('診', 'Logs', '/logs'),
+        link("録", "Sessions", "/sessions", { badge: MOCK.sessions }),
+        link("庫", "Libraries", "/libraries", { badge: MOCK.libraries }),
+        link("具", "Instruments", "/instruments"),
+        link("診", "Logs", "/logs"),
       ],
     });
     // Settings — visited when something needs changing, hidden in Focus.
-    entries.push({ type: 'separator' });
-    entries.push(link('調', 'Preferences', '/settings'));
+    entries.push({ type: "separator" });
+    entries.push(link("調", "Preferences", "/settings"));
   }
 
   return entries;
@@ -105,8 +109,8 @@ export function buildNavItems({ focus, projectCount }: NavOptions): NavEntry[] {
 function allHrefs(): string[] {
   const out: string[] = [];
   for (const e of buildNavItems({ focus: false })) {
-    if ('href' in e) out.push(e.href);
-    else if ('children' in e) for (const c of e.children) out.push(c.href);
+    if ("href" in e) out.push(e.href);
+    else if ("children" in e) for (const c of e.children) out.push(c.href);
   }
   return out;
 }
@@ -121,10 +125,11 @@ export function resolveActiveHref(pathname: string): string {
   const hrefs = allHrefs();
   if (hrefs.includes(pathname)) return pathname;
 
-  let best = '';
+  let best = "";
   for (const href of hrefs) {
-    if (href === '/') continue;
-    if (pathname.startsWith(href + '/') && href.length > best.length) best = href;
+    if (href === "/") continue;
+    if (pathname.startsWith(href + "/") && href.length > best.length)
+      best = href;
   }
   return best;
 }

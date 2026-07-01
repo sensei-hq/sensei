@@ -19,21 +19,15 @@
     const items = $derived(buildNavItems({ focus, projectCount }));
     const activeHref = $derived(resolveActiveHref(pathname));
 
-    // Field mapping for List's default rendering: kanji → icon, text → label,
-    // plus href (→ <a>), value (active-route match), badge, children (groups),
-    // type (separators). List handles icon + label + badge — no item/group snippets.
-    const fields = {
-        value: 'value',
-        href: 'href',
-        icon: 'kanji',
-        label: 'text',
-        badge: 'badge',
-        children: 'children',
-        type: 'type',
-    };
+    // List's default rendering handles icon + label + badge. Only remap the two
+    // keys that differ from defaults: kanji → icon, text → label. href / value /
+    // badge / children / type keep their default field names.
+    const fields = { icon: 'kanji', label: 'text' };
 
     // All|Focus segmented control (rokkit Toggle); its value is the focus flag.
-    // Toggle reads proxy.label → the default 'label' field, so key on `label`.
+    // Lives in the header chrome (not a List group header — rokkit disables
+    // non-collapsible group headers, so a Toggle inside one is inert; see
+    // rokkit issue). Toggle reads proxy.label → the default 'label' field.
     const DENSITY = [
         { label: 'All', value: false },
         { label: 'Focus', value: true },
