@@ -5,6 +5,9 @@ pub async fn fetch_lib_url(url: &str) -> Result<String, String> {
 }
 
 /// Index pre-fetched library content (sync part — safe to hold mutex).
+/// Legacy single-URL path; superseded by [`resolve_library_pages`] for the
+/// multi-source component-derivation flow, retained for the direct-URL API.
+#[allow(dead_code)]
 pub fn index_lib_content(
     lib_name: &str,
     url: &str,
@@ -14,7 +17,7 @@ pub fn index_lib_content(
     let source_type = detect_source_type(url, content);
 
     let docs = match source_type.as_str() {
-        "llms-txt" => parse_llms_txt(content, lib_name),
+        "llms.txt" => parse_llms_txt(content, lib_name),
         "markdown" => parse_markdown(content, lib_name, url),
         _ => parse_markdown(content, lib_name, url),
     };
@@ -103,6 +106,7 @@ pub fn extract_dep_versions(
     Ok(deps)
 }
 
+#[allow(dead_code)] // legacy single-URL index result; see index_lib_content
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct LibIndexResult {
     pub lib_name: String,
@@ -167,9 +171,13 @@ async fn fetch_url(url: &str) -> Result<String, String> {
     resp.text().await.map_err(|e| format!("Read body: {}", e))
 }
 
+/// Legacy source-type sniffer for the single-URL path. The multi-source flow
+/// uses [`detect_lib_source`] + explicit enum labels; kept for the direct-URL
+/// helpers ([`index_lib_content`], [`parse_docs`]).
+#[allow(dead_code)]
 pub fn detect_source_type(url: &str, content: &str) -> String {
     if url.ends_with("llms.txt") || url.ends_with("llms-full.txt") {
-        return "llms-txt".into();
+        return "llms.txt".into();
     }
     if url.contains("raw.githubusercontent.com") || url.ends_with(".md") {
         return "markdown".into();
@@ -180,16 +188,20 @@ pub fn detect_source_type(url: &str, content: &str) -> String {
     "text".into()
 }
 
-/// Parse content into documentation sections, auto-detecting format.
+/// Parse content into documentation sections, auto-detecting format. Legacy
+/// heading-splitter for a single fetched URL; the component-derivation flow
+/// uses [`docs_from_source_files`] / [`parse_single_file`] instead.
+#[allow(dead_code)]
 pub fn parse_docs(content: &str, lib_name: &str, url: &str) -> Vec<ParsedDoc> {
     let source_type = detect_source_type(url, content);
     match source_type.as_str() {
-        "llms-txt" => parse_llms_txt(content, lib_name),
+        "llms.txt" => parse_llms_txt(content, lib_name),
         _ => parse_markdown(content, lib_name, url),
     }
 }
 
 /// Parse llms.txt format — sections delimited by `# heading` with content.
+#[allow(dead_code)] // legacy heading-splitter; used by index_lib_content/parse_docs + tests
 fn parse_llms_txt(content: &str, lib_name: &str) -> Vec<ParsedDoc> {
     let mut docs = Vec::new();
     let mut current_title = String::new();
@@ -253,9 +265,565 @@ fn parse_llms_txt(content: &str, lib_name: &str) -> Vec<ParsedDoc> {
     docs
 }
 
+#[allow(dead_code)] // legacy markdown splitter; used by index_lib_content/parse_docs
 fn parse_markdown(content: &str, lib_name: &str, _url: &str) -> Vec<ParsedDoc> {
     // Same as llms_txt for now — split by headings
     parse_llms_txt(content, lib_name)
+}
+
+// ── Component-derivation & multi-source llms ingestion ──────────────────────
+//
+// Populates `library_pages` with PER-COMPONENT pages so `get_lib_docs(name,
+// component)` resolves to the right page. Two layouts are supported:
+//   1. per-file `components/<name>.txt` + top-level `.txt` (e.g. rokkit)
+//   2. single-file `llms-full.txt` with `##`/`### <lib> <cmd>` sections (dbd)
+// …across three sources: local dir, website llms URL, GitHub tree URL.
+
+/// Where a library's llms docs come from. Detected from the trigger `url`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LibSource {
+    /// A local directory on disk (may be the llms root or a repo root).
+    LocalDir(String),
+    /// A `github.com/owner/repo/tree/branch/path` docs directory.
+    GitHubTree { owner: String, repo: String, branch: String, path: String },
+    /// A website llms URL (index or single-file), e.g. `https://x/llms/index.txt`.
+    Website(String),
+}
+
+/// A single fetched source file (its stem/name + raw content). `stem` is the
+/// filename without extension (kebab), used to derive the component when a page
+/// maps 1:1 to a file (per-file layout).
+pub struct SourceFile {
+    /// Filename stem, kebab (e.g. `list`, `cli`, `index`, `llms-full`).
+    pub stem: String,
+    /// Raw file content.
+    pub content: String,
+    /// Origin URL or local path for the page's `url`/`local_path` column.
+    pub location: String,
+    /// True when this file lives under a `components/` directory.
+    pub is_component_file: bool,
+}
+
+/// Slugify a heading into a component id: lowercase, spaces/punct → `-`,
+/// collapse repeats, trim leading/trailing `-`.
+pub fn slug(heading: &str) -> String {
+    let mut out = String::with_capacity(heading.len());
+    let mut prev_dash = false;
+    for ch in heading.trim().chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch.to_ascii_lowercase());
+            prev_dash = false;
+        } else if !prev_dash && !out.is_empty() {
+            out.push('-');
+            prev_dash = true;
+        }
+    }
+    while out.ends_with('-') {
+        out.pop();
+    }
+    out
+}
+
+/// Derive a component id from a section heading, stripping a leading
+/// library-name token so `### dbd deploy` → `deploy`, `## Commands` →
+/// `commands`, `### Global options` → `global-options`. When the heading is a
+/// single token equal to the lib name, keeps it (avoids an empty component).
+pub fn component_from_heading(heading: &str, lib_name: &str) -> String {
+    let full = slug(heading);
+    let lib = slug(lib_name);
+    if lib.is_empty() {
+        return full;
+    }
+    // Strip a leading `<lib>-` prefix (the "dbd" in "### dbd deploy").
+    if let Some(rest) = full.strip_prefix(&format!("{lib}-"))
+        && !rest.is_empty() {
+            return rest.to_string();
+        }
+    full
+}
+
+/// Component id for a per-file page from its filename stem. `index`, `llms`,
+/// `llms-full` map to the overview (returns `None`); anything else → the stem.
+pub fn component_from_stem(stem: &str) -> Option<String> {
+    let s = slug(stem);
+    match s.as_str() {
+        "" | "index" | "llms" | "llms-full" => None,
+        _ => Some(s),
+    }
+}
+
+/// Build a `ParsedDoc` with a 200-char summary from the first lines of content.
+fn make_doc(title: String, content: String, component: Option<String>) -> ParsedDoc {
+    let summary: String = content.lines().take(3).collect::<Vec<_>>().join(" ");
+    ParsedDoc {
+        title,
+        summary: summary.chars().take(200).collect(),
+        content: content.trim().to_string(),
+        component,
+    }
+}
+
+/// Split a single-file llms doc (`llms-full.txt`) into per-section pages.
+///
+/// The `#` title + any preamble before the first `##`/`###` heading becomes the
+/// overview page (`component = None`). Every `##` and `###` heading starts a new
+/// page whose `component` is derived via [`component_from_heading`]. Deeper
+/// headings (`####`+) stay inside the current section's body.
+pub fn parse_single_file(content: &str, lib_name: &str) -> Vec<ParsedDoc> {
+    let mut docs = Vec::new();
+    let mut overview_title = lib_name.to_string();
+    let mut preamble = String::new();
+    let mut cur_heading: Option<String> = None;
+    let mut cur_body = String::new();
+    let mut seen_section = false;
+
+    // Emit a page per heading even when its body is empty: a `## Commands`
+    // section whose body is just deeper sub-sections is still a real page
+    // (e.g. dbd's `## Commands` → `### dbd deploy`). Only a blank heading is
+    // skipped.
+    let flush = |docs: &mut Vec<ParsedDoc>, heading: &str, body: &str| {
+        if heading.trim().is_empty() {
+            return;
+        }
+        let component = component_from_heading(heading, lib_name);
+        let component = if component.is_empty() { None } else { Some(component) };
+        // Fall back to the heading as content when the section body is empty so
+        // the page is never stored with empty content.
+        let content = if body.trim().is_empty() { heading.trim().to_string() } else { body.to_string() };
+        docs.push(make_doc(heading.trim().to_string(), content, component));
+    };
+
+    for line in content.lines() {
+        // Section boundary: `## ` or `### ` (but not `#### `+).
+        let is_section = (line.starts_with("## ") && !line.starts_with("### "))
+            || (line.starts_with("### ") && !line.starts_with("#### "));
+
+        if let Some(title) = line.strip_prefix("# ").filter(|_| !line.starts_with("## ")) {
+            // Top-level title for the overview.
+            if !seen_section {
+                overview_title = title.trim().to_string();
+            }
+            continue;
+        }
+
+        if is_section {
+            if let Some(h) = cur_heading.take() {
+                flush(&mut docs, &h, &cur_body);
+            }
+            let heading = line.trim_start_matches('#').trim().to_string();
+            cur_heading = Some(heading);
+            cur_body.clear();
+            seen_section = true;
+        } else if cur_heading.is_some() {
+            cur_body.push_str(line);
+            cur_body.push('\n');
+        } else {
+            preamble.push_str(line);
+            preamble.push('\n');
+        }
+    }
+    if let Some(h) = cur_heading.take() {
+        flush(&mut docs, &h, &cur_body);
+    }
+
+    // Overview page from the title + preamble.
+    if !preamble.trim().is_empty() {
+        docs.insert(0, make_doc(overview_title, preamble, None));
+    } else if docs.is_empty() {
+        docs.push(make_doc(lib_name.to_string(), content.to_string(), None));
+    }
+    docs
+}
+
+/// Turn a set of fetched source files into per-component pages. Prefers the
+/// per-file `components/` layout; if the only meaningful file is a single
+/// `llms-full.txt` it is section-split; otherwise each `.txt` stem is a page.
+pub fn docs_from_source_files(files: &[SourceFile], lib_name: &str) -> Vec<ParsedDoc> {
+    let has_component_dir = files.iter().any(|f| f.is_component_file);
+
+    // Single-file layout: no component dir and a lone llms-full among the files.
+    let full = files.iter().find(|f| f.stem == "llms-full");
+    if !has_component_dir
+        && let Some(full) = full {
+            let non_index: Vec<&SourceFile> = files
+                .iter()
+                .filter(|f| f.stem != "llms" && f.stem != "index" && f.stem != "llms-full")
+                .collect();
+            if non_index.is_empty() {
+                return parse_single_file(&full.content, lib_name);
+            }
+        }
+
+    // Per-file layout (components/ or plain top-level stems).
+    let mut docs = Vec::new();
+    for f in files {
+        // Overview from index/llms; skip llms-full when other files exist.
+        if f.stem == "llms-full" {
+            continue;
+        }
+        let component = if f.is_component_file {
+            Some(slug(&f.stem))
+        } else {
+            component_from_stem(&f.stem)
+        };
+        let title = match &component {
+            Some(c) => c.clone(),
+            None => lib_name.to_string(),
+        };
+        docs.push(make_doc(title, f.content.clone(), component));
+    }
+    if docs.is_empty()
+        && let Some(full) = full {
+            return parse_single_file(&full.content, lib_name);
+        }
+    docs
+}
+
+// ── Source detection ────────────────────────────────────────────────────────
+
+/// Classify the trigger `url`: an existing path on disk → local; a github.com
+/// host → GitHub tree; otherwise a website llms URL.
+pub fn detect_lib_source(url: &str) -> LibSource {
+    if std::path::Path::new(url).exists() {
+        return LibSource::LocalDir(url.to_string());
+    }
+    if let Some(gh) = parse_github_tree_url(url) {
+        return gh;
+    }
+    LibSource::Website(url.to_string())
+}
+
+/// Parse a `https://github.com/{owner}/{repo}/tree/{branch}/{path}` URL.
+/// Returns `None` when the host is not github.com or the shape doesn't match.
+pub fn parse_github_tree_url(url: &str) -> Option<LibSource> {
+    let rest = url
+        .strip_prefix("https://github.com/")
+        .or_else(|| url.strip_prefix("http://github.com/"))
+        .or_else(|| url.strip_prefix("github.com/"))?;
+    let mut parts = rest.split('/');
+    let owner = parts.next().filter(|s| !s.is_empty())?.to_string();
+    let repo = parts.next().filter(|s| !s.is_empty())?.to_string();
+    // Accept `tree` or `blob` as the ref marker.
+    match parts.next() {
+        Some("tree") | Some("blob") => {}
+        _ => return None,
+    }
+    let branch = parts.next().filter(|s| !s.is_empty())?.to_string();
+    let path = parts.collect::<Vec<_>>().join("/");
+    let path = path.trim_end_matches('/').to_string();
+    Some(LibSource::GitHubTree { owner, repo, branch, path })
+}
+
+/// GitHub contents API URL for a directory at a given ref.
+pub fn github_contents_url(owner: &str, repo: &str, path: &str, branch: &str) -> String {
+    if path.is_empty() {
+        format!("https://api.github.com/repos/{owner}/{repo}/contents?ref={branch}")
+    } else {
+        format!("https://api.github.com/repos/{owner}/{repo}/contents/{path}?ref={branch}")
+    }
+}
+
+// ── Website link parsing ────────────────────────────────────────────────────
+
+/// Extract markdown-link targets that point at `.txt` doc pages from an index.
+/// Returns the raw hrefs (e.g. `/llms/components/list.txt`, `cli.txt`).
+pub fn extract_doc_links(index: &str) -> Vec<String> {
+    let mut links = Vec::new();
+    let bytes = index.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        // Find `](` then read until `)`.
+        if bytes[i] == b']' && i + 1 < bytes.len() && bytes[i + 1] == b'(' {
+            let start = i + 2;
+            let mut j = start;
+            while j < bytes.len() && bytes[j] != b')' && bytes[j] != b' ' {
+                j += 1;
+            }
+            if j <= bytes.len() {
+                let href = &index[start..j.min(index.len())];
+                if href.ends_with(".txt") && !href.starts_with("http") {
+                    links.push(href.to_string());
+                }
+            }
+            i = j;
+        } else {
+            i += 1;
+        }
+    }
+    links.sort();
+    links.dedup();
+    links
+}
+
+/// Resolve a possibly-relative doc href against the index URL. Root-absolute
+/// (`/llms/x.txt`) resolves against the origin; relative (`cli.txt`) against the
+/// index URL's directory.
+pub fn resolve_link(index_url: &str, href: &str) -> String {
+    if href.starts_with("http://") || href.starts_with("https://") {
+        return href.to_string();
+    }
+    let origin = origin_of(index_url);
+    if let Some(stripped) = href.strip_prefix('/') {
+        return format!("{origin}/{stripped}");
+    }
+    // Relative to the index URL's directory.
+    let dir = index_url.rsplit_once('/').map(|(d, _)| d).unwrap_or(index_url);
+    format!("{dir}/{href}")
+}
+
+/// The scheme+host of a URL (`https://host.tld`), or the input on failure.
+fn origin_of(url: &str) -> String {
+    if let Some(rest) = url.strip_prefix("https://") {
+        let host = rest.split('/').next().unwrap_or(rest);
+        return format!("https://{host}");
+    }
+    if let Some(rest) = url.strip_prefix("http://") {
+        let host = rest.split('/').next().unwrap_or(rest);
+        return format!("http://{host}");
+    }
+    url.to_string()
+}
+
+/// Filename stem (kebab) from a URL or path (`/llms/components/list.txt` →
+/// `list`).
+pub fn stem_from_path(p: &str) -> String {
+    let name = p.rsplit('/').next().unwrap_or(p);
+    let name = name.split('?').next().unwrap_or(name);
+    let stem = name.strip_suffix(".txt").unwrap_or(name);
+    slug(stem)
+}
+
+// ── Resolvers (fetch + assemble SourceFiles per source) ─────────────────────
+
+/// Find the llms docs root for a local path: the path itself when it ends in
+/// `llms` / contains `index.txt` / `llms.txt`, else `<path>/docs/llms`.
+pub fn resolve_local_llms_root(path: &str) -> std::path::PathBuf {
+    let p = std::path::Path::new(path);
+    let looks_like_root = p.file_name().and_then(|n| n.to_str()) == Some("llms")
+        || p.join("index.txt").exists()
+        || p.join("llms.txt").exists()
+        || p.join("llms-full.txt").exists();
+    if looks_like_root {
+        return p.to_path_buf();
+    }
+    p.join("docs").join("llms")
+}
+
+/// Read `.txt` files from a local llms root (top level + `components/`).
+pub fn read_local_source_files(root: &std::path::Path) -> Result<Vec<SourceFile>, String> {
+    if !root.is_dir() {
+        return Err(format!("llms root not a directory: {}", root.display()));
+    }
+    let mut files = Vec::new();
+    collect_txt_files(root, false, &mut files);
+    let comp = root.join("components");
+    if comp.is_dir() {
+        collect_txt_files(&comp, true, &mut files);
+    }
+    if files.is_empty() {
+        return Err(format!("no .txt files under {}", root.display()));
+    }
+    Ok(files)
+}
+
+fn collect_txt_files(dir: &std::path::Path, is_component: bool, out: &mut Vec<SourceFile>) {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(e) => {
+            tracing::warn!(error = %e, dir = %dir.display(), "read_local_source_files: read_dir failed");
+            return;
+        }
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        if path.extension().and_then(|e| e.to_str()) != Some("txt") {
+            continue;
+        }
+        let stem = path.file_stem().and_then(|s| s.to_str()).map(slug).unwrap_or_default();
+        match std::fs::read_to_string(&path) {
+            Ok(content) => out.push(SourceFile {
+                stem,
+                content,
+                location: path.to_string_lossy().to_string(),
+                is_component_file: is_component,
+            }),
+            Err(e) => tracing::warn!(error = %e, path = %path.display(), "read_local_source_files: read failed"),
+        }
+    }
+}
+
+/// Fetch website llms docs: parse the index for `.txt` links; when links exist,
+/// fetch each as a component page; otherwise treat the index as a single file.
+pub async fn fetch_website_source_files(index_url: &str) -> Result<Vec<SourceFile>, String> {
+    let index = fetch_lib_url_with_timeout(index_url, 15).await?;
+    let links = extract_doc_links(&index);
+    let index_stem = stem_from_path(index_url);
+
+    if links.is_empty() {
+        // Single-file: index IS the content (llms.txt / llms-full.txt).
+        return Ok(vec![SourceFile {
+            stem: if index_stem.is_empty() { "index".into() } else { index_stem },
+            content: index,
+            location: index_url.to_string(),
+            is_component_file: false,
+        }]);
+    }
+
+    let mut files = vec![SourceFile {
+        stem: "index".into(),
+        content: index,
+        location: index_url.to_string(),
+        is_component_file: false,
+    }];
+    for href in links {
+        let full = resolve_link(index_url, &href);
+        let is_component = href.contains("/components/");
+        match fetch_lib_url_with_timeout(&full, 15).await {
+            Ok(content) => files.push(SourceFile {
+                stem: stem_from_path(&href),
+                content,
+                location: full,
+                is_component_file: is_component,
+            }),
+            Err(e) => tracing::warn!(error = %e, url = %full, "fetch_website_source_files: page fetch failed"),
+        }
+    }
+    Ok(files)
+}
+
+/// Fetch GitHub-tree llms docs via the contents API. Lists the directory (and
+/// `components/` subdir) and downloads each `.txt` via its `download_url`.
+pub async fn fetch_github_source_files(
+    owner: &str, repo: &str, branch: &str, path: &str,
+) -> Result<Vec<SourceFile>, String> {
+    let mut files = Vec::new();
+    fetch_github_dir(owner, repo, branch, path, false, &mut files).await?;
+    // Recurse into components/ if present.
+    let comp_path = if path.is_empty() { "components".to_string() } else { format!("{path}/components") };
+    if let Err(e) = fetch_github_dir(owner, repo, branch, &comp_path, true, &mut files).await {
+        tracing::warn!(error = %e, path = %comp_path, "fetch_github_source_files: components/ dir skipped");
+    }
+    if files.is_empty() {
+        return Err(format!("no .txt files at github {owner}/{repo}/{path}@{branch}"));
+    }
+    Ok(files)
+}
+
+async fn fetch_github_dir(
+    owner: &str, repo: &str, branch: &str, path: &str,
+    is_component: bool, out: &mut Vec<SourceFile>,
+) -> Result<(), String> {
+    let api = github_contents_url(owner, repo, path, branch);
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .map_err(|e| format!("HTTP client error: {e}"))?;
+    let resp = client
+        .get(&api)
+        .header("User-Agent", "sensei-daemon")
+        .header("Accept", "application/vnd.github+json")
+        .send()
+        .await
+        .map_err(|e| format!("GitHub API fetch failed: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("GitHub API HTTP {} for {api}", resp.status()));
+    }
+    let body = resp.text().await.map_err(|e| format!("GitHub API read body: {e}"))?;
+    let entries: Vec<serde_json::Value> =
+        serde_json::from_str(&body).map_err(|e| format!("GitHub API parse: {e}"))?;
+
+    for entry in entries {
+        if entry["type"].as_str() != Some("file") {
+            continue;
+        }
+        let name = entry["name"].as_str().unwrap_or("");
+        if !name.ends_with(".txt") {
+            continue;
+        }
+        let Some(download_url) = entry["download_url"].as_str() else { continue };
+        match client.get(download_url).header("User-Agent", "sensei-daemon").send().await {
+            Ok(r) if r.status().is_success() => match r.text().await {
+                Ok(content) => out.push(SourceFile {
+                    stem: stem_from_path(name),
+                    content,
+                    location: download_url.to_string(),
+                    is_component_file: is_component,
+                }),
+                Err(e) => tracing::warn!(error = %e, url = %download_url, "fetch_github_dir: read body failed"),
+            },
+            Ok(r) => tracing::warn!(status = %r.status(), url = %download_url, "fetch_github_dir: raw fetch non-200"),
+            Err(e) => tracing::warn!(error = %e, url = %download_url, "fetch_github_dir: raw fetch failed"),
+        }
+    }
+    Ok(())
+}
+
+/// A page ready to store: derived component + title/summary/content + where it
+/// came from (a URL for remote pages, a local path for local pages). The
+/// `source_type` (`'local'` vs `'llms.txt'`/`'http'`) already distinguishes a
+/// local page from a remote one, so no separate flag is carried.
+pub struct ResolvedPage {
+    pub doc: ParsedDoc,
+    /// Origin location — an http(s) URL, or a local filesystem path.
+    pub location: String,
+    /// `library_source_type` enum value: `'llms.txt' | 'http' | 'local'`.
+    pub source_type: &'static str,
+}
+
+/// Resolve a [`LibSource`] to a set of storable pages (fetch + parse). Async
+/// because website/GitHub sources hit the network; local is filesystem-only.
+pub async fn resolve_library_pages(
+    source: &LibSource, lib_name: &str,
+) -> Result<Vec<ResolvedPage>, String> {
+    match source {
+        LibSource::LocalDir(path) => {
+            let root = resolve_local_llms_root(path);
+            let files = read_local_source_files(&root)?;
+            let docs = docs_from_source_files(&files, lib_name);
+            Ok(pages_from(docs, &files, "local"))
+        }
+        LibSource::Website(url) => {
+            let files = fetch_website_source_files(url).await?;
+            let docs = docs_from_source_files(&files, lib_name);
+            Ok(pages_from(docs, &files, "llms.txt"))
+        }
+        LibSource::GitHubTree { owner, repo, branch, path } => {
+            let files = fetch_github_source_files(owner, repo, branch, path).await?;
+            let docs = docs_from_source_files(&files, lib_name);
+            Ok(pages_from(docs, &files, "http"))
+        }
+    }
+}
+
+/// Attach a source location to each derived doc. A doc's location is the source
+/// file whose derived component matches; falls back to the first file (index).
+fn pages_from(
+    docs: Vec<ParsedDoc>, files: &[SourceFile], source_type: &'static str,
+) -> Vec<ResolvedPage> {
+    let default_loc = files.first().map(|f| f.location.clone()).unwrap_or_default();
+    docs.into_iter()
+        .map(|doc| {
+            let location = doc
+                .component
+                .as_ref()
+                .and_then(|c| {
+                    files.iter().find(|f| {
+                        let stem_comp = if f.is_component_file {
+                            slug(&f.stem)
+                        } else {
+                            component_from_stem(&f.stem).unwrap_or_default()
+                        };
+                        &stem_comp == c
+                    })
+                })
+                .map(|f| f.location.clone())
+                .unwrap_or_else(|| default_loc.clone());
+            ResolvedPage { doc, location, source_type }
+        })
+        .collect()
 }
 
 fn clean_version(v: &str) -> String {
@@ -314,7 +882,274 @@ mod tests {
 
     #[test]
     fn detect_llms_txt() {
-        assert_eq!(detect_source_type("https://example.com/llms.txt", ""), "llms-txt");
+        // Must be the exact enum label 'llms.txt' (dotted), not "llms-txt".
+        assert_eq!(detect_source_type("https://example.com/llms.txt", ""), "llms.txt");
+        assert_eq!(detect_source_type("https://example.com/llms-full.txt", ""), "llms.txt");
         assert_eq!(detect_source_type("https://example.com/README.md", "# Hi"), "markdown");
+    }
+
+    // ── slug / component derivation ─────────────────────────────────────────
+
+    #[test]
+    fn slug_basics() {
+        assert_eq!(slug("Global options"), "global-options");
+        assert_eq!(slug("dbd deploy"), "dbd-deploy");
+        assert_eq!(slug("  File path → entity name "), "file-path-entity-name");
+        assert_eq!(slug("Commands"), "commands");
+    }
+
+    #[test]
+    fn component_from_heading_strips_lib_token() {
+        assert_eq!(component_from_heading("dbd deploy", "dbd"), "deploy");
+        assert_eq!(component_from_heading("### dbd deploy".trim_start_matches('#').trim(), "dbd"), "deploy");
+        assert_eq!(component_from_heading("Commands", "dbd"), "commands");
+        assert_eq!(component_from_heading("Global options", "dbd"), "global-options");
+        // A heading that is only the lib name keeps it (never empty).
+        assert_eq!(component_from_heading("dbd", "dbd"), "dbd");
+    }
+
+    #[test]
+    fn component_from_stem_maps_overview_and_files() {
+        assert_eq!(component_from_stem("index"), None);
+        assert_eq!(component_from_stem("llms"), None);
+        assert_eq!(component_from_stem("llms-full"), None);
+        assert_eq!(component_from_stem("cli"), Some("cli".to_string()));
+        assert_eq!(component_from_stem("List"), Some("list".to_string()));
+    }
+
+    // ── single-file section split ───────────────────────────────────────────
+
+    #[test]
+    fn single_file_split_yields_component_pages_and_overview() {
+        let content = "\
+# dbd — Full Reference
+
+> A CLI for schemas as code.
+
+## Commands
+
+### Global options
+
+Flags that apply everywhere.
+
+### dbd deploy
+
+Applies pending changes to the target database.
+Use --dry-run to preview.
+";
+        let docs = parse_single_file(content, "dbd");
+
+        // Overview page (no component) from the title + preamble.
+        let overview = docs.iter().find(|d| d.component.is_none()).expect("overview page");
+        assert_eq!(overview.title, "dbd — Full Reference");
+        assert!(overview.content.contains("CLI for schemas as code"));
+
+        // `### dbd deploy` → component "deploy" with the deploy body.
+        let deploy = docs
+            .iter()
+            .find(|d| d.component.as_deref() == Some("deploy"))
+            .expect("deploy page");
+        assert!(deploy.content.contains("Applies pending changes"));
+
+        // `## Commands` → "commands", `### Global options` → "global-options".
+        assert!(docs.iter().any(|d| d.component.as_deref() == Some("commands")));
+        assert!(docs.iter().any(|d| d.component.as_deref() == Some("global-options")));
+    }
+
+    // ── per-file layout via SourceFiles ─────────────────────────────────────
+
+    #[test]
+    fn per_file_layout_maps_components_and_overview() {
+        let files = vec![
+            SourceFile { stem: "index".into(), content: "# Overview\nAll about the lib.".into(), location: "/x/index.txt".into(), is_component_file: false },
+            SourceFile { stem: "list".into(), content: "# List\nA vertical list.".into(), location: "/x/components/list.txt".into(), is_component_file: true },
+            SourceFile { stem: "cli".into(), content: "# CLI\nThe CLI.".into(), location: "/x/cli.txt".into(), is_component_file: false },
+        ];
+        let docs = docs_from_source_files(&files, "rokkit");
+
+        assert!(docs.iter().any(|d| d.component.is_none()), "index → overview");
+        assert_eq!(
+            docs.iter().find(|d| d.component.as_deref() == Some("list")).map(|d| d.content.contains("vertical list")),
+            Some(true),
+        );
+        assert!(docs.iter().any(|d| d.component.as_deref() == Some("cli")), "cli.txt → cli");
+    }
+
+    #[test]
+    fn source_files_prefer_component_dir_over_llms_full() {
+        // components/ present ⇒ per-file layout wins even if llms-full exists.
+        let files = vec![
+            SourceFile { stem: "llms-full".into(), content: "# X\n## y\nbody".into(), location: "/x/llms-full.txt".into(), is_component_file: false },
+            SourceFile { stem: "button".into(), content: "# Button\nA button.".into(), location: "/x/components/button.txt".into(), is_component_file: true },
+        ];
+        let docs = docs_from_source_files(&files, "rokkit");
+        assert!(docs.iter().any(|d| d.component.as_deref() == Some("button")));
+        // llms-full is skipped when other files exist.
+        assert!(!docs.iter().any(|d| d.component.as_deref() == Some("y")));
+    }
+
+    #[test]
+    fn source_files_single_llms_full_is_section_split() {
+        let files = vec![SourceFile {
+            stem: "llms-full".into(),
+            content: "# dbd\n> lead\n## Commands\n### dbd deploy\nbody".into(),
+            location: "/x/llms-full.txt".into(),
+            is_component_file: false,
+        }];
+        let docs = docs_from_source_files(&files, "dbd");
+        assert!(docs.iter().any(|d| d.component.as_deref() == Some("deploy")));
+        assert!(docs.iter().any(|d| d.component.is_none()));
+    }
+
+    // ── local directory layout (tempfile) ───────────────────────────────────
+
+    #[test]
+    fn read_local_source_files_from_dir() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        std::fs::write(root.join("index.txt"), "# Overview\nlib docs").unwrap();
+        std::fs::write(root.join("cli.txt"), "# CLI\ncli docs").unwrap();
+        let comp = root.join("components");
+        std::fs::create_dir_all(&comp).unwrap();
+        std::fs::write(comp.join("list.txt"), "# List\nlist docs").unwrap();
+
+        let files = read_local_source_files(root).expect("read files");
+        let docs = docs_from_source_files(&files, "rokkit");
+
+        // components/list.txt → component "list"
+        assert!(docs.iter().any(|d| d.component.as_deref() == Some("list")), "list component");
+        // index.txt → overview (None)
+        assert!(docs.iter().any(|d| d.component.is_none()), "overview");
+        // cli.txt top-level → component "cli"
+        assert!(docs.iter().any(|d| d.component.as_deref() == Some("cli")), "cli component");
+    }
+
+    #[test]
+    fn resolve_local_llms_root_variants() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        // A dir with index.txt is itself the root.
+        std::fs::write(root.join("index.txt"), "x").unwrap();
+        assert_eq!(resolve_local_llms_root(root.to_str().unwrap()), root.to_path_buf());
+
+        // A repo root without llms markers → <path>/docs/llms.
+        let repo = tempfile::tempdir().unwrap();
+        let expected = repo.path().join("docs").join("llms");
+        assert_eq!(resolve_local_llms_root(repo.path().to_str().unwrap()), expected);
+    }
+
+    // ── GitHub / website URL parsing (pure, no network) ─────────────────────
+
+    #[test]
+    fn parse_github_tree_url_ok() {
+        let s = parse_github_tree_url("https://github.com/jerrythomas/rokkit/tree/main/docs/llms");
+        assert_eq!(
+            s,
+            Some(LibSource::GitHubTree {
+                owner: "jerrythomas".into(),
+                repo: "rokkit".into(),
+                branch: "main".into(),
+                path: "docs/llms".into(),
+            })
+        );
+        // blob works too; trailing slash trimmed.
+        let s = parse_github_tree_url("https://github.com/o/r/blob/dev/a/b/");
+        assert_eq!(
+            s,
+            Some(LibSource::GitHubTree {
+                owner: "o".into(), repo: "r".into(), branch: "dev".into(), path: "a/b".into(),
+            })
+        );
+        // Non-github and malformed → None.
+        assert_eq!(parse_github_tree_url("https://example.com/x"), None);
+        assert_eq!(parse_github_tree_url("https://github.com/only-owner"), None);
+    }
+
+    #[test]
+    fn github_contents_url_shape() {
+        assert_eq!(
+            github_contents_url("o", "r", "docs/llms", "main"),
+            "https://api.github.com/repos/o/r/contents/docs/llms?ref=main"
+        );
+        assert_eq!(
+            github_contents_url("o", "r", "", "main"),
+            "https://api.github.com/repos/o/r/contents?ref=main"
+        );
+    }
+
+    #[test]
+    fn detect_lib_source_classifies() {
+        assert!(matches!(
+            detect_lib_source("https://github.com/o/r/tree/main/docs/llms"),
+            LibSource::GitHubTree { .. }
+        ));
+        assert!(matches!(
+            detect_lib_source("https://rokkit.sensei-hq.com/llms/index.txt"),
+            LibSource::Website(_)
+        ));
+        let dir = tempfile::tempdir().unwrap();
+        assert!(matches!(
+            detect_lib_source(dir.path().to_str().unwrap()),
+            LibSource::LocalDir(_)
+        ));
+    }
+
+    #[test]
+    fn extract_and_resolve_links() {
+        let index = "\
+# Index
+See [cli.txt](/llms/cli.txt) — CLI reference
+- [List](/llms/components/list.txt) — vertical list
+- [rel](guides/getting-started.txt) — relative
+- [ext](https://other.com/x.txt) — external (ignored, absolute)
+- [dir](/llms/packages/) — not a .txt (ignored)
+";
+        let links = extract_doc_links(index);
+        assert!(links.contains(&"/llms/cli.txt".to_string()));
+        assert!(links.contains(&"/llms/components/list.txt".to_string()));
+        assert!(links.contains(&"guides/getting-started.txt".to_string()));
+        assert!(!links.iter().any(|l| l.ends_with("packages/")));
+
+        let base = "https://rokkit.sensei-hq.com/llms/index.txt";
+        assert_eq!(
+            resolve_link(base, "/llms/components/list.txt"),
+            "https://rokkit.sensei-hq.com/llms/components/list.txt"
+        );
+        assert_eq!(
+            resolve_link(base, "guides/getting-started.txt"),
+            "https://rokkit.sensei-hq.com/llms/guides/getting-started.txt"
+        );
+        assert_eq!(resolve_link(base, "https://x/y.txt"), "https://x/y.txt");
+    }
+
+    #[test]
+    fn stem_from_path_extracts_kebab() {
+        assert_eq!(stem_from_path("/llms/components/list.txt"), "list");
+        assert_eq!(stem_from_path("cli.txt"), "cli");
+        assert_eq!(stem_from_path("https://x/llms/index.txt?ref=1"), "index");
+    }
+
+    // Real-corpus smoke checks — ignored by default (path-dependent on local
+    // dev checkouts); run with `--ignored` to verify against the actual repos.
+    #[test]
+    #[ignore]
+    fn real_dbd_single_file_has_deploy_component() {
+        let root = resolve_local_llms_root("/Users/Jerry/Developer/dbd-rs");
+        let files = read_local_source_files(&root).expect("dbd llms files");
+        let docs = docs_from_source_files(&files, "dbd");
+        let deploy = docs.iter().find(|d| d.component.as_deref() == Some("deploy")).expect("deploy page");
+        assert!(deploy.content.contains("deploy"), "deploy body present");
+        assert!(docs.iter().any(|d| d.component.is_none()), "overview present");
+    }
+
+    #[test]
+    #[ignore]
+    fn real_rokkit_per_file_has_list_component() {
+        let root = resolve_local_llms_root("/Users/Jerry/Developer/rokkit");
+        let files = read_local_source_files(&root).expect("rokkit llms files");
+        let docs = docs_from_source_files(&files, "rokkit");
+        assert!(docs.iter().any(|d| d.component.as_deref() == Some("list")), "list component");
+        assert!(docs.iter().any(|d| d.component.as_deref() == Some("cli")), "cli top-level component");
+        assert!(docs.iter().any(|d| d.component.is_none()), "index overview");
     }
 }
