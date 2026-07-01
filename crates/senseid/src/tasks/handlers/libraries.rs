@@ -263,12 +263,11 @@ pub async fn extract_deps(ctx: &TaskContext, task: &Task) -> Result<u32, String>
     let mut count = 0u32;
     let mut local_edge_count = 0u32;
     for dep in &deps {
-        let ecosystem = match dep.source.as_str() {
-            "package.json" => "npm",
-            "Cargo.toml" => "cargo",
-            "pyproject.toml" => "pypi",
-            _ => "npm",
-        };
+        // Route the manifest filename through the ManifestAdapter registry —
+        // one source of truth for the manifest→ecosystem mapping.
+        let ecosystem = crate::adapters::manifest::manifest_adapter_for_filename(&dep.source)
+            .map(|a| a.ecosystem())
+            .unwrap_or("npm");
 
         // Local-protocol deps (link: / workspace: / file: / path=) do NOT
         // resolve to external registry libraries; skip the library upsert and
