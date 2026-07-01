@@ -33,6 +33,10 @@ pub fn index_lib_content(
 }
 
 /// Fetch and store dependency versions from a project's manifest files.
+///
+/// Dispatches through the `ManifestAdapter` registry: any registered ecosystem
+/// (`npm`, `cargo`, `pypi`, `go`) contributes its dep entries. New ecosystems
+/// only require a new adapter — this function never grows another branch.
 pub fn extract_dep_versions(
     _repo_id: &str,
     repo_path: &str,
@@ -40,22 +44,15 @@ pub fn extract_dep_versions(
     let repo = std::path::Path::new(repo_path);
     let mut deps = Vec::new();
 
-    if let Ok(content) = std::fs::read_to_string(repo.join("package.json"))
-        && let Ok(pkg) = serde_json::from_str::<serde_json::Value>(&content)
-    {
-        deps.extend(parse_npm_deps(&pkg));
-    }
-
-    if let Ok(content) = std::fs::read_to_string(repo.join("Cargo.toml"))
-        && let Ok(cargo) = content.parse::<toml::Value>()
-    {
-        deps.extend(parse_cargo_deps(&cargo));
-    }
-
-    if let Ok(content) = std::fs::read_to_string(repo.join("pyproject.toml"))
-        && let Ok(pyp) = content.parse::<toml::Value>()
-    {
-        deps.extend(parse_pyproject_deps(&pyp));
+    for filename in ["package.json", "Cargo.toml", "pyproject.toml", "go.mod"] {
+        let Ok(content) = std::fs::read_to_string(repo.join(filename)) else {
+            continue;
+        };
+        let Some(adapter) = crate::adapters::manifest::manifest_adapter_for_filename(filename)
+        else {
+            continue;
+        };
+        deps.extend(adapter.parse_dependencies(&content));
     }
 
     Ok(deps)
@@ -910,7 +907,7 @@ fn pages_from(
         .collect()
 }
 
-fn clean_version(v: &str) -> String {
+pub(crate) fn clean_version(v: &str) -> String {
     v.trim_start_matches('^')
         .trim_start_matches('~')
         .trim_start_matches(">=")

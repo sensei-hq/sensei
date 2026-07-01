@@ -333,21 +333,19 @@ fn classify_case(name: &str) -> &'static str {
 }
 
 /// Map a file extension to a language label for the structure summary.
+///
+/// For extensions with a `LanguageAdapter`, we consult the adapter directly so
+/// this handler doesn't duplicate the language slug knowledge. For extensions
+/// with no adapter yet (go, ruby, shell, config-file types) we fall through
+/// to the small hardcoded table below.
 fn language_for_ext(ext: &str) -> &str {
+    let dotted = format!(".{ext}");
+    if let Some(adapter) = crate::languages::adapter_for_ext(&dotted) {
+        return adapter_language_static(adapter.language());
+    }
     match ext {
-        "rs" => "rust",
-        "ts" | "mts" | "cts" => "typescript",
-        "tsx" => "typescript",
-        "js" | "mjs" | "cjs" => "javascript",
-        "jsx" => "javascript",
-        "py" => "python",
         "go" => "go",
         "rb" => "ruby",
-        "java" => "java",
-        "kt" | "kts" => "kotlin",
-        "svelte" => "svelte",
-        "vue" => "vue",
-        "sql" => "sql",
         "sh" | "bash" => "shell",
         "md" | "markdown" => "markdown",
         "toml" => "toml",
@@ -356,6 +354,30 @@ fn language_for_ext(ext: &str) -> &str {
         "css" => "css",
         "html" => "html",
         other => other,
+    }
+}
+
+/// Return-value adapter: `adapter.language()` yields a `&str` bound to a
+/// short-lived `Box<dyn LanguageAdapter>`, but every impl returns one of a
+/// closed set of static slugs. Map through this table so the caller gets a
+/// `&'static str` and doesn't have to clone on the hot path.
+fn adapter_language_static(slug: &str) -> &'static str {
+    match slug {
+        "rust" => "rust",
+        "typescript" => "typescript",
+        "javascript" => "javascript",
+        "python" => "python",
+        "java" => "java",
+        "kotlin" => "kotlin",
+        "swift" => "swift",
+        "svelte" => "svelte",
+        "vue" => "vue",
+        "sql" => "sql",
+        "c" => "c",
+        // Fallback for any future adapter — treat as unknown so this handler
+        // never surfaces stale labels; add a case above when a new adapter
+        // lands.
+        _ => "other",
     }
 }
 
@@ -535,6 +557,55 @@ mod tests {
         assert_eq!(conv["naming"].as_array().unwrap().len(), 0);
         assert_eq!(conv["structure"]["file_count"], 0);
         assert_eq!(conv["patterns"].as_array().unwrap().len(), 0);
+    }
+
+    // ── language_for_ext (1b Step 1 migration) ──────────────────────────
+    //
+    // The mapping used to be a 20-branch match. It now consults LanguageAdapter
+    // for the extensions that have one and only carries hardcoded fallbacks for
+    // langs that don't (go, ruby, shell, config files). Same output, one source
+    // of truth for the adapter-backed languages.
+
+    #[test]
+    fn language_for_ext_uses_adapter_for_backed_languages() {
+        assert_eq!(language_for_ext("rs"), "rust");
+        assert_eq!(language_for_ext("ts"), "typescript");
+        assert_eq!(language_for_ext("tsx"), "typescript");
+        assert_eq!(language_for_ext("js"), "javascript");
+        assert_eq!(language_for_ext("jsx"), "javascript");
+        assert_eq!(language_for_ext("py"), "python");
+        assert_eq!(language_for_ext("java"), "java");
+        assert_eq!(language_for_ext("kt"), "kotlin");
+        assert_eq!(language_for_ext("kts"), "kotlin");
+        assert_eq!(language_for_ext("svelte"), "svelte");
+        assert_eq!(language_for_ext("vue"), "vue");
+        assert_eq!(language_for_ext("sql"), "sql");
+        assert_eq!(language_for_ext("swift"), "swift");
+        assert_eq!(language_for_ext("c"), "c");
+        assert_eq!(language_for_ext("h"), "c");
+        assert_eq!(language_for_ext("cpp"), "c");
+    }
+
+    #[test]
+    fn language_for_ext_falls_back_for_adapterless_languages() {
+        assert_eq!(language_for_ext("go"), "go");
+        assert_eq!(language_for_ext("rb"), "ruby");
+        assert_eq!(language_for_ext("sh"), "shell");
+        assert_eq!(language_for_ext("bash"), "shell");
+        assert_eq!(language_for_ext("md"), "markdown");
+        assert_eq!(language_for_ext("toml"), "toml");
+        assert_eq!(language_for_ext("yaml"), "yaml");
+        assert_eq!(language_for_ext("json"), "json");
+        assert_eq!(language_for_ext("css"), "css");
+        assert_eq!(language_for_ext("html"), "html");
+    }
+
+    #[test]
+    fn language_for_ext_unknown_passes_through() {
+        // Preserved from the original: unknown ext returns the ext itself so
+        // callers can still bucket them ("go" isn't in the adapter set — it
+        // has a fallback; "elixir" would pass through as "elixir").
+        assert_eq!(language_for_ext("elixir"), "elixir");
     }
 
     #[test]

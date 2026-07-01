@@ -213,24 +213,12 @@ pub enum QuasiKind {
 /// recognise without a parser adapter, or Markdown docs. Data, config, and
 /// binaries (`.csv`, `.json`, `.txt`, `.png`, …) deliberately do NOT count — a
 /// folder of only those is not a project.
+///
+/// Thin wrapper over `classifiers::file_classifier()` — the source-ext list
+/// itself now lives in the classifier module so adding a new language is one
+/// edit, not two.
 pub fn is_project_source_ext(ext: &str) -> bool {
-    let e = ext.trim_start_matches('.').to_ascii_lowercase();
-    // Markdown docs: a docs-only folder is a documentation project.
-    if matches!(e.as_str(), "md" | "mdx") {
-        return true;
-    }
-    // Anything the parser has a language adapter for is code.
-    if crate::languages::adapter_for_ext(&format!(".{e}")).is_some() {
-        return true;
-    }
-    // Common source languages we recognise as code even without a parser adapter.
-    matches!(
-        e.as_str(),
-        "go" | "rb" | "sh" | "bash" | "zsh" | "fish" | "pl" | "pm" | "php"
-            | "lua" | "r" | "jl" | "scala" | "ex" | "exs" | "erl" | "hs" | "ml"
-            | "dart" | "cs" | "fs" | "fsx" | "clj" | "cljs" | "groovy" | "m" | "mm"
-            | "cxx" | "hh" | "hxx" | "swift" | "scss" | "css" | "html"
-    )
+    crate::classifiers::file_classifier().is_source_file(ext)
 }
 
 /// Classify a non-git directory as a quasi-repo (a project the developer never
@@ -267,15 +255,23 @@ pub fn has_indexable_code(dir: &Path) -> bool {
 }
 
 /// Detect if a git folder is a monorepo (has workspace config).
+///
+/// Delegates each known manifest to its `ManifestAdapter.is_workspace_root`,
+/// plus keeps two filesystem-marker fallbacks for workspace formats that live
+/// outside a per-ecosystem manifest: `pnpm-workspace.yaml` (pnpm-only
+/// workspaces without a root `package.json`) and `go.work` (Go multi-module
+/// workspaces).
 pub fn is_monorepo(path: &Path) -> bool {
-    // Cargo workspace
-    if let Ok(content) = std::fs::read_to_string(path.join("Cargo.toml"))
-        && content.contains("[workspace]") { return true; }
-    // npm/pnpm workspace
-    if let Ok(content) = std::fs::read_to_string(path.join("package.json"))
-        && content.contains("\"workspaces\"") { return true; }
+    for adapter in crate::adapters::manifest::registered_adapters() {
+        for filename in adapter.manifest_filenames() {
+            let Ok(content) = std::fs::read_to_string(path.join(filename)) else { continue };
+            if adapter.is_workspace_root(&content) {
+                return true;
+            }
+        }
+    }
+    // Filesystem-marker workspaces without a per-ecosystem manifest.
     if path.join("pnpm-workspace.yaml").exists() { return true; }
-    // Go workspace
     if path.join("go.work").exists() { return true; }
     false
 }
@@ -313,18 +309,28 @@ pub fn incremental_plan(
 }
 
 /// Detect technology stack from config files in a git folder.
+///
+/// Iterates registered `ManifestAdapter`s to pick up stack labels for every
+/// manifest present (`Cargo.toml` → "rust", `package.json` → svelte / react /
+/// vue / nextjs / typescript by framework detection, `pyproject.toml` →
+/// "python", `go.mod` → "go"). Filesystem-only stacks that don't yet have an
+/// adapter — `requirements.txt`, `Package.swift`, `Gemfile`, .NET
+/// solution/project files, `global.json` — stay as explicit filesystem
+/// signals until their adapters land.
 pub fn detect_stack(path: &Path) -> Vec<String> {
-    let mut stack = vec![];
-    if path.join("Cargo.toml").exists() { stack.push("rust".into()); }
-    if let Ok(pkg) = std::fs::read_to_string(path.join("package.json")) {
-        if pkg.contains("\"svelte\"") || pkg.contains("\"@sveltejs/kit\"") { stack.push("svelte".into()); }
-        else if pkg.contains("\"react\"") { stack.push("react".into()); }
-        else if pkg.contains("\"vue\"") { stack.push("vue".into()); }
-        else if pkg.contains("\"next\"") { stack.push("nextjs".into()); }
-        else { stack.push("typescript".into()); }
+    let mut stack: Vec<String> = Vec::new();
+    for adapter in crate::adapters::manifest::registered_adapters() {
+        for filename in adapter.manifest_filenames() {
+            let Ok(content) = std::fs::read_to_string(path.join(filename)) else { continue };
+            for label in adapter.stack_labels(&content) {
+                stack.push(label.to_string());
+            }
+        }
     }
-    if path.join("go.mod").exists() { stack.push("go".into()); }
-    if path.join("pyproject.toml").exists() || path.join("requirements.txt").exists() { stack.push("python".into()); }
+    // Filesystem-only stacks (no ManifestAdapter yet).
+    if path.join("requirements.txt").exists() && !stack.iter().any(|s| s == "python") {
+        stack.push("python".into());
+    }
     if path.join("Package.swift").exists() { stack.push("swift".into()); }
     if path.join("Gemfile").exists() { stack.push("ruby".into()); }
     // .NET — solution/project manifests use globbed names (Foo.sln, Bar.csproj),
@@ -353,9 +359,13 @@ pub fn infer_role(path: &Path) -> Option<&'static str> {
     )
 }
 
+
 /// Pure role classifier from manifest contents + layout flags. Precedence:
 /// tool (ships a binary) > website (web app framework) > library (publishable
-/// lib) > docs. Kept pure so it is unit-testable without a filesystem.
+/// lib) > docs. Delegates the per-ecosystem rules to `ManifestAdapter.infer_role`
+/// and applies the cross-ecosystem precedence here so the same set of rules
+/// governs `folder_role` regardless of which manifest(s) the folder carries.
+/// Kept as a pure function so it stays unit-testable without a filesystem.
 pub fn classify_role(
     cargo: Option<&str>,
     pkg: Option<&str>,
@@ -363,43 +373,34 @@ pub fn classify_role(
     has_routes: bool,
     dir_name: &str,
 ) -> Option<&'static str> {
-    // 1. Tool — a crate/package that ships an executable: an explicit Rust
-    //    `[[bin]]` target or a node `bin` field. A bare `main.rs` is
-    //    deliberately NOT enough: a daemon (e.g. senseid, axum-based) is a
-    //    binary too, so requiring an explicit bin declaration avoids
-    //    mislabeling a backend service as a CLI tool.
-    let rust_bin = cargo.is_some_and(|c| c.contains("[[bin]]"));
-    let node_bin = pkg.is_some_and(|p| p.contains("\"bin\""));
-    if rust_bin || node_bin {
-        return Some("tool");
-    }
+    use crate::adapters::manifest::{manifest_adapter_for_filename, FsSignals};
 
-    // 2. Website — a web-app framework (checked before library: an app's
-    //    package.json also has a name, but it is not a publishable lib). For
-    //    SvelteKit/Vite require an actual `src/routes` app tree: a *library* can
-    //    list `@sveltejs/kit` as a peer/dev dep (e.g. a UnoCSS preset) without
-    //    being an app, so the manifest marker alone isn't enough.
-    let is_web_app = pkg.is_some_and(|p| p.contains("\"next\"") || p.contains("\"astro\""))
-        || (has_routes && pkg.is_some_and(|p| p.contains("\"@sveltejs/kit\"") || p.contains("\"vite\"")));
-    if is_web_app {
-        return Some("website");
-    }
+    let fs = FsSignals {
+        has_lib_rs,
+        has_src_routes: has_routes,
+        dir_name: dir_name.to_string(),
+    };
+    let cargo_adapter = manifest_adapter_for_filename("Cargo.toml");
+    let npm_adapter = manifest_adapter_for_filename("package.json");
 
-    // 3. Library — a lib crate (src/lib.rs or [lib]) or a publishable package
-    //    (has a name plus an entry point, and no bin/app markers above).
-    let rust_lib = has_lib_rs || cargo.is_some_and(|c| c.contains("[lib]"));
-    let node_lib = pkg.is_some_and(|p| {
-        p.contains("\"name\"")
-            && (p.contains("\"exports\"")
-                || p.contains("\"main\"")
-                || p.contains("\"module\":")
-                || p.contains("\"svelte\""))
+    let cargo_role = cargo.zip(cargo_adapter).and_then(|(content, adapter)| {
+        let parsed = adapter.parse_manifest(content);
+        adapter.infer_role(&parsed, content, &fs)
     });
-    if rust_lib || node_lib {
-        return Some("library");
+    let npm_role = pkg.zip(npm_adapter).and_then(|(content, adapter)| {
+        let parsed = adapter.parse_manifest(content);
+        adapter.infer_role(&parsed, content, &fs)
+    });
+
+    // Cross-ecosystem precedence: tool > website > library. A folder with both
+    // a Cargo.toml [[bin]] and a package.json library is a tool.
+    for role in ["tool", "website", "library"] {
+        if cargo_role == Some(role) || npm_role == Some(role) {
+            return Some(role);
+        }
     }
 
-    // 4. Docs directory.
+    // 4. Docs directory (fallback that has no manifest to speak of).
     if dir_name == "docs" {
         return Some("docs");
     }
@@ -425,6 +426,7 @@ fn find_subprojects_walk(dir: &Path, depth: u32, max_depth: u32, out: &mut Vec<P
         return;
     }
     let Ok(entries) = std::fs::read_dir(dir) else { return; };
+    let manifest_filenames = crate::adapters::manifest::all_manifest_filenames();
     for entry in entries.flatten() {
         let p = entry.path();
         if !p.is_dir() {
@@ -434,7 +436,8 @@ fn find_subprojects_walk(dir: &Path, depth: u32, max_depth: u32, out: &mut Vec<P
         if name.starts_with('.') || IGNORED_DIRS.contains(&name) {
             continue;
         }
-        if p.join("Cargo.toml").exists() || p.join("package.json").exists() {
+        // Any registered manifest filename marks a sub-project boundary.
+        if manifest_filenames.iter().any(|m| p.join(m).exists()) {
             // A sub-project boundary: record it and stop descending into it.
             out.push(p);
             continue;
@@ -999,6 +1002,75 @@ mod tests {
         let stack = detect_stack(tmp.path());
         assert!(stack.contains(&"rust".to_string()));
         assert!(stack.contains(&"python".to_string()));
+    }
+
+    #[test]
+    fn detect_stack_python_from_requirements_txt_only() {
+        // requirements.txt (no pyproject.toml) still marks python via the
+        // filesystem-signal fallback.
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("requirements.txt"), "flask\n").unwrap();
+        assert_eq!(detect_stack(tmp.path()), vec!["python"]);
+    }
+
+    #[test]
+    fn detect_stack_does_not_duplicate_python_when_pyproject_and_requirements_both_present() {
+        // pyproject adapter already contributes "python"; requirements.txt
+        // fallback must not double it.
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("pyproject.toml"), "[project]").unwrap();
+        std::fs::write(tmp.path().join("requirements.txt"), "flask\n").unwrap();
+        let stack = detect_stack(tmp.path());
+        assert_eq!(stack.iter().filter(|s| *s == "python").count(), 1);
+    }
+
+    #[test]
+    fn is_monorepo_detects_pnpm_workspace_yaml_alone() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("pnpm-workspace.yaml"), "packages:\n  - 'apps/*'\n").unwrap();
+        assert!(is_monorepo(tmp.path()));
+    }
+
+    #[test]
+    fn is_monorepo_detects_go_work_alone() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("go.work"), "go 1.21\n\nuse ( ./sub )\n").unwrap();
+        assert!(is_monorepo(tmp.path()));
+    }
+
+    #[test]
+    fn is_monorepo_detects_npm_workspaces_from_package_json() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("package.json"),
+            r#"{"name":"mono","workspaces":["packages/*"]}"#,
+        )
+        .unwrap();
+        assert!(is_monorepo(tmp.path()));
+    }
+
+    #[test]
+    fn find_subprojects_finds_go_modules() {
+        // Adapter-aware child manifest lookup: a go.mod in a nested folder
+        // must now count as a sub-project boundary (previously only Cargo.toml
+        // and package.json did).
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::write(root.join("go.work"), "go 1.21\nuse ( ./svc )\n").unwrap();
+        std::fs::create_dir_all(root.join("svc")).unwrap();
+        std::fs::write(root.join("svc/go.mod"), "module x\n").unwrap();
+        let subs = find_subprojects(root, 3);
+        assert!(subs.iter().any(|p| p.ends_with("svc")), "go.mod folder should be a sub-project: {subs:?}");
+    }
+
+    #[test]
+    fn find_subprojects_finds_pyproject_folders() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("py_pkg")).unwrap();
+        std::fs::write(root.join("py_pkg/pyproject.toml"), "[project]\nname=\"p\"\n").unwrap();
+        let subs = find_subprojects(root, 3);
+        assert!(subs.iter().any(|p| p.ends_with("py_pkg")), "pyproject.toml folder should be a sub-project: {subs:?}");
     }
 
     #[test]
