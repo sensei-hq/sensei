@@ -34,76 +34,153 @@ pub fn index_lib_content(
 
 /// Fetch and store dependency versions from a project's manifest files.
 pub fn extract_dep_versions(
-
     _repo_id: &str,
     repo_path: &str,
 ) -> Result<Vec<DepVersion>, String> {
     let repo = std::path::Path::new(repo_path);
     let mut deps = Vec::new();
 
-    // package.json
     if let Ok(content) = std::fs::read_to_string(repo.join("package.json"))
-        && let Ok(pkg) = serde_json::from_str::<serde_json::Value>(&content) {
-            for section in &["dependencies", "devDependencies", "peerDependencies"] {
-                if let Some(obj) = pkg.get(section).and_then(|v| v.as_object()) {
-                    for (name, ver) in obj {
-                        let version = ver.as_str().unwrap_or("*").to_string();
-                        deps.push(DepVersion {
-                            lib_name: name.clone(),
-                            version: clean_version(&version),
-                            raw_version: version,
-                            source: "package.json".into(),
-                            dev: *section != "dependencies",
-                        });
-                    }
-                }
-            }
-        }
+        && let Ok(pkg) = serde_json::from_str::<serde_json::Value>(&content)
+    {
+        deps.extend(parse_npm_deps(&pkg));
+    }
 
-    // Cargo.toml
     if let Ok(content) = std::fs::read_to_string(repo.join("Cargo.toml"))
-        && let Ok(cargo) = content.parse::<toml::Value>() {
-            for section in &["dependencies", "dev-dependencies", "build-dependencies"] {
-                if let Some(obj) = cargo.get(section).and_then(|v| v.as_table()) {
-                    for (name, ver) in obj {
-                        let version = match ver {
-                            toml::Value::String(s) => s.clone(),
-                            toml::Value::Table(t) => t.get("version")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("*").to_string(),
-                            _ => "*".into(),
-                        };
-                        deps.push(DepVersion {
-                            lib_name: name.clone(),
-                            version: clean_version(&version),
-                            raw_version: version,
-                            source: "Cargo.toml".into(),
-                            dev: *section != "dependencies",
-                        });
-                    }
-                }
-            }
-        }
+        && let Ok(cargo) = content.parse::<toml::Value>()
+    {
+        deps.extend(parse_cargo_deps(&cargo));
+    }
 
-    // pyproject.toml
     if let Ok(content) = std::fs::read_to_string(repo.join("pyproject.toml"))
         && let Ok(pyp) = content.parse::<toml::Value>()
-            && let Some(deps_arr) = pyp.get("project").and_then(|v| v.get("dependencies")).and_then(|v| v.as_array()) {
-                for dep in deps_arr {
-                    if let Some(s) = dep.as_str() {
-                        let (name, ver) = parse_pep508(s);
-                        deps.push(DepVersion {
-                            lib_name: name,
-                            version: ver.clone(),
-                            raw_version: ver,
-                            source: "pyproject.toml".into(),
-                            dev: false,
-                        });
-                    }
-                }
-            }
+    {
+        deps.extend(parse_pyproject_deps(&pyp));
+    }
 
     Ok(deps)
+}
+
+/// Detect the local-dep marker in an npm version string.
+///
+/// Returns the payload after the protocol prefix for:
+///   - `link:../foo` → `Some("../foo")` — local sibling folder
+///   - `file:./local-tgz.tgz` → `Some("./local-tgz.tgz")` — local tarball
+///   - `workspace:*` / `workspace:^1.2.3` → `Some("*")` / `Some("^1.2.3")` — resolved by dep NAME within the workspace
+///
+/// Git / http / npm-registry versions return `None`.
+pub(crate) fn npm_local_source(version: &str) -> Option<String> {
+    for prefix in ["link:", "workspace:", "file:"] {
+        if let Some(rest) = version.strip_prefix(prefix) {
+            return Some(rest.to_string());
+        }
+    }
+    None
+}
+
+/// Detect the local-dep marker in a Cargo dependency table.
+///
+/// Cargo local deps use `{ path = "../sibling" }`. The `path` key alone is
+/// enough — `version` may be present alongside `path` (for publishing a
+/// hybrid dep) but the resolution still goes local first, so we treat it as
+/// local for the folder→project rollup.
+///
+/// Returns `Some(path_string)` when a `path` key is present, `None` otherwise.
+pub(crate) fn cargo_local_source(dep_value: &toml::Value) -> Option<String> {
+    dep_value
+        .as_table()
+        .and_then(|t| t.get("path"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+}
+
+/// Parse npm dependency sections from a `package.json` value.
+///
+/// Emits one `DepVersion` per (name, section) pair across `dependencies`,
+/// `devDependencies`, and `peerDependencies`. Local-protocol versions
+/// (`link:`, `workspace:`, `file:`) are tagged via `local_source` so the
+/// caller can route them to `project_dependencies` instead of writing them
+/// as external libraries.
+pub(crate) fn parse_npm_deps(pkg: &serde_json::Value) -> Vec<DepVersion> {
+    let mut out = Vec::new();
+    for section in &["dependencies", "devDependencies", "peerDependencies"] {
+        let Some(obj) = pkg.get(section).and_then(|v| v.as_object()) else { continue };
+        for (name, ver) in obj {
+            let version = ver.as_str().unwrap_or("*").to_string();
+            let local_source = npm_local_source(&version);
+            out.push(DepVersion {
+                lib_name: name.clone(),
+                version: clean_version(&version),
+                raw_version: version,
+                source: "package.json".into(),
+                dev: *section != "dependencies",
+                local_source,
+            });
+        }
+    }
+    out
+}
+
+/// Parse Cargo dependency sections from a `Cargo.toml` value.
+///
+/// Emits one `DepVersion` per (name, section) pair across `dependencies`,
+/// `dev-dependencies`, and `build-dependencies`. Deps declared with `path = "..."`
+/// are tagged via `local_source` for local rollup.
+pub(crate) fn parse_cargo_deps(cargo: &toml::Value) -> Vec<DepVersion> {
+    let mut out = Vec::new();
+    for section in &["dependencies", "dev-dependencies", "build-dependencies"] {
+        let Some(obj) = cargo.get(section).and_then(|v| v.as_table()) else { continue };
+        for (name, ver) in obj {
+            let version = match ver {
+                toml::Value::String(s) => s.clone(),
+                toml::Value::Table(t) => t
+                    .get("version")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("*")
+                    .to_string(),
+                _ => "*".into(),
+            };
+            let local_source = cargo_local_source(ver);
+            out.push(DepVersion {
+                lib_name: name.clone(),
+                version: clean_version(&version),
+                raw_version: version,
+                source: "Cargo.toml".into(),
+                dev: *section != "dependencies",
+                local_source,
+            });
+        }
+    }
+    out
+}
+
+/// Parse `[project.dependencies]` from a `pyproject.toml` value.
+///
+/// PEP 621 only. `[tool.poetry.dependencies]` and `[tool.uv.sources]` local
+/// deps are on the 1b/1c roadmap.
+pub(crate) fn parse_pyproject_deps(pyp: &toml::Value) -> Vec<DepVersion> {
+    let mut out = Vec::new();
+    let Some(deps_arr) = pyp
+        .get("project")
+        .and_then(|v| v.get("dependencies"))
+        .and_then(|v| v.as_array())
+    else {
+        return out;
+    };
+    for dep in deps_arr {
+        if let Some(s) = dep.as_str() {
+            let (name, ver) = parse_pep508(s);
+            out.push(DepVersion {
+                lib_name: name,
+                version: ver.clone(),
+                raw_version: ver,
+                source: "pyproject.toml".into(),
+                dev: false,
+                local_source: None,
+            });
+        }
+    }
+    out
 }
 
 #[allow(dead_code)] // legacy single-URL index result; see index_lib_content
@@ -122,6 +199,13 @@ pub struct DepVersion {
     pub raw_version: String,
     pub source: String,
     pub dev: bool,
+    /// When the dep resolves to a local sibling (npm `link:`, `workspace:`,
+    /// `file:`; Cargo `path=`), the payload after the protocol prefix (or the
+    /// path string for Cargo). `None` for registry / git / http deps. The
+    /// writer routes `Some(_)` deps to `project_dependencies` and skips the
+    /// external-library upsert.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_source: Option<String>,
 }
 
 #[allow(dead_code)] // planned: full lib doc API response type
@@ -879,6 +963,121 @@ mod tests {
         assert_eq!(name, "flask");
         assert_eq!(ver, "*");
     }
+
+    // ── local-source detection (1a Step 2) ─────────────────────────────
+    //
+    // Local-protocol deps (npm `link:`/`workspace:`/`file:`, Cargo `path=`)
+    // must be tagged so extract_deps routes them to project_dependencies
+    // instead of writing them as external libraries.
+
+    #[test]
+    fn npm_local_source_recognises_link_workspace_file() {
+        assert_eq!(npm_local_source("link:../actions"), Some("../actions".to_string()));
+        assert_eq!(npm_local_source("workspace:*"), Some("*".to_string()));
+        assert_eq!(npm_local_source("workspace:^1.2.3"), Some("^1.2.3".to_string()));
+        assert_eq!(npm_local_source("file:./local-tgz.tgz"), Some("./local-tgz.tgz".to_string()));
+    }
+
+    #[test]
+    fn npm_local_source_ignores_registry_and_git_versions() {
+        assert_eq!(npm_local_source("^1.2.3"), None);
+        assert_eq!(npm_local_source("~0.8.0"), None);
+        assert_eq!(npm_local_source("*"), None);
+        assert_eq!(npm_local_source("github:owner/repo"), None);
+        assert_eq!(npm_local_source("git+https://example.com/pkg.git"), None);
+    }
+
+    #[test]
+    fn cargo_local_source_reads_path_key() {
+        let v: toml::Value = toml::from_str(r#"path = "../actions""#).unwrap();
+        // toml::from_str returns a table containing the key; wrap so the
+        // helper sees the same shape as it would inline in the dep table.
+        assert_eq!(cargo_local_source(&v), Some("../actions".to_string()));
+    }
+
+    #[test]
+    fn cargo_local_source_none_for_registry_string_dep() {
+        let v = toml::Value::String("1.2.3".into());
+        assert_eq!(cargo_local_source(&v), None);
+    }
+
+    #[test]
+    fn cargo_local_source_reads_path_even_with_version_present() {
+        let src = r#"
+            version = "1.2.3"
+            path = "../actions"
+        "#;
+        let v: toml::Value = toml::from_str(src).unwrap();
+        assert_eq!(cargo_local_source(&v), Some("../actions".to_string()));
+    }
+
+    // ── ecosystem parsers (1a Step 2) ──────────────────────────────────
+
+    #[test]
+    fn parse_npm_deps_tags_link_and_workspace_versions() {
+        let pkg: serde_json::Value = serde_json::json!({
+            "dependencies": {
+                "d3": "^7.0.0",
+                "@rokkit/actions": "link:../actions",
+                "@rokkit/states": "workspace:*",
+            },
+            "devDependencies": {
+                "vitest": "^1.0.0"
+            }
+        });
+        let deps = parse_npm_deps(&pkg);
+        assert_eq!(deps.len(), 4);
+        let by_name = |n: &str| deps.iter().find(|d| d.lib_name == n).unwrap();
+        assert_eq!(by_name("d3").local_source, None);
+        assert!(!by_name("d3").dev);
+        assert_eq!(by_name("@rokkit/actions").local_source, Some("../actions".into()));
+        assert_eq!(by_name("@rokkit/states").local_source, Some("*".into()));
+        assert!(by_name("vitest").dev);
+    }
+
+    #[test]
+    fn parse_cargo_deps_tags_path_dep_and_reads_string_version() {
+        let src = r#"
+            [dependencies]
+            serde = "1.0"
+            senseid = { path = "../senseid" }
+            gateway = { version = "0.2", path = "../gateway" }
+            tracing = { version = "0.1" }
+
+            [dev-dependencies]
+            tempfile = "3"
+        "#;
+        let cargo: toml::Value = toml::from_str(src).unwrap();
+        let deps = parse_cargo_deps(&cargo);
+        assert_eq!(deps.len(), 5);
+        let by_name = |n: &str| deps.iter().find(|d| d.lib_name == n).unwrap();
+        assert_eq!(by_name("serde").local_source, None);
+        assert!(!by_name("serde").dev);
+        assert_eq!(by_name("senseid").local_source, Some("../senseid".into()));
+        assert_eq!(by_name("gateway").local_source, Some("../gateway".into()));
+        assert_eq!(by_name("tracing").local_source, None);
+        assert!(by_name("tempfile").dev);
+    }
+
+    #[test]
+    fn parse_pyproject_deps_reads_pep621_dependencies() {
+        let src = r#"
+            [project]
+            name = "example"
+            dependencies = [
+                "requests>=2.28",
+                "flask",
+            ]
+        "#;
+        let pyp: toml::Value = toml::from_str(src).unwrap();
+        let deps = parse_pyproject_deps(&pyp);
+        assert_eq!(deps.len(), 2);
+        assert_eq!(deps[0].lib_name, "requests");
+        assert_eq!(deps[0].local_source, None);
+        assert_eq!(deps[1].lib_name, "flask");
+    }
+
+    // ── source_type detection (existing) ────────────────────────────────
 
     #[test]
     fn detect_llms_txt() {
