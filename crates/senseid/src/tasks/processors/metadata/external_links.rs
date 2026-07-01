@@ -45,16 +45,24 @@ pub fn scan_external_links(repo_path: &Path) -> ExternalLinksResult {
         }
     }
 
-    // package.json
-    let pkg = repo_path.join("package.json");
-    if let Ok(content) = std::fs::read_to_string(&pkg) {
-        extract_package_json_links(&content, "package.json", &mut links);
-    }
-
-    // Cargo.toml
-    let cargo = repo_path.join("Cargo.toml");
-    if let Ok(content) = std::fs::read_to_string(&cargo) {
-        extract_toml_links(&content, "Cargo.toml", &mut links);
+    // Well-known manifests — delegate link extraction to the format-aware
+    // ConfigAdapter (JSON / TOML). Each ManifestAdapter registers its
+    // filename; we pick the format adapter by the file's extension and let
+    // it pull `homepage` / `repository` / `bugs` / `documentation` fields.
+    for filename in ["package.json", "Cargo.toml", "pyproject.toml"] {
+        let path = repo_path.join(filename);
+        let Ok(content) = std::fs::read_to_string(&path) else { continue };
+        let ext = std::path::Path::new(filename)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("");
+        let Some(adapter) = crate::adapters::config::config_adapter_for_ext(ext) else { continue };
+        for meta in adapter.extract_metadata_links(&content) {
+            let external = meta.into_external(filename);
+            if external.kind != "skip" {
+                links.push(external);
+            }
+        }
     }
 
     // Deduplicate by URL
@@ -94,55 +102,6 @@ fn extract_markdown_links(content: &str, found_in: &str, links: &mut Vec<Externa
                 label: None,
                 found_in: found_in.to_string(),
             });
-        }
-    }
-}
-
-/// Extract links from package.json fields.
-fn extract_package_json_links(content: &str, found_in: &str, links: &mut Vec<ExternalLink>) {
-    if let Ok(val) = serde_json::from_str::<serde_json::Value>(content) {
-        for key in &["homepage", "repository", "bugs"] {
-            if let Some(url) = val[key].as_str()
-                && url.starts_with("http") {
-                    links.push(ExternalLink {
-                        url: url.to_string(),
-                        kind: classify_url(url),
-                        label: Some(key.to_string()),
-                        found_in: found_in.to_string(),
-                    });
-                }
-            // repository can be {type, url}
-            if let Some(url) = val[key]["url"].as_str()
-                && url.starts_with("http") {
-                    links.push(ExternalLink {
-                        url: url.to_string(),
-                        kind: classify_url(url),
-                        label: Some(key.to_string()),
-                        found_in: found_in.to_string(),
-                    });
-                }
-        }
-    }
-}
-
-/// Extract links from Cargo.toml fields.
-fn extract_toml_links(content: &str, found_in: &str, links: &mut Vec<ExternalLink>) {
-    // Simple line-based extraction — avoid pulling in a toml parser just for this
-    for line in content.lines() {
-        let trimmed = line.trim();
-        for key in &["homepage", "repository", "documentation"] {
-            let prefix = format!("{} = ", key);
-            if let Some(rest) = trimmed.strip_prefix(&prefix) {
-                let url = rest.trim_matches(|c| c == '"' || c == '\'').to_string();
-                if url.starts_with("http") {
-                    links.push(ExternalLink {
-                        url,
-                        kind: classify_url(rest),
-                        label: Some(key.to_string()),
-                        found_in: found_in.to_string(),
-                    });
-                }
-            }
         }
     }
 }
@@ -269,10 +228,46 @@ mod tests {
     }
 
     #[test]
-    fn extract_package_json_links_finds_homepage() {
-        let content = r#"{"homepage": "https://docs.acme.com", "bugs": {"url": "https://github.com/acme/api/issues"}}"#;
-        let mut links = Vec::new();
-        extract_package_json_links(content, "package.json", &mut links);
-        assert_eq!(links.len(), 2);
+    fn scan_external_links_pulls_package_json_homepage_and_bugs() {
+        // End-to-end: writes a package.json into a tempdir, calls the public
+        // scan_external_links entry, verifies the ConfigAdapter dispatch picks
+        // up the homepage + bugs fields (plain + object forms).
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            r#"{"homepage": "https://docs.acme.com", "bugs": {"url": "https://github.com/acme/api/issues"}}"#,
+        ).unwrap();
+        let result = scan_external_links(dir.path());
+        assert_eq!(result.links.len(), 2);
+        let urls: Vec<&str> = result.links.iter().map(|l| l.url.as_str()).collect();
+        assert!(urls.contains(&"https://docs.acme.com"));
+        assert!(urls.contains(&"https://github.com/acme/api/issues"));
+    }
+
+    #[test]
+    fn scan_external_links_pulls_cargo_toml_homepage_and_repository() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("Cargo.toml"),
+            "[package]\nname = \"x\"\nhomepage = \"https://sensei-hq.com\"\nrepository = \"https://github.com/sensei-hq/sensei\"\n",
+        ).unwrap();
+        let result = scan_external_links(dir.path());
+        let urls: Vec<&str> = result.links.iter().map(|l| l.url.as_str()).collect();
+        assert!(urls.contains(&"https://sensei-hq.com"));
+        assert!(urls.contains(&"https://github.com/sensei-hq/sensei"));
+    }
+
+    #[test]
+    fn scan_external_links_pulls_pyproject_urls() {
+        // New: pyproject.toml [project.urls] now feeds the external-link
+        // pass because the TomlConfigAdapter also reads the pyproject shape.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("pyproject.toml"),
+            "[project]\nname = \"y\"\n\n[project.urls]\nhomepage = \"https://py.example\"\n",
+        ).unwrap();
+        let result = scan_external_links(dir.path());
+        let urls: Vec<&str> = result.links.iter().map(|l| l.url.as_str()).collect();
+        assert!(urls.contains(&"https://py.example"));
     }
 }
