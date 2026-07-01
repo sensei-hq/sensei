@@ -65,13 +65,7 @@ pub async fn resolve_libs(ctx: &TaskContext, task: &Task) -> Result<u32, String>
                     if path.starts_with("import_") || path.starts_with("from_") { continue; }
                     if path.starts_with("pub use") || path.starts_with("pub(crate)") { continue; }
 
-                    let lib_name = if path.starts_with('@') {
-                        path.split('/').next().unwrap_or("").trim_start_matches('@').to_string()
-                    } else if path.contains("::") {
-                        path.split("::").next().unwrap_or("").to_string()
-                    } else {
-                        path.split('/').next().unwrap_or("").to_string()
-                    };
+                    let lib_name = extract_lib_name(path);
                     if !lib_name.is_empty() && lib_name.len() > 1 {
                         lib_set.insert(lib_name);
                     }
@@ -333,6 +327,34 @@ pub async fn extract_deps(ctx: &TaskContext, task: &Task) -> Result<u32, String>
     Ok(count + member_count)
 }
 
+/// Extract the library name from an import path. Preserves scoped npm package
+/// names (`@rokkit/core`) as a two-segment atom instead of dropping the scope.
+///
+/// - `@rokkit/core` → `@rokkit/core`
+/// - `@rokkit/actions/sub/module` → `@rokkit/actions` (deeper subpaths dropped)
+/// - `@rokkit` (bare scope) → `@rokkit` (rare; kept as-is)
+/// - `svelte/store` → `svelte`
+/// - `serde::de::Deserializer` → `serde`
+/// - single-segment `react` → `react`
+///
+/// Returns an empty string if `path` is empty. Callers apply the `len > 1`
+/// filter to reject noise.
+fn extract_lib_name(path: &str) -> String {
+    if path.starts_with('@') {
+        // Scoped npm package: keep the "@scope/name" pair, drop deeper paths.
+        let mut parts = path.splitn(3, '/');
+        return match (parts.next(), parts.next()) {
+            (Some(scope), Some(name)) => format!("{scope}/{name}"),
+            (Some(only), None) => only.to_string(),
+            _ => String::new(),
+        };
+    }
+    if path.contains("::") {
+        return path.split("::").next().unwrap_or("").to_string();
+    }
+    path.split('/').next().unwrap_or("").to_string()
+}
+
 /// Public (non-private) workspace members mapped to `(name, ecosystem, version)`
 /// for registration as first-party libraries. Private members are excluded so
 /// only publishable packages reach the global Libraries view (#63).
@@ -363,6 +385,52 @@ mod tests {
             pkg_type: pkg_type.into(), private,
         }
     }
+
+    // ── extract_lib_name ──────────────────────────────────────────────
+    //
+    // #30 residual: the scoped-npm branch used to drop everything after the
+    // first `/` and strip `@`, so `@rokkit/core` became `rokkit`. Now we keep
+    // the two-segment scope+name atom.
+
+    #[test]
+    fn extract_lib_name_keeps_scoped_npm_package() {
+        assert_eq!(extract_lib_name("@rokkit/core"), "@rokkit/core");
+        assert_eq!(extract_lib_name("@sveltejs/kit"), "@sveltejs/kit");
+    }
+
+    #[test]
+    fn extract_lib_name_drops_deeper_subpaths_under_scope() {
+        // Deep import: `import { foo } from "@rokkit/actions/sub/module"`
+        // → the library is `@rokkit/actions`; the deeper path is where inside
+        //   the package the symbol lives.
+        assert_eq!(extract_lib_name("@rokkit/actions/sub/module"), "@rokkit/actions");
+    }
+
+    #[test]
+    fn extract_lib_name_handles_bare_scope() {
+        // Defensive: a lone `@scope` shouldn't crash — keep as-is.
+        // Caller's len > 1 filter will still let this through, but it's fine.
+        assert_eq!(extract_lib_name("@rokkit"), "@rokkit");
+    }
+
+    #[test]
+    fn extract_lib_name_strips_subpath_from_unscoped_npm() {
+        assert_eq!(extract_lib_name("svelte/store"), "svelte");
+        assert_eq!(extract_lib_name("react"), "react");
+    }
+
+    #[test]
+    fn extract_lib_name_strips_rust_module_path() {
+        assert_eq!(extract_lib_name("serde::de::Deserializer"), "serde");
+        assert_eq!(extract_lib_name("tokio::spawn"), "tokio");
+    }
+
+    #[test]
+    fn extract_lib_name_empty_input_returns_empty() {
+        assert_eq!(extract_lib_name(""), "");
+    }
+
+    // ── public_member_libs (existing) ─────────────────────────────────
 
     #[test]
     fn public_member_libs_skips_private_and_maps_valid_ecosystems() {
