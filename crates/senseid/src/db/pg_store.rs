@@ -1938,6 +1938,40 @@ impl PgStore {
         Ok(())
     }
 
+    /// Upsert a project → project edge into `sensei.project_dependencies`.
+    ///
+    /// Called from `extract_deps` when a `link:` / `workspace:` / `file:` /
+    /// `path=` dep resolves to a sibling folder that belongs to a DIFFERENT
+    /// project than the declaring folder. Idempotent on the composite PK
+    /// `(from_project_id, to_project_id, from_folder_id, source_manifest)`.
+    pub async fn upsert_project_dependency(
+        &self,
+        from_project_id: &uuid::Uuid,
+        to_project_id: &uuid::Uuid,
+        from_folder_id: &uuid::Uuid,
+        source_protocol: &str,
+        source_manifest: &str,
+        resolved_target: Option<&str>,
+    ) -> Result<(), String> {
+        sqlx_core::query::query(
+            "INSERT INTO sensei.project_dependencies
+                (from_project_id, to_project_id, from_folder_id, source_protocol, source_manifest, resolved_target)
+             VALUES ($1, $2, $3, $4, $5, $6)
+             ON CONFLICT (from_project_id, to_project_id, from_folder_id, source_manifest) DO UPDATE SET
+               source_protocol = EXCLUDED.source_protocol,
+               resolved_target = EXCLUDED.resolved_target,
+               modified_at = now()"
+        )
+            .bind(from_project_id)
+            .bind(to_project_id)
+            .bind(from_folder_id)
+            .bind(source_protocol)
+            .bind(source_manifest)
+            .bind(resolved_target)
+            .execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     /// Roll a folder-level library reference up to a project-level association
     /// (sensei.project_libraries), scoped to `project_id`. `referenced_libraries`
     /// is folder-grained; `project_libraries` is the project↔library M2M the
@@ -4568,6 +4602,63 @@ mod tests {
         assert_eq!(lib["ecosystem"], "cargo");
         assert_eq!(lib["version"], "1.0");
         s.delete_library(&id).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn upsert_project_dependency_is_idempotent_and_stores_all_columns() {
+        // 1a Step 5: project → project edges must be idempotent on the
+        // composite PK (from_project, to_project, from_folder, source_manifest)
+        // and must preserve source_protocol and resolved_target across upserts.
+        let s = pg_store().await;
+        let from_pid = s.ensure_test_project(&format!("dep-from-{}", uuid::Uuid::new_v4())).await.unwrap();
+        let to_pid   = s.ensure_test_project(&format!("dep-to-{}", uuid::Uuid::new_v4())).await.unwrap();
+        let from_fid = create_test_folder(&s, &format!("pd-{}", uuid::Uuid::new_v4())).await;
+
+        // First upsert
+        s.upsert_project_dependency(
+            &from_pid, &to_pid, &from_fid, "link", "package.json", Some("../actions"),
+        ).await.unwrap();
+        // Repeat with a different resolved_target — same PK, so this must
+        // update in place (last-writer wins on non-key columns).
+        s.upsert_project_dependency(
+            &from_pid, &to_pid, &from_fid, "link", "package.json", Some("../actions-renamed"),
+        ).await.unwrap();
+
+        use sqlx_core::query_as::query_as;
+        let rows: Vec<(String, Option<String>)> = query_as(
+            "SELECT source_protocol, resolved_target
+               FROM sensei.project_dependencies
+              WHERE from_project_id = $1 AND to_project_id = $2 AND from_folder_id = $3"
+        ).bind(from_pid).bind(to_pid).bind(from_fid)
+         .fetch_all(s.pool()).await.unwrap();
+
+        assert_eq!(rows.len(), 1, "composite PK must dedupe two upserts");
+        assert_eq!(rows[0].0, "link", "protocol preserved");
+        assert_eq!(rows[0].1.as_deref(), Some("../actions-renamed"), "target updated in place");
+
+        // Cleanup
+        sqlx_core::query::query("DELETE FROM sensei.project_dependencies WHERE from_folder_id = $1")
+            .bind(from_fid).execute(s.pool()).await.unwrap();
+        s.delete_project(&from_pid).await.ok();
+        s.delete_project(&to_pid).await.ok();
+    }
+
+    #[tokio::test]
+    async fn upsert_project_dependency_rejects_self_edges() {
+        // 1a Step 5: DDL check constraint (from_project_id <> to_project_id)
+        // must reject self-edges at the write path.
+        let s = pg_store().await;
+        let pid = s.ensure_test_project(&format!("self-{}", uuid::Uuid::new_v4())).await.unwrap();
+        let fid = create_test_folder(&s, &format!("self-fid-{}", uuid::Uuid::new_v4())).await;
+
+        let err = s.upsert_project_dependency(
+            &pid, &pid, &fid, "path", "Cargo.toml", Some("."),
+        ).await;
+
+        assert!(err.is_err(), "self-edge must be rejected");
+        assert!(err.unwrap_err().contains("check"), "err message must reference the check constraint");
+
+        s.delete_project(&pid).await.ok();
     }
 
     #[tokio::test]
