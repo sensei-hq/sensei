@@ -13,4 +13,5 @@
 //! dispatch. Later steps migrate the workspace / stack / role / metadata
 //! callers.
 
+pub mod config;
 pub mod manifest;
