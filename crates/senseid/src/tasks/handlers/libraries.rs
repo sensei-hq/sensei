@@ -279,7 +279,7 @@ pub async fn extract_deps(ctx: &TaskContext, task: &Task) -> Result<u32, String>
         };
 
         // Link folder → library via referenced_libraries
-        if let Err(e) = ctx.pg().upsert_referenced_library(&folder_id, &lib_id, Some(&dep.version)).await {
+        if let Err(e) = ctx.pg().upsert_referenced_library(&folder_id, &lib_id, Some(&dep.version), None).await {
             tracing::warn!(error = %e, lib = %dep.lib_name, folder = %folder_name, "extract_deps: upsert_referenced_library failed");
             continue;
         }
@@ -309,7 +309,7 @@ pub async fn extract_deps(ctx: &TaskContext, task: &Task) -> Result<u32, String>
                 continue;
             }
         };
-        if let Err(e) = ctx.pg().upsert_referenced_library(&folder_id, &lib_id, version.as_deref()).await {
+        if let Err(e) = ctx.pg().upsert_referenced_library(&folder_id, &lib_id, version.as_deref(), None).await {
             tracing::warn!(error = %e, lib = %name, folder = %folder_name, "extract_deps: upsert_referenced_library (workspace member) failed");
             continue;
         }

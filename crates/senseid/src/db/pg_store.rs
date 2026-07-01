@@ -1911,16 +1911,29 @@ impl PgStore {
         Ok(())
     }
 
+    /// Upsert a folder → library edge with optional `version_used` and `props`.
+    ///
+    /// `props` is merged (`||`) with any existing row's props, so callers can
+    /// stack tags across passes without clobbering earlier metadata. Pass
+    /// `None` for a props-free upsert.
+    ///
+    /// Typical `props` shape: `{"local_source": "../actions", "protocol": "link"}`
+    /// for a dep declared via `link:` / `workspace:` / `file:` / Cargo `path=`.
     pub async fn upsert_referenced_library(
-        &self, folder_id: &uuid::Uuid, library_id: &uuid::Uuid, version: Option<&str>,
+        &self,
+        folder_id: &uuid::Uuid,
+        library_id: &uuid::Uuid,
+        version: Option<&str>,
+        props: Option<serde_json::Value>,
     ) -> Result<(), String> {
         sqlx_core::query::query(
-            "INSERT INTO sensei.referenced_libraries(folder_id, library_id, version_used)
-             VALUES($1, $2, $3)
+            "INSERT INTO sensei.referenced_libraries(folder_id, library_id, version_used, props)
+             VALUES($1, $2, $3, COALESCE($4, '{}'::jsonb))
              ON CONFLICT(folder_id, library_id) DO UPDATE SET
                version_used = COALESCE(EXCLUDED.version_used, referenced_libraries.version_used),
+               props = referenced_libraries.props || EXCLUDED.props,
                modified_at = now()"
-        ).bind(folder_id).bind(library_id).bind(version)
+        ).bind(folder_id).bind(library_id).bind(version).bind(props)
             .execute(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(())
     }
@@ -4555,6 +4568,38 @@ mod tests {
         assert_eq!(lib["ecosystem"], "cargo");
         assert_eq!(lib["version"], "1.0");
         s.delete_library(&id).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn upsert_referenced_library_merges_props() {
+        // 1a Step 3: props must accumulate across passes, not overwrite. A
+        // first pass tags {"local_source": "../actions"} for a link:/path=
+        // dep; a later pass adding {"pinned": true} must produce the merged
+        // {"local_source": "../actions", "pinned": true}.
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("refprops_{}", uuid::Uuid::new_v4())).await;
+        let lib = s.upsert_library(&format!("_test:refprops-{}", uuid::Uuid::new_v4()), "npm", Some("1.0"), None, None, None).await.unwrap();
+
+        s.upsert_referenced_library(
+            &fid, &lib, Some("1.0"),
+            Some(serde_json::json!({"local_source": "../actions"})),
+        ).await.unwrap();
+
+        s.upsert_referenced_library(
+            &fid, &lib, Some("1.0"),
+            Some(serde_json::json!({"pinned": true})),
+        ).await.unwrap();
+
+        use sqlx_core::query_as::query_as;
+        let (props,): (serde_json::Value,) = query_as(
+            "SELECT props FROM sensei.referenced_libraries WHERE folder_id = $1 AND library_id = $2"
+        ).bind(fid).bind(lib).fetch_one(s.pool()).await.unwrap();
+
+        assert_eq!(props["local_source"], "../actions", "first pass tag must persist");
+        assert_eq!(props["pinned"], true, "second pass tag must merge in");
+
+        // Cleanup — library delete cascades referenced_libraries via FK.
+        s.delete_library(&lib).await.unwrap();
     }
 
     #[tokio::test]
