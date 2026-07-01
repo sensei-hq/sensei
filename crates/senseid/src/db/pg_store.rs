@@ -2776,6 +2776,38 @@ impl PgStore {
         }).collect())
     }
 
+    /// List outgoing project → project edges for a project.
+    ///
+    /// Returns one row per edge with the target project's name joined in.
+    /// Sorted by target project name for stable UI ordering.
+    pub async fn list_project_dependencies(
+        &self, project_id: &uuid::Uuid,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, String, uuid::Uuid, String, String, Option<String>, String)> =
+            sqlx_core::query_as::query_as(
+                "SELECT to_p.id, to_p.name, pd.from_folder_id, pd.source_protocol,
+                        pd.source_manifest, pd.resolved_target, from_f.name
+                   FROM sensei.project_dependencies pd
+                   JOIN sensei.projects to_p   ON to_p.id   = pd.to_project_id
+                   JOIN sensei.folders  from_f ON from_f.id = pd.from_folder_id
+                  WHERE pd.from_project_id = $1
+                  ORDER BY to_p.name, from_f.name, pd.source_manifest"
+            ).bind(project_id)
+            .fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+
+        Ok(rows.into_iter().map(|(to_id, to_name, from_folder_id, protocol, manifest, target, from_folder_name)| {
+            serde_json::json!({
+                "to_project_id": to_id,
+                "to_project_name": to_name,
+                "from_folder_id": from_folder_id,
+                "from_folder": from_folder_name,
+                "source_protocol": protocol,
+                "source_manifest": manifest,
+                "resolved_target": target,
+            })
+        }).collect())
+    }
+
     pub async fn get_project_extensions(&self, project_id: &uuid::Uuid, kind_filter: Option<&[&str]>) -> Result<Vec<serde_json::Value>, String> {
         // Query the resolved view directly — it already joins extensions internally
         let rows: Vec<(uuid::Uuid, String, String, bool, serde_json::Value, String)> =
@@ -4637,6 +4669,43 @@ mod tests {
         assert_eq!(rows[0].1.as_deref(), Some("../actions-renamed"), "target updated in place");
 
         // Cleanup
+        sqlx_core::query::query("DELETE FROM sensei.project_dependencies WHERE from_folder_id = $1")
+            .bind(from_fid).execute(s.pool()).await.unwrap();
+        s.delete_project(&from_pid).await.ok();
+        s.delete_project(&to_pid).await.ok();
+    }
+
+    #[tokio::test]
+    async fn list_project_dependencies_joins_target_name_and_folder() {
+        // 1a Step 6: the list endpoint returns each outgoing edge with the
+        // TARGET project's name and the source folder's name joined in.
+        let s = pg_store().await;
+        let suffix = uuid::Uuid::new_v4();
+        let from_pid = s.ensure_test_project(&format!("lpd-from-{suffix}")).await.unwrap();
+        let to_pid   = s.ensure_test_project(&format!("lpd-to-{suffix}")).await.unwrap();
+        let from_fid = create_test_folder(&s, &format!("lpd-fid-{suffix}")).await;
+
+        s.upsert_project_dependency(
+            &from_pid, &to_pid, &from_fid, "link", "package.json", Some("../actions"),
+        ).await.unwrap();
+
+        let deps = s.list_project_dependencies(&from_pid).await.unwrap();
+
+        assert_eq!(deps.len(), 1);
+        let d = &deps[0];
+        assert_eq!(d["to_project_id"].as_str().unwrap(), to_pid.to_string());
+        assert!(d["to_project_name"].as_str().unwrap().starts_with("_test:lpd-to-"),
+                "target project name must be joined in");
+        assert!(d["from_folder"].as_str().unwrap().starts_with("lpd-fid-"),
+                "source folder name must be joined in");
+        assert_eq!(d["source_protocol"], "link");
+        assert_eq!(d["source_manifest"], "package.json");
+        assert_eq!(d["resolved_target"], "../actions");
+
+        // Reverse direction returns empty
+        let none = s.list_project_dependencies(&to_pid).await.unwrap();
+        assert!(none.is_empty(), "target project has no outgoing edges");
+
         sqlx_core::query::query("DELETE FROM sensei.project_dependencies WHERE from_folder_id = $1")
             .bind(from_fid).execute(s.pool()).await.unwrap();
         s.delete_project(&from_pid).await.ok();
