@@ -24,6 +24,7 @@ pub mod corrections;
 pub mod ranking;
 pub mod model_insight;
 mod classifiers;
+mod adapters;
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
