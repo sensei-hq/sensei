@@ -23,6 +23,7 @@ pub mod pattern_effectiveness;
 pub mod corrections;
 pub mod ranking;
 pub mod model_insight;
+mod classifiers;
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
