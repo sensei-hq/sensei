@@ -7,12 +7,14 @@
 //! rewrite the resolver graph but don't add or drop entries.
 //!
 //! go.mod is not a workspace root — Go workspaces live in a separate
-//! `go.work` file — so `is_workspace_root` always returns false. Workspace
-//! detection of `go.work` is handled at a different layer (`config/detector.rs`
-//! already covers it; that migration lands in a later step).
+//! `go.work` file — so `is_workspace_root` always returns false.
+//! `detect_workspace_members` reads `go.work` at the repo root to enumerate
+//! the workspace's members.
 
 use super::{ManifestAdapter, ParsedManifest};
 use crate::indexer::lib_indexer::{clean_version, DepVersion};
+use crate::types::PackageInfo;
+use std::path::Path;
 
 pub struct GoManifestAdapter;
 
@@ -86,6 +88,74 @@ impl ManifestAdapter for GoManifestAdapter {
     fn stack_labels(&self, _content: &str) -> Vec<&'static str> {
         vec!["go"]
     }
+
+    fn detect_workspace_members(&self, repo_root: &Path) -> Vec<PackageInfo> {
+        let Ok(content) = std::fs::read_to_string(repo_root.join("go.work")) else {
+            return Vec::new();
+        };
+        let mut members = Vec::new();
+        // Parse the `use ( ./dir1 ./dir2 )` block plus stand-alone `use ./dir`
+        // lines that go.work also supports.
+        let mut in_use = false;
+        for raw_line in content.lines() {
+            let line = strip_go_line_comment(raw_line).trim();
+            if line.is_empty() {
+                continue;
+            }
+            if let Some(rest) = line.strip_prefix("use") {
+                let rest = rest.trim_start();
+                if rest.starts_with('(') {
+                    in_use = true;
+                    continue;
+                }
+                // Single-line: `use ./sub`
+                if let Some(member) = go_work_member(repo_root, rest) {
+                    members.push(member);
+                }
+                continue;
+            }
+            if in_use {
+                if line == ")" {
+                    in_use = false;
+                    continue;
+                }
+                if let Some(member) = go_work_member(repo_root, line) {
+                    members.push(member);
+                }
+            }
+        }
+        members
+    }
+}
+
+/// Build a `PackageInfo` for a `use ./dir` entry in a go.work file. Returns
+/// `None` when the referenced folder has no `go.mod`.
+fn go_work_member(repo_root: &Path, entry: &str) -> Option<PackageInfo> {
+    let dir = entry.trim_start_matches("./").trim();
+    if dir.is_empty() {
+        return None;
+    }
+    let go_mod = repo_root.join(dir).join("go.mod");
+    if !go_mod.exists() {
+        return None;
+    }
+    let name = std::fs::read_to_string(&go_mod)
+        .ok()
+        .and_then(|c| {
+            c.lines()
+                .map(strip_go_line_comment)
+                .map(|l| l.trim().to_string())
+                .find_map(|line| line.strip_prefix("module").map(|rest| rest.trim().to_string()))
+                .filter(|s| !s.is_empty())
+        })
+        .unwrap_or_else(|| dir.to_string());
+    Some(PackageInfo {
+        name,
+        path: dir.to_string(),
+        version: None,
+        pkg_type: "go_module".to_string(),
+        private: false,
+    })
 }
 
 /// Strip a `//` line comment (preserving anything before it).
