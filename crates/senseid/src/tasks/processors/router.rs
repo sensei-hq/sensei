@@ -44,8 +44,11 @@ pub fn process_file(abs_path: &str, repo_path: &str, repo_id: &str) -> Result<Fi
         // Plain text docs (llms.txt, etc.)
         "txt" => Ok(doc::process(abs_path, &rel_path, &content, repo_id, repo_path)),
 
-        // Config
-        "json" | "toml" | "yaml" | "yml" | "jsonl" => Ok(config::process(abs_path, &rel_path, ext)),
+        // Config — the ConfigAdapter registry decides which extensions count
+        // as config files (currently json / jsonl / toml / yaml / yml).
+        e if crate::adapters::config::config_adapter_for_ext(e).is_some() => {
+            Ok(config::process(abs_path, &rel_path, ext))
+        }
 
         // Code — try language adapter
         _ => {
