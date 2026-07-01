@@ -849,6 +849,64 @@ impl PgStore {
         }).collect())
     }
 
+    /// Documentation pages for a library by name, optionally filtered to a
+    /// single component. `component=None` returns every page (the handler
+    /// builds the index/overview from these); `Some(c)` returns just that
+    /// component's page(s). NULL-component pages (the library overview) sort
+    /// first. This is what `get_lib_docs` reads — it must return the page
+    /// CONTENT, not just library metadata.
+    pub async fn get_library_pages(
+        &self, name: &str, component: Option<&str>,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(String, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT lp.title, lp.component, lp.description, lp.content,
+                        COALESCE(lp.url, lp.local_path) AS location, lp.source_type::text
+                   FROM sensei.library_pages lp
+                   JOIN sensei.libraries l ON l.id = lp.library_id
+                  WHERE l.name = $1
+                    AND ($2::text IS NULL OR lp.component = $2)
+                  ORDER BY (lp.component IS NULL) DESC, lp.component, lp.title"
+            )
+            .bind(name).bind(component)
+            .fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(title, component, description, content, location, source_type)| {
+            serde_json::json!({
+                "title": title, "component": component,
+                "description": description, "content": content,
+                "location": location, "source": source_type,
+            })
+        }).collect())
+    }
+
+    /// Search library pages by title / component / content (ILIKE). Returns
+    /// ranked matches with a short snippet rather than full content, so
+    /// `search_lib_docs` is concise. Title/component hits rank above body hits.
+    pub async fn search_library_pages(&self, query: &str) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(String, String, Option<String>, Option<String>, Option<String>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT l.name, lp.title, lp.component, lp.description,
+                        left(lp.content, 400) AS snippet
+                   FROM sensei.library_pages lp
+                   JOIN sensei.libraries l ON l.id = lp.library_id
+                  WHERE lp.title ILIKE '%' || $1 || '%'
+                     OR lp.component ILIKE '%' || $1 || '%'
+                     OR lp.content ILIKE '%' || $1 || '%'
+                  ORDER BY (lp.title ILIKE '%' || $1 || '%') DESC,
+                           (lp.component ILIKE '%' || $1 || '%') DESC,
+                           l.name, lp.component
+                  LIMIT 30"
+            )
+            .bind(query)
+            .fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(library, title, component, description, snippet)| {
+            serde_json::json!({
+                "library": library, "title": title, "component": component,
+                "description": description, "snippet": snippet,
+            })
+        }).collect())
+    }
+
     /// List all sessions across all folders.
     pub async fn list_all_sessions(&self, limit: i64) -> Result<Vec<serde_json::Value>, String> {
         // Join the project name so each session can be labelled, and return the
@@ -1827,20 +1885,21 @@ impl PgStore {
 
     pub async fn upsert_library_page(
         &self, library_id: &uuid::Uuid, title: &str, url: Option<&str>,
-        description: Option<&str>, content: Option<&str>, source_type: &str,
-        component: Option<&str>,
+        local_path: Option<&str>, description: Option<&str>, content: Option<&str>,
+        source_type: &str, component: Option<&str>,
     ) -> Result<uuid::Uuid, String> {
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
-            "INSERT INTO sensei.library_pages(library_id, title, url, description, content, source_type, component, fetched_at)
-             VALUES($1, $2, $3, $4, $5, $6::sensei.library_source_type, $7, now())
+            "INSERT INTO sensei.library_pages(library_id, title, url, local_path, description, content, source_type, component, fetched_at)
+             VALUES($1, $2, $3, $4, $5, $6, $7::sensei.library_source_type, $8, now())
              ON CONFLICT(library_id, title) DO UPDATE SET
                url = COALESCE(EXCLUDED.url, library_pages.url),
+               local_path = COALESCE(EXCLUDED.local_path, library_pages.local_path),
                description = COALESCE(EXCLUDED.description, library_pages.description),
                content = COALESCE(EXCLUDED.content, library_pages.content),
                component = COALESCE(EXCLUDED.component, library_pages.component),
                fetched_at = now(), modified_at = now()
              RETURNING id"
-        ).bind(library_id).bind(title).bind(url).bind(description).bind(content).bind(source_type).bind(component)
+        ).bind(library_id).bind(title).bind(url).bind(local_path).bind(description).bind(content).bind(source_type).bind(component)
             .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(row.0)
     }
