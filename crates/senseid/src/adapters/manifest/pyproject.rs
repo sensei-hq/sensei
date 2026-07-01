@@ -54,6 +54,10 @@ impl ManifestAdapter for PyprojectManifestAdapter {
                 .map(|s| s.to_string()),
         }
     }
+
+    fn stack_labels(&self, _content: &str) -> Vec<&'static str> {
+        vec!["python"]
+    }
 }
 
 #[cfg(test)]
@@ -135,5 +139,10 @@ mod tests {
         assert_eq!(p.name.as_deref(), Some("sensei-py"));
         assert_eq!(p.version.as_deref(), Some("0.1.0"));
         assert_eq!(p.description.as_deref(), Some("A Python helper"));
+    }
+
+    #[test]
+    fn stack_labels_always_python() {
+        assert_eq!(PyprojectManifestAdapter.stack_labels(""), vec!["python"]);
     }
 }

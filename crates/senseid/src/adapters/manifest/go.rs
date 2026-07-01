@@ -82,6 +82,10 @@ impl ManifestAdapter for GoManifestAdapter {
             description: None,   // no description field in go.mod
         }
     }
+
+    fn stack_labels(&self, _content: &str) -> Vec<&'static str> {
+        vec!["go"]
+    }
 }
 
 /// Strip a `//` line comment (preserving anything before it).
@@ -231,5 +235,10 @@ mod tests {
     fn parse_manifest_defaults_when_no_module_line() {
         let p = GoManifestAdapter.parse_manifest("");
         assert!(p.name.is_none());
+    }
+
+    #[test]
+    fn stack_labels_always_go() {
+        assert_eq!(GoManifestAdapter.stack_labels(""), vec!["go"]);
     }
 }
