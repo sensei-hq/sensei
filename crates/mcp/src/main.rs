@@ -289,21 +289,8 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
         resolve_project_from_cwd(cwd, client)
     };
 
-    // Build daemon call params — forward all args + add resolved repoId
-    let query = args["query"].as_str()
-        .or(args["name"].as_str())
-        .or(args["pattern"].as_str())
-        .unwrap_or("");
-
-    let mut daemon_params = args.clone();
-    if let Some(obj) = daemon_params.as_object_mut() {
-        obj.insert("repoId".into(), json!(repo_id));
-        obj.insert("query".into(), json!(query));
-        if let Some(pattern) = obj.remove("pattern") {
-            obj.insert("tag".into(), pattern);
-        }
-        obj.insert("q".into(), json!(query));
-    }
+    // Build daemon call params — forward all args + resolved repoId + query aliases.
+    let daemon_params = build_daemon_params(&args, &repo_id);
 
     // ── Inference tools (direct endpoints, not mcp proxy) ──────────────
     if tool_name == "infer" {
@@ -653,10 +640,7 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
 
     // ── Standard tools (via daemon mcp proxy) ───────────────────────────
     // Map tool names
-    let daemon_tool = match tool_name {
-        "get_patterns" => "get_file_tags",
-        other => other,
-    };
+    let daemon_tool = map_daemon_tool(tool_name);
 
     let result = client.post(format!("{}/api/mcp/call", daemon_url()))
         .json(&json!({"tool": daemon_tool, "params": daemon_params}))
@@ -767,6 +751,38 @@ fn tool(name: &str, description: &str, required: &[(&str, &str, &str)], optional
     })
 }
 
+/// Pure: build the params object forwarded to the daemon's `/api/mcp/call`.
+/// Forwards every caller arg, injects the resolved `repoId`, derives the search
+/// term (`query` → else `name` → else `pattern`) and mirrors it to both `query`
+/// and `q` (different daemon handlers read different keys), and renames
+/// `pattern` → `tag` (the daemon's tag-filter key).
+fn build_daemon_params(args: &Value, repo_id: &str) -> Value {
+    let query = args["query"].as_str()
+        .or(args["name"].as_str())
+        .or(args["pattern"].as_str())
+        .unwrap_or("");
+
+    let mut daemon_params = args.clone();
+    if let Some(obj) = daemon_params.as_object_mut() {
+        obj.insert("repoId".into(), json!(repo_id));
+        obj.insert("query".into(), json!(query));
+        if let Some(pattern) = obj.remove("pattern") {
+            obj.insert("tag".into(), pattern);
+        }
+        obj.insert("q".into(), json!(query));
+    }
+    daemon_params
+}
+
+/// Pure: map an MCP tool name to the daemon's internal tool name. Most pass
+/// through unchanged; `get_patterns` is the daemon's `get_file_tags`.
+fn map_daemon_tool(tool_name: &str) -> &str {
+    match tool_name {
+        "get_patterns" => "get_file_tags",
+        other => other,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -803,5 +819,166 @@ mod tests {
             "sensei".to_string()
         );
         assert_eq!(resolve_from_cwd_in(&sample(), "/tmp/other"), "".to_string());
+    }
+
+    #[test]
+    fn resolve_project_exact_name_wins_over_partial() {
+        let projects = vec![
+            json!({ "id": "a", "name": "sensei-web", "folders": [] }),
+            json!({ "id": "b", "name": "sensei",     "folders": [] }),
+        ];
+        // Exact "sensei" must return "sensei", not the partial-matching "sensei-web".
+        assert_eq!(resolve_project_in(&projects, "sensei"), Some("sensei".into()));
+    }
+
+    #[test]
+    fn resolve_from_cwd_no_folders_is_empty() {
+        let projects = vec![json!({ "id": "a", "name": "x" })]; // no folders key
+        assert_eq!(resolve_from_cwd_in(&projects, "/anywhere"), "".to_string());
+    }
+
+    // ── Tool catalog contract ────────────────────────────────────────────
+
+    /// Every tool the daemon's mcp_call_tool / direct endpoints dispatch on.
+    /// Keep in sync with handle_list_tools — a missing entry means the tool is
+    /// advertised but untested, an extra entry means it's tested but unadvertised.
+    const EXPECTED_TOOLS: &[&str] = &[
+        "search", "get_callers", "get_callees", "get_project_summary",
+        "get_lib_docs", "search_lib_docs", "get_communities", "get_patterns",
+        "list_projects", "create_session", "update_session", "add_library",
+        "update_phase", "get_workflow_state", "match_pattern", "get_pattern_for",
+        "get_duplicates", "get_project_conventions", "get_rules", "infer", "embed",
+        "gateway_status", "consensus", "generate_image", "log_event",
+        "propose_memory", "save_memory", "promote_memory", "accept_proposal",
+        "reject_proposal", "record_outcome", "get_layered_context",
+    ];
+
+    fn tools() -> Vec<Value> {
+        handle_list_tools()["tools"].as_array().unwrap().clone()
+    }
+    fn tool_named<'a>(ts: &'a [Value], name: &str) -> &'a Value {
+        ts.iter().find(|t| t["name"] == name)
+            .unwrap_or_else(|| panic!("tool '{name}' not in catalog"))
+    }
+
+    #[test]
+    fn catalog_exposes_exactly_the_expected_tools() {
+        let ts = tools();
+        let mut names: Vec<&str> = ts.iter().filter_map(|t| t["name"].as_str()).collect();
+        for expected in EXPECTED_TOOLS {
+            assert!(names.contains(expected), "catalog missing tool: {expected}");
+        }
+        // No duplicates, and nothing advertised that isn't in the expected set.
+        names.sort();
+        let mut deduped = names.clone();
+        deduped.dedup();
+        assert_eq!(deduped.len(), names.len(), "duplicate tool names in catalog");
+        for name in &names {
+            assert!(EXPECTED_TOOLS.contains(name), "undeclared tool advertised: {name}");
+        }
+    }
+
+    #[test]
+    fn every_tool_has_a_well_formed_schema() {
+        for t in tools() {
+            let name = t["name"].as_str().unwrap_or("");
+            assert!(!name.is_empty(), "a tool is missing its name");
+            assert!(
+                t["description"].as_str().map(|d| d.len() > 10).unwrap_or(false),
+                "{name}: description missing or too short"
+            );
+            assert_eq!(t["inputSchema"]["type"], "object", "{name}: schema not an object");
+            assert!(t["inputSchema"]["properties"].is_object(), "{name}: no properties map");
+            let required = t["inputSchema"]["required"].as_array()
+                .unwrap_or_else(|| panic!("{name}: required is not an array"));
+            // Every required param must also be declared in properties.
+            for r in required {
+                let rn = r.as_str().unwrap();
+                assert!(
+                    t["inputSchema"]["properties"][rn].is_object(),
+                    "{name}: required param '{rn}' absent from properties"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn lib_docs_tools_declare_their_documented_params() {
+        let ts = tools();
+        let gld = tool_named(&ts, "get_lib_docs");
+        assert_eq!(gld["inputSchema"]["required"], json!(["name"]), "get_lib_docs requires name");
+        assert!(
+            gld["inputSchema"]["properties"]["component"].is_object(),
+            "get_lib_docs must offer an optional 'component'"
+        );
+        let sld = tool_named(&ts, "search_lib_docs");
+        assert_eq!(sld["inputSchema"]["required"], json!(["query"]), "search_lib_docs requires query");
+    }
+
+    #[test]
+    fn update_session_requires_session_id_and_outcome() {
+        let ts = tools();
+        let req = tool_named(&ts, "update_session")["inputSchema"]["required"].clone();
+        assert_eq!(req, json!(["sessionId", "outcome"]));
+    }
+
+    #[test]
+    fn tool_helper_lists_only_required_in_required_array() {
+        let t = tool("demo", "a demo tool description", &[("a", "string", "the a")], &[("b", "string", "the b")]);
+        assert_eq!(t["name"], "demo");
+        assert_eq!(t["inputSchema"]["properties"]["a"]["type"], "string");
+        assert_eq!(t["inputSchema"]["properties"]["b"]["type"], "string");
+        assert_eq!(t["inputSchema"]["required"], json!(["a"]), "optional must not be required");
+    }
+
+    #[test]
+    fn initialize_reports_protocol_and_server_info() {
+        let init = handle_initialize();
+        assert_eq!(init["protocolVersion"], "2024-11-05");
+        assert_eq!(init["serverInfo"]["name"], "sensei");
+        assert!(init["capabilities"]["tools"].is_object());
+    }
+
+    // ── Daemon param building ────────────────────────────────────────────
+
+    #[test]
+    fn build_daemon_params_injects_repo_id_and_mirrors_query() {
+        let p = build_daemon_params(&json!({ "query": "foo" }), "my-repo");
+        assert_eq!(p["repoId"], "my-repo");
+        assert_eq!(p["query"], "foo");
+        assert_eq!(p["q"], "foo", "daemon search handlers read 'q'");
+    }
+
+    #[test]
+    fn build_daemon_params_derives_query_from_name_then_pattern() {
+        // name fills query when query is absent
+        assert_eq!(build_daemon_params(&json!({ "name": "Foo" }), "r")["query"], "Foo");
+        // explicit query wins over name
+        assert_eq!(build_daemon_params(&json!({ "query": "q", "name": "n" }), "r")["query"], "q");
+        // pattern is the last fallback
+        assert_eq!(build_daemon_params(&json!({ "pattern": "hook" }), "r")["query"], "hook");
+    }
+
+    #[test]
+    fn build_daemon_params_renames_pattern_to_tag() {
+        let p = build_daemon_params(&json!({ "pattern": "hook" }), "r");
+        assert_eq!(p["tag"], "hook", "pattern becomes the daemon 'tag' key");
+        assert!(p.get("pattern").is_none(), "raw 'pattern' must be removed");
+    }
+
+    #[test]
+    fn build_daemon_params_preserves_other_args_and_defaults_query_empty() {
+        let p = build_daemon_params(&json!({ "task": "build X", "outcome": "completed" }), "r");
+        assert_eq!(p["task"], "build X");
+        assert_eq!(p["outcome"], "completed");
+        assert_eq!(p["query"], "", "no query/name/pattern → empty search term");
+        assert_eq!(p["q"], "");
+    }
+
+    #[test]
+    fn map_daemon_tool_aliases_get_patterns_and_passes_through() {
+        assert_eq!(map_daemon_tool("get_patterns"), "get_file_tags");
+        assert_eq!(map_daemon_tool("search"), "search");
+        assert_eq!(map_daemon_tool("get_lib_docs"), "get_lib_docs");
     }
 }

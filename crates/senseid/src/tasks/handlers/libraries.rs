@@ -65,13 +65,7 @@ pub async fn resolve_libs(ctx: &TaskContext, task: &Task) -> Result<u32, String>
                     if path.starts_with("import_") || path.starts_with("from_") { continue; }
                     if path.starts_with("pub use") || path.starts_with("pub(crate)") { continue; }
 
-                    let lib_name = if path.starts_with('@') {
-                        path.split('/').next().unwrap_or("").trim_start_matches('@').to_string()
-                    } else if path.contains("::") {
-                        path.split("::").next().unwrap_or("").to_string()
-                    } else {
-                        path.split('/').next().unwrap_or("").to_string()
-                    };
+                    let lib_name = extract_lib_name(path);
                     if !lib_name.is_empty() && lib_name.len() > 1 {
                         lib_set.insert(lib_name);
                     }
@@ -137,9 +131,15 @@ pub async fn import_lib(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
 
 // ── Index Library ──────────────────────────────────────────────────────────
 
-/// Fetch library docs from URL, parse into pages, and store each page.
-/// Enqueues IndexLibraryPage child tasks for each parsed doc section.
+/// Fetch a library's llms docs, split into PER-COMPONENT pages, and store each.
+///
+/// `task.url` may be a local directory, a `github.com/.../tree/...` URL, or a
+/// website llms URL — [`detect_lib_source`] classifies it and the matching
+/// resolver fetches + derives pages (`component` set per page). Each page's
+/// `component` is what makes `get_lib_docs(name, component)` resolve.
 pub async fn index_library(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
+    use crate::indexer::lib_indexer::{detect_lib_source, resolve_library_pages, LibSource};
+
     let lib_name = &task.path;
     let url = task.url.as_deref().unwrap_or("");
 
@@ -147,49 +147,58 @@ pub async fn index_library(ctx: &TaskContext, task: &Task) -> Result<u32, String
         return Err("index_library requires a URL (set via task.url)".into());
     }
 
-    let content = crate::indexer::lib_indexer::fetch_lib_url_with_timeout(url, 15).await?;
+    let source = detect_lib_source(url);
 
-    if content.len() < 50 {
-        return Err(format!("Content too short from {}: {} bytes", url, content.len()));
-    }
-
-    // Upsert the library record
-    let lib_id = ctx.pg().upsert_library(lib_name, "npm", None, None, Some("url"), Some(url)).await
+    // Upsert the library record with the correct enum source_type + base_url.
+    let (base_source_type, base_url): (&str, Option<&str>) = match &source {
+        LibSource::LocalDir(p) => ("local", Some(p.as_str())),
+        LibSource::GitHubTree { .. } => ("http", Some(url)),
+        LibSource::Website(u) => ("llms.txt", Some(u.as_str())),
+    };
+    let lib_id = ctx.pg()
+        .upsert_library(lib_name, "npm", None, None, Some(base_source_type), base_url)
+        .await
         .map_err(|e| format!("upsert_library failed: {}", e))?;
 
-    // Parse content into doc sections
-    let result = crate::indexer::lib_indexer::index_lib_content(lib_name, url, &content, None)
-        .map_err(|e| format!("index_lib_content failed: {}", e))?;
+    // Resolve the source into per-component pages (fetch + parse).
+    let pages = resolve_library_pages(&source, lib_name).await
+        .map_err(|e| format!("resolve_library_pages failed for {}: {}", url, e))?;
 
-    // Get parsed docs for page storage
-    let source_type = crate::indexer::lib_indexer::detect_source_type(url, &content);
-    let docs = crate::indexer::lib_indexer::parse_docs(&content, lib_name, url);
-
-    // Store each parsed doc as a library_page
+    // Store each page. The page location goes to the right column: a filesystem
+    // path (local sources) → local_path; an http(s) URL (website/GitHub) → url.
+    // `source_type` records whether it was 'local', 'llms.txt', or 'http'.
     let mut pages_stored = 0u32;
-    for doc in &docs {
+    for page in &pages {
+        let (url, local_path) = if page.source_type == "local" {
+            (None, Some(page.location.as_str()))
+        } else {
+            (Some(page.location.as_str()), None)
+        };
         match ctx.pg().upsert_library_page(
             &lib_id,
-            &doc.title,
-            Some(url),
-            Some(&doc.summary),
-            Some(&doc.content),
-            &source_type,
-            doc.component.as_deref(),
+            &page.doc.title,
+            url,
+            local_path,
+            Some(&page.doc.summary),
+            Some(&page.doc.content),
+            page.source_type,
+            page.doc.component.as_deref(),
         ).await {
             Ok(_) => pages_stored += 1,
-            Err(e) => tracing::warn!("Failed to store page '{}': {}", doc.title, e),
+            Err(e) => tracing::warn!(error = %e, title = %page.doc.title, "index_library: store page failed"),
         }
     }
 
-    // Update denormalized page_count
     if let Err(e) = ctx.pg().update_library_page_count(&lib_id).await {
         tracing::warn!(error = %e, lib = %lib_name, "index_library: update_library_page_count failed");
     }
 
     tracing::info!(
-        "index_library: {} — {} pages stored (parsed {} sections) from {}",
-        lib_name, pages_stored, result.docs_indexed, url
+        "index_library: {} — {} pages stored ({} components) from {}",
+        lib_name,
+        pages_stored,
+        pages.iter().filter(|p| p.doc.component.is_some()).count(),
+        url,
     );
     Ok(pages_stored)
 }
@@ -221,7 +230,7 @@ pub async fn index_library_page(ctx: &TaskContext, task: &Task) -> Result<u32, S
     let summary: String = content.lines().take(3).collect::<Vec<_>>().join(" ");
     let summary = &summary[..summary.len().min(200)];
 
-    ctx.pg().upsert_library_page(&lib_id, title, url, Some(summary), Some(content), "http", None).await
+    ctx.pg().upsert_library_page(&lib_id, title, url, None, Some(summary), Some(content), "http", None).await
         .map_err(|e| format!("upsert_library_page failed: {}", e))?;
 
     Ok(1)
@@ -252,6 +261,7 @@ pub async fn extract_deps(ctx: &TaskContext, task: &Task) -> Result<u32, String>
     let deps = crate::indexer::lib_indexer::extract_dep_versions(folder_name, repo_path)?;
 
     let mut count = 0u32;
+    let mut local_edge_count = 0u32;
     for dep in &deps {
         let ecosystem = match dep.source.as_str() {
             "package.json" => "npm",
@@ -259,6 +269,33 @@ pub async fn extract_deps(ctx: &TaskContext, task: &Task) -> Result<u32, String>
             "pyproject.toml" => "pypi",
             _ => "npm",
         };
+
+        // Local-protocol deps (link: / workspace: / file: / path=) do NOT
+        // resolve to external registry libraries; skip the library upsert and
+        // try to record a project → project edge instead. If resolution
+        // fails (target not indexed yet, workspace-name lookup, etc.), log
+        // and move on — the next scan will retry.
+        if let Some(target) = &dep.local_source {
+            let protocol = local_source_protocol(&dep.source, &dep.raw_version);
+            let resolved = resolve_local_target(repo_path, protocol, target);
+            if let Some(pid) = project_id
+                && let Some(abs_target) = resolved.as_ref().and_then(|p| p.to_str())
+                && let Ok(Some(target_folder)) = ctx.pg().get_repo_by_path(abs_target).await
+                && let Some(to_pid) = crate::api::util::json_uuid(&target_folder["project_id"])
+                && to_pid != pid
+                && let Err(e) = ctx.pg().upsert_project_dependency(
+                    &pid, &to_pid, &folder_id, protocol, &dep.source, Some(target),
+                ).await {
+                    tracing::warn!(
+                        error = %e, lib = %dep.lib_name, folder = %folder_name,
+                        "extract_deps: upsert_project_dependency failed"
+                    );
+                }
+            if resolved.is_some() {
+                local_edge_count += 1;
+            }
+            continue;
+        }
 
         // Upsert the library record (creates if not exists)
         let lib_id = match ctx.pg().upsert_library(&dep.lib_name, ecosystem, Some(&dep.version), None, None, None).await {
@@ -270,7 +307,7 @@ pub async fn extract_deps(ctx: &TaskContext, task: &Task) -> Result<u32, String>
         };
 
         // Link folder → library via referenced_libraries
-        if let Err(e) = ctx.pg().upsert_referenced_library(&folder_id, &lib_id, Some(&dep.version)).await {
+        if let Err(e) = ctx.pg().upsert_referenced_library(&folder_id, &lib_id, Some(&dep.version), None).await {
             tracing::warn!(error = %e, lib = %dep.lib_name, folder = %folder_name, "extract_deps: upsert_referenced_library failed");
             continue;
         }
@@ -300,7 +337,7 @@ pub async fn extract_deps(ctx: &TaskContext, task: &Task) -> Result<u32, String>
                 continue;
             }
         };
-        if let Err(e) = ctx.pg().upsert_referenced_library(&folder_id, &lib_id, version.as_deref()).await {
+        if let Err(e) = ctx.pg().upsert_referenced_library(&folder_id, &lib_id, version.as_deref(), None).await {
             tracing::warn!(error = %e, lib = %name, folder = %folder_name, "extract_deps: upsert_referenced_library (workspace member) failed");
             continue;
         }
@@ -312,10 +349,98 @@ pub async fn extract_deps(ctx: &TaskContext, task: &Task) -> Result<u32, String>
     }
 
     tracing::info!(
-        "extract_deps: {} — {} deps from manifests, {} first-party workspace packages",
-        folder_name, count, member_count,
+        "extract_deps: {} — {} deps from manifests, {} first-party workspace packages, {} local-protocol edges",
+        folder_name, count, member_count, local_edge_count,
     );
-    Ok(count + member_count)
+    Ok(count + member_count + local_edge_count)
+}
+
+/// Classify a `DepVersion` with a `local_source` into a protocol tag.
+///
+/// The protocol drives how the target is looked up:
+/// - `path` → filesystem path relative to the declaring folder (Cargo).
+/// - `link` / `file` → filesystem path relative to the declaring folder (npm).
+/// - `workspace` → name lookup inside the same monorepo (intra-project by
+///   design — no cross-project edge).
+fn local_source_protocol(source: &str, raw_version: &str) -> &'static str {
+    if source == "Cargo.toml" {
+        return "path";
+    }
+    if raw_version.starts_with("link:") {
+        return "link";
+    }
+    if raw_version.starts_with("workspace:") {
+        return "workspace";
+    }
+    if raw_version.starts_with("file:") {
+        return "file";
+    }
+    "path"
+}
+
+/// Resolve a manifest-relative local-source target to an absolute filesystem
+/// path.
+///
+/// - `link:` / `path=` / `file:` payloads are filesystem paths; resolve
+///   against the declaring folder's abs_path and normalize `..` / `.` segments.
+/// - `workspace:` payloads name a member (not a path); return `None` so the
+///   caller knows to fall back to the name-based lookup path.
+///
+/// The result is NOT `.canonicalize`d — canonicalization requires the target
+/// to exist and follows symlinks in a way that surprises the caller when the
+/// folder is symlinked. Lexical normalization is enough for looking up in
+/// `sensei.folders` by `abs_path`, which itself stores the pre-canonical path.
+fn resolve_local_target(from_abs_path: &str, protocol: &str, target: &str) -> Option<std::path::PathBuf> {
+    if protocol == "workspace" {
+        return None;
+    }
+    let base = std::path::Path::new(from_abs_path);
+    let joined = base.join(target);
+    Some(lexical_normalize(&joined))
+}
+
+/// Lexical `..` / `.` normalization — no filesystem access. Behaves like
+/// `Path::canonicalize` for lexically absolute inputs but does not require the
+/// target to exist.
+fn lexical_normalize(p: &std::path::Path) -> std::path::PathBuf {
+    use std::path::Component;
+    let mut out = std::path::PathBuf::new();
+    for comp in p.components() {
+        match comp {
+            Component::ParentDir => { out.pop(); }
+            Component::CurDir => {}
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
+/// Extract the library name from an import path. Preserves scoped npm package
+/// names (`@rokkit/core`) as a two-segment atom instead of dropping the scope.
+///
+/// - `@rokkit/core` → `@rokkit/core`
+/// - `@rokkit/actions/sub/module` → `@rokkit/actions` (deeper subpaths dropped)
+/// - `@rokkit` (bare scope) → `@rokkit` (rare; kept as-is)
+/// - `svelte/store` → `svelte`
+/// - `serde::de::Deserializer` → `serde`
+/// - single-segment `react` → `react`
+///
+/// Returns an empty string if `path` is empty. Callers apply the `len > 1`
+/// filter to reject noise.
+fn extract_lib_name(path: &str) -> String {
+    if path.starts_with('@') {
+        // Scoped npm package: keep the "@scope/name" pair, drop deeper paths.
+        let mut parts = path.splitn(3, '/');
+        return match (parts.next(), parts.next()) {
+            (Some(scope), Some(name)) => format!("{scope}/{name}"),
+            (Some(only), None) => only.to_string(),
+            _ => String::new(),
+        };
+    }
+    if path.contains("::") {
+        return path.split("::").next().unwrap_or("").to_string();
+    }
+    path.split('/').next().unwrap_or("").to_string()
 }
 
 /// Public (non-private) workspace members mapped to `(name, ecosystem, version)`
@@ -348,6 +473,96 @@ mod tests {
             pkg_type: pkg_type.into(), private,
         }
     }
+
+    // ── extract_lib_name ──────────────────────────────────────────────
+    //
+    // #30 residual: the scoped-npm branch used to drop everything after the
+    // first `/` and strip `@`, so `@rokkit/core` became `rokkit`. Now we keep
+    // the two-segment scope+name atom.
+
+    #[test]
+    fn extract_lib_name_keeps_scoped_npm_package() {
+        assert_eq!(extract_lib_name("@rokkit/core"), "@rokkit/core");
+        assert_eq!(extract_lib_name("@sveltejs/kit"), "@sveltejs/kit");
+    }
+
+    #[test]
+    fn extract_lib_name_drops_deeper_subpaths_under_scope() {
+        // Deep import: `import { foo } from "@rokkit/actions/sub/module"`
+        // → the library is `@rokkit/actions`; the deeper path is where inside
+        //   the package the symbol lives.
+        assert_eq!(extract_lib_name("@rokkit/actions/sub/module"), "@rokkit/actions");
+    }
+
+    #[test]
+    fn extract_lib_name_handles_bare_scope() {
+        // Defensive: a lone `@scope` shouldn't crash — keep as-is.
+        // Caller's len > 1 filter will still let this through, but it's fine.
+        assert_eq!(extract_lib_name("@rokkit"), "@rokkit");
+    }
+
+    #[test]
+    fn extract_lib_name_strips_subpath_from_unscoped_npm() {
+        assert_eq!(extract_lib_name("svelte/store"), "svelte");
+        assert_eq!(extract_lib_name("react"), "react");
+    }
+
+    #[test]
+    fn extract_lib_name_strips_rust_module_path() {
+        assert_eq!(extract_lib_name("serde::de::Deserializer"), "serde");
+        assert_eq!(extract_lib_name("tokio::spawn"), "tokio");
+    }
+
+    #[test]
+    fn extract_lib_name_empty_input_returns_empty() {
+        assert_eq!(extract_lib_name(""), "");
+    }
+
+    // ── local_source_protocol + resolve_local_target (1a Step 5) ──────
+
+    #[test]
+    fn local_source_protocol_maps_cargo_and_npm_prefixes() {
+        assert_eq!(local_source_protocol("Cargo.toml", "1.2.3"), "path");
+        assert_eq!(local_source_protocol("package.json", "link:../actions"), "link");
+        assert_eq!(local_source_protocol("package.json", "workspace:*"), "workspace");
+        assert_eq!(local_source_protocol("package.json", "file:./x.tgz"), "file");
+    }
+
+    #[test]
+    fn resolve_local_target_joins_relative_and_normalizes() {
+        let resolved = resolve_local_target(
+            "/Users/j/Developer/rokkit/packages/ui",
+            "link",
+            "../actions",
+        );
+        assert_eq!(
+            resolved.as_deref(),
+            Some(std::path::Path::new("/Users/j/Developer/rokkit/packages/actions"))
+        );
+    }
+
+    #[test]
+    fn resolve_local_target_handles_double_parent() {
+        let resolved = resolve_local_target(
+            "/root/proj/a/b",
+            "path",
+            "../../other/c",
+        );
+        assert_eq!(
+            resolved.as_deref(),
+            Some(std::path::Path::new("/root/proj/other/c"))
+        );
+    }
+
+    #[test]
+    fn resolve_local_target_workspace_returns_none() {
+        // workspace: is a name-based lookup, not a path — caller must
+        // fall back to member-name resolution when it wants intra-project
+        // routing. For 1a this branch is intentionally not wired.
+        assert_eq!(resolve_local_target("/x/y", "workspace", "*"), None);
+    }
+
+    // ── public_member_libs (existing) ─────────────────────────────────
 
     #[test]
     fn public_member_libs_skips_private_and_maps_valid_ecosystems() {

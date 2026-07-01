@@ -336,6 +336,113 @@ pub fn detect_stack(path: &Path) -> Vec<String> {
     stack
 }
 
+/// Infer a folder's semantic role (a `folder_role` enum value) from its manifest
+/// and layout — for workspace members / folders with no explicit README `role:`
+/// frontmatter (frontmatter always wins; see process::reconcile_repo_identity).
+/// Reads the folder's manifests, then delegates to the pure [`classify_role`].
+/// Returns `None` to leave the role unset.
+pub fn infer_role(path: &Path) -> Option<&'static str> {
+    let cargo = std::fs::read_to_string(path.join("Cargo.toml")).ok();
+    let pkg = std::fs::read_to_string(path.join("package.json")).ok();
+    classify_role(
+        cargo.as_deref(),
+        pkg.as_deref(),
+        path.join("src/lib.rs").exists(),
+        path.join("src").join("routes").exists(),
+        path.file_name().and_then(|n| n.to_str()).unwrap_or(""),
+    )
+}
+
+/// Pure role classifier from manifest contents + layout flags. Precedence:
+/// tool (ships a binary) > website (web app framework) > library (publishable
+/// lib) > docs. Kept pure so it is unit-testable without a filesystem.
+pub fn classify_role(
+    cargo: Option<&str>,
+    pkg: Option<&str>,
+    has_lib_rs: bool,
+    has_routes: bool,
+    dir_name: &str,
+) -> Option<&'static str> {
+    // 1. Tool — a crate/package that ships an executable: an explicit Rust
+    //    `[[bin]]` target or a node `bin` field. A bare `main.rs` is
+    //    deliberately NOT enough: a daemon (e.g. senseid, axum-based) is a
+    //    binary too, so requiring an explicit bin declaration avoids
+    //    mislabeling a backend service as a CLI tool.
+    let rust_bin = cargo.is_some_and(|c| c.contains("[[bin]]"));
+    let node_bin = pkg.is_some_and(|p| p.contains("\"bin\""));
+    if rust_bin || node_bin {
+        return Some("tool");
+    }
+
+    // 2. Website — a web-app framework (checked before library: an app's
+    //    package.json also has a name, but it is not a publishable lib). For
+    //    SvelteKit/Vite require an actual `src/routes` app tree: a *library* can
+    //    list `@sveltejs/kit` as a peer/dev dep (e.g. a UnoCSS preset) without
+    //    being an app, so the manifest marker alone isn't enough.
+    let is_web_app = pkg.is_some_and(|p| p.contains("\"next\"") || p.contains("\"astro\""))
+        || (has_routes && pkg.is_some_and(|p| p.contains("\"@sveltejs/kit\"") || p.contains("\"vite\"")));
+    if is_web_app {
+        return Some("website");
+    }
+
+    // 3. Library — a lib crate (src/lib.rs or [lib]) or a publishable package
+    //    (has a name plus an entry point, and no bin/app markers above).
+    let rust_lib = has_lib_rs || cargo.is_some_and(|c| c.contains("[lib]"));
+    let node_lib = pkg.is_some_and(|p| {
+        p.contains("\"name\"")
+            && (p.contains("\"exports\"")
+                || p.contains("\"main\"")
+                || p.contains("\"module\":")
+                || p.contains("\"svelte\""))
+    });
+    if rust_lib || node_lib {
+        return Some("library");
+    }
+
+    // 4. Docs directory.
+    if dir_name == "docs" {
+        return Some("docs");
+    }
+    None
+}
+
+/// Find nested sub-project directories under a repo root: directories (other
+/// than the root) that carry their own `Cargo.toml` or `package.json`. This
+/// covers declared workspace members (`packages/*`, `crates/*`, `apps/*`) *and*
+/// standalone sub-apps that are not workspace members (e.g. a `site/` inside a
+/// Cargo workspace). Does not descend into a sub-project once found (a package's
+/// own subdirectories are not separate sub-projects) nor into ignored/build/OS
+/// dirs, and is depth-bounded so the walk stays cheap on large trees.
+pub fn find_subprojects(root: &Path, max_depth: u32) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    find_subprojects_walk(root, 0, max_depth, &mut out);
+    out.sort();
+    out
+}
+
+fn find_subprojects_walk(dir: &Path, depth: u32, max_depth: u32, out: &mut Vec<PathBuf>) {
+    if depth >= max_depth {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else { return; };
+    for entry in entries.flatten() {
+        let p = entry.path();
+        if !p.is_dir() {
+            continue;
+        }
+        let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if name.starts_with('.') || IGNORED_DIRS.contains(&name) {
+            continue;
+        }
+        if p.join("Cargo.toml").exists() || p.join("package.json").exists() {
+            // A sub-project boundary: record it and stop descending into it.
+            out.push(p);
+            continue;
+        }
+        find_subprojects_walk(&p, depth + 1, max_depth, out);
+    }
+}
+
 /// True if the directory directly contains a file with one of the given
 /// (lowercase, no-dot) extensions. Used for manifests whose names are globbed
 /// rather than fixed (e.g. .NET `*.csproj` / `*.sln`).
@@ -456,6 +563,83 @@ pub fn classify_stale_root(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── role inference ───────────────────────────────────────────────────
+    #[test]
+    fn classify_role_tool_from_binary() {
+        // Explicit Cargo [[bin]] → tool (dbd's cli crate, sensei cli/mcp).
+        assert_eq!(classify_role(Some("[package]\nname=\"cli\"\n\n[[bin]]\nname=\"dbd\""), None, false, false, "cli"), Some("tool"));
+        // Node package that ships a CLI (`bin` field) (rokkit packages/cli) → tool.
+        assert_eq!(classify_role(None, Some("{\"name\":\"c\",\"bin\":{\"c\":\"./c.js\"}}"), false, false, "c"), Some("tool"));
+        // A daemon binary (main.rs, NO [[bin]], server deps) is NOT a CLI tool —
+        // it stays unclassified so a frontmatter role can label it backend.
+        assert_eq!(classify_role(Some("[package]\nname=\"senseid\"\n\n[dependencies]\naxum = \"0.7\"\nclap = \"4\""), None, false, false, "senseid"), None);
+    }
+
+    #[test]
+    fn classify_role_website_from_web_framework() {
+        // SvelteKit app (rokkit apps/learn, dbd site) → website.
+        assert_eq!(classify_role(None, Some("{\"name\":\"learn\",\"devDependencies\":{\"@sveltejs/kit\":\"^2\"}}"), false, true, "learn"), Some("website"));
+        // Web-app markers win over the library marker (an app also has a name).
+        assert_eq!(classify_role(None, Some("{\"name\":\"site\",\"type\":\"module\",\"devDependencies\":{\"@sveltejs/kit\":\"^2\"}}"), false, true, "site"), Some("website"));
+    }
+
+    #[test]
+    fn classify_role_library_from_lib_crate_or_package() {
+        // Rust lib crate (dbd's core crates) → library.
+        assert_eq!(classify_role(Some("[package]\nname=\"core\""), None, true, false, "core"), Some("library"));
+        // Publishable node package with exports (rokkit packages/*) → library.
+        assert_eq!(classify_role(None, Some("{\"name\":\"@rokkit/ui\",\"exports\":{\".\":\"./index.js\"}}"), false, false, "ui"), Some("library"));
+        // A library that only lists @sveltejs/kit as a peer/dev dep (no src/routes)
+        // is NOT a website (rokkit's unocss preset) → library.
+        assert_eq!(classify_role(None, Some("{\"name\":\"@rokkit/unocss\",\"exports\":{\".\":\"./i.js\"},\"peerDependencies\":{\"@sveltejs/kit\":\"^2\"}}"), false, false, "unocss"), Some("library"));
+        // `"type": "module"` alone must NOT read as a library entry point.
+        assert_eq!(classify_role(None, Some("{\"name\":\"x\",\"type\":\"module\"}"), false, false, "x"), None);
+    }
+
+    #[test]
+    fn classify_role_none_or_docs() {
+        assert_eq!(classify_role(None, None, false, false, "misc"), None);
+        // A private root manifest with no name/entry stays unclassified.
+        assert_eq!(classify_role(None, Some("{\"private\":true,\"workspaces\":[\"packages/*\"]}"), false, false, "root"), None);
+        assert_eq!(classify_role(None, None, false, false, "docs"), Some("docs"));
+    }
+
+    #[test]
+    fn infer_role_reads_manifest_from_disk() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("src")).unwrap();
+        std::fs::write(tmp.path().join("Cargo.toml"), "[package]\nname=\"c\"\n[[bin]]\nname=\"c\"").unwrap();
+        std::fs::write(tmp.path().join("src/main.rs"), "fn main(){}").unwrap();
+        assert_eq!(infer_role(tmp.path()), Some("tool"));
+    }
+
+    #[test]
+    fn find_subprojects_covers_members_and_standalone_apps() {
+        // Model a Cargo-workspace repo (like dbd-rs): crates/* members plus a
+        // non-member `site/` app, plus a build dir that must be ignored.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::write(root.join("Cargo.toml"), "[workspace]\nmembers=[\"crates/*\"]").unwrap();
+        for c in ["dbd-cli", "dbd-core"] {
+            std::fs::create_dir_all(root.join("crates").join(c)).unwrap();
+            std::fs::write(root.join("crates").join(c).join("Cargo.toml"), "[package]").unwrap();
+        }
+        // A sub-project's internals must NOT be reported as sub-projects.
+        std::fs::create_dir_all(root.join("crates/dbd-core/src")).unwrap();
+        std::fs::write(root.join("crates/dbd-core/src/lib.rs"), "").unwrap();
+        std::fs::create_dir_all(root.join("site")).unwrap();
+        std::fs::write(root.join("site/package.json"), "{\"name\":\"site\"}").unwrap();
+        // Build output must be skipped even though it may contain manifests.
+        std::fs::create_dir_all(root.join("target/pkg")).unwrap();
+        std::fs::write(root.join("target/pkg/Cargo.toml"), "[package]").unwrap();
+
+        let found: Vec<String> = find_subprojects(root, 3)
+            .iter()
+            .map(|p| p.strip_prefix(root).unwrap().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(found, vec!["crates/dbd-cli", "crates/dbd-core", "site"]);
+    }
 
     fn create_fixture() -> tempfile::TempDir {
         let tmp = tempfile::tempdir().unwrap();

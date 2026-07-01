@@ -261,12 +261,12 @@ describe('HealthState — description hydration', () => {
   it('every gate gets the canonical description from the frontend map', () => {
     const s = new HealthState();
     const byId = new Map(s.components.map((c) => [c.id, c.description]));
-    expect(byId.get('postgres')).toBe('A still pond where memories settle.');
-    expect(byId.get('ollama')).toBe('A mind that thinks without leaving the room.');
-    expect(byId.get('sensei')).toBe('Three hands of the practice — speak, listen, attend.');
-    expect(byId.get('database')).toBe('Shelves shaped to the form of each memory.');
-    expect(byId.get('daemon')).toBe('The quiet breath that keeps watch.');
-    expect(s.packageManager.description).toBe('The gardener who tends the tools.');
+    expect(byId.get('postgres')).toBe('The local database where every session and memory is stored.');
+    expect(byId.get('ollama')).toBe('Runs the models on-device, so your code never leaves the machine.');
+    expect(byId.get('sensei')).toBe('The CLI, the MCP server assistants talk to, and the watcher.');
+    expect(byId.get('database')).toBe('Creates the schema and vector index memories are searched through.');
+    expect(byId.get('daemon')).toBe('Watches sessions in the background — nothing works without it.');
+    expect(s.packageManager.description).toBe('Installs and updates everything else from one manifest.');
   });
 
   it('apply() overwrites description from frontend map even if the wire omits it', () => {
