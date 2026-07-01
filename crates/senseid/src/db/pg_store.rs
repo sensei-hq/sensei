@@ -849,6 +849,64 @@ impl PgStore {
         }).collect())
     }
 
+    /// Documentation pages for a library by name, optionally filtered to a
+    /// single component. `component=None` returns every page (the handler
+    /// builds the index/overview from these); `Some(c)` returns just that
+    /// component's page(s). NULL-component pages (the library overview) sort
+    /// first. This is what `get_lib_docs` reads — it must return the page
+    /// CONTENT, not just library metadata.
+    pub async fn get_library_pages(
+        &self, name: &str, component: Option<&str>,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(String, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT lp.title, lp.component, lp.description, lp.content,
+                        COALESCE(lp.url, lp.local_path) AS location, lp.source_type::text
+                   FROM sensei.library_pages lp
+                   JOIN sensei.libraries l ON l.id = lp.library_id
+                  WHERE l.name = $1
+                    AND ($2::text IS NULL OR lp.component = $2)
+                  ORDER BY (lp.component IS NULL) DESC, lp.component, lp.title"
+            )
+            .bind(name).bind(component)
+            .fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(title, component, description, content, location, source_type)| {
+            serde_json::json!({
+                "title": title, "component": component,
+                "description": description, "content": content,
+                "location": location, "source": source_type,
+            })
+        }).collect())
+    }
+
+    /// Search library pages by title / component / content (ILIKE). Returns
+    /// ranked matches with a short snippet rather than full content, so
+    /// `search_lib_docs` is concise. Title/component hits rank above body hits.
+    pub async fn search_library_pages(&self, query: &str) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(String, String, Option<String>, Option<String>, Option<String>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT l.name, lp.title, lp.component, lp.description,
+                        left(lp.content, 400) AS snippet
+                   FROM sensei.library_pages lp
+                   JOIN sensei.libraries l ON l.id = lp.library_id
+                  WHERE lp.title ILIKE '%' || $1 || '%'
+                     OR lp.component ILIKE '%' || $1 || '%'
+                     OR lp.content ILIKE '%' || $1 || '%'
+                  ORDER BY (lp.title ILIKE '%' || $1 || '%') DESC,
+                           (lp.component ILIKE '%' || $1 || '%') DESC,
+                           l.name, lp.component
+                  LIMIT 30"
+            )
+            .bind(query)
+            .fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(library, title, component, description, snippet)| {
+            serde_json::json!({
+                "library": library, "title": title, "component": component,
+                "description": description, "snippet": snippet,
+            })
+        }).collect())
+    }
+
     /// List all sessions across all folders.
     pub async fn list_all_sessions(&self, limit: i64) -> Result<Vec<serde_json::Value>, String> {
         // Join the project name so each session can be labelled, and return the
@@ -1827,20 +1885,21 @@ impl PgStore {
 
     pub async fn upsert_library_page(
         &self, library_id: &uuid::Uuid, title: &str, url: Option<&str>,
-        description: Option<&str>, content: Option<&str>, source_type: &str,
-        component: Option<&str>,
+        local_path: Option<&str>, description: Option<&str>, content: Option<&str>,
+        source_type: &str, component: Option<&str>,
     ) -> Result<uuid::Uuid, String> {
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
-            "INSERT INTO sensei.library_pages(library_id, title, url, description, content, source_type, component, fetched_at)
-             VALUES($1, $2, $3, $4, $5, $6::sensei.library_source_type, $7, now())
+            "INSERT INTO sensei.library_pages(library_id, title, url, local_path, description, content, source_type, component, fetched_at)
+             VALUES($1, $2, $3, $4, $5, $6, $7::sensei.library_source_type, $8, now())
              ON CONFLICT(library_id, title) DO UPDATE SET
                url = COALESCE(EXCLUDED.url, library_pages.url),
+               local_path = COALESCE(EXCLUDED.local_path, library_pages.local_path),
                description = COALESCE(EXCLUDED.description, library_pages.description),
                content = COALESCE(EXCLUDED.content, library_pages.content),
                component = COALESCE(EXCLUDED.component, library_pages.component),
                fetched_at = now(), modified_at = now()
              RETURNING id"
-        ).bind(library_id).bind(title).bind(url).bind(description).bind(content).bind(source_type).bind(component)
+        ).bind(library_id).bind(title).bind(url).bind(local_path).bind(description).bind(content).bind(source_type).bind(component)
             .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(row.0)
     }
@@ -1852,16 +1911,63 @@ impl PgStore {
         Ok(())
     }
 
+    /// Upsert a folder → library edge with optional `version_used` and `props`.
+    ///
+    /// `props` is merged (`||`) with any existing row's props, so callers can
+    /// stack tags across passes without clobbering earlier metadata. Pass
+    /// `None` for a props-free upsert.
+    ///
+    /// Typical `props` shape: `{"local_source": "../actions", "protocol": "link"}`
+    /// for a dep declared via `link:` / `workspace:` / `file:` / Cargo `path=`.
     pub async fn upsert_referenced_library(
-        &self, folder_id: &uuid::Uuid, library_id: &uuid::Uuid, version: Option<&str>,
+        &self,
+        folder_id: &uuid::Uuid,
+        library_id: &uuid::Uuid,
+        version: Option<&str>,
+        props: Option<serde_json::Value>,
     ) -> Result<(), String> {
         sqlx_core::query::query(
-            "INSERT INTO sensei.referenced_libraries(folder_id, library_id, version_used)
-             VALUES($1, $2, $3)
+            "INSERT INTO sensei.referenced_libraries(folder_id, library_id, version_used, props)
+             VALUES($1, $2, $3, COALESCE($4, '{}'::jsonb))
              ON CONFLICT(folder_id, library_id) DO UPDATE SET
                version_used = COALESCE(EXCLUDED.version_used, referenced_libraries.version_used),
+               props = referenced_libraries.props || EXCLUDED.props,
                modified_at = now()"
-        ).bind(folder_id).bind(library_id).bind(version)
+        ).bind(folder_id).bind(library_id).bind(version).bind(props)
+            .execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Upsert a project → project edge into `sensei.project_dependencies`.
+    ///
+    /// Called from `extract_deps` when a `link:` / `workspace:` / `file:` /
+    /// `path=` dep resolves to a sibling folder that belongs to a DIFFERENT
+    /// project than the declaring folder. Idempotent on the composite PK
+    /// `(from_project_id, to_project_id, from_folder_id, source_manifest)`.
+    pub async fn upsert_project_dependency(
+        &self,
+        from_project_id: &uuid::Uuid,
+        to_project_id: &uuid::Uuid,
+        from_folder_id: &uuid::Uuid,
+        source_protocol: &str,
+        source_manifest: &str,
+        resolved_target: Option<&str>,
+    ) -> Result<(), String> {
+        sqlx_core::query::query(
+            "INSERT INTO sensei.project_dependencies
+                (from_project_id, to_project_id, from_folder_id, source_protocol, source_manifest, resolved_target)
+             VALUES ($1, $2, $3, $4, $5, $6)
+             ON CONFLICT (from_project_id, to_project_id, from_folder_id, source_manifest) DO UPDATE SET
+               source_protocol = EXCLUDED.source_protocol,
+               resolved_target = EXCLUDED.resolved_target,
+               modified_at = now()"
+        )
+            .bind(from_project_id)
+            .bind(to_project_id)
+            .bind(from_folder_id)
+            .bind(source_protocol)
+            .bind(source_manifest)
+            .bind(resolved_target)
             .execute(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(())
     }
@@ -2666,6 +2772,67 @@ impl PgStore {
                 "id": id, "name": name, "ecosystem": ecosystem,
                 "description": desc, "enabled": enabled,
                 "project_props": props, "scope": scope,
+            })
+        }).collect())
+    }
+
+    /// List libraries pinned to different versions across folders of a project.
+    ///
+    /// Reads `sensei.project_library_version_conflicts` — excludes local-
+    /// protocol deps so only registry-version drift surfaces. Returns one row
+    /// per conflicting (project, library) pair with the distinct versions and
+    /// the folders where each version was seen.
+    pub async fn list_project_library_version_conflicts(
+        &self, project_id: &uuid::Uuid,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, String, String, Vec<String>, Vec<String>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT library_id, library_name, ecosystem, versions, folders
+                   FROM sensei.project_library_version_conflicts
+                  WHERE project_id = $1
+                  ORDER BY library_name"
+            ).bind(project_id)
+            .fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+
+        Ok(rows.into_iter().map(|(lib_id, name, ecosystem, versions, folders)| {
+            serde_json::json!({
+                "library_id": lib_id,
+                "library_name": name,
+                "ecosystem": ecosystem,
+                "versions": versions,
+                "folders": folders,
+            })
+        }).collect())
+    }
+
+    /// List outgoing project → project edges for a project.
+    ///
+    /// Returns one row per edge with the target project's name joined in.
+    /// Sorted by target project name for stable UI ordering.
+    pub async fn list_project_dependencies(
+        &self, project_id: &uuid::Uuid,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, String, uuid::Uuid, String, String, Option<String>, String)> =
+            sqlx_core::query_as::query_as(
+                "SELECT to_p.id, to_p.name, pd.from_folder_id, pd.source_protocol,
+                        pd.source_manifest, pd.resolved_target, from_f.name
+                   FROM sensei.project_dependencies pd
+                   JOIN sensei.projects to_p   ON to_p.id   = pd.to_project_id
+                   JOIN sensei.folders  from_f ON from_f.id = pd.from_folder_id
+                  WHERE pd.from_project_id = $1
+                  ORDER BY to_p.name, from_f.name, pd.source_manifest"
+            ).bind(project_id)
+            .fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+
+        Ok(rows.into_iter().map(|(to_id, to_name, from_folder_id, protocol, manifest, target, from_folder_name)| {
+            serde_json::json!({
+                "to_project_id": to_id,
+                "to_project_name": to_name,
+                "from_folder_id": from_folder_id,
+                "from_folder": from_folder_name,
+                "source_protocol": protocol,
+                "source_manifest": manifest,
+                "resolved_target": target,
             })
         }).collect())
     }
@@ -4496,6 +4663,178 @@ mod tests {
         assert_eq!(lib["ecosystem"], "cargo");
         assert_eq!(lib["version"], "1.0");
         s.delete_library(&id).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn upsert_project_dependency_is_idempotent_and_stores_all_columns() {
+        // 1a Step 5: project → project edges must be idempotent on the
+        // composite PK (from_project, to_project, from_folder, source_manifest)
+        // and must preserve source_protocol and resolved_target across upserts.
+        let s = pg_store().await;
+        let from_pid = s.ensure_test_project(&format!("dep-from-{}", uuid::Uuid::new_v4())).await.unwrap();
+        let to_pid   = s.ensure_test_project(&format!("dep-to-{}", uuid::Uuid::new_v4())).await.unwrap();
+        let from_fid = create_test_folder(&s, &format!("pd-{}", uuid::Uuid::new_v4())).await;
+
+        // First upsert
+        s.upsert_project_dependency(
+            &from_pid, &to_pid, &from_fid, "link", "package.json", Some("../actions"),
+        ).await.unwrap();
+        // Repeat with a different resolved_target — same PK, so this must
+        // update in place (last-writer wins on non-key columns).
+        s.upsert_project_dependency(
+            &from_pid, &to_pid, &from_fid, "link", "package.json", Some("../actions-renamed"),
+        ).await.unwrap();
+
+        use sqlx_core::query_as::query_as;
+        let rows: Vec<(String, Option<String>)> = query_as(
+            "SELECT source_protocol, resolved_target
+               FROM sensei.project_dependencies
+              WHERE from_project_id = $1 AND to_project_id = $2 AND from_folder_id = $3"
+        ).bind(from_pid).bind(to_pid).bind(from_fid)
+         .fetch_all(s.pool()).await.unwrap();
+
+        assert_eq!(rows.len(), 1, "composite PK must dedupe two upserts");
+        assert_eq!(rows[0].0, "link", "protocol preserved");
+        assert_eq!(rows[0].1.as_deref(), Some("../actions-renamed"), "target updated in place");
+
+        // Cleanup
+        sqlx_core::query::query("DELETE FROM sensei.project_dependencies WHERE from_folder_id = $1")
+            .bind(from_fid).execute(s.pool()).await.unwrap();
+        s.delete_project(&from_pid).await.ok();
+        s.delete_project(&to_pid).await.ok();
+    }
+
+    #[tokio::test]
+    async fn version_conflicts_view_flags_multi_version_pins_and_excludes_local() {
+        // 1a Step 7-8: two folders in the same project pin the same library
+        // at DIFFERENT versions → surfaces as a conflict. A third row tagged
+        // local_source (as if declared via link:) with a different version
+        // must NOT contribute to the conflict.
+        let s = pg_store().await;
+        let suffix = uuid::Uuid::new_v4();
+        let pid = s.ensure_test_project(&format!("vc-{suffix}")).await.unwrap();
+        let lib = s.upsert_library(&format!("_test:vc-lib-{suffix}"), "npm", Some("1.0"), None, None, None).await.unwrap();
+
+        // Two folders in the same project, different versions.
+        let fid_a = create_test_folder(&s, &format!("vc-a-{suffix}")).await;
+        let fid_b = create_test_folder(&s, &format!("vc-b-{suffix}")).await;
+        // Attach folders to the project.
+        sqlx_core::query::query("UPDATE sensei.folders SET project_id = $1 WHERE id IN ($2, $3)")
+            .bind(pid).bind(fid_a).bind(fid_b)
+            .execute(s.pool()).await.unwrap();
+
+        s.upsert_referenced_library(&fid_a, &lib, Some("1.2.0"), None).await.unwrap();
+        s.upsert_referenced_library(&fid_b, &lib, Some("1.3.0"), None).await.unwrap();
+
+        // Third folder pins a local-source variant. This must be excluded.
+        let fid_local = create_test_folder(&s, &format!("vc-local-{suffix}")).await;
+        sqlx_core::query::query("UPDATE sensei.folders SET project_id = $1 WHERE id = $2")
+            .bind(pid).bind(fid_local).execute(s.pool()).await.unwrap();
+        s.upsert_referenced_library(
+            &fid_local, &lib, Some("workspace-42"),
+            Some(serde_json::json!({"local_source": "../lib"})),
+        ).await.unwrap();
+
+        let rows = s.list_project_library_version_conflicts(&pid).await.unwrap();
+        assert_eq!(rows.len(), 1, "one lib with two registry-version pins → one row");
+        let r = &rows[0];
+        assert_eq!(r["library_id"].as_str().unwrap(), lib.to_string());
+        let versions: Vec<String> = r["versions"].as_array().unwrap()
+            .iter().map(|v| v.as_str().unwrap().to_string()).collect();
+        assert_eq!(versions, vec!["1.2.0".to_string(), "1.3.0".to_string()],
+                   "versions must be sorted + distinct; workspace-42 excluded because local_source is tagged");
+
+        // Cleanup — library FK cascades referenced_libraries; then delete
+        // project (folders cascade because project_id set null).
+        s.delete_library(&lib).await.unwrap();
+        s.delete_project(&pid).await.ok();
+    }
+
+    #[tokio::test]
+    async fn list_project_dependencies_joins_target_name_and_folder() {
+        // 1a Step 6: the list endpoint returns each outgoing edge with the
+        // TARGET project's name and the source folder's name joined in.
+        let s = pg_store().await;
+        let suffix = uuid::Uuid::new_v4();
+        let from_pid = s.ensure_test_project(&format!("lpd-from-{suffix}")).await.unwrap();
+        let to_pid   = s.ensure_test_project(&format!("lpd-to-{suffix}")).await.unwrap();
+        let from_fid = create_test_folder(&s, &format!("lpd-fid-{suffix}")).await;
+
+        s.upsert_project_dependency(
+            &from_pid, &to_pid, &from_fid, "link", "package.json", Some("../actions"),
+        ).await.unwrap();
+
+        let deps = s.list_project_dependencies(&from_pid).await.unwrap();
+
+        assert_eq!(deps.len(), 1);
+        let d = &deps[0];
+        assert_eq!(d["to_project_id"].as_str().unwrap(), to_pid.to_string());
+        assert!(d["to_project_name"].as_str().unwrap().starts_with("_test:lpd-to-"),
+                "target project name must be joined in");
+        assert!(d["from_folder"].as_str().unwrap().starts_with("lpd-fid-"),
+                "source folder name must be joined in");
+        assert_eq!(d["source_protocol"], "link");
+        assert_eq!(d["source_manifest"], "package.json");
+        assert_eq!(d["resolved_target"], "../actions");
+
+        // Reverse direction returns empty
+        let none = s.list_project_dependencies(&to_pid).await.unwrap();
+        assert!(none.is_empty(), "target project has no outgoing edges");
+
+        sqlx_core::query::query("DELETE FROM sensei.project_dependencies WHERE from_folder_id = $1")
+            .bind(from_fid).execute(s.pool()).await.unwrap();
+        s.delete_project(&from_pid).await.ok();
+        s.delete_project(&to_pid).await.ok();
+    }
+
+    #[tokio::test]
+    async fn upsert_project_dependency_rejects_self_edges() {
+        // 1a Step 5: DDL check constraint (from_project_id <> to_project_id)
+        // must reject self-edges at the write path.
+        let s = pg_store().await;
+        let pid = s.ensure_test_project(&format!("self-{}", uuid::Uuid::new_v4())).await.unwrap();
+        let fid = create_test_folder(&s, &format!("self-fid-{}", uuid::Uuid::new_v4())).await;
+
+        let err = s.upsert_project_dependency(
+            &pid, &pid, &fid, "path", "Cargo.toml", Some("."),
+        ).await;
+
+        assert!(err.is_err(), "self-edge must be rejected");
+        assert!(err.unwrap_err().contains("check"), "err message must reference the check constraint");
+
+        s.delete_project(&pid).await.ok();
+    }
+
+    #[tokio::test]
+    async fn upsert_referenced_library_merges_props() {
+        // 1a Step 3: props must accumulate across passes, not overwrite. A
+        // first pass tags {"local_source": "../actions"} for a link:/path=
+        // dep; a later pass adding {"pinned": true} must produce the merged
+        // {"local_source": "../actions", "pinned": true}.
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("refprops_{}", uuid::Uuid::new_v4())).await;
+        let lib = s.upsert_library(&format!("_test:refprops-{}", uuid::Uuid::new_v4()), "npm", Some("1.0"), None, None, None).await.unwrap();
+
+        s.upsert_referenced_library(
+            &fid, &lib, Some("1.0"),
+            Some(serde_json::json!({"local_source": "../actions"})),
+        ).await.unwrap();
+
+        s.upsert_referenced_library(
+            &fid, &lib, Some("1.0"),
+            Some(serde_json::json!({"pinned": true})),
+        ).await.unwrap();
+
+        use sqlx_core::query_as::query_as;
+        let (props,): (serde_json::Value,) = query_as(
+            "SELECT props FROM sensei.referenced_libraries WHERE folder_id = $1 AND library_id = $2"
+        ).bind(fid).bind(lib).fetch_one(s.pool()).await.unwrap();
+
+        assert_eq!(props["local_source"], "../actions", "first pass tag must persist");
+        assert_eq!(props["pinned"], true, "second pass tag must merge in");
+
+        // Cleanup — library delete cascades referenced_libraries via FK.
+        s.delete_library(&lib).await.unwrap();
     }
 
     #[tokio::test]

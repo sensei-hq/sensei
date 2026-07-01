@@ -134,6 +134,39 @@ pub(crate) async fn get_project_impact(
     Ok(Json(serde_json::json!(data)))
 }
 
+/// GET /api/projects/{id}/library-version-conflicts — per-library version drift
+/// across the project's folders (excluding local-protocol deps). Powers the
+/// Track 3 Libraries screen "version conflicts" signal.
+pub(crate) async fn get_project_library_version_conflicts(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let uuid = uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?;
+    state.pg.get_project(&uuid).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let conflicts = state.pg.list_project_library_version_conflicts(&uuid).await
+        .map_err(|e| { tracing::error!(error = %e, project = %uuid, "list_project_library_version_conflicts failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    Ok(Json(serde_json::json!({ "conflicts": conflicts })))
+}
+
+/// GET /api/projects/{id}/project-deps — outgoing project → project edges
+/// detected from local-path protocols (npm link:/workspace:/file:,
+/// Cargo path=). Powers the Track 3 Libraries screen "depends on other
+/// project" section.
+pub(crate) async fn get_project_project_deps(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let uuid = uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?;
+    state.pg.get_project(&uuid).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let deps = state.pg.list_project_dependencies(&uuid).await
+        .map_err(|e| { tracing::error!(error = %e, project = %uuid, "list_project_dependencies failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    Ok(Json(serde_json::json!({ "dependencies": deps })))
+}
+
 pub(crate) async fn get_project_sessions(
     State(state): State<AppState>,
     Path(id): Path<String>,

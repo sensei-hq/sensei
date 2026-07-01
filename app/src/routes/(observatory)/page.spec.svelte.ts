@@ -98,6 +98,23 @@ describe('Observatory /+page — early mode rendering', () => {
     expect(placeholder?.textContent).toContain('試');
   });
 
+  it('writes the early hero body in the lowercase "sensei" voice', () => {
+    const m = mountComponent(Page, { data: emptyData() });
+    cleanup.push(m.destroy);
+    const hero = m.container.querySelector('[data-hero-early]');
+    expect(hero?.textContent).toContain('sensei is ready to watch');
+    // No capital "Sensei" anywhere on the page (covers the empty-state copy too).
+    expect(m.container.textContent).not.toContain('Sensei');
+  });
+
+  it('keeps the mature-mode empty-state copy in the lowercase "sensei" voice', () => {
+    const data = emptyData();
+    data.topRecommendations = [{ id: 'r1', title: 'x', why: 'y', urgency: 'high' }]; // → mature, teachings empty
+    const m = mountComponent(Page, { data });
+    cleanup.push(m.destroy);
+    expect(m.container.textContent).not.toContain('Sensei');
+  });
+
   it('renders a dynamic body referencing session count when sessions exist', () => {
     const data = emptyData();
     data.sessionsTotal = 4;

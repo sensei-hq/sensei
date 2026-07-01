@@ -14,6 +14,7 @@ const apiMock = {
   setConfig:    vi.fn().mockResolvedValue(undefined),
   trySetConfig: vi.fn().mockResolvedValue({ ok: true,  data: undefined }),
   deleteConfig: vi.fn().mockResolvedValue(undefined),
+  listProjects: vi.fn().mockResolvedValue([]),
 };
 
 vi.mock('./api.js', () => ({
@@ -55,6 +56,7 @@ describe('AppState', () => {
     apiMock.getConfig.mockResolvedValue({ setup_complete: '1', active_project: 'proj-1' });
     apiMock.tryGetConfig.mockResolvedValue({ ok: true, data: { setup_complete: '1', active_project: 'proj-1' } });
     apiMock.trySetConfig.mockResolvedValue({ ok: true, data: undefined });
+    apiMock.listProjects.mockResolvedValue([]);
     state = new AppState();
   });
 
@@ -270,6 +272,32 @@ describe('AppState', () => {
     await state.load();
     expect(state.loaded).toBe(true);
     expect(state.config).toEqual({});
+  });
+
+  // ── loadProjectCount ───────────────────────────────────────
+
+  it('projectCount starts null (no badge until loaded)', () => {
+    expect(state.projectCount).toBeNull();
+  });
+
+  it('loadProjectCount caches the number of projects from the daemon', async () => {
+    apiMock.listProjects.mockResolvedValueOnce([{ id: 'a' }, { id: 'b' }, { id: 'c' }]);
+    await state.loadProjectCount();
+    expect(state.projectCount).toBe(3);
+  });
+
+  it('loadProjectCount is a no-op without Tauri (count stays null)', async () => {
+    const tauri = win.__TAURI__;
+    delete win.__TAURI__;
+    await state.loadProjectCount();
+    expect(state.projectCount).toBeNull();
+    win.__TAURI__ = tauri;
+  });
+
+  it('reset clears the cached project count', async () => {
+    state.projectCount = 7;
+    await state.reset();
+    expect(state.projectCount).toBeNull();
   });
 
   // ── reset ──────────────────────────────────────────────────

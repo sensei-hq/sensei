@@ -22,6 +22,12 @@ export class AppState {
   config = $state<Record<string, string>>({});
   loaded = $state(false);
 
+  /** Cached project count for the observatory rail badge. Projects change
+   *  rarely, so this is fetched once (on layout mount via loadProjectCount)
+   *  and reused — the rail reads this rather than re-fetching on every
+   *  render. `null` until loaded → the badge stays hidden. */
+  projectCount = $state<number | null>(null);
+
   get activeProjectId(): string | null {
     return this.config['active_project'] || this.config['active_solution'] || null;
   }
@@ -166,9 +172,21 @@ export class AppState {
     this.loaded = true;
   }
 
+  /**
+   * Fetch + cache the project count for rail badges. No-op without Tauri
+   * (browser dev). Errors surface as an empty list (the api `get` fallback),
+   * leaving the count at 0 rather than throwing — the rail must never block.
+   */
+  async loadProjectCount(): Promise<void> {
+    if (!hasTauri()) return;
+    const projects = await senseiApi(this.port).listProjects();
+    this.projectCount = projects.length;
+  }
+
   async reset() {
     this.config = {};
     this.loaded = false;
+    this.projectCount = null;
 
     // sensei:health is owned by HealthState — do not touch it here.
     // sensei:app-version is owned by the upgrader so an in-flight staged

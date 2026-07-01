@@ -88,13 +88,33 @@ pub(crate) async fn mcp_call_tool(
             serde_json::json!({"drift": drift})
         }
         "search_lib_docs" => {
-            let docs = state.pg.list_libraries().await.unwrap_or_else(|e| { tracing::warn!(error = %e, "mcp search_lib_docs: list_libraries failed"); Vec::new() });
-            serde_json::json!({"docs": docs})
+            let results = state.pg.search_library_pages(query).await.unwrap_or_else(|e| { tracing::warn!(error = %e, query, "mcp search_lib_docs: search_library_pages failed"); Vec::new() });
+            serde_json::json!({ "query": query, "results": results })
         }
         "get_lib_docs" => {
-            let _name = params["name"].as_str().unwrap_or(query);
-            let docs = state.pg.list_libraries().await.unwrap_or_else(|e| { tracing::warn!(error = %e, "mcp get_lib_docs: list_libraries failed"); Vec::new() });
-            serde_json::json!({"docs": docs})
+            let name = params["name"].as_str().filter(|s| !s.is_empty()).unwrap_or(query);
+            let component = params["component"].as_str().filter(|s| !s.is_empty());
+            let pages = state.pg.get_library_pages(name, component).await.unwrap_or_else(|e| { tracing::warn!(error = %e, name, "mcp get_lib_docs: get_library_pages failed"); Vec::new() });
+            if pages.is_empty() {
+                serde_json::json!({
+                    "library": name,
+                    "component": component,
+                    "error": format!(
+                        "No docs indexed for '{}'{}. Index it with add_library, or check the name/component.",
+                        name,
+                        component.map(|c| format!(" (component '{}')", c)).unwrap_or_default(),
+                    ),
+                })
+            } else if component.is_some() {
+                // Specific component → return its page content.
+                serde_json::json!({ "library": name, "component": component, "pages": pages })
+            } else {
+                // No component → the overview (null-component pages) + the list of
+                // available components so the caller can drill in.
+                let overview: Vec<_> = pages.iter().filter(|p| p["component"].is_null()).cloned().collect();
+                let components: Vec<_> = pages.iter().filter_map(|p| p["component"].as_str().map(str::to_string)).collect();
+                serde_json::json!({ "library": name, "overview": overview, "components": components })
+            }
         }
         "list_projects" => {
             let repos = state.pg.list_repositories().await.unwrap_or_else(|e| { tracing::warn!(error = %e, "mcp list_projects: list_repositories failed"); Vec::new() });
@@ -146,15 +166,28 @@ pub(crate) async fn mcp_call_tool(
             if name.is_empty() {
                 serde_json::json!({"error": "name required"})
             } else {
-                // Discover a working URL first (quick probes)
-                let discovered_url = discover_lib_url(name, explicit_url).await;
+                // Resolve the ingestion target. An explicit `url` may be a local
+                // directory path, a github.com tree URL, or a website llms URL —
+                // classify it and store the matching source_type. If no url is
+                // given, fall back to the auto-discovery probes.
+                let (target, source_type): (Option<String>, &str) = if !explicit_url.is_empty() {
+                    use crate::indexer::lib_indexer::{detect_lib_source, LibSource};
+                    let st = match detect_lib_source(explicit_url) {
+                        LibSource::LocalDir(_) => "local",
+                        LibSource::GitHubTree { .. } => "http",
+                        LibSource::Website(_) => "llms.txt",
+                    };
+                    (Some(explicit_url.to_string()), st)
+                } else {
+                    (discover_lib_url(name, "").await, "llms.txt")
+                };
 
-                match discovered_url {
+                match target {
                     Some(url) => {
-                        // Upsert the library record
-                        match state.pg.upsert_library(name, "npm", version, None, Some("url"), Some(&url)).await {
+                        // Upsert the library record with the resolved source_type.
+                        match state.pg.upsert_library(name, "npm", version, None, Some(source_type), Some(&url)).await {
                             Ok(lib_id) => {
-                                // Enqueue IndexLibrary task for async doc parsing
+                                // Enqueue IndexLibrary task for async ingestion.
                                 let task = crate::tasks::Task::new(
                                     crate::tasks::TaskKind::IndexLibrary,
                                     &lib_id.to_string(),
@@ -168,6 +201,7 @@ pub(crate) async fn mcp_call_tool(
                                     "libId": lib_id.to_string(),
                                     "taskId": task_id,
                                     "url": url,
+                                    "sourceType": source_type,
                                     "status": "indexing",
                                 })
                             }
@@ -178,7 +212,7 @@ pub(crate) async fn mcp_call_tool(
                         let clean = name.trim_start_matches('@').replace('/', "-");
                         serde_json::json!({
                             "error": format!(
-                                "Could not find docs for '{}'. Tried common patterns ({}.com, .dev, .io, GitHub). Provide an explicit url.",
+                                "Could not find docs for '{}'. Tried common patterns ({}.com, .dev, .io, GitHub). Provide an explicit url (local dir, github tree URL, or website llms URL).",
                                 name, clean
                             ),
                         })
