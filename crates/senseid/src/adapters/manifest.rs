@@ -18,6 +18,7 @@ use crate::indexer::lib_indexer::DepVersion;
 
 mod cargo;
 mod npm;
+mod pyproject;
 
 /// Adapter for a specific ecosystem's manifest format.
 pub trait ManifestAdapter: Send + Sync {
@@ -66,7 +67,11 @@ pub fn manifest_adapter_for_filename(filename: &str) -> Option<&'static dyn Mani
 
 /// All registered ManifestAdapter impls. Add new ecosystems here.
 fn registered_adapters() -> &'static [&'static dyn ManifestAdapter] {
-    &[&npm::NpmManifestAdapter, &cargo::CargoManifestAdapter]
+    &[
+        &npm::NpmManifestAdapter,
+        &cargo::CargoManifestAdapter,
+        &pyproject::PyprojectManifestAdapter,
+    ]
 }
 
 #[cfg(test)]
@@ -92,9 +97,15 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_does_not_match_pyproject_toml_yet() {
-        // Step 5 will land the PyprojectManifestAdapter. Until then dispatch
-        // returns None and callers keep the legacy path.
-        assert!(manifest_adapter_for_filename("pyproject.toml").is_none());
+    fn dispatch_returns_pyproject_for_pyproject_toml() {
+        let a = manifest_adapter_for_filename("pyproject.toml").unwrap();
+        assert_eq!(a.ecosystem(), "pypi");
+    }
+
+    #[test]
+    fn dispatch_does_not_match_go_mod_yet() {
+        // Step 6 will land the GoManifestAdapter — the first new-capability
+        // impl (go.mod has never been parsed for versions).
+        assert!(manifest_adapter_for_filename("go.mod").is_none());
     }
 }
