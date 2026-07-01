@@ -1,8 +1,3 @@
-// Scaffolding: consumers wire in during Steps 7+ (extract_dep_versions
-// migration, scan_logic/detector migrations). Remove this allow when the
-// first non-test caller lands.
-#![allow(dead_code)]
-
 //! `ManifestAdapter` trait + ecosystem impls.
 //!
 //! The daemon used to switch on manifest filenames inline in ten places
@@ -43,6 +38,27 @@ pub trait ManifestAdapter: Send + Sync {
 
     /// Parse identity metadata (name, version, description) from a manifest.
     fn parse_manifest(&self, content: &str) -> ParsedManifest;
+
+    /// Stack labels this manifest indicates (e.g. `["rust"]`, `["svelte"]`,
+    /// `["typescript"]`, `["python"]`, `["go"]`). Framework detection (React,
+    /// Svelte, Vue, Next) for npm happens here so the label vocabulary lives
+    /// with the ecosystem that owns it. Default: the ecosystem slug.
+    fn stack_labels(&self, _content: &str) -> Vec<&'static str> {
+        vec![self.ecosystem()]
+    }
+
+    /// Infer a folder's semantic `folder_role` (`"library"` / `"tool"` /
+    /// `"website"` / `"docs"`) from its manifest and filesystem signals.
+    /// Returns `None` to leave the role unset. Default: `None` — ecosystems
+    /// without a role-inference rule (Go, Python today) don't classify.
+    fn infer_role(
+        &self,
+        _parsed: &ParsedManifest,
+        _content: &str,
+        _fs: &FsSignals,
+    ) -> Option<&'static str> {
+        None
+    }
 }
 
 /// Identity metadata for a manifest.
@@ -51,6 +67,21 @@ pub struct ParsedManifest {
     pub name: Option<String>,
     pub version: Option<String>,
     pub description: Option<String>,
+}
+
+/// Filesystem-side signals the caller supplies to `infer_role`. Kept in one
+/// struct so the trait method stays stable when new signals are added.
+#[derive(Debug, Clone, Default)]
+pub struct FsSignals {
+    /// `src/lib.rs` exists (Rust library entry point).
+    pub has_lib_rs: bool,
+    /// `src/routes/` exists (SvelteKit / web-app route tree).
+    pub has_src_routes: bool,
+    /// Folder's own directory name — reserved for future adapters that
+    /// classify by folder name (e.g. `docs/` → docs). Today the docs fallback
+    /// lives at the `classify_role` layer since it isn't tied to any manifest.
+    #[allow(dead_code)]
+    pub dir_name: String,
 }
 
 /// Pick the adapter for a manifest filename.
@@ -67,13 +98,27 @@ pub fn manifest_adapter_for_filename(filename: &str) -> Option<&'static dyn Mani
 }
 
 /// All registered ManifestAdapter impls. Add new ecosystems here.
-fn registered_adapters() -> &'static [&'static dyn ManifestAdapter] {
+pub fn registered_adapters() -> &'static [&'static dyn ManifestAdapter] {
     &[
         &npm::NpmManifestAdapter,
         &cargo::CargoManifestAdapter,
         &pyproject::PyprojectManifestAdapter,
         &go::GoManifestAdapter,
     ]
+}
+
+/// Every distinct manifest filename any registered adapter recognises. Used by
+/// filesystem walks (subproject discovery, manifest scanning) that need to
+/// know "is there a known manifest in this directory?" without knowing which
+/// ecosystem it belongs to.
+pub fn all_manifest_filenames() -> Vec<&'static str> {
+    let mut out: Vec<&'static str> = registered_adapters()
+        .iter()
+        .flat_map(|a| a.manifest_filenames().iter().copied())
+        .collect();
+    out.sort();
+    out.dedup();
+    out
 }
 
 #[cfg(test)]
@@ -108,5 +153,13 @@ mod tests {
     fn dispatch_returns_go_for_go_mod() {
         let a = manifest_adapter_for_filename("go.mod").unwrap();
         assert_eq!(a.ecosystem(), "go");
+    }
+
+    #[test]
+    fn all_manifest_filenames_includes_every_ecosystem() {
+        let names = all_manifest_filenames();
+        for expected in ["Cargo.toml", "package.json", "pyproject.toml", "go.mod"] {
+            assert!(names.contains(&expected), "missing {expected} in {names:?}");
+        }
     }
 }
