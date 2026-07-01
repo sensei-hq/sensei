@@ -99,10 +99,13 @@ pub fn folder_role_from_frontmatter(role: &str) -> Option<&'static str> {
         "backend" | "server" | "api" | "service" | "daemon" => Some("backend"),
         "frontend" | "ui" | "client" => Some("frontend"),
         "library" | "lib" | "package" | "sdk" => Some("library"),
+        "tool" | "cli" | "command" | "binary" => Some("tool"),
         "docs" | "doc" | "documentation" => Some("docs"),
         "infra" | "infrastructure" | "ops" | "devops" | "ci" => Some("infra"),
-        "website" | "site" | "web" | "marketing" => Some("website"),
-        "desktop" | "app" => Some("desktop"),
+        // "app" is a (web) application surface → website; a native desktop app
+        // must declare `role: desktop` explicitly.
+        "website" | "site" | "web" | "marketing" | "app" => Some("website"),
+        "desktop" => Some("desktop"),
         "mobile" | "ios" | "android" => Some("mobile"),
         "config" | "configuration" | "settings" => Some("config"),
         "packaging" | "tap" | "homebrew" | "brew" | "formula" | "distribution" => Some("packaging"),
@@ -242,8 +245,11 @@ mod tests {
     #[test]
     fn folder_role_maps_synonyms_and_skips_specific() {
         assert_eq!(folder_role_from_frontmatter("desktop"), Some("desktop"));
-        assert_eq!(folder_role_from_frontmatter("App"), Some("desktop"));
+        // "app" is a web-application surface → website (desktop must be explicit).
+        assert_eq!(folder_role_from_frontmatter("App"), Some("website"));
         assert_eq!(folder_role_from_frontmatter("website"), Some("website"));
+        assert_eq!(folder_role_from_frontmatter("tool"), Some("tool"));
+        assert_eq!(folder_role_from_frontmatter("CLI"), Some("tool"));
         assert_eq!(folder_role_from_frontmatter("homebrew"), Some("packaging"));
         assert_eq!(folder_role_from_frontmatter("  Library "), Some("library"));
         assert_eq!(folder_role_from_frontmatter("mobile"), Some("mobile"));
