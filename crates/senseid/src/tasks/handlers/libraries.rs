@@ -137,9 +137,15 @@ pub async fn import_lib(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
 
 // ── Index Library ──────────────────────────────────────────────────────────
 
-/// Fetch library docs from URL, parse into pages, and store each page.
-/// Enqueues IndexLibraryPage child tasks for each parsed doc section.
+/// Fetch a library's llms docs, split into PER-COMPONENT pages, and store each.
+///
+/// `task.url` may be a local directory, a `github.com/.../tree/...` URL, or a
+/// website llms URL — [`detect_lib_source`] classifies it and the matching
+/// resolver fetches + derives pages (`component` set per page). Each page's
+/// `component` is what makes `get_lib_docs(name, component)` resolve.
 pub async fn index_library(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
+    use crate::indexer::lib_indexer::{detect_lib_source, resolve_library_pages, LibSource};
+
     let lib_name = &task.path;
     let url = task.url.as_deref().unwrap_or("");
 
@@ -147,49 +153,58 @@ pub async fn index_library(ctx: &TaskContext, task: &Task) -> Result<u32, String
         return Err("index_library requires a URL (set via task.url)".into());
     }
 
-    let content = crate::indexer::lib_indexer::fetch_lib_url_with_timeout(url, 15).await?;
+    let source = detect_lib_source(url);
 
-    if content.len() < 50 {
-        return Err(format!("Content too short from {}: {} bytes", url, content.len()));
-    }
-
-    // Upsert the library record
-    let lib_id = ctx.pg().upsert_library(lib_name, "npm", None, None, Some("url"), Some(url)).await
+    // Upsert the library record with the correct enum source_type + base_url.
+    let (base_source_type, base_url): (&str, Option<&str>) = match &source {
+        LibSource::LocalDir(p) => ("local", Some(p.as_str())),
+        LibSource::GitHubTree { .. } => ("http", Some(url)),
+        LibSource::Website(u) => ("llms.txt", Some(u.as_str())),
+    };
+    let lib_id = ctx.pg()
+        .upsert_library(lib_name, "npm", None, None, Some(base_source_type), base_url)
+        .await
         .map_err(|e| format!("upsert_library failed: {}", e))?;
 
-    // Parse content into doc sections
-    let result = crate::indexer::lib_indexer::index_lib_content(lib_name, url, &content, None)
-        .map_err(|e| format!("index_lib_content failed: {}", e))?;
+    // Resolve the source into per-component pages (fetch + parse).
+    let pages = resolve_library_pages(&source, lib_name).await
+        .map_err(|e| format!("resolve_library_pages failed for {}: {}", url, e))?;
 
-    // Get parsed docs for page storage
-    let source_type = crate::indexer::lib_indexer::detect_source_type(url, &content);
-    let docs = crate::indexer::lib_indexer::parse_docs(&content, lib_name, url);
-
-    // Store each parsed doc as a library_page
+    // Store each page. The page location goes to the right column: a filesystem
+    // path (local sources) → local_path; an http(s) URL (website/GitHub) → url.
+    // `source_type` records whether it was 'local', 'llms.txt', or 'http'.
     let mut pages_stored = 0u32;
-    for doc in &docs {
+    for page in &pages {
+        let (url, local_path) = if page.source_type == "local" {
+            (None, Some(page.location.as_str()))
+        } else {
+            (Some(page.location.as_str()), None)
+        };
         match ctx.pg().upsert_library_page(
             &lib_id,
-            &doc.title,
-            Some(url),
-            Some(&doc.summary),
-            Some(&doc.content),
-            &source_type,
-            doc.component.as_deref(),
+            &page.doc.title,
+            url,
+            local_path,
+            Some(&page.doc.summary),
+            Some(&page.doc.content),
+            page.source_type,
+            page.doc.component.as_deref(),
         ).await {
             Ok(_) => pages_stored += 1,
-            Err(e) => tracing::warn!("Failed to store page '{}': {}", doc.title, e),
+            Err(e) => tracing::warn!(error = %e, title = %page.doc.title, "index_library: store page failed"),
         }
     }
 
-    // Update denormalized page_count
     if let Err(e) = ctx.pg().update_library_page_count(&lib_id).await {
         tracing::warn!(error = %e, lib = %lib_name, "index_library: update_library_page_count failed");
     }
 
     tracing::info!(
-        "index_library: {} — {} pages stored (parsed {} sections) from {}",
-        lib_name, pages_stored, result.docs_indexed, url
+        "index_library: {} — {} pages stored ({} components) from {}",
+        lib_name,
+        pages_stored,
+        pages.iter().filter(|p| p.doc.component.is_some()).count(),
+        url,
     );
     Ok(pages_stored)
 }
@@ -221,7 +236,7 @@ pub async fn index_library_page(ctx: &TaskContext, task: &Task) -> Result<u32, S
     let summary: String = content.lines().take(3).collect::<Vec<_>>().join(" ");
     let summary = &summary[..summary.len().min(200)];
 
-    ctx.pg().upsert_library_page(&lib_id, title, url, Some(summary), Some(content), "http", None).await
+    ctx.pg().upsert_library_page(&lib_id, title, url, None, Some(summary), Some(content), "http", None).await
         .map_err(|e| format!("upsert_library_page failed: {}", e))?;
 
     Ok(1)
