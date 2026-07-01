@@ -92,3 +92,38 @@ button {
 ::selection {
     background: color-mix(in oklch, var(--accent) 12%, transparent);
 }
+
+/*
+ * Observatory rail — size/space overrides for the rokkit List.
+ *
+ * The List renders its own <nav data-list>/<a data-list-item>/<button
+ * data-list-group> DOM, so utility classes on our snippet content can't reach
+ * the wrappers. rokkit's base/zen-sumi themes target those data-attributes; we
+ * override the geometry here (colour/hover/active still come from the zen-sumi
+ * theme) to match the mockup (docs/mockups/Sensei/lib/observatory.jsx ~L181-323).
+ * Scoped to the sidebar so other Lists keep the theme defaults. These sit after
+ * the @imports above, so they win at equal specificity.
+ */
+[data-component="observatory-sidebar"] [data-list] {
+    gap: 4px; /* mockup: items container gap-1 */
+}
+[data-component="observatory-sidebar"] [data-list] [data-list-item] {
+    gap: 8px; /* kanji ↔ label ↔ badge (mockup gap-2) */
+    padding: 8px; /* mockup py-2 px-2 */
+    font-size: 13px; /* mockup nav fontSize 13 (rokkit default is 14) */
+    border-radius: 6px; /* mockup borderRadius 6 — rounds the hover/active wash */
+}
+[data-component="observatory-sidebar"] [data-list] [data-list-group] {
+    padding: 12px 8px 4px; /* mockup cluster pt-3 pb-1 px-2 */
+    font-size: 9.5px; /* mockup cluster fontSize 9.5 (rokkit default is 12) */
+    letter-spacing: 0.14em; /* mockup cluster letterSpacing 0.14em */
+}
+[data-component="observatory-sidebar"] [data-list] [data-list-separator] {
+    margin-block: 8px; /* breathing room before the Preferences section */
+}
+/* Header eyebrow ("Observatory") — size it to match the cluster labels
+   ([data-list-group]) so the section header isn't larger than the clusters. */
+[data-component="observatory-sidebar"] [data-component="eyebrow"] {
+    font-size: 9.5px;
+    letter-spacing: 0.14em;
+}
