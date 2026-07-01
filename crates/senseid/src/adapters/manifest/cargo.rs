@@ -4,8 +4,16 @@
 //! step remains a refactor. Workspace detection reads the `[workspace]`
 //! section directly.
 
+use super::workspace::resolve_glob_members;
 use super::{FsSignals, ManifestAdapter, ParsedManifest};
 use crate::indexer::lib_indexer::{parse_cargo_deps, DepVersion};
+use crate::types::PackageInfo;
+use std::path::Path;
+
+/// Common directories where standalone crates live in repos WITHOUT a root
+/// `Cargo.toml` workspace. Scanning these lets us catch e.g. sensei's
+/// `crates/*` layout even when the root Cargo isn't a workspace root.
+const CARGO_FALLBACK_DIRS: &[&str] = &["crates", "rust", "lib", "services"];
 
 pub struct CargoManifestAdapter;
 
@@ -74,6 +82,100 @@ impl ManifestAdapter for CargoManifestAdapter {
         }
         None
     }
+
+    fn detect_workspace_members(&self, repo_root: &Path) -> Vec<PackageInfo> {
+        let mut members = Vec::new();
+        let mut declared_member_paths: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+
+        // 1. `[workspace]` members declared in the root Cargo.toml.
+        if let Ok(content) = std::fs::read_to_string(repo_root.join("Cargo.toml"))
+            && let Ok(toml_val) = content.parse::<toml::Value>()
+            && let Some(workspace) = toml_val.get("workspace")
+            && let Some(ws_members) = workspace.get("members").and_then(|m| m.as_array())
+        {
+            for m in ws_members {
+                if let Some(pattern) = m.as_str() {
+                    for entry in resolve_glob_members(repo_root, pattern) {
+                        if let Some(member) = cargo_toml_member(repo_root, &entry) {
+                            declared_member_paths.insert(entry.clone());
+                            members.push(member);
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Standalone crates: scan common dirs for `Cargo.toml` even without
+        //    a root workspace. Catches repos like sensei where `crates/` has
+        //    Rust packages but the top-level manifest isn't a workspace.
+        //    Skip any path already registered as a workspace member above.
+        for dir_name in CARGO_FALLBACK_DIRS {
+            let dir = repo_root.join(dir_name);
+            if !dir.is_dir() { continue; }
+            let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+            for entry in entries.flatten() {
+                if !entry.path().is_dir() {
+                    continue;
+                }
+                if !entry.path().join("Cargo.toml").exists() {
+                    continue;
+                }
+                let rel_path = format!("{}/{}", dir_name, entry.file_name().to_string_lossy());
+                if declared_member_paths.contains(&rel_path) {
+                    continue;
+                }
+                if let Some(member) = cargo_toml_member(repo_root, &rel_path) {
+                    // Fallback crates without a `[package]` name are ignored
+                    // to keep parity with the pre-refactor detector.
+                    if member.name != rel_path {
+                        members.push(member);
+                    }
+                }
+            }
+        }
+
+        members
+    }
+}
+
+/// A Cargo package is non-publishable when `publish = false` or `publish = []`.
+fn cargo_publish_disabled(pkg: Option<&toml::Value>) -> bool {
+    match pkg.and_then(|p| p.get("publish")) {
+        Some(toml::Value::Boolean(false)) => true,
+        Some(toml::Value::Array(a)) => a.is_empty(),
+        _ => false,
+    }
+}
+
+/// Build a `PackageInfo` for a workspace-member folder that contains a
+/// `Cargo.toml`. Returns `None` if the folder has no `Cargo.toml`.
+fn cargo_toml_member(repo_root: &Path, rel_path: &str) -> Option<PackageInfo> {
+    let cargo_toml = repo_root.join(rel_path).join("Cargo.toml");
+    if !cargo_toml.exists() {
+        return None;
+    }
+    let manifest = std::fs::read_to_string(&cargo_toml)
+        .ok()
+        .and_then(|c| c.parse::<toml::Value>().ok());
+    let pkg = manifest.as_ref().and_then(|v| v.get("package"));
+    let name = pkg
+        .and_then(|p| p.get("name"))
+        .and_then(|n| n.as_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| rel_path.to_string());
+    let version = pkg
+        .and_then(|p| p.get("version"))
+        .and_then(|n| n.as_str())
+        .map(|s| s.to_string());
+    let private = cargo_publish_disabled(pkg);
+    Some(PackageInfo {
+        name,
+        path: rel_path.to_string(),
+        version,
+        pkg_type: "cargo_crate".to_string(),
+        private,
+    })
 }
 
 #[cfg(test)]
