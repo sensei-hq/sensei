@@ -910,7 +910,7 @@ fn pages_from(
         .collect()
 }
 
-fn clean_version(v: &str) -> String {
+pub(crate) fn clean_version(v: &str) -> String {
     v.trim_start_matches('^')
         .trim_start_matches('~')
         .trim_start_matches(">=")
