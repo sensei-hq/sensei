@@ -479,13 +479,18 @@ pub async fn reconcile_repo_identity(ctx: &TaskContext, repo_abs_path: &str) -> 
             if fm.stack.is_empty() { stack.clone() } else { fm.stack.clone() };
         let mut tags: Vec<String> = Vec::new();
         if let Some(role) = fm.role.as_deref() {
-            // Keep the raw role as a project tag (lossless), map known generic
-            // roles onto the folder.role enum column.
+            // Keep the raw role as a project tag (lossless).
             tags.push(format!("role:{role}"));
-            if let Some(fr) = metadata::folder_role_from_frontmatter(role) {
-                ctx.pg().update_folder_role(&folder_id, Some(fr)).await
-                    .unwrap_or_else(|e| tracing::warn!(folder_id = %folder_id, error = %e, "update_folder_role failed"));
-            }
+        }
+        // folder.role enum: explicit README frontmatter wins; otherwise infer it
+        // from the folder's manifest + layout so monorepo members are classified
+        // automatically (library / tool / website).
+        let folder_role = fm.role.as_deref()
+            .and_then(metadata::folder_role_from_frontmatter)
+            .or_else(|| super::scan_logic::infer_role(repo_path));
+        if let Some(fr) = folder_role {
+            ctx.pg().update_folder_role(&folder_id, Some(fr)).await
+                .unwrap_or_else(|e| tracing::warn!(folder_id = %folder_id, error = %e, "update_folder_role failed"));
         }
         if let Some(org) = fm.organization.as_deref() {
             tags.push(format!("org:{}", metadata::slugify(org)));
@@ -507,6 +512,33 @@ pub async fn reconcile_repo_identity(ctx: &TaskContext, repo_abs_path: &str) -> 
             if let Ok(ns_id) = ctx.pg().upsert_namespace(scope, name, &slug).await {
                 ctx.pg().link_folder_namespace(&folder_id, &ns_id).await
                     .unwrap_or_else(|e| tracing::warn!(folder_id = %folder_id, ns_id = %ns_id, error = %e, "link_folder_namespace failed"));
+            }
+        }
+    }
+
+    // Sub-project roles: classify each nested sub-project (declared workspace
+    // members and standalone sub-apps like a `site/`) so a monorepo's packages,
+    // crates and apps are individually typed (library / tool / website). Only
+    // runs for monorepo roots — a single-package repo has nothing nested to
+    // find. Role assignment is independent of project membership.
+    if super::scan_logic::is_monorepo(repo_path)
+        && let Some(root_id) = crate::api::util::json_uuid(&folder["root_id"])
+    {
+        let project_id = folder["project_id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok());
+        for sub in super::scan_logic::find_subprojects(repo_path, 3) {
+            let Some(role) = super::scan_logic::infer_role(&sub) else { continue };
+            let sub_abs = sub.to_string_lossy().to_string();
+            let rel = sub.strip_prefix(repo_path).unwrap_or(&sub).to_string_lossy().to_string();
+            let name = sub.file_name().and_then(|n| n.to_str()).unwrap_or(rel.as_str()).to_string();
+            match ctx.pg().upsert_subfolder(
+                &root_id, &name, &rel, &sub_abs, Some(&folder_id), project_id.as_ref(),
+            ).await {
+                Ok(sub_id) => {
+                    if let Err(e) = ctx.pg().update_folder_role(&sub_id, Some(role)).await {
+                        tracing::warn!(sub = %sub_abs, error = %e, "sub-project update_folder_role failed");
+                    }
+                }
+                Err(e) => tracing::warn!(sub = %sub_abs, error = %e, "sub-project upsert_subfolder failed"),
             }
         }
     }
@@ -816,6 +848,43 @@ mod tests {
         process_folder(&ctx, &task).await.unwrap();
 
         // TODO: verify module node once module writes are implemented
+    }
+
+    /// Reconciling a monorepo git root classifies each nested sub-project with
+    /// its own folder.role: a lib crate → library, a bin crate → tool, and a
+    /// (non-member) SvelteKit sub-app → website. Guards the end-to-end wiring
+    /// (is_monorepo → find_subprojects → upsert_subfolder → update_folder_role).
+    #[tokio::test]
+    async fn reconcile_classifies_monorepo_member_roles() {
+        async fn role_of(ctx: &TaskContext, abs: &str) -> Option<String> {
+            let row: Option<(Option<String>,)> = sqlx_core::query_as::query_as(
+                "SELECT role::text FROM sensei.folders WHERE abs_path = $1",
+            ).bind(abs).fetch_optional(ctx.pg().pool()).await.unwrap();
+            row.and_then(|r| r.0)
+        }
+
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::write(root.join("Cargo.toml"), "[workspace]\nmembers=[\"crates/*\"]").unwrap();
+        std::fs::create_dir_all(root.join("crates/mylib/src")).unwrap();
+        std::fs::write(root.join("crates/mylib/Cargo.toml"), "[package]\nname=\"mylib\"").unwrap();
+        std::fs::write(root.join("crates/mylib/src/lib.rs"), "pub fn a() {}").unwrap();
+        std::fs::create_dir_all(root.join("crates/mytool/src")).unwrap();
+        std::fs::write(root.join("crates/mytool/Cargo.toml"), "[package]\nname=\"mytool\"\n\n[[bin]]\nname=\"mytool\"").unwrap();
+        std::fs::write(root.join("crates/mytool/src/main.rs"), "fn main() {}").unwrap();
+        std::fs::create_dir_all(root.join("site/src/routes")).unwrap();
+        std::fs::write(root.join("site/package.json"), "{\"name\":\"site\",\"devDependencies\":{\"@sveltejs/kit\":\"^2\"}}").unwrap();
+
+        let ctx = make_ctx().await;
+        let repo_path = root.to_string_lossy().to_string();
+        let root_id = ctx.pg().add_watch_root(&repo_path, "mono", &serde_json::json!([])).await.unwrap();
+        ctx.pg().upsert_repo_kind(&root_id, "git", "mono", &repo_path).await.unwrap();
+
+        reconcile_repo_identity(&ctx, &repo_path).await.unwrap();
+
+        assert_eq!(role_of(&ctx, &root.join("crates/mylib").to_string_lossy()).await.as_deref(), Some("library"));
+        assert_eq!(role_of(&ctx, &root.join("crates/mytool").to_string_lossy()).await.as_deref(), Some("tool"));
+        assert_eq!(role_of(&ctx, &root.join("site").to_string_lossy()).await.as_deref(), Some("website"));
     }
 
     #[tokio::test]
