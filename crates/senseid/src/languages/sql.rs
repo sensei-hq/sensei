@@ -9,6 +9,7 @@ pub struct SqlAdapter;
 
 impl LanguageAdapter for SqlAdapter {
     fn language(&self) -> &str { "sql" }
+    fn display_name(&self) -> &str { "SQL" }
 
     fn parse_to_ir(&self, source: &str, file_path: &str) -> crate::ir::IRParsedFile {
         parse_to_ir(source, file_path)

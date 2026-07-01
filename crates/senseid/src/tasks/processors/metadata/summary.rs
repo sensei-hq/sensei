@@ -13,30 +13,27 @@ pub struct ProjectSummary {
 }
 
 /// Extract a project summary from common files.
+///
+/// Description precedence: registered manifests (package.json → Cargo.toml →
+/// pyproject.toml → go.mod) via each `ManifestAdapter.parse_manifest`, then a
+/// README first-paragraph fallback. Adding a new ecosystem here is one
+/// adapter registration, not a new branch.
 pub fn extract_summary(repo_path: &Path) -> ProjectSummary {
     let mut summary = ProjectSummary::default();
 
-    // Try package.json description
-    if let Ok(content) = std::fs::read_to_string(repo_path.join("package.json"))
-        && let Ok(val) = serde_json::from_str::<serde_json::Value>(&content)
-            && let Some(desc) = val["description"].as_str()
-                && !desc.is_empty() {
-                    summary.description = Some(desc.to_string());
-                }
-
-    // Try Cargo.toml description
-    if summary.description.is_none()
-        && let Ok(content) = std::fs::read_to_string(repo_path.join("Cargo.toml")) {
-            for line in content.lines() {
-                if let Some(rest) = line.trim().strip_prefix("description = ") {
-                    let desc = rest.trim_matches(|c| c == '"' || c == '\'');
-                    if !desc.is_empty() {
-                        summary.description = Some(desc.to_string());
-                        break;
-                    }
-                }
+    for adapter in crate::adapters::manifest::registered_adapters() {
+        if summary.description.is_some() {
+            break;
+        }
+        for filename in adapter.manifest_filenames() {
+            let Ok(content) = std::fs::read_to_string(repo_path.join(filename)) else { continue };
+            let parsed = adapter.parse_manifest(&content);
+            if let Some(desc) = parsed.description.filter(|s| !s.is_empty()) {
+                summary.description = Some(desc);
+                break;
             }
         }
+    }
 
     // Try README first non-heading paragraph
     if summary.description.is_none() {
@@ -131,5 +128,29 @@ mod tests {
 
         let summary = extract_summary(dir.path());
         assert_eq!(summary.status.as_deref(), Some("archived"));
+    }
+
+    #[test]
+    fn extract_summary_from_cargo_toml_when_no_package_json() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("Cargo.toml"),
+            "[package]\nname = \"c\"\ndescription = \"A Rust thing\"",
+        ).unwrap();
+        let summary = extract_summary(dir.path());
+        assert_eq!(summary.description.as_deref(), Some("A Rust thing"));
+    }
+
+    #[test]
+    fn extract_summary_from_pyproject_when_no_other_manifest() {
+        // pyproject.toml → description now flows through the adapter registry
+        // (previously not covered).
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("pyproject.toml"),
+            "[project]\nname = \"y\"\ndescription = \"A python thing\"\n",
+        ).unwrap();
+        let summary = extract_summary(dir.path());
+        assert_eq!(summary.description.as_deref(), Some("A python thing"));
     }
 }
