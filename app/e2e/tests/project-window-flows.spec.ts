@@ -263,3 +263,68 @@ test.describe('Project window — Instruments services + MCP stats', () => {
     expect(found).toBe(true);
   });
 });
+
+test.describe('Project window — Overview recommendation decision', () => {
+  // Gap 1 fix — validate the accept/reject buttons on Overview actually flip
+  // the daemon's rec status so MeasureVerdicts has something to measure.
+  // Uses `reject` rather than `accept` so it doesn't seed a downstream
+  // verdict measurement (which only fires for accepted recs).
+  //
+  // The E2E DB starts empty of `inference.recommendations`, so this test
+  // seeds a synthetic pending row via psql — the daemon's read-path picks
+  // it up like any analyzer-produced rec. Cleanup runs even on failure.
+  test('Reject flips the top recommendation off pending', async ({ tauriPage }) => {
+    const project = await pickTestProject();
+    if (!project) { test.skip(true, 'no projects registered'); return; }
+
+    const { execFileSync } = await import('child_process');
+    const marker = `E2E reject ${Date.now()}`;
+    // -q suppresses the `INSERT 0 1` status line that psql otherwise appends
+    // AFTER the RETURNING row (which would corrupt any id we capture from
+    // the output).
+    const psql = (sql: string): string =>
+      execFileSync('psql', ['postgres://localhost/sensei_e2e', '-qtAc', sql], {
+        encoding: 'utf8',
+      }).trim();
+
+    // Seed one pending rec for the target project. Sticks to the NOT-NULL
+    // columns; urgency/status/evidence use their DDL defaults.
+    const targetId = psql(`
+      INSERT INTO inference.recommendations (project_id, title, why, action_type)
+      VALUES ('${project.id}'::uuid, '${marker}', 'seeded by e2e', 'enrich_memory')
+      RETURNING id
+    `);
+    expect(targetId, 'psql seed returned a rec id').toMatch(/[0-9a-f-]{36}/);
+
+    try {
+      await navigateTo(tauriPage, `/project/${project.id}/overview`);
+      await tauriPage.waitForSelector('[data-testid="top-recommendation"]', 15_000);
+      await tauriPage.locator('[data-testid="rec-reject"]').click();
+
+      // Poll: the seeded rec must leave the pending list. Also confirm it
+      // shows up in `status=dismissed` (the enum's reject terminal) —
+      // belt-and-braces against a rare rec-set churn during the poll window.
+      let stillPending = true;
+      let seenDismissed = false;
+      for (let i = 0; i < 20; i++) {
+        const nowPending = await safeJson<Array<{ id: string }>>(
+          `${DAEMON_URL}/api/projects/${project.id}/recommendations?status=pending`, [],
+        );
+        stillPending = nowPending.some(r => r.id === targetId);
+        if (!stillPending) {
+          const dismissed = await safeJson<Array<{ id: string; status: string }>>(
+            `${DAEMON_URL}/api/projects/${project.id}/recommendations?status=dismissed`, [],
+          );
+          seenDismissed = dismissed.some(r => r.id === targetId);
+          break;
+        }
+        await new Promise<void>(r => setTimeout(r, 500));
+      }
+      expect(stillPending).toBe(false);
+      expect(seenDismissed).toBe(true);
+    } finally {
+      // Best-effort cleanup so a failing test doesn't leave junk behind.
+      try { psql(`DELETE FROM inference.recommendations WHERE id = '${targetId}'::uuid`); } catch {}
+    }
+  });
+});

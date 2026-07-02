@@ -1261,12 +1261,13 @@ impl PgStore {
         Ok(())
     }
 
-    /// Move a `pending` recommendation to `rejected`. Same shape as accept —
+    /// Move a `pending` recommendation to `dismissed` (the reject terminal —
+    /// the enum uses `dismissed`, not `rejected`). Same shape as accept:
     /// idempotency-guarded so a stale UI can't clobber a real decision.
     pub async fn reject_recommendation(&self, id: &uuid::Uuid) -> Result<(), String> {
         let result = sqlx_core::query::query(
             "UPDATE inference.recommendations
-                SET status = 'rejected'::sensei.recommendation_status,
+                SET status = 'dismissed'::sensei.recommendation_status,
                     acted_at = now()
               WHERE id = $1 AND status = 'pending'"
         ).bind(id).execute(&self.pool).await.map_err(|e| e.to_string())?;
@@ -5248,6 +5249,31 @@ mod tests {
         let r = recs.iter().find(|r| r["title"] == "_test:rec").unwrap();
         assert_eq!(r["status"], "accepted");
         assert_eq!(r["verdict"], "positive");
+        sqlx_core::query::query("DELETE FROM inference.recommendations WHERE id = $1").bind(rid).execute(s.pool()).await.unwrap();
+        s.delete_project(&pid).await.unwrap();
+    }
+
+    // Gap 1 fix — the reject terminal is `dismissed` in the enum (not
+    // `rejected`), and both accept + reject must only fire from `pending`.
+    // Locks the enum-value contract so a future rename can't silently
+    // break the UI action buttons.
+    #[tokio::test]
+    async fn recommendation_reject_writes_dismissed_and_guards_at_pending() {
+        let s = pg_store().await;
+        let pid = s.create_project("_test:rec_reject_proj", None, None).await.unwrap();
+        let rid = s.create_recommendation(&pid, "_test:rej", "why", "revise_rule", "low").await.unwrap();
+
+        s.reject_recommendation(&rid).await.unwrap();
+        let recs = s.list_recommendations(&pid).await.unwrap();
+        let r = recs.iter().find(|r| r["title"] == "_test:rej").unwrap();
+        assert_eq!(r["status"], "dismissed", "reject writes the `dismissed` enum terminal");
+
+        // Second reject on the same rec is a no-op guarded at `pending`;
+        // pg_store must return an error rather than clobber the decision.
+        let err = s.reject_recommendation(&rid).await.expect_err("guard fires on already-decided");
+        assert!(err.contains("already decided") || err.contains("not found"),
+                "guard error text: {err}");
+
         sqlx_core::query::query("DELETE FROM inference.recommendations WHERE id = $1").bind(rid).execute(s.pool()).await.unwrap();
         s.delete_project(&pid).await.unwrap();
     }
