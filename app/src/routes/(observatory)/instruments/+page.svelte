@@ -14,6 +14,7 @@
     let toolStats = $state<ToolStat[]>([]);
     let loading = $state(true);
     let tab = $state("playground");
+    let kindFilter = $state<'all' | 'query' | 'action'>('all');
     let selectedTool = $state<Tool | null>(null);
     let toolResult = $state<string>("");
     let toolParams = $state<Record<string, string>>({});
@@ -24,6 +25,19 @@
         ["replay", "Replay"],
         ["insights", "Insights"],
     ];
+
+    const kindChips: Array<{ id: 'all' | 'query' | 'action'; label: string }> = [
+        { id: 'all', label: 'All' },
+        { id: 'query', label: 'Queries' },
+        { id: 'action', label: 'Actions' },
+    ];
+
+    // Filter tools by the active kind chip. `all` keeps the full list; kind
+    // filter narrows to matching tools. Filter is applied client-side so the
+    // chip switches are instant with no daemon round-trip.
+    const visibleTools = $derived(
+        kindFilter === 'all' ? tools : tools.filter((t) => t.kind === kindFilter),
+    );
 
     onMount(async () => {
         const api = senseiApi(appState.port);
@@ -62,10 +76,31 @@
                 description="Tools appear when the sensei daemon is running and MCP services are configured. Check your instruments in the setup wizard."
             />
         {:else}
+            <!-- Kind chips — filter tools by query vs action -->
+            <div class="flex gap-2 mb-4" role="tablist" aria-label="Tool kind filter">
+                {#each kindChips as chip}
+                    {@const active = kindFilter === chip.id}
+                    <button
+                        class="px-3 py-1 rounded-full border text-xs cursor-pointer transition-colors duration-fast"
+                        class:bg-primary={active}
+                        class:text-on-primary={active}
+                        class:border-primary={active}
+                        class:bg-transparent={!active}
+                        class:text-ink-soft={!active}
+                        class:border-paper-mute={!active}
+                        role="tab"
+                        aria-selected={active}
+                        onclick={() => (kindFilter = chip.id)}
+                    >
+                        {chip.label}
+                    </button>
+                {/each}
+            </div>
+
             <div class="grid grid-cols-[260px_1fr] gap-6">
                 <!-- Tool list -->
                 <div class="flex flex-col gap-0.5">
-                    {#each tools as tool (tool.name)}
+                    {#each visibleTools as tool (tool.name)}
                         <button
                             class="tool-card text-left px-3.5 py-2.5 rounded-md bg-transparent border-none cursor-pointer transition-colors duration-fast"
                             class:selected={selectedTool?.name === tool.name}
@@ -84,6 +119,11 @@
                             >
                         </button>
                     {/each}
+                    {#if visibleTools.length === 0}
+                        <p class="text-xs text-ink-soft px-3 py-2">
+                            No {kindFilter === 'query' ? 'queries' : 'actions'} match this filter.
+                        </p>
+                    {/if}
                 </div>
 
                 <!-- Tool detail + execution -->
