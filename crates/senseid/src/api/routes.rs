@@ -81,6 +81,10 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/projects/{id}/memory-batches/{batch_id}",
                put(project_detail::decide_memory_share_batch))
         .route("/api/projects/{id}/recommendations", get(project_detail::get_project_recommendations))
+        .route("/api/projects/{id}/recommendations/{rec_id}/accept",
+               post(project_detail::accept_project_recommendation))
+        .route("/api/projects/{id}/recommendations/{rec_id}/reject",
+               post(project_detail::reject_project_recommendation))
         .route("/api/projects/{id}/impact",          get(project_detail::get_project_impact))
         .route("/api/projects/{id}/impact-verdicts",
                get(project_detail::list_impact_verdicts)
