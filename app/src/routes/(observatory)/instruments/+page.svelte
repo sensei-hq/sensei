@@ -5,8 +5,9 @@
     import TabBar from "$lib/components/TabBar.svelte";
     import EmptyState from "$lib/components/EmptyState.svelte";
     import { Eyebrow, PageHeader } from "$lib/components";
+    import type { McpToolManifest } from "$lib/types.js";
 
-    type Tool = { name: string; description: string; params: string[] };
+    type Tool = McpToolManifest;
     type ToolStat = { tool_name: string; call_count: number; error_count: number; avg_duration_ms: number | null; last_used_at: string };
 
     let tools = $state<Tool[]>([]);
@@ -79,7 +80,7 @@
                                 >{tool.name}</span
                             >
                             <span class="block text-xs text-ink-soft mt-0.5"
-                                >{tool.description}</span
+                                >{tool.summary}</span
                             >
                         </button>
                     {/each}
@@ -96,24 +97,36 @@
                         <p
                             class="text-sm text-ink-mute m-0 mb-5 leading-normal"
                         >
-                            {selectedTool.description}
+                            {selectedTool.summary}
                         </p>
 
-                        {#if selectedTool.params.length > 0}
+                        {#if selectedTool.inputs.length > 0}
                             <div class="flex flex-col gap-3 mb-5">
-                                {#each selectedTool.params as param}
+                                {#each selectedTool.inputs as input}
                                     <div class="flex flex-col gap-1">
                                         <label
                                             class="text-xs text-ink-soft font-mono"
-                                            for="param-{param}">{param}</label
+                                            for="param-{input.key}">{input.label}{input.required ? ' *' : ''}</label
                                         >
-                                        <input
-                                            id="param-{param}"
-                                            class="param-input px-3 py-2 border border-paper-mute rounded-md bg-paper-soft text-ink text-sm font-mono outline-none"
-                                            type="text"
-                                            placeholder={param}
-                                            bind:value={toolParams[param]}
-                                        />
+                                        {#if input.kind === 'enum' && input.options}
+                                            <select
+                                                id="param-{input.key}"
+                                                class="param-input px-3 py-2 border border-paper-mute rounded-md bg-paper-soft text-ink text-sm font-mono outline-none"
+                                                bind:value={toolParams[input.key]}
+                                            >
+                                                {#each input.options as option}
+                                                    <option value={option}>{option}</option>
+                                                {/each}
+                                            </select>
+                                        {:else}
+                                            <input
+                                                id="param-{input.key}"
+                                                class="param-input px-3 py-2 border border-paper-mute rounded-md bg-paper-soft text-ink text-sm font-mono outline-none"
+                                                type={input.kind === 'number' ? 'number' : 'text'}
+                                                placeholder={input.placeholder ?? input.default ?? input.key}
+                                                bind:value={toolParams[input.key]}
+                                            />
+                                        {/if}
                                     </div>
                                 {/each}
                             </div>

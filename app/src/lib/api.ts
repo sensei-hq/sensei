@@ -8,6 +8,7 @@ import type {
   ProjectSession, CallFlowModule, CallFlowCall,
   ProjectListItem,
   KnowledgeSource, NewKnowledgeSourceBody, SyncStats,
+  McpToolManifest,
 } from './types.js';
 import type {
   MemoryListResponse, MemoryDetail, ContextResponse,
@@ -406,7 +407,7 @@ export function senseiApi(port: number) {
       ),
 
     // ── MCP Tool Proxy ────────────────────────────────────────────────
-    mcpListTools: () => get<{ tools: Array<{ name: string; description: string; params: string[] }> }>('/api/mcp/tools', { tools: [] }),
+    mcpListTools: () => get<{ tools: McpToolManifest[] }>('/api/mcp/tools', { tools: [] }),
 
     mcpCallTool: (tool: string, params: Record<string, string>) =>
       post<Record<string, unknown>>('/api/mcp/call', { tool, params }, {}),
