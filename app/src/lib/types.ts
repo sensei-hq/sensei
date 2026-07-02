@@ -746,3 +746,20 @@ export interface ProjectService {
   /** Raw global scope; null when no global row exists. */
   globalEnabled: boolean | null;
 }
+
+// ─── Cached tool insights (T2 Slice D) ───────────────────────────────────────
+
+export interface ToolInsight {
+  toolName: string;
+  computedAt: string;
+  metrics: {
+    callCount?: number;
+    errorCount?: number;
+    errorRate?: number;
+    avgDurationMs?: number | null;
+    lastUsedAt?: string;
+  };
+  variant: SignalVariant | null;
+  title: string | null;
+  detail: string | null;
+}
