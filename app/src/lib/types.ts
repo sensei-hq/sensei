@@ -666,3 +666,16 @@ export interface SessionToolTimeline {
   calls: SessionToolCall[];
   count: number;
 }
+
+// ─── Memory share batches (T3 Slice 2.2) ─────────────────────────────────────
+
+export type MemoryShareBatchStatus = 'proposed' | 'approved' | 'rejected' | 'withdrawn';
+
+export interface MemoryShareBatch {
+  id: string;
+  status: MemoryShareBatchStatus;
+  note: string | null;
+  createdAt: string;
+  decidedAt: string | null;
+  memberCount: number;
+}
