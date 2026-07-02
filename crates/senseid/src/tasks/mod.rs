@@ -56,6 +56,11 @@ pub enum TaskKind {
     /// Global: cluster recurring corrective prompts across all projects into
     /// inference.corrections (analyzer #65 step 5). Enqueued once per scheduler tick.
     AggregateCorrections,
+    /// Global: snapshot the per-tool signal cards (unused / warn / opportunity /
+    /// win) into sensei.tool_insights so the observatory Insights tab reads a
+    /// cached row per tool instead of re-computing on every request (T2 Slice D).
+    /// Enqueued once per scheduler tick alongside AggregateCorrections.
+    AggregateToolInsights,
 }
 
 impl std::fmt::Display for TaskKind {
@@ -84,6 +89,7 @@ impl std::fmt::Display for TaskKind {
             Self::BackfillTranscripts => write!(f, "backfill_transcripts"),
             Self::BackfillTranscriptFile => write!(f, "backfill_transcript_file"),
             Self::AggregateCorrections => write!(f, "aggregate_corrections"),
+            Self::AggregateToolInsights => write!(f, "aggregate_tool_insights"),
         }
     }
 }
@@ -110,7 +116,12 @@ impl TaskKind {
             // lists + enqueues, each per-file task parses one transcript.
             | TaskKind::BackfillTranscripts
             | TaskKind::BackfillTranscriptFile
-            | TaskKind::MeasureVerdicts => Duration::from_secs(180),
+            | TaskKind::MeasureVerdicts
+            // Tool-insights snapshot: a couple of small aggregations + one
+            // multi-row insert — well under a minute in practice, but keep
+            // the same 3-minute budget as the other analyzer touch-ups so a
+            // pathological corpus doesn't wedge the queue.
+            | TaskKind::AggregateToolInsights => Duration::from_secs(180),
             // Whole-repo, barrier, embedding and network-bound doc-indexing
             // tasks can legitimately run for minutes on a large repository.
             TaskKind::ScanRoot
@@ -295,6 +306,7 @@ mod tests {
             TaskKind::DetectCommunities, TaskKind::ExtractDeps, TaskKind::MeasureVerdicts,
             TaskKind::ReconcileIdentity, TaskKind::AnalyzeProject, TaskKind::BackfillTranscripts,
             TaskKind::BackfillTranscriptFile, TaskKind::AggregateCorrections,
+            TaskKind::AggregateToolInsights,
         ] {
             assert!(k.watchdog_timeout().as_secs() > 0, "{k} must have a positive cap");
         }
