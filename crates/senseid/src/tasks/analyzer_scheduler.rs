@@ -16,6 +16,10 @@
 //! - **Daily full refresh** — once per `full_refresh_secs`, ALL active projects
 //!   are re-analyzed even without new sessions, so time-based/decay insights
 //!   (maturity, pattern effectiveness, model effectiveness, ranking) stay fresh.
+//!   The full-refresh window is ALSO when `DetectCommunities` runs per indexed
+//!   folder — community structure drifts slowly and the label-propagation pass
+//!   is expensive, so a daily cadence keeps `inference.communities` current
+//!   without dominating the queue on hot ticks.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -142,9 +146,12 @@ async fn run(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
         let mut due = projects_due(&activity, &mut watermark);
 
         // Daily full refresh: re-analyze ALL active projects so decay/effectiveness
-        // insights stay fresh even when no new sessions arrived.
+        // insights stay fresh even when no new sessions arrived. Community
+        // detection also runs here — see the module-level comment for why the
+        // daily cadence is the right home for it.
         let now_ms = Utc::now().timestamp_millis();
-        if due_for_full_refresh(now_ms, last_refresh_ms, refresh_secs) {
+        let is_full_refresh = due_for_full_refresh(now_ms, last_refresh_ms, refresh_secs);
+        if is_full_refresh {
             for (pid, _) in &activity {
                 if !due.contains(pid) {
                     due.push(*pid);
@@ -153,6 +160,21 @@ async fn run(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
             last_refresh_ms = Some(now_ms);
             let _ = pg.set_config(LAST_REFRESH_KEY, &now_ms.to_string()).await;
             tracing::info!(projects = activity.len(), "analyzer_scheduler: daily full refresh");
+            // Enqueue community detection per indexed folder for every active
+            // project. Log-and-skip on lookup errors — a bad row shouldn't
+            // block the rest of the daily pass.
+            for (pid, _) in &activity {
+                match pg.get_indexed_folder_paths_for_project(pid).await {
+                    Ok(paths) => {
+                        for abs_path in paths {
+                            queue.enqueue(Task::new(TaskKind::DetectCommunities, &abs_path, "")).await;
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(project_id = %pid, error = %e, "analyzer_scheduler: could not list folders for community detection");
+                    }
+                }
+            }
         }
 
         let any_due = !due.is_empty();
