@@ -4,11 +4,36 @@
 //! logic is unit-testable over plain data.
 
 /// Cosine-similarity threshold: two corrective prompts join the same cluster when
-/// their embeddings are at least this similar. Tunable.
+/// their embeddings are at least this similar. Default; caller can override via
+/// `sensei.config.corrections.similarity_threshold` (0.0..=1.0).
 pub const SIMILARITY_THRESHOLD: f32 = 0.82;
 
 /// A cluster must reach this many members to surface as a "recurring" correction.
+/// Default; caller can override via `sensei.config.corrections.cluster_min` (≥1).
+///
+/// Gap 2 tuning note: the current corpus (114K events across 4 projects)
+/// surfaces exactly one cluster at threshold 0.82 + min 2, which suggests
+/// corrective prompts are more scattered than the default assumes. Lowering
+/// the threshold to ~0.75 or the min to 2 (already the default) is worth
+/// trying via config before code-editing the constant.
 pub const CORRECTION_CLUSTER_MIN: usize = 2;
+
+/// Parse a `SIMILARITY_THRESHOLD` override from config text. Rejects values
+/// outside `[0.0, 1.0]` and falls back to the default on parse failure.
+/// Pure so callers can unit-test without a DB round-trip.
+pub fn parse_similarity_threshold(raw: Option<&str>) -> f32 {
+    raw.and_then(|s| s.trim().parse::<f32>().ok())
+        .filter(|v| (0.0..=1.0).contains(v))
+        .unwrap_or(SIMILARITY_THRESHOLD)
+}
+
+/// Parse a `CORRECTION_CLUSTER_MIN` override from config text. Rejects zero
+/// and negative values.
+pub fn parse_cluster_min(raw: Option<&str>) -> usize {
+    raw.and_then(|s| s.trim().parse::<usize>().ok())
+        .filter(|v| *v >= 1)
+        .unwrap_or(CORRECTION_CLUSTER_MIN)
+}
 
 /// Max chars of the normalized snippet / canonical-text fallback.
 const SNIPPET_MAX: usize = 200;
@@ -200,6 +225,48 @@ mod tests {
 
     fn item(pid: uuid::Uuid, session: &str, ts: i64, prompt: &str) -> CorrItem {
         CorrItem { project_id: pid, session_id: session.into(), ts, prompt: prompt.into() }
+    }
+
+    // ── parse_similarity_threshold ──────────────────────────────────────
+    #[test]
+    fn similarity_default_when_config_missing() {
+        assert_eq!(parse_similarity_threshold(None), SIMILARITY_THRESHOLD);
+    }
+
+    #[test]
+    fn similarity_default_when_config_unparseable() {
+        assert_eq!(parse_similarity_threshold(Some("not a number")), SIMILARITY_THRESHOLD);
+        assert_eq!(parse_similarity_threshold(Some("")),             SIMILARITY_THRESHOLD);
+    }
+
+    #[test]
+    fn similarity_default_when_out_of_range() {
+        assert_eq!(parse_similarity_threshold(Some("-0.1")), SIMILARITY_THRESHOLD);
+        assert_eq!(parse_similarity_threshold(Some("1.1")),  SIMILARITY_THRESHOLD);
+    }
+
+    #[test]
+    fn similarity_honors_valid_override() {
+        assert_eq!(parse_similarity_threshold(Some("0.75")), 0.75);
+        assert_eq!(parse_similarity_threshold(Some(" 0.9 ")), 0.9); // trims whitespace
+    }
+
+    // ── parse_cluster_min ───────────────────────────────────────────────
+    #[test]
+    fn cluster_min_default_when_config_missing() {
+        assert_eq!(parse_cluster_min(None), CORRECTION_CLUSTER_MIN);
+    }
+
+    #[test]
+    fn cluster_min_default_when_zero_or_negative() {
+        // usize can't be negative, but zero is invalid — reject it.
+        assert_eq!(parse_cluster_min(Some("0")),  CORRECTION_CLUSTER_MIN);
+    }
+
+    #[test]
+    fn cluster_min_honors_valid_override() {
+        assert_eq!(parse_cluster_min(Some("3")), 3);
+        assert_eq!(parse_cluster_min(Some("10")), 10);
     }
 
     #[test]

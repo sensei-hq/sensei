@@ -321,6 +321,18 @@ export function senseiApi(port: number) {
         `/api/projects/${enc(id)}/recommendations${status ? `?status=${enc(status)}` : ''}`, []
       ),
 
+    // Gap 1 fix — expose the accept/reject flow so MeasureVerdicts has
+    // work to measure. Each returns { ok } on success or 409 CONFLICT if
+    // the rec was already decided.
+    acceptProjectRecommendation: (id: string, recId: string) =>
+      post<{ ok: boolean }>(
+        `/api/projects/${enc(id)}/recommendations/${enc(recId)}/accept`, {}, { ok: false },
+      ),
+    rejectProjectRecommendation: (id: string, recId: string) =>
+      post<{ ok: boolean }>(
+        `/api/projects/${enc(id)}/recommendations/${enc(recId)}/reject`, {}, { ok: false },
+      ),
+
     getProjectSessions: (id: string, limit = 50) =>
       get<{ sessions: ProjectSession[] }>(
         `/api/projects/${enc(id)}/sessions?limit=${limit}`, { sessions: [] }

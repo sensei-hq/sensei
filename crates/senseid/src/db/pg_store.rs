@@ -458,6 +458,20 @@ impl PgStore {
         }).collect())
     }
 
+    /// Return the absolute paths of a project's indexed folders — the input the
+    /// analyzer scheduler needs to enqueue `DetectCommunities` per folder. Only
+    /// `indexed` folders are worth running community detection on (others have
+    /// no code nodes yet).
+    pub async fn get_indexed_folder_paths_for_project(&self, project_id: &uuid::Uuid) -> Result<Vec<String>, String> {
+        let rows: Vec<(String,)> = sqlx_core::query_as::query_as(
+            "SELECT abs_path
+             FROM sensei.folders
+             WHERE project_id = $1 AND status = 'indexed'::sensei.folder_status
+             ORDER BY abs_path"
+        ).bind(project_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(p,)| p).collect())
+    }
+
     /// Mark a folder as indexed with detected libs.
     pub async fn mark_folder_indexed(&self, folder_id: &uuid::Uuid, libs: &[String]) -> Result<(), String> {
         let props = serde_json::json!({"indexed_at": chrono::Utc::now().to_rfc3339(), "libs": libs});
@@ -1232,9 +1246,33 @@ impl PgStore {
     }
 
     pub async fn accept_recommendation(&self, id: &uuid::Uuid) -> Result<(), String> {
-        sqlx_core::query::query(
-            "UPDATE inference.recommendations SET status = 'accepted'::sensei.recommendation_status, acted_at = now() WHERE id = $1"
+        // Guard the transition to `accepted` at the `pending` state so a
+        // double-click / stale UI can't push an already-decided rec back to
+        // accepted. Errors when the row is missing or already decided.
+        let result = sqlx_core::query::query(
+            "UPDATE inference.recommendations
+                SET status = 'accepted'::sensei.recommendation_status,
+                    acted_at = now()
+              WHERE id = $1 AND status = 'pending'"
         ).bind(id).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        if result.rows_affected() == 0 {
+            return Err("recommendation not found or already decided".into());
+        }
+        Ok(())
+    }
+
+    /// Move a `pending` recommendation to `rejected`. Same shape as accept —
+    /// idempotency-guarded so a stale UI can't clobber a real decision.
+    pub async fn reject_recommendation(&self, id: &uuid::Uuid) -> Result<(), String> {
+        let result = sqlx_core::query::query(
+            "UPDATE inference.recommendations
+                SET status = 'rejected'::sensei.recommendation_status,
+                    acted_at = now()
+              WHERE id = $1 AND status = 'pending'"
+        ).bind(id).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        if result.rows_affected() == 0 {
+            return Err("recommendation not found or already decided".into());
+        }
         Ok(())
     }
 
