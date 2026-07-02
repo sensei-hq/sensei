@@ -1422,6 +1422,270 @@ impl PgStore {
         }).collect())
     }
 
+    // ── Service registry + per-project scoping (T2 Slice B) ──────────────
+
+    /// List every installed service, joined with the given project's per-scope
+    /// override so the UI can render enabled/disabled state without a second
+    /// round-trip. `enabled_for_project` reads from the scoped override when
+    /// present, otherwise falls back to the global row's `enabled`, otherwise
+    /// defaults to `true` (installed services are on by default).
+    pub async fn list_services_with_project_scope(
+        &self,
+        project_id: &uuid::Uuid,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        #[allow(clippy::type_complexity)]
+        let rows: Vec<(
+            uuid::Uuid,     // id
+            String,         // name
+            String,         // display_name
+            Option<String>, // publisher
+            String,         // protocol
+            String,         // kind
+            Option<String>, // summary
+            i32,            // tools_count
+            bool,           // verified
+            bool,           // installed
+            Option<bool>,   // scoped_enabled
+            Option<bool>,   // global_enabled
+        )> = sqlx_core::query_as::query_as(
+            "SELECT s.id, s.name, s.display_name, s.publisher,
+                    s.protocol::text, s.kind::text, s.summary, s.tools_count,
+                    s.verified, s.installed,
+                    (SELECT enabled FROM sensei.service_projects sp
+                      WHERE sp.service_id = s.id AND sp.project_id = $1) AS scoped_enabled,
+                    (SELECT enabled FROM sensei.service_projects sp
+                      WHERE sp.service_id = s.id AND sp.project_id IS NULL) AS global_enabled
+               FROM sensei.services s
+              WHERE s.installed = true
+              ORDER BY s.display_name"
+        )
+        .bind(project_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        Ok(rows.into_iter().map(|(id, name, display_name, publisher, protocol, kind, summary,
+                                    tools_count, verified, installed, scoped_enabled, global_enabled)| {
+            // Effective enable: scoped override wins, then global row, then default true.
+            let enabled_for_project = scoped_enabled.or(global_enabled).unwrap_or(true);
+            serde_json::json!({
+                "id":                 id,
+                "name":               name,
+                "displayName":        display_name,
+                "publisher":          publisher,
+                "protocol":           protocol,
+                "kind":               kind,
+                "summary":            summary,
+                "toolsCount":         tools_count,
+                "verified":           verified,
+                "installed":          installed,
+                "enabledForProject":  enabled_for_project,
+                "scopedEnabled":      scoped_enabled,
+                "globalEnabled":      global_enabled,
+            })
+        }).collect())
+    }
+
+    /// Upsert the per-project scope row for a service. `project_id = None`
+    /// writes the global scope. Idempotent — repeat calls flip the enabled
+    /// flag and bump `modified_at`.
+    pub async fn set_service_project_scope(
+        &self,
+        service_id: &uuid::Uuid,
+        project_id: Option<&uuid::Uuid>,
+        enabled: bool,
+    ) -> Result<(), String> {
+        // Partial-unique indexes on (service_id) WHERE project_id IS NULL and
+        // (service_id, project_id) WHERE project_id IS NOT NULL guarantee at
+        // most one row per scope, so an UPDATE-first fallback is enough
+        // without needing INSERT ... ON CONFLICT (which can't target a
+        // partial unique index without extra hints in Postgres).
+        let updated = if let Some(pid) = project_id {
+            sqlx_core::query::query(
+                "UPDATE sensei.service_projects
+                    SET enabled = $1, modified_at = now()
+                  WHERE service_id = $2 AND project_id = $3"
+            )
+            .bind(enabled)
+            .bind(service_id)
+            .bind(pid)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?
+        } else {
+            sqlx_core::query::query(
+                "UPDATE sensei.service_projects
+                    SET enabled = $1, modified_at = now()
+                  WHERE service_id = $2 AND project_id IS NULL"
+            )
+            .bind(enabled)
+            .bind(service_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?
+        };
+
+        if updated.rows_affected() == 0 {
+            sqlx_core::query::query(
+                "INSERT INTO sensei.service_projects (service_id, project_id, enabled)
+                 VALUES ($1, $2, $3)"
+            )
+            .bind(service_id)
+            .bind(project_id)
+            .bind(enabled)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+
+    /// Per-tool aggregation for a project's Instruments screen.
+    /// Joins `session_tool_calls` back to `activity.sessions` on
+    /// `client_session_id`, filters by `session.project_id`, and computes
+    /// call count, error count, avg duration, and FTR (fraction of sessions
+    /// that used the tool AND completed FTR).
+    pub async fn get_project_mcp_tool_stats(
+        &self,
+        project_id: &uuid::Uuid,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(String, i64, i64, Option<f64>, Option<f64>, Option<chrono::DateTime<chrono::Utc>>)> =
+            sqlx_core::query_as::query_as(
+                "WITH scoped AS (
+                     SELECT stc.tool_name,
+                            stc.success,
+                            stc.duration_ms,
+                            stc.started_at,
+                            s.ftr
+                       FROM sensei.session_tool_calls stc
+                       JOIN activity.sessions s
+                         ON s.client_session_id = stc.session_id
+                      WHERE s.project_id = $1
+                 )
+                 SELECT tool_name,
+                        count(*)::bigint                                                          AS calls,
+                        count(*) FILTER (WHERE success IS FALSE)::bigint                          AS errors,
+                        avg(duration_ms)::float8                                                  AS avg_duration_ms,
+                        (count(*) FILTER (WHERE ftr IS TRUE)::float8
+                            / NULLIF(count(*) FILTER (WHERE ftr IS NOT NULL), 0))                 AS ftr,
+                        max(started_at)                                                           AS last_used_at
+                   FROM scoped
+                  GROUP BY tool_name
+                  ORDER BY calls DESC, tool_name ASC"
+            )
+            .bind(project_id)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        Ok(rows.into_iter().map(|(tool_name, calls, errors, avg_dur, ftr, last_used_at)| {
+            serde_json::json!({
+                "toolName":      tool_name,
+                "calls":         calls,
+                "errors":        errors,
+                "avgDurationMs": avg_dur,
+                "ftr":           ftr,
+                "lastUsedAt":    last_used_at.map(|t| t.to_rfc3339()),
+            })
+        }).collect())
+    }
+
+    // ── Manual impact-verdict log (T3 Slice 3) ─────────────────────────────
+
+    /// List manual impact-verdict entries for a project, newest first.
+    /// Optional `verdict` filter narrows to one lifecycle stage (`pending`,
+    /// `success`, `mixed`, `failure`).
+    pub async fn list_impact_verdicts(
+        &self,
+        project_id: &uuid::Uuid,
+        verdict: Option<&str>,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, Option<uuid::Uuid>, String, Option<String>, String, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT id, session_id, title, note, verdict::text, created_at, decided_at
+                   FROM sensei.impact_verdicts
+                  WHERE project_id = $1
+                    AND ($2::text IS NULL OR verdict::text = $2)
+                  ORDER BY created_at DESC
+                  LIMIT 200"
+            )
+            .bind(project_id)
+            .bind(verdict)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        Ok(rows.into_iter().map(|(id, session_id, title, note, verdict, created_at, decided_at)| {
+            serde_json::json!({
+                "id":         id,
+                "sessionId":  session_id,
+                "title":      title,
+                "note":       note,
+                "verdict":    verdict,
+                "createdAt":  created_at.to_rfc3339(),
+                "decidedAt":  decided_at.map(|t| t.to_rfc3339()),
+            })
+        }).collect())
+    }
+
+    /// Log a new impact entry. Verdict defaults to `pending`; the caller
+    /// hits `set_impact_verdict_outcome` later to record the outcome.
+    pub async fn create_impact_verdict(
+        &self,
+        project_id: &uuid::Uuid,
+        title: &str,
+        note: Option<&str>,
+        session_id: Option<&uuid::Uuid>,
+    ) -> Result<uuid::Uuid, String> {
+        if title.trim().is_empty() {
+            return Err("title required".into());
+        }
+        let (id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.impact_verdicts (project_id, title, note, session_id)
+             VALUES ($1, $2, $3, $4) RETURNING id"
+        )
+        .bind(project_id)
+        .bind(title)
+        .bind(note)
+        .bind(session_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(id)
+    }
+
+    /// Assign a terminal verdict (`success` | `mixed` | `failure`) to a
+    /// pending impact log entry. Stamps `decided_at = now()`. Errors when
+    /// the entry doesn't exist or has already been decided.
+    pub async fn set_impact_verdict_outcome(
+        &self,
+        verdict_id: &uuid::Uuid,
+        outcome: &str,
+        note: Option<&str>,
+    ) -> Result<(), String> {
+        if !matches!(outcome, "success" | "mixed" | "failure") {
+            return Err(format!("invalid verdict {outcome}"));
+        }
+        let result = sqlx_core::query::query(
+            "UPDATE sensei.impact_verdicts
+                SET verdict = $1::sensei.impact_verdict,
+                    note = COALESCE($2, note),
+                    decided_at = now()
+              WHERE id = $3
+                AND verdict = 'pending'"
+        )
+        .bind(outcome)
+        .bind(note)
+        .bind(verdict_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        if result.rows_affected() == 0 {
+            return Err("verdict not found or already decided".into());
+        }
+        Ok(())
+    }
+
     pub async fn get_reasoning_traces_by_project(&self, project_id: &uuid::Uuid) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(uuid::Uuid, String, Vec<String>, serde_json::Value, serde_json::Value)> = sqlx_core::query_as::query_as(
             "SELECT id, trigger_event, models_used, exchanges, consensus FROM inference.reasoning_traces WHERE project_id = $1"
@@ -2926,22 +3190,52 @@ impl PgStore {
         // Each pattern + its folder's average FTR (locus signal).
         // confidence is nullable (correction-prone / rule-candidate patterns set
         // no confidence) — decode as Option to avoid a NULL→f64 decode failure.
-        let rows: Vec<(uuid::Uuid, String, Option<String>, bool, String, Option<f64>, i32, Option<f64>)> =
-            sqlx_core::query_as::query_as(
-                "SELECT pp.id, pp.name, pp.family, pp.is_anti_pattern, pp.lifecycle::text, pp.confidence::float8, pp.instance_count,
+        // description / example / enforcement are exposed here (previously
+        // dropped) so the Patterns screen can render the guidance the analyzer
+        // captured with each pattern (T3 Slice 2.1).
+        #[allow(clippy::type_complexity)]
+        let rows: Vec<(
+            uuid::Uuid,      // id
+            String,          // name
+            Option<String>,  // family
+            bool,            // is_anti_pattern
+            String,          // lifecycle
+            Option<f64>,     // confidence
+            i32,             // instance_count
+            Option<f64>,     // folder_ftr
+            Option<String>,  // description
+            Option<String>,  // example
+            Option<String>,  // enforcement
+        )> = sqlx_core::query_as::query_as(
+                "SELECT pp.id, pp.name, pp.family, pp.is_anti_pattern, pp.lifecycle::text,
+                        pp.confidence::float8, pp.instance_count,
                         (SELECT avg(CASE WHEN s.ftr THEN 1.0 ELSE 0.0 END)::float8
                            FROM activity.sessions s
-                          WHERE s.folder_id = pp.folder_id AND s.ftr IS NOT NULL) AS folder_ftr
+                          WHERE s.folder_id = pp.folder_id AND s.ftr IS NOT NULL) AS folder_ftr,
+                        pp.description, pp.example, pp.enforcement
                  FROM sensei.project_patterns pp WHERE pp.project_id = $1
                  ORDER BY pp.is_anti_pattern, pp.name"
             ).bind(project_id)
             .fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
 
         let (followed, anti): (Vec<_>, Vec<_>) = rows.into_iter().partition(|r| !r.3);
-        let map_row = |(id, name, family, is_anti, lifecycle, confidence, count, folder_ftr): (uuid::Uuid, String, Option<String>, bool, String, Option<f64>, i32, Option<f64>)| {
+        let map_row = |(id, name, family, is_anti, lifecycle, confidence, count, folder_ftr, description, example, enforcement): (uuid::Uuid, String, Option<String>, bool, String, Option<f64>, i32, Option<f64>, Option<String>, Option<String>, Option<String>)| {
             let kind = crate::pattern_effectiveness::pattern_kind(is_anti, &lifecycle);
             let ftr_delta = crate::pattern_effectiveness::ftr_delta(folder_ftr, project_ftr);
-            serde_json::json!({ "id": id, "name": name, "family": family, "isAntiPattern": is_anti, "lifecycle": lifecycle, "confidence": confidence, "instanceCount": count, "kind": kind, "ftrDelta": ftr_delta })
+            serde_json::json!({
+                "id":            id,
+                "name":          name,
+                "family":        family,
+                "isAntiPattern": is_anti,
+                "lifecycle":     lifecycle,
+                "confidence":    confidence,
+                "instanceCount": count,
+                "kind":          kind,
+                "ftrDelta":      ftr_delta,
+                "description":   description,
+                "example":       example,
+                "enforcement":   enforcement,
+            })
         };
         Ok(serde_json::json!({
             "followed": followed.into_iter().map(map_row).collect::<Vec<_>>(),
@@ -2967,6 +3261,178 @@ impl PgStore {
             }).collect();
 
         Ok(serde_json::json!({ "active": active, "total": total, "pendingShare": pending_share }))
+    }
+
+    /// Return the paired PreToolUse / PostToolUse timeline for an assistant
+    /// session, ordered by call start. Each row carries the request payload,
+    /// the response payload (null when the call is still in-flight or the
+    /// PostToolUse was dropped), the success flag, and duration_ms. Backed
+    /// by the `sensei.session_tool_calls` view — see its DDL for the
+    /// pairing rule.
+    pub async fn get_session_tool_calls(
+        &self,
+        session_id: &str,
+        limit: i32,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(
+            i64,                                            // call_id
+            String,                                         // tool_name
+            String,                                         // family
+            serde_json::Value,                              // request
+            Option<serde_json::Value>,                      // response
+            Option<bool>,                                   // success
+            i64,                                            // started_at_ms
+            Option<i64>,                                    // completed_at_ms
+            Option<i64>,                                    // duration_ms
+            chrono::DateTime<chrono::Utc>,                  // started_at
+            Option<chrono::DateTime<chrono::Utc>>,          // completed_at
+        )> = sqlx_core::query_as::query_as(
+            "SELECT call_id, tool_name, family::text, request, response, success,
+                    started_at_ms, completed_at_ms, duration_ms,
+                    started_at, completed_at
+               FROM sensei.session_tool_calls
+              WHERE session_id = $1
+              ORDER BY started_at_ms ASC
+              LIMIT $2"
+        )
+        .bind(session_id)
+        .bind(limit as i64)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        Ok(rows.into_iter().map(|(
+            call_id, tool_name, family, request, response, success,
+            started_at_ms, completed_at_ms, duration_ms,
+            started_at, completed_at,
+        )| {
+            serde_json::json!({
+                "callId":         call_id,
+                "toolName":       tool_name,
+                "family":         family,
+                "request":        request,
+                "response":       response,
+                "success":        success,
+                "startedAtMs":    started_at_ms,
+                "completedAtMs":  completed_at_ms,
+                "durationMs":     duration_ms,
+                "startedAt":      started_at.to_rfc3339(),
+                "completedAt":    completed_at.map(|t| t.to_rfc3339()),
+                "inFlight":       completed_at_ms.is_none(),
+            })
+        }).collect())
+    }
+
+    /// List memory-share batches for a project, newest first. `only_status`
+    /// filters to a single lifecycle stage (`proposed`, `approved`, …); pass
+    /// `None` to include every stage.
+    pub async fn list_memory_share_batches(
+        &self,
+        project_id: &uuid::Uuid,
+        only_status: Option<&str>,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, String, Option<String>, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>, i64)> =
+            sqlx_core::query_as::query_as(
+                "SELECT b.id, b.status::text, b.note, b.created_at, b.decided_at,
+                        (SELECT count(*) FROM sensei.memory_share_batch_members m WHERE m.batch_id = b.id)::bigint
+                   FROM sensei.memory_share_batches b
+                  WHERE b.project_id = $1
+                    AND ($2::text IS NULL OR b.status::text = $2)
+                  ORDER BY b.created_at DESC
+                  LIMIT 200"
+            )
+            .bind(project_id)
+            .bind(only_status)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        Ok(rows.into_iter().map(|(id, status, note, created_at, decided_at, member_count)| {
+            serde_json::json!({
+                "id":          id,
+                "status":      status,
+                "note":        note,
+                "createdAt":   created_at.to_rfc3339(),
+                "decidedAt":   decided_at.map(|t| t.to_rfc3339()),
+                "memberCount": member_count,
+            })
+        }).collect())
+    }
+
+    /// Create a new `proposed` memory-share batch with the given memory ids.
+    /// Rejects an empty member list — a batch with nothing to share is a
+    /// caller-side bug. Returns the new batch id on success.
+    pub async fn create_memory_share_batch(
+        &self,
+        project_id: &uuid::Uuid,
+        memory_ids: &[uuid::Uuid],
+        note: Option<&str>,
+    ) -> Result<uuid::Uuid, String> {
+        if memory_ids.is_empty() {
+            return Err("memory_ids must be non-empty".into());
+        }
+        let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
+
+        let (batch_id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.memory_share_batches (project_id, note)
+             VALUES ($1, $2) RETURNING id"
+        )
+        .bind(project_id)
+        .bind(note)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        // ON CONFLICT DO NOTHING is intentional — the composite PK guards
+        // against duplicate members when a caller passes the same id twice.
+        sqlx_core::query::query(
+            "INSERT INTO sensei.memory_share_batch_members (batch_id, memory_id)
+             SELECT $1, unnest($2::uuid[])
+             ON CONFLICT DO NOTHING"
+        )
+        .bind(batch_id)
+        .bind(memory_ids)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        tx.commit().await.map_err(|e| e.to_string())?;
+        Ok(batch_id)
+    }
+
+    /// Set a memory-share batch's terminal status. Accepts `approved`,
+    /// `rejected`, or `withdrawn`. `approved` / `rejected` stamp
+    /// `decided_at = now()`; `withdrawn` clears it (the batch was never
+    /// decided). Errors when the batch is missing or already decided.
+    pub async fn set_memory_share_batch_status(
+        &self,
+        batch_id: &uuid::Uuid,
+        new_status: &str,
+        note: Option<&str>,
+    ) -> Result<(), String> {
+        if !matches!(new_status, "approved" | "rejected" | "withdrawn") {
+            return Err(format!("invalid status {new_status}"));
+        }
+        let decided_at_sql = if new_status == "withdrawn" { "NULL" } else { "now()" };
+        let sql = format!(
+            "UPDATE sensei.memory_share_batches
+                SET status = $1::sensei.memory_share_batch_status,
+                    note = COALESCE($2, note),
+                    decided_at = {decided_at_sql}
+              WHERE id = $3
+                AND status = 'proposed'"
+        );
+        let result = sqlx_core::query::query(&sql)
+            .bind(new_status)
+            .bind(note)
+            .bind(batch_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        if result.rows_affected() == 0 {
+            return Err("batch not found or already decided".into());
+        }
+        Ok(())
     }
 
     pub async fn ensure_test_project(&self, name: &str) -> Result<uuid::Uuid, String> {
