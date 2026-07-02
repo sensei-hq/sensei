@@ -47,6 +47,8 @@ pub fn run() {
             // Update
             commands::update::run_upgrade_steps,
             commands::update::check_for_update,
+            // Project windows — open/focus a project in its own window
+            commands::project_windows::open_project_window,
         ])
         .setup(|app| {
             // ── Tracing subscriber → flog ────────────────────────────────
