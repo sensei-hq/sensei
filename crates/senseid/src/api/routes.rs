@@ -69,6 +69,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/projects/{id}/patterns",        get(project_detail::get_project_patterns))
         .route("/api/projects/{id}/libraries",       get(project_detail::get_project_libraries))
         .route("/api/projects/{id}/instruments",     get(project_detail::get_project_instruments))
+        .route("/api/projects/{id}/mcp-tool-stats",  get(project_detail::get_project_mcp_tool_stats))
         .route("/api/projects/{id}/memories",        get(project_detail::get_project_memories))
         .route("/api/projects/{id}/memory-batches",
                get(project_detail::list_memory_share_batches)
