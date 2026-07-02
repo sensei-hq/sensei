@@ -106,6 +106,7 @@ Enum "sensei"."folder_role" {
   "backend"
   "frontend"
   "library"
+  "tool"
   "docs"
   "infra"
   "website"
@@ -124,11 +125,11 @@ Enum "sensei"."folder_status" {
   "deferred"
 }
 
-Enum "sensei"."hyperedge_kind" {
-  "flow"
-  "group"
-  "co_change"
-  "addressed_by"
+Enum "sensei"."impact_verdict" {
+  "pending"
+  "success"
+  "mixed"
+  "failure"
 }
 
 Enum "sensei"."inference_role" {
@@ -158,6 +159,13 @@ Enum "sensei"."library_source_type" {
   "local"
 }
 
+Enum "sensei"."memory_category" {
+  "correctness"
+  "convention"
+  "pattern"
+  "preference"
+}
+
 Enum "sensei"."memory_outcome" {
   "applied"
   "consulted"
@@ -171,6 +179,13 @@ Enum "sensei"."memory_scope" {
   "stack"
   "task_type"
   "module"
+}
+
+Enum "sensei"."memory_share_batch_status" {
+  "proposed"
+  "approved"
+  "rejected"
+  "withdrawn"
 }
 
 Enum "sensei"."memory_status" {
@@ -219,6 +234,11 @@ Enum "sensei"."node_kind" {
   "enum_variant"
   "section"
   "rationale"
+  "struct"
+  "component"
+  "hook"
+  "doc"
+  "extension"
 }
 
 Enum "sensei"."pattern_lifecycle" {
@@ -322,30 +342,30 @@ Enum "sensei"."watch_status" {
   "paused"
 }
 
-Table "activity"."hook_events" {
-  "id" bigserial [pk, increment, not null, note: 'Surrogate primary key (bigserial — high write volume).']
+Table "activity"."assistant_events" {
+  "id" bigserial [pk, not null, note: 'Surrogate primary key (bigserial — high write volume).']
   "session_id" TEXT [not null, default: '', note: 'Assistant session ID string. Not a FK — not a DB UUID.']
-  "assistant_family" assistant_family [not null, default: 'claude', note: 'Which assistant emitted this event: claude, cursor, zed, codex, aider, etc.']
+  "family" assistant_family [not null, default: 'claude', note: 'Which assistant emitted this event: claude, cursor, zed, codex, aider, etc.']
   "event_type" TEXT [not null, note: 'hook_event_name from payload: SessionStart, PreToolUse, PostToolUse, Stop, etc.']
   "tool_name" TEXT [note: 'tool_name from payload. Populated for PreToolUse and PostToolUse events only.']
-  "cwd" TEXT [note: 'Working directory at the time of the hook event.']
-  "ts" BIGINT [not null, note: 'Unix epoch milliseconds when the hook fired (client clock).']
+  "cwd" TEXT [note: 'Working directory at the time of the event.']
+  "ts" BIGINT [not null, note: 'Unix epoch milliseconds when the event fired (client clock).']
   "success" BOOLEAN [note: 'For PostToolUse: true if exit_code == 0. Null for all other event types.']
-  "payload" JSONB [not null, default: '{}', note: 'Full JSON payload received from stdin — complete hook event data.']
+  "payload" JSONB [not null, default: '{}', note: 'Full JSON payload received from stdin — complete event data.']
   "created_at" TIMESTAMPTZ [not null, default: `now()`, note: 'Server-side timestamp when this row was inserted.']
 
   indexes {
-    (session_id, created_at) [name: 'hook_events_session_id_idx']
-    (event_type, created_at) [name: 'hook_events_event_type_idx']
-    created_at [name: 'hook_events_created_at_idx']
-    (assistant_family, created_at) [name: 'hook_events_family_idx']
+    (session_id, created_at) [name: 'assistant_events_session_id_idx']
+    (event_type, created_at) [name: 'assistant_events_event_type_idx']
+    created_at [name: 'assistant_events_created_at_idx']
+    (family, created_at) [name: 'assistant_events_family_idx']
   }
 
   Note: '''
-Raw hook event log — one row per hook invocation, from any assistant family.
-Captures event types emitted by hooks from Claude Code, Cursor, Zed, etc.
+Raw assistant event log — one row per hook/event invocation, from any
+assistant family. Captures events emitted by Claude Code, Cursor, Zed, etc.
 session_id is the assistant string session ID, not a DB UUID.
-assistant_family identifies the source assistant (claude, cursor, zed, …).
+family identifies the source assistant (claude, cursor, zed, …).
 payload stores the full JSON payload received from stdin.
 '''
 }
@@ -392,6 +412,46 @@ Common queries:
   SELECT task_kind, avg(duration_ms), max(duration_ms) FROM task_executions WHERE status = 'completed' GROUP BY task_kind
   -- Failed tasks in last hour
   SELECT * FROM task_executions WHERE status = 'failed' AND started_at > now() - interval '1h'
+'''
+}
+
+Table "activity"."transcript_cursor" {
+  "source" TEXT [pk, not null]
+  "file_path" TEXT [pk, not null]
+  "session_id" TEXT
+  "last_mtime_ns" BIGINT [not null]
+  "turns_ingested" INTEGER [not null, default: 0]
+  "updated_at" TIMESTAMPTZ [not null, default: `now()`]
+
+  Note: '''
+Resumable cursor for transcript ingest (#73): per-file mtime so re-runs skip
+unchanged transcripts. Shared by the backfill and forward-capture workers.
+'''
+}
+
+Table "activity"."transcript_turns" {
+  "id" UUID [pk, not null, default: `gen_random_uuid()`]
+  "source" TEXT [not null]
+  "session_id" TEXT [not null]
+  "family" TEXT
+  "provider" TEXT
+  "model" TEXT
+  "turn_index" INTEGER [not null]
+  "user_text" TEXT
+  "assistant_text" TEXT
+  "char_count" INTEGER [not null, default: 0]
+  "started_at" TIMESTAMPTZ
+  "created_at" TIMESTAMPTZ [not null, default: `now()`]
+
+  indexes {
+    session_id [name: 'transcript_turns_session_idx']
+    (source, session_id) [name: 'transcript_turns_source_session_idx']
+  }
+
+  Note: '''
+Per-turn assistant/user prose parsed from agent transcripts (#73). Backfills the
+prose the hook stream lacks; consumed by the analyzer LLM tiers. Grain = one
+user-prompt -> assistant-response turn. Identity = (source, session_id, turn_index).
 '''
 }
 
@@ -527,20 +587,6 @@ Captures every INSERT, UPDATE, and DELETE so that memory evolution can be audite
 - memory_id: references sensei.memories.id with no FK — survives hard deletes
 - effective_from/to: when this revision was the live state
 - operation: INSERT, UPDATE, or DELETE
-'''
-}
-
-Table "inference"."insight_batches" {
-  "id" UUID [pk, not null, default: `gen_random_uuid()`, note: 'Surrogate primary key (UUID).']
-  "insight_count" INTEGER [not null, default: 0, note: 'Number of insights in this batch.']
-  "target" TEXT [not null, note: 'Where insights were sent: git, posthog.']
-  "reference" TEXT [note: 'External reference: git commit SHA, PostHog batch ID, etc.']
-  "sent_at" TIMESTAMPTZ [not null, default: `now()`, note: 'Timestamp when this batch was sent.']
-
-  Note: '''
-Collective intelligence send batches. Groups insights shared together.
-- target: "git", "posthog" — where insights were sent
-- reference: git commit SHA, PostHog batch ID, etc. — traceable external reference
 '''
 }
 
@@ -843,6 +889,30 @@ This table provides autocomplete and validation.
 '''
 }
 
+Table "sensei"."tool_insights" {
+  "id" UUID [pk, not null, default: `gen_random_uuid()`, note: 'Surrogate primary key (UUID).']
+  "tool_name" TEXT [not null, note: 'Tool being insighted — matches assistant_events.tool_name.']
+  "computed_at" TIMESTAMPTZ [not null, default: `now()`, note: 'When this snapshot was written.']
+  "metrics" JSONB [not null, default: '{}', note: 'Raw aggregates: call_count, error_count, avg_duration_ms, last_used_at, error_rate.']
+  "signal_variant" TEXT [note: 'Signal card variant (warn / opportunity / unused / win) or NULL when no signal fires.']
+  "signal_title" TEXT [note: 'Card title copy (matches derive_signals output).']
+  "signal_detail" TEXT [note: 'Card detail copy (matches derive_signals output).']
+
+  indexes {
+    (tool_name, computed_at) [name: 'tool_insights_tool_time_idx']
+    computed_at [name: 'tool_insights_time_idx']
+  }
+
+  Note: '''
+Cached per-tool insight snapshots produced by the AggregateToolInsights
+scheduled task. Append-only — each run writes a fresh row per known tool.
+The observatory tool-signals endpoint picks the latest row per tool
+(via a distinct-on / row_number window) and returns them ordered by
+variant priority. Cache-miss (no rows yet) falls back to the on-the-fly
+derivation.
+'''
+}
+
 Table "sensei"."workflow_state" {
   "project" TEXT [pk, not null, note: 'Project identifier.']
   "active_phase" TEXT [note: 'Current phase name.']
@@ -856,6 +926,25 @@ Table "sensei"."workflow_state" {
   Note: '''
 Workflow state — current phase/task/issue per project.
 Updated by checkpoint and phase commands.
+'''
+}
+
+Table "staging"."assistant_events" {
+  "session_id" TEXT
+  "family" TEXT [default: 'claude']
+  "event_type" TEXT
+  "tool_name" TEXT
+  "cwd" TEXT
+  "ts" BIGINT
+  "success" BOOLEAN
+  "payload" JSONB
+  "created_at" TIMESTAMPTZ
+
+  Note: '''
+Staging buffer for activity.assistant_events.
+family is text here (cast to the sensei.assistant_family enum during import).
+Load via dbd import or CALL staging.import_jsonb_to_table('_temp', 'staging.assistant_events').
+Then call: CALL staging.import_assistant_events() to move into activity.assistant_events.
 '''
 }
 
@@ -898,27 +987,6 @@ Table "staging"."fallback_chains" {
   "modified_at" TIMESTAMPTZ [not null, default: `now()`]
 }
 
-Table "staging"."hook_events" {
-  "session_id" TEXT
-  "assistant_family" TEXT [default: 'claude']
-  "event_type" TEXT
-  "tool_name" TEXT
-  "cwd" TEXT
-  "ts" BIGINT
-  "success" BOOLEAN
-  "payload" JSONB
-  "created_at" TIMESTAMPTZ
-
-  Note: '''
-Staging buffer for activity.hook_events.
-assistant_family is text here (cast to enum during import).
-Load via dbd import or CALL staging.import_jsonb_to_table('_temp', 'staging.hook_events').
-The hook script enriches payload with event_type (mapped from hook_event_name)
-so that import_jsonb_to_table can map field names directly.
-Then call: CALL staging.import_hook_events() to move into activity.hook_events.
-'''
-}
-
 Table "staging"."libraries" {
   "name" TEXT
   "ecosystem" TEXT
@@ -940,6 +1008,36 @@ Table "staging"."libraries" {
   }
 
   Note: 'Staging buffer for sensei.libraries. Natural key: (ecosystem, name).'
+}
+
+Table "staging"."memories" {
+  "project_name" TEXT
+  "namespace_scope_key" TEXT
+  "namespace_slug" TEXT
+  "scope" TEXT
+  "scope_filter" TEXT
+  "enforcement" TEXT
+  "origin" TEXT
+  "type" TEXT
+  "title" TEXT
+  "content" TEXT
+  "impact" TEXT
+  "strength" REAL
+  "status" TEXT
+  "reinforced_count" INTEGER
+  "violated_count" INTEGER
+  "last_relevant_at" TIMESTAMPTZ
+  "tags" TEXT[]
+  "triage_signal" TEXT
+  "modified_at" TIMESTAMPTZ
+
+  Note: '''
+Staging buffer for sensei.memories. FK targets are carried as natural keys
+(project_name; namespace_scope_key + namespace_slug) and resolved to ids during
+import. Enum columns are text here (cast during import). Loaded from
+import/staging/memories.jsonl (produced by export.memories) via dbd import, then
+CALL staging.import_memories() to move into sensei.memories.
+'''
 }
 
 Table "staging"."models" {
@@ -1075,29 +1173,6 @@ Seed data loaded via staging.import_models().
 '''
 }
 
-Table "inference"."insights" {
-  "id" UUID [pk, not null, default: `gen_random_uuid()`, note: 'Surrogate primary key (UUID).']
-  "batch_id" UUID [note: 'Foreign key to insight_batches — which send batch included this insight. Null until shared.']
-  "source_table" TEXT [not null, note: 'Source table name: recommendation_outcomes, detected_patterns, sessions, etc.']
-  "source_id" UUID [not null, note: 'Primary key of the source record in source_table.']
-  "category" TEXT [not null, note: 'Insight category: pattern, model, skill, correction, ftr, anti_pattern, tool, stack.']
-  "payload" JSONB [not null, default: '{}', note: 'Anonymized snapshot of the insight at share time. No code, paths, or identifiable info.']
-
-  indexes {
-    batch_id [name: 'insights_batch_id_idx']
-    category [name: 'insights_category_idx']
-  }
-
-  Note: '''
-Collective intelligence — references to local insights shared with the network.
-Points to source records in recommendation_outcomes, detected_patterns, sessions, etc.
-- source_table: which table the original insight lives in
-- source_id: PK of the source record
-- payload: anonymized snapshot of the insight at time of sharing
-- batch_id: null until shared; links to the batch it was sent in
-'''
-}
-
 Table "inference"."reasoning_traces" {
   "id" UUID [pk, not null, default: `gen_random_uuid()`, note: 'Surrogate primary key (UUID).']
   "project_id" UUID [note: 'Foreign key to projects — which project this reasoning was about. Nullable for system-level.']
@@ -1213,6 +1288,33 @@ Consolidates the former lib_doc_sections, shared_lib_sections, and lib_docs tabl
 '''
 }
 
+Table "sensei"."memory_share_batches" {
+  "id" UUID [pk, not null, default: `gen_random_uuid()`, note: 'Surrogate primary key (UUID).']
+  "project_id" UUID [not null, note: 'FK to projects — batches are always scoped to a single project.']
+  "status" memory_share_batch_status [not null, default: 'proposed', note: 'Lifecycle stage. `proposed` and `withdrawn` have decided_at NULL; `approved` and `rejected` require decided_at.']
+  "note" TEXT [note: 'Optional free-text rationale attached at approve or reject time.']
+  "created_at" TIMESTAMPTZ [not null, default: `now()`, note: 'When the batch was proposed.']
+  "decided_at" TIMESTAMPTZ [note: 'When the batch was approved or rejected. NULL while proposed or if withdrawn.']
+
+  indexes {
+    (project_id, status, created_at) [name: 'memory_share_batches_project_idx']
+    (project_id, created_at) [name: 'memory_share_batches_proposed_idx']
+  }
+
+  Note: '''
+Batched proposal to share memories from a project to the federation.
+Users review a group of learned memories together and approve or reject
+the batch as a unit. On approve, the daemon iterates the linked members
+and pushes each to the configured hive-mind. Kept as a first-class
+entity (not a memory-status flag) so verdicts stay auditable and the
+UI can surface a per-project "pending review" queue.
+- proposed: created, awaiting user decision
+- approved: user accepted — the federation writer picks it up
+- rejected: user declined
+- withdrawn: user cancelled before deciding
+'''
+}
+
 Table "sensei"."namespaces" {
   "id" UUID [pk, not null, default: `gen_random_uuid()`, note: 'Surrogate primary key (UUID).']
   "scope_key" TEXT [not null, note: 'Which scope this namespace instantiates (FK to scopes.key).']
@@ -1256,29 +1358,58 @@ Populated by daemon indexer from referenced_libraries; editable by user.
 '''
 }
 
+Table "sensei"."service_projects" {
+  "service_id" UUID [not null, note: 'FK to services — the MCP server / inference provider being scoped.']
+  "project_id" UUID [note: 'FK to projects — null for the global row (default for every project), otherwise the project-specific override.']
+  "enabled" BOOLEAN [not null, default: true, note: 'Whether this scope activates the service. false disables the service for the given project (or globally when project_id is null).']
+  "props" JSONB [not null, default: '{}', note: 'Per-scope config overrides (JSONB) — e.g. project-specific env, endpoint, or budget.']
+  "modified_at" TIMESTAMPTZ [not null, default: `now()`, note: 'Timestamp of the last modification to this row.']
+
+  indexes {
+    service_id [unique, name: 'service_projects_global_uniq']
+    (service_id, project_id) [unique, name: 'service_projects_scoped_uniq']
+    project_id [name: 'service_projects_project_id_idx']
+  }
+
+  Note: '''
+Per-project scope for services (MCP servers, inference providers).
+project_id NULL = global (active in every project).
+project_id = X  = active only in that project.
+services.installed is the top-level "is this installed" flag; this table
+controls whether an installed service is enabled for a given project so
+the Instruments playground can offer per-project MCP configurations.
+'''
+}
+
 Table "activity"."sessions" {
   "id" UUID [pk, not null, default: `gen_random_uuid()`, note: 'Surrogate primary key (UUID).']
   "folder_id" UUID [not null, note: 'Foreign key to folders — which folder this session ran in.']
   "project_id" UUID [note: 'Foreign key to projects — derived from folder.']
   "task" TEXT [not null, default: '', note: 'Task description passed at get_session_context.']
   "acp_id" TEXT [note: 'Assistant family name (matches sensei.assistants.family): claude, cursor, codex, aider, etc.']
+  "client_session_id" TEXT [note: 'The assistant\'s own session id (e.g. Claude session_id from hooks). Correlates all hook events of one session to a single row; NULL for MCP-created sessions.']
   "outcome" session_outcome [note: 'Session outcome: completed, corrected, blocked, partial, abandoned.']
   "ftr" BOOLEAN [note: 'First-Try Rate: true if zero corrections.']
   "turns" INTEGER [not null, default: 0, note: 'Number of user turns.']
   "corrections" INTEGER [not null, default: 0, note: 'Number of user corrections (FTR detractor).']
   "tokens_in" INTEGER [note: 'Total input tokens consumed.']
   "tokens_out" INTEGER [note: 'Total output tokens generated.']
-  "duration_ms" INTEGER [note: 'Session duration in milliseconds.']
+  "duration" INTERVAL [note: 'Gap-aware active work time (excludes idle gaps > threshold). The full wall-clock span is started_at..completed_at; per-turn/segment detail lives in activity.turns.']
   "module" TEXT [note: 'Primary code module touched. For per-module FTR.']
   "summary" TEXT [note: 'Brief summary of what happened in this session. Populated at checkpoint time by the assistant.']
+  "provider" TEXT [note: 'Inference provider that ran this session (e.g. anthropic, openai, copilot_chat, ollama). Captured from the transcript at synthesis (#75); NULL for live hook-captured sessions whose model the hook stream doesn\'t carry. Powers effectiveness-by-model.']
+  "model" TEXT [note: 'Specific model that ran this session (e.g. claude-opus-4, GPT-5, Grok Code Fast 1). See provider. Powers effectiveness-by-model insights.']
   "props" JSONB [not null, default: '{}', note: 'Extensible: {patterns_matched, personas_applied, workflow_phase, ...}.']
   "started_at" TIMESTAMPTZ [not null, default: `now()`, note: 'When this session started.']
   "completed_at" TIMESTAMPTZ [note: 'When this session ended.']
+  "analyzed_at" TIMESTAMPTZ [note: 'When the analyzer last enriched this session (#67). The scheduler skips a session whose assistant_events are no newer than this — incremental re-analysis.']
+  "backfilled" BOOLEAN [not null, default: false]
 
   indexes {
     (folder_id, started_at) [name: 'sessions_folder_id_idx']
     (project_id, started_at) [name: 'sessions_project_id_idx']
     ftr [name: 'sessions_ftr_idx']
+    client_session_id [unique, name: 'sessions_client_session_id_uniq']
   }
 
   Note: '''
@@ -1400,31 +1531,6 @@ Code patterns detected during indexing and analysis.
 '''
 }
 
-Table "inference"."hyperedges" {
-  "id" UUID [pk, not null, default: `gen_random_uuid()`, note: 'Surrogate primary key (UUID).']
-  "folder_id" UUID [not null, note: 'Foreign key to folders — which repo this hyperedge belongs to.']
-  "kind" hyperedge_kind [not null, note: 'Hyperedge category: flow, group, co_change, addressed_by.']
-  "label" TEXT [note: 'Human-readable label (e.g. "auth refresh flow", "CRDTOp implementations").']
-  "description" TEXT [note: 'Description of what this group of nodes represents.']
-  "confidence" edge_confidence [not null, default: 'extracted', note: 'How this hyperedge was detected: extracted, inferred, ambiguous.']
-  "member_count" INTEGER [not null, default: 0, note: 'Denormalized count of members.']
-  "modified_at" TIMESTAMPTZ [not null, default: `now()`, note: 'Timestamp of the last modification to this row.']
-
-  indexes {
-    folder_id [name: 'hyperedges_folder_id_idx']
-    kind [name: 'hyperedges_kind_idx']
-  }
-
-  Note: '''
-Multi-node relationships (3+ nodes simultaneously).
-- flow: all functions in an auth flow or request pipeline
-- group: all implementations of an interface, all files in a module
-- co_change: files that always change together (from git history)
-- addressed_by: all requirements addressed by a single session
-Members stored in hyperedge_members.
-'''
-}
-
 Table "inference"."recommendations" {
   "id" UUID [pk, not null, default: `gen_random_uuid()`, note: 'Surrogate primary key (UUID).']
   "project_id" UUID [not null, note: 'Foreign key to projects — which project this targets.']
@@ -1434,8 +1540,9 @@ Table "inference"."recommendations" {
   "title" TEXT [not null, note: 'Short title (e.g. "Write an auth integration-test persona").']
   "why" TEXT [not null, note: 'Why this matters, with evidence summary.']
   "impact" TEXT [note: 'Projected impact (e.g. "Projected FTR +14%").']
-  "evidence" JSONB [not null, default: '[]', note: 'JSON array: [{session_id, file, description}] — what triggered this.']
-  "action_type" TEXT [not null, note: 'What to do: create_persona, promote_pattern, enable_skill, fix_anti_pattern, audit_stale, revise_rule.']
+  "evidence" JSONB [not null, default: '[]', note: 'JSON array: [{session_id, file, description}] — the raw activity that triggered this.']
+  "based_on" JSONB [not null, default: '{}', note: 'Provenance links to the derived artifacts this recommendation was built from: {patterns:[id], memories:[id], corrections:[ref]}. Distinct from `evidence` (raw session/file activity) — `based_on` points at the L1/L2 outputs the generator reasoned over.']
+  "action_type" TEXT [not null, note: 'What to do (free text; the generator enforces the canonical set): promote_pattern, create_agent, write_skill, archive_memory, enrich_memory, cross_project, revise_rule, audit_stale.']
   "action_detail" JSONB [not null, default: '{}', note: 'Specifics: {persona_name, pattern_id, skill_id, cwd, ...}.']
   "prompt" TEXT [note: 'Ready-to-send prompt for the ACP. Shown in the action drawer.']
   "default_acp" TEXT [note: 'Suggested ACP: claude-code, cursor, codex, etc.']
@@ -1443,12 +1550,15 @@ Table "inference"."recommendations" {
   "current_ftr" NUMERIC(4,3) [note: 'Rolling project FTR after the change. Updated during measurement.']
   "verdict" recommendation_verdict [not null, default: 'pending', note: 'Impact: positive (FTR improved), negative (FTR dropped), neutral, pending.']
   "props" JSONB [not null, default: '{}', note: 'Extensible: {baseline_corrections_avg, current_corrections_avg, tool_usage_delta, ...}.']
+  "score" NUMERIC(5,2) [note: 'Analyzer-computed priority score 0–100 (ranking.rs): weighted sum of action leverage, urgency, source-pattern confidence, and recurrence. Null until the project is ranked. Read path orders by this. Breakdown is mirrored into based_on.score_factors.']
+  "focal" BOOLEAN [not null, default: false, note: 'The single highest-scoring pending recommendation per project — the "do first" / today\'s koan pick the Observatory surfaces. Exactly one per project (or zero if none pending).']
   "acted_at" TIMESTAMPTZ [note: 'Timestamp when the user accepted — the point-in-time marker for before/after FTR comparison.']
   "measured_at" TIMESTAMPTZ [note: 'Timestamp when verdict was last computed.']
 
   indexes {
     (project_id, status) [name: 'recommendations_project_id_idx']
     urgency [name: 'recommendations_urgency_idx']
+    (project_id, score) [name: 'recommendations_score_idx']
     verdict [name: 'recommendations_verdict_idx']
   }
 
@@ -1527,7 +1637,7 @@ scope level. Populated at scan time from README frontmatter + detected stack.
 }
 
 Table "sensei"."index_errors" {
-  "id" serial [pk, increment, not null, note: 'Surrogate primary key (serial).']
+  "id" serial [pk, not null, note: 'Surrogate primary key (serial).']
   "folder_id" UUID [not null, note: 'Foreign key to folders — which folder this error occurred in.']
   "file_path" TEXT [not null, note: 'Path to the file that failed to index.']
   "error" TEXT [not null, note: 'Error message or stack trace.']
@@ -1583,6 +1693,8 @@ Table "sensei"."memories" {
   "session_id" UUID [note: 'Session that created this memory. Null for imported or collective memories.']
   "tags" TEXT[] [not null, default: '{}', note: 'Free-form tags (e.g. security, performance, compliance). GIN-indexed for &&/@> filters.']
   "triage_signal" TEXT [note: 'Which capture heuristic surfaced this memory (revert/correction/actually/repeat_pattern/override/test_failure). Null for explicit /save.']
+  "category" memory_category [note: 'Quality dimension for the learnings UI anatomy, orthogonal to `type`: correctness, convention, pattern, preference. Null until classified.']
+  "created_at" TIMESTAMPTZ [not null, default: `now()`, note: 'When this memory was first learned/created (stable). Distinct from modified_at, which moves on every reinforcement; the UI shows this as "learned".']
   "modified_at" TIMESTAMPTZ [not null, default: `now()`, note: 'Timestamp of the last modification to this row.']
 
   indexes {
@@ -1664,6 +1776,39 @@ Relationships between nodes are stored in the edges table.
 '''
 }
 
+Table "sensei"."project_dependencies" {
+  "from_project_id" UUID [pk, not null, note: 'FK to projects — the project whose manifest names the dep.']
+  "to_project_id" UUID [pk, not null, note: 'FK to projects — the project the local-protocol dep resolves to.']
+  "from_folder_id" UUID [pk, not null, note: 'FK to folders — the folder inside from_project that carries the manifest.']
+  "source_protocol" TEXT [not null, note: 'Local-dep protocol: link (npm link:), workspace (npm workspace:), file (npm file:), path (Cargo path=).']
+  "source_manifest" TEXT [pk, not null, note: 'Which manifest file declared the edge (package.json, Cargo.toml, pyproject.toml).']
+  "resolved_target" TEXT [note: 'Raw local-source payload as written in the manifest (e.g. "../actions", "workspace:*").']
+  "modified_at" TIMESTAMPTZ [not null, default: `now()`, note: 'Timestamp of the last modification to this row.']
+
+  indexes {
+    from_project_id [name: 'project_dependencies_from_idx']
+    to_project_id [name: 'project_dependencies_to_idx']
+    from_folder_id [name: 'project_dependencies_from_folder_idx']
+  }
+
+  Note: '''
+First-class project→project edges detected via local-path protocols.
+When a manifest declares a dep with `link:` / `workspace:` / `file:` (npm) or
+`path=` (Cargo), the referenced target folder is looked up in sensei.folders.
+If it belongs to a DIFFERENT sensei.projects row than the declaring folder,
+we record the edge here (from → to) instead of writing an external-library
+row to referenced_libraries. Powers the project window "depends on other
+project" surface (Track 3 Libraries screen) and lets the daemon reason about
+inner-source dependency graphs.
+- from_project_id: the project that DECLARES the dep
+- to_project_id:   the project the dep RESOLVES to
+- from_folder_id:  which folder inside from_project holds the manifest
+- source_protocol: link | workspace | file | path
+- source_manifest: package.json | Cargo.toml | pyproject.toml | ...
+- resolved_target: the raw local-source string (../actions, workspace:*, etc.)
+'''
+}
+
 Table "sensei"."referenced_libraries" {
   "folder_id" UUID [pk, not null, note: 'Foreign key to folders — the folder that uses this library.']
   "library_id" UUID [pk, not null, note: 'Foreign key to libraries — the library dependency.']
@@ -1700,41 +1845,6 @@ Per-file scan fingerprint used by the indexer to skip unchanged files.
 - mtime: file modification time as unix ms
 - content_hash: sha256 of file content for change detection
 - indexed_at: when this file was last successfully indexed
-'''
-}
-
-Table "activity"."events" {
-  "id" UUID [pk, not null, default: `gen_random_uuid()`, note: 'Surrogate primary key (UUID).']
-  "session_id" UUID [not null, note: 'Foreign key to sessions — which session this event occurred in.']
-  "folder_id" UUID [not null, note: 'Foreign key to folders — which folder context. Denormalized for fast queries.']
-  "event_type" event_type [not null, note: 'Event category. Determines the shape of the data payload.']
-  "turn_number" INTEGER [note: 'Which turn in the session this event occurred at. Null for non-turn events.']
-  "data" JSONB [not null, default: '{}', note: 'Event payload as JSON. Shape determined by event_type — see table comment.']
-  "created_at" TIMESTAMPTZ [not null, default: `now()`, note: 'Timestamp when this event occurred.']
-
-  indexes {
-    (session_id, created_at) [name: 'events_session_id_idx']
-    (folder_id, created_at) [name: 'events_folder_id_idx']
-    event_type [name: 'events_type_idx']
-  }
-
-  Note: '''
-Unified activity log for everything that happens during sessions.
-Consolidates the former api_requests, task_turns, tool_calls, and events tables.
-
-Event types and their data payloads:
-  tool_call:        {tool_name, service_name, input_params, response, duration_ms, used_in_response}
-  api_request:      {prompt_id, model, input_tokens, output_tokens, cache_read_tokens, cost_usd, duration_ms}
-  correction:       {description, module}
-  turn:             {role:"user"|"assistant", token_count}
-  phase_transition: {from_phase, to_phase}
-  checkpoint:       {summary, next_step}
-  task_start:       {task_description, task_type}
-  task_end:         {status, ftr_score, ftr_signals}
-  context_loaded:   {files_loaded, token_count}
-  edit:             {file_path, lines_changed}
-  test:             {passed, failed, total}
-  error:            {message, adapter, phase}
 '''
 }
 
@@ -1790,6 +1900,58 @@ Task-level events (task_start, task_end) are in the events table.
 '''
 }
 
+Table "activity"."turns" {
+  "id" UUID [pk, not null, default: `gen_random_uuid()`, note: 'Surrogate primary key (UUID).']
+  "session_id" UUID [not null, note: 'Foreign key to sessions — which session this turn belongs to.']
+  "turn_number" INTEGER [not null, note: '1-based turn index within the session.']
+  "segment" INTEGER [not null, default: 1, note: 'Sub-session marker: +1 after an idle gap > threshold. Group by this for work-session boundaries.']
+  "started_at" TIMESTAMPTZ [not null, note: 'First event of the turn (the UserPromptSubmit).']
+  "ended_at" TIMESTAMPTZ [not null, note: 'Last event of the turn (before the next prompt or session end).']
+  "duration" INTERVAL [note: 'Active time within the turn (gap-aware).']
+  "is_correction" BOOLEAN [not null, default: false, note: 'True if this turn\'s prompt corrected the previous turn (FTR detractor).']
+  "triage_signal" TEXT [note: 'Which correction heuristic matched (revert/correction/actually/...). Null if not a correction.']
+  "tool_calls" INTEGER [not null, default: 0, note: 'Number of tool invocations (PostToolUse) in the turn.']
+
+  indexes {
+    (session_id, turn_number) [name: 'turns_session_id_idx']
+    (session_id, segment) [name: 'turns_segment_idx']
+  }
+
+  Note: '''
+Per-turn breakdown of an assistant session, derived from the hook-event stream
+(analyzer L0, #66). A turn spans one UserPromptSubmit to the next. `segment`
+marks sub-sessions: it increments when the idle gap before a turn exceeds the
+threshold, so a multi-day resumed session splits into work segments without
+breaking the one-row-per-session model. Sub-sessions are a GROUP BY segment.
+'''
+}
+
+Table "inference"."corrections" {
+  "id" UUID [pk, not null, default: `gen_random_uuid()`, note: 'Surrogate primary key (UUID). Stable across runs via upsert-on-signature.']
+  "signature" TEXT [not null, unique, note: 'Deterministic cluster identity: hash(seed_session + normalized seed prompt). Stable as the cluster grows.']
+  "text" TEXT [not null, note: 'Canonical correction statement (LLM). Falls back to the seed member\'s normalized snippet when no chat model is available.']
+  "suggestion" TEXT [note: 'LLM advisory on what to do (reinforce a memory / add a rule / write a skill). Null when no chat model.']
+  "count" INTEGER [not null, default: 0, note: 'Number of corrective prompts in the cluster.']
+  "project_ids" UUID[] [not null, default: '{}', note: 'Distinct projects the correction appeared in. Names resolved by the API.']
+  "last_seen" TIMESTAMPTZ [note: 'Most recent corrective prompt in the cluster.']
+  "memory_id" UUID [note: 'Related learned memory (LLM-matched from a shortlist), or null.']
+  "instances" JSONB [not null, default: '[]', note: 'Provenance: [{project_id, session_id, ts, prompt}] — the member corrective prompts (snippet).']
+  "detected_at" TIMESTAMPTZ [not null, default: `now()`, note: 'When this cluster was first derived.']
+  "modified_at" TIMESTAMPTZ [not null, default: `now()`, note: 'When this row was last upserted.']
+
+  indexes {
+    project_ids [name: 'corrections_project_ids_idx']
+    count [name: 'corrections_count_idx']
+  }
+
+  Note: '''
+Recurring developer corrections, clustered globally across projects (analyzer #65 step 5).
+One row per recurring correction cluster: similar corrective prompts grouped by
+embedding (or lexical) similarity. Re-derived idempotently by the AggregateCorrections
+task; `signature` is the stable natural key.
+'''
+}
+
 Table "inference"."drift_items" {
   "id" UUID [pk, not null, default: `gen_random_uuid()`, note: 'Surrogate primary key (UUID).']
   "folder_id" UUID [not null, note: 'Foreign key to folders — which folder this drift was detected in.']
@@ -1814,23 +1976,6 @@ Doc-to-code drift tracking. One row per reference from a doc node to a code node
 - broken: target was deleted or renamed
 - expected_signature: what the doc says the symbol looks like
 - actual_signature: what the code actually has (null if broken)
-'''
-}
-
-Table "inference"."hyperedge_members" {
-  "id" UUID [pk, not null, default: `gen_random_uuid()`, note: 'Surrogate primary key (UUID).']
-  "hyperedge_id" UUID [not null, note: 'Foreign key to hyperedges — which hyperedge this member belongs to.']
-  "node_id" UUID [not null, note: 'Foreign key to nodes — which node is a member of this hyperedge.']
-  "position" INTEGER [note: 'Order position for flow-type hyperedges. Null for unordered groups.']
-
-  indexes {
-    hyperedge_id [name: 'hyperedge_members_hyperedge_id_idx']
-    node_id [name: 'hyperedge_members_node_id_idx']
-  }
-
-  Note: '''
-Members of a hyperedge. Links nodes to their hyperedge with optional ordering.
-- position: sequence order for flow-type hyperedges (null for unordered groups)
 '''
 }
 
@@ -1891,6 +2036,32 @@ making ingestion idempotent; it is also the echo-guard — a rule this daemon
 pushed is recorded here, so pulling it back links to the existing memory instead
 of creating a federated duplicate. memory_id is the local memory; null after the
 linked memory is hard-deleted.
+'''
+}
+
+Table "sensei"."impact_verdicts" {
+  "id" UUID [pk, not null, default: `gen_random_uuid()`, note: 'Surrogate primary key (UUID).']
+  "project_id" UUID [not null, note: 'FK to projects — every impact entry belongs to exactly one project.']
+  "session_id" UUID [note: 'Optional FK to the session that shipped the change. Null for retrospective entries.']
+  "title" TEXT [not null, note: 'Short label — the "what" being logged.']
+  "note" TEXT [note: 'Optional context — why the change was worth logging or what to watch for.']
+  "verdict" impact_verdict [not null, default: 'pending', note: 'Outcome: pending (not yet judged), success (delivered as intended), mixed (delivered value but not clean), failure (regressed or missed the goal).']
+  "created_at" TIMESTAMPTZ [not null, default: `now()`, note: 'When the entry was logged.']
+  "decided_at" TIMESTAMPTZ [note: 'When the verdict was assigned. NULL while pending; enforced by CHECK constraint.']
+
+  indexes {
+    (project_id, created_at) [name: 'impact_verdicts_project_idx']
+    (project_id, verdict, created_at) [name: 'impact_verdicts_verdict_idx']
+    session_id [name: 'impact_verdicts_session_idx']
+  }
+
+  Note: '''
+Impact log — retrospective judgments about shipped changes. Users file
+an entry per meaningful change (feature, refactor, incident response),
+then verdict it later as success / mixed / failure once the effect has
+had time to settle. Powers the Impact screen in the project window and
+feeds the analyzer's effectiveness signals. Session linkage is optional
+so pre-capture history can be backfilled.
 '''
 }
 
@@ -1975,10 +2146,25 @@ Insert triggers update memories.reinforced_count / violated_count / strength / s
 '''
 }
 
+Table "sensei"."memory_share_batch_members" {
+  "batch_id" UUID [pk, not null, note: 'FK to memory_share_batches — the batch this membership belongs to.']
+  "memory_id" UUID [pk, not null, note: 'FK to memories — the memory being proposed for share via this batch.']
+  "added_at" TIMESTAMPTZ [not null, default: `now()`, note: 'When the memory was attached to the batch (may differ from batch created_at if members are added later).']
+
+  indexes {
+    memory_id [name: 'memory_share_batch_members_memory_idx']
+  }
+
+  Note: '''
+Join between memory_share_batches and memories. One row per (batch,
+memory) pair. Both foreign keys cascade on delete so removing a memory
+or a batch cleanly clears the association.
+'''
+}
+
 Ref: "sensei"."extensions"."plugin_id" > "sensei"."extensions"."id" [delete: cascade]
 Ref: "gateway"."inference_assignments"."chain_id" > "gateway"."fallback_chains"."id" [delete: cascade]
 Ref: "gateway"."models"."provider_id" > "gateway"."providers"."id" [delete: cascade]
-Ref: "inference"."insights"."batch_id" > "inference"."insight_batches"."id" [delete: set null]
 Ref: "inference"."reasoning_traces"."project_id" > "sensei"."projects"."id" [delete: set null]
 Ref: "sensei"."extension_projects"."extension_id" > "sensei"."extensions"."id" [delete: cascade]
 Ref: "sensei"."extension_projects"."project_id" > "sensei"."projects"."id" [delete: cascade]
@@ -1986,9 +2172,12 @@ Ref: "sensei"."folders"."root_id" > "sensei"."folders_to_watch"."id" [delete: ca
 Ref: "sensei"."folders"."parent_id" > "sensei"."folders"."id" [delete: cascade]
 Ref: "sensei"."folders"."project_id" > "sensei"."projects"."id" [delete: set null]
 Ref: "sensei"."library_pages"."library_id" > "sensei"."libraries"."id" [delete: cascade]
+Ref: "sensei"."memory_share_batches"."project_id" > "sensei"."projects"."id" [delete: cascade]
 Ref: "sensei"."namespaces"."scope_key" > "sensei"."scopes"."key"
 Ref: "sensei"."project_libraries"."library_id" > "sensei"."libraries"."id" [delete: cascade]
 Ref: "sensei"."project_libraries"."project_id" > "sensei"."projects"."id" [delete: cascade]
+Ref: "sensei"."service_projects"."service_id" > "sensei"."services"."id" [delete: cascade]
+Ref: "sensei"."service_projects"."project_id" > "sensei"."projects"."id" [delete: cascade]
 Ref: "activity"."sessions"."folder_id" > "sensei"."folders"."id" [delete: cascade]
 Ref: "activity"."sessions"."project_id" > "sensei"."projects"."id" [delete: set null]
 Ref: "gateway"."fallback_chain_models"."chain_id" > "gateway"."fallback_chains"."id" [delete: cascade]
@@ -1999,7 +2188,6 @@ Ref: "gateway"."models_in_router"."model_id" > "gateway"."models"."id" [delete: 
 Ref: "inference"."communities"."folder_id" > "sensei"."folders"."id" [delete: cascade]
 Ref: "inference"."detected_patterns"."folder_id" > "sensei"."folders"."id" [delete: cascade]
 Ref: "inference"."detected_patterns"."fix_pattern_id" > "inference"."detected_patterns"."id" [delete: set null]
-Ref: "inference"."hyperedges"."folder_id" > "sensei"."folders"."id" [delete: cascade]
 Ref: "inference"."recommendations"."project_id" > "sensei"."projects"."id" [delete: cascade]
 Ref: "inference"."recommendations"."reasoning_trace_id" > "inference"."reasoning_traces"."id" [delete: set null]
 Ref: "sensei"."benchmark_reports"."folder_id" > "sensei"."folders"."id" [delete: set null]
@@ -2012,28 +2200,33 @@ Ref: "sensei"."memories"."project_id" > "sensei"."projects"."id" [delete: cascad
 Ref: "sensei"."memories"."namespace_id" > "sensei"."namespaces"."id" [delete: set null]
 Ref: "sensei"."nodes"."folder_id" > "sensei"."folders"."id" [delete: cascade]
 Ref: "sensei"."nodes"."parent_id" > "sensei"."nodes"."id" [delete: cascade]
+Ref: "sensei"."project_dependencies"."from_project_id" > "sensei"."projects"."id" [delete: cascade]
+Ref: "sensei"."project_dependencies"."to_project_id" > "sensei"."projects"."id" [delete: cascade]
+Ref: "sensei"."project_dependencies"."from_folder_id" > "sensei"."folders"."id" [delete: cascade]
 Ref: "sensei"."referenced_libraries"."folder_id" > "sensei"."folders"."id" [delete: cascade]
 Ref: "sensei"."referenced_libraries"."library_id" > "sensei"."libraries"."id" [delete: cascade]
 Ref: "sensei"."scan_state"."folder_id" > "sensei"."folders"."id" [delete: cascade]
-Ref: "activity"."events"."session_id" > "activity"."sessions"."id" [delete: cascade]
-Ref: "activity"."events"."folder_id" > "sensei"."folders"."id" [delete: cascade]
 Ref: "activity"."snapshots"."session_id" > "activity"."sessions"."id" [delete: cascade]
 Ref: "activity"."snapshots"."folder_id" > "sensei"."folders"."id" [delete: cascade]
 Ref: "activity"."task_sessions"."session_id" > "activity"."sessions"."id" [delete: set null]
 Ref: "activity"."task_sessions"."folder_id" > "sensei"."folders"."id" [delete: cascade]
+Ref: "activity"."turns"."session_id" > "activity"."sessions"."id" [delete: cascade]
+Ref: "inference"."corrections"."memory_id" > "sensei"."memories"."id" [delete: set null]
 Ref: "inference"."drift_items"."folder_id" > "sensei"."folders"."id" [delete: cascade]
 Ref: "inference"."drift_items"."doc_node_id" > "sensei"."nodes"."id" [delete: cascade]
 Ref: "inference"."drift_items"."code_node_id" > "sensei"."nodes"."id" [delete: set null]
-Ref: "inference"."hyperedge_members"."hyperedge_id" > "inference"."hyperedges"."id" [delete: cascade]
-Ref: "inference"."hyperedge_members"."node_id" > "sensei"."nodes"."id" [delete: cascade]
 Ref: "sensei"."edges"."folder_id" > "sensei"."folders"."id" [delete: cascade]
 Ref: "sensei"."edges"."source_id" > "sensei"."nodes"."id" [delete: cascade]
 Ref: "sensei"."edges"."target_id" > "sensei"."nodes"."id" [delete: cascade]
 Ref: "sensei"."federated_memories"."knowledge_source_id" > "sensei"."knowledge_sources"."id" [delete: cascade]
 Ref: "sensei"."federated_memories"."memory_id" > "sensei"."memories"."id" [delete: set null]
+Ref: "sensei"."impact_verdicts"."project_id" > "sensei"."projects"."id" [delete: cascade]
+Ref: "sensei"."impact_verdicts"."session_id" > "activity"."sessions"."id" [delete: set null]
 Ref: "sensei"."memory_evidence"."memory_id" > "sensei"."memories"."id" [delete: cascade]
 Ref: "sensei"."memory_examples"."memory_id" > "sensei"."memories"."id" [delete: cascade]
 Ref: "sensei"."memory_links"."parent_id" > "sensei"."memories"."id" [delete: cascade]
 Ref: "sensei"."memory_links"."child_id" > "sensei"."memories"."id" [delete: cascade]
 Ref: "sensei"."memory_outcomes"."memory_id" > "sensei"."memories"."id" [delete: cascade]
 Ref: "sensei"."memory_outcomes"."session_id" > "activity"."sessions"."id" [delete: set null]
+Ref: "sensei"."memory_share_batch_members"."batch_id" > "sensei"."memory_share_batches"."id" [delete: cascade]
+Ref: "sensei"."memory_share_batch_members"."memory_id" > "sensei"."memories"."id" [delete: cascade]

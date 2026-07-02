@@ -1,5 +1,9 @@
 <script lang="ts">
     import { sparklinePath } from '$lib/sparkline';
+    import { appState } from '$lib/appstate.svelte.js';
+    import { senseiApi } from '$lib/api.js';
+    import { invalidateAll } from '$app/navigation';
+    import { page } from '$app/state';
 
     let { data } = $props();
     let ftr = $derived(Math.round((data.ftrMetrics?.ftr14d ?? 0) * 100));
@@ -14,21 +18,57 @@
         if (value >= threshold * 0.7) return 'warn';
         return 'fail';
     }
+
+    // Gap 1 fix — accept/reject the top recommendation. Guards double-clicks
+    // via `deciding` and re-fetches after the daemon lands the update so
+    // `MeasureVerdicts` can pick it up on the next scheduler tick.
+    const projectId = $derived(page.params.id ?? '');
+    let deciding = $state(false);
+    async function decide(action: 'accept' | 'reject') {
+        const rec = data.topRecommendation;
+        if (!rec || !projectId || deciding) return;
+        deciding = true;
+        try {
+            const api = senseiApi(appState.port);
+            if (action === 'accept') await api.acceptProjectRecommendation(projectId, rec.id);
+            else                    await api.rejectProjectRecommendation(projectId, rec.id);
+            await invalidateAll();
+        } finally {
+            deciding = false;
+        }
+    }
 </script>
 
 <div class="px-6 py-6 max-w-[860px]">
     <!-- Hero: top recommendation -->
     {#if data.topRecommendation}
-        <div class="bg-paper-mute rounded-lg p-5 mb-5">
+        <div class="bg-paper-mute rounded-lg p-5 mb-5" data-testid="top-recommendation">
             <span class="text-xs opacity-60 block mb-1.5"
                 >Top recommendation</span
             >
             <p class="text-base font-semibold m-0 mb-2">
                 {data.topRecommendation.title}
             </p>
-            <span class="text-xs px-2 py-0.5 rounded-lg bg-paper-mute"
-                >{data.topRecommendation.urgency}</span
-            >
+            <div class="flex items-center gap-2 flex-wrap">
+                <span class="text-xs px-2 py-0.5 rounded-lg bg-paper-mute"
+                    >{data.topRecommendation.urgency}</span
+                >
+                <div class="flex-1"></div>
+                <button
+                    type="button"
+                    class="px-3 py-1 rounded-md text-xs bg-primary text-on-primary border-none cursor-pointer"
+                    disabled={deciding}
+                    data-testid="rec-accept"
+                    onclick={() => decide('accept')}
+                >{deciding ? 'Working…' : 'Accept'}</button>
+                <button
+                    type="button"
+                    class="px-3 py-1 rounded-md text-xs bg-transparent text-ink-soft border border-paper-edge cursor-pointer"
+                    disabled={deciding}
+                    data-testid="rec-reject"
+                    onclick={() => decide('reject')}
+                >Reject</button>
+            </div>
         </div>
     {:else}
         <div class="bg-paper-mute rounded-lg p-5 mb-5 opacity-50">
