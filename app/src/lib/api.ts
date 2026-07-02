@@ -9,7 +9,7 @@ import type {
   ProjectListItem,
   KnowledgeSource, NewKnowledgeSourceBody, SyncStats,
   McpToolManifest, SessionToolTimeline, MemoryShareBatch, ImpactVerdictEntry,
-  ProjectMcpToolStat,
+  ProjectMcpToolStat, ToolSignal,
 } from './types.js';
 import type {
   MemoryListResponse, MemoryDetail, ContextResponse,
@@ -333,6 +333,11 @@ export function senseiApi(port: number) {
     getToolUsage: () =>
       get<{ tools: Array<{ tool_name: string; call_count: number; error_count: number; avg_duration_ms: number | null; last_used_at: string }> }>(
         '/api/observatory/tool-usage', { tools: [] }
+      ),
+
+    getToolSignals: () =>
+      get<{ signals: ToolSignal[] }>(
+        '/api/observatory/tool-signals', { signals: [] }
       ),
 
     getLibraryUsage: (id: string) =>

@@ -4,8 +4,9 @@
     import { senseiApi } from "$lib/api.js";
     import TabBar from "$lib/components/TabBar.svelte";
     import EmptyState from "$lib/components/EmptyState.svelte";
+    import SignalCard from "$lib/components/SignalCard.svelte";
     import { Eyebrow, PageHeader } from "$lib/components";
-    import type { McpToolManifest, SessionToolCall } from "$lib/types.js";
+    import type { McpToolManifest, SessionToolCall, ToolSignal } from "$lib/types.js";
 
     type Tool = McpToolManifest;
     type ToolStat = { tool_name: string; call_count: number; error_count: number; avg_duration_ms: number | null; last_used_at: string };
@@ -13,6 +14,7 @@
 
     let tools = $state<Tool[]>([]);
     let toolStats = $state<ToolStat[]>([]);
+    let toolSignals = $state<ToolSignal[]>([]);
     let loading = $state(true);
     let tab = $state("playground");
     let kindFilter = $state<'all' | 'query' | 'action'>('all');
@@ -50,12 +52,14 @@
 
     onMount(async () => {
         const api = senseiApi(appState.port);
-        const [data, stats] = await Promise.all([
+        const [data, stats, signals] = await Promise.all([
             api.mcpListTools(),
             api.getToolUsage(),
+            api.getToolSignals(),
         ]);
         tools = data.tools;
         toolStats = stats.tools ?? [];
+        toolSignals = signals.signals ?? [];
         loading = false;
     });
 
@@ -356,6 +360,23 @@
             description="Tool usage statistics appear after your assistant sessions call sensei tools. Start a session to begin tracking."
         />
     {:else}
+        <!-- Signal cards on top — sorted by variant priority in the daemon. -->
+        {#if toolSignals.length > 0}
+            <div class="mb-6">
+                <p class="text-xs uppercase tracking-wide text-ink-mute mb-2">Signals</p>
+                <div class="grid gap-2 grid-cols-1 md:grid-cols-2">
+                    {#each toolSignals as sig (sig.tool_name + sig.variant)}
+                        <SignalCard
+                            variant={sig.variant}
+                            title={sig.title}
+                            detail={sig.detail}
+                            toolName={sig.tool_name}
+                        />
+                    {/each}
+                </div>
+            </div>
+        {/if}
+
         <div class="flex flex-col gap-1">
             <div class="grid grid-cols-[1fr_80px_80px_100px_120px] gap-3 px-3 py-2 text-xs text-ink-soft tracking-wide uppercase">
                 <span>Tool</span>
