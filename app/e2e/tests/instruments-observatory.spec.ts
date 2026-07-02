@@ -21,7 +21,7 @@ test.describe('Observatory Instruments', () => {
   test.beforeEach(async ({ tauriPage }) => {
     await navigateTo(tauriPage, '/instruments');
     // Give the store's loadCatalog() a chance to hydrate.
-    await tauriPage.waitForSelector('[data-testid="playground-body"]', { timeout: 15_000 }).catch(() => {});
+    await tauriPage.waitForSelector('[data-testid="playground-body"]', 15_000).catch(() => {});
   });
 
   test('playground renders sensei manifest tools with kind badges', async ({ tauriPage }) => {
@@ -38,25 +38,24 @@ test.describe('Observatory Instruments', () => {
   });
 
   test('kind chip filters the tool list (queries only)', async ({ tauriPage }) => {
-    await tauriPage.locator('[data-testid="playground-body"]').waitFor({ timeout: 10_000 });
+    await tauriPage.locator('[data-testid="playground-body"]').waitFor(10_000);
 
-    // Baseline — All shows every tool.
-    const allCount = await tauriPage.locator('[data-testid^="tool-row-"]').count();
-    expect(allCount).toBeGreaterThan(0);
+    // The tauri-playwright wrapper doesn't expose evaluateAll on locators —
+    // fall back to a page.evaluate that queries the DOM directly.
+    const readKinds = async () => tauriPage.evaluate(`
+      Array.from(document.querySelectorAll('[data-testid^="tool-row-"]'))
+        .map(el => el.dataset.toolKind)
+    `) as Promise<string[]>;
 
-    // Click "Queries" and every visible row should be kind=query.
+    const allKinds = await readKinds();
+    expect(allKinds.length).toBeGreaterThan(0);
+
     await tauriPage.locator('[data-testid="kind-chip-query"]').click();
-    // Small wait for the $derived filter to re-render.
-    await tauriPage.waitForTimeout(200);
-    const queriesCount = await tauriPage.locator('[data-testid^="tool-row-"]').count();
-    expect(queriesCount).toBeGreaterThan(0);
-    expect(queriesCount).toBeLessThanOrEqual(allCount);
-
-    // Every rendered row is a query kind — matches the daemon's manifest.
-    const kinds = await tauriPage.locator('[data-testid^="tool-row-"]').evaluateAll(
-      els => els.map(el => (el as HTMLElement).dataset.toolKind),
-    );
-    for (const k of kinds) expect(k).toBe('query');
+    await new Promise<void>(r => setTimeout(r, 300));
+    const filteredKinds = await readKinds();
+    expect(filteredKinds.length).toBeGreaterThan(0);
+    expect(filteredKinds.length).toBeLessThanOrEqual(allKinds.length);
+    for (const k of filteredKinds) expect(k).toBe('query');
   });
 
   test('Insights tab shows signal cards + expandable per-tool detail', async ({ tauriPage }) => {
@@ -70,7 +69,7 @@ test.describe('Observatory Instruments', () => {
     // one card when the cache has variant-firing rows. Wait up to 10s.
     const signalsExist = await tauriPage
       .locator('[data-testid="tool-signals"]')
-      .waitFor({ timeout: 10_000 })
+      .waitFor(10_000)
       .then(() => true)
       .catch(() => false);
     if (!signalsExist) {
