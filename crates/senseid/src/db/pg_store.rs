@@ -3484,11 +3484,17 @@ impl PgStore {
     }
 
     pub async fn get_project_memories(&self, project_id: &uuid::Uuid) -> Result<serde_json::Value, String> {
-        let rows: Vec<(uuid::Uuid, String, String, String, f64, chrono::DateTime<chrono::Utc>)> =
+        // `strength` is `real` (Postgres 4-byte float) — sqlx decodes it as
+        // `f32`, not `f64`. A mismatched decode-target quietly failed the
+        // whole query and made the endpoint 500. `last_relevant_at` is
+        // likewise nullable for freshly minted memories that haven't been
+        // reinforced or violated, so decode as Option so a NULL doesn't
+        // fail the row.
+        let rows: Vec<(uuid::Uuid, String, String, String, f32, Option<chrono::DateTime<chrono::Utc>>)> =
             sqlx_core::query_as::query_as(
                 "SELECT id, title, type::text, status::text, strength, last_relevant_at
                  FROM sensei.memories WHERE project_id = $1
-                 ORDER BY last_relevant_at DESC LIMIT 100"
+                 ORDER BY last_relevant_at DESC NULLS LAST LIMIT 100"
             ).bind(project_id)
             .fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
 
@@ -3497,7 +3503,11 @@ impl PgStore {
         let active: Vec<_> = rows.into_iter()
             .filter(|r| r.3 == "active")
             .map(|(id, title, typ, status, strength, last)| {
-                serde_json::json!({ "id": id, "title": title, "type": typ, "status": status, "strength": strength, "lastRelevantAt": last.to_rfc3339() })
+                serde_json::json!({
+                    "id": id, "title": title, "type": typ, "status": status,
+                    "strength": strength,
+                    "lastRelevantAt": last.map(|t| t.to_rfc3339()),
+                })
             }).collect();
 
         Ok(serde_json::json!({ "active": active, "total": total, "pendingShare": pending_share }))
