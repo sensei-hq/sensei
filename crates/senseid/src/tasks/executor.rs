@@ -104,6 +104,7 @@ async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
             TaskKind::ReconcileIdentity => handlers::reconcile_identity(ctx, task).await,
             TaskKind::AnalyzeProject => handlers::analyze_project(ctx, task).await,
             TaskKind::AggregateCorrections => handlers::aggregate_corrections(ctx, task).await,
+            TaskKind::AggregateToolInsights => handlers::aggregate_tool_insights(ctx, task).await,
             TaskKind::BackfillTranscripts => crate::transcript::run_backfill(ctx, task).await,
             TaskKind::BackfillTranscriptFile => crate::transcript::run_backfill_file(ctx, task).await,
         }
