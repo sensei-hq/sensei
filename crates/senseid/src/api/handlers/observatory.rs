@@ -526,6 +526,26 @@ pub(crate) async fn tool_usage(
     Ok(Json(serde_json::json!({ "tools": data })))
 }
 
+/// GET /api/observatory/tool-signals — derived insight cards over the same
+/// tool-usage data. Pure computation on top of `get_tool_usage_stats`; the
+/// heuristics live in `handlers::tool_signals` so they can be unit-tested
+/// without a DB round-trip.
+pub(crate) async fn tool_signals(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    use crate::api::handlers::tool_signals as ts;
+    let rows = state.pg.get_tool_usage_stats().await
+        .map_err(|e| { tracing::error!(error = %e, "tool_signals: get_tool_usage_stats failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+
+    // The pg_store returns `serde_json::Value`s; deserialize into the
+    // typed row shape used by the signal derivation.
+    let stats: Vec<ts::ToolUsageRow> = rows.into_iter()
+        .filter_map(|v| serde_json::from_value(v).ok())
+        .collect();
+    let signals = ts::derive_signals(&stats, chrono::Utc::now(), &ts::SignalThresholds::default());
+    Ok(Json(serde_json::json!({ "signals": signals })))
+}
+
 /// GET /api/observatory/model-effectiveness — FTR / corrections / volume per
 /// (provider, model) across the multi-model corpus (Zed + Claude). Powers the
 /// "which models work best here" view.

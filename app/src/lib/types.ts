@@ -714,3 +714,14 @@ export interface ProjectMcpToolStat {
   ftr: number | null;
   lastUsedAt: string | null;
 }
+
+// ─── Observatory tool signals (T2 Slice D-lite) ──────────────────────────────
+
+export type SignalVariant = 'warn' | 'opportunity' | 'unused' | 'win';
+
+export interface ToolSignal {
+  tool_name: string;
+  variant: SignalVariant;
+  title: string;
+  detail: string;
+}
