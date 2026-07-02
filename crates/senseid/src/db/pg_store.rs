@@ -3029,6 +3029,118 @@ impl PgStore {
         }).collect())
     }
 
+    /// List memory-share batches for a project, newest first. `only_status`
+    /// filters to a single lifecycle stage (`proposed`, `approved`, …); pass
+    /// `None` to include every stage.
+    pub async fn list_memory_share_batches(
+        &self,
+        project_id: &uuid::Uuid,
+        only_status: Option<&str>,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, String, Option<String>, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>, i64)> =
+            sqlx_core::query_as::query_as(
+                "SELECT b.id, b.status::text, b.note, b.created_at, b.decided_at,
+                        (SELECT count(*) FROM sensei.memory_share_batch_members m WHERE m.batch_id = b.id)::bigint
+                   FROM sensei.memory_share_batches b
+                  WHERE b.project_id = $1
+                    AND ($2::text IS NULL OR b.status::text = $2)
+                  ORDER BY b.created_at DESC
+                  LIMIT 200"
+            )
+            .bind(project_id)
+            .bind(only_status)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        Ok(rows.into_iter().map(|(id, status, note, created_at, decided_at, member_count)| {
+            serde_json::json!({
+                "id":          id,
+                "status":      status,
+                "note":        note,
+                "createdAt":   created_at.to_rfc3339(),
+                "decidedAt":   decided_at.map(|t| t.to_rfc3339()),
+                "memberCount": member_count,
+            })
+        }).collect())
+    }
+
+    /// Create a new `proposed` memory-share batch with the given memory ids.
+    /// Rejects an empty member list — a batch with nothing to share is a
+    /// caller-side bug. Returns the new batch id on success.
+    pub async fn create_memory_share_batch(
+        &self,
+        project_id: &uuid::Uuid,
+        memory_ids: &[uuid::Uuid],
+        note: Option<&str>,
+    ) -> Result<uuid::Uuid, String> {
+        if memory_ids.is_empty() {
+            return Err("memory_ids must be non-empty".into());
+        }
+        let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
+
+        let (batch_id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.memory_share_batches (project_id, note)
+             VALUES ($1, $2) RETURNING id"
+        )
+        .bind(project_id)
+        .bind(note)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        // ON CONFLICT DO NOTHING is intentional — the composite PK guards
+        // against duplicate members when a caller passes the same id twice.
+        sqlx_core::query::query(
+            "INSERT INTO sensei.memory_share_batch_members (batch_id, memory_id)
+             SELECT $1, unnest($2::uuid[])
+             ON CONFLICT DO NOTHING"
+        )
+        .bind(batch_id)
+        .bind(memory_ids)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        tx.commit().await.map_err(|e| e.to_string())?;
+        Ok(batch_id)
+    }
+
+    /// Set a memory-share batch's terminal status. Accepts `approved`,
+    /// `rejected`, or `withdrawn`. `approved` / `rejected` stamp
+    /// `decided_at = now()`; `withdrawn` clears it (the batch was never
+    /// decided). Errors when the batch is missing or already decided.
+    pub async fn set_memory_share_batch_status(
+        &self,
+        batch_id: &uuid::Uuid,
+        new_status: &str,
+        note: Option<&str>,
+    ) -> Result<(), String> {
+        if !matches!(new_status, "approved" | "rejected" | "withdrawn") {
+            return Err(format!("invalid status {new_status}"));
+        }
+        let decided_at_sql = if new_status == "withdrawn" { "NULL" } else { "now()" };
+        let sql = format!(
+            "UPDATE sensei.memory_share_batches
+                SET status = $1::sensei.memory_share_batch_status,
+                    note = COALESCE($2, note),
+                    decided_at = {decided_at_sql}
+              WHERE id = $3
+                AND status = 'proposed'"
+        );
+        let result = sqlx_core::query::query(&sql)
+            .bind(new_status)
+            .bind(note)
+            .bind(batch_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        if result.rows_affected() == 0 {
+            return Err("batch not found or already decided".into());
+        }
+        Ok(())
+    }
+
     pub async fn ensure_test_project(&self, name: &str) -> Result<uuid::Uuid, String> {
         // Namespace fixtures under `_test:` so leaked rows are identifiable
         // (and filterable by the Projects screen) and never masquerade as real

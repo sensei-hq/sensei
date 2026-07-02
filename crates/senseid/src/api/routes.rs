@@ -70,6 +70,11 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/projects/{id}/libraries",       get(project_detail::get_project_libraries))
         .route("/api/projects/{id}/instruments",     get(project_detail::get_project_instruments))
         .route("/api/projects/{id}/memories",        get(project_detail::get_project_memories))
+        .route("/api/projects/{id}/memory-batches",
+               get(project_detail::list_memory_share_batches)
+                 .post(project_detail::create_memory_share_batch))
+        .route("/api/projects/{id}/memory-batches/{batch_id}",
+               put(project_detail::decide_memory_share_batch))
         .route("/api/projects/{id}/recommendations", get(project_detail::get_project_recommendations))
         .route("/api/projects/{id}/impact",          get(project_detail::get_project_impact))
         .route("/api/projects/{id}/sessions",        get(project_detail::get_project_sessions))

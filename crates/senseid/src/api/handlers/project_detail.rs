@@ -181,3 +181,87 @@ pub(crate) async fn get_project_sessions(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(serde_json::json!({ "sessions": sessions })))
 }
+
+// ── Memory share batches ────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub(crate) struct BatchListQuery {
+    status: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct BatchCreateBody {
+    memory_ids: Vec<uuid::Uuid>,
+    note: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct BatchDecisionBody {
+    status: String,
+    note: Option<String>,
+}
+
+/// GET /api/projects/{id}/memory-batches?status=proposed
+pub(crate) async fn list_memory_share_batches(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<BatchListQuery>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let uuid = uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?;
+    state.pg.get_project(&uuid).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let batches = state.pg.list_memory_share_batches(&uuid, q.status.as_deref()).await
+        .map_err(|e| {
+            tracing::error!(error = %e, project = %uuid, "list_memory_share_batches failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    Ok(Json(serde_json::json!({ "batches": batches })))
+}
+
+/// POST /api/projects/{id}/memory-batches
+pub(crate) async fn create_memory_share_batch(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<BatchCreateBody>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let uuid = uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?;
+    state.pg.get_project(&uuid).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    if body.memory_ids.is_empty() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let batch_id = state.pg
+        .create_memory_share_batch(&uuid, &body.memory_ids, body.note.as_deref())
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, project = %uuid, "create_memory_share_batch failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    Ok(Json(serde_json::json!({ "id": batch_id })))
+}
+
+/// PUT /api/projects/{id}/memory-batches/{batch_id}
+pub(crate) async fn decide_memory_share_batch(
+    State(state): State<AppState>,
+    Path((id, batch_id)): Path<(String, String)>,
+    Json(body): Json<BatchDecisionBody>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let _project_uuid = uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let batch_uuid = uuid::Uuid::parse_str(&batch_id).map_err(|_| StatusCode::BAD_REQUEST)?;
+    state.pg
+        .set_memory_share_batch_status(&batch_uuid, &body.status, body.note.as_deref())
+        .await
+        .map_err(|e| {
+            if e.contains("not found") || e.contains("already decided") {
+                StatusCode::CONFLICT
+            } else if e.contains("invalid status") {
+                StatusCode::BAD_REQUEST
+            } else {
+                tracing::error!(error = %e, batch = %batch_uuid, "set_memory_share_batch_status failed");
+                StatusCode::INTERNAL_SERVER_ERROR
+            }
+        })?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
