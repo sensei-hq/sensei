@@ -605,3 +605,36 @@ export interface NewKnowledgeSourceBody {
 export interface SyncStats {
   [k: string]: unknown;
 }
+
+// ─── MCP tool manifests (playground / instruments) ───────────────────────────
+//
+// Wire shape returned by `GET /api/mcp/tools`. One entry per tool the daemon
+// dispatches on. Fields mirror `crates/senseid/src/api/handlers/mcp_manifests.rs`
+// — the daemon is the source of truth; keep in lockstep.
+
+export type McpToolKind = 'query' | 'action';
+export type McpInputKind = 'text' | 'enum' | 'number';
+
+export interface McpToolInput {
+  key: string;
+  kind: McpInputKind;
+  required: boolean;
+  label: string;
+  placeholder?: string;
+  default?: string;
+  options?: string[];
+}
+
+export interface McpToolExample {
+  response: string;
+}
+
+export interface McpToolManifest {
+  mcp: string;
+  id: string;
+  name: string;
+  kind: McpToolKind;
+  summary: string;
+  inputs: McpToolInput[];
+  example: McpToolExample;
+}
