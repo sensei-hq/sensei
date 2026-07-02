@@ -490,6 +490,12 @@ export interface PatternEntry {
   confidence: number;
   is_anti_pattern: boolean;
   lifecycle?: string;
+  /** Human-readable description of the pattern and why it matters. */
+  description?: string | null;
+  /** Code example showing the pattern (or the anti-pattern to avoid). */
+  example?: string | null;
+  /** Free-form enforcement guidance surfaced when lifecycle = rule. */
+  enforcement?: string | null;
 }
 
 export interface Recommendation {
@@ -604,4 +610,118 @@ export interface NewKnowledgeSourceBody {
 
 export interface SyncStats {
   [k: string]: unknown;
+}
+
+// ─── MCP tool manifests (playground / instruments) ───────────────────────────
+//
+// Wire shape returned by `GET /api/mcp/tools`. One entry per tool the daemon
+// dispatches on. Fields mirror `crates/senseid/src/api/handlers/mcp_manifests.rs`
+// — the daemon is the source of truth; keep in lockstep.
+
+export type McpToolKind = 'query' | 'action';
+export type McpInputKind = 'text' | 'enum' | 'number';
+
+export interface McpToolInput {
+  key: string;
+  kind: McpInputKind;
+  required: boolean;
+  label: string;
+  placeholder?: string;
+  default?: string;
+  options?: string[];
+}
+
+export interface McpToolExample {
+  response: string;
+}
+
+export interface McpToolManifest {
+  mcp: string;
+  id: string;
+  name: string;
+  kind: McpToolKind;
+  summary: string;
+  inputs: McpToolInput[];
+  example: McpToolExample;
+}
+
+// ─── Session tool timeline (Instruments Replay tab) ──────────────────────────
+//
+// Wire shape returned by `GET /api/sessions/{id}/tool-timeline`. One row per
+// tool call, paired PreToolUse ↔ PostToolUse. Mirrors the JSON keys the
+// daemon emits from `pg_store::get_session_tool_calls`.
+
+export interface SessionToolCall {
+  callId: number;
+  toolName: string;
+  family: string;
+  request: unknown;
+  response: unknown | null;
+  success: boolean | null;
+  startedAtMs: number;
+  completedAtMs: number | null;
+  durationMs: number | null;
+  startedAt: string;
+  completedAt: string | null;
+  /** True when the PostToolUse hasn't landed yet (call in-flight or aborted). */
+  inFlight: boolean;
+}
+
+export interface SessionToolTimeline {
+  sessionId: string;
+  calls: SessionToolCall[];
+  count: number;
+}
+
+// ─── Memory share batches (T3 Slice 2.2) ─────────────────────────────────────
+
+export type MemoryShareBatchStatus = 'proposed' | 'approved' | 'rejected' | 'withdrawn';
+
+export interface MemoryShareBatch {
+  id: string;
+  status: MemoryShareBatchStatus;
+  note: string | null;
+  createdAt: string;
+  decidedAt: string | null;
+  memberCount: number;
+}
+
+// ─── Manual impact-verdict log (T3 Slice 3) ──────────────────────────────────
+
+export type ImpactVerdict = 'pending' | 'success' | 'mixed' | 'failure';
+
+export interface ImpactVerdictEntry {
+  id: string;
+  sessionId: string | null;
+  title: string;
+  note: string | null;
+  verdict: ImpactVerdict;
+  createdAt: string;
+  decidedAt: string | null;
+}
+
+// ─── Project-scoped MCP tool stats (T2 Slice F) ──────────────────────────────
+
+export interface ProjectMcpToolStat {
+  id: string;
+  name: string;
+  mcp: string;
+  kind: McpToolKind;
+  summary: string;
+  calls: number;
+  errors: number;
+  avgDurationMs: number | null;
+  ftr: number | null;
+  lastUsedAt: string | null;
+}
+
+// ─── Observatory tool signals (T2 Slice D-lite) ──────────────────────────────
+
+export type SignalVariant = 'warn' | 'opportunity' | 'unused' | 'win';
+
+export interface ToolSignal {
+  tool_name: string;
+  variant: SignalVariant;
+  title: string;
+  detail: string;
 }

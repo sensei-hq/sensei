@@ -9,25 +9,14 @@ use super::query::{resolve_folder_id, resolve_scope_ids};
 
 // ── MCP Tool Proxy ──────────────────────────────────────────────────────────
 
+/// List every MCP tool this daemon dispatches on, with the shape the
+/// Instruments playground consumes: `kind`, `summary`, structured `inputs[]`,
+/// and an `example` response.
+///
+/// Sourced from `mcp_manifests::manifests()` — kept in that module so the
+/// listing stays in lockstep with `mcp_call_tool` (guarded by a unit test).
 pub(crate) async fn mcp_list_tools() -> Json<serde_json::Value> {
-    Json(serde_json::json!({
-        "tools": [
-            {"name": "search", "description": "Search functions and types by name", "params": ["query", "repoId"]},
-            {"name": "get_symbol", "description": "Get function details by name", "params": ["name", "repoId"]},
-            {"name": "get_callers", "description": "Get callers of a function", "params": ["name", "repoId"]},
-            {"name": "get_callees", "description": "Get callees of a function", "params": ["name", "repoId"]},
-            {"name": "get_file_tags", "description": "Get files by framework tag", "params": ["tag", "repoId"]},
-            {"name": "get_communities", "description": "Get code communities for a project", "params": ["repoId"]},
-            {"name": "get_doc_drift", "description": "Get docs that may be stale", "params": ["repoId"]},
-            {"name": "search_lib_docs", "description": "Search indexed library documentation", "params": ["query"]},
-            {"name": "query", "description": "Natural language query across graph", "params": ["q", "repoId"]},
-            {"name": "get_project_summary", "description": "Get project stats and metadata", "params": ["repoId"]},
-            {"name": "get_metrics", "description": "Get project quality metrics: FTR, turn count, rework rate, tool adherence", "params": ["repoId"]},
-            {"name": "get_ftr_daily", "description": "Get daily FTR sparkline data for charts", "params": ["repoId", "days"]},
-            {"name": "get_hotspots", "description": "Get files with highest rework/correction frequency", "params": ["repoId", "days"]},
-            {"name": "get_quality_signals", "description": "Get quality indicators: FTR, pattern compliance, doc drift, test pass rate", "params": ["repoId"]},
-        ]
-    }))
+    Json(serde_json::json!({ "tools": super::mcp_manifests::manifests() }))
 }
 
 pub(crate) async fn mcp_call_tool(

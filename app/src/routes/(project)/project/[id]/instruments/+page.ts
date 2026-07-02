@@ -4,7 +4,16 @@ import { appState } from '$lib/appstate.svelte.js';
 
 export const load: PageLoad = async ({ params, parent }) => {
   const { project } = await parent();
-  const data = await senseiApi(appState.port).getProjectInstruments(params.id);
-  const tools = data.tools ?? [];
-  return { project, tools };
+  const api = senseiApi(appState.port);
+  const [ext, mcp] = await Promise.all([
+    api.getProjectInstruments(params.id),
+    api.getProjectMcpToolStats(params.id),
+  ]);
+  return {
+    project,
+    // Extensions (skills/commands/agents) — historical shape, kept intact.
+    tools: ext.tools ?? [],
+    // MCP tool aggregation — every manifest tool with per-project usage.
+    mcpToolStats: mcp.tools ?? [],
+  };
 };

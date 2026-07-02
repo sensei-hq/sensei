@@ -69,15 +69,30 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/projects/{id}/patterns",        get(project_detail::get_project_patterns))
         .route("/api/projects/{id}/libraries",       get(project_detail::get_project_libraries))
         .route("/api/projects/{id}/instruments",     get(project_detail::get_project_instruments))
+        .route("/api/projects/{id}/mcp-tool-stats",  get(project_detail::get_project_mcp_tool_stats))
+        .route("/api/projects/{id}/services",        get(project_detail::list_project_services))
+        .route("/api/projects/{id}/services/{service_id}/scope",
+               put(project_detail::set_project_service_scope))
         .route("/api/projects/{id}/memories",        get(project_detail::get_project_memories))
+        .route("/api/projects/{id}/memory-batches",
+               get(project_detail::list_memory_share_batches)
+                 .post(project_detail::create_memory_share_batch))
+        .route("/api/projects/{id}/memory-batches/{batch_id}",
+               put(project_detail::decide_memory_share_batch))
         .route("/api/projects/{id}/recommendations", get(project_detail::get_project_recommendations))
         .route("/api/projects/{id}/impact",          get(project_detail::get_project_impact))
+        .route("/api/projects/{id}/impact-verdicts",
+               get(project_detail::list_impact_verdicts)
+                 .post(project_detail::create_impact_verdict))
+        .route("/api/projects/{id}/impact-verdicts/{verdict_id}",
+               put(project_detail::decide_impact_verdict))
         .route("/api/projects/{id}/sessions",        get(project_detail::get_project_sessions))
         .route("/api/projects/{id}/project-deps",    get(project_detail::get_project_project_deps))
         .route("/api/projects/{id}/library-version-conflicts", get(project_detail::get_project_library_version_conflicts))
         // Observatory chart data
         .route("/api/observatory/ftr-daily",             get(observatory::holistic_ftr_daily))
         .route("/api/observatory/tool-usage",            get(observatory::tool_usage))
+        .route("/api/observatory/tool-signals",          get(observatory::tool_signals))
         .route("/api/observatory/model-effectiveness",   get(observatory::model_effectiveness))
         .route("/api/projects/{id}/ftr-daily",           get(observatory::project_ftr_daily))
         .route("/api/projects/{id}/hotspots",            get(observatory::project_hotspots))
@@ -151,6 +166,7 @@ pub fn create_router(state: AppState) -> Router {
         // Sessions
         .route("/api/sessions", get(sessions::get_sessions_stub).post(sessions::create_session))
         .route("/api/sessions/{id}", put(sessions::update_session_handler))
+        .route("/api/sessions/{id}/tool-timeline", get(sessions::get_session_tool_timeline))
         // Patterns
         .route("/api/patterns/{project}/detect", post(codebase::detect_patterns))
         .route("/api/patterns/{project}", get(codebase::list_patterns))

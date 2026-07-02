@@ -4,7 +4,11 @@ import { appState } from '$lib/appstate.svelte.js';
 
 export const load: PageLoad = async ({ params, parent }) => {
   const { project } = await parent();
-  const recs = await senseiApi(appState.port).getProjectRecommendations(params.id, 'accepted');
+  const api = senseiApi(appState.port);
+  const [recs, impactLog] = await Promise.all([
+    api.getProjectRecommendations(params.id, 'accepted'),
+    api.listImpactVerdicts(params.id),
+  ]);
   const verdicts = recs ?? [];
   return {
     project,
@@ -12,5 +16,7 @@ export const load: PageLoad = async ({ params, parent }) => {
     positiveCount: verdicts.filter(r => r.verdict === 'positive').length,
     negativeCount: verdicts.filter(r => r.verdict === 'negative').length,
     pendingCount:  verdicts.filter(r => r.verdict === 'pending').length,
+    // Manual impact log (T3 Slice 3) — independent lane, user-logged.
+    impactLog: impactLog.verdicts ?? [],
   };
 };

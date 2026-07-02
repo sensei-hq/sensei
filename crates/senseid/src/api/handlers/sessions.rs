@@ -50,6 +50,39 @@ pub(crate) async fn create_session(
     }
 }
 
+/// GET /api/sessions/{id}/tool-timeline — paired PreToolUse ↔ PostToolUse
+/// timeline for one assistant session. Query param `limit` (default 200)
+/// caps rows. `id` is the assistant string session id.
+pub(crate) async fn get_session_tool_timeline(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    if id.is_empty() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let limit: i32 = q
+        .get("limit")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(200)
+        .clamp(1, 1000);
+
+    let calls = state
+        .pg
+        .get_session_tool_calls(&id, limit)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, session = %id, "get_session_tool_calls failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    Ok(Json(serde_json::json!({
+        "sessionId": id,
+        "calls":     calls,
+        "count":     calls.len(),
+    })))
+}
+
 pub(crate) async fn update_session_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
