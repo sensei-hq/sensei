@@ -16,11 +16,12 @@
 
 {#snippet PatternRow(p: PatternEntry, anti: boolean)}
     {@const open = expanded[p.id]}
-    <li class="pattern-row py-2 border-b border-paper-mute text-sm" class:opacity-80={anti}>
+    <li class="pattern-row py-2 border-b border-paper-mute text-sm" class:opacity-80={anti} data-testid={`pattern-row-${p.id}`}>
         <button
             type="button"
             class="flex items-center gap-3 w-full text-left bg-transparent border-none cursor-pointer text-inherit"
             aria-expanded={open}
+            data-testid={`pattern-toggle-${p.id}`}
             onclick={() => toggle(p.id)}
         >
             <span class="flex-1">{p.name}</span>
@@ -34,7 +35,7 @@
         </button>
 
         {#if open}
-            <div class="mt-2 flex flex-col gap-2 pl-1">
+            <div class="mt-2 flex flex-col gap-2 pl-1" data-testid={`pattern-detail-${p.id}`}>
                 {#if p.description}
                     <p class="text-sm text-ink-soft m-0 leading-normal">{p.description}</p>
                 {:else}

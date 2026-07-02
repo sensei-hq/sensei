@@ -518,11 +518,13 @@ export interface ProjectSession {
   id: string;
   task: string;
   outcome: string | null;
-  ftr: boolean;
+  ftr: boolean | null;
   turns: number;
-  started_at: string;
+  corrections: number;
+  provider: string | null;
+  model: string | null;
   startedAt: string;
-  completed_at: string | null;
+  completedAt: string | null;
 }
 
 export interface CallFlowModule {

@@ -217,8 +217,22 @@ export function senseiApi(port: number) {
       ),
 
     getProjectLibraries: (id: string) =>
-      get<{ libraries: Array<{ id: string; name: string; ecosystem: string; scope: 'global' | 'project'; enabled: boolean }> }>(
+      get<{ libraries: Array<{
+        id: string; name: string; ecosystem: string;
+        scope: 'global' | 'project'; enabled: boolean;
+        description?: string | null;
+        hasDocs?: boolean; pageCount?: number;
+        localSource?: string | null;
+      }> }>(
         `/api/projects/${enc(id)}/libraries`, { libraries: [] }
+      ),
+
+    // T1a version-conflict view — surfaces libraries pinned to multiple
+    // versions across the project's folders. One row per (project, library)
+    // pair with the distinct versions + folders where each was seen.
+    getProjectLibraryVersionConflicts: (id: string) =>
+      get<{ conflicts: Array<{ library_id: string; library_name: string; ecosystem: string; versions: string[]; folders: string[] }> }>(
+        `/api/projects/${enc(id)}/library-version-conflicts`, { conflicts: [] },
       ),
 
     getProjectInstruments: (id: string) =>
