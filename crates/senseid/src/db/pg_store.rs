@@ -1422,6 +1422,102 @@ impl PgStore {
         }).collect())
     }
 
+    // ── Manual impact-verdict log (T3 Slice 3) ─────────────────────────────
+
+    /// List manual impact-verdict entries for a project, newest first.
+    /// Optional `verdict` filter narrows to one lifecycle stage (`pending`,
+    /// `success`, `mixed`, `failure`).
+    pub async fn list_impact_verdicts(
+        &self,
+        project_id: &uuid::Uuid,
+        verdict: Option<&str>,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, Option<uuid::Uuid>, String, Option<String>, String, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT id, session_id, title, note, verdict::text, created_at, decided_at
+                   FROM sensei.impact_verdicts
+                  WHERE project_id = $1
+                    AND ($2::text IS NULL OR verdict::text = $2)
+                  ORDER BY created_at DESC
+                  LIMIT 200"
+            )
+            .bind(project_id)
+            .bind(verdict)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        Ok(rows.into_iter().map(|(id, session_id, title, note, verdict, created_at, decided_at)| {
+            serde_json::json!({
+                "id":         id,
+                "sessionId":  session_id,
+                "title":      title,
+                "note":       note,
+                "verdict":    verdict,
+                "createdAt":  created_at.to_rfc3339(),
+                "decidedAt":  decided_at.map(|t| t.to_rfc3339()),
+            })
+        }).collect())
+    }
+
+    /// Log a new impact entry. Verdict defaults to `pending`; the caller
+    /// hits `set_impact_verdict_outcome` later to record the outcome.
+    pub async fn create_impact_verdict(
+        &self,
+        project_id: &uuid::Uuid,
+        title: &str,
+        note: Option<&str>,
+        session_id: Option<&uuid::Uuid>,
+    ) -> Result<uuid::Uuid, String> {
+        if title.trim().is_empty() {
+            return Err("title required".into());
+        }
+        let (id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.impact_verdicts (project_id, title, note, session_id)
+             VALUES ($1, $2, $3, $4) RETURNING id"
+        )
+        .bind(project_id)
+        .bind(title)
+        .bind(note)
+        .bind(session_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(id)
+    }
+
+    /// Assign a terminal verdict (`success` | `mixed` | `failure`) to a
+    /// pending impact log entry. Stamps `decided_at = now()`. Errors when
+    /// the entry doesn't exist or has already been decided.
+    pub async fn set_impact_verdict_outcome(
+        &self,
+        verdict_id: &uuid::Uuid,
+        outcome: &str,
+        note: Option<&str>,
+    ) -> Result<(), String> {
+        if !matches!(outcome, "success" | "mixed" | "failure") {
+            return Err(format!("invalid verdict {outcome}"));
+        }
+        let result = sqlx_core::query::query(
+            "UPDATE sensei.impact_verdicts
+                SET verdict = $1::sensei.impact_verdict,
+                    note = COALESCE($2, note),
+                    decided_at = now()
+              WHERE id = $3
+                AND verdict = 'pending'"
+        )
+        .bind(outcome)
+        .bind(note)
+        .bind(verdict_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        if result.rows_affected() == 0 {
+            return Err("verdict not found or already decided".into());
+        }
+        Ok(())
+    }
+
     pub async fn get_reasoning_traces_by_project(&self, project_id: &uuid::Uuid) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(uuid::Uuid, String, Vec<String>, serde_json::Value, serde_json::Value)> = sqlx_core::query_as::query_as(
             "SELECT id, trigger_event, models_used, exchanges, consensus FROM inference.reasoning_traces WHERE project_id = $1"

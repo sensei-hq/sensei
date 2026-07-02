@@ -242,6 +242,92 @@ pub(crate) async fn create_memory_share_batch(
     Ok(Json(serde_json::json!({ "id": batch_id })))
 }
 
+// ── Impact verdicts (manual log) ────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub(crate) struct ImpactListQuery {
+    verdict: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct ImpactCreateBody {
+    title: String,
+    note: Option<String>,
+    session_id: Option<uuid::Uuid>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct ImpactDecisionBody {
+    verdict: String,
+    note: Option<String>,
+}
+
+/// GET /api/projects/{id}/impact-verdicts?verdict=success
+pub(crate) async fn list_impact_verdicts(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<ImpactListQuery>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let uuid = uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?;
+    state.pg.get_project(&uuid).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let verdicts = state.pg.list_impact_verdicts(&uuid, q.verdict.as_deref()).await
+        .map_err(|e| {
+            tracing::error!(error = %e, project = %uuid, "list_impact_verdicts failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    Ok(Json(serde_json::json!({ "verdicts": verdicts })))
+}
+
+/// POST /api/projects/{id}/impact-verdicts
+pub(crate) async fn create_impact_verdict(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<ImpactCreateBody>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let uuid = uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?;
+    state.pg.get_project(&uuid).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let verdict_id = state.pg
+        .create_impact_verdict(&uuid, &body.title, body.note.as_deref(), body.session_id.as_ref())
+        .await
+        .map_err(|e| {
+            if e.contains("title required") {
+                StatusCode::BAD_REQUEST
+            } else {
+                tracing::error!(error = %e, project = %uuid, "create_impact_verdict failed");
+                StatusCode::INTERNAL_SERVER_ERROR
+            }
+        })?;
+    Ok(Json(serde_json::json!({ "id": verdict_id })))
+}
+
+/// PUT /api/projects/{id}/impact-verdicts/{verdict_id}
+pub(crate) async fn decide_impact_verdict(
+    State(state): State<AppState>,
+    Path((id, verdict_id)): Path<(String, String)>,
+    Json(body): Json<ImpactDecisionBody>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let _project_uuid = uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let verdict_uuid = uuid::Uuid::parse_str(&verdict_id).map_err(|_| StatusCode::BAD_REQUEST)?;
+    state.pg
+        .set_impact_verdict_outcome(&verdict_uuid, &body.verdict, body.note.as_deref())
+        .await
+        .map_err(|e| {
+            if e.contains("not found") || e.contains("already decided") {
+                StatusCode::CONFLICT
+            } else if e.contains("invalid verdict") {
+                StatusCode::BAD_REQUEST
+            } else {
+                tracing::error!(error = %e, verdict = %verdict_uuid, "set_impact_verdict_outcome failed");
+                StatusCode::INTERNAL_SERVER_ERROR
+            }
+        })?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
 /// PUT /api/projects/{id}/memory-batches/{batch_id}
 pub(crate) async fn decide_memory_share_batch(
     State(state): State<AppState>,
