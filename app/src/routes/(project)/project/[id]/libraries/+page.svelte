@@ -1,36 +1,130 @@
 <script lang="ts">
     import { PageHeader } from '$lib/components';
     let { data } = $props();
+
+    // Local search + filter — libraries can grow to hundreds on a monorepo.
+    let query = $state('');
+    let filter = $state<'all' | 'wrapped' | 'local' | 'conflict'>('all');
+
+    // Set of library names known to have a version conflict, for badge lookup.
+    const conflictSet = $derived(new Set(data.conflicts.map(c => c.library_name)));
+
+    const filtered = $derived(
+        data.libraries.filter(l => {
+            const q = query.trim().toLowerCase();
+            if (q && !l.name.toLowerCase().includes(q) && !(l.ecosystem?.toLowerCase().includes(q))) return false;
+            switch (filter) {
+                case 'wrapped':  return l.hasDocs;
+                case 'local':    return !!l.localSource;
+                case 'conflict': return conflictSet.has(l.name);
+                default:         return true;
+            }
+        }),
+    );
 </script>
 
 <PageHeader title="Libraries">
     {#snippet right()}
-        <div class="text-sm text-ink-mute">
-            <span>{data.wrappedCount} wrapped</span>
-            <span class="opacity-40"> · </span>
-            <span>{data.unwrappedCount} unwrapped</span>
+        <div class="text-sm text-ink-mute flex gap-3 items-center">
+            <span>{data.libraries.length} total</span>
+            <span class="text-success">{data.wrappedCount} wrapped</span>
+            {#if data.localCount > 0}<span class="text-primary">{data.localCount} local</span>{/if}
+            {#if data.conflicts.length > 0}
+                <span class="text-warning" data-testid="library-conflicts-count">
+                    ⚠ {data.conflicts.length} version conflict{data.conflicts.length === 1 ? '' : 's'}
+                </span>
+            {/if}
         </div>
     {/snippet}
 </PageHeader>
-<div class="px-6 py-6">
 
-    {#if data.libraries.length === 0}
+<div class="px-6 py-6">
+    <!-- Version conflicts banner — the T1a signal. Users decide before browsing rows. -->
+    {#if data.conflicts.length > 0}
+        <section class="mb-6 border border-warning-edge bg-warning-soft rounded-md p-3" data-testid="library-conflicts-banner">
+            <h3 class="text-sm font-medium m-0 mb-2 text-warning">Version conflicts</h3>
+            <p class="text-xs text-ink-soft m-0 mb-3">
+                These libraries are pinned to different versions across folders in this project.
+            </p>
+            <ul class="flex flex-col gap-2">
+                {#each data.conflicts as c (c.library_id)}
+                    <li class="text-xs" data-testid={`library-conflict-${c.library_name}`}>
+                        <span class="font-mono text-ink font-medium">{c.library_name}</span>
+                        <span class="opacity-60"> · {c.ecosystem}</span>
+                        <span class="opacity-60"> · </span>
+                        <span class="font-mono text-ink">{c.versions.join(', ')}</span>
+                        <span class="opacity-60"> across </span>
+                        <span class="font-mono text-ink-soft">{c.folders.join(', ')}</span>
+                    </li>
+                {/each}
+            </ul>
+        </section>
+    {/if}
+
+    <div class="flex gap-2 items-center mb-4 flex-wrap">
+        <input
+            type="text"
+            placeholder="Search by name or ecosystem…"
+            bind:value={query}
+            class="px-3 py-1.5 border border-paper-edge rounded-md bg-paper text-ink text-sm outline-none flex-1 min-w-[200px]"
+            data-testid="library-search"
+        />
+        <div class="flex gap-2" role="tablist" aria-label="Library filter">
+            {#each [['all','All'],['wrapped','Wrapped'],['local','Local'],['conflict','Conflicts']] as [id, label]}
+                {@const active = filter === id}
+                {@const disabled = id === 'conflict' && data.conflicts.length === 0}
+                <button
+                    type="button"
+                    class="px-3 py-1 rounded-full border text-xs cursor-pointer transition-colors duration-fast disabled:opacity-40 disabled:cursor-not-allowed"
+                    class:bg-primary={active}
+                    class:text-on-primary={active}
+                    class:border-primary={active}
+                    class:bg-transparent={!active}
+                    class:text-ink-soft={!active}
+                    class:border-paper-mute={!active}
+                    role="tab"
+                    aria-selected={active}
+                    {disabled}
+                    data-testid={`library-filter-${id}`}
+                    onclick={() => (filter = id as typeof filter)}
+                >{label}</button>
+            {/each}
+        </div>
+    </div>
+
+    {#if filtered.length === 0}
         <p class="text-sm opacity-50">
-            No libraries associated with this project yet.
+            {data.libraries.length === 0
+                ? 'No libraries associated with this project yet.'
+                : 'No libraries match this filter.'}
         </p>
     {:else}
-        <ul class="list-none m-0 p-0">
-            {#each data.libraries as lib (lib.id)}
-                <li
-                    class="lib-row flex items-center gap-2.5 py-2 border-b border-paper-mute text-sm"
-                >
-                    <span class="font-semibold flex-1">{lib.name}</span>
+        <ul class="list-none m-0 p-0" data-testid="library-list">
+            {#each filtered as lib (lib.id)}
+                {@const inConflict = conflictSet.has(lib.name)}
+                <li class="lib-row flex items-center gap-2.5 py-2 border-b border-paper-mute text-sm"
+                    data-testid={`library-row-${lib.name}`}>
+                    <span class="font-semibold text-ink truncate max-w-[280px]">{lib.name}</span>
                     <span class="opacity-50 text-xs">{lib.ecosystem}</span>
-                    <span
-                        class="scope-badge text-xs px-1.5 py-px rounded-md font-mono"
-                        class:global={lib.scope === "global"}
-                        class:proj={lib.scope === "project"}
-                    >
+                    <div class="flex gap-1 flex-1">
+                        {#if lib.hasDocs}
+                            <span class="badge bg-success-soft text-success border border-success-edge"
+                                  title="{lib.pageCount ?? 0} indexed doc page{lib.pageCount === 1 ? '' : 's'}"
+                                  data-testid={`library-badge-wrapped-${lib.name}`}>Wrapped</span>
+                        {/if}
+                        {#if lib.localSource}
+                            <span class="badge bg-primary-soft text-primary border border-primary-edge"
+                                  title={lib.localSource}
+                                  data-testid={`library-badge-local-${lib.name}`}>Local</span>
+                        {/if}
+                        {#if inConflict}
+                            <span class="badge bg-warning-soft text-warning border border-warning-edge"
+                                  data-testid={`library-badge-conflict-${lib.name}`}>Version conflict</span>
+                        {/if}
+                    </div>
+                    <span class="scope-badge text-xs px-1.5 py-px rounded-md font-mono"
+                          class:global={lib.scope === 'global'}
+                          class:proj={lib.scope === 'project'}>
                         [{lib.scope}]
                     </span>
                 </li>
@@ -43,6 +137,9 @@
     .lib-row:last-child {
         border-bottom: none;
     }
+    .lib-row:hover {
+        background: var(--paper-mute);
+    }
     .scope-badge.global {
         background: var(--paper-mute);
         opacity: 0.7;
@@ -50,5 +147,12 @@
     .scope-badge.proj {
         background: var(--accent-soft);
         color: var(--accent);
+    }
+    .badge {
+        padding: 1px 6px;
+        border-radius: 999px;
+        font-size: 10px;
+        line-height: 1.4;
+        white-space: nowrap;
     }
 </style>
