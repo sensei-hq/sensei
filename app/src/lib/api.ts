@@ -8,7 +8,7 @@ import type {
   ProjectSession, CallFlowModule, CallFlowCall,
   ProjectListItem,
   KnowledgeSource, NewKnowledgeSourceBody, SyncStats,
-  McpToolManifest, SessionToolTimeline,
+  McpToolManifest, SessionToolTimeline, MemoryShareBatch,
 } from './types.js';
 import type {
   MemoryListResponse, MemoryDetail, ContextResponse,
@@ -228,6 +228,27 @@ export function senseiApi(port: number) {
     getProjectMemories: (id: string) =>
       get<{ active: ProjectMemory[]; total: number; pendingShare: number }>(
         `/api/projects/${enc(id)}/memories`, { active: [], total: 0, pendingShare: 0 }
+      ),
+
+    // Memory share batches — the proposal / review / verdict lifecycle for
+    // grouping memories before federating them out to a hive-mind.
+    listMemoryShareBatches: (id: string, status?: string) =>
+      get<{ batches: MemoryShareBatch[] }>(
+        `/api/projects/${enc(id)}/memory-batches${status ? `?status=${enc(status)}` : ''}`,
+        { batches: [] },
+      ),
+
+    createMemoryShareBatch: (id: string, memoryIds: string[], note?: string) =>
+      post<{ id: string }>(
+        `/api/projects/${enc(id)}/memory-batches`,
+        { memory_ids: memoryIds, note },
+        { id: '' },
+      ),
+
+    decideMemoryShareBatch: (id: string, batchId: string, status: 'approved' | 'rejected' | 'withdrawn', note?: string) =>
+      put(
+        `/api/projects/${enc(id)}/memory-batches/${enc(batchId)}`,
+        { status, note },
       ),
 
     getProjectDrift: (id: string) =>
