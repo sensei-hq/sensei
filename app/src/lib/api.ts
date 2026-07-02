@@ -9,7 +9,7 @@ import type {
   ProjectListItem,
   KnowledgeSource, NewKnowledgeSourceBody, SyncStats,
   McpToolManifest, SessionToolTimeline, MemoryShareBatch, ImpactVerdictEntry,
-  ProjectMcpToolStat, ToolSignal, ProjectService,
+  ProjectMcpToolStat, ToolSignal, ProjectService, ToolInsight,
 } from './types.js';
 import type {
   MemoryListResponse, MemoryDetail, ContextResponse,
@@ -346,8 +346,15 @@ export function senseiApi(port: number) {
       ),
 
     getToolSignals: () =>
-      get<{ signals: ToolSignal[] }>(
+      get<{ signals: ToolSignal[]; source?: 'cache' | 'derived' }>(
         '/api/observatory/tool-signals', { signals: [] }
+      ),
+
+    // Cached per-tool snapshots (T2 Slice D) — full metrics + optional
+    // signal card per tool. Populated by the AggregateToolInsights task.
+    getToolInsights: () =>
+      get<{ insights: ToolInsight[] }>(
+        '/api/observatory/tool-insights', { insights: [] }
       ),
 
     getLibraryUsage: (id: string) =>
