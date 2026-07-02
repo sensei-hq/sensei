@@ -9,7 +9,7 @@ import type {
   ProjectListItem,
   KnowledgeSource, NewKnowledgeSourceBody, SyncStats,
   McpToolManifest, SessionToolTimeline, MemoryShareBatch, ImpactVerdictEntry,
-  ProjectMcpToolStat, ToolSignal,
+  ProjectMcpToolStat, ToolSignal, ProjectService,
 } from './types.js';
 import type {
   MemoryListResponse, MemoryDetail, ContextResponse,
@@ -233,6 +233,16 @@ export function senseiApi(port: number) {
       get<{ tools: ProjectMcpToolStat[] }>(
         `/api/projects/${enc(id)}/mcp-tool-stats`, { tools: [] }
       ),
+
+    // Services (MCP servers, inference providers) with per-project scope
+    // resolved (scoped > global > default true).
+    listProjectServices: (id: string) =>
+      get<{ services: ProjectService[] }>(
+        `/api/projects/${enc(id)}/services`, { services: [] }
+      ),
+
+    setProjectServiceScope: (id: string, serviceId: string, enabled: boolean) =>
+      put(`/api/projects/${enc(id)}/services/${enc(serviceId)}/scope`, { enabled }),
 
     getProjectMemories: (id: string) =>
       get<{ active: ProjectMemory[]; total: number; pendingShare: number }>(
