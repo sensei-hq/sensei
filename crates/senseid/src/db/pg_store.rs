@@ -2969,6 +2969,66 @@ impl PgStore {
         Ok(serde_json::json!({ "active": active, "total": total, "pendingShare": pending_share }))
     }
 
+    /// Return the paired PreToolUse / PostToolUse timeline for an assistant
+    /// session, ordered by call start. Each row carries the request payload,
+    /// the response payload (null when the call is still in-flight or the
+    /// PostToolUse was dropped), the success flag, and duration_ms. Backed
+    /// by the `sensei.session_tool_calls` view — see its DDL for the
+    /// pairing rule.
+    pub async fn get_session_tool_calls(
+        &self,
+        session_id: &str,
+        limit: i32,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(
+            i64,                                            // call_id
+            String,                                         // tool_name
+            String,                                         // family
+            serde_json::Value,                              // request
+            Option<serde_json::Value>,                      // response
+            Option<bool>,                                   // success
+            i64,                                            // started_at_ms
+            Option<i64>,                                    // completed_at_ms
+            Option<i64>,                                    // duration_ms
+            chrono::DateTime<chrono::Utc>,                  // started_at
+            Option<chrono::DateTime<chrono::Utc>>,          // completed_at
+        )> = sqlx_core::query_as::query_as(
+            "SELECT call_id, tool_name, family::text, request, response, success,
+                    started_at_ms, completed_at_ms, duration_ms,
+                    started_at, completed_at
+               FROM sensei.session_tool_calls
+              WHERE session_id = $1
+              ORDER BY started_at_ms ASC
+              LIMIT $2"
+        )
+        .bind(session_id)
+        .bind(limit as i64)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        Ok(rows.into_iter().map(|(
+            call_id, tool_name, family, request, response, success,
+            started_at_ms, completed_at_ms, duration_ms,
+            started_at, completed_at,
+        )| {
+            serde_json::json!({
+                "callId":         call_id,
+                "toolName":       tool_name,
+                "family":         family,
+                "request":        request,
+                "response":       response,
+                "success":        success,
+                "startedAtMs":    started_at_ms,
+                "completedAtMs":  completed_at_ms,
+                "durationMs":     duration_ms,
+                "startedAt":      started_at.to_rfc3339(),
+                "completedAt":    completed_at.map(|t| t.to_rfc3339()),
+                "inFlight":       completed_at_ms.is_none(),
+            })
+        }).collect())
+    }
+
     pub async fn ensure_test_project(&self, name: &str) -> Result<uuid::Uuid, String> {
         // Namespace fixtures under `_test:` so leaked rows are identifiable
         // (and filterable by the Projects screen) and never masquerade as real

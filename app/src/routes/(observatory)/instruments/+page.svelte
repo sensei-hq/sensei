@@ -5,10 +5,11 @@
     import TabBar from "$lib/components/TabBar.svelte";
     import EmptyState from "$lib/components/EmptyState.svelte";
     import { Eyebrow, PageHeader } from "$lib/components";
-    import type { McpToolManifest } from "$lib/types.js";
+    import type { McpToolManifest, SessionToolCall } from "$lib/types.js";
 
     type Tool = McpToolManifest;
     type ToolStat = { tool_name: string; call_count: number; error_count: number; avg_duration_ms: number | null; last_used_at: string };
+    type SessionRow = { id: string; task: string; startedAt: string; ftr?: number | null };
 
     let tools = $state<Tool[]>([]);
     let toolStats = $state<ToolStat[]>([]);
@@ -19,6 +20,14 @@
     let toolResult = $state<string>("");
     let toolParams = $state<Record<string, string>>({});
     let executing = $state(false);
+
+    // Replay tab state — populated lazily on first tab activation to keep the
+    // Playground / Insights load path light.
+    let replaySessions = $state<SessionRow[]>([]);
+    let selectedSessionId = $state<string | null>(null);
+    let sessionCalls = $state<SessionToolCall[]>([]);
+    let replayLoading = $state(false);
+    let selectedCall = $state<SessionToolCall | null>(null);
 
     const instrumentTabs: [string, string][] = [
         ["playground", "Playground"],
@@ -58,6 +67,62 @@
         const result = await api.mcpCallTool(selectedTool.name, toolParams);
         toolResult = JSON.stringify(result, null, 2);
         executing = false;
+    }
+
+    // Load the session list once the Replay tab is first opened. Subsequent
+    // tab switches skip the fetch since the list rarely changes mid-session.
+    async function ensureReplaySessionsLoaded() {
+        if (replaySessions.length > 0) return;
+        replayLoading = true;
+        const api = senseiApi(appState.port);
+        const data = await api.getSessions();
+        replaySessions = (data.sessions ?? []).map((s) => ({
+            id: s.id,
+            task: s.task,
+            startedAt: s.startedAt,
+            ftr: s.ftr,
+        }));
+        replayLoading = false;
+    }
+
+    async function selectReplaySession(sessionId: string) {
+        selectedSessionId = sessionId;
+        selectedCall = null;
+        sessionCalls = [];
+        replayLoading = true;
+        const api = senseiApi(appState.port);
+        const timeline = await api.getSessionToolTimeline(sessionId, 200);
+        sessionCalls = timeline.calls;
+        replayLoading = false;
+    }
+
+    // Kick off session loading the first time Replay is visible.
+    $effect(() => {
+        if (tab === 'replay') {
+            void ensureReplaySessionsLoaded();
+        }
+    });
+
+    // Format request/response payloads for the detail pane — pretty JSON
+    // when we have an object, raw string otherwise.
+    function fmtPayload(value: unknown): string {
+        if (value == null) return '—';
+        if (typeof value === 'string') return value;
+        try {
+            return JSON.stringify(value, null, 2);
+        } catch {
+            return String(value);
+        }
+    }
+
+    function fmtDuration(ms: number | null): string {
+        if (ms == null) return '—';
+        if (ms < 1000) return `${ms} ms`;
+        return `${(ms / 1000).toFixed(2)} s`;
+    }
+
+    function fmtDate(iso: string): string {
+        return new Date(iso).toLocaleString();
     }
 </script>
 
@@ -196,11 +261,88 @@
             </div>
         {/if}
     {:else if tab === "replay"}
-        <EmptyState
-            kanji="録"
-            title="Session replay"
-            description="Tool calls from your assistant sessions will appear here. Each call shows the tool, arguments, response, and whether the assistant used the result."
-        />
+        {#if replayLoading && replaySessions.length === 0}
+            <p class="text-sm text-ink-soft">Loading sessions…</p>
+        {:else if replaySessions.length === 0}
+            <EmptyState
+                kanji="録"
+                title="No sessions recorded yet"
+                description="Tool calls from your assistant sessions appear here once sensei has captured at least one session."
+            />
+        {:else}
+            <div class="grid grid-cols-[220px_260px_1fr] gap-6">
+                <!-- Session picker -->
+                <div class="flex flex-col gap-0.5 max-h-[560px] overflow-auto">
+                    <div class="text-xs uppercase tracking-wide text-ink-mute px-3 py-2">Sessions</div>
+                    {#each replaySessions as session (session.id)}
+                        <button
+                            class="tool-card text-left px-3.5 py-2 rounded-md bg-transparent border-none cursor-pointer transition-colors duration-fast"
+                            class:selected={selectedSessionId === session.id}
+                            onclick={() => selectReplaySession(session.id)}
+                        >
+                            <span class="block text-sm font-medium text-ink truncate">{session.task}</span>
+                            <span class="block text-xs text-ink-soft mt-0.5">
+                                {fmtDate(session.startedAt)}
+                                {#if session.ftr != null}· FTR {(session.ftr * 100).toFixed(0)}%{/if}
+                            </span>
+                        </button>
+                    {/each}
+                </div>
+
+                <!-- Call list -->
+                <div class="flex flex-col gap-0.5 max-h-[560px] overflow-auto">
+                    <div class="text-xs uppercase tracking-wide text-ink-mute px-3 py-2">Calls</div>
+                    {#if selectedSessionId == null}
+                        <p class="text-xs text-ink-soft px-3">Pick a session.</p>
+                    {:else if replayLoading}
+                        <p class="text-xs text-ink-soft px-3">Loading timeline…</p>
+                    {:else if sessionCalls.length === 0}
+                        <p class="text-xs text-ink-soft px-3">No tool calls in this session.</p>
+                    {:else}
+                        {#each sessionCalls as call (call.callId)}
+                            <button
+                                class="tool-card text-left px-3.5 py-2 rounded-md bg-transparent border-none cursor-pointer transition-colors duration-fast flex items-center gap-2"
+                                class:selected={selectedCall?.callId === call.callId}
+                                onclick={() => (selectedCall = call)}
+                            >
+                                <span class="block text-sm font-mono text-ink truncate flex-1">{call.toolName}</span>
+                                {#if call.inFlight}
+                                    <span class="text-xs text-warning">in-flight</span>
+                                {:else if call.success === false}
+                                    <span class="text-xs text-danger">✗</span>
+                                {:else if call.success === true}
+                                    <span class="text-xs text-success">✓</span>
+                                {/if}
+                                <span class="text-xs text-ink-soft">{fmtDuration(call.durationMs)}</span>
+                            </button>
+                        {/each}
+                    {/if}
+                </div>
+
+                <!-- Call detail -->
+                <div class="p-6 bg-paper-mute border border-paper-mute rounded-lg max-h-[560px] overflow-auto">
+                    {#if !selectedCall}
+                        <p class="text-sm text-ink-soft">Select a call to see request + response.</p>
+                    {:else}
+                        <h3 class="text-base font-mono m-0 mb-1.5">{selectedCall.toolName}</h3>
+                        <p class="text-xs text-ink-mute m-0 mb-4">
+                            {fmtDate(selectedCall.startedAt)} · {fmtDuration(selectedCall.durationMs)}
+                            {#if selectedCall.inFlight} · in-flight{/if}
+                        </p>
+
+                        <p class="m-0 mb-1"><Eyebrow>Request</Eyebrow></p>
+                        <pre class="px-3 py-2 bg-paper-soft border border-paper-mute rounded-md text-xs font-mono text-ink overflow-auto whitespace-pre-wrap break-all m-0 mb-4">{fmtPayload(selectedCall.request)}</pre>
+
+                        <p class="m-0 mb-1"><Eyebrow>Response</Eyebrow></p>
+                        {#if selectedCall.response == null}
+                            <p class="text-xs text-ink-soft m-0">No response captured yet.</p>
+                        {:else}
+                            <pre class="px-3 py-2 bg-paper-soft border border-paper-mute rounded-md text-xs font-mono text-ink overflow-auto whitespace-pre-wrap break-all m-0">{fmtPayload(selectedCall.response)}</pre>
+                        {/if}
+                    {/if}
+                </div>
+            </div>
+        {/if}
     {:else}
         {@render ToolInsights()}
     {/if}

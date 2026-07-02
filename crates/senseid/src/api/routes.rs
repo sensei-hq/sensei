@@ -151,6 +151,7 @@ pub fn create_router(state: AppState) -> Router {
         // Sessions
         .route("/api/sessions", get(sessions::get_sessions_stub).post(sessions::create_session))
         .route("/api/sessions/{id}", put(sessions::update_session_handler))
+        .route("/api/sessions/{id}/tool-timeline", get(sessions::get_session_tool_timeline))
         // Patterns
         .route("/api/patterns/{project}/detect", post(codebase::detect_patterns))
         .route("/api/patterns/{project}", get(codebase::list_patterns))
