@@ -1422,6 +1422,159 @@ impl PgStore {
         }).collect())
     }
 
+    // ── Doc-drift scan (T3 Slice 2.3) ────────────────────────────────────
+
+    /// Scan every doc node in a project's folders for backtick-wrapped
+    /// identifier mentions, cross-reference against `sensei.nodes`, and
+    /// materialise the results into `inference.drift_items`. Returns how
+    /// many broken references were added, how many drift rows were
+    /// resolved (mentions that now resolve back to a live code node),
+    /// and how many doc nodes were scanned.
+    ///
+    /// The identifier extraction lives in `analysis::doc_drift` so it can
+    /// be unit-tested without a Postgres round-trip; here we handle the
+    /// per-project fanout and the persistence.
+    pub async fn scan_project_doc_drift(
+        &self,
+        project_id: &uuid::Uuid,
+    ) -> Result<serde_json::Value, String> {
+        use crate::analysis::doc_drift::{
+            extract_identifier_mentions, extract_mention_from_detail,
+        };
+
+        // 1. Load every doc node in this project along with its folder id
+        //    and the absolute path so we can read the file content off disk.
+        //    `n.content` is intentionally not stored for doc nodes today —
+        //    the file remains the source of truth — so this scan reads the
+        //    on-disk content each pass. Capped at 500 docs per run so a
+        //    heavy project doesn't stall the request.
+        #[allow(clippy::type_complexity)]
+        let doc_rows: Vec<(uuid::Uuid, uuid::Uuid, String, String)> = sqlx_core::query_as::query_as(
+            "SELECT n.id, n.folder_id, f.abs_path, n.file_path
+               FROM sensei.nodes n
+               JOIN sensei.folders f ON f.id = n.folder_id
+              WHERE f.project_id = $1
+                AND n.kind = 'doc'
+              LIMIT 500"
+        )
+        .bind(project_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        let scanned_docs = doc_rows.len();
+
+        // 2. Load the project's known code identifier names into a set once,
+        //    so the per-mention lookup is a HashSet::contains (cheap) rather
+        //    than a DB round-trip per mention.
+        let code_names: Vec<(String,)> = sqlx_core::query_as::query_as(
+            "SELECT DISTINCT n.name
+               FROM sensei.nodes n
+               JOIN sensei.folders f ON f.id = n.folder_id
+              WHERE f.project_id = $1
+                AND n.kind IN ('function', 'method', 'class', 'type', 'interface', 'const', 'module')"
+        )
+        .bind(project_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        let known: std::collections::HashSet<String> = code_names.into_iter().map(|(n,)| n).collect();
+
+        // 3. Fan the mentions out per doc, inserting `broken` drift rows for
+        //    mentions that don't resolve. `ON CONFLICT DO NOTHING` on the
+        //    (doc_node_id, detail) uniqueness in application logic — we
+        //    check for an existing broken row via a subquery.
+        let mut new_broken: i64 = 0;
+        for (doc_id, folder_id, abs_path, file_path) in &doc_rows {
+            // Read the doc content off disk. Unreadable files (deleted,
+            // permission denied) silently skip — we never fail the whole
+            // scan for one bad file.
+            let full_path = std::path::Path::new(abs_path).join(file_path);
+            let content = match std::fs::read_to_string(&full_path) {
+                Ok(text) => text,
+                Err(_) => continue,
+            };
+            let mentions = extract_identifier_mentions(&content);
+            for mention in mentions {
+                if known.contains(&mention) {
+                    continue;
+                }
+                let detail = format!("Mentions `{mention}` which is not in the code.");
+                // Skip if we already logged this same drift signal.
+                let existing: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
+                    "SELECT id FROM inference.drift_items
+                      WHERE doc_node_id = $1 AND detail = $2 AND resolved_at IS NULL
+                      LIMIT 1"
+                )
+                .bind(doc_id)
+                .bind(&detail)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| e.to_string())?;
+                if existing.is_some() {
+                    continue;
+                }
+                // The `doc_node_id -> code_node_id` invariant requires a code
+                // node — the DDL enforces NOT NULL on the FK. Use the doc node
+                // as a self-reference so the FK stays satisfied without a
+                // dedicated "unresolved" sentinel. Callers rely on
+                // `code_node_id` matching `doc_node_id` to mean "broken".
+                sqlx_core::query::query(
+                    "INSERT INTO inference.drift_items
+                        (folder_id, doc_node_id, code_node_id, status, detail)
+                     VALUES ($1, $2, $2, 'broken', $3)"
+                )
+                .bind(folder_id)
+                .bind(doc_id)
+                .bind(&detail)
+                .execute(&self.pool)
+                .await
+                .map_err(|e| e.to_string())?;
+                new_broken += 1;
+            }
+        }
+
+        // 4. Resolve any existing broken rows whose mention now RESOLVES —
+        //    the doc got fixed or the code got added since the last scan.
+        //    We re-parse each open row's detail to recover the mention name.
+        let open_rows: Vec<(uuid::Uuid, String)> = sqlx_core::query_as::query_as(
+            "SELECT di.id, di.detail
+               FROM inference.drift_items di
+               JOIN sensei.folders f ON f.id = di.folder_id
+              WHERE f.project_id = $1
+                AND di.status = 'broken'
+                AND di.resolved_at IS NULL"
+        )
+        .bind(project_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        let mut resolved: i64 = 0;
+        for (drift_id, detail) in open_rows {
+            if let Some(mention) = extract_mention_from_detail(&detail)
+                && known.contains(&mention)
+            {
+                sqlx_core::query::query(
+                    "UPDATE inference.drift_items
+                        SET status = 'current', resolved_at = now()
+                      WHERE id = $1"
+                )
+                .bind(drift_id)
+                .execute(&self.pool)
+                .await
+                .map_err(|e| e.to_string())?;
+                resolved += 1;
+            }
+        }
+
+        Ok(serde_json::json!({
+            "scannedDocs": scanned_docs,
+            "newBroken":   new_broken,
+            "resolved":    resolved,
+        }))
+    }
+
     // ── Service registry + per-project scoping (T2 Slice B) ──────────────
 
     /// List every installed service, joined with the given project's per-scope

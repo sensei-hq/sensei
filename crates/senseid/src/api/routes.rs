@@ -66,6 +66,7 @@ pub fn create_router(state: AppState) -> Router {
         // Project detail endpoints (multi-window)
         .route("/api/projects/{id}/ftr",             get(project_detail::get_project_ftr))
         .route("/api/projects/{id}/drift",           get(project_detail::get_project_drift))
+        .route("/api/projects/{id}/drift/scan",      post(project_detail::scan_project_doc_drift))
         .route("/api/projects/{id}/patterns",        get(project_detail::get_project_patterns))
         .route("/api/projects/{id}/libraries",       get(project_detail::get_project_libraries))
         .route("/api/projects/{id}/instruments",     get(project_detail::get_project_instruments))
