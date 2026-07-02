@@ -80,12 +80,14 @@
                             type="button"
                             class="px-2 py-1 rounded-md text-xs bg-primary text-on-primary border-none cursor-pointer"
                             disabled={deciding[batch.id]}
+                            data-testid={`batch-approve-${batch.id}`}
                             onclick={() => decide(batch.id, 'approved')}
                         >Approve</button>
                         <button
                             type="button"
                             class="px-2 py-1 rounded-md text-xs bg-transparent text-ink-soft border border-paper-edge cursor-pointer"
                             disabled={deciding[batch.id]}
+                            data-testid={`batch-reject-${batch.id}`}
                             onclick={() => decide(batch.id, 'rejected')}
                         >Reject</button>
                     </li>
@@ -104,19 +106,21 @@
                 type="button"
                 class="px-3 py-1.5 rounded-md text-xs bg-primary text-on-primary border-none cursor-pointer"
                 disabled={selected.size === 0 || creating}
+                data-testid="propose-batch-button"
                 onclick={proposeBatch}
             >{creating ? 'Proposing…' : 'Propose batch'}</button>
         </div>
     {/if}
 
-    <ul class="list-none m-0 p-0">
+    <ul class="list-none m-0 p-0" data-testid="memories-list">
         {#each memories as m (m.id)}
             {@const checked = selected.has(m.id)}
-            <li class="memory-row flex items-center gap-3 py-2 border-b border-paper-mute text-sm">
+            <li class="memory-row flex items-center gap-3 py-2 border-b border-paper-mute text-sm" data-testid={`memory-row-${m.id}`}>
                 <input
                     type="checkbox"
                     class="cursor-pointer"
                     aria-label={`Select memory ${m.title || m.name}`}
+                    data-testid={`memory-checkbox-${m.id}`}
                     {checked}
                     onchange={() => toggle(m.id)}
                 />
