@@ -150,7 +150,7 @@
             />
         {:else}
             <!-- Kind chips — filter tools by query vs action -->
-            <div class="flex gap-2 mb-4" role="tablist" aria-label="Tool kind filter">
+            <div class="flex gap-2 mb-4" role="tablist" aria-label="Tool kind filter" data-testid="kind-chips">
                 {#each kindChips as chip}
                     {@const active = kindFilter === chip.id}
                     <button
@@ -163,6 +163,7 @@
                         class:border-paper-mute={!active}
                         role="tab"
                         aria-selected={active}
+                        data-testid={`kind-chip-${chip.id}`}
                         onclick={() => (kindFilter = chip.id)}
                     >
                         {chip.label}
@@ -170,13 +171,15 @@
                 {/each}
             </div>
 
-            <div class="grid grid-cols-[260px_1fr] gap-6">
+            <div class="grid grid-cols-[260px_1fr] gap-6" data-testid="playground-body">
                 <!-- Tool list -->
-                <div class="flex flex-col gap-0.5">
+                <div class="flex flex-col gap-0.5" data-testid="tool-list">
                     {#each visibleTools as tool (tool.name)}
                         <button
                             class="tool-card text-left px-3.5 py-2.5 rounded-md bg-transparent border-none cursor-pointer transition-colors duration-fast"
                             class:selected={selectedTool?.name === tool.name}
+                            data-testid={`tool-row-${tool.name}`}
+                            data-tool-kind={tool.kind}
                             onclick={() => {
                                 selectedTool = tool;
                                 toolParams = {};
@@ -366,22 +369,24 @@
     {:else}
         <!-- Signal cards on top — sorted by variant priority in the daemon. -->
         {#if toolSignals.length > 0}
-            <div class="mb-6">
+            <div class="mb-6" data-testid="tool-signals">
                 <p class="text-xs uppercase tracking-wide text-ink-mute mb-2">Signals</p>
                 <div class="grid gap-2 grid-cols-1 md:grid-cols-2">
                     {#each toolSignals as sig (sig.tool_name + sig.variant)}
-                        <SignalCard
-                            variant={sig.variant}
-                            title={sig.title}
-                            detail={sig.detail}
-                            toolName={sig.tool_name}
-                        />
+                        <div data-testid={`signal-card-${sig.variant}`} data-tool={sig.tool_name}>
+                            <SignalCard
+                                variant={sig.variant}
+                                title={sig.title}
+                                detail={sig.detail}
+                                toolName={sig.tool_name}
+                            />
+                        </div>
                     {/each}
                 </div>
             </div>
         {/if}
 
-        <div class="flex flex-col gap-1">
+        <div class="flex flex-col gap-1" data-testid="insights-table">
             <div class="grid grid-cols-[1fr_80px_80px_100px_120px] gap-3 px-3 py-2 text-xs text-ink-soft tracking-wide uppercase">
                 <span>Tool</span>
                 <span class="text-right">Calls</span>
@@ -396,6 +401,8 @@
                     type="button"
                     class="w-full text-left grid grid-cols-[1fr_80px_80px_100px_120px] gap-3 px-3 py-2.5 border-b border-paper-mute text-sm items-center bg-transparent border-l-0 border-r-0 border-t-0 cursor-pointer"
                     class:bg-paper-mute={expanded}
+                    data-testid={`insights-row-${stat.tool_name}`}
+                    aria-expanded={expanded}
                     onclick={() => (selectedInsightTool = expanded ? null : stat.tool_name)}
                 >
                     <span class="font-mono text-xs">{stat.tool_name}</span>
@@ -415,7 +422,7 @@
                 </button>
                 {#if expanded}
                     {@const insight = selectedInsight}
-                    <div class="px-3 pb-3 pt-1 border-b border-paper-mute bg-paper-soft">
+                    <div class="px-3 pb-3 pt-1 border-b border-paper-mute bg-paper-soft" data-testid={`insights-detail-${stat.tool_name}`}>
                         {#if insight}
                             <div class="flex items-center gap-3 mb-2">
                                 <span class="text-xs uppercase tracking-wide text-ink-mute">Snapshot</span>

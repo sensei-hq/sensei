@@ -48,6 +48,7 @@
                 type="button"
                 class="px-3 py-1 rounded-md text-xs border border-paper-edge bg-transparent text-ink cursor-pointer"
                 disabled={scanning}
+                data-testid="drift-scan-button"
                 onclick={scan}
             >{scanning ? 'Scanning…' : 'Scan now'}</button>
         </div>
@@ -55,16 +56,16 @@
 </PageHeader>
 <div class="px-6 py-6">
     {#if lastSummary}
-        <div class="mb-4 text-xs text-ink-soft">
+        <div class="mb-4 text-xs text-ink-soft" data-testid="drift-scan-summary">
             Scanned {lastSummary.scannedDocs} docs · added {lastSummary.newBroken} broken · resolved {lastSummary.resolved}.
         </div>
     {/if}
     {#if data.driftItems.length === 0}
         <p class="text-sm text-ink-soft">No drift signals yet. Run a scan to check for stale doc references.</p>
     {:else}
-        <ul class="list-none m-0 p-0">
+        <ul class="list-none m-0 p-0" data-testid="drift-list">
             {#each data.driftItems as item (item.id)}
-                <li class="drift-row flex gap-2.5 py-2 border-b border-paper-mute text-sm items-start">
+                <li class="drift-row flex gap-2.5 py-2 border-b border-paper-mute text-sm items-start" data-testid="drift-row">
                     <span class="mt-1"><StatusDot status={dotStatus(item.status)} /></span>
                     <span class="flex-1">{item.detail ?? item.status}</span>
                 </li>

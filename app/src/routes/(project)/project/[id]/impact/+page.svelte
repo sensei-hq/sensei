@@ -181,25 +181,28 @@
         placeholder="What shipped?"
         bind:value={logForm.title}
         class="px-3 py-2 border border-paper-edge rounded-md bg-paper text-ink text-sm outline-none"
+        data-testid="impact-title"
       />
       <textarea
         placeholder="Context (optional)"
         bind:value={logForm.note}
         rows="2"
         class="px-3 py-2 border border-paper-edge rounded-md bg-paper text-ink text-sm outline-none resize-y"
+        data-testid="impact-note"
       ></textarea>
       <button
         type="submit"
         disabled={!logForm.title.trim() || logging}
         class="self-start px-4 py-2 rounded-md text-sm bg-primary text-on-primary border-none cursor-pointer"
+        data-testid="impact-log-button"
       >{logging ? 'Logging…' : 'Log impact'}</button>
     </form>
 
     {#if impactPending.length > 0}
       <h4 class="text-xs uppercase tracking-wide opacity-60 m-0 mb-2">Pending verdict</h4>
-      <ul class="list-none m-0 p-0 flex flex-col gap-2 mb-6">
+      <ul class="list-none m-0 p-0 flex flex-col gap-2 mb-6" data-testid="impact-pending-list">
         {#each impactPending as entry (entry.id)}
-          <li class="border border-paper-mute rounded-md px-3 py-2 flex items-center gap-2">
+          <li class="border border-paper-mute rounded-md px-3 py-2 flex items-center gap-2" data-testid={`impact-pending-${entry.id}`}>
             <div class="flex-1 min-w-0">
               <div class="text-sm text-ink truncate">{entry.title}</div>
               {#if entry.note}
@@ -208,10 +211,13 @@
               <div class="text-xs text-ink-soft mt-0.5">{new Date(entry.createdAt).toLocaleDateString()}</div>
             </div>
             <button type="button" disabled={decideBusy[entry.id]} onclick={() => decide(entry.id, 'success')}
+                    data-testid={`impact-success-${entry.id}`}
                     class="px-2 py-1 text-xs rounded-md bg-success-soft text-success border-none cursor-pointer">Success</button>
             <button type="button" disabled={decideBusy[entry.id]} onclick={() => decide(entry.id, 'mixed')}
+                    data-testid={`impact-mixed-${entry.id}`}
                     class="px-2 py-1 text-xs rounded-md bg-warning-soft text-warning border-none cursor-pointer">Mixed</button>
             <button type="button" disabled={decideBusy[entry.id]} onclick={() => decide(entry.id, 'failure')}
+                    data-testid={`impact-failure-${entry.id}`}
                     class="px-2 py-1 text-xs rounded-md bg-danger-soft text-danger border-none cursor-pointer">Failure</button>
           </li>
         {/each}

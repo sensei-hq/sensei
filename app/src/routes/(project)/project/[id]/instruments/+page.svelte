@@ -89,6 +89,7 @@
                             class:enabled={service.enabledForProject}
                             disabled={toggling[service.id]}
                             aria-pressed={service.enabledForProject}
+                            data-testid={`service-toggle-${service.name}`}
                             onclick={() => toggleService(service)}
                         >{service.enabledForProject ? 'On' : 'Off'}</button>
                     </li>
