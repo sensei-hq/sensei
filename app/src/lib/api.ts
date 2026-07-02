@@ -8,7 +8,7 @@ import type {
   ProjectSession, CallFlowModule, CallFlowCall,
   ProjectListItem,
   KnowledgeSource, NewKnowledgeSourceBody, SyncStats,
-  McpToolManifest,
+  McpToolManifest, SessionToolTimeline,
 } from './types.js';
 import type {
   MemoryListResponse, MemoryDetail, ContextResponse,
@@ -411,6 +411,13 @@ export function senseiApi(port: number) {
 
     mcpCallTool: (tool: string, params: Record<string, string>) =>
       post<Record<string, unknown>>('/api/mcp/call', { tool, params }, {}),
+
+    // Session tool-call timeline for the Instruments Replay tab.
+    getSessionToolTimeline: (sessionId: string, limit = 200) =>
+      get<SessionToolTimeline>(
+        `/api/sessions/${enc(sessionId)}/tool-timeline?limit=${limit}`,
+        { sessionId, calls: [], count: 0 },
+      ),
 
     // ── Marketplace ──────────────────────────────────────────────────
     marketplaceInstall: (target: string, marketplacePath: string, item?: string, scope?: string) =>
