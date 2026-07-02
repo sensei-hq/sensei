@@ -3260,10 +3260,18 @@ impl PgStore {
     }
 
     pub async fn get_project_libraries(&self, project_id: &uuid::Uuid) -> Result<Vec<serde_json::Value>, String> {
-        // Query the resolved view directly — it already joins libraries internally
-        let rows: Vec<(uuid::Uuid, String, String, Option<String>, bool, serde_json::Value, String)> =
-            sqlx_core::query_as::query_as(
-                "SELECT id, name, ecosystem::text, description, enabled, project_props, scope
+        // Query the resolved view directly — it already joins libraries internally.
+        // Extended for T3 Slice 1.5: pull `page_count` (indexed docs marker) and
+        // `local_path` (workspace / local-source marker) so the Libraries page
+        // can render "wrapped by sensei" and "local source" badges without a
+        // second round-trip.
+        #[allow(clippy::type_complexity)]
+        let rows: Vec<(
+            uuid::Uuid, String, String, Option<String>, bool,
+            serde_json::Value, String, i32, Option<String>,
+        )> = sqlx_core::query_as::query_as(
+                "SELECT id, name, ecosystem::text, description, enabled,
+                        project_props, scope, page_count, local_path
                  FROM sensei.project_libraries_resolved
                  WHERE (scoped_project_id = $1 OR scoped_project_id IS NULL)
                    AND enabled = true
@@ -3271,11 +3279,18 @@ impl PgStore {
             ).bind(project_id)
             .fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
 
-        Ok(rows.into_iter().map(|(id, name, ecosystem, desc, enabled, props, scope)| {
+        Ok(rows.into_iter().map(|(id, name, ecosystem, desc, enabled, props, scope, page_count, local_path)| {
             serde_json::json!({
-                "id": id, "name": name, "ecosystem": ecosystem,
-                "description": desc, "enabled": enabled,
-                "project_props": props, "scope": scope,
+                "id":            id,
+                "name":          name,
+                "ecosystem":     ecosystem,
+                "description":   desc,
+                "enabled":       enabled,
+                "project_props": props,
+                "scope":         scope,
+                "hasDocs":       page_count > 0,
+                "pageCount":     page_count,
+                "localSource":   local_path,
             })
         }).collect())
     }
@@ -3484,11 +3499,17 @@ impl PgStore {
     }
 
     pub async fn get_project_memories(&self, project_id: &uuid::Uuid) -> Result<serde_json::Value, String> {
-        let rows: Vec<(uuid::Uuid, String, String, String, f64, chrono::DateTime<chrono::Utc>)> =
+        // `strength` is `real` (Postgres 4-byte float) — sqlx decodes it as
+        // `f32`, not `f64`. A mismatched decode-target quietly failed the
+        // whole query and made the endpoint 500. `last_relevant_at` is
+        // likewise nullable for freshly minted memories that haven't been
+        // reinforced or violated, so decode as Option so a NULL doesn't
+        // fail the row.
+        let rows: Vec<(uuid::Uuid, String, String, String, f32, Option<chrono::DateTime<chrono::Utc>>)> =
             sqlx_core::query_as::query_as(
                 "SELECT id, title, type::text, status::text, strength, last_relevant_at
                  FROM sensei.memories WHERE project_id = $1
-                 ORDER BY last_relevant_at DESC LIMIT 100"
+                 ORDER BY last_relevant_at DESC NULLS LAST LIMIT 100"
             ).bind(project_id)
             .fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
 
@@ -3497,7 +3518,11 @@ impl PgStore {
         let active: Vec<_> = rows.into_iter()
             .filter(|r| r.3 == "active")
             .map(|(id, title, typ, status, strength, last)| {
-                serde_json::json!({ "id": id, "title": title, "type": typ, "status": status, "strength": strength, "lastRelevantAt": last.to_rfc3339() })
+                serde_json::json!({
+                    "id": id, "title": title, "type": typ, "status": status,
+                    "strength": strength,
+                    "lastRelevantAt": last.map(|t| t.to_rfc3339()),
+                })
             }).collect();
 
         Ok(serde_json::json!({ "active": active, "total": total, "pendingShare": pending_share }))
@@ -4276,16 +4301,45 @@ impl PgStore {
     }
 
     pub async fn list_sessions_by_project(&self, project_id: &uuid::Uuid, limit: i64) -> Result<Vec<serde_json::Value>, String> {
-        let rows: Vec<(uuid::Uuid, String, Option<bool>, String, chrono::DateTime<chrono::Utc>)> =
-            sqlx_core::query_as::query_as(
-                "SELECT id, task, ftr, outcome::text, started_at
+        // Extended shape (T3 Slice 1.4): the Sessions screen needs model,
+        // provider, turns, corrections, and completed_at so the row can
+        // render date / model / turns / corrections / FTR / outcome
+        // side-by-side per the mockup. `outcome` is nullable while a
+        // session is still in-flight — decode it Option to keep the query
+        // resilient.
+        #[allow(clippy::type_complexity)]
+        let rows: Vec<(
+            uuid::Uuid,                                     // id
+            String,                                         // task
+            Option<bool>,                                   // ftr
+            Option<String>,                                 // outcome
+            chrono::DateTime<chrono::Utc>,                  // started_at
+            Option<chrono::DateTime<chrono::Utc>>,          // completed_at
+            i32,                                            // turns
+            i32,                                            // corrections
+            Option<String>,                                 // provider
+            Option<String>,                                 // model
+        )> = sqlx_core::query_as::query_as(
+                "SELECT id, task, ftr, outcome::text, started_at, completed_at,
+                        turns, corrections, provider, model
                  FROM activity.sessions WHERE project_id = $1
                  ORDER BY started_at DESC LIMIT $2"
             ).bind(project_id).bind(limit)
             .fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
 
-        Ok(rows.into_iter().map(|(id, task, ftr, outcome, started)| {
-            serde_json::json!({ "id": id, "task": task, "ftr": ftr, "outcome": outcome, "startedAt": started.to_rfc3339() })
+        Ok(rows.into_iter().map(|(id, task, ftr, outcome, started, completed, turns, corrections, provider, model)| {
+            serde_json::json!({
+                "id":           id,
+                "task":         task,
+                "ftr":          ftr,
+                "outcome":      outcome,
+                "startedAt":    started.to_rfc3339(),
+                "completedAt":  completed.map(|t| t.to_rfc3339()),
+                "turns":        turns,
+                "corrections":  corrections,
+                "provider":     provider,
+                "model":        model,
+            })
         }).collect())
     }
 
