@@ -160,10 +160,13 @@ async fn run(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
             queue.enqueue(Task::new(TaskKind::AnalyzeProject, "", &pid.to_string())).await;
         }
         // Global passes once per tick when work happened: corrections cluster
-        // across projects; verdicts re-measure accepted recs' before/after FTR.
+        // across projects; verdicts re-measure accepted recs' before/after FTR;
+        // tool insights snapshot the per-tool signal cards so the observatory
+        // Insights tab reads from cache (T2 Slice D).
         if any_due {
             queue.enqueue(Task::new(TaskKind::AggregateCorrections, "", "")).await;
             queue.enqueue(Task::new(TaskKind::MeasureVerdicts, "", "")).await;
+            queue.enqueue(Task::new(TaskKind::AggregateToolInsights, "", "")).await;
             // Persist the advanced watermark so a restart doesn't redo this work.
             let _ = pg.set_config(WATERMARK_KEY, &serialize_watermark(&watermark)).await;
         }
