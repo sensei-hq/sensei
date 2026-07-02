@@ -232,6 +232,53 @@ pub(crate) async fn get_project_sessions(
     Ok(Json(serde_json::json!({ "sessions": sessions })))
 }
 
+// ── Service scoping (T2 Slice B) ────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub(crate) struct ServiceScopeBody {
+    enabled: bool,
+}
+
+/// GET /api/projects/{id}/services — installed services with per-project
+/// scope resolved (scoped override wins, then global, then default true).
+pub(crate) async fn list_project_services(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let uuid = uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?;
+    state.pg.get_project(&uuid).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let services = state.pg.list_services_with_project_scope(&uuid).await
+        .map_err(|e| {
+            tracing::error!(error = %e, project = %uuid, "list_services_with_project_scope failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    Ok(Json(serde_json::json!({ "services": services })))
+}
+
+/// PUT /api/projects/{id}/services/{service_id}/scope — toggle a service's
+/// enabled state for this project. Body: `{ enabled: bool }`.
+pub(crate) async fn set_project_service_scope(
+    State(state): State<AppState>,
+    Path((id, service_id)): Path<(String, String)>,
+    Json(body): Json<ServiceScopeBody>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let project_uuid = uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let service_uuid = uuid::Uuid::parse_str(&service_id).map_err(|_| StatusCode::BAD_REQUEST)?;
+    state.pg.get_project(&project_uuid).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    state.pg
+        .set_service_project_scope(&service_uuid, Some(&project_uuid), body.enabled)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, project = %project_uuid, service = %service_uuid, "set_service_project_scope failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
 // ── Memory share batches ────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
