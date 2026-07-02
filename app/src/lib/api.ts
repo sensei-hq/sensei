@@ -9,6 +9,7 @@ import type {
   ProjectListItem,
   KnowledgeSource, NewKnowledgeSourceBody, SyncStats,
   McpToolManifest, SessionToolTimeline, MemoryShareBatch, ImpactVerdictEntry,
+  ProjectMcpToolStat,
 } from './types.js';
 import type {
   MemoryListResponse, MemoryDetail, ContextResponse,
@@ -223,6 +224,14 @@ export function senseiApi(port: number) {
     getProjectInstruments: (id: string) =>
       get<{ tools: Array<{ id: string; name: string; kind: string; scope: 'global' | 'project'; enabled: boolean }> }>(
         `/api/projects/${enc(id)}/instruments`, { tools: [] }
+      ),
+
+    // Per-project MCP tool aggregation — calls / errors / avg duration / FTR
+    // scoped to the project. Returns EVERY manifest tool with usage overlaid
+    // (zero-call rows included) so the UI can render the full catalogue.
+    getProjectMcpToolStats: (id: string) =>
+      get<{ tools: ProjectMcpToolStat[] }>(
+        `/api/projects/${enc(id)}/mcp-tool-stats`, { tools: [] }
       ),
 
     getProjectMemories: (id: string) =>

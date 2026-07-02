@@ -699,3 +699,18 @@ export interface ImpactVerdictEntry {
   createdAt: string;
   decidedAt: string | null;
 }
+
+// ─── Project-scoped MCP tool stats (T2 Slice F) ──────────────────────────────
+
+export interface ProjectMcpToolStat {
+  id: string;
+  name: string;
+  mcp: string;
+  kind: McpToolKind;
+  summary: string;
+  calls: number;
+  errors: number;
+  avgDurationMs: number | null;
+  ftr: number | null;
+  lastUsedAt: string | null;
+}
