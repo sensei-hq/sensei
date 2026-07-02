@@ -18,6 +18,7 @@ mod rank;
 mod model_insight;
 mod corrections_llm;
 mod prompt_classify;
+pub(crate) mod tool_insights;
 pub(crate) mod helpers;
 
 pub use scan::{scan_root, branch_switch};
@@ -29,3 +30,4 @@ pub use community::detect_communities;
 pub use verdicts::measure_verdicts;
 pub use analyze::analyze_project;
 pub use corrections::aggregate_corrections;
+pub use tool_insights::aggregate_tool_insights;

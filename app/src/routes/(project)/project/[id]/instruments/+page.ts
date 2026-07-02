@@ -5,9 +5,10 @@ import { appState } from '$lib/appstate.svelte.js';
 export const load: PageLoad = async ({ params, parent }) => {
   const { project } = await parent();
   const api = senseiApi(appState.port);
-  const [ext, mcp] = await Promise.all([
+  const [ext, mcp, services] = await Promise.all([
     api.getProjectInstruments(params.id),
     api.getProjectMcpToolStats(params.id),
+    api.listProjectServices(params.id),
   ]);
   return {
     project,
@@ -15,5 +16,7 @@ export const load: PageLoad = async ({ params, parent }) => {
     tools: ext.tools ?? [],
     // MCP tool aggregation — every manifest tool with per-project usage.
     mcpToolStats: mcp.tools ?? [],
+    // Installed services with per-project scope resolved (T2 Slice B).
+    services: services.services ?? [],
   };
 };

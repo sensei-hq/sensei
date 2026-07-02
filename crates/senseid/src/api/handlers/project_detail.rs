@@ -232,6 +232,27 @@ pub(crate) async fn get_project_sessions(
     Ok(Json(serde_json::json!({ "sessions": sessions })))
 }
 
+// ── Doc drift scan (T3 Slice 2.3) ───────────────────────────────────────────
+
+/// POST /api/projects/{id}/drift/scan — run the doc-drift detector on the
+/// project. Returns `{ scannedDocs, newBroken, resolved }` so the UI can
+/// flash a "found N drift signals" notice after triggering.
+pub(crate) async fn scan_project_doc_drift(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let uuid = uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?;
+    state.pg.get_project(&uuid).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let summary = state.pg.scan_project_doc_drift(&uuid).await
+        .map_err(|e| {
+            tracing::error!(error = %e, project = %uuid, "scan_project_doc_drift failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    Ok(Json(summary))
+}
+
 // ── Service scoping (T2 Slice B) ────────────────────────────────────────────
 
 #[derive(Deserialize)]

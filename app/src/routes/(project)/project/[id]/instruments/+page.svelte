@@ -1,8 +1,13 @@
 <script lang="ts">
     import { PageHeader } from '$lib/components';
-    import type { ProjectMcpToolStat } from '$lib/types.js';
+    import { appState } from '$lib/appstate.svelte.js';
+    import { senseiApi } from '$lib/api.js';
+    import { invalidateAll } from '$app/navigation';
+    import { page } from '$app/state';
+    import type { ProjectMcpToolStat, ProjectService } from '$lib/types.js';
 
     let { data } = $props();
+    const projectId = $derived(page.params.id ?? '');
 
     // Kind chip filter mirrors the observatory Playground so users move
     // between the two pages with the same mental model.
@@ -14,12 +19,29 @@
     ];
 
     const stats: ProjectMcpToolStat[] = $derived(data.mcpToolStats);
+    const services: ProjectService[] = $derived(data.services);
     const visibleStats = $derived(
         kindFilter === 'all' ? stats : stats.filter((t) => t.kind === kindFilter),
     );
 
     const totalCalls = $derived(stats.reduce((a, t) => a + (t.calls || 0), 0));
     const totalErrors = $derived(stats.reduce((a, t) => a + (t.errors || 0), 0));
+
+    // Per-service toggle state — tracks in-flight PUTs so the row disables
+    // while the round-trip is happening (prevents double-flip races).
+    let toggling = $state<Record<string, boolean>>({});
+    async function toggleService(service: ProjectService) {
+        if (!projectId) return;
+        toggling = { ...toggling, [service.id]: true };
+        try {
+            await senseiApi(appState.port).setProjectServiceScope(
+                projectId, service.id, !service.enabledForProject,
+            );
+            await invalidateAll();
+        } finally {
+            toggling = { ...toggling, [service.id]: false };
+        }
+    }
 
     function fmtInt(n: number | null | undefined): string {
         return n == null ? '—' : n.toLocaleString();
@@ -43,6 +65,38 @@
 </PageHeader>
 
 <div class="px-6 py-6">
+    <!-- Services (MCP servers, inference providers) — per-project toggle. -->
+    {#if services.length > 0}
+        <section class="mb-8">
+            <h3 class="text-sm font-medium m-0 mb-3">Services</h3>
+            <ul class="list-none m-0 p-0 flex flex-col gap-1">
+                {#each services as service (service.id)}
+                    <li class="flex items-center gap-3 py-2 px-2 rounded-md border border-paper-mute">
+                        <div class="flex-1 min-w-0">
+                            <div class="text-sm font-medium text-ink truncate">{service.displayName}</div>
+                            <div class="text-xs text-ink-soft truncate">
+                                <span class="font-mono">{service.name}</span>
+                                <span class="opacity-60"> · {service.protocol} · {service.kind}</span>
+                                {#if service.publisher} · {service.publisher}{/if}
+                            </div>
+                        </div>
+                        {#if service.toolsCount > 0}
+                            <span class="text-xs text-ink-soft">{service.toolsCount} tool{service.toolsCount === 1 ? '' : 's'}</span>
+                        {/if}
+                        <button
+                            type="button"
+                            class="toggle text-xs px-3 py-1 rounded-full border cursor-pointer"
+                            class:enabled={service.enabledForProject}
+                            disabled={toggling[service.id]}
+                            aria-pressed={service.enabledForProject}
+                            onclick={() => toggleService(service)}
+                        >{service.enabledForProject ? 'On' : 'Off'}</button>
+                    </li>
+                {/each}
+            </ul>
+        </section>
+    {/if}
+
     <!-- MCP tool aggregation — the new lens per T2 Slice F. -->
     <section class="mb-8">
         <h3 class="text-sm font-medium m-0 mb-3">MCP tools</h3>
@@ -132,5 +186,20 @@
     .scope-badge.proj {
         background: var(--accent-soft);
         color: var(--accent);
+    }
+    /* Enable-toggle pill — On is bright, Off is muted. Token-only. */
+    .toggle {
+        background: transparent;
+        color: var(--ink-mute);
+        border-color: var(--paper-edge);
+    }
+    .toggle.enabled {
+        background: var(--success-soft);
+        color: var(--success);
+        border-color: var(--success-edge);
+    }
+    .toggle:disabled {
+        opacity: 0.6;
+        cursor: default;
     }
 </style>
