@@ -9,7 +9,7 @@ import type {
   ProjectListItem,
   KnowledgeSource, NewKnowledgeSourceBody, SyncStats,
   McpToolManifest, SessionToolTimeline, MemoryShareBatch, ImpactVerdictEntry,
-  ProjectMcpToolStat, ToolSignal,
+  ProjectMcpToolStat, ToolSignal, ProjectService, ToolInsight,
 } from './types.js';
 import type {
   MemoryListResponse, MemoryDetail, ContextResponse,
@@ -234,6 +234,16 @@ export function senseiApi(port: number) {
         `/api/projects/${enc(id)}/mcp-tool-stats`, { tools: [] }
       ),
 
+    // Services (MCP servers, inference providers) with per-project scope
+    // resolved (scoped > global > default true).
+    listProjectServices: (id: string) =>
+      get<{ services: ProjectService[] }>(
+        `/api/projects/${enc(id)}/services`, { services: [] }
+      ),
+
+    setProjectServiceScope: (id: string, serviceId: string, enabled: boolean) =>
+      put(`/api/projects/${enc(id)}/services/${enc(serviceId)}/scope`, { enabled }),
+
     getProjectMemories: (id: string) =>
       get<{ active: ProjectMemory[]; total: number; pendingShare: number }>(
         `/api/projects/${enc(id)}/memories`, { active: [], total: 0, pendingShare: 0 }
@@ -336,8 +346,15 @@ export function senseiApi(port: number) {
       ),
 
     getToolSignals: () =>
-      get<{ signals: ToolSignal[] }>(
+      get<{ signals: ToolSignal[]; source?: 'cache' | 'derived' }>(
         '/api/observatory/tool-signals', { signals: [] }
+      ),
+
+    // Cached per-tool snapshots (T2 Slice D) — full metrics + optional
+    // signal card per tool. Populated by the AggregateToolInsights task.
+    getToolInsights: () =>
+      get<{ insights: ToolInsight[] }>(
+        '/api/observatory/tool-insights', { insights: [] }
       ),
 
     getLibraryUsage: (id: string) =>

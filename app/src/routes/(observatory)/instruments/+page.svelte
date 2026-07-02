@@ -6,16 +6,18 @@
     import EmptyState from "$lib/components/EmptyState.svelte";
     import SignalCard from "$lib/components/SignalCard.svelte";
     import { Eyebrow, PageHeader } from "$lib/components";
-    import type { McpToolManifest, SessionToolCall, ToolSignal } from "$lib/types.js";
+    import { mcp } from "$lib/state/mcp.svelte.js";
+    import type { McpToolManifest, SessionToolCall } from "$lib/types.js";
 
     type Tool = McpToolManifest;
-    type ToolStat = { tool_name: string; call_count: number; error_count: number; avg_duration_ms: number | null; last_used_at: string };
     type SessionRow = { id: string; task: string; startedAt: string; ftr?: number | null };
 
-    let tools = $state<Tool[]>([]);
-    let toolStats = $state<ToolStat[]>([]);
-    let toolSignals = $state<ToolSignal[]>([]);
-    let loading = $state(true);
+    // All catalogue data lives on the mcp store — page is pure presentation.
+    const tools = $derived(mcp.tools);
+    const toolStats = $derived(mcp.toolStats);
+    const toolSignals = $derived(mcp.toolSignals);
+    const loading = $derived(mcp.catalogStatus === 'loading' || mcp.catalogStatus === 'idle');
+
     let tab = $state("playground");
     let kindFilter = $state<'all' | 'query' | 'action'>('all');
     let selectedTool = $state<Tool | null>(null);
@@ -23,13 +25,21 @@
     let toolParams = $state<Record<string, string>>({});
     let executing = $state(false);
 
-    // Replay tab state — populated lazily on first tab activation to keep the
-    // Playground / Insights load path light.
+    // Replay tab state — session list stays local (small, page-scoped);
+    // timelines cache in the mcp store keyed by session id.
     let replaySessions = $state<SessionRow[]>([]);
     let selectedSessionId = $state<string | null>(null);
     let sessionCalls = $state<SessionToolCall[]>([]);
     let replayLoading = $state(false);
     let selectedCall = $state<SessionToolCall | null>(null);
+
+    // Insights tab — the newer cached tool_insights table is loaded lazily
+    // when the tab is first opened. Selecting a tool row expands its
+    // metrics detail.
+    let selectedInsightTool = $state<string | null>(null);
+    const selectedInsight = $derived(
+        selectedInsightTool ? mcp.insightFor(selectedInsightTool) : undefined,
+    );
 
     const instrumentTabs: [string, string][] = [
         ["playground", "Playground"],
@@ -50,17 +60,8 @@
         kindFilter === 'all' ? tools : tools.filter((t) => t.kind === kindFilter),
     );
 
-    onMount(async () => {
-        const api = senseiApi(appState.port);
-        const [data, stats, signals] = await Promise.all([
-            api.mcpListTools(),
-            api.getToolUsage(),
-            api.getToolSignals(),
-        ]);
-        tools = data.tools;
-        toolStats = stats.tools ?? [];
-        toolSignals = signals.signals ?? [];
-        loading = false;
+    onMount(() => {
+        void mcp.loadCatalog();
     });
 
     async function executeTool() {
@@ -94,16 +95,19 @@
         selectedCall = null;
         sessionCalls = [];
         replayLoading = true;
-        const api = senseiApi(appState.port);
-        const timeline = await api.getSessionToolTimeline(sessionId, 200);
-        sessionCalls = timeline.calls;
+        // Store-backed cache — repeat selects are instant.
+        sessionCalls = await mcp.loadSessionTimeline(sessionId);
         replayLoading = false;
     }
 
-    // Kick off session loading the first time Replay is visible.
+    // Kick off session loading the first time Replay is visible; and load
+    // the tool_insights cache the first time Insights is visible.
     $effect(() => {
         if (tab === 'replay') {
             void ensureReplaySessionsLoaded();
+        }
+        if (tab === 'insights') {
+            void mcp.loadInsights();
         }
     });
 
@@ -387,7 +391,13 @@
             </div>
             {#each toolStats as stat (stat.tool_name)}
                 {@const errorRate = stat.call_count > 0 ? stat.error_count / stat.call_count : 0}
-                <div class="grid grid-cols-[1fr_80px_80px_100px_120px] gap-3 px-3 py-2.5 border-b border-paper-mute text-sm items-center">
+                {@const expanded = selectedInsightTool === stat.tool_name}
+                <button
+                    type="button"
+                    class="w-full text-left grid grid-cols-[1fr_80px_80px_100px_120px] gap-3 px-3 py-2.5 border-b border-paper-mute text-sm items-center bg-transparent border-l-0 border-r-0 border-t-0 cursor-pointer"
+                    class:bg-paper-mute={expanded}
+                    onclick={() => (selectedInsightTool = expanded ? null : stat.tool_name)}
+                >
                     <span class="font-mono text-xs">{stat.tool_name}</span>
                     <span class="text-right font-mono text-xs">{stat.call_count}</span>
                     <span class="text-right font-mono text-xs" class:text-error={errorRate > 0.1}>
@@ -402,7 +412,53 @@
                     <span class="text-right text-xs text-ink-soft">
                         {new Date(stat.last_used_at).toLocaleDateString()}
                     </span>
-                </div>
+                </button>
+                {#if expanded}
+                    {@const insight = selectedInsight}
+                    <div class="px-3 pb-3 pt-1 border-b border-paper-mute bg-paper-soft">
+                        {#if insight}
+                            <div class="flex items-center gap-3 mb-2">
+                                <span class="text-xs uppercase tracking-wide text-ink-mute">Snapshot</span>
+                                <span class="text-xs text-ink-soft font-mono">
+                                    computed {new Date(insight.computedAt).toLocaleString()}
+                                </span>
+                                {#if insight.variant}
+                                    <span class="text-xs uppercase tracking-wide"
+                                        class:text-danger={insight.variant === 'warn'}
+                                        class:text-warning={insight.variant === 'opportunity'}
+                                        class:text-ink-mute={insight.variant === 'unused'}
+                                        class:text-success={insight.variant === 'win'}>
+                                        {insight.variant}
+                                    </span>
+                                {/if}
+                            </div>
+                            <div class="grid grid-cols-2 gap-x-6 gap-y-1 text-xs">
+                                <span class="text-ink-mute">Error rate</span>
+                                <span class="font-mono">
+                                    {insight.metrics.errorRate != null ? `${(insight.metrics.errorRate * 100).toFixed(1)}%` : '—'}
+                                </span>
+                                <span class="text-ink-mute">Avg duration</span>
+                                <span class="font-mono">
+                                    {insight.metrics.avgDurationMs != null ? fmtDuration(insight.metrics.avgDurationMs) : '—'}
+                                </span>
+                                <span class="text-ink-mute">Calls</span>
+                                <span class="font-mono">{insight.metrics.callCount ?? 0}</span>
+                                <span class="text-ink-mute">Errors</span>
+                                <span class="font-mono">{insight.metrics.errorCount ?? 0}</span>
+                            </div>
+                            {#if insight.title && insight.detail}
+                                <div class="mt-2 text-xs text-ink-soft leading-normal">
+                                    <span class="font-medium">{insight.title}.</span> {insight.detail}
+                                </div>
+                            {/if}
+                        {:else}
+                            <p class="text-xs text-ink-soft m-0">
+                                No cached snapshot yet — the AggregateToolInsights task
+                                writes one per scheduler tick.
+                            </p>
+                        {/if}
+                    </div>
+                {/if}
             {/each}
         </div>
     {/if}

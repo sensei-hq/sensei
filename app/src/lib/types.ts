@@ -725,3 +725,41 @@ export interface ToolSignal {
   title: string;
   detail: string;
 }
+
+// ─── Service scoping (T2 Slice B) ────────────────────────────────────────────
+
+export interface ProjectService {
+  id: string;
+  name: string;
+  displayName: string;
+  publisher: string | null;
+  protocol: string;
+  kind: string;
+  summary: string | null;
+  toolsCount: number;
+  verified: boolean;
+  installed: boolean;
+  /** Effective enable state (scoped > global > default true). */
+  enabledForProject: boolean;
+  /** Raw scoped override for this project; null when no override row exists. */
+  scopedEnabled: boolean | null;
+  /** Raw global scope; null when no global row exists. */
+  globalEnabled: boolean | null;
+}
+
+// ─── Cached tool insights (T2 Slice D) ───────────────────────────────────────
+
+export interface ToolInsight {
+  toolName: string;
+  computedAt: string;
+  metrics: {
+    callCount?: number;
+    errorCount?: number;
+    errorRate?: number;
+    avgDurationMs?: number | null;
+    lastUsedAt?: string;
+  };
+  variant: SignalVariant | null;
+  title: string | null;
+  detail: string | null;
+}
