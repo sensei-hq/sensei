@@ -94,6 +94,56 @@ pub(crate) async fn get_project_instruments(
     Ok(Json(serde_json::json!({ "tools": tools })))
 }
 
+/// GET /api/projects/{id}/mcp-tool-stats — per-tool call/error/duration/FTR
+/// aggregation scoped to a project. Joins the daemon's tool manifests (the
+/// full known catalogue) with per-project usage rows so tools with zero
+/// calls still appear in the response (with count=0). T2 Slice F.
+pub(crate) async fn get_project_mcp_tool_stats(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let uuid = uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?;
+    state.pg.get_project(&uuid).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let stats = state.pg.get_project_mcp_tool_stats(&uuid).await
+        .map_err(|e| {
+            tracing::error!(error = %e, project = %uuid, "get_project_mcp_tool_stats failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    // Merge with the tool manifest so the response covers every tool the
+    // daemon dispatches (not just the ones this project called). Manifest
+    // fields (kind, summary) let the UI render a full catalogue with usage
+    // overlays without a second daemon round-trip.
+    let manifests = crate::api::handlers::mcp_manifests::manifests();
+    let mut by_name: std::collections::HashMap<String, &serde_json::Value> = std::collections::HashMap::new();
+    for stat in &stats {
+        if let Some(name) = stat.get("toolName").and_then(|v| v.as_str()) {
+            by_name.insert(name.to_string(), stat);
+        }
+    }
+    let tools: Vec<serde_json::Value> = manifests.iter().map(|m| {
+        let empty = serde_json::json!({});
+        let usage = by_name.get(m.name).copied().unwrap_or(&empty);
+        serde_json::json!({
+            "id":            m.id,
+            "name":          m.name,
+            "mcp":           m.mcp,
+            "kind":          m.kind,
+            "summary":       m.summary,
+            "calls":         usage.get("calls").cloned().unwrap_or(serde_json::json!(0)),
+            "errors":        usage.get("errors").cloned().unwrap_or(serde_json::json!(0)),
+            "avgDurationMs": usage.get("avgDurationMs").cloned().unwrap_or(serde_json::Value::Null),
+            "ftr":           usage.get("ftr").cloned().unwrap_or(serde_json::Value::Null),
+            "lastUsedAt":    usage.get("lastUsedAt").cloned().unwrap_or(serde_json::Value::Null),
+        })
+    }).collect();
+
+    Ok(Json(serde_json::json!({ "tools": tools })))
+}
+
 pub(crate) async fn get_project_memories(
     State(state): State<AppState>,
     Path(id): Path<String>,
