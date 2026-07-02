@@ -638,3 +638,31 @@ export interface McpToolManifest {
   inputs: McpToolInput[];
   example: McpToolExample;
 }
+
+// ─── Session tool timeline (Instruments Replay tab) ──────────────────────────
+//
+// Wire shape returned by `GET /api/sessions/{id}/tool-timeline`. One row per
+// tool call, paired PreToolUse ↔ PostToolUse. Mirrors the JSON keys the
+// daemon emits from `pg_store::get_session_tool_calls`.
+
+export interface SessionToolCall {
+  callId: number;
+  toolName: string;
+  family: string;
+  request: unknown;
+  response: unknown | null;
+  success: boolean | null;
+  startedAtMs: number;
+  completedAtMs: number | null;
+  durationMs: number | null;
+  startedAt: string;
+  completedAt: string | null;
+  /** True when the PostToolUse hasn't landed yet (call in-flight or aborted). */
+  inFlight: boolean;
+}
+
+export interface SessionToolTimeline {
+  sessionId: string;
+  calls: SessionToolCall[];
+  count: number;
+}
