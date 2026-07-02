@@ -490,6 +490,12 @@ export interface PatternEntry {
   confidence: number;
   is_anti_pattern: boolean;
   lifecycle?: string;
+  /** Human-readable description of the pattern and why it matters. */
+  description?: string | null;
+  /** Code example showing the pattern (or the anti-pattern to avoid). */
+  example?: string | null;
+  /** Free-form enforcement guidance surfaced when lifecycle = rule. */
+  enforcement?: string | null;
 }
 
 export interface Recommendation {
