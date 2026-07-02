@@ -1422,6 +1422,93 @@ impl PgStore {
         }).collect())
     }
 
+    // ── Tool insights cache (T2 Slice D) ─────────────────────────────────
+
+    /// Append a snapshot row for one tool. Called by the
+    /// `AggregateToolInsights` task once per tool per tick. Historical rows
+    /// stay in place so a follow-up trend chart can walk `computed_at` back
+    /// in time.
+    pub async fn insert_tool_insight(
+        &self,
+        tool_name: &str,
+        metrics: &serde_json::Value,
+        signal: Option<&crate::api::handlers::tool_signals::Signal>,
+    ) -> Result<(), String> {
+        use crate::tasks::handlers::tool_insights::variant_str;
+        let (variant, title, detail) = match signal {
+            Some(s) => (Some(variant_str(s.variant)), Some(s.title.as_str()), Some(s.detail.as_str())),
+            None => (None, None, None),
+        };
+        sqlx_core::query::query(
+            "INSERT INTO sensei.tool_insights
+                (tool_name, metrics, signal_variant, signal_title, signal_detail)
+             VALUES ($1, $2, $3, $4, $5)"
+        )
+        .bind(tool_name)
+        .bind(metrics)
+        .bind(variant)
+        .bind(title)
+        .bind(detail)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Read the latest cached insight per tool. Returns `(tool_name,
+    /// computed_at, metrics, signal_variant, signal_title, signal_detail)`
+    /// tuples ordered by variant priority (warn > opportunity > unused >
+    /// win > null) so the caller can render them straight through.
+    pub async fn get_latest_tool_insights(
+        &self,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        // DISTINCT ON (tool_name) with ORDER BY tool_name, computed_at DESC
+        // is the compact "latest row per tool" trick — Postgres picks the
+        // first tuple per group. Wrapped in an outer SELECT so we can add
+        // the variant-priority ordering the endpoint expects.
+        #[allow(clippy::type_complexity)]
+        let rows: Vec<(
+            String,                                // tool_name
+            chrono::DateTime<chrono::Utc>,         // computed_at
+            serde_json::Value,                     // metrics
+            Option<String>,                        // variant
+            Option<String>,                        // title
+            Option<String>,                        // detail
+        )> = sqlx_core::query_as::query_as(
+            "SELECT tool_name, computed_at, metrics,
+                    signal_variant, signal_title, signal_detail
+               FROM (
+                 SELECT DISTINCT ON (tool_name)
+                        tool_name, computed_at, metrics,
+                        signal_variant, signal_title, signal_detail
+                   FROM sensei.tool_insights
+                  ORDER BY tool_name, computed_at DESC
+               ) latest
+              ORDER BY CASE signal_variant
+                         WHEN 'warn'        THEN 0
+                         WHEN 'opportunity' THEN 1
+                         WHEN 'unused'      THEN 2
+                         WHEN 'win'         THEN 3
+                         ELSE 4
+                       END,
+                       computed_at DESC"
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        Ok(rows.into_iter().map(|(tool_name, computed_at, metrics, variant, title, detail)| {
+            serde_json::json!({
+                "toolName":   tool_name,
+                "computedAt": computed_at.to_rfc3339(),
+                "metrics":    metrics,
+                "variant":    variant,
+                "title":      title,
+                "detail":     detail,
+            })
+        }).collect())
+    }
+
     // ── Doc-drift scan (T3 Slice 2.3) ────────────────────────────────────
 
     /// Scan every doc node in a project's folders for backtick-wrapped
