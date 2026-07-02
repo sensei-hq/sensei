@@ -1422,6 +1422,124 @@ impl PgStore {
         }).collect())
     }
 
+    // ── Service registry + per-project scoping (T2 Slice B) ──────────────
+
+    /// List every installed service, joined with the given project's per-scope
+    /// override so the UI can render enabled/disabled state without a second
+    /// round-trip. `enabled_for_project` reads from the scoped override when
+    /// present, otherwise falls back to the global row's `enabled`, otherwise
+    /// defaults to `true` (installed services are on by default).
+    pub async fn list_services_with_project_scope(
+        &self,
+        project_id: &uuid::Uuid,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        #[allow(clippy::type_complexity)]
+        let rows: Vec<(
+            uuid::Uuid,     // id
+            String,         // name
+            String,         // display_name
+            Option<String>, // publisher
+            String,         // protocol
+            String,         // kind
+            Option<String>, // summary
+            i32,            // tools_count
+            bool,           // verified
+            bool,           // installed
+            Option<bool>,   // scoped_enabled
+            Option<bool>,   // global_enabled
+        )> = sqlx_core::query_as::query_as(
+            "SELECT s.id, s.name, s.display_name, s.publisher,
+                    s.protocol::text, s.kind::text, s.summary, s.tools_count,
+                    s.verified, s.installed,
+                    (SELECT enabled FROM sensei.service_projects sp
+                      WHERE sp.service_id = s.id AND sp.project_id = $1) AS scoped_enabled,
+                    (SELECT enabled FROM sensei.service_projects sp
+                      WHERE sp.service_id = s.id AND sp.project_id IS NULL) AS global_enabled
+               FROM sensei.services s
+              WHERE s.installed = true
+              ORDER BY s.display_name"
+        )
+        .bind(project_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        Ok(rows.into_iter().map(|(id, name, display_name, publisher, protocol, kind, summary,
+                                    tools_count, verified, installed, scoped_enabled, global_enabled)| {
+            // Effective enable: scoped override wins, then global row, then default true.
+            let enabled_for_project = scoped_enabled.or(global_enabled).unwrap_or(true);
+            serde_json::json!({
+                "id":                 id,
+                "name":               name,
+                "displayName":        display_name,
+                "publisher":          publisher,
+                "protocol":           protocol,
+                "kind":               kind,
+                "summary":            summary,
+                "toolsCount":         tools_count,
+                "verified":           verified,
+                "installed":          installed,
+                "enabledForProject":  enabled_for_project,
+                "scopedEnabled":      scoped_enabled,
+                "globalEnabled":      global_enabled,
+            })
+        }).collect())
+    }
+
+    /// Upsert the per-project scope row for a service. `project_id = None`
+    /// writes the global scope. Idempotent — repeat calls flip the enabled
+    /// flag and bump `modified_at`.
+    pub async fn set_service_project_scope(
+        &self,
+        service_id: &uuid::Uuid,
+        project_id: Option<&uuid::Uuid>,
+        enabled: bool,
+    ) -> Result<(), String> {
+        // Partial-unique indexes on (service_id) WHERE project_id IS NULL and
+        // (service_id, project_id) WHERE project_id IS NOT NULL guarantee at
+        // most one row per scope, so an UPDATE-first fallback is enough
+        // without needing INSERT ... ON CONFLICT (which can't target a
+        // partial unique index without extra hints in Postgres).
+        let updated = if let Some(pid) = project_id {
+            sqlx_core::query::query(
+                "UPDATE sensei.service_projects
+                    SET enabled = $1, modified_at = now()
+                  WHERE service_id = $2 AND project_id = $3"
+            )
+            .bind(enabled)
+            .bind(service_id)
+            .bind(pid)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?
+        } else {
+            sqlx_core::query::query(
+                "UPDATE sensei.service_projects
+                    SET enabled = $1, modified_at = now()
+                  WHERE service_id = $2 AND project_id IS NULL"
+            )
+            .bind(enabled)
+            .bind(service_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?
+        };
+
+        if updated.rows_affected() == 0 {
+            sqlx_core::query::query(
+                "INSERT INTO sensei.service_projects (service_id, project_id, enabled)
+                 VALUES ($1, $2, $3)"
+            )
+            .bind(service_id)
+            .bind(project_id)
+            .bind(enabled)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+
     /// Per-tool aggregation for a project's Instruments screen.
     /// Joins `session_tool_calls` back to `activity.sessions` on
     /// `client_session_id`, filters by `session.project_id`, and computes
