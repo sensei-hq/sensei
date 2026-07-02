@@ -1422,6 +1422,56 @@ impl PgStore {
         }).collect())
     }
 
+    /// Per-tool aggregation for a project's Instruments screen.
+    /// Joins `session_tool_calls` back to `activity.sessions` on
+    /// `client_session_id`, filters by `session.project_id`, and computes
+    /// call count, error count, avg duration, and FTR (fraction of sessions
+    /// that used the tool AND completed FTR).
+    pub async fn get_project_mcp_tool_stats(
+        &self,
+        project_id: &uuid::Uuid,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(String, i64, i64, Option<f64>, Option<f64>, Option<chrono::DateTime<chrono::Utc>>)> =
+            sqlx_core::query_as::query_as(
+                "WITH scoped AS (
+                     SELECT stc.tool_name,
+                            stc.success,
+                            stc.duration_ms,
+                            stc.started_at,
+                            s.ftr
+                       FROM sensei.session_tool_calls stc
+                       JOIN activity.sessions s
+                         ON s.client_session_id = stc.session_id
+                      WHERE s.project_id = $1
+                 )
+                 SELECT tool_name,
+                        count(*)::bigint                                                          AS calls,
+                        count(*) FILTER (WHERE success IS FALSE)::bigint                          AS errors,
+                        avg(duration_ms)::float8                                                  AS avg_duration_ms,
+                        (count(*) FILTER (WHERE ftr IS TRUE)::float8
+                            / NULLIF(count(*) FILTER (WHERE ftr IS NOT NULL), 0))                 AS ftr,
+                        max(started_at)                                                           AS last_used_at
+                   FROM scoped
+                  GROUP BY tool_name
+                  ORDER BY calls DESC, tool_name ASC"
+            )
+            .bind(project_id)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        Ok(rows.into_iter().map(|(tool_name, calls, errors, avg_dur, ftr, last_used_at)| {
+            serde_json::json!({
+                "toolName":      tool_name,
+                "calls":         calls,
+                "errors":        errors,
+                "avgDurationMs": avg_dur,
+                "ftr":           ftr,
+                "lastUsedAt":    last_used_at.map(|t| t.to_rfc3339()),
+            })
+        }).collect())
+    }
+
     // ── Manual impact-verdict log (T3 Slice 3) ─────────────────────────────
 
     /// List manual impact-verdict entries for a project, newest first.
