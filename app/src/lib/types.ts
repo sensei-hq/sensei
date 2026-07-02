@@ -685,3 +685,17 @@ export interface MemoryShareBatch {
   decidedAt: string | null;
   memberCount: number;
 }
+
+// ─── Manual impact-verdict log (T3 Slice 3) ──────────────────────────────────
+
+export type ImpactVerdict = 'pending' | 'success' | 'mixed' | 'failure';
+
+export interface ImpactVerdictEntry {
+  id: string;
+  sessionId: string | null;
+  title: string;
+  note: string | null;
+  verdict: ImpactVerdict;
+  createdAt: string;
+  decidedAt: string | null;
+}
