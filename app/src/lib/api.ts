@@ -8,7 +8,7 @@ import type {
   ProjectSession, CallFlowModule, CallFlowCall,
   ProjectListItem,
   KnowledgeSource, NewKnowledgeSourceBody, SyncStats,
-  McpToolManifest, SessionToolTimeline, MemoryShareBatch,
+  McpToolManifest, SessionToolTimeline, MemoryShareBatch, ImpactVerdictEntry,
 } from './types.js';
 import type {
   MemoryListResponse, MemoryDetail, ContextResponse,
@@ -249,6 +249,28 @@ export function senseiApi(port: number) {
       put(
         `/api/projects/${enc(id)}/memory-batches/${enc(batchId)}`,
         { status, note },
+      ),
+
+    // Impact verdicts (manual log) — user-logged retrospectives about
+    // shipped changes. Independent of the automatic recommendation
+    // verdicts on /api/projects/{id}/impact.
+    listImpactVerdicts: (id: string, verdict?: string) =>
+      get<{ verdicts: ImpactVerdictEntry[] }>(
+        `/api/projects/${enc(id)}/impact-verdicts${verdict ? `?verdict=${enc(verdict)}` : ''}`,
+        { verdicts: [] },
+      ),
+
+    createImpactVerdict: (id: string, title: string, note?: string, sessionId?: string) =>
+      post<{ id: string }>(
+        `/api/projects/${enc(id)}/impact-verdicts`,
+        { title, note, session_id: sessionId },
+        { id: '' },
+      ),
+
+    decideImpactVerdict: (id: string, verdictId: string, verdict: 'success' | 'mixed' | 'failure', note?: string) =>
+      put(
+        `/api/projects/${enc(id)}/impact-verdicts/${enc(verdictId)}`,
+        { verdict, note },
       ),
 
     getProjectDrift: (id: string) =>
