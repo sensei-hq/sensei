@@ -8,6 +8,8 @@ import type {
   ProjectSession, CallFlowModule, CallFlowCall,
   ProjectListItem,
   KnowledgeSource, NewKnowledgeSourceBody, SyncStats,
+  McpToolManifest, SessionToolTimeline, MemoryShareBatch, ImpactVerdictEntry,
+  ProjectMcpToolStat, ToolSignal,
 } from './types.js';
 import type {
   MemoryListResponse, MemoryDetail, ContextResponse,
@@ -224,9 +226,60 @@ export function senseiApi(port: number) {
         `/api/projects/${enc(id)}/instruments`, { tools: [] }
       ),
 
+    // Per-project MCP tool aggregation — calls / errors / avg duration / FTR
+    // scoped to the project. Returns EVERY manifest tool with usage overlaid
+    // (zero-call rows included) so the UI can render the full catalogue.
+    getProjectMcpToolStats: (id: string) =>
+      get<{ tools: ProjectMcpToolStat[] }>(
+        `/api/projects/${enc(id)}/mcp-tool-stats`, { tools: [] }
+      ),
+
     getProjectMemories: (id: string) =>
       get<{ active: ProjectMemory[]; total: number; pendingShare: number }>(
         `/api/projects/${enc(id)}/memories`, { active: [], total: 0, pendingShare: 0 }
+      ),
+
+    // Memory share batches — the proposal / review / verdict lifecycle for
+    // grouping memories before federating them out to a hive-mind.
+    listMemoryShareBatches: (id: string, status?: string) =>
+      get<{ batches: MemoryShareBatch[] }>(
+        `/api/projects/${enc(id)}/memory-batches${status ? `?status=${enc(status)}` : ''}`,
+        { batches: [] },
+      ),
+
+    createMemoryShareBatch: (id: string, memoryIds: string[], note?: string) =>
+      post<{ id: string }>(
+        `/api/projects/${enc(id)}/memory-batches`,
+        { memory_ids: memoryIds, note },
+        { id: '' },
+      ),
+
+    decideMemoryShareBatch: (id: string, batchId: string, status: 'approved' | 'rejected' | 'withdrawn', note?: string) =>
+      put(
+        `/api/projects/${enc(id)}/memory-batches/${enc(batchId)}`,
+        { status, note },
+      ),
+
+    // Impact verdicts (manual log) — user-logged retrospectives about
+    // shipped changes. Independent of the automatic recommendation
+    // verdicts on /api/projects/{id}/impact.
+    listImpactVerdicts: (id: string, verdict?: string) =>
+      get<{ verdicts: ImpactVerdictEntry[] }>(
+        `/api/projects/${enc(id)}/impact-verdicts${verdict ? `?verdict=${enc(verdict)}` : ''}`,
+        { verdicts: [] },
+      ),
+
+    createImpactVerdict: (id: string, title: string, note?: string, sessionId?: string) =>
+      post<{ id: string }>(
+        `/api/projects/${enc(id)}/impact-verdicts`,
+        { title, note, session_id: sessionId },
+        { id: '' },
+      ),
+
+    decideImpactVerdict: (id: string, verdictId: string, verdict: 'success' | 'mixed' | 'failure', note?: string) =>
+      put(
+        `/api/projects/${enc(id)}/impact-verdicts/${enc(verdictId)}`,
+        { verdict, note },
       ),
 
     getProjectDrift: (id: string) =>
@@ -280,6 +333,11 @@ export function senseiApi(port: number) {
     getToolUsage: () =>
       get<{ tools: Array<{ tool_name: string; call_count: number; error_count: number; avg_duration_ms: number | null; last_used_at: string }> }>(
         '/api/observatory/tool-usage', { tools: [] }
+      ),
+
+    getToolSignals: () =>
+      get<{ signals: ToolSignal[] }>(
+        '/api/observatory/tool-signals', { signals: [] }
       ),
 
     getLibraryUsage: (id: string) =>
@@ -406,10 +464,17 @@ export function senseiApi(port: number) {
       ),
 
     // ── MCP Tool Proxy ────────────────────────────────────────────────
-    mcpListTools: () => get<{ tools: Array<{ name: string; description: string; params: string[] }> }>('/api/mcp/tools', { tools: [] }),
+    mcpListTools: () => get<{ tools: McpToolManifest[] }>('/api/mcp/tools', { tools: [] }),
 
     mcpCallTool: (tool: string, params: Record<string, string>) =>
       post<Record<string, unknown>>('/api/mcp/call', { tool, params }, {}),
+
+    // Session tool-call timeline for the Instruments Replay tab.
+    getSessionToolTimeline: (sessionId: string, limit = 200) =>
+      get<SessionToolTimeline>(
+        `/api/sessions/${enc(sessionId)}/tool-timeline?limit=${limit}`,
+        { sessionId, calls: [], count: 0 },
+      ),
 
     // ── Marketplace ──────────────────────────────────────────────────
     marketplaceInstall: (target: string, marketplacePath: string, item?: string, scope?: string) =>

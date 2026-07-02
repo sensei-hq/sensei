@@ -6,3 +6,4 @@ pub mod assistants;
 pub mod repos;
 pub mod logs;
 pub mod update;
+pub mod project_windows;

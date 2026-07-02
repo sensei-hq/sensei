@@ -1,9 +1,52 @@
 <script lang="ts">
+  import { appState } from '$lib/appstate.svelte.js';
+  import { senseiApi } from '$lib/api.js';
+  import { invalidateAll } from '$app/navigation';
+  import { page } from '$app/state';
+  import type { ImpactVerdictEntry } from '$lib/types.js';
+
   let { data } = $props();
   let selectedId = $state<string | null>(null);
   // Auto-select first verdict on data load
   $effect(() => { if (selectedId === null && data.verdicts.length > 0) selectedId = data.verdicts[0].id; });
   let selected = $derived(data.verdicts.find((v: any) => v.id === selectedId) ?? null);
+
+  // Manual impact-log state (T3 Slice 3).
+  const projectId = $derived(page.params.id ?? '');
+  let logForm = $state({ title: '', note: '' });
+  let logging = $state(false);
+  let decideBusy = $state<Record<string, boolean>>({});
+
+  async function logImpact() {
+    if (!projectId || !logForm.title.trim()) return;
+    logging = true;
+    try {
+      await senseiApi(appState.port).createImpactVerdict(
+        projectId,
+        logForm.title.trim(),
+        logForm.note.trim() || undefined,
+      );
+      logForm = { title: '', note: '' };
+      await invalidateAll();
+    } finally {
+      logging = false;
+    }
+  }
+
+  async function decide(verdictId: string, outcome: 'success' | 'mixed' | 'failure') {
+    if (!projectId) return;
+    decideBusy = { ...decideBusy, [verdictId]: true };
+    try {
+      await senseiApi(appState.port).decideImpactVerdict(projectId, verdictId, outcome);
+      await invalidateAll();
+    } finally {
+      decideBusy = { ...decideBusy, [verdictId]: false };
+    }
+  }
+
+  const impactLog: ImpactVerdictEntry[] = $derived(data.impactLog);
+  const impactPending = $derived(impactLog.filter(e => e.verdict === 'pending'));
+  const impactDecided = $derived(impactLog.filter(e => e.verdict !== 'pending'));
 </script>
 
 <div class="px-6 py-6">
@@ -119,6 +162,85 @@
       {/if}
     </div>
   {/if}
+
+  <!-- ── Manual impact log (T3 Slice 3) ─────────────────────────────── -->
+  <section class="mt-10 pt-6 border-t border-paper-mute">
+    <h3 class="text-sm font-medium m-0 mb-1">Impact log</h3>
+    <p class="text-xs text-ink-soft m-0 mb-4">
+      Log a shipped change, then verdict it later once the outcome has had
+      time to settle. Independent of the automatic recommendation
+      measurement above.
+    </p>
+
+    <form
+      class="flex flex-col gap-2 mb-6"
+      onsubmit={(e) => { e.preventDefault(); logImpact(); }}
+    >
+      <input
+        type="text"
+        placeholder="What shipped?"
+        bind:value={logForm.title}
+        class="px-3 py-2 border border-paper-edge rounded-md bg-paper text-ink text-sm outline-none"
+      />
+      <textarea
+        placeholder="Context (optional)"
+        bind:value={logForm.note}
+        rows="2"
+        class="px-3 py-2 border border-paper-edge rounded-md bg-paper text-ink text-sm outline-none resize-y"
+      ></textarea>
+      <button
+        type="submit"
+        disabled={!logForm.title.trim() || logging}
+        class="self-start px-4 py-2 rounded-md text-sm bg-primary text-on-primary border-none cursor-pointer"
+      >{logging ? 'Logging…' : 'Log impact'}</button>
+    </form>
+
+    {#if impactPending.length > 0}
+      <h4 class="text-xs uppercase tracking-wide opacity-60 m-0 mb-2">Pending verdict</h4>
+      <ul class="list-none m-0 p-0 flex flex-col gap-2 mb-6">
+        {#each impactPending as entry (entry.id)}
+          <li class="border border-paper-mute rounded-md px-3 py-2 flex items-center gap-2">
+            <div class="flex-1 min-w-0">
+              <div class="text-sm text-ink truncate">{entry.title}</div>
+              {#if entry.note}
+                <div class="text-xs text-ink-soft mt-0.5">{entry.note}</div>
+              {/if}
+              <div class="text-xs text-ink-soft mt-0.5">{new Date(entry.createdAt).toLocaleDateString()}</div>
+            </div>
+            <button type="button" disabled={decideBusy[entry.id]} onclick={() => decide(entry.id, 'success')}
+                    class="px-2 py-1 text-xs rounded-md bg-success-soft text-success border-none cursor-pointer">Success</button>
+            <button type="button" disabled={decideBusy[entry.id]} onclick={() => decide(entry.id, 'mixed')}
+                    class="px-2 py-1 text-xs rounded-md bg-warning-soft text-warning border-none cursor-pointer">Mixed</button>
+            <button type="button" disabled={decideBusy[entry.id]} onclick={() => decide(entry.id, 'failure')}
+                    class="px-2 py-1 text-xs rounded-md bg-danger-soft text-danger border-none cursor-pointer">Failure</button>
+          </li>
+        {/each}
+      </ul>
+    {/if}
+
+    {#if impactDecided.length > 0}
+      <h4 class="text-xs uppercase tracking-wide opacity-60 m-0 mb-2">Decided</h4>
+      <ul class="list-none m-0 p-0 flex flex-col gap-1">
+        {#each impactDecided as entry (entry.id)}
+          <li class="flex items-center gap-2 py-1.5 border-b border-paper-mute text-sm">
+            <span class="text-xs uppercase tracking-wide font-mono w-16"
+                  class:text-success={entry.verdict === 'success'}
+                  class:text-warning={entry.verdict === 'mixed'}
+                  class:text-danger={entry.verdict === 'failure'}
+            >{entry.verdict}</span>
+            <span class="flex-1 truncate">{entry.title}</span>
+            <span class="text-xs text-ink-soft">
+              {entry.decidedAt ? new Date(entry.decidedAt).toLocaleDateString() : ''}
+            </span>
+          </li>
+        {/each}
+      </ul>
+    {/if}
+
+    {#if impactLog.length === 0}
+      <p class="text-sm text-ink-soft opacity-60">No impact entries yet.</p>
+    {/if}
+  </section>
 </div>
 
 <style>
