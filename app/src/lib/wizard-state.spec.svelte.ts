@@ -219,7 +219,7 @@ describe('WizardState', () => {
         welcome: 'done', preferences: 'done', assistants: 'done',
         roots: 'done', scan: 'done', projects: 'done',
         libraries: 'done', instruments: 'done',
-        inference: 'done', done: 'done',
+        inference: 'done', assignments: 'done', done: 'done',
       };
       ws.hydrate(mockWizardLoadData({ completion: allDone }));
       expect(ws.allDone).toBe(true);

@@ -105,6 +105,34 @@ export interface DaemonRouter {
   configured: boolean;
 }
 
+/** One entry in a fallback chain's ordered model list. `routerName` is
+ *  the router id (matches `DaemonRouter.id`). */
+export interface DaemonChainModel {
+  sequenceOrder: number;
+  modelName: string;
+  routerName: string;
+}
+
+/** A gateway fallback chain surfaced to the Model Assignments wizard.
+ *  `role` is null for utility chains (consensus-* / classify) that the
+ *  gateway invokes by name — those never show up in the role picker. */
+export interface DaemonChain {
+  id: string;
+  name: string;
+  capability: string;
+  role: SenseiRole | null;
+  description: string | null;
+  maxFallbackAttempts: number;
+  isActive: boolean;
+  models: DaemonChainModel[];
+}
+
+/** Sensei roles surfaced by the Model Assignments wizard. Mirrors the
+ *  daemon's `SUPPORTED_ROLES` constant; `default_fallback` is
+ *  intentionally omitted. */
+export const SENSEI_ROLES = ['inference', 'consolidation', 'embedding', 'voice'] as const;
+export type SenseiRole = typeof SENSEI_ROLES[number];
+
 /** Scan baseline — derived from loaded data at hydration time. */
 export interface ScanBaseline {
   rootCount: number;
