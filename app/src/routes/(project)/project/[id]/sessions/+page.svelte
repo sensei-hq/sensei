@@ -1,6 +1,13 @@
 <script lang="ts">
-  import { PageHeader } from '$lib/components';
+  import { PageHeader, TurnBar } from '$lib/components';
   import type { ProjectSession } from '$lib/types.js';
+
+  // Same vocabulary as the daily observatory Recent Sessions — one word
+  // for "did this go right the first time" so both surfaces read the same.
+  function reworkLabel(c: number): string {
+    if (c === 0) return 'first-try';
+    return `${c}× rework`;
+  }
 
   let { data } = $props();
 
@@ -82,17 +89,17 @@
       {filter === 'all' ? 'No sessions recorded for this project yet.' : 'No sessions match this filter.'}
     </p>
   {:else}
-    <div class="grid grid-cols-[60px_1fr_100px_60px_80px_60px_80px] gap-3 px-3 py-2 text-xs text-ink-mute tracking-wide uppercase">
+    <div class="grid grid-cols-[60px_1fr_100px_80px_100px_60px_80px] gap-3 px-3 py-2 text-xs text-ink-mute tracking-wide uppercase">
       <span>Date</span>
       <span>Task</span>
       <span>Model</span>
-      <span class="text-right">Turns</span>
-      <span class="text-right">Corr</span>
+      <span>Timeline</span>
+      <span class="text-right">Rework</span>
       <span class="text-right">FTR</span>
       <span class="text-right">Outcome</span>
     </div>
     {#each visible as s (s.id)}
-      <div class="session-row grid grid-cols-[60px_1fr_100px_60px_80px_60px_80px] gap-3 px-3 py-2 border-b border-paper-mute text-sm items-center" data-testid={`session-row-${s.id}`}>
+      <div class="session-row grid grid-cols-[60px_1fr_100px_80px_100px_60px_80px] gap-3 px-3 py-2 border-b border-paper-mute text-sm items-center" data-testid={`session-row-${s.id}`}>
         <span class="text-xs text-ink-soft font-mono">{fmtDate(s.startedAt)}</span>
         <div class="min-w-0">
           <div class="truncate">{s.task}</div>
@@ -103,11 +110,15 @@
         <span class="text-xs font-mono text-ink-soft truncate" title={s.model ?? undefined}>
           {shortModel(s.model)}
         </span>
-        <span class="text-right font-mono text-xs">{s.turns}</span>
+        <div class="flex items-center gap-2" title={`${s.turns} turns · ${s.corrections} rework`}>
+          <TurnBar turns={s.turns} corrections={s.corrections} width={60} height={8} />
+          <span class="font-mono text-xs text-ink-soft">{s.turns}</span>
+        </div>
         <span class="text-right font-mono text-xs"
+              class:text-success={s.corrections === 0}
               class:text-warning={s.corrections > 0 && s.corrections < 3}
               class:text-danger={s.corrections >= 3}>
-          {s.corrections}
+          {reworkLabel(s.corrections)}
         </span>
         <span class="text-right font-mono text-sm"
               class:text-success={s.ftr === true}
