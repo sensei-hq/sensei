@@ -8,6 +8,9 @@ export interface RecentSession {
   startedAt: string;
   completedAt?: string;
   ftr?: number | null;
+  // Present when the daemon has completed the session — RecentSessions
+  // renders "first-try" for 0, "N× rework" otherwise, per the mockup.
+  corrections?: number | null;
 }
 
 type WireSession = SessionData['sessions'][number];
@@ -42,5 +45,6 @@ export function toRecentSessions(
       startedAt: s.startedAt,
       completedAt: s.completedAt,
       ftr: s.ftr == null ? null : (s.ftr ? 1 : 0),
+      corrections: s.corrections ?? null,
     }));
 }
