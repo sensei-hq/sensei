@@ -132,6 +132,18 @@ export const STAGES: WizardStage[] = [
     active: false,
   },
   {
+    id: 'assignments',
+    path: '/setup/assignments',
+    icon: '任',
+    title: 'Assignments',
+    brief: 'Which model handles which role.',
+    description:
+      'Decide which chain of models handles each reasoning role: insights, memory consolidation, embeddings, and voice. Chains are ordered — first is primary, the rest are fallbacks.',
+    watermark: true,
+    status: 'pending',
+    active: false,
+  },
+  {
     id: 'done',
     path: '/setup/done',
     icon: '入',
