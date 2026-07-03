@@ -929,18 +929,22 @@ impl PgStore {
         // old shape returned folder_id (a bare uuid, never a project name) and
         // snake_case `started_at` with no `completed_at`, so every displayed
         // column — project, task time, duration — came back blank (#61).
+        //
+        // `corrections` is what powers the Today observatory's "Corrections"
+        // column (first-try / N× rework) per the mockup — same column the
+        // per-project session list has surfaced since T3 Slice 1.4.
         type SessionRow = (
             uuid::Uuid, Option<String>, String, Option<String>, Option<String>,
-            Option<bool>, i32, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>,
+            Option<bool>, i32, i32, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>,
         );
         let rows: Vec<SessionRow> = sqlx_core::query_as::query_as(
-            "SELECT s.id, p.name, s.task, s.summary, s.outcome::text, s.ftr, s.turns,
+            "SELECT s.id, p.name, s.task, s.summary, s.outcome::text, s.ftr, s.turns, s.corrections,
                     s.started_at, s.completed_at
              FROM activity.sessions s
              LEFT JOIN sensei.projects p ON p.id = s.project_id
              ORDER BY s.started_at DESC LIMIT $1"
         ).bind(limit).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
-        Ok(rows.into_iter().map(|(id, project, task, summary, outcome, ftr, turns, started, completed)| {
+        Ok(rows.into_iter().map(|(id, project, task, summary, outcome, ftr, turns, corrections, started, completed)| {
             serde_json::json!({
                 "id": id,
                 "project": project,
@@ -949,6 +953,7 @@ impl PgStore {
                 "outcome": outcome,
                 "ftr": ftr,
                 "turns": turns,
+                "corrections": corrections,
                 "startedAt": started.to_rfc3339(),
                 "completedAt": completed.map(|c| c.to_rfc3339()),
             })

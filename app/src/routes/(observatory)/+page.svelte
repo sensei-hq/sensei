@@ -1,6 +1,5 @@
 <script lang="ts">
-  import { sparklinePath } from '$lib/sparkline';
-  import { Eyebrow, Kanji, StatusDot } from '$lib/components';
+  import { Eyebrow, FtrStrip, Kanji, StatusDot } from '$lib/components';
   import RecentSessions from './RecentSessions.svelte';
 
   let { data } = $props();
@@ -85,14 +84,11 @@
           </div>
         </div>
         {#if data.ftrDaily.length >= 2}
-          {@const last = data.ftrDaily[data.ftrDaily.length - 1]}
-          {@const vals = data.ftrDaily.map((p: { ftr_rate: number }) => p.ftr_rate)}
-          {@const minV = Math.min(...vals)}
-          {@const rangeV = Math.max(...vals) - minV || 0.01}
-          <svg width="140" height="40" class="block overflow-visible text-accent">
-            <path d={sparklinePath(data.ftrDaily, 140, 40)} fill="none" stroke="currentColor" stroke-width="1.5" />
-            <circle cx="140" cy={40 - (40 - 2) * ((last.ftr_rate - minV) / rangeV) - 1} r="2.5" fill="currentColor" />
-          </svg>
+          <FtrStrip
+            data={data.ftrDaily.map((p: { ftr_rate: number }) => ({ rate: p.ftr_rate }))}
+            width={168}
+            height={56}
+          />
         {/if}
       </div>
     {/if}
