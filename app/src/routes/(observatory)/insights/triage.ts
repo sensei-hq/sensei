@@ -10,6 +10,9 @@ export interface TriageRec {
   urgency: 'high' | 'medium' | 'low';
   status: 'pending' | 'accepted' | 'dismissed' | 'superseded';
   actedAt: string | null;
+  /** Analyzer action_type — powers the mockup's typed-descriptor chip.
+   *  Optional so early recs (or a pre-fix daemon) still render. */
+  actionType?: string | null;
 }
 
 export interface TriageBuckets {
