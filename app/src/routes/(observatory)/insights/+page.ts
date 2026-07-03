@@ -26,6 +26,9 @@ function toTriageRec(r: Recommendation, project: ProjectListItem): TriageRec {
     urgency: (['high', 'medium', 'low'] as const).includes(urgency) ? urgency : 'low',
     status,
     actedAt: r.acted_at ?? null,
+    actionType: (r as { action_type?: string; actionType?: string }).action_type
+      ?? (r as { actionType?: string }).actionType
+      ?? null,
   };
 }
 
