@@ -306,6 +306,19 @@ export function senseiApi(port: number) {
         { verdict, note },
       ),
 
+    // Measured impact reports — the analyzer's before/after FTR + MOE-style
+    // consensus for recommendations that carry a reasoning trace or a
+    // non-pending verdict. Distinct from the manual `listImpactVerdicts`
+    // retrospectives above.
+    getProjectImpact: (id: string) =>
+      get<Array<{
+        id: string; title: string; actionType: string; status: string;
+        verdict: string; baselineFtr: number | null; currentFtr: number | null;
+        ftrDelta: number | null;
+        props: Record<string, unknown>;
+        reasoning: { models: string[]; consensus: unknown } | null;
+      }>>(`/api/projects/${enc(id)}/impact`, []),
+
     getProjectDrift: (id: string) =>
       get<{ items: DriftItem[]; total: number; drifted: number; broken: number }>(
         `/api/projects/${enc(id)}/drift`, { items: [], total: 0, drifted: 0, broken: 0 }
