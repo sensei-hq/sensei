@@ -3459,9 +3459,16 @@ impl PgStore {
     }
 
     pub async fn get_project_drift(&self, project_id: &uuid::Uuid) -> Result<serde_json::Value, String> {
-        let rows: Vec<(uuid::Uuid, String, Option<String>, chrono::DateTime<chrono::Utc>)> =
-            sqlx_core::query_as::query_as(
-                "SELECT id, status::text, detail, detected_at
+        // `expected_signature` and `actual_signature` power the Traceability
+        // detail drawer's Expected-vs-Actual diff. Both are nullable — `broken`
+        // rows carry no `actual`, `drifted` carries both, `current` may carry
+        // neither depending on how the detector wrote the row.
+        type DriftRow = (
+            uuid::Uuid, String, Option<String>, Option<String>, Option<String>,
+            chrono::DateTime<chrono::Utc>,
+        );
+        let rows: Vec<DriftRow> = sqlx_core::query_as::query_as(
+                "SELECT id, status::text, detail, expected_signature, actual_signature, detected_at
                  FROM sensei.project_drift WHERE project_id = $1
                  ORDER BY detected_at DESC LIMIT 200"
             ).bind(project_id)
@@ -3470,8 +3477,13 @@ impl PgStore {
         let total = rows.len();
         let drifted = rows.iter().filter(|r| r.1 == "drifted").count();
         let broken = rows.iter().filter(|r| r.1 == "broken").count();
-        let items: Vec<_> = rows.into_iter().map(|(id, status, detail, detected_at)| {
-            serde_json::json!({ "id": id, "status": status, "detail": detail, "detectedAt": detected_at.to_rfc3339() })
+        let items: Vec<_> = rows.into_iter().map(|(id, status, detail, expected, actual, detected_at)| {
+            serde_json::json!({
+                "id": id, "status": status, "detail": detail,
+                "expectedSignature": expected,
+                "actualSignature":   actual,
+                "detectedAt": detected_at.to_rfc3339(),
+            })
         }).collect();
 
         Ok(serde_json::json!({ "items": items, "total": total, "drifted": drifted, "broken": broken }))
@@ -3549,9 +3561,19 @@ impl PgStore {
         // likewise nullable for freshly minted memories that haven't been
         // reinforced or violated, so decode as Option so a NULL doesn't
         // fail the row.
-        let rows: Vec<(uuid::Uuid, String, String, String, f32, Option<chrono::DateTime<chrono::Utc>>)> =
-            sqlx_core::query_as::query_as(
-                "SELECT id, title, type::text, status::text, strength, last_relevant_at
+        //
+        // `content`, `impact`, and the two counts power the Memory Anatomy
+        // detail drawer (What / Because / Consequence + evidence). Cheap
+        // to project — all existing columns on `sensei.memories`.
+        type MemRow = (
+            uuid::Uuid, String, String, String, String, Option<String>,
+            f32, i32, i32, String, Option<String>,
+            Option<chrono::DateTime<chrono::Utc>>,
+        );
+        let rows: Vec<MemRow> = sqlx_core::query_as::query_as(
+                "SELECT id, title, type::text, status::text, content, impact,
+                        strength, reinforced_count, violated_count,
+                        scope::text, scope_filter, last_relevant_at
                  FROM sensei.memories WHERE project_id = $1
                  ORDER BY last_relevant_at DESC NULLS LAST LIMIT 100"
             ).bind(project_id)
@@ -3561,10 +3583,14 @@ impl PgStore {
         let total = rows.len();
         let active: Vec<_> = rows.into_iter()
             .filter(|r| r.3 == "active")
-            .map(|(id, title, typ, status, strength, last)| {
+            .map(|(id, title, typ, status, content, impact, strength, reinforced, violated, scope, scope_filter, last)| {
                 serde_json::json!({
                     "id": id, "title": title, "type": typ, "status": status,
+                    "content": content, "impact": impact,
                     "strength": strength,
+                    "reinforcedCount": reinforced,
+                    "violatedCount": violated,
+                    "scope": scope, "scopeFilter": scope_filter,
                     "lastRelevantAt": last.map(|t| t.to_rfc3339()),
                 })
             }).collect();

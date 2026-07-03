@@ -34,6 +34,10 @@
         // if this file ever re-adds a wrapper.
         void senseiApi;
     }
+
+    // Expandable-row state — only one row shows its expected-vs-actual diff
+    // at a time so the list stays readable.
+    let openedItemId = $state<string | null>(null);
 </script>
 
 <PageHeader title="Traceability">
@@ -65,9 +69,43 @@
     {:else}
         <ul class="list-none m-0 p-0" data-testid="drift-list">
             {#each data.driftItems as item (item.id)}
-                <li class="drift-row flex gap-2.5 py-2 border-b border-paper-mute text-sm items-start" data-testid="drift-row">
-                    <span class="mt-1"><StatusDot status={dotStatus(item.status)} /></span>
-                    <span class="flex-1">{item.detail ?? item.status}</span>
+                {@const opened = openedItemId === item.id}
+                {@const hasDiff = !!(item.expectedSignature || item.actualSignature)}
+                <li class="drift-row border-b border-paper-mute text-sm" data-testid="drift-row" data-opened={opened || undefined}>
+                    <button
+                        type="button"
+                        class="w-full flex gap-2.5 py-2 items-start bg-transparent border-none cursor-pointer text-left text-inherit"
+                        data-testid={`drift-toggle-${item.id}`}
+                        aria-expanded={opened}
+                        onclick={() => (openedItemId = opened ? null : item.id)}
+                    >
+                        <span class="mt-1"><StatusDot status={dotStatus(item.status)} /></span>
+                        <span class="flex-1">{item.detail ?? item.status}</span>
+                        {#if hasDiff}
+                            <span class="text-xs text-ink-mute">{opened ? '−' : '+'}</span>
+                        {/if}
+                    </button>
+                    {#if opened && hasDiff}
+                        <div class="pl-6 pb-3 flex flex-col gap-2" data-testid={`drift-diff-${item.id}`}>
+                            {#if item.expectedSignature}
+                                <div>
+                                    <p class="text-xs text-ink-mute uppercase tracking-wide m-0 mb-1">Expected</p>
+                                    <pre class="text-xs font-mono bg-paper-soft border border-paper-mute rounded-md p-2 m-0 whitespace-pre-wrap break-all">{item.expectedSignature}</pre>
+                                </div>
+                            {/if}
+                            {#if item.actualSignature}
+                                <div>
+                                    <p class="text-xs text-ink-mute uppercase tracking-wide m-0 mb-1">Actual</p>
+                                    <pre class="text-xs font-mono bg-paper-soft border border-paper-mute rounded-md p-2 m-0 whitespace-pre-wrap break-all">{item.actualSignature}</pre>
+                                </div>
+                            {:else if item.status === 'broken'}
+                                <div>
+                                    <p class="text-xs text-ink-mute uppercase tracking-wide m-0 mb-1">Actual</p>
+                                    <p class="text-xs text-warning italic m-0">Symbol no longer exists.</p>
+                                </div>
+                            {/if}
+                        </div>
+                    {/if}
                 </li>
             {/each}
         </ul>
