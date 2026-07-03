@@ -450,6 +450,9 @@ export interface SessionData {
     id: string; task: string; project: string | null; startedAt: string;
     completedAt?: string; outcome?: string; summary?: string;
     cost?: number; tokensIn?: number; tokensOut?: number; ftr?: number | null;
+    // First-try-right feed carries a rework count (0 ⇒ first-try, N ⇒ N× rework).
+    // Optional on the wire so pre-fix daemons still parse.
+    corrections?: number;
   }>;
   toolUsage: unknown[];
   benchmarkPairs: unknown[];
