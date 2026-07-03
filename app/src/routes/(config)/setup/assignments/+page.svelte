@@ -2,33 +2,7 @@
   import { onMount } from 'svelte';
   import { wizardState } from '$lib/wizard-state.svelte.js';
   import { SENSEI_ROLES, type DaemonChain, type SenseiRole } from '$lib/setup/contracts.js';
-
-  const ROLE_META: Record<SenseiRole, { kanji: string; label: string; hint: string; capabilities: string[] }> = {
-    inference: {
-      kanji: '推',
-      label: 'Inference',
-      hint: 'insights, actions, and recommendations from sessions + memory',
-      capabilities: ['reasoning'],
-    },
-    consolidation: {
-      kanji: '洞',
-      label: 'Consolidation',
-      hint: 'merge memories, detect conflicts, propose scope updates',
-      capabilities: ['reasoning', 'summarize'],
-    },
-    embedding: {
-      kanji: '印',
-      label: 'Embedding',
-      hint: 'index sessions, memories, and code refs for retrieval',
-      capabilities: ['embed'],
-    },
-    voice: {
-      kanji: '話',
-      label: 'Voice',
-      hint: 'observatory speech (optional — leave unassigned to keep quiet)',
-      capabilities: ['audio', 'chat'],
-    },
-  };
+  import { ROLE_META } from '$lib/setup/role-meta.js';
 
   let loading = $state(true);
   let error = $state<string | null>(null);
