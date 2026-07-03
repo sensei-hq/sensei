@@ -4,16 +4,23 @@ create table if not exists fallback_chains (
 , name                     text               not null unique
 , capability               model_capability   not null
 , description              text
+, role                     inference_role
 , max_fallback_attempts    integer            not null default 3
 , is_active                boolean            not null default true
 , sequence                 integer            not null default 0
 , modified_at              timestamptz        not null default now()
 );
 
+create unique index if not exists fallback_chains_role_uidx
+    on fallback_chains(role) where role is not null;
+
 comment on table fallback_chains is
 'Ordered model fallback sequences per capability.
 When a model fails (timeout, rate limit, error), the gateway tries the next in sequence.
 - capability: which model_capability this chain handles (chat, reasoning, embed, etc.)
+- role: which sensei inference role this chain serves (nullable — utility chains
+  like consensus-* stay null). Enforced unique when set, so a role points at
+  exactly one chain and vice versa.
 - max_fallback_attempts: how many models to try before giving up
 Seed data loaded via staging.import_fallback_chains().';
 
@@ -25,6 +32,8 @@ comment on column fallback_chains.capability
      is 'Which capability this chain serves: chat, reasoning, embed, classify, summarize, vision, audio.';
 comment on column fallback_chains.description
      is 'What this chain is for (e.g. "MOE proposer — strong reasoning models").';
+comment on column fallback_chains.role
+     is 'Sensei inference role this chain serves. Null for utility chains (e.g. consensus-*) that the gateway invokes by name for internal orchestration. Unique when set — one chain per role.';
 comment on column fallback_chains.max_fallback_attempts
      is 'Maximum number of models to attempt before failing.';
 comment on column fallback_chains.is_active

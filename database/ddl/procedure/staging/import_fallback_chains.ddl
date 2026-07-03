@@ -5,12 +5,13 @@ language plpgsql
 as $$
 begin
   insert into gateway.fallback_chains (
-      name, capability, description, max_fallback_attempts, is_active, sequence, modified_at
+      name, capability, description, role, max_fallback_attempts, is_active, sequence, modified_at
   )
   select
       stg.name
     , stg.capability::sensei.model_capability
     , stg.description
+    , nullif(stg.role, '')::sensei.inference_role
     , coalesce(stg.max_fallback_attempts, 3)
     , coalesce(stg.is_active, true)
     , coalesce(stg.sequence, 0)
@@ -21,6 +22,7 @@ begin
   do update set
       capability            = excluded.capability
     , description           = excluded.description
+    , role                  = excluded.role
     , max_fallback_attempts = excluded.max_fallback_attempts
     , is_active             = excluded.is_active
     , sequence              = excluded.sequence
