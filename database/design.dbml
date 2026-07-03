@@ -460,15 +460,23 @@ Table "gateway"."fallback_chains" {
   "name" TEXT [not null, unique, note: 'Unique chain name (e.g. "reasoning", "embed", "classify", "consensus-proposer").']
   "capability" model_capability [not null, note: 'Which capability this chain serves: chat, reasoning, embed, classify, summarize, vision, audio.']
   "description" TEXT [note: 'What this chain is for (e.g. "MOE proposer — strong reasoning models").']
+  "role" inference_role [note: 'Sensei inference role this chain serves. Null for utility chains (e.g. consensus-*) that the gateway invokes by name for internal orchestration. Unique when set — one chain per role.']
   "max_fallback_attempts" INTEGER [not null, default: 3, note: 'Maximum number of models to attempt before failing.']
   "is_active" BOOLEAN [not null, default: true, note: 'Whether this chain is available for use.']
   "sequence" INTEGER [not null, default: 0, note: 'Display order — lower values shown first.']
   "modified_at" TIMESTAMPTZ [not null, default: `now()`, note: 'Timestamp of the last modification to this row.']
 
+  indexes {
+    role [unique, name: 'fallback_chains_role_uidx']
+  }
+
   Note: '''
 Ordered model fallback sequences per capability.
 When a model fails (timeout, rate limit, error), the gateway tries the next in sequence.
 - capability: which model_capability this chain handles (chat, reasoning, embed, etc.)
+- role: which sensei inference role this chain serves (nullable — utility chains
+  like consensus-* stay null). Enforced unique when set, so a role points at
+  exactly one chain and vice versa.
 - max_fallback_attempts: how many models to try before giving up
 Seed data loaded via staging.import_fallback_chains().
 '''
@@ -981,6 +989,7 @@ Table "staging"."fallback_chains" {
   "name" TEXT
   "capability" TEXT
   "description" TEXT
+  "role" TEXT
   "max_fallback_attempts" INTEGER [default: 3]
   "is_active" BOOLEAN [default: true]
   "sequence" INTEGER [default: 0]
@@ -1108,33 +1117,6 @@ Table "staging"."scopes" {
   "shareable" BOOLEAN [default: false]
   "description" TEXT
   "modified_at" TIMESTAMPTZ [not null, default: `now()`]
-}
-
-Table "gateway"."inference_assignments" {
-  "id" UUID [pk, not null, default: `gen_random_uuid()`, note: 'Surrogate primary key (UUID).']
-  "role" inference_role [not null, note: 'Inference role: inference (insights/recommendations), consolidation (memory merge/conflict), embedding (index/retrieval), voice (observatory speech), default_fallback (catch-all).']
-  "chain_id" UUID [not null, note: 'Foreign key to fallback_chains — the ordered model sequence that serves this role.']
-  "is_default_fallback" BOOLEAN [not null, default: false, note: 'When true, this chain is the last-resort fallback for the role. Exactly one per role.']
-  "modified_at" TIMESTAMPTZ [not null, default: `now()`, note: 'Timestamp of the last modification to this row.']
-
-  indexes {
-    role [name: 'inference_assignments_role_idx']
-  }
-
-  Note: '''
-Maps sensei inference roles to gateway fallback chains.
-Each role (inference, consolidation, embedding, voice) is served by one or more
-fallback chains. The default_fallback role is a catch-all chain used when a
-role-specific chain is exhausted or missing.
-
-- role: which reasoning purpose this chain serves
-- chain_id: FK to fallback_chains — the ordered model sequence
-- is_default_fallback: true on exactly one row per role — marks which chain
-  to use as the last-resort fallback before giving up
-
-Setup wizard (step 9) writes these rows. Users can later reconfigure from
-Settings → Inference.
-'''
 }
 
 Table "gateway"."models" {
@@ -2163,7 +2145,6 @@ or a batch cleanly clears the association.
 }
 
 Ref: "sensei"."extensions"."plugin_id" > "sensei"."extensions"."id" [delete: cascade]
-Ref: "gateway"."inference_assignments"."chain_id" > "gateway"."fallback_chains"."id" [delete: cascade]
 Ref: "gateway"."models"."provider_id" > "gateway"."providers"."id" [delete: cascade]
 Ref: "inference"."reasoning_traces"."project_id" > "sensei"."projects"."id" [delete: set null]
 Ref: "sensei"."extension_projects"."extension_id" > "sensei"."extensions"."id" [delete: cascade]
