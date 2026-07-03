@@ -621,6 +621,24 @@ export function senseiApi(port: number) {
     clearGatewayRouterKey: (id: string) =>
       tryDelete(`/api/gateway/routers/${enc(id)}/key`),
 
+    // Model Assignments — chains carry an optional `role` column; a
+    // chain-with-a-role IS the role assignment. Utility chains
+    // (consensus-* / classify) stay null and never surface in the picker.
+    listGatewayChains: () =>
+      get<{ chains: import('./setup/contracts').DaemonChain[] }>(
+        '/api/gateway/chains',
+        { chains: [] },
+      ),
+
+    /** Assign or clear a chain's sensei inference role. Pass `null` to
+     *  unassign. Returns error status codes: 400 unknown role, 404
+     *  unknown chain, 409 role already owned by another chain. */
+    setGatewayChainRole: (id: string, role: import('./setup/contracts').SenseiRole | null) =>
+      tryPut(
+        `/api/gateway/chains/${enc(id)}/role`,
+        { role },
+      ),
+
     generateImage: (body: {
       prompt: string;
       output_path?: string;
