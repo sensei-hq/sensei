@@ -6,6 +6,7 @@
     import { PageHeader, StatusDot, Switch } from "$lib/components";
     import type { PreferencesData } from "$lib/setup/contracts.js";
     import { DEFAULT_PREFERENCES, fromPreferencesForm, toPreferencesForm } from "./preferences-form.js";
+    import InferenceAssignmentsPanel from "./InferenceAssignmentsPanel.svelte";
 
     type Assistant = {
         family: string;
@@ -244,22 +245,7 @@
             {/if}
         </div>
     {:else if section === "inference"}
-        <div
-            class="px-7 py-7 bg-paper-mute border border-paper-mute rounded-lg"
-        >
-            <h3 class="text-base m-0 mb-1">Inference</h3>
-            <p class="text-sm text-ink-soft m-0 mb-6">
-                Local and external model configuration.
-            </p>
-            <div class="flex flex-col items-center gap-3 py-10">
-                <span class="kanji text-3xl text-accent opacity-40">想</span
-                >
-                <p class="text-sm text-ink-soft leading-normal">
-                    Inference configuration will be available once model
-                    assignments are supported.
-                </p>
-            </div>
-        </div>
+        <InferenceAssignmentsPanel />
     {:else if section === "extensions"}
         <div
             class="px-7 py-7 bg-paper-mute border border-paper-mute rounded-lg"
