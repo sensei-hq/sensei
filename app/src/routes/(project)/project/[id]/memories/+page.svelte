@@ -118,7 +118,7 @@
         </div>
     {/if}
 
-    <div class="grid gap-6" class:grid-cols-1={!openedMemory} class:grid-cols-[1fr_360px]={openedMemory}>
+    <div class="grid gap-6" class:grid-cols-1={!openedMemory} class:grid-cols-[280px_1fr]={openedMemory}>
         <ul class="list-none m-0 p-0" data-testid="memories-list">
             {#each memories as m (m.id)}
                 {@const checked = selected.has(m.id)}
@@ -149,48 +149,79 @@
         </ul>
 
         {#if openedMemory}
-            <aside
-                class="p-5 bg-paper-mute border border-paper-mute rounded-lg sticky top-6 h-fit flex flex-col gap-4"
+            <main
+                class="max-w-[720px]"
                 data-testid="memory-anatomy"
             >
-                <div class="flex items-baseline justify-between gap-3">
-                    <span class="text-xs uppercase tracking-wide text-ink-mute">Memory anatomy</span>
+                <!-- Eyebrow row: type · strength · surface -->
+                <div class="flex items-center gap-3 text-xs uppercase tracking-wider text-ink-soft mb-3">
+                    <span>{openedMemory.type}</span>
+                    <span class="w-[3px] h-[3px] rounded-full bg-ink-faint"></span>
+                    <span>strength {Math.round((openedMemory.strength ?? 0) * 100)}%</span>
+                    {#if openedMemory.scope}
+                        <span class="w-[3px] h-[3px] rounded-full bg-ink-faint"></span>
+                        <span class="font-mono normal-case tracking-normal text-ink-mute">{openedMemory.scope}{openedMemory.scopeFilter ? ` · ${openedMemory.scopeFilter}` : ''}</span>
+                    {/if}
+                    <span class="flex-1"></span>
                     <button
                         type="button"
-                        class="text-xs text-ink-soft bg-transparent border-none cursor-pointer"
+                        class="text-xs text-ink-soft normal-case tracking-normal bg-transparent border-none cursor-pointer"
                         data-testid="memory-anatomy-close"
                         onclick={() => (openedMemoryId = null)}
                     >close</button>
                 </div>
-                <div>
-                    <p class="text-xs tracking-wide uppercase text-ink-soft m-0 mb-1">What</p>
-                    <p class="text-sm text-ink m-0 leading-normal">{openedMemory.title || openedMemory.name}</p>
-                </div>
+
+                <!-- The memory statement — display-scale, mockup vibe -->
+                <h2 class="display text-[40px] font-light leading-tight tracking-tight m-0 mb-5 text-ink">
+                    What: {openedMemory.title || openedMemory.name}
+                </h2>
+
+                <!-- Because — quiet paragraph -->
                 {#if openedMemory.content}
-                    <div>
-                        <p class="text-xs tracking-wide uppercase text-ink-soft m-0 mb-1">Because</p>
-                        <p class="text-sm text-ink m-0 leading-normal whitespace-pre-line">{openedMemory.content}</p>
-                    </div>
+                    <p class="text-[15px] text-ink-mute leading-relaxed m-0 mb-4 whitespace-pre-line">
+                        {openedMemory.content}
+                    </p>
                 {/if}
-                {#if openedMemory.impact}
-                    <div>
-                        <p class="text-xs tracking-wide uppercase text-ink-soft m-0 mb-1">Consequence</p>
-                        <p class="text-sm text-ink m-0 leading-normal">{openedMemory.impact}</p>
-                    </div>
+
+                <!-- Consequence — either violated summary or reinforced summary -->
+                {#if (openedMemory.violatedCount ?? 0) > 0}
+                    <p class="text-[13px] text-ink-soft leading-relaxed m-0 mb-6">
+                        When this slipped, sensei saw
+                        <span class="text-warning">
+                            {openedMemory.violatedCount} correction{openedMemory.violatedCount === 1 ? '' : 's'}
+                        </span>
+                        across recent sessions.
+                    </p>
+                {:else if (openedMemory.reinforcedCount ?? 0) > 0}
+                    <p class="text-[13px] text-ink-soft leading-relaxed m-0 mb-6">
+                        Reinforced
+                        <span class="text-ink-mute">{openedMemory.reinforcedCount} time{openedMemory.reinforcedCount === 1 ? '' : 's'}</span>
+                        without a violation.
+                    </p>
+                {:else if openedMemory.impact}
+                    <p class="text-[13px] text-ink-soft leading-relaxed m-0 mb-6">
+                        {openedMemory.impact}
+                    </p>
                 {/if}
-                <div class="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-                    <span class="text-ink-mute">Strength</span>
-                    <span class="font-mono">{Math.round((openedMemory.strength ?? 0) * 100)}%</span>
-                    <span class="text-ink-mute">Reinforced</span>
-                    <span class="font-mono">{openedMemory.reinforcedCount ?? 0}</span>
-                    <span class="text-ink-mute">Violated</span>
-                    <span class="font-mono" class:text-warning={(openedMemory.violatedCount ?? 0) > 0}>{openedMemory.violatedCount ?? 0}</span>
-                    <span class="text-ink-mute">Scope</span>
-                    <span class="font-mono">{openedMemory.scope}{openedMemory.scopeFilter ? ` · ${openedMemory.scopeFilter}` : ''}</span>
-                    <span class="text-ink-mute">Type</span>
-                    <span class="font-mono">{openedMemory.type}</span>
+
+                <!-- Observation grid — the anatomy details -->
+                <div class="grid grid-cols-2 gap-6 border-t border-paper-edge pt-5">
+                    <div>
+                        <p class="text-xs uppercase tracking-wider text-ink-soft m-0 mb-2">Reinforced</p>
+                        <p class="font-mono text-lg text-ink m-0">{openedMemory.reinforcedCount ?? 0}</p>
+                        <p class="text-xs text-ink-faint m-0 mt-1">times seen in evidence</p>
+                    </div>
+                    <div>
+                        <p class="text-xs uppercase tracking-wider text-ink-soft m-0 mb-2">Violated</p>
+                        <p
+                            class="font-mono text-lg m-0"
+                            class:text-warning={(openedMemory.violatedCount ?? 0) > 0}
+                            class:text-ink={(openedMemory.violatedCount ?? 0) === 0}
+                        >{openedMemory.violatedCount ?? 0}</p>
+                        <p class="text-xs text-ink-faint m-0 mt-1">times a correction contradicted it</p>
+                    </div>
                 </div>
-            </aside>
+            </main>
         {/if}
     </div>
 </div>
