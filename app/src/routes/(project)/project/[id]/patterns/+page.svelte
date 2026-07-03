@@ -35,7 +35,7 @@
 
 {#snippet PatternRow(p: PatternEntry, anti: boolean)}
     {@const open = expanded[p.id]}
-    <li class="pattern-row py-2 border-b border-paper-mute text-sm" class:opacity-80={anti} data-testid={`pattern-row-${p.id}`}>
+    <li class="pattern-row py-2.5 border-b border-paper-edge text-sm" class:opacity-80={anti} data-testid={`pattern-row-${p.id}`}>
         <button
             type="button"
             class="flex items-center gap-3 w-full text-left bg-transparent border-none cursor-pointer text-inherit"
@@ -43,24 +43,34 @@
             data-testid={`pattern-toggle-${p.id}`}
             onclick={() => toggle(p.id)}
         >
-            <span class="flex-1">{p.name}</span>
-            {#if p.instanceCount != null && p.instanceCount > 0}
-                <span class="text-xs font-mono text-ink-mute" title={`${p.instanceCount} instances`}>
-                    {p.instanceCount}×
-                </span>
-            {/if}
+            <!-- kanji marker: 紋 for pattern, 禁 for anti-pattern -->
             <span
-                class="text-xs font-mono min-w-[3rem] text-right {deltaTone(p.ftrDelta, anti)}"
+                class="kanji text-base w-5 text-center"
+                class:text-accent={!anti}
+                class:text-warning={anti}
+            >{anti ? '禁' : '紋'}</span>
+            <div class="flex-1 min-w-0">
+                <p class="m-0 text-[13px] text-ink truncate">{p.name}</p>
+                <p class="m-0 mt-0.5 text-xs text-ink-soft flex items-center gap-2">
+                    {#if p.instanceCount != null && p.instanceCount > 0}
+                        <span class="font-mono">{p.instanceCount}×</span>
+                        <span class="text-ink-faint">·</span>
+                    {/if}
+                    {#if p.lifecycle}
+                        <span class="font-mono uppercase tracking-wide">{p.lifecycle}</span>
+                    {/if}
+                    {#if p.confidence != null}
+                        <span class="text-ink-faint">·</span>
+                        <span class="font-mono">conf {Math.round(p.confidence * 100)}%</span>
+                    {/if}
+                </p>
+            </div>
+            <span
+                class="text-xs font-mono min-w-[3.5rem] text-right {deltaTone(p.ftrDelta, anti)}"
                 data-testid={`pattern-ftr-delta-${p.id}`}
                 title="FTR delta vs project baseline"
             >{fmtFtrDelta(p.ftrDelta)}</span>
-            {#if p.confidence != null}
-                <span class="text-xs font-mono opacity-70">{Math.round(p.confidence * 100)}%</span>
-            {/if}
-            {#if p.lifecycle}
-                <span class="text-xs opacity-50 font-mono">{p.lifecycle}</span>
-            {/if}
-            <span class="text-xs opacity-40 w-3">{open ? '▾' : '▸'}</span>
+            <span class="text-xs text-ink-faint w-3">{open ? '▾' : '▸'}</span>
         </button>
 
         {#if open}
