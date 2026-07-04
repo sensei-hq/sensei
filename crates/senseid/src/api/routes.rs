@@ -172,6 +172,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/install/item/remove", post(config::remove_single_item))
         .route("/api/install/catalog", get(config::get_catalog))
         .route("/api/install/installed", get(config::list_installed_items))
+        .route("/api/install/installed/{name}/enabled", put(config::set_installed_enabled))
         .route("/api/remove", post(config::remove_all))
         // Config (user preferences)
         .route("/api/config", get(config::get_config).put(config::set_config_handler))

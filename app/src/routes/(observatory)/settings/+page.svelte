@@ -23,6 +23,9 @@
     let extensions = $state<
         Array<{ name: string; kind: string; enabled: boolean }>
     >([]);
+    // Per-row busy so a slow toggle on one extension doesn't disable
+    // its neighbours. Keyed by `${kind}::${name}`.
+    let extBusy = $state<Record<string, boolean>>({});
     let loading = $state(true);
     let section = $state("general");
     // Short banner state: 'idle' / 'saving' / 'saved' / 'error'. Auto-clears
@@ -90,6 +93,36 @@
         } catch (e) {
             saveStatus = 'error';
             saveError = (e as Error).message;
+        }
+    }
+
+    async function toggleExtension(
+        ext: { name: string; kind: string; enabled: boolean },
+        next: boolean,
+    ): Promise<void> {
+        const key = `${ext.kind}::${ext.name}`;
+        extBusy[key] = true;
+        try {
+            const api = senseiApi(appState.port);
+            const result = await api.setInstalledItemEnabled(ext.name, ext.kind, next);
+            if (!result.ok) {
+                console.warn('[settings] toggleExtension failed', ext.kind, ext.name, result.error);
+                // Refetch so the checkbox reflects daemon truth after a failure.
+                const fresh = await api.getInstalledItems();
+                extensions = (fresh as any[]).map((i) => ({
+                    name: i.name,
+                    kind: i.kind ?? 'unknown',
+                    enabled: i.enabled ?? true,
+                }));
+                return;
+            }
+            // Optimistic update — daemon confirmed the move.
+            ext.enabled = next;
+            extensions = extensions.map(e =>
+                e.kind === ext.kind && e.name === ext.name ? { ...e, enabled: next } : e,
+            );
+        } finally {
+            extBusy[key] = false;
         }
     }
 </script>
@@ -260,9 +293,11 @@
                 </p>
             {:else}
                 <div class="flex flex-col gap-0.5">
-                    {#each extensions as ext}
+                    {#each extensions as ext (ext.kind + '::' + ext.name)}
+                        {@const busy = extBusy[ext.kind + '::' + ext.name]}
                         <div
                             class="extension-row flex items-center gap-3 py-2.5 border-b border-paper-mute"
+                            data-testid={`ext-row-${ext.kind}-${ext.name}`}
                         >
                             <span
                                 class="text-xs uppercase tracking-wide text-ink-soft w-[70px]"
@@ -271,11 +306,24 @@
                             <span class="text-sm text-ink flex-1"
                                 >{ext.name}</span
                             >
-                            <span
-                                class="extension-enabled text-xs text-ink-soft"
-                                class:on={ext.enabled}
-                                >{ext.enabled ? "on" : "off"}</span
-                            >
+                            {#if busy}
+                                <span class="text-xs text-ink-soft w-14 text-right">saving…</span>
+                            {/if}
+                            <label class="inline-flex items-center gap-2 cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    class="cursor-pointer"
+                                    data-testid={`ext-toggle-${ext.kind}-${ext.name}`}
+                                    checked={ext.enabled}
+                                    disabled={busy}
+                                    onchange={(e) => toggleExtension(ext, e.currentTarget.checked)}
+                                />
+                                <span
+                                    class="extension-enabled text-xs text-ink-soft w-8"
+                                    class:on={ext.enabled}
+                                    >{ext.enabled ? "on" : "off"}</span
+                                >
+                            </label>
                         </div>
                     {/each}
                 </div>

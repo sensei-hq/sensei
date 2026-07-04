@@ -157,6 +157,9 @@ export interface InstalledItem {
   name: string;
   kind: string;
   path: string;
+  /** Live in `~/.claude/<kind>s/` (true) or moved to sibling `disabled/`
+   *  (false). Toggled via `PUT /api/install/installed/{name}/enabled`. */
+  enabled: boolean;
 }
 
 export interface MarketplaceCatalogItem {
