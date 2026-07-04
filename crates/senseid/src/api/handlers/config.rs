@@ -232,6 +232,50 @@ pub(crate) async fn list_installed_items() -> Json<Vec<crate::installer::Install
     Json(crate::installer::list_installed())
 }
 
+#[derive(serde::Deserialize)]
+pub(crate) struct SetInstalledEnabledBody {
+    pub kind: String,
+    pub enabled: bool,
+}
+
+/// PUT /api/install/installed/{name}/enabled body `{kind, enabled}` —
+/// toggle a skill or command by moving its .md file between
+/// `~/.claude/<kind>s/` and its `disabled/` sibling. Returns
+/// `{ ok: true, changed: bool }` — `changed=false` when the item was
+/// already in the target state (idempotent).
+pub(crate) async fn set_installed_enabled(
+    axum::extract::Path(name): axum::extract::Path<String>,
+    Json(body): Json<SetInstalledEnabledBody>,
+) -> Result<Json<serde_json::Value>, (axum::http::StatusCode, Json<serde_json::Value>)> {
+    // Filesystem work — off the async runtime.
+    let name_owned = name.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        crate::installer::set_item_enabled(&name_owned, &body.kind, body.enabled)
+    }).await.map_err(|e| (
+        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+        Json(serde_json::json!({ "error": format!("spawn_blocking failed: {e}") }))
+    ))?;
+
+    match result {
+        Ok(changed) => Ok(Json(serde_json::json!({ "ok": true, "changed": changed }))),
+        Err(e) if e.contains("unknown kind") => Err((
+            axum::http::StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": e })),
+        )),
+        Err(e) if e.contains("not found") || e.contains("ambiguous") => Err((
+            axum::http::StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": e })),
+        )),
+        Err(e) => {
+            tracing::error!(error = %e, item = %name, "set_installed_enabled failed");
+            Err((
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": e })),
+            ))
+        }
+    }
+}
+
 pub(crate) async fn remove_all(
     body: Option<Json<crate::installer::RemoveRequest>>,
 ) -> Json<crate::installer::RemoveResult> {
