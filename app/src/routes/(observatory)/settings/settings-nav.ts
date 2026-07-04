@@ -63,13 +63,15 @@ export function buildNavItems(): NavEntry[] {
         link("書", "Libraries", "/settings/libraries"),
       ],
     },
-    // Reasoning — models, chains, and role assignments. Inference already
-    // covers the role → chain wiring (InferenceAssignmentsPanel is a live
-    // editor), so there is no separate Assignments entry here.
+    // Reasoning — models, chains, providers, and role assignments. Inference
+    // already covers the role → chain wiring (InferenceAssignmentsPanel is a
+    // live editor), so there is no separate Assignments entry. Providers is
+    // the API-key surface for cloud routers (Keychain-backed).
     {
       text: "Reasoning",
       children: [
         link("器", "Instruments", "/settings/instruments"),
+        link("鍵", "Providers", "/settings/providers"),
         link("想", "Inference", "/settings/inference"),
       ],
     },
