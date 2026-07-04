@@ -99,7 +99,7 @@ export function buildNavItems({ focus, projectCount }: NavOptions): NavEntry[] {
     });
     // Settings — visited when something needs changing, hidden in Focus.
     entries.push({ type: "separator" });
-    entries.push(link("調", "Preferences", "/settings"));
+    entries.push(link("調", "Settings", "/settings"));
   }
 
   return entries;
