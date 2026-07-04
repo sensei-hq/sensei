@@ -1,3 +1,28 @@
+/** One entry in the MOE reasoning panel — a model plus the role it played
+ *  and its per-model note. Written by `verdicts::synthesize_reasoning`. */
+export interface ReasoningModel {
+  name: string;
+  /** proposer / challenger / synthesizer / reviewer, deterministic by
+   *  the model's index in the panel. */
+  role: string;
+  note: string;
+}
+
+/** Rich MOE reasoning JSON attached to a measured recommendation.
+ *  All fields are optional on the wire so a legacy `{conclusion}`-only
+ *  trace still renders — the UI degrades gracefully to whatever it has. */
+export interface ImpactReasoning {
+  headline: string | null;
+  body: string | null;
+  /** "3 positive · 0 neutral · 0 negative" summary line. Null for
+   *  legacy traces that didn't compose a per-panel breakdown. */
+  consensus: string | null;
+  models: ReasoningModel[];
+  /** Populated only when verdict is negative — an alternate approach
+   *  the reader can try before rolling back entirely. */
+  suggestedRevision: string | null;
+}
+
 /** One row in the observatory-wide Impact list — a measured recommendation
  *  after the analyzer's MeasureVerdicts pass has recorded a verdict. */
 export interface ImpactRow {
@@ -10,7 +35,7 @@ export interface ImpactRow {
   baselineFtr: number | null;
   currentFtr: number | null;
   ftrDelta: number | null;
-  reasoning: { models: string[]; consensus: unknown } | null;
+  reasoning: ImpactReasoning | null;
 }
 
 export interface ImpactBuckets {

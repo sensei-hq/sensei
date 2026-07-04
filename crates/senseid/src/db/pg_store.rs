@@ -1456,12 +1456,53 @@ impl PgStore {
                   ORDER BY r.measured_at DESC NULLS LAST"
             ).bind(project_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(|(id, title, action_type, status, verdict, baseline, current, props, models, consensus)| {
+            // The reasoning field carries the rich MOE JSON directly to
+            // the UI: `{headline, body, consensus, models: [{name, role,
+            // note}], suggestedRevision}` when measure has populated it,
+            // or null when the rec has no trace yet. The pre-fix wire
+            // was `{models: string[], consensus: unknown}` which lost
+            // the narrative — the panel had nothing to render past the
+            // one-word verdict tag.
+            let reasoning = consensus.map(|synth| {
+                // Prefer the trace's own models_used array when the synth
+                // JSON lacks a models[] key (older traces written by
+                // consensus reasoning). This keeps the older analyzer's
+                // output rendering the mockup panel with model names,
+                // even before MeasureVerdicts overwrites the trace.
+                if synth.get("models").is_some() && synth.get("headline").is_some() {
+                    // Rich synth — flow straight through.
+                    synth
+                } else {
+                    // Old-shape consensus (e.g. `{conclusion}`). Wrap it
+                    // in the panel shape so the UI has something to
+                    // render, even if the narrative is a single line.
+                    let conclusion = synth.get("conclusion")
+                        .and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let names = models.clone().unwrap_or_default();
+                    let panelists: Vec<serde_json::Value> = names.iter()
+                        .enumerate()
+                        .map(|(i, n)| serde_json::json!({
+                            "name": n,
+                            "role": match i { 0 => "proposer", 1 => "challenger", 2 => "synthesizer", _ => "reviewer" },
+                            "note": "Contributed to the original consensus panel.",
+                        }))
+                        .collect();
+                    serde_json::json!({
+                        "headline":          if conclusion.is_empty() { "Consensus captured (no narrative)".into() } else { conclusion },
+                        "body":              serde_json::Value::Null,
+                        "consensus":         serde_json::Value::Null,
+                        "models":            panelists,
+                        "suggestedRevision": serde_json::Value::Null,
+                    })
+                }
+            });
+
             serde_json::json!({
                 "id": id, "title": title, "actionType": action_type, "status": status,
                 "verdict": verdict, "baselineFtr": baseline, "currentFtr": current,
                 "ftrDelta": match (current, baseline) { (Some(c), Some(b)) => Some(((c - b) * 1000.0).round() / 1000.0), _ => None },
                 "props": props,
-                "reasoning": consensus.map(|c| serde_json::json!({ "models": models.unwrap_or_default(), "consensus": c })),
+                "reasoning": reasoning,
             })
         }).collect())
     }
@@ -2544,12 +2585,29 @@ impl PgStore {
     /// Compares current 14-day FTR against baseline_ftr snapshot at time of acceptance.
     /// Returns number of recommendations updated.
     pub async fn measure_pending_verdicts(&self) -> Result<i64, String> {
-        // Update current_ftr and verdict for accepted recommendations that have been
-        // acted on at least 3 days ago (enough data for a meaningful comparison).
-        let result = sqlx_core::query::query(
+        // Per-row measure so we can also compose the MOE consensus JSON
+        // the Observatory Impact panel renders. The classification rule
+        // is the same ±0.05 FTR band the old bulk UPDATE used; kept in
+        // `crate::verdicts::Verdict::from_ftr_delta` so it's testable.
+        //
+        // Two-phase per rec:
+        //   1. UPDATE the rec (verdict / current_ftr / measured_at).
+        //   2. Insert or update the linked reasoning_trace's `consensus`
+        //      JSON with the synth helper. If the rec has no trace yet,
+        //      we mint one with trigger_event = 'verdict_measurement'
+        //      and link it back onto the rec.
+        //
+        // Failures in the reasoning-trace write are logged but don't
+        // abort the whole batch — verdict measurement is best-effort by
+        // design (the scheduler retries every full-refresh window).
+        type Row = (
+            uuid::Uuid, Option<uuid::Uuid>, f64, f64,
+            Option<Vec<String>>,
+        );
+        let rows: Vec<Row> = sqlx_core::query_as::query_as(
             "WITH current AS (
                SELECT r.id AS rec_id,
-                      AVG(CASE WHEN s.ftr THEN 1.0 ELSE 0.0 END) AS current_ftr
+                      AVG(CASE WHEN s.ftr THEN 1.0 ELSE 0.0 END)::float8 AS current_ftr
                  FROM inference.recommendations r
                  JOIN activity.sessions s ON s.project_id = r.project_id
                                          AND s.started_at > r.acted_at
@@ -2560,18 +2618,78 @@ impl PgStore {
                 GROUP BY r.id
                 HAVING COUNT(*) >= 3
              )
-             UPDATE inference.recommendations r
-                SET current_ftr = c.current_ftr,
-                    verdict = CASE
-                      WHEN c.current_ftr > r.baseline_ftr + 0.05 THEN 'positive'
-                      WHEN c.current_ftr < r.baseline_ftr - 0.05 THEN 'negative'
-                      ELSE 'neutral'
-                    END::sensei.recommendation_verdict,
-                    measured_at = now()
-               FROM current c
-              WHERE c.rec_id = r.id"
-        ).execute(&self.pool).await.map_err(|e| e.to_string())?;
-        Ok(result.rows_affected() as i64)
+             SELECT r.id,
+                    r.reasoning_trace_id,
+                    COALESCE(r.baseline_ftr, 0)::float8,
+                    c.current_ftr,
+                    t.models_used
+               FROM inference.recommendations r
+               JOIN current c ON c.rec_id = r.id
+          LEFT JOIN inference.reasoning_traces t ON t.id = r.reasoning_trace_id"
+        ).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+
+        if rows.is_empty() { return Ok(0); }
+
+        let mut updated: i64 = 0;
+        for (rec_id, trace_id, baseline_ftr, current_ftr, models_used_opt) in rows {
+            let verdict = crate::verdicts::Verdict::from_ftr_delta(current_ftr - baseline_ftr);
+            let models_used = models_used_opt.unwrap_or_default();
+            let consensus = crate::verdicts::synthesize_reasoning(
+                verdict, baseline_ftr, current_ftr, &models_used,
+            );
+
+            let upd = sqlx_core::query::query(
+                "UPDATE inference.recommendations
+                    SET verdict     = $2::sensei.recommendation_verdict,
+                        current_ftr = $3,
+                        measured_at = now()
+                  WHERE id = $1"
+            )
+            .bind(rec_id)
+            .bind(verdict.as_wire())
+            .bind(current_ftr)
+            .execute(&self.pool).await.map_err(|e| e.to_string())?;
+
+            if upd.rows_affected() == 0 { continue; }
+            updated += 1;
+
+            match trace_id {
+                Some(id) => {
+                    if let Err(e) = sqlx_core::query::query(
+                        "UPDATE inference.reasoning_traces SET consensus = $2 WHERE id = $1"
+                    ).bind(id).bind(&consensus).execute(&self.pool).await {
+                        tracing::warn!(error = %e, rec = %rec_id, trace = %id, "measure_pending_verdicts: consensus update failed");
+                    }
+                }
+                None => {
+                    match sqlx_core::query_as::query_as::<_, (uuid::Uuid,)>(
+                        "INSERT INTO inference.reasoning_traces
+                            (trigger_event, trigger_detail, models_used, consensus)
+                         VALUES ($1, $2, $3, $4)
+                         RETURNING id"
+                    )
+                    .bind("verdict_measurement")
+                    .bind(serde_json::json!({ "recId": rec_id, "verdict": verdict.as_wire() }))
+                    .bind::<Vec<String>>(models_used)
+                    .bind(&consensus)
+                    .fetch_one(&self.pool).await
+                    {
+                        Ok((new_trace_id,)) => {
+                            if let Err(e) = sqlx_core::query::query(
+                                "UPDATE inference.recommendations SET reasoning_trace_id = $2 WHERE id = $1"
+                            ).bind(rec_id).bind(new_trace_id).execute(&self.pool).await {
+                                tracing::warn!(error = %e, rec = %rec_id, trace = %new_trace_id, "measure_pending_verdicts: relink failed");
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!(error = %e, rec = %rec_id, "measure_pending_verdicts: mint trace failed");
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(updated)
     }
 
     // ── Observatory views ──────────────────────────────────────────────
