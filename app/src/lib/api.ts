@@ -316,7 +316,18 @@ export function senseiApi(port: number) {
         verdict: string; baselineFtr: number | null; currentFtr: number | null;
         ftrDelta: number | null;
         props: Record<string, unknown>;
-        reasoning: { models: string[]; consensus: unknown } | null;
+        // Rich MOE reasoning JSON — `null` when the rec has no trace,
+        // otherwise `{headline, body, consensus, models: [{name, role,
+        // note}], suggestedRevision}`. Legacy `{conclusion}`-shape
+        // traces are shimmed on the daemon side so the reader always
+        // gets the panel shape when reasoning is present at all.
+        reasoning: {
+          headline: string | null;
+          body: string | null;
+          consensus: string | null;
+          models: Array<{ name: string; role: string; note: string }>;
+          suggestedRevision: string | null;
+        } | null;
       }>>(`/api/projects/${enc(id)}/impact`, []),
 
     getProjectDrift: (id: string) =>
