@@ -442,7 +442,10 @@ fn prompt_snippet(prompt: &str) -> String {
 pub async fn derive_signals(ctx: &TaskContext, project_id: &uuid::Uuid, affected: Option<&[uuid::Uuid]>) -> Result<u32, String> {
     let mut count = 0u32;
 
-    // 1. Re-edit churn anti-patterns (file-scoped).
+    // 1. Re-edit churn anti-patterns (file-scoped). Patterns are project-scoped
+    //    now (#82): the ON CONFLICT key is (project_id, name, is_anti_pattern),
+    //    so if the same churned file surfaces from two folders in this project
+    //    the two rows collapse into one. `folder_id` stays as the locus pointer.
     for (folder_id, file, max_edits, total_edits) in
         ctx.pg().get_file_churn_stats(project_id, CHURN_MIN_EDITS, affected).await?
     {
@@ -451,7 +454,7 @@ pub async fn derive_signals(ctx: &TaskContext, project_id: &uuid::Uuid, affected
         }]);
         match ctx
             .pg()
-            .upsert_pattern(&folder_id, &churn_pattern_name(&file), true, Some(churn_confidence(max_edits)), &instances)
+            .upsert_pattern(project_id, Some(&folder_id), &churn_pattern_name(&file), true, Some(churn_confidence(max_edits)), &instances)
             .await
         {
             Ok(_) => count += 1,
@@ -464,6 +467,10 @@ pub async fn derive_signals(ctx: &TaskContext, project_id: &uuid::Uuid, affected
     // then one model pass refines them (drops false positives, fixes
     // correction↔principle mislabels). Falls back to the regex class when no
     // chat model is configured, so this never blocks the analyzer.
+    //
+    // Aggregation is at PROJECT scope (#82): one `correction-prone` and one
+    // `rule-candidates` pattern per project — the folder locus survives inside
+    // each instance blob for later drill-down, but the row itself rolls up.
     let mut candidates: Vec<(uuid::Uuid, String, String, PromptClass)> = Vec::new();
     for (folder_id, session_id, prompt) in ctx.pg().get_project_prompts(project_id, affected).await? {
         let regex_class = if correction_signal(&prompt).is_some() {
@@ -478,34 +485,34 @@ pub async fn derive_signals(ctx: &TaskContext, project_id: &uuid::Uuid, affected
     let texts: Vec<&str> = candidates.iter().map(|(_, _, p, _)| p.as_str()).collect();
     let refined = classify_batch(&ctx.app_state.gateway, &texts).await;
 
-    let mut corrections: std::collections::HashMap<uuid::Uuid, Vec<serde_json::Value>> = Default::default();
-    let mut principles: std::collections::HashMap<uuid::Uuid, Vec<serde_json::Value>> = Default::default();
+    let mut corrections: Vec<serde_json::Value> = Vec::new();
+    let mut principles: Vec<serde_json::Value> = Vec::new();
     for (i, (folder_id, session_id, prompt, regex_class)) in candidates.iter().enumerate() {
         // LLM-refined class when available for this prompt, else the regex class.
         let class = refined.get(i).copied().flatten().unwrap_or(*regex_class);
-        let instance = serde_json::json!({ "session": session_id, "prompt": prompt_snippet(prompt) });
+        let instance = serde_json::json!({
+            "folder_id": folder_id,
+            "session": session_id,
+            "prompt": prompt_snippet(prompt),
+        });
         match class {
-            PromptClass::Correction => corrections.entry(*folder_id).or_default().push(instance),
-            PromptClass::Principle => principles.entry(*folder_id).or_default().push(instance),
+            PromptClass::Correction => corrections.push(instance),
+            PromptClass::Principle => principles.push(instance),
             PromptClass::Neither => {} // LLM rejected the regex candidate — a false positive
         }
     }
-    for (folder_id, items) in corrections {
-        if items.len() >= CORRECTION_MIN {
-            let instances = serde_json::Value::Array(items);
-            match ctx.pg().upsert_pattern(&folder_id, "correction-prone", true, None, &instances).await {
-                Ok(_) => count += 1,
-                Err(e) => tracing::warn!(error = %e, folder = %folder_id, "derive_signals: correction upsert failed"),
-            }
+    if corrections.len() >= CORRECTION_MIN {
+        let instances = serde_json::Value::Array(corrections);
+        match ctx.pg().upsert_pattern(project_id, None, "correction-prone", true, None, &instances).await {
+            Ok(_) => count += 1,
+            Err(e) => tracing::warn!(error = %e, project = %project_id, "derive_signals: correction upsert failed"),
         }
     }
-    for (folder_id, items) in principles {
-        if !items.is_empty() {
-            let instances = serde_json::Value::Array(items);
-            match ctx.pg().upsert_pattern(&folder_id, "rule-candidates", false, None, &instances).await {
-                Ok(_) => count += 1,
-                Err(e) => tracing::warn!(error = %e, folder = %folder_id, "derive_signals: rule-candidate upsert failed"),
-            }
+    if !principles.is_empty() {
+        let instances = serde_json::Value::Array(principles);
+        match ctx.pg().upsert_pattern(project_id, None, "rule-candidates", false, None, &instances).await {
+            Ok(_) => count += 1,
+            Err(e) => tracing::warn!(error = %e, project = %project_id, "derive_signals: rule-candidate upsert failed"),
         }
     }
 
@@ -796,8 +803,8 @@ mod tests {
         assert_eq!(analyze_project(&ctx, &task).await.unwrap(), 1, "one session enriched");
 
         let pats: Vec<(String, bool, Option<f64>, i32)> = sqlx_core::query_as::query_as(
-            "SELECT name, is_anti_pattern, confidence::float8, instance_count FROM inference.detected_patterns WHERE folder_id = $1 ORDER BY name"
-        ).bind(fid).fetch_all(pg.pool()).await.unwrap();
+            "SELECT name, is_anti_pattern, confidence::float8, instance_count FROM inference.detected_patterns WHERE project_id = $1 ORDER BY name"
+        ).bind(pid).fetch_all(pg.pool()).await.unwrap();
         assert_eq!(pats.len(), 3, "churn + correction-prone + rule-candidates (cold.rs below churn threshold)");
         assert_eq!(pats[0].0, "correction-prone");
         assert!(pats[0].1, "correction-prone is an anti-pattern");
@@ -811,13 +818,13 @@ mod tests {
 
         // idempotent: deriving again (whole-project path) upserts the same 3 rows.
         assert_eq!(derive_signals(&ctx, &pid, None).await.unwrap(), 3);
-        let n: (i64,) = sqlx_core::query_as::query_as("SELECT count(*) FROM inference.detected_patterns WHERE folder_id = $1")
-            .bind(fid).fetch_one(pg.pool()).await.unwrap();
+        let n: (i64,) = sqlx_core::query_as::query_as("SELECT count(*) FROM inference.detected_patterns WHERE project_id = $1")
+            .bind(pid).fetch_one(pg.pool()).await.unwrap();
         assert_eq!(n.0, 3, "upsert, not insert");
 
         // cleanup
         let pool = pg.pool();
-        sqlx_core::query::query("DELETE FROM inference.detected_patterns WHERE folder_id = $1").bind(fid).execute(pool).await.ok();
+        sqlx_core::query::query("DELETE FROM inference.detected_patterns WHERE project_id = $1").bind(pid).execute(pool).await.ok();
         sqlx_core::query::query("DELETE FROM activity.assistant_events WHERE session_id = $1").bind(&csid).execute(pool).await.ok();
         sqlx_core::query::query("DELETE FROM activity.sessions WHERE id = $1").bind(sid).execute(pool).await.ok();
         sqlx_core::query::query("DELETE FROM sensei.folders WHERE root_id = $1").bind(root).execute(pool).await.ok();
