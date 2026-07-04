@@ -23,14 +23,14 @@ describe("buildNavItems", () => {
     const entries = buildNavItems({ focus: false });
     expect(groups(entries).map((g) => g.text)).toEqual(["Needs you", "Review"]);
 
-    // Anchors are top-level links; Preferences is the trailing top-level link.
+    // Anchors are top-level links; Settings is the trailing top-level link.
     const topHrefs = links(entries).map((l) => l.href);
     expect(topHrefs).toContain("/"); // Today
     expect(topHrefs).toContain("/projects");
-    expect(topHrefs).toContain("/settings"); // Preferences
+    expect(topHrefs).toContain("/settings"); // Settings
   });
 
-  it("hides Review group, separator and Preferences in Focus", () => {
+  it("hides Review group, separator and Settings in Focus", () => {
     const entries = buildNavItems({ focus: true });
     expect(groups(entries).map((g) => g.text)).toEqual(["Needs you"]);
     expect(byHref(entries, "/settings")).toBeUndefined();
@@ -47,7 +47,7 @@ describe("buildNavItems", () => {
     expect(byHref(entries, "/impact")).toBeDefined();
   });
 
-  it("renders a separator before Preferences in the full rail", () => {
+  it("renders a separator before Settings in the full rail", () => {
     const entries = buildNavItems({ focus: false });
     const sepIdx = entries.findIndex(
       (e) => "type" in e && e.type === "separator",
@@ -65,9 +65,9 @@ describe("buildNavItems", () => {
     expect(mem?.kanji).toBe("覚");
   });
 
-  it('labels /settings "Preferences"', () => {
+  it('labels /settings "Settings"', () => {
     expect(byHref(buildNavItems({ focus: false }), "/settings")?.text).toBe(
-      "Preferences",
+      "Settings",
     );
   });
 
