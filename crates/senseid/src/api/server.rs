@@ -98,7 +98,13 @@ pub async fn start_server(port: u16) -> std::io::Result<()> {
 
     axum::serve(listener, app)
         .with_graceful_shutdown(async move {
-            tokio::signal::ctrl_c().await.ok();
+            // `.ok()` is deliberate here — ctrl_c() only errors if signal
+            // handler registration fails (rare, non-actionable at runtime).
+            // Either way we want the graceful-shutdown future to complete
+            // so the server drives its teardown flow. Not a silent-error bug.
+            if let Err(e) = tokio::signal::ctrl_c().await {
+                tracing::warn!(error = %e, "ctrl_c handler setup failed — shutdown will still run");
+            }
             tracing::info!("Shutting down...");
             if let Some(q) = watcher_queue {
                 let watcher = crate::watcher::root_watcher::RootWatcher::instance(q);
