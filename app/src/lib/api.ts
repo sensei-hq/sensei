@@ -609,6 +609,20 @@ export function senseiApi(port: number) {
     getInstalledItems: () =>
       get<import('./types').InstalledItem[]>('/api/install/installed', []),
 
+    /** Toggle a skill or command. The daemon moves the .md file between
+     *  `~/.claude/<kind>s/` and its `disabled/` sibling — Claude Code
+     *  scans only the live folder. Idempotent server-side (the daemon
+     *  returns `changed: false` when the item was already in the target
+     *  state, but we discard that here — re-fetch the list to reflect
+     *  new state).
+     *  Error codes: 400 unknown kind, 404 unknown item or ambiguous
+     *  state (item present in both live + disabled folders). */
+    setInstalledItemEnabled: (name: string, kind: string, enabled: boolean) =>
+      tryPut(
+        `/api/install/installed/${enc(name)}/enabled`,
+        { kind, enabled },
+      ),
+
     removeAll: (purge = false) =>
       post<import('./types').RemoveResult>('/api/remove', { purge }, {
         assistants_removed: [], plugin_removed: false, commands_removed: 0,
