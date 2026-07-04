@@ -30,6 +30,7 @@ describe("SettingsSidebar", () => {
       "Projects",
       "Libraries",
       "Instruments",
+      "Providers",
       "Inference",
       "Extensions",
     ]) {
