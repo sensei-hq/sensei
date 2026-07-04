@@ -640,9 +640,13 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
         Ok(Ok(r)) => r,
         Ok(Err(e)) => {
             // Read/parse error — record per-file in index_errors (surfaced in the
-            // UI) instead of silently dropping it.
-            if let Some(fid) = &folder_id {
-                ctx.pg().log_index_error(fid, abs_path, &e, Some(ext), Some("parse")).await.ok();
+            // UI) instead of silently dropping it. If THAT write also fails,
+            // surface the second failure so an operator can see the DB is unhappy;
+            // otherwise the parse-error observability itself becomes silent.
+            if let Some(fid) = &folder_id
+                && let Err(log_err) = ctx.pg().log_index_error(fid, abs_path, &e, Some(ext), Some("parse")).await
+            {
+                tracing::warn!(error = %log_err, path = %abs_path, "log_index_error failed for parse error");
             }
             tracing::debug!("process_file: skipping unparseable {abs_path}: {e}");
             return Ok(0);
@@ -653,8 +657,10 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
             // survives; record which file so panicking inputs are observable
             // rather than vanishing.
             let msg = format!("parser panicked: {join_err}");
-            if let Some(fid) = &folder_id {
-                ctx.pg().log_index_error(fid, abs_path, &msg, Some(ext), Some("parse")).await.ok();
+            if let Some(fid) = &folder_id
+                && let Err(log_err) = ctx.pg().log_index_error(fid, abs_path, &msg, Some(ext), Some("parse")).await
+            {
+                tracing::warn!(error = %log_err, path = %abs_path, "log_index_error failed for parser panic");
             }
             tracing::warn!("process_file: {abs_path}: {msg}");
             return Ok(0);
