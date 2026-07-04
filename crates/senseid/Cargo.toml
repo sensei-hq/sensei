@@ -77,10 +77,10 @@ thiserror = "2"
 chrono = { version = "0.4", features = ["serde"] }
 dirs = "6"
 reqwest = { version = "0.12", default-features = false, features = ["json", "blocking", "rustls-tls", "stream"] }
-gateway = { path = "../gateway" }
+gateway = { git = "ssh://git@github.com/sensei-hq/gateway.git", rev = "01d0ab2" }
 # Registry + trait types only by default — engine adapters land via the
 # `embedded-*` cargo features above.
-gateway-embedded = { path = "../gateway-embedded" }
+gateway-embedded = { git = "ssh://git@github.com/sensei-hq/gateway.git", rev = "01d0ab2" }
 hive-protocol = { path = "../hive-protocol" }
 sensei-bootstrap = { path = "../bootstrap" }
 sensei-logger = { path = "../logger" }
