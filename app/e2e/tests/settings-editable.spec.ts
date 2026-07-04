@@ -65,20 +65,10 @@ test.describe('Settings — General editable', () => {
   });
 });
 
-test.describe('Settings — Inference tab', () => {
+test.describe('Settings — Inference page', () => {
   test('role → chain picker renders each of the four supported roles', async ({ tauriPage }) => {
-    await navigateTo(tauriPage, '/settings');
-    // Click the Inference tab. `TabBar` uses text — walk the DOM to
-    // find the tab labelled "Inference" and click it. Falls back to
-    // waiting on the panel testid so a re-labelled tab isn't fatal.
-    await tauriPage.evaluate(`
-      (function() {
-        var tab = Array.from(document.querySelectorAll('button, a'))
-          .find(function(el) { return (el.textContent || '').trim() === 'Inference'; });
-        if (tab) tab.click();
-        return true;
-      })()
-    `);
+    // Inference lives at its own route now (Settings rail); no tab clicking.
+    await navigateTo(tauriPage, '/settings/inference');
     await tauriPage.waitForSelector('[data-testid="settings-inference"]', 15_000);
 
     for (const role of ['inference', 'consolidation', 'embedding', 'voice']) {
@@ -102,15 +92,7 @@ test.describe('Settings — Inference tab', () => {
       return;
     }
 
-    await navigateTo(tauriPage, '/settings');
-    await tauriPage.evaluate(`
-      (function() {
-        var tab = Array.from(document.querySelectorAll('button, a'))
-          .find(function(el) { return (el.textContent || '').trim() === 'Inference'; });
-        if (tab) tab.click();
-        return true;
-      })()
-    `);
+    await navigateTo(tauriPage, '/settings/inference');
     await tauriPage.waitForSelector('[data-testid="inference-role-picker-inference"]', 15_000);
 
     // The wrapper's `selectOption` isn't reliable across all envs. Set
