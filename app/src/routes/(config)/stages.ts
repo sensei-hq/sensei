@@ -4,7 +4,9 @@
  *
  * Icons are *meaning* kanji, not counters — the glyph reinforces what the
  * step is about, and survives reordering without going stale. The numeric
- * "01 / 11" lives in the bottom bar for a sense of progression.
+ * "01 / 05" lives in the bottom bar for a sense of progression. Non-setup
+ * concerns (Preferences, Libraries, Instruments, Inference/Assignments,
+ * Projects) live in the Settings surface, not in the wizard.
  *
  * `brief` is the short rail copy (one sentence, tease voice).
  * `description` is the longer header tagline shown on the page.
@@ -34,18 +36,6 @@ export const STAGES: WizardStage[] = [
     title: 'Welcome',
     brief: 'A quiet observer. Nothing more.',
     description: '',
-    watermark: true,
-    status: 'pending',
-    active: false,
-  },
-  {
-    id: 'preferences',
-    path: '/setup/preferences',
-    icon: '名',
-    title: 'Preferences',
-    brief: 'A few small choices before you step in.',
-    description:
-      'A few small choices before you step in. Anything here can be changed later by re-opening this wizard.',
     watermark: true,
     status: 'pending',
     active: false,
@@ -81,65 +71,6 @@ export const STAGES: WizardStage[] = [
     description:
       'The daemon recurses your folders, identifies repos, and extracts the code graph.',
     watermark: false,
-    status: 'pending',
-    active: false,
-  },
-  {
-    id: 'projects',
-    path: '/setup/projects',
-    icon: '組',
-    title: 'Projects',
-    brief: 'Each project, one or more repos.',
-    description: 'A project has one or more repos. Edit, split, or confirm.',
-    watermark: true,
-    status: 'pending',
-    active: false,
-  },
-  {
-    id: 'libraries',
-    path: '/setup/libraries',
-    icon: '書',
-    title: 'Libraries',
-    brief: 'What sensei should wrap.',
-    description:
-      'Libraries without their own MCP — sensei indexes docs & code and wraps them with its own tools.',
-    watermark: true,
-    status: 'pending',
-    active: false,
-  },
-  {
-    id: 'instruments',
-    path: '/setup/instruments',
-    icon: '器',
-    title: 'Instruments',
-    brief: 'Tools sensei can reach for.',
-    description:
-      "Tools sensei can reach for — recommended based on what's in your stack. Each MCP brings its own capabilities.",
-    watermark: true,
-    status: 'pending',
-    active: false,
-  },
-  {
-    id: 'inference',
-    path: '/setup/inference',
-    icon: '想',
-    title: 'Inference',
-    brief: 'Local models, and a few clouds.',
-    description:
-      'Providers give sensei models for reasoning — inferring insights, consolidating memory, and making recommendations. Add providers, select models.',
-    watermark: true,
-    status: 'pending',
-    active: false,
-  },
-  {
-    id: 'assignments',
-    path: '/setup/assignments',
-    icon: '任',
-    title: 'Assignments',
-    brief: 'Which model handles which role.',
-    description:
-      'Decide which chain of models handles each reasoning role: insights, memory consolidation, embeddings, and voice. Chains are ordered — first is primary, the rest are fallbacks.',
-    watermark: true,
     status: 'pending',
     active: false,
   },
