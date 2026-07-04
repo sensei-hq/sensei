@@ -271,6 +271,12 @@ pub(crate) struct AddRootBody {
 
 /// Add a watch root to the DB immediately (synchronous) — does not start scanning.
 /// The Scan page is responsible for calling POST /api/scan to trigger the actual scan.
+///
+/// After the row lands, the handler also registers the path with the global
+/// RootWatcher and — if the watcher goes live — flips the row's status from the
+/// DB default (`scanning`) to `watching`. Without this the UI's Roots list
+/// would keep showing the "recursive" fallback badge indefinitely until the
+/// next daemon restart when `spawn_root_watchers` finally ran (#6).
 pub(crate) async fn add_watch_root(
     State(state): State<AppState>,
     Json(body): Json<AddRootBody>,
@@ -291,6 +297,30 @@ pub(crate) async fn add_watch_root(
             tracing::error!("add_watch_root: {}", e);
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
+
+    // Register the new root with the live watcher singleton and (re)start it.
+    // The mutex is std, so the lock scope must not span an await.
+    let watching = {
+        let queue = state.task_queue.clone();
+        let w_mutex = crate::watcher::root_watcher::RootWatcher::instance(queue);
+        match w_mutex.lock() {
+            Ok(mut w) => {
+                w.register(std::path::PathBuf::from(&expanded), vec![]);
+                w.start().is_ok()
+                    && *w.status() == crate::watcher::root_watcher::WatcherStatus::Watching
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "add_watch_root: RootWatcher mutex poisoned; leaving status at default");
+                false
+            }
+        }
+    };
+    if watching
+        && let Err(e) = state.pg.update_watch_status(&id, "watching").await
+    {
+        tracing::warn!(error = %e, %id, "add_watch_root: update_watch_status watching failed");
+    }
+
     Ok(Json(serde_json::json!({ "ok": true, "id": id, "path": expanded })))
 }
 
