@@ -101,52 +101,82 @@
         {/each}
       </div>
 
-      <div class="p-6 bg-paper-mute border border-paper-mute rounded-lg" data-testid="role-detail">
-        <div class="flex items-baseline gap-3 mb-2">
-          <span class="kanji text-3xl text-accent">{activeMeta.kanji}</span>
-          <h3 class="text-lg font-medium m-0">{activeMeta.label}</h3>
+      <div data-testid="role-detail">
+        <!-- Role heading — big kanji + display title + hint -->
+        <div class="flex items-baseline gap-2 mb-1">
+          <span class="kanji text-[22px] text-accent">{activeMeta.kanji}</span>
+          <h3 class="display text-[17px] font-normal m-0">{activeMeta.label}</h3>
         </div>
-        <p class="text-sm text-ink-mute m-0 mb-5">{activeMeta.hint}</p>
+        <p class="text-[13px] text-ink-soft m-0 mb-4">{activeMeta.hint}</p>
 
-        <div class="mb-5 flex items-center gap-3">
-          <label for="chain-picker" class="text-xs text-ink-mute uppercase tracking-wide">Chain</label>
-          <select
-            id="chain-picker"
-            class="text-sm px-3 py-2 border border-paper-edge rounded-md bg-paper-soft text-ink cursor-pointer font-mono"
-            data-testid={`chain-picker-${active}`}
-            value={activePickedId ?? ''}
-            onchange={(e) => pickChain(active, e.currentTarget.value || null)}
-          >
-            <option value="">— none —</option>
-            {#each activeOptions as opt (opt.id)}
-              <option value={opt.id}>{opt.name} · {opt.capability}</option>
-            {/each}
-          </select>
-          {#if activeOptions.length === 0}
-            <span class="text-xs text-warning">No chain with capability {activeMeta.capabilities.join('/')} yet.</span>
-          {/if}
-        </div>
-
-        {#if activePicked}
-          <div>
-            <p class="text-xs text-ink-mute uppercase tracking-wide m-0 mb-2">Models in this chain</p>
-            {#if activePicked.models.length === 0}
-              <p class="text-sm text-ink-soft italic">Chain has no models — pick one, or configure this chain first.</p>
+        <!-- Split: priority list (left) + available picker (right) -->
+        <div class="grid grid-cols-[1fr_280px] gap-3">
+          <!-- Priority list — chain's models, primary marked -->
+          <div class="p-3 rounded-md bg-paper border border-paper-edge min-h-[220px]">
+            <p class="text-xs uppercase tracking-wider text-ink-soft m-0 mb-2">Priority</p>
+            {#if !activePicked || activePicked.models.length === 0}
+              <div class="text-center text-[13px] text-ink-faint italic py-6">
+                {activePicked
+                  ? 'This chain has no models — pick a different chain →'
+                  : 'No chain assigned — pick one from the right →'}
+              </div>
             {:else}
-              <ol class="list-none m-0 p-0 flex flex-col gap-1.5" data-testid={`chain-models-${active}`}>
+              <ol class="list-none m-0 p-0 flex flex-col gap-1" data-testid={`chain-models-${active}`}>
                 {#each activePicked.models as m (m.sequenceOrder)}
-                  <li class="grid grid-cols-[24px_1fr_auto] gap-3 items-center px-3 py-2 border border-paper-edge rounded-md bg-paper-soft">
-                    <span class="text-xs font-mono text-ink-mute">{m.sequenceOrder}</span>
-                    <span class="text-sm font-mono">{m.modelName}</span>
-                    <span class="text-xs font-mono text-ink-mute">{m.routerName.slice(0, 8)}</span>
+                  {@const primary = m.sequenceOrder === 1}
+                  <li
+                    class="grid grid-cols-[22px_28px_1fr_auto] gap-2 items-center py-2 px-2 rounded"
+                    class:bg-ink={primary}
+                    class:text-paper={primary}
+                    class:bg-paper-mute={!primary}
+                    class:text-ink={!primary}
+                  >
+                    <span class="font-mono text-xs opacity-60 text-center">{m.sequenceOrder}</span>
+                    <span class="kanji text-[13px]" class:text-paper={primary} class:text-accent={!primary}>◆</span>
+                    <div class="min-w-0">
+                      <div class="text-[13px] font-mono truncate">{m.modelName}</div>
+                      <div class="text-xs opacity-60 truncate">
+                        {m.routerName.slice(0, 8)}{primary ? ' · PRIMARY' : ''}
+                      </div>
+                    </div>
                   </li>
                 {/each}
               </ol>
             {/if}
           </div>
-        {:else}
-          <p class="text-sm text-ink-soft italic">No chain assigned to this role. Pick one above to enable this workflow.</p>
-        {/if}
+
+          <!-- Available picker — other chains user could swap in -->
+          <div class="p-3 rounded-md bg-paper-mute border border-paper-edge min-h-[220px]">
+            <p class="text-xs uppercase tracking-wider text-ink-soft m-0 mb-2">Available chains</p>
+            {#if activeOptions.length === 0}
+              <div class="text-center text-[13px] text-ink-faint italic py-4">
+                No chain with capability {activeMeta.capabilities.join('/')} yet.
+              </div>
+            {:else}
+              <div class="flex flex-col gap-1" data-testid={`chain-picker-list-${active}`}>
+                {#each activeOptions as opt (opt.id)}
+                  {@const selected = opt.id === activePickedId}
+                  <button
+                    type="button"
+                    class="grid grid-cols-[1fr_auto] items-center gap-1 py-2 px-2 rounded border-none bg-transparent cursor-pointer text-left text-inherit hover:bg-paper"
+                    class:font-medium={selected}
+                    data-testid={`chain-opt-${active}-${opt.id}`}
+                    onclick={() => pickChain(active, selected ? null : opt.id)}
+                  >
+                    <div class="min-w-0">
+                      <div class="text-[13px] truncate">{opt.name}</div>
+                      <div class="text-xs text-ink-soft font-mono">{opt.capability} · {opt.models.length} model{opt.models.length === 1 ? '' : 's'}</div>
+                    </div>
+                    <span class="text-[13px] {selected ? 'text-accent' : 'text-ink-soft'}">{selected ? '✓' : '+'}</span>
+                  </button>
+                {/each}
+              </div>
+            {/if}
+            <p class="text-xs text-ink-faint mt-3 italic">
+              Chain-model reorder/add coming later.
+            </p>
+          </div>
+        </div>
       </div>
     </div>
   {/if}
