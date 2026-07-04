@@ -2159,21 +2159,30 @@ impl PgStore {
 
     // ── Detected Patterns (inference) ──────────────────────────────────
 
+    /// Upsert a detected pattern at PROJECT scope (#82). `folder_id` is
+    /// preserved as an optional locus pointer for file/folder-scoped signals
+    /// (churn); it is not part of the uniqueness key. Passing the same
+    /// (project_id, name, is_anti_pattern) with a different folder_id
+    /// updates the same row and overwrites the locus — that's the desired
+    /// merge behaviour when a single file's pattern shows up across sibling
+    /// folders inside the project.
     pub async fn upsert_pattern(
-        &self, folder_id: &uuid::Uuid, name: &str, is_anti: bool,
+        &self, project_id: &uuid::Uuid, folder_id: Option<&uuid::Uuid>,
+        name: &str, is_anti: bool,
         confidence: Option<f64>, instances: &serde_json::Value,
     ) -> Result<uuid::Uuid, String> {
         let count = instances.as_array().map(|a| a.len() as i32).unwrap_or(0);
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
-            "INSERT INTO inference.detected_patterns(folder_id, name, is_anti_pattern, confidence, instance_count, instances)
-             VALUES($1, $2, $3, $4, $5, $6)
-             ON CONFLICT(folder_id, name, is_anti_pattern) DO UPDATE SET
+            "INSERT INTO inference.detected_patterns(project_id, folder_id, name, is_anti_pattern, confidence, instance_count, instances)
+             VALUES($1, $2, $3, $4, $5, $6, $7)
+             ON CONFLICT(project_id, name, is_anti_pattern) DO UPDATE SET
+               folder_id = COALESCE(EXCLUDED.folder_id, detected_patterns.folder_id),
                confidence = COALESCE(EXCLUDED.confidence, detected_patterns.confidence),
                instance_count = EXCLUDED.instance_count,
                instances = EXCLUDED.instances,
                modified_at = now()
              RETURNING id"
-        ).bind(folder_id).bind(name).bind(is_anti).bind(confidence).bind(count).bind(instances)
+        ).bind(project_id).bind(folder_id).bind(name).bind(is_anti).bind(confidence).bind(count).bind(instances)
             .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(row.0)
     }
@@ -5367,6 +5376,19 @@ mod tests {
         row.0
     }
 
+    /// Create a unique (project, folder) pair for FK tests that need both,
+    /// wiring the folder to the project. Used by the pattern tests since
+    /// detected_patterns is project-scoped (#82) and needs a non-null
+    /// project_id, while `list_patterns_by_folder` still keys on folder.
+    async fn create_test_project_and_folder(s: &PgStore, suffix: &str) -> (uuid::Uuid, uuid::Uuid) {
+        let pid = s.create_project(&format!("_test:{}", suffix), None, None).await.unwrap();
+        let fid = create_test_folder(s, suffix).await;
+        sqlx_core::query::query("UPDATE sensei.folders SET project_id = $1 WHERE id = $2")
+            .bind(pid).bind(fid)
+            .execute(s.pool()).await.unwrap();
+        (pid, fid)
+    }
+
     // ── PG Function tests ─────────────────────────────────────────────
 
     #[tokio::test]
@@ -5978,41 +6000,81 @@ mod tests {
     #[tokio::test]
     async fn pattern_upsert_and_list() {
         let s = pg_store().await;
-        let fid = create_test_folder(&s, "pat_upsert").await;
+        let suffix = format!("pat_upsert_{}", uuid::Uuid::new_v4());
+        let (proj_id, fid) = create_test_project_and_folder(&s, &suffix).await;
         let instances = serde_json::json!([{"file":"src/lib.rs","line":10},{"file":"src/main.rs","line":20}]);
-        let pid = s.upsert_pattern(&fid, "_test:Adapter", false, Some(0.85), &instances).await.unwrap();
+        let pat_id = s.upsert_pattern(&proj_id, Some(&fid), "_test:Adapter", false, Some(0.85), &instances).await.unwrap();
         let patterns = s.list_patterns_by_folder(&fid).await.unwrap();
         assert!(patterns.iter().any(|p| p["name"] == "_test:Adapter" && p["instance_count"] == 2));
         // cleanup
         sqlx_core::query::query("DELETE FROM inference.detected_patterns WHERE id = $1")
-            .bind(pid).execute(s.pool()).await.unwrap();
+            .bind(pat_id).execute(s.pool()).await.unwrap();
+        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+            .bind(proj_id).execute(s.pool()).await.ok();
     }
 
     #[tokio::test]
     async fn pattern_promote() {
         let s = pg_store().await;
-        let fid = create_test_folder(&s, "pat_promote").await;
-        let pid = s.upsert_pattern(&fid, "_test:Factory", false, None, &serde_json::json!([])).await.unwrap();
-        s.promote_pattern(&pid, "rule").await.unwrap();
+        let suffix = format!("pat_promote_{}", uuid::Uuid::new_v4());
+        let (proj_id, fid) = create_test_project_and_folder(&s, &suffix).await;
+        let pat_id = s.upsert_pattern(&proj_id, Some(&fid), "_test:Factory", false, None, &serde_json::json!([])).await.unwrap();
+        s.promote_pattern(&pat_id, "rule").await.unwrap();
         let patterns = s.list_patterns_by_folder(&fid).await.unwrap();
-        let p = patterns.iter().find(|p| p["id"] == pid.to_string()).unwrap();
+        let p = patterns.iter().find(|p| p["id"] == pat_id.to_string()).unwrap();
         assert_eq!(p["lifecycle"], "rule");
         sqlx_core::query::query("DELETE FROM inference.detected_patterns WHERE id = $1")
-            .bind(pid).execute(s.pool()).await.unwrap();
+            .bind(pat_id).execute(s.pool()).await.unwrap();
+        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+            .bind(proj_id).execute(s.pool()).await.ok();
     }
 
     #[tokio::test]
     async fn pattern_upsert_updates_existing() {
         let s = pg_store().await;
-        let fid = create_test_folder(&s, "pat_dup").await;
-        let id1 = s.upsert_pattern(&fid, "_test:Singleton", false, Some(0.5), &serde_json::json!([{"file":"a.rs"}])).await.unwrap();
-        let id2 = s.upsert_pattern(&fid, "_test:Singleton", false, Some(0.9), &serde_json::json!([{"file":"a.rs"},{"file":"b.rs"}])).await.unwrap();
+        let suffix = format!("pat_dup_{}", uuid::Uuid::new_v4());
+        let (proj_id, fid) = create_test_project_and_folder(&s, &suffix).await;
+        let id1 = s.upsert_pattern(&proj_id, Some(&fid), "_test:Singleton", false, Some(0.5), &serde_json::json!([{"file":"a.rs"}])).await.unwrap();
+        let id2 = s.upsert_pattern(&proj_id, Some(&fid), "_test:Singleton", false, Some(0.9), &serde_json::json!([{"file":"a.rs"},{"file":"b.rs"}])).await.unwrap();
         assert_eq!(id1, id2); // same row updated
         let patterns = s.list_patterns_by_folder(&fid).await.unwrap();
         let p = patterns.iter().find(|p| p["name"] == "_test:Singleton").unwrap();
         assert_eq!(p["instance_count"], 2);
         sqlx_core::query::query("DELETE FROM inference.detected_patterns WHERE id = $1")
             .bind(id1).execute(s.pool()).await.unwrap();
+        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+            .bind(proj_id).execute(s.pool()).await.ok();
+    }
+
+    #[tokio::test]
+    async fn pattern_upsert_merges_across_folders_in_same_project() {
+        // #82: patterns are project-scoped. Two folders in the same project
+        // upserting the same pattern name collapse into a single row — the
+        // second upsert updates the first row's instances/folder_id locus.
+        let s = pg_store().await;
+        let suffix = format!("pat_project_scope_{}", uuid::Uuid::new_v4());
+        let (proj_id, fid_a) = create_test_project_and_folder(&s, &suffix).await;
+        let fid_b = create_test_folder(&s, &format!("{}_b", suffix)).await;
+        sqlx_core::query::query("UPDATE sensei.folders SET project_id = $1 WHERE id = $2")
+            .bind(proj_id).bind(fid_b)
+            .execute(s.pool()).await.unwrap();
+
+        let id_a = s.upsert_pattern(&proj_id, Some(&fid_a), "_test:Shared", false, None, &serde_json::json!([{"file":"a.rs"}])).await.unwrap();
+        let id_b = s.upsert_pattern(&proj_id, Some(&fid_b), "_test:Shared", false, None, &serde_json::json!([{"file":"b.rs"},{"file":"b2.rs"}])).await.unwrap();
+        assert_eq!(id_a, id_b, "same (project_id, name) must merge into one row");
+
+        // The row's instances reflect the latest upsert; folder_id follows too.
+        let (count, locus): (i32, uuid::Uuid) = sqlx_core::query_as::query_as(
+            "SELECT instance_count, folder_id FROM inference.detected_patterns WHERE id = $1"
+        ).bind(id_a).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(count, 2);
+        assert_eq!(locus, fid_b, "folder_id is the latest upsert's locus");
+
+        // cleanup
+        sqlx_core::query::query("DELETE FROM inference.detected_patterns WHERE id = $1")
+            .bind(id_a).execute(s.pool()).await.unwrap();
+        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+            .bind(proj_id).execute(s.pool()).await.ok();
     }
 
     // ── Corrections aggregation tests ──────────────────────────────────
