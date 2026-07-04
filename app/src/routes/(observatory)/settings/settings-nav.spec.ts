@@ -45,15 +45,15 @@ describe("settings buildNavItems", () => {
     ]);
   });
 
-  it("groups Reasoning → Instruments + Inference + Assignments", () => {
+  it("groups Reasoning → Instruments + Inference (no Assignments — Inference is a live role→chain editor)", () => {
     const reasoning = groups(buildNavItems()).find(
       (g) => g.text === "Reasoning",
     )!;
     expect(reasoning.children.map((c) => c.href)).toEqual([
       "/settings/instruments",
       "/settings/inference",
-      "/settings/assignments",
     ]);
+    expect(byHref(buildNavItems(), "/settings/assignments")).toBeUndefined();
   });
 
   it("renders a separator before Extensions", () => {

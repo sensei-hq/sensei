@@ -63,13 +63,14 @@ export function buildNavItems(): NavEntry[] {
         link("書", "Libraries", "/settings/libraries"),
       ],
     },
-    // Reasoning — models, chains, and role assignments.
+    // Reasoning — models, chains, and role assignments. Inference already
+    // covers the role → chain wiring (InferenceAssignmentsPanel is a live
+    // editor), so there is no separate Assignments entry here.
     {
       text: "Reasoning",
       children: [
         link("器", "Instruments", "/settings/instruments"),
         link("想", "Inference", "/settings/inference"),
-        link("任", "Assignments", "/settings/assignments"),
       ],
     },
     { type: "separator" },

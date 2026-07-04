@@ -31,7 +31,6 @@ describe("SettingsSidebar", () => {
       "Libraries",
       "Instruments",
       "Inference",
-      "Assignments",
       "Extensions",
     ]) {
       expect(t).toContain(label);
