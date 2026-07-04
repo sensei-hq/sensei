@@ -109,14 +109,26 @@
         {@const current = chainById(currentId)}
         {@const options = optionsFor(role)}
         {@const status = saveStatus[role]}
-        <div class="grid grid-cols-[28px_1fr_auto] gap-3 py-4 items-center" data-testid={`inference-role-${role}`}>
-          <span class="kanji text-lg text-accent">{meta.kanji}</span>
+        <div class="grid grid-cols-[28px_1fr_auto] gap-3 py-4 items-start" data-testid={`inference-role-${role}`}>
+          <span class="kanji text-[22px] text-accent leading-none mt-1">{meta.kanji}</span>
           <div class="min-w-0">
-            <div class="text-sm text-ink">{meta.label}</div>
-            <div class="text-xs text-ink-mute mt-0.5">{meta.hint}</div>
+            <div class="text-[13px] text-ink font-medium">{meta.label}</div>
+            <div class="text-xs text-ink-soft mt-0.5">{meta.hint}</div>
             {#if current && current.models.length > 0}
-              <div class="text-xs text-ink-mute mt-1 font-mono truncate" title={current.models.map(m => m.modelName).join(' → ')}>
-                {current.models.map(m => m.modelName).join(' → ')}
+              <!-- Chain preview: model[1] → model[2] → …, primary marked -->
+              <div class="flex items-center gap-2 mt-2 flex-wrap" title={current.models.map(m => m.modelName).join(' → ')}>
+                {#each current.models as m, i (m.sequenceOrder)}
+                  <span
+                    class="font-mono text-xs px-2 py-0.5 rounded"
+                    class:bg-ink={i === 0}
+                    class:text-paper={i === 0}
+                    class:bg-paper-mute={i > 0}
+                    class:text-ink-mute={i > 0}
+                  >{m.modelName}</span>
+                  {#if i < current.models.length - 1}
+                    <span class="text-xs text-ink-faint">→</span>
+                  {/if}
+                {/each}
               </div>
             {/if}
             {#if status === 'error' && saveError[role]}
