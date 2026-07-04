@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { wizardState } from '$lib/wizard-state.svelte.js';
+  import { appState } from '$lib/appstate.svelte.js';
+  import { senseiApi } from '$lib/api.js';
 
   let loading = $state(true);
   let error = $state<string | null>(null);
@@ -17,6 +19,26 @@
       loading = false;
     }
   });
+
+  /** Per-row inline save. Settings has no Continue mechanic, so each row
+   *  persists on demand via the Save button — same daemon endpoint the
+   *  wizard's commit-hook used. Runs on the row's `router` object so the
+   *  status chips (`saveState`) reflect progress. */
+  async function saveKey(router: { id: string; draftKey: string; saveState: string; saveError: string; configured: boolean }): Promise<void> {
+    const trimmed = router.draftKey.trim();
+    if (trimmed.length === 0) return;
+    router.saveState = 'saving';
+    router.saveError = '';
+    const result = await senseiApi(appState.port).setGatewayRouterKey(router.id, trimmed);
+    if (result.ok) {
+      router.configured = result.data.configured;
+      router.draftKey = '';
+      router.saveState = 'done';
+    } else {
+      router.saveState = 'failed';
+      router.saveError = result.error.message;
+    }
+  }
 </script>
 
 <div class="max-w-[820px]">
@@ -88,8 +110,16 @@
                 bind:value={router.draftKey}
                 placeholder={router.configured ? 'Update key (paste to replace)' : 'Paste API key (sk-...)'}
                 data-testid={`router-key-input-${router.id}`}
+                onkeydown={(e) => { if (e.key === 'Enter') void saveKey(router); }}
                 class="key-input flex-1 px-3 py-1.5 text-sm font-mono bg-paper-soft border border-paper-mute rounded-md text-ink focus:outline-none focus:border-accent"
               />
+              <button
+                type="button"
+                data-testid={`router-save-${router.id}`}
+                class="btn-solid text-xs"
+                disabled={router.draftKey.trim().length === 0 || router.saveState === 'saving'}
+                onclick={() => saveKey(router)}
+              >Save</button>
               {#if router.configured}
                 <button
                   type="button"
