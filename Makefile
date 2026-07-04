@@ -27,13 +27,14 @@
 
 .PHONY: crates crates-debug crates-all \
         install install-service install-app install-debug \
-        db-backup \
+        db-backup db-backup-essential db-backup-rotate \
         app-dev app-check \
         website-dev website-build \
         test test-fast test-crates test-crates-fast \
         test-app test-app-unit test-app-e2e test-app-e2e-cold app-e2e-build \
         _e2e-cold-pre _e2e-cold-post reset-e2e-db \
-        setup-hooks update bump dbd-cache-clear tap-push marketplace-push clean
+        setup-hooks update bump dbd-cache-clear tap-push marketplace-push \
+        clean clean-cache
 
 VERSION := $(shell cat VERSION)
 
@@ -95,7 +96,7 @@ install: install-service install-app
 #
 # Restore the latest backup:
 #   pg_restore -d sensei -c $$(ls -t database/backup/backup-*.dump | head -1)
-db-backup:
+db-backup: db-backup-rotate
 	@mkdir -p database/backup
 	@if psql -d sensei -c "SELECT 1" >/dev/null 2>&1; then \
 	  ts=$$(date +%Y%m%d-%H%M%S); \
@@ -106,6 +107,63 @@ db-backup:
 	else \
 	  echo "sensei DB not present — skipping backup (first-time install)"; \
 	fi
+
+# db-backup-rotate — keep only the 5 most recent full backups. Runs before
+# `db-backup` so the new dump always fits inside the retention window.
+# Each backup is ~350MB compressed; 5 is the sweet spot between rollback
+# headroom and disk consumption.
+db-backup-rotate:
+	@if [ -d database/backup ]; then \
+	  keep=5; \
+	  ls -t database/backup/backup-*.dump 2>/dev/null \
+	    | tail -n +$$((keep + 1)) \
+	    | xargs -I{} rm -f "{}"; \
+	fi
+
+# db-backup-essential — narrow backup that exports ONLY the tables whose
+# contents can't be reconstructed from the source tree:
+#   • assistant_events / sessions / transcript_turns / turns — captured user
+#     activity that has no other source of truth
+#   • memories / detected_patterns / recommendations / reasoning_trace /
+#     corrections — derived signals distilled by the analyzer that survive
+#     raw-event pruning
+#   • projects / folders / folders_to_watch — user identity + scope mapping
+#
+# NOT exported (rebuildable):
+#   • nodes / edges / scan_state — comes from a full scan
+#   • library_pages — re-fetched by lib_indexer
+#   • logs — pruned by the structured-log TTL (#74 partial)
+#   • task_executions — job history; noisy and self-contained
+#
+# Writes JSONL under database/backup/essential/<ts>/<schema>.<name>.jsonl.
+# Runs `dbd export -n <table> --format jsonl` per table so the file layout
+# matches import/staging/*.jsonl for future re-import.
+db-backup-essential:
+	@mkdir -p database/backup/essential
+	@if ! psql -d sensei -c "SELECT 1" >/dev/null 2>&1; then \
+	  echo "sensei DB not present — skipping essential backup"; \
+	  exit 0; \
+	fi
+	@# Rotate essential-backup snapshots: keep only the 5 most recent so a
+	@# 650MB assistant_events export doesn't accumulate unbounded.
+	@keep=5; \
+	  ls -1t database/backup/essential 2>/dev/null | tail -n +$$((keep + 1)) \
+	    | while read d; do rm -rf "database/backup/essential/$$d"; done
+	@ts=$$(date +%Y%m%d-%H%M%S); \
+	  outdir="database/backup/essential/$${ts}"; \
+	  mkdir -p "$$outdir"; \
+	  echo "Essential backup → $$outdir"; \
+	  for t in activity.assistant_events activity.sessions activity.transcript_turns activity.turns \
+	           sensei.memories inference.detected_patterns inference.recommendations \
+	           inference.reasoning_trace inference.corrections \
+	           sensei.projects sensei.folders sensei.folders_to_watch; do \
+	    DATABASE_URL="postgres://localhost/sensei" \
+	      dbd export -n "$$t" --format jsonl \
+	                 --output "$$outdir" \
+	                 --source database >/dev/null 2>&1 || \
+	      echo "  skip $$t (dbd export failed — table may not be tracked in design.yaml)"; \
+	  done; \
+	  echo "Essential backup complete — $$(du -sh "$$outdir" | awk '{print $$1}')"
 
 # Overlay freshly-built release binaries into the brew prefix.
 #
@@ -397,6 +455,9 @@ bump:
 	@# so the next daemon deploy fetches v$(_v)'s DDL instead of serving the
 	@# previous version's cached bundle (which would re-apply the old schema).
 	@$(MAKE) dbd-cache-clear
+	@# Prune stale rustc incremental caches so target/ doesn't drift over
+	@# release cadence (cargo doesn't GC target/debug/incremental).
+	@$(MAKE) clean-cache
 	@echo "Syncing homebrew-tap and marketplace..."
 	@$(MAKE) tap-push marketplace-push
 
@@ -438,7 +499,49 @@ marketplace-push:
 	rm -rf "$$tmpdir"
 
 # ── Clean ─────────────────────────────────────────────────────────────────────
+#
+# Two clean levels:
+#
+#   make clean       — nuke everything reproducible: target/ (both workspaces),
+#                      app build artifacts, DB backups older than 7 days.
+#                      Full rebuild after this (~2 min for crates alone).
+#
+#   make clean-cache — quick prune: keep target/debug artifacts warm but drop
+#                      stale rustc incremental caches (target/debug/incremental
+#                      accumulates ~800MB per rustc invocation and cargo doesn't
+#                      GC it). Called by `make bump` so releases don't ship a
+#                      2-week-old cache.
+#
+# target/ bloat: cargo's target/debug/incremental grows by ~1GB per rustc
+# invocation without upper bound. On a busy day this pushes target/ to 100+ GB.
+# `clean-cache` keeps only the 5 most recent incremental caches per crate.
 
 clean:
+	@echo "Cleaning target/ (both workspaces)..."
 	cargo clean
+	@if [ -d app/src-tauri/target ]; then \
+	  (cd app/src-tauri && cargo clean); \
+	fi
+	@echo "Cleaning app build artifacts..."
 	rm -rf app/.svelte-kit app/build
+	@echo "Pruning DB backups older than 7 days..."
+	@if [ -d database/backup ]; then \
+	  find database/backup -name 'backup-*.dump' -mtime +7 -delete -print; \
+	fi
+	@echo "Clean complete."
+
+clean-cache:
+	@echo "Pruning stale rustc incremental caches (keeping 5 newest per crate)..."
+	@for base in target app/src-tauri/target; do \
+	  inc="$$base/debug/incremental"; \
+	  if [ ! -d "$$inc" ]; then continue; fi; \
+	  keep=5; \
+	  find "$$inc" -mindepth 1 -maxdepth 1 -type d -print0 \
+	    | xargs -0 -I{} stat -f "%m %N" "{}" 2>/dev/null \
+	    | sort -rn \
+	    | tail -n +$$((keep + 1)) \
+	    | awk '{print $$2}' \
+	    | xargs -r -I{} rm -rf "{}"; \
+	  echo "  $$inc: kept last $$keep, rest pruned"; \
+	done
+	@echo "Cache prune complete."
