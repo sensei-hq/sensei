@@ -106,8 +106,11 @@ export interface DaemonRouter {
 }
 
 /** One entry in a fallback chain's ordered model list. `routerName` is
- *  the router id (matches `DaemonRouter.id`). */
+ *  the router id (matches `DaemonRouter.id`). `memberId` is the row's
+ *  UUID in `gateway.fallback_chain_models` — used as the target for
+ *  remove / move / (reorder) writes. */
 export interface DaemonChainModel {
+  memberId: string;
   sequenceOrder: number;
   modelName: string;
   routerName: string;

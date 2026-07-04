@@ -95,3 +95,125 @@ pub(crate) async fn set_chain_role(
         })?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
+
+/// GET /api/gateway/chains/{id}/available-models — models with matching
+/// capability, reachable via `models_in_router`, that aren't already
+/// members of this chain. Powers the wizard's "Available models" picker.
+pub(crate) async fn list_available_models(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let chain_id = uuid::Uuid::parse_str(&id).map_err(|_| (
+        StatusCode::BAD_REQUEST,
+        Json(serde_json::json!({ "error": "chain id must be a uuid" }))
+    ))?;
+    let models = state.pg.list_available_models_for_chain(&chain_id).await
+        .map_err(|e| {
+            tracing::error!(error = %e, chain = %chain_id, "list_available_models_for_chain failed");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": e })),
+            )
+        })?;
+    Ok(Json(serde_json::json!({ "models": models })))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct AddModelBody {
+    #[serde(alias = "model_id")]
+    pub model_id: uuid::Uuid,
+    #[serde(alias = "router_id")]
+    pub router_id: uuid::Uuid,
+}
+
+/// POST /api/gateway/chains/{id}/models — append a model to the end of
+/// a chain's ordered list. Body: `{model_id, router_id}`. Returns the
+/// new member id + assigned sequence_order so the caller can rehydrate
+/// its optimistic UI. 400 on unknown chain / unreachable model pair,
+/// 500 otherwise.
+pub(crate) async fn add_chain_model(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<AddModelBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let chain_id = uuid::Uuid::parse_str(&id).map_err(|_| (
+        StatusCode::BAD_REQUEST,
+        Json(serde_json::json!({ "error": "chain id must be a uuid" }))
+    ))?;
+    let (member_id, sequence_order) = state.pg
+        .add_chain_model(&chain_id, &body.model_id, &body.router_id).await
+        .map_err(|e| chain_member_err_to_status(e, chain_id))?;
+    Ok(Json(serde_json::json!({
+        "ok":            true,
+        "memberId":      member_id,
+        "sequenceOrder": sequence_order,
+    })))
+}
+
+/// DELETE /api/gateway/chains/{id}/models/{member_id} — remove a
+/// specific member and compact the remaining rows so sequence stays
+/// contiguous. 404 on unknown member.
+pub(crate) async fn remove_chain_model(
+    State(state): State<AppState>,
+    Path((id, member_id_str)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let chain_id = uuid::Uuid::parse_str(&id).map_err(|_| (
+        StatusCode::BAD_REQUEST,
+        Json(serde_json::json!({ "error": "chain id must be a uuid" }))
+    ))?;
+    let member_id = uuid::Uuid::parse_str(&member_id_str).map_err(|_| (
+        StatusCode::BAD_REQUEST,
+        Json(serde_json::json!({ "error": "member id must be a uuid" }))
+    ))?;
+    state.pg.remove_chain_model(&chain_id, &member_id).await
+        .map_err(|e| chain_member_err_to_status(e, chain_id))?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct MoveBody {
+    /// -1 for up, +1 for down. Anything else → 400.
+    pub direction: i32,
+}
+
+/// PUT /api/gateway/chains/{id}/models/{member_id}/move — swap this
+/// member with its neighbour. Returns `moved: false` when at a
+/// boundary (no-op, not an error) so the UI can dim the arrow.
+pub(crate) async fn move_chain_model(
+    State(state): State<AppState>,
+    Path((id, member_id_str)): Path<(String, String)>,
+    Json(body): Json<MoveBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let chain_id = uuid::Uuid::parse_str(&id).map_err(|_| (
+        StatusCode::BAD_REQUEST,
+        Json(serde_json::json!({ "error": "chain id must be a uuid" }))
+    ))?;
+    let member_id = uuid::Uuid::parse_str(&member_id_str).map_err(|_| (
+        StatusCode::BAD_REQUEST,
+        Json(serde_json::json!({ "error": "member id must be a uuid" }))
+    ))?;
+    let moved = state.pg.move_chain_model(&chain_id, &member_id, body.direction).await
+        .map_err(|e| {
+            if e.contains("direction") {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({ "error": e })),
+                );
+            }
+            chain_member_err_to_status(e, chain_id)
+        })?;
+    Ok(Json(serde_json::json!({ "ok": true, "moved": moved })))
+}
+
+/// Shared error-mapper for chain-member writes. Maps `not found` /
+/// `not reachable` to 400/404, everything else to 500 with logging.
+fn chain_member_err_to_status(e: String, chain_id: uuid::Uuid) -> (StatusCode, Json<serde_json::Value>) {
+    if e.contains("not found") {
+        return (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": e })));
+    }
+    if e.contains("not reachable") {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": e })));
+    }
+    tracing::error!(error = %e, chain = %chain_id, "chain-member write failed");
+    (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e })))
+}

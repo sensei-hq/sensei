@@ -20,6 +20,9 @@
   let saveError = $state<Record<SenseiRole, string | null>>({
     inference: null, consolidation: null, embedding: null, voice: null,
   });
+  // Per-member busy so a slow move/remove on one row doesn't disable
+  // its neighbours. Keyed by fallback_chain_models.id.
+  let memberBusy = $state<Record<string, 'up' | 'down' | 'remove' | null>>({});
 
   async function loadChains(): Promise<void> {
     const api = senseiApi(appState.port);
@@ -87,6 +90,48 @@
     setTimeout(() => { if (saveStatus[role] === 'saved') saveStatus[role] = 'idle'; }, 1500);
   }
 
+  async function moveMember(role: SenseiRole, memberId: string, direction: -1 | 1): Promise<void> {
+    const chainId = assignments[role];
+    if (!chainId) return;
+    memberBusy[memberId] = direction === -1 ? 'up' : 'down';
+    saveStatus[role] = 'saving';
+    try {
+      const api = senseiApi(appState.port);
+      const res = await api.moveGatewayChainModel(chainId, memberId, direction);
+      if (!res.ok) {
+        saveStatus[role] = 'error';
+        saveError[role] = res.error.message;
+        return;
+      }
+      await loadChains();
+      saveStatus[role] = 'saved';
+      setTimeout(() => { if (saveStatus[role] === 'saved') saveStatus[role] = 'idle'; }, 1500);
+    } finally {
+      memberBusy[memberId] = null;
+    }
+  }
+
+  async function removeMember(role: SenseiRole, memberId: string): Promise<void> {
+    const chainId = assignments[role];
+    if (!chainId) return;
+    memberBusy[memberId] = 'remove';
+    saveStatus[role] = 'saving';
+    try {
+      const api = senseiApi(appState.port);
+      const res = await api.removeGatewayChainModel(chainId, memberId);
+      if (!res.ok) {
+        saveStatus[role] = 'error';
+        saveError[role] = res.error.message;
+        return;
+      }
+      await loadChains();
+      saveStatus[role] = 'saved';
+      setTimeout(() => { if (saveStatus[role] === 'saved') saveStatus[role] = 'idle'; }, 1500);
+    } finally {
+      memberBusy[memberId] = null;
+    }
+  }
+
   onMount(loadChains);
 </script>
 
@@ -115,19 +160,51 @@
             <div class="text-[13px] text-ink font-medium">{meta.label}</div>
             <div class="text-xs text-ink-soft mt-0.5">{meta.hint}</div>
             {#if current && current.models.length > 0}
-              <!-- Chain preview: model[1] → model[2] → …, primary marked -->
-              <div class="flex items-center gap-2 mt-2 flex-wrap" title={current.models.map(m => m.modelName).join(' → ')}>
-                {#each current.models as m, i (m.sequenceOrder)}
-                  <span
-                    class="font-mono text-xs px-2 py-0.5 rounded"
-                    class:bg-ink={i === 0}
-                    class:text-paper={i === 0}
-                    class:bg-paper-mute={i > 0}
-                    class:text-ink-mute={i > 0}
-                  >{m.modelName}</span>
-                  {#if i < current.models.length - 1}
-                    <span class="text-xs text-ink-faint">→</span>
-                  {/if}
+              <!-- Chain editor: model chips + ▲/▼/× per member. Adding a
+                   new model happens in the wizard's fuller "Available
+                   models" picker; here we keep the chain-model editor
+                   compact — you can only reorder or remove. -->
+              <div class="flex flex-col gap-1 mt-2" data-testid={`inference-chain-members-${role}`}>
+                {#each current.models as m, i (m.memberId)}
+                  {@const primary = i === 0}
+                  {@const busy = memberBusy[m.memberId]}
+                  <div
+                    class="grid grid-cols-[auto_1fr_auto_auto_auto] items-center gap-2 py-1 px-2 rounded"
+                    class:bg-ink={primary}
+                    class:text-paper={primary}
+                    class:bg-paper-mute={!primary}
+                    data-testid={`inference-chain-member-${m.memberId}`}
+                  >
+                    <span class="font-mono text-xs opacity-70">{i + 1}.</span>
+                    <span class="font-mono text-xs truncate">{m.modelName}</span>
+                    <button
+                      type="button"
+                      class="w-5 h-5 text-xs bg-transparent border-none cursor-pointer"
+                      class:opacity-25={i === 0 || busy}
+                      disabled={i === 0 || !!busy}
+                      title="Move up"
+                      data-testid={`inference-member-up-${m.memberId}`}
+                      onclick={() => moveMember(role, m.memberId, -1)}
+                    >▲</button>
+                    <button
+                      type="button"
+                      class="w-5 h-5 text-xs bg-transparent border-none cursor-pointer"
+                      class:opacity-25={i === current.models.length - 1 || busy}
+                      disabled={i === current.models.length - 1 || !!busy}
+                      title="Move down"
+                      data-testid={`inference-member-down-${m.memberId}`}
+                      onclick={() => moveMember(role, m.memberId, 1)}
+                    >▼</button>
+                    <button
+                      type="button"
+                      class="w-5 h-5 text-xs bg-transparent border-none cursor-pointer"
+                      class:opacity-25={busy}
+                      disabled={!!busy}
+                      title="Remove"
+                      data-testid={`inference-member-remove-${m.memberId}`}
+                      onclick={() => removeMember(role, m.memberId)}
+                    >×</button>
+                  </div>
                 {/each}
               </div>
             {/if}

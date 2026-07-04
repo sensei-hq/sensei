@@ -4988,6 +4988,7 @@ impl PgStore {
                     COALESCE(
                         (SELECT jsonb_agg(
                                     jsonb_build_object(
+                                        'memberId',      fcm.id,
                                         'sequenceOrder', fcm.sequence_order,
                                         'modelName',     m.name,
                                         'routerName',    r.id::text
@@ -5045,6 +5046,201 @@ impl PgStore {
             return Err("chain not found".into());
         }
         Ok(())
+    }
+
+    // ── Chain member editing (add / remove / move) ───────────────────
+    //
+    // Members of a chain are rows in `gateway.fallback_chain_models`,
+    // ordered by `sequence_order`. The (chain_id, sequence_order) pair
+    // is unique — so writes must maintain contiguous ordering, and
+    // moves happen through temporary shifts to dodge the constraint.
+
+    /// List the models that a chain COULD use — everything with a
+    /// matching capability, in any router, minus the models already
+    /// present in the chain. Each row carries the model + its router
+    /// so the picker can render provider chips per the mockup.
+    pub async fn list_available_models_for_chain(&self, chain_id: &uuid::Uuid) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, String, String, uuid::Uuid, String)> = sqlx_core::query_as::query_as(
+            "SELECT m.id, m.name, m.full_name, r.id, r.name
+               FROM gateway.models m
+               JOIN gateway.models_in_router mir ON mir.model_id = m.id
+               JOIN gateway.routers r ON r.id = mir.router_id
+              WHERE m.capabilities @> ARRAY[(
+                  SELECT fc.capability FROM gateway.fallback_chains fc WHERE fc.id = $1
+              )]::sensei.model_capability[]
+                AND NOT EXISTS (
+                    SELECT 1 FROM gateway.fallback_chain_models fcm
+                     WHERE fcm.chain_id = $1
+                       AND fcm.model_id = m.id
+                       AND fcm.router_id = r.id
+                )
+              ORDER BY r.name, m.full_name"
+        ).bind(chain_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(mid, name, full, rid, rname)| {
+            serde_json::json!({
+                "modelId":    mid,
+                "modelName":  name,
+                "fullName":   full,
+                "routerId":   rid,
+                "routerName": rname,
+            })
+        }).collect())
+    }
+
+    /// Append a model to the end of a chain's ordered list. Returns the
+    /// new row id and the assigned sequence_order so the caller can
+    /// update its optimistic UI. Fails with a helpful message when the
+    /// (model_id, router_id) pair isn't reachable via `models_in_router`.
+    pub async fn add_chain_model(
+        &self,
+        chain_id: &uuid::Uuid,
+        model_id: &uuid::Uuid,
+        router_id: &uuid::Uuid,
+    ) -> Result<(uuid::Uuid, i32), String> {
+        // Guard: chain must exist.
+        let (chain_exists,): (bool,) = sqlx_core::query_as::query_as(
+            "SELECT EXISTS(SELECT 1 FROM gateway.fallback_chains WHERE id = $1)"
+        ).bind(chain_id).fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        if !chain_exists {
+            return Err("chain not found".into());
+        }
+
+        // Guard: the (model_id, router_id) pair must be reachable via
+        // models_in_router. This is what the FK check would tell us,
+        // but a clearer message helps the wizard render a useful error.
+        let (reachable,): (bool,) = sqlx_core::query_as::query_as(
+            "SELECT EXISTS(
+                SELECT 1 FROM gateway.models_in_router
+                 WHERE model_id = $1 AND router_id = $2
+             )"
+        ).bind(model_id).bind(router_id).fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        if !reachable {
+            return Err("model is not reachable via this router".into());
+        }
+
+        // Next sequence_order = max + 1 (or 1 for an empty chain). The
+        // unique(chain_id, sequence_order) index catches any race; on a
+        // conflict we surface as-is.
+        let (row_id, seq): (uuid::Uuid, i32) = sqlx_core::query_as::query_as(
+            "INSERT INTO gateway.fallback_chain_models (chain_id, router_id, model_id, sequence_order)
+             SELECT $1, $2, $3, COALESCE(MAX(sequence_order), 0) + 1
+               FROM gateway.fallback_chain_models
+              WHERE chain_id = $1
+             RETURNING id, sequence_order"
+        )
+        .bind(chain_id).bind(router_id).bind(model_id)
+        .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+
+        Ok((row_id, seq))
+    }
+
+    /// Remove a chain-model row by id and compact the sequence so the
+    /// remaining rows stay contiguous (1, 2, 3, …). Fails if the row
+    /// isn't in the given chain — surfaces as 404 upstream.
+    pub async fn remove_chain_model(
+        &self,
+        chain_id: &uuid::Uuid,
+        member_id: &uuid::Uuid,
+    ) -> Result<(), String> {
+        // Two-step in a single transaction so the compaction sees the
+        // deletion. The unique(chain_id, sequence_order) constraint
+        // enforces the contiguous invariant.
+        let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
+
+        let (removed_seq,): (Option<i32>,) = sqlx_core::query_as::query_as(
+            "DELETE FROM gateway.fallback_chain_models
+              WHERE id = $1 AND chain_id = $2
+              RETURNING (sequence_order)::int"
+        ).bind(member_id).bind(chain_id).fetch_optional(&mut *tx).await.map_err(|e| e.to_string())?
+         .map(|(s,)| (Some(s),)).unwrap_or((None,));
+
+        let Some(seq) = removed_seq else {
+            return Err("chain member not found".into());
+        };
+
+        // Compact: shift everyone above the removed slot down by one.
+        // The unique index would collide if we did a single-step
+        // decrement, so we bump the shifted rows to a negative range
+        // first, then normalise.
+        sqlx_core::query::query(
+            "UPDATE gateway.fallback_chain_models
+                SET sequence_order = -sequence_order
+              WHERE chain_id = $1 AND sequence_order > $2"
+        ).bind(chain_id).bind(seq).execute(&mut *tx).await.map_err(|e| e.to_string())?;
+
+        sqlx_core::query::query(
+            "UPDATE gateway.fallback_chain_models
+                SET sequence_order = -sequence_order - 1
+              WHERE chain_id = $1 AND sequence_order < 0"
+        ).bind(chain_id).execute(&mut *tx).await.map_err(|e| e.to_string())?;
+
+        tx.commit().await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Swap a chain-model with its neighbour above (direction = -1) or
+    /// below (direction = +1). No-op at boundaries. Returns Ok(false)
+    /// when no swap happened so the caller can distinguish "hit
+    /// boundary" from "wrote".
+    pub async fn move_chain_model(
+        &self,
+        chain_id: &uuid::Uuid,
+        member_id: &uuid::Uuid,
+        direction: i32,
+    ) -> Result<bool, String> {
+        if direction != -1 && direction != 1 {
+            return Err("direction must be -1 (up) or +1 (down)".into());
+        }
+
+        let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
+
+        // Find the current sequence_order (also confirms membership).
+        let cur: Option<(i32,)> = sqlx_core::query_as::query_as(
+            "SELECT sequence_order FROM gateway.fallback_chain_models
+              WHERE id = $1 AND chain_id = $2"
+        ).bind(member_id).bind(chain_id).fetch_optional(&mut *tx).await.map_err(|e| e.to_string())?;
+        let Some((cur_seq,)) = cur else {
+            return Err("chain member not found".into());
+        };
+
+        let target_seq = cur_seq + direction;
+        if target_seq < 1 {
+            return Ok(false); // Already at top.
+        }
+
+        // Locate the neighbour to swap with. If none exists at target
+        // (member is last row), also a boundary.
+        let neighbour: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
+            "SELECT id FROM gateway.fallback_chain_models
+              WHERE chain_id = $1 AND sequence_order = $2"
+        ).bind(chain_id).bind(target_seq).fetch_optional(&mut *tx).await.map_err(|e| e.to_string())?;
+        let Some((neighbour_id,)) = neighbour else {
+            return Ok(false); // Already at bottom.
+        };
+
+        // Three-step swap to dodge the unique(chain_id, sequence_order)
+        // index: park the mover at a negative slot, move the neighbour
+        // into the mover's old slot, then land the mover.
+        sqlx_core::query::query(
+            "UPDATE gateway.fallback_chain_models
+                SET sequence_order = -$1
+              WHERE id = $2"
+        ).bind(cur_seq).bind(member_id).execute(&mut *tx).await.map_err(|e| e.to_string())?;
+
+        sqlx_core::query::query(
+            "UPDATE gateway.fallback_chain_models
+                SET sequence_order = $1
+              WHERE id = $2"
+        ).bind(cur_seq).bind(neighbour_id).execute(&mut *tx).await.map_err(|e| e.to_string())?;
+
+        sqlx_core::query::query(
+            "UPDATE gateway.fallback_chain_models
+                SET sequence_order = $1
+              WHERE id = $2"
+        ).bind(target_seq).bind(member_id).execute(&mut *tx).await.map_err(|e| e.to_string())?;
+
+        tx.commit().await.map_err(|e| e.to_string())?;
+        Ok(true)
     }
 }
 
@@ -5599,6 +5795,80 @@ mod tests {
         // Teardown — remove the scratch chain.
         sqlx_core::query::query("DELETE FROM gateway.fallback_chains WHERE id = $1")
             .bind(scratch_id).execute(s.pool()).await.unwrap();
+    }
+
+    /// End-to-end chain-model editing: add → move → remove → compact.
+    /// Runs against a scratch chain so seed rows stay intact.
+    #[tokio::test]
+    async fn chain_model_editing_add_move_remove_compacts_sequence() {
+        let s = pg_store().await;
+
+        // Scratch chain, capability=chat so any chat model matches.
+        let scratch_name = format!("_test:mchain_{}", uuid::Uuid::new_v4());
+        let (chain_id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO gateway.fallback_chains (name, capability, description, is_active)
+             VALUES ($1, 'chat'::sensei.model_capability, 'scratch', true)
+             RETURNING id"
+        ).bind(&scratch_name).fetch_one(s.pool()).await.unwrap();
+
+        // Pick three (model, router) pairs with capability=chat.
+        let pairs: Vec<(uuid::Uuid, uuid::Uuid)> = sqlx_core::query_as::query_as(
+            "SELECT m.id, mir.router_id
+               FROM gateway.models m
+               JOIN gateway.models_in_router mir ON mir.model_id = m.id
+              WHERE m.capabilities @> ARRAY['chat'::sensei.model_capability]
+              LIMIT 3"
+        ).fetch_all(s.pool()).await.unwrap();
+        assert!(pairs.len() >= 2, "test needs at least 2 chat-capable (model, router) pairs; got {}", pairs.len());
+
+        // Add — sequence_order starts at 1 and advances.
+        let (row_a, seq_a) = s.add_chain_model(&chain_id, &pairs[0].0, &pairs[0].1).await.unwrap();
+        let (row_b, seq_b) = s.add_chain_model(&chain_id, &pairs[1].0, &pairs[1].1).await.unwrap();
+        assert_eq!(seq_a, 1);
+        assert_eq!(seq_b, 2);
+
+        // Move A down (swap with B).
+        let moved = s.move_chain_model(&chain_id, &row_a, 1).await.unwrap();
+        assert!(moved, "A should swap with B");
+        let (seq_a_now,): (i32,) = sqlx_core::query_as::query_as(
+            "SELECT sequence_order FROM gateway.fallback_chain_models WHERE id = $1"
+        ).bind(row_a).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(seq_a_now, 2, "A now sits at position 2");
+        let (seq_b_now,): (i32,) = sqlx_core::query_as::query_as(
+            "SELECT sequence_order FROM gateway.fallback_chain_models WHERE id = $1"
+        ).bind(row_b).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(seq_b_now, 1, "B moved into A's old slot");
+
+        // Move B up past the top — boundary, no-op.
+        let moved = s.move_chain_model(&chain_id, &row_b, -1).await.unwrap();
+        assert!(!moved, "top boundary should return false");
+
+        // Remove B — A should compact to sequence_order 1.
+        s.remove_chain_model(&chain_id, &row_b).await.unwrap();
+        let (seq_a_final,): (i32,) = sqlx_core::query_as::query_as(
+            "SELECT sequence_order FROM gateway.fallback_chain_models WHERE id = $1"
+        ).bind(row_a).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(seq_a_final, 1, "A compacts after B removal");
+
+        // Not-found errors surface, not silent no-ops.
+        let ghost = uuid::Uuid::new_v4();
+        let err = s.remove_chain_model(&chain_id, &ghost).await.expect_err("remove missing must error");
+        assert!(err.contains("not found"), "expected not-found, got: {err}");
+        let err = s.move_chain_model(&chain_id, &ghost, 1).await.expect_err("move missing must error");
+        assert!(err.contains("not found"), "expected not-found, got: {err}");
+
+        // Available list: chain has 1 model, so all others with matching
+        // capability are available (excludes the row we still have).
+        let available = s.list_available_models_for_chain(&chain_id).await.unwrap();
+        assert!(!available.is_empty(), "at least one chat model should be available after removing B");
+
+        // Bad direction rejected with a clear message.
+        let err = s.move_chain_model(&chain_id, &row_a, 2).await.expect_err("direction 2 must reject");
+        assert!(err.contains("-1") || err.contains("+1"), "expected direction hint, got: {err}");
+
+        // Teardown.
+        sqlx_core::query::query("DELETE FROM gateway.fallback_chains WHERE id = $1")
+            .bind(chain_id).execute(s.pool()).await.unwrap();
     }
 
     // ── Communities tests ────────────────────────────────────────────

@@ -650,6 +650,37 @@ export function senseiApi(port: number) {
         { role },
       ),
 
+    /** Chain-model editing — available picker source. Returns models
+     *  with matching capability, reachable via `models_in_router`,
+     *  minus the ones already in this chain. */
+    listAvailableChainModels: (chainId: string) =>
+      get<{ models: Array<{
+        modelId: string; modelName: string; fullName: string;
+        routerId: string; routerName: string;
+      }>}>(`/api/gateway/chains/${enc(chainId)}/available-models`, { models: [] }),
+
+    /** Append a (model, router) pair to the end of a chain's ordered
+     *  list. Returns the new member id + assigned sequence order. */
+    addGatewayChainModel: (chainId: string, modelId: string, routerId: string) =>
+      tryPost<{ ok: boolean; memberId: string; sequenceOrder: number }>(
+        `/api/gateway/chains/${enc(chainId)}/models`,
+        { model_id: modelId, router_id: routerId },
+      ),
+
+    /** Remove a chain member row. Compacts remaining sequence orders
+     *  server-side so the list stays contiguous. */
+    removeGatewayChainModel: (chainId: string, memberId: string) =>
+      tryDelete(`/api/gateway/chains/${enc(chainId)}/models/${enc(memberId)}`),
+
+    /** Swap a chain member with its neighbour. direction = -1 (up) /
+     *  +1 (down). `moved: false` in the response means at a boundary,
+     *  not an error — the UI dims the arrow. */
+    moveGatewayChainModel: (chainId: string, memberId: string, direction: -1 | 1) =>
+      tryPut(
+        `/api/gateway/chains/${enc(chainId)}/models/${enc(memberId)}/move`,
+        { direction },
+      ),
+
     generateImage: (body: {
       prompt: string;
       output_path?: string;
