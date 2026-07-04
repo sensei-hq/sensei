@@ -75,7 +75,8 @@
   {:else}
     <div class="flex flex-col gap-3">
       {#each projects as project (project.id)}
-        {@const isMulti = project.folders.length > 1}
+        {@const repoFolders = project.folders.filter(f => f.kind !== 'folder')}
+        {@const isMulti = repoFolders.length > 1}
         {@const isConfirmed = confirmed[project.id] !== false}
         {@const path = projectPath(project)}
         {@const stackChips = [
@@ -106,7 +107,7 @@
                 class="display text-xl font-normal bg-transparent border-none outline-none w-full p-0 text-ink"
               />
               <div class="font-mono text-xs text-ink-soft mt-0.5">
-                {#if path}{path} · {/if}{project.folders.length} {project.folders.length === 1 ? 'folder' : 'folders'}
+                {#if path}{path} · {/if}{repoFolders.length} {repoFolders.length === 1 ? 'repo' : 'repos'}
               </div>
             </div>
 
