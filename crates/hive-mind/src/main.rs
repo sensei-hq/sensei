@@ -27,7 +27,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt().with_env_filter(
         tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into())).init();
     let cli = Cli::parse();
-    let cfg = HiveConfig::from_env();
+    let cfg = HiveConfig::from_env().map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
     let db = HiveDb::bootstrap(cfg.data_dir.clone(), cfg.database_dir.clone()).await?;
     let store = HiveStore::new(db.pool().clone());
     match cli.cmd.unwrap_or(Cmd::Serve) {

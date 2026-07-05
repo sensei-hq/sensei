@@ -290,41 +290,41 @@ impl HiveStore {
     }
 
     /// Resolve a presented key to its caller. Only active (non-revoked, member
-    /// not disabled) keys match. Hashes are compared in constant time. On a hit,
+    /// not disabled) keys match. The lookup filters by `key_hash` (indexed by
+    /// `api_keys_key_hash_idx`) so it stays O(log n) as the key count grows,
+    /// then constant-time-compares the single returned row before returning —
+    /// defense in depth against any exotic timing at the pg side. On a hit,
     /// `last_used_at` is stamped.
     pub async fn find_member_by_key(&self, presented: &str) -> Result<Option<Caller>, String> {
         let presented_hash = hash_key(presented);
-        let rows: Vec<(Uuid, Uuid, String, String, String)> = sqlx_core::query_as::query_as(
+        let row: Option<(Uuid, Uuid, String, String, String)> = sqlx_core::query_as::query_as(
             "SELECT k.id, m.id, m.name, m.role, k.key_hash
              FROM hive.api_keys k
              JOIN hive.members m ON m.id = k.member_id
-             WHERE k.revoked_at IS NULL AND m.disabled_at IS NULL",
+             WHERE k.key_hash = $1 AND k.revoked_at IS NULL AND m.disabled_at IS NULL
+             LIMIT 1",
         )
-        .fetch_all(&self.pool)
+        .bind(&presented_hash)
+        .fetch_optional(&self.pool)
         .await
         .map_err(|e| e.to_string())?;
 
-        for (key_id, member_id, name, role, key_hash) in rows {
-            let matches: bool = key_hash
-                .as_bytes()
-                .ct_eq(presented_hash.as_bytes())
-                .into();
-            if matches {
-                sqlx_core::query::query(
-                    "UPDATE hive.api_keys SET last_used_at = now() WHERE id = $1",
-                )
-                .bind(key_id)
-                .execute(&self.pool)
-                .await
-                .map_err(|e| e.to_string())?;
-                return Ok(Some(Caller {
-                    member_id,
-                    name,
-                    role,
-                }));
-            }
+        let Some((key_id, member_id, name, role, key_hash)) = row else { return Ok(None) };
+        let matches: bool = key_hash
+            .as_bytes()
+            .ct_eq(presented_hash.as_bytes())
+            .into();
+        if !matches {
+            return Ok(None);
         }
-        Ok(None)
+        sqlx_core::query::query(
+            "UPDATE hive.api_keys SET last_used_at = now() WHERE id = $1",
+        )
+        .bind(key_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(Some(Caller { member_id, name, role }))
     }
 
     /// Revoke an API key by id.
