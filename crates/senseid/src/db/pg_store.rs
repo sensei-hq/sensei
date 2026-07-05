@@ -9,6 +9,17 @@ pub struct PgStore {
     pool: PgPool,
 }
 
+/// Per-table row counts from a single `PgStore::prune_activity` run (#74).
+/// Everything is `u64` so callers can report a single log line without
+/// per-field conversions.
+#[derive(Debug, Default, Clone, Copy, serde::Serialize)]
+pub struct ActivityPruneCounts {
+    pub sessions:          u64,
+    pub turns:             u64,
+    pub transcript_turns:  u64,
+    pub assistant_events:  u64,
+}
+
 pub struct InsertMemory {
     pub project_id:    Option<uuid::Uuid>,
     pub scope:         String,
@@ -4711,6 +4722,123 @@ impl PgStore {
         Ok(r.rows_affected())
     }
 
+    /// Prune raw activity older than `days` days, respecting the analyzer's
+    /// value-extraction guard (#74):
+    ///
+    /// - Sessions are eligible only when `analyzed_at IS NOT NULL` AND
+    ///   `started_at < now() - days` — a session whose insights the analyzer
+    ///   never derived is kept even if it is old (would lose signal).
+    /// - The eligible sessions' \`activity.turns\` cascade (FK ON DELETE
+    ///   CASCADE) so `turns` deletes are counted via a preflight
+    ///   `COUNT(*) WHERE session_id IN (…)` for observability.
+    /// - `activity.transcript_turns` and `activity.assistant_events` key
+    ///   session-scoped rows off `client_session_id` (text), NOT the
+    ///   session uuid — no FK, so we DELETE by matching that column.
+    /// - Session-less assistant_events (never attached to a session; still
+    ///   valuable for global tool-usage stats via ts) are pruned by ts alone
+    ///   when they're older than the cutoff — same window, but they don't
+    ///   need the analyzed-only guard.
+    ///
+    /// Derived signals (\`inference.detected_patterns\` /
+    /// \`inference.recommendations\` / \`inference.reasoning_traces\` /
+    /// \`sensei.memories\`) are NEVER touched — they are the distilled value
+    /// that survives raw-event pruning.
+    ///
+    /// Ordering respects FKs: children first (transcript_turns / assistant_events
+    /// keyed by client_session_id), then sessions (which cascades turns).
+    pub async fn prune_activity(&self, days: i32) -> Result<ActivityPruneCounts, String> {
+        let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
+
+        // (1) Snapshot eligible sessions once — used for every child delete
+        //     so we don't re-scan the guard SQL four times.
+        let eligible: Vec<(uuid::Uuid, String)> = sqlx_core::query_as::query_as(
+            "SELECT id, client_session_id
+               FROM activity.sessions
+              WHERE analyzed_at IS NOT NULL
+                AND started_at < now() - (interval '1 day' * $1)"
+        )
+            .bind(days)
+            .fetch_all(&mut *tx).await.map_err(|e| e.to_string())?;
+        if eligible.is_empty() {
+            // Even with no eligible sessions, orphan assistant_events by ts
+            // are still a valid target.
+            let cutoff_ms = self.cutoff_millis(days);
+            let ae = sqlx_core::query::query(
+                // NOT EXISTS instead of NOT IN because sessions.client_session_id
+            // is nullable — a NULL in the NOT IN subquery poisons the whole
+            // predicate under ANSI three-valued logic.
+            "DELETE FROM activity.assistant_events ae
+              WHERE ae.ts < $1
+                AND (ae.session_id = ''
+                     OR NOT EXISTS (
+                        SELECT 1 FROM activity.sessions s
+                         WHERE s.client_session_id = ae.session_id))"
+            )
+                .bind(cutoff_ms)
+                .execute(&mut *tx).await.map_err(|e| e.to_string())?;
+            tx.commit().await.map_err(|e| e.to_string())?;
+            return Ok(ActivityPruneCounts { assistant_events: ae.rows_affected(), ..Default::default() });
+        }
+        let session_uuids: Vec<uuid::Uuid> = eligible.iter().map(|(u, _)| *u).collect();
+        let client_ids:    Vec<String>     = eligible.iter().map(|(_, c)| c.clone()).collect();
+
+        // (2) Count turns that will cascade on the session delete — for the
+        //     log line; the DELETE itself happens via CASCADE below.
+        let turns_count: (i64,) = sqlx_core::query_as::query_as(
+            "SELECT COUNT(*) FROM activity.turns WHERE session_id = ANY($1::uuid[])"
+        )
+            .bind(&session_uuids)
+            .fetch_one(&mut *tx).await.map_err(|e| e.to_string())?;
+
+        // (3) transcript_turns keyed by client_session_id (text, no FK).
+        let tt = sqlx_core::query::query(
+            "DELETE FROM activity.transcript_turns WHERE session_id = ANY($1::text[])"
+        )
+            .bind(&client_ids)
+            .execute(&mut *tx).await.map_err(|e| e.to_string())?;
+
+        // (4) assistant_events for the same client_session_ids.
+        let ae_session = sqlx_core::query::query(
+            "DELETE FROM activity.assistant_events WHERE session_id = ANY($1::text[])"
+        )
+            .bind(&client_ids)
+            .execute(&mut *tx).await.map_err(|e| e.to_string())?;
+
+        // (5) sessions — cascades turns.
+        let sess = sqlx_core::query::query(
+            "DELETE FROM activity.sessions WHERE id = ANY($1::uuid[])"
+        )
+            .bind(&session_uuids)
+            .execute(&mut *tx).await.map_err(|e| e.to_string())?;
+
+        // (6) Session-less orphan assistant_events by ts. Runs after the
+        //     session-scoped prune so we don't double-count.
+        let cutoff_ms = self.cutoff_millis(days);
+        let ae_orphan = sqlx_core::query::query(
+            "DELETE FROM activity.assistant_events WHERE ts < $1
+               AND (session_id = '' OR session_id NOT IN
+                    (SELECT client_session_id FROM activity.sessions))"
+        )
+            .bind(cutoff_ms)
+            .execute(&mut *tx).await.map_err(|e| e.to_string())?;
+
+        tx.commit().await.map_err(|e| e.to_string())?;
+
+        Ok(ActivityPruneCounts {
+            sessions:         sess.rows_affected(),
+            turns:            turns_count.0.max(0) as u64,
+            transcript_turns: tt.rows_affected(),
+            assistant_events: ae_session.rows_affected() + ae_orphan.rows_affected(),
+        })
+    }
+
+    /// Wall-clock cutoff in unix-ms for `days` back — used by prune_activity's
+    /// ts-based paths (assistant_events.ts is bigint ms).
+    fn cutoff_millis(&self, days: i32) -> i64 {
+        let secs = (chrono::Utc::now() - chrono::Duration::days(days as i64)).timestamp();
+        secs.saturating_mul(1000)
+    }
+
     // ── Raw ──────────────────────────────────────────────────────────
 
     /// Execute a parameterized query returning unresolved edges.
@@ -6233,6 +6361,90 @@ mod tests {
         assert!(exists.0);
         sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
             .bind(real).execute(s.pool()).await.ok();
+    }
+
+    // ── Activity pruner tests (#74) ────────────────────────────────────
+
+    #[tokio::test]
+    async fn prune_activity_keeps_unanalyzed_sessions_even_when_old() {
+        let s = pg_store().await;
+        let suffix = format!("prune_keep_unanalyzed_{}", uuid::Uuid::new_v4());
+        let (_pid, fid) = create_test_project_and_folder(&s, &suffix).await;
+        let csid = format!("{}-csid", suffix);
+        let sid = s.record_session_event(&csid, &fid, None, "claude", true).await.unwrap();
+        // Age the session past the cutoff but leave analyzed_at NULL.
+        sqlx_core::query::query(
+            "UPDATE activity.sessions SET started_at = now() - interval '90 days' WHERE id = $1"
+        ).bind(sid).execute(s.pool()).await.unwrap();
+
+        // Other tests may seed analyzed sessions, so the global count is not
+        // useful — verify OUR session specifically survives.
+        s.prune_activity(30).await.unwrap();
+
+        let exists: (bool,) = sqlx_core::query_as::query_as(
+            "SELECT EXISTS(SELECT 1 FROM activity.sessions WHERE id = $1)"
+        ).bind(sid).fetch_one(s.pool()).await.unwrap();
+        assert!(exists.0, "unanalyzed session must survive prune");
+
+        sqlx_core::query::query("DELETE FROM activity.sessions WHERE id = $1")
+            .bind(sid).execute(s.pool()).await.ok();
+    }
+
+    #[tokio::test]
+    async fn prune_activity_deletes_analyzed_sessions_past_cutoff_and_children() {
+        let s = pg_store().await;
+        let suffix = format!("prune_del_{}", uuid::Uuid::new_v4());
+        let (_pid, fid) = create_test_project_and_folder(&s, &suffix).await;
+        let csid = format!("{}-csid", suffix);
+        let sid = s.record_session_event(&csid, &fid, None, "claude", true).await.unwrap();
+        // Age + mark analyzed.
+        sqlx_core::query::query(
+            "UPDATE activity.sessions
+                SET started_at = now() - interval '90 days',
+                    analyzed_at = now() - interval '60 days'
+              WHERE id = $1"
+        ).bind(sid).execute(s.pool()).await.unwrap();
+        // Seed a child transcript_turn keyed on client_session_id (no FK).
+        sqlx_core::query::query(
+            "INSERT INTO activity.transcript_turns(session_id, source, turn_index, assistant_text)
+             VALUES ($1, 'claude', 0, 'hello')"
+        ).bind(&csid).execute(s.pool()).await.unwrap();
+        // Seed a hook event under the same client_session_id.
+        s.insert_hook_event(&csid, "claude", "UserPromptSubmit", None, None, 1000, None,
+            &serde_json::json!({"prompt": "hi"})).await.unwrap();
+
+        // Counts include any leftover analyzed+old data from other tests, so
+        // don't assert exact numbers — assert OUR session (and its child
+        // rows) are gone after the prune.
+        s.prune_activity(30).await.unwrap();
+
+        let exists: (bool,) = sqlx_core::query_as::query_as(
+            "SELECT EXISTS(SELECT 1 FROM activity.sessions WHERE id = $1)"
+        ).bind(sid).fetch_one(s.pool()).await.unwrap();
+        assert!(!exists.0, "analyzed + old session must be pruned");
+
+        let tt: (i64,) = sqlx_core::query_as::query_as(
+            "SELECT COUNT(*) FROM activity.transcript_turns WHERE session_id = $1"
+        ).bind(&csid).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(tt.0, 0, "transcript_turns keyed on this session must be gone");
+    }
+
+    #[tokio::test]
+    async fn prune_activity_prunes_orphan_events_by_ts() {
+        let s = pg_store().await;
+        // Insert an assistant_event with no matching session and old ts.
+        let old_ts: i64 = (chrono::Utc::now() - chrono::Duration::days(90)).timestamp() * 1000;
+        let orphan_csid = format!("orphan_prune_{}", uuid::Uuid::new_v4());
+        s.insert_hook_event(&orphan_csid, "claude", "PostToolUse", Some("Read".into()), None, old_ts, None,
+            &serde_json::json!({})).await.unwrap();
+
+        let counts = s.prune_activity(30).await.unwrap();
+        assert!(counts.assistant_events >= 1, "orphan event older than cutoff must be pruned");
+
+        let orphaned: (i64,) = sqlx_core::query_as::query_as(
+            "SELECT COUNT(*) FROM activity.assistant_events WHERE session_id = $1"
+        ).bind(&orphan_csid).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(orphaned.0, 0);
     }
 
     // ── Corrections aggregation tests ──────────────────────────────────
