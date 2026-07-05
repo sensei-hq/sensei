@@ -427,6 +427,7 @@ fn find_subprojects_walk(dir: &Path, depth: u32, max_depth: u32, out: &mut Vec<P
     }
     let Ok(entries) = std::fs::read_dir(dir) else { return; };
     let manifest_filenames = crate::adapters::manifest::all_manifest_filenames();
+    let manifest_extensions = crate::adapters::manifest::all_manifest_extensions();
     for entry in entries.flatten() {
         let p = entry.path();
         if !p.is_dir() {
@@ -437,7 +438,11 @@ fn find_subprojects_walk(dir: &Path, depth: u32, max_depth: u32, out: &mut Vec<P
             continue;
         }
         // Any registered manifest filename marks a sub-project boundary.
-        if manifest_filenames.iter().any(|m| p.join(m).exists()) {
+        // Extension-keyed manifests (.csproj / .fsproj / .sln) get a second
+        // pass so .NET reactors are recognised alongside package.json / Cargo.toml.
+        let has_manifest = manifest_filenames.iter().any(|m| p.join(m).exists())
+            || (!manifest_extensions.is_empty() && dir_has_ext(&p, &manifest_extensions));
+        if has_manifest {
             // A sub-project boundary: record it and stop descending into it.
             out.push(p);
             continue;
