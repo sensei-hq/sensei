@@ -90,7 +90,23 @@ impl TaskQueue {
                 task.depends_on.clear();
                 state.pending.push_back(task);
             } else {
-                task.depends_on = unmet;
+                task.depends_on = unmet.clone();
+                // Structured log so a stalled pipeline is diagnosable from the
+                // logs — records which task blocked on which and (best-effort)
+                // the kinds of the blocking tasks so the reader doesn't have
+                // to cross-reference ids by hand (#64). Resolved by scanning
+                // blocked / running / pending / completed for each dep id;
+                // unresolved ids are reported as `"?"` which is a signal that
+                // the dep was already dropped from history.
+                let blockers = blocker_summary(&state, &unmet);
+                tracing::debug!(
+                    task_id = id,
+                    kind = %task.kind,
+                    folder_path = %task.folder_path,
+                    path = %task.path,
+                    blocked_on = ?blockers,
+                    "task blocked on {} dependency(ies)", unmet.len(),
+                );
                 state.blocked.push(task);
             }
         } else {
@@ -197,6 +213,15 @@ impl TaskQueue {
                     if state.blocked[pos].depends_on.is_empty() {
                         let mut unblocked = state.blocked.remove(pos);
                         unblocked.status = TaskStatus::Pending;
+                        // Pair with the enqueue-blocked log so a stall that
+                        // eventually resolves shows both edges (#64).
+                        tracing::debug!(
+                            task_id = unblocked.id,
+                            kind = %unblocked.kind,
+                            folder_path = %unblocked.folder_path,
+                            released_by = task_id,
+                            "task unblocked",
+                        );
                         newly_pending.push(unblocked);
                     }
                 }
@@ -242,6 +267,17 @@ impl TaskQueue {
                     if state.blocked[pos].depends_on.is_empty() {
                         let mut unblocked = state.blocked.remove(pos);
                         unblocked.status = TaskStatus::Pending;
+                        // A dep FAILED but we release the dependent anyway —
+                        // note the reason so a partial-data downstream failure
+                        // is traceable back to the failed upstream (#64).
+                        tracing::debug!(
+                            task_id = unblocked.id,
+                            kind = %unblocked.kind,
+                            folder_path = %unblocked.folder_path,
+                            released_by = task_id,
+                            released_by_state = "failed",
+                            "task unblocked (dep failed — proceeding with partial data)",
+                        );
                         state.pending.push_back(unblocked);
                     }
                 }
@@ -307,10 +343,80 @@ pub struct QueueStatus {
     pub repos_active: usize,
 }
 
+/// Best-effort resolver: for each unmet-dependency id, produce a
+/// `"<id>:<kind>"` string by scanning the running / pending / blocked /
+/// completed vecs. Unresolved ids come back as `"<id>:?"` so a reader can
+/// tell "the dep was dropped from history" from "the dep still exists but
+/// with an unknown kind" (the former should be rare — it means the task
+/// completed and was already trimmed from the last-100 window). Kept as a
+/// free function so the enqueue path can call it with a `&QueueState`
+/// borrow that outlives the log macro.
+fn blocker_summary(state: &QueueState, deps: &[u64]) -> Vec<String> {
+    deps.iter()
+        .map(|dep_id| {
+            let kind = state.running.values().find(|t| t.id == *dep_id).map(|t| t.kind.to_string())
+                .or_else(|| state.pending.iter().find(|t| t.id == *dep_id).map(|t| t.kind.to_string()))
+                .or_else(|| state.blocked.iter().find(|t| t.id == *dep_id).map(|t| t.kind.to_string()))
+                .or_else(|| state.completed.iter().find(|t| t.id == *dep_id).map(|t| t.kind.to_string()))
+                .unwrap_or_else(|| "?".to_string());
+            format!("{dep_id}:{kind}")
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::tasks::{Task, TaskKind, TaskStatus};
+
+    fn state_with(pending: Vec<Task>, blocked: Vec<Task>, completed: Vec<Task>) -> QueueState {
+        let mut s = QueueState {
+            pending: VecDeque::new(),
+            blocked: Vec::new(),
+            running: HashMap::new(),
+            completed: Vec::new(),
+            folder_running_count: HashMap::new(),
+            dependents: HashMap::new(),
+        };
+        s.pending.extend(pending);
+        s.blocked = blocked;
+        s.completed = completed;
+        s
+    }
+
+    fn task_with(id: u64, kind: TaskKind) -> Task {
+        let mut t = Task::new(kind, "repo", "");
+        t.id = id;
+        t
+    }
+
+    #[test]
+    fn blocker_summary_resolves_kinds_across_queues() {
+        // #64: the blocked-task log has to identify blockers by kind, not just
+        // by opaque id. Verify the four fallback paths (pending → blocked →
+        // completed → unknown) all resolve as expected.
+        let state = state_with(
+            vec![task_with(11, TaskKind::ProcessFile)],
+            vec![task_with(22, TaskKind::ResolveEdges)],
+            vec![task_with(33, TaskKind::ProcessGitFolder)],
+        );
+        let summary = blocker_summary(&state, &[11, 22, 33, 99]);
+        assert_eq!(
+            summary,
+            vec![
+                "11:process_file".to_string(),
+                "22:resolve_edges".to_string(),
+                "33:process_git_folder".to_string(),
+                "99:?".to_string(),
+            ],
+        );
+    }
+
+    #[test]
+    fn blocker_summary_empty_deps_returns_empty() {
+        let state = state_with(vec![], vec![], vec![]);
+        assert!(blocker_summary(&state, &[]).is_empty());
+    }
 
     #[tokio::test]
     async fn enqueue_and_dequeue() {
