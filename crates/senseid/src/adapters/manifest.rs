@@ -14,12 +14,15 @@ use crate::types::PackageInfo;
 use std::path::Path;
 
 mod cargo;
+mod composer;
 mod dotnet;
 mod go;
 mod gradle;
 mod maven;
 mod npm;
 mod pyproject;
+mod ruby;
+mod swiftpm;
 pub(crate) mod workspace;
 mod xml;
 
@@ -53,7 +56,8 @@ pub trait ManifestAdapter: Send + Sync {
     }
 
     /// Ecosystem slug matching the `sensei.library_ecosystem` DDL enum.
-    /// One of `"npm"`, `"cargo"`, `"pypi"`, `"go"`, `"maven"`, `"nuget"`.
+    /// One of `"npm"`, `"cargo"`, `"pypi"`, `"go"`, `"maven"`, `"nuget"`,
+    /// `"rubygems"`, `"composer"`, `"swiftpm"`.
     fn ecosystem(&self) -> &'static str;
 
     /// Parse the raw contents of a manifest into dependency entries.
@@ -145,6 +149,9 @@ pub fn registered_adapters() -> &'static [&'static dyn ManifestAdapter] {
         &maven::MavenManifestAdapter,
         &dotnet::DotnetManifestAdapter,
         &gradle::GradleManifestAdapter,
+        &ruby::RubyManifestAdapter,
+        &composer::ComposerManifestAdapter,
+        &swiftpm::SwiftPmManifestAdapter,
     ]
 }
 
@@ -233,6 +240,24 @@ mod tests {
         assert_eq!(a.ecosystem(), "maven");
         let b = manifest_adapter_for_filename("build.gradle.kts").unwrap();
         assert_eq!(b.ecosystem(), "maven");
+    }
+
+    #[test]
+    fn dispatch_returns_ruby_for_gemfile() {
+        let a = manifest_adapter_for_filename("Gemfile").unwrap();
+        assert_eq!(a.ecosystem(), "rubygems");
+    }
+
+    #[test]
+    fn dispatch_returns_composer_for_composer_json() {
+        let a = manifest_adapter_for_filename("composer.json").unwrap();
+        assert_eq!(a.ecosystem(), "composer");
+    }
+
+    #[test]
+    fn dispatch_returns_swiftpm_for_package_swift() {
+        let a = manifest_adapter_for_filename("Package.swift").unwrap();
+        assert_eq!(a.ecosystem(), "swiftpm");
     }
 
     #[test]
