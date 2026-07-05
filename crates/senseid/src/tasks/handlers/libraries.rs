@@ -452,10 +452,11 @@ fn public_member_libs(
         .filter(|m| !m.private)
         .map(|m| {
             let ecosystem = match m.pkg_type.as_str() {
-                "cargo_crate"  => "cargo",
-                "go_module"    => "go",
-                "maven_module" => "maven",
-                _              => "npm", // npm_workspace + any future JS variant
+                "cargo_crate"    => "cargo",
+                "go_module"      => "go",
+                "maven_module"   => "maven",
+                "dotnet_project" => "nuget",
+                _                => "npm", // npm_workspace + any future JS variant
             };
             (m.name.clone(), ecosystem, m.version.clone())
         })
@@ -572,6 +573,7 @@ mod tests {
             member("my-crate", "cargo_crate", false),
             member("example.com/mod", "go_module", false),
             member("com.example:core", "maven_module", false),
+            member("MyLib", "dotnet_project", false),
         ];
         let libs = public_member_libs(&members);
         let names: Vec<&str> = libs.iter().map(|(n, _, _)| n.as_str()).collect();
@@ -585,5 +587,6 @@ mod tests {
         assert_eq!(eco("my-crate"), Some("cargo"));
         assert_eq!(eco("example.com/mod"), Some("go"));
         assert_eq!(eco("com.example:core"), Some("maven"));
+        assert_eq!(eco("MyLib"), Some("nuget"));
     }
 }

@@ -54,6 +54,11 @@ serde_json = "1"
 json5 = "0.4"
 toml = "0.8"
 serde_yaml = "0.9"
+# XML parsing — pom.xml (Maven, #86) and .csproj / .fsproj (.NET, #88).
+# Streaming reader; no allocation on the parse tree, just the tokens we care
+# about. Chosen over serde-based XML crates because pom.xml uses same-name
+# repeated child elements that trip serde's typed deserializers.
+quick-xml = "0.36"
 
 # File watching
 notify = "8"

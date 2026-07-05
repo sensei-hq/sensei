@@ -1,19 +1,15 @@
 //! `MavenManifestAdapter` — parses `pom.xml` (#86).
 //!
-//! Maven's manifest is XML, but the shape sensei cares about is well-scoped
-//! and repetitive: top-level `<groupId>` / `<artifactId>` / `<version>` /
-//! `<description>` / `<packaging>`, a `<dependencies>` list of `<dependency>`
-//! entries, and (for multi-module reactors) a `<modules>` list. That's
-//! parseable cleanly with the regex crate we already carry — pulling in
-//! `quick-xml` would be a heavier dep for what amounts to five regex-guarded
-//! scoops.
+//! Uses `quick-xml` via the shared [`super::xml`] streaming walker so real
+//! pom.xml quirks (`xmlns`, comments, CDATA, self-closing tags) are handled
+//! by an XML parser rather than by regex.
 //!
 //! Coordinate naming: Maven identifies a library as `groupId:artifactId`.
 //! We follow suit so the library rows produced here match how the ecosystem
 //! itself names artifacts, and so re-scanning across pom.xml versions stays
 //! idempotent (versions live in `DepVersion.version`, not the name).
 //!
-//! Not covered in v1:
+//! Not covered in v1 (documented so a follow-up doesn't rediscover them):
 //! - Property interpolation (`${my.prop}`) — versions with `${...}` land as
 //!   the literal string. Maven itself resolves these against `<properties>`;
 //!   we can add that in a follow-up once a real corpus needs it.
@@ -22,12 +18,11 @@
 //!   would need distinguishing "declared version" from "used version".
 //! - `<parent>` inheritance across pom.xml files.
 
+use super::xml::{walk, walk_leaves, XmlEvent, XmlPath};
 use super::{ManifestAdapter, ParsedManifest};
 use crate::indexer::lib_indexer::DepVersion;
 use crate::types::PackageInfo;
-use regex::Regex;
 use std::path::Path;
-use std::sync::OnceLock;
 
 pub struct MavenManifestAdapter;
 
@@ -41,51 +36,109 @@ impl ManifestAdapter for MavenManifestAdapter {
     }
 
     fn parse_dependencies(&self, content: &str) -> Vec<DepVersion> {
-        // Restrict to the top-level `<dependencies>` block so we don't pick
-        // up `<dependencyManagement>` entries. The naive non-greedy regex
-        // matches the FIRST `<dependencies>` in the file which is inside
-        // `<dependencyManagement>` when both are present — strip that
-        // wrapper block out first so only the real `<dependencies>` remains.
-        let stripped = strip_top_level_block(content, "dependencyManagement");
-        let deps_block = extract_top_level_block(&stripped, "dependencies").unwrap_or_default();
-        let mut out = Vec::new();
-        for dep in extract_dependency_entries(&deps_block) {
-            let group = element_text(&dep, "groupId").unwrap_or_default();
-            let artifact = element_text(&dep, "artifactId").unwrap_or_default();
-            if group.is_empty() || artifact.is_empty() {
-                continue;
+        // Collect every `<dependency>` under `project/dependencies/dependency`
+        // (NOT under `project/dependencyManagement/…`, which declares
+        // versions but doesn't actually pull jars). Enter/Exit brackets on
+        // the walker let a fresh PartialDep start at every `<dependency>`
+        // Enter — that's the only reliable way to partition repeated
+        // same-name children.
+        let mut deps: Vec<PartialDep> = Vec::new();
+        let mut current: Option<PartialDep> = None;
+
+        let _ = walk(content, |path: &XmlPath<'_>, evt: XmlEvent<'_>| {
+            let at_dependency = path.is(&["project", "dependencies", "dependency"]);
+            match (at_dependency, evt) {
+                (true, XmlEvent::Enter(_)) => current = Some(PartialDep::default()),
+                (true, XmlEvent::Exit) => {
+                    if let Some(d) = current.take() {
+                        deps.push(d);
+                    }
+                }
+                (false, XmlEvent::Leaf(text)) => {
+                    let Some(d) = current.as_mut() else { return };
+                    // Only pick up leaf children ONE level below <dependency>
+                    // — a nested `<version>` under `<exclusions><exclusion>`
+                    // (rare, but legal) would otherwise clobber the top-level
+                    // one.
+                    let inside_dependency = path.0.len() == 4
+                        && path.0[0] == "project"
+                        && path.0[1] == "dependencies"
+                        && path.0[2] == "dependency";
+                    if !inside_dependency {
+                        return;
+                    }
+                    match path.0[3].as_str() {
+                        "groupId"    => d.group    = Some(text.to_string()),
+                        "artifactId" => d.artifact = Some(text.to_string()),
+                        "version"    => d.version  = Some(text.to_string()),
+                        "scope"      => d.scope    = Some(text.to_string()),
+                        _ => {}
+                    }
+                }
+                _ => {}
             }
-            let version = element_text(&dep, "version").unwrap_or_else(|| "*".to_string());
-            let scope = element_text(&dep, "scope");
-            let dev = matches!(scope.as_deref(), Some("test") | Some("provided"));
-            out.push(DepVersion {
-                lib_name: format!("{group}:{artifact}"),
-                version: clean_maven_version(&version),
-                raw_version: version,
-                source: "pom.xml".into(),
-                dev,
-                local_source: None,
-            });
-        }
-        out
+        });
+
+        deps.into_iter()
+            .filter_map(|d| {
+                let group = d.group?;
+                let artifact = d.artifact?;
+                if group.is_empty() || artifact.is_empty() {
+                    return None;
+                }
+                let version = d.version.unwrap_or_else(|| "*".to_string());
+                let dev = matches!(d.scope.as_deref(), Some("test") | Some("provided"));
+                Some(DepVersion {
+                    lib_name: format!("{group}:{artifact}"),
+                    version: version.trim().to_string(),
+                    raw_version: version,
+                    source: "pom.xml".into(),
+                    dev,
+                    local_source: None,
+                })
+            })
+            .collect()
     }
 
     fn is_workspace_root(&self, content: &str) -> bool {
         // A multi-module reactor sets <packaging>pom</packaging> AND declares
         // <modules>. Either alone isn't enough (a plain pom-packaged parent
         // with no modules is just an inheritance root, not a workspace).
-        element_text(content, "packaging").as_deref() == Some("pom")
-            && extract_top_level_block(content, "modules").is_some()
+        let mut packaging_is_pom = false;
+        let mut has_modules = false;
+        let _ = walk_leaves(content, |p: &XmlPath<'_>, t: &str| {
+            if p.is(&["project", "packaging"]) && t == "pom" {
+                packaging_is_pom = true;
+            } else if p.is(&["project", "modules", "module"]) {
+                has_modules = true;
+            }
+        });
+        packaging_is_pom && has_modules
     }
 
     fn parse_manifest(&self, content: &str) -> ParsedManifest {
-        let group = element_text(content, "groupId");
-        let artifact = element_text(content, "artifactId");
-        let version = element_text(content, "version");
-        let description = element_text(content, "description");
-        // Name = "groupId:artifactId" so the identity keys the same way as
-        // dependency coordinates. If either half is missing we return None
-        // rather than a partial coord.
+        // Read only the TOP-LEVEL identity (`project/*`), not the `<parent>`
+        // block — otherwise a child pom.xml that omits its own groupId but
+        // inherits from `<parent><groupId>` would take the parent's id
+        // instead of correctly reporting None.
+        let mut group: Option<String> = None;
+        let mut artifact: Option<String> = None;
+        let mut version: Option<String> = None;
+        let mut description: Option<String> = None;
+        let _ = walk_leaves(content, |p: &XmlPath<'_>, t: &str| {
+            if p.is(&["project", "groupId"]) {
+                group = Some(t.to_string());
+            } else if p.is(&["project", "artifactId"]) {
+                artifact = Some(t.to_string());
+            } else if p.is(&["project", "version"]) {
+                version = Some(t.to_string());
+            } else if p.is(&["project", "description"]) {
+                description = Some(t.to_string());
+            }
+        });
+
+        // Identity = `groupId:artifactId`. Missing either → None rather than
+        // a partial coord.
         let name = match (group, artifact) {
             (Some(g), Some(a)) if !g.is_empty() && !a.is_empty() => Some(format!("{g}:{a}")),
             _ => None,
@@ -108,17 +161,19 @@ impl ManifestAdapter for MavenManifestAdapter {
         if !self.is_workspace_root(&content) {
             return Vec::new();
         }
-        let Some(modules_block) = extract_top_level_block(&content, "modules") else {
-            return Vec::new();
-        };
+        // Collect module paths under `project/modules/module`.
+        let mut modules: Vec<String> = Vec::new();
+        let _ = walk_leaves(&content, |p: &XmlPath<'_>, t: &str| {
+            if p.is(&["project", "modules", "module"]) && !t.is_empty() {
+                modules.push(t.to_string());
+            }
+        });
 
-        // Modules are `<module>subdir</module>` — plain relative paths (no
-        // globs; Maven doesn't do glob workspace patterns like npm does).
-        // Skip any listed module dir that doesn't exist on disk or doesn't
-        // carry its own pom.xml — a stale `<module>` entry from a prior
-        // reactor shape shouldn't break enumeration.
+        // Maven module paths are plain relative dirs (not glob patterns);
+        // stale entries (dir missing or no child pom.xml) are silently
+        // skipped so a broken reactor doesn't crash enumeration.
         let mut out = Vec::new();
-        for path in extract_module_paths(&modules_block) {
+        for path in modules {
             let dir = repo_root.join(&path);
             if !dir.is_dir() || !dir.join("pom.xml").exists() {
                 continue;
@@ -141,59 +196,12 @@ impl ManifestAdapter for MavenManifestAdapter {
     }
 }
 
-// ── Extraction helpers ─────────────────────────────────────────────────────
-
-/// Extract the inner text of the first `<tag>…</tag>` in `content`.
-/// Returns `None` when the tag is absent or self-closing.
-fn element_text(content: &str, tag: &str) -> Option<String> {
-    let re = element_re(tag);
-    re.captures(content).map(|c| c.get(1).unwrap().as_str().trim().to_string())
-}
-
-/// Compile-cached regex for `<tag>...</tag>` (non-greedy inner).
-fn element_re(tag: &str) -> Regex {
-    // Escape the tag name so `<dep>` doesn't accidentally match a longer name.
-    Regex::new(&format!(r"<{tag}>([\s\S]*?)</{tag}>", tag = regex::escape(tag))).unwrap()
-}
-
-/// Extract the content between a top-level `<tag>…</tag>` — used for the
-/// enclosing `<dependencies>` / `<modules>` blocks so nested `<dependency>` /
-/// `<module>` entries are matched only inside their proper parent.
-fn extract_top_level_block(content: &str, tag: &str) -> Option<String> {
-    element_re(tag).captures(content).map(|c| c.get(1).unwrap().as_str().to_string())
-}
-
-/// Delete every `<tag>…</tag>` block from `content`. Used to pull the
-/// `<dependencyManagement>` wrapper out before scanning for the real
-/// `<dependencies>` — otherwise the FIRST `<dependencies>` the naive
-/// non-greedy regex matches is the nested BOM one, not the deps that
-/// actually pull jars.
-fn strip_top_level_block(content: &str, tag: &str) -> String {
-    element_re(tag).replace_all(content, "").into_owned()
-}
-
-/// Every `<dependency>...</dependency>` entry inside a dependencies block.
-fn extract_dependency_entries(deps_block: &str) -> Vec<String> {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| Regex::new(r"<dependency>([\s\S]*?)</dependency>").unwrap());
-    re.captures_iter(deps_block).map(|c| c.get(1).unwrap().as_str().to_string()).collect()
-}
-
-/// Every `<module>path</module>` entry inside a modules block.
-fn extract_module_paths(modules_block: &str) -> Vec<String> {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| Regex::new(r"<module>([\s\S]*?)</module>").unwrap());
-    re.captures_iter(modules_block)
-        .map(|c| c.get(1).unwrap().as_str().trim().to_string())
-        .filter(|s| !s.is_empty())
-        .collect()
-}
-
-/// Strip Maven-specific version noise for the `clean` field. Unresolved
-/// `${prop}` interpolations are preserved literally so a reader can spot
-/// them; version ranges like `[1.0,2.0)` also pass through unchanged.
-fn clean_maven_version(raw: &str) -> String {
-    raw.trim().to_string()
+#[derive(Default)]
+struct PartialDep {
+    group: Option<String>,
+    artifact: Option<String>,
+    version: Option<String>,
+    scope: Option<String>,
 }
 
 #[cfg(test)]
@@ -220,6 +228,37 @@ mod tests {
         assert_eq!(p.name.as_deref(), Some("com.example:my-app"));
         assert_eq!(p.version.as_deref(), Some("1.2.3"));
         assert_eq!(p.description.as_deref(), Some("A sample Maven app."));
+    }
+
+    #[test]
+    fn parse_manifest_handles_namespaced_pom() {
+        // Real poms declare xmlns; the local-name walker must still resolve.
+        let src = r#"<?xml version="1.0"?>
+            <project xmlns="http://maven.apache.org/POM/4.0.0">
+              <groupId>com.example</groupId>
+              <artifactId>ns-app</artifactId>
+              <version>2.0</version>
+            </project>"#;
+        let p = MavenManifestAdapter.parse_manifest(src);
+        assert_eq!(p.name.as_deref(), Some("com.example:ns-app"));
+    }
+
+    #[test]
+    fn parse_manifest_ignores_parent_identity() {
+        // A child pom without its own groupId inherits from <parent>. The
+        // ADAPTER should NOT surface the parent's id as this artifact's
+        // name — that would give the wrong library row on scan.
+        let src = r#"<project>
+              <parent>
+                <groupId>com.parent</groupId>
+                <artifactId>parent-pom</artifactId>
+                <version>1.0</version>
+              </parent>
+              <artifactId>child</artifactId>
+            </project>"#;
+        let p = MavenManifestAdapter.parse_manifest(src);
+        // Only artifactId present at project level; group missing → no name.
+        assert!(p.name.is_none());
     }
 
     #[test]
@@ -278,8 +317,6 @@ mod tests {
             </dependencies>
         </project>"#;
         let deps = MavenManifestAdapter.parse_dependencies(src);
-        // BOM entries (dependencyManagement) must NOT surface as deps —
-        // they declare a version but don't actually pull anything.
         assert_eq!(deps.len(), 1);
         assert_eq!(deps[0].lib_name, "real.example:real-lib");
     }
@@ -297,6 +334,25 @@ mod tests {
         let deps = MavenManifestAdapter.parse_dependencies(src);
         assert_eq!(deps.len(), 1);
         assert_eq!(deps[0].version, "*");
+    }
+
+    #[test]
+    fn parse_dependencies_ignores_xml_comments() {
+        // Regex-based extraction would trip on a <dependency> hidden inside
+        // an XML comment; the XML parser correctly skips it.
+        let src = r#"<project>
+            <dependencies>
+              <!--<dependency><groupId>hidden</groupId><artifactId>a</artifactId></dependency>-->
+              <dependency>
+                <groupId>real</groupId>
+                <artifactId>lib</artifactId>
+                <version>1.0</version>
+              </dependency>
+            </dependencies>
+        </project>"#;
+        let deps = MavenManifestAdapter.parse_dependencies(src);
+        assert_eq!(deps.len(), 1);
+        assert_eq!(deps[0].lib_name, "real:lib");
     }
 
     #[test]
