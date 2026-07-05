@@ -65,6 +65,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/exclusions/{path}", delete(workspace::remove_exclusion))
         // Projects (groups of 1+ repos)
         .route("/api/projects", get(observatory::list_solutions).post(observatory::create_solution))
+        .route("/api/projects/merge", post(observatory::merge_projects))
         .route("/api/projects/{id}", put(observatory::update_solution).delete(observatory::delete_solution))
         .route("/api/projects/{id}/repos", get(project_detail::get_project_repos).post(observatory::add_solution_repo))
         .route("/api/projects/{id}/repos/{repo_id}", delete(observatory::remove_solution_repo))
@@ -200,7 +201,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/scan", post(workspace::scan_folder))
         .route("/api/scan/suggestions", get(workspace::scan_suggestions))
         .route("/api/scan/roots", get(workspace::scan_roots).post(workspace::add_watch_root))
-        .route("/api/scan/roots/{id}", delete(workspace::delete_watch_root))
+        .route("/api/scan/roots/{id}", put(workspace::update_watch_root).delete(workspace::delete_watch_root))
         // Backfill embeddings for already-indexed nodes (EmbedNodes per folder)
         .route("/api/embed/backfill", post(workspace::backfill_embeddings))
         // Knowledge plane
