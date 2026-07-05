@@ -5,3 +5,4 @@
 {"name":"consensus-proposer","capability":"reasoning","description":"MOE panel: proposer — strong reasoning model, proposes root cause and action.","max_fallback_attempts":2,"modified_at":"2026-04-23"}
 {"name":"consensus-challenger","capability":"reasoning","description":"MOE panel: challenger — different model family, challenges and refines proposal.","max_fallback_attempts":2,"modified_at":"2026-04-23"}
 {"name":"consensus-synthesizer","capability":"reasoning","description":"MOE panel: synthesizer — combines analyses into consensus. Can use external for higher quality.","max_fallback_attempts":3,"modified_at":"2026-04-23"}
+{"name":"image_generate","capability":"image","description":"Image generation — routes to OpenAI. Requires OPENAI_API_KEY.","max_fallback_attempts":2,"modified_at":"2026-07-05"}
