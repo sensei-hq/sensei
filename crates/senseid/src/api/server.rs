@@ -190,6 +190,12 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
     // configured window (default 30d, daily). First tick prunes on startup.
     crate::tasks::log_pruner::spawn(Arc::new(state.pg.clone()));
 
+    // Activity-data retention (#74): periodically prune raw activity older
+    // than `activity.retention_days` (default 30d, daily), guarded by
+    // `analyzed_at IS NOT NULL` so the pruner never drops a session before
+    // the analyzer has derived its insights.
+    crate::tasks::activity_pruner::spawn(Arc::new(state.pg.clone()));
+
     // Re-enqueue tasks for folders left in a non-terminal state by a
     // previous daemon session. Must run after workers and the progress
     // emitter are live so resumed tasks get picked up immediately and
