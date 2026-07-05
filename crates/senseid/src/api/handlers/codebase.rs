@@ -258,19 +258,49 @@ pub(crate) struct DuplicatesQuery {
 /// GET /api/patterns/{project}/duplicates — near-duplicate functions found by
 /// cosine similarity on code embeddings. `min_similarity` (default 0.92) and
 /// `limit` (default 50) are query params.
+///
+/// #54 — Scope is the WHOLE project, not just one folder: when the caller
+/// passes a project name we resolve every folder that belongs to it and
+/// run the cosine-similarity self-join across all of them, so a
+/// duplicate that spans two crates in the same project surfaces. If the
+/// caller passes a bare repo name that resolves to a folder without a
+/// project, we fall back to the single-folder variant.
 pub(crate) async fn find_duplicates_handler(
     State(state): State<AppState>,
     Path(project): Path<String>,
     Query(q): Query<DuplicatesQuery>,
 ) -> Json<serde_json::Value> {
+    let min_similarity = q.min_similarity.unwrap_or(0.92).clamp(0.0, 1.0);
+    let limit = q.limit.unwrap_or(50).clamp(1, 500);
+
+    // Project scope first — every folder that belongs to the named project.
+    let scope = state.pg.scope_folder_ids(&project).await.unwrap_or_default();
+    if !scope.is_empty() {
+        return match state.pg.find_duplicates_scoped(&scope, min_similarity, limit).await {
+            Ok(dups) => Json(serde_json::json!({
+                "count": dups.len(),
+                "min_similarity": min_similarity,
+                "scope": "project",
+                "folder_count": scope.len(),
+                "duplicates": dups,
+            })),
+            Err(e) => Json(serde_json::json!({ "duplicates": [], "count": 0, "error": e })),
+        };
+    }
+
+    // Fall back to a single-folder lookup when the caller passed a repo
+    // name (or the project resolution returned nothing).
     let folder = state.pg.get_repo_by_name(&project).await.ok().flatten();
     let Some(folder_id) = folder.as_ref().and_then(|f| crate::api::util::json_uuid(&f["id"])) else {
         return Json(serde_json::json!({ "duplicates": [], "count": 0, "message": "project not indexed" }));
     };
-    let min_similarity = q.min_similarity.unwrap_or(0.92).clamp(0.0, 1.0);
-    let limit = q.limit.unwrap_or(50).clamp(1, 500);
     match state.pg.find_duplicates(&folder_id, min_similarity, limit).await {
-        Ok(dups) => Json(serde_json::json!({ "count": dups.len(), "min_similarity": min_similarity, "duplicates": dups })),
+        Ok(dups) => Json(serde_json::json!({
+            "count": dups.len(),
+            "min_similarity": min_similarity,
+            "scope": "folder",
+            "duplicates": dups,
+        })),
         Err(e) => Json(serde_json::json!({ "duplicates": [], "count": 0, "error": e })),
     }
 }

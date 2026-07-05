@@ -661,6 +661,63 @@ impl PgStore {
         }).collect())
     }
 
+    /// Multi-folder variant of `find_duplicates` (#54). Runs the same
+    /// cosine-similarity self-join but scopes the pair search to every
+    /// folder belonging to a project — so a duplicate function defined in
+    /// `crates/foo/src/x.rs` and `crates/bar/src/y.rs` (both inside the
+    /// same project) surfaces even though they don't share a folder_id.
+    ///
+    /// Pairs are restricted to a.id < b.id so each dyad appears once; the
+    /// unlike `find_duplicates` this variant also requires
+    /// `a.folder_id != b.folder_id` on top of that, so intra-folder pairs
+    /// keep flowing through the older folder-scoped path and don't get
+    /// double-counted when a caller uses both.
+    pub async fn find_duplicates_scoped(
+        &self,
+        folder_ids: &[uuid::Uuid],
+        min_similarity: f64,
+        limit: i64,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        if folder_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let max_distance = 1.0 - min_similarity;
+        let rows: Vec<(String, String, Option<i32>, String, String, Option<i32>, f64)> =
+            sqlx_core::query_as::query_as(
+                "SELECT a.name, a.file_path, a.line_start,
+                        b.name, b.file_path, b.line_start,
+                        1 - (a.embedding <=> b.embedding) AS similarity
+                   FROM sensei.nodes a
+                   JOIN sensei.nodes b
+                     ON a.id < b.id
+                    AND a.folder_id != b.folder_id
+                    AND b.folder_id = ANY($1::uuid[])
+                    AND b.kind IN ('function'::sensei.node_kind, 'method'::sensei.node_kind)
+                    AND b.embedding IS NOT NULL
+                    AND (b.line_end - b.line_start) >= 3
+                  WHERE a.folder_id = ANY($1::uuid[])
+                    AND a.kind IN ('function'::sensei.node_kind, 'method'::sensei.node_kind)
+                    AND a.embedding IS NOT NULL
+                    AND (a.line_end - a.line_start) >= 3
+                    AND (a.embedding <=> b.embedding) <= $2
+                  ORDER BY similarity DESC
+                  LIMIT $3",
+            )
+            .bind(folder_ids)
+            .bind(max_distance)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(na, fa, la, nb, fb, lb, sim)| {
+            serde_json::json!({
+                "a": { "name": na, "file": fa, "line": la },
+                "b": { "name": nb, "file": fb, "line": lb },
+                "similarity": (sim * 10000.0).round() / 10000.0,
+            })
+        }).collect())
+    }
+
     /// Abs paths of folders that still have embeddable nodes without an
     /// embedding. Used by the backfill endpoint to enqueue `EmbedNodes` for
     /// already-indexed folders (which a normal incremental scan won't revisit).
