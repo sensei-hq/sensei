@@ -25,3 +25,5 @@
 {"chain_name":"consensus-synthesizer","router_name":"ollama","model_full_name":"gemma3:27b","sequence_order":1,"modified_at":"2026-04-23"}
 {"chain_name":"consensus-synthesizer","router_name":"anthropic","model_full_name":"claude-haiku-4-5","sequence_order":2,"modified_at":"2026-04-23"}
 {"chain_name":"consensus-synthesizer","router_name":"openai","model_full_name":"gpt-4o-mini","sequence_order":3,"modified_at":"2026-04-23"}
+{"chain_name":"image_generate","router_name":"openai","model_full_name":"gpt-image-1","sequence_order":1,"modified_at":"2026-07-05"}
+{"chain_name":"image_generate","router_name":"openai","model_full_name":"dall-e-3","sequence_order":2,"modified_at":"2026-07-05"}

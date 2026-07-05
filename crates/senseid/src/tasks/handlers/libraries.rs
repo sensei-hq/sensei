@@ -454,7 +454,9 @@ fn public_member_libs(
             let ecosystem = match m.pkg_type.as_str() {
                 "cargo_crate"    => "cargo",
                 "go_module"      => "go",
-                "maven_module"   => "maven",
+                // Gradle + Maven both resolve against the same Maven Central
+                // namespace, so their members roll up as `"maven"` libs.
+                "maven_module" | "gradle_module" => "maven",
                 "dotnet_project" => "nuget",
                 _                => "npm", // npm_workspace + any future JS variant
             };
