@@ -16,6 +16,7 @@ use std::path::Path;
 mod cargo;
 mod dotnet;
 mod go;
+mod gradle;
 mod maven;
 mod npm;
 mod pyproject;
@@ -143,6 +144,7 @@ pub fn registered_adapters() -> &'static [&'static dyn ManifestAdapter] {
         &go::GoManifestAdapter,
         &maven::MavenManifestAdapter,
         &dotnet::DotnetManifestAdapter,
+        &gradle::GradleManifestAdapter,
     ]
 }
 
@@ -223,6 +225,14 @@ mod tests {
     fn dispatch_returns_dotnet_for_sln_by_extension() {
         let a = manifest_adapter_for_filename("solution.sln").unwrap();
         assert_eq!(a.ecosystem(), "nuget");
+    }
+
+    #[test]
+    fn dispatch_returns_gradle_for_build_gradle() {
+        let a = manifest_adapter_for_filename("build.gradle").unwrap();
+        assert_eq!(a.ecosystem(), "maven");
+        let b = manifest_adapter_for_filename("build.gradle.kts").unwrap();
+        assert_eq!(b.ecosystem(), "maven");
     }
 
     #[test]
