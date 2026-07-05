@@ -15,6 +15,7 @@ use std::path::Path;
 
 mod cargo;
 mod go;
+mod maven;
 mod npm;
 mod pyproject;
 pub(crate) mod workspace;
@@ -25,7 +26,7 @@ pub trait ManifestAdapter: Send + Sync {
     fn manifest_filenames(&self) -> &[&'static str];
 
     /// Ecosystem slug matching the `sensei.library_ecosystem` DDL enum.
-    /// One of `"npm"`, `"cargo"`, `"pypi"`, `"go"`.
+    /// One of `"npm"`, `"cargo"`, `"pypi"`, `"go"`, `"maven"`.
     fn ecosystem(&self) -> &'static str;
 
     /// Parse the raw contents of a manifest into dependency entries.
@@ -114,6 +115,7 @@ pub fn registered_adapters() -> &'static [&'static dyn ManifestAdapter] {
         &cargo::CargoManifestAdapter,
         &pyproject::PyprojectManifestAdapter,
         &go::GoManifestAdapter,
+        &maven::MavenManifestAdapter,
     ]
 }
 
@@ -166,9 +168,15 @@ mod tests {
     }
 
     #[test]
+    fn dispatch_returns_maven_for_pom_xml() {
+        let a = manifest_adapter_for_filename("pom.xml").unwrap();
+        assert_eq!(a.ecosystem(), "maven");
+    }
+
+    #[test]
     fn all_manifest_filenames_includes_every_ecosystem() {
         let names = all_manifest_filenames();
-        for expected in ["Cargo.toml", "package.json", "pyproject.toml", "go.mod"] {
+        for expected in ["Cargo.toml", "package.json", "pyproject.toml", "go.mod", "pom.xml"] {
             assert!(names.contains(&expected), "missing {expected} in {names:?}");
         }
     }
