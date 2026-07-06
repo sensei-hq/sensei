@@ -21,6 +21,7 @@ use crate::api::handlers::gateway;
 use crate::api::handlers::scan_events;
 use crate::api::handlers::project_detail;
 use crate::api::handlers::instruments;
+use crate::api::handlers::verdicts;
 use crate::api::handlers::gateway_routers;
 use crate::api::handlers::gateway_chains;
 use crate::api::handlers::gateway_image;
@@ -152,6 +153,10 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/libs/versions", get(libraries::get_dep_versions))
         // Instruments (MCP registry — setup wizard Instruments stage)
         .route("/api/instruments", get(instruments::list_instruments))
+        // Instruments Replay — tool-call usage verdicts (#90)
+        .route("/api/instruments/verdicts/classify", post(verdicts::classify))
+        .route("/api/instruments/verdicts", get(verdicts::list))
+        .route("/api/instruments/verdicts/summary", get(verdicts::summary))
         // Unified query (desktop/MCP)
         .route("/api/query", post(query::unified_query))
         // MCP tool proxy
