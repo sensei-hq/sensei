@@ -22,7 +22,8 @@
 
     let tab = $state("playground");
     let kindFilter = $state<'all' | 'query' | 'action'>('all');
-    let selectedTool = $state<Tool | null>(null);
+    // `selectedTool` is $derived from `selectedToolId` + the sensei catalog
+    // below; kept reactive so a catalog reload doesn't strand a stale ref.
     let toolResult = $state<string>("");
     let toolParams = $state<Record<string, string>>({});
     let executing = $state(false);
@@ -48,40 +49,140 @@
         selectedInsightTool ? mcp.insightFor(selectedInsightTool) : undefined,
     );
 
-    // #84 T2 Slice A/B — discovered MCP servers panel state.
-    // Loads lazily on Playground open; expanding a server row fetches its
-    // cached tool manifest (probing lazily when the cache is stale).
-    let discoveredServers = $derived(mcp.mcpServers);
-    let expandedServerId = $state<string | null>(null);
-    let serverProbing = $state<Record<string, boolean>>({});
+    // #84 T2 Slice A/B — discovered MCP servers state.
+    // Sensei's own tools + every discovered server merge into a single
+    // "groups" list in the sidebar left rail per instruments-simple.jsx.
+    // Each group is expandable; a discovered server's expand triggers
+    // loadServerTools() to hydrate the tool manifest lazily.
+    const discoveredServers = $derived(mcp.mcpServers);
+
+    // Group tools by MCP for the sidebar. Sensei is always first and open by
+    // default; discovered servers default to collapsed. Search auto-expands
+    // any group that has hits so the results aren't hidden behind a
+    // chevron.
+    type PlaygroundTool = {
+        id: string;
+        mcp: string;
+        name: string;
+        kind: 'query' | 'action' | 'other';
+        summary: string;
+    };
+    type PlaygroundGroup = {
+        id: string;
+        kanji: string;
+        name: string;
+        installed: boolean;
+        source: 'sensei' | 'discovered';
+        serverId?: string;
+        tools: PlaygroundTool[];
+    };
+
+    let collapsedGroups = $state<Record<string, boolean>>({});
+    let toolSearch = $state('');
     let refreshingServers = $state(false);
 
-    const expandedManifest = $derived(
-        expandedServerId ? mcp.serverToolManifests[expandedServerId] : undefined,
-    );
-
-    async function expandServer(id: string) {
-        if (expandedServerId === id) {
-            expandedServerId = null;
-            return;
-        }
-        expandedServerId = id;
-        if (!mcp.serverToolManifests[id]) {
-            serverProbing = { ...serverProbing, [id]: true };
-            try {
-                await mcp.loadServerTools(id);
-            } finally {
-                serverProbing = { ...serverProbing, [id]: false };
-            }
-        }
+    function inferKind(name: string, declared: string | undefined): 'query' | 'action' | 'other' {
+        if (declared === 'action' || declared === 'query') return declared;
+        // Fallback classifier for tool names from third-party MCPs whose
+        // catalog doesn't declare a kind. Verbs that mutate → action;
+        // getters / list / search → query.
+        const n = name.toLowerCase();
+        if (/^(get|list|search|find|read|show|describe|inspect|explain|status|check)/.test(n)) return 'query';
+        if (/^(set|create|delete|update|write|run|call|start|stop|restart|install|remove)/.test(n)) return 'action';
+        return 'other';
     }
 
-    async function reprobeServer(id: string) {
-        serverProbing = { ...serverProbing, [id]: true };
-        try {
-            await mcp.loadServerTools(id, { refresh: true });
-        } finally {
-            serverProbing = { ...serverProbing, [id]: false };
+    const playgroundGroups = $derived.by<PlaygroundGroup[]>(() => {
+        const senseiTools: PlaygroundTool[] = tools.map((t) => ({
+            id: `sensei:${t.name}`,
+            mcp: 'sensei',
+            name: t.name,
+            kind: t.kind === 'action' || t.kind === 'query' ? t.kind : 'other',
+            summary: t.summary,
+        }));
+        const groups: PlaygroundGroup[] = [
+            { id: 'sensei', kanji: '具', name: 'Sensei', installed: true, source: 'sensei', tools: senseiTools },
+        ];
+        for (const server of discoveredServers) {
+            const manifest = mcp.serverToolManifests[server.id];
+            const rawTools = (manifest?.tools ?? []) as Array<{ name?: string; description?: string }>;
+            const serverTools: PlaygroundTool[] = rawTools
+                .filter((t) => !!t.name)
+                .map((t) => ({
+                    id: `${server.id}:${t.name}`,
+                    mcp: server.id,
+                    name: t.name as string,
+                    kind: inferKind(t.name as string, undefined),
+                    summary: t.description ?? '',
+                }));
+            groups.push({
+                id: server.id,
+                // Small kanji per family — reasonable defaults; real mockup uses per-MCP glyphs.
+                kanji: server.acp_family === 'claude' ? '書' : server.acp_family === 'zed' ? '禅' : server.acp_family === 'cursor' ? '刀' : '器',
+                name: server.mcp_key,
+                installed: server.enabled,
+                source: 'discovered',
+                serverId: server.id,
+                tools: serverTools,
+            });
+        }
+        return groups;
+    });
+
+    // Search-filtered view of groups. Ql matches on tool name OR summary.
+    const filteredGroups = $derived.by(() => {
+        const ql = toolSearch.trim().toLowerCase();
+        if (!ql) return playgroundGroups;
+        return playgroundGroups
+            .map((g) => ({
+                ...g,
+                tools: g.tools.filter((t) =>
+                    t.name.toLowerCase().includes(ql) || t.summary.toLowerCase().includes(ql)
+                ),
+            }))
+            .filter((g) => g.tools.length > 0);
+    });
+
+    // Effective collapse state: search auto-expands any group with hits.
+    const effectiveCollapsed = $derived.by(() => {
+        const ql = toolSearch.trim().toLowerCase();
+        if (ql) {
+            return Object.fromEntries(filteredGroups.map((g) => [g.id, false]));
+        }
+        return collapsedGroups;
+    });
+
+    // Flat list of visible tools for focus-pick fallback.
+    const visibleFlat = $derived(filteredGroups.flatMap((g) => g.tools));
+
+    let selectedToolId = $state<string | null>(null);
+    const focusedGroupAndTool = $derived.by(() => {
+        const byId = new Map(playgroundGroups.flatMap((g) => g.tools.map((t) => [t.id, { group: g, tool: t }])));
+        if (selectedToolId && byId.has(selectedToolId)) {
+            return byId.get(selectedToolId)!;
+        }
+        const first = visibleFlat[0];
+        if (first && byId.has(first.id)) return byId.get(first.id)!;
+        return null;
+    });
+    const focusedGroup = $derived(focusedGroupAndTool?.group ?? null);
+    const focusedTool = $derived(focusedGroupAndTool?.tool ?? null);
+
+    // Bridge to legacy state used by executeTool. `selectedTool` mirrors
+    // the sensei-manifest Tool shape (structured inputs + example) when
+    // focus lands on a sensei tool; for discovered-server tools we don't
+    // have the manifest yet, so the inputs block renders as "No inputs".
+    const selectedTool = $derived(
+        focusedTool?.mcp === 'sensei' ? tools.find((t) => t.name === focusedTool.name) ?? null : null,
+    );
+
+    function toggleGroup(id: string) {
+        // Discovered server: trigger lazy tool load on first expand.
+        const isNowExpanded = collapsedGroups[id];
+        collapsedGroups = { ...collapsedGroups, [id]: !collapsedGroups[id] };
+        const group = playgroundGroups.find((g) => g.id === id);
+        if (isNowExpanded && group?.source === 'discovered' && group.serverId && !mcp.serverToolManifests[group.serverId]) {
+            void mcp.loadServerTools(group.serverId);
         }
     }
 
@@ -94,35 +195,59 @@
         }
     }
 
-    // Group servers by acp_family so the panel reads as one section per
-    // ACP (Claude/Cursor/Zed …) rather than an undifferentiated soup.
-    const serversByFamily = $derived.by(() => {
-        const out: Record<string, typeof discoveredServers> = {};
-        for (const s of discoveredServers) {
-            if (!out[s.acp_family]) out[s.acp_family] = [];
-            out[s.acp_family].push(s);
+    // Default: sensei expanded, all discovered servers collapsed.
+    $effect(() => {
+        for (const g of playgroundGroups) {
+            if (!(g.id in collapsedGroups)) {
+                collapsedGroups = { ...collapsedGroups, [g.id]: g.source !== 'sensei' };
+            }
         }
-        return out;
     });
 
-    const instrumentTabs: [string, string][] = [
-        ["playground", "Playground"],
-        ["replay", "Replay"],
-        ["insights", "Insights"],
+    // Custom tab set matching the mockup (docs/mockups/Sensei/lib/instruments.jsx).
+    // Each tab has a kanji glyph + label + one-line hint. The third tab is
+    // named "Health" (renamed from Insights per the mockup) — it's a
+    // toolset-health surface, not the Observatory's top-level Insights view.
+    // 'insights' is kept as the historical id so bookmarks / e2e testids
+    // don't churn; the visible label is "Health".
+    const instrumentTabs: Array<{ id: string; kanji: string; label: string; hint: string }> = [
+        { id: 'playground', kanji: '具', label: 'Playground', hint: 'what can these instruments do?' },
+        { id: 'replay',     kanji: '録', label: 'Replay',     hint: 'what did the assistant do?' },
+        { id: 'insights',   kanji: '健', label: 'Health',     hint: 'what should we change?' },
     ];
 
-    const kindChips: Array<{ id: 'all' | 'query' | 'action'; label: string }> = [
-        { id: 'all', label: 'All' },
-        { id: 'query', label: 'Queries' },
-        { id: 'action', label: 'Actions' },
+    // Kind chips carry a kanji glyph per the mockup (全 all, 作 actions, 問 queries).
+    const kindChips: Array<{ id: 'all' | 'query' | 'action'; label: string; kanji: string }> = [
+        { id: 'all',    label: 'All',     kanji: '全' },
+        { id: 'action', label: 'Actions', kanji: '作' },
+        { id: 'query',  label: 'Queries', kanji: '問' },
     ];
 
-    // Filter tools by the active kind chip. `all` keeps the full list; kind
-    // filter narrows to matching tools. Filter is applied client-side so the
-    // chip switches are instant with no daemon round-trip.
-    const visibleTools = $derived(
-        kindFilter === 'all' ? tools : tools.filter((t) => t.kind === kindFilter),
+    // Playground search — narrows the visible tool list on top of the kind
+    // filter. Applied client-side so filter changes are instant.
+    let toolQuery = $state('');
+
+    const currentTab = $derived(instrumentTabs.find((t) => t.id === tab) ?? instrumentTabs[0]);
+    // Per-tab hero copy (tagline + sub). Matches the phrasing in
+    // docs/mockups/Sensei/lib/instruments.jsx.
+    const heroCopy = $derived(
+        tab === 'replay'   ? { tagline: 'Every instrument call, in order.',
+                                sub: "Step through the tools the assistant reached for during a session. Pure request + response — what was asked, what came back, how long it took." } :
+        tab === 'insights' ? { tagline: 'Toolset health.',
+                                sub: "How your instruments are performing — usage, effectiveness signals, and where the assistant is under- or over-reaching." } :
+        { tagline: "Sensei · what your instruments can do.",
+          sub: "Sensei's own MCP + every server discovered from your assistant configs. Try each tool interactively; sensei never wraps third-party MCPs — it just surfaces them." }
     );
+
+    // Filter tools by the active kind chip AND the search query. Both are
+    // applied client-side so switches are instant with no daemon round-trip.
+    const visibleTools = $derived.by(() => {
+        const q = toolQuery.trim().toLowerCase();
+        return tools.filter((t) =>
+            (kindFilter === 'all' || t.kind === kindFilter) &&
+            (q === '' || t.name.toLowerCase().includes(q) || (t.summary ?? '').toLowerCase().includes(q))
+        );
+    });
 
     onMount(() => {
         void mcp.loadCatalog();
@@ -207,100 +332,208 @@
     }
 </script>
 
-<PageHeader kanji="具" eyebrow="Instruments" title="Instruments" />
+<!-- #84 T2 UI — Instruments custom shell matching
+     docs/mockups/Sensei/lib/instruments.jsx. Hero header (kanji + eyebrow +
+     tagline + sub) sits above a kanji-decorated tab nav; the three tabs
+     read as one-line questions (Playground: what can these instruments do?
+     · Replay: what did the assistant do? · Health: what should we change?)
+     matching the mockup's phrasing.
+     Full hero — kanji + eyebrow (Instruments · <tab>) + tagline + sub -->
+<div class="flex items-end gap-4 pt-5 pb-4 px-7 border-b border-paper-mute" data-testid="instruments-hero">
+    <div class="kanji text-4xl text-accent leading-none">{currentTab.kanji}</div>
+    <div class="flex-1 min-w-0">
+        <div class="text-xs uppercase tracking-[0.18em] text-ink-mute mb-1">
+            Instruments · {tab}
+        </div>
+        <h1 class="display text-xl font-normal m-0 text-ink">{heroCopy.tagline}</h1>
+        <p class="text-sm text-ink-soft leading-normal mt-1 mb-0 max-w-[680px]">
+            {heroCopy.sub}
+        </p>
+    </div>
+</div>
+
+<!-- Custom kanji-tabs strip. Renamed 'insights' label → 'Health' per mockup;
+     the id stays for URL/testid stability. -->
+<div class="flex px-7 border-b border-paper-mute bg-paper" role="tablist" aria-label="Instruments tabs" data-testid="instrument-tabs">
+    {#each instrumentTabs as t}
+        {@const on = t.id === tab}
+        <button
+            class="flex items-center gap-2 py-3 px-4 bg-transparent border-none cursor-pointer"
+            class:text-ink={on}
+            class:text-ink-soft={!on}
+            style="border-bottom: {on ? '2px solid var(--ink)' : '2px solid transparent'}; margin-bottom: -1px;"
+            role="tab"
+            aria-selected={on}
+            data-testid={`instrument-tab-${t.id}`}
+            onclick={() => (tab = t.id)}
+        >
+            <span class="kanji text-sm" class:text-accent={on} class:text-ink-mute={!on}>{t.kanji}</span>
+            <span class="display text-sm">{t.label}</span>
+            <span class="text-xs text-ink-mute">· {t.hint}</span>
+        </button>
+    {/each}
+</div>
+
 <div class="max-w-[960px] mx-auto px-12 pt-8 pb-16">
 
-    <TabBar tabs={instrumentTabs} bind:active={tab} class="mb-7" />
-
     {#if tab === "playground"}
-        {#if loading}
-            <p class="text-sm text-ink-soft">Loading tools...</p>
-        {:else if tools.length === 0}
-            <EmptyState
-                kanji="具"
-                title="No MCP tools available."
-                description="Tools appear when the sensei daemon is running and MCP services are configured. Check your instruments in the setup wizard."
-            />
-        {:else}
-            <!-- Kind chips — filter tools by query vs action -->
-            <div class="flex gap-2 mb-4" role="tablist" aria-label="Tool kind filter" data-testid="kind-chips">
-                {#each kindChips as chip}
-                    {@const active = kindFilter === chip.id}
-                    <button
-                        class="px-3 py-1 rounded-full border text-xs cursor-pointer transition-colors duration-fast"
-                        class:bg-primary={active}
-                        class:text-on-primary={active}
-                        class:border-primary={active}
-                        class:bg-transparent={!active}
-                        class:text-ink-soft={!active}
-                        class:border-paper-mute={!active}
-                        role="tab"
-                        aria-selected={active}
-                        data-testid={`kind-chip-${chip.id}`}
-                        onclick={() => (kindFilter = chip.id)}
-                    >
-                        {chip.label}
-                    </button>
-                {/each}
-            </div>
-
-            <div class="grid grid-cols-[260px_1fr] gap-6" data-testid="playground-body">
-                <!-- Tool list -->
-                <div class="flex flex-col gap-0.5" data-testid="tool-list">
-                    {#each visibleTools as tool (tool.name)}
-                        <button
-                            class="tool-card text-left px-3.5 py-2.5 rounded-md bg-transparent border-none cursor-pointer transition-colors duration-fast"
-                            class:selected={selectedTool?.name === tool.name}
-                            data-testid={`tool-row-${tool.name}`}
-                            data-tool-kind={tool.kind}
-                            onclick={() => {
-                                selectedTool = tool;
-                                toolParams = {};
-                                toolResult = "";
-                            }}
-                        >
-                            <span
-                                class="block text-sm font-medium text-ink font-mono"
-                                >{tool.name}</span
-                            >
-                            <span class="block text-xs text-ink-soft mt-0.5"
-                                >{tool.summary}</span
-                            >
-                        </button>
-                    {/each}
-                    {#if visibleTools.length === 0}
-                        <p class="text-xs text-ink-soft px-3 py-2">
-                            No {kindFilter === 'query' ? 'queries' : 'actions'} match this filter.
-                        </p>
+        <!-- #84 T2 Playground — matches docs/mockups/Sensei/lib/instruments-simple.jsx
+             (InstrumentsPlaygroundSimple). Left rail: search + collapsible MCP
+             groups → tools. Right: tool detail with inputs form + response
+             preview. Sensei's own tools sit as the first (always-installed)
+             group; every discovered MCP server (Slice A) is its own group
+             with tools hydrated lazily on expand via Slice B's probe. -->
+        {@const running = executing}
+        <div class="grid grid-cols-[300px_1fr] min-h-[600px] border-t border-paper-mute" data-testid="playground-body">
+            <!-- ── Left rail — search + MCP tree ────────────────────────────── -->
+            <aside class="bg-paper-soft border-r border-paper-mute flex flex-col overflow-hidden">
+                <!-- Search box -->
+                <div class="flex items-center gap-2 py-3 px-3 border-b border-paper-mute">
+                    <span class="kanji text-xs text-ink-mute">探</span>
+                    <input
+                        type="text"
+                        class="border-none outline-none bg-transparent text-sm text-ink flex-1"
+                        placeholder="search tools…"
+                        bind:value={toolSearch}
+                        data-testid="tool-search"
+                    />
+                    {#if toolSearch}
+                        <button class="text-xs text-ink-faint bg-transparent border-none cursor-pointer" onclick={() => (toolSearch = '')} aria-label="Clear search">×</button>
                     {/if}
                 </div>
 
-                <!-- Tool detail + execution -->
-                <div
-                    class="p-6 bg-paper-mute border border-paper-mute rounded-lg"
-                >
-                    {#if selectedTool}
-                        <h3 class="text-base font-mono m-0 mb-1.5">
-                            {selectedTool.name}
-                        </h3>
-                        <p
-                            class="text-sm text-ink-mute m-0 mb-5 leading-normal"
-                        >
-                            {selectedTool.summary}
-                        </p>
+                <!-- MCP groups list -->
+                <div class="overflow-auto flex-1 py-1">
+                    {#if filteredGroups.length === 0}
+                        <div class="text-center text-sm text-ink-faint py-4 px-3">
+                            no tools match.
+                        </div>
+                    {/if}
+                    {#each filteredGroups as group (group.id)}
+                        {@const collapsed = effectiveCollapsed[group.id] ?? (group.source !== 'sensei')}
+                        <div class="mb-1" data-testid={`mcp-group-${group.id}`}>
+                            <!-- Group header -->
+                            <button
+                                class="w-full grid grid-cols-[14px_18px_1fr_auto_auto] items-center gap-2 py-2 px-3 text-left bg-transparent border-none cursor-pointer text-ink-soft"
+                                onclick={() => toggleGroup(group.id)}
+                                aria-expanded={!collapsed}
+                                data-testid={`mcp-group-toggle-${group.id}`}
+                            >
+                                <span
+                                    class="font-mono text-xs text-ink-mute transition-transform duration-fast"
+                                    style="transform: {collapsed ? 'none' : 'rotate(90deg)'};"
+                                >▶</span>
+                                <span class="kanji text-sm text-accent">{group.kanji}</span>
+                                <span class="text-sm truncate">{group.name}</span>
+                                {#if !group.installed}
+                                    <span class="text-xs uppercase tracking-wide text-warning">off</span>
+                                {:else}
+                                    <span></span>
+                                {/if}
+                                <span class="font-mono text-xs text-ink-faint">{group.tools.length}</span>
+                            </button>
 
-                        {#if selectedTool.inputs.length > 0}
-                            <div class="flex flex-col gap-3 mb-5">
-                                {#each selectedTool.inputs as input}
-                                    <div class="flex flex-col gap-1">
-                                        <label
-                                            class="text-xs text-ink-soft font-mono"
-                                            for="param-{input.key}">{input.label}{input.required ? ' *' : ''}</label
+                            <!-- Tool lines -->
+                            {#if !collapsed}
+                                <div>
+                                    {#each group.tools as tool (tool.id)}
+                                        {@const active = focusedTool?.id === tool.id}
+                                        {@const isAction = tool.kind === 'action'}
+                                        {@const kindGlyph = isAction ? '作' : tool.kind === 'query' ? '問' : '·'}
+                                        <button
+                                            class="w-full grid grid-cols-[32px_14px_1fr] gap-1 py-1 pl-1 pr-3 text-left bg-transparent border-none cursor-pointer"
+                                            style="border-left: {active ? '2px solid var(--accent)' : '2px solid transparent'};"
+                                            onclick={() => { selectedToolId = tool.id; toolResult = ''; toolParams = {}; }}
+                                            data-testid={`tool-row-${tool.name}`}
+                                            data-tool-kind={tool.kind}
                                         >
+                                            <span></span>
+                                            <span
+                                                class="kanji text-xs"
+                                                class:text-accent={isAction}
+                                                class:text-success={tool.kind === 'query'}
+                                                class:text-ink-mute={tool.kind === 'other'}
+                                            >{kindGlyph}</span>
+                                            <span
+                                                class="font-mono text-xs truncate"
+                                                class:text-ink={active}
+                                                class:text-ink-soft={!active}
+                                            >{tool.name}</span>
+                                        </button>
+                                    {/each}
+                                </div>
+                            {/if}
+                        </div>
+                    {/each}
+                </div>
+
+                <!-- Footer — MCP + tool counts + refresh -->
+                <div class="border-t border-paper-mute flex justify-between items-center gap-2 py-2 px-3 text-xs text-ink-faint">
+                    <span>{playgroundGroups.length} MCPs · {playgroundGroups.reduce((s, g) => s + g.tools.length, 0)} tools</span>
+                    <button
+                        class="text-xs text-ink-mute bg-transparent border-none cursor-pointer"
+                        onclick={refreshDiscoveredServers}
+                        disabled={refreshingServers}
+                        data-testid="refresh-servers"
+                    >{refreshingServers ? 'scanning…' : '+ scan'}</button>
+                </div>
+            </aside>
+
+            <!-- ── Detail ────────────────────────────────────────────────────── -->
+            <main class="overflow-auto pt-5 pb-6 px-7">
+                {#if focusedTool && focusedGroup}
+                    {@const tool = focusedTool}
+                    {@const group = focusedGroup}
+                    {@const isAction = tool.kind === 'action'}
+                    {@const kindColor = isAction ? 'accent' : tool.kind === 'query' ? 'success' : 'ink-mute'}
+                    {@const kindLabel = isAction ? 'action' : tool.kind === 'query' ? 'query' : 'call'}
+                    {@const kindGlyph = isAction ? '作' : tool.kind === 'query' ? '問' : '·'}
+                    {@const kindHint = isAction ? 'performs an operation' : 'returns information'}
+
+                    <!-- Heading -->
+                    <div class="mb-4">
+                        <div class="flex items-center flex-wrap gap-2 mb-2">
+                            <span class="font-mono text-xs text-ink-mute">{group.kanji} {group.name.toLowerCase()}</span>
+                            <span class="text-xs text-ink-faint">·</span>
+                            <span
+                                class="inline-flex items-center gap-1 py-1 px-2 text-xs bg-paper-soft border border-paper-edge rounded uppercase tracking-wide"
+                                class:text-accent={isAction}
+                                class:text-success={tool.kind === 'query'}
+                                class:text-ink-mute={tool.kind === 'other'}
+                            >
+                                <span class="kanji text-xs">{kindGlyph}</span>
+                                {kindLabel}
+                            </span>
+                        </div>
+                        <h2 class="font-mono text-lg font-normal m-0 text-ink">{tool.name}</h2>
+                        <p class="text-sm text-ink-soft leading-normal mt-1 mb-0 max-w-[700px]">
+                            {tool.summary || 'No description.'}
+                        </p>
+                    </div>
+
+                    <!-- Inputs panel -->
+                    <div class="bg-paper-soft border border-paper-mute rounded-lg py-3 px-4 mb-3">
+                        <div class="flex items-baseline justify-between mb-2">
+                            <span class="text-xs uppercase tracking-wide text-ink-mute">Inputs</span>
+                            <span class="text-xs text-ink-faint">{kindHint}</span>
+                        </div>
+
+                        {#if !selectedTool || (selectedTool.inputs?.length ?? 0) === 0}
+                            <div class="text-sm text-ink-mute mb-2">
+                                {selectedTool ? 'No inputs — just call it.' : 'Third-party MCP — sensei surfaces the tool but doesn\'t know its input schema yet.'}
+                            </div>
+                        {:else}
+                            <div class="grid grid-cols-2 gap-y-2 gap-x-4">
+                                {#each selectedTool.inputs as input}
+                                    <label class="flex flex-col text-xs text-ink-soft">
+                                        <span class="flex items-baseline gap-1">
+                                            <span>{input.label}</span>
+                                            {#if input.required}<span class="text-accent">*</span>{/if}
+                                            <span class="font-mono text-xs text-ink-faint">{input.kind}</span>
+                                        </span>
                                         {#if input.kind === 'enum' && input.options}
                                             <select
-                                                id="param-{input.key}"
-                                                class="param-input px-3 py-2 border border-paper-mute rounded-md bg-paper-soft text-ink text-sm font-mono outline-none"
+                                                class="py-1 px-2 text-sm border border-paper-edge rounded bg-paper text-ink font-mono outline-none"
                                                 bind:value={toolParams[input.key]}
                                             >
                                                 {#each input.options as option}
@@ -309,166 +542,56 @@
                                             </select>
                                         {:else}
                                             <input
-                                                id="param-{input.key}"
-                                                class="param-input px-3 py-2 border border-paper-mute rounded-md bg-paper-soft text-ink text-sm font-mono outline-none"
                                                 type={input.kind === 'number' ? 'number' : 'text'}
-                                                placeholder={input.placeholder ?? input.default ?? input.key}
+                                                class="py-1 px-2 text-sm border border-paper-edge rounded bg-paper text-ink font-mono outline-none"
+                                                placeholder={input.placeholder ?? input.default ?? ''}
                                                 bind:value={toolParams[input.key]}
                                             />
                                         {/if}
-                                    </div>
+                                    </label>
                                 {/each}
                             </div>
                         {/if}
 
-                        <button
-                            class="btn-solid"
-                            onclick={executeTool}
-                            disabled={executing}
-                        >
-                            {executing ? "Running..." : "Execute"}
-                        </button>
-
-                        {#if toolResult}
-                            <div class="mt-5">
-                                <p class="m-0 mb-2"><Eyebrow>Response</Eyebrow></p>
-                                <pre
-                                    class="px-4 py-4 bg-paper-soft border border-paper-mute rounded-md text-xs font-mono text-ink overflow-auto max-h-[400px] whitespace-pre-wrap break-all m-0">{toolResult}</pre>
-                            </div>
-                        {/if}
-                    {:else}
-                        <p class="text-sm text-ink-soft">
-                            Select a tool to try it.
-                        </p>
-                    {/if}
-                </div>
-            </div>
-
-            <!-- #84 T2 Slice A/B — Discovered MCP servers panel. Sits below
-                 the sensei playground so the primary workflow (call sensei's
-                 tools) stays front-and-center; the secondary view (which
-                 other MCPs are configured, what tools they expose) is
-                 discoverable but not in the way. -->
-            <section class="mt-10 pt-8 border-t border-paper-mute" data-testid="discovered-servers">
-                <header class="flex items-baseline justify-between mb-4">
-                    <div>
-                        <Eyebrow>Discovered MCP servers</Eyebrow>
-                        <p class="text-xs text-ink-soft m-0 mt-1">
-                            Configured across Claude Code, Cursor, and Zed. Scan pulls from your ACP config files.
-                        </p>
-                    </div>
-                    <button
-                        class="btn-outline text-xs"
-                        onclick={refreshDiscoveredServers}
-                        disabled={refreshingServers}
-                        data-testid="refresh-servers"
-                    >
-                        {refreshingServers ? "Scanning…" : "Refresh"}
-                    </button>
-                </header>
-
-                {#if mcp.mcpServersStatus === 'loading' && discoveredServers.length === 0}
-                    <p class="text-xs text-ink-soft">Loading servers…</p>
-                {:else if discoveredServers.length === 0}
-                    <p class="text-xs text-ink-soft">
-                        No MCP servers discovered yet. Configure one in Claude Code / Cursor / Zed, then hit Refresh.
-                    </p>
-                {:else}
-                    {#each Object.entries(serversByFamily) as [family, servers]}
-                        <div class="mb-5" data-testid={`servers-family-${family}`}>
-                            <div class="flex items-baseline gap-2 mb-2">
-                                <span class="text-xs uppercase tracking-wide text-ink-mute">{family}</span>
-                                <span class="text-[10px] text-ink-soft font-mono">{servers.length}</span>
-                            </div>
-                            <div class="flex flex-col gap-0.5">
-                                {#each servers as server (server.id)}
-                                    {@const expanded = expandedServerId === server.id}
-                                    {@const manifest = expanded ? expandedManifest : undefined}
-                                    {@const probing = serverProbing[server.id] ?? false}
-                                    <div
-                                        class="border-b border-paper-mute last:border-b-0"
-                                        data-testid={`server-row-${server.mcp_key}`}
-                                    >
-                                        <!-- Row splits into two side-by-side buttons — nesting
-                                             buttons is invalid HTML, so the expand-toggle and the
-                                             enable-toggle sit as siblings inside a flex container. -->
-                                        <div
-                                            class="tool-card flex items-center gap-3 px-3.5 py-2 transition-colors duration-fast"
-                                            class:selected={expanded}
-                                        >
-                                            <button
-                                                class="text-left bg-transparent border-none cursor-pointer flex-1 flex items-center gap-3 py-1 min-w-0"
-                                                onclick={() => expandServer(server.id)}
-                                            >
-                                                <span class="text-sm font-mono text-ink flex-1 truncate">{server.mcp_key}</span>
-                                                <span class="text-[10px] uppercase tracking-wide text-ink-soft">{server.scope}</span>
-                                                {#if !server.enabled}
-                                                    <span class="text-[10px] text-ink-mute">disabled</span>
-                                                {/if}
-                                            </button>
-                                            <button
-                                                class="text-[10px] px-2 py-0.5 rounded border border-paper-mute cursor-pointer transition-colors duration-fast"
-                                                class:bg-primary={server.enabled}
-                                                class:text-on-primary={server.enabled}
-                                                class:bg-transparent={!server.enabled}
-                                                class:text-ink-soft={!server.enabled}
-                                                onclick={() => void mcp.toggleMcpServer(server.id, !server.enabled)}
-                                                data-testid={`server-toggle-${server.mcp_key}`}
-                                                aria-label="Toggle server"
-                                            >
-                                                {server.enabled ? "on" : "off"}
-                                            </button>
-                                        </div>
-                                        {#if expanded}
-                                            <div class="px-3.5 pb-3 pt-1 bg-paper-soft border-t border-paper-mute" data-testid={`server-detail-${server.mcp_key}`}>
-                                                <div class="flex items-baseline justify-between mb-2">
-                                                    <span class="text-[10px] uppercase tracking-wide text-ink-mute">
-                                                        {server.command || '(no command configured)'}
-                                                    </span>
-                                                    <button
-                                                        class="text-[10px] text-ink-soft cursor-pointer bg-transparent border-none"
-                                                        onclick={() => void reprobeServer(server.id)}
-                                                        disabled={probing}
-                                                    >
-                                                        {probing ? "probing…" : "re-probe"}
-                                                    </button>
-                                                </div>
-                                                {#if probing && !manifest}
-                                                    <p class="text-xs text-ink-soft m-0">Probing server…</p>
-                                                {:else if manifest?.error}
-                                                    <p class="text-xs text-danger m-0">Probe failed: {manifest.error}</p>
-                                                {:else if manifest}
-                                                    {@const tools = manifest.tools as Array<{ name?: string; description?: string }>}
-                                                    <div class="flex items-baseline gap-3 mb-2 text-[10px] text-ink-soft">
-                                                        <span>{manifest.tool_count} tools</span>
-                                                        {#if manifest.server_name}<span>{manifest.server_name}{manifest.server_version ? ` ${manifest.server_version}` : ''}</span>{/if}
-                                                        {#if manifest.protocol_version}<span class="font-mono">mcp {manifest.protocol_version}</span>{/if}
-                                                    </div>
-                                                    {#if tools.length === 0}
-                                                        <p class="text-xs text-ink-soft m-0">Server exposed no tools.</p>
-                                                    {:else}
-                                                        <ul class="list-none p-0 m-0 flex flex-col gap-1">
-                                                            {#each tools as tool}
-                                                                <li class="text-xs">
-                                                                    <span class="font-mono text-ink">{tool.name ?? '(unnamed)'}</span>
-                                                                    {#if tool.description}
-                                                                        <span class="text-ink-soft"> — {tool.description}</span>
-                                                                    {/if}
-                                                                </li>
-                                                            {/each}
-                                                        </ul>
-                                                    {/if}
-                                                {/if}
-                                            </div>
-                                        {/if}
-                                    </div>
-                                {/each}
-                            </div>
+                        <div class="flex items-center gap-2 mt-3 pt-2 border-t border-paper-mute">
+                            <button
+                                class="py-1 px-3 text-sm bg-ink text-paper border-none rounded cursor-pointer tracking-tight"
+                                onclick={executeTool}
+                                disabled={running || !selectedTool}
+                            >
+                                {isAction ? 'Run →' : 'Query →'}
+                            </button>
+                            <div class="flex-1"></div>
+                            {#if running}
+                                <span class="font-mono text-xs text-ink-mute">calling …</span>
+                            {:else if toolResult}
+                                <span class="font-mono text-xs text-success">200 ok</span>
+                            {/if}
                         </div>
-                    {/each}
+                    </div>
+
+                    <!-- Response panel -->
+                    <div>
+                        <div class="text-xs uppercase tracking-wide text-ink-mute mb-1">
+                            Response{!toolResult ? ' · preview' : ''}
+                        </div>
+                        <pre
+                            class="font-mono text-xs leading-normal py-3 px-3 m-0 bg-paper-soft border border-paper-mute rounded whitespace-pre-wrap overflow-auto max-h-[360px]"
+                            class:text-ink={toolResult}
+                            class:text-ink-soft={!toolResult}
+                            class:opacity-70={!toolResult}
+                            class:border-l-accent={isAction}
+                            class:border-l-success={tool.kind === 'query'}
+                            style="border-left-width: 2px; border-left-color: {isAction ? 'var(--accent)' : tool.kind === 'query' ? 'var(--success)' : 'var(--ink-mute)'};"
+                        >{toolResult || '—'}</pre>
+                    </div>
+                {:else}
+                    <div class="text-center text-sm text-ink-faint py-6">
+                        Pick a tool to inspect it.
+                    </div>
                 {/if}
-            </section>
-        {/if}
+            </main>
+        </div>
     {:else if tab === "replay"}
         {#if replayLoading && replaySessions.length === 0}
             <p class="text-sm text-ink-soft">Loading sessions…</p>
