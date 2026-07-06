@@ -21,6 +21,7 @@ import type {
   DaemonAssistantFamily, DaemonWatchRoot, DaemonProject,
   DaemonLibEntry, DaemonMcpEntry, PreferencesData,
   ScanBaseline, WizardLoadData,
+  DaemonChain, SenseiRole,
 } from './setup/contracts.js';
 import type { AssistantPartEvent, AssistantPartStatus } from './types.js';
 
@@ -90,6 +91,18 @@ export interface RouterEntry {
 
 export interface InferenceSlice {
   routers: RouterEntry[];
+}
+
+/** Model Assignments slice. `chains` is the full active-chain list
+ *  (utility chains included so the UI can render "consensus-* is used
+ *  internally" hints); `roleAssignments` snapshots the daemon's
+ *  role→chainId map at hydrate time so commit can diff to a minimal
+ *  set of PUTs on submit. `pendingAssignments` is the user's working
+ *  edit — same shape as `roleAssignments` but keyed by user intent. */
+export interface AssignmentsSlice {
+  chains: DaemonChain[];
+  roleAssignments: Record<SenseiRole, string | null>;
+  pendingAssignments: Record<SenseiRole, string | null>;
 }
 
 // ── Commit handlers ─────────────────────────────────────────
@@ -225,6 +238,42 @@ const COMMIT_HANDLERS: Record<string, CommitFn> = {
       }
     }
   },
+  assignments: async (ws, api) => {
+    // Diff pending vs. daemon truth so we PUT the minimal set. Two-phase
+    // order matters: CLEARS first (chain-role writes fail with 409 if
+    // another chain still owns the same role), THEN sets. Skip roles
+    // whose pending pick equals current truth.
+    const roles: SenseiRole[] = ['inference', 'consolidation', 'embedding', 'voice'];
+    const current = ws.assignments.roleAssignments;
+    const pending = ws.assignments.pendingAssignments;
+
+    const changes = roles
+      .filter(r => (pending[r] ?? null) !== (current[r] ?? null))
+      .map(r => ({ role: r, next: pending[r] ?? null, prev: current[r] ?? null }));
+
+    // Phase 1 — clear every OLD chain that's losing its role.
+    // (Includes both "role unassigned" and "role moved to a different chain".)
+    for (const c of changes) {
+      if (c.prev) {
+        const result = await api.setGatewayChainRole(c.prev, null);
+        if (!result.ok) {
+          console.warn('[assignments] clear old chain role failed', c.prev, result.error);
+        }
+      }
+    }
+    // Phase 2 — set every NEW chain to its role.
+    for (const c of changes) {
+      if (c.next) {
+        const result = await api.setGatewayChainRole(c.next, c.role);
+        if (!result.ok) {
+          console.warn('[assignments] set new chain role failed', c.next, c.role, result.error);
+        }
+      }
+    }
+    // Refresh state so `roleAssignments` reflects the freshly-written
+    // truth — the next mount reads the correct baseline for its diff.
+    await ws.refreshAssignments();
+  },
   done:        async (ws) => { await ws.setCompleted(); },
 };
 
@@ -315,6 +364,11 @@ export class WizardState {
   libraries   = $state<LibrariesSlice>({ libs: [] });
   instruments = $state<InstrumentsSlice>({ mcps: [] });
   inference   = $state<InferenceSlice>({ routers: [] });
+  assignments = $state<AssignmentsSlice>({
+    chains: [],
+    roleAssignments:    { inference: null, consolidation: null, embedding: null, voice: null },
+    pendingAssignments: { inference: null, consolidation: null, embedding: null, voice: null },
+  });
 
   // ── Derived ──
 
@@ -741,6 +795,41 @@ export class WizardState {
    * Re-fetch gateway routers from daemon, preserving per-card draft state
    * (draftKey, saveState, saveError) for entries that survive the refresh.
    */
+  /**
+   * Hydrate the assignments slice from the daemon's chain list. Called
+   * by the Model Assignments page's `+page.ts` load so the wizard state
+   * is always in sync with `gateway.fallback_chains` at page-open time.
+   * Preserves the user's `pendingAssignments` when possible — a refresh
+   * mid-edit shouldn't wipe uncommitted picks.
+   */
+  async refreshAssignments(): Promise<void> {
+    const api = senseiApi(appState.port);
+    const fresh = await api.listGatewayChains();
+    const chains = fresh.chains;
+
+    // Daemon truth: fold role → chainId for the four supported roles.
+    const daemon: Record<SenseiRole, string | null> = {
+      inference: null, consolidation: null, embedding: null, voice: null,
+    };
+    for (const c of chains) {
+      if (c.role != null && daemon[c.role] === null) {
+        daemon[c.role] = c.id;
+      }
+    }
+    this.assignments = {
+      chains,
+      roleAssignments:    { ...daemon },
+      // Preserve any prior pending pick that's still valid; fall back
+      // to the daemon's truth otherwise so the UI has something to show.
+      pendingAssignments: {
+        inference:     this.assignments.pendingAssignments.inference    ?? daemon.inference,
+        consolidation: this.assignments.pendingAssignments.consolidation ?? daemon.consolidation,
+        embedding:     this.assignments.pendingAssignments.embedding    ?? daemon.embedding,
+        voice:         this.assignments.pendingAssignments.voice        ?? daemon.voice,
+      },
+    };
+  }
+
   async refreshInferenceRouters(): Promise<void> {
     const api = senseiApi(appState.port);
     const fresh = await api.listGatewayRouters();

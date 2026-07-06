@@ -5,6 +5,7 @@ create table fallback_chains (
   name                     text
 , capability               text
 , description              text
+, role                     text
 , max_fallback_attempts    integer     default 3
 , is_active                boolean     default true
 , sequence                 integer     default 0

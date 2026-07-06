@@ -1,11 +1,18 @@
 /**
- * Inference stage — router list, paste a key, Continue → daemon
- * Keychain write. Clear button removes the key.
+ * Providers surface — router list, paste a key, daemon writes to
+ * Keychain. Clear button removes the key.
+ *
+ * Since the wizard → Preferences arch change, provider API-key entry
+ * lives at /settings/providers (not the wizard's /setup/inference).
+ * The daemon endpoints (/api/gateway/routers/{id}/key) are the same;
+ * only the surface moved. Settings has no Continue mechanic, so the
+ * key-write flow triggers on the daemon's save endpoint directly (the
+ * ProvidersSection wires the same wizardState methods).
  *
  * Uses the daemon's actual /api/gateway/routers/{id}/key endpoints
  * for setup/teardown to avoid touching real OpenAI keys in the user's
- * actual Keychain — we only ever set/clear a known-fake key against
- * the dev daemon's namespace.
+ * Keychain — we only ever set/clear a known-fake key against the dev
+ * daemon's namespace.
  */
 
 import { test, expect } from '../fixtures';
@@ -20,16 +27,6 @@ async function seedHealth(tauriPage: any): Promise<void> {
   `);
 }
 
-async function resetSetupKeys(): Promise<void> {
-  const keys = [
-    'setup.welcome', 'setup.preferences', 'setup.assistants',
-    'setup.roots', 'setup.scan', 'setup_complete',
-  ];
-  for (const k of keys) {
-    await fetch(`${DAEMON_URL}/api/config/${k}`, { method: 'DELETE' });
-  }
-}
-
 async function clearRouterKey(id: string): Promise<void> {
   await fetch(`${DAEMON_URL}/api/gateway/routers/${id}/key`, { method: 'DELETE' });
 }
@@ -42,12 +39,11 @@ async function setRouterKey(id: string, key: string): Promise<void> {
   });
 }
 
-test.describe('Inference stage', () => {
+test.describe('Providers — Settings surface', () => {
   test.beforeEach(async ({ tauriPage }) => {
-    await resetSetupKeys();
     await clearRouterKey('openai');
     await seedHealth(tauriPage);
-    await navigateTo(tauriPage, '/setup/inference');
+    await navigateTo(tauriPage, '/settings/providers');
   });
 
   test('renders one card per known router with providers + capabilities chips', async ({ tauriPage }) => {
@@ -58,35 +54,12 @@ test.describe('Inference stage', () => {
     await expect(card).toHaveAttribute('data-configured', 'false');
   });
 
-  test('paste key → Continue → daemon reports configured', async ({ tauriPage }) => {
-    const card = tauriPage.locator('[data-testid="router-card-openai"]');
-    const input = tauriPage.locator('[data-testid="router-key-input-openai"]');
-    await expect(card).toBeVisible({ timeout: 10_000 });
-    await input.fill('sk-e2e-test-key');
-
-    await tauriPage.locator('.btn-primary').click();
-
-    // After commit, the daemon's view of the router should be configured.
-    const deadline = Date.now() + 10_000;
-    let configured = false;
-    while (Date.now() < deadline) {
-      const list = await fetch(`${DAEMON_URL}/api/gateway/routers`).then(r => r.json());
-      const openai = list.routers.find((r: any) => r.id === 'openai');
-      if (openai?.configured) { configured = true; break; }
-      await new Promise(r => setTimeout(r, 200));
-    }
-    expect(configured).toBe(true);
-
-    // Cleanup so subsequent test runs start fresh.
-    await clearRouterKey('openai');
-  });
-
   test('Clear button removes the key', async ({ tauriPage }) => {
-    // Pre-set so the Clear button renders.
+    // Pre-set so the Clear button renders on hydrate.
     await setRouterKey('openai', 'sk-pretend');
     await navigateTo(tauriPage, '/logs');
     await new Promise(r => setTimeout(r, 800));
-    await navigateTo(tauriPage, '/setup/inference');
+    await navigateTo(tauriPage, '/settings/providers');
 
     const card = tauriPage.locator('[data-testid="router-card-openai"]');
     await expect(card).toHaveAttribute('data-configured', 'true', { timeout: 10_000 });

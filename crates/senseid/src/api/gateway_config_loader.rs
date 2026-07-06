@@ -40,6 +40,9 @@ pub(crate) fn map_capability(db_cap: &str) -> Option<Capability> {
         "embed" => Some(Capability::TextEmbed),
         "vision" => Some(Capability::ImageAnalyze),
         "audio" => Some(Capability::AudioTranscribe),
+        // #77 — image gen is now a first-class capability; before this landed
+        // it lived only in the code-defined baseline and was grafted in.
+        "image" => Some(Capability::ImageGenerate),
         _ => None,
     }
 }
@@ -386,6 +389,7 @@ mod tests {
         assert_eq!(map_capability("embed"), Some(Capability::TextEmbed));
         assert_eq!(map_capability("vision"), Some(Capability::ImageAnalyze));
         assert_eq!(map_capability("audio"), Some(Capability::AudioTranscribe));
+        assert_eq!(map_capability("image"), Some(Capability::ImageGenerate));
         assert_eq!(map_capability("nonsense"), None);
     }
 

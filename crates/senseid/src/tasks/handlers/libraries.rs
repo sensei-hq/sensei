@@ -452,9 +452,13 @@ fn public_member_libs(
         .filter(|m| !m.private)
         .map(|m| {
             let ecosystem = match m.pkg_type.as_str() {
-                "cargo_crate" => "cargo",
-                "go_module"   => "go",
-                _              => "npm", // npm_workspace + any future JS variant
+                "cargo_crate"    => "cargo",
+                "go_module"      => "go",
+                // Gradle + Maven both resolve against the same Maven Central
+                // namespace, so their members roll up as `"maven"` libs.
+                "maven_module" | "gradle_module" => "maven",
+                "dotnet_project" => "nuget",
+                _                => "npm", // npm_workspace + any future JS variant
             };
             (m.name.clone(), ecosystem, m.version.clone())
         })
@@ -570,16 +574,21 @@ mod tests {
             member("@m/secret", "npm_workspace", true), // private → excluded
             member("my-crate", "cargo_crate", false),
             member("example.com/mod", "go_module", false),
+            member("com.example:core", "maven_module", false),
+            member("MyLib", "dotnet_project", false),
         ];
         let libs = public_member_libs(&members);
         let names: Vec<&str> = libs.iter().map(|(n, _, _)| n.as_str()).collect();
         assert!(names.contains(&"@m/ui"));
         assert!(!names.contains(&"@m/secret"), "private members are excluded");
         let eco = |n: &str| libs.iter().find(|(name, _, _)| name == n).map(|(_, e, _)| *e);
-        // Must be valid `library_ecosystem` enum labels (npm/cargo/go) — NOT
-        // "crates", which silently failed the cast and dropped every cargo lib.
+        // Must be valid `library_ecosystem` enum labels (npm/cargo/go/maven)
+        // — NOT "crates", which silently failed the cast and dropped every
+        // cargo lib (#63).
         assert_eq!(eco("@m/ui"), Some("npm"));
         assert_eq!(eco("my-crate"), Some("cargo"));
         assert_eq!(eco("example.com/mod"), Some("go"));
+        assert_eq!(eco("com.example:core"), Some("maven"));
+        assert_eq!(eco("MyLib"), Some("nuget"));
     }
 }

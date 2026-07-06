@@ -232,6 +232,49 @@ pub(crate) async fn get_project_sessions(
     Ok(Json(serde_json::json!({ "sessions": sessions })))
 }
 
+// ── Recommendation accept / reject (Gap 1 fix) ──────────────────────────────
+//
+// The analyzer writes recommendations in `pending` state, and `MeasureVerdicts`
+// only computes an FTR delta for recs that reached `accepted`. Without a UI
+// affordance to accept, every rec sits at `pending` forever and the verdict
+// column stays empty. These two endpoints close the loop.
+
+/// POST /api/projects/{id}/recommendations/{rec_id}/accept
+pub(crate) async fn accept_project_recommendation(
+    State(state): State<AppState>,
+    Path((_project_id, rec_id)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let rec_uuid = uuid::Uuid::parse_str(&rec_id).map_err(|_| StatusCode::BAD_REQUEST)?;
+    state.pg.accept_recommendation(&rec_uuid).await
+        .map_err(|e| {
+            if e.contains("not found") || e.contains("already decided") {
+                StatusCode::CONFLICT
+            } else {
+                tracing::error!(error = %e, rec = %rec_uuid, "accept_recommendation failed");
+                StatusCode::INTERNAL_SERVER_ERROR
+            }
+        })?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+/// POST /api/projects/{id}/recommendations/{rec_id}/reject
+pub(crate) async fn reject_project_recommendation(
+    State(state): State<AppState>,
+    Path((_project_id, rec_id)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let rec_uuid = uuid::Uuid::parse_str(&rec_id).map_err(|_| StatusCode::BAD_REQUEST)?;
+    state.pg.reject_recommendation(&rec_uuid).await
+        .map_err(|e| {
+            if e.contains("not found") || e.contains("already decided") {
+                StatusCode::CONFLICT
+            } else {
+                tracing::error!(error = %e, rec = %rec_uuid, "reject_recommendation failed");
+                StatusCode::INTERNAL_SERVER_ERROR
+            }
+        })?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
 // ── Doc drift scan (T3 Slice 2.3) ───────────────────────────────────────────
 
 /// POST /api/projects/{id}/drift/scan — run the doc-drift detector on the

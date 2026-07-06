@@ -72,6 +72,21 @@ mod tests {
     }
 
     #[test]
+    fn resolve_glob_handles_dot_slash_prefix() {
+        // Rokkit-style pattern with a leading `./` — every real monorepo we
+        // hit in the wild writes at least some patterns this way (#63).
+        // Before this test the returned entries carried the `./` prefix,
+        // which downstream `package_json_member(repo, "./packages/actions")`
+        // still resolved correctly, so this locks the current behaviour.
+        let dir = TempDir::new().unwrap();
+        std::fs::create_dir_all(dir.path().join("packages/a")).unwrap();
+        std::fs::create_dir_all(dir.path().join("packages/b")).unwrap();
+        let mut members = resolve_glob_members(dir.path(), "./packages/*");
+        members.sort();
+        assert_eq!(members, vec!["./packages/a", "./packages/b"]);
+    }
+
+    #[test]
     fn resolve_glob_skips_hidden_dirs() {
         let dir = TempDir::new().unwrap();
         std::fs::create_dir_all(dir.path().join("packages/a")).unwrap();

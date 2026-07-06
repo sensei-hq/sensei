@@ -41,7 +41,7 @@ describe("ObservatorySidebar", () => {
       "Libraries",
       "Instruments",
       "Logs",
-      "Preferences",
+      "Settings",
     ]) {
       expect(t).toContain(label);
     }
@@ -62,7 +62,7 @@ describe("ObservatorySidebar", () => {
     ).toBe("/projects");
   });
 
-  it("hides the Review group and Preferences when Focus is selected", () => {
+  it("hides the Review group and Settings when Focus is selected", () => {
     const { container } = mount("/");
     expect(container).toMatchSnapshot();
     const focusBtn = segButton(container, "Focus");
@@ -71,7 +71,7 @@ describe("ObservatorySidebar", () => {
     flushSync();
     const t = container.textContent ?? "";
     expect(t).not.toContain("Review");
-    expect(t).not.toContain("Preferences");
+    expect(t).not.toContain("Settings");
     expect(t).not.toContain("Sessions");
     // Anchors + "Needs you" remain.
     expect(t).toContain("Insights");

@@ -480,7 +480,7 @@ mod tests {
 
         // A rule-candidate pattern (the user stated a principle) → memory + promote rec.
         let instances = serde_json::json!([{ "session": csid, "prompt": "you should always run the tests first" }]);
-        let pat_id = pg.upsert_pattern(&fid, "rule-candidates", false, None, &instances).await.unwrap();
+        let pat_id = pg.upsert_pattern(&pid, Some(&fid), "rule-candidates", false, None, &instances).await.unwrap();
 
         // First run: writes a learned memory + a recommendation.
         let written = generate_for_project(&ctx, &pid).await.unwrap();
@@ -505,7 +505,7 @@ mod tests {
         let pool = pg.pool();
         sqlx_core::query::query("DELETE FROM sensei.memories WHERE source_id = $1").bind(pat_id).execute(pool).await.ok();
         sqlx_core::query::query("DELETE FROM inference.recommendations WHERE project_id = $1").bind(pid).execute(pool).await.ok();
-        sqlx_core::query::query("DELETE FROM inference.detected_patterns WHERE folder_id = $1").bind(fid).execute(pool).await.ok();
+        sqlx_core::query::query("DELETE FROM inference.detected_patterns WHERE project_id = $1").bind(pid).execute(pool).await.ok();
         sqlx_core::query::query("DELETE FROM activity.sessions WHERE client_session_id = $1").bind(&csid).execute(pool).await.ok();
         sqlx_core::query::query("DELETE FROM sensei.folders WHERE id = $1").bind(fid).execute(pool).await.ok();
         sqlx_core::query::query("DELETE FROM sensei.folders_to_watch WHERE id = $1").bind(root).execute(pool).await.ok();

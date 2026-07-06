@@ -98,7 +98,13 @@ pub async fn start_server(port: u16) -> std::io::Result<()> {
 
     axum::serve(listener, app)
         .with_graceful_shutdown(async move {
-            tokio::signal::ctrl_c().await.ok();
+            // `.ok()` is deliberate here — ctrl_c() only errors if signal
+            // handler registration fails (rare, non-actionable at runtime).
+            // Either way we want the graceful-shutdown future to complete
+            // so the server drives its teardown flow. Not a silent-error bug.
+            if let Err(e) = tokio::signal::ctrl_c().await {
+                tracing::warn!(error = %e, "ctrl_c handler setup failed — shutdown will still run");
+            }
             tracing::info!("Shutting down...");
             if let Some(q) = watcher_queue {
                 let watcher = crate::watcher::root_watcher::RootWatcher::instance(q);
@@ -183,6 +189,12 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
     // Log retention (#74): periodically prune `public.logs` older than the
     // configured window (default 30d, daily). First tick prunes on startup.
     crate::tasks::log_pruner::spawn(Arc::new(state.pg.clone()));
+
+    // Activity-data retention (#74): periodically prune raw activity older
+    // than `activity.retention_days` (default 30d, daily), guarded by
+    // `analyzed_at IS NOT NULL` so the pruner never drops a session before
+    // the analyzer has derived its insights.
+    crate::tasks::activity_pruner::spawn(Arc::new(state.pg.clone()));
 
     // Re-enqueue tasks for folders left in a non-terminal state by a
     // previous daemon session. Must run after workers and the progress

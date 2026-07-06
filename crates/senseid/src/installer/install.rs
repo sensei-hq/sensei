@@ -128,26 +128,48 @@ pub fn remove_item(name: &str, kind: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// List installed items (skills + commands).
+/// List installed items — skills + commands, enabled or disabled.
+///
+/// Live files live in `~/.claude/<kind>s/*.md`; disabled files sit in
+/// the sibling `disabled/*.md` subfolder. Both are scanned so the
+/// Settings UI can show the same row with a toggle regardless of state.
 pub fn list_installed() -> Vec<InstalledItem> {
     let h = home();
     let mut items = vec![];
 
     for (kind, dir) in &[("skill", ".claude/skills"), ("command", ".claude/commands")] {
-        let dir = h.join(dir);
-        if let Ok(entries) = fs::read_dir(&dir) {
+        let live_dir = h.join(dir);
+        // Live entries — anything ending in .md directly under <kind>s/.
+        if let Ok(entries) = fs::read_dir(&live_dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if path.extension().is_some_and(|e| e == "md") {
-                    let name = path
-                        .file_stem()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("")
-                        .to_string();
+                if path.is_file()
+                    && path.extension().is_some_and(|e| e == "md")
+                    && let Some(name) = path.file_stem().and_then(|s| s.to_str())
+                {
                     items.push(InstalledItem {
-                        name,
+                        name: name.to_string(),
                         kind: kind.to_string(),
                         path: path.to_string_lossy().into_owned(),
+                        enabled: true,
+                    });
+                }
+            }
+        }
+        // Disabled entries — anything ending in .md under <kind>s/disabled/.
+        let disabled_dir = live_dir.join("disabled");
+        if let Ok(entries) = fs::read_dir(&disabled_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file()
+                    && path.extension().is_some_and(|e| e == "md")
+                    && let Some(name) = path.file_stem().and_then(|s| s.to_str())
+                {
+                    items.push(InstalledItem {
+                        name: name.to_string(),
+                        kind: kind.to_string(),
+                        path: path.to_string_lossy().into_owned(),
+                        enabled: false,
                     });
                 }
             }
@@ -155,6 +177,53 @@ pub fn list_installed() -> Vec<InstalledItem> {
     }
 
     items
+}
+
+/// Enable or disable an installed skill / command by moving the .md
+/// file between `~/.claude/<kind>s/` and its `disabled/` sibling.
+/// Returns Ok(true) when a move happened, Ok(false) when the item was
+/// already in the target state, and Err with a clear message on I/O
+/// failure or unknown kind.
+///
+/// Claude Code doesn't scan the `disabled/` folder, so a moved file
+/// stops being active as soon as the rename lands.
+pub fn set_item_enabled(name: &str, kind: &str, enabled: bool) -> Result<bool, String> {
+    let subdir = match kind {
+        "skill"   => ".claude/skills",
+        "command" => ".claude/commands",
+        other => return Err(format!("unknown kind: {other} (expected 'skill' or 'command')")),
+    };
+    let live_dir = home().join(subdir);
+    let disabled_dir = live_dir.join("disabled");
+    let file_name = format!("{name}.md");
+    let live_path = live_dir.join(&file_name);
+    let disabled_path = disabled_dir.join(&file_name);
+
+    // Ambiguous state — same-named file in both folders — comes first.
+    // Probably a mv failed half-way or someone touched the tree by hand;
+    // refusing to toggle is safer than picking a side.
+    if live_path.exists() && disabled_path.exists() {
+        return Err(format!(
+            "{kind} '{name}' exists in both live and disabled folders — resolve manually before toggling"
+        ));
+    }
+
+    // Idempotency + find the source.
+    let (source, dest, dest_dir) = match (live_path.exists(), disabled_path.exists(), enabled) {
+        (true,  _,     true)  => return Ok(false),                                       // already enabled
+        (_,     true,  false) => return Ok(false),                                       // already disabled
+        (true,  false, false) => (&live_path,     &disabled_path, &disabled_dir),        // enable → disable
+        (false, true,  true)  => (&disabled_path, &live_path,     &live_dir),            // disable → enable
+        (false, false, _)     => return Err(format!("{kind} '{name}' not found")),      // unknown
+    };
+
+    // Ensure the destination directory exists (first-time disable
+    // creates `disabled/`; a fresh home may lack it).
+    if !dest_dir.exists() {
+        std::fs::create_dir_all(dest_dir).map_err(|e| format!("create dir {dest_dir:?}: {e}"))?;
+    }
+    std::fs::rename(source, dest).map_err(|e| format!("rename {source:?} → {dest:?}: {e}"))?;
+    Ok(true)
 }
 
 #[cfg(test)]
@@ -248,10 +317,25 @@ mod tests {
             name: "review".into(),
             kind: "skill".into(),
             path: "/home/user/.claude/skills/review.md".into(),
+            enabled: true,
         };
         let json: serde_json::Value = serde_json::to_value(&item).unwrap();
         assert_eq!(json["name"], "review");
         assert_eq!(json["kind"], "skill");
         assert!(json["path"].as_str().unwrap().ends_with("review.md"));
+        assert_eq!(json["enabled"], true);
     }
+
+    #[test]
+    fn set_item_enabled_rejects_unknown_kind() {
+        let err = set_item_enabled("foo", "agent", true).expect_err("agents not covered here");
+        assert!(err.contains("unknown kind"), "expected clear kind error, got: {err}");
+    }
+
+    // The filesystem-mutation path — live↔disabled/ rename — needs a
+    // scratch $HOME, which the process shares with every other parallel
+    // test and can't be mutated safely from a `#[test]`. It's covered
+    // instead by the live smoke against a running daemon (PUT
+    // /api/install/installed/{name}/enabled + `ls` before/after), which
+    // this commit records in the message.
 }

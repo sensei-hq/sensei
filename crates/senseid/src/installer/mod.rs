@@ -96,10 +96,15 @@ pub struct InstalledItem {
     pub name: String,
     pub kind: String,
     pub path: String,
+    /// True when the item is live in `~/.claude/<kind>s/`, false when
+    /// it sits in the sibling `disabled/` folder. Toggling moves the
+    /// file between the two directories — Claude Code only scans the
+    /// live folder, so `disabled` files are inert.
+    pub enabled: bool,
 }
 
 // ── Re-exports ───────────────────────────────────────────────────────────────
 
 pub use catalog::fetch_catalog;
-pub use install::{install, install_hooks_only, install_item, list_installed, remove_item};
+pub use install::{install, install_hooks_only, install_item, list_installed, remove_item, set_item_enabled};
 pub use removal::remove;

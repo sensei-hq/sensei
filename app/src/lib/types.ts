@@ -157,6 +157,9 @@ export interface InstalledItem {
   name: string;
   kind: string;
   path: string;
+  /** Live in `~/.claude/<kind>s/` (true) or moved to sibling `disabled/`
+   *  (false). Toggled via `PUT /api/install/installed/{name}/enabled`. */
+  enabled: boolean;
 }
 
 export interface MarketplaceCatalogItem {
@@ -450,6 +453,9 @@ export interface SessionData {
     id: string; task: string; project: string | null; startedAt: string;
     completedAt?: string; outcome?: string; summary?: string;
     cost?: number; tokensIn?: number; tokensOut?: number; ftr?: number | null;
+    // First-try-right feed carries a rework count (0 ⇒ first-try, N ⇒ N× rework).
+    // Optional on the wire so pre-fix daemons still parse.
+    corrections?: number;
   }>;
   toolUsage: unknown[];
   benchmarkPairs: unknown[];
@@ -472,6 +478,14 @@ export interface ProjectMemory {
   type: string;
   strength: number;
   scope: string;
+  // Anatomy fields — surfaced by the Memory Anatomy detail drawer.
+  // `content` is the What/Because body the analyzer stored, `impact`
+  // is the Consequence, and the two counts are the evidence tally.
+  content?: string;
+  impact?: string | null;
+  reinforcedCount?: number;
+  violatedCount?: number;
+  scopeFilter?: string | null;
 }
 
 export interface DriftItem {
@@ -480,6 +494,11 @@ export interface DriftItem {
   status: string;
   confidence: number;
   detail?: string;
+  /** What the doc claims the referenced symbol looks like. */
+  expectedSignature?: string | null;
+  /** What the code actually has. Null when `status = broken` (the target
+   *  was deleted or renamed). */
+  actualSignature?: string | null;
 }
 
 export interface PatternEntry {
@@ -496,6 +515,12 @@ export interface PatternEntry {
   example?: string | null;
   /** Free-form enforcement guidance surfaced when lifecycle = rule. */
   enforcement?: string | null;
+  /** Signed FTR delta between the pattern's folder and the project baseline.
+   *  Positive → the pattern's locus performs above the project average;
+   *  negative → below. Null when either baseline can't be computed. */
+  ftrDelta?: number | null;
+  /** How many code sites carry this pattern (or the anti-pattern). */
+  instanceCount?: number;
 }
 
 export interface Recommendation {
