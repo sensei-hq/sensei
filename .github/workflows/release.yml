@@ -21,21 +21,30 @@ jobs:
           - target: aarch64-apple-darwin
             os: macos-latest
             artifact: sensei-macos-arm64
+            embedded: true
           - target: x86_64-apple-darwin
             os: macos-latest
             artifact: sensei-macos-x86_64
+            embedded: true
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             artifact: sensei-linux-x86_64
+            embedded: true
+          # aarch64-linux stays without embedded-llama-cpp until the cross
+          # Docker image is validated to carry cmake + the target C/C++
+          # toolchain. Track under #78; enable by flipping `embedded: true`.
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
             artifact: sensei-linux-arm64
             use-cross: true
+            embedded: false
 
     runs-on: ${{ matrix.os }}
     # Fail fast if a runner type ever goes silent again — v0.2.15 sat 24h
     # on macos-13 waiting for a runner. Healthy daemon builds finish in ~10m.
-    timeout-minutes: 30
+    # Embedded llama.cpp adds ~5m to the compile step (native C++), so bumped
+    # to 45m.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v5
 
@@ -48,15 +57,22 @@ jobs:
         if: matrix.use-cross
         run: cargo install cross --locked
 
+      # Embedded llama.cpp compiles native C++ via cmake — macOS has clang
+      # from the Xcode CLT preinstalled; ubuntu-latest doesn't ship cmake.
+      - name: Install cmake (Linux, embedded builds only)
+        if: matrix.embedded && runner.os == 'Linux' && !matrix.use-cross
+        run: sudo apt-get update && sudo apt-get install -y cmake
+
       - name: Build binaries
         env:
           BUILD_TARGET: ${{ matrix.target }}
           USE_CROSS: ${{ matrix.use-cross }}
+          FEATURES: ${{ matrix.embedded && '--features senseid/embedded-llama-cpp' || '' }}
         run: |
           if [ "$USE_CROSS" = "true" ]; then
-            cross build --release --target "$BUILD_TARGET" -p senseid -p sensei-cli -p sensei-mcp
+            cross build --release --target "$BUILD_TARGET" -p senseid -p sensei-cli -p sensei-mcp $FEATURES
           else
-            cargo build --release --target "$BUILD_TARGET" -p senseid -p sensei-cli -p sensei-mcp
+            cargo build --release --target "$BUILD_TARGET" -p senseid -p sensei-cli -p sensei-mcp $FEATURES
           fi
 
       - name: Package binaries
