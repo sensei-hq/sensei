@@ -700,6 +700,70 @@ export interface SessionToolTimeline {
   count: number;
 }
 
+// ─── #84 T2 Slice C — Replay tab session timeline (with #90 verdicts) ────────
+// Response shape of GET /api/sessions/{id}/replay. Each call row is the
+// paired PreToolUse↔PostToolUse pair plus the tool_call_verdicts join
+// (verdict / confidence / verdictReason are null when unclassified).
+
+export interface SessionReplayCall extends SessionToolCall {
+  /** PostToolUse event id — the join key for the verdict. */
+  postEventId: number | null;
+  /** #90 classification: 'used' | 'partial' | 'ignored' | null. */
+  verdict: 'used' | 'partial' | 'ignored' | null;
+  /** Classifier confidence in [0, 1], or null when unclassified. */
+  confidence: number | null;
+  /** Short human-readable reason string from the classifier. */
+  verdictReason: string | null;
+}
+
+export interface SessionReplayResponse {
+  sessionId: string;
+  calls: SessionReplayCall[];
+  count: number;
+  /** #90 session-level verdict summary. */
+  summary: { used: number; partial: number; ignored: number; total: number };
+  /** Number of verdict rows written by the classify pass (0 unless
+   *  `?classify=true` was set on the request). */
+  classified: number;
+}
+
+// ─── #84 T2 Slice A — discovered MCP servers ─────────────────────────────────
+
+export interface McpServerRow {
+  id: string;
+  acp_family: string;
+  mcp_key: string;
+  scope: 'user' | 'project';
+  project_id: string | null;
+  config_source: string;
+  command: string;
+  args: unknown[];
+  env: Record<string, unknown>;
+  enabled: boolean;
+  connection_state: 'unknown' | 'connected' | 'error' | 'disabled';
+  last_error: string | null;
+  last_seen_at: string;
+  discovered_at: string;
+}
+
+// ─── #84 T2 Slice B — per-server tool manifest cache ─────────────────────────
+
+export interface McpServerToolsManifest {
+  id: string;
+  server_id: string;
+  tools: unknown[];
+  tool_count: number;
+  probed_at: string;
+  ttl_seconds: number;
+  error: string | null;
+  protocol_version: string | null;
+  server_name: string | null;
+  server_version: string | null;
+  age_seconds: number;
+  /** Only present when the caller asked to skip probing and got stale cache. */
+  stale?: boolean;
+}
+
 // ─── Memory share batches (T3 Slice 2.2) ─────────────────────────────────────
 
 export type MemoryShareBatchStatus = 'proposed' | 'approved' | 'rejected' | 'withdrawn';
@@ -785,6 +849,18 @@ export interface ToolInsight {
     errorRate?: number;
     avgDurationMs?: number | null;
     lastUsedAt?: string;
+    // #84 T2 Slice D — 14d verdict split merged in by
+    // aggregate_tool_insights. Present on every metrics row after the
+    // Slice D commit, defaulting to 0 for tools with no classified
+    // verdicts in the window.
+    usedCount?: number;
+    partialCount?: number;
+    ignoredCount?: number;
+    verdictTotal?: number;
+    usedPct?: number;
+    partialPct?: number;
+    ignoredPct?: number;
+    verdictWindowDays?: number;
   };
   variant: SignalVariant | null;
   title: string | null;
