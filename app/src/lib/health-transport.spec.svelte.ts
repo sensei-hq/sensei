@@ -211,7 +211,11 @@ describe('RealTransport', () => {
 
   // ── check() ────────────────────────────────────────────────────────────────
 
-  it('check() calls invoke("health_check") exactly once', async () => {
+  it('check() calls invoke("health_check_traced") exactly once (#39)', async () => {
+    // #39 switched RealTransport.check() to the traced variant so failed
+    // probes leave a diagnostic log session behind. The un-traced
+    // `health_check` command still exists as a Tauri handler for the
+    // legacy path.
     const expected = okPayload();
     invokeMock.mockResolvedValueOnce(expected);
 
@@ -219,7 +223,7 @@ describe('RealTransport', () => {
     await t.check();
 
     expect(invokeMock).toHaveBeenCalledTimes(1);
-    expect(invokeMock).toHaveBeenCalledWith('health_check');
+    expect(invokeMock).toHaveBeenCalledWith('health_check_traced');
   });
 
   it('check() resolves with the typed HealthPayload returned by invoke', async () => {

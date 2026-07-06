@@ -18,9 +18,10 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use sensei_bootstrap::{self as bootstrap, HealthEvent, HealthPayload};
-use tauri::Emitter;
+use tauri::{Emitter, State};
 
 use crate::flog;
+use crate::log_collector::LogCollector;
 
 static IN_FLIGHT: AtomicBool = AtomicBool::new(false);
 
@@ -46,6 +47,40 @@ fn try_acquire() -> Option<InFlightGuard> {
 pub fn health_check(app: tauri::AppHandle) -> HealthPayload {
     let version = app.package_info().version.to_string();
     bootstrap::check(&version)
+}
+
+/// Traced variant of `health_check` — runs the same probe pass but captures a
+/// `BootstrapTrace` for every instrumented `Command::new` inside the pipeline
+/// (#39). Traces are persisted into a fresh log session named "bootstrap-check"
+/// so the diagnostic logs page can render the timeline immediately after; the
+/// payload itself is returned to the caller so existing UI wiring keeps
+/// working. Non-instrumented sites still run correctly — tracing is additive.
+#[tauri::command]
+pub fn health_check_traced(
+    app: tauri::AppHandle,
+    collector: State<LogCollector>,
+) -> HealthPayload {
+    let version = app.package_info().version.to_string();
+    let (payload, traces) = bootstrap::health::check_traced(&version);
+
+    // Only bother opening a log session when we actually captured something.
+    // A CI environment where no probed binary resolves will produce zero
+    // traces; skipping the session in that case keeps the on-disk log dir
+    // clean of empty envelopes.
+    if !traces.is_empty() {
+        let system_info = crate::log_collector::SystemInfo {
+            os:        std::env::consts::OS.to_string(),
+            arch:      std::env::consts::ARCH.to_string(),
+            ram_gb:    0,   // not needed for a diagnostic entry; keeps the payload small
+            cpu_cores: 0,
+        };
+        let session_id = collector.start_session("bootstrap-check", &version, system_info);
+        for t in &traces {
+            collector.append_trace(&session_id, t);
+        }
+        collector.end_session(&session_id);
+    }
+    payload
 }
 
 #[tauri::command]

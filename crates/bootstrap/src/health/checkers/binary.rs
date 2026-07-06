@@ -2,7 +2,8 @@
 
 use std::process::Command;
 use crate::health::checker::{Checker, CheckOutcome};
-use crate::health::process_util::{output_with_timeout, TimedOutcome, DEFAULT_CHECKER_TIMEOUT};
+use crate::health::process_util::{TimedOutcome, DEFAULT_CHECKER_TIMEOUT};
+use crate::health::trace::{run_traced_current, ActionType, TraceSpec};
 
 pub struct BinaryChecker {
     pub bin:         &'static str,
@@ -54,7 +55,14 @@ impl Checker for BinaryChecker {
                 // at /opt/homebrew/bin/brew the whole time.
                 let mut cmd = Command::new(&resolved);
                 cmd.arg(arg);
-                match output_with_timeout(cmd, DEFAULT_CHECKER_TIMEOUT) {
+                let spec = TraceSpec {
+                    step: self.bin,
+                    desc: "version probe",
+                    action_type: ActionType::Check,
+                    fix_approach: None,
+                    timeout: DEFAULT_CHECKER_TIMEOUT,
+                };
+                match run_traced_current(cmd, spec) {
                     TimedOutcome::Done(out) if out.status.success() => {
                         let raw = String::from_utf8_lossy(&out.stdout).trim().to_string();
                         let v = if raw.is_empty() { "unknown".to_string() } else { raw };
