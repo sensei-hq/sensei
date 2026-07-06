@@ -166,51 +166,82 @@
                 {/if}
             </div>
 
-            <!-- Right: Task list (one row per folder, status evolves) -->
+            <!-- Right: Task list while scanning, summary card once done (#9) -->
             <div
                 class="bg-paper-mute rounded-lg p-4 border border-paper-mute max-h-[600px] flex flex-col"
+                data-testid="scan-tasks-panel"
             >
-                <div
-                    class="flex justify-between pb-3 border-b border-paper-mute mb-3 text-xs text-ink-soft"
-                >
-                    <span class="font-mono">TASKS</span>
-                    <span class="font-mono text-ink-mute"
-                        >{projects.pendingFolders} active · {activities.totalElapsed.toFixed(
-                            1,
-                        )}s</span
+                {#if scanState.completed}
+                    <div
+                        class="flex justify-between pb-3 border-b border-paper-mute mb-3 text-xs text-ink-soft"
                     >
-                </div>
-                <div class="flex-1 overflow-y-auto flex flex-col gap-0.5">
-                    {#each projects.allFolders as f (f.id)}
-                        <div
-                            class="flex gap-3 text-xs py-1 items-baseline border-b border-paper-mute last:border-b-0"
+                        <span class="font-mono">SUMMARY</span>
+                        <span class="font-mono text-success">complete</span>
+                    </div>
+                    <div class="flex flex-col gap-3" data-testid="scan-summary">
+                        <div class="flex justify-between text-sm">
+                            <span class="text-ink-mute">Folders scanned</span>
+                            <span class="font-mono">{projects.readyFolders}</span>
+                        </div>
+                        <div class="flex justify-between text-sm">
+                            <span class="text-ink-mute">Files indexed</span>
+                            <span class="font-mono">{projects.completedFiles.toLocaleString()}</span>
+                        </div>
+                        <div class="flex justify-between text-sm">
+                            <span class="text-ink-mute">Time elapsed</span>
+                            <span class="font-mono">{activities.totalElapsed.toFixed(1)}s</span>
+                        </div>
+                        <button
+                            class="btn-outline mt-3"
+                            data-testid="scan-rescan"
+                            onclick={() => { scanState.reset(); void scanState.start(); }}
                         >
-                            <span
-                                class="font-medium flex-1 min-w-0 truncate"
-                                title={f.path}>{f.name}</span
+                            Re-scan
+                        </button>
+                    </div>
+                {:else}
+                    <div
+                        class="flex justify-between pb-3 border-b border-paper-mute mb-3 text-xs text-ink-soft"
+                    >
+                        <span class="font-mono">TASKS</span>
+                        <span class="font-mono text-ink-mute"
+                            >{projects.pendingFolders} active · {activities.totalElapsed.toFixed(
+                                1,
+                            )}s</span
+                        >
+                    </div>
+                    <div class="flex-1 overflow-y-auto flex flex-col gap-0.5">
+                        {#each projects.allFolders as f (f.id)}
+                            <div
+                                class="flex gap-3 text-xs py-1 items-baseline border-b border-paper-mute last:border-b-0"
                             >
-                            <span
-                                class="text-xs min-w-[64px] text-right"
-                                style="color: {STATUS_COLORS[f.status] ??
-                                    'var(--ink-soft)'}"
-                                >{f.status}</span
-                            >
-                            {#if f.filesTotal > 0}
                                 <span
-                                    class="font-mono text-xs text-ink-soft min-w-[60px] text-right"
-                                    >{f.filesCompleted}/{f.filesTotal}</span
+                                    class="font-medium flex-1 min-w-0 truncate"
+                                    title={f.path}>{f.name}</span
                                 >
-                            {:else}
-                                <span class="font-mono text-xs text-ink-soft min-w-[60px] text-right">—</span>
-                            {/if}
-                        </div>
-                    {/each}
-                    {#if projects.allFolders.length === 0}
-                        <div class="text-xs text-ink-soft text-center p-4">
-                            Waiting for the daemon to discover folders…
-                        </div>
-                    {/if}
-                </div>
+                                <span
+                                    class="text-xs min-w-[64px] text-right"
+                                    style="color: {STATUS_COLORS[f.status] ??
+                                        'var(--ink-soft)'}"
+                                    >{f.status}</span
+                                >
+                                {#if f.filesTotal > 0}
+                                    <span
+                                        class="font-mono text-xs text-ink-soft min-w-[60px] text-right"
+                                        >{f.filesCompleted}/{f.filesTotal}</span
+                                    >
+                                {:else}
+                                    <span class="font-mono text-xs text-ink-soft min-w-[60px] text-right">—</span>
+                                {/if}
+                            </div>
+                        {/each}
+                        {#if projects.allFolders.length === 0}
+                            <div class="text-xs text-ink-soft text-center p-4">
+                                Waiting for the daemon to discover folders…
+                            </div>
+                        {/if}
+                    </div>
+                {/if}
             </div>
         </div>
     {/if}
