@@ -849,6 +849,18 @@ export interface ToolInsight {
     errorRate?: number;
     avgDurationMs?: number | null;
     lastUsedAt?: string;
+    // #84 T2 Slice D — 14d verdict split merged in by
+    // aggregate_tool_insights. Present on every metrics row after the
+    // Slice D commit, defaulting to 0 for tools with no classified
+    // verdicts in the window.
+    usedCount?: number;
+    partialCount?: number;
+    ignoredCount?: number;
+    verdictTotal?: number;
+    usedPct?: number;
+    partialPct?: number;
+    ignoredPct?: number;
+    verdictWindowDays?: number;
   };
   variant: SignalVariant | null;
   title: string | null;
