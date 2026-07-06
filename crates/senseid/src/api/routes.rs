@@ -22,6 +22,7 @@ use crate::api::handlers::scan_events;
 use crate::api::handlers::project_detail;
 use crate::api::handlers::instruments;
 use crate::api::handlers::verdicts;
+use crate::api::handlers::mcp_servers as mcp_servers_handler;
 use crate::api::handlers::gateway_routers;
 use crate::api::handlers::gateway_chains;
 use crate::api::handlers::gateway_image;
@@ -157,6 +158,10 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/instruments/verdicts/classify", post(verdicts::classify))
         .route("/api/instruments/verdicts", get(verdicts::list))
         .route("/api/instruments/verdicts/summary", get(verdicts::summary))
+        // Instruments — discovered MCP servers (#84 T2 Slice A)
+        .route("/api/instruments/mcp-servers", get(mcp_servers_handler::list))
+        .route("/api/instruments/mcp-servers/{id}/enabled", put(mcp_servers_handler::set_enabled))
+        .route("/api/instruments/mcp-servers/refresh", post(mcp_servers_handler::refresh))
         // Unified query (desktop/MCP)
         .route("/api/query", post(query::unified_query))
         // MCP tool proxy
