@@ -3084,6 +3084,152 @@ impl PgStore {
         Ok(rows.len())
     }
 
+    // ── #84 Track 2 Slice A — mcp_servers ─────────────────────────────────
+
+    /// Upsert a discovered MCP server row (#84). The uniqueness key is
+    /// `(acp_family, mcp_key, scope, project_id)`; existing rows have
+    /// `command`/`args`/`env`/`config_source`/`last_seen_at` refreshed, but
+    /// `enabled` is preserved (a user's manual toggle survives a re-scan).
+    ///
+    /// Args:
+    /// - `acp_family`  — 'claude' | 'zed' | 'cursor' | 'codex' | 'opencode' | 'other'
+    /// - `mcp_key`     — key in the ACP config, e.g. 'sensei', 'postgres'
+    /// - `project_id`  — Some(uuid) for project-scope, None for user-scope
+    /// - `config_source` — absolute path where discovered
+    /// - `command`     — the mcp entry's `command`
+    /// - `args`        — JSON array of args (from the config)
+    /// - `env`         — JSON object of env vars (from the config)
+    #[allow(clippy::too_many_arguments)]
+    pub async fn upsert_mcp_server(
+        &self,
+        acp_family: &str,
+        mcp_key: &str,
+        project_id: Option<uuid::Uuid>,
+        config_source: &str,
+        command: &str,
+        args: &serde_json::Value,
+        env: &serde_json::Value,
+    ) -> Result<uuid::Uuid, String> {
+        let scope = if project_id.is_some() { "project" } else { "user" };
+        // Partial unique indexes mean the ON CONFLICT target differs for
+        // user vs project scope; the cleanest cross-cutting pattern is
+        // "try INSERT, on failure UPDATE by lookup". Use a plain lookup +
+        // conditional insert inside a transaction so a concurrent scan
+        // can't race us into a duplicate.
+        let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
+
+        let existing: Option<(uuid::Uuid,)> = if let Some(pid) = project_id {
+            sqlx_core::query_as::query_as(
+                "SELECT id FROM sensei.mcp_servers
+                  WHERE acp_family = $1 AND mcp_key = $2
+                    AND scope = 'project' AND project_id = $3"
+            ).bind(acp_family).bind(mcp_key).bind(pid)
+            .fetch_optional(&mut *tx).await.map_err(|e| e.to_string())?
+        } else {
+            sqlx_core::query_as::query_as(
+                "SELECT id FROM sensei.mcp_servers
+                  WHERE acp_family = $1 AND mcp_key = $2
+                    AND scope = 'user'"
+            ).bind(acp_family).bind(mcp_key)
+            .fetch_optional(&mut *tx).await.map_err(|e| e.to_string())?
+        };
+
+        let id = if let Some((existing_id,)) = existing {
+            sqlx_core::query::query(
+                "UPDATE sensei.mcp_servers
+                    SET config_source = $2,
+                        command       = $3,
+                        args          = $4,
+                        env           = $5,
+                        last_seen_at  = now()
+                  WHERE id = $1"
+            )
+            .bind(existing_id).bind(config_source).bind(command).bind(args).bind(env)
+            .execute(&mut *tx).await.map_err(|e| e.to_string())?;
+            existing_id
+        } else {
+            let (new_id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+                "INSERT INTO sensei.mcp_servers
+                    (acp_family, mcp_key, scope, project_id, config_source, command, args, env)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                 RETURNING id"
+            )
+            .bind(acp_family).bind(mcp_key).bind(scope).bind(project_id)
+            .bind(config_source).bind(command).bind(args).bind(env)
+            .fetch_one(&mut *tx).await.map_err(|e| e.to_string())?;
+            new_id
+        };
+
+        tx.commit().await.map_err(|e| e.to_string())?;
+        Ok(id)
+    }
+
+    /// List MCP servers. `project_id = None` returns user-scope rows; a
+    /// concrete project returns the union of user-scope + that project's
+    /// project-scope rows (the Instruments Playground shows both). Ordered
+    /// by family, then key.
+    pub async fn list_mcp_servers(
+        &self,
+        project_id: Option<uuid::Uuid>,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, String, String, String, Option<uuid::Uuid>, String, String, serde_json::Value, serde_json::Value, bool, String, Option<String>, chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>)> =
+            if let Some(pid) = project_id {
+                sqlx_core::query_as::query_as(
+                    "SELECT id, acp_family, mcp_key, scope, project_id, config_source, command, args, env, enabled, connection_state, last_error, last_seen_at, discovered_at
+                       FROM sensei.mcp_servers
+                      WHERE scope = 'user' OR project_id = $1
+                      ORDER BY acp_family, mcp_key"
+                ).bind(pid).fetch_all(&self.pool).await.map_err(|e| e.to_string())?
+            } else {
+                sqlx_core::query_as::query_as(
+                    "SELECT id, acp_family, mcp_key, scope, project_id, config_source, command, args, env, enabled, connection_state, last_error, last_seen_at, discovered_at
+                       FROM sensei.mcp_servers
+                      WHERE scope = 'user'
+                      ORDER BY acp_family, mcp_key"
+                ).fetch_all(&self.pool).await.map_err(|e| e.to_string())?
+            };
+
+        Ok(rows.into_iter().map(|r| serde_json::json!({
+            "id": r.0, "acp_family": r.1, "mcp_key": r.2, "scope": r.3,
+            "project_id": r.4, "config_source": r.5, "command": r.6,
+            "args": r.7, "env": r.8, "enabled": r.9,
+            "connection_state": r.10, "last_error": r.11,
+            "last_seen_at": r.12.to_rfc3339(),
+            "discovered_at": r.13.to_rfc3339(),
+        })).collect())
+    }
+
+    /// Toggle `enabled` for an MCP server. Returns the new state, or `None`
+    /// if the id doesn't exist.
+    pub async fn set_mcp_server_enabled(
+        &self,
+        id: &uuid::Uuid,
+        enabled: bool,
+    ) -> Result<Option<bool>, String> {
+        let row: Option<(bool,)> = sqlx_core::query_as::query_as(
+            "UPDATE sensei.mcp_servers
+                SET enabled = $2,
+                    connection_state = CASE WHEN $2 THEN connection_state ELSE 'disabled' END
+              WHERE id = $1
+          RETURNING enabled"
+        ).bind(id).bind(enabled).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.map(|(e,)| e))
+    }
+
+    /// Delete rows the current scan did NOT touch — servers that no longer
+    /// appear in any ACP config. Compares against `not_seen_before` so a
+    /// row scanned after the cutoff survives. Returns the number of rows
+    /// pruned. Called at the end of `discover_mcp_servers`.
+    pub async fn prune_stale_mcp_servers(
+        &self,
+        not_seen_before: chrono::DateTime<chrono::Utc>,
+    ) -> Result<u64, String> {
+        let res = sqlx_core::query::query(
+            "DELETE FROM sensei.mcp_servers WHERE last_seen_at < $1"
+        ).bind(not_seen_before).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(res.rows_affected())
+    }
+
     /// All verdicts for one session, ordered by the underlying event ts.
     /// Consumed by the Replay tab's timeline read path (#84 / #90).
     pub async fn get_verdicts_for_session(
