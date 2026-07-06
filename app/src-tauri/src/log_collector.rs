@@ -120,6 +120,29 @@ impl LogCollector {
         }
     }
 
+    /// Append a `BootstrapTrace` (from the sensei_bootstrap health pipeline)
+    /// to an open session. Traces live alongside `LogEntry` records in
+    /// `LogSession.traces`; the frontend `isBootstrapTrace` discriminator
+    /// keys on the presence of `action_type`. Failed traces (`ok=false`)
+    /// bump the session's `max_level` to `error` so the session outcome
+    /// reflects the underlying health failure.
+    pub fn append_trace(
+        &self,
+        session_id: &str,
+        trace: &sensei_bootstrap::health::BootstrapTrace,
+    ) {
+        let mut sessions = self.sessions.lock().unwrap();
+        if let Some(s) = sessions.get_mut(session_id) {
+            if !trace.ok && s.max_level < 2 {
+                s.max_level = 2;
+            }
+            match serde_json::to_value(trace) {
+                Ok(val) => s.entries.push(val),
+                Err(e) => eprintln!("log_collector: failed to serialise trace: {e}"),
+            }
+        }
+    }
+
     /// Finalize an incremental session and write it to disk.
     pub fn end_session(&self, session_id: &str) {
         let session = {
