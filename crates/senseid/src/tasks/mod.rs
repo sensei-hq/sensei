@@ -17,6 +17,7 @@ pub mod processors;
 pub mod resume;
 pub mod verdict_classifier;
 pub mod mcp_discovery;
+pub mod mcp_probe;
 
 use serde::{Serialize, Deserialize};
 use std::time::Instant;

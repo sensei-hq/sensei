@@ -15,6 +15,11 @@ use crate::api::handlers::tool_signals::{
     derive_signals, Signal, SignalThresholds, SignalVariant, ToolUsageRow,
 };
 
+/// Verdict-window for the Health tab metrics — 14 days matches the ticket
+/// text ("14d trend"). Kept `pub const` so the aggregator + any future
+/// per-project override key off the same constant (#84 T2 Slice D).
+pub const HEALTH_VERDICT_WINDOW_DAYS: i32 = 14;
+
 pub async fn aggregate_tool_insights(ctx: &TaskContext, _task: &Task) -> Result<u32, String> {
     // 1. Pull the current per-tool aggregate.
     let raw_rows = ctx
@@ -35,12 +40,53 @@ pub async fn aggregate_tool_insights(ctx: &TaskContext, _task: &Task) -> Result<
         .map(|s| (s.tool_name.as_str(), s))
         .collect();
 
+    // 2b. Verdict split per tool over the last N days (#84 T2 Slice D / #90).
+    // Zero-row tools land with `usedPct=0` in the metrics; explicit is
+    // better than an absent field for the frontend variant selector.
+    let split_rows = ctx
+        .pg()
+        .get_verdict_split_per_tool(HEALTH_VERDICT_WINDOW_DAYS)
+        .await
+        .map_err(|e| format!("get_verdict_split_per_tool: {e}"))?;
+    let split_by_tool: std::collections::HashMap<String, (i64, i64, i64)> = split_rows
+        .into_iter()
+        .map(|(t, u, p, i)| (t, (u, p, i)))
+        .collect();
+
     // 3. Write one row per tool. Every tool from the raw aggregate gets a
     //    row so the reader can find "healthy tools" too — even those with
     //    no active signal card.
     let mut written: u32 = 0;
     for (row, raw) in typed.iter().zip(raw_rows.iter()) {
-        let metrics = build_metrics(row, raw);
+        let mut metrics = build_metrics(row, raw);
+        // Merge in the verdict split. Reach for the sensible zero fallback
+        // rather than absent-field so the UI variant selector always
+        // finds `usedPct` / `partialPct` / `ignoredPct` keys.
+        let (used, partial, ignored) = split_by_tool
+            .get(row.tool_name.as_str())
+            .copied()
+            .unwrap_or((0, 0, 0));
+        let total = used + partial + ignored;
+        let (used_pct, partial_pct, ignored_pct) = if total > 0 {
+            (
+                used as f64 / total as f64,
+                partial as f64 / total as f64,
+                ignored as f64 / total as f64,
+            )
+        } else {
+            (0.0, 0.0, 0.0)
+        };
+        if let Some(obj) = metrics.as_object_mut() {
+            obj.insert("usedCount".into(),     used.into());
+            obj.insert("partialCount".into(),  partial.into());
+            obj.insert("ignoredCount".into(),  ignored.into());
+            obj.insert("verdictTotal".into(),  total.into());
+            obj.insert("usedPct".into(),       used_pct.into());
+            obj.insert("partialPct".into(),    partial_pct.into());
+            obj.insert("ignoredPct".into(),    ignored_pct.into());
+            obj.insert("verdictWindowDays".into(), HEALTH_VERDICT_WINDOW_DAYS.into());
+        }
+
         let signal = signals_by_tool.get(row.tool_name.as_str()).copied();
         ctx.pg()
             .insert_tool_insight(&row.tool_name, &metrics, signal)
@@ -53,6 +99,7 @@ pub async fn aggregate_tool_insights(ctx: &TaskContext, _task: &Task) -> Result<
         written,
         tools = typed.len(),
         signals = signals.len(),
+        window_days = HEALTH_VERDICT_WINDOW_DAYS,
         "aggregate_tool_insights: wrote snapshot",
     );
     Ok(written)
