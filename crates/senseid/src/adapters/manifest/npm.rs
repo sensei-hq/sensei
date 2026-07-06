@@ -144,6 +144,27 @@ impl ManifestAdapter for NpmManifestAdapter {
 
         members
     }
+
+    /// Read `scripts` from `package.json` and emit one DiscoveredCommand
+    /// per entry (#83). `command_line` is the standard `<pm> run <name>`
+    /// form — we don't know if the user prefers bun/npm/pnpm here, so we
+    /// leave that to the caller (the scan pipeline picks based on lock
+    /// file). Category is derived from the script name via the shared
+    /// [`command_category::categorise`] classifier.
+    fn parse_commands(&self, content: &str) -> Vec<super::DiscoveredCommand> {
+        let Ok(pkg) = serde_json::from_str::<serde_json::Value>(content) else { return Vec::new() };
+        let Some(scripts) = pkg.get("scripts").and_then(|v| v.as_object()) else { return Vec::new() };
+        scripts.iter().filter_map(|(name, _value)| {
+            if name.is_empty() { return None; }
+            Some(super::DiscoveredCommand {
+                raw_name: name.clone(),
+                // Package-manager-agnostic. The runner picks bun/npm/pnpm
+                // at exec time based on lockfile presence.
+                command_line: format!("npm run {name}"),
+                category: super::command_category::categorise(name),
+            })
+        }).collect()
+    }
 }
 
 /// Build a `PackageInfo` for a workspace-member folder that contains a
@@ -185,6 +206,50 @@ mod tests {
         let a = NpmManifestAdapter;
         assert_eq!(a.ecosystem(), "npm");
         assert_eq!(a.manifest_filenames(), &["package.json"]);
+    }
+
+    // ── #83 commands surface — parse_commands ──────────────────────────────
+
+    #[test]
+    fn parse_commands_extracts_scripts_and_categorises() {
+        let a = NpmManifestAdapter;
+        let pkg = r#"{
+            "name": "app",
+            "scripts": {
+                "test": "vitest",
+                "test:e2e": "playwright test",
+                "build": "vite build",
+                "lint": "eslint src",
+                "custom": "node custom.js"
+            }
+        }"#;
+        let cmds = a.parse_commands(pkg);
+        assert_eq!(cmds.len(), 5, "one row per script");
+
+        // Category classification hits the shared vocabulary.
+        let by_name: std::collections::HashMap<&str, &super::super::DiscoveredCommand> =
+            cmds.iter().map(|c| (c.raw_name.as_str(), c)).collect();
+        assert_eq!(by_name["test"].category, Some("test"));
+        assert_eq!(by_name["test:e2e"].category, Some("e2e"), "e2e wins over test");
+        assert_eq!(by_name["build"].category, Some("build"));
+        assert_eq!(by_name["lint"].category, Some("lint"));
+        assert_eq!(by_name["custom"].category, None, "unclassified stays None");
+
+        // Command line uses the package-manager-agnostic form.
+        assert_eq!(by_name["test"].command_line, "npm run test");
+        assert_eq!(by_name["test:e2e"].command_line, "npm run test:e2e");
+    }
+
+    #[test]
+    fn parse_commands_empty_when_scripts_missing() {
+        let a = NpmManifestAdapter;
+        assert!(a.parse_commands(r#"{"name":"app"}"#).is_empty());
+    }
+
+    #[test]
+    fn parse_commands_empty_when_invalid_json() {
+        let a = NpmManifestAdapter;
+        assert!(a.parse_commands("not json").is_empty());
     }
 
     #[test]
