@@ -485,6 +485,44 @@
                                 <span class="text-ink-mute">Errors</span>
                                 <span class="font-mono">{insight.metrics.errorCount ?? 0}</span>
                             </div>
+
+                            {#if (insight.metrics.verdictTotal ?? 0) > 0}
+                                <!-- #84 T2 Slice D — 14d verdict split from
+                                     aggregate_tool_insights. Only render when
+                                     the window has at least one classified
+                                     verdict; unused tools would otherwise
+                                     show a zero-bar. -->
+                                <div class="mt-3 pt-3 border-t border-paper-mute">
+                                    <div class="flex items-baseline justify-between mb-1.5">
+                                        <span class="text-xs uppercase tracking-wide text-ink-mute">
+                                            Usage split · {insight.metrics.verdictWindowDays ?? 14}d
+                                        </span>
+                                        <span class="text-xs text-ink-soft font-mono">
+                                            {insight.metrics.verdictTotal} classified
+                                        </span>
+                                    </div>
+                                    <!-- Segmented bar: used | partial | ignored. Percentages come
+                                         from the aggregator so client stays a pure renderer. -->
+                                    <div class="flex h-2 rounded overflow-hidden bg-paper-mute" title={
+                                        `used ${((insight.metrics.usedPct ?? 0) * 100).toFixed(0)}% · partial ${((insight.metrics.partialPct ?? 0) * 100).toFixed(0)}% · ignored ${((insight.metrics.ignoredPct ?? 0) * 100).toFixed(0)}%`
+                                    }>
+                                        {#if (insight.metrics.usedPct ?? 0) > 0}
+                                            <div class="bg-success" style="width: {((insight.metrics.usedPct ?? 0) * 100).toFixed(1)}%"></div>
+                                        {/if}
+                                        {#if (insight.metrics.partialPct ?? 0) > 0}
+                                            <div class="bg-warning" style="width: {((insight.metrics.partialPct ?? 0) * 100).toFixed(1)}%"></div>
+                                        {/if}
+                                        {#if (insight.metrics.ignoredPct ?? 0) > 0}
+                                            <div class="bg-ink-mute" style="width: {((insight.metrics.ignoredPct ?? 0) * 100).toFixed(1)}%"></div>
+                                        {/if}
+                                    </div>
+                                    <div class="flex gap-3 mt-1.5 text-[10px]">
+                                        <span><span class="inline-block w-2 h-2 rounded-sm bg-success align-middle mr-1"></span>used {insight.metrics.usedCount ?? 0}</span>
+                                        <span><span class="inline-block w-2 h-2 rounded-sm bg-warning align-middle mr-1"></span>partial {insight.metrics.partialCount ?? 0}</span>
+                                        <span><span class="inline-block w-2 h-2 rounded-sm bg-ink-mute align-middle mr-1"></span>ignored {insight.metrics.ignoredCount ?? 0}</span>
+                                    </div>
+                                </div>
+                            {/if}
                             {#if insight.title && insight.detail}
                                 <div class="mt-2 text-xs text-ink-soft leading-normal">
                                     <span class="font-medium">{insight.title}.</span> {insight.detail}
