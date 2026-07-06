@@ -16,6 +16,46 @@ pub(crate) struct SessionsQuery {
     limit: Option<i64>,
 }
 
+#[derive(Deserialize)]
+pub(crate) struct CommandsQuery {
+    /// Optional canonical verb (`test` / `build` / `lint` / `e2e` / …).
+    /// Absent → return every category.
+    pub category: Option<String>,
+}
+
+/// GET /api/projects/{id}/commands — #83 T1 commands surface. Returns every
+/// discoverable command across the project's folders, or a category subset
+/// when `?category=<verb>` is set. Populated by
+/// `ManifestAdapter::parse_commands` during `extract_deps` — a re-scan
+/// refreshes each folder's rows atomically.
+///
+/// Accepts `{id}` as a project name OR UUID, matching the read-side pattern
+/// the MCP tool `get_commands` uses (repo_id from `resolve_project` is a
+/// name).
+pub(crate) async fn get_project_commands(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<CommandsQuery>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    // Resolve name → uuid, or accept a raw UUID.
+    let uuid = if let Some(row) = state.pg.get_project_by_name(&id).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    {
+        crate::api::util::json_uuid(&row["id"]).ok_or(StatusCode::INTERNAL_SERVER_ERROR)?
+    } else if let Ok(uid) = uuid::Uuid::parse_str(&id) {
+        state.pg.get_project(&uid).await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+            .ok_or(StatusCode::NOT_FOUND)?;
+        uid
+    } else {
+        return Err(StatusCode::NOT_FOUND);
+    };
+
+    let rows = state.pg.get_project_commands(&uuid, q.category.as_deref()).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(serde_json::json!({"commands": rows, "count": rows.len()})))
+}
+
 pub(crate) async fn get_project_ftr(
     State(state): State<AppState>,
     Path(id): Path<String>,

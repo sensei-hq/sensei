@@ -103,6 +103,7 @@ pub fn create_router(state: AppState) -> Router {
                put(project_detail::decide_impact_verdict))
         .route("/api/projects/{id}/sessions",        get(project_detail::get_project_sessions))
         .route("/api/projects/{id}/project-deps",    get(project_detail::get_project_project_deps))
+        .route("/api/projects/{id}/commands",        get(project_detail::get_project_commands))
         .route("/api/projects/{id}/library-version-conflicts", get(project_detail::get_project_library_version_conflicts))
         // Observatory chart data
         .route("/api/observatory/ftr-daily",             get(observatory::holistic_ftr_daily))

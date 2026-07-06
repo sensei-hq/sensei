@@ -155,6 +155,10 @@ fn handle_list_tools() -> Value {
             tool("get_duplicates", "Find duplicate or very similar functions across different files. Use during /sensei:review to catch code duplication.", &[], &[]),
             tool("get_project_conventions", "Analyze project conventions — naming patterns, directory structure, design patterns. Use to understand how this project is structured.", &[], &[]),
             tool("get_rules", "Get the governance rules that apply to this repository, resolved across its scopes (organization / project / technology / …) and ranked by enforcement. Rules flagged mandatory are non-negotiable and cannot be overridden. Call at the start of a task to learn the constraints you must obey.", &[], &[]),
+            tool("get_commands", "List the discoverable commands for this project — the actual `test` / `build` / `lint` / `e2e` invocations, derived from each folder's manifest (package.json scripts, etc.). Call when you need to know how to run tests, build, or lint here without guessing. Optionally filter by canonical category verb.", &[], &[
+                ("project",  "string", "Project name. Defaults to current project."),
+                ("category", "string", "Canonical verb filter — test | build | lint | e2e | run | format | typecheck | bench | docs | dev | start."),
+            ]),
             // Inference
             tool("infer", "Run inference using the gateway — chat, classify, summarize, or reason about text. Routes to the best available model automatically.", &[
                 ("prompt", "string", "The text prompt or question"),
@@ -509,6 +513,20 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
         return daemon_result(result);
     }
 
+    if tool_name == "get_commands" {
+        // #83 T1 commands surface. `repo_id` here is the project name (see
+        // resolve_project). Optional category filter passes through. The
+        // daemon-side handler resolves the project name to its UUID, so a
+        // straight path segment is fine — no URL encoding needed for the
+        // sensible name shape (alphanumeric + hyphen).
+        let category = args["category"].as_str().unwrap_or("");
+        let mut req = client.get(format!("{}/api/projects/{}/commands", daemon_url(), repo_id));
+        if !category.is_empty() {
+            req = req.query(&[("category", category)]);
+        }
+        return daemon_result(req.send());
+    }
+
     if tool_name == "log_event" {
         // The activity.events sink was retired (#68) — nothing consumed it, and
         // the session analyzer derives its signals from the hook stream
@@ -847,7 +865,7 @@ mod tests {
         "get_lib_docs", "search_lib_docs", "get_communities", "get_patterns",
         "list_projects", "create_session", "update_session", "add_library",
         "update_phase", "get_workflow_state", "match_pattern", "get_pattern_for",
-        "get_duplicates", "get_project_conventions", "get_rules", "infer", "embed",
+        "get_duplicates", "get_project_conventions", "get_rules", "get_commands", "infer", "embed",
         "gateway_status", "consensus", "generate_image", "log_event",
         "propose_memory", "save_memory", "promote_memory", "accept_proposal",
         "reject_proposal", "record_outcome", "get_layered_context",
