@@ -19,12 +19,14 @@ Sensei watches your coding sessions, learns your team's patterns and conventions
 | Directory | Language | Purpose |
 |-----------|----------|---------|
 | [`app/`](app/) | SvelteKit + Tauri | Desktop observatory |
-| [`daemon/`](daemon/) | Rust | Background daemon, CLI, MCP server |
+| [`crates/`](crates/) | Rust | Background daemon, CLI, MCP server (single unified workspace) |
 | [`website/`](website/) | SvelteKit | Marketing website |
-| [`gateway/`](gateway/) | Rust | LLM routing library |
 | [`docs/`](docs/) | Markdown | Design docs, mockups, backlog |
 
-**[marketplace](https://github.com/sensei-hq/marketplace)** — skills, commands, agents, and hooks — is a separate repo whose version tracks this one.
+Sibling repos (versioned independently, pulled in as dependencies):
+
+- **[sensei-hq/gateway](https://github.com/sensei-hq/gateway)** — LLM routing library. Consumed by the daemon as a git dependency (`gateway-embedded` in `crates/senseid/Cargo.toml`). Previously vendored here as `gateway/`; moved out so it can be released to crates.io on its own cadence.
+- **[sensei-hq/marketplace](https://github.com/sensei-hq/marketplace)** — skills, commands, agents, and hooks. Version tracks this repo.
 
 ## Install (macOS)
 
@@ -72,13 +74,12 @@ make bump v=0.3.0
 
 ```bash
 make update
-# cargo update (daemon + gateway) + bun update (app + website) + make test
+# cargo update + bun update (app + website) + make test
 ```
 
 ## Component READMEs
 
 - [app/README.md](app/README.md) — desktop app setup, routes, build
-- [daemon/README.md](daemon/README.md) — crates, database, build targets
 - [website/README.md](website/README.md) — marketing site, deployment
-- [gateway/README.md](gateway/README.md) — LLM routing, providers, capabilities
 - [docs/README.md](docs/README.md) — design docs index
+- [sensei-hq/gateway](https://github.com/sensei-hq/gateway) — LLM routing, providers, capabilities (separate repo)
