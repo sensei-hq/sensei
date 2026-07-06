@@ -10,6 +10,7 @@ import type {
   KnowledgeSource, NewKnowledgeSourceBody, SyncStats,
   McpToolManifest, SessionToolTimeline, MemoryShareBatch, ImpactVerdictEntry,
   ProjectMcpToolStat, ToolSignal, ProjectService, ToolInsight,
+  SessionReplayResponse, McpServerRow, McpServerToolsManifest,
 } from './types.js';
 import type {
   MemoryListResponse, MemoryDetail, ContextResponse,
@@ -542,6 +543,55 @@ export function senseiApi(port: number) {
         `/api/sessions/${enc(sessionId)}/tool-timeline?limit=${limit}`,
         { sessionId, calls: [], count: 0 },
       ),
+
+    // #84 T2 Slice C — Replay timeline with #90 verdicts joined + session
+    // summary. Set `classify: true` to run the classifier before the read
+    // (idempotent — safe on every open) so verdicts populate on first view.
+    getSessionReplay: (sessionId: string, opts: { limit?: number; classify?: boolean } = {}) => {
+      const p = new URLSearchParams();
+      p.set('limit', String(opts.limit ?? 200));
+      if (opts.classify) p.set('classify', 'true');
+      return get<SessionReplayResponse>(
+        `/api/sessions/${enc(sessionId)}/replay?${p.toString()}`,
+        { sessionId, calls: [], count: 0, summary: { used: 0, partial: 0, ignored: 0, total: 0 }, classified: 0 },
+      );
+    },
+
+    // #84 T2 Slice A — discovered MCP servers (Claude / Cursor / Zed configs).
+    getMcpServers: (projectId?: string) => {
+      const q = projectId ? `?project_id=${enc(projectId)}` : '';
+      return get<{ servers: McpServerRow[] }>(
+        `/api/instruments/mcp-servers${q}`, { servers: [] },
+      );
+    },
+    setMcpServerEnabled: (id: string, enabled: boolean) =>
+      put(`/api/instruments/mcp-servers/${enc(id)}/enabled`, { enabled }),
+    refreshMcpServers: () =>
+      post<{ discovered: number; pruned: number }>(
+        '/api/instruments/mcp-servers/refresh', {}, { discovered: 0, pruned: 0 },
+      ),
+
+    // #84 T2 Slice B — cached tool manifest per server. `?refresh=true`
+    // forces a re-probe; `?probe=false` returns stale-badged cache without
+    // spawning.
+    getMcpServerTools: (
+      serverId: string,
+      opts: { refresh?: boolean; probe?: boolean } = {},
+    ) => {
+      const p = new URLSearchParams();
+      if (opts.refresh) p.set('refresh', 'true');
+      if (opts.probe === false) p.set('probe', 'false');
+      const qs = p.toString() ? `?${p.toString()}` : '';
+      return get<McpServerToolsManifest>(
+        `/api/instruments/mcp-servers/${enc(serverId)}/tools${qs}`,
+        {
+          id: '', server_id: serverId, tools: [], tool_count: 0,
+          probed_at: '', ttl_seconds: 900, error: null,
+          protocol_version: null, server_name: null, server_version: null,
+          age_seconds: 0,
+        },
+      );
+    },
 
     // ── Marketplace ──────────────────────────────────────────────────
     marketplaceInstall: (target: string, marketplacePath: string, item?: string, scope?: string) =>
