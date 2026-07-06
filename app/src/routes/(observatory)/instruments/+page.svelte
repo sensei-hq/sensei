@@ -7,7 +7,9 @@
     import SignalCard from "$lib/components/SignalCard.svelte";
     import { Eyebrow, PageHeader } from "$lib/components";
     import { mcp } from "$lib/state/mcp.svelte.js";
-    import type { McpToolManifest, SessionToolCall } from "$lib/types.js";
+    import type {
+        McpToolManifest, SessionToolCall, SessionReplayCall,
+    } from "$lib/types.js";
 
     type Tool = McpToolManifest;
     type SessionRow = { id: string; task: string; startedAt: string; ftr?: number | null };
@@ -26,12 +28,17 @@
     let executing = $state(false);
 
     // Replay tab state — session list stays local (small, page-scoped);
-    // timelines cache in the mcp store keyed by session id.
+    // timelines cache in the mcp store keyed by session id. Calls carry the
+    // #90 verdict / confidence / verdictReason on the new Replay endpoint
+    // (#84 Slice C), so we widen the type to SessionReplayCall.
     let replaySessions = $state<SessionRow[]>([]);
     let selectedSessionId = $state<string | null>(null);
-    let sessionCalls = $state<SessionToolCall[]>([]);
+    let sessionCalls = $state<SessionReplayCall[]>([]);
+    let sessionSummary = $state<{ used: number; partial: number; ignored: number; total: number }>({
+        used: 0, partial: 0, ignored: 0, total: 0,
+    });
     let replayLoading = $state(false);
-    let selectedCall = $state<SessionToolCall | null>(null);
+    let selectedCall = $state<SessionReplayCall | null>(null);
 
     // Insights tab — the newer cached tool_insights table is loaded lazily
     // when the tab is first opened. Selecting a tool row expands its
@@ -94,9 +101,14 @@
         selectedSessionId = sessionId;
         selectedCall = null;
         sessionCalls = [];
+        sessionSummary = { used: 0, partial: 0, ignored: 0, total: 0 };
         replayLoading = true;
-        // Store-backed cache — repeat selects are instant.
-        sessionCalls = await mcp.loadSessionTimeline(sessionId);
+        // #84 T2 Slice C — Replay endpoint with #90 verdicts joined. First
+        // open triggers `classify: true` so verdicts populate in one round-
+        // trip; subsequent selects hit the cache.
+        const cache = await mcp.loadSessionReplay(sessionId, { classify: true });
+        sessionCalls = cache.calls;
+        sessionSummary = cache.summary;
         replayLoading = false;
     }
 
@@ -302,7 +314,18 @@
 
                 <!-- Call list -->
                 <div class="flex flex-col gap-0.5 max-h-[560px] overflow-auto">
-                    <div class="text-xs uppercase tracking-wide text-ink-mute px-3 py-2">Calls</div>
+                    <div class="flex items-baseline justify-between px-3 py-2">
+                        <span class="text-xs uppercase tracking-wide text-ink-mute">Calls</span>
+                        {#if selectedSessionId && sessionSummary.total > 0}
+                            <!-- #84 T2 Slice C — session verdict summary. -->
+                            <span class="text-[10px] text-ink-soft">
+                                <span class="text-success">{sessionSummary.used}</span> ·
+                                <span class="text-warning">{sessionSummary.partial}</span> ·
+                                <span class="text-ink-mute">{sessionSummary.ignored}</span>
+                                <span class="text-ink-mute">/ {sessionSummary.total}</span>
+                            </span>
+                        {/if}
+                    </div>
                     {#if selectedSessionId == null}
                         <p class="text-xs text-ink-soft px-3">Pick a session.</p>
                     {:else if replayLoading}
@@ -323,6 +346,15 @@
                                     <span class="text-xs text-danger">✗</span>
                                 {:else if call.success === true}
                                     <span class="text-xs text-success">✓</span>
+                                {/if}
+                                <!-- #84 T2 Slice C — #90 verdict badge. Colour by verdict, no
+                                     badge when unclassified. -->
+                                {#if call.verdict === 'used'}
+                                    <span class="text-[10px] px-1.5 py-0.5 rounded bg-success-soft text-success uppercase tracking-wide" title={call.verdictReason ?? ''}>used</span>
+                                {:else if call.verdict === 'partial'}
+                                    <span class="text-[10px] px-1.5 py-0.5 rounded bg-warning-soft text-warning uppercase tracking-wide" title={call.verdictReason ?? ''}>partial</span>
+                                {:else if call.verdict === 'ignored'}
+                                    <span class="text-[10px] px-1.5 py-0.5 rounded bg-paper-soft text-ink-mute uppercase tracking-wide" title={call.verdictReason ?? ''}>ignored</span>
                                 {/if}
                                 <span class="text-xs text-ink-soft">{fmtDuration(call.durationMs)}</span>
                             </button>
