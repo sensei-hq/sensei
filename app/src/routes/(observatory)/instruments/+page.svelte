@@ -48,6 +48,63 @@
         selectedInsightTool ? mcp.insightFor(selectedInsightTool) : undefined,
     );
 
+    // #84 T2 Slice A/B — discovered MCP servers panel state.
+    // Loads lazily on Playground open; expanding a server row fetches its
+    // cached tool manifest (probing lazily when the cache is stale).
+    let discoveredServers = $derived(mcp.mcpServers);
+    let expandedServerId = $state<string | null>(null);
+    let serverProbing = $state<Record<string, boolean>>({});
+    let refreshingServers = $state(false);
+
+    const expandedManifest = $derived(
+        expandedServerId ? mcp.serverToolManifests[expandedServerId] : undefined,
+    );
+
+    async function expandServer(id: string) {
+        if (expandedServerId === id) {
+            expandedServerId = null;
+            return;
+        }
+        expandedServerId = id;
+        if (!mcp.serverToolManifests[id]) {
+            serverProbing = { ...serverProbing, [id]: true };
+            try {
+                await mcp.loadServerTools(id);
+            } finally {
+                serverProbing = { ...serverProbing, [id]: false };
+            }
+        }
+    }
+
+    async function reprobeServer(id: string) {
+        serverProbing = { ...serverProbing, [id]: true };
+        try {
+            await mcp.loadServerTools(id, { refresh: true });
+        } finally {
+            serverProbing = { ...serverProbing, [id]: false };
+        }
+    }
+
+    async function refreshDiscoveredServers() {
+        refreshingServers = true;
+        try {
+            await mcp.refreshMcpServers();
+        } finally {
+            refreshingServers = false;
+        }
+    }
+
+    // Group servers by acp_family so the panel reads as one section per
+    // ACP (Claude/Cursor/Zed …) rather than an undifferentiated soup.
+    const serversByFamily = $derived.by(() => {
+        const out: Record<string, typeof discoveredServers> = {};
+        for (const s of discoveredServers) {
+            if (!out[s.acp_family]) out[s.acp_family] = [];
+            out[s.acp_family].push(s);
+        }
+        return out;
+    });
+
     const instrumentTabs: [string, string][] = [
         ["playground", "Playground"],
         ["replay", "Replay"],
@@ -113,8 +170,12 @@
     }
 
     // Kick off session loading the first time Replay is visible; and load
-    // the tool_insights cache the first time Insights is visible.
+    // the tool_insights cache the first time Insights is visible. Playground
+    // gets a lazy load of the discovered MCP servers panel.
     $effect(() => {
+        if (tab === 'playground') {
+            void mcp.loadMcpServers();
+        }
         if (tab === 'replay') {
             void ensureReplaySessionsLoaded();
         }
@@ -282,6 +343,131 @@
                     {/if}
                 </div>
             </div>
+
+            <!-- #84 T2 Slice A/B — Discovered MCP servers panel. Sits below
+                 the sensei playground so the primary workflow (call sensei's
+                 tools) stays front-and-center; the secondary view (which
+                 other MCPs are configured, what tools they expose) is
+                 discoverable but not in the way. -->
+            <section class="mt-10 pt-8 border-t border-paper-mute" data-testid="discovered-servers">
+                <header class="flex items-baseline justify-between mb-4">
+                    <div>
+                        <Eyebrow>Discovered MCP servers</Eyebrow>
+                        <p class="text-xs text-ink-soft m-0 mt-1">
+                            Configured across Claude Code, Cursor, and Zed. Scan pulls from your ACP config files.
+                        </p>
+                    </div>
+                    <button
+                        class="btn-outline text-xs"
+                        onclick={refreshDiscoveredServers}
+                        disabled={refreshingServers}
+                        data-testid="refresh-servers"
+                    >
+                        {refreshingServers ? "Scanning…" : "Refresh"}
+                    </button>
+                </header>
+
+                {#if mcp.mcpServersStatus === 'loading' && discoveredServers.length === 0}
+                    <p class="text-xs text-ink-soft">Loading servers…</p>
+                {:else if discoveredServers.length === 0}
+                    <p class="text-xs text-ink-soft">
+                        No MCP servers discovered yet. Configure one in Claude Code / Cursor / Zed, then hit Refresh.
+                    </p>
+                {:else}
+                    {#each Object.entries(serversByFamily) as [family, servers]}
+                        <div class="mb-5" data-testid={`servers-family-${family}`}>
+                            <div class="flex items-baseline gap-2 mb-2">
+                                <span class="text-xs uppercase tracking-wide text-ink-mute">{family}</span>
+                                <span class="text-[10px] text-ink-soft font-mono">{servers.length}</span>
+                            </div>
+                            <div class="flex flex-col gap-0.5">
+                                {#each servers as server (server.id)}
+                                    {@const expanded = expandedServerId === server.id}
+                                    {@const manifest = expanded ? expandedManifest : undefined}
+                                    {@const probing = serverProbing[server.id] ?? false}
+                                    <div
+                                        class="border-b border-paper-mute last:border-b-0"
+                                        data-testid={`server-row-${server.mcp_key}`}
+                                    >
+                                        <!-- Row splits into two side-by-side buttons — nesting
+                                             buttons is invalid HTML, so the expand-toggle and the
+                                             enable-toggle sit as siblings inside a flex container. -->
+                                        <div
+                                            class="tool-card flex items-center gap-3 px-3.5 py-2 transition-colors duration-fast"
+                                            class:selected={expanded}
+                                        >
+                                            <button
+                                                class="text-left bg-transparent border-none cursor-pointer flex-1 flex items-center gap-3 py-1 min-w-0"
+                                                onclick={() => expandServer(server.id)}
+                                            >
+                                                <span class="text-sm font-mono text-ink flex-1 truncate">{server.mcp_key}</span>
+                                                <span class="text-[10px] uppercase tracking-wide text-ink-soft">{server.scope}</span>
+                                                {#if !server.enabled}
+                                                    <span class="text-[10px] text-ink-mute">disabled</span>
+                                                {/if}
+                                            </button>
+                                            <button
+                                                class="text-[10px] px-2 py-0.5 rounded border border-paper-mute cursor-pointer transition-colors duration-fast"
+                                                class:bg-primary={server.enabled}
+                                                class:text-on-primary={server.enabled}
+                                                class:bg-transparent={!server.enabled}
+                                                class:text-ink-soft={!server.enabled}
+                                                onclick={() => void mcp.toggleMcpServer(server.id, !server.enabled)}
+                                                data-testid={`server-toggle-${server.mcp_key}`}
+                                                aria-label="Toggle server"
+                                            >
+                                                {server.enabled ? "on" : "off"}
+                                            </button>
+                                        </div>
+                                        {#if expanded}
+                                            <div class="px-3.5 pb-3 pt-1 bg-paper-soft border-t border-paper-mute" data-testid={`server-detail-${server.mcp_key}`}>
+                                                <div class="flex items-baseline justify-between mb-2">
+                                                    <span class="text-[10px] uppercase tracking-wide text-ink-mute">
+                                                        {server.command || '(no command configured)'}
+                                                    </span>
+                                                    <button
+                                                        class="text-[10px] text-ink-soft cursor-pointer bg-transparent border-none"
+                                                        onclick={() => void reprobeServer(server.id)}
+                                                        disabled={probing}
+                                                    >
+                                                        {probing ? "probing…" : "re-probe"}
+                                                    </button>
+                                                </div>
+                                                {#if probing && !manifest}
+                                                    <p class="text-xs text-ink-soft m-0">Probing server…</p>
+                                                {:else if manifest?.error}
+                                                    <p class="text-xs text-danger m-0">Probe failed: {manifest.error}</p>
+                                                {:else if manifest}
+                                                    {@const tools = manifest.tools as Array<{ name?: string; description?: string }>}
+                                                    <div class="flex items-baseline gap-3 mb-2 text-[10px] text-ink-soft">
+                                                        <span>{manifest.tool_count} tools</span>
+                                                        {#if manifest.server_name}<span>{manifest.server_name}{manifest.server_version ? ` ${manifest.server_version}` : ''}</span>{/if}
+                                                        {#if manifest.protocol_version}<span class="font-mono">mcp {manifest.protocol_version}</span>{/if}
+                                                    </div>
+                                                    {#if tools.length === 0}
+                                                        <p class="text-xs text-ink-soft m-0">Server exposed no tools.</p>
+                                                    {:else}
+                                                        <ul class="list-none p-0 m-0 flex flex-col gap-1">
+                                                            {#each tools as tool}
+                                                                <li class="text-xs">
+                                                                    <span class="font-mono text-ink">{tool.name ?? '(unnamed)'}</span>
+                                                                    {#if tool.description}
+                                                                        <span class="text-ink-soft"> — {tool.description}</span>
+                                                                    {/if}
+                                                                </li>
+                                                            {/each}
+                                                        </ul>
+                                                    {/if}
+                                                {/if}
+                                            </div>
+                                        {/if}
+                                    </div>
+                                {/each}
+                            </div>
+                        </div>
+                    {/each}
+                {/if}
+            </section>
         {/if}
     {:else if tab === "replay"}
         {#if replayLoading && replaySessions.length === 0}
