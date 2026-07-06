@@ -3084,6 +3084,226 @@ impl PgStore {
         Ok(rows.len())
     }
 
+    // ── #84 Track 2 Slice B — MCP tool manifest cache ─────────────────────
+
+    /// Read the cached tool manifest for a server. `None` when nothing has
+    /// been probed yet.
+    pub async fn get_mcp_tool_manifest(
+        &self,
+        server_id: &uuid::Uuid,
+    ) -> Result<Option<serde_json::Value>, String> {
+        let row: Option<(uuid::Uuid, serde_json::Value, i32, chrono::DateTime<chrono::Utc>, i32, Option<String>, Option<String>, Option<String>, Option<String>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT id, tools, tool_count, probed_at, ttl_seconds, error,
+                        protocol_version, server_name, server_version
+                   FROM sensei.mcp_tool_manifests
+                  WHERE server_id = $1"
+            )
+            .bind(server_id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        Ok(row.map(|(id, tools, tool_count, probed_at, ttl, error, pv, sn, sv)| serde_json::json!({
+            "id":                id,
+            "server_id":         server_id,
+            "tools":             tools,
+            "tool_count":        tool_count,
+            "probed_at":         probed_at.to_rfc3339(),
+            "ttl_seconds":       ttl,
+            "error":             error,
+            "protocol_version":  pv,
+            "server_name":       sn,
+            "server_version":    sv,
+            "age_seconds":       (chrono::Utc::now() - probed_at).num_seconds(),
+        })))
+    }
+
+    /// Upsert a probed manifest. Uses `server_id UNIQUE` on the table so a
+    /// re-probe overwrites in place.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn upsert_mcp_tool_manifest(
+        &self,
+        server_id: &uuid::Uuid,
+        tools: &serde_json::Value,
+        tool_count: i32,
+        protocol_version: Option<&str>,
+        server_name: Option<&str>,
+        server_version: Option<&str>,
+        error: Option<&str>,
+    ) -> Result<(), String> {
+        sqlx_core::query::query(
+            "INSERT INTO sensei.mcp_tool_manifests
+                (server_id, tools, tool_count, probed_at, protocol_version, server_name, server_version, error)
+             VALUES ($1, $2, $3, now(), $4, $5, $6, $7)
+             ON CONFLICT (server_id) DO UPDATE SET
+                tools            = EXCLUDED.tools,
+                tool_count       = EXCLUDED.tool_count,
+                probed_at        = now(),
+                protocol_version = EXCLUDED.protocol_version,
+                server_name      = EXCLUDED.server_name,
+                server_version   = EXCLUDED.server_version,
+                error            = EXCLUDED.error"
+        )
+        .bind(server_id).bind(tools).bind(tool_count)
+        .bind(protocol_version).bind(server_name).bind(server_version).bind(error)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Full server row for the probe orchestrator — command, args, env,
+    /// enabled state — keyed by id.
+    pub async fn get_mcp_server_by_id(
+        &self,
+        id: &uuid::Uuid,
+    ) -> Result<Option<serde_json::Value>, String> {
+        let row: Option<(uuid::Uuid, String, String, String, Option<uuid::Uuid>, String, String, serde_json::Value, serde_json::Value, bool, String)> =
+            sqlx_core::query_as::query_as(
+                "SELECT id, acp_family, mcp_key, scope, project_id, config_source, command, args, env, enabled, connection_state
+                   FROM sensei.mcp_servers WHERE id = $1"
+            )
+            .bind(id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+
+        Ok(row.map(|(id, family, key, scope, pid, source, cmd, args, env, enabled, state)| serde_json::json!({
+            "id": id, "acp_family": family, "mcp_key": key, "scope": scope,
+            "project_id": pid, "config_source": source, "command": cmd,
+            "args": args, "env": env, "enabled": enabled, "connection_state": state,
+        })))
+    }
+
+    // ── #84 Track 2 Slice D — Health tab per-tool verdict split ───────────
+
+    /// Per-tool verdict counts (`used` / `partial` / `ignored`) over the
+    /// last N days. Feeds the Health tab's "usage split %" via
+    /// `aggregate_tool_insights` (#84 T2 Slice D). Zero-row tools that
+    /// still appear in `tool_usage_stats` land with all-zero counts on the
+    /// caller side; this method returns only tools that have at least one
+    /// classified verdict in the window.
+    pub async fn get_verdict_split_per_tool(
+        &self,
+        days: i32,
+    ) -> Result<Vec<(String, i64, i64, i64)>, String> {
+        let rows: Vec<(String, i64, i64, i64)> = sqlx_core::query_as::query_as(
+            "SELECT COALESCE(tool_name, '') AS tool_name,
+                    count(*) FILTER (WHERE verdict = 'used')::bigint    AS used,
+                    count(*) FILTER (WHERE verdict = 'partial')::bigint AS partial,
+                    count(*) FILTER (WHERE verdict = 'ignored')::bigint AS ignored
+               FROM sensei.tool_call_verdicts
+              WHERE classified_at > now() - ($1::int || ' days')::interval
+              GROUP BY tool_name
+              HAVING count(*) > 0"
+        )
+        .bind(days)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(rows)
+    }
+
+    // ── #84 Track 2 Slice C — Replay tab session timeline ─────────────────
+
+    /// Session timeline for the Replay tab (#84 T2 Slice C). Same
+    /// paired-call shape as [`get_session_tool_calls`], but also joins
+    /// `sensei.tool_call_verdicts` (#90) on the underlying PostToolUse
+    /// event id so each row carries the usage verdict.
+    ///
+    /// The existing view [`sensei.session_tool_calls`] keys on the
+    /// PreToolUse event id (call_id); verdicts are keyed on the
+    /// PostToolUse event id. This query recomputes both directly against
+    /// `activity.assistant_events` so we can LEFT JOIN verdicts on the
+    /// PostToolUse id without changing either the view or the verdicts
+    /// table.
+    pub async fn get_session_replay_timeline(
+        &self,
+        session_id: &str,
+        limit: i32,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(
+            i64,                                              // pre_id (call_id)
+            Option<i64>,                                      // post_id
+            String,                                           // tool_name
+            String,                                           // family
+            serde_json::Value,                                // request
+            Option<serde_json::Value>,                        // response
+            Option<bool>,                                     // success
+            i64,                                              // pre_ts
+            Option<i64>,                                      // post_ts
+            Option<i64>,                                      // duration_ms
+            Option<String>,                                   // verdict
+            Option<f32>,                                      // confidence
+            Option<String>,                                   // reason
+        )> = sqlx_core::query_as::query_as(
+            "WITH pre AS (
+                SELECT session_id, family::text AS family, tool_name,
+                       id AS pre_id, ts AS pre_ts, payload AS request,
+                       row_number() OVER (
+                           PARTITION BY session_id, tool_name
+                           ORDER BY ts, id
+                       ) AS seq
+                  FROM activity.assistant_events
+                 WHERE event_type = 'PreToolUse'
+                   AND tool_name IS NOT NULL
+                   AND session_id = $1
+            ),
+            post AS (
+                SELECT session_id, tool_name,
+                       id AS post_id, ts AS post_ts,
+                       payload AS response, success,
+                       row_number() OVER (
+                           PARTITION BY session_id, tool_name
+                           ORDER BY ts, id
+                       ) AS seq
+                  FROM activity.assistant_events
+                 WHERE event_type = 'PostToolUse'
+                   AND tool_name IS NOT NULL
+                   AND session_id = $1
+            )
+            SELECT pre.pre_id, post.post_id, pre.tool_name, pre.family,
+                   pre.request, post.response, post.success,
+                   pre.pre_ts, post.post_ts,
+                   CASE WHEN post.post_ts IS NULL THEN NULL
+                        ELSE GREATEST(post.post_ts - pre.pre_ts, 0)
+                   END AS duration_ms,
+                   v.verdict, v.confidence, v.reason
+              FROM pre
+              LEFT JOIN post ON pre.session_id = post.session_id
+                            AND pre.tool_name  = post.tool_name
+                            AND pre.seq        = post.seq
+              LEFT JOIN sensei.tool_call_verdicts v ON v.event_id = post.post_id
+             ORDER BY pre.pre_ts ASC
+             LIMIT $2"
+        )
+        .bind(session_id)
+        .bind(limit as i64)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        Ok(rows.into_iter().map(|(
+            pre_id, post_id, tool_name, family, request, response, success,
+            pre_ts, post_ts, duration_ms, verdict, confidence, reason,
+        )| {
+            serde_json::json!({
+                "callId":         pre_id,
+                "postEventId":    post_id,
+                "toolName":       tool_name,
+                "family":         family,
+                "request":        request,
+                "response":       response,
+                "success":        success,
+                "startedAtMs":    pre_ts,
+                "completedAtMs":  post_ts,
+                "durationMs":     duration_ms,
+                "inFlight":       post_ts.is_none(),
+                "verdict":        verdict,    // null when unclassified
+                "confidence":     confidence,
+                "verdictReason":  reason,
+            })
+        }).collect())
+    }
+
     // ── #84 Track 2 Slice A — mcp_servers ─────────────────────────────────
 
     /// Upsert a discovered MCP server row (#84). The uniqueness key is
