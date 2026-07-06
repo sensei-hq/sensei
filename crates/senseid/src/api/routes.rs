@@ -161,6 +161,7 @@ pub fn create_router(state: AppState) -> Router {
         // Instruments — discovered MCP servers (#84 T2 Slice A)
         .route("/api/instruments/mcp-servers", get(mcp_servers_handler::list))
         .route("/api/instruments/mcp-servers/{id}/enabled", put(mcp_servers_handler::set_enabled))
+        .route("/api/instruments/mcp-servers/{id}/tools", get(mcp_servers_handler::get_tools))
         .route("/api/instruments/mcp-servers/refresh", post(mcp_servers_handler::refresh))
         // Unified query (desktop/MCP)
         .route("/api/query", post(query::unified_query))
@@ -192,6 +193,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/sessions", get(sessions::get_sessions_stub).post(sessions::create_session))
         .route("/api/sessions/{id}", put(sessions::update_session_handler))
         .route("/api/sessions/{id}/tool-timeline", get(sessions::get_session_tool_timeline))
+        .route("/api/sessions/{id}/replay", get(sessions::get_session_replay))
         // Patterns
         .route("/api/patterns/{project}/detect", post(codebase::detect_patterns))
         .route("/api/patterns/{project}", get(codebase::list_patterns))
