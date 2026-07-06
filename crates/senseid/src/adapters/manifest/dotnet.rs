@@ -93,9 +93,11 @@ impl ManifestAdapter for DotnetManifestAdapter {
             }
             // The exact PropertyGroup nesting depth varies (top-level or
             // per-config), so match by ends_with instead of exact path.
-            if path.ends_with(&["AssemblyName"]) && name.is_none() {
-                name = Some(text.to_string());
-            } else if path.ends_with(&["RootNamespace"]) && name.is_none() {
+            // AssemblyName wins over RootNamespace when both are present;
+            // whichever comes first in the file sets `name`.
+            if (path.ends_with(&["AssemblyName"]) || path.ends_with(&["RootNamespace"]))
+                && name.is_none()
+            {
                 name = Some(text.to_string());
             } else if path.ends_with(&["Version"]) && version.is_none() {
                 // Guard against the PackageReference Version child — that's
