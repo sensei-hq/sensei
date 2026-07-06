@@ -466,7 +466,10 @@ mod tests {
         let entry = serde_json::json!({"command": "sensei-mcp", "args": []});
         upsert_sensei_in_json(&path, "mcpServers", entry).unwrap();
 
-        let content: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        // Written file preserves the leading `// Zed settings` header (#51),
+        // so the assertion uses json5 (JSONC-tolerant) rather than strict
+        // serde_json.
+        let content: serde_json::Value = json5::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         // Sensei entry added
         assert_eq!(content["mcpServers"][MCP_REGISTRY_KEY]["command"], "sensei-mcp");
         // Sibling mcpServer preserved
@@ -493,7 +496,7 @@ mod tests {
         let entry = serde_json::json!({"command": "sensei-mcp"});
         upsert_sensei_in_json(&path, "mcpServers", entry).unwrap();
 
-        let content: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let content: serde_json::Value = json5::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(content["mcpServers"][MCP_REGISTRY_KEY]["command"], "sensei-mcp");
         assert_eq!(content["mcpServers"]["postgres"]["command"], "pg-mcp");
         assert_eq!(content["vim_mode"], false);
@@ -514,7 +517,7 @@ mod tests {
 
         assert!(remove_sensei_from_json(&path, "mcpServers"));
 
-        let content: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let content: serde_json::Value = json5::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert!(content["mcpServers"][MCP_REGISTRY_KEY].is_null());
         assert_eq!(content["mcpServers"]["svelte"]["command"], "svelte-mcp");
         assert_eq!(content["terminal"]["dock"], "right");
