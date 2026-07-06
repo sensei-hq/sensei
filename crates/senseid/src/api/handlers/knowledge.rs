@@ -171,6 +171,86 @@ pub(crate) async fn materialize_rules(
     Ok(Json(serde_json::json!({ "path": path.display().to_string(), "rules": count })))
 }
 
+/// Managed-block marker used to bracket the sensei pointer inside the user's
+/// global `~/.claude/CLAUDE.md`. Any content between the two lines is owned by
+/// the daemon and safe to rewrite on every startup; content outside is
+/// user-authored and preserved verbatim.
+const CLAUDE_MD_BEGIN: &str = "<!-- sensei:global-rules-pointer BEGIN -->";
+const CLAUDE_MD_END:   &str = "<!-- sensei:global-rules-pointer END -->";
+
+/// The one-line pointer body itself. Kept short so it costs almost nothing on
+/// every message. References the file the daemon just materialized so any ACP
+/// (Claude Code, non-Claude ACPs that also read CLAUDE.md, or a post-compact
+/// Claude session) knows where the resolved global rules live.
+fn render_pointer_block(rules_path: &std::path::Path) -> String {
+    format!(
+        "{begin}\n\
+         Global governance rules resolved by sensei live at `{path}`. \
+         Rules flagged **mandatory** are non-negotiable and cannot be \
+         overridden by more-specific scopes.\n\
+         {end}\n",
+        begin = CLAUDE_MD_BEGIN,
+        end   = CLAUDE_MD_END,
+        path  = rules_path.display(),
+    )
+}
+
+/// Splice `new_block` into `existing`, replacing any prior sensei-managed block
+/// (between `CLAUDE_MD_BEGIN` and `CLAUDE_MD_END`). If no prior block exists,
+/// appends the new block after one blank line so it sits at the end of the
+/// file without smashing into pre-existing user content. Pure — returns the
+/// new file contents.
+pub(crate) fn splice_pointer_block(existing: &str, new_block: &str) -> String {
+    if let Some(begin_idx) = existing.find(CLAUDE_MD_BEGIN)
+        && let Some(end_rel) = existing[begin_idx..].find(CLAUDE_MD_END)
+    {
+        let end_idx = begin_idx + end_rel + CLAUDE_MD_END.len();
+        // Also swallow one trailing newline so we don't accumulate blank
+        // lines across re-runs.
+        let after = existing[end_idx..].strip_prefix('\n').unwrap_or(&existing[end_idx..]);
+        let mut out = String::with_capacity(existing.len() + new_block.len());
+        out.push_str(&existing[..begin_idx]);
+        out.push_str(new_block);
+        out.push_str(after);
+        return out;
+    }
+    let mut out = existing.to_string();
+    if !out.is_empty() && !out.ends_with('\n') {
+        out.push('\n');
+    }
+    if !out.is_empty() {
+        out.push('\n');
+    }
+    out.push_str(new_block);
+    out
+}
+
+/// Upsert the sensei pointer block into the user's global `~/.claude/CLAUDE.md`.
+/// Only touches an existing file (no-op if the file is missing) — sensei never
+/// creates a global CLAUDE.md on behalf of the user; if they haven't set up
+/// Claude Code globally, the session-start hook at
+/// `marketplace/plugins/sensei/hooks/session-start` covers rules injection
+/// on its own. Idempotent: rerun replaces the managed block, preserves
+/// everything else. Returns the path written and whether it changed.
+pub(crate) fn upsert_pointer_in_claude_md(
+    claude_md: &std::path::Path,
+    rules_path: &std::path::Path,
+) -> Result<Option<(std::path::PathBuf, bool)>, String> {
+    if !claude_md.exists() {
+        return Ok(None);
+    }
+    let existing = std::fs::read_to_string(claude_md)
+        .map_err(|e| format!("read {}: {e}", claude_md.display()))?;
+    let new_block = render_pointer_block(rules_path);
+    let out = splice_pointer_block(&existing, &new_block);
+    if out == existing {
+        return Ok(Some((claude_md.to_path_buf(), false)));
+    }
+    std::fs::write(claude_md, out)
+        .map_err(|e| format!("write {}: {e}", claude_md.display()))?;
+    Ok(Some((claude_md.to_path_buf(), true)))
+}
+
 // ============================================================================
 // POST /api/knowledge/proposals  — propose_memory
 // POST /api/knowledge/memories   — save_memory (explicit)
@@ -615,5 +695,87 @@ mod tests {
         let body = std::fs::read_to_string(&path).unwrap();
         assert!(body.contains("Managed by sensei"), "managed header present");
         assert!(body.contains("# Sensei Rules"), "title present");
+    }
+
+    // #13 — Global rules pointer in ~/.claude/CLAUDE.md
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn splice_appends_when_no_managed_block_present() {
+        let rules_path = std::path::PathBuf::from("/home/u/.sensei/rules.md");
+        let existing = "# My CLAUDE.md\n\nUser content here.\n";
+        let out = splice_pointer_block(existing, &render_pointer_block(&rules_path));
+        assert!(out.starts_with("# My CLAUDE.md\n\nUser content here.\n"), "prior user content preserved verbatim");
+        assert!(out.contains(CLAUDE_MD_BEGIN));
+        assert!(out.contains(CLAUDE_MD_END));
+        assert!(out.contains("/home/u/.sensei/rules.md"));
+        assert!(out.contains("**mandatory**"));
+    }
+
+    #[test]
+    fn splice_replaces_prior_block_and_does_not_accumulate() {
+        let rules_path = std::path::PathBuf::from("/home/u/.sensei/rules.md");
+        let existing_block = render_pointer_block(&std::path::PathBuf::from("/OLD/path/rules.md"));
+        let user_before = "# User CLAUDE.md\n\nFirst paragraph.\n\n";
+        let user_after = "\n## Later section\n\nMore user content.\n";
+        let existing = format!("{user_before}{existing_block}{user_after}");
+
+        let out = splice_pointer_block(&existing, &render_pointer_block(&rules_path));
+
+        // New block present, old one gone.
+        assert!(out.contains("/home/u/.sensei/rules.md"), "new path landed");
+        assert!(!out.contains("/OLD/path/rules.md"), "old path swept");
+
+        // Only one begin marker (idempotent — never doubles).
+        assert_eq!(out.matches(CLAUDE_MD_BEGIN).count(), 1, "no marker accumulation");
+        assert_eq!(out.matches(CLAUDE_MD_END).count(), 1);
+
+        // Surrounding user content intact.
+        assert!(out.contains("# User CLAUDE.md"));
+        assert!(out.contains("First paragraph."));
+        assert!(out.contains("## Later section"));
+        assert!(out.contains("More user content."));
+    }
+
+    #[test]
+    fn splice_is_a_fixed_point_on_second_run() {
+        // A pointer block written once and re-spliced with the same path must
+        // produce a byte-identical output — the daemon's startup upsert fires
+        // on every boot and mustn't churn the file.
+        let rules_path = std::path::PathBuf::from("/home/u/.sensei/rules.md");
+        let block = render_pointer_block(&rules_path);
+        let first = splice_pointer_block("# CLAUDE.md\n\nHello.\n", &block);
+        let second = splice_pointer_block(&first, &block);
+        assert_eq!(first, second, "idempotent: second run leaves the file unchanged");
+    }
+
+    #[test]
+    fn upsert_is_noop_when_file_missing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let claude_md = tmp.path().join("CLAUDE.md"); // does not exist
+        let rules_path = tmp.path().join("rules.md");
+        let result = upsert_pointer_in_claude_md(&claude_md, &rules_path).unwrap();
+        assert!(result.is_none(), "must not create CLAUDE.md that isn't there");
+    }
+
+    #[test]
+    fn upsert_writes_pointer_into_existing_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let claude_md = tmp.path().join("CLAUDE.md");
+        std::fs::write(&claude_md, "# CLAUDE.md\n\nUser content.\n").unwrap();
+        let rules_path = tmp.path().join("rules.md");
+
+        let (path, changed) = upsert_pointer_in_claude_md(&claude_md, &rules_path).unwrap().unwrap();
+        assert_eq!(path, claude_md);
+        assert!(changed, "first upsert reports change=true");
+
+        let after = std::fs::read_to_string(&claude_md).unwrap();
+        assert!(after.contains(CLAUDE_MD_BEGIN));
+        assert!(after.contains(rules_path.to_string_lossy().as_ref()));
+        assert!(after.contains("# CLAUDE.md"), "user content preserved");
+
+        // Rerun with same path → no change (byte-identical), reported as unchanged.
+        let (_, changed2) = upsert_pointer_in_claude_md(&claude_md, &rules_path).unwrap().unwrap();
+        assert!(!changed2, "second upsert reports change=false");
     }
 }

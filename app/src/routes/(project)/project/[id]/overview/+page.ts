@@ -21,7 +21,6 @@ export const load: PageLoad = async ({ params, parent }) => {
     repos: reposData.repos ?? [],
     topRecommendation: (recs as any[])[0] ?? null,
     memoryCount: memoriesData.total ?? 0,
-    memoriesPendingShare: memoriesData.pendingShare ?? 0,
     recentSessions: sessionsData.sessions ?? [],
     ftrDaily: ftrDaily.ftr_daily ?? [],
     hotspots: hotspots.hotspots ?? [],

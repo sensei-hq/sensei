@@ -209,11 +209,24 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
 
     // Materialize the global rules file (~/.sensei/rules.md) from the governance
     // plane on startup so the session-start hook injects a fresh, resolved set.
+    // Also upsert a durable managed-block pointer into ~/.claude/CLAUDE.md so
+    // Claude Code post-compaction states + non-Claude ACPs that read CLAUDE.md
+    // see where the resolved global rules live (#13).
     {
         let pg = state.pg.clone();
         tokio::spawn(async move {
-            match crate::api::handlers::knowledge::materialize_global_rules(&pg, &crate::paths::sensei_dir()).await {
-                Ok((path, n)) => tracing::info!("startup: materialized {n} global rule(s) → {}", path.display()),
+            let sensei_dir = crate::paths::sensei_dir();
+            match crate::api::handlers::knowledge::materialize_global_rules(&pg, &sensei_dir).await {
+                Ok((rules_path, n)) => {
+                    tracing::info!("startup: materialized {n} global rule(s) → {}", rules_path.display());
+                    let claude_md = crate::paths::home().join(".claude/CLAUDE.md");
+                    match crate::api::handlers::knowledge::upsert_pointer_in_claude_md(&claude_md, &rules_path) {
+                        Ok(None) => tracing::debug!("startup: {} not present, skipping CLAUDE.md pointer", claude_md.display()),
+                        Ok(Some((path, true))) => tracing::info!("startup: updated CLAUDE.md pointer → {}", path.display()),
+                        Ok(Some((_, false))) => tracing::debug!("startup: CLAUDE.md pointer already current"),
+                        Err(e) => tracing::warn!("startup: CLAUDE.md pointer upsert failed: {e}"),
+                    }
+                }
                 Err(e) => tracing::warn!("startup: global rules materialize failed: {e}"),
             }
         });
