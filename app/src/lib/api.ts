@@ -259,8 +259,8 @@ export function senseiApi(port: number) {
       put(`/api/projects/${enc(id)}/services/${enc(serviceId)}/scope`, { enabled }),
 
     getProjectMemories: (id: string) =>
-      get<{ active: ProjectMemory[]; total: number; pendingShare: number }>(
-        `/api/projects/${enc(id)}/memories`, { active: [], total: 0, pendingShare: 0 }
+      get<{ active: ProjectMemory[]; total: number }>(
+        `/api/projects/${enc(id)}/memories`, { active: [], total: 0 }
       ),
 
     // Memory share batches — the proposal / review / verdict lifecycle for

@@ -61,12 +61,6 @@
 
 <PageHeader title="Memories" />
 <div class="px-6 py-6">
-    {#if data.pendingShare > 0}
-        <div class="text-sm px-3.5 py-2.5 rounded-md mb-4 bg-accent-soft text-accent">
-            {data.pendingShare} memories pending collective share
-        </div>
-    {/if}
-
     <!-- Pending batches (proposed only). Approved / rejected verdicts fall
          off the top-level list to keep the review queue tight. -->
     {#if proposedBatches.length > 0}

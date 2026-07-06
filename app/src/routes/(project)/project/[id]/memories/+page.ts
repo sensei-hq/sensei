@@ -14,7 +14,6 @@ export const load: PageLoad = async ({ params, parent }) => {
   return {
     project,
     memories: data.active ?? [],
-    pendingShare: data.pendingShare ?? 0,
     total: data.total ?? 0,
     proposedBatches: batches.batches ?? [],
   };
