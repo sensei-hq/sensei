@@ -22,6 +22,7 @@ use crate::api::handlers::scan_events;
 use crate::api::handlers::project_detail;
 use crate::api::handlers::instruments;
 use crate::api::handlers::gateway_routers;
+use crate::api::handlers::gateway_chains;
 use crate::api::handlers::gateway_image;
 use crate::api::handlers::knowledge;
 use crate::api::handlers::corrections;
@@ -44,6 +45,12 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/gateway/routers/{id}/models",           get(gateway_routers::router_models))
         .route("/api/gateway/routers/{id}/key",              post(gateway_routers::set_router_key).delete(gateway_routers::clear_router_key))
         .route("/api/gateway/models",                        get(gateway_routers::list_all_models))
+        .route("/api/gateway/chains",                        get(gateway_chains::list_chains))
+        .route("/api/gateway/chains/{id}/role",              put(gateway_chains::set_chain_role))
+        .route("/api/gateway/chains/{id}/available-models",  get(gateway_chains::list_available_models))
+        .route("/api/gateway/chains/{id}/models",            post(gateway_chains::add_chain_model))
+        .route("/api/gateway/chains/{id}/models/{member_id}",           delete(gateway_chains::remove_chain_model))
+        .route("/api/gateway/chains/{id}/models/{member_id}/move",      put(gateway_chains::move_chain_model))
         .route("/api/gateway/image/generate",                post(gateway_image::image_generate))
         // Repos (individual git repos)
         .route("/api/repos", get(workspace::list_projects).post(workspace::create_project))
@@ -58,6 +65,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/exclusions/{path}", delete(workspace::remove_exclusion))
         // Projects (groups of 1+ repos)
         .route("/api/projects", get(observatory::list_solutions).post(observatory::create_solution))
+        .route("/api/projects/merge", post(observatory::merge_projects))
         .route("/api/projects/{id}", put(observatory::update_solution).delete(observatory::delete_solution))
         .route("/api/projects/{id}/repos", get(project_detail::get_project_repos).post(observatory::add_solution_repo))
         .route("/api/projects/{id}/repos/{repo_id}", delete(observatory::remove_solution_repo))
@@ -81,6 +89,10 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/projects/{id}/memory-batches/{batch_id}",
                put(project_detail::decide_memory_share_batch))
         .route("/api/projects/{id}/recommendations", get(project_detail::get_project_recommendations))
+        .route("/api/projects/{id}/recommendations/{rec_id}/accept",
+               post(project_detail::accept_project_recommendation))
+        .route("/api/projects/{id}/recommendations/{rec_id}/reject",
+               post(project_detail::reject_project_recommendation))
         .route("/api/projects/{id}/impact",          get(project_detail::get_project_impact))
         .route("/api/projects/{id}/impact-verdicts",
                get(project_detail::list_impact_verdicts)
@@ -161,6 +173,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/install/item/remove", post(config::remove_single_item))
         .route("/api/install/catalog", get(config::get_catalog))
         .route("/api/install/installed", get(config::list_installed_items))
+        .route("/api/install/installed/{name}/enabled", put(config::set_installed_enabled))
         .route("/api/remove", post(config::remove_all))
         // Config (user preferences)
         .route("/api/config", get(config::get_config).put(config::set_config_handler))
@@ -188,7 +201,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/scan", post(workspace::scan_folder))
         .route("/api/scan/suggestions", get(workspace::scan_suggestions))
         .route("/api/scan/roots", get(workspace::scan_roots).post(workspace::add_watch_root))
-        .route("/api/scan/roots/{id}", delete(workspace::delete_watch_root))
+        .route("/api/scan/roots/{id}", put(workspace::update_watch_root).delete(workspace::delete_watch_root))
         // Backfill embeddings for already-indexed nodes (EmbedNodes per folder)
         .route("/api/embed/backfill", post(workspace::backfill_embeddings))
         // Knowledge plane

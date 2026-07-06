@@ -21,6 +21,7 @@ pub mod model_provision;
 pub mod maturity;
 pub mod pattern_effectiveness;
 pub mod corrections;
+pub mod verdicts;
 pub mod ranking;
 pub mod model_insight;
 mod classifiers;

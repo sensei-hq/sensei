@@ -9,6 +9,17 @@ pub struct PgStore {
     pool: PgPool,
 }
 
+/// Per-table row counts from a single `PgStore::prune_activity` run (#74).
+/// Everything is `u64` so callers can report a single log line without
+/// per-field conversions.
+#[derive(Debug, Default, Clone, Copy, serde::Serialize)]
+pub struct ActivityPruneCounts {
+    pub sessions:          u64,
+    pub turns:             u64,
+    pub transcript_turns:  u64,
+    pub assistant_events:  u64,
+}
+
 pub struct InsertMemory {
     pub project_id:    Option<uuid::Uuid>,
     pub scope:         String,
@@ -458,6 +469,20 @@ impl PgStore {
         }).collect())
     }
 
+    /// Return the absolute paths of a project's indexed folders — the input the
+    /// analyzer scheduler needs to enqueue `DetectCommunities` per folder. Only
+    /// `indexed` folders are worth running community detection on (others have
+    /// no code nodes yet).
+    pub async fn get_indexed_folder_paths_for_project(&self, project_id: &uuid::Uuid) -> Result<Vec<String>, String> {
+        let rows: Vec<(String,)> = sqlx_core::query_as::query_as(
+            "SELECT abs_path
+             FROM sensei.folders
+             WHERE project_id = $1 AND status = 'indexed'::sensei.folder_status
+             ORDER BY abs_path"
+        ).bind(project_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(p,)| p).collect())
+    }
+
     /// Mark a folder as indexed with detected libs.
     pub async fn mark_folder_indexed(&self, folder_id: &uuid::Uuid, libs: &[String]) -> Result<(), String> {
         let props = serde_json::json!({"indexed_at": chrono::Utc::now().to_rfc3339(), "libs": libs});
@@ -622,6 +647,63 @@ impl PgStore {
                   LIMIT $3",
             )
             .bind(folder_id)
+            .bind(max_distance)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(na, fa, la, nb, fb, lb, sim)| {
+            serde_json::json!({
+                "a": { "name": na, "file": fa, "line": la },
+                "b": { "name": nb, "file": fb, "line": lb },
+                "similarity": (sim * 10000.0).round() / 10000.0,
+            })
+        }).collect())
+    }
+
+    /// Multi-folder variant of `find_duplicates` (#54). Runs the same
+    /// cosine-similarity self-join but scopes the pair search to every
+    /// folder belonging to a project — so a duplicate function defined in
+    /// `crates/foo/src/x.rs` and `crates/bar/src/y.rs` (both inside the
+    /// same project) surfaces even though they don't share a folder_id.
+    ///
+    /// Pairs are restricted to a.id < b.id so each dyad appears once; the
+    /// unlike `find_duplicates` this variant also requires
+    /// `a.folder_id != b.folder_id` on top of that, so intra-folder pairs
+    /// keep flowing through the older folder-scoped path and don't get
+    /// double-counted when a caller uses both.
+    pub async fn find_duplicates_scoped(
+        &self,
+        folder_ids: &[uuid::Uuid],
+        min_similarity: f64,
+        limit: i64,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        if folder_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let max_distance = 1.0 - min_similarity;
+        let rows: Vec<(String, String, Option<i32>, String, String, Option<i32>, f64)> =
+            sqlx_core::query_as::query_as(
+                "SELECT a.name, a.file_path, a.line_start,
+                        b.name, b.file_path, b.line_start,
+                        1 - (a.embedding <=> b.embedding) AS similarity
+                   FROM sensei.nodes a
+                   JOIN sensei.nodes b
+                     ON a.id < b.id
+                    AND a.folder_id != b.folder_id
+                    AND b.folder_id = ANY($1::uuid[])
+                    AND b.kind IN ('function'::sensei.node_kind, 'method'::sensei.node_kind)
+                    AND b.embedding IS NOT NULL
+                    AND (b.line_end - b.line_start) >= 3
+                  WHERE a.folder_id = ANY($1::uuid[])
+                    AND a.kind IN ('function'::sensei.node_kind, 'method'::sensei.node_kind)
+                    AND a.embedding IS NOT NULL
+                    AND (a.line_end - a.line_start) >= 3
+                    AND (a.embedding <=> b.embedding) <= $2
+                  ORDER BY similarity DESC
+                  LIMIT $3",
+            )
+            .bind(folder_ids)
             .bind(max_distance)
             .bind(limit)
             .fetch_all(&self.pool)
@@ -915,18 +997,22 @@ impl PgStore {
         // old shape returned folder_id (a bare uuid, never a project name) and
         // snake_case `started_at` with no `completed_at`, so every displayed
         // column — project, task time, duration — came back blank (#61).
+        //
+        // `corrections` is what powers the Today observatory's "Corrections"
+        // column (first-try / N× rework) per the mockup — same column the
+        // per-project session list has surfaced since T3 Slice 1.4.
         type SessionRow = (
             uuid::Uuid, Option<String>, String, Option<String>, Option<String>,
-            Option<bool>, i32, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>,
+            Option<bool>, i32, i32, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>,
         );
         let rows: Vec<SessionRow> = sqlx_core::query_as::query_as(
-            "SELECT s.id, p.name, s.task, s.summary, s.outcome::text, s.ftr, s.turns,
+            "SELECT s.id, p.name, s.task, s.summary, s.outcome::text, s.ftr, s.turns, s.corrections,
                     s.started_at, s.completed_at
              FROM activity.sessions s
              LEFT JOIN sensei.projects p ON p.id = s.project_id
              ORDER BY s.started_at DESC LIMIT $1"
         ).bind(limit).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
-        Ok(rows.into_iter().map(|(id, project, task, summary, outcome, ftr, turns, started, completed)| {
+        Ok(rows.into_iter().map(|(id, project, task, summary, outcome, ftr, turns, corrections, started, completed)| {
             serde_json::json!({
                 "id": id,
                 "project": project,
@@ -935,6 +1021,7 @@ impl PgStore {
                 "outcome": outcome,
                 "ftr": ftr,
                 "turns": turns,
+                "corrections": corrections,
                 "startedAt": started.to_rfc3339(),
                 "completedAt": completed.map(|c| c.to_rfc3339()),
             })
@@ -1232,9 +1319,34 @@ impl PgStore {
     }
 
     pub async fn accept_recommendation(&self, id: &uuid::Uuid) -> Result<(), String> {
-        sqlx_core::query::query(
-            "UPDATE inference.recommendations SET status = 'accepted'::sensei.recommendation_status, acted_at = now() WHERE id = $1"
+        // Guard the transition to `accepted` at the `pending` state so a
+        // double-click / stale UI can't push an already-decided rec back to
+        // accepted. Errors when the row is missing or already decided.
+        let result = sqlx_core::query::query(
+            "UPDATE inference.recommendations
+                SET status = 'accepted'::sensei.recommendation_status,
+                    acted_at = now()
+              WHERE id = $1 AND status = 'pending'"
         ).bind(id).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        if result.rows_affected() == 0 {
+            return Err("recommendation not found or already decided".into());
+        }
+        Ok(())
+    }
+
+    /// Move a `pending` recommendation to `dismissed` (the reject terminal —
+    /// the enum uses `dismissed`, not `rejected`). Same shape as accept:
+    /// idempotency-guarded so a stale UI can't clobber a real decision.
+    pub async fn reject_recommendation(&self, id: &uuid::Uuid) -> Result<(), String> {
+        let result = sqlx_core::query::query(
+            "UPDATE inference.recommendations
+                SET status = 'dismissed'::sensei.recommendation_status,
+                    acted_at = now()
+              WHERE id = $1 AND status = 'pending'"
+        ).bind(id).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        if result.rows_affected() == 0 {
+            return Err("recommendation not found or already decided".into());
+        }
         Ok(())
     }
 
@@ -1412,12 +1524,53 @@ impl PgStore {
                   ORDER BY r.measured_at DESC NULLS LAST"
             ).bind(project_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(|(id, title, action_type, status, verdict, baseline, current, props, models, consensus)| {
+            // The reasoning field carries the rich MOE JSON directly to
+            // the UI: `{headline, body, consensus, models: [{name, role,
+            // note}], suggestedRevision}` when measure has populated it,
+            // or null when the rec has no trace yet. The pre-fix wire
+            // was `{models: string[], consensus: unknown}` which lost
+            // the narrative — the panel had nothing to render past the
+            // one-word verdict tag.
+            let reasoning = consensus.map(|synth| {
+                // Prefer the trace's own models_used array when the synth
+                // JSON lacks a models[] key (older traces written by
+                // consensus reasoning). This keeps the older analyzer's
+                // output rendering the mockup panel with model names,
+                // even before MeasureVerdicts overwrites the trace.
+                if synth.get("models").is_some() && synth.get("headline").is_some() {
+                    // Rich synth — flow straight through.
+                    synth
+                } else {
+                    // Old-shape consensus (e.g. `{conclusion}`). Wrap it
+                    // in the panel shape so the UI has something to
+                    // render, even if the narrative is a single line.
+                    let conclusion = synth.get("conclusion")
+                        .and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let names = models.clone().unwrap_or_default();
+                    let panelists: Vec<serde_json::Value> = names.iter()
+                        .enumerate()
+                        .map(|(i, n)| serde_json::json!({
+                            "name": n,
+                            "role": match i { 0 => "proposer", 1 => "challenger", 2 => "synthesizer", _ => "reviewer" },
+                            "note": "Contributed to the original consensus panel.",
+                        }))
+                        .collect();
+                    serde_json::json!({
+                        "headline":          if conclusion.is_empty() { "Consensus captured (no narrative)".into() } else { conclusion },
+                        "body":              serde_json::Value::Null,
+                        "consensus":         serde_json::Value::Null,
+                        "models":            panelists,
+                        "suggestedRevision": serde_json::Value::Null,
+                    })
+                }
+            });
+
             serde_json::json!({
                 "id": id, "title": title, "actionType": action_type, "status": status,
                 "verdict": verdict, "baselineFtr": baseline, "currentFtr": current,
                 "ftrDelta": match (current, baseline) { (Some(c), Some(b)) => Some(((c - b) * 1000.0).round() / 1000.0), _ => None },
                 "props": props,
-                "reasoning": consensus.map(|c| serde_json::json!({ "models": models.unwrap_or_default(), "consensus": c })),
+                "reasoning": reasoning,
             })
         }).collect())
     }
@@ -1963,6 +2116,29 @@ impl PgStore {
         Ok(())
     }
 
+    /// Update a watch root's name and/or exclusions. Passing `None` for a
+    /// field leaves it unchanged; passing `Some(x)` replaces the current
+    /// value with `x`. Path is deliberately not mutable — a rename would
+    /// need to remove + re-add (folders_to_watch.path is UNIQUE and the
+    /// materialised sensei.folders subtree references it). #41.
+    pub async fn update_watch_root(
+        &self,
+        id: &uuid::Uuid,
+        name: Option<&str>,
+        excluded: Option<&serde_json::Value>,
+    ) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE sensei.folders_to_watch
+                SET name     = COALESCE($2, name),
+                    excluded = COALESCE($3, excluded),
+                    modified_at = now()
+              WHERE id = $1"
+        )
+            .bind(id).bind(name).bind(excluded)
+            .execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     pub async fn remove_watch_root(&self, id: &uuid::Uuid) -> Result<(), String> {
         sqlx_core::query::query("DELETE FROM sensei.folders_to_watch WHERE id = $1")
             .bind(id).execute(&self.pool).await.map_err(|e| e.to_string())?;
@@ -2074,21 +2250,30 @@ impl PgStore {
 
     // ── Detected Patterns (inference) ──────────────────────────────────
 
+    /// Upsert a detected pattern at PROJECT scope (#82). `folder_id` is
+    /// preserved as an optional locus pointer for file/folder-scoped signals
+    /// (churn); it is not part of the uniqueness key. Passing the same
+    /// (project_id, name, is_anti_pattern) with a different folder_id
+    /// updates the same row and overwrites the locus — that's the desired
+    /// merge behaviour when a single file's pattern shows up across sibling
+    /// folders inside the project.
     pub async fn upsert_pattern(
-        &self, folder_id: &uuid::Uuid, name: &str, is_anti: bool,
+        &self, project_id: &uuid::Uuid, folder_id: Option<&uuid::Uuid>,
+        name: &str, is_anti: bool,
         confidence: Option<f64>, instances: &serde_json::Value,
     ) -> Result<uuid::Uuid, String> {
         let count = instances.as_array().map(|a| a.len() as i32).unwrap_or(0);
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
-            "INSERT INTO inference.detected_patterns(folder_id, name, is_anti_pattern, confidence, instance_count, instances)
-             VALUES($1, $2, $3, $4, $5, $6)
-             ON CONFLICT(folder_id, name, is_anti_pattern) DO UPDATE SET
+            "INSERT INTO inference.detected_patterns(project_id, folder_id, name, is_anti_pattern, confidence, instance_count, instances)
+             VALUES($1, $2, $3, $4, $5, $6, $7)
+             ON CONFLICT(project_id, name, is_anti_pattern) DO UPDATE SET
+               folder_id = COALESCE(EXCLUDED.folder_id, detected_patterns.folder_id),
                confidence = COALESCE(EXCLUDED.confidence, detected_patterns.confidence),
                instance_count = EXCLUDED.instance_count,
                instances = EXCLUDED.instances,
                modified_at = now()
              RETURNING id"
-        ).bind(folder_id).bind(name).bind(is_anti).bind(confidence).bind(count).bind(instances)
+        ).bind(project_id).bind(folder_id).bind(name).bind(is_anti).bind(confidence).bind(count).bind(instances)
             .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(row.0)
     }
@@ -2500,12 +2685,29 @@ impl PgStore {
     /// Compares current 14-day FTR against baseline_ftr snapshot at time of acceptance.
     /// Returns number of recommendations updated.
     pub async fn measure_pending_verdicts(&self) -> Result<i64, String> {
-        // Update current_ftr and verdict for accepted recommendations that have been
-        // acted on at least 3 days ago (enough data for a meaningful comparison).
-        let result = sqlx_core::query::query(
+        // Per-row measure so we can also compose the MOE consensus JSON
+        // the Observatory Impact panel renders. The classification rule
+        // is the same ±0.05 FTR band the old bulk UPDATE used; kept in
+        // `crate::verdicts::Verdict::from_ftr_delta` so it's testable.
+        //
+        // Two-phase per rec:
+        //   1. UPDATE the rec (verdict / current_ftr / measured_at).
+        //   2. Insert or update the linked reasoning_trace's `consensus`
+        //      JSON with the synth helper. If the rec has no trace yet,
+        //      we mint one with trigger_event = 'verdict_measurement'
+        //      and link it back onto the rec.
+        //
+        // Failures in the reasoning-trace write are logged but don't
+        // abort the whole batch — verdict measurement is best-effort by
+        // design (the scheduler retries every full-refresh window).
+        type Row = (
+            uuid::Uuid, Option<uuid::Uuid>, f64, f64,
+            Option<Vec<String>>,
+        );
+        let rows: Vec<Row> = sqlx_core::query_as::query_as(
             "WITH current AS (
                SELECT r.id AS rec_id,
-                      AVG(CASE WHEN s.ftr THEN 1.0 ELSE 0.0 END) AS current_ftr
+                      AVG(CASE WHEN s.ftr THEN 1.0 ELSE 0.0 END)::float8 AS current_ftr
                  FROM inference.recommendations r
                  JOIN activity.sessions s ON s.project_id = r.project_id
                                          AND s.started_at > r.acted_at
@@ -2516,18 +2718,78 @@ impl PgStore {
                 GROUP BY r.id
                 HAVING COUNT(*) >= 3
              )
-             UPDATE inference.recommendations r
-                SET current_ftr = c.current_ftr,
-                    verdict = CASE
-                      WHEN c.current_ftr > r.baseline_ftr + 0.05 THEN 'positive'
-                      WHEN c.current_ftr < r.baseline_ftr - 0.05 THEN 'negative'
-                      ELSE 'neutral'
-                    END::sensei.recommendation_verdict,
-                    measured_at = now()
-               FROM current c
-              WHERE c.rec_id = r.id"
-        ).execute(&self.pool).await.map_err(|e| e.to_string())?;
-        Ok(result.rows_affected() as i64)
+             SELECT r.id,
+                    r.reasoning_trace_id,
+                    COALESCE(r.baseline_ftr, 0)::float8,
+                    c.current_ftr,
+                    t.models_used
+               FROM inference.recommendations r
+               JOIN current c ON c.rec_id = r.id
+          LEFT JOIN inference.reasoning_traces t ON t.id = r.reasoning_trace_id"
+        ).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+
+        if rows.is_empty() { return Ok(0); }
+
+        let mut updated: i64 = 0;
+        for (rec_id, trace_id, baseline_ftr, current_ftr, models_used_opt) in rows {
+            let verdict = crate::verdicts::Verdict::from_ftr_delta(current_ftr - baseline_ftr);
+            let models_used = models_used_opt.unwrap_or_default();
+            let consensus = crate::verdicts::synthesize_reasoning(
+                verdict, baseline_ftr, current_ftr, &models_used,
+            );
+
+            let upd = sqlx_core::query::query(
+                "UPDATE inference.recommendations
+                    SET verdict     = $2::sensei.recommendation_verdict,
+                        current_ftr = $3,
+                        measured_at = now()
+                  WHERE id = $1"
+            )
+            .bind(rec_id)
+            .bind(verdict.as_wire())
+            .bind(current_ftr)
+            .execute(&self.pool).await.map_err(|e| e.to_string())?;
+
+            if upd.rows_affected() == 0 { continue; }
+            updated += 1;
+
+            match trace_id {
+                Some(id) => {
+                    if let Err(e) = sqlx_core::query::query(
+                        "UPDATE inference.reasoning_traces SET consensus = $2 WHERE id = $1"
+                    ).bind(id).bind(&consensus).execute(&self.pool).await {
+                        tracing::warn!(error = %e, rec = %rec_id, trace = %id, "measure_pending_verdicts: consensus update failed");
+                    }
+                }
+                None => {
+                    match sqlx_core::query_as::query_as::<_, (uuid::Uuid,)>(
+                        "INSERT INTO inference.reasoning_traces
+                            (trigger_event, trigger_detail, models_used, consensus)
+                         VALUES ($1, $2, $3, $4)
+                         RETURNING id"
+                    )
+                    .bind("verdict_measurement")
+                    .bind(serde_json::json!({ "recId": rec_id, "verdict": verdict.as_wire() }))
+                    .bind::<Vec<String>>(models_used)
+                    .bind(&consensus)
+                    .fetch_one(&self.pool).await
+                    {
+                        Ok((new_trace_id,)) => {
+                            if let Err(e) = sqlx_core::query::query(
+                                "UPDATE inference.recommendations SET reasoning_trace_id = $2 WHERE id = $1"
+                            ).bind(rec_id).bind(new_trace_id).execute(&self.pool).await {
+                                tracing::warn!(error = %e, rec = %rec_id, trace = %new_trace_id, "measure_pending_verdicts: relink failed");
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!(error = %e, rec = %rec_id, "measure_pending_verdicts: mint trace failed");
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(updated)
     }
 
     // ── Observatory views ──────────────────────────────────────────────
@@ -3259,6 +3521,70 @@ impl PgStore {
         Ok(())
     }
 
+    /// Merge one project into another (#41). All source-project folders +
+    /// sessions + memories are reassigned to `target`, then the source
+    /// project row is deleted; ON DELETE CASCADE cleans up the derived rows
+    /// (detected_patterns, recommendations, reasoning_traces,
+    /// impact_verdicts, memory_share_batches, service_projects,
+    /// project_dependencies edges terminating at the source).
+    ///
+    /// Derived signals (patterns/recommendations) are dropped and
+    /// regenerated by the analyzer on the next tick over the merged corpus
+    /// — that's why we don't try to hand-merge them here (the unique keys
+    /// on those tables would need collision handling that isn't worth the
+    /// code for a delete-and-rederive path). User-authored memories DO
+    /// survive because `memories.project_id` is nullable + non-unique;
+    /// they simply move under the target.
+    ///
+    /// Runs inside a transaction so a mid-way failure doesn't leave the
+    /// merge half-done. Refuses `source == target` (no-op guarded up front)
+    /// and errors if either project id doesn't exist.
+    pub async fn merge_projects(
+        &self,
+        source: &uuid::Uuid,
+        target: &uuid::Uuid,
+    ) -> Result<(), String> {
+        if source == target {
+            return Err("merge_projects: source and target must differ".into());
+        }
+        let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
+
+        // Verify both projects exist.
+        let (exists,): (i64,) = sqlx_core::query_as::query_as(
+            "SELECT COUNT(*) FROM sensei.projects WHERE id = ANY($1::uuid[])"
+        )
+            .bind([*source, *target].as_slice())
+            .fetch_one(&mut *tx).await.map_err(|e| e.to_string())?;
+        if exists != 2 {
+            return Err(format!(
+                "merge_projects: expected source + target to exist, found {exists} of 2"
+            ));
+        }
+
+        // Reassign the data-source rows. Order: folders first (they define
+        // the corpus), then sessions, then memories (user-authored — must
+        // survive the merge). Derived tables are left for CASCADE to trim.
+        for stmt in [
+            "UPDATE sensei.folders    SET project_id = $2 WHERE project_id = $1",
+            "UPDATE activity.sessions SET project_id = $2 WHERE project_id = $1",
+            "UPDATE sensei.memories   SET project_id = $2 WHERE project_id = $1",
+        ] {
+            sqlx_core::query::query(stmt)
+                .bind(source).bind(target)
+                .execute(&mut *tx).await.map_err(|e| e.to_string())?;
+        }
+
+        // CASCADE deletes derived rows (detected_patterns / recommendations /
+        // reasoning_traces / impact_verdicts / memory_share_batches /
+        // service_projects / project_dependencies edges at either end).
+        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+            .bind(source)
+            .execute(&mut *tx).await.map_err(|e| e.to_string())?;
+
+        tx.commit().await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     pub async fn get_project_libraries(&self, project_id: &uuid::Uuid) -> Result<Vec<serde_json::Value>, String> {
         // Query the resolved view directly — it already joins libraries internally.
         // Extended for T3 Slice 1.5: pull `page_count` (indexed docs marker) and
@@ -3415,9 +3741,16 @@ impl PgStore {
     }
 
     pub async fn get_project_drift(&self, project_id: &uuid::Uuid) -> Result<serde_json::Value, String> {
-        let rows: Vec<(uuid::Uuid, String, Option<String>, chrono::DateTime<chrono::Utc>)> =
-            sqlx_core::query_as::query_as(
-                "SELECT id, status::text, detail, detected_at
+        // `expected_signature` and `actual_signature` power the Traceability
+        // detail drawer's Expected-vs-Actual diff. Both are nullable — `broken`
+        // rows carry no `actual`, `drifted` carries both, `current` may carry
+        // neither depending on how the detector wrote the row.
+        type DriftRow = (
+            uuid::Uuid, String, Option<String>, Option<String>, Option<String>,
+            chrono::DateTime<chrono::Utc>,
+        );
+        let rows: Vec<DriftRow> = sqlx_core::query_as::query_as(
+                "SELECT id, status::text, detail, expected_signature, actual_signature, detected_at
                  FROM sensei.project_drift WHERE project_id = $1
                  ORDER BY detected_at DESC LIMIT 200"
             ).bind(project_id)
@@ -3426,8 +3759,13 @@ impl PgStore {
         let total = rows.len();
         let drifted = rows.iter().filter(|r| r.1 == "drifted").count();
         let broken = rows.iter().filter(|r| r.1 == "broken").count();
-        let items: Vec<_> = rows.into_iter().map(|(id, status, detail, detected_at)| {
-            serde_json::json!({ "id": id, "status": status, "detail": detail, "detectedAt": detected_at.to_rfc3339() })
+        let items: Vec<_> = rows.into_iter().map(|(id, status, detail, expected, actual, detected_at)| {
+            serde_json::json!({
+                "id": id, "status": status, "detail": detail,
+                "expectedSignature": expected,
+                "actualSignature":   actual,
+                "detectedAt": detected_at.to_rfc3339(),
+            })
         }).collect();
 
         Ok(serde_json::json!({ "items": items, "total": total, "drifted": drifted, "broken": broken }))
@@ -3505,9 +3843,19 @@ impl PgStore {
         // likewise nullable for freshly minted memories that haven't been
         // reinforced or violated, so decode as Option so a NULL doesn't
         // fail the row.
-        let rows: Vec<(uuid::Uuid, String, String, String, f32, Option<chrono::DateTime<chrono::Utc>>)> =
-            sqlx_core::query_as::query_as(
-                "SELECT id, title, type::text, status::text, strength, last_relevant_at
+        //
+        // `content`, `impact`, and the two counts power the Memory Anatomy
+        // detail drawer (What / Because / Consequence + evidence). Cheap
+        // to project — all existing columns on `sensei.memories`.
+        type MemRow = (
+            uuid::Uuid, String, String, String, String, Option<String>,
+            f32, i32, i32, String, Option<String>,
+            Option<chrono::DateTime<chrono::Utc>>,
+        );
+        let rows: Vec<MemRow> = sqlx_core::query_as::query_as(
+                "SELECT id, title, type::text, status::text, content, impact,
+                        strength, reinforced_count, violated_count,
+                        scope::text, scope_filter, last_relevant_at
                  FROM sensei.memories WHERE project_id = $1
                  ORDER BY last_relevant_at DESC NULLS LAST LIMIT 100"
             ).bind(project_id)
@@ -3517,10 +3865,14 @@ impl PgStore {
         let total = rows.len();
         let active: Vec<_> = rows.into_iter()
             .filter(|r| r.3 == "active")
-            .map(|(id, title, typ, status, strength, last)| {
+            .map(|(id, title, typ, status, content, impact, strength, reinforced, violated, scope, scope_filter, last)| {
                 serde_json::json!({
                     "id": id, "title": title, "type": typ, "status": status,
+                    "content": content, "impact": impact,
                     "strength": strength,
+                    "reinforcedCount": reinforced,
+                    "violatedCount": violated,
+                    "scope": scope, "scopeFilter": scope_filter,
                     "lastRelevantAt": last.map(|t| t.to_rfc3339()),
                 })
             }).collect();
@@ -4427,6 +4779,123 @@ impl PgStore {
         Ok(r.rows_affected())
     }
 
+    /// Prune raw activity older than `days` days, respecting the analyzer's
+    /// value-extraction guard (#74):
+    ///
+    /// - Sessions are eligible only when `analyzed_at IS NOT NULL` AND
+    ///   `started_at < now() - days` — a session whose insights the analyzer
+    ///   never derived is kept even if it is old (would lose signal).
+    /// - The eligible sessions' \`activity.turns\` cascade (FK ON DELETE
+    ///   CASCADE) so `turns` deletes are counted via a preflight
+    ///   `COUNT(*) WHERE session_id IN (…)` for observability.
+    /// - `activity.transcript_turns` and `activity.assistant_events` key
+    ///   session-scoped rows off `client_session_id` (text), NOT the
+    ///   session uuid — no FK, so we DELETE by matching that column.
+    /// - Session-less assistant_events (never attached to a session; still
+    ///   valuable for global tool-usage stats via ts) are pruned by ts alone
+    ///   when they're older than the cutoff — same window, but they don't
+    ///   need the analyzed-only guard.
+    ///
+    /// Derived signals (\`inference.detected_patterns\` /
+    /// \`inference.recommendations\` / \`inference.reasoning_traces\` /
+    /// \`sensei.memories\`) are NEVER touched — they are the distilled value
+    /// that survives raw-event pruning.
+    ///
+    /// Ordering respects FKs: children first (transcript_turns / assistant_events
+    /// keyed by client_session_id), then sessions (which cascades turns).
+    pub async fn prune_activity(&self, days: i32) -> Result<ActivityPruneCounts, String> {
+        let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
+
+        // (1) Snapshot eligible sessions once — used for every child delete
+        //     so we don't re-scan the guard SQL four times.
+        let eligible: Vec<(uuid::Uuid, String)> = sqlx_core::query_as::query_as(
+            "SELECT id, client_session_id
+               FROM activity.sessions
+              WHERE analyzed_at IS NOT NULL
+                AND started_at < now() - (interval '1 day' * $1)"
+        )
+            .bind(days)
+            .fetch_all(&mut *tx).await.map_err(|e| e.to_string())?;
+        if eligible.is_empty() {
+            // Even with no eligible sessions, orphan assistant_events by ts
+            // are still a valid target.
+            let cutoff_ms = self.cutoff_millis(days);
+            let ae = sqlx_core::query::query(
+                // NOT EXISTS instead of NOT IN because sessions.client_session_id
+            // is nullable — a NULL in the NOT IN subquery poisons the whole
+            // predicate under ANSI three-valued logic.
+            "DELETE FROM activity.assistant_events ae
+              WHERE ae.ts < $1
+                AND (ae.session_id = ''
+                     OR NOT EXISTS (
+                        SELECT 1 FROM activity.sessions s
+                         WHERE s.client_session_id = ae.session_id))"
+            )
+                .bind(cutoff_ms)
+                .execute(&mut *tx).await.map_err(|e| e.to_string())?;
+            tx.commit().await.map_err(|e| e.to_string())?;
+            return Ok(ActivityPruneCounts { assistant_events: ae.rows_affected(), ..Default::default() });
+        }
+        let session_uuids: Vec<uuid::Uuid> = eligible.iter().map(|(u, _)| *u).collect();
+        let client_ids:    Vec<String>     = eligible.iter().map(|(_, c)| c.clone()).collect();
+
+        // (2) Count turns that will cascade on the session delete — for the
+        //     log line; the DELETE itself happens via CASCADE below.
+        let turns_count: (i64,) = sqlx_core::query_as::query_as(
+            "SELECT COUNT(*) FROM activity.turns WHERE session_id = ANY($1::uuid[])"
+        )
+            .bind(&session_uuids)
+            .fetch_one(&mut *tx).await.map_err(|e| e.to_string())?;
+
+        // (3) transcript_turns keyed by client_session_id (text, no FK).
+        let tt = sqlx_core::query::query(
+            "DELETE FROM activity.transcript_turns WHERE session_id = ANY($1::text[])"
+        )
+            .bind(&client_ids)
+            .execute(&mut *tx).await.map_err(|e| e.to_string())?;
+
+        // (4) assistant_events for the same client_session_ids.
+        let ae_session = sqlx_core::query::query(
+            "DELETE FROM activity.assistant_events WHERE session_id = ANY($1::text[])"
+        )
+            .bind(&client_ids)
+            .execute(&mut *tx).await.map_err(|e| e.to_string())?;
+
+        // (5) sessions — cascades turns.
+        let sess = sqlx_core::query::query(
+            "DELETE FROM activity.sessions WHERE id = ANY($1::uuid[])"
+        )
+            .bind(&session_uuids)
+            .execute(&mut *tx).await.map_err(|e| e.to_string())?;
+
+        // (6) Session-less orphan assistant_events by ts. Runs after the
+        //     session-scoped prune so we don't double-count.
+        let cutoff_ms = self.cutoff_millis(days);
+        let ae_orphan = sqlx_core::query::query(
+            "DELETE FROM activity.assistant_events WHERE ts < $1
+               AND (session_id = '' OR session_id NOT IN
+                    (SELECT client_session_id FROM activity.sessions))"
+        )
+            .bind(cutoff_ms)
+            .execute(&mut *tx).await.map_err(|e| e.to_string())?;
+
+        tx.commit().await.map_err(|e| e.to_string())?;
+
+        Ok(ActivityPruneCounts {
+            sessions:         sess.rows_affected(),
+            turns:            turns_count.0.max(0) as u64,
+            transcript_turns: tt.rows_affected(),
+            assistant_events: ae_session.rows_affected() + ae_orphan.rows_affected(),
+        })
+    }
+
+    /// Wall-clock cutoff in unix-ms for `days` back — used by prune_activity's
+    /// ts-based paths (assistant_events.ts is bigint ms).
+    fn cutoff_millis(&self, days: i32) -> i64 {
+        let secs = (chrono::Utc::now() - chrono::Duration::days(days as i64)).timestamp();
+        secs.saturating_mul(1000)
+    }
+
     // ── Raw ──────────────────────────────────────────────────────────
 
     /// Execute a parameterized query returning unresolved edges.
@@ -4768,6 +5237,292 @@ impl PgStore {
             serde_json::json!({ "id": id, "source_id": src, "target_id": tgt, "target_name": name })
         }).collect())
     }
+
+    // ── Gateway fallback chains + role assignments ──────────────────────
+    //
+    // Reads and writes for the Model Assignments wizard step. The DDL
+    // model puts an optional `role` on `gateway.fallback_chains` (unique
+    // when set); a chain-with-a-role IS the role assignment. Utility
+    // chains (consensus-*) keep role=null and stay invisible to the
+    // wizard.
+
+    /// Return every active chain with its ordered model list. The wizard
+    /// reads this to build the per-role picker; the settings page reuses
+    /// it for the "which chain serves which role" table.
+    pub async fn list_chains_with_models(&self) -> Result<Vec<serde_json::Value>, String> {
+        // One round trip: chain metadata + JSON-aggregated members ordered
+        // by sequence_order. Sqlx decodes the aggregate directly; the null
+        // JSON coalesce keeps chains with no models rendering as `[]`
+        // instead of the row disappearing.
+        type ChainRow = (
+            uuid::Uuid, String, String, Option<String>, Option<String>,
+            i32, bool, serde_json::Value,
+        );
+        let rows: Vec<ChainRow> = sqlx_core::query_as::query_as(
+            "SELECT fc.id,
+                    fc.name,
+                    fc.capability::text,
+                    fc.role::text,
+                    fc.description,
+                    fc.max_fallback_attempts,
+                    fc.is_active,
+                    COALESCE(
+                        (SELECT jsonb_agg(
+                                    jsonb_build_object(
+                                        'memberId',      fcm.id,
+                                        'sequenceOrder', fcm.sequence_order,
+                                        'modelName',     m.name,
+                                        'routerName',    r.id::text
+                                    ) ORDER BY fcm.sequence_order
+                                )
+                           FROM gateway.fallback_chain_models fcm
+                           JOIN gateway.routers r ON r.id = fcm.router_id
+                           JOIN gateway.models  m ON m.id = fcm.model_id
+                          WHERE fcm.chain_id = fc.id AND fcm.is_active),
+                        '[]'::jsonb) AS models
+               FROM gateway.fallback_chains fc
+              WHERE fc.is_active
+              ORDER BY fc.sequence, fc.name"
+        ).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+
+        Ok(rows.into_iter().map(|(id, name, capability, role, description, max_attempts, is_active, models)| {
+            serde_json::json!({
+                "id":                 id,
+                "name":               name,
+                "capability":         capability,
+                "role":               role,
+                "description":        description,
+                "maxFallbackAttempts": max_attempts,
+                "isActive":           is_active,
+                "models":             models,
+            })
+        }).collect())
+    }
+
+    /// Assign (or clear) the sensei inference role a chain serves. The
+    /// `role` column carries a unique-when-set index — writing a role
+    /// that another chain already owns returns a database error the
+    /// caller can map to a 409. Pass `None` to unassign.
+    pub async fn set_chain_role(
+        &self,
+        chain_id: &uuid::Uuid,
+        role: Option<&str>,
+    ) -> Result<(), String> {
+        // Cast at bind time so `None` writes SQL NULL, not the empty
+        // string. `modified_at` updates so downstream diff-based reads
+        // see the change.
+        let result = sqlx_core::query::query(
+            "UPDATE gateway.fallback_chains
+                SET role = $2::sensei.inference_role,
+                    modified_at = now()
+              WHERE id = $1"
+        )
+        .bind(chain_id)
+        .bind(role)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        if result.rows_affected() == 0 {
+            return Err("chain not found".into());
+        }
+        Ok(())
+    }
+
+    // ── Chain member editing (add / remove / move) ───────────────────
+    //
+    // Members of a chain are rows in `gateway.fallback_chain_models`,
+    // ordered by `sequence_order`. The (chain_id, sequence_order) pair
+    // is unique — so writes must maintain contiguous ordering, and
+    // moves happen through temporary shifts to dodge the constraint.
+
+    /// List the models that a chain COULD use — everything with a
+    /// matching capability, in any router, minus the models already
+    /// present in the chain. Each row carries the model + its router
+    /// so the picker can render provider chips per the mockup.
+    pub async fn list_available_models_for_chain(&self, chain_id: &uuid::Uuid) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, String, String, uuid::Uuid, String)> = sqlx_core::query_as::query_as(
+            "SELECT m.id, m.name, m.full_name, r.id, r.name
+               FROM gateway.models m
+               JOIN gateway.models_in_router mir ON mir.model_id = m.id
+               JOIN gateway.routers r ON r.id = mir.router_id
+              WHERE m.capabilities @> ARRAY[(
+                  SELECT fc.capability FROM gateway.fallback_chains fc WHERE fc.id = $1
+              )]::sensei.model_capability[]
+                AND NOT EXISTS (
+                    SELECT 1 FROM gateway.fallback_chain_models fcm
+                     WHERE fcm.chain_id = $1
+                       AND fcm.model_id = m.id
+                       AND fcm.router_id = r.id
+                )
+              ORDER BY r.name, m.full_name"
+        ).bind(chain_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(mid, name, full, rid, rname)| {
+            serde_json::json!({
+                "modelId":    mid,
+                "modelName":  name,
+                "fullName":   full,
+                "routerId":   rid,
+                "routerName": rname,
+            })
+        }).collect())
+    }
+
+    /// Append a model to the end of a chain's ordered list. Returns the
+    /// new row id and the assigned sequence_order so the caller can
+    /// update its optimistic UI. Fails with a helpful message when the
+    /// (model_id, router_id) pair isn't reachable via `models_in_router`.
+    pub async fn add_chain_model(
+        &self,
+        chain_id: &uuid::Uuid,
+        model_id: &uuid::Uuid,
+        router_id: &uuid::Uuid,
+    ) -> Result<(uuid::Uuid, i32), String> {
+        // Guard: chain must exist.
+        let (chain_exists,): (bool,) = sqlx_core::query_as::query_as(
+            "SELECT EXISTS(SELECT 1 FROM gateway.fallback_chains WHERE id = $1)"
+        ).bind(chain_id).fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        if !chain_exists {
+            return Err("chain not found".into());
+        }
+
+        // Guard: the (model_id, router_id) pair must be reachable via
+        // models_in_router. This is what the FK check would tell us,
+        // but a clearer message helps the wizard render a useful error.
+        let (reachable,): (bool,) = sqlx_core::query_as::query_as(
+            "SELECT EXISTS(
+                SELECT 1 FROM gateway.models_in_router
+                 WHERE model_id = $1 AND router_id = $2
+             )"
+        ).bind(model_id).bind(router_id).fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        if !reachable {
+            return Err("model is not reachable via this router".into());
+        }
+
+        // Next sequence_order = max + 1 (or 1 for an empty chain). The
+        // unique(chain_id, sequence_order) index catches any race; on a
+        // conflict we surface as-is.
+        let (row_id, seq): (uuid::Uuid, i32) = sqlx_core::query_as::query_as(
+            "INSERT INTO gateway.fallback_chain_models (chain_id, router_id, model_id, sequence_order)
+             SELECT $1, $2, $3, COALESCE(MAX(sequence_order), 0) + 1
+               FROM gateway.fallback_chain_models
+              WHERE chain_id = $1
+             RETURNING id, sequence_order"
+        )
+        .bind(chain_id).bind(router_id).bind(model_id)
+        .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+
+        Ok((row_id, seq))
+    }
+
+    /// Remove a chain-model row by id and compact the sequence so the
+    /// remaining rows stay contiguous (1, 2, 3, …). Fails if the row
+    /// isn't in the given chain — surfaces as 404 upstream.
+    pub async fn remove_chain_model(
+        &self,
+        chain_id: &uuid::Uuid,
+        member_id: &uuid::Uuid,
+    ) -> Result<(), String> {
+        // Two-step in a single transaction so the compaction sees the
+        // deletion. The unique(chain_id, sequence_order) constraint
+        // enforces the contiguous invariant.
+        let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
+
+        let (removed_seq,): (Option<i32>,) = sqlx_core::query_as::query_as(
+            "DELETE FROM gateway.fallback_chain_models
+              WHERE id = $1 AND chain_id = $2
+              RETURNING (sequence_order)::int"
+        ).bind(member_id).bind(chain_id).fetch_optional(&mut *tx).await.map_err(|e| e.to_string())?
+         .map(|(s,)| (Some(s),)).unwrap_or((None,));
+
+        let Some(seq) = removed_seq else {
+            return Err("chain member not found".into());
+        };
+
+        // Compact: shift everyone above the removed slot down by one.
+        // The unique index would collide if we did a single-step
+        // decrement, so we bump the shifted rows to a negative range
+        // first, then normalise.
+        sqlx_core::query::query(
+            "UPDATE gateway.fallback_chain_models
+                SET sequence_order = -sequence_order
+              WHERE chain_id = $1 AND sequence_order > $2"
+        ).bind(chain_id).bind(seq).execute(&mut *tx).await.map_err(|e| e.to_string())?;
+
+        sqlx_core::query::query(
+            "UPDATE gateway.fallback_chain_models
+                SET sequence_order = -sequence_order - 1
+              WHERE chain_id = $1 AND sequence_order < 0"
+        ).bind(chain_id).execute(&mut *tx).await.map_err(|e| e.to_string())?;
+
+        tx.commit().await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Swap a chain-model with its neighbour above (direction = -1) or
+    /// below (direction = +1). No-op at boundaries. Returns Ok(false)
+    /// when no swap happened so the caller can distinguish "hit
+    /// boundary" from "wrote".
+    pub async fn move_chain_model(
+        &self,
+        chain_id: &uuid::Uuid,
+        member_id: &uuid::Uuid,
+        direction: i32,
+    ) -> Result<bool, String> {
+        if direction != -1 && direction != 1 {
+            return Err("direction must be -1 (up) or +1 (down)".into());
+        }
+
+        let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
+
+        // Find the current sequence_order (also confirms membership).
+        let cur: Option<(i32,)> = sqlx_core::query_as::query_as(
+            "SELECT sequence_order FROM gateway.fallback_chain_models
+              WHERE id = $1 AND chain_id = $2"
+        ).bind(member_id).bind(chain_id).fetch_optional(&mut *tx).await.map_err(|e| e.to_string())?;
+        let Some((cur_seq,)) = cur else {
+            return Err("chain member not found".into());
+        };
+
+        let target_seq = cur_seq + direction;
+        if target_seq < 1 {
+            return Ok(false); // Already at top.
+        }
+
+        // Locate the neighbour to swap with. If none exists at target
+        // (member is last row), also a boundary.
+        let neighbour: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
+            "SELECT id FROM gateway.fallback_chain_models
+              WHERE chain_id = $1 AND sequence_order = $2"
+        ).bind(chain_id).bind(target_seq).fetch_optional(&mut *tx).await.map_err(|e| e.to_string())?;
+        let Some((neighbour_id,)) = neighbour else {
+            return Ok(false); // Already at bottom.
+        };
+
+        // Three-step swap to dodge the unique(chain_id, sequence_order)
+        // index: park the mover at a negative slot, move the neighbour
+        // into the mover's old slot, then land the mover.
+        sqlx_core::query::query(
+            "UPDATE gateway.fallback_chain_models
+                SET sequence_order = -$1
+              WHERE id = $2"
+        ).bind(cur_seq).bind(member_id).execute(&mut *tx).await.map_err(|e| e.to_string())?;
+
+        sqlx_core::query::query(
+            "UPDATE gateway.fallback_chain_models
+                SET sequence_order = $1
+              WHERE id = $2"
+        ).bind(cur_seq).bind(neighbour_id).execute(&mut *tx).await.map_err(|e| e.to_string())?;
+
+        sqlx_core::query::query(
+            "UPDATE gateway.fallback_chain_models
+                SET sequence_order = $1
+              WHERE id = $2"
+        ).bind(target_seq).bind(member_id).execute(&mut *tx).await.map_err(|e| e.to_string())?;
+
+        tx.commit().await.map_err(|e| e.to_string())?;
+        Ok(true)
+    }
 }
 
 #[cfg(test)]
@@ -4891,6 +5646,19 @@ mod tests {
             "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path) VALUES('00000000-0000-0000-0000-000000000001', 'git'::sensei.folder_kind, $1, $1, $2) ON CONFLICT(abs_path) DO UPDATE SET name = EXCLUDED.name RETURNING id"
         ).bind(suffix).bind(&abs_path).fetch_one(s.pool()).await.unwrap();
         row.0
+    }
+
+    /// Create a unique (project, folder) pair for FK tests that need both,
+    /// wiring the folder to the project. Used by the pattern tests since
+    /// detected_patterns is project-scoped (#82) and needs a non-null
+    /// project_id, while `list_patterns_by_folder` still keys on folder.
+    async fn create_test_project_and_folder(s: &PgStore, suffix: &str) -> (uuid::Uuid, uuid::Uuid) {
+        let pid = s.create_project(&format!("_test:{}", suffix), None, None).await.unwrap();
+        let fid = create_test_folder(s, suffix).await;
+        sqlx_core::query::query("UPDATE sensei.folders SET project_id = $1 WHERE id = $2")
+            .bind(pid).bind(fid)
+            .execute(s.pool()).await.unwrap();
+        (pid, fid)
     }
 
     // ── PG Function tests ─────────────────────────────────────────────
@@ -5214,6 +5982,189 @@ mod tests {
         s.delete_project(&pid).await.unwrap();
     }
 
+    // Gap 1 fix — the reject terminal is `dismissed` in the enum (not
+    // `rejected`), and both accept + reject must only fire from `pending`.
+    // Locks the enum-value contract so a future rename can't silently
+    // break the UI action buttons.
+    #[tokio::test]
+    async fn recommendation_reject_writes_dismissed_and_guards_at_pending() {
+        let s = pg_store().await;
+        let pid = s.create_project("_test:rec_reject_proj", None, None).await.unwrap();
+        let rid = s.create_recommendation(&pid, "_test:rej", "why", "revise_rule", "low").await.unwrap();
+
+        s.reject_recommendation(&rid).await.unwrap();
+        let recs = s.list_recommendations(&pid).await.unwrap();
+        let r = recs.iter().find(|r| r["title"] == "_test:rej").unwrap();
+        assert_eq!(r["status"], "dismissed", "reject writes the `dismissed` enum terminal");
+
+        // Second reject on the same rec is a no-op guarded at `pending`;
+        // pg_store must return an error rather than clobber the decision.
+        let err = s.reject_recommendation(&rid).await.expect_err("guard fires on already-decided");
+        assert!(err.contains("already decided") || err.contains("not found"),
+                "guard error text: {err}");
+
+        sqlx_core::query::query("DELETE FROM inference.recommendations WHERE id = $1").bind(rid).execute(s.pool()).await.unwrap();
+        s.delete_project(&pid).await.unwrap();
+    }
+
+    // ── Gateway chains / role assignments tests ─────────────────────
+
+    /// list_chains_with_models returns every active chain, correctly
+    /// projects the `role` column, and JSON-aggregates member models in
+    /// sequence order. Seeded prod rows drive the shape assertions —
+    /// only a chain the test itself creates is deleted at teardown.
+    #[tokio::test]
+    async fn list_chains_with_models_returns_role_and_ordered_members() {
+        let s = pg_store().await;
+        let chains = s.list_chains_with_models().await.unwrap();
+        assert!(!chains.is_empty(), "seed data should include at least one chain");
+
+        // `reasoning` seeds to role=inference; `embed` to role=embedding.
+        let reasoning = chains.iter().find(|c| c["name"] == "reasoning")
+            .expect("seed data should include reasoning chain");
+        assert_eq!(reasoning["role"], "inference");
+
+        let embed = chains.iter().find(|c| c["name"] == "embed")
+            .expect("seed data should include embed chain");
+        assert_eq!(embed["role"], "embedding");
+
+        // Utility chain — consensus-proposer — must NOT carry a role.
+        let proposer = chains.iter().find(|c| c["name"] == "consensus-proposer")
+            .expect("seed data should include consensus-proposer");
+        assert!(proposer["role"].is_null(), "utility chains stay unassigned");
+
+        // Members are JSON-aggregated in `sequence_order`.
+        let members = reasoning["models"].as_array().expect("models is an array");
+        if members.len() >= 2 {
+            let first  = members[0]["sequenceOrder"].as_i64().unwrap();
+            let second = members[1]["sequenceOrder"].as_i64().unwrap();
+            assert!(first < second, "members are ordered by sequence_order asc");
+        }
+    }
+
+    /// set_chain_role writes the role, clears it on None, and rejects a
+    /// role that another chain already owns (the unique-when-set index).
+    /// Runs against a scratch chain so seed rows stay intact.
+    #[tokio::test]
+    async fn set_chain_role_writes_clears_and_rejects_duplicate() {
+        let s = pg_store().await;
+
+        // Create a scratch chain with capability=reasoning so it can carry
+        // a role at all.
+        let scratch_name = format!("_test:chain_{}", uuid::Uuid::new_v4());
+        let (scratch_id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO gateway.fallback_chains (name, capability, description, is_active)
+             VALUES ($1, 'reasoning'::sensei.model_capability, 'scratch', true)
+             RETURNING id"
+        ).bind(&scratch_name).fetch_one(s.pool()).await.unwrap();
+
+        // Write voice (unassigned by seed) → row now carries the role.
+        s.set_chain_role(&scratch_id, Some("voice")).await.unwrap();
+        let row: (Option<String>,) = sqlx_core::query_as::query_as(
+            "SELECT role::text FROM gateway.fallback_chains WHERE id = $1"
+        ).bind(scratch_id).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(row.0.as_deref(), Some("voice"));
+
+        // Clear → back to null.
+        s.set_chain_role(&scratch_id, None).await.unwrap();
+        let row: (Option<String>,) = sqlx_core::query_as::query_as(
+            "SELECT role::text FROM gateway.fallback_chains WHERE id = $1"
+        ).bind(scratch_id).fetch_one(s.pool()).await.unwrap();
+        assert!(row.0.is_none());
+
+        // Taking a role already owned by another chain (seed: reasoning ↔
+        // inference) must fail — surfaces as a duplicate-key DB error the
+        // caller can map to a 409 CONFLICT.
+        let err = s.set_chain_role(&scratch_id, Some("inference")).await
+            .expect_err("unique index rejects a second inference chain");
+        assert!(err.contains("duplicate") || err.contains("unique"),
+                "expected uniqueness violation, got: {err}");
+
+        // Unknown chain id → not-found error, not a silent no-op.
+        let ghost = uuid::Uuid::new_v4();
+        let err = s.set_chain_role(&ghost, Some("voice")).await
+            .expect_err("missing row must error");
+        assert!(err.contains("not found"), "expected not-found error, got: {err}");
+
+        // Teardown — remove the scratch chain.
+        sqlx_core::query::query("DELETE FROM gateway.fallback_chains WHERE id = $1")
+            .bind(scratch_id).execute(s.pool()).await.unwrap();
+    }
+
+    /// End-to-end chain-model editing: add → move → remove → compact.
+    /// Runs against a scratch chain so seed rows stay intact.
+    #[tokio::test]
+    async fn chain_model_editing_add_move_remove_compacts_sequence() {
+        let s = pg_store().await;
+
+        // Scratch chain, capability=chat so any chat model matches.
+        let scratch_name = format!("_test:mchain_{}", uuid::Uuid::new_v4());
+        let (chain_id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO gateway.fallback_chains (name, capability, description, is_active)
+             VALUES ($1, 'chat'::sensei.model_capability, 'scratch', true)
+             RETURNING id"
+        ).bind(&scratch_name).fetch_one(s.pool()).await.unwrap();
+
+        // Pick three (model, router) pairs with capability=chat.
+        let pairs: Vec<(uuid::Uuid, uuid::Uuid)> = sqlx_core::query_as::query_as(
+            "SELECT m.id, mir.router_id
+               FROM gateway.models m
+               JOIN gateway.models_in_router mir ON mir.model_id = m.id
+              WHERE m.capabilities @> ARRAY['chat'::sensei.model_capability]
+              LIMIT 3"
+        ).fetch_all(s.pool()).await.unwrap();
+        assert!(pairs.len() >= 2, "test needs at least 2 chat-capable (model, router) pairs; got {}", pairs.len());
+
+        // Add — sequence_order starts at 1 and advances.
+        let (row_a, seq_a) = s.add_chain_model(&chain_id, &pairs[0].0, &pairs[0].1).await.unwrap();
+        let (row_b, seq_b) = s.add_chain_model(&chain_id, &pairs[1].0, &pairs[1].1).await.unwrap();
+        assert_eq!(seq_a, 1);
+        assert_eq!(seq_b, 2);
+
+        // Move A down (swap with B).
+        let moved = s.move_chain_model(&chain_id, &row_a, 1).await.unwrap();
+        assert!(moved, "A should swap with B");
+        let (seq_a_now,): (i32,) = sqlx_core::query_as::query_as(
+            "SELECT sequence_order FROM gateway.fallback_chain_models WHERE id = $1"
+        ).bind(row_a).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(seq_a_now, 2, "A now sits at position 2");
+        let (seq_b_now,): (i32,) = sqlx_core::query_as::query_as(
+            "SELECT sequence_order FROM gateway.fallback_chain_models WHERE id = $1"
+        ).bind(row_b).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(seq_b_now, 1, "B moved into A's old slot");
+
+        // Move B up past the top — boundary, no-op.
+        let moved = s.move_chain_model(&chain_id, &row_b, -1).await.unwrap();
+        assert!(!moved, "top boundary should return false");
+
+        // Remove B — A should compact to sequence_order 1.
+        s.remove_chain_model(&chain_id, &row_b).await.unwrap();
+        let (seq_a_final,): (i32,) = sqlx_core::query_as::query_as(
+            "SELECT sequence_order FROM gateway.fallback_chain_models WHERE id = $1"
+        ).bind(row_a).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(seq_a_final, 1, "A compacts after B removal");
+
+        // Not-found errors surface, not silent no-ops.
+        let ghost = uuid::Uuid::new_v4();
+        let err = s.remove_chain_model(&chain_id, &ghost).await.expect_err("remove missing must error");
+        assert!(err.contains("not found"), "expected not-found, got: {err}");
+        let err = s.move_chain_model(&chain_id, &ghost, 1).await.expect_err("move missing must error");
+        assert!(err.contains("not found"), "expected not-found, got: {err}");
+
+        // Available list: chain has 1 model, so all others with matching
+        // capability are available (excludes the row we still have).
+        let available = s.list_available_models_for_chain(&chain_id).await.unwrap();
+        assert!(!available.is_empty(), "at least one chat model should be available after removing B");
+
+        // Bad direction rejected with a clear message.
+        let err = s.move_chain_model(&chain_id, &row_a, 2).await.expect_err("direction 2 must reject");
+        assert!(err.contains("-1") || err.contains("+1"), "expected direction hint, got: {err}");
+
+        // Teardown.
+        sqlx_core::query::query("DELETE FROM gateway.fallback_chains WHERE id = $1")
+            .bind(chain_id).execute(s.pool()).await.unwrap();
+    }
+
     // ── Communities tests ────────────────────────────────────────────
 
     #[tokio::test]
@@ -5321,41 +6272,236 @@ mod tests {
     #[tokio::test]
     async fn pattern_upsert_and_list() {
         let s = pg_store().await;
-        let fid = create_test_folder(&s, "pat_upsert").await;
+        let suffix = format!("pat_upsert_{}", uuid::Uuid::new_v4());
+        let (proj_id, fid) = create_test_project_and_folder(&s, &suffix).await;
         let instances = serde_json::json!([{"file":"src/lib.rs","line":10},{"file":"src/main.rs","line":20}]);
-        let pid = s.upsert_pattern(&fid, "_test:Adapter", false, Some(0.85), &instances).await.unwrap();
+        let pat_id = s.upsert_pattern(&proj_id, Some(&fid), "_test:Adapter", false, Some(0.85), &instances).await.unwrap();
         let patterns = s.list_patterns_by_folder(&fid).await.unwrap();
         assert!(patterns.iter().any(|p| p["name"] == "_test:Adapter" && p["instance_count"] == 2));
         // cleanup
         sqlx_core::query::query("DELETE FROM inference.detected_patterns WHERE id = $1")
-            .bind(pid).execute(s.pool()).await.unwrap();
+            .bind(pat_id).execute(s.pool()).await.unwrap();
+        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+            .bind(proj_id).execute(s.pool()).await.ok();
     }
 
     #[tokio::test]
     async fn pattern_promote() {
         let s = pg_store().await;
-        let fid = create_test_folder(&s, "pat_promote").await;
-        let pid = s.upsert_pattern(&fid, "_test:Factory", false, None, &serde_json::json!([])).await.unwrap();
-        s.promote_pattern(&pid, "rule").await.unwrap();
+        let suffix = format!("pat_promote_{}", uuid::Uuid::new_v4());
+        let (proj_id, fid) = create_test_project_and_folder(&s, &suffix).await;
+        let pat_id = s.upsert_pattern(&proj_id, Some(&fid), "_test:Factory", false, None, &serde_json::json!([])).await.unwrap();
+        s.promote_pattern(&pat_id, "rule").await.unwrap();
         let patterns = s.list_patterns_by_folder(&fid).await.unwrap();
-        let p = patterns.iter().find(|p| p["id"] == pid.to_string()).unwrap();
+        let p = patterns.iter().find(|p| p["id"] == pat_id.to_string()).unwrap();
         assert_eq!(p["lifecycle"], "rule");
         sqlx_core::query::query("DELETE FROM inference.detected_patterns WHERE id = $1")
-            .bind(pid).execute(s.pool()).await.unwrap();
+            .bind(pat_id).execute(s.pool()).await.unwrap();
+        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+            .bind(proj_id).execute(s.pool()).await.ok();
     }
 
     #[tokio::test]
     async fn pattern_upsert_updates_existing() {
         let s = pg_store().await;
-        let fid = create_test_folder(&s, "pat_dup").await;
-        let id1 = s.upsert_pattern(&fid, "_test:Singleton", false, Some(0.5), &serde_json::json!([{"file":"a.rs"}])).await.unwrap();
-        let id2 = s.upsert_pattern(&fid, "_test:Singleton", false, Some(0.9), &serde_json::json!([{"file":"a.rs"},{"file":"b.rs"}])).await.unwrap();
+        let suffix = format!("pat_dup_{}", uuid::Uuid::new_v4());
+        let (proj_id, fid) = create_test_project_and_folder(&s, &suffix).await;
+        let id1 = s.upsert_pattern(&proj_id, Some(&fid), "_test:Singleton", false, Some(0.5), &serde_json::json!([{"file":"a.rs"}])).await.unwrap();
+        let id2 = s.upsert_pattern(&proj_id, Some(&fid), "_test:Singleton", false, Some(0.9), &serde_json::json!([{"file":"a.rs"},{"file":"b.rs"}])).await.unwrap();
         assert_eq!(id1, id2); // same row updated
         let patterns = s.list_patterns_by_folder(&fid).await.unwrap();
         let p = patterns.iter().find(|p| p["name"] == "_test:Singleton").unwrap();
         assert_eq!(p["instance_count"], 2);
         sqlx_core::query::query("DELETE FROM inference.detected_patterns WHERE id = $1")
             .bind(id1).execute(s.pool()).await.unwrap();
+        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+            .bind(proj_id).execute(s.pool()).await.ok();
+    }
+
+    #[tokio::test]
+    async fn pattern_upsert_merges_across_folders_in_same_project() {
+        // #82: patterns are project-scoped. Two folders in the same project
+        // upserting the same pattern name collapse into a single row — the
+        // second upsert updates the first row's instances/folder_id locus.
+        let s = pg_store().await;
+        let suffix = format!("pat_project_scope_{}", uuid::Uuid::new_v4());
+        let (proj_id, fid_a) = create_test_project_and_folder(&s, &suffix).await;
+        let fid_b = create_test_folder(&s, &format!("{}_b", suffix)).await;
+        sqlx_core::query::query("UPDATE sensei.folders SET project_id = $1 WHERE id = $2")
+            .bind(proj_id).bind(fid_b)
+            .execute(s.pool()).await.unwrap();
+
+        let id_a = s.upsert_pattern(&proj_id, Some(&fid_a), "_test:Shared", false, None, &serde_json::json!([{"file":"a.rs"}])).await.unwrap();
+        let id_b = s.upsert_pattern(&proj_id, Some(&fid_b), "_test:Shared", false, None, &serde_json::json!([{"file":"b.rs"},{"file":"b2.rs"}])).await.unwrap();
+        assert_eq!(id_a, id_b, "same (project_id, name) must merge into one row");
+
+        // The row's instances reflect the latest upsert; folder_id follows too.
+        let (count, locus): (i32, uuid::Uuid) = sqlx_core::query_as::query_as(
+            "SELECT instance_count, folder_id FROM inference.detected_patterns WHERE id = $1"
+        ).bind(id_a).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(count, 2);
+        assert_eq!(locus, fid_b, "folder_id is the latest upsert's locus");
+
+        // cleanup
+        sqlx_core::query::query("DELETE FROM inference.detected_patterns WHERE id = $1")
+            .bind(id_a).execute(s.pool()).await.unwrap();
+        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+            .bind(proj_id).execute(s.pool()).await.ok();
+    }
+
+    // ── Project merge tests (#41) ──────────────────────────────────────
+
+    #[tokio::test]
+    async fn merge_projects_moves_folders_sessions_memories_and_deletes_source() {
+        let s = pg_store().await;
+        let suffix = format!("merge_{}", uuid::Uuid::new_v4());
+        let (src, src_folder) = create_test_project_and_folder(&s, &format!("{}_src", suffix)).await;
+        let (tgt, _tgt_folder) = create_test_project_and_folder(&s, &format!("{}_tgt", suffix)).await;
+
+        // Seed a memory attributed to the source project so we can prove it
+        // survives the merge (only its project_id shifts).
+        let mem_id: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.memories(project_id, scope, type, title, content, origin)
+             VALUES($1, 'project'::sensei.memory_scope, 'convention'::sensei.memory_type, $2, 'body', 'user')
+             RETURNING id"
+        ).bind(src).bind(format!("_test:merge_memory_{}", uuid::Uuid::new_v4()))
+            .fetch_one(s.pool()).await.unwrap();
+
+        s.merge_projects(&src, &tgt).await.unwrap();
+
+        // Source project row is gone.
+        let src_exists: (bool,) = sqlx_core::query_as::query_as(
+            "SELECT EXISTS(SELECT 1 FROM sensei.projects WHERE id = $1)"
+        ).bind(src).fetch_one(s.pool()).await.unwrap();
+        assert!(!src_exists.0, "source project should be deleted after merge");
+
+        // The source's folder now lives under the target project.
+        let (folder_project,): (Option<uuid::Uuid>,) = sqlx_core::query_as::query_as(
+            "SELECT project_id FROM sensei.folders WHERE id = $1"
+        ).bind(src_folder).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(folder_project, Some(tgt), "folder should be reassigned to target");
+
+        // The memory survived and points at the target.
+        let (mem_project,): (Option<uuid::Uuid>,) = sqlx_core::query_as::query_as(
+            "SELECT project_id FROM sensei.memories WHERE id = $1"
+        ).bind(mem_id.0).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(mem_project, Some(tgt), "user-authored memory should follow to target");
+
+        // cleanup
+        sqlx_core::query::query("DELETE FROM sensei.memories WHERE id = $1")
+            .bind(mem_id.0).execute(s.pool()).await.ok();
+        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+            .bind(tgt).execute(s.pool()).await.ok();
+    }
+
+    #[tokio::test]
+    async fn merge_projects_rejects_self_merge() {
+        let s = pg_store().await;
+        let (pid, _fid) = create_test_project_and_folder(&s, &format!("selfmerge_{}", uuid::Uuid::new_v4())).await;
+        let err = s.merge_projects(&pid, &pid).await.unwrap_err();
+        assert!(err.contains("must differ"), "got: {err}");
+        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+            .bind(pid).execute(s.pool()).await.ok();
+    }
+
+    #[tokio::test]
+    async fn merge_projects_errors_on_missing_ids() {
+        let s = pg_store().await;
+        let ghost = uuid::Uuid::new_v4();
+        let (real, _fid) = create_test_project_and_folder(&s, &format!("mergemiss_{}", uuid::Uuid::new_v4())).await;
+        let err = s.merge_projects(&ghost, &real).await.unwrap_err();
+        assert!(err.contains("expected source + target to exist"), "got: {err}");
+        // The real project is untouched.
+        let exists: (bool,) = sqlx_core::query_as::query_as(
+            "SELECT EXISTS(SELECT 1 FROM sensei.projects WHERE id = $1)"
+        ).bind(real).fetch_one(s.pool()).await.unwrap();
+        assert!(exists.0);
+        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+            .bind(real).execute(s.pool()).await.ok();
+    }
+
+    // ── Activity pruner tests (#74) ────────────────────────────────────
+
+    #[tokio::test]
+    async fn prune_activity_keeps_unanalyzed_sessions_even_when_old() {
+        let s = pg_store().await;
+        let suffix = format!("prune_keep_unanalyzed_{}", uuid::Uuid::new_v4());
+        let (_pid, fid) = create_test_project_and_folder(&s, &suffix).await;
+        let csid = format!("{}-csid", suffix);
+        let sid = s.record_session_event(&csid, &fid, None, "claude", true).await.unwrap();
+        // Age the session past the cutoff but leave analyzed_at NULL.
+        sqlx_core::query::query(
+            "UPDATE activity.sessions SET started_at = now() - interval '90 days' WHERE id = $1"
+        ).bind(sid).execute(s.pool()).await.unwrap();
+
+        // Other tests may seed analyzed sessions, so the global count is not
+        // useful — verify OUR session specifically survives.
+        s.prune_activity(30).await.unwrap();
+
+        let exists: (bool,) = sqlx_core::query_as::query_as(
+            "SELECT EXISTS(SELECT 1 FROM activity.sessions WHERE id = $1)"
+        ).bind(sid).fetch_one(s.pool()).await.unwrap();
+        assert!(exists.0, "unanalyzed session must survive prune");
+
+        sqlx_core::query::query("DELETE FROM activity.sessions WHERE id = $1")
+            .bind(sid).execute(s.pool()).await.ok();
+    }
+
+    #[tokio::test]
+    async fn prune_activity_deletes_analyzed_sessions_past_cutoff_and_children() {
+        let s = pg_store().await;
+        let suffix = format!("prune_del_{}", uuid::Uuid::new_v4());
+        let (_pid, fid) = create_test_project_and_folder(&s, &suffix).await;
+        let csid = format!("{}-csid", suffix);
+        let sid = s.record_session_event(&csid, &fid, None, "claude", true).await.unwrap();
+        // Age + mark analyzed.
+        sqlx_core::query::query(
+            "UPDATE activity.sessions
+                SET started_at = now() - interval '90 days',
+                    analyzed_at = now() - interval '60 days'
+              WHERE id = $1"
+        ).bind(sid).execute(s.pool()).await.unwrap();
+        // Seed a child transcript_turn keyed on client_session_id (no FK).
+        sqlx_core::query::query(
+            "INSERT INTO activity.transcript_turns(session_id, source, turn_index, assistant_text)
+             VALUES ($1, 'claude', 0, 'hello')"
+        ).bind(&csid).execute(s.pool()).await.unwrap();
+        // Seed a hook event under the same client_session_id.
+        s.insert_hook_event(&csid, "claude", "UserPromptSubmit", None, None, 1000, None,
+            &serde_json::json!({"prompt": "hi"})).await.unwrap();
+
+        // Counts include any leftover analyzed+old data from other tests, so
+        // don't assert exact numbers — assert OUR session (and its child
+        // rows) are gone after the prune.
+        s.prune_activity(30).await.unwrap();
+
+        let exists: (bool,) = sqlx_core::query_as::query_as(
+            "SELECT EXISTS(SELECT 1 FROM activity.sessions WHERE id = $1)"
+        ).bind(sid).fetch_one(s.pool()).await.unwrap();
+        assert!(!exists.0, "analyzed + old session must be pruned");
+
+        let tt: (i64,) = sqlx_core::query_as::query_as(
+            "SELECT COUNT(*) FROM activity.transcript_turns WHERE session_id = $1"
+        ).bind(&csid).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(tt.0, 0, "transcript_turns keyed on this session must be gone");
+    }
+
+    #[tokio::test]
+    async fn prune_activity_prunes_orphan_events_by_ts() {
+        let s = pg_store().await;
+        // Insert an assistant_event with no matching session and old ts.
+        let old_ts: i64 = (chrono::Utc::now() - chrono::Duration::days(90)).timestamp() * 1000;
+        let orphan_csid = format!("orphan_prune_{}", uuid::Uuid::new_v4());
+        s.insert_hook_event(&orphan_csid, "claude", "PostToolUse", Some("Read".into()), None, old_ts, None,
+            &serde_json::json!({})).await.unwrap();
+
+        let counts = s.prune_activity(30).await.unwrap();
+        assert!(counts.assistant_events >= 1, "orphan event older than cutoff must be pruned");
+
+        let orphaned: (i64,) = sqlx_core::query_as::query_as(
+            "SELECT COUNT(*) FROM activity.assistant_events WHERE session_id = $1"
+        ).bind(&orphan_csid).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(orphaned.0, 0);
     }
 
     // ── Corrections aggregation tests ──────────────────────────────────

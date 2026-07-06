@@ -234,7 +234,13 @@ async fn synthesize_session(
     }
     let started = synth.events.iter().map(|e| e.ts).min().unwrap_or(0);
     let completed = synth.events.iter().map(|e| e.ts).max().unwrap_or(0);
-    let _ = pg.set_session_history(session_id, started, completed).await;
+    // Session start/completed timestamps power the "Duration" column
+    // on the observatory. If this write fails silently the row still
+    // shows up but with a blank duration — surface the failure so the
+    // observability isn't itself invisible.
+    if let Err(e) = pg.set_session_history(session_id, started, completed).await {
+        tracing::warn!(error = %e, session = %session_id, "synthesize_session: set_session_history failed");
+    }
     // Capture the inference model that ran this session (Zed: per-thread; Claude:
     // dominant transcript model) so insights can be attributed by model.
     if let Some((provider, model)) = adapter.model_for(content)

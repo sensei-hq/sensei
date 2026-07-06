@@ -20,14 +20,12 @@ describe('WizardState', () => {
     it('sets stage.status to done for completed stages', () => {
       ws.hydrate(mockWizardLoadData({
         completion: {
-          welcome: 'done', preferences: 'pending', assistants: 'pending',
-          roots: 'pending', scan: 'pending', projects: 'pending',
-          libraries: 'pending', instruments: 'pending',
-          inference: 'pending', done: 'pending',
+          welcome: 'done', assistants: 'pending',
+          roots: 'pending', scan: 'pending', done: 'pending',
         },
       }));
       expect(ws.stages.find(s => s.id === 'welcome')?.status).toBe('done');
-      expect(ws.stages.find(s => s.id === 'preferences')?.status).toBe('pending');
+      expect(ws.stages.find(s => s.id === 'assistants')?.status).toBe('pending');
     });
 
     it('resets active flags on rehydrate', () => {
@@ -205,10 +203,8 @@ describe('WizardState', () => {
     it('returns first pending after some done', () => {
       ws.hydrate(mockWizardLoadData({
         completion: {
-          welcome: 'done', preferences: 'done', assistants: 'done',
-          roots: 'pending', scan: 'pending', projects: 'pending',
-          libraries: 'pending', instruments: 'pending',
-          inference: 'pending', done: 'pending',
+          welcome: 'done', assistants: 'done',
+          roots: 'pending', scan: 'pending', done: 'pending',
         },
       }));
       expect(ws.firstPendingStage).toBe('roots');
@@ -216,10 +212,8 @@ describe('WizardState', () => {
 
     it('returns done when all stages complete', () => {
       const allDone: Record<string, 'done'> = {
-        welcome: 'done', preferences: 'done', assistants: 'done',
-        roots: 'done', scan: 'done', projects: 'done',
-        libraries: 'done', instruments: 'done',
-        inference: 'done', done: 'done',
+        welcome: 'done', assistants: 'done',
+        roots: 'done', scan: 'done', done: 'done',
       };
       ws.hydrate(mockWizardLoadData({ completion: allDone }));
       expect(ws.allDone).toBe(true);

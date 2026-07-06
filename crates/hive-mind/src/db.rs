@@ -38,10 +38,22 @@ impl HiveDb {
 
     /// Boot an embedded Postgres at `data_dir`, deploy the `hive` scope from the
     /// `database/` tree at `database_dir`, and seed the scope ladder.
+    ///
+    /// `temporary`: caller decides. Tests should set this to `true` (via
+    /// `bootstrap_temp`) so the crate's Drop wipes the data dir. Production
+    /// callers pass `false` to persist across daemon restarts.
     pub async fn bootstrap(data_dir: PathBuf, database_dir: PathBuf) -> Result<Self, DbError> {
+        Self::bootstrap_with_settings(data_dir, database_dir, false).await
+    }
+
+    async fn bootstrap_with_settings(
+        data_dir: PathBuf,
+        database_dir: PathBuf,
+        temporary: bool,
+    ) -> Result<Self, DbError> {
         let settings = Settings {
             data_dir,
-            temporary: false,
+            temporary,
             ..Default::default()
         };
         let mut pg = PostgreSQL::new(settings);
@@ -75,14 +87,78 @@ impl HiveDb {
     /// workspace `database/` tree. The dir is unique per call (process id +
     /// monotonic counter) so multiple `#[tokio::test]`s in one test binary do
     /// not collide on the same embedded-Postgres data directory.
+    ///
+    /// Marks the embedded-pg as `temporary: true` so the crate's Drop wipes
+    /// the data dir when the test finishes normally. As a defensive layer
+    /// against SIGKILL / panic-across-runtime paths that skip Drop, this
+    /// also runs `sweep_orphaned_test_dirs` at the top of every call —
+    /// prior-run leaks stop accumulating even when a Drop is missed.
     pub async fn bootstrap_temp() -> Result<Self, DbError> {
+        sweep_orphaned_test_dirs();
+
         use std::sync::atomic::{AtomicU64, Ordering};
         static SEQ: AtomicU64 = AtomicU64::new(0);
         let n = SEQ.fetch_add(1, Ordering::Relaxed);
         let tmp = std::env::temp_dir()
             .join(format!("sensei-hive-test-{}-{n}", std::process::id()));
-        Self::bootstrap(tmp, workspace_database_dir()).await
+        Self::bootstrap_with_settings(tmp, workspace_database_dir(), true).await
     }
+}
+
+/// Sweep `$TMPDIR/sensei-hive-test-*` directories left behind by prior test
+/// runs whose parent PID is no longer alive, killing any embedded-Postgres
+/// child that's still holding the dir and then rm'ing the tree.
+///
+/// This runs at the top of every `bootstrap_temp` — it's cheap (a single
+/// `ps` + a directory walk) and keeps the temp filesystem from filling
+/// up when a test binary gets SIGKILL'd (Ctrl+C, cargo test timeout,
+/// OOM) and skips Drop.
+///
+/// Only touches directories whose PID prefix belongs to a dead process, so
+/// concurrent `cargo test` invocations against the same crate leave each
+/// other's live dirs alone.
+fn sweep_orphaned_test_dirs() {
+    let tmp = std::env::temp_dir();
+    let Ok(entries) = std::fs::read_dir(&tmp) else { return };
+
+    for entry in entries.flatten() {
+        let Ok(file_name) = entry.file_name().into_string() else { continue };
+        let Some(rest) = file_name.strip_prefix("sensei-hive-test-") else { continue };
+        // Name shape: sensei-hive-test-{pid}-{n} — parse the pid segment.
+        let Some((pid_str, _)) = rest.split_once('-') else { continue };
+        let Ok(pid) = pid_str.parse::<u32>() else { continue };
+
+        if is_pid_alive(pid) { continue }
+
+        // The parent is gone. Kill any embedded-pg processes still
+        // holding this dir (using -D <path> in their command line), then
+        // remove the tree. Failures here are best-effort — logging noise
+        // is worse than an orphan directory the next run will retry.
+        let dir_path = entry.path();
+        let _ = std::process::Command::new("pkill")
+            .arg("-f")
+            .arg(dir_path.to_string_lossy().as_ref())
+            .output();
+        let _ = std::fs::remove_dir_all(&dir_path);
+    }
+}
+
+/// Cheap `kill -0 <pid>` — returns true when the process exists.
+/// stderr is captured (not inherited) so a "No such process" message for
+/// every orphan doesn't spam the test-runner output on cleanup.
+fn is_pid_alive(pid: u32) -> bool {
+    // `kill -0` returns 0 when the process exists; nonzero when it's
+    // gone or we lack permission. `Command::output` captures stderr so
+    // the "No such process" line stays out of the test runner's
+    // console.
+    std::process::Command::new("kill")
+        .arg("-0")
+        .arg(pid.to_string())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
 }
 
 /// `crates/hive-mind/ -> ../../database`

@@ -14,18 +14,50 @@ use crate::types::PackageInfo;
 use std::path::Path;
 
 mod cargo;
+mod composer;
+mod dotnet;
 mod go;
+mod gradle;
+mod maven;
 mod npm;
 mod pyproject;
+mod ruby;
+mod swiftpm;
 pub(crate) mod workspace;
+mod xml;
 
 /// Adapter for a specific ecosystem's manifest format.
 pub trait ManifestAdapter: Send + Sync {
-    /// Manifest filenames this adapter recognises (typically one).
+    /// Fixed manifest filenames this adapter recognises (typically one).
+    /// For ecosystems whose manifest names are extension-based (`.csproj`,
+    /// `.sln`), leave this empty and populate [`Self::manifest_extensions`].
     fn manifest_filenames(&self) -> &[&'static str];
 
+    /// Filename extensions (no dot) this adapter recognises when the
+    /// ecosystem lacks fixed manifest names — used by .NET
+    /// (`.csproj` / `.fsproj` / `.sln`). Default: none.
+    fn manifest_extensions(&self) -> &[&'static str] {
+        &[]
+    }
+
+    /// True when `filename` belongs to this adapter. Default impl accepts
+    /// any name matching `manifest_filenames` or ending with a dot + any
+    /// entry from `manifest_extensions`. Callers should prefer this over
+    /// touching either list directly so extension-only adapters keep working.
+    fn accepts(&self, filename: &str) -> bool {
+        if self.manifest_filenames().contains(&filename) {
+            return true;
+        }
+        let Some(dot) = filename.rfind('.') else { return false };
+        let ext = &filename[dot + 1..];
+        self.manifest_extensions()
+            .iter()
+            .any(|e| e.eq_ignore_ascii_case(ext))
+    }
+
     /// Ecosystem slug matching the `sensei.library_ecosystem` DDL enum.
-    /// One of `"npm"`, `"cargo"`, `"pypi"`, `"go"`.
+    /// One of `"npm"`, `"cargo"`, `"pypi"`, `"go"`, `"maven"`, `"nuget"`,
+    /// `"rubygems"`, `"composer"`, `"swiftpm"`.
     fn ecosystem(&self) -> &'static str;
 
     /// Parse the raw contents of a manifest into dependency entries.
@@ -100,7 +132,7 @@ pub struct FsSignals {
 /// path until every ecosystem is migrated.
 pub fn manifest_adapter_for_filename(filename: &str) -> Option<&'static dyn ManifestAdapter> {
     for a in registered_adapters() {
-        if a.manifest_filenames().contains(&filename) {
+        if a.accepts(filename) {
             return Some(*a);
         }
     }
@@ -114,6 +146,12 @@ pub fn registered_adapters() -> &'static [&'static dyn ManifestAdapter] {
         &cargo::CargoManifestAdapter,
         &pyproject::PyprojectManifestAdapter,
         &go::GoManifestAdapter,
+        &maven::MavenManifestAdapter,
+        &dotnet::DotnetManifestAdapter,
+        &gradle::GradleManifestAdapter,
+        &ruby::RubyManifestAdapter,
+        &composer::ComposerManifestAdapter,
+        &swiftpm::SwiftPmManifestAdapter,
     ]
 }
 
@@ -125,6 +163,19 @@ pub fn all_manifest_filenames() -> Vec<&'static str> {
     let mut out: Vec<&'static str> = registered_adapters()
         .iter()
         .flat_map(|a| a.manifest_filenames().iter().copied())
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// Every distinct manifest extension any registered adapter recognises. Used
+/// by filesystem walks to catch ecosystems whose manifests are extension-keyed
+/// (`.csproj` / `.fsproj` / `.sln`) rather than fixed-name.
+pub fn all_manifest_extensions() -> Vec<&'static str> {
+    let mut out: Vec<&'static str> = registered_adapters()
+        .iter()
+        .flat_map(|a| a.manifest_extensions().iter().copied())
         .collect();
     out.sort();
     out.dedup();
@@ -166,10 +217,62 @@ mod tests {
     }
 
     #[test]
+    fn dispatch_returns_maven_for_pom_xml() {
+        let a = manifest_adapter_for_filename("pom.xml").unwrap();
+        assert_eq!(a.ecosystem(), "maven");
+    }
+
+    #[test]
+    fn dispatch_returns_dotnet_for_csproj_by_extension() {
+        let a = manifest_adapter_for_filename("MyApp.csproj").unwrap();
+        assert_eq!(a.ecosystem(), "nuget");
+    }
+
+    #[test]
+    fn dispatch_returns_dotnet_for_sln_by_extension() {
+        let a = manifest_adapter_for_filename("solution.sln").unwrap();
+        assert_eq!(a.ecosystem(), "nuget");
+    }
+
+    #[test]
+    fn dispatch_returns_gradle_for_build_gradle() {
+        let a = manifest_adapter_for_filename("build.gradle").unwrap();
+        assert_eq!(a.ecosystem(), "maven");
+        let b = manifest_adapter_for_filename("build.gradle.kts").unwrap();
+        assert_eq!(b.ecosystem(), "maven");
+    }
+
+    #[test]
+    fn dispatch_returns_ruby_for_gemfile() {
+        let a = manifest_adapter_for_filename("Gemfile").unwrap();
+        assert_eq!(a.ecosystem(), "rubygems");
+    }
+
+    #[test]
+    fn dispatch_returns_composer_for_composer_json() {
+        let a = manifest_adapter_for_filename("composer.json").unwrap();
+        assert_eq!(a.ecosystem(), "composer");
+    }
+
+    #[test]
+    fn dispatch_returns_swiftpm_for_package_swift() {
+        let a = manifest_adapter_for_filename("Package.swift").unwrap();
+        assert_eq!(a.ecosystem(), "swiftpm");
+    }
+
+    #[test]
     fn all_manifest_filenames_includes_every_ecosystem() {
         let names = all_manifest_filenames();
-        for expected in ["Cargo.toml", "package.json", "pyproject.toml", "go.mod"] {
+        for expected in ["Cargo.toml", "package.json", "pyproject.toml", "go.mod", "pom.xml"] {
             assert!(names.contains(&expected), "missing {expected} in {names:?}");
+        }
+    }
+
+    #[test]
+    fn all_manifest_extensions_includes_dotnet_variants() {
+        let exts = all_manifest_extensions();
+        for expected in ["csproj", "fsproj", "sln"] {
+            assert!(exts.contains(&expected), "missing {expected} in {exts:?}");
         }
     }
 }

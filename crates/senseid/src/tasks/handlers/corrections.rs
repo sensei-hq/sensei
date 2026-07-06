@@ -8,7 +8,7 @@ use super::super::Task;
 use super::analyze::correction_signal;
 use super::corrections_llm::{summarize_cluster, ClusterSummary};
 use super::prompt_classify::{classify_batch, PromptClass};
-use crate::corrections::{self, Cluster, CorrItem, CorrectionRow, CORRECTION_CLUSTER_MIN, SIMILARITY_THRESHOLD};
+use crate::corrections::{self, parse_cluster_min, parse_similarity_threshold, Cluster, CorrItem, CorrectionRow};
 
 /// Prompts embedded per gateway call.
 const EMBED_BATCH: usize = 64;
@@ -20,16 +20,17 @@ const EMBED_TIMEOUT_SECS: u64 = 30;
 const EMBED_DIM: usize = 384;
 
 /// Pure: assemble upsert rows from clusters + their (aligned) summaries. Drops
-/// clusters below `CORRECTION_CLUSTER_MIN`. `summaries[i]` corresponds to
-/// `clusters[i]`; `None` ⇒ snippet fallback.
+/// clusters below `cluster_min`. `summaries[i]` corresponds to `clusters[i]`;
+/// `None` ⇒ snippet fallback.
 pub fn build_rows(
     clusters: &[Cluster],
     summaries: &[Option<ClusterSummary>],
     items: &[CorrItem],
+    cluster_min: usize,
 ) -> Vec<CorrectionRow> {
     let mut rows = Vec::new();
     for (c, summary) in clusters.iter().zip(summaries.iter()) {
-        if c.count < CORRECTION_CLUSTER_MIN {
+        if c.count < cluster_min {
             continue;
         }
         let (text, suggestion, memory_id) = match summary {
@@ -117,6 +118,14 @@ async fn embed_items(ctx: &TaskContext, items: &[CorrItem]) -> Option<Vec<Vec<f3
 
 /// Global corrections aggregation. Idempotent; degrades gracefully without models.
 pub async fn aggregate_corrections(ctx: &TaskContext, _task: &Task) -> Result<u32, String> {
+    // Config-driven thresholds; constants are the defaults.
+    let sim_threshold = parse_similarity_threshold(
+        ctx.pg().get_config("corrections.similarity_threshold").await.ok().flatten().as_deref(),
+    );
+    let cluster_min = parse_cluster_min(
+        ctx.pg().get_config("corrections.cluster_min").await.ok().flatten().as_deref(),
+    );
+
     // 1. Pull all user prompts, keep regex-recall corrections.
     let all = ctx.pg().get_all_user_prompts().await?;
     let mut candidates: Vec<CorrItem> = all
@@ -158,7 +167,7 @@ pub async fn aggregate_corrections(ctx: &TaskContext, _task: &Task) -> Result<u3
 
     // 3. Cluster (embed → lexical fallback).
     let clusters = match embed_items(ctx, &items).await {
-        Some(embeddings) => corrections::cluster(&items, &embeddings, SIMILARITY_THRESHOLD),
+        Some(embeddings) => corrections::cluster(&items, &embeddings, sim_threshold),
         None => {
             tracing::warn!("aggregate_corrections: no embeddings — lexical fallback");
             corrections::lexical_cluster(&items)
@@ -175,7 +184,7 @@ pub async fn aggregate_corrections(ctx: &TaskContext, _task: &Task) -> Result<u3
     };
     let mut summaries: Vec<Option<ClusterSummary>> = Vec::with_capacity(clusters.len());
     for c in &clusters {
-        if c.count < CORRECTION_CLUSTER_MIN {
+        if c.count < cluster_min {
             summaries.push(None);
             continue;
         }
@@ -191,7 +200,7 @@ pub async fn aggregate_corrections(ctx: &TaskContext, _task: &Task) -> Result<u3
 
     // 5. Upsert + prune. `keep` is built from the rows we intend to persist; when
     // genuinely no corrections recur it is empty and the table is cleared.
-    let rows = build_rows(&clusters, &summaries, &items);
+    let rows = build_rows(&clusters, &summaries, &items, cluster_min);
     // `keep` lists EVERY intended row (even if its upsert transiently fails) so a
     // failed re-upsert never prunes an already-persisted row. `written` counts
     // only the upserts that actually succeeded, for a faithful return/log.
@@ -243,7 +252,7 @@ mod tests {
             Some(ClusterSummary { text: "Use $state".into(), suggestion: Some("reinforce".into()), memory_id: None }),
             None,
         ];
-        let rows = build_rows(&clusters, &summaries, &items);
+        let rows = build_rows(&clusters, &summaries, &items, 2);
         assert_eq!(rows.len(), 1, "singleton dropped");
         assert_eq!(rows[0].signature, "corr-a");
         assert_eq!(rows[0].text, "Use $state", "summary text used");
@@ -263,7 +272,7 @@ mod tests {
             project_ids: vec![p],
             member_idxs: vec![0, 1],
         }];
-        let rows = build_rows(&clusters, &[None], &items);
+        let rows = build_rows(&clusters, &[None], &items, 2);
         assert_eq!(rows[0].text, "revert that", "snippet fallback");
         assert_eq!(rows[0].suggestion, None);
         assert_eq!(rows[0].memory_id, None);

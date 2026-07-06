@@ -306,6 +306,30 @@ export function senseiApi(port: number) {
         { verdict, note },
       ),
 
+    // Measured impact reports — the analyzer's before/after FTR + MOE-style
+    // consensus for recommendations that carry a reasoning trace or a
+    // non-pending verdict. Distinct from the manual `listImpactVerdicts`
+    // retrospectives above.
+    getProjectImpact: (id: string) =>
+      get<Array<{
+        id: string; title: string; actionType: string; status: string;
+        verdict: string; baselineFtr: number | null; currentFtr: number | null;
+        ftrDelta: number | null;
+        props: Record<string, unknown>;
+        // Rich MOE reasoning JSON — `null` when the rec has no trace,
+        // otherwise `{headline, body, consensus, models: [{name, role,
+        // note}], suggestedRevision}`. Legacy `{conclusion}`-shape
+        // traces are shimmed on the daemon side so the reader always
+        // gets the panel shape when reasoning is present at all.
+        reasoning: {
+          headline: string | null;
+          body: string | null;
+          consensus: string | null;
+          models: Array<{ name: string; role: string; note: string }>;
+          suggestedRevision: string | null;
+        } | null;
+      }>>(`/api/projects/${enc(id)}/impact`, []),
+
     getProjectDrift: (id: string) =>
       get<{ items: DriftItem[]; total: number; drifted: number; broken: number }>(
         `/api/projects/${enc(id)}/drift`, { items: [], total: 0, drifted: 0, broken: 0 }
@@ -319,6 +343,18 @@ export function senseiApi(port: number) {
     getProjectRecommendations: (id: string, status?: string) =>
       get<Recommendation[]>(
         `/api/projects/${enc(id)}/recommendations${status ? `?status=${enc(status)}` : ''}`, []
+      ),
+
+    // Gap 1 fix — expose the accept/reject flow so MeasureVerdicts has
+    // work to measure. Each returns { ok } on success or 409 CONFLICT if
+    // the rec was already decided.
+    acceptProjectRecommendation: (id: string, recId: string) =>
+      post<{ ok: boolean }>(
+        `/api/projects/${enc(id)}/recommendations/${enc(recId)}/accept`, {}, { ok: false },
+      ),
+    rejectProjectRecommendation: (id: string, recId: string) =>
+      post<{ ok: boolean }>(
+        `/api/projects/${enc(id)}/recommendations/${enc(recId)}/reject`, {}, { ok: false },
       ),
 
     getProjectSessions: (id: string, limit = 50) =>
@@ -573,6 +609,20 @@ export function senseiApi(port: number) {
     getInstalledItems: () =>
       get<import('./types').InstalledItem[]>('/api/install/installed', []),
 
+    /** Toggle a skill or command. The daemon moves the .md file between
+     *  `~/.claude/<kind>s/` and its `disabled/` sibling — Claude Code
+     *  scans only the live folder. Idempotent server-side (the daemon
+     *  returns `changed: false` when the item was already in the target
+     *  state, but we discard that here — re-fetch the list to reflect
+     *  new state).
+     *  Error codes: 400 unknown kind, 404 unknown item or ambiguous
+     *  state (item present in both live + disabled folders). */
+    setInstalledItemEnabled: (name: string, kind: string, enabled: boolean) =>
+      tryPut(
+        `/api/install/installed/${enc(name)}/enabled`,
+        { kind, enabled },
+      ),
+
     removeAll: (purge = false) =>
       post<import('./types').RemoveResult>('/api/remove', { purge }, {
         assistants_removed: [], plugin_removed: false, commands_removed: 0,
@@ -595,6 +645,55 @@ export function senseiApi(port: number) {
 
     clearGatewayRouterKey: (id: string) =>
       tryDelete(`/api/gateway/routers/${enc(id)}/key`),
+
+    // Model Assignments — chains carry an optional `role` column; a
+    // chain-with-a-role IS the role assignment. Utility chains
+    // (consensus-* / classify) stay null and never surface in the picker.
+    listGatewayChains: () =>
+      get<{ chains: import('./setup/contracts').DaemonChain[] }>(
+        '/api/gateway/chains',
+        { chains: [] },
+      ),
+
+    /** Assign or clear a chain's sensei inference role. Pass `null` to
+     *  unassign. Returns error status codes: 400 unknown role, 404
+     *  unknown chain, 409 role already owned by another chain. */
+    setGatewayChainRole: (id: string, role: import('./setup/contracts').SenseiRole | null) =>
+      tryPut(
+        `/api/gateway/chains/${enc(id)}/role`,
+        { role },
+      ),
+
+    /** Chain-model editing — available picker source. Returns models
+     *  with matching capability, reachable via `models_in_router`,
+     *  minus the ones already in this chain. */
+    listAvailableChainModels: (chainId: string) =>
+      get<{ models: Array<{
+        modelId: string; modelName: string; fullName: string;
+        routerId: string; routerName: string;
+      }>}>(`/api/gateway/chains/${enc(chainId)}/available-models`, { models: [] }),
+
+    /** Append a (model, router) pair to the end of a chain's ordered
+     *  list. Returns the new member id + assigned sequence order. */
+    addGatewayChainModel: (chainId: string, modelId: string, routerId: string) =>
+      tryPost<{ ok: boolean; memberId: string; sequenceOrder: number }>(
+        `/api/gateway/chains/${enc(chainId)}/models`,
+        { model_id: modelId, router_id: routerId },
+      ),
+
+    /** Remove a chain member row. Compacts remaining sequence orders
+     *  server-side so the list stays contiguous. */
+    removeGatewayChainModel: (chainId: string, memberId: string) =>
+      tryDelete(`/api/gateway/chains/${enc(chainId)}/models/${enc(memberId)}`),
+
+    /** Swap a chain member with its neighbour. direction = -1 (up) /
+     *  +1 (down). `moved: false` in the response means at a boundary,
+     *  not an error — the UI dims the arrow. */
+    moveGatewayChainModel: (chainId: string, memberId: string, direction: -1 | 1) =>
+      tryPut(
+        `/api/gateway/chains/${enc(chainId)}/models/${enc(memberId)}/move`,
+        { direction },
+      ),
 
     generateImage: (body: {
       prompt: string;

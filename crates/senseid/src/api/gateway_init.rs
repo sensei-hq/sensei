@@ -191,13 +191,14 @@ pub async fn init_gateway(db_config: Option<GatewayConfig>) -> Arc<Gateway> {
     // after the user pastes a key.
     let config = match db_config {
         Some(mut db) => {
-            // The DB `model_capability` enum can't yet express image
-            // generation, so it has no image_generate chain. Graft the
-            // baseline's chains for any capability the DB doesn't cover so
-            // those features (e.g. image generation) don't regress when the
-            // DB becomes the source of truth. Tracked by #77 (seed an image
-            // chain once the enum gains an `image` value), after which this
-            // is a no-op.
+            // The DB IS the source of truth (#76 + #77): every capability the
+            // gateway serves — including image generation — is expressible as
+            // a seeded chain. This graft is now a defensive no-op: when the
+            // seed carries an `image_generate` chain (post-#77), the DB
+            // already covers `Capability::ImageGenerate` and the graft
+            // touches nothing. Kept as belt-and-suspenders for the case
+            // where the DB is somehow missing a capability at boot (partial
+            // seed, mid-migration daemon).
             merge_baseline_capability_gaps(&mut db, &baseline_production_config());
             db
         }

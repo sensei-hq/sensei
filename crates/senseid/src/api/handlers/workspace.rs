@@ -267,10 +267,21 @@ fn expand_tilde(path: &str) -> String {
 #[derive(Deserialize)]
 pub(crate) struct AddRootBody {
     pub path: String,
+    /// Optional exclusion globs applied to the watcher and stored on the
+    /// folders_to_watch row (#41). Missing / null / [] all mean "no
+    /// exclusions".
+    #[serde(default)]
+    pub excluded: Vec<String>,
 }
 
 /// Add a watch root to the DB immediately (synchronous) — does not start scanning.
 /// The Scan page is responsible for calling POST /api/scan to trigger the actual scan.
+///
+/// After the row lands, the handler also registers the path with the global
+/// RootWatcher and — if the watcher goes live — flips the row's status from the
+/// DB default (`scanning`) to `watching`. Without this the UI's Roots list
+/// would keep showing the "recursive" fallback badge indefinitely until the
+/// next daemon restart when `spawn_root_watchers` finally ran (#6).
 pub(crate) async fn add_watch_root(
     State(state): State<AppState>,
     Json(body): Json<AddRootBody>,
@@ -284,14 +295,103 @@ pub(crate) async fn add_watch_root(
         .and_then(|n| n.to_str())
         .unwrap_or("root")
         .to_string();
+    let excluded_json = serde_json::Value::Array(
+        body.excluded.iter().map(|s| serde_json::Value::String(s.clone())).collect(),
+    );
     let id = state.pg
-        .add_watch_root(&expanded, &name, &serde_json::json!([]))
+        .add_watch_root(&expanded, &name, &excluded_json)
         .await
         .map_err(|e| {
             tracing::error!("add_watch_root: {}", e);
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
-    Ok(Json(serde_json::json!({ "ok": true, "id": id, "path": expanded })))
+
+    // Register the new root with the live watcher singleton and (re)start it.
+    // The mutex is std, so the lock scope must not span an await.
+    let watching = {
+        let queue = state.task_queue.clone();
+        let w_mutex = crate::watcher::root_watcher::RootWatcher::instance(queue);
+        match w_mutex.lock() {
+            Ok(mut w) => {
+                w.register(std::path::PathBuf::from(&expanded), body.excluded.clone());
+                w.start().is_ok()
+                    && *w.status() == crate::watcher::root_watcher::WatcherStatus::Watching
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "add_watch_root: RootWatcher mutex poisoned; leaving status at default");
+                false
+            }
+        }
+    };
+    if watching
+        && let Err(e) = state.pg.update_watch_status(&id, "watching").await
+    {
+        tracing::warn!(error = %e, %id, "add_watch_root: update_watch_status watching failed");
+    }
+
+    Ok(Json(serde_json::json!({
+        "ok": true, "id": id, "path": expanded, "excluded": body.excluded,
+    })))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct UpdateRootBody {
+    /// New name for the root (optional).
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Full replacement exclusion set (optional). Semantics are "set to this
+    /// list" rather than "merge with existing" — the UI holds the canonical
+    /// list; server-side merging invites drift.
+    #[serde(default)]
+    pub excluded: Option<Vec<String>>,
+}
+
+/// PUT /api/scan/roots/:id — update a watch root's name / exclusions (#41).
+///
+/// Path is immutable (a rename would need to remove + re-add for correctness).
+/// Body fields are all optional; omitted fields leave the DB row alone.
+pub(crate) async fn update_watch_root(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<UpdateRootBody>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let uuid = uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let excluded_json = body.excluded.as_ref().map(|list| {
+        serde_json::Value::Array(list.iter().map(|s| serde_json::Value::String(s.clone())).collect())
+    });
+    state.pg
+        .update_watch_root(&uuid, body.name.as_deref(), excluded_json.as_ref())
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, %uuid, "update_watch_root: DB write failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    // Push new exclusions into the live watcher for this root so the change
+    // takes effect immediately, not on next daemon restart. Best-effort —
+    // the DB is authoritative.
+    if let Some(list) = body.excluded.as_ref() {
+        let path = state.pg
+            .list_watch_roots().await.unwrap_or_default()
+            .into_iter()
+            .find(|r| crate::api::util::json_uuid(&r["id"]).as_ref() == Some(&uuid))
+            .and_then(|r| r["path"].as_str().map(String::from));
+        if let Some(path) = path {
+            let queue = state.task_queue.clone();
+            let w_mutex = crate::watcher::root_watcher::RootWatcher::instance(queue);
+            match w_mutex.lock() {
+                Ok(mut w) => {
+                    w.register(std::path::PathBuf::from(&path), list.clone());
+                    let _ = w.start();
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, %uuid, "update_watch_root: RootWatcher mutex poisoned; DB updated, live state stale");
+                }
+            }
+        }
+    }
+
+    Ok(Json(serde_json::json!({ "ok": true, "id": uuid })))
 }
 
 /// Delete a watch root by ID.

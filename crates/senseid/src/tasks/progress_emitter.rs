@@ -1,11 +1,26 @@
 //! Scan-pipeline progress emitter — translates per-file TaskEvent::Completed
-//! events into throttled StateEvent::folder_update SSE events.
+//! events into StateEvent::folder_update SSE events.
 //!
 //! Listens to the task queue's broadcast channel. For each folder being
 //! indexed, maintains an in-memory tracker that counts completed file tasks
-//! and emits a StateEvent::folder_update at most every 300ms or after 25
-//! files (whichever fires first). When the terminal BuildConnections task
-//! for a folder completes, emits a final folder_update with status=Indexed.
+//! and forwards updates to the API broadcast channel. When the terminal
+//! BuildConnections task for a folder completes, emits a final folder_update
+//! with status=Indexed.
+//!
+//! ## Throttling
+//!
+//! Throttling is a code constant, not a user setting. Two knobs:
+//!
+//! - `THROTTLE_ENABLED` — master switch. When `false`, every per-file event
+//!   is forwarded verbatim. The current default is `false` because the
+//!   client-side state slice already coalesces updates before render, and
+//!   throttling upstream previously caused stalled progress in the UI when
+//!   long tail-batches finished under the delta threshold with no more ticks
+//!   coming. Flip to `true` to compare or if a downstream consumer starts
+//!   choking on the raw volume.
+//! - `THROTTLE_DURATION` / `THROTTLE_FILE_DELTA` — the "at most every X ms
+//!   or every N files" pacing. Only consulted when `THROTTLE_ENABLED` is
+//!   `true`.
 
 use crate::api::events::{StateEvent, ScanFolder, FolderKind, FolderStatus, ActivityEvent, ActivityLevel};
 use crate::tasks::progress::TaskEvent;
@@ -14,6 +29,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::broadcast;
 
+/// Master switch for throttling. `false` = forward every file event
+/// (current default — see module docs). `true` = pace by
+/// `THROTTLE_DURATION` / `THROTTLE_FILE_DELTA`.
+const THROTTLE_ENABLED: bool = false;
 const THROTTLE_DURATION: Duration = Duration::from_millis(300);
 const THROTTLE_FILE_DELTA: u32 = 25;
 
@@ -43,10 +62,36 @@ struct FolderTracker {
     announced_indexing: bool,
 }
 
+/// Pure emission-decision policy, split out so the throttle logic is
+/// unit-testable with each combination of the module constants without
+/// mounting a FolderTracker or hitting real time.
+///
+/// When `enabled` is `false`, always emit (the current default — see the
+/// module docs). When `true`, emit iff at least `duration` has elapsed
+/// since the last emit OR the file-delta has grown by at least
+/// `file_delta_threshold`.
+fn should_emit_policy(
+    enabled: bool,
+    elapsed_since_last: Duration,
+    duration: Duration,
+    delta: u32,
+    file_delta_threshold: u32,
+) -> bool {
+    if !enabled {
+        return true;
+    }
+    elapsed_since_last >= duration || delta >= file_delta_threshold
+}
+
 impl FolderTracker {
     fn should_emit(&self, now: Instant) -> bool {
-        now.duration_since(self.last_emit_at) >= THROTTLE_DURATION
-            || (self.files_completed.saturating_sub(self.last_emit_count)) >= THROTTLE_FILE_DELTA
+        should_emit_policy(
+            THROTTLE_ENABLED,
+            now.duration_since(self.last_emit_at),
+            THROTTLE_DURATION,
+            self.files_completed.saturating_sub(self.last_emit_count),
+            THROTTLE_FILE_DELTA,
+        )
     }
 
     /// Returns `true` exactly once — the first call marks the queued→indexing
@@ -308,34 +353,59 @@ mod tests {
         }
     }
 
+    // ── Throttle policy (pure) ───────────────────────────────────────
+    //
+    // Exercise `should_emit_policy` directly so the constants
+    // `THROTTLE_ENABLED` / `THROTTLE_DURATION` / `THROTTLE_FILE_DELTA`
+    // can flip without breaking these tests.
+
     #[test]
-    fn emits_after_25_files_within_throttle_window() {
-        let t0 = Instant::now();
-        let mut t = fresh_tracker(100, t0);
-        // First 24 files at the same instant: under the duration threshold AND
-        // under the 25-file delta — no emit.
-        for _ in 0..24 { assert!(!tick(&mut t, t0)); }
-        // 25th file: delta reaches 25 — should emit.
-        assert!(tick(&mut t, t0));
+    fn policy_disabled_emits_every_tick() {
+        // enabled=false → always emit, regardless of elapsed or delta.
+        assert!(should_emit_policy(false, Duration::ZERO, Duration::from_millis(300), 0, 25));
+        assert!(should_emit_policy(false, Duration::from_secs(1), Duration::from_millis(300), 24, 25));
     }
 
     #[test]
-    fn emits_after_300ms_elapsed_even_with_few_files() {
-        let t0 = Instant::now();
-        let mut t = fresh_tracker(100, t0);
-        assert!(!tick(&mut t, t0));   // 1 file, 0ms elapsed — no emit
-        let t1 = t0 + Duration::from_millis(300);
-        assert!(tick(&mut t, t1));    // 2 files, 300ms — emit on time
+    fn policy_enabled_emits_after_file_delta_threshold() {
+        // enabled=true, under duration but at threshold → emit.
+        assert!(!should_emit_policy(true, Duration::ZERO, Duration::from_millis(300), 24, 25));
+        assert!( should_emit_policy(true, Duration::ZERO, Duration::from_millis(300), 25, 25));
     }
 
     #[test]
-    fn resets_throttle_window_after_emit() {
+    fn policy_enabled_emits_after_duration_even_with_few_files() {
+        // enabled=true, under file delta but past duration → emit.
+        assert!(!should_emit_policy(true, Duration::from_millis(200), Duration::from_millis(300), 1, 25));
+        assert!( should_emit_policy(true, Duration::from_millis(300), Duration::from_millis(300), 1, 25));
+    }
+
+    #[test]
+    fn tracker_should_emit_uses_the_module_default() {
+        // Locks the tracker's should_emit to whatever the module constants
+        // resolve to today. If the default flips, this expectation moves —
+        // deliberately concrete so a silent constant-toggle can't drift.
+        let t0 = Instant::now();
+        let t = fresh_tracker(100, t0);
+        assert_eq!(t.should_emit(t0), !THROTTLE_ENABLED || THROTTLE_DURATION.is_zero());
+    }
+
+    #[test]
+    fn tick_forwards_every_event_when_throttling_off() {
+        // Regression guard: throttling defaults to off (module docs) — every
+        // tick must emit. A previous "long tail-batches finish under the
+        // delta with no more ticks" bug froze the UI at N-1 when throttling
+        // was on and the terminal fell short of the delta.
+        if THROTTLE_ENABLED {
+            // Skip the assertion when the constant is flipped — the throttled
+            // shape is covered by `policy_*` tests above.
+            return;
+        }
         let t0 = Instant::now();
         let mut t = fresh_tracker(100, t0);
-        for _ in 0..25 { tick(&mut t, t0); }     // emits at file 25
-        // files_completed = 25, last_emit_count = 25.
-        for _ in 0..24 { assert!(!tick(&mut t, t0)); }  // 49 files total, delta of 24 — no emit
-        assert!(tick(&mut t, t0));                       // 50 files, delta of 25 — emit
+        for _ in 0..30 {
+            assert!(tick(&mut t, t0));
+        }
     }
 
     #[test]

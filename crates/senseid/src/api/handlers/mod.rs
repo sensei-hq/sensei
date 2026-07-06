@@ -15,6 +15,7 @@ pub(crate) mod project_detail;
 pub(crate) mod logs;
 pub(crate) mod instruments;
 pub(crate) mod gateway_routers;
+pub(crate) mod gateway_chains;
 pub(crate) mod gateway_image;
 pub(crate) mod knowledge;
 pub(crate) mod corrections;
