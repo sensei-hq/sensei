@@ -126,6 +126,21 @@ impl ManifestAdapter for GoManifestAdapter {
         }
         members
     }
+
+    /// Conventional Go verbs. `go test ./...` (recursive) is the canonical
+    /// answer to "run the tests"; `go vet` catches common bugs; `go fmt`
+    /// enforces formatting; `go mod tidy` cleans deps. These are the same
+    /// across every Go project.
+    fn parse_commands(&self, _content: &str) -> Vec<super::DiscoveredCommand> {
+        super::conventional_commands("go", &[
+            ("test ./...",  "test"),
+            ("build ./...", "build"),
+            ("vet ./...",   "lint"),
+            ("fmt ./...",   "format"),
+            ("mod tidy",    "run"),
+            ("run .",       "run"),
+        ])
+    }
 }
 
 /// Build a `PackageInfo` for a `use ./dir` entry in a go.work file. Returns

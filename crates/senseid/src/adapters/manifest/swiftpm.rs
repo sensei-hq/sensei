@@ -77,6 +77,15 @@ impl ManifestAdapter for SwiftPmManifestAdapter {
     fn stack_labels(&self, _content: &str) -> Vec<&'static str> {
         vec!["swift"]
     }
+
+    /// Conventional Swift Package Manager verbs.
+    fn parse_commands(&self, _content: &str) -> Vec<super::DiscoveredCommand> {
+        super::conventional_commands("swift", &[
+            ("test",   "test"),
+            ("build",  "build"),
+            ("run",    "run"),
+        ])
+    }
 }
 
 fn package_url_re() -> &'static Regex {
