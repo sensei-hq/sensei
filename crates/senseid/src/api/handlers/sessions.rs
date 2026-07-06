@@ -83,6 +83,69 @@ pub(crate) async fn get_session_tool_timeline(
     })))
 }
 
+/// GET /api/sessions/{id}/replay — #84 T2 Slice C. Same paired timeline
+/// as `tool-timeline`, but each row also carries the usage verdict from
+/// `sensei.tool_call_verdicts` (#90). Rows with no verdict yet ship
+/// `verdict: null` — the Replay tab decides whether to render a "—"
+/// placeholder or trigger a classify pass.
+///
+/// If `?classify=true` is set, runs the verdict classifier for this
+/// session before returning, so the caller doesn't need two round-trips
+/// on first open.
+pub(crate) async fn get_session_replay(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    if id.is_empty() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let limit: i32 = q
+        .get("limit")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(200)
+        .clamp(1, 1000);
+    let classify_first = q.get("classify").is_some_and(|v| v == "true" || v == "1");
+
+    // Optionally classify first so verdicts are populated before the read.
+    // Idempotent — refresh is safe on every open.
+    let classified = if classify_first {
+        crate::tasks::verdict_classifier::classify_session(&state.pg, &id).await
+            .map_err(|e| {
+                tracing::error!(error = %e, session = %id, "replay: classify_session failed");
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?
+    } else {
+        0
+    };
+
+    let calls = state
+        .pg
+        .get_session_replay_timeline(&id, limit)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, session = %id, "get_session_replay_timeline failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    let summary = state
+        .pg
+        .get_verdict_summary_for_session(&id)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, session = %id, "get_verdict_summary_for_session failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    Ok(Json(serde_json::json!({
+        "sessionId":  id,
+        "calls":      calls,
+        "count":      calls.len(),
+        "summary":    summary,
+        "classified": classified,
+    })))
+}
+
 pub(crate) async fn update_session_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
