@@ -64,6 +64,91 @@ pub(crate) async fn set_enabled(
 /// Trigger a discovery pass. Reads `$HOME` (via `crate::paths::home()`) and
 /// every registered project's absolute path; scans each for known ACP
 /// configs; upserts + prunes stale.
+/// GET /api/instruments/mcp-servers/{id}/tools — Slice B. Return the cached
+/// tool manifest. If `?refresh=true` OR the cache is older than
+/// `ttl_seconds`, spawn a fresh probe first. Cache misses (no row yet) also
+/// trigger a probe unless the caller passes `?probe=false`.
+pub(crate) async fn get_tools(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let uuid = uuid::Uuid::parse_str(&id).map_err(|_| err(StatusCode::BAD_REQUEST, "bad id"))?;
+    let force = q.get("refresh").is_some_and(|v| v == "true" || v == "1");
+    let allow_probe = q.get("probe").map(|v| v != "false" && v != "0").unwrap_or(true);
+
+    let cached = state.pg.get_mcp_tool_manifest(&uuid).await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+
+    let stale = cached.as_ref().is_some_and(|c| {
+        let age = c.get("age_seconds").and_then(|v| v.as_i64()).unwrap_or(0);
+        let ttl = c.get("ttl_seconds").and_then(|v| v.as_i64()).unwrap_or(900);
+        age > ttl
+    });
+
+    if !force && !stale && cached.is_some() {
+        return Ok(Json(cached.unwrap()));
+    }
+
+    if !allow_probe && cached.is_some() {
+        // Caller doesn't want us to spawn; return whatever we have with a
+        // `stale: true` hint so the UI can badge it.
+        let mut c = cached.unwrap();
+        if let Some(obj) = c.as_object_mut() {
+            obj.insert("stale".into(), serde_json::Value::Bool(true));
+        }
+        return Ok(Json(c));
+    }
+
+    // Probe path: fetch the server config and spawn the tool manifest probe.
+    let server = state.pg.get_mcp_server_by_id(&uuid).await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "mcp server not found"))?;
+
+    let command = server.get("command").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let args: Vec<String> = server.get("args")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+    let env: std::collections::HashMap<String, String> = server.get("env")
+        .and_then(|v| v.as_object())
+        .map(|obj| obj.iter()
+            .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+            .collect())
+        .unwrap_or_default();
+
+    let outcome = crate::tasks::mcp_probe::probe_tools(&command, &args, &env).await;
+
+    match outcome {
+        crate::tasks::mcp_probe::ProbeOutcome::Ok(manifest) => {
+            let tools = serde_json::Value::Array(manifest.tools.clone());
+            state.pg.upsert_mcp_tool_manifest(
+                &uuid,
+                &tools,
+                manifest.tools.len() as i32,
+                manifest.protocol_version.as_deref(),
+                manifest.server_name.as_deref(),
+                manifest.server_version.as_deref(),
+                None,
+            ).await.map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+        }
+        crate::tasks::mcp_probe::ProbeOutcome::Error(msg) => {
+            // Cache the error so callers see WHY the probe failed and don't
+            // spam retries; TTL still applies so it retries eventually.
+            let empty = serde_json::Value::Array(vec![]);
+            state.pg.upsert_mcp_tool_manifest(
+                &uuid, &empty, 0, None, None, None, Some(&msg),
+            ).await.map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+        }
+    }
+
+    // Return the freshly-updated row.
+    let refreshed = state.pg.get_mcp_tool_manifest(&uuid).await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
+        .ok_or_else(|| err(StatusCode::INTERNAL_SERVER_ERROR, "manifest upserted but not readable"))?;
+    Ok(Json(refreshed))
+}
+
 pub(crate) async fn refresh(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
