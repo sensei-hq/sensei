@@ -137,6 +137,23 @@ impl ManifestAdapter for CargoManifestAdapter {
 
         members
     }
+
+    /// Conventional Cargo verbs — every Cargo.toml presents the same set
+    /// (clippy is standard-issue enough to count). Custom `.cargo/config.toml`
+    /// aliases could be layered in via a follow-up; the conventional set is
+    /// what covers 90%+ of "how do I test this Rust project" answers.
+    fn parse_commands(&self, _content: &str) -> Vec<super::DiscoveredCommand> {
+        super::conventional_commands("cargo", &[
+            ("test",    "test"),
+            ("build",   "build"),
+            ("check",   "typecheck"),
+            ("clippy",  "lint"),
+            ("fmt",     "format"),
+            ("bench",   "bench"),
+            ("doc",     "docs"),
+            ("run",     "run"),
+        ])
+    }
 }
 
 /// A Cargo package is non-publishable when `publish = false` or `publish = []`.

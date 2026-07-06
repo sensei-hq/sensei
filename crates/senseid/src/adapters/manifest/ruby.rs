@@ -68,6 +68,18 @@ impl ManifestAdapter for RubyManifestAdapter {
     fn stack_labels(&self, _content: &str) -> Vec<&'static str> {
         vec!["ruby"]
     }
+
+    /// Conventional Ruby entry points. `rake test` covers the standard test
+    /// runner; `bundle install` is universally the setup step; `bundle
+    /// exec …` is the runtime wrapper. Rake task discovery from Rakefile
+    /// itself is a follow-up (Ruby DSL parse is out of scope for this cut).
+    fn parse_commands(&self, _content: &str) -> Vec<super::DiscoveredCommand> {
+        super::conventional_commands("bundle", &[
+            ("exec rake test", "test"),
+            ("exec rake",      "run"),
+            ("install",        "run"),
+        ])
+    }
 }
 
 /// Match a `gem` call. Captures:

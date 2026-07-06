@@ -139,6 +139,19 @@ impl ManifestAdapter for GradleManifestAdapter {
         }
         out
     }
+
+    /// Conventional Gradle tasks. Wrapper form (`./gradlew`) is what most
+    /// repos actually use so we prefer that; a caller can still swap in
+    /// `gradle` on read if the folder lacks the wrapper script.
+    fn parse_commands(&self, _content: &str) -> Vec<super::DiscoveredCommand> {
+        super::conventional_commands("./gradlew", &[
+            ("test",         "test"),
+            ("build",        "build"),
+            ("assemble",     "build"),
+            ("clean",        "run"),
+            ("check",        "typecheck"),
+        ])
+    }
 }
 
 // ── Coordinate + regex helpers ─────────────────────────────────────────────

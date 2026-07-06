@@ -58,6 +58,42 @@ impl ManifestAdapter for PyprojectManifestAdapter {
     fn stack_labels(&self, _content: &str) -> Vec<&'static str> {
         vec!["python"]
     }
+
+    /// Read command entries from the four common script sections. Multiple
+    /// tools coexist in the wild — pdm, poetry, and hatch all define script
+    /// runners inside pyproject.toml and each uses a distinct table:
+    ///
+    /// - `[tool.pdm.scripts]`   — pdm run <name>
+    /// - `[tool.poetry.scripts]`— poetry run <name> (or the entry-point name directly)
+    /// - `[project.scripts]`    — PEP 621 entry points
+    /// - `[tool.hatch.envs.default.scripts]` — hatch run <name>
+    ///
+    /// Each entry becomes one [`super::DiscoveredCommand`]. Category is
+    /// derived from the script name via the shared classifier.
+    fn parse_commands(&self, content: &str) -> Vec<super::DiscoveredCommand> {
+        let Ok(pyp) = content.parse::<toml::Value>() else { return Vec::new() };
+        let mut out = Vec::new();
+        let mut emit = |section: Option<&toml::Value>, runner: &str| {
+            let Some(scripts) = section.and_then(|v| v.as_table()) else { return };
+            for name in scripts.keys() {
+                if name.is_empty() { continue; }
+                out.push(super::DiscoveredCommand {
+                    raw_name: name.clone(),
+                    command_line: format!("{runner} {name}"),
+                    category: super::command_category::categorise(name),
+                });
+            }
+        };
+        emit(pyp.get("tool").and_then(|t| t.get("pdm")).and_then(|p| p.get("scripts")), "pdm run");
+        emit(pyp.get("tool").and_then(|t| t.get("poetry")).and_then(|p| p.get("scripts")), "poetry run");
+        emit(pyp.get("project").and_then(|p| p.get("scripts")), "python -m");
+        emit(pyp.get("tool")
+            .and_then(|t| t.get("hatch"))
+            .and_then(|h| h.get("envs"))
+            .and_then(|e| e.get("default"))
+            .and_then(|d| d.get("scripts")), "hatch run");
+        out
+    }
 }
 
 #[cfg(test)]

@@ -194,6 +194,19 @@ impl ManifestAdapter for MavenManifestAdapter {
         }
         out
     }
+
+    /// Conventional Maven lifecycle verbs. `test` / `package` / `install` /
+    /// `clean` / `verify` cover the ~90% of "how do I build this" answers.
+    fn parse_commands(&self, _content: &str) -> Vec<super::DiscoveredCommand> {
+        super::conventional_commands("mvn", &[
+            ("test",     "test"),
+            ("compile",  "build"),
+            ("package",  "build"),
+            ("install",  "build"),
+            ("verify",   "test"),
+            ("clean",    "run"),
+        ])
+    }
 }
 
 #[derive(Default)]
