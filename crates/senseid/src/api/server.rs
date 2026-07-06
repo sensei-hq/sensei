@@ -232,6 +232,42 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
         });
     }
 
+    // MCP servers discovery — scan each detected ACP's config files and
+    // upsert into `sensei.mcp_servers` so the Instruments Playground/Replay/
+    // Health tabs (#84) have day-one data without a manual refresh call.
+    // Runs after the projects table is populated (needs project roots), so
+    // this fires from a spawn with a small delay rather than blocking boot.
+    {
+        let pg = state.pg.clone();
+        tokio::spawn(async move {
+            // Small delay so the initial scan queue drains and any
+            // fresh-boot project rows land first.
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            let home = crate::paths::home();
+            let projects = match pg.list_projects().await {
+                Ok(p) => p,
+                Err(e) => { tracing::warn!("startup: mcp discovery — list_projects failed: {e}"); return; }
+            };
+            let mut project_roots: Vec<(uuid::Uuid, std::path::PathBuf)> = Vec::new();
+            for p in projects {
+                let Some(pid) = p["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok())
+                else { continue };
+                let repos = pg.get_project_repos(&pid).await.unwrap_or_default();
+                if let Some(first) = repos.first()
+                    && let Some(path) = first["path"].as_str()
+                {
+                    project_roots.push((pid, std::path::PathBuf::from(path)));
+                }
+            }
+            match crate::tasks::mcp_discovery::run_once(&pg, &home, &project_roots).await {
+                Ok((discovered, pruned)) =>
+                    tracing::info!("startup: mcp discovery — discovered {discovered}, pruned {pruned}"),
+                Err(e) =>
+                    tracing::warn!("startup: mcp discovery failed: {e}"),
+            }
+        });
+    }
+
     // Log retention: prune public.logs rows older than 30 days, on startup and
     // then daily. The task logger writes two rows per task, so large scans add
     // hundreds of thousands of rows; this keeps the table bounded.
