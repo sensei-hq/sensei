@@ -174,6 +174,18 @@ impl ManifestAdapter for DotnetManifestAdapter {
         }
         out
     }
+
+    /// Conventional dotnet CLI verbs. `test` / `build` / `run` / `publish`
+    /// / `restore` cover the canonical loop.
+    fn parse_commands(&self, _content: &str) -> Vec<super::DiscoveredCommand> {
+        super::conventional_commands("dotnet", &[
+            ("test",     "test"),
+            ("build",    "build"),
+            ("run",      "run"),
+            ("publish",  "build"),
+            ("restore",  "run"),
+        ])
+    }
 }
 
 /// One project entry parsed out of a `.sln` line. Solution Folders (which
