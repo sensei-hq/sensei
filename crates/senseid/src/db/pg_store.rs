@@ -3861,7 +3861,6 @@ impl PgStore {
             ).bind(project_id)
             .fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
 
-        let pending_share = rows.iter().filter(|r| r.3 == "pending_share").count();
         let total = rows.len();
         let active: Vec<_> = rows.into_iter()
             .filter(|r| r.3 == "active")
@@ -3877,7 +3876,7 @@ impl PgStore {
                 })
             }).collect();
 
-        Ok(serde_json::json!({ "active": active, "total": total, "pendingShare": pending_share }))
+        Ok(serde_json::json!({ "active": active, "total": total }))
     }
 
     /// Return the paired PreToolUse / PostToolUse timeline for an assistant
