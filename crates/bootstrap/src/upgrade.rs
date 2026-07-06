@@ -85,8 +85,13 @@ pub fn run<F: Fn(UpgradeEvent)>(emit: F) -> bool {
 
 fn brew_upgrade_sensei() -> Result<(), String> {
     let formula = SenseiConfig::from_env().sensei_tap_formula();
+    // Silence the network-hitting "brew update" auto-refresh so the pre-commit
+    // hook (which drives `test-fast` → this test) can't hang for minutes on a
+    // slow homebrew CDN. The command's actual upgrade path still runs.
     let output = Command::new("brew")
         .args(["upgrade", formula])
+        .env("HOMEBREW_NO_AUTO_UPDATE", "1")
+        .env("HOMEBREW_NO_INSTALL_UPGRADE", "1")
         .output()
         .map_err(|e| format!("brew upgrade failed to spawn: {e}"))?;
     if output.status.success() {
@@ -139,8 +144,32 @@ mod tests {
         // We run against a system that almost certainly fails both steps
         // (CI without brew formula + without postgres), so the assertion
         // focuses on the *shape* of the event stream, not the outcomes.
+        //
+        // The pre-commit hook drives this test; if `brew upgrade` can hit a
+        // slow homebrew CDN or the network is flaky, the whole hook stalls
+        // for minutes. Route the actual network-hitting `brew`/`dbd` calls
+        // through the test-only PATH override so they resolve to `true` (a
+        // no-op that exits 0) and the event stream comes back instantly.
+        let dir = tempfile::tempdir().unwrap();
+        for name in ["brew", "dbd", "createdb", "psql"] {
+            let bin = dir.path().join(name);
+            std::os::unix::fs::symlink("/usr/bin/true", &bin).unwrap();
+        }
+        let orig_path = std::env::var("PATH").unwrap_or_default();
+        // SAFETY: single-thread test using set_var; other tests do not read PATH.
+        unsafe {
+            std::env::set_var(
+                "PATH",
+                format!("{}:{}", dir.path().display(), orig_path),
+            );
+        }
+
         let events: Mutex<Vec<UpgradeEvent>> = Mutex::new(Vec::new());
         let _ = run(|e| events.lock().unwrap().push(e));
+
+        // SAFETY: single-thread test cleanup.
+        unsafe { std::env::set_var("PATH", orig_path); }
+
         let events = events.into_inner().unwrap();
 
         // Must emit at least: prereqs running → prereqs (done|failed)

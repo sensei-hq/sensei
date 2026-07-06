@@ -172,7 +172,14 @@ impl Provisioner {
 
         let got = hex::encode(hasher.finalize());
         if got != expected_hex {
-            let _ = tokio::fs::remove_file(&tmp).await;
+            // Best-effort cleanup: the checksum-failed download is
+            // corrupt, so leaving it on disk risks a next-run pick-up.
+            // If cleanup itself fails we're not in a worse state than
+            // pre-download, but log so an operator can see the temp
+            // leaked.
+            if let Err(e) = tokio::fs::remove_file(&tmp).await {
+                tracing::debug!(tmp = ?tmp, error = %e, "model_provision: failed to remove checksum-mismatched temp file");
+            }
             return Err(format!(
                 "sha256 mismatch for {url}: expected {expected_hex}, got {got}"
             ));

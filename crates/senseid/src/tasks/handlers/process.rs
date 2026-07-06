@@ -484,12 +484,13 @@ pub async fn reconcile_repo_identity(ctx: &TaskContext, repo_abs_path: &str) -> 
         }
         // folder.role enum: explicit README frontmatter wins; otherwise infer it
         // from the folder's manifest + layout so monorepo members are classified
-        // automatically (library / tool / website).
+        // automatically (library / tool / website). See `role_reconciliation` for
+        // the write-vs-skip decision that reconciles stale pre-refactor rows.
         let folder_role = fm.role.as_deref()
             .and_then(metadata::folder_role_from_frontmatter)
             .or_else(|| super::scan_logic::infer_role(repo_path));
-        if let Some(fr) = folder_role {
-            ctx.pg().update_folder_role(&folder_id, Some(fr)).await
+        if let Some(role_arg) = role_reconciliation(folder_role, fm.role.as_deref()) {
+            ctx.pg().update_folder_role(&folder_id, role_arg).await
                 .unwrap_or_else(|e| tracing::warn!(folder_id = %folder_id, error = %e, "update_folder_role failed"));
         }
         if let Some(org) = fm.organization.as_deref() {
@@ -640,9 +641,13 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
         Ok(Ok(r)) => r,
         Ok(Err(e)) => {
             // Read/parse error — record per-file in index_errors (surfaced in the
-            // UI) instead of silently dropping it.
-            if let Some(fid) = &folder_id {
-                ctx.pg().log_index_error(fid, abs_path, &e, Some(ext), Some("parse")).await.ok();
+            // UI) instead of silently dropping it. If THAT write also fails,
+            // surface the second failure so an operator can see the DB is unhappy;
+            // otherwise the parse-error observability itself becomes silent.
+            if let Some(fid) = &folder_id
+                && let Err(log_err) = ctx.pg().log_index_error(fid, abs_path, &e, Some(ext), Some("parse")).await
+            {
+                tracing::warn!(error = %log_err, path = %abs_path, "log_index_error failed for parse error");
             }
             tracing::debug!("process_file: skipping unparseable {abs_path}: {e}");
             return Ok(0);
@@ -653,8 +658,10 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
             // survives; record which file so panicking inputs are observable
             // rather than vanishing.
             let msg = format!("parser panicked: {join_err}");
-            if let Some(fid) = &folder_id {
-                ctx.pg().log_index_error(fid, abs_path, &msg, Some(ext), Some("parse")).await.ok();
+            if let Some(fid) = &folder_id
+                && let Err(log_err) = ctx.pg().log_index_error(fid, abs_path, &msg, Some(ext), Some("parse")).await
+            {
+                tracing::warn!(error = %log_err, path = %abs_path, "log_index_error failed for parser panic");
             }
             tracing::warn!("process_file: {abs_path}: {msg}");
             return Ok(0);
@@ -785,6 +792,75 @@ pub async fn delete_folder(ctx: &TaskContext, task: &Task) -> Result<u32, String
             }
     tracing::info!("delete_folder: {}", task.path);
     Ok(0)
+}
+
+/// Decide what to write to a folder's role column given the classifier's
+/// output and the frontmatter's raw `role:` value.
+///
+/// Reconciles stale rows from before the classifier refactor (#8): the old
+/// classifier had a `backend` fallback and left rows tagged `backend`
+/// wherever it could not infer a real role. The new classifier returns
+/// `None` for un-inferrable folders, but the writer used to skip those,
+/// leaving the stale `backend` in place forever. This helper makes the
+/// silent-frontmatter + no-classification case actively clear the DB.
+///
+/// - `classified`: the classifier's decision (`None` means "cannot classify").
+/// - `raw_frontmatter_role`: whatever the README's `role:` field literally said,
+///   before it was mapped through `folder_role_from_frontmatter`. `Some("")`
+///   still counts as "the user wrote something" — only true `None` means the
+///   frontmatter is silent.
+///
+/// Returns `Some(role_arg)` when we should call `update_folder_role`, where
+/// `role_arg` may itself be `Some(&str)` (write that value) or `None` (clear
+/// the DB column). Returns outer `None` to skip the write entirely — used
+/// when the user wrote an unrecognised role that we neither map nor override.
+pub fn role_reconciliation<'a>(
+    classified: Option<&'a str>,
+    raw_frontmatter_role: Option<&str>,
+) -> Option<Option<&'a str>> {
+    match (classified, raw_frontmatter_role) {
+        (Some(fr), _) => Some(Some(fr)),
+        (None, None) => Some(None),
+        (None, Some(_)) => None,
+    }
+}
+
+#[cfg(test)]
+mod role_reconciliation_tests {
+    use super::role_reconciliation;
+
+    #[test]
+    fn writes_classifier_result_when_classified() {
+        assert_eq!(role_reconciliation(Some("library"), None), Some(Some("library")));
+    }
+
+    #[test]
+    fn writes_classifier_result_even_when_frontmatter_says_something_else() {
+        // Frontmatter took precedence upstream (folder_role_from_frontmatter
+        // returned the mapped value). If we got here with a classified value,
+        // trust it — the caller already resolved precedence.
+        assert_eq!(
+            role_reconciliation(Some("website"), Some("backend")),
+            Some(Some("website")),
+        );
+    }
+
+    #[test]
+    fn clears_stale_value_when_frontmatter_silent_and_no_classification() {
+        // The #8 fix: a rescan of a folder with no manifest signals AND no
+        // frontmatter role must clear the DB, not skip. Otherwise pre-refactor
+        // "backend" rows persist forever.
+        assert_eq!(role_reconciliation(None, None), Some(None));
+    }
+
+    #[test]
+    fn preserves_db_when_frontmatter_has_unrecognised_role() {
+        // The user wrote `role: platform` (or similar not-mapped value). We
+        // don't know if the DB already holds their previous choice — leave it
+        // alone rather than clobber.
+        assert_eq!(role_reconciliation(None, Some("platform")), None);
+        assert_eq!(role_reconciliation(None, Some("")), None);
+    }
 }
 
 #[cfg(test)]
