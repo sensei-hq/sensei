@@ -3202,6 +3202,87 @@ impl PgStore {
         Ok(rows)
     }
 
+    // ── #83 T1 commands surface — project_commands writer + reader ────────
+
+    /// Replace the set of discovered commands for a folder. Delete + insert
+    /// in one transaction so a fresh scan atomically supersedes whatever
+    /// was there before. Returns the number of rows inserted.
+    pub async fn replace_folder_commands(
+        &self,
+        folder_id: &uuid::Uuid,
+        ecosystem: &str,
+        source_file: Option<&str>,
+        commands: &[(String, String, Option<&str>)],
+    ) -> Result<usize, String> {
+        let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
+
+        sqlx_core::query::query(
+            "DELETE FROM sensei.project_commands WHERE folder_id = $1 AND ecosystem = $2"
+        ).bind(folder_id).bind(ecosystem).execute(&mut *tx).await.map_err(|e| e.to_string())?;
+
+        for (raw_name, command_line, category) in commands {
+            sqlx_core::query::query(
+                "INSERT INTO sensei.project_commands
+                    (folder_id, raw_name, command_line, category, ecosystem, source_file)
+                 VALUES ($1, $2, $3, $4, $5, $6)
+                 ON CONFLICT (folder_id, raw_name) DO UPDATE SET
+                    command_line  = EXCLUDED.command_line,
+                    category      = EXCLUDED.category,
+                    ecosystem     = EXCLUDED.ecosystem,
+                    source_file   = EXCLUDED.source_file,
+                    discovered_at = now()"
+            )
+            .bind(folder_id).bind(raw_name).bind(command_line).bind(category).bind(ecosystem).bind(source_file)
+            .execute(&mut *tx).await.map_err(|e| e.to_string())?;
+        }
+
+        tx.commit().await.map_err(|e| e.to_string())?;
+        Ok(commands.len())
+    }
+
+    /// All commands for a project — union across its folders. `category`
+    /// filter is applied server-side so callers can ask for just `test` or
+    /// `build` without pulling everything. Ordered by category (nulls last)
+    /// then raw_name for stable UI display.
+    pub async fn get_project_commands(
+        &self,
+        project_id: &uuid::Uuid,
+        category: Option<&str>,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(i64, uuid::Uuid, String, String, String, Option<String>, String, Option<String>, chrono::DateTime<chrono::Utc>)> =
+            if let Some(cat) = category {
+                sqlx_core::query_as::query_as(
+                    "SELECT c.id, c.folder_id, f.name, c.raw_name, c.command_line, c.category, c.ecosystem, c.source_file, c.discovered_at
+                       FROM sensei.project_commands c
+                       JOIN sensei.folders f ON f.id = c.folder_id
+                      WHERE f.project_id = $1 AND c.category = $2
+                      ORDER BY c.category NULLS LAST, c.raw_name"
+                ).bind(project_id).bind(cat).fetch_all(&self.pool).await.map_err(|e| e.to_string())?
+            } else {
+                sqlx_core::query_as::query_as(
+                    "SELECT c.id, c.folder_id, f.name, c.raw_name, c.command_line, c.category, c.ecosystem, c.source_file, c.discovered_at
+                       FROM sensei.project_commands c
+                       JOIN sensei.folders f ON f.id = c.folder_id
+                      WHERE f.project_id = $1
+                      ORDER BY c.category NULLS LAST, c.raw_name"
+                ).bind(project_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?
+            };
+
+        Ok(rows.into_iter().map(|(id, folder_id, folder_name, raw_name, command_line, category, ecosystem, source_file, discovered_at)| {
+            serde_json::json!({
+                "id":            id,
+                "folder_id":     folder_id,
+                "folder_name":   folder_name,
+                "raw_name":      raw_name,
+                "command_line":  command_line,
+                "category":      category,
+                "ecosystem":     ecosystem,
+                "source_file":   source_file,
+                "discovered_at": discovered_at.to_rfc3339(),
+            })
+        }).collect())
+    }
+
     // ── #84 Track 2 Slice C — Replay tab session timeline ─────────────────
 
     /// Session timeline for the Replay tab (#84 T2 Slice C). Same

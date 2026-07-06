@@ -351,7 +351,50 @@ pub async fn extract_deps(ctx: &TaskContext, task: &Task) -> Result<u32, String>
         "extract_deps: {} — {} deps from manifests, {} first-party workspace packages, {} local-protocol edges",
         folder_name, count, member_count, local_edge_count,
     );
-    Ok(count + member_count + local_edge_count)
+
+    // #83 T1 commands surface — one pass over the root's known manifests,
+    // calling each ManifestAdapter's `parse_commands` and replacing the
+    // folder's rows in `sensei.project_commands`. Idempotent (delete+insert
+    // per ecosystem); cheap enough to run alongside the dep pass since it
+    // re-reads only the manifest at the folder root, not the whole tree.
+    let cmd_count = extract_and_persist_commands(ctx, &folder_id, repo_path).await;
+    tracing::info!("extract_deps: {folder_name} — {cmd_count} discoverable command(s) persisted");
+
+    Ok(count + member_count + local_edge_count + cmd_count)
+}
+
+/// For each known manifest at the folder root, ask its ManifestAdapter for
+/// discoverable commands and replace the folder's rows. Errors are
+/// logged, never propagated — a failing command scan mustn't fail the
+/// wider dep pass. Returns the total rows written across ecosystems.
+async fn extract_and_persist_commands(
+    ctx: &TaskContext,
+    folder_id: &uuid::Uuid,
+    repo_path: &str,
+) -> u32 {
+    let repo = std::path::Path::new(repo_path);
+    let mut written: u32 = 0;
+    for adapter in crate::adapters::manifest::registered_adapters() {
+        for filename in adapter.manifest_filenames() {
+            let path = repo.join(filename);
+            let Ok(content) = std::fs::read_to_string(&path) else { continue };
+            let cmds = adapter.parse_commands(&content);
+            if cmds.is_empty() { continue; }
+            let rows: Vec<(String, String, Option<&str>)> = cmds.iter()
+                .map(|c| (c.raw_name.clone(), c.command_line.clone(), c.category))
+                .collect();
+            match ctx.pg().replace_folder_commands(
+                folder_id, adapter.ecosystem(), path.to_str(), &rows,
+            ).await {
+                Ok(n) => written += n as u32,
+                Err(e) => tracing::warn!(
+                    error = %e, folder = %folder_id, ecosystem = adapter.ecosystem(),
+                    "extract_deps: replace_folder_commands failed"
+                ),
+            }
+        }
+    }
+    written
 }
 
 /// Classify a `DepVersion` with a `local_source` into a protocol tag.

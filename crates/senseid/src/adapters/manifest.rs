@@ -101,6 +101,120 @@ pub trait ManifestAdapter: Send + Sync {
     fn detect_workspace_members(&self, _repo_root: &Path) -> Vec<PackageInfo> {
         Vec::new()
     }
+
+    /// Discoverable named commands the ecosystem exposes for this manifest
+    /// (#83 T1 commands surface). Feeds `sensei.project_commands` so the
+    /// project window's action buttons + the future `get_commands` MCP
+    /// tool + AI-assistant "how do I run tests here?" queries all read from
+    /// one authoritative source.
+    ///
+    /// Canonical `category` verbs (see [`command_category::categorise`]):
+    /// `test` / `build` / `lint` / `run` / `format` / `typecheck` / `e2e`
+    /// / `bench` / `docs` / `start` / `dev`. Ecosystems that don't expose
+    /// named commands (Go, Maven at manifest level) return an empty vec —
+    /// their conventional commands (`go test ./...`, `mvn test`) can be
+    /// synthesised elsewhere and don't belong in the manifest-derived
+    /// table.
+    ///
+    /// Default: empty. Override per-ecosystem to opt in.
+    fn parse_commands(&self, _content: &str) -> Vec<DiscoveredCommand> {
+        Vec::new()
+    }
+}
+
+/// One command discovered from a manifest. Persisted into
+/// `sensei.project_commands`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiscoveredCommand {
+    /// Raw name as it appears in the manifest (e.g. `test:unit`, `build-fast`).
+    pub raw_name: String,
+    /// Full command line to invoke (`bun test:unit`, `npm run build-fast`).
+    pub command_line: String,
+    /// Canonical verb — one of the vocabulary in
+    /// [`command_category::categorise`]. `None` for entries whose intent
+    /// isn't discoverable from name alone (a caller-classifier can post-
+    /// process, but the adapter shouldn't guess).
+    pub category: Option<&'static str>,
+}
+
+/// Shared classifier that maps a script name → canonical category verb.
+/// Keeps the same vocabulary across ecosystems so the project window's
+/// action buttons and the get_commands MCP tool speak one language.
+pub mod command_category {
+    /// Return the canonical verb for a script name, or `None` when nothing
+    /// obvious matches. Uses lowercase substring matching, category-agnostic
+    /// on the ecosystem (an npm `test:e2e` and a cargo `xtask-e2e` alias
+    /// both categorise as `e2e`).
+    ///
+    /// Longer / more-specific matches win first — `e2e` beats `test`,
+    /// `typecheck` beats `check`, so the frontend variant selector always
+    /// picks the tighter category.
+    pub fn categorise(name: &str) -> Option<&'static str> {
+        let n = name.to_ascii_lowercase();
+        // Order matters: more-specific patterns first.
+        if n.contains("e2e") || n.contains("end-to-end") { return Some("e2e"); }
+        if n.contains("typecheck") || n.contains("type-check") || n == "tsc" { return Some("typecheck"); }
+        if n.contains("bench") { return Some("bench"); }
+        if n.contains("format") || n.contains("prettier") || n.contains("rustfmt") { return Some("format"); }
+        if n.contains("lint") || n.contains("clippy") || n.contains("eslint") || n.contains("ruff") { return Some("lint"); }
+        if n.contains("docs") || n == "doc" || n.contains("docgen") { return Some("docs"); }
+        if n.contains("test") { return Some("test"); }
+        if n.contains("build") || n == "compile" { return Some("build"); }
+        if n == "dev" || n.contains("watch") || n.starts_with("dev:") { return Some("dev"); }
+        if n == "start" || n.starts_with("start:") { return Some("start"); }
+        if n == "run" || n.starts_with("run:") { return Some("run"); }
+        None
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn e2e_wins_over_test() {
+            // A script named `test:e2e` categorises as e2e, not test —
+            // longer/more-specific match first.
+            assert_eq!(categorise("test:e2e"), Some("e2e"));
+            assert_eq!(categorise("end-to-end"), Some("e2e"));
+        }
+
+        #[test]
+        fn typecheck_wins_over_lint() {
+            assert_eq!(categorise("typecheck"), Some("typecheck"));
+            assert_eq!(categorise("type-check"), Some("typecheck"));
+            assert_eq!(categorise("tsc"), Some("typecheck"));
+        }
+
+        #[test]
+        fn lint_variants() {
+            assert_eq!(categorise("lint"), Some("lint"));
+            assert_eq!(categorise("clippy"), Some("lint"));
+            assert_eq!(categorise("eslint:fix"), Some("lint"));
+            assert_eq!(categorise("ruff"), Some("lint"));
+        }
+
+        #[test]
+        fn build_variants() {
+            assert_eq!(categorise("build"), Some("build"));
+            assert_eq!(categorise("build:release"), Some("build"));
+            assert_eq!(categorise("compile"), Some("build"));
+        }
+
+        #[test]
+        fn dev_start_run() {
+            assert_eq!(categorise("dev"), Some("dev"));
+            assert_eq!(categorise("dev:app"), Some("dev"));
+            assert_eq!(categorise("start"), Some("start"));
+            assert_eq!(categorise("watch"), Some("dev"));
+            assert_eq!(categorise("run"), Some("run"));
+        }
+
+        #[test]
+        fn unknown_returns_none() {
+            assert_eq!(categorise("myScript"), None);
+            assert_eq!(categorise("release"), None);
+        }
+    }
 }
 
 /// Identity metadata for a manifest.
