@@ -10,11 +10,16 @@
 | ├ `cli`       |                   | sensei CLI (binary: sensei)                   |
 | ├ `mcp`       |                   | MCP server                                    |
 | ├ `bootstrap` |                   | Installer / prereq checker                    |
-| └ `gateway`   |                   | LLM routing library                           |
+| ├ `hive-mind` |                   | Federated shared-brain service                |
+| └ `logger`    |                   | Structured logging crate                      |
 | `website/`    | SvelteKit         | Marketing website                             |
 | `docs/`       | Markdown          | Design docs, mockups, DDL, backlog            |
 | `homebrew/`   | Ruby              | Homebrew tap (subtree → sensei-hq/homebrew-tap) |
 | `marketplace/`| JSON/Markdown     | Skills & plugins (subtree → sensei-hq/marketplace) |
+
+**Sibling repos** (pulled in as dependencies, not in this tree):
+
+- **[sensei-hq/gateway](https://github.com/sensei-hq/gateway)** — LLM routing library. `crates/senseid` consumes it as `gateway-embedded` git dep. Was previously `crates/gateway/`; moved out so it can release to crates.io independently.
 
 ## Version
 
