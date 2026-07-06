@@ -7,9 +7,13 @@
 ##     cli        — sensei CLI (binary: sensei)
 ##     mcp        — MCP server
 ##     bootstrap  — installer/prereq checker
-##     gateway    — LLM routing library
+##     hive-mind  — federated shared-brain service
+##     logger     — structured logging crate
 ##   website/     — Marketing website
 ##   docs/        — Documentation
+##
+## Sibling repos (pulled in as git deps, not in this tree):
+##   sensei-hq/gateway — LLM routing library (git dep `gateway-embedded`)
 ##
 ## Versioning:
 ##   VERSION file is the single source of truth.
