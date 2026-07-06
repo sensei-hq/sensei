@@ -28,8 +28,12 @@ export interface HealthTransport {
  */
 export class RealTransport implements HealthTransport {
   async check(): Promise<HealthPayload> {
+    // Prefer the traced variant so failed probes leave a diagnostic
+    // "bootstrap-check" log session behind for the (health)/logs viewer
+    // (#39). Non-traced `health_check` is kept as the legacy fallback used
+    // by tests + the pre-#39 path — it's still a Tauri-registered command.
     const { invoke } = await import('@tauri-apps/api/core');
-    return invoke<HealthPayload>('health_check');
+    return invoke<HealthPayload>('health_check_traced');
   }
 
   async resolve(

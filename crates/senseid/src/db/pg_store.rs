@@ -3036,6 +3036,121 @@ impl PgStore {
         }).collect())
     }
 
+    /// Same as [`get_hook_events_for_session`] but also returns the DB row id
+    /// so the verdict classifier (#90) can reference each `PostToolUse` by
+    /// its `activity.assistant_events.id`.
+    pub async fn get_hook_events_for_session_with_id(
+        &self,
+        client_session_id: &str,
+    ) -> Result<Vec<(i64, String, Option<String>, i64, serde_json::Value)>, String> {
+        sqlx_core::query_as::query_as(
+            "SELECT id, event_type, tool_name, ts, payload FROM activity.assistant_events
+             WHERE session_id = $1 ORDER BY ts"
+        ).bind(client_session_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())
+    }
+
+    /// Upsert a batch of tool-call verdicts (#90). Idempotent: repeated calls
+    /// with a new heuristic just refresh the row (`ON CONFLICT (event_id) DO
+    /// UPDATE`). Returns the number of rows written.
+    pub async fn upsert_verdicts_batch(
+        &self,
+        rows: &[(String, i64, Option<String>, &'static str, f32, String)],
+    ) -> Result<usize, String> {
+        if rows.is_empty() { return Ok(0); }
+        let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
+        for (session_id, event_id, tool_name, verdict, confidence, reason) in rows {
+            sqlx_core::query::query(
+                "INSERT INTO sensei.tool_call_verdicts \
+                    (session_id, event_id, tool_name, verdict, confidence, reason, classified_at) \
+                 VALUES ($1, $2, $3, $4, $5, $6, now()) \
+                 ON CONFLICT (event_id) DO UPDATE SET \
+                    tool_name = EXCLUDED.tool_name, \
+                    verdict = EXCLUDED.verdict, \
+                    confidence = EXCLUDED.confidence, \
+                    reason = EXCLUDED.reason, \
+                    classified_at = now()"
+            )
+            .bind(session_id)
+            .bind(event_id)
+            .bind(tool_name)
+            .bind(*verdict)
+            .bind(*confidence)
+            .bind(reason)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?;
+        }
+        tx.commit().await.map_err(|e| e.to_string())?;
+        Ok(rows.len())
+    }
+
+    /// All verdicts for one session, ordered by the underlying event ts.
+    /// Consumed by the Replay tab's timeline read path (#84 / #90).
+    pub async fn get_verdicts_for_session(
+        &self,
+        client_session_id: &str,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(i64, Option<String>, String, f32, Option<String>, chrono::DateTime<chrono::Utc>, i64)> =
+            sqlx_core::query_as::query_as(
+                "SELECT v.event_id, v.tool_name, v.verdict, v.confidence, v.reason,
+                        v.classified_at, ae.ts
+                   FROM sensei.tool_call_verdicts v
+                   JOIN activity.assistant_events ae ON ae.id = v.event_id
+                  WHERE v.session_id = $1
+               ORDER BY ae.ts"
+            )
+            .bind(client_session_id)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(event_id, tool_name, verdict, confidence, reason, classified_at, ts)| {
+            serde_json::json!({
+                "event_id":       event_id,
+                "tool_name":      tool_name,
+                "verdict":        verdict,
+                "confidence":     confidence,
+                "reason":         reason,
+                "classified_at":  classified_at.to_rfc3339(),
+                "ts":             ts,
+            })
+        }).collect())
+    }
+
+    /// Session-level summary of verdicts — the counts by outcome. Cheap to
+    /// project into a StatBlock on the Replay/Health tab.
+    pub async fn get_verdict_summary_for_session(
+        &self,
+        client_session_id: &str,
+    ) -> Result<serde_json::Value, String> {
+        let rows: Vec<(String, i64)> = sqlx_core::query_as::query_as(
+            "SELECT verdict, count(*)::bigint FROM sensei.tool_call_verdicts
+              WHERE session_id = $1 GROUP BY verdict"
+        )
+        .bind(client_session_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        let mut used = 0i64;
+        let mut partial = 0i64;
+        let mut ignored = 0i64;
+        for (v, n) in rows {
+            match v.as_str() {
+                "used" => used = n,
+                "partial" => partial = n,
+                "ignored" => ignored = n,
+                _ => {}
+            }
+        }
+        let total = used + partial + ignored;
+        Ok(serde_json::json!({
+            "used":    used,
+            "partial": partial,
+            "ignored": ignored,
+            "total":   total,
+        }))
+    }
+
     /// `(session uuid, client_session_id)` for a project's sessions that NEED
     /// (re)enrichment — never analyzed (`analyzed_at IS NULL`), or with
     /// assistant_events newer than the last analysis. Lets the scheduler skip
