@@ -137,6 +137,41 @@ pub struct DiscoveredCommand {
     pub category: Option<&'static str>,
 }
 
+/// Build a batch of [`DiscoveredCommand`]s from a conventional list —
+/// `(subcommand, canonical_category)` pairs — for ecosystems whose commands
+/// are not manifest-derived (Cargo, Go, Maven, Gradle, .NET, SwiftPM). The
+/// `cli` is prepended verbatim to each subcommand to form `command_line`
+/// (`cargo test`, `go test ./...`, `mvn test`). The `raw_name` is the
+/// subcommand itself so uniqueness on (folder_id, raw_name) is stable across
+/// scans.
+pub fn conventional_commands(cli: &str, entries: &[(&str, &str)]) -> Vec<DiscoveredCommand> {
+    entries.iter().map(|(sub, verb)| DiscoveredCommand {
+        raw_name: (*sub).to_string(),
+        command_line: format!("{cli} {sub}"),
+        category: Some(canonical_verb(verb)),
+    }).collect()
+}
+
+/// Interns a category string to the `&'static` form the DDL check constraint
+/// expects. Panics on unknown verbs — the input is always a compile-time
+/// constant inside this crate, so a typo would be caught at test time.
+fn canonical_verb(verb: &str) -> &'static str {
+    match verb {
+        "test" => "test",
+        "build" => "build",
+        "lint" => "lint",
+        "run" => "run",
+        "format" => "format",
+        "typecheck" => "typecheck",
+        "e2e" => "e2e",
+        "bench" => "bench",
+        "docs" => "docs",
+        "start" => "start",
+        "dev" => "dev",
+        other => panic!("unknown canonical verb: {other} — extend canonical_verb / command_category vocabulary"),
+    }
+}
+
 /// Shared classifier that maps a script name → canonical category verb.
 /// Keeps the same vocabulary across ecosystems so the project window's
 /// action buttons and the get_commands MCP tool speak one language.
@@ -379,6 +414,44 @@ mod tests {
         let names = all_manifest_filenames();
         for expected in ["Cargo.toml", "package.json", "pyproject.toml", "go.mod", "pom.xml"] {
             assert!(names.contains(&expected), "missing {expected} in {names:?}");
+        }
+    }
+
+    // ── conventional_commands helper ─────────────────────────────────
+
+    #[test]
+    fn conventional_commands_prefixes_cli_and_categorises() {
+        let cmds = conventional_commands("cargo", &[("test", "test"), ("build", "build")]);
+        assert_eq!(cmds.len(), 2);
+        assert_eq!(cmds[0].raw_name, "test");
+        assert_eq!(cmds[0].command_line, "cargo test");
+        assert_eq!(cmds[0].category, Some("test"));
+        assert_eq!(cmds[1].command_line, "cargo build");
+    }
+
+    #[test]
+    #[should_panic(expected = "unknown canonical verb")]
+    fn canonical_verb_panics_on_typo_so_tests_catch_it() {
+        // Guard against a copy-paste typo like "tests" instead of "test" —
+        // this panic surfaces during test time, never in production.
+        conventional_commands("x", &[("y", "testz")]);
+    }
+
+    #[test]
+    fn every_registered_adapter_produces_at_least_one_command_or_none_intentionally() {
+        // Sanity: for the ecosystems that emit conventional commands we
+        // expect at least a `test` entry, since "how do I test this?" is
+        // the load-bearing question. npm/composer/pyproject are content-
+        // driven so an empty manifest is legitimately empty.
+        for adapter in registered_adapters() {
+            let cmds = adapter.parse_commands("");
+            let has_test = cmds.iter().any(|c| c.category == Some("test"));
+            match adapter.ecosystem() {
+                "cargo" | "go" | "maven" | "nuget" | "swiftpm" | "rubygems" => {
+                    assert!(has_test, "{} adapter must emit a `test` conventional command on empty content", adapter.ecosystem());
+                }
+                _ => { /* content-driven adapters (npm/composer/pyproject) are fine with empty */ }
+            }
         }
     }
 
