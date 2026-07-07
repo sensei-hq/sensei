@@ -9,6 +9,19 @@ use crate::api::state::AppState;
 // Re-use TagBody from workspace
 use super::workspace::TagBody;
 
+/// Resolve `id` as either a project UUID or a project name → project UUID.
+/// Fixes the `get_ftr_daily` / `get_quality_signals` / `get_hotspots` MCP
+/// tools returning empty when the caller passes a project *name* (the
+/// natural shape for AI assistants) — they used to only parse as UUID and
+/// silently 400.
+async fn resolve_project_uuid(state: &AppState, id: &str) -> Option<uuid::Uuid> {
+    if let Ok(uuid) = uuid::Uuid::parse_str(id) {
+        return Some(uuid);
+    }
+    let row = state.pg.get_project_by_name(id).await.ok().flatten()?;
+    crate::api::util::json_uuid(&row["id"])
+}
+
 // ── Solutions CRUD ──────────────────────────────────────────────────────────
 
 pub(crate) async fn list_solutions(State(state): State<AppState>) -> Result<Json<serde_json::Value>, StatusCode> {
@@ -528,7 +541,8 @@ pub(crate) async fn project_ftr_daily(
     Path(id): Path<String>,
     axum::extract::Query(q): axum::extract::Query<DaysQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let project_id = uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let project_id = resolve_project_uuid(&state, &id).await
+        .ok_or(StatusCode::NOT_FOUND)?;
     let data = state.pg.get_ftr_daily(Some(&project_id), q.days).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(serde_json::json!({ "ftr_daily": data })))
@@ -540,7 +554,8 @@ pub(crate) async fn project_hotspots(
     Path(id): Path<String>,
     axum::extract::Query(q): axum::extract::Query<DaysQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let project_id = uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let project_id = resolve_project_uuid(&state, &id).await
+        .ok_or(StatusCode::NOT_FOUND)?;
     let data = state.pg.get_hotspots(&project_id, q.days).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(serde_json::json!({ "hotspots": data })))
@@ -551,7 +566,8 @@ pub(crate) async fn project_quality_signals(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let project_id = uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let project_id = resolve_project_uuid(&state, &id).await
+        .ok_or(StatusCode::NOT_FOUND)?;
     let data = state.pg.get_quality_signals(&project_id).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(data))
@@ -564,7 +580,8 @@ pub(crate) async fn project_maturity(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let project_id = uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let project_id = resolve_project_uuid(&state, &id).await
+        .ok_or(StatusCode::NOT_FOUND)?;
     let (watched, has_insights) = state
         .pg
         .get_project_maturity_inputs(&project_id)
@@ -667,7 +684,8 @@ pub(crate) async fn project_teachings(
     Path(id): Path<String>,
     axum::extract::Query(q): axum::extract::Query<LimitQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let project_id = uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let project_id = resolve_project_uuid(&state, &id).await
+        .ok_or(StatusCode::NOT_FOUND)?;
     let data = state.pg.get_adopted_teachings(&project_id, q.limit).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(serde_json::json!({ "teachings": data })))

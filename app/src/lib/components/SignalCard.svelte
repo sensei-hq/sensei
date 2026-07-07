@@ -22,13 +22,17 @@
   const style = $derived(VARIANT_STYLE[variant]);
 </script>
 
-<article class="{style.bg} {style.edge} border rounded-lg p-4 flex items-start gap-3">
-  <span class="kanji text-xl opacity-70 {style.ink} w-6 text-center shrink-0">{style.kanji}</span>
+<!-- Card body uses text-ink for the title so it stays readable on both
+     light and dark modes; the tint colour is carried by the kanji glyph
+     and the left border only (like the mockup's SignalCard which uses
+     borderLeft: 3px solid <accent> rather than tinting the title text). -->
+<article class="{style.bg} border rounded-lg p-4 flex items-start gap-3 border-l-2 {style.edge}">
+  <span class="kanji text-xl {style.ink} w-6 text-center shrink-0">{style.kanji}</span>
   <div class="flex-1 min-w-0">
     {#if toolName}
-      <div class="text-xs uppercase tracking-wide opacity-60 font-mono">{toolName}</div>
+      <div class="text-xs uppercase tracking-wide text-ink-mute font-mono">{toolName}</div>
     {/if}
-    <div class="text-sm font-medium {style.ink} m-0">{title}</div>
+    <div class="text-sm font-medium text-ink m-0">{title}</div>
     <p class="text-sm text-ink-soft m-0 mt-1 leading-normal">{detail}</p>
   </div>
 </article>

@@ -107,12 +107,40 @@ pub(crate) async fn get_session_replay(
         .clamp(1, 1000);
     let classify_first = q.get("classify").is_some_and(|v| v == "true" || v == "1");
 
+    // Resolve the observatory session UUID → assistant-events client
+    // session id. Callers (the app's Replay tab) pass `activity.sessions.id`,
+    // but `activity.assistant_events.session_id` is the assistant's *own*
+    // session identifier (the string the hook writer sends). Without this
+    // lookup, `get_session_replay_timeline` reads 0 rows even for sessions
+    // with hundreds of PostToolUse events (root cause of the "no tool calls
+    // in this session" bug).
+    //
+    // If parsing `id` as UUID fails, fall back to treating it as an
+    // already-resolved client_session_id — some callers already pass that
+    // shape.
+    let client_sid: String = match uuid::Uuid::parse_str(&id) {
+        Ok(uuid) => {
+            match state.pg.get_session_client_id(&uuid).await {
+                Ok(Some(csid)) => csid,
+                Ok(None) => {
+                    tracing::warn!(session = %id, "replay: no session row for UUID; treating id as client_session_id");
+                    id.clone()
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, session = %id, "replay: get_session_client_id failed");
+                    return Err(StatusCode::INTERNAL_SERVER_ERROR);
+                }
+            }
+        }
+        Err(_) => id.clone(),
+    };
+
     // Optionally classify first so verdicts are populated before the read.
     // Idempotent — refresh is safe on every open.
     let classified = if classify_first {
-        crate::tasks::verdict_classifier::classify_session(&state.pg, &id).await
+        crate::tasks::verdict_classifier::classify_session(&state.pg, &client_sid).await
             .map_err(|e| {
-                tracing::error!(error = %e, session = %id, "replay: classify_session failed");
+                tracing::error!(error = %e, session = %client_sid, "replay: classify_session failed");
                 StatusCode::INTERNAL_SERVER_ERROR
             })?
     } else {
@@ -121,19 +149,19 @@ pub(crate) async fn get_session_replay(
 
     let calls = state
         .pg
-        .get_session_replay_timeline(&id, limit)
+        .get_session_replay_timeline(&client_sid, limit)
         .await
         .map_err(|e| {
-            tracing::error!(error = %e, session = %id, "get_session_replay_timeline failed");
+            tracing::error!(error = %e, session = %client_sid, "get_session_replay_timeline failed");
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
 
     let summary = state
         .pg
-        .get_verdict_summary_for_session(&id)
+        .get_verdict_summary_for_session(&client_sid)
         .await
         .map_err(|e| {
-            tracing::error!(error = %e, session = %id, "get_verdict_summary_for_session failed");
+            tracing::error!(error = %e, session = %client_sid, "get_verdict_summary_for_session failed");
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
 
