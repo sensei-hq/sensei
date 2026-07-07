@@ -2,107 +2,171 @@
 
 **Segment:** 03 · Observatory — daily use
 **Route:** `/instruments/health`
-**Source mockup:** [`lib/instruments-simple.jsx`](../../mockups/Sensei/lib/instruments-simple.jsx) → `InstrumentsHealthSimple`
-**Rebuild landed (signal derivation):** 2026-07-07 (this session)
+**Source mockup:** [`lib/instruments-simple.jsx`](../../mockups/Sensei/lib/instruments-simple.jsx) → `InstrumentsHealthSimple` → delegates to `InstrumentsHealth` in `lib/instruments.jsx`
+**Data:** `lib/mcp-signals-data.js` → `window.MCP_SIGNALS.mcpMeta` + `toolUsage` + `thirdPartyUsage`
 **App file:** `app/src/routes/(observatory)/instruments/+page.svelte` (Health tab)
 **Daemon files:** `crates/senseid/src/api/handlers/tool_signals.rs`, `crates/senseid/src/api/handlers/observatory.rs::tool_signals`
+**Refactored:** 2026-07-07 (per-MCP entry + per-tool L2 drill; signal curation moved to L2)
 
 ## Purpose
 
-The user opened Instruments because something is nagging them about
-their tools — either their MCP surface, the built-in sensei tools, or
-the assistant's tool-picking behaviour. Health is the **at-a-glance
-verdict**: for each tool the daemon has ever seen, is it a win, warn,
-opportunity, or dormant? And more importantly: **what should I do about
-it?** Kanji is 具 — *instrument*.
+The user came here worried about tools — MCP surface, sensei
+tool-picking, third-party assistants. Health is the **at-a-glance
+verdict**, but at two zoom levels:
 
-The wrong version of this screen is a long list of "no calls in N days"
-cards, one per registered tool. That's noise. The right version is a
-**selective, actionable list** — every warn and opportunity kept as a
-per-tool card because they need action, but all the dormants collapsed
-to one summary card ("40 tools dormant") with the first three names and
-an "N more" tail.
+**L1 — MCP grid.** One card per connected MCP server (Sensei,
+Postgres, Stripe, GitHub, Sentry). Each card shows *what share of
+this MCP's registered tools are actually being invoked*, whether
+it's connected at all, and a one-line note. This is the "which
+MCPs are earning their keep?" pane. It's the entry.
+
+**L2 — per-tool.** Click a card. The signal strip (curated
+warns/opportunities/dormant-summary/win-summary) and the per-tool
+usage table appear scoped to that MCP. This is where the signal
+curation we shipped on 2026-07-07 lives — visible when a user cares
+about one MCP's per-tool detail, not when they're glancing at the
+overall surface.
+
+Kanji is 具 — *instrument*.
+
+## Sub-nav placement
+
+Instruments follows a placement rule that differs from other groups:
+the sub-tab strip (`Playground / Replay / Health`) renders **inside
+each screen**, between the screen's hero and its body — not at the
+top of the observatory main container. The parent passes `subNav`
+as a JSX prop; this screen renders it under its own `InstrHero`.
+See `docs/llm-spec/MOCKUP-INDEX.md` §"Sub-nav placement".
 
 ## Data invariants
 
-- `sensei.tool_usage_stats` has rows for every tool ever called
-  (populated by the capture pipeline).
-- `sensei.tool_insights` gets a row per tool per aggregation tick
-  (written by the `AggregateToolInsights` task, one snapshot per tool).
-- **The per-tool cache and the featured-insights list are different
-  concerns.** The cache feeds the per-tool detail pane (below the
-  Insights strip); the featured list is derived on the fly and curated.
-- FTR verdict split (`used / partial / ignored`) comes from
-  `get_verdict_split_per_tool(14)` — folded into each `tool_insights`
-  row's `metrics`. Zero-verdict tools show 0/0/0, not absent.
+### MCP-level (L1)
+
+- `GET /api/observatory/mcp-servers` returns:
+  ```json
+  {
+    "mcps": [
+      { "id": "sensei",   "name": "Sensei", "kanji": "先",
+        "publisher": "local", "connected": true, "note": "Your codebase's private expert.",
+        "tools_registered": 44, "tools_invoked_14d": 16, "share_invoked": 0.36 },
+      { "id": "postgres", … }, …
+    ]
+  }
+  ```
+- `tools_registered` = distinct tools this MCP declares.
+- `tools_invoked_14d` = distinct tools with `call_count > 0` in the
+  last 14 days.
+- `share_invoked = tools_invoked_14d / tools_registered`, or `0`
+  when registered is 0. Rendered as a share bar.
+- `connected: false` mcps still render as cards with a "not
+  connected — recommended for this stack" note; they never render
+  with active signals.
+- **Sensei itself is an MCP.** It is the first card. It is
+  connected.
+
+### Per-tool (L2, scoped to a selected MCP)
+
+- `GET /api/observatory/tool-signals?mcp={id}` returns the curated
+  signal list scoped to that MCP (see [[pipeline/signals]]). If
+  omitted, the endpoint returns all-MCPs curated.
+- `GET /api/observatory/tool-insights?mcp={id}` returns the flat
+  per-tool table (used by the drill pane).
+- Signals: at most one dormant summary, at most one win summary,
+  all warns/opportunities per tool.
 
 ## Signals shown
 
-The Insights strip at the top:
+### L1 — MCP grid
 
-| Variant | Kanji | When it fires | Copy pattern |
-|---|---|---|---|
-| `warn` | 警 | `calls >= 50 && error_rate >= 0.05` | Per-tool. Title: `{short}: {rate}% failure rate`. Detail: `{calls} calls, {errors} errored. High-traffic tool with sharp edges — fix these first.` Action: `Edit tool: {tool}`. |
-| `opportunity` | 芽 | `calls >= 10 && error_rate >= 0.05` (but not high-traffic) | Per-tool. Title: `{short}: room to improve`. Detail: `{calls} calls, {rate}% failure. Modest volume — small polish would pay off.` Action: `Edit tool: {tool}`. |
-| `unused` | 眠 | `calls == 0` OR `days_since_last_use >= 14`. **Collapsed to one summary when >1.** | Summary title: `{n} tools dormant`. Detail: `{tool1}, {tool2}, {tool3} and {N-3} more haven't been called in the last two weeks. Either wire them into a skill or persona, or archive them.` Action: `Review tool registry`. |
-| `win` | 勝 | `calls >= 50 && error_rate <= 0.02`. **Collapsed to one summary when >1.** | Summary title: `{n} workhorse tools`. Detail: `{tool1}, {tool2}, {tool3} are running high-volume with clean error rates.` Action: none. |
-
-**Sort order:** warn → opportunity → unused → win. Actionable first.
-
-The per-tool table below the Insights strip:
-
-| Column | Value | Meaning |
+| Element | Value | Meaning |
 |---|---|---|
-| Tool | shortname | Strips `sensei.` or `mcp__…__` prefix |
-| Calls | integer | Total in `tool_usage_stats` |
-| Errors | integer | Total errors captured |
-| Avg ms | integer | Mean duration |
-| Last used | relative time | Powers dormancy determination |
+| MCP card kanji | `p.kanji` (large) | Domain glyph — Sensei is 先, Postgres 庫, Stripe 銀, GitHub 貢, Sentry 哨 |
+| MCP name + publisher | text + small mono | Publisher is scope tag |
+| Connected chip | on / off | Muted card when not connected |
+| Share-invoked bar | 0..1 fraction | `tools_invoked_14d / tools_registered` |
+| Bar detail | `{invoked} of {registered} tools invoked · 14d` | Under the bar |
+| Note line | `p.note` | Editorial one-liner from `mcpMeta` (frozen; not model-generated at this layer) |
+| Card click | opens L2 for that MCP | Passes `mcp={id}` to the sub-view |
+
+### L2 — per-tool (scoped)
+
+Insights strip:
+
+| Variant | Kanji | When it fires | Copy owner |
+|---|---|---|---|
+| `warn` | 警 | `calls >= 50 && error_rate >= 0.05` | [[pipeline/insight-copy]] (fallback: `{short}: {rate}% failure rate`) |
+| `opportunity` | 芽 | `calls >= 10 && error_rate >= 0.05` (not high-traffic) | insight-copy (fallback: `{short}: room to improve`) |
+| `unused` | 眠 | `calls == 0` OR `days_since_last_use >= 14`; collapsed to one summary when >1 | insight-copy (fallback: `{n} tools dormant`) |
+| `win` | 勝 | `calls >= 50 && error_rate <= 0.02`; collapsed to one summary when >1 | insight-copy (fallback: `{n} workhorse tools`) |
+
+Per-tool table (drill):
+
+| Column | Value |
+|---|---|
+| Tool | shortname (strips `sensei.` or `mcp__…__`) |
+| Calls | integer |
+| Errors | integer |
+| Avg ms | integer |
+| Last used | relative time |
+| Verdict chip | `healthy` / `ok` / `warn` / `unused` (matches the mockup vocabulary) |
 
 ## Done gate
 
-- On Jerry's live data (~40 registered sensei tools of which most are
-  dormant), the Insights strip renders **at most one dormant card**,
-  **at most one win card**, and one card per warn/opportunity — total
-  usually 2–4 cards, not 40.
-- Every visible card has:
-  - the tool's short name in the title (not the raw MCP path)
-  - a concrete number in the detail (calls / failure rate / dormancy days)
-  - an action hint on warn/opportunity/unused variants
-- Dark-mode: the SignalCard text stays readable on all four tinted
-  backgrounds. No white-on-cream, no light-green-on-light-green.
-- The dormant *count* in the header agrees with the length of the
-  dormant list in the per-tool table below.
-- Clicking a per-tool row expands it (existing behaviour) and — when
-  present — shows the same signal detail we surfaced in the Insights
-  strip.
+- L1 renders one card per MCP in `mcpMeta` on Jerry's live data.
+  Sensei is first; connected MCPs precede disconnected ones.
+- The share bar on the Sensei card matches
+  `tools_invoked_14d / tools_registered` from the daemon (spot-
+  checked against the live tool_usage_stats).
+- Clicking any MCP card scopes the L2 view. Deep-linking with
+  `?mcp={id}` opens L2 directly.
+- L2 Insights strip renders **at most one dormant summary** and
+  **at most one win summary**; per-MCP totals never exceed a
+  handful of visible cards.
+- Every card's title + detail comes through insight-copy when the
+  model is available; fallback strings are labelled fallback in
+  the wire response for debuggability.
+- Dark-mode: SignalCard text stays readable on all four tinted
+  backgrounds. Disconnected-MCP cards remain distinguishable.
+- Instruments sub-nav renders under the hero (via `subNav` prop),
+  never at the top of the observatory main container.
 
 Optional check:
 ```
-curl -s http://localhost:7744/api/observatory/tool-signals | jq '.signals | group_by(.variant) | map({variant: .[0].variant, n: length})'
-# expected: at most one row with variant=unused and at most one row with variant=win
+curl -s http://localhost:7744/api/observatory/mcp-servers \
+  | jq '.mcps | map({id, share: (.share_invoked * 100 | floor)})'
+
+curl -s "http://localhost:7744/api/observatory/tool-signals?mcp=sensei" \
+  | jq '.signals | group_by(.variant) | map({variant: .[0].variant, n: length})'
+# expected: at most one unused row, at most one win row
 ```
 
 ## Wrong gate
 
-- **40+ signal cards.** Curation regressed — the endpoint is returning
-  the raw per-tool list.
-- **All dormant cards say "No calls in N days" verbatim.** The
-  short-name / kanji / action-hint refactor was reverted.
-- **Header dormant count = 0 while the table shows dormant tools.**
-  Header derivation is reading the wrong source. Both should derive
-  from the same source of truth.
-- **Signal action hint missing.** Card renders but there's no next-step
-  hint — the "what do I do about it" is what makes this screen useful.
-- **"Workhorse tool" title without a tool name.** The generic copy
-  ("workhorse tool" appearing multiple times identically) is the
-  smoke of a caching-key bug.
-- **Every card is `variant=warn`.** Threshold tuning bug — likely the
-  error-rate denominator collapsed.
+- **L1 shows only Sensei.** Other MCPs from `mcpMeta` aren't being
+  populated OR the daemon lacks the mcp_servers table content.
+- **Share bar reads 100% on every MCP.** `tools_invoked_14d` is
+  being read as `tools_registered`.
+- **Disconnected MCP still lists signals.** Signal derivation is
+  running on a non-connected surface.
+- **L2 shows the same signals regardless of the selected MCP.**
+  `?mcp=` isn't filtering server-side; the endpoint returns the
+  global curated list.
+- **40+ signal cards in L2.** Curation regressed (see
+  [[pipeline/signals]] wrong-gate).
+- **Instruments sub-nav appears twice** (top-of-main AND
+  below-hero). The observatory shell didn't gate on
+  `groupKeyOf(section) === "instruments"` correctly.
+- **L1 card kanji is the wrong glyph.** `mcpMeta` unified with
+  another datasource; use only `mcpMeta` for identity here.
+- **Note lines say "coming soon" on connected MCPs.** Editorial
+  note has decayed; keep the note wire-honest to the current
+  state.
 
 ## Related
 
-- [[pipeline/signals]] — the derivation itself, with unit tests
+- [[pipeline/signals]] — curation logic scoped by MCP
+- [[pipeline/insight-copy]] — mentor-voice text for signal cards
 - [[pipeline/capture]] — where `tool_usage_stats` gets its data
+- [[pipeline/mcp-surface]] — the connected-MCP list + registration
 - [[screen/observatory-instruments-playground]] — sibling tab
 - [[screen/observatory-instruments-replay]] — sibling tab
