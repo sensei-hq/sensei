@@ -75,8 +75,9 @@ Kanji is 家 — *home*.
   `ftr14d - ftr14dPrev`.
 - Every session id in `hero.source` resolves via
   `GET /api/sessions/{id}` (name-or-UUID resolution honored).
-- Adopted lane shows real rows or is honestly empty
-  ("Nothing adopted yet — Sensei is still watching.").
+- Adopted lane shows real rows OR the early-state string
+  ("Nothing adopted yet — Sensei is still watching."). Never
+  a "no data" or "loading…" placeholder.
 - Dark-mode: all four tones (warn/good/mute/plain) remain readable.
 - One-decision-one-default theme is honoured: the action button on
   mature koan uses the standard Apply-family verb, not a bespoke

@@ -22,8 +22,9 @@ three questions the user has when they open their project:
 Every element is **project-scoped** — same primitives as the
 Observatory Today screen, but filtered to this one project. When
 the mockup and daemon agree that a project has zero recent
-activity, the hero shows an honest early-state message, not a
-"getting started" empty screen.
+activity, the hero shows the early-state message ("Sensei is
+observing. The next correction or pattern will surface here."), not
+a "getting started" empty screen.
 
 Kanji is 全 — *whole / overview*.
 
@@ -166,7 +167,7 @@ curl -s http://localhost:7744/api/projects/sensei/overview | jq '{
   for the same project on the same day.** Two derivations of
   the same number — pick the view.
 - **Hero shows "getting started" or "no data" instead of the
-  honest all-quiet message.** Fallback template forgotten;
+  all-quiet message.** Fallback template forgotten;
   insight-copy fallback path needs it.
 - **Multi-repo project header hides the `{n} repos` chip.** The
   overview looks like a single-repo project; user can't tell why

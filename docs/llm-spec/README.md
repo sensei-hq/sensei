@@ -35,8 +35,8 @@ leaking client work.
 
 **North-star metric:** FTR — first-turn resolution — the fraction of
 sessions where the assistant's first attempt landed without a
-correction. Every screen is judged by whether it makes FTR go up
-honestly, or exposes an honest reason it went down.
+correction. Every screen is judged by whether it makes FTR go up or
+exposes the reason it went down.
 
 ---
 

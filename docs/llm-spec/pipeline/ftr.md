@@ -8,16 +8,16 @@
 ## Purpose
 
 FTR — first-turn resolution — is the **north-star metric** for the
-whole product. It answers one question honestly: when the assistant
-made its first attempt on a task, did it land? A session is FTR-true
-when the developer's follow-up prompts contain no correction signal
-(no "actually", no "revert", no "no, X"). A session is FTR-false when
+whole product. It answers one question: when the assistant made its
+first attempt on a task, did it land? A session is FTR-true when the
+developer's follow-up prompts contain no correction signal (no
+"actually", no "revert", no "no, X"). A session is FTR-false when
 at least one correction fires.
 
 Every visible number in the app is judged by whether making it move
-would make FTR go up honestly, or expose an honest reason it went
-down. If a change to the UI can't be justified by "this either raises
-FTR or explains why it fell", it doesn't ship.
+would make FTR go up, or expose the reason it went down. If a UI
+change can't be justified by "this raises FTR or explains why it
+fell", it doesn't ship.
 
 Kanji is 率 — *rate*.
 
@@ -120,17 +120,32 @@ curl -s http://localhost:7744/api/projects/sensei/ftr | jq
 - [[screen/observatory-projects]] — per-project FTR stat
 - [[screen/project-impact]] — scoped before/after FTR
 
-## Open questions
+## Locked decisions (2026-07-07)
 
-- Should we track a **per-model FTR** alongside per-project? The
-  daemon already has `sessions.provider` / `sessions.model`; a
-  `model_effectiveness` view exists. Answer: yes, but as a
-  different metric (`ftr_by_model`) not a replacement — the
-  north-star stays per-project.
-- Should sessions with fewer than N turns be excluded? "One-shot
-  ask, one-shot answer" trivially scores FTR=1 and inflates the
-  metric. Bias: keep at 1-turn minimum, but surface a `low_signal`
-  chip on projects where median turns < 3.
-- Does a subagent side-chain corrupt the count? A subagent's
-  corrections aren't the main session's corrections. Currently they
-  ARE bundled; open decision whether that's honest.
+- **Per-model FTR — yes, calculate it.** Not as the north-star
+  (that stays per-project so the user sees whether the pair is
+  getting better here). Per-model FTR is a **decision aid**: which
+  model works best for this project / this stack. Surfaces on:
+  - Project Overview (secondary chip: "Opus 4.6 is scoring 0.82
+    here — try it")
+  - Model effectiveness pane
+  - Autonomous model preference in the analyzer's
+    `model_insight` step (already shipped — see
+    [[project_standalone_completion_plan]])
+  Computed from `sessions.provider` + `sessions.model` +
+  `sessions.ftr`, same view logic scoped by (provider, model).
+
+- **Low-turn sessions.** Keep the 1-turn minimum for the FTR
+  numerator. Surface a `low_signal` chip on projects where
+  median turns < 3 so the reader sees the number is thin.
+- **Subagent side-chains.** Subagent corrections do **not** count
+  toward the main session's FTR — they're not the user's
+  correction, so bundling them tanks the parent unfairly. But the
+  *cause* of a subagent deviation IS worth learning from: what
+  prompt / tool response / context made the subagent course-
+  correct? Those events feed the memory pipeline as candidates
+  the same way top-level corrections do — see
+  [[pipeline/memory]] formation. Storage: add
+  `sessions.parent_session_id` (nullable) so subagent sessions
+  are queryable but keep their corrections out of the parent's
+  `corrections` counter and FTR calc.
