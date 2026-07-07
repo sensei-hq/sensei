@@ -606,42 +606,26 @@ pub(crate) async fn tool_usage(
     Ok(Json(serde_json::json!({ "tools": data })))
 }
 
-/// GET /api/observatory/tool-signals — derived insight cards.
+/// GET /api/observatory/tool-signals — curated insight cards for the
+/// Health tab's Insights strip.
 ///
-/// Prefers the cached snapshots written by the `AggregateToolInsights`
-/// scheduled task (T2 Slice D); falls back to computing on the fly when
-/// the cache is empty (fresh install, task hasn't run yet). The wire
-/// shape stays identical either way — `{ signals: [{tool_name, variant,
-/// title, detail}] }` — so callers don't care where the data came from.
+/// Derives on the fly from `sensei.tool_usage_stats` (small dataset —
+/// no cache round-trip needed) and applies [`ts::curate_insights`] so a
+/// registry with dozens of dormant tools collapses to a single summary
+/// card rather than one per tool. Per-tool detail rows still come from
+/// `/api/observatory/tool-insights`, which reads the cached snapshot.
 pub(crate) async fn tool_signals(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     use crate::api::handlers::tool_signals as ts;
 
-    // Fast path: read the cached snapshot the scheduled task writes.
-    let cached = state.pg.get_latest_tool_insights().await
-        .map_err(|e| { tracing::error!(error = %e, "tool_signals: get_latest_tool_insights failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
-    let cached_signals: Vec<serde_json::Value> = cached.iter()
-        .filter(|row| row.get("variant").and_then(|v| v.as_str()).is_some())
-        .map(|row| serde_json::json!({
-            "tool_name": row.get("toolName").cloned().unwrap_or(serde_json::Value::Null),
-            "variant":   row.get("variant").cloned().unwrap_or(serde_json::Value::Null),
-            "title":     row.get("title").cloned().unwrap_or(serde_json::Value::Null),
-            "detail":    row.get("detail").cloned().unwrap_or(serde_json::Value::Null),
-        }))
-        .collect();
-    if !cached_signals.is_empty() {
-        return Ok(Json(serde_json::json!({ "signals": cached_signals, "source": "cache" })));
-    }
-
-    // Fallback: derive on-the-fly. Same heuristics as the scheduled task
-    // so empty-cache and populated-cache paths produce identical cards.
     let rows = state.pg.get_tool_usage_stats().await
         .map_err(|e| { tracing::error!(error = %e, "tool_signals: get_tool_usage_stats failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
     let stats: Vec<ts::ToolUsageRow> = rows.into_iter()
         .filter_map(|v| serde_json::from_value(v).ok())
         .collect();
-    let signals = ts::derive_signals(&stats, chrono::Utc::now(), &ts::SignalThresholds::default());
+    let raw = ts::derive_signals(&stats, chrono::Utc::now(), &ts::SignalThresholds::default());
+    let signals = ts::curate_insights(raw);
     Ok(Json(serde_json::json!({ "signals": signals, "source": "derived" })))
 }
 
