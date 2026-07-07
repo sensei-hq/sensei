@@ -268,6 +268,107 @@ curl -s http://localhost:7744/api/observatory/memory-health | jq '.skipped_repea
   `id` in memory_loads for that session.** Self-report accepts
   arbitrary ids — validate against the load log or drop.
 
+### Session-start context assembly (the decision tree)
+
+The MCP `get_memories(scope)` call isn't a flat query. The
+assistant should assemble session-start context by asking a
+short **decision tree** and letting the daemon respond with the
+right slice:
+
+1. **Who am I?** — user identity + memberships. Global user-
+   scope memories.
+2. **What's the project?** — project-scope memories + folder-
+   role for multi-repo.
+3. **What stack / community?** — stack-scoped memories from
+   `pipeline/collective-intelligence` if opted in.
+4. **What did we learn recently?** — memories with recent
+   `reinforced_at` first.
+5. **What's pending?** — memories in `state=proposed` or
+   `state=challenged` that the assistant should be aware of.
+6. **What's on the queue?** — accepted recommendations awaiting
+   verdict measurement (from [[pipeline/impact]]).
+
+`get_memories(scope, mode="session-start")` runs the tree and
+returns a curated, ordered list — battle-tested first, recent
+reinforcements next, pending awareness last. This is what the
+assistant loads into its context; the answer competes with
+[[pipeline/context-delivery]] for the token budget.
+
+### Continuity memory (session-restart special)
+
+Not every memory is durable. When a session gets interrupted
+(user goes to lunch, laptop sleeps), the next session on the
+same project needs a **short-lived continuity note**: what were
+we in the middle of, what did we just decide, what were we
+about to try.
+
+- New memory type: `category: continuity`.
+- Auto-generated on session end via
+  [[pipeline/inferencing]] `reasoning` chain summarising the
+  last N turns.
+- Auto-decays after **7 days** (default) unless reinforced.
+- Loaded at the top of the session-start context for the same
+  project.
+
+Continuity memories are distinct from durable memories — they
+never promote to rules, they never widen scope. They exist to
+resume, not to teach.
+
+### Two-way learning (assistant as contributor)
+
+The assistant proactively surfaces candidate learnings mid- or
+post-session:
+
+- `report_learning({session, observation, evidence})` MCP tool
+  — the assistant flags "we corrected the auth handler shape
+  three times this session; worth remembering?"
+- The daemon runs a short interactive follow-up (via
+  [[pipeline/inferencing]] `reasoning`): asks the user to
+  confirm / adjust / dismiss / widen scope. Confirmation
+  writes a memory in `state=proposed`.
+- The user's review surface is
+  [[screen/observatory-memories]] → Anatomy view.
+
+Distinct from `report_memory_use` (which reports on memories
+loaded/followed/skipped). `report_learning` proposes *new*
+memories.
+
+### Consolidation
+
+When 5 memories about auth cluster into 2 core concepts with
+examples, the pipeline runs consolidation:
+
+- Similarity clustering on memory embeddings.
+- MOE panel via [[pipeline/inferencing]] `consensus` proposes
+  a merged representative; challenge / synthesize returns a
+  confidence-labelled merge suggestion.
+- User approves in [[screen/observatory-consolidation]]; the
+  cluster's members archive with `merged_into: representative_id`;
+  the representative absorbs the strengths + reinforcement
+  counts.
+- Cross-scope merge is not allowed automatically — widen or
+  narrow first (matches the promotion-ladder invariant).
+
+### Conflict resolution
+
+Two memories with contradictory signatures at overlapping scopes:
+
+- Detected on write and on session-start assembly.
+- Surface both as "contradiction" cards in
+  [[screen/observatory-insights]] Now column.
+- User picks one to keep OR reframes both (edit their `what` so
+  they no longer contradict at the same scope).
+- The assistant is told about the conflict at session start so
+  it doesn't act on either until resolved.
+
+### Preference / memory merge
+
+Preferences that are effectively memories (code style, TDD
+strictness, testing conventions) are stored as memories with
+`category: preference` — there is no separate preferences
+table for these. The Preferences screen surfaces them alongside
+regular preferences with a "this is a memory" chip.
+
 ## Future — user-side learnings (deferred)
 
 The memory pipeline is currently biased toward assistant behaviour:
