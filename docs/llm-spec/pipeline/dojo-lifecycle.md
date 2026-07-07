@@ -26,11 +26,76 @@ UX (queue, approve, admin) is specified in the Dōjō screen docs.
 
 Kanji is 結 — *connection / knot*.
 
+## Deployment modes
+
+Two ways a Dōjō runs, sharing the same protocol and schema:
+
+### SaaS — `dojo.sensei-hq.org` (multi-tenant)
+
+The hosted default. `dojo.sensei-hq.org` runs a single service
+that isolates each tenant Dōjō. **Keys are per-tenant** — a
+tenant Dōjō only ever sees its own keys, artifacts, memberships.
+Cross-tenant reads are impossible by construction (row-level
+security + separate encryption contexts).
+
+Discovery URL structure:
+
+    dojo.sensei-hq.org/<origin>/<org>/<dojo?>
+
+- `origin` = `github` when the tenant's identity is a GitHub
+  org, `org` for custom-registered names.
+- `org` = the github org id (e.g. `sensei-hq`) or a custom name.
+- `dojo` = optional sub-path when an org runs multiple Dōjōs
+  (e.g. one per client engagement).
+
+Examples:
+
+- `dojo.sensei-hq.org/github/sensei-hq` — the sensei-hq team's
+  own Dōjō, backed by the GitHub org identity.
+- `dojo.sensei-hq.org/github/acme/mobile` — Acme's mobile-team
+  Dōjō.
+- `dojo.sensei-hq.org/org/global-dojo` — the **global
+  collective**, modelled as a special-case Dōjō everyone can
+  join. There is no separate "Collective" concept in the schema
+  — it's the `global-dojo` Dōjō at scope `global`. Simplifies
+  the mental model: everything's a Dōjō, some are private,
+  one is public.
+
+### Self-hosted
+
+Any Dōjō can be run on the customer's own infra (VPC, on-prem)
+for orgs that don't want the SaaS. Same protocol, same schema,
+same URL shape but under the customer's chosen domain:
+
+    dojo.acme-corp.com/org/mobile-team
+
+Self-hosted Dōjōs federate with SaaS the same way individual
+Sensei clients do — no special-cased connection type. Global
+`global-dojo` remains on SaaS.
+
+### Auto-discovery
+
+On first launch (or when a project's git remote is inspected),
+sensei probes for a Dōjō at the natural URL:
+
+1. Extract the git origin (e.g. `github:sensei-hq/sensei`).
+2. Probe `https://dojo.sensei-hq.org/github/sensei-hq/.well-known/dojo`.
+3. If found and reachable, offer to join.
+4. Also probe `dojo.<git-host-domain>/...` for self-hosted
+   options.
+
+The user always confirms — auto-discovery surfaces an offer,
+never a silent connection.
+
 ## Data invariants
 
 ### Memberships
 
-A developer belongs to zero or many Dōjōs. `sensei.dojo_memberships`:
+Tables live under the `dojo` schema — no `dojo_` prefix needed
+since the schema already scopes them. Sensei-side references
+(e.g. `sensei.projects.dojo_id`) point at `dojo.memberships.id`.
+
+A developer belongs to zero or many Dōjōs. `dojo.memberships`:
 
 - `id` uuid, `user_id`, `dojo_id`, `dojo_url`, `role`
   (`contributor | maintainer | admin`), `kind` (`employer |
@@ -39,7 +104,7 @@ A developer belongs to zero or many Dōjōs. `sensei.dojo_memberships`:
   (`named | anonymous | dereferenced`).
 
 Every **project** binds to **exactly one** membership through
-`sensei.projects.dojo_membership_id`. Auto-bound at project detect
+`sensei.projects.dojo_id` (fk into `dojo.memberships`). Auto-bound at project detect
 based on the folder's git remote + heuristics (org owner match,
 existing memberships), or user-picked from the Project → About
 pane.
@@ -60,7 +125,7 @@ Six primitives ride the loop:
 5. **Skill** (`技`) — packaged capability an assistant can pick up.
 6. **Agent** (`使`) — configured agent with tools and scope.
 
-Each has a canonical DDL shape in `sensei.dojo_artifacts` (jsonb
+Each has a canonical DDL shape in `dojo.artifacts` (jsonb
 payload keyed by type). Upstream shape and downstream shape are
 identical — the round-trip preserves the payload.
 
@@ -87,7 +152,7 @@ Upstream, in five stages:
    the Memories "widen scope" action (see [[pipeline/memory]]).
 2. **Accumulate** — contributions pool on the Dōjō server,
    clustered and deduped against existing knowledge. Shape:
-   `dojo_triage_queue` with `signature` for dedup.
+   `dojo.triage_queue` with `signature` for dedup.
 3. **Triage** — maintainer sees candidates scored, with conflicts
    surfaced and near-duplicates merged. This is
    [[screen/dojo-maintainer-console]] queue view.
@@ -126,7 +191,7 @@ on drop. Payloads signed by the developer's device key
 | Pending-upstream contributions per developer | [[screen/observatory-share-review]] |
 | Triage queue rows per maintainer scope | [[screen/dojo-maintainer-console]] |
 | Downstream inbox per developer | [[screen/observatory-upgrades]] |
-| Attribution decisions | Audit trail in `dojo_events` |
+| Attribution decisions | Audit trail in `dojo.events` |
 | Distribution notifications | Today downstream lane |
 
 ## Done gate
