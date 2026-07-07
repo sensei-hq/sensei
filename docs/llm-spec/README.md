@@ -158,12 +158,12 @@ only, **todo** = not started.
 | 02 Preferences | [screen/preferences.md](screen/preferences.md) | todo | Wizard rehab lands here; 8 panes |
 | 03 Observatory | [screen/observatory-today.md](screen/observatory-today.md) | **draft** | Today — the koan surface |
 | 03 Observatory | [screen/observatory-projects.md](screen/observatory-projects.md) | **draft** | The projects index rebuilt today |
-| 03 Observatory | [screen/observatory-sessions.md](screen/observatory-sessions.md) | todo | |
-| 03 Observatory | [screen/observatory-insights.md](screen/observatory-insights.md) | todo | Learnings triage |
-| 03 Observatory | [screen/observatory-memories.md](screen/observatory-memories.md) | todo | Learnings anatomy v2 |
+| 03 Observatory | [screen/observatory-sessions.md](screen/observatory-sessions.md) | **draft** | SessionsDigestZen — trend/stream/etc. variants |
+| 03 Observatory | [screen/observatory-insights.md](screen/observatory-insights.md) | **draft** | Learnings Triage — Now/Soon/Settled |
+| 03 Observatory | [screen/observatory-memories.md](screen/observatory-memories.md) | **draft** | Learnings Anatomy v2 — LLM-primary + human promotion ladder |
 | 03 Observatory | [screen/observatory-libraries.md](screen/observatory-libraries.md) | todo | |
-| 03 Observatory | [screen/observatory-instruments-playground.md](screen/observatory-instruments-playground.md) | todo | |
-| 03 Observatory | [screen/observatory-instruments-replay.md](screen/observatory-instruments-replay.md) | todo | |
+| 03 Observatory | [screen/observatory-instruments-playground.md](screen/observatory-instruments-playground.md) | **draft** | MCP tree + tool detail + execute round-trip |
+| 03 Observatory | [screen/observatory-instruments-replay.md](screen/observatory-instruments-replay.md) | **draft** | Session picker + tool-call timeline + verdict chips |
 | 03 Observatory | [screen/observatory-instruments-health.md](screen/observatory-instruments-health.md) | **draft** | Signal derivation shipped today |
 | 03 Observatory | [screen/observatory-upgrades.md](screen/observatory-upgrades.md) | todo | Downstream lane |
 | 03 Observatory | [screen/observatory-impact.md](screen/observatory-impact.md) | todo | Incl. Regressions nav entry |
@@ -197,14 +197,14 @@ only, **todo** = not started.
 
 | Doc | Status | Notes |
 |---|---|---|
-| [pipeline/capture.md](pipeline/capture.md) | todo | Hook events → activity.hook_events → assistant_events |
+| [pipeline/capture.md](pipeline/capture.md) | **draft** | Hook events + scanner + multi-repo project detection |
 | [pipeline/analyzer.md](pipeline/analyzer.md) | **draft** | Scheduler + L0 enrichment + L1 signal derivation |
-| [pipeline/ftr.md](pipeline/ftr.md) | todo | Correction-signal detection, 14d roll-up |
-| [pipeline/memory.md](pipeline/memory.md) | todo | Observe → Form → Vet → Adopt → Reinforce |
+| [pipeline/ftr.md](pipeline/ftr.md) | **draft** | Correction-signal detection, 14d roll-up, north-star metric |
+| [pipeline/memory.md](pipeline/memory.md) | **draft** | LLM-primary consumer + human promotion ladder |
 | [pipeline/traceability.md](pipeline/traceability.md) | todo | Doc-drift scanner, confidence scoring |
-| [pipeline/impact.md](pipeline/impact.md) | todo | Verdict measurement, regression detection |
+| [pipeline/impact.md](pipeline/impact.md) | **draft** | MeasureVerdicts + regression alerts |
 | [pipeline/libraries.md](pipeline/libraries.md) | todo | Detect → wrap → query → watch + lib-docs ingestion |
-| [pipeline/insights.md](pipeline/insights.md) | todo | Surface → triage → apply/review/dismiss → measure |
+| [pipeline/insights.md](pipeline/insights.md) | **draft** | Generator + apply/review/dismiss + follow-up to impact |
 | [pipeline/signals.md](pipeline/signals.md) | **draft** | Health-tab signal derivation (rewritten today) |
 | [pipeline/insight-copy.md](pipeline/insight-copy.md) | **draft** | LLM-generated human-readable insight text — gemma4 primary, static fallback. **All insight copy reaches for this.** |
 | [pipeline/project-icon.md](pipeline/project-icon.md) | **draft** | README/logo/favicon → project icon inference chain with kanji + letter fallback. |
