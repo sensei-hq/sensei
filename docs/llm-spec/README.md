@@ -1,0 +1,236 @@
+# Sensei — LLM-executable spec
+
+**Purpose.** This directory translates the mockups + journey maps into
+per-screen and per-pipeline specs an LLM (or a new engineer) can use to
+build to a defined "done." Every spec answers five questions:
+
+1. **Purpose.** What should the user feel here, in one paragraph.
+2. **Data invariants.** What must be true in the DB before this screen
+   can look right. Names the tables, the joins, the "sensei project has
+   ≥ 1 enriched session" style preconditions.
+3. **Signals shown.** What each visible number / card / chip means, with
+   worked examples. If a number is meaningless without context, we say
+   what context makes it meaningful.
+4. **Done gate.** The English claim we make when the screen is finished.
+   Optionally a curl-shaped check for the non-obvious ones.
+5. **Wrong gate.** What would make this screen embarrassing to demo.
+   The list of failure modes we specifically watch for.
+
+Screens without all five answers are stubs. Fill them before coding.
+
+---
+
+## The vision — one paragraph
+
+Sensei is a **helpful, observer and mentor of how a developer works with AI
+coding assistants. mentoring surfaces as insights land**. It captures the sessions (hook events, tool calls, prompts, outcomes), builds a code + activity graph over the developer's
+real repos, and turns the resulting signal into things a human can act
+on: memories that stick, patterns worth reusing, guards worth adopting,
+and a clear picture of when the pairing worked and when it didn't. It is
+not a productivity dashboard — it is a **retrospective loop for a pair
+(you + your assistant) that otherwise never gets one**. The Observatory
+shows *today's one thing*; the project window shows *what this project
+learned*; the Dōjō (SaaS) extends the same loop across a team without
+leaking client work.
+
+**North-star metric:** FTR — first-turn resolution — the fraction of
+sessions where the assistant's first attempt landed without a
+correction. Every screen is judged by whether it makes FTR go up
+honestly, or exposes an honest reason it went down.
+
+---
+
+## The journey — the four segments we build against
+
+Source of truth: [`docs/mockups/Sensei/Sensei Journey Map.html`](../mockups/Sensei/Sensei%20Journey%20Map.html).
+
+| # | Segment | Kanji | Purpose | Screens |
+|---|---|---|---|---|
+| 01 | Bootstrap | 支 | Reach a working, trustworthy environment without thinking about toolchains. Homebrew · Postgres · Ollama · daemon come up green. | probing, green |
+| 02 | First run & Preferences | 名 | Point Sensei at real folders, watch projects appear, then tune what defaults got wrong. **The wizard has moved into Preferences — it's not a first-run gauntlet.** | scan, first projects, preferences |
+| 03 | Observatory — daily use | 家 | Walk in, learn the one thing that needs me today, act on it, stay in control of what leaves my machine. | today, projects, project, sessions, insights, memory, libraries, instruments, upgrades, impact, collective |
+| 04 | The project window | 雲 | Work inside one project end-to-end and trust what Sensei learned here before any of it travels. | overview, sessions, memories, traceability, libraries, instruments, patterns, impact, about |
+
+Dōjō (SaaS) is a companion track — [`Sensei Dōjō Journey Map.html`](../mockups/Sensei/Sensei%20D%C5%8Djo%20Journey%20Map.html):
+
+| Role | Surface | Stages |
+|---|---|---|
+| Developer | in-app | discover, authenticate, bind project→org, a finding forms, share upstream, watch it travel, receive downstream |
+| Maintainer | console | queue, evaluate, decide, set distribution, publish & measure |
+| Org admin | console | stand up, connect identity, provision members, scopes & policies, monitor |
+| Client / engagement lead | console | define engagement, anonymize always, no per-item review, audit trail, incident handling |
+
+---
+
+## The themes — non-negotiable design principles
+
+Every spec must honour these. If a spec pushes against one, call it out.
+
+1. **Value before setup.** The first thing the user does is see their
+   own projects. Not a wizard.
+2. **One decision, one default.** Across insights, traceability,
+   libraries, upgrades — the same verb set: **Apply · Review · Dismiss.**
+   The recommended one is highlighted; the others are one keystroke
+   away.
+3. **Discoverability of depth.** Nothing important is hidden behind
+   one-liner descriptions. Preferences is searchable. The sidebar
+   clusters with a Focus mode. Nav entries name the safety screens.
+4. **Trust through proof.** No claim without a receipt. Confidence
+   scores, regression notes, before/after FTR — the user verifies,
+   they don't take our word for it.
+5. **Org boundary is Dōjō.** Anything that should stay inside a company
+   or a client engagement goes through the Dōjō lane, not the global
+   Collective. Personal Sensei can operate perfectly without a Dōjō —
+   but when one exists, the boundary is exact.
+
+---
+
+## The doc template — every spec looks like this
+
+    # {kanji} · {name}
+
+    **Segment:** 03 · Observatory | Route: `/…` | Source mockup: `lib/….jsx`
+
+    ## Purpose
+
+    One paragraph. What the user feels. Not what the screen contains.
+
+    ## Data invariants
+
+    - `activity.sessions` has at least one row for {project} in the last 14d
+    - `analyzer.session_metrics` join returns non-null ftr for at least 50%
+    - No orphaned tool_calls (client_session_id must resolve to a session)
+
+    ## Signals shown
+
+    | Element | Value shape | Meaning | Example |
+    |---|---|---|---|
+    | FTR chip | 0.00–1.00 pct | 14d rolling first-turn resolution | 0.63 → "63%, up 8 pts this window" |
+    | Dormant summary | integer | Tools with no calls in 14d, aggregated | "40 tools dormant" — not 40 cards |
+
+    ## Done gate
+
+    - When Jerry loads this screen on the sensei project he sees an FTR
+      chip with a real number, at least one non-noise signal, and can
+      click through to at least one memory that was promoted this week.
+    - Zero repeated cards ("no calls in N days" appears at most once).
+
+    Optional check:
+    ```
+    curl -s http://localhost:7744/api/projects/sensei/ftr | jq '.ftr14d'
+    # expected: > 0.4
+    ```
+
+    ## Wrong gate
+
+    - Numbers that don't correlate (e.g. dormant count = 0 while list has 40)
+    - Silent empty state where data exists but wasn't fetched
+    - Names shown as UUIDs (name-or-UUID resolution missing)
+    - Dark-mode text on light-tint backgrounds
+
+    ## Related
+
+    - [[pipeline/analyzer]] · [[pipeline/ftr]] · [[screen/instruments-health]]
+
+---
+
+## The index — every doc, current status
+
+Status legend: **draft** = written and reviewed, **stub** = frontmatter
+only, **todo** = not started.
+
+### Screen specs — personal Sensei
+
+| Segment | Doc | Status | Notes |
+|---|---|---|---|
+| 01 Bootstrap | [screen/bootstrap-probing.md](screen/bootstrap-probing.md) | todo | |
+| 01 Bootstrap | [screen/bootstrap-green.md](screen/bootstrap-green.md) | todo | |
+| 02 First-run | [screen/first-run-scan.md](screen/first-run-scan.md) | todo | |
+| 02 First-run | [screen/first-entry-projects.md](screen/first-entry-projects.md) | todo | |
+| 02 Preferences | [screen/preferences.md](screen/preferences.md) | todo | Wizard rehab lands here; 8 panes |
+| 03 Observatory | [screen/observatory-today.md](screen/observatory-today.md) | **draft** | Today — the koan surface |
+| 03 Observatory | [screen/observatory-projects.md](screen/observatory-projects.md) | **draft** | The projects index rebuilt today |
+| 03 Observatory | [screen/observatory-sessions.md](screen/observatory-sessions.md) | todo | |
+| 03 Observatory | [screen/observatory-insights.md](screen/observatory-insights.md) | todo | Learnings triage |
+| 03 Observatory | [screen/observatory-memories.md](screen/observatory-memories.md) | todo | Learnings anatomy v2 |
+| 03 Observatory | [screen/observatory-libraries.md](screen/observatory-libraries.md) | todo | |
+| 03 Observatory | [screen/observatory-instruments-playground.md](screen/observatory-instruments-playground.md) | todo | |
+| 03 Observatory | [screen/observatory-instruments-replay.md](screen/observatory-instruments-replay.md) | todo | |
+| 03 Observatory | [screen/observatory-instruments-health.md](screen/observatory-instruments-health.md) | **draft** | Signal derivation shipped today |
+| 03 Observatory | [screen/observatory-upgrades.md](screen/observatory-upgrades.md) | todo | Downstream lane |
+| 03 Observatory | [screen/observatory-impact.md](screen/observatory-impact.md) | todo | Incl. Regressions nav entry |
+| 03 Observatory | [screen/observatory-collective.md](screen/observatory-collective.md) | todo | Global↔company toggle |
+| 03 Observatory | [screen/observatory-traceability.md](screen/observatory-traceability.md) | todo | |
+| 03 Observatory | [screen/observatory-consolidation.md](screen/observatory-consolidation.md) | todo | |
+| 03 Observatory | [screen/observatory-logs.md](screen/observatory-logs.md) | todo | |
+| 03 Observatory | [screen/observatory-share-review.md](screen/observatory-share-review.md) | todo | |
+| 03 Observatory | [screen/observatory-dojo-connections.md](screen/observatory-dojo-connections.md) | todo | |
+| 03 Observatory | [screen/observatory-dojo-sharing.md](screen/observatory-dojo-sharing.md) | todo | |
+| 04 Project window | [screen/project-overview.md](screen/project-overview.md) | **draft** | |
+| 04 Project window | [screen/project-sessions.md](screen/project-sessions.md) | todo | |
+| 04 Project window | [screen/project-memories.md](screen/project-memories.md) | todo | Ready-to-share lane |
+| 04 Project window | [screen/project-traceability.md](screen/project-traceability.md) | todo | Confidence scores |
+| 04 Project window | [screen/project-libraries.md](screen/project-libraries.md) | todo | One-click wrap |
+| 04 Project window | [screen/project-instruments.md](screen/project-instruments.md) | todo | Project-scoped |
+| 04 Project window | [screen/project-patterns.md](screen/project-patterns.md) | todo | Promotion to rules |
+| 04 Project window | [screen/project-impact.md](screen/project-impact.md) | todo | Before/after FTR |
+| 04 Project window | [screen/project-about.md](screen/project-about.md) | todo | Editable stack + org binding |
+
+### Screen specs — Dōjō (SaaS)
+
+| Role | Doc | Status |
+|---|---|---|
+| Developer | [screen/dojo-developer-flow.md](screen/dojo-developer-flow.md) | todo |
+| Maintainer | [screen/dojo-maintainer-console.md](screen/dojo-maintainer-console.md) | todo |
+| Org admin | [screen/dojo-admin-console.md](screen/dojo-admin-console.md) | todo |
+| Client / engagement lead | [screen/dojo-client-lead-console.md](screen/dojo-client-lead-console.md) | todo |
+
+### Pipeline specs — the data behind the screens
+
+| Doc | Status | Notes |
+|---|---|---|
+| [pipeline/capture.md](pipeline/capture.md) | todo | Hook events → activity.hook_events → assistant_events |
+| [pipeline/analyzer.md](pipeline/analyzer.md) | **draft** | Scheduler + L0 enrichment + L1 signal derivation |
+| [pipeline/ftr.md](pipeline/ftr.md) | todo | Correction-signal detection, 14d roll-up |
+| [pipeline/memory.md](pipeline/memory.md) | todo | Observe → Form → Vet → Adopt → Reinforce |
+| [pipeline/traceability.md](pipeline/traceability.md) | todo | Doc-drift scanner, confidence scoring |
+| [pipeline/impact.md](pipeline/impact.md) | todo | Verdict measurement, regression detection |
+| [pipeline/libraries.md](pipeline/libraries.md) | todo | Detect → wrap → query → watch + lib-docs ingestion |
+| [pipeline/insights.md](pipeline/insights.md) | todo | Surface → triage → apply/review/dismiss → measure |
+| [pipeline/signals.md](pipeline/signals.md) | **draft** | Health-tab signal derivation (rewritten today) |
+| [pipeline/mcp-surface.md](pipeline/mcp-surface.md) | todo | Every MCP tool: purpose, input, output, when to reach for it |
+| [pipeline/governance.md](pipeline/governance.md) | todo | Rules hierarchy + priority ladders + Dōjō upstream/downstream |
+| [pipeline/dojo-lifecycle.md](pipeline/dojo-lifecycle.md) | todo | Contribute → accumulate → triage → approve → distribute |
+
+---
+
+## Reading order
+
+Newcomer to the codebase reads: this README → [agents/README.md](agents/README.md) (the gate playbook) → [pipeline/analyzer.md](pipeline/analyzer.md) → [pipeline/ftr.md](pipeline/ftr.md) → any screen doc they own.
+A developer picking up an autonomous task reads: [screen/{their-target}.md](screen/) → the pipeline docs it references → the mockup file listed in the front-matter → then runs the gates from the playbook.
+
+The tie-breaker rule: **if this spec disagrees with the mockup, the
+mockup wins; if the mockup disagrees with the wire API, the wire wins.**
+File an update to whichever is behind.
+
+---
+
+## Gates — how a spec goes from draft to shipped
+
+Every spec is executed through four gates. See
+[agents/README.md](agents/README.md) for the full playbook. Short
+version:
+
+| Gate | Agent | When |
+|---|---|---|
+| 1. Spec review | `spec-doc-reviewer` | BEFORE coding. Confirms the doc is usable and agrees with the mockup. |
+| 2. Done-gate verification | `done-gate-verifier` | AFTER coding. Runs each "Done gate" check against the live daemon. |
+| 3. Wrong-gate hunt | `wrong-gate-hunter` | AFTER coding, in parallel with #2. Actively probes for each "Wrong gate" anti-pattern. |
+| 4. Persona review | `sensei-persona-reviewer` | AFTER #2 + #3 pass. Independent check that the work serves each persona. |
+
+Segment-level end-to-end runs `sensei-acceptance-tester` when a whole
+segment (Bootstrap, Observatory, Project window) is claimed done.
+
+**Autonomous execution rule:** if any gate fails, park the doc with a
+note and continue to the next. Don't try to muscle a doc past a
+failing gate.
