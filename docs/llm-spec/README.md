@@ -38,6 +38,20 @@ sessions where the assistant's first attempt landed without a
 correction. Every screen is judged by whether it makes FTR go up or
 exposes the reason it went down.
 
+**The pair goes both ways.** Sensei is not "watching the assistant
+make mistakes" — it's watching a *pair* (human + assistant) and
+noticing patterns from both sides. Sometimes the correction was the
+assistant's fault; sometimes it was the human giving underspecified
+instructions, incomplete context, or wrong assumptions. Both are
+learning signal. Deferred but not forgotten: user-facing learnings
+("you tend to give sparse instructions when asking for schema
+changes — the assistant will do better if you include X") and an
+assistant behaviour where the LLM proactively asks for clarification
+with a reason ("I need to know the migration policy before I can
+answer confidently; without it, half my choices are guesses"). The
+ultimate vision is human and LLM working in sync — mutual
+improvement, not one-sided teaching.
+
 ---
 
 ## The journey — the four segments we build against
@@ -175,14 +189,14 @@ only, **todo** = not started.
 | 03 Observatory | [screen/observatory-dojo-connections.md](screen/observatory-dojo-connections.md) | **draft** | Memberships + SSO/OAuth/device-code |
 | 03 Observatory | [screen/observatory-dojo-sharing.md](screen/observatory-dojo-sharing.md) | **draft** | Per-membership sharing overrides |
 | 04 Project window | [screen/project-overview.md](screen/project-overview.md) | **draft** | |
-| 04 Project window | [screen/project-sessions.md](screen/project-sessions.md) | todo | |
-| 04 Project window | [screen/project-memories.md](screen/project-memories.md) | todo | Ready-to-share lane |
-| 04 Project window | [screen/project-traceability.md](screen/project-traceability.md) | todo | Confidence scores |
-| 04 Project window | [screen/project-libraries.md](screen/project-libraries.md) | todo | One-click wrap |
-| 04 Project window | [screen/project-instruments.md](screen/project-instruments.md) | todo | Project-scoped |
-| 04 Project window | [screen/project-patterns.md](screen/project-patterns.md) | todo | Promotion to rules |
-| 04 Project window | [screen/project-impact.md](screen/project-impact.md) | todo | Before/after FTR |
-| 04 Project window | [screen/project-about.md](screen/project-about.md) | todo | Editable stack + org binding |
+| 04 Project window | [screen/project-sessions.md](screen/project-sessions.md) | **draft** | Zen digest with multi-repo folder-role chip |
+| 04 Project window | [screen/project-memories.md](screen/project-memories.md) | **draft** | Ready-to-share lane + generalise action |
+| 04 Project window | [screen/project-traceability.md](screen/project-traceability.md) | **draft** | Doc-coverage summary + Expected/Actual drawer |
+| 04 Project window | [screen/project-libraries.md](screen/project-libraries.md) | **draft** | One-click wrap + version-conflict warnings |
+| 04 Project window | [screen/project-instruments.md](screen/project-instruments.md) | **draft** | 3-tab shell scoped to project |
+| 04 Project window | [screen/project-patterns.md](screen/project-patterns.md) | **draft** | 5-source patterns; promotion to rule via ladder |
+| 04 Project window | [screen/project-impact.md](screen/project-impact.md) | **draft** | Project FTR trend with apply-event annotations |
+| 04 Project window | [screen/project-about.md](screen/project-about.md) | **draft** | Vision + multi-repo membership + Dōjō binding |
 
 ### Screen specs — Dōjō (SaaS)
 
@@ -211,7 +225,8 @@ only, **todo** = not started.
 | [pipeline/memory.md](pipeline/memory.md) | **draft** | Memory pipeline — LLM-primary consumer via MCP `get_memories`; formation, scope, promotion ladder, feedback. |
 | [pipeline/mcp-surface.md](pipeline/mcp-surface.md) | **draft** | Tool declarations + defaults contract + third-party discovery |
 | [pipeline/governance.md](pipeline/governance.md) | **draft** | Priority ladders + scope precedence + rule promotion path |
-| [pipeline/dojo-lifecycle.md](pipeline/dojo-lifecycle.md) | **draft** | Memberships + routing + attribution + upstream/downstream loop |
+| [pipeline/dojo-lifecycle.md](pipeline/dojo-lifecycle.md) | **draft** | Memberships + routing + attribution + upstream/downstream loop; SaaS+self-hosted modes |
+| [pipeline/patterns.md](pipeline/patterns.md) | **draft** | 5 sources (codebase/library/registry/option/derived) + anti-patterns + optimization opportunities |
 
 ---
 
