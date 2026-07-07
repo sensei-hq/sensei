@@ -49,6 +49,7 @@ project has a vision, one row of three stats. No wasted vertical space.
 | Filter chip: Active (動) | integer count | Projects with `sessions7d > 0` | `4` |
 | Filter chip: Dormant (眠) | integer count | Projects with `sessions7d == 0 && !archived` | `7` |
 | Filter chip: Archived (蔵) | integer count | Projects with `archived == true` | `1` |
+| **View toggle** | 2-way: grid (田) / list (≣) | User-persisted preference. Defaults to `grid`. | selected: `list` |
 | Search input (探) | text | Matches `name` OR `client` case-insensitively | Type `sen` → `sensei` |
 | Running tally | `{filtered} of {total}` | After chip + search filter | `3 of 12` |
 
@@ -97,6 +98,39 @@ Dormant/archived card (`!hasStats`):
   a terse two-item line.
 - Client + status moved from muted-subtitle to pill.
 
+### List view (`ProjectRow`)
+
+When the view toggle is set to **list (≣)**, the grid is replaced
+by a single bordered container of rows. Each row is a 4-column
+grid: kanji · [name + pills + optional vision one-liner (truncated
+to one line)] · ftr%-or-last-session · repos/libs. Same data as
+the card, one screen-line per row, no borders between rows except
+a hairline separator.
+
+| Row column | Value | Notes |
+|---|---|---|
+| 1. Kanji or image | as in card | 18px |
+| 2. Name block | status-dot · name · ProjPill(client) · ProjPill(status) | Row 2 (vision) truncates to a single line with ellipsis; hidden when `p.vision` is empty |
+| 3. Signal cell | active → `{ftr}% ftr`; dormant/archived → `last · {relative}` | Warn tone when `p.warn` |
+| 4. Repos·libs cell | `{repos_count} repos · {libs_count} libs` | Mono, right-aligned, `min-width: 78px` |
+
+**Row behaviour:**
+- Same `onClick → openProjectWindow` as the card.
+- Hover: row background lifts to `bg-paper-mute`.
+- Archived rows carry opacity `0.6`, matching the card variant.
+- No stat grid — the row is one line by design; drill in for full stats.
+
+**When to reach for list vs grid:**
+- Grid — the default. Good for ≤ 40 projects, best for a browsing
+  glance.
+- List — better at scale (100+ projects), better on narrow windows,
+  and better when the user wants to eyeball FTR across many
+  projects at once.
+
+The user preference is **persisted** on the client (localStorage or
+a small settings row) so a return visit lands in the same view. No
+per-project override.
+
 ## Done gate
 
 - Loading `/projects` on Jerry's live data shows chips with counts
@@ -108,6 +142,12 @@ Dormant/archived card (`!hasStats`):
 - Cards render both variants: **active** shows the ftr/repos/libs
   strip; **dormant/archived** show repos/libs/last-session with the
   status pill and muted tone.
+- The view toggle switches the layout without refetching data;
+  filter chip state and search query survive the toggle.
+- List-view rows show the same identity elements as cards (kanji,
+  status dot, name, pills) plus a single FTR-or-last-session cell
+  and a repos·libs cell.
+- User's grid/list preference is remembered across sessions.
 - `p.vision` when present renders as row 2 with `pretty` wrapping;
   when absent the row is omitted (no empty gap).
 - Project icons inferred via [[pipeline/project-icon]] render for
@@ -144,6 +184,14 @@ curl -s http://localhost:7744/api/projects | jq '.[0] | {name, icon, vision, rep
   in permissions.
 - **Search misses a project whose name contains the query.** Hay
   string omitted the field.
+- **View toggle switches back to grid on every page load.** User
+  preference not being persisted; the mockup's default is `grid`
+  but the toggle must respect the last-chosen value.
+- **List-view row wraps to two visual lines when the window is
+  narrow.** Row is meant to stay one screen-line — vision text
+  must truncate to a single line with ellipsis, not wrap.
+- **Vision text renders untruncated in list view.** Ruins the
+  one-row-per-project promise.
 
 ## Related
 
