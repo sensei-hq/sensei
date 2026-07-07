@@ -201,17 +201,17 @@ only, **todo** = not started.
 | [pipeline/analyzer.md](pipeline/analyzer.md) | **draft** | Scheduler + L0 enrichment + L1 signal derivation |
 | [pipeline/ftr.md](pipeline/ftr.md) | **draft** | Correction-signal detection, 14d roll-up, north-star metric |
 | [pipeline/memory.md](pipeline/memory.md) | **draft** | LLM-primary consumer + human promotion ladder |
-| [pipeline/traceability.md](pipeline/traceability.md) | todo | Doc-drift scanner, confidence scoring |
+| [pipeline/traceability.md](pipeline/traceability.md) | **draft** | Doc-drift scanner, confidence scoring, auto-fix policy |
 | [pipeline/impact.md](pipeline/impact.md) | **draft** | MeasureVerdicts + regression alerts |
-| [pipeline/libraries.md](pipeline/libraries.md) | todo | Detect → wrap → query → watch + lib-docs ingestion |
+| [pipeline/libraries.md](pipeline/libraries.md) | **draft** | Detect → wrap → query → watch + lib-docs ingestion |
 | [pipeline/insights.md](pipeline/insights.md) | **draft** | Generator + apply/review/dismiss + follow-up to impact |
 | [pipeline/signals.md](pipeline/signals.md) | **draft** | Health-tab signal derivation (rewritten today) |
 | [pipeline/insight-copy.md](pipeline/insight-copy.md) | **draft** | LLM-generated human-readable insight text — gemma4 primary, static fallback. **All insight copy reaches for this.** |
 | [pipeline/project-icon.md](pipeline/project-icon.md) | **draft** | README/logo/favicon → project icon inference chain with kanji + letter fallback. |
 | [pipeline/memory.md](pipeline/memory.md) | **draft** | Memory pipeline — LLM-primary consumer via MCP `get_memories`; formation, scope, promotion ladder, feedback. |
-| [pipeline/mcp-surface.md](pipeline/mcp-surface.md) | todo | Every MCP tool: purpose, input, output, when to reach for it |
-| [pipeline/governance.md](pipeline/governance.md) | todo | Rules hierarchy + priority ladders + Dōjō upstream/downstream |
-| [pipeline/dojo-lifecycle.md](pipeline/dojo-lifecycle.md) | todo | Contribute → accumulate → triage → approve → distribute |
+| [pipeline/mcp-surface.md](pipeline/mcp-surface.md) | **draft** | Tool declarations + defaults contract + third-party discovery |
+| [pipeline/governance.md](pipeline/governance.md) | **draft** | Priority ladders + scope precedence + rule promotion path |
+| [pipeline/dojo-lifecycle.md](pipeline/dojo-lifecycle.md) | **draft** | Memberships + routing + attribution + upstream/downstream loop |
 
 ---
 
