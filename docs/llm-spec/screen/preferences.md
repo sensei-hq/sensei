@@ -42,7 +42,12 @@ Ordered by frequency of visit:
 7. **Assignments** — which project → which assistant family
    binding; per-project default persona.
 8. **Profile** — user identity, dojo memberships, attribution
-   defaults.
+   defaults. **User name auto-derives from the home folder on
+   first boot** (`/Users/Jerry` → "Jerry"; Linux/Windows
+   analogues). The user can override — auto-derivation only
+   fills a *blank* field; a user-set name is never overwritten.
+   Regression to watch: the field going blank on upgrade instead
+   of preserving the derived-or-set value.
 
 Each pane matches a `WizStage` from the mockup's wizard
 architecture. **The connection pane** — pair with a company
@@ -127,6 +132,11 @@ curl -s http://localhost:7744/api/preferences/cues | jq 'length'
   self-contained pane with no forward-back stepping.
 - **Restore-default doesn't reset the value.** Or resets to the
   wrong default.
+- **Profile user name blank after an upgrade** despite having
+  been auto-derived (or manually set) previously. Auto-derive
+  fills only when blank at boot, and upgrades must preserve
+  existing values. Bug already observed once — 2026-07-07 —
+  needs a regression check.
 
 ## Related
 

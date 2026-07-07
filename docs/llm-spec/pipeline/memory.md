@@ -268,6 +268,42 @@ curl -s http://localhost:7744/api/observatory/memory-health | jq '.skipped_repea
   `id` in memory_loads for that session.** Self-report accepts
   arbitrary ids — validate against the load log or drop.
 
+## Future — user-side learnings (deferred)
+
+The memory pipeline is currently biased toward assistant behaviour:
+"the LLM keeps missing X; here's a memory to make it stop". The
+pair goes both ways. A future extension records **user-side
+patterns** — the human's own tendencies that shape session
+outcomes:
+
+- "You often ask for schema changes without saying whether we're
+  keeping compatibility. Adding that context up-front raises FTR."
+- "You get shorter answers when you paste error text; you get
+  longer answers when you describe the error in prose. Both work;
+  we noticed."
+- "You start sessions on a moving branch; downstream churn tends
+  to follow. Consider stabilising before starting the next batch
+  of memory-worthy work."
+
+Formation same as today (correction clusters + explicit
+promotion) but the **subject** is the user, not the assistant.
+Storage: same table, `scope_target: 'user_behaviour'`.
+Surface: same anatomy view but tagged so the user sees these as
+"about my patterns" rather than "about the assistant's patterns".
+
+Not shipped in v1. Called out here so the schema and the
+insight-copy `kind` vocabulary can be built with this direction
+in mind.
+
+**Related assistant behaviour** — when the LLM notices it lacks
+information critical to the task, it should ask a clarifying
+question **with a reason** ("I don't know whether we're keeping
+backward compatibility here — that changes the answer materially;
+half my choices become guesses without it"). That's not stored
+as a memory per se, but as an instruction the assistant's plugin
+surface enforces. Wire pointed at a future
+`pipeline/clarification-prompting.md`.
+
 ## Related
 
 - [[pipeline/analyzer]] — schedules consolidate + strength recompute
