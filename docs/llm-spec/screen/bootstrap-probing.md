@@ -42,6 +42,14 @@ Kanji is 支 — *support / foundation*.
 - Gate ids: `homebrew`, `postgres`, `ollama`, `components`, `db`,
   `daemon`. Order is fixed — the sequence tests the dependency
   chain top-down.
+- **Ollama is a soft dependency.** The daemon ships with an
+  embedded ollama, so a system ollama that's absent or
+  unreachable falls to `remedy` **without blocking** subsequent
+  gates. The user can continue into the app; insight-copy and
+  other inference chains route to embedded gemma4. Upgrading a
+  soft-remedy gate later is a "Re-check" away. Deferred
+  refinement: better copy on the row that says "embedded ollama
+  available; system ollama would give you access to more models."
 - Gates run in parallel where the dependency graph allows; the
   UI shows them running as the daemon reports.
 - Bootstrap runs on daemon start and via a "Re-check" action

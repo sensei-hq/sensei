@@ -161,19 +161,19 @@ only, **todo** = not started.
 | 03 Observatory | [screen/observatory-sessions.md](screen/observatory-sessions.md) | **draft** | SessionsDigestZen — trend/stream/etc. variants |
 | 03 Observatory | [screen/observatory-insights.md](screen/observatory-insights.md) | **draft** | Learnings Triage — Now/Soon/Settled |
 | 03 Observatory | [screen/observatory-memories.md](screen/observatory-memories.md) | **draft** | Learnings Anatomy v2 — LLM-primary + human promotion ladder |
-| 03 Observatory | [screen/observatory-libraries.md](screen/observatory-libraries.md) | todo | |
+| 03 Observatory | [screen/observatory-libraries.md](screen/observatory-libraries.md) | **draft** | LibrariesVariantA — ecosystem/tier/wrap-me filters |
 | 03 Observatory | [screen/observatory-instruments-playground.md](screen/observatory-instruments-playground.md) | **draft** | MCP tree + tool detail + execute round-trip |
 | 03 Observatory | [screen/observatory-instruments-replay.md](screen/observatory-instruments-replay.md) | **draft** | Session picker + tool-call timeline + verdict chips |
 | 03 Observatory | [screen/observatory-instruments-health.md](screen/observatory-instruments-health.md) | **draft** | Signal derivation shipped today |
-| 03 Observatory | [screen/observatory-upgrades.md](screen/observatory-upgrades.md) | todo | Downstream lane |
-| 03 Observatory | [screen/observatory-impact.md](screen/observatory-impact.md) | todo | Incl. Regressions nav entry |
-| 03 Observatory | [screen/observatory-collective.md](screen/observatory-collective.md) | todo | Global↔company toggle |
-| 03 Observatory | [screen/observatory-traceability.md](screen/observatory-traceability.md) | todo | |
-| 03 Observatory | [screen/observatory-consolidation.md](screen/observatory-consolidation.md) | todo | |
-| 03 Observatory | [screen/observatory-logs.md](screen/observatory-logs.md) | todo | |
-| 03 Observatory | [screen/observatory-share-review.md](screen/observatory-share-review.md) | todo | |
-| 03 Observatory | [screen/observatory-dojo-connections.md](screen/observatory-dojo-connections.md) | todo | |
-| 03 Observatory | [screen/observatory-dojo-sharing.md](screen/observatory-dojo-sharing.md) | todo | |
+| 03 Observatory | [screen/observatory-upgrades.md](screen/observatory-upgrades.md) | **draft** | Downstream lane (Apply/Mute/Pin) |
+| 03 Observatory | [screen/observatory-impact.md](screen/observatory-impact.md) | **draft** | Verdicts + Regressions nav entry always visible |
+| 03 Observatory | [screen/observatory-collective.md](screen/observatory-collective.md) | **draft** | Global↔Dōjō toggle with independent controls |
+| 03 Observatory | [screen/observatory-traceability.md](screen/observatory-traceability.md) | **draft** | Doc-drift list + Expected-vs-Actual diff |
+| 03 Observatory | [screen/observatory-consolidation.md](screen/observatory-consolidation.md) | **draft** | Merge similar memories/patterns/rules |
+| 03 Observatory | [screen/observatory-logs.md](screen/observatory-logs.md) | **draft** | Operator surface + scheduled-task strip |
+| 03 Observatory | [screen/observatory-share-review.md](screen/observatory-share-review.md) | **draft** | Batch review upstream — client dereference locked |
+| 03 Observatory | [screen/observatory-dojo-connections.md](screen/observatory-dojo-connections.md) | **draft** | Memberships + SSO/OAuth/device-code |
+| 03 Observatory | [screen/observatory-dojo-sharing.md](screen/observatory-dojo-sharing.md) | **draft** | Per-membership sharing overrides |
 | 04 Project window | [screen/project-overview.md](screen/project-overview.md) | **draft** | |
 | 04 Project window | [screen/project-sessions.md](screen/project-sessions.md) | todo | |
 | 04 Project window | [screen/project-memories.md](screen/project-memories.md) | todo | Ready-to-share lane |

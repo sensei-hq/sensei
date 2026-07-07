@@ -81,6 +81,68 @@ The [[pipeline/memory]] promotion ladder feeds rules:
 - Retiring the source memory retires the rule (or moves it to
   archived, depending on user choice).
 
+### Enforcement — checker · resolver · verifier · approver
+
+Rules on paper are half the story. The other half is making sure
+they hold when it counts. Governance carries **four enforcement
+agents** with distinct responsibilities:
+
+1. **Checker** (`crates/senseid/src/governance/checker.rs`)
+   - Runs continuously and on every capture event.
+   - Detects violations of the loaded ruleset in
+     `activity.assistant_events` (a tool call would leak a
+     secret, a rule about auth handlers is being ignored, a
+     compliance rule fires).
+   - Writes findings to `sensei.rule_violations` with
+     `severity` and `evidence`.
+   - Emits an alert when a P0 mandatory rule is violated.
+2. **Resolver** (`crates/senseid/src/governance/resolver.rs`)
+   - Same file as the ordinary `get_rules` resolver but with an
+     enforcement path — resolves conflicts + returns the
+     effective ruleset for a given context (session start,
+     pre-commit, pre-tool-call).
+   - Answers "what rules must hold RIGHT NOW for this operation?"
+3. **Verifier** (`crates/senseid/src/governance/verifier.rs`)
+   - Pre-action gate. Before a risky action lands (commit, push,
+     tool call that touches secrets or PII), the verifier
+     replays the operation against the effective rules and
+     approves / rejects with a specific reason.
+   - Used by pre-commit hooks, pre-tool-call MCP interception,
+     CI pipelines.
+4. **Approver** (`crates/senseid/src/governance/approver.rs`)
+   - When a user tries to bypass a P0 rule (`--force`, `--no-verify`,
+     inline `# ignore-lint`), the approver requires an explicit
+     override with a documented reason and, for org rules, an
+     approver identity. No silent bypass.
+   - Overrides are logged in `sensei.governance_overrides` with
+     `bypassed_rule`, `reason`, `approver`, `expires_at`.
+
+**Compliance framework packs** — pre-authored rule ladders for
+common regimes ship as importable bundles:
+
+- HIPAA (protected health information handling)
+- PCI-DSS (cardholder data storage / transit)
+- SOC2 (access control, audit trail, incident response)
+- GDPR (data minimisation, right-to-erasure paths)
+- Common baseline (no secrets in commits, no logs of PII, no
+  eval of untrusted input)
+
+Each pack imports as a rule ladder with `mandatory: true` at
+`P0`. Users can adopt a pack from Preferences → Governance;
+adoption enables all the pack's checkers.
+
+**MCP surface for enforcement:**
+
+- `governance.check(context)` — checker query for the caller's
+  context (session, project, files touched)
+- `governance.effective_rules(context)` — resolver query
+- `governance.verify(action)` — verifier gate for an action
+- `governance.record_override(rule_id, reason, approver?)` —
+  approver-recorded bypass
+
+The verifier is a **hard gate** by default. A P0 mandatory rule
+violation blocks the action. A P1 rule warns. P2/P3 are advisory.
+
 ### Personal-scope global rules
 
 `~/.sensei/rules.md` is the personal global rules file. On daemon
@@ -98,6 +160,9 @@ boot:
 | Signal | Consumer |
 |---|---|
 | `get_rules(scope)` → ordered rule list | MCP; assistant loads at session start |
+| `governance.check(context)` → violations | Insights Now column violation cards; Impact › Regressions |
+| `governance.verify(action)` → allow/block | pre-commit hook, pre-tool-call MCP gate, CI pipelines |
+| `governance.record_override(…)` → override row | `sensei.governance_overrides` audit trail |
 | Ladder view (per concern, per project) | Preferences → Rules panel |
 | Rule violations (against captured behaviour) | Insights Now column violation cards |
 | Recommendation candidates when a project would benefit from a rule the user hasn't added | [[pipeline/insights]] source #3 (persona/skill gaps → rule gaps) |
@@ -145,6 +210,20 @@ psql -A -t -c "select max(state_changed_at) from sensei.rules where source = 'fi
 - **Ladder categorisation collapse** — all promoted memories land
   in a default `Style` ladder because the source memory doesn't
   carry a ladder hint.
+- **A P0 mandatory rule violation didn't block the action.**
+  Verifier gate wasn't consulted OR the effective ruleset was
+  read from the wrong scope.
+- **A `--no-verify` bypass shipped without an override row.**
+  Approver skipped; the audit trail is broken.
+- **Adopting the HIPAA / PCI / SOC2 pack didn't enable its
+  checkers.** Pack import ran but checker registration failed
+  silently.
+- **A secret ended up committed via a tool call.** Pre-tool-call
+  verification wasn't consulted — same class as the "no silent
+  errors" rule.
+- **Override row created without an expiry.** Overrides must
+  expire (or be marked permanent + reviewed) so they don't
+  quietly permit violations forever.
 
 ## Related
 
