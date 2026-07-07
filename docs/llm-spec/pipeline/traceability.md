@@ -165,6 +165,88 @@ psql -A -t -c "select confidence, state, count(*)
   succeeded but neither side got populated; renders as a useless
   card.
 
+## Bidirectional linking
+
+Traceability isn't just "docs mention code identifiers." It's a
+**two-way binding**: docs reference code AND code references
+docs. Both directions need to survive edits.
+
+- Doc → code: extracted from backtick identifiers, links, and
+  `docs/README.md`-style anchors.
+- Code → doc: extracted from block-doc comments referencing
+  design docs (`// see docs/design/02-daemon.md`) and from
+  git-commit trailers (`Refs: docs/analysis/...`).
+- Persisted in `sensei.trace_links` as one row per link with
+  `direction`, `source_node_id`, `target_node_id`,
+  `confidence`, `detected_at`.
+
+`get_trace_links(node)` returns everything pointing at (or
+pointed at by) a node — used by:
+
+- Traceability screen expansion drawer.
+- [[pipeline/context-delivery]] ranking (traceability boost —
+  docs that link a code path get their referenced code loaded
+  into context).
+- Solution-scope architecture view — cross-repo doc→code edges.
+
+## Doc-doctor (lint for docs)
+
+The traceability scanner runs during the analyzer tick and
+emits **lint findings** — not just drift, but doc quality:
+
+- **Stale doc** — doc unchanged in > N days AND references code
+  that changed in that window. Threshold configurable (default
+  90d).
+- **Undocumented public** — a public function / type / API
+  endpoint with no doc reference. Only when the folder has a
+  `documented_at`-level policy (see enforcement modes).
+- **Inconsistent** — same identifier referenced with different
+  parameter shapes in two docs.
+- **Ambiguous** — an identifier that resolves to multiple nodes;
+  the doc doesn't disambiguate.
+- **Broken link** — the identifier doesn't resolve at all AND
+  no likely rename found.
+
+`sensei.doc_lint_findings` — one row per finding + severity
+(`error | warning | info`).
+
+Findings surface:
+
+- On Insights (Now / Soon) when severity is warn / error.
+- On the Traceability screen as a filter.
+- Optionally, during `/sensei:validate` phase as a gate.
+
+## Auto-generated docs (fallback)
+
+For code without any doc coverage, sensei can generate a doc
+stub via [[pipeline/inferencing]] `reasoning` chain:
+
+- Reads the function signature + surrounding context (up to a
+  bounded token budget).
+- Emits: a one-paragraph description, the params, the returns,
+  and side effects (from function-shape analysis in
+  [[pipeline/testability]]).
+- Stub written to `sensei.doc_stubs` — **not** the actual
+  source file until the user approves.
+- User can promote a stub to a real doc from the Traceability
+  screen; sensei writes to the appropriate location (repo
+  README, `docs/…`, or an inline block comment based on the
+  project's derived convention).
+
+## Enforcement modes
+
+Per project (settable in Project → About OR a project-scope
+rule in [[pipeline/governance]]):
+
+- **audit-only** — findings surface as info; nothing blocks.
+- **warn** — findings surface with a warn severity; validate
+  phase passes with warnings.
+- **block** — findings surface with error severity; validate
+  phase fails until resolved.
+
+Default: `warn`. Compliance packs (HIPAA/PCI/SOC2) may raise
+specific doc-lint rules to `block`.
+
 ## Related
 
 - [[pipeline/capture]] — doc + code node ingestion; branch versioning

@@ -184,6 +184,89 @@ psql -A -t -c "select count(*) from sensei.task_queue
   measurement never lands within the measurement window.**
   Measurement path broken; the number becomes noise.
 
+## Effectiveness correlation
+
+Not every rec is created equal. Some tools / patterns / memories
+predict FTR movement more than others. The pipeline runs
+effectiveness correlation on the enriched session corpus:
+
+- For each promoted memory, for each pattern, for each tool: FTR
+  when applied vs FTR when absent. Delta persisted in
+  `sensei.effectiveness_correlations` (keyed by
+  `(subject_type, subject_id)` — memory/pattern/tool).
+- Feeds:
+  - Rec ranking (recommendations whose subject has high
+    effectiveness bubble up).
+  - Insights hint on landing cards ("this pattern lifted FTR
+    +18% in similar sessions").
+  - Model-effectiveness view ([[project_standalone_completion_plan]]
+    already shipped a per-model version).
+
+## Change-impact tracking
+
+Every accepted recommendation is a change — sensei measures its
+impact over a bounded window. See [[pipeline/impact]] for the
+verdict machinery; the pipeline hooks it up:
+
+- On accept, snapshot baseline (`ftr_14d`, `sessions_7d`,
+  `corrections_7d`) into `sensei.applied_recommendations`.
+- Schedule `MeasureVerdicts` for `now + measurement_window`.
+- On verdict landing:
+  - `positive` → reinforce underlying memory / promote pattern.
+  - `negative` → open a regression alert (see
+    [[pipeline/impact]] regression alerts).
+  - `insufficient_data` → re-schedule with a longer window; cap
+    on retries.
+
+## MOE reasoning integration
+
+For high-stakes recommendations (a memory that might contradict
+existing state, a pattern promotion, a negative-verdict
+analysis), the generator calls
+[[pipeline/inferencing]] `consensus` chain and stores the
+reasoning trace:
+
+- `sensei.reasoning_traces` — one row per MOE run (see
+  [[screen/insights-reasoning]]).
+- The user can open the reasoning drawer from the rec card to
+  see the propose/challenge/synthesize debate + disagreements.
+- Confidence label from MOE feeds the rec's presentation —
+  `low` confidence recs render with a "sensei is uncertain
+  about this — the reasoning is worth checking" note.
+
+## Playground + Replay integration
+
+Two related surfaces that feed effectiveness signals:
+
+- **Playground** ([[screen/observatory-instruments-playground]])
+  — user-triggered tool executions. Attributed to the user (not
+  the assistant) so they don't corrupt behavioural signals; but
+  DO count for "which tools does the developer find useful?"
+  effectiveness. Feeds hint copy: "the Playground got 12 hits
+  on `search_lib_docs` this week — consider surfacing it
+  in the assistant's default context".
+- **Replay** ([[screen/observatory-instruments-replay]]) — the
+  audit trail. Not a data producer but the consumer of
+  effectiveness data: each tool call row in a replay carries
+  its effectiveness chip ("used", "partial", "ignored") from
+  [[pipeline/signals]] verdict classifier.
+
+## Negative-impact detection
+
+When a verdict returns `negative`, the pipeline runs a follow-up
+analysis:
+
+1. Cluster subsequent corrections by signature.
+2. Compare against the rec's expected effect.
+3. Via MOE reasoning, propose a revision candidate:
+   - "keep, but adjust scope"
+   - "roll back the memory"
+   - "the correlation was spurious; different variable at play"
+4. Presents the analysis on
+   [[screen/observatory-impact]] regression detail.
+
+The user acts on the revision (Revert / Keep / Investigate).
+
 ## Related
 
 - [[pipeline/analyzer]] — schedules `generate` per project tick

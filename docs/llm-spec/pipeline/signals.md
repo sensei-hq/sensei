@@ -6,6 +6,14 @@
 
 ## Purpose
 
+> **Scope note.** "Signals" here means the Health-tab tool
+> signals — `SignalCard`-shaped cards derived per tool. The
+> broader metric taxonomy (FTR granularity, rework tracking,
+> pattern-adherence, module-correction clustering, god-node,
+> recommendation types) lives in [[pipeline/analyzer]] under
+> "Enrichment output — the full derived surface". This spec
+> focuses on the tool-signal derivation only.
+
 Turn the flat per-tool aggregate (`sensei.tool_usage_stats`) into
 three distinct products:
 
