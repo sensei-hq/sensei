@@ -19,6 +19,7 @@ function ProjectsIndexA({ embedded = false, onOpenProject } = {}) {
   const D = window.PROJECTS_INDEX;
   const [status, setStatus] = nvS("all");   // all | active | dormant | archived
   const [query, setQuery] = nvS("");
+  const [view, setView] = nvS("grid");       // grid | list
 
   const counts = {
     all:      D.projects.length,
@@ -90,6 +91,18 @@ function ProjectsIndexA({ embedded = false, onOpenProject } = {}) {
           })}
         </div>
         <span style={{ flex: 1 }}/>
+        <div style={{ display: 'flex', background: 'var(--paper-2)', borderRadius: 5,
+                       border: 'var(--hairline)' }} className="gap-1 p-1" >
+          {[["grid", "田"], ["list", "≣"]].map(([v, g]) => (
+            <button key={v} onClick={() => setView(v)}
+                    style={{ fontSize: 11, borderRadius: 3, cursor: 'pointer', border: 'none',
+                             background: view === v ? 'var(--paper)' : 'transparent',
+                             color: view === v ? 'var(--ink)' : 'var(--ink-3)' }}
+                    className="py-1 px-2" >
+              <span className="kanji" style={{ fontSize: 12 }}>{g}</span>
+            </button>
+          ))}
+        </div>
         <div style={{
  display: 'flex', alignItems: 'center',
                        background: 'var(--paper-2)', borderRadius: 5, border: 'var(--hairline)', minWidth: 260
@@ -111,8 +124,10 @@ function ProjectsIndexA({ embedded = false, onOpenProject } = {}) {
 
       <main style={{
  flex: 1, overflow: 'auto',
-                     display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', alignContent: 'start'
-}} className="gap-3 pt-5 pb-6 px-7" >
+                     display: view === "grid" ? 'grid' : 'block',
+                     gridTemplateColumns: view === "grid" ? 'repeat(3, 1fr)' : undefined,
+                     alignContent: 'start'
+}} className={view === "grid" ? "gap-3 pt-5 pb-6 px-7" : "pt-4 pb-6 px-7"} >
         {filtered.length === 0 && (
           <div style={{
  gridColumn: '1/-1', textAlign: 'center', fontSize: 13, color: 'var(--ink-3)'
@@ -120,9 +135,66 @@ function ProjectsIndexA({ embedded = false, onOpenProject } = {}) {
             No projects match.
           </div>
         )}
-        {filtered.map(p => <ProjectCard key={p.id} p={p} onOpen={onOpenProject}/>)}
+        {view === "grid"
+          ? filtered.map(p => <ProjectCard key={p.id} p={p} onOpen={onOpenProject}/>)
+          : (
+            <div style={{ border: 'var(--hairline)', borderRadius: 8, overflow: 'hidden',
+                           background: 'var(--paper-2)' }}>
+              {filtered.map((p, i) => (
+                <ProjectRow key={p.id} p={p} onOpen={onOpenProject}
+                            last={i === filtered.length - 1}/>
+              ))}
+            </div>
+          )}
       </main>
     </div>
+  );
+}
+
+// A single project as a list row — same data as the card, laid out inline.
+function ProjectRow({ p, onOpen, last }) {
+  const dormant = p.status !== "active";
+  const hasStats = p.sessions7d > 0;
+  return (
+    <button onClick={() => onOpen && onOpen(p.id)} style={{
+      width: '100%', textAlign: 'left', background: 'transparent', border: 'none',
+      borderBottom: last ? 'none' : 'var(--hairline)',
+      opacity: p.status === "archived" ? 0.6 : 1,
+      display: 'grid', gridTemplateColumns: 'auto 1fr auto auto',
+      alignItems: 'center', cursor: onOpen ? 'pointer' : 'default',
+      transition: 'background 0.12s'
+    }}
+    onMouseEnter={(e) => { if (onOpen) e.currentTarget.style.background = 'var(--paper-3)'; }}
+    onMouseLeave={(e) => { if (onOpen) e.currentTarget.style.background = 'transparent'; }}
+    className="py-3 px-4 gap-3" >
+      <span className="kanji" style={{ fontSize: 18, color: 'var(--accent)', lineHeight: 1,
+                    flexShrink: 0 }}>{p.kanji}</span>
+      <div style={{ minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center' }} className="gap-2" >
+          <StatusDot ftr={p.ftr} warn={p.warn}/>
+          <span style={{ fontSize: 13, color: 'var(--ink)', whiteSpace: 'nowrap',
+                         overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.name}</span>
+          <ProjPill>{p.client}</ProjPill>
+          {dormant && <ProjPill tone="dormant">{p.status === "recent" ? "dormant" : p.status}</ProjPill>}
+        </div>
+        {p.vision && (
+          <div style={{ fontSize: 12, lineHeight: 1.35, color: 'var(--ink-3)', marginTop: 3,
+                        whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {p.vision}
+          </div>
+        )}
+      </div>
+      <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', textAlign: 'right',
+                    fontFeatureSettings: '"tnum"', whiteSpace: 'nowrap' }}>
+        {hasStats
+          ? <span style={{ color: p.warn ? 'var(--warning)' : 'var(--ink-2)' }}>{Math.round(p.ftr * 100)}% ftr</span>
+          : <span style={{ color: 'var(--ink-4)' }}>last · {p.lastSession}</span>}
+      </div>
+      <div className="mono" style={{ fontSize: 11, color: 'var(--ink-4)', textAlign: 'right',
+                    fontFeatureSettings: '"tnum"', whiteSpace: 'nowrap', minWidth: 78 }}>
+        {p.repos} repos · {p.libs} libs
+      </div>
+    </button>
   );
 }
 
@@ -143,60 +215,76 @@ function ProjectCard({ p, onOpen }) {
 }}
     onMouseEnter={(e) => { if (onOpen) e.currentTarget.style.background = 'var(--paper-3)'; }}
     onMouseLeave={(e) => { if (onOpen) e.currentTarget.style.background = 'var(--paper-2)'; }} className="py-3 px-3 gap-2" >
+      {/* Row 1 — kanji + name in a single row; client/status as pills on the right */}
       <div style={{ display: 'flex', alignItems: 'center' }} className="gap-2" >
-        <span className="kanji" style={{ fontSize: 22, color: 'var(--accent)', lineHeight: 1,
-                      width: 24, textAlign: 'center', flexShrink: 0 }}>
+        <span className="kanji" style={{ fontSize: 18, color: 'var(--accent)', lineHeight: 1,
+                      flexShrink: 0 }}>
           {p.kanji}
         </span>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center' }} className="gap-2" >
-            <StatusDot ftr={p.ftr} warn={p.warn}/>
-            <span style={{ fontSize: 13, color: 'var(--ink)',
-                           whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              {p.name}
-            </span>
-          </div>
-          <div className="mono mt-1" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
-            {p.client}
-          </div>
-        </div>
-        {p.status !== "active" && (
-          <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)',
-                        textTransform: 'uppercase', letterSpacing: '0.12em' }}>
-            {p.status === "recent" ? "dormant" : p.status}
-          </span>
+        <StatusDot ftr={p.ftr} warn={p.warn}/>
+        <span style={{ fontSize: 13, color: 'var(--ink)', flex: 1, minWidth: 0,
+                       whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          {p.name}
+        </span>
+        <ProjPill>{p.client}</ProjPill>
+        {dormant && (
+          <ProjPill tone="dormant">{p.status === "recent" ? "dormant" : p.status}</ProjPill>
         )}
       </div>
 
+      {/* Row 2 — description, full width */}
+      {p.vision && (
+        <div style={{ fontSize: 12, lineHeight: 1.4, color: 'var(--ink-2)',
+                      textWrap: 'pretty' }}>
+          {p.vision}
+        </div>
+      )}
+
+      {/* Stats — full width, each metric its own item */}
       {hasStats ? (
         <div style={{
- display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', borderTop: 'var(--hairline)'
-}} className="gap-2 pt-1" >
-          <Stat label="FTR" value={Math.round(p.ftr * 100)}
+ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', borderTop: 'var(--hairline)'
+}} className="gap-2 pt-2" >
+          <Stat label="ftr" value={Math.round(p.ftr * 100)}
                 tone={p.warn ? 'var(--warning)' : 'var(--ink)'}/>
-          <Stat label="7d" value={p.sessions7d}/>
-          <Stat label="repos·libs" value={`${p.repos}·${p.libs}`}/>
+          <Stat label="repos" value={p.repos}/>
+          <Stat label="libs" value={p.libs}/>
         </div>
       ) : (
-        <div className="mono pt-1" style={{
- fontSize: 11, color: 'var(--ink-4)', borderTop: 'var(--hairline)',
-                      display: 'flex', justifyContent: 'space-between'
-}}>
-          <span>{p.repos} repo{p.repos !== 1 ? 's' : ''} · {p.libs} libs</span>
-          <span>last · {p.lastSession}</span>
+        <div style={{
+ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', borderTop: 'var(--hairline)'
+}} className="gap-2 pt-2" >
+          <Stat label="repos" value={p.repos} tone="var(--ink-3)"/>
+          <Stat label="libs" value={p.libs} tone="var(--ink-3)"/>
+          <Stat label="last session" value={p.lastSession} tone="var(--ink-3)"/>
         </div>
       )}
     </button>
   );
 }
 
+// Small pill/tag — used for the client label and dormant/archived state.
+function ProjPill({ children, tone }) {
+  const isDormant = tone === "dormant";
+  return (
+    <span className="mono" style={{
+      fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase',
+      color: isDormant ? 'var(--ink-3)' : 'var(--ink-2)',
+      background: 'var(--paper-3)', border: 'var(--hairline)',
+      borderRadius: 999, padding: '2px 8px', whiteSpace: 'nowrap', flexShrink: 0
+    }}>
+      {children}
+    </span>
+  );
+}
+
 function Stat({ label, value, tone = 'var(--ink)' }) {
   return (
-    <div>
-      <div style={{ fontSize: 11, letterSpacing: '0.12em', color: 'var(--ink-3)',
-                    textTransform: 'uppercase' }}>{label}</div>
-      <div className="display" style={{ fontSize: 15, fontWeight: 400, color: tone,
-                    lineHeight: 1.1 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      <div style={{ fontSize: 10, letterSpacing: '0.08em', color: 'var(--ink-3)',
+                    textTransform: 'uppercase', lineHeight: 1.25 }}>{label}</div>
+      <div className="display" style={{ marginTop: 'auto', fontSize: 15, fontWeight: 400,
+                    color: tone, lineHeight: 1.1, fontFeatureSettings: '"tnum"' }}>
         {value}
       </div>
     </div>

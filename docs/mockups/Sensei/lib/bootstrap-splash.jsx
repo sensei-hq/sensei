@@ -530,8 +530,8 @@ function Splash({ state }) {
                 <div style={{
                   position: 'absolute', inset: 0,
                   background: 'var(--ink)',
-                  WebkitMaskImage: 'url(uploads/sensei.svg?v=2)',
-                  maskImage: 'url(uploads/sensei.svg?v=2)',
+                  WebkitMaskImage: 'url(uploads/sensei.svg?v=3)',
+                  maskImage: 'url(uploads/sensei.svg?v=3)',
                   WebkitMaskSize: '62%', maskSize: '62%',
                   WebkitMaskRepeat: 'no-repeat', maskRepeat: 'no-repeat',
                   WebkitMaskPosition: 'center', maskPosition: 'center',

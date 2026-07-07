@@ -104,8 +104,8 @@ function Enso({ size = 26, stroke = 'var(--accent)' }) {
     <span aria-hidden="true"
           style={{ display: 'block', flexShrink: 0, width: size, height: size,
                    background: stroke,
-                   WebkitMaskImage: 'url(uploads/sensei.svg?v=2)',
-                   maskImage: 'url(uploads/sensei.svg?v=2)',
+                   WebkitMaskImage: 'url(uploads/sensei.svg?v=3)',
+                   maskImage: 'url(uploads/sensei.svg?v=3)',
                    WebkitMaskSize: 'contain', maskSize: 'contain',
                    WebkitMaskRepeat: 'no-repeat', maskRepeat: 'no-repeat',
                    WebkitMaskPosition: 'center', maskPosition: 'center' }} />
