@@ -225,6 +225,68 @@ psql -A -t -c "select max(state_changed_at) from sensei.rules where source = 'fi
   expire (or be marked permanent + reviewed) so they don't
   quietly permit violations forever.
 
+## Solution-scope cascade (multi-repo)
+
+When a solution has multiple projects (see
+[[screen/solution-dashboard]]), rules cascade:
+
+    global (~/.sensei/rules.md)
+        └── org (Dōjō distribution)
+              └── solution (`sensei.solutions.rules` — new column)
+                    └── project (per-project rule overrides)
+                          └── module / stack (tag-based)
+
+- A solution-level rule applies to every member project unless
+  the project overrides.
+- A project can promote its own rule to solution-level from
+  Project → About with confirmation from the solution owner.
+- Solution rules with `mandatory: true` behave the same way
+  personal-scope mandatories do — a project cannot override.
+
+`resolver.effective_rules(project_id)` walks the cascade:
+
+1. Load personal-global mandatories.
+2. Load org rules (via Dōjō) that match the project's stack /
+   scope.
+3. Load solution rules for the solution the project belongs to.
+4. Load project rules.
+5. Merge with priority + impact + tighter-scope-wins tiebreak.
+
+Rules on the solution level are exposed as an editable panel on
+[[screen/solution-dashboard]] (settings drawer).
+
+## Cross-repo enforcement (solution-scope)
+
+The verifier ([[pipeline/governance]] enforcement section) can
+now enforce across repos in a solution:
+
+- A rule like "public API compatibility" checks against the
+  API contract shared between UI and Backend projects.
+- A rule like "docs must describe every public endpoint"
+  spans Backend + Docs projects — the check verifies coverage
+  across both.
+- Cross-repo edges come from [[pipeline/capture]] (see
+  multi-repo section) and [[pipeline/traceability]]
+  bidirectional links.
+
+Verifier can block a commit in one project if it violates a
+solution-scoped rule that requires a corresponding change in
+another (e.g. rename an endpoint in Backend without updating
+the Docs project → blocked with the specific link).
+
+## Data source connectors (deferred)
+
+Vision from the archive: solutions can include **data sources
+that aren't code repos** — Confluence spaces, Jira boards,
+wikis, Figma files. Governance rules apply to these too:
+
+- "Docs must reference an ADR from Confluence before merging."
+- "Jira ticket must have acceptance criteria before starting."
+- "Design tokens must match Figma library version X."
+
+Not built in v1. Called out here so the connector interface can
+be designed with governance in mind from the start.
+
 ## Related
 
 - [[pipeline/memory]] — promotion path from memory → rule
