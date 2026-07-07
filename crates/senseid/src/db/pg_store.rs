@@ -2948,6 +2948,18 @@ impl PgStore {
         Ok(row.0)
     }
 
+    /// Resolve `activity.sessions.id` (observatory UUID) → `client_session_id`
+    /// (the string the assistant's hook writer stamps on every
+    /// `activity.assistant_events` row). The Replay endpoint (#84 Slice C)
+    /// needs this because `assistant_events.session_id` is the client id,
+    /// not the UUID.
+    pub async fn get_session_client_id(&self, id: &uuid::Uuid) -> Result<Option<String>, String> {
+        let row: Option<(Option<String>,)> = sqlx_core::query_as::query_as(
+            "SELECT client_session_id FROM activity.sessions WHERE id = $1"
+        ).bind(id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.and_then(|(c,)| c))
+    }
+
     pub async fn get_session(&self, id: &uuid::Uuid) -> Result<Option<serde_json::Value>, String> {
         let row: Option<(uuid::Uuid, uuid::Uuid, String, Option<String>, Option<String>, Option<bool>, i32, i32, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>)> =
             sqlx_core::query_as::query_as(

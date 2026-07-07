@@ -380,42 +380,47 @@
      · Replay: what did the assistant do? · Health: what should we change?)
      matching the mockup's phrasing.
      Full hero — kanji + eyebrow (Instruments · <tab>) + tagline + sub -->
-<div class="flex items-end gap-4 pt-5 pb-4 px-7 border-b border-paper-mute" data-testid="instruments-hero">
-    <div class="kanji text-4xl text-accent leading-none">{currentTab.kanji}</div>
-    <div class="flex-1 min-w-0">
-        <div class="text-xs uppercase tracking-[0.18em] text-ink-mute mb-1">
-            Instruments · {currentTab.label}
+<!-- Sticky hero + tabs. Full width — no max-w wrapper — so the panels
+     below fill the observatory main pane edge-to-edge (fixes the L/R
+     gap the user hit). Sticky top-0 keeps them visible while the body
+     scrolls. -->
+<div class="sticky top-0 z-20 bg-paper">
+    <div class="flex items-end gap-4 pt-5 pb-4 px-7 border-b border-paper-mute" data-testid="instruments-hero">
+        <div class="kanji text-4xl text-accent leading-none">{currentTab.kanji}</div>
+        <div class="flex-1 min-w-0">
+            <div class="text-xs uppercase tracking-[0.18em] text-ink-mute mb-1">
+                Instruments · {currentTab.label}
+            </div>
+            <h1 class="display text-xl font-normal m-0 text-ink">{heroCopy.tagline}</h1>
+            <p class="text-sm text-ink-soft leading-normal mt-1 mb-0 max-w-[680px]">
+                {heroCopy.sub}
+            </p>
         </div>
-        <h1 class="display text-xl font-normal m-0 text-ink">{heroCopy.tagline}</h1>
-        <p class="text-sm text-ink-soft leading-normal mt-1 mb-0 max-w-[680px]">
-            {heroCopy.sub}
-        </p>
+    </div>
+    <div class="flex px-7 border-b border-paper-mute" role="tablist" aria-label="Instruments tabs" data-testid="instrument-tabs">
+        {#each instrumentTabs as t}
+            {@const on = t.id === tab}
+            <button
+                class="flex items-center gap-2 py-3 px-4 bg-transparent border-none cursor-pointer"
+                class:text-ink={on}
+                class:text-ink-soft={!on}
+                style="border-bottom: {on ? '2px solid var(--ink)' : '2px solid transparent'}; margin-bottom: -1px;"
+                role="tab"
+                aria-selected={on}
+                data-testid={`instrument-tab-${t.id}`}
+                onclick={() => (tab = t.id)}
+            >
+                <span class="kanji text-sm" class:text-accent={on} class:text-ink-mute={!on}>{t.kanji}</span>
+                <span class="display text-sm">{t.label}</span>
+            </button>
+        {/each}
     </div>
 </div>
 
-<!-- Custom kanji-tabs strip. Renamed 'insights' label → 'Health' per mockup;
-     the id stays for URL/testid stability. -->
-<div class="flex px-7 border-b border-paper-mute bg-paper" role="tablist" aria-label="Instruments tabs" data-testid="instrument-tabs">
-    {#each instrumentTabs as t}
-        {@const on = t.id === tab}
-        <button
-            class="flex items-center gap-2 py-3 px-4 bg-transparent border-none cursor-pointer"
-            class:text-ink={on}
-            class:text-ink-soft={!on}
-            style="border-bottom: {on ? '2px solid var(--ink)' : '2px solid transparent'}; margin-bottom: -1px;"
-            role="tab"
-            aria-selected={on}
-            data-testid={`instrument-tab-${t.id}`}
-            onclick={() => (tab = t.id)}
-        >
-            <span class="kanji text-sm" class:text-accent={on} class:text-ink-mute={!on}>{t.kanji}</span>
-            <span class="display text-sm">{t.label}</span>
-            <span class="text-xs text-ink-mute">· {t.hint}</span>
-        </button>
-    {/each}
-</div>
-
-<div class="max-w-[960px] mx-auto px-12 pt-8 pb-16">
+<!-- Body is full width; Playground/Replay use their own internal grids,
+     Health gets horizontal padding so cards breathe but still reach the
+     edges (no centered max-w wrapper any more). -->
+<div>
 
     {#if tab === "playground"}
         <!-- #84 T2 Playground — matches docs/mockups/Sensei/lib/instruments-simple.jsx
@@ -808,7 +813,9 @@
             </div>
         {/if}
     {:else}
-        {@render ToolInsights()}
+        <div class="px-7 py-6">
+            {@render ToolInsights()}
+        </div>
     {/if}
 </div>
 
@@ -825,8 +832,11 @@
     {:else}
         {@const totalCalls = toolStats.reduce((s, t) => s + t.call_count, 0)}
         {@const totalErrors = toolStats.reduce((s, t) => s + t.error_count, 0)}
-        {@const warnTools = toolSignals.filter((s) => s.variant === 'warn' || s.variant === 'unused').length}
-        {@const dormantTools = toolStats.filter((t) => t.call_count === 0).length}
+        {@const warnTools = toolSignals.filter((s) => s.variant === 'warn').length}
+        <!-- Dormant = signals-side "unused" (no calls in window), not just
+             zero call_count on the aggregate row. The aggregate keeps
+             historical rows; the signal derives from last_used_at. -->
+        {@const dormantTools = toolSignals.filter((s) => s.variant === 'unused').length}
 
         <!-- ── KPI row — 5 cards, one per key metric ────────────────── -->
         <div class="grid grid-cols-5 gap-3 mb-5">
