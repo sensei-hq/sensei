@@ -159,7 +159,7 @@ curl -s "http://localhost:7744/api/observatory/tool-signals?mcp=sensei" \
 - **L1 card kanji is the wrong glyph.** `mcpMeta` unified with
   another datasource; use only `mcpMeta` for identity here.
 - **Note lines say "coming soon" on connected MCPs.** Editorial
-  note has decayed; keep the note wire-honest to the current
+  note has decayed; the wire response should match the current
   state.
 
 ## Related
