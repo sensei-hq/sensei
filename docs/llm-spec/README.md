@@ -198,14 +198,29 @@ only, **todo** = not started.
 | 04 Project window | [screen/project-impact.md](screen/project-impact.md) | **draft** | Project FTR trend with apply-event annotations |
 | 04 Project window | [screen/project-about.md](screen/project-about.md) | **draft** | Vision + multi-repo membership + Dōjō binding |
 
+### Screen specs — Solution scope
+
+| Doc | Status | Notes |
+|---|---|---|
+| [screen/solution-dashboard.md](screen/solution-dashboard.md) | **draft** | Cross-repo aggregate FTR + members + connections |
+| [screen/solution-sessions.md](screen/solution-sessions.md) | **draft** | Sessions across member projects with role facet |
+| [screen/solution-architecture.md](screen/solution-architecture.md) | **draft** | Merged cross-repo graph + focus mode + doc-link edges |
+
+### Additional Observatory / Preferences
+
+| Doc | Status | Notes |
+|---|---|---|
+| [screen/settings-inference.md](screen/settings-inference.md) | **draft** | Inference pane — chains + models + budget + circuit state |
+| [screen/insights-reasoning.md](screen/insights-reasoning.md) | **draft** | MOE consensus panel — propose → challenge → synthesize |
+
 ### Screen specs — Dōjō (SaaS)
 
 | Role | Doc | Status |
 |---|---|---|
-| Developer | [screen/dojo-developer-flow.md](screen/dojo-developer-flow.md) | todo |
-| Maintainer | [screen/dojo-maintainer-console.md](screen/dojo-maintainer-console.md) | todo |
-| Org admin | [screen/dojo-admin-console.md](screen/dojo-admin-console.md) | todo |
-| Client / engagement lead | [screen/dojo-client-lead-console.md](screen/dojo-client-lead-console.md) | todo |
+| Developer | [screen/dojo-developer-flow.md](screen/dojo-developer-flow.md) | **draft** | Journey narrative wiring across in-app screens |
+| Maintainer | [screen/dojo-maintainer-console.md](screen/dojo-maintainer-console.md) | **draft** | Queue / evaluate / decide / distribute / measure |
+| Org admin | [screen/dojo-admin-console.md](screen/dojo-admin-console.md) | **draft** | Stand up / identity / members / policies / monitor |
+| Client / engagement lead | [screen/dojo-client-lead-console.md](screen/dojo-client-lead-console.md) | **draft** | Engagement + universal strip + audit trail |
 
 ### Pipeline specs — the data behind the screens
 
@@ -227,6 +242,15 @@ only, **todo** = not started.
 | [pipeline/governance.md](pipeline/governance.md) | **draft** | Priority ladders + scope precedence + rule promotion path |
 | [pipeline/dojo-lifecycle.md](pipeline/dojo-lifecycle.md) | **draft** | Memberships + routing + attribution + upstream/downstream loop; SaaS+self-hosted modes |
 | [pipeline/patterns.md](pipeline/patterns.md) | **draft** | 5 sources (codebase/library/registry/option/derived) + anti-patterns + optimization opportunities |
+| [pipeline/inferencing.md](pipeline/inferencing.md) | **draft** | Gateway + adapters + MOE consensus + fallback / budget / circuit |
+| [pipeline/context-delivery.md](pipeline/context-delivery.md) | **draft** | Resolution levels L0-L3 + token budget + BFS ranking + session dedup |
+| [pipeline/semantic-search.md](pipeline/semantic-search.md) | **draft** | Hybrid FTS+semantic+structural + grep fallback + optional hook routing |
+| [pipeline/bootstrap-resolution.md](pipeline/bootstrap-resolution.md) | **draft** | 5-phase startup + Tauri sidecar + hardware tiers + ollama-as-soft-dep |
+| [pipeline/agent-execution.md](pipeline/agent-execution.md) | **draft** | Focused specialist agents + isolation + tool restriction + reporting |
+| [pipeline/library-intelligence.md](pipeline/library-intelligence.md) | **draft** | Doc ingestion + version pinning + custom-lib + skill gen + drift |
+| [pipeline/collective-intelligence.md](pipeline/collective-intelligence.md) | **draft** | Federated insights via `global-dojo` — anonymisation + community promotion |
+| [pipeline/testability.md](pipeline/testability.md) | **draft** | Function-shape analysis + TDD gate + decompose-before-code |
+| [pipeline/benchmarks.md](pipeline/benchmarks.md) | **draft** | Reproducible benchmark runs + competitive matrix + regression detection |
 
 ---
 
