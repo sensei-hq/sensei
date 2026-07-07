@@ -2,12 +2,17 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Default capabilities for the Sensei desktop app",
-  "windows": ["main"],
+  "windows": ["main", "project-*"],
   "permissions": [
     "core:default",
     "core:event:default",
     "core:event:allow-listen",
     "core:event:allow-emit",
+    "core:webview:allow-create-webview-window",
+    "core:webview:allow-webview-close",
+    "core:window:allow-close",
+    "core:window:allow-set-focus",
+    "core:window:allow-set-title",
     "shell:allow-open",
     "opener:default"
   ]
