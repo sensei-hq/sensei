@@ -82,6 +82,14 @@ Every spec must honour these. If a spec pushes against one, call it out.
    or a client engagement goes through the Dōjō lane, not the global
    Collective. Personal Sensei can operate perfectly without a Dōjō —
    but when one exists, the boundary is exact.
+6. **Insight copy comes from the model, not the template.** Every
+   human-readable string on an insight card, koan, adopted-blurb,
+   drift note, or FTR sentence goes through
+   [[pipeline/insight-copy]] — embedded gemma4 first, static template
+   as fallback. Templated copy hits its ceiling immediately (the same
+   "N tools dormant" reads as noise the second time). The mentor
+   voice needs a mentor writer. Actions and route labels stay
+   deterministic; the code owns those.
 
 ---
 
@@ -198,6 +206,9 @@ only, **todo** = not started.
 | [pipeline/libraries.md](pipeline/libraries.md) | todo | Detect → wrap → query → watch + lib-docs ingestion |
 | [pipeline/insights.md](pipeline/insights.md) | todo | Surface → triage → apply/review/dismiss → measure |
 | [pipeline/signals.md](pipeline/signals.md) | **draft** | Health-tab signal derivation (rewritten today) |
+| [pipeline/insight-copy.md](pipeline/insight-copy.md) | **draft** | LLM-generated human-readable insight text — gemma4 primary, static fallback. **All insight copy reaches for this.** |
+| [pipeline/project-icon.md](pipeline/project-icon.md) | **draft** | README/logo/favicon → project icon inference chain with kanji + letter fallback. |
+| [pipeline/memory.md](pipeline/memory.md) | **draft** | Memory pipeline — LLM-primary consumer via MCP `get_memories`; formation, scope, promotion ladder, feedback. |
 | [pipeline/mcp-surface.md](pipeline/mcp-surface.md) | todo | Every MCP tool: purpose, input, output, when to reach for it |
 | [pipeline/governance.md](pipeline/governance.md) | todo | Rules hierarchy + priority ladders + Dōjō upstream/downstream |
 | [pipeline/dojo-lifecycle.md](pipeline/dojo-lifecycle.md) | todo | Contribute → accumulate → triage → approve → distribute |
@@ -206,7 +217,7 @@ only, **todo** = not started.
 
 ## Reading order
 
-Newcomer to the codebase reads: this README → [agents/README.md](agents/README.md) (the gate playbook) → [pipeline/analyzer.md](pipeline/analyzer.md) → [pipeline/ftr.md](pipeline/ftr.md) → any screen doc they own.
+Newcomer to the codebase reads: this README → [MOCKUP-INDEX.md](MOCKUP-INDEX.md) (which mockup file to open for which screen — **never guess**) → [agents/README.md](agents/README.md) (the gate playbook) → [pipeline/analyzer.md](pipeline/analyzer.md) → [pipeline/ftr.md](pipeline/ftr.md) → any screen doc they own.
 A developer picking up an autonomous task reads: [screen/{their-target}.md](screen/) → the pipeline docs it references → the mockup file listed in the front-matter → then runs the gates from the playbook.
 
 The tie-breaker rule: **if this spec disagrees with the mockup, the

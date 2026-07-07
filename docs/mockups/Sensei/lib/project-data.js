@@ -509,12 +509,12 @@ Nothing deprecated since 0.7.3.`
 // ── Projects index (for navigation screens) ──────────────────────────
 window.PROJECTS_INDEX = {
   projects: [
-    { id: "lumen-studio", kanji: "工", name: "Lumen Studio", client: "internal",     status: "active",   ftr: 0.82, sessions7d: 41, repos: 3, libs: 14,  lastSession: "22m ago", warn: false },
-    { id: "lumen-cloud",  kanji: "雲", name: "Lumen Cloud",  client: "internal",     status: "active",   ftr: 0.64, sessions7d: 28, repos: 3, libs: 18,  lastSession: "2h ago",  warn: true  },
-    { id: "brand-kit",    kanji: "紋", name: "Brand Kit",    client: "internal",     status: "active",   ftr: 0.91, sessions7d: 12, repos: 2, libs: 9,   lastSession: "yesterday", warn: false },
-    { id: "sketch-tool",  kanji: "筆", name: "Sketch tool",  client: "internal",     status: "recent",   ftr: 0.71, sessions7d: 0,  repos: 1, libs: 6,   lastSession: "3w ago",  warn: false },
-    { id: "old-docs",     kanji: "巻", name: "Docs site",    client: "external",     status: "recent",   ftr: 0.88, sessions7d: 0,  repos: 1, libs: 4,   lastSession: "2mo ago", warn: false },
-    { id: "prototype-x",  kanji: "試", name: "Prototype X",  client: "research",     status: "archived", ftr: 0.55, sessions7d: 0,  repos: 1, libs: 2,   lastSession: "6mo ago", warn: false }
+    { id: "lumen-studio", kanji: "工", name: "Lumen Studio", client: "internal",     vision: "The canvas where the whole suite is designed.",                 status: "active",   ftr: 0.82, sessions7d: 41, repos: 3, libs: 14,  lastSession: "22m ago", warn: false },
+    { id: "lumen-cloud",  kanji: "雲", name: "Lumen Cloud",  client: "internal",     vision: "Keep everyone's work in sync without a central server feeling central.", status: "active",   ftr: 0.64, sessions7d: 28, repos: 3, libs: 18,  lastSession: "2h ago",  warn: true  },
+    { id: "brand-kit",    kanji: "紋", name: "Brand Kit",    client: "internal",     vision: "One source of truth for how everything looks.",                  status: "active",   ftr: 0.91, sessions7d: 12, repos: 2, libs: 9,   lastSession: "yesterday", warn: false },
+    { id: "sketch-tool",  kanji: "筆", name: "Sketch tool",  client: "internal",     vision: "A fast place to think in shapes before code.",                  status: "recent",   ftr: 0.71, sessions7d: 0,  repos: 1, libs: 6,   lastSession: "3w ago",  warn: false },
+    { id: "old-docs",     kanji: "巻", name: "Docs site",    client: "external",     vision: "The public record — kept honest with the code.",                status: "recent",   ftr: 0.88, sessions7d: 0,  repos: 1, libs: 4,   lastSession: "2mo ago", warn: false },
+    { id: "prototype-x",  kanji: "試", name: "Prototype X",  client: "research",     vision: "An idea kept on the shelf, in case it returns.",                 status: "archived", ftr: 0.55, sessions7d: 0,  repos: 1, libs: 2,   lastSession: "6mo ago", warn: false }
   ],
   clients: ["internal", "external", "research"]
 };
