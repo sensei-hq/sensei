@@ -73,7 +73,7 @@ Kanji is 今 — *now*.
 | Soon-column card: PatternMini | emerging pattern (>0 instances, unpromoted) | Not yet a rule; browsable |
 | Soon-column card: ChallengedMini | memory contested by recent evidence | Needs a "keep / retire" decision |
 | Settled-column list: memory row | scoped memory + strength bar | Sorted by strength desc |
-| Empty-column copy | "nothing urgent." / "nothing brewing." / "nothing yet." | Honest quiet state, not "no data" |
+| Empty-column copy | "nothing urgent." / "nothing brewing." / "nothing yet." | Quiet-state copy from the mockup — not "no data" or "loading" |
 
 ## Done gate
 
@@ -88,7 +88,7 @@ Kanji is 今 — *now*.
   (the mockup's one-decision-one-default theme).
 - Accept on a rec triggers a `MeasureVerdicts` follow-up so the
   before/after FTR is measured and shown in `screen/observatory-impact`.
-- Empty state text is the mockup's honest voice ("nothing urgent." /
+- Empty state text is the mockup's voice ("nothing urgent." /
   "nothing brewing." / "nothing yet."), not "no data" or "loading…".
 - Every card's title + body comes through [[pipeline/insight-copy]]
   when the model is available; fallback templates otherwise.
