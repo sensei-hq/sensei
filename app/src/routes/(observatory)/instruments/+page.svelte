@@ -263,6 +263,47 @@
         executing = false;
     }
 
+    /**
+     * Pre-fill common tool-input keys so the user isn't forced to type
+     * the active project name on every tool click. `repoId` defaults to
+     * the currently-active project. Anything else stays empty and shows
+     * placeholder from the manifest.
+     *
+     * Fixes the "execute returns empty result" symptom: sensei tools
+     * that take a `repoId` return `{"callees":[]}` etc. when the input
+     * doesn't match a real project name. Curl verification: valid
+     * repoId=sensei with name=extract_deps → 18 callees; wrong project
+     * name → empty. Defaulting to the active project makes the
+     * happy-path work without user interaction.
+     */
+    function pickToolDefaults(tool: PlaygroundTool): Record<string, string> {
+        const source = tool.mcp === 'sensei'
+            ? tools.find((t) => t.name === tool.name)
+            : null;
+        const params: Record<string, string> = {};
+        if (!source) return params;
+        for (const input of source.inputs ?? []) {
+            if (input.key === 'repoId') {
+                // Prefer the user's active project; otherwise fall back to
+                // the input's placeholder (usually 'sensei') so the field
+                // isn't blank on first click. Empty repoId → empty result.
+                params[input.key] = appState.activeProjectId
+                    || input.placeholder
+                    || input.default
+                    || 'sensei';
+            } else if (input.default != null) {
+                params[input.key] = String(input.default);
+            } else if (input.placeholder) {
+                // For sensei's own tools the placeholder is a concrete
+                // known-good example (e.g. 'process_event' for a symbol
+                // arg). Pre-filling makes execute-on-first-click work
+                // without the user having to guess.
+                params[input.key] = input.placeholder;
+            }
+        }
+        return params;
+    }
+
     // Load the session list once the Replay tab is first opened. Subsequent
     // tab switches skip the fetch since the list rarely changes mid-session.
     async function ensureReplaySessionsLoaded() {
@@ -443,7 +484,7 @@
                                         <button
                                             class="w-full grid grid-cols-[32px_14px_1fr] gap-1 py-1 pl-1 pr-3 text-left bg-transparent border-none cursor-pointer"
                                             style="border-left: {active ? '2px solid var(--accent)' : '2px solid transparent'};"
-                                            onclick={() => { selectedToolId = tool.id; toolResult = ''; toolParams = {}; }}
+                                            onclick={() => { selectedToolId = tool.id; toolResult = ''; toolParams = pickToolDefaults(tool); }}
                                             data-testid={`tool-row-${tool.name}`}
                                             data-tool-kind={tool.kind}
                                         >
@@ -558,6 +599,7 @@
                                 class="py-1 px-3 text-sm bg-ink text-paper border-none rounded cursor-pointer tracking-tight"
                                 onclick={executeTool}
                                 disabled={running || !selectedTool}
+                                data-testid="tool-execute"
                             >
                                 {isAction ? 'Run →' : 'Query →'}
                             </button>
@@ -593,8 +635,13 @@
             </main>
         </div>
     {:else if tab === "replay"}
+        <!-- Replay body — matches instruments.jsx InstrumentsReplay (used
+             by InstrumentsReplaySimple with simple=true). 300px session
+             picker sidebar + main pane with summary strip + timeline+
+             detail grid. Timeline entries use the mockup's [22px | 38px |
+             1fr | auto] grid (index / offset / tool name / dot+ms). -->
         {#if replayLoading && replaySessions.length === 0}
-            <p class="text-sm text-ink-soft">Loading sessions…</p>
+            <p class="text-sm text-ink-soft px-7 py-5">Loading sessions…</p>
         {:else if replaySessions.length === 0}
             <EmptyState
                 kanji="録"
@@ -602,97 +649,162 @@
                 description="Tool calls from your assistant sessions appear here once sensei has captured at least one session."
             />
         {:else}
-            <div class="grid grid-cols-[220px_260px_1fr] gap-6">
-                <!-- Session picker -->
-                <div class="flex flex-col gap-0.5 max-h-[560px] overflow-auto">
-                    <div class="text-xs uppercase tracking-wide text-ink-mute px-3 py-2">Sessions</div>
+            <div class="grid grid-cols-[300px_1fr] min-h-[600px] border-t border-paper-mute">
+                <!-- ── Left rail — session picker ─────────────────── -->
+                <aside class="bg-paper-soft border-r border-paper-mute overflow-auto">
+                    <div class="text-xs uppercase tracking-wide text-ink-mute pt-3 pb-2 px-3">
+                        sessions
+                    </div>
                     {#each replaySessions as session (session.id)}
+                        {@const on = selectedSessionId === session.id}
                         <button
-                            class="tool-card text-left px-3.5 py-2 rounded-md bg-transparent border-none cursor-pointer transition-colors duration-fast"
-                            class:selected={selectedSessionId === session.id}
+                            class="w-full text-left bg-transparent border-none cursor-pointer py-2 px-3"
+                            class:bg-paper={on}
+                            style="border-left: {on ? '2px solid var(--accent)' : '2px solid transparent'};"
                             onclick={() => selectReplaySession(session.id)}
+                            data-testid={`replay-session-${session.id}`}
                         >
-                            <span class="block text-sm font-medium text-ink truncate">{session.task}</span>
-                            <span class="block text-xs text-ink-soft mt-0.5">
+                            <div class="flex items-baseline gap-1">
+                                <span class="font-mono text-xs" class:text-ink={on} class:text-ink-soft={!on}>
+                                    {session.id.substring(0, 8)}
+                                </span>
+                                {#if session.ftr != null}
+                                    {@const isFtr = session.ftr >= 1}
+                                    <span
+                                        class="text-xs uppercase tracking-wide"
+                                        class:text-success={isFtr}
+                                        class:text-warning={!isFtr}
+                                    >
+                                        {isFtr ? 'ftr' : `${((1 - (session.ftr ?? 0)) * 100).toFixed(0)}%c`}
+                                    </span>
+                                {/if}
+                            </div>
+                            <div class="text-xs text-ink-soft leading-normal mt-1 line-clamp-2">
+                                {session.task}
+                            </div>
+                            <div class="text-xs text-ink-faint mt-1">
                                 {fmtDate(session.startedAt)}
-                                {#if session.ftr != null}· FTR {(session.ftr * 100).toFixed(0)}%{/if}
-                            </span>
+                            </div>
                         </button>
                     {/each}
-                </div>
+                </aside>
 
-                <!-- Call list -->
-                <div class="flex flex-col gap-0.5 max-h-[560px] overflow-auto">
-                    <div class="flex items-baseline justify-between px-3 py-2">
-                        <span class="text-xs uppercase tracking-wide text-ink-mute">Calls</span>
-                        {#if selectedSessionId && sessionSummary.total > 0}
-                            <!-- #84 T2 Slice C — session verdict summary. -->
-                            <span class="text-[10px] text-ink-soft">
-                                <span class="text-success">{sessionSummary.used}</span> ·
-                                <span class="text-warning">{sessionSummary.partial}</span> ·
-                                <span class="text-ink-mute">{sessionSummary.ignored}</span>
-                                <span class="text-ink-mute">/ {sessionSummary.total}</span>
-                            </span>
-                        {/if}
-                    </div>
+                <!-- ── Detail ─────────────────────────────────────── -->
+                <main class="overflow-auto pt-5 pb-6 px-6">
                     {#if selectedSessionId == null}
-                        <p class="text-xs text-ink-soft px-3">Pick a session.</p>
+                        <p class="text-sm text-ink-soft">Pick a session on the left.</p>
                     {:else if replayLoading}
-                        <p class="text-xs text-ink-soft px-3">Loading timeline…</p>
-                    {:else if sessionCalls.length === 0}
-                        <p class="text-xs text-ink-soft px-3">No tool calls in this session.</p>
+                        <p class="text-sm text-ink-soft">Loading timeline…</p>
                     {:else}
-                        {#each sessionCalls as call (call.callId)}
-                            <button
-                                class="tool-card text-left px-3.5 py-2 rounded-md bg-transparent border-none cursor-pointer transition-colors duration-fast flex items-center gap-2"
-                                class:selected={selectedCall?.callId === call.callId}
-                                onclick={() => (selectedCall = call)}
-                            >
-                                <span class="block text-sm font-mono text-ink truncate flex-1">{call.toolName}</span>
-                                {#if call.inFlight}
-                                    <span class="text-xs text-warning">in-flight</span>
-                                {:else if call.success === false}
-                                    <span class="text-xs text-danger">✗</span>
-                                {:else if call.success === true}
-                                    <span class="text-xs text-success">✓</span>
+                        <!-- Session summary strip -->
+                        <div class="grid grid-cols-[auto_auto_auto_auto_1fr] items-baseline gap-5 mb-4 pb-3 border-b border-paper-mute">
+                            <div>
+                                <div class="display text-base mb-1">
+                                    {replaySessions.find((s) => s.id === selectedSessionId)?.task ?? selectedSessionId}
+                                </div>
+                                <div class="font-mono text-xs text-ink-mute">{selectedSessionId}</div>
+                            </div>
+                            <div>
+                                <div class="text-xs uppercase tracking-wide text-ink-faint">calls</div>
+                                <div class="display text-base mt-1">{sessionCalls.length}</div>
+                            </div>
+                            <div>
+                                <div class="text-xs uppercase tracking-wide text-ink-faint">used</div>
+                                <div class="display text-base text-success mt-1">{sessionSummary.used}</div>
+                            </div>
+                            <div>
+                                <div class="text-xs uppercase tracking-wide text-ink-faint">ignored</div>
+                                <div class="display text-base text-ink-mute mt-1">{sessionSummary.ignored}</div>
+                            </div>
+                            <span></span>
+                        </div>
+
+                        <!-- Timeline + detail grid — matches mockup's 0.95fr 1.4fr split -->
+                        <div class="grid grid-cols-[0.95fr_1.4fr] gap-5" style="min-height: 400px;">
+                            <!-- Timeline -->
+                            <div>
+                                <div class="text-xs uppercase tracking-wide text-ink-mute mb-2">
+                                    timeline ({sessionCalls.length})
+                                </div>
+                                {#if sessionCalls.length === 0}
+                                    <p class="text-xs text-ink-soft">No tool calls in this session.</p>
+                                {:else}
+                                    {#each sessionCalls as call, i (call.callId)}
+                                        {@const on = selectedCall?.callId === call.callId}
+                                        {@const kindColor = call.verdict === 'used' ? 'var(--success)' : call.verdict === 'partial' ? 'var(--warning)' : call.verdict === 'ignored' ? 'var(--ink-mute)' : 'var(--accent)'}
+                                        <button
+                                            class="w-full grid grid-cols-[22px_38px_1fr_auto] gap-2 items-center py-2 pl-3 pr-2 text-left border rounded-sm cursor-pointer"
+                                            class:bg-paper-soft={on}
+                                            class:border-paper-edge={on}
+                                            class:border-transparent={!on}
+                                            style="background: {on ? 'var(--paper-soft)' : 'transparent'};"
+                                            onclick={() => (selectedCall = call)}
+                                        >
+                                            <span class="font-mono text-xs text-ink-mute" style='font-feature-settings: "tnum";'>{i + 1}</span>
+                                            <span class="font-mono text-xs text-ink-mute truncate" style='font-feature-settings: "tnum";'>
+                                                {call.startedAtMs ? new Date(call.startedAtMs).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—'}
+                                            </span>
+                                            <span class="font-mono text-xs text-ink truncate">{call.toolName}</span>
+                                            <span class="flex items-center gap-1">
+                                                <span class="rounded-full inline-block" style="width: 7px; height: 7px; background: {kindColor};" title={call.verdict ?? 'unclassified'}></span>
+                                                <span class="font-mono text-xs text-ink-faint" style='font-feature-settings: "tnum";'>
+                                                    {call.durationMs != null ? `${call.durationMs}ms` : '—'}
+                                                </span>
+                                            </span>
+                                        </button>
+                                    {/each}
                                 {/if}
-                                <!-- #84 T2 Slice C — #90 verdict badge. Colour by verdict, no
-                                     badge when unclassified. -->
-                                {#if call.verdict === 'used'}
-                                    <span class="text-[10px] px-1.5 py-0.5 rounded bg-success-soft text-success uppercase tracking-wide" title={call.verdictReason ?? ''}>used</span>
-                                {:else if call.verdict === 'partial'}
-                                    <span class="text-[10px] px-1.5 py-0.5 rounded bg-warning-soft text-warning uppercase tracking-wide" title={call.verdictReason ?? ''}>partial</span>
-                                {:else if call.verdict === 'ignored'}
-                                    <span class="text-[10px] px-1.5 py-0.5 rounded bg-paper-soft text-ink-mute uppercase tracking-wide" title={call.verdictReason ?? ''}>ignored</span>
+                            </div>
+
+                            <!-- Detail: request + response panels matching CallDetailSimple -->
+                            <div class="flex flex-col gap-3">
+                                {#if !selectedCall}
+                                    <p class="text-sm text-ink-soft">Select a call to see request + response.</p>
+                                {:else}
+                                    {@const call = selectedCall}
+                                    {@const kindGlyph = call.verdict === 'used' ? '用' : call.verdict === 'partial' ? '部' : call.verdict === 'ignored' ? '無' : call.success === false ? '✗' : '問'}
+                                    {@const kindColor = call.verdict === 'used' ? 'text-success' : call.verdict === 'partial' ? 'text-warning' : call.verdict === 'ignored' ? 'text-ink-mute' : 'text-accent'}
+                                    <div class="flex items-baseline justify-between pb-3 border-b border-paper-mute">
+                                        <div>
+                                            <div class="text-xs uppercase tracking-wide text-ink-mute mb-1">
+                                                call #{call.callId} · {fmtDuration(call.durationMs)}
+                                            </div>
+                                            <div class="font-mono text-sm text-ink">{call.toolName}</div>
+                                        </div>
+                                        <span class="inline-flex items-center gap-1 py-1 px-2 text-xs bg-paper-soft border border-paper-edge rounded uppercase tracking-wide {kindColor}">
+                                            <span class="kanji text-xs">{kindGlyph}</span>
+                                            {call.verdict ?? (call.success === false ? 'error' : 'query')}
+                                        </span>
+                                    </div>
+
+                                    <div>
+                                        <div class="text-xs uppercase tracking-wide text-ink-mute mb-1">request</div>
+                                        <pre class="font-mono text-xs leading-normal py-3 px-3 m-0 bg-paper-soft border border-paper-mute rounded whitespace-pre-wrap overflow-auto max-h-[220px] text-ink-soft">{fmtPayload(call.request)}</pre>
+                                    </div>
+
+                                    <div>
+                                        <div class="text-xs uppercase tracking-wide text-ink-mute mb-1">
+                                            response · {call.durationMs != null ? `${call.durationMs}ms` : '—'}
+                                        </div>
+                                        {#if call.response == null}
+                                            <p class="text-xs text-ink-soft m-0 italic">No response captured yet.</p>
+                                        {:else}
+                                            <pre
+                                                class="font-mono text-xs leading-normal py-3 px-3 m-0 bg-paper-soft border border-paper-mute rounded whitespace-pre-wrap overflow-auto max-h-[220px] text-ink"
+                                                style="border-left-width: 2px; border-left-color: {call.verdict === 'used' ? 'var(--success)' : call.verdict === 'partial' ? 'var(--warning)' : call.verdict === 'ignored' ? 'var(--ink-mute)' : 'var(--accent)'};"
+                                            >{fmtPayload(call.response)}</pre>
+                                        {/if}
+                                        {#if call.verdictReason}
+                                            <div class="text-xs text-ink-faint italic mt-1">
+                                                {call.verdictReason}
+                                            </div>
+                                        {/if}
+                                    </div>
                                 {/if}
-                                <span class="text-xs text-ink-soft">{fmtDuration(call.durationMs)}</span>
-                            </button>
-                        {/each}
+                            </div>
+                        </div>
                     {/if}
-                </div>
-
-                <!-- Call detail -->
-                <div class="p-6 bg-paper-mute border border-paper-mute rounded-lg max-h-[560px] overflow-auto">
-                    {#if !selectedCall}
-                        <p class="text-sm text-ink-soft">Select a call to see request + response.</p>
-                    {:else}
-                        <h3 class="text-base font-mono m-0 mb-1.5">{selectedCall.toolName}</h3>
-                        <p class="text-xs text-ink-mute m-0 mb-4">
-                            {fmtDate(selectedCall.startedAt)} · {fmtDuration(selectedCall.durationMs)}
-                            {#if selectedCall.inFlight} · in-flight{/if}
-                        </p>
-
-                        <p class="m-0 mb-1"><Eyebrow>Request</Eyebrow></p>
-                        <pre class="px-3 py-2 bg-paper-soft border border-paper-mute rounded-md text-xs font-mono text-ink overflow-auto whitespace-pre-wrap break-all m-0 mb-4">{fmtPayload(selectedCall.request)}</pre>
-
-                        <p class="m-0 mb-1"><Eyebrow>Response</Eyebrow></p>
-                        {#if selectedCall.response == null}
-                            <p class="text-xs text-ink-soft m-0">No response captured yet.</p>
-                        {:else}
-                            <pre class="px-3 py-2 bg-paper-soft border border-paper-mute rounded-md text-xs font-mono text-ink overflow-auto whitespace-pre-wrap break-all m-0">{fmtPayload(selectedCall.response)}</pre>
-                        {/if}
-                    {/if}
-                </div>
+                </main>
             </div>
         {/if}
     {:else}
@@ -701,18 +813,88 @@
 </div>
 
 {#snippet ToolInsights()}
+    <!-- Health body — matches instruments.jsx InstrumentsHealth. KPI
+         row (5 cards) on top, then Signals grid, then per-tool usage
+         table. Verdict split bar layers into each expanded row (Slice D). -->
     {#if toolStats.length === 0}
         <EmptyState
-            kanji="照"
+            kanji="健"
             title="No tool usage data yet"
             description="Tool usage statistics appear after your assistant sessions call sensei tools. Start a session to begin tracking."
         />
     {:else}
-        <!-- Signal cards on top — sorted by variant priority in the daemon. -->
+        {@const totalCalls = toolStats.reduce((s, t) => s + t.call_count, 0)}
+        {@const totalErrors = toolStats.reduce((s, t) => s + t.error_count, 0)}
+        {@const warnTools = toolSignals.filter((s) => s.variant === 'warn' || s.variant === 'unused').length}
+        {@const dormantTools = toolStats.filter((t) => t.call_count === 0).length}
+
+        <!-- ── KPI row — 5 cards, one per key metric ────────────────── -->
+        <div class="grid grid-cols-5 gap-3 mb-5">
+            <div class="py-3 px-3 bg-paper-soft border border-paper-mute rounded-md">
+                <div class="flex items-center gap-1 mb-1">
+                    <span class="kanji text-sm text-accent">計</span>
+                    <span class="text-xs uppercase tracking-wide text-ink-mute">total calls</span>
+                </div>
+                <div class="display text-xl" style='font-feature-settings: "tnum";'>{totalCalls.toLocaleString()}</div>
+                <div class="text-xs text-ink-mute mt-1">{toolStats.length} tools</div>
+            </div>
+            <div class="py-3 px-3 bg-paper-soft border border-paper-mute rounded-md">
+                <div class="flex items-center gap-1 mb-1">
+                    <span class="kanji text-sm text-accent">誤</span>
+                    <span class="text-xs uppercase tracking-wide text-ink-mute">errors</span>
+                </div>
+                <div class="display text-xl" style='font-feature-settings: "tnum";' class:text-warning={totalErrors > 0}>
+                    {totalErrors.toLocaleString()}
+                </div>
+                <div class="text-xs text-ink-mute mt-1">
+                    {totalCalls > 0 ? `${((totalErrors / totalCalls) * 100).toFixed(1)}% rate` : '—'}
+                </div>
+            </div>
+            <div class="py-3 px-3 bg-paper-soft border border-paper-mute rounded-md">
+                <div class="flex items-center gap-1 mb-1">
+                    <span class="kanji text-sm text-accent">警</span>
+                    <span class="text-xs uppercase tracking-wide text-ink-mute">signals</span>
+                </div>
+                <div class="display text-xl" style='font-feature-settings: "tnum";' class:text-warning={warnTools > 0}>
+                    {toolSignals.length}
+                </div>
+                <div class="text-xs text-ink-mute mt-1">
+                    {warnTools} need attention
+                </div>
+            </div>
+            <div class="py-3 px-3 bg-paper-soft border border-paper-mute rounded-md">
+                <div class="flex items-center gap-1 mb-1">
+                    <span class="kanji text-sm text-accent">眠</span>
+                    <span class="text-xs uppercase tracking-wide text-ink-mute">dormant</span>
+                </div>
+                <div class="display text-xl" style='font-feature-settings: "tnum";' class:text-warning={dormantTools > 0}>
+                    {dormantTools}
+                </div>
+                <div class="text-xs text-ink-mute mt-1">0 calls</div>
+            </div>
+            <div class="py-3 px-3 bg-paper-soft border border-paper-mute rounded-md">
+                <div class="flex items-center gap-1 mb-1">
+                    <span class="kanji text-sm text-accent">源</span>
+                    <span class="text-xs uppercase tracking-wide text-ink-mute">source</span>
+                </div>
+                <div class="text-xs text-ink" class:text-success={mcp.signalSource === 'cache'}>
+                    {mcp.signalSource ?? 'derived'}
+                </div>
+                <div class="text-xs text-ink-mute mt-1">signals</div>
+            </div>
+        </div>
+
+        <!-- ── Signals — cards grid ─────────────────────────────────── -->
         {#if toolSignals.length > 0}
-            <div class="mb-6" data-testid="tool-signals">
-                <p class="text-xs uppercase tracking-wide text-ink-mute mb-2">Signals</p>
-                <div class="grid gap-2 grid-cols-1 md:grid-cols-2">
+            <div class="mb-5" data-testid="tool-signals">
+                <div class="flex items-baseline justify-between mb-3">
+                    <h3 class="display text-base font-normal m-0">
+                        Signals
+                        <span class="text-sm text-ink-mute ml-2">· what the data suggests you change</span>
+                    </h3>
+                    <span class="font-mono text-xs text-ink-mute">{toolSignals.length} signals</span>
+                </div>
+                <div class="grid gap-3" style="grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));">
                     {#each toolSignals as sig (sig.tool_name + sig.variant)}
                         <div data-testid={`signal-card-${sig.variant}`} data-tool={sig.tool_name}>
                             <SignalCard
@@ -727,7 +909,12 @@
             </div>
         {/if}
 
-        <div class="flex flex-col gap-1" data-testid="insights-table">
+        <!-- ── Per-tool usage table ─────────────────────────────────── -->
+        <div class="flex items-baseline justify-between mb-3">
+            <h3 class="display text-base font-normal m-0">Per-tool usage</h3>
+            <span class="font-mono text-xs text-ink-mute">{toolStats.length} tools · sorted by calls</span>
+        </div>
+        <div class="flex flex-col gap-1 border border-paper-mute rounded-md overflow-hidden bg-paper" data-testid="insights-table">
             <div class="grid grid-cols-[1fr_80px_80px_100px_120px] gap-3 px-3 py-2 text-xs text-ink-soft tracking-wide uppercase">
                 <span>Tool</span>
                 <span class="text-right">Calls</span>
