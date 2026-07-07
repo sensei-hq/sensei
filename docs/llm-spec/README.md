@@ -151,11 +151,11 @@ only, **todo** = not started.
 
 | Segment | Doc | Status | Notes |
 |---|---|---|---|
-| 01 Bootstrap | [screen/bootstrap-probing.md](screen/bootstrap-probing.md) | todo | |
-| 01 Bootstrap | [screen/bootstrap-green.md](screen/bootstrap-green.md) | todo | |
-| 02 First-run | [screen/first-run-scan.md](screen/first-run-scan.md) | todo | |
-| 02 First-run | [screen/first-entry-projects.md](screen/first-entry-projects.md) | todo | |
-| 02 Preferences | [screen/preferences.md](screen/preferences.md) | todo | Wizard rehab lands here; 8 panes |
+| 01 Bootstrap | [screen/bootstrap-probing.md](screen/bootstrap-probing.md) | **draft** | 6 gates, why-and-if-missing per row |
+| 01 Bootstrap | [screen/bootstrap-green.md](screen/bootstrap-green.md) | **draft** | Calm all-green, auto-transition |
+| 02 First-run | [screen/first-run-scan.md](screen/first-run-scan.md) | **draft** | The only first-time gate: pick roots |
+| 02 First-run | [screen/first-entry-projects.md](screen/first-entry-projects.md) | **draft** | Value-before-setup landing with banner |
+| 02 Preferences | [screen/preferences.md](screen/preferences.md) | **draft** | 8 panes, searchable, review cues |
 | 03 Observatory | [screen/observatory-today.md](screen/observatory-today.md) | **draft** | Today — the koan surface |
 | 03 Observatory | [screen/observatory-projects.md](screen/observatory-projects.md) | **draft** | The projects index rebuilt today |
 | 03 Observatory | [screen/observatory-sessions.md](screen/observatory-sessions.md) | **draft** | SessionsDigestZen — trend/stream/etc. variants |
