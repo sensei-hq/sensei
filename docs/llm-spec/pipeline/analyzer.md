@@ -77,6 +77,97 @@ Kanji is 分 — *to divide/analyse*.
 - Restart safety: watermark persisted after each tick; malformed
   entries in the JSON are dropped (not fatal).
 
+## Enrichment output — the full derived surface
+
+### FTR granularity
+
+FTR isn't just per-project. The analyzer produces four
+granularities from the same underlying `sessions.ftr` column:
+
+- **Per-project** — see [[pipeline/ftr]] north-star.
+- **Per-module** — corrections attributed to files touched in
+  each session; folded into `sensei.module_ftr` view.
+- **Per-pattern** — sessions grouped by which patterns they
+  followed / violated (see [[pipeline/patterns]]); FTR delta
+  computed. Feeds pattern effectiveness scoring.
+- **Trending** — 14-day rolling with a 4-week reference; the
+  sparkline strip the projects card shows.
+
+Materialised as:
+
+- `sensei.project_ftr_metrics` (existing view — 14d rolling)
+- `sensei.module_ftr` (per-project, per-folder-role)
+- `sensei.pattern_ftr` (per-pattern id, with observed
+  `ftr_delta`)
+- `sensei.ftr_trend_14d` (daily bucket for the sparkline)
+
+### Rework tracking
+
+The analyzer catches **rework hotspots** — files edited 3+
+times in the last 7 days across sessions.
+
+- Table: `inference.rework_items` — per file, count of edits +
+  distinct sessions + rewrote-shape flag (same lines coming
+  back after being changed).
+- Feeds Insights ("`api/auth.rs` edited 5× in 7d — pattern gap
+  or unclear requirement?").
+
+### Pattern-adherence correlation
+
+For each promoted pattern, does the session-FTR go up when the
+pattern is followed vs. violated?
+
+- Table: `sensei.pattern_effectiveness` — `pattern_id`,
+  `sessions_following`, `sessions_ignoring`, `ftr_following`,
+  `ftr_ignoring`, `ftr_delta` — recomputed on each
+  measure-verdicts tick.
+- If `ftr_delta` crosses `PATTERN_EFFECTIVE_MIN`, feeds
+  [[pipeline/insights]] source #2 as a promotion suggestion.
+- If `ftr_delta` is negative, feeds Insights as an anti-pattern
+  candidate.
+
+### God-node detection
+
+Structural risk detection from the code graph — files or
+functions with unusually high fan-in + fan-out. Uses the
+existing community-detection pass.
+
+- Table: `inference.god_nodes` — `node_id`,
+  `combined_score` (fan-in × fan-out), `detected_at`.
+- Feeds Insights as an architecture concern.
+
+### Module correction clustering
+
+When corrections cluster around one module (auth had 3
+corrections on refresh flow, all in `api/auth/refresh.rs`), the
+analyzer surfaces the cluster with the specific correction
+signatures.
+
+- Table: `inference.module_correction_clusters` — `module_id`,
+  `signatures[]`, `count`, `sessions[]`.
+- Feeds [[pipeline/insights]] source #1 with rich context — not
+  just "sessions have corrections" but "this module, this
+  signature, N sessions".
+
+### Recommendation engine (L2)
+
+`generate.rs` produces recommendation candidates. The archive
+identifies 5+ types (see [[pipeline/insights]] source list) —
+here's the mapping to what the analyzer emits:
+
+| Rec type | Trigger | Analyzer output |
+|---|---|---|
+| Create persona | Repeated correction signature with no persona covering it | `inference.recommendations` with `type=create_persona` |
+| Promote pattern | `pattern_ftr.ftr_delta >= threshold` | `type=promote_pattern` |
+| Enable skill | Repeated tool-lookup on a library that has a generated skill | `type=enable_skill` |
+| Audit stale | Memory `state=proposed` for > 30d with no new evidence | `type=audit_stale_memory` |
+| Extract helper | Duplication + rework cluster on same shape | `type=extract_helper` |
+| Fix doc drift | `inference.drift_items` with high confidence | `type=fix_drift` |
+| Wrap library | High usage + unwrapped | `type=wrap_library` |
+
+Each rec carries an `urgency` (`high | medium | low`) computed
+from `expected_ftr_delta × recency`.
+
 ## Signals produced
 
 The analyzer doesn't produce user-facing signals directly — it
