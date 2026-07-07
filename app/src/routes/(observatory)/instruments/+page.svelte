@@ -384,7 +384,7 @@
     <div class="kanji text-4xl text-accent leading-none">{currentTab.kanji}</div>
     <div class="flex-1 min-w-0">
         <div class="text-xs uppercase tracking-[0.18em] text-ink-mute mb-1">
-            Instruments · {tab}
+            Instruments · {currentTab.label}
         </div>
         <h1 class="display text-xl font-normal m-0 text-ink">{heroCopy.tagline}</h1>
         <p class="text-sm text-ink-soft leading-normal mt-1 mb-0 max-w-[680px]">
