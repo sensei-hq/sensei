@@ -2,6 +2,7 @@
 
 **Segment:** 04 · Project window — solution variant
 **Route:** `/solution/[id]/dashboard`
+**Source mockup:** _none yet — solution track has no dedicated mockup. Reuse the `ProjOverviewLite` primitive from `lib/project-lite-panes.jsx` for the card shape; the aggregate strip is greenfield._
 **Source design:** [`docs/archive/ideas/24-desktop-observatory.md`](../../archive/ideas/24-desktop-observatory.md) (Solution scope model)
 **App file:** `app/src/routes/solution/[id]/dashboard/+page.svelte`
 
@@ -88,4 +89,4 @@ Same shape as [[screen/project-overview]] but aggregated:
 - [[pipeline/governance]] — solution-scoped profile cascade
 - [[screen/project-overview]] — per-project peer
 - [[screen/solution-sessions]] · [[screen/solution-architecture]]
-- [[archive/ideas/24-desktop-observatory]] — source design
+- (archive: ideas/24-desktop-observatory.md) — source design

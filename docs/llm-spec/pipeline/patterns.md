@@ -86,7 +86,7 @@ Recognisers per pattern (adapter, plugin, observer/subscriber,
 strategy, factory, repository, decorator, trait/mixin).
 
 **Custom codebase patterns** — emerge from community detection
-([[project_ingest_scan_bug_batch]] memory). A labeled cluster
+((memory: project_ingest_scan_bug_batch) memory). A labeled cluster
 where members expose the same trait / shape becomes a
 `codebase.custom.*` pattern. User can name it from Project
 Patterns.
@@ -227,14 +227,14 @@ architectural option applies, present with tradeoffs.
 Same detection framework, three primary anti-pattern recognisers:
 
 - **Duplication** — reuses `get_duplicates` MCP tool
-  ([[project_p2_sweep_2026_07]]). Similarity > threshold →
+  ((memory: project_p2_sweep_2026_07)). Similarity > threshold →
   anti-pattern instance.
 - **Spaghetti coupling** — coupling metric > threshold.
 - **Broken layering** — imports crossing layers the wrong way.
 - **God object** — struct with method+field count above
   threshold.
 - **Dead code** — reachability analysis. See
-  [[project_p2_sweep_2026_07]] `#24 dead-code drop`.
+  (memory: project_p2_sweep_2026_07) `#24 dead-code drop`.
 
 ## Optimization opportunities
 
@@ -284,7 +284,7 @@ Same detection framework, three primary anti-pattern recognisers:
   spaghetti guarantee fails.
 - **Rokkit's data-driven-component pattern isn't ingested from
   `~/Developer/rokkit`.** Library pattern extraction regressed
-  (see [[project_mcp_libdocs_rokkit]]).
+  (see (memory: project_mcp_libdocs_rokkit)).
 - **Same pattern detected in two sources isn't deduped when the
   assistant reads `get_patterns`.** Assistant sees two entries,
   gets confused.
@@ -317,5 +317,5 @@ Same detection framework, three primary anti-pattern recognisers:
   / `match_pattern` / `get_pattern_options` /
   `get_project_conventions` tools
 - [[screen/project-patterns]] — human review + promote surface
-- [[project_ingest_scan_bug_batch]] (memory) — community detection
-- [[project_mcp_libdocs_rokkit]] (memory) — library ingestion
+- (memory: project_ingest_scan_bug_batch) (memory) — community detection
+- (memory: project_mcp_libdocs_rokkit) (memory) — library ingestion

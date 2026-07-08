@@ -118,4 +118,4 @@ raises a warning to the assistant via
 - [[pipeline/governance]] — TDD as a governance rule (P1
   recommended, promotable to P0)
 - [[screen/observatory-insights]] — where TDD proposals surface
-- [[archive/ideas/18-testability-tdd]] — source design
+- (archive: ideas/18-testability-tdd.md) — source design

@@ -1,4 +1,15 @@
-# 庫 · Pipeline · Libraries
+# 庫 · Pipeline · Libraries (operational surface)
+
+> **Scope note.** This spec covers the **operational surface** — the
+> tables the screens read, the detect/wrap/query/watch workflow,
+> and the user-visible actions. The ingestion internals
+> (per-source docs → pages → skill generation, version pinning
+> mechanics, custom-lib source parsing, drift-on-upgrade detection)
+> live in [[pipeline/library-intelligence]]. When implementers see
+> `sensei.libraries` / `sensei.library_pages` mentioned in both
+> docs, the shared tables are the coupling point; ownership stays
+> here for the schema and query surface, over in
+> library-intelligence for the ingestion writer.
 
 **Owner files:**
 - Detection: `crates/senseid/src/scan/library_detection.rs`
@@ -41,7 +52,7 @@ Kanji is 庫 — *repository / library*.
   `usage_count`, `first_seen_at`, `last_seen_at`.
 - Detection reads manifest files (`package.json`, `Cargo.toml`,
   `pyproject.toml`, `go.mod`, `Gemfile`, …) via the manifest
-  adapter (see [[project_manifest_adapter_direction]] memory) and
+  adapter (see (memory: project_manifest_adapter_direction) memory) and
   cross-references against code-level import counts. Manifest
   entry without imports = declared-not-used; imports without
   manifest = suspicious (git-vendored?).
@@ -83,7 +94,7 @@ resolved_at)`.
 ### Query
 
 MCP tools (already live per
-[[project_mcp_libdocs_rokkit]] memory):
+(memory: project_mcp_libdocs_rokkit) memory):
 
 - `get_lib_docs(name)` — library overview
 - `get_lib_docs(name, component)` — specific component docs
@@ -99,7 +110,7 @@ MCP tools (already live per
 | Wrap-me recommendation | [[pipeline/insights]] source #4 → Insights Now column |
 | Library-drift item on wrapper upgrade | [[pipeline/traceability]] drift items scoped to wrapper |
 | Doc lookup response | MCP query surface |
-| Version-conflict warning | `sensei.project_dependencies` view already exposes conflicts (see [[project_p2_sweep_2026_07]]) |
+| Version-conflict warning | `sensei.project_dependencies` view already exposes conflicts (see (memory: project_p2_sweep_2026_07)) |
 
 ## Done gate
 
@@ -155,7 +166,7 @@ curl -s 'http://localhost:7744/api/libraries' \
 - [[pipeline/mcp-surface]] — the query tools
 - [[screen/observatory-libraries]] — primary consumer
 - [[screen/project-libraries]] — project-scoped one-click wrap
-- [[project_mcp_libdocs_rokkit]] (memory) — the live ingestion
+- (memory: project_mcp_libdocs_rokkit) (memory) — the live ingestion
   work from 2026-06-30
-- [[project_manifest_adapter_direction]] (memory) — the manifest
+- (memory: project_manifest_adapter_direction) (memory) — the manifest
   adapter architecture

@@ -3,7 +3,7 @@
 **Owner files:**
 - Trace / probe: `crates/bootstrap/src/health/trace.rs`,
   `crates/bootstrap/src/probe/*` (see
-  [[project_p2_sweep_2026_07]] BootstrapTrace foundation)
+  (memory: project_p2_sweep_2026_07) BootstrapTrace foundation)
 - Resolvers per component: `crates/bootstrap/src/resolvers/{homebrew,postgres,ollama,components,db,daemon}.rs`
 - Hardware inspector: `crates/bootstrap/src/hardware.rs`
 - Tauri sidecar (app-only mode): `app/src-tauri/src/bootstrap_sidecar.rs`
@@ -61,9 +61,9 @@ Ollama model recommendation reads system RAM + CPU:
 
 | RAM | Recommendation | Backing model |
 |---|---|---|
-| ≥ 32 GB | `advanced` | gemma3:27b (or similar 20B+) |
-| 16 GB | `balanced` | gemma3:12b |
-| ≥ 8 GB | `lite` | gemma3:1b + nomic-embed-text |
+| ≥ 32 GB | `advanced` | gemma4:27b (or similar 20B+) |
+| 16 GB | `balanced` | gemma4:12b |
+| ≥ 8 GB | `lite` | gemma4:1b + nomic-embed-text |
 | < 8 GB | `no-inference` | gateway routes remote-only OR skips optional inference |
 
 User can override the recommendation in Preferences →
@@ -101,7 +101,7 @@ larger models, sensei can prefer that on next boot. See
 | Phase status stream | Bootstrap probing UI + Bootstrap green |
 | BootstrapTrace | `sensei.bootstrap_runs` for diagnosis |
 | Hardware profile | Preferences → Inference recommendation |
-| Health baseline | The signal every downstream health-check reads (see [[project_capture_watchdog]]) |
+| Health baseline | The signal every downstream health-check reads (see (memory: project_capture_watchdog)) |
 | Model available list | Inference chain configuration |
 
 ## Done gate
@@ -150,7 +150,7 @@ psql -A -t -c "select id, started_at, ended_at, status
 - [[screen/bootstrap-green]] — terminal state
 - [[pipeline/inferencing]] — Ollama model recommendation feeds
   chain config
-- [[project_capture_watchdog]] (memory) — health baseline
-- [[project_p2_sweep_2026_07]] (memory) — #39 BootstrapTrace
+- (memory: project_capture_watchdog) (memory) — health baseline
+- (memory: project_p2_sweep_2026_07) (memory) — #39 BootstrapTrace
   foundation shipped
-- [[archive/ideas/26-bootstrap-and-dependencies]] — source design
+- (archive: ideas/26-bootstrap-and-dependencies.md) — source design

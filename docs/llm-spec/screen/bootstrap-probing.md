@@ -57,7 +57,7 @@ Kanji is 支 — *support / foundation*.
   resolved list).
 - Instrumentation is captured via the `BootstrapTrace` /
   `TraceRecorder` primitives (see
-  [[project_p2_sweep_2026_07]] memory) so each gate's timing is
+  (memory: project_p2_sweep_2026_07) memory) so each gate's timing is
   observable after the fact.
 - Offline / proxy path: if network is required and unavailable,
   Homebrew and Ollama gates fall to `remedy` state with a
@@ -134,4 +134,4 @@ curl -s http://localhost:7744/api/bootstrap/status \
 - [[screen/bootstrap-green]] — the collapsed all-green state
 - [[screen/first-run-scan]] — where the flow goes next
 - [[pipeline/capture]] — the daemon that these gates prep
-- [[project_p2_sweep_2026_07]] (memory) — BootstrapTrace foundation
+- (memory: project_p2_sweep_2026_07) (memory) — BootstrapTrace foundation

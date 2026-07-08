@@ -144,5 +144,5 @@ curl -s http://localhost:7744/api/preferences/cues | jq 'length'
 - [[screen/first-entry-projects]] — link back to Preferences
 - [[pipeline/governance]] — Rules panel deep-links here
 - [[pipeline/dojo-lifecycle]] — Connection pane
-- [[project_wizard_rehab_pickup]] (memory) — W1-W12 shipped;
+- (memory: project_wizard_rehab_pickup) (memory) — W1-W12 shipped;
   W13 (WKWebView) deferred; W14 not merged
