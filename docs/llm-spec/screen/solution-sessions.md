@@ -28,10 +28,21 @@ Same as [[screen/project-sessions]] plus:
 
 ## Done gate
 
-- Every session across member projects appears.
+- Every session across member projects appears; the visible
+  session count equals `sum` over member projects of
+  `count(*) from activity.sessions where project_id = {id_i}
+  and started_at within range`.
 - Filter chips narrow correctly; totals row respects the
-  filter.
+  filter (e.g. selecting only `role = ui` matches
+  `count from sessions where folder_role = 'ui' and project_id
+  in {member_ids}`).
 - Row navigates to Replay scoped to the underlying session.
+
+Optional check:
+```
+curl -s "http://localhost:7744/api/sessions?solution={id}&range=7d" \
+  | jq '{n: length, by_role: (group_by(.folder_role) | map({role: .[0].folder_role, n: length}))}'
+```
 
 ## Wrong gate
 

@@ -44,12 +44,24 @@ cross-project graph edges from [[pipeline/capture]] and
 
 ## Done gate
 
-- Cross-project edges surface (UI project calling Backend
-  project's endpoint appears as an edge).
+- Cross-project edges surface on the `sensei` solution:
+  `edges | length >= 1` where `from.project_id !=
+  to.project_id`.
 - Focus mode highlights only the neighbours across the whole
   merged graph.
 - Doc-to-code edges from [[pipeline/traceability]] render as a
-  distinct edge kind.
+  distinct edge kind — filter by `kind = doc_link` returns a
+  non-empty set for any solution that has documented endpoints.
+- Community-collapsed mode auto-engages when the merged graph
+  has more than 500 nodes (threshold — falsifiable).
+
+Optional check:
+```
+curl -s http://localhost:7744/api/solutions/{id}/architecture \
+  | jq '{n_nodes: (.nodes | length),
+         n_edges: (.edges | length),
+         cross_project: [.edges[] | select(.from_project != .to_project)] | length}'
+```
 
 ## Wrong gate
 

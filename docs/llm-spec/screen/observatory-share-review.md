@@ -52,12 +52,23 @@ Kanji is 送 — *to send*.
 
 ## Done gate
 
-- Every item queued for the next batch appears here.
-- Attribution shows `will_dereference: true` for client work
-  with no override.
-- Trigger-now on manual cadence sends immediately.
-- Held items persist across sessions until manually released.
+- Every item queued for the next batch appears here; the visible
+  count matches `select count(*) from dojo.upstream_queue where
+  state = 'queued'`.
+- Attribution shows `will_dereference: true` for client work with
+  no override; the API rejects a POST that tries to override.
+- Trigger-now on manual cadence sends immediately; batches over
+  10 items require a confirmation dialog.
+- Held items persist across daemon restart until manually
+  released.
 - Edit updates the payload without dropping attribution rules.
+
+Optional check:
+```
+curl -s http://localhost:7744/api/share-review/next-batch \
+  | jq '{destination, cadence, n_queued: (.items | length),
+         n_held: [.items[] | select(.state=="held")] | length}'
+```
 
 ## Wrong gate
 
