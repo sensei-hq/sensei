@@ -390,6 +390,12 @@ wrong-gate-hunter → sensei-persona-reviewer → commit). NOT merged to main (J
   NOT `inference.detected_patterns` (that's project-window teachings).
   `/api/observatory/today` + `/ftr` both 404 → build as new handlers.
 
+## ✅ PHASE 1 MILESTONE (2026-07-08): Slot 2 shipped `6336dc6a` + RELEASED v0.2.24 (`a43c4657`)
+Released all 6 completed screens (Today/Projects/Overview/Insights/Sessions + Instruments-Health).
+`make bump` clean: tag v0.2.24 pushed, dbd cache cleared, subtrees synced (homebrew-tap 02c1970,
+marketplace ed81a5f). GitHub Actions building artifacts. NEXT: merge develop→main (0 conflicts;
+main's extra commits are just merge-commit history), then PHASE 2 (make shipped screens real).
+
 ## Slot 2 UN-PARKED — Jerry decided the data model (2026-07-08)
 User authorized the capture/DDL build (overrides run off-limits). DECISION:
 - **Unified inventory + typed config.** New `sensei.assistant_tools` table = one row per
