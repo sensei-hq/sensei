@@ -16,7 +16,8 @@
 //! What is NOT pruned:
 //!   - `inference.detected_patterns` / `recommendations` / `reasoning_traces`
 //!   - `sensei.memories`
-//!   The analyzer already distilled those; they survive the raw-event window.
+//!
+//! The analyzer already distilled those; they survive the raw-event window.
 
 use std::sync::Arc;
 use std::time::Duration;
