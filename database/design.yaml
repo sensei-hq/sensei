@@ -32,8 +32,17 @@ scopes:
     includes: [hive, sensei.enforcement]
     deps: include
     extensions: []      # vector-free: the embedded hive PG lacks pgvector
+  dojo:
+    # The Dōjō SaaS layer (issue: Dōjō track, Fork 1). dojo.* lives in the
+    # Dōjō Rust service's own Postgres — a separate logical DB from the daemon's
+    # `sensei` DB and from `hive`. Self-contained: every FK stays inside the dojo
+    # schema (no cross-schema refs), so no `deps` closure reaches out. The only
+    # sensei-side link is sensei.projects.dojo_id, a plain uuid (no cross-DB FK).
+    includes: [dojo]
+    deps: include
+    extensions: []      # vector-free service DB, like hive
   default:
-    excludes: [hive]
+    excludes: [hive, dojo]
     deps: include
 import:
   staging:
