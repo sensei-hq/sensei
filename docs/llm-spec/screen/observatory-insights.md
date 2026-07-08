@@ -12,9 +12,9 @@ knowledge base — they want to know **what needs them, what's
 working, and what's quiet, in that order**. The mockup answers with
 three columns:
 
-- **Now** (今) — violations, high-impact recommendations, top
+- **Now** (今) — violations, high-urgency recommendations, top
   corrections. This is where the day's decisions live.
-- **Soon** (近) — emerging patterns, medium-impact recs, challenged
+- **Soon** (近) — emerging patterns, medium-urgency recs, challenged
   memories. Read once, revisit if the story clarifies.
 - **Settled** (定) — battle-tested memories, sorted by strength.
   Browsable but low-noise. This is the "how we work here" shelf.
@@ -30,10 +30,13 @@ Kanji is 今 — *now*.
 
 ## Data invariants
 
-- `GET /api/insights` returns:
+- `GET /api/insights` is a **new endpoint** (not yet in routes.rs; must be built).
+  It is a server-side aggregator that bundles three sources into Now / Soon / Settled
+  columns, cross-project by default. Pass `?project=<name-or-uuid>` to scope all
+  three columns to a single project. It returns:
   ```json
   {
-    "counts": { "now": N, "soon": N, "settled": N, "archived": N },
+    "counts": { "now": N, "soon": N, "settled": N },
     "projects": [ { "id": "…", "name": "…", "kanji": "…" }, … ],
     "memories": [ Memory, … ],
     "recommendations": [ Recommendation, … ],
@@ -41,24 +44,32 @@ Kanji is 今 — *now*.
     "corrections": [ Correction, … ]
   }
   ```
-- Bucketing (server-side; the UI trusts the label):
-  - **Now**: violations (`m.violated > 0 && m.state != "archived"`) +
-    recs with `impact === "high"` + top 3 corrections
-  - **Soon**: recs with `impact === "medium"` + emerging patterns
-    (`p.kind === "emerging"`) + memories with `m.state === "challenged"`
-  - **Settled**: memories with `m.state in ("battle-tested", "reinforced")`
-    AND `m.violated === 0`, sorted by `strength` desc
+- Sources and bucketing (server-side; the UI trusts the label):
+  - **recommendations** — `inference.recommendations` WHERE `status = 'pending'`,
+    bucketed by `urgency`: `'high'` → Now, `'medium'` → Soon, `'low'` → Settled.
+    Each card carries `project_id` + project name (for the action URL and scope chip).
+  - **memories** — `sensei.memories`, bucketed by `status` (`memory_status` enum):
+    - violations (`m.violated_count > 0 && m.status != 'archived'`) → Now
+    - `'proposed'` → Soon
+    - in-force (`'active'` / `'reinforced'` / `'battle_tested'`) → Settled, sorted by `strength` desc
+  - **patterns** — `inference.detected_patterns`, bucketed by `lifecycle`:
+    `'suggested'` → Soon, `'rule'` → Settled.
+  - **corrections** — top 3 by count from `inference.corrections` → Now.
 - Every recommendation, memory, and pattern carries a stable `id`
   used for the accept/reject actions.
 - Every card's user-facing text (title, body, impact sentence)
   reaches through [[pipeline/insight-copy]] — templated fallbacks
   are labelled as such.
-- Actions map to daemon endpoints:
-  - `POST /api/insights/recommendations/{id}/accept` → schedules
-    a `MeasureVerdicts` follow-up
-  - `POST /api/insights/recommendations/{id}/reject`
-  - `POST /api/insights/memories/{id}/reinforce` / `challenge` /
-    `archive`
+- Actions map to daemon endpoints (each card carries its own `project_id`):
+  - Apply → `POST /api/projects/{project_id}/recommendations/{rec_id}/accept`
+    (already exists in `project_detail.rs`; schedules a `MeasureVerdicts` follow-up
+    so before/after FTR is captured automatically)
+  - Dismiss → `POST /api/projects/{project_id}/recommendations/{rec_id}/reject`
+  - Review → navigate to the recommendation/impact detail — no write call
+  - Memory write-actions (reinforce / challenge / archive) are **display-only /
+    deferred** for this screen. Only `/api/knowledge/memories/{id}/promote` exists
+    today; the other endpoints are not yet built. Memories in Settled are shown as
+    adopted learnings, not triaged here.
 
 ## Signals shown
 
@@ -67,10 +78,10 @@ Kanji is 今 — *now*.
 | Project filter chip strip | project name + kanji + count | Narrows all three columns |
 | Triage-stats row | `{now.count} · {soon.count} · {settled.count}` | Header micro-KPI |
 | Now-column card: ViolationCard | violated memory + affected sessions | Highest signal — always focal in Now |
-| Now-column card: RecCardSlim (impact=high) | rec title + impact sentence + Apply/Review/Dismiss | Universal Apply-verb; recommended action highlighted |
+| Now-column card: RecCardSlim (urgency='high') | rec title + impact sentence + Apply/Review/Dismiss | Universal Apply-verb; recommended action highlighted |
 | Now-column card: CorrectionMini | one of the top-3 corrections | Signals cluster of same-shape mistakes |
-| Soon-column card: RecCardSlim (impact=medium) | slower-decision rec | Deferred but not dismissed |
-| Soon-column card: PatternMini | emerging pattern (>0 instances, unpromoted) | Not yet a rule; browsable |
+| Soon-column card: RecCardSlim (urgency='medium') | slower-decision rec | Deferred but not dismissed |
+| Soon-column card: PatternMini | `lifecycle = 'suggested'` pattern from `inference.detected_patterns` (>0 instances, unpromoted) | Not yet a rule; browsable |
 | Soon-column card: ChallengedMini | memory contested by recent evidence | Needs a "keep / retire" decision |
 | Settled-column list: memory row | scoped memory + strength bar | Sorted by strength desc |
 | Empty-column copy | "nothing urgent." / "nothing brewing." / "nothing yet." | Quiet-state copy from the mockup — not "no data" or "loading" |
@@ -81,8 +92,8 @@ Kanji is 今 — *now*.
   bucketing — every card ends up in the right column per the rules
   above.
 - The project filter narrows all three columns in step; the
-  `all` projection is the default; per-project scoping honors the
-  `scope.project` field.
+  cross-project view is the default; passing `?project=<name-or-uuid>`
+  scopes all three columns to a single project.
 - Every recommendation card exposes the same three verbs (Apply /
   Review / Dismiss) with **one** verb highlighted as recommended
   (the mockup's one-decision-one-default theme).
@@ -97,7 +108,7 @@ Kanji is 今 — *now*.
 Optional check:
 ```
 curl -s http://localhost:7744/api/insights | jq '{now: .counts.now, soon: .counts.soon, settled: .counts.settled}'
-# expected: sum matches total memories + recs + corrections that pass their filters
+# expected: .now >= 1  (337 pending recs exist, so Now must be non-empty)
 ```
 
 ## Wrong gate
@@ -112,7 +123,7 @@ curl -s http://localhost:7744/api/insights | jq '{now: .counts.now, soon: .count
 - **Recommended verb varies from card to card without semantic
   reason.** The default-picker is inconsistent — should be a stable
   function of the card type.
-- **A memory in Settled with `violated > 0`.** Bucketing rule
+- **A memory in Settled with `violated_count > 0`.** Bucketing rule
   broken — Settled requires zero live violations.
 - **"Apply" changes the state but the Impact screen shows no
   measured verdict a day later.** MeasureVerdicts is not being

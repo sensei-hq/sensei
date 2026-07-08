@@ -605,6 +605,78 @@ export interface Recommendation {
   measured_at?: string | null;
 }
 
+// ── Observatory · Insights (Learnings triage) ──────────────────────────────
+// Wire shapes for `GET /api/insights` — the server-side triage aggregator.
+// Every item carries a server-assigned `column` ("now" | "soon" | "settled");
+// the client trusts that label and never re-buckets.
+
+export type InsightColumn = 'now' | 'soon' | 'settled';
+
+/** Project reference for the filter-chip strip. */
+export interface InsightProjectRef {
+  id: string;
+  name: string;
+  kanji: string;
+}
+
+/** A pending recommendation, pre-bucketed. `name` is the project name;
+ *  `impact` is a plain-language sentence (may be null). */
+export interface InsightRecommendation {
+  id: string;
+  urgency: string;
+  title: string;
+  why: string | null;
+  impact: string | null;
+  evidence: string[];
+  project_id: string;
+  name: string;
+  column: InsightColumn;
+}
+
+/** A memory row. Violated (`violated_count > 0`) memories land in Now;
+ *  in-force memories in Settled sorted by strength. */
+export interface InsightMemory {
+  id: string;
+  status: string;
+  title: string;
+  content: string;
+  violated_count: number;
+  strength: number;
+  scope: string;
+  project_id: string;
+  column: InsightColumn;
+}
+
+/** A detected pattern. `lifecycle` = "suggested" (Soon) | "rule" (Settled). */
+export interface InsightPattern {
+  id: string;
+  name: string;
+  family: string | null;
+  lifecycle: string;
+  instance_count: number;
+  project_id: string;
+  column: InsightColumn;
+}
+
+/** A recurring correction cluster (top-N by count → Now). */
+export interface InsightCorrection {
+  id: string;
+  text: string;
+  suggestion: string | null;
+  count: number;
+  column: InsightColumn;
+}
+
+/** The whole triage board in one payload. */
+export interface InsightsBoard {
+  counts: { now: number; soon: number; settled: number };
+  projects: InsightProjectRef[];
+  recommendations: InsightRecommendation[];
+  memories: InsightMemory[];
+  patterns: InsightPattern[];
+  corrections: InsightCorrection[];
+}
+
 export interface ProjectSession {
   id: string;
   task: string;

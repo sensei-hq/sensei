@@ -12,6 +12,7 @@ import type {
   ProjectMcpToolStat, ToolSignal, ProjectService, ToolInsight,
   SessionReplayResponse, McpServerRow, McpServerToolsManifest,
   ObservatoryToday, ObservatoryFtr, ProjectOverview,
+  InsightsBoard,
 } from './types.js';
 import type {
   MemoryListResponse, MemoryDetail, ContextResponse,
@@ -357,6 +358,20 @@ export function senseiApi(port: number) {
     rejectProjectRecommendation: (id: string, recId: string) =>
       post<{ ok: boolean }>(
         `/api/projects/${enc(id)}/recommendations/${enc(recId)}/reject`, {}, { ok: false },
+      ),
+
+    // ── Observatory · Insights (Slot 5) ─────────────────────────────────
+    // Server-side triage aggregator: bundles recs, memories, patterns and
+    // corrections pre-bucketed into Now / Soon / Settled. `project` scopes
+    // all three columns to one project (name-or-uuid). Fallback is the empty
+    // board so a daemon hiccup renders the quiet-state, never a broken screen.
+    getInsights: (project?: string) =>
+      get<InsightsBoard>(
+        `/api/insights${project ? `?project=${enc(project)}` : ''}`,
+        {
+          counts: { now: 0, soon: 0, settled: 0 },
+          projects: [], recommendations: [], memories: [], patterns: [], corrections: [],
+        },
       ),
 
     getProjectSessions: (id: string, limit = 50) =>
