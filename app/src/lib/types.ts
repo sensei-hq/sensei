@@ -288,8 +288,22 @@ export interface ProjectListItem {
   goal?: string | null;
   maturity: string;
   stack: { languages?: string[]; frameworks?: string[]; runtimes?: string[]; services?: string[] };
-  icon?: { kind: string; value: string };
+  /** Small icon union. `kind:"kanji"` → `value` is a single glyph;
+   *  `kind:"image"` → `value` is a URL/path from the project-icon pipeline.
+   *  The wire may send an empty `{}` (nothing inferred yet) or `null`. */
+  icon?: { kind?: string; value?: string } | null;
   preferred_acp?: string;
+  /** Project "purpose" text — sourced from `sensei.projects.goal` and
+   *  exposed by the list endpoint as `vision`. Null when absent. */
+  vision?: string | null;
+  /** COUNT of the project's repo-root folders (not nested subfolders). */
+  repos_count?: number;
+  /** COUNT of the project's linked libraries. */
+  libs_count?: number;
+  /** MAX(sessions.started_at) for the project, ISO. Null when never run. */
+  last_session_at?: string | null;
+  /** COUNT of sessions in the last 7 days. Also available via the /ftr fanout. */
+  sessions7d?: number;
   [key: string]: unknown;
 }
 
@@ -461,6 +475,86 @@ export interface SessionData {
   benchmarkPairs: unknown[];
 }
 
+// ── Observatory · Sessions digest (Slot 6) ────────────────────────────────
+// Wire shape for the range/project-scoped `GET /api/sessions?range=&project=`.
+// `outcome` is the real `sensei.session_outcome` enum; `agent` is the captured
+// assistant family ("claude" / "zed"). `ftr` is a boolean on this endpoint
+// (true = first-try-right) or null when the session isn't scored yet.
+export type SessionOutcome =
+  | 'completed' | 'corrected' | 'blocked' | 'partial' | 'abandoned';
+
+export interface SessionRow {
+  id: string;
+  project: string | null;
+  task: string;
+  summary: string | null;
+  // Kept string-tolerant so an unrecognized daemon enum value renders neutral
+  // rather than throwing — the quality mapper handles the known five.
+  outcome: SessionOutcome | string;
+  ftr: boolean | null;
+  turns: number;
+  corrections: number;
+  startedAt: string;
+  completedAt: string | null;
+  agent: string | null;
+}
+
+export interface SessionsDigest {
+  sessions: SessionRow[];
+}
+
+// ── Observatory · Today (home screen) ──────────────────────────────────────
+// Wire shapes for GET /api/observatory/today and /api/observatory/ftr. The
+// daemon owns the early/mature decision and the koan/insights/adopted
+// assembly — the screen renders these fields, it does not derive them.
+export interface ObservatoryTodayHero {
+  kanji: string;
+  koan: string;
+  body: string;
+  /** Projected effect, e.g. "Projected FTR +14%". Null when not quantified. */
+  impact: string | null;
+  /** Next-step CTA label. Null in the early state (no confident action yet). */
+  action: string | null;
+  /** Provenance, e.g. "from s-2891 · s-2889". May be empty. */
+  source: string;
+  /** Relative recency, e.g. "noticed 2 days ago". May be empty. */
+  noticed: string;
+}
+
+export interface ObservatoryInsight {
+  kanji: string;
+  label: string;
+  text: string;
+  tag: string;
+  tone: 'warn' | 'good' | 'mute';
+}
+
+export interface ObservatoryAdopted {
+  when: string;
+  what: string;
+  scope: string;
+  source: string;
+}
+
+export interface ObservatoryToday {
+  greeting: string;
+  today: string;
+  dataMaturity: 'early' | 'mature';
+  hero: ObservatoryTodayHero;
+  insights: ObservatoryInsight[];
+  adopted: ObservatoryAdopted[];
+  // Daemon-selected recent sessions in the standard wire-session shape; the
+  // page re-shapes them via toRecentSessions for the RecentSessions template.
+  recentSessions: SessionData['sessions'];
+}
+
+export interface ObservatoryFtr {
+  ftr14d: number;
+  ftr14dPrev: number;
+  ftrTrend: number[];
+  sessions7d: number;
+}
+
 export interface IndexError {
   repo_id: string;
   file_path: string;
@@ -537,6 +631,78 @@ export interface Recommendation {
   current_ftr?: number | null;
   acted_at?: string | null;
   measured_at?: string | null;
+}
+
+// ── Observatory · Insights (Learnings triage) ──────────────────────────────
+// Wire shapes for `GET /api/insights` — the server-side triage aggregator.
+// Every item carries a server-assigned `column` ("now" | "soon" | "settled");
+// the client trusts that label and never re-buckets.
+
+export type InsightColumn = 'now' | 'soon' | 'settled';
+
+/** Project reference for the filter-chip strip. */
+export interface InsightProjectRef {
+  id: string;
+  name: string;
+  kanji: string;
+}
+
+/** A pending recommendation, pre-bucketed. `name` is the project name;
+ *  `impact` is a plain-language sentence (may be null). */
+export interface InsightRecommendation {
+  id: string;
+  urgency: string;
+  title: string;
+  why: string | null;
+  impact: string | null;
+  evidence: string[];
+  project_id: string;
+  name: string;
+  column: InsightColumn;
+}
+
+/** A memory row. Violated (`violated_count > 0`) memories land in Now;
+ *  in-force memories in Settled sorted by strength. */
+export interface InsightMemory {
+  id: string;
+  status: string;
+  title: string;
+  content: string;
+  violated_count: number;
+  strength: number;
+  scope: string;
+  project_id: string;
+  column: InsightColumn;
+}
+
+/** A detected pattern. `lifecycle` = "suggested" (Soon) | "rule" (Settled). */
+export interface InsightPattern {
+  id: string;
+  name: string;
+  family: string | null;
+  lifecycle: string;
+  instance_count: number;
+  project_id: string;
+  column: InsightColumn;
+}
+
+/** A recurring correction cluster (top-N by count → Now). */
+export interface InsightCorrection {
+  id: string;
+  text: string;
+  suggestion: string | null;
+  count: number;
+  column: InsightColumn;
+}
+
+/** The whole triage board in one payload. */
+export interface InsightsBoard {
+  counts: { now: number; soon: number; settled: number };
+  projects: InsightProjectRef[];
+  recommendations: InsightRecommendation[];
+  memories: InsightMemory[];
+  patterns: InsightPattern[];
+  corrections: InsightCorrection[];
 }
 
 export interface ProjectSession {
@@ -838,6 +1004,35 @@ export interface ProjectService {
   globalEnabled: boolean | null;
 }
 
+// ─── Instruments · Health L1 source grid ─────────────────────────────────────
+// Shape of GET /api/instruments/tools-health — one row per registered source
+// (a builtin assistant tool set, or a probed MCP server). Drives the L1
+// "which sources earn their keep?" grid on the Instruments · Health surface.
+
+export interface ToolHealthSource {
+  assistant_family: string;
+  source_type: 'mcp' | 'builtin';
+  source_key: string;
+  name: string;
+  /** Normalised connection flag — the UI's primary discriminator. */
+  connected: boolean;
+  /** Raw enum from sensei.mcp_servers (unknown|connected|error|disabled), or
+   *  null for builtin / never-probed sources. */
+  connection_state: string | null;
+  server_id: string | null;
+  /** Null when the server was never probed — the card must then show
+   *  `registered —` and omit the share bar (share_invoked is also null). */
+  tools_registered: number | null;
+  tools_invoked_14d: number;
+  calls_14d: number;
+  /** tools_invoked_14d / tools_registered for probed sources; null otherwise. */
+  share_invoked: number | null;
+}
+
+export interface ToolsHealth {
+  sources: ToolHealthSource[];
+}
+
 // ─── Cached tool insights (T2 Slice D) ───────────────────────────────────────
 
 export interface ToolInsight {
@@ -865,4 +1060,69 @@ export interface ToolInsight {
   variant: SignalVariant | null;
   title: string | null;
   detail: string | null;
+}
+
+// ─── Project window · Overview (Slot 4) ──────────────────────────────────────
+// Shape of GET /api/projects/{id}/overview — a server-side assembler that
+// composes the project window's landing pane from several sources. The wire is
+// camelCase throughout, except the top-level `top_recommendation` key.
+
+export interface ProjectOverviewFolder {
+  id: string;
+  name: string;
+  /** Folder-project membership role (backend/frontend/library/…); null when
+   *  the folder has no assigned role. */
+  role: string | null;
+  primary: boolean;
+}
+
+export interface ProjectOverviewHeader {
+  id: string;
+  name: string;
+  /** Single glyph from the project's icon; 場 when nothing is set. */
+  kanji: string;
+  client: string | null;
+  goal: string | null;
+  /** 14-day rolling FTR, 0..1 — same project_ftr_metrics view the
+   *  projects-index card reads, so the two numbers never disagree. */
+  ftr: number;
+  warn: boolean;
+  sessions7d: number;
+  folders: ProjectOverviewFolder[];
+}
+
+export interface ProjectOverviewTopRec {
+  id: string;
+  title: string;
+  why: string;
+  /** Session ids backing the recommendation; may be empty. */
+  evidence: string[];
+  /** Preferred ACP to route the rec to; null when none is set. */
+  defaultAcp: string | null;
+}
+
+export interface ProjectOverviewStats {
+  sessions7d: number;
+  sessions7dCorrected: number;
+  memories: { total: number; readyToShare: number; toMerge: number };
+  docDrift: { open: number; referencedDocs: number };
+}
+
+export interface ProjectOverviewSession {
+  id: string;
+  title: string;
+  startedAt: string;
+  completedAt: string | null;
+  corrections: number;
+  ftr: boolean;
+  /** Folder role for the repo this session touched; null for single-repo
+   *  projects or unassigned folders. */
+  role: string | null;
+}
+
+export interface ProjectOverview {
+  project: ProjectOverviewHeader;
+  top_recommendation: ProjectOverviewTopRec | null;
+  stats: ProjectOverviewStats;
+  recentSessions: ProjectOverviewSession[];
 }

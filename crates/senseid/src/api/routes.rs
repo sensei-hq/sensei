@@ -75,6 +75,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/projects/{id}/tags/{tag}", delete(observatory::remove_solution_tag))
         // Project detail endpoints (multi-window)
         .route("/api/projects/{id}/ftr",             get(project_detail::get_project_ftr))
+        .route("/api/projects/{id}/overview",        get(project_detail::get_project_overview))
         .route("/api/projects/{id}/drift",           get(project_detail::get_project_drift))
         .route("/api/projects/{id}/drift/scan",      post(project_detail::scan_project_doc_drift))
         .route("/api/projects/{id}/patterns",        get(project_detail::get_project_patterns))
@@ -111,6 +112,9 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/observatory/tool-signals",          get(observatory::tool_signals))
         .route("/api/observatory/tool-insights",         get(observatory::tool_insights))
         .route("/api/observatory/model-effectiveness",   get(observatory::model_effectiveness))
+        .route("/api/observatory/today",                 get(observatory::observatory_today))
+        .route("/api/observatory/ftr",                   get(observatory::observatory_ftr))
+        .route("/api/insights",                          get(observatory::get_insights))
         .route("/api/projects/{id}/ftr-daily",           get(observatory::project_ftr_daily))
         .route("/api/projects/{id}/hotspots",            get(observatory::project_hotspots))
         .route("/api/projects/{id}/quality-signals",     get(observatory::project_quality_signals))
@@ -164,6 +168,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/instruments/mcp-servers/{id}/enabled", put(mcp_servers_handler::set_enabled))
         .route("/api/instruments/mcp-servers/{id}/tools", get(mcp_servers_handler::get_tools))
         .route("/api/instruments/mcp-servers/refresh", post(mcp_servers_handler::refresh))
+        .route("/api/instruments/tools-health", get(crate::api::handlers::tools_health::grid))
+        .route("/api/instruments/tools/refresh", post(crate::api::handlers::tools_health::refresh))
         // Unified query (desktop/MCP)
         .route("/api/query", post(query::unified_query))
         // MCP tool proxy
@@ -192,7 +198,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/config/{key}", get(config::get_config_key).delete(config::delete_config_key))
         // Sessions
         .route("/api/sessions", get(sessions::get_sessions_stub).post(sessions::create_session))
-        .route("/api/sessions/{id}", put(sessions::update_session_handler))
+        .route("/api/sessions/{id}", get(sessions::get_session).put(sessions::update_session_handler))
         .route("/api/sessions/{id}/tool-timeline", get(sessions::get_session_tool_timeline))
         .route("/api/sessions/{id}/replay", get(sessions::get_session_replay))
         // Patterns

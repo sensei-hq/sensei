@@ -7,10 +7,29 @@ use crate::api::state::AppState;
 
 // ── Sessions ────────────────────────────────────────────────────────────────
 
+/// Map a range chip to a day cutoff for the Observatory · Sessions digest.
+/// `"7d"`/`"30d"`/`"90d"` → the day count; anything else (or absent) → `None`
+/// (no time filter). Pure so it is unit-tested without a DB.
+pub(crate) fn range_to_days(range: Option<&str>) -> Option<i64> {
+    match range {
+        Some("7d") => Some(7),
+        Some("30d") => Some(30),
+        Some("90d") => Some(90),
+        _ => None,
+    }
+}
+
 pub(crate) async fn get_sessions_stub(
     State(state): State<AppState>,
     Query(q): Query<std::collections::HashMap<String, String>>,
 ) -> Json<serde_json::Value> {
+    let range_days = range_to_days(q.get("range").map(String::as_str));
+    // `?project=<name-or-uuid>` scopes the digest to one project (honours the
+    // name-or-UUID contract). An unresolvable name yields None → no scope.
+    let project = match q.get("project") {
+        Some(p) => crate::api::util::resolve_project_uuid(&state, p).await,
+        None => None,
+    };
     // PgStore uses list_sessions_by_folder(&Uuid, limit) instead of get_sessions(repo_id)
     let sessions = if let Some(folder_str) = q.get("repoId") {
         if let Ok(folder_id) = uuid::Uuid::parse_str(folder_str) {
@@ -19,7 +38,9 @@ pub(crate) async fn get_sessions_stub(
             vec![]
         }
     } else {
-        state.pg.list_all_sessions(50).await.unwrap_or_default()
+        // 500 comfortably covers the real corpus within any range window; range +
+        // project narrow it. The digest aggregates these client-side per day.
+        state.pg.list_all_sessions(500, range_days, project.as_ref()).await.unwrap_or_default()
     };
     let total = sessions.len();
     let completed = sessions.iter().filter(|s| s["outcome"].as_str() == Some("completed")).count();
@@ -47,6 +68,24 @@ pub(crate) async fn create_session(
     match state.pg.create_session(&folder_id, task, acp_id).await {
         Ok(id) => Json(serde_json::json!({"ok": true, "id": id})),
         Err(e) => Json(serde_json::json!({"ok": false, "error": e})),
+    }
+}
+
+/// GET /api/sessions/{id} — one session row by UUID. Powers hero.source and
+/// recent-session link resolution on the Observatory · Today screen. Honors the
+/// session-id contract: a well-formed UUID with no row yields 404, not a 500.
+pub(crate) async fn get_session(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let uuid = uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?;
+    match state.pg.get_session(&uuid).await {
+        Ok(Some(row)) => Ok(Json(row)),
+        Ok(None) => Err(StatusCode::NOT_FOUND),
+        Err(e) => {
+            tracing::error!(error = %e, session = %id, "get_session failed");
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
     }
 }
 
@@ -319,4 +358,23 @@ pub(crate) async fn update_workflow_state(
     }
 
     Json(serde_json::json!({"ok": true}))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::range_to_days;
+
+    #[test]
+    fn range_to_days_maps_known_chips() {
+        assert_eq!(range_to_days(Some("7d")), Some(7));
+        assert_eq!(range_to_days(Some("30d")), Some(30));
+        assert_eq!(range_to_days(Some("90d")), Some(90));
+    }
+
+    #[test]
+    fn range_to_days_none_for_unknown_or_absent() {
+        assert_eq!(range_to_days(Some("1y")), None);
+        assert_eq!(range_to_days(Some("")), None);
+        assert_eq!(range_to_days(None), None);
+    }
 }

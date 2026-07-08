@@ -1,0 +1,74 @@
+<script lang="ts">
+  // A project as a single screen-line. Four columns: icon · name-block ·
+  // signal · repos/libs. The name block carries the same identity elements
+  // as the card (dot, name, client + status pills) plus a one-line vision;
+  // the vision truncates with an ellipsis so the row never wraps to two
+  // lines. Presentational only.
+  import type { EnrichedProject } from './buckets.js';
+  import { projectStatus, projectIcon, lastSessionLabel } from './buckets.js';
+  import ProjPill from './ProjPill.svelte';
+  import ProjectDot from './ProjectDot.svelte';
+
+  let {
+    p,
+    onOpen,
+    last = false,
+  }: {
+    p: EnrichedProject;
+    onOpen?: (id: string, name: string) => void;
+    last?: boolean;
+  } = $props();
+
+  const status = $derived(projectStatus(p));
+  const icon = $derived(projectIcon(p));
+  const ftrPct = $derived(Math.round(p.ftr14d * 100));
+</script>
+
+<button
+  type="button"
+  data-project-row={p.id}
+  data-status={status}
+  onclick={() => onOpen?.(p.id, p.name)}
+  class="w-full text-left bg-transparent hover:bg-paper-mute grid grid-cols-[auto_1fr_auto_auto] items-center gap-3 py-3 px-4 cursor-pointer text-inherit"
+  class:border-b={!last}
+  class:border-paper-edge={!last}
+  class:opacity-60={status === 'archived'}
+>
+  <!-- col 1 — icon -->
+  {#if icon.kind === 'image'}
+    <img src={icon.src} alt="" class="w-[18px] h-[18px] object-contain rounded-sm shrink-0" />
+  {:else}
+    <span class="kanji text-accent text-[18px] leading-none shrink-0">{icon.glyph}</span>
+  {/if}
+
+  <!-- col 2 — name block -->
+  <div class="min-w-0">
+    <div class="flex items-center gap-2">
+      <ProjectDot ftr={p.ftr14d} warn={p.warn} />
+      <span class="text-[13px] text-ink truncate">{p.name}</span>
+      {#if p.client}
+        <ProjPill text={p.client} />
+      {/if}
+      {#if status !== 'active'}
+        <ProjPill text={status} tone="dormant" />
+      {/if}
+    </div>
+    {#if p.vision}
+      <div data-vision class="text-[12px] text-ink-mute leading-snug mt-0.5 truncate">{p.vision}</div>
+    {/if}
+  </div>
+
+  <!-- col 3 — signal -->
+  <div class="font-mono text-[11px] text-right tabular-nums whitespace-nowrap">
+    {#if status === 'active'}
+      <span class:text-warning={p.warn} class:text-ink-soft={!p.warn}>{ftrPct}% ftr</span>
+    {:else}
+      <span class="text-ink-faint">last · {lastSessionLabel(p.last_session_at)}</span>
+    {/if}
+  </div>
+
+  <!-- col 4 — repos · libs -->
+  <div class="font-mono text-[11px] text-ink-faint text-right tabular-nums whitespace-nowrap min-w-[78px]">
+    {p.repos_count} repos · {p.libs_count} libs
+  </div>
+</button>

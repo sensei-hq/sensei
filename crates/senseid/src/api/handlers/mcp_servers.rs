@@ -117,7 +117,7 @@ pub(crate) async fn get_tools(
             .collect())
         .unwrap_or_default();
 
-    let outcome = crate::tasks::mcp_probe::probe_tools(&command, &args, &env).await;
+    let outcome = crate::tasks::mcp_probe::probe_tools(&command, &args, &env, None).await;
 
     match outcome {
         crate::tasks::mcp_probe::ProbeOutcome::Ok(manifest) => {

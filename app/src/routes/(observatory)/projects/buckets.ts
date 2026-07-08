@@ -1,50 +1,108 @@
 import type { ProjectListItem } from '$lib/types.js';
 
 /** One row in the segmented Projects list — a project enriched with the
- *  signals shown on its card (FTR%, 7-day sessions, warning dot). */
+ *  signals shown on its card (FTR%, 7-day sessions, warning dot) plus the
+ *  list-endpoint aggregates the card/row render (repos/libs/last-session/
+ *  vision). Counts are normalized to numbers in `+page.ts` so the pure
+ *  components never have to reach for a fallback. */
 export interface EnrichedProject extends ProjectListItem {
   ftr14d: number;
   sessions7d: number;
   /** True when a quality signal is red (open drift, or FTR7d below 60%).
    *  Drives the amber dot the mockup shows next to the project name. */
   warn: boolean;
+  repos_count: number;
+  libs_count: number;
+  last_session_at: string | null;
+  vision: string | null;
 }
 
-/** The three buckets the mockup surfaces. Archived is empty until the
- *  daemon exposes an archive flag on `ProjectListItem` — enumerating it
- *  keeps the UI contract stable when that lands. */
+/** The three mutually-exclusive buckets the screen surfaces. A project
+ *  lands in exactly one, so the chip counts always sum to `all`. */
 export interface Buckets {
   active:   EnrichedProject[];
-  recent:   EnrichedProject[];
+  dormant:  EnrichedProject[];
   archived: EnrichedProject[];
 }
 
-/** Pure: split enriched projects into Active / Recent / Archived and
- *  sort each by the mockup's ordering (Active by sessions7d desc, Recent
- *  by name asc). Any project with sessions in the last 7 days is Active;
- *  the rest are Recent. Archived is reserved for a future flag; today
- *  it's always empty so the section stays discoverable but honest. */
+export type ProjectStatus = 'active' | 'dormant' | 'archived';
+
+/** Pure: derive a project's status from real wire fields. `archived`
+ *  (maturity enum) takes priority over activity so an archived project is
+ *  never double-counted as active. A project is `active` when it has any
+ *  session in the last 7 days, otherwise `dormant`. */
+export function projectStatus(
+  p: Pick<EnrichedProject, 'sessions7d' | 'maturity'>,
+): ProjectStatus {
+  if (p.maturity === 'archived') return 'archived';
+  return p.sessions7d > 0 ? 'active' : 'dormant';
+}
+
+/** Pure: split enriched projects into Active / Dormant / Archived and sort
+ *  each. Buckets are mutually exclusive (see `projectStatus`) so the union
+ *  is the full list and the chip counts sum to `all`. Active is ranked by
+ *  FTR (the signal that matters when you glance across today's work);
+ *  Dormant and Archived are alphabetical. */
 export function bucketProjects(projects: EnrichedProject[]): Buckets {
   const active:   EnrichedProject[] = [];
-  const recent:   EnrichedProject[] = [];
+  const dormant:  EnrichedProject[] = [];
   const archived: EnrichedProject[] = [];
   for (const p of projects) {
-    if ((p as { archived?: boolean }).archived) {
-      archived.push(p);
-    } else if (p.sessions7d > 0) {
-      active.push(p);
-    } else {
-      recent.push(p);
+    switch (projectStatus(p)) {
+      case 'archived': archived.push(p); break;
+      case 'active':   active.push(p);   break;
+      default:         dormant.push(p);  break;
     }
   }
-  active.sort((a, b) => b.sessions7d - a.sessions7d || a.name.localeCompare(b.name));
-  recent.sort((a, b) => a.name.localeCompare(b.name));
+  active.sort((a, b) => b.ftr14d - a.ftr14d || a.name.localeCompare(b.name));
+  dormant.sort((a, b) => a.name.localeCompare(b.name));
   archived.sort((a, b) => a.name.localeCompare(b.name));
-  return { active, recent, archived };
+  return { active, dormant, archived };
 }
 
 /** Pure: a project is "warning" if it has open drift OR its 7-day FTR is
- *  below 0.6. Kept small so the bucket rules stay declarative. */
-export function isWarning(signals: { open_drift_count: number; ftr_7d: number }): boolean {
+ *  below 0.6 — but only when it has recent activity. A dormant project has no
+ *  FTR signal, and the wire's zero-FTR fallback (`ftr_7d: 0`) would otherwise
+ *  light every dormant project amber, drowning the signal at scale. Guard on
+ *  `sessions7d` so the dot only warns about projects actually being worked on. */
+export function isWarning(
+  signals: { open_drift_count: number; ftr_7d: number },
+  sessions7d: number,
+): boolean {
+  if (sessions7d <= 0) return false;
   return signals.open_drift_count > 0 || signals.ftr_7d < 0.6;
+}
+
+/** The card/row icon, resolved so a kanji glyph and an inferred image can
+ *  never render together (the fallback OR-collapse is the wrong-gate). */
+export type ProjectIcon =
+  | { kind: 'image'; src: string }
+  | { kind: 'kanji'; glyph: string };
+
+/** Pure: pick the project's icon. An `image` icon wins only when it carries
+ *  a value; otherwise fall back to the kanji glyph on the icon, and finally
+ *  to 場 (place) — the screen's default when nothing is known. */
+export function projectIcon(p: Pick<EnrichedProject, 'icon'>): ProjectIcon {
+  const icon = p.icon;
+  if (icon && icon.kind === 'image' && icon.value) return { kind: 'image', src: icon.value };
+  if (icon && icon.kind === 'kanji' && icon.value) return { kind: 'kanji', glyph: icon.value };
+  return { kind: 'kanji', glyph: '場' };
+}
+
+/** Pure: compact "last session" label from an ISO timestamp. `now` is
+ *  injectable so the label is deterministic under test. Null / unparseable
+ *  timestamps render as an em dash — a dormant project may simply have
+ *  never run a session. Spans grow coarser with age: m → h → d → w → mo → y. */
+export function lastSessionLabel(iso: string | null, now: number = Date.now()): string {
+  if (!iso) return '—';
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return '—';
+  const diff = now - then;
+  if (diff < 60_000)         return 'just now';
+  if (diff < 3_600_000)      return `${Math.round(diff / 60_000)}m`;
+  if (diff < 86_400_000)     return `${Math.round(diff / 3_600_000)}h`;
+  if (diff < 7 * 86_400_000) return `${Math.round(diff / 86_400_000)}d`;
+  if (diff < 30 * 86_400_000)  return `${Math.round(diff / (7 * 86_400_000))}w`;
+  if (diff < 365 * 86_400_000) return `${Math.round(diff / (30 * 86_400_000))}mo`;
+  return `${Math.round(diff / (365 * 86_400_000))}y`;
 }
