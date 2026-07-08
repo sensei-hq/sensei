@@ -1,240 +1,170 @@
 <script lang="ts">
-    import { sparklinePath } from '$lib/sparkline';
-    import { appState } from '$lib/appstate.svelte.js';
-    import { senseiApi } from '$lib/api.js';
-    import { invalidateAll } from '$app/navigation';
-    import { page } from '$app/state';
+  import { appState } from '$lib/appstate.svelte.js';
+  import { senseiApi } from '$lib/api.js';
+  import { invalidateAll } from '$app/navigation';
+  import { page } from '$app/state';
+  import { Kanji, Eyebrow } from '$lib/components';
+  import ProjPill from '../../../../(observatory)/projects/ProjPill.svelte';
+  import {
+    ftrDisplay,
+    projectEyebrow,
+    repoChipLabel,
+    heroContent,
+    statBlocks,
+    sessionRows,
+    type StatBlock,
+  } from './overview-view.svelte.js';
 
-    let { data } = $props();
-    let ftr = $derived(Math.round((data.ftrMetrics?.ftr14d ?? 0) * 100));
-    let ftrPrev = $derived(
-        Math.round((data.ftrMetrics?.ftr14dPrev ?? 0) * 100),
-    );
-    let ftrDelta = $derived(ftr - ftrPrev);
+  let { data } = $props();
 
-    function signalStatus(value: number | null, threshold: number): 'pass' | 'warn' | 'fail' | 'unknown' {
-        if (value == null) return 'unknown';
-        if (value >= threshold) return 'pass';
-        if (value >= threshold * 0.7) return 'warn';
-        return 'fail';
+  const project = $derived(data.overview.project);
+  const rec = $derived(data.overview.top_recommendation);
+
+  const ftr = $derived(ftrDisplay(project));
+  const eyebrow = $derived(projectEyebrow(project));
+  const repoChip = $derived(repoChipLabel(project.folders));
+  const hero = $derived(heroContent(rec));
+  const stats = $derived(statBlocks(data.overview.stats));
+  const rows = $derived(sessionRows(data.overview.recentSessions));
+
+  const projectId = $derived(page.params.id ?? '');
+
+  // Recommendation decision flow (Gap 1 — the accept/reject that gives
+  // MeasureVerdicts something to measure). Guards double-clicks with
+  // `deciding`, then re-loads so the next scheduler tick sees the update.
+  // Retained through the Slot-4 redesign; the mockup's send-to-acp action sits
+  // alongside it and appears only when the rec carries a defaultAcp.
+  let deciding = $state(false);
+  async function decide(action: 'accept' | 'reject') {
+    if (!rec || !projectId || deciding) return;
+    deciding = true;
+    try {
+      const api = senseiApi(appState.port);
+      if (action === 'accept') await api.acceptProjectRecommendation(projectId, rec.id);
+      else await api.rejectProjectRecommendation(projectId, rec.id);
+      await invalidateAll();
+    } finally {
+      deciding = false;
     }
-
-    // Gap 1 fix — accept/reject the top recommendation. Guards double-clicks
-    // via `deciding` and re-fetches after the daemon lands the update so
-    // `MeasureVerdicts` can pick it up on the next scheduler tick.
-    const projectId = $derived(page.params.id ?? '');
-    let deciding = $state(false);
-    async function decide(action: 'accept' | 'reject') {
-        const rec = data.topRecommendation;
-        if (!rec || !projectId || deciding) return;
-        deciding = true;
-        try {
-            const api = senseiApi(appState.port);
-            if (action === 'accept') await api.acceptProjectRecommendation(projectId, rec.id);
-            else                    await api.rejectProjectRecommendation(projectId, rec.id);
-            await invalidateAll();
-        } finally {
-            deciding = false;
-        }
-    }
+  }
 </script>
 
-<div class="px-6 py-6 max-w-[860px]">
-    <!-- Hero: top recommendation -->
-    {#if data.topRecommendation}
-        <div class="bg-paper-mute rounded-lg p-5 mb-5" data-testid="top-recommendation">
-            <span class="text-xs opacity-60 block mb-1.5"
-                >Top recommendation</span
-            >
-            <p class="text-base font-semibold m-0 mb-2">
-                {data.topRecommendation.title}
-            </p>
-            <div class="flex items-center gap-2 flex-wrap">
-                <span class="text-xs px-2 py-0.5 rounded-lg bg-paper-mute"
-                    >{data.topRecommendation.urgency}</span
-                >
-                <div class="flex-1"></div>
-                <button
-                    type="button"
-                    class="px-3 py-1 rounded-md text-xs bg-primary text-on-primary border-none cursor-pointer"
-                    disabled={deciding}
-                    data-testid="rec-accept"
-                    onclick={() => decide('accept')}
-                >{deciding ? 'Working…' : 'Accept'}</button>
-                <button
-                    type="button"
-                    class="px-3 py-1 rounded-md text-xs bg-transparent text-ink-soft border border-paper-edge cursor-pointer"
-                    disabled={deciding}
-                    data-testid="rec-reject"
-                    onclick={() => decide('reject')}
-                >Reject</button>
-            </div>
-        </div>
-    {:else}
-        <div class="bg-paper-mute rounded-lg p-5 mb-5 opacity-50">
-            <p class="text-sm opacity-50 m-0">No pending recommendations.</p>
-        </div>
-    {/if}
+{#snippet statBlock(s: StatBlock)}
+  <div class="bg-paper-soft border border-paper-edge rounded-lg px-4 py-3">
+    <div class="text-xs tracking-wide uppercase text-ink-mute mb-1">{s.label}</div>
+    <div class="display text-2xl font-normal leading-none {s.toneClass}">{s.value}</div>
+    <div class="text-xs text-ink-mute mt-1">{s.sub}</div>
+  </div>
+{/snippet}
 
-    <!-- Stat blocks + sparkline -->
-    <div class="flex gap-4 mb-6 flex-wrap items-end">
-        <div class="bg-paper-mute rounded-lg p-4 min-w-[100px]">
-            <span class="text-3xl font-bold block">{ftr}%</span>
-            <span class="text-xs opacity-50 block">FTR 14d</span>
-            {#if ftrDelta !== 0}
-                <span
-                    class="stat-delta text-xs"
-                    class:pos={ftrDelta > 0}
-                    class:neg={ftrDelta < 0}
-                >
-                    {ftrDelta > 0 ? "+" : ""}{ftrDelta}%
-                </span>
-            {/if}
-        </div>
-        {#if data.ftrDaily.length >= 2}
-            <div class="bg-paper-mute rounded-lg p-4">
-                <svg width="120" height="32" class="block overflow-visible text-accent">
-                    <path d={sparklinePath(data.ftrDaily, 120, 32)} fill="none" stroke="currentColor" stroke-width="1.5" />
-                </svg>
-                <span class="text-xs opacity-50 block mt-1">14d trend</span>
-            </div>
+<div class="pt-8 px-10 pb-12 max-w-[900px]">
+  <!-- Pane header — kanji · eyebrow (+ repo chip) · name · FTR·14d -->
+  <header class="flex items-end gap-4 mb-6">
+    <Kanji char={project.kanji} size="4xl" tone="accent" />
+    <div class="flex-1 min-w-0">
+      <div class="flex items-center gap-2 mb-1">
+        <Eyebrow>{eyebrow}</Eyebrow>
+        {#if repoChip}
+          <ProjPill text={repoChip} />
         {/if}
-        <div class="bg-paper-mute rounded-lg p-4 min-w-[100px]">
-            <span class="text-3xl font-bold block"
-                >{data.ftrMetrics?.sessions7d ?? 0}</span
-            >
-            <span class="text-xs opacity-50 block">Sessions 7d</span>
+      </div>
+      <h1 class="display text-2xl font-normal m-0 tracking-tight text-ink truncate">
+        {project.name}
+      </h1>
+    </div>
+    <div class="text-right shrink-0">
+      <div class="text-xs tracking-wide uppercase text-ink-mute">FTR · 14d</div>
+      <div class="flex items-baseline justify-end gap-1 mt-1">
+        <span class="display text-2xl font-normal leading-none {ftr.toneClass}">{ftr.pct}</span>
+        <span class="text-xs text-ink-mute">%</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Hero — top recommendation, or the all-quiet listening state -->
+  <section
+    data-testid={hero.quiet ? undefined : 'top-recommendation'}
+    class="grid grid-cols-[auto_1fr] gap-5 bg-paper-soft border border-paper-edge rounded-lg px-5 py-5 mb-6"
+  >
+    <Kanji char={hero.kanji} size="4xl" tone={hero.quiet ? 'watermark' : 'accent'} />
+    <div class="min-w-0">
+      <div class="text-xs tracking-wide uppercase text-ink-mute mb-1">{hero.eyebrow}</div>
+      <p class="display text-xl font-normal leading-snug tracking-tight text-ink m-0 mb-2">
+        {hero.headline}
+      </p>
+      <p class="text-sm text-ink-soft leading-relaxed m-0">{hero.body}</p>
+
+      {#if hero.action || hero.meta || rec}
+        <div class="flex items-center gap-3 mt-3 flex-wrap">
+          {#if hero.action}
+            <button
+              type="button"
+              class="text-sm bg-ink text-paper rounded px-3 py-2 border-none cursor-pointer"
+            >{hero.action} →</button>
+          {/if}
+          {#if rec}
+            <button
+              type="button"
+              data-testid="rec-accept"
+              disabled={deciding}
+              onclick={() => decide('accept')}
+              class="text-sm bg-primary text-on-primary rounded px-3 py-1.5 border-none cursor-pointer disabled:opacity-60"
+            >{deciding ? 'Working…' : 'Accept'}</button>
+            <button
+              type="button"
+              data-testid="rec-reject"
+              disabled={deciding}
+              onclick={() => decide('reject')}
+              class="text-sm bg-transparent text-ink-soft rounded px-3 py-1.5 border border-paper-edge cursor-pointer disabled:opacity-60"
+            >Reject</button>
+          {/if}
+          {#if hero.meta}
+            <span class="font-mono text-xs text-ink-mute">{hero.meta}</span>
+          {/if}
         </div>
-        <div class="bg-paper-mute rounded-lg p-4 min-w-[100px]">
-            <span class="text-3xl font-bold block">{data.memoryCount}</span>
-            <span class="text-xs opacity-50 block">Memories</span>
-        </div>
-        <div class="bg-paper-mute rounded-lg p-4 min-w-[100px]">
-            <span class="text-3xl font-bold block">{data.repos.length}</span>
-            <span class="text-xs opacity-50 block">Repos</span>
-        </div>
+      {/if}
+    </div>
+  </section>
+
+  <!-- Stat blocks — sessions · memories · doc drift -->
+  <div class="grid grid-cols-3 gap-4 mb-6">
+    {#each stats as s (s.key)}
+      {@render statBlock(s)}
+    {/each}
+  </div>
+
+  <!-- Recent in this project -->
+  <section>
+    <div class="flex items-baseline gap-2 mb-3">
+      <Kanji char="今" size="sm" tone="accent" />
+      <h2 class="display text-sm font-normal uppercase tracking-wide text-ink-soft m-0">
+        Recent in this project
+      </h2>
     </div>
 
-    <!-- Quality signals -->
-    {#if data.qualitySignals}
-        {@const s = data.qualitySignals}
-        {@const ftrSig = signalStatus(s.ftr_7d, 0.7)}
-        <div class="flex gap-2 mb-6 text-xs flex-wrap">
-            <span class="signal" class:signal-pass={ftrSig === 'pass'} class:signal-warn={ftrSig === 'warn'} class:signal-fail={ftrSig === 'fail'}>
-                {ftrSig === 'pass' ? '✓' : ftrSig === 'warn' ? '⚠' : ftrSig === 'fail' ? '✗' : '—'}
-                Zero-errors: {Math.round(s.ftr_7d * 100)}% sessions passed first try
-            </span>
-            {#if s.pattern_compliance != null}
-                {@const patSig = signalStatus(s.pattern_compliance, 0.8)}
-                <span class="signal" class:signal-pass={patSig === 'pass'} class:signal-warn={patSig === 'warn'} class:signal-fail={patSig === 'fail'}>
-                    {patSig === 'pass' ? '✓' : patSig === 'warn' ? '⚠' : '✗'}
-                    Pattern compliance: {Math.round(s.pattern_compliance * 100)}%
-                </span>
-            {/if}
-            <span class="signal" class:signal-pass={s.open_drift_count === 0} class:signal-warn={s.open_drift_count > 0 && s.open_drift_count <= 3} class:signal-fail={s.open_drift_count > 3}>
-                {s.open_drift_count === 0 ? '✓' : '⚠'}
-                Doc drift: {s.open_drift_count} open
-            </span>
-            {#if s.test_pass_rate != null}
-                {@const testSig = signalStatus(s.test_pass_rate, 0.95)}
-                <span class="signal" class:signal-pass={testSig === 'pass'} class:signal-warn={testSig === 'warn'} class:signal-fail={testSig === 'fail'}>
-                    {testSig === 'pass' ? '✓' : testSig === 'warn' ? '⚠' : '✗'}
-                    Tests: {Math.round(s.test_pass_rate * 100)}% pass
-                </span>
-            {/if}
-        </div>
+    {#if rows.length > 0}
+      <div class="flex flex-col">
+        {#each rows as row (row.id)}
+          <a
+            data-session-row={row.id}
+            href={`/project/${projectId}/sessions#${row.id}`}
+            class="grid grid-cols-[1fr_auto] gap-3 items-baseline px-1 py-3 border-b border-paper-edge hover:bg-paper-soft"
+          >
+            <div class="min-w-0">
+              <div class="flex items-center gap-2">
+                <span class="text-sm text-ink truncate">{row.title}</span>
+                {#if row.role}
+                  <ProjPill text={row.role} />
+                {/if}
+              </div>
+              <div class="font-mono text-xs text-ink-faint mt-1">{row.meta}</div>
+            </div>
+            <span class="font-mono text-xs {row.timeToneClass}">{row.time}</span>
+          </a>
+        {/each}
+      </div>
+    {:else}
+      <p class="text-sm text-ink-soft">No sessions recorded in this project yet.</p>
     {/if}
-
-    <div class="grid grid-cols-[1.3fr_1fr] gap-8">
-        <div>
-            <!-- Recent sessions -->
-            {#if data.recentSessions.length > 0}
-                <section class="mb-6">
-                    <h3 class="text-sm font-semibold m-0 mb-2.5 opacity-70">
-                        Recent sessions
-                    </h3>
-                    {#each data.recentSessions as session (session.id)}
-                        <div
-                            class="session-row flex justify-between py-1.5 border-b border-paper-mute text-sm"
-                        >
-                            <span>{session.task}</span>
-                            <span
-                                class="ftr-mark"
-                                class:ftr-pass={session.ftr}
-                                class:ftr-fail={session.ftr === false}
-                            >
-                                {session.ftr === true
-                                    ? "✓"
-                                    : session.ftr === false
-                                      ? "✗"
-                                      : "—"}
-                            </span>
-                        </div>
-                    {/each}
-                </section>
-            {/if}
-
-            <!-- Hotspots -->
-            {#if data.hotspots.length > 0}
-                <section>
-                    <h3 class="text-sm font-semibold m-0 mb-2.5 opacity-70">Hotspots</h3>
-                    {#each data.hotspots.slice(0, 5) as h}
-                        <div class="flex justify-between py-1.5 border-b border-paper-mute text-sm">
-                            <span class="font-mono text-xs truncate flex-1 mr-3">{h.file_path}</span>
-                            <span class="font-mono text-xs opacity-50 shrink-0">
-                                {h.correction_count > 0 ? `${h.correction_count}× rework` : `${h.edit_count} edits`}
-                            </span>
-                        </div>
-                    {/each}
-                </section>
-            {/if}
-        </div>
-
-        <!-- Teachings (right column) -->
-        <div>
-            {#if data.teachings.length > 0}
-                <section>
-                    <h3 class="text-sm font-semibold m-0 mb-2.5 opacity-70">Adopted teachings</h3>
-                    {#each data.teachings as t (t.id)}
-                        <div class="teaching-card py-3 px-3.5 mb-2 rounded-md bg-paper-mute border border-paper-mute">
-                            <p class="text-sm m-0 leading-snug">{t.name}</p>
-                            <p class="text-xs text-ink-soft m-0 mt-1">
-                                {t.family ?? 'pattern'} · {t.instance_count} places
-                            </p>
-                        </div>
-                    {/each}
-                </section>
-            {/if}
-        </div>
-    </div>
+  </section>
 </div>
-
-<style>
-    .stat-delta.pos {
-        color: var(--success);
-    }
-    .stat-delta.neg {
-        color: var(--accent);
-    }
-    .ftr-mark.ftr-pass {
-        color: var(--success);
-    }
-    .ftr-mark.ftr-fail {
-        color: var(--accent);
-    }
-    .session-row:last-child {
-        border-bottom: none;
-    }
-    .signal {
-        padding: 3px 10px;
-        border-radius: 4px;
-        background: var(--paper-mute);
-        white-space: nowrap;
-    }
-    .signal-pass { color: var(--success); }
-    .signal-warn { color: var(--warning); }
-    .signal-fail { color: var(--danger); }
-    .teaching-card {
-        border-left: 2px solid var(--accent);
-    }
-</style>
