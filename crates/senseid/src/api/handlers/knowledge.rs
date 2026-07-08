@@ -374,6 +374,131 @@ pub(crate) async fn promote_memory(
     Ok(Json(serde_json::json!({ "id": new_id, "status": "proposed", "origin": "promoted" })))
 }
 
+// ============================================================================
+// POST /api/knowledge/memories/{id}/generalise  — rewrite project-agnostic
+// ============================================================================
+
+/// System prompt for the generalise rewrite: turn a project-specific memory
+/// into a portable rule. Mirrors `corrections_llm::SYSTEM` — a strict
+/// JSON-only instruction the `reasoning` chain can honour deterministically.
+const GENERALISE_SYSTEM: &str = "You rewrite a developer's project-specific memory into a portable, project-agnostic rule. \
+Strip every project-specific identifier — project names, repository names, file paths, service names, person names, ticket ids — \
+and restate the learning as a general principle that would apply across projects. \
+Stay faithful: do not invent scope, do not add advice the original did not contain, do not reproduce the identifiers you removed. \
+Reply with ONLY a JSON object: {\"generalised\": <the rewritten rule as one or two plain sentences>}. No prose, no code fences.";
+
+/// Token budget for the rewrite (one short JSON object; reasoning headroom).
+const GENERALISE_MAX_TOKENS: u32 = 512;
+/// Cap the memory body shown to the model so a runaway `content` can't blow the
+/// request budget.
+const GENERALISE_MAX_CONTENT: usize = 4000;
+/// Wall-clock cap on the user-triggered rewrite so a hung model can't wedge the
+/// request forever (the UI waits on this with a loading state).
+const GENERALISE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Build the user message: the memory's title + (bounded) content, asking the
+/// model to restate it project-agnostic. Pure — mirrors
+/// `corrections_llm::build_user_message`.
+pub(crate) fn build_generalise_message(title: &str, content: &str) -> String {
+    let body: String = content.chars().take(GENERALISE_MAX_CONTENT).collect();
+    format!(
+        "Memory title: {}\n\nMemory content:\n{}\n\nRewrite this as a project-agnostic rule.",
+        title.replace('\n', " "),
+        body,
+    )
+}
+
+/// Parse the model's `{ "generalised": "..." }` object. Tolerates surrounding
+/// prose / code fences by extracting the first `{ … }`. Returns `None` when
+/// there is no usable text — the caller then degrades (503) rather than
+/// fabricating a generalisation. Mirrors `corrections_llm::parse_response`.
+pub(crate) fn parse_generalise_response(content: &str) -> Option<String> {
+    let start = content.find('{')?;
+    let end = content.rfind('}')?;
+    if end <= start {
+        return None;
+    }
+    let v: serde_json::Value = serde_json::from_str(&content[start..=end]).ok()?;
+    v.get("generalised")
+        .and_then(|t| t.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+}
+
+/// Rewrite a project-scoped memory into a project-agnostic rule that is ready to
+/// widen up the scope ladder (see [[pipeline/memory]]). User-triggered (the UI
+/// shows a loading state), so this is a request-time gateway call bounded by
+/// `GENERALISE_TIMEOUT`. Graceful and honest: if the model is unavailable,
+/// times out, or returns nothing usable, the `generalised` flag stays unset and
+/// the request returns 503 — it never fabricates a rewrite or silently succeeds.
+/// Widening itself reuses the existing `promote_memory` path; this only produces
+/// the portable text + flag.
+pub(crate) async fn generalise_memory(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    use gateway::types::capability::Capability;
+    use gateway::types::request::*;
+
+    let mid = uuid::Uuid::parse_str(&id).map_err(|_| err(StatusCode::BAD_REQUEST, "bad memory id"))?;
+    let memory = state.pg.get_memory(&mid).await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "memory not found"))?;
+    let title = memory["title"].as_str().unwrap_or_default();
+    let content = memory["content"].as_str().unwrap_or_default();
+    if content.trim().is_empty() {
+        return Err(err(StatusCode::UNPROCESSABLE_ENTITY, "memory has no content to generalise"));
+    }
+
+    let request = InferenceRequest {
+        capability: Capability::TextChat,
+        model: None,
+        router: None,
+        // Faithful rewrite is synthesis — pin the seed `reasoning` chain
+        // (embedded → ollama → cloud), same as the corrections summariser.
+        chain: Some("reasoning".into()),
+        payload: Payload::Chat {
+            messages: vec![Message::text(MessageRole::User, build_generalise_message(title, content))],
+            system: Some(GENERALISE_SYSTEM.to_string()),
+            max_tokens: Some(GENERALISE_MAX_TOKENS),
+            temperature: None,
+            tools: Vec::new(),
+        },
+        budget: None,
+    };
+
+    // Timeout / gateway error / empty-or-unparseable output all degrade the SAME
+    // way: surface it (503 + tracing), leave the flag unset, never fabricate.
+    let generalised = match tokio::time::timeout(GENERALISE_TIMEOUT, state.gateway.execute(&request)).await {
+        Ok(Ok(resp)) if resp.success => resp.content.as_deref().and_then(parse_generalise_response),
+        Ok(Ok(_)) => None,
+        Ok(Err(e)) => {
+            tracing::warn!(memory_id = %mid, error = %e, "generalise: gateway call failed");
+            None
+        }
+        Err(_) => {
+            tracing::warn!(memory_id = %mid, "generalise: gateway call timed out");
+            None
+        }
+    };
+    let Some(text) = generalised else {
+        tracing::warn!(memory_id = %mid, "generalise: no usable rewrite — flag left unset");
+        return Err(err(StatusCode::SERVICE_UNAVAILABLE,
+            "could not generalise this memory right now — the model was unavailable or returned nothing usable; try again"));
+    };
+
+    state.pg.set_memory_generalisation(mid, &text).await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "memory not found"))?;
+
+    Ok(Json(serde_json::json!({
+        "id": mid,
+        "original": content,
+        "generalised": text,
+    })))
+}
+
 /// List battle_tested memories that have not yet been promoted — the candidates
 /// a UI surfaces for "elevate to a broader scope".
 pub(crate) async fn promotion_candidates(
@@ -684,6 +809,52 @@ pub(crate) async fn source_status(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── generalise (project-agnostic rewrite) pure helpers ──────────────────
+
+    #[test]
+    fn build_generalise_message_includes_title_and_bounds_content() {
+        let long = "z".repeat(GENERALISE_MAX_CONTENT + 500);
+        let msg = build_generalise_message("Use dbd for migrations", &long);
+        assert!(msg.contains("Memory title: Use dbd for migrations"), "title carried");
+        assert!(msg.contains("project-agnostic rule"), "instruction carried");
+        // Content bounded to GENERALISE_MAX_CONTENT chars (title has no 'z').
+        assert_eq!(msg.matches('z').count(), GENERALISE_MAX_CONTENT, "content bounded");
+    }
+
+    #[test]
+    fn build_generalise_message_flattens_title_newlines() {
+        let msg = build_generalise_message("line1\nline2", "body");
+        assert!(msg.contains("Memory title: line1 line2"), "title newlines flattened");
+        assert!(msg.contains("body"));
+    }
+
+    #[test]
+    fn parse_generalise_extracts_text() {
+        let c = r#"{"generalised":"Prefer a dedicated migration tool over hand-rolled SQL."}"#;
+        assert_eq!(
+            parse_generalise_response(c).as_deref(),
+            Some("Prefer a dedicated migration tool over hand-rolled SQL."),
+        );
+    }
+
+    #[test]
+    fn parse_generalise_tolerates_fences_and_surrounding_prose() {
+        let c = "Here you go:\n```json\n{\"generalised\":\"Run pre-commit before opening a PR.\"}\n```";
+        assert_eq!(
+            parse_generalise_response(c).as_deref(),
+            Some("Run pre-commit before opening a PR."),
+        );
+    }
+
+    #[test]
+    fn parse_generalise_none_on_empty_or_missing() {
+        assert_eq!(parse_generalise_response(r#"{"generalised":""}"#), None, "empty string → None");
+        assert_eq!(parse_generalise_response(r#"{"generalised":"   "}"#), None, "whitespace → None");
+        assert_eq!(parse_generalise_response(r#"{"other":"x"}"#), None, "missing key → None");
+        assert_eq!(parse_generalise_response("not json"), None, "no object → None");
+        assert_eq!(parse_generalise_response(""), None, "empty input → None");
+    }
 
     #[tokio::test]
     async fn materialize_writes_managed_global_rules_file() {
