@@ -1,90 +1,79 @@
 <script lang="ts">
-  import { PageHeader, Eyebrow, EmptyState } from '$lib/components';
-  import type { TriageRec } from './triage.js';
+  import type { Snippet } from 'svelte';
+  import { untrack } from 'svelte';
+  import { PageHeader } from '$lib/components';
+  import { senseiApi } from '$lib/api.js';
+  import { appState } from '$lib/appstate.svelte.js';
+  import { openProjectWindow } from '$lib/stores/windows.svelte.js';
+  import { InsightsBoardState, type RecCardVm } from './insights-board.svelte.js';
+  import ProjectFilterStrip from './ProjectFilterStrip.svelte';
+  import RecCard from './RecCard.svelte';
+  import ViolationCard from './ViolationCard.svelte';
+  import CorrectionMini from './CorrectionMini.svelte';
+  import PatternMini from './PatternMini.svelte';
+  import MemoryRow from './MemoryRow.svelte';
 
   let { data } = $props();
 
-  // Typed-descriptor chip mapping — same vocabulary the mockup's
-  // RecCardSlim uses. Adds a glyph + short tag so at-a-glance a reader
-  // knows what KIND of action this rec is (rule / skill / agent / …)
-  // without reading the title.
-  const REC_KINDS: Record<string, { glyph: string; tag: string; effect: string }> = {
-    write_skill:     { glyph: '技', tag: 'skill',   effect: 'Scaffolds' },
-    create_agent:    { glyph: '作', tag: 'agent',   effect: 'Drafts the agent' },
-    revise_rule:     { glyph: '則', tag: 'rule',    effect: 'Revises the rule' },
-    enrich_memory:   { glyph: '育', tag: 'memory',  effect: 'Reinforces' },
-    audit_stale:     { glyph: '禁', tag: 'lint',    effect: 'Audits' },
-    promote_pattern: { glyph: '則', tag: 'rule',    effect: 'Promotes the pattern in' },
-  };
+  const api = senseiApi(appState.port);
+  // Seed the state once from the loaded board; the state owns every refetch
+  // and optimistic update thereafter. untrack makes the one-time read explicit.
+  const board = new InsightsBoardState(untrack(() => data.board));
 
-  function kindFor(actionType: string | null | undefined) {
-    if (!actionType) return { glyph: '•', tag: 'suggestion', effect: 'Applies to' };
-    return REC_KINDS[actionType] ?? { glyph: '•', tag: actionType, effect: 'Applies to' };
+  function selectProject(id: string | null): void {
+    void board.selectProject(api, id);
   }
-
-  function relative(iso: string | null): string {
-    if (!iso) return '';
-    const d = new Date(iso).getTime();
-    if (Number.isNaN(d)) return '';
-    const diff = Date.now() - d;
-    if (diff < 60_000)      return 'just now';
-    if (diff < 3_600_000)   return `${Math.round(diff / 60_000)}m ago`;
-    if (diff < 86_400_000)  return `${Math.round(diff / 3_600_000)}h ago`;
-    return `${Math.round(diff / 86_400_000)}d ago`;
+  function apply(rec: RecCardVm): void {
+    void board.apply(api, rec);
+  }
+  function dismiss(rec: RecCardVm): void {
+    void board.dismiss(api, rec);
+  }
+  // Review — navigate to where the recommendation lives (the project window).
+  // No write call.
+  function review(rec: RecCardVm): void {
+    openProjectWindow(rec.projectId, rec.projectName).catch((e) => console.error(e));
   }
 </script>
 
-{#snippet recCard(rec: TriageRec, tone: 'now' | 'soon' | 'settled', focal: boolean)}
-  {@const kind = kindFor(rec.actionType)}
-  <a
-    data-triage-rec={rec.id}
-    href={`/project/${rec.projectId}/overview`}
-    class="block rounded bg-paper-soft border py-2 px-3 text-inherit mb-2"
-    class:border-accent={tone === 'now' && focal}
-    class:border-paper-edge={!(tone === 'now' && focal)}
-    style={tone === 'now' && focal ? 'border-left: 2px solid var(--accent);' : ''}
-  >
-    <!-- typed descriptor + (focal) do-first marker -->
-    <div class="flex items-center gap-2 mb-1">
-      <span class="inline-flex items-center gap-1 text-xs text-ink-soft">
-        <span class="kanji text-xs text-accent">{kind.glyph}</span>
-        <span class="uppercase tracking-wide">{kind.tag}</span>
-      </span>
-      <span class="flex-1"></span>
-      {#if focal && tone === 'now'}
-        <span class="text-xs uppercase tracking-wider text-accent font-medium">do first</span>
-      {:else if tone === 'settled' && rec.actedAt}
-        <span class="font-mono text-xs text-ink-mute">{rec.status} · {relative(rec.actedAt)}</span>
-      {:else}
-        <span class="font-mono text-xs text-ink-mute">{rec.projectName}</span>
-      {/if}
-    </div>
-
-    <p class="text-[13px] text-ink m-0 leading-snug">{rec.title}</p>
-    {#if rec.why}
-      <p class="text-xs text-ink-soft mt-1 m-0 leading-snug line-clamp-2">{rec.why}</p>
-    {/if}
-
-    {#if tone !== 'settled'}
-      <div class="text-xs text-ink-faint leading-snug mt-2">
-        {kind.effect} <span class="font-mono text-ink-soft">{rec.projectName}</span>
-      </div>
-    {/if}
-  </a>
+{#snippet stat(n: number, label: string, tone: 'now' | 'soon' | 'settled')}
+  <div class="text-center">
+    <div
+      class="font-mono text-lg font-light leading-none"
+      class:text-accent={tone === 'now'}
+      class:text-warning={tone === 'soon'}
+      class:text-success={tone === 'settled'}
+    >{n}</div>
+    <div class="text-xs uppercase tracking-wider text-ink-faint mt-1">{label}</div>
+  </div>
 {/snippet}
 
-{#snippet column(kanji: string, title: string, sub: string, recs: TriageRec[], tone: 'now' | 'soon' | 'settled')}
-  <section class="flex flex-col min-w-0 border-r border-paper-edge last:border-r-0" data-triage-column={tone}>
-    <!-- Column header — kanji + title + sub + count -->
+{#snippet quiet(text: string)}
+  <p class="text-xs text-ink-faint italic text-center py-6 m-0">{text}</p>
+{/snippet}
+
+{#snippet columnShell(
+  tone: 'now' | 'soon' | 'settled',
+  kanji: string,
+  title: string,
+  sub: string,
+  count: number,
+  body: Snippet,
+)}
+  <section
+    class="flex flex-col min-h-0 border-r border-paper-edge last:border-r-0"
+    data-triage-column={tone}
+    data-count={count}
+  >
     <div class="flex items-baseline gap-2 pt-4 pb-3 px-5 border-b border-paper-edge">
       <span
-        class="kanji text-[22px] leading-none"
+        class="kanji text-xl leading-none"
         class:text-accent={tone === 'now'}
         class:text-warning={tone === 'soon'}
         class:text-success={tone === 'settled'}
       >{kanji}</span>
-      <div class="flex-1">
-        <div class="text-[13px] text-ink font-medium">{title}</div>
+      <div class="flex-1 min-w-0">
+        <div class="text-sm text-ink font-medium">{title}</div>
         <div class="text-xs text-ink-soft mt-0.5">{sub}</div>
       </div>
       <span
@@ -92,37 +81,105 @@
         class:text-accent={tone === 'now'}
         class:text-warning={tone === 'soon'}
         class:text-success={tone === 'settled'}
-      >{recs.length}</span>
+      >{count}</span>
     </div>
-    <div class="flex flex-col py-3 px-4 gap-0">
-      {#if recs.length === 0}
-        <p class="text-xs text-ink-faint italic text-center py-6">
-          {tone === 'now' ? 'nothing urgent.' : tone === 'soon' ? 'nothing brewing.' : 'no recent decisions.'}
-        </p>
-      {:else}
-        {#each recs as rec, i (rec.id)}
-          {@render recCard(rec, tone, tone === 'now' && i === 0)}
-        {/each}
-      {/if}
+    <div class="flex-1 overflow-auto flex flex-col gap-2 py-3 px-4">
+      {@render body()}
     </div>
   </section>
 {/snippet}
 
-<PageHeader kanji="學" eyebrow="Observatory · Insights" title="Triage" />
-<div class="pb-10">
-  {#if data.total === 0}
-    <div class="px-6">
-      <EmptyState
-        kanji="學"
-        title="Nothing to triage yet."
-        description="Recommendations show up here once the analyzer has enough signal to teach — usually after 20+ sessions across a project."
-      />
-    </div>
-  {:else}
-    <div class="grid grid-cols-3" data-triage-grid>
-      {@render column('今', 'Now',     'violations · high-impact · this week',  data.buckets.now,     'now')}
-      {@render column('近', 'Soon',    'emerging patterns · worth a look',       data.buckets.soon,    'soon')}
-      {@render column('定', 'Settled', 'battle-tested · low-noise archive',      data.buckets.settled, 'settled')}
+{#snippet nowBody()}
+  {#each board.now.violations as m (m.id)}
+    <ViolationCard memory={m} />
+  {/each}
+  {#each board.now.recs as rec, i (rec.id)}
+    <RecCard
+      {rec}
+      focal={i === 0 && board.now.violations.length === 0}
+      onApply={() => apply(rec)}
+      onReview={() => review(rec)}
+      onDismiss={() => dismiss(rec)}
+    />
+  {/each}
+  {#each board.now.corrections as c (c.id)}
+    <CorrectionMini correction={c} />
+  {/each}
+  {#if board.now.count === 0}
+    {@render quiet('nothing urgent.')}
+  {/if}
+{/snippet}
+
+{#snippet soonBody()}
+  {#each board.soon.recs as rec (rec.id)}
+    <RecCard
+      {rec}
+      onApply={() => apply(rec)}
+      onReview={() => review(rec)}
+      onDismiss={() => dismiss(rec)}
+    />
+  {/each}
+  {#each board.soon.patterns as p (p.id)}
+    <PatternMini pattern={p} />
+  {/each}
+  {#each board.soon.memories as m (m.id)}
+    <MemoryRow memory={m} variant="proposed" />
+  {/each}
+  {#if board.soon.count === 0}
+    {@render quiet('nothing brewing.')}
+  {/if}
+{/snippet}
+
+{#snippet settledBody()}
+  {#each board.settled.memories as m (m.id)}
+    <MemoryRow memory={m} variant="settled" />
+  {/each}
+  {#each board.settled.patterns as p (p.id)}
+    <PatternMini pattern={p} />
+  {/each}
+  {#if board.settled.count === 0}
+    {@render quiet('nothing yet.')}
+  {/if}
+{/snippet}
+
+<div class="flex flex-col h-full">
+  <PageHeader
+    variant="h1"
+    kanji="今"
+    eyebrow="Observatory · Insights"
+    title="What needs you, what's working, what's quiet."
+    description="Sorted by immediacy. Most days you only need the first column."
+  >
+    {#snippet right()}
+      <div class="flex gap-5 pl-5 border-l border-paper-edge">
+        {@render stat(board.counts.now, 'now', 'now')}
+        {@render stat(board.counts.soon, 'soon', 'soon')}
+        {@render stat(board.counts.settled, 'settled', 'settled')}
+      </div>
+    {/snippet}
+  </PageHeader>
+
+  <div class="py-3 px-6 border-b border-paper-edge shrink-0">
+    <ProjectFilterStrip
+      projects={board.projects}
+      selectedId={board.selectedProjectId}
+      onSelect={selectProject}
+    />
+  </div>
+
+  {#if board.actionError}
+    <div
+      role="alert"
+      class="flex items-center gap-2 py-2 px-6 bg-danger-soft border-b border-paper-edge shrink-0"
+    >
+      <span class="kanji text-xs text-danger">警</span>
+      <span class="text-xs text-danger">{board.actionError}</span>
     </div>
   {/if}
+
+  <div class="grid grid-cols-3 flex-1 min-h-0" data-triage-grid>
+    {@render columnShell('now', '今', 'Now', 'violations · high-impact · this week', board.now.count, nowBody)}
+    {@render columnShell('soon', '近', 'Soon', 'emerging patterns · worth a look', board.soon.count, soonBody)}
+    {@render columnShell('settled', '定', 'Settled', 'battle-tested · low-noise reference', board.settled.count, settledBody)}
+  </div>
 </div>

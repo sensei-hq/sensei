@@ -2913,6 +2913,91 @@ impl PgStore {
         }).collect())
     }
 
+    // ── Insights (Learnings Triage) aggregator sources (#Slot 5) ──────────
+    // Each carries `project_id` so the UI can call the per-project
+    // accept/reject action; `project` is None for the cross-project view.
+
+    /// Pending recommendations + their project name, ordered high→low urgency.
+    /// Capped: the triage screen shows the highest-urgency first (Now/Soon are
+    /// complete; low-urgency Settled recs beyond the cap fall off the shelf).
+    pub async fn get_insights_recommendations(&self, project: Option<&uuid::Uuid>) -> Result<Vec<serde_json::Value>, String> {
+        #[allow(clippy::type_complexity)]
+        let rows: Vec<(uuid::Uuid, String, String, String, Option<String>, serde_json::Value, Option<uuid::Uuid>, Option<String>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT r.id, r.urgency::text, r.title, r.why, r.impact, r.evidence, r.project_id, p.name
+                 FROM inference.recommendations r
+                 LEFT JOIN sensei.projects p ON p.id = r.project_id
+                 WHERE r.status = 'pending' AND ($1::uuid IS NULL OR r.project_id = $1)
+                 ORDER BY CASE r.urgency WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, r.id
+                 LIMIT 200"
+            ).bind(project).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        // No silent caps: the Insights board shows the top-200 pending recs by
+        // urgency; if the cap is hit, lower-urgency recs are not surfaced. Log it
+        // so the truncation is observable (a "showing N of M" UI hint is a follow-up).
+        if rows.len() >= 200 {
+            tracing::warn!(returned = rows.len(),
+                "get_insights_recommendations hit the 200-row cap — lower-urgency pending recs are not surfaced on the triage board");
+        }
+        Ok(rows.into_iter().map(|(id, urgency, title, why, impact, evidence, project_id, name)| {
+            serde_json::json!({ "id": id, "urgency": urgency, "title": title, "why": why,
+                                "impact": impact, "evidence": evidence,
+                                "project_id": project_id, "name": name })
+        }).collect())
+    }
+
+    /// Memories eligible for the triage screen: proposed, in-force, or violated
+    /// (non-archived). Column assignment happens in `crate::insights`.
+    pub async fn get_insights_memories(&self, project: Option<&uuid::Uuid>) -> Result<Vec<serde_json::Value>, String> {
+        #[allow(clippy::type_complexity)]
+        let rows: Vec<(uuid::Uuid, String, String, Option<String>, i32, Option<f64>, String, Option<uuid::Uuid>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT id, status::text, title, content, violated_count, strength::float8, scope::text, project_id
+                 FROM sensei.memories
+                 WHERE ($1::uuid IS NULL OR project_id = $1)
+                   AND ( status IN ('proposed','active','reinforced','battle_tested')
+                         OR (violated_count > 0 AND status != 'archived') )
+                 ORDER BY strength DESC NULLS LAST
+                 LIMIT 100"
+            ).bind(project).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id, status, title, content, violated_count, strength, scope, project_id)| {
+            serde_json::json!({ "id": id, "status": status, "title": title, "content": content,
+                                "violated_count": violated_count, "strength": strength,
+                                "scope": scope, "project_id": project_id })
+        }).collect())
+    }
+
+    /// Suggested + rule patterns for the triage screen (anti-patterns excluded).
+    pub async fn get_insights_patterns(&self, project: Option<&uuid::Uuid>) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, String, Option<String>, String, i32, Option<uuid::Uuid>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT dp.id, dp.name, dp.family, dp.lifecycle::text, dp.instance_count, f.project_id
+                 FROM inference.detected_patterns dp
+                 JOIN sensei.folders f ON f.id = dp.folder_id
+                 WHERE dp.lifecycle IN ('suggested','rule') AND NOT dp.is_anti_pattern
+                   AND ($1::uuid IS NULL OR f.project_id = $1)
+                 ORDER BY dp.instance_count DESC
+                 LIMIT 100"
+            ).bind(project).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id, name, family, lifecycle, instance_count, project_id)| {
+            serde_json::json!({ "id": id, "name": name, "family": family, "lifecycle": lifecycle,
+                                "instance_count": instance_count, "project_id": project_id })
+        }).collect())
+    }
+
+    /// Top recurring corrections by count → the Now column. `project` scopes via
+    /// the `project_ids` array membership.
+    pub async fn get_insights_corrections(&self, project: Option<&uuid::Uuid>, limit: i64) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, String, Option<String>, i32)> = sqlx_core::query_as::query_as(
+            "SELECT id, text, suggestion, count
+             FROM inference.corrections
+             WHERE ($1::uuid IS NULL OR $1 = ANY(project_ids))
+             ORDER BY count DESC LIMIT $2"
+        ).bind(project).bind(limit).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id, text, suggestion, count)| {
+            serde_json::json!({ "id": id, "text": text, "suggestion": suggestion, "count": count })
+        }).collect())
+    }
+
     pub async fn get_adopted_teachings(&self, project_id: &uuid::Uuid, limit: i64) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(uuid::Uuid, String, Option<String>, i32, chrono::DateTime<chrono::Utc>)> = sqlx_core::query_as::query_as(
             "SELECT dp.id, dp.name, dp.family, dp.instance_count, dp.modified_at

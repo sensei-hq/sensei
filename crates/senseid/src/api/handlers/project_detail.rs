@@ -362,6 +362,13 @@ pub(crate) async fn accept_project_recommendation(
                 StatusCode::INTERNAL_SERVER_ERROR
             }
         })?;
+    // Close the FTR feedback loop on-demand: accepting a recommendation schedules
+    // a MeasureVerdicts follow-up so the before/after impact is captured now, not
+    // only on the next periodic analyzer cycle. Verdicts re-measure globally, so
+    // the task carries no target args (matches the scheduler's enqueue).
+    state.task_queue.enqueue(
+        crate::tasks::Task::new(crate::tasks::TaskKind::MeasureVerdicts, "", ""),
+    ).await;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 

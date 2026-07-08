@@ -23,11 +23,76 @@ resumes from the current slot/gate. Updated after every gate step.
    uncomputable. See park/observatory-instruments-health.md. AWAITS Jerry: unify/redefine/descope.)
 3. Observatory · Projects (list view) — `screen/observatory-projects.md`  ✅ SHIPPED (ead8f971)
 4. Project window · Overview — `screen/project-overview.md`  ✅ SHIPPED (all 4 gates; P0-B drift-source fixed)
-5. Observatory · Insights — `screen/observatory-insights.md`  ← CURRENT
-6. Observatory · Sessions — `screen/observatory-sessions.md`
+5. Observatory · Insights — `screen/observatory-insights.md`  ✅ SHIPPED (all gates; MeasureVerdicts wired)
+6. Observatory · Sessions — `screen/observatory-sessions.md`  ← CURRENT (final target slot)
 (overflow: 7 Observatory·Memories, 8 Project·Sessions+Memories)
 
 ## Current position
+- **Slot 5 — Observatory · Insights** — gate1 ✅ (2 rounds: not-ready→needs-fixes→all fixed;
+  trivial impact→urgency parentheticals + inference.corrections source applied w/o 3rd round).
+  BACKEND (aggregating /api/insights) delegated to fork; then frontend triage; then gates 2/3/4.
+  corrections source = `inference.corrections` (NOT sensei.corrections). Reuse
+  get_pending_recommendations_global (added Slot 1) for cross-project recs. Actions reuse
+  existing accept/reject (no new write endpoints).
+- BACKEND ✅ VERIFIED: new `insights.rs` bucketing module (4 tests) + main.rs + 4 pg_store
+  queries + get_insights handler + `GET /api/insights` route. clippy clean (4 pre-existing).
+  Wire: {counts{now,soon,settled}, projects[{id,name,kanji}], recommendations[{id,urgency,title,
+  why,impact,evidence,project_id,name,column}], memories[{id,status,title,content,violated_count,
+  strength,scope,project_id,column}], patterns[{id,name,family,lifecycle,instance_count,project_id,
+  column}], corrections[{id,text,suggestion,count,column}]}. Each item tagged `column`=now|soon|settled.
+  Live: cross-project counts{25,184,9}; ?project=sensei {9,180,1}. FRONTEND ✅ GREEN: check 0/0
+  (855 files), test 790 (28 new insights, deleted 5 old triage, 0 regress), MCP-validated.
+  Files: types.ts(InsightsBoard), api.ts(getInsights+reused accept/reject), insights/+page.ts/svelte,
+  insights-board.svelte.ts(+14-test spec), RecCard/ViolationCard/CorrectionMini/PatternMini/MemoryRow/
+  ProjectFilterStrip (+harness+spec), deleted triage.ts/spec. Columns bucket by server `column`
+  (no client re-derive); Apply highlighted (1-decision-1-default); Apply→accept(MeasureVerdicts)+
+  optimistic remove+restore-on-fail; Review→nav; filter refetches ?project=. Judgment: dropped
+  mockup kind-chip (wire has no action_type). Gates 2(done)+3(wrong) LAUNCHED — verify action wiring
+  by CODE (do NOT POST accept/reject — mutates real recs).
+- Gate 2 done-gate-verifier: not-ready — 6/7 pass; Gate 5 FAIL: `/accept` handler never enqueued
+  MeasureVerdicts (only the periodic scheduler did) → spec's "apply schedules MeasureVerdicts" unmet.
+  FIXED: accept_project_recommendation (project_detail.rs:351) now enqueues
+  Task::new(TaskKind::MeasureVerdicts,"","") after accept (also improves Slot-4 Accept button).
+  Holding rebuild until gate 3 returns, then batch-rebuild+verify. Awaiting wrong-gate-hunter.
+- Gate 3 wrong-gate-hunter: one-or-more-tripping — SAME issue (Item 2: Apply→no MeasureVerdicts),
+  already fixed. Other 7 clean. Additional (deferrals, non-block): insight-copy not wired (raw DB
+  text = accepted fallback, varied so no symptom), unused server counts (client recomputes
+  optimistically = correct), violation cards no action (memory write-actions deferred).
+  → observatory-insights-followups.md. Rebuild+verify job `bast5o8ze` running (install-debug +
+  clippy + insights tests). On green → gate 4 persona → commit Slot 5 + push → Slot 6.
+- MeasureVerdicts fix REBUILT+VERIFIED (accept enqueues @ line 370; clippy clean; 8 tests). Gate 4
+  persona: mechanical gates pass; flagged LIMIT-200 silent truncation (137 recs dropped) — MITIGATED
+  with tracing::warn (get_insights_recommendations); ViolationCard dead-end = spec-compliant deferral
+  (high-priority enhancement follow-up); board.loading/Soon-subcap/aria = follow-ups →
+  observatory-insights-followups.md. Rebuild+verify `bxg4vzln0` running (warn). On green → commit Slot 5.
+
+### Slot 5 detail (superseded)
+- **Slot 5 — Observatory · Insights (Learnings Triage)** — gate1 `not-ready` (4 FAIL, all
+  field/endpoint, FEASIBLE — reviewer verified tables/enums). Spec fix DELEGATED; then re-review;
+  then impl. LOCKED DECISIONS: /api/insights = NEW aggregating endpoint, optional `?project=`
+  scope (=scope.project), cross-project when unscoped; bundles recs (inference.recommendations by
+  `urgency`: high→Now, medium→Soon, low→Settled) + memories (sensei.memories by `status`) +
+  patterns (inference.detected_patterns by `lifecycle`). ACTIONS reuse EXISTING per-project
+  `POST /api/projects/{project_id}/recommendations/{rec_id}/accept` (Apply, already triggers
+  MeasureVerdicts per project_detail.rs:345) + `/reject` (Dismiss); Review=navigate (no write);
+  project_id from each card. Memory write-actions (reinforce/challenge/archive) DISPLAY-ONLY/
+  deferred (only /promote exists). FIELD FIXES: m.state→m.status, m.violated→m.violated_count,
+  "battle-tested"→'battle_tested', p.kind==="emerging"→p.lifecycle='suggested', impact→urgency.
+  Mockup: learnings-v2.jsx LearningsTriage. 337 pending recs live.
+
+### Slot 5 detail (superseded)
+- **Slot 5 — Observatory · Insights (Learnings Triage)** — STARTING (gate 1 spec-doc-reviewer).
+  Plan notes: triage surface for the recommendation pipeline; insights pipeline partial (buckets
+  query needs finishing); verb set Apply·Review·Dismiss (one-decision-one-default). Data prep:
+  `GET /api/insights` server-side bucketing (Now/Soon/Settled); POST apply/review/dismiss.
+  Definition of shipped: 3 columns render on real data; apply schedules a MeasureVerdicts
+  follow-up; verbs consistent. REALITY: 337 pending recs in inference.recommendations; existing
+  endpoints `/api/projects/{id}/recommendations/{rec_id}/accept` + `/reject` — apply/dismiss may
+  map to these. Check whether a global (cross-project) /api/insights exists. Mockup: find via
+  MOCKUP-INDEX. Reuse gate mechanics (gate agents general-purpose/sonnet; svelte-file-editor;
+  daemon DEBUG binary; install-debug; node_modules untracked→stage explicit trees).
+
+### Slot 4 detail (SHIPPED fa18a4d1 — superseded)
 - **Slot 4 — Project window · Overview** — gate1 ✅ (2 rounds: not-ready→needs-fixes→all fixed;
   doc-drift source consistency + to_merge/casing recs applied without 3rd round). BACKEND
   (assembling endpoint) delegated to fork; then frontend overview pane; then gates 2/3/4; commit.
