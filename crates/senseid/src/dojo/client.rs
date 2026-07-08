@@ -9,7 +9,7 @@
 //! Keychain-backed Bearer token — never Supabase).
 
 use crate::db::pg_store::DojoMembership;
-use dojo_protocol::{PublishArtifactResponse, PublishedArtifact};
+use dojo_protocol::{ArtifactPullResponse, PublishArtifactResponse, PublishedArtifact};
 
 /// A resolved endpoint for talking to one Dōjō membership: the registry base +
 /// tenant path plus the bounded HTTP client. The auth token is fetched on demand
@@ -173,6 +173,35 @@ impl DojoClient {
             .await
             .map_err(|e| DojoClientError::Decode(e.to_string()))
     }
+
+    /// Pull (receive) this membership's downstream artifacts since a cursor (C7).
+    ///
+    /// `GET {registry_url}/v1/t/{tenant_key}/artifacts?since={since}` with the
+    /// Keychain bearer, parse an [`ArtifactPullResponse`] (the delta artifacts +
+    /// the new cursor to persist). Mirrors [`Self::publish_artifact`]'s error
+    /// discipline exactly: transport faults → [`DojoClientError::Network`],
+    /// non-2xx → [`DojoClientError::Status`], an undecodable 2xx →
+    /// [`DojoClientError::Decode`]. Errors are returned, never panicked — the
+    /// caller (the pull loop) logs and moves on so a downstream pull can never
+    /// wedge the rules-federation pull it runs beside.
+    pub async fn pull_artifacts(&self, since: i64) -> Result<ArtifactPullResponse, DojoClientError> {
+        let token = self.bearer_async().await?;
+        let resp = self
+            .http
+            .get(self.artifacts_url())
+            .query(&[("since", since.to_string())])
+            .bearer_auth(token)
+            .send()
+            .await
+            .map_err(|e| DojoClientError::Network(e.to_string()))?;
+        let status = resp.status();
+        if !status.is_success() {
+            return Err(DojoClientError::Status(status.as_u16()));
+        }
+        resp.json::<ArtifactPullResponse>()
+            .await
+            .map_err(|e| DojoClientError::Decode(e.to_string()))
+    }
 }
 
 #[cfg(test)]
@@ -226,6 +255,71 @@ mod tests {
         assert!(!DojoClientError::Status(403).is_retryable());
         assert!(!DojoClientError::Decode("bad json".into()).is_retryable());
         assert!(!DojoClientError::Keychain("missing".into()).is_retryable());
+    }
+
+    #[tokio::test]
+    #[cfg_attr(not(target_os = "macos"), ignore)]
+    async fn pull_artifacts_forwards_since_and_parses_response() {
+        use axum::{extract::Query, routing::get, Json, Router};
+        use dojo_protocol::{
+            artifact_signature, ArtifactKind, ArtifactPayload, ArtifactPullResponse, ArtifactScope,
+            ArtifactStatus, Attribution, AttributionMode, PrinciplePayload, PublishedArtifact, PulledArtifact,
+        };
+        use std::collections::HashMap;
+
+        // A fake Dōjō service: echoes `since` into the cursor and returns one
+        // published principle. Echoing `since` proves the client forwarded the
+        // cursor; a bad path/query would 404 and fail the parse.
+        async fn artifacts(Query(q): Query<HashMap<String, String>>) -> Json<ArtifactPullResponse> {
+            let since: i64 = q.get("since").and_then(|s| s.parse().ok()).unwrap_or(-1);
+            let payload = ArtifactPayload::Principle(PrinciplePayload { rationale: None });
+            let (title, body) = ("prefer small functions".to_string(), "keep units testable".to_string());
+            let artifact = PublishedArtifact {
+                signature: artifact_signature(ArtifactKind::Principle, &title, &body, &payload),
+                tenant_key: "github/acme".into(),
+                engagement_id: None,
+                kind: ArtifactKind::Principle,
+                title,
+                body,
+                payload,
+                scope: ArtifactScope { stack: Some("rust".into()), ..Default::default() },
+                attribution: Attribution {
+                    mode: AttributionMode::Anonymous,
+                    author: None,
+                    org: None,
+                    anonymous_id: Some("anon-1".into()),
+                    dereferenced: true,
+                },
+                dereferenced: true,
+                contributed_by: None,
+                published_at: None,
+            };
+            Json(ArtifactPullResponse {
+                artifacts: vec![PulledArtifact { id: "art-1".into(), seq: since + 1, status: ArtifactStatus::Published, artifact }],
+                cursor: since,
+            })
+        }
+
+        let app = Router::new().route("/v1/t/{tenant}/artifacts", get(artifacts));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap(); });
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        let cref = format!("dojo-pull-{}", uuid::Uuid::new_v4());
+        crate::gateway_keys::set_key(&cref, "device-token-pull").unwrap();
+        let mut m = membership("http://localhost:8787/github/acme", &cref);
+        m.registry_url = format!("http://{addr}");
+        let c = DojoClient::for_membership(&m);
+
+        let resp = c.pull_artifacts(7).await.expect("pull succeeds");
+        assert_eq!(resp.cursor, 7, "the client forwarded since=7 (echoed as the cursor)");
+        assert_eq!(resp.artifacts.len(), 1);
+        assert_eq!(resp.artifacts[0].seq, 8);
+        assert_eq!(resp.artifacts[0].status, ArtifactStatus::Published);
+        assert_eq!(resp.artifacts[0].artifact.kind, ArtifactKind::Principle);
+
+        crate::gateway_keys::delete_key(&cref).unwrap();
     }
 
     #[test]

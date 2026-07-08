@@ -30,7 +30,7 @@ create table if not exists dojo_memberships (
 , attribution_default  text        not null default 'named'         -- named | anonymous | dereferenced
 , credential_ref       text        not null      -- Keychain entry id; the device token lives in the OS keychain, never in PG
 , sync_status          text        not null default 'authenticating' -- healthy | stale | error | authenticating
-, last_seq             bigint      not null default 0    -- downstream-artifact pull cursor (C7)
+, last_seq             bigint      not null default 0    -- downstream-artifact pull cursor (C7): the last dojo.artifacts seq mirrored into sensei.dojo_inbox
 , last_heartbeat_at    timestamptz               -- last successful federation heartbeat; drives sync_status derivation
 , enabled              boolean     not null default true
 , created_at           timestamptz not null default now()
