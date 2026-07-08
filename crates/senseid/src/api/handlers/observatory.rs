@@ -4,6 +4,7 @@ use axum::{
     response::Json,
 };
 use serde::Deserialize;
+use chrono::Timelike;
 use crate::api::state::AppState;
 
 // Re-use TagBody from workspace
@@ -606,42 +607,26 @@ pub(crate) async fn tool_usage(
     Ok(Json(serde_json::json!({ "tools": data })))
 }
 
-/// GET /api/observatory/tool-signals — derived insight cards.
+/// GET /api/observatory/tool-signals — curated insight cards for the
+/// Health tab's Insights strip.
 ///
-/// Prefers the cached snapshots written by the `AggregateToolInsights`
-/// scheduled task (T2 Slice D); falls back to computing on the fly when
-/// the cache is empty (fresh install, task hasn't run yet). The wire
-/// shape stays identical either way — `{ signals: [{tool_name, variant,
-/// title, detail}] }` — so callers don't care where the data came from.
+/// Derives on the fly from `sensei.tool_usage_stats` (small dataset —
+/// no cache round-trip needed) and applies [`ts::curate_insights`] so a
+/// registry with dozens of dormant tools collapses to a single summary
+/// card rather than one per tool. Per-tool detail rows still come from
+/// `/api/observatory/tool-insights`, which reads the cached snapshot.
 pub(crate) async fn tool_signals(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     use crate::api::handlers::tool_signals as ts;
 
-    // Fast path: read the cached snapshot the scheduled task writes.
-    let cached = state.pg.get_latest_tool_insights().await
-        .map_err(|e| { tracing::error!(error = %e, "tool_signals: get_latest_tool_insights failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
-    let cached_signals: Vec<serde_json::Value> = cached.iter()
-        .filter(|row| row.get("variant").and_then(|v| v.as_str()).is_some())
-        .map(|row| serde_json::json!({
-            "tool_name": row.get("toolName").cloned().unwrap_or(serde_json::Value::Null),
-            "variant":   row.get("variant").cloned().unwrap_or(serde_json::Value::Null),
-            "title":     row.get("title").cloned().unwrap_or(serde_json::Value::Null),
-            "detail":    row.get("detail").cloned().unwrap_or(serde_json::Value::Null),
-        }))
-        .collect();
-    if !cached_signals.is_empty() {
-        return Ok(Json(serde_json::json!({ "signals": cached_signals, "source": "cache" })));
-    }
-
-    // Fallback: derive on-the-fly. Same heuristics as the scheduled task
-    // so empty-cache and populated-cache paths produce identical cards.
     let rows = state.pg.get_tool_usage_stats().await
         .map_err(|e| { tracing::error!(error = %e, "tool_signals: get_tool_usage_stats failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
     let stats: Vec<ts::ToolUsageRow> = rows.into_iter()
         .filter_map(|v| serde_json::from_value(v).ok())
         .collect();
-    let signals = ts::derive_signals(&stats, chrono::Utc::now(), &ts::SignalThresholds::default());
+    let raw = ts::derive_signals(&stats, chrono::Utc::now(), &ts::SignalThresholds::default());
+    let signals = ts::curate_insights(raw);
     Ok(Json(serde_json::json!({ "signals": signals, "source": "derived" })))
 }
 
@@ -689,4 +674,229 @@ pub(crate) async fn project_teachings(
     let data = state.pg.get_adopted_teachings(&project_id, q.limit).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(serde_json::json!({ "teachings": data })))
+}
+
+// ── Observatory · Today (Slot 1) ────────────────────────────────────────────
+
+/// Compact relative-time label ("2d ago", "3h ago", "just now").
+fn relative_when(then: chrono::DateTime<chrono::Utc>, now: chrono::DateTime<chrono::Utc>) -> String {
+    let secs = (now - then).num_seconds().max(0);
+    match secs {
+        0..=59 => "just now".to_string(),
+        60..=3_599 => format!("{}m ago", secs / 60),
+        3_600..=86_399 => format!("{}h ago", secs / 3_600),
+        86_400..=604_799 => format!("{}d ago", secs / 86_400),
+        _ => format!("{}w ago", secs / 604_800),
+    }
+}
+
+/// GET /api/observatory/today — the assembled Today payload. The daemon owns
+/// every decision this screen renders (maturity, hero koan, insights, adopted
+/// lane); the pure assembly lives in [`crate::observatory_home`]. The UI is a
+/// dumb renderer of this payload plus `/api/observatory/ftr`.
+pub(crate) async fn observatory_today(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    use crate::observatory_home as home;
+
+    let now_local = chrono::Local::now();
+    let greeting = home::greeting(now_local.hour());
+    let today = now_local.format("%a · %-d %b").to_string();
+
+    // Maturity is a daemon decision (aggregate across active projects), reusing
+    // the shared, already-tested maturity gate.
+    let (watched, has_insights) = state.pg.get_global_maturity_inputs().await
+        .map_err(|e| { tracing::error!(error = %e, "observatory_today: maturity inputs failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    let sig = crate::maturity::maturity_signal(watched, has_insights, crate::maturity::MATURITY_TARGET);
+
+    // Recent sessions — reuse the raw shape `/api/sessions` returns so the app's
+    // existing RecentSessions component + toRecentSessions() render them without
+    // a second shaping path. Drop content-less ghost rows (#61), cap at 5.
+    let all = state.pg.list_all_sessions(20, None, None).await
+        .map_err(|e| { tracing::error!(error = %e, "observatory_today: sessions failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    let recent: Vec<serde_json::Value> = all.into_iter()
+        .filter(|s| {
+            let has = |k: &str| s[k].as_str().map(|v| !v.trim().is_empty()).unwrap_or(false);
+            has("project") || has("task") || has("summary")
+        })
+        .take(5)
+        .collect();
+    let recent_ids: Vec<String> = recent.iter()
+        .filter_map(|s| s["id"].as_str().map(str::to_string))
+        .take(4)
+        .collect();
+
+    let now = chrono::Utc::now();
+    let (hero, insights, adopted) = if sig.stage == "mature" {
+        let recs = state.pg.get_pending_recommendations_global(4).await.unwrap_or_default();
+        let rec_lite: Vec<home::RecLite> = recs.iter().map(|r| home::RecLite {
+            urgency: r["urgency"].as_str().unwrap_or("low").to_string(),
+            title:   r["title"].as_str().unwrap_or("").to_string(),
+            why:     r["why"].as_str().unwrap_or("").to_string(),
+            impact:  r["impact"].as_str().map(str::to_string),
+        }).collect();
+
+        if let Some((top, rest)) = rec_lite.split_first() {
+            // Honest provenance: session ids drawn from the top rec's own
+            // evidence, not arbitrary recent sessions. Empty when it has none.
+            let sources = recs.first()
+                .map(|r| home::session_ids_from_evidence(&r["evidence"], 3))
+                .unwrap_or_default();
+            let hero = home::mature_hero(top, &sources, "");
+            let insights: Vec<serde_json::Value> = rest.iter().take(3).map(home::insight_card).collect();
+
+            let mems = state.pg.list_active_memories_global(5).await.unwrap_or_default();
+            let adopted: Vec<serde_json::Value> = mems.iter().map(|m| {
+                let when = m["modified_at"].as_str()
+                    .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                    .map(|t| relative_when(t.with_timezone(&chrono::Utc), now))
+                    .unwrap_or_default();
+                let scope = m["scope"].as_str().unwrap_or("project");
+                let source = m["impact"].as_str()
+                    .filter(|s| !s.trim().is_empty())
+                    .unwrap_or("adopted by sensei");
+                home::adopted_row(&when, m["title"].as_str().unwrap_or(""), scope, source)
+            }).collect();
+            (hero, insights, adopted)
+        } else {
+            (home::steady_hero(recent.len()), Vec::new(), Vec::new())
+        }
+    } else {
+        (
+            home::early_hero(watched, crate::maturity::MATURITY_TARGET, &recent_ids),
+            home::early_insights(),
+            Vec::new(),
+        )
+    };
+
+    Ok(Json(serde_json::json!({
+        "greeting": greeting,
+        "today": today,
+        "dataMaturity": sig.stage,
+        "hero": hero,
+        "insights": insights,
+        "adopted": adopted,
+        "recentSessions": recent,
+    })))
+}
+
+/// GET /api/observatory/ftr — holistic First-Try-Right rollup for the Today
+/// header: `{ ftr14d, ftr14dPrev, ftrTrend[14], sessions7d }`.
+pub(crate) async fn observatory_ftr(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let data = state.pg.get_holistic_ftr().await
+        .map_err(|e| { tracing::error!(error = %e, "observatory_ftr failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    Ok(Json(data))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct InsightsQuery {
+    #[serde(default)]
+    project: Option<String>,
+}
+
+/// GET /api/insights?project=<name|uuid>? — the Learnings Triage aggregator.
+/// Bundles pending recommendations, in-force/violated memories, suggested/rule
+/// patterns, and top recurring corrections into Now / Soon / Settled columns
+/// (each item carries a `column` label the UI trusts). Cross-project by default;
+/// `?project=` scopes every column to one project. Read-only — the Apply/Dismiss
+/// actions reuse the per-project accept/reject endpoints.
+pub(crate) async fn get_insights(
+    State(state): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<InsightsQuery>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    use crate::insights as ins;
+
+    let project: Option<uuid::Uuid> = match q.project.as_deref() {
+        Some(p) if !p.trim().is_empty() => {
+            Some(resolve_project_uuid(&state, p).await.ok_or(StatusCode::NOT_FOUND)?)
+        }
+        _ => None,
+    };
+    let pref = project.as_ref();
+
+    let err = |label: &'static str| move |e: String| {
+        tracing::error!(error = %e, "get_insights: {label} failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    };
+
+    // Recommendations — always shown (bucketed by urgency), tagged with a column.
+    let mut recs = state.pg.get_insights_recommendations(pref).await.map_err(err("recommendations"))?;
+    for r in recs.iter_mut() {
+        let col = ins::rec_column(r["urgency"].as_str().unwrap_or("low"));
+        r["column"] = serde_json::json!(col);
+    }
+
+    // Memories — filtered + tagged; excluded when the bucket rule returns None.
+    let memories: Vec<serde_json::Value> = state.pg.get_insights_memories(pref).await.map_err(err("memories"))?
+        .into_iter()
+        .filter_map(|mut m| {
+            let vc = m["violated_count"].as_i64().unwrap_or(0);
+            ins::memory_column(m["status"].as_str().unwrap_or(""), vc).map(|col| {
+                m["column"] = serde_json::json!(col);
+                m
+            })
+        })
+        .collect();
+
+    // Patterns — suggested/rule only; tagged.
+    let patterns: Vec<serde_json::Value> = state.pg.get_insights_patterns(pref).await.map_err(err("patterns"))?
+        .into_iter()
+        .filter_map(|mut p| {
+            ins::pattern_column(p["lifecycle"].as_str().unwrap_or("")).map(|col| {
+                p["column"] = serde_json::json!(col);
+                p
+            })
+        })
+        .collect();
+
+    // Corrections — top 3, always Now.
+    let mut corrections = state.pg.get_insights_corrections(pref, 3).await.map_err(err("corrections"))?;
+    for c in corrections.iter_mut() {
+        c["column"] = serde_json::json!(ins::CORRECTION_COLUMN);
+    }
+
+    // Per-column totals across every source type.
+    let count_in = |col: &str| -> i64 {
+        let f = |v: &&serde_json::Value| v["column"].as_str() == Some(col);
+        (recs.iter().filter(f).count()
+            + memories.iter().filter(f).count()
+            + patterns.iter().filter(f).count()
+            + corrections.iter().filter(f).count()) as i64
+    };
+    let counts = serde_json::json!({
+        "now": count_in(ins::NOW), "soon": count_in(ins::SOON), "settled": count_in(ins::SETTLED),
+    });
+
+    // Project filter chips — the distinct projects that actually appear in the
+    // results, with their kanji from the project icon.
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for v in recs.iter().chain(memories.iter()).chain(patterns.iter()) {
+        if let Some(pid) = v["project_id"].as_str() {
+            seen.insert(pid.to_string());
+        }
+    }
+    let all_projects = state.pg.list_projects().await.unwrap_or_default();
+    let projects: Vec<serde_json::Value> = all_projects.iter().filter_map(|p| {
+        let pid = p["id"].as_str()?;
+        if !seen.contains(pid) {
+            return None;
+        }
+        let kanji = if p["icon"].get("kind").and_then(|k| k.as_str()) == Some("kanji") {
+            p["icon"].get("value").and_then(|v| v.as_str()).unwrap_or("場")
+        } else {
+            "場"
+        };
+        Some(serde_json::json!({ "id": pid, "name": p["name"], "kanji": kanji }))
+    }).collect();
+
+    Ok(Json(serde_json::json!({
+        "counts": counts,
+        "projects": projects,
+        "memories": memories,
+        "recommendations": recs,
+        "patterns": patterns,
+        "corrections": corrections,
+    })))
 }

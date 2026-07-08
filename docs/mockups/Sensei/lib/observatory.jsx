@@ -119,7 +119,13 @@ function ObservatoryDaily({ stateMode = "mature", firstEntry = false, onBack }) 
                     onOpenProject={openProject}
                     mode={mode} setMode={setMode}/>
         <main style={{ overflow: 'hidden', position: 'relative', display: 'flex', flexDirection: 'column' }}>
-          {SUBNAV[groupKeyOf(section)] && <ObsSubTabs group={SUBNAV[groupKeyOf(section)]} section={section} setSection={setSection}/>}
+          {(() => {
+            const grp = SUBNAV[groupKeyOf(section)];
+            // Instruments keeps its sub-tabs BELOW each screen's header (passed
+            // in as `subNav`), so it isn't rendered here at the top.
+            if (!grp || groupKeyOf(section) === "instruments") return null;
+            return <ObsSubTabs group={grp} section={section} setSection={setSection}/>;
+          })()}
           <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
           {section === "home"      && <ObsHome mode={mode} hero={hero} insights={insights} adopted={adopted} D={D} onOpenProject={openProject}/>}
           {section === "projects"  && (
@@ -147,9 +153,14 @@ function ObservatoryDaily({ stateMode = "mature", firstEntry = false, onBack }) 
           {section === "impact-alert"  && <ObsNegativeAlert/>}
           {section === "dojo-connections" && <InappConnection embedded={true}/>}
           {section === "dojo-sharing"     && <ObsCollectiveSettings/>}
-          {section === "instruments-playground" && <InstrumentsPlaygroundSimple/>}
-          {section === "instruments-replay"     && <InstrumentsReplaySimple/>}
-          {section === "instruments-health"     && <InstrumentsHealthSimple/>}
+          {(() => {
+            const instrNav = <ObsSubTabs group={SUBNAV.instruments} section={section} setSection={setSection}/>;
+            return <>
+              {section === "instruments-playground" && <InstrumentsPlaygroundSimple subNav={instrNav}/>}
+              {section === "instruments-replay"     && <InstrumentsReplaySimple subNav={instrNav}/>}
+              {section === "instruments-health"     && <InstrumentsHealthSimple subNav={instrNav}/>}
+            </>;
+          })()}
           {section !== "home" && section !== "projects" && section !== "project" &&
            section !== "sessions" &&
            section !== "logs" &&

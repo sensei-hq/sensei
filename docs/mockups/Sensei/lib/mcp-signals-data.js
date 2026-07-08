@@ -264,6 +264,65 @@ window.MCP_SIGNALS = {
         note: "Zero calls in 30d. Either undiscoverable or the skill contradicts it." }
     ],
 
+    // ─── MCP-level metadata ────────────────────────────────────────
+    // The Health view opens at this level: one card per connected MCP
+    // server, showing what share of its registered tools are actually
+    // being invoked. Drill into a card to see the per-tool breakdown.
+    // Sensei's tools are the `toolUsage` rows above (mcp defaults to
+    // "sensei"); third-party tool rows live in `thirdPartyUsage`.
+    mcpMeta: [
+      { id: "sensei",   name: "Sensei",   kanji: "先", publisher: "local",
+        connected: true,  note: "Your codebase's private expert." },
+      { id: "postgres", name: "Postgres", kanji: "庫", publisher: "pgMCP",
+        connected: true,  note: "Local Postgres, introspected." },
+      { id: "stripe",   name: "Stripe",   kanji: "銀", publisher: "stripe",
+        connected: true,  note: "Live dashboard data, from the CLI." },
+      { id: "github",   name: "GitHub",   kanji: "貢", publisher: "github",
+        connected: false, note: "Not connected — recommended for this stack." },
+      { id: "sentry",   name: "Sentry",   kanji: "哨", publisher: "sentry.io",
+        connected: false, note: "Not connected." }
+    ],
+
+    // Per-tool usage for the non-Sensei MCPs. Same shape as toolUsage.
+    thirdPartyUsage: [
+      { tool: "postgres.explain",         mcp: "postgres", category: "query",
+        calls: 96, trend: [5,6,6,7,7,8,7,8,9,8,9,10,9,11],
+        last24h: 11, usedPct: 88, partialPct: 8, ignoredPct: 4,
+        ftrDelta: +0.06, verdict: "healthy",
+        note: "Query-plan checks before writing migrations. Effective." },
+      { tool: "postgres.describe_table",  mcp: "postgres", category: "query",
+        calls: 74, trend: [4,4,5,5,6,6,7,6,7,7,8,7,8,9],
+        last24h: 9, usedPct: 81, partialPct: 14, ignoredPct: 5,
+        ftrDelta: +0.05, verdict: "healthy",
+        note: "Schema lookups mid-session. Steady." },
+      { tool: "postgres.list_tables",     mcp: "postgres", category: "query",
+        calls: 41, trend: [3,3,2,3,4,3,4,3,4,4,3,4,5,4],
+        last24h: 4, usedPct: 62, partialPct: 20, ignoredPct: 18,
+        ftrDelta: +0.02, verdict: "ok",
+        note: "Mostly a session-start orientation call." },
+      { tool: "postgres.run_migration",   mcp: "postgres", category: "action",
+        calls: 0,  trend: [0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+        last24h: 0, usedPct: 0, partialPct: 0, ignoredPct: 0,
+        ftrDelta: 0, verdict: "unused",
+        note: "Never invoked — assistants run migrations from the terminal instead." },
+
+      { tool: "stripe.get_customer",      mcp: "stripe", category: "query",
+        calls: 52, trend: [3,3,4,4,5,4,5,5,6,5,6,5,6,7],
+        last24h: 7, usedPct: 79, partialPct: 15, ignoredPct: 6,
+        ftrDelta: +0.04, verdict: "healthy",
+        note: "Billing bug triage. Response usually acted on." },
+      { tool: "stripe.replay_webhook",    mcp: "stripe", category: "action",
+        calls: 18, trend: [1,1,2,1,2,1,2,2,1,2,1,2,1,2],
+        last24h: 2, usedPct: 72, partialPct: 17, ignoredPct: 11,
+        ftrDelta: +0.03, verdict: "ok",
+        note: "Local webhook testing. Low volume, clean outcomes." },
+      { tool: "stripe.list_prices",       mcp: "stripe", category: "query",
+        calls: 6,  trend: [0,1,0,1,0,1,0,0,1,0,1,0,1,0],
+        last24h: 0, usedPct: 33, partialPct: 17, ignoredPct: 50,
+        ftrDelta: -0.01, verdict: "warn",
+        note: "Half of calls go ignored — assistants tend to hardcode price ids." }
+    ],
+
     // By-project usage — which projects lean on which tools
     byProject: [
       { project: "lumen-auth",    sessions: 38, toolCalls: 287, topTool: "sensei.library.search-usages",  ftr: 0.52 },

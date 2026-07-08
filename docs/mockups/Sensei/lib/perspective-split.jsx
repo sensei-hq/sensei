@@ -102,48 +102,18 @@ function CollectiveSidebar({ active = "projects", onProjectClick }) {
       <div>
         <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
           {COLL_SIDEBAR_PRIMARY.map(s => <PSItem key={s.id} {...s} active={s.id === active}/>)}
-        </div>
 
-        {/* Memories group */}
-        <div className="py-1 px-2" >
-          <div style={{
- display: 'grid', gridTemplateColumns: 'auto 1fr auto',
-                         alignItems: 'center',
-                         color: 'var(--ink-2)', fontSize: 13
-}} className="gap-2 py-2 px-0" >
-            <span className="kanji" style={{ fontSize: 13, width: 14,
-                          color: 'var(--ink-3)' }}>覚</span>
-            <span>Memories</span>
-            <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>24</span>
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1 pl-3" >
-            {COLL_SIDEBAR_MEMORIES.map(s => <PSItem key={s.id} {...s}/>)}
-          </div>
-        </div>
+          {/* Memories — compacted to a single item (sub-views are inline tabs) */}
+          <PSItem id="memories" kanji="覚" label="Memories" badge="24"
+                  active={active === "memories"}/>
 
-        <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
-          {COLL_SIDEBAR_OTHER.map(s => <PSItem key={s.id} {...s}/>)}
-        </div>
+          {COLL_SIDEBAR_OTHER.map(s => <PSItem key={s.id} {...s} active={s.id === active}/>)}
 
-        {/* Instruments group */}
-        <div className="py-1 px-2" >
-          <div style={{
- display: 'grid', gridTemplateColumns: 'auto 1fr auto',
-                         alignItems: 'center',
-                         color: 'var(--ink-2)', fontSize: 13
-}} className="gap-2 py-2 px-0" >
-            <span className="kanji" style={{ fontSize: 13, width: 14,
-                          color: 'var(--ink-3)' }}>具</span>
-            <span>Instruments</span>
-            <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>7</span>
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1 pl-3" >
-            {COLL_SIDEBAR_INSTRUMENTS.map(s => <PSItem key={s.id} {...s}/>)}
-          </div>
-        </div>
+          {/* Instruments — compacted to a single item (sub-views are inline tabs) */}
+          <PSItem id="instruments-playground" kanji="具" label="Instruments" badge="7"
+                  active={active === "instruments-playground"}/>
 
-        <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
-          {COLL_SIDEBAR_BOTTOM.map(s => <PSItem key={s.id} {...s}/>)}
+          {COLL_SIDEBAR_BOTTOM.map(s => <PSItem key={s.id} {...s} active={s.id === active}/>)}
         </div>
       </div>
 

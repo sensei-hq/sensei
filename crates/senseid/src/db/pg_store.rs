@@ -990,29 +990,36 @@ impl PgStore {
     }
 
     /// List all sessions across all folders.
-    pub async fn list_all_sessions(&self, limit: i64) -> Result<Vec<serde_json::Value>, String> {
+    /// List recent sessions, newest first. `range_days` (when `Some`) filters to
+    /// sessions started within the last N days — powers the Observatory · Sessions
+    /// digest range chips (7d/30d/90d); `None` = no time filter. `project` (when
+    /// `Some`) scopes to one project. `agent` (the acp harness, e.g. "claude" /
+    /// "zed") lets the digest label each row's assistant.
+    pub async fn list_all_sessions(
+        &self,
+        limit: i64,
+        range_days: Option<i64>,
+        project: Option<&uuid::Uuid>,
+    ) -> Result<Vec<serde_json::Value>, String> {
         // Join the project name so each session can be labelled, and return the
         // timestamps in the camelCase shape the SessionData wire type and the
-        // observatory components actually read (startedAt / completedAt). The
-        // old shape returned folder_id (a bare uuid, never a project name) and
-        // snake_case `started_at` with no `completed_at`, so every displayed
-        // column — project, task time, duration — came back blank (#61).
-        //
-        // `corrections` is what powers the Today observatory's "Corrections"
-        // column (first-try / N× rework) per the mockup — same column the
-        // per-project session list has surfaced since T3 Slice 1.4.
+        // observatory components actually read (startedAt / completedAt). `corrections`
+        // powers the "Corrections" column (first-try / N× rework) per the mockup.
         type SessionRow = (
             uuid::Uuid, Option<String>, String, Option<String>, Option<String>,
             Option<bool>, i32, i32, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>,
+            Option<String>,
         );
         let rows: Vec<SessionRow> = sqlx_core::query_as::query_as(
             "SELECT s.id, p.name, s.task, s.summary, s.outcome::text, s.ftr, s.turns, s.corrections,
-                    s.started_at, s.completed_at
+                    s.started_at, s.completed_at, s.acp_id
              FROM activity.sessions s
              LEFT JOIN sensei.projects p ON p.id = s.project_id
+             WHERE ($2::int IS NULL OR s.started_at >= now() - make_interval(days => $2::int))
+               AND ($3::uuid IS NULL OR s.project_id = $3)
              ORDER BY s.started_at DESC LIMIT $1"
-        ).bind(limit).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
-        Ok(rows.into_iter().map(|(id, project, task, summary, outcome, ftr, turns, corrections, started, completed)| {
+        ).bind(limit).bind(range_days).bind(project).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id, project, task, summary, outcome, ftr, turns, corrections, started, completed, agent)| {
             serde_json::json!({
                 "id": id,
                 "project": project,
@@ -1024,6 +1031,7 @@ impl PgStore {
                 "corrections": corrections,
                 "startedAt": started.to_rfc3339(),
                 "completedAt": completed.map(|c| c.to_rfc3339()),
+                "agent": agent,
             })
         }).collect())
     }
@@ -1241,6 +1249,25 @@ impl PgStore {
 
         Ok(rows.into_iter().map(|(id, scope, filter, mtype, title, content, impact, strength)| {
             serde_json::json!({ "id": id, "scope": scope, "scope_filter": filter, "type": mtype, "title": title, "content": content, "impact": impact, "strength": strength })
+        }).collect())
+    }
+
+    /// In-force adopted memories across ALL projects — powers the Observatory ·
+    /// Today adopted lane. Same in-force filter as [`Self::list_active_memories`]
+    /// (`status='active'`, `strength>=1.0`) but not scoped to a single
+    /// project/global namespace.
+    pub async fn list_active_memories_global(&self, limit: i64) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, String, String, Option<String>, f64, chrono::DateTime<chrono::Utc>)> = sqlx_core::query_as::query_as(
+            "SELECT m.id, m.title, m.scope::text, m.impact, m.strength::float8, m.modified_at
+             FROM sensei.memories m
+             WHERE m.status = 'active' AND m.strength >= 1.0
+             ORDER BY m.strength DESC, m.modified_at DESC
+             LIMIT $1"
+        ).bind(limit).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id, title, scope, impact, strength, modified)| {
+            serde_json::json!({ "id": id, "title": title, "scope": scope,
+                                "impact": impact, "strength": strength,
+                                "modified_at": modified.to_rfc3339() })
         }).collect())
     }
 
@@ -2877,6 +2904,108 @@ impl PgStore {
         }).collect())
     }
 
+    /// Highest-priority pending recommendations across all projects — powers the
+    /// Observatory · Today hero + insight strip. Mirrors
+    /// [`Self::get_pending_recommendations`] without the project filter.
+    pub async fn get_pending_recommendations_global(&self, limit: i64) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, String, String, String, Option<String>, serde_json::Value)> = sqlx_core::query_as::query_as(
+            "SELECT id, urgency::text, title, why, impact, evidence
+             FROM inference.recommendations
+             WHERE status = 'pending'
+             ORDER BY CASE urgency WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, id
+             LIMIT $1"
+        ).bind(limit).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id, urgency, title, why, impact, evidence)| {
+            serde_json::json!({ "id": id, "urgency": urgency, "title": title,
+                                "why": why, "impact": impact, "evidence": evidence })
+        }).collect())
+    }
+
+    // ── Insights (Learnings Triage) aggregator sources (#Slot 5) ──────────
+    // Each carries `project_id` so the UI can call the per-project
+    // accept/reject action; `project` is None for the cross-project view.
+
+    /// Pending recommendations + their project name, ordered high→low urgency.
+    /// Capped: the triage screen shows the highest-urgency first (Now/Soon are
+    /// complete; low-urgency Settled recs beyond the cap fall off the shelf).
+    pub async fn get_insights_recommendations(&self, project: Option<&uuid::Uuid>) -> Result<Vec<serde_json::Value>, String> {
+        #[allow(clippy::type_complexity)]
+        let rows: Vec<(uuid::Uuid, String, String, String, Option<String>, serde_json::Value, Option<uuid::Uuid>, Option<String>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT r.id, r.urgency::text, r.title, r.why, r.impact, r.evidence, r.project_id, p.name
+                 FROM inference.recommendations r
+                 LEFT JOIN sensei.projects p ON p.id = r.project_id
+                 WHERE r.status = 'pending' AND ($1::uuid IS NULL OR r.project_id = $1)
+                 ORDER BY CASE r.urgency WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, r.id
+                 LIMIT 200"
+            ).bind(project).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        // No silent caps: the Insights board shows the top-200 pending recs by
+        // urgency; if the cap is hit, lower-urgency recs are not surfaced. Log it
+        // so the truncation is observable (a "showing N of M" UI hint is a follow-up).
+        if rows.len() >= 200 {
+            tracing::warn!(returned = rows.len(),
+                "get_insights_recommendations hit the 200-row cap — lower-urgency pending recs are not surfaced on the triage board");
+        }
+        Ok(rows.into_iter().map(|(id, urgency, title, why, impact, evidence, project_id, name)| {
+            serde_json::json!({ "id": id, "urgency": urgency, "title": title, "why": why,
+                                "impact": impact, "evidence": evidence,
+                                "project_id": project_id, "name": name })
+        }).collect())
+    }
+
+    /// Memories eligible for the triage screen: proposed, in-force, or violated
+    /// (non-archived). Column assignment happens in `crate::insights`.
+    pub async fn get_insights_memories(&self, project: Option<&uuid::Uuid>) -> Result<Vec<serde_json::Value>, String> {
+        #[allow(clippy::type_complexity)]
+        let rows: Vec<(uuid::Uuid, String, String, Option<String>, i32, Option<f64>, String, Option<uuid::Uuid>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT id, status::text, title, content, violated_count, strength::float8, scope::text, project_id
+                 FROM sensei.memories
+                 WHERE ($1::uuid IS NULL OR project_id = $1)
+                   AND ( status IN ('proposed','active','reinforced','battle_tested')
+                         OR (violated_count > 0 AND status != 'archived') )
+                 ORDER BY strength DESC NULLS LAST
+                 LIMIT 100"
+            ).bind(project).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id, status, title, content, violated_count, strength, scope, project_id)| {
+            serde_json::json!({ "id": id, "status": status, "title": title, "content": content,
+                                "violated_count": violated_count, "strength": strength,
+                                "scope": scope, "project_id": project_id })
+        }).collect())
+    }
+
+    /// Suggested + rule patterns for the triage screen (anti-patterns excluded).
+    pub async fn get_insights_patterns(&self, project: Option<&uuid::Uuid>) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, String, Option<String>, String, i32, Option<uuid::Uuid>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT dp.id, dp.name, dp.family, dp.lifecycle::text, dp.instance_count, f.project_id
+                 FROM inference.detected_patterns dp
+                 JOIN sensei.folders f ON f.id = dp.folder_id
+                 WHERE dp.lifecycle IN ('suggested','rule') AND NOT dp.is_anti_pattern
+                   AND ($1::uuid IS NULL OR f.project_id = $1)
+                 ORDER BY dp.instance_count DESC
+                 LIMIT 100"
+            ).bind(project).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id, name, family, lifecycle, instance_count, project_id)| {
+            serde_json::json!({ "id": id, "name": name, "family": family, "lifecycle": lifecycle,
+                                "instance_count": instance_count, "project_id": project_id })
+        }).collect())
+    }
+
+    /// Top recurring corrections by count → the Now column. `project` scopes via
+    /// the `project_ids` array membership.
+    pub async fn get_insights_corrections(&self, project: Option<&uuid::Uuid>, limit: i64) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, String, Option<String>, i32)> = sqlx_core::query_as::query_as(
+            "SELECT id, text, suggestion, count
+             FROM inference.corrections
+             WHERE ($1::uuid IS NULL OR $1 = ANY(project_ids))
+             ORDER BY count DESC LIMIT $2"
+        ).bind(project).bind(limit).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id, text, suggestion, count)| {
+            serde_json::json!({ "id": id, "text": text, "suggestion": suggestion, "count": count })
+        }).collect())
+    }
+
     pub async fn get_adopted_teachings(&self, project_id: &uuid::Uuid, limit: i64) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(uuid::Uuid, String, Option<String>, i32, chrono::DateTime<chrono::Utc>)> = sqlx_core::query_as::query_as(
             "SELECT dp.id, dp.name, dp.family, dp.instance_count, dp.modified_at
@@ -3543,6 +3672,153 @@ impl PgStore {
         Ok(res.rows_affected())
     }
 
+    // ── Unified tool inventory (assistant_tools) + Instruments · Health grid ──
+
+    /// Wipe the inventory — the capture repopulates from scratch so tools that
+    /// vanished from a source don't linger.
+    pub async fn clear_assistant_tools(&self) -> Result<(), String> {
+        sqlx_core::query::query("DELETE FROM sensei.assistant_tools")
+            .execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Upsert one registered tool (idempotent on the (family, source_type,
+    /// source_key, tool_name) unique index).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn upsert_assistant_tool(
+        &self, assistant_family: &str, source_type: &str, source_key: &str,
+        tool_name: &str, invoked_name: &str, description: Option<&str>,
+        server_id: Option<uuid::Uuid>,
+    ) -> Result<(), String> {
+        sqlx_core::query::query(
+            "INSERT INTO sensei.assistant_tools
+                (assistant_family, source_type, source_key, tool_name, invoked_name, description, server_id)
+             VALUES ($1,$2,$3,$4,$5,$6,$7)
+             ON CONFLICT (assistant_family, source_type, source_key, tool_name)
+             DO UPDATE SET invoked_name = EXCLUDED.invoked_name,
+                           description  = EXCLUDED.description,
+                           server_id    = EXCLUDED.server_id,
+                           updated_at   = now()"
+        ).bind(assistant_family).bind(source_type).bind(source_key)
+         .bind(tool_name).bind(invoked_name).bind(description).bind(server_id)
+         .execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Distinct built-in (non-MCP) tool names observed in usage — the harness's
+    /// built-in catalog (no canonical list exists, so observed usage IS the
+    /// registry: Bash, Read, Edit, Task, Skill, …).
+    pub async fn distinct_builtin_tool_names(&self) -> Result<Vec<String>, String> {
+        let rows: Vec<(String,)> = sqlx_core::query_as::query_as(
+            "SELECT DISTINCT tool_name FROM sensei.tool_usage_stats
+              WHERE tool_name NOT LIKE 'mcp__%' ORDER BY tool_name"
+        ).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(n,)| n).collect())
+    }
+
+    /// Usage-observed MCP prefixes → their bare tool names. Powers the bridge
+    /// that maps a probed server to its harness usage key.
+    pub async fn usage_mcp_prefix_tools(
+        &self,
+    ) -> Result<std::collections::HashMap<String, std::collections::HashSet<String>>, String> {
+        let rows: Vec<(String, String)> = sqlx_core::query_as::query_as(
+            "SELECT split_part(tool_name,'__',2) AS prefix,
+                    split_part(tool_name,'__',3) AS bare
+               FROM sensei.tool_usage_stats
+              WHERE tool_name LIKE 'mcp__%'"
+        ).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        let mut map: std::collections::HashMap<String, std::collections::HashSet<String>> =
+            std::collections::HashMap::new();
+        for (p, b) in rows { map.entry(p).or_default().insert(b); }
+        Ok(map)
+    }
+
+    /// Set an MCP server's connection state (after a probe attempt).
+    pub async fn set_mcp_server_connection_state(
+        &self, id: &uuid::Uuid, state: &str,
+    ) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE sensei.mcp_servers SET connection_state = $2, last_seen_at = now() WHERE id = $1"
+        ).bind(id).bind(state).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// The Instruments · Health L1 grid — one row per tool source. Unions the
+    /// inventory (registered known) with usage-observed MCP sources not yet in
+    /// the inventory (registered unknown → null share, never a fabricated bar).
+    pub async fn get_tools_health(&self) -> Result<Vec<serde_json::Value>, String> {
+        #[allow(clippy::type_complexity)]
+        let rows: Vec<(String, String, String, Option<i64>, Option<uuid::Uuid>, i64, i64, Option<String>)> =
+            sqlx_core::query_as::query_as(
+            // `evt` is the real 14-day usage window: one row per tool with its
+            // PostToolUse count over the last 14 days. `assistant_events.ts` is
+            // epoch MILLIS (bigint), so the cutoff is computed in millis too.
+            // tool_usage_stats is an all-time view — never use it for the window.
+            "WITH evt AS (
+               SELECT h.tool_name AS tool_name, count(*)::bigint AS calls_14d
+                 FROM activity.assistant_events h
+                WHERE h.event_type = 'PostToolUse' AND h.tool_name IS NOT NULL
+                  AND h.ts >= (extract(epoch from now() - interval '14 days') * 1000)::bigint
+                GROUP BY h.tool_name ),
+             reg AS (
+               SELECT assistant_family, source_type, source_key,
+                      count(*)::bigint AS registered,
+                      (array_agg(server_id) FILTER (WHERE server_id IS NOT NULL))[1] AS server_id
+                 FROM sensei.assistant_tools
+                GROUP BY assistant_family, source_type, source_key ),
+             inv AS (
+               SELECT at.assistant_family, at.source_type, at.source_key,
+                      count(DISTINCT e.tool_name)::bigint AS invoked_14d,
+                      coalesce(sum(e.calls_14d),0)::bigint AS calls_14d
+                 FROM sensei.assistant_tools at
+                 JOIN evt e ON e.tool_name = at.invoked_name
+                GROUP BY at.assistant_family, at.source_type, at.source_key ),
+             uncovered AS (
+               SELECT 'claude'::text AS assistant_family, 'mcp'::text AS source_type,
+                      split_part(e.tool_name,'__',2) AS source_key,
+                      count(DISTINCT e.tool_name)::bigint AS invoked_14d,
+                      coalesce(sum(e.calls_14d),0)::bigint AS calls_14d
+                 FROM evt e
+                WHERE e.tool_name LIKE 'mcp__%'
+                  AND NOT EXISTS (SELECT 1 FROM sensei.assistant_tools at WHERE at.invoked_name = e.tool_name)
+                GROUP BY split_part(e.tool_name,'__',2) )
+             SELECT r.assistant_family, r.source_type, r.source_key,
+                    r.registered, r.server_id,
+                    coalesce(i.invoked_14d,0)::bigint, coalesce(i.calls_14d,0)::bigint,
+                    s.connection_state
+               FROM reg r
+               LEFT JOIN inv i ON i.assistant_family=r.assistant_family
+                              AND i.source_type=r.source_type AND i.source_key=r.source_key
+               LEFT JOIN sensei.mcp_servers s ON s.id = r.server_id
+             UNION ALL
+             SELECT assistant_family, source_type, source_key,
+                    NULL::bigint, NULL::uuid, invoked_14d, calls_14d, NULL::text
+               FROM uncovered
+             ORDER BY 7 DESC"
+        ).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+
+        Ok(rows.into_iter().map(|(family, stype, skey, registered, server_id, invoked, calls, conn)| {
+            let connected = match stype.as_str() {
+                "builtin" => true,
+                _ => conn.as_deref() == Some("connected"),
+            };
+            let share = registered.filter(|r| *r > 0).map(|r| invoked as f64 / r as f64);
+            serde_json::json!({
+                "assistant_family": family,
+                "source_type": stype,
+                "source_key": skey,
+                "name": crate::tool_discovery::pretty_source_name(&stype, &skey),
+                "connected": connected,
+                "connection_state": conn,
+                "server_id": server_id,
+                "tools_registered": registered,
+                "tools_invoked_14d": invoked,
+                "calls_14d": calls,
+                "share_invoked": share,
+            })
+        }).collect())
+    }
+
     /// All verdicts for one session, ordered by the underlying event ts.
     /// Consumed by the Replay tab's timeline read path (#84 / #90).
     pub async fn get_verdicts_for_session(
@@ -4038,18 +4314,93 @@ impl PgStore {
     }
 
     pub async fn get_project(&self, id: &uuid::Uuid) -> Result<Option<serde_json::Value>, String> {
-        let row: Option<(uuid::Uuid, String, Option<String>, Option<String>, String, Option<String>, serde_json::Value, serde_json::Value, Vec<String>, chrono::DateTime<chrono::Utc>)> =
+        #[allow(clippy::type_complexity)]
+        let row: Option<(uuid::Uuid, String, Option<String>, Option<String>, String, Option<String>, serde_json::Value, serde_json::Value, serde_json::Value, Vec<String>, chrono::DateTime<chrono::Utc>)> =
             sqlx_core::query_as::query_as(
-                "SELECT id, name, description, client, maturity::text, goal, stack, links, tags, modified_at FROM sensei.projects WHERE id = $1"
+                "SELECT id, name, description, client, maturity::text, goal, icon, stack, links, tags, modified_at FROM sensei.projects WHERE id = $1"
             ).bind(id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
 
-        Ok(row.map(|(id, name, desc, client, maturity, goal, stack, links, tags, modified)| {
+        Ok(row.map(|(id, name, desc, client, maturity, goal, icon, stack, links, tags, modified)| {
             serde_json::json!({
                 "id": id, "name": name, "description": desc, "client": client,
-                "maturity": maturity, "goal": goal, "stack": stack, "links": links,
+                "maturity": maturity, "goal": goal, "icon": icon, "stack": stack, "links": links,
                 "tags": tags, "modified_at": modified.to_rfc3339(),
             })
         }))
+    }
+
+    /// Top pending recommendation for a project — highest urgency, then id —
+    /// including `default_acp` for the Overview hero's "send to {acp}" action.
+    /// `None` when the project has no pending recommendation.
+    pub async fn get_top_recommendation(&self, project_id: &uuid::Uuid) -> Result<Option<serde_json::Value>, String> {
+        let row: Option<(uuid::Uuid, String, String, serde_json::Value, Option<String>)> = sqlx_core::query_as::query_as(
+            "SELECT id, title, why, evidence, default_acp
+             FROM inference.recommendations
+             WHERE project_id = $1 AND status = 'pending'
+             ORDER BY CASE urgency WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, id
+             LIMIT 1"
+        ).bind(project_id).fetch_optional(&self.pool).await
+            .map_err(|e| { tracing::error!(error = %e, "get_top_recommendation failed"); e.to_string() })?;
+        Ok(row.map(|(id, title, why, evidence, default_acp)| serde_json::json!({
+            "id": id, "title": title, "why": why, "evidence": evidence, "defaultAcp": default_acp,
+        })))
+    }
+
+    /// Overview stat scalars for a project in one round trip: active (non-
+    /// archived) memory count, 7-day session + corrected counts, and open
+    /// doc-drift + distinct-referenced-doc counts. `readyToShare` / `toMerge`
+    /// are 0 — the memory_status enum has no promotion/merge-readiness value yet
+    /// ([[pipeline/memory]]); they are surfaced as 0 rather than invented.
+    pub async fn get_project_overview_stats(&self, project_id: &uuid::Uuid) -> Result<serde_json::Value, String> {
+        let (mem_total, sessions_7d, sessions_7d_corrected, drift_open, referenced_docs):
+            (i64, i64, i64, i64, i64) = sqlx_core::query_as::query_as(
+            "SELECT
+               (SELECT count(*) FROM sensei.memories
+                  WHERE project_id = $1 AND status != 'archived'),
+               (SELECT count(*) FROM activity.sessions
+                  WHERE project_id = $1 AND started_at > now() - interval '7 days'),
+               (SELECT count(*) FROM activity.sessions
+                  WHERE project_id = $1 AND started_at > now() - interval '7 days' AND corrections > 0),
+               (SELECT count(*) FROM sensei.project_drift
+                  WHERE project_id = $1 AND status::text IN ('drifted','broken')),
+               (SELECT count(DISTINCT di.doc_node_id) FROM inference.drift_items di
+                  JOIN sensei.folders f ON f.id = di.folder_id WHERE f.project_id = $1)"
+        ).bind(project_id).fetch_one(&self.pool).await
+            .map_err(|e| { tracing::error!(error = %e, "get_project_overview_stats failed"); e.to_string() })?;
+        Ok(serde_json::json!({
+            "sessions7d": sessions_7d,
+            "sessions7dCorrected": sessions_7d_corrected,
+            "memories": { "total": mem_total, "readyToShare": 0, "toMerge": 0 },
+            "docDrift": { "open": drift_open, "referencedDocs": referenced_docs },
+        }))
+    }
+
+    /// Recent sessions for a project with the folder role they ran in (the
+    /// multi-repo membership chip). Newest first, capped at `limit`. Duration
+    /// and relative time are formatted client-side from the ISO timestamps, the
+    /// same as the shared RecentSessions component.
+    pub async fn list_recent_project_sessions_with_role(&self, project_id: &uuid::Uuid, limit: i64) -> Result<Vec<serde_json::Value>, String> {
+        #[allow(clippy::type_complexity)]
+        let rows: Vec<(uuid::Uuid, Option<String>, Option<bool>, i32, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>, Option<String>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT s.id, s.task, s.ftr, s.corrections, s.started_at, s.completed_at, f.role::text
+                 FROM activity.sessions s
+                 LEFT JOIN sensei.folders f ON f.id = s.folder_id
+                 WHERE s.project_id = $1
+                 ORDER BY s.started_at DESC LIMIT $2"
+            ).bind(project_id).bind(limit).fetch_all(&self.pool).await
+            .map_err(|e| { tracing::error!(error = %e, "list_recent_project_sessions_with_role failed"); e.to_string() })?;
+        Ok(rows.into_iter().map(|(id, task, ftr, corrections, started, completed, role)| {
+            serde_json::json!({
+                "id": id,
+                "title": task,
+                "ftr": ftr,
+                "corrections": corrections,
+                "startedAt": started.to_rfc3339(),
+                "completedAt": completed.map(|t| t.to_rfc3339()),
+                "role": role,
+            })
+        }).collect())
     }
 
     pub async fn get_project_by_name(&self, name: &str) -> Result<Option<serde_json::Value>, String> {
@@ -4068,15 +4419,39 @@ impl PgStore {
     }
 
     pub async fn list_projects(&self) -> Result<Vec<serde_json::Value>, String> {
-        let rows: Vec<(uuid::Uuid, String, Option<String>, Option<String>, String, Vec<String>, chrono::DateTime<chrono::Utc>)> =
-            sqlx_core::query_as::query_as(
-                "SELECT id, name, description, client, maturity::text, tags, modified_at FROM sensei.projects ORDER BY name"
-            ).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        // Additive: also returns icon/stack/vision(goal) plus repos_count /
+        // libs_count / last_session_at / sessions7d so the Projects index can
+        // render its card + list layouts without a per-project fanout. Existing
+        // consumers (e.g. the Today loader) keep working — nothing is removed.
+        // repos_count counts only real repos (folders.kind git|standalone), NOT
+        // the ~10k nested `folder` rows.
+        #[allow(clippy::type_complexity)]
+        let rows: Vec<(
+            uuid::Uuid, String, Option<String>, Option<String>, String, Vec<String>,
+            chrono::DateTime<chrono::Utc>, Option<serde_json::Value>, Option<serde_json::Value>,
+            Option<String>, i64, i64, Option<chrono::DateTime<chrono::Utc>>, i64,
+        )> = sqlx_core::query_as::query_as(
+                "SELECT p.id, p.name, p.description, p.client, p.maturity::text, p.tags, p.modified_at,
+                        p.icon, p.stack, p.goal,
+                        (SELECT count(*) FROM sensei.folders f
+                          WHERE f.project_id = p.id AND f.kind::text IN ('git','standalone'))::bigint AS repos_count,
+                        (SELECT count(*) FROM sensei.project_libraries pl
+                          WHERE pl.project_id = p.id)::bigint AS libs_count,
+                        (SELECT max(s.started_at) FROM activity.sessions s WHERE s.project_id = p.id) AS last_session_at,
+                        (SELECT count(*) FROM activity.sessions s
+                          WHERE s.project_id = p.id AND s.started_at > now() - interval '7 days')::bigint AS sessions7d
+                 FROM sensei.projects p ORDER BY p.name"
+            ).fetch_all(&self.pool).await
+            .map_err(|e| { tracing::error!(error = %e, "list_projects failed"); e.to_string() })?;
 
-        Ok(rows.into_iter().map(|(id, name, desc, client, maturity, tags, modified)| {
+        Ok(rows.into_iter().map(|(id, name, desc, client, maturity, tags, modified, icon, stack, vision, repos_count, libs_count, last_session_at, sessions7d)| {
             serde_json::json!({
                 "id": id, "name": name, "description": desc, "client": client,
                 "maturity": maturity, "tags": tags, "modified_at": modified.to_rfc3339(),
+                "icon": icon, "stack": stack, "vision": vision,
+                "repos_count": repos_count, "libs_count": libs_count,
+                "last_session_at": last_session_at.map(|t| t.to_rfc3339()),
+                "sessions7d": sessions7d,
             })
         }).collect())
     }
@@ -4304,6 +4679,47 @@ impl PgStore {
             ).bind(project_id)
             .fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
 
+        let trend: Vec<f64> = daily.into_iter().map(|(_, v)| v.unwrap_or(0.0)).collect();
+
+        Ok(serde_json::json!({
+            "ftr14d": ftr_14d.unwrap_or(0.0),
+            "ftr14dPrev": ftr_14d_prev.unwrap_or(0.0),
+            "ftrTrend": trend,
+            "sessions7d": sessions_7d,
+        }))
+    }
+
+    /// Holistic First-Try-Right rollup across all sessions — powers the
+    /// Observatory · Today header. Mirrors [`Self::get_project_ftr`] without the
+    /// project filter: the 14d / prior-14d headline is session-weighted
+    /// (fraction of FTR-scored sessions), and the trend is a fixed 14
+    /// calendar-day array (0-filled on empty days) so the sparkline always has
+    /// 14 points.
+    pub async fn get_holistic_ftr(&self) -> Result<serde_json::Value, String> {
+        let row: (Option<f64>, Option<f64>, i64) = sqlx_core::query_as::query_as(
+            "SELECT
+               (avg(CASE WHEN ftr THEN 1.0 ELSE 0.0 END)
+                  FILTER (WHERE ftr IS NOT NULL AND started_at > now() - interval '14 days'))::float8,
+               (avg(CASE WHEN ftr THEN 1.0 ELSE 0.0 END)
+                  FILTER (WHERE ftr IS NOT NULL
+                          AND started_at <= now() - interval '14 days'
+                          AND started_at >  now() - interval '28 days'))::float8,
+               count(*) FILTER (WHERE started_at > now() - interval '7 days')
+             FROM activity.sessions"
+        ).fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        let (ftr_14d, ftr_14d_prev, sessions_7d) = row;
+
+        // Exactly 14 calendar-day trend points, oldest → newest, 0-filled on
+        // days with no FTR-scored session.
+        let daily: Vec<(chrono::NaiveDate, Option<f64>)> = sqlx_core::query_as::query_as(
+            "SELECT d::date,
+                    (SELECT avg(CASE WHEN s.ftr THEN 1.0 ELSE 0.0 END)::float8
+                       FROM activity.sessions s
+                      WHERE date_trunc('day', s.started_at)::date = d::date
+                        AND s.ftr IS NOT NULL)
+             FROM generate_series(current_date - 13, current_date, interval '1 day') d
+             ORDER BY d"
+        ).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
         let trend: Vec<f64> = daily.into_iter().map(|(_, v)| v.unwrap_or(0.0)).collect();
 
         Ok(serde_json::json!({
@@ -4685,6 +5101,19 @@ impl PgStore {
                (EXISTS(SELECT 1 FROM inference.recommendations WHERE project_id = $1)
                 OR EXISTS(SELECT 1 FROM sensei.memories WHERE project_id = $1 AND origin = 'learned'))"
         ).bind(project_id).fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row)
+    }
+
+    /// Aggregate maturity inputs across all sessions/projects — powers the
+    /// Observatory · Today maturity gate. Mirrors
+    /// [`Self::get_project_maturity_inputs`] without the project filter.
+    pub async fn get_global_maturity_inputs(&self) -> Result<(i64, bool), String> {
+        let row: (i64, bool) = sqlx_core::query_as::query_as(
+            "SELECT
+               (SELECT count(*) FROM activity.sessions WHERE analyzed_at IS NOT NULL),
+               (EXISTS(SELECT 1 FROM inference.recommendations)
+                OR EXISTS(SELECT 1 FROM sensei.memories WHERE origin = 'learned'))"
+        ).fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(row)
     }
 
@@ -7393,7 +7822,7 @@ mod tests {
         let session_id = s.record_session_event(&sid, &fid, Some(&pid), "claude", false).await.unwrap();
         s.record_session_event(&sid, &fid, Some(&pid), "claude", true).await.unwrap();
 
-        let all = s.list_all_sessions(500).await.unwrap();
+        let all = s.list_all_sessions(500, None, None).await.unwrap();
         let row = all.iter()
             .find(|r| r["id"].as_str() == Some(session_id.to_string().as_str()))
             .expect("our session is listed");

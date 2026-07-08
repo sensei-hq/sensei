@@ -3691,7 +3691,7 @@ dependencies = [
 
 [[package]]
 name = "sensei-bootstrap"
-version = "0.2.23"
+version = "0.2.24"
 dependencies = [
  "chrono",
  "dbd-core",
@@ -3702,11 +3702,12 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]
 name = "sensei-desktop"
-version = "0.2.23"
+version = "0.2.24"
 dependencies = [
  "chrono",
  "sensei-bootstrap",

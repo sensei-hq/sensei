@@ -54,11 +54,12 @@ pub async fn probe_tools(
     command: &str,
     args: &[String],
     env: &HashMap<String, String>,
+    cwd: Option<&std::path::Path>,
 ) -> ProbeOutcome {
     if command.is_empty() {
         return ProbeOutcome::Error("no command configured".into());
     }
-    match tokio::time::timeout(PROBE_TIMEOUT, probe_inner(command, args, env)).await {
+    match tokio::time::timeout(PROBE_TIMEOUT, probe_inner(command, args, env, cwd)).await {
         Ok(Ok(manifest)) => ProbeOutcome::Ok(manifest),
         Ok(Err(e))       => ProbeOutcome::Error(e),
         Err(_)           => ProbeOutcome::Error(format!("timed out after {}s", PROBE_TIMEOUT.as_secs())),
@@ -69,9 +70,16 @@ async fn probe_inner(
     command: &str,
     args: &[String],
     env: &HashMap<String, String>,
+    cwd: Option<&std::path::Path>,
 ) -> Result<ProbedManifest, String> {
     let mut cmd = Command::new(command);
     cmd.args(args);
+    // Plugin MCP configs sometimes use a command/arg path relative to the
+    // config file's directory (e.g. `node packages/mcp-stdio/dist/index.js`),
+    // so run from the config's dir when the caller provides one.
+    if let Some(dir) = cwd {
+        cmd.current_dir(dir);
+    }
     // Merge env over process env; the mcp entry usually only wants to set
     // API keys, so we don't strip the process's PATH etc.
     for (k, v) in env {
@@ -223,7 +231,7 @@ mod tests {
 
     #[tokio::test]
     async fn empty_command_is_early_error_no_spawn() {
-        let outcome = probe_tools("", &[], &HashMap::new()).await;
+        let outcome = probe_tools("", &[], &HashMap::new(), None).await;
         match outcome {
             ProbeOutcome::Error(msg) => assert!(msg.contains("no command"), "got: {msg}"),
             _ => panic!("expected early Error for empty command"),
@@ -236,6 +244,7 @@ mod tests {
             "definitely_not_a_real_binary_xyz_88",
             &[],
             &HashMap::new(),
+            None,
         ).await;
         match outcome {
             ProbeOutcome::Error(msg) => assert!(msg.contains("spawn failed"), "got: {msg}"),
@@ -265,7 +274,7 @@ mod tests {
         env: &HashMap<String, String>,
         timeout: Duration,
     ) -> String {
-        match tokio::time::timeout(timeout, probe_inner(cmd, args, env)).await {
+        match tokio::time::timeout(timeout, probe_inner(cmd, args, env, None)).await {
             Ok(Ok(_))  => "ok".into(),
             Ok(Err(e)) => e,
             Err(_)     => format!("timed out after {}ms", timeout.as_millis()),

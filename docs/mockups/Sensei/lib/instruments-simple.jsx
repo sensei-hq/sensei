@@ -31,7 +31,7 @@ function InstrHero({ kanji, eyebrow, title, sub, right }) {
 // Left rail: search + collapsible MCP groups → tools
 // Right: detail
 // ═══════════════════════════════════════════════════════════════════════
-function InstrumentsPlaygroundSimple() {
+function InstrumentsPlaygroundSimple({ subNav } = {}) {
   const I = window.INSTRUMENTS;
   const [q, setQ] = isS("");
   const [focusId, setFocusId] = isS(null);
@@ -74,6 +74,8 @@ function InstrumentsPlaygroundSimple() {
         eyebrow="Instruments · Playground"
         title="Try any tool before you trust it."
         sub="A room of tools. See what each one does, what it returns. Try one."/>
+
+      {subNav}
 
       <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '300px 1fr',
                      minHeight: 0, overflow: 'hidden' }}>
@@ -401,12 +403,12 @@ function EmptyDetail() {
 // They already have their own internal layouts. We just swap the chrome
 // so the slim hero is consistent and the old tab strip is gone.
 // ═══════════════════════════════════════════════════════════════════════
-function InstrumentsReplaySimple() {
-  return <InstrumentsReplay simple={true} embedded={true}/>;
+function InstrumentsReplaySimple({ subNav } = {}) {
+  return <InstrumentsReplay simple={true} embedded={true} subNav={subNav}/>;
 }
 
-function InstrumentsHealthSimple() {
-  return <InstrumentsHealth simple={true} embedded={true}/>;
+function InstrumentsHealthSimple({ subNav } = {}) {
+  return <InstrumentsHealth simple={true} embedded={true} subNav={subNav}/>;
 }
 
 Object.assign(window, {

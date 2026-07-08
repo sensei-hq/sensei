@@ -1,117 +1,169 @@
 <script lang="ts">
   import { openProjectWindow } from '$lib/stores/windows.svelte.js';
-  import { PageHeader, Eyebrow } from '$lib/components';
-  import type { EnrichedProject } from './buckets.js';
+  import { Eyebrow } from '$lib/components';
+  import { projectStatus, type EnrichedProject } from './buckets.js';
+  import { projectsView, type ProjectFilter } from './projects-view.svelte.js';
+  import ProjectCard from './ProjectCard.svelte';
+  import ProjectRow from './ProjectRow.svelte';
 
   let { data } = $props();
 
-  const totalActive   = $derived(data.buckets.active.length);
-  const totalRecent   = $derived(data.buckets.recent.length);
-  const totalArchived = $derived(data.buckets.archived.length);
+  const allProjects = $derived<EnrichedProject[]>([
+    ...data.buckets.active,
+    ...data.buckets.dormant,
+    ...data.buckets.archived,
+  ]);
 
-  function ftrPct(v: number): string {
-    return `${Math.round(v * 100)}`;
+  const counts = $derived({
+    all:      allProjects.length,
+    active:   data.buckets.active.length,
+    dormant:  data.buckets.dormant.length,
+    archived: data.buckets.archived.length,
+  });
+
+  // Buckets arrive pre-ordered (active by FTR, then dormant, then archived),
+  // and Array.filter is stable, so filtering preserves that order.
+  const filtered = $derived.by(() => {
+    const q = projectsView.query.trim().toLowerCase();
+    const f = projectsView.filter;
+    return allProjects.filter((p) => {
+      if (f !== 'all' && projectStatus(p) !== f) return false;
+      if (q) {
+        const hay = `${p.name} ${p.client ?? ''}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+  });
+
+  function open(id: string, name: string): void {
+    openProjectWindow(id, name).catch((e) => console.error(e));
   }
 
-  function sessionsShort(n: number): string {
-    return n === 0 ? 'no 7d' : `${n}× 7d`;
-  }
+  const chips: Array<{ v: ProjectFilter; label: string; kanji: string }> = [
+    { v: 'all',      label: 'All',      kanji: '全' },
+    { v: 'active',   label: 'Active',   kanji: '動' },
+    { v: 'dormant',  label: 'Dormant',  kanji: '眠' },
+    { v: 'archived', label: 'Archived', kanji: '蔵' },
+  ];
+
+  const views: Array<{ v: 'grid' | 'list'; glyph: string; label: string }> = [
+    { v: 'grid', glyph: '田', label: 'grid view' },
+    { v: 'list', glyph: '≣', label: 'list view' },
+  ];
 </script>
 
-{#snippet card(p: EnrichedProject, big: boolean, dim: boolean)}
-  <button
-    type="button"
-    data-project-card={p.id}
-    data-big={big || undefined}
-    data-dim={dim || undefined}
-    class="flex flex-col gap-2 text-left bg-paper-mute hover:bg-paper-soft border border-paper-edge rounded-[10px] cursor-pointer text-inherit"
-    class:opacity-70={dim}
-    style={big ? 'padding: 18px 20px; min-height: 120px;' : 'padding: 14px 16px; min-height: 84px;'}
-    onclick={() => openProjectWindow(p.id, p.name).catch(console.error)}
-  >
-    <div class="flex items-center gap-3">
-      <span
-        class="kanji text-accent"
-        style={big ? 'font-size: 26px;' : 'font-size: 18px;'}
-      >{p.icon?.value ?? '場'}</span>
-      <div class="flex-1 min-w-0">
-        <div class="flex items-center gap-2">
-          <span
-            class="w-2 h-2 rounded-full shrink-0"
-            class:bg-warning={p.warn}
-            class:bg-success={!p.warn && p.ftr14d >= 0.8}
-            class:bg-ink-mute={!p.warn && p.ftr14d < 0.8}
-            aria-label={p.warn ? 'warning' : 'ok'}
-          ></span>
-          <span
-            class="text-ink truncate"
-            style={big ? 'font-size: 14.5px;' : 'font-size: 13px;'}
-          >{p.name}</span>
-        </div>
-        <div class="font-mono text-xs text-ink-soft mt-1 truncate">
-          {p.client ?? '—'}
-        </div>
-      </div>
-      <span class="font-mono text-xs text-ink-soft">{ftrPct(p.ftr14d)}</span>
-    </div>
-    {#if big}
-      <div class="font-mono flex gap-3 text-xs text-ink-soft mt-auto">
-        <span>{sessionsShort(p.sessions7d)}</span>
-        <span>·</span>
-        <span>{p.maturity}</span>
-        {#if p.stack?.languages && p.stack.languages.length > 0}
-          <span>·</span>
-          <span class="truncate">{p.stack.languages.slice(0, 2).join(' / ')}</span>
-        {/if}
-      </div>
-    {/if}
-  </button>
-{/snippet}
-
-<div class="max-w-[1060px] mx-auto px-7 py-6 pb-16">
-  <!-- Header — kanji + workspace eyebrow + running tally -->
-  <div class="flex items-center gap-5 mb-6">
+<div class="w-full h-full flex flex-col bg-paper overflow-hidden">
+  <!-- Header -->
+  <div class="pt-5 pb-4 px-7 border-b border-paper-edge flex items-center gap-5">
     <span class="kanji text-[28px] text-accent">場</span>
     <div>
-      <p class="m-0 mb-0.5"><Eyebrow>Workspace</Eyebrow></p>
-      <h1 class="display text-[22px] font-normal m-0">
-        {totalActive} active · {totalRecent} recent · {totalArchived} archived
-      </h1>
+      <p class="m-0 mb-0.5"><Eyebrow>Projects</Eyebrow></p>
+      <h1 class="display text-[22px] font-normal m-0">All the places you work.</h1>
     </div>
     <span class="flex-1"></span>
-    <span class="font-mono text-xs text-ink-soft py-1 px-2 border border-paper-edge rounded">
+    <span class="font-mono text-[11px] text-ink-soft py-1 px-2 border border-paper-edge rounded">
       ⌘K to jump
     </span>
   </div>
 
-  {#if totalActive === 0 && totalRecent === 0 && totalArchived === 0}
-    <p class="text-sm text-ink-soft opacity-70">No projects yet. Set up a project to get started.</p>
-  {:else}
-    {#if totalActive > 0}
-      <h2 class="display text-[15px] font-normal mt-5 mb-2" data-bucket="active">Active</h2>
-      <div class="grid grid-cols-2 gap-3">
-        {#each data.buckets.active as p (p.id)}
-          {@render card(p, true, false)}
-        {/each}
-      </div>
-    {/if}
+  <!-- Filter chips + view toggle + search -->
+  <div class="py-3 px-7 gap-4 border-b border-paper-edge flex items-center">
+    <div class="flex gap-1">
+      {#each chips as c (c.v)}
+        {@const on = projectsView.filter === c.v}
+        {@const n = counts[c.v]}
+        <button
+          type="button"
+          data-chip={c.v}
+          data-active={on || undefined}
+          onclick={() => projectsView.setFilter(c.v)}
+          class="py-1 px-3 gap-2 text-[11px] rounded inline-flex items-center transition-colors"
+          class:bg-ink={on}
+          class:text-paper={on}
+          class:text-ink-mute={!on}
+        >
+          <span class="kanji text-[11px]">{c.kanji}</span>
+          {c.label}
+          <span
+            class="font-mono text-[11px]"
+            class:text-paper={on}
+            class:text-ink-faint={!on}
+          >{n}</span>
+        </button>
+      {/each}
+    </div>
+    <span class="flex-1"></span>
 
-    {#if totalRecent > 0}
-      <h2 class="display text-[15px] font-normal text-ink-mute mt-5 mb-2" data-bucket="recent">Recent</h2>
-      <div class="grid grid-cols-3 gap-3">
-        {#each data.buckets.recent as p (p.id)}
-          {@render card(p, false, false)}
-        {/each}
-      </div>
-    {/if}
+    <!-- View toggle: grid 田 / list ≣ -->
+    <div
+      class="flex gap-1 p-1 bg-paper-soft border border-paper-edge rounded"
+      role="group"
+      aria-label="view"
+    >
+      {#each views as v (v.v)}
+        {@const on = projectsView.view === v.v}
+        <button
+          type="button"
+          data-view-toggle={v.v}
+          aria-pressed={on}
+          aria-label={v.label}
+          onclick={() => projectsView.setView(v.v)}
+          class="py-1 px-2 rounded-sm transition-colors"
+          class:bg-paper={on}
+          class:text-ink={on}
+          class:text-ink-mute={!on}
+        >
+          <span class="kanji text-[12px]">{v.glyph}</span>
+        </button>
+      {/each}
+    </div>
 
-    {#if totalArchived > 0}
-      <h2 class="display text-[15px] font-normal text-ink-soft mt-5 mb-2" data-bucket="archived">Archived</h2>
-      <div class="grid grid-cols-3 gap-3">
-        {#each data.buckets.archived as p (p.id)}
-          {@render card(p, false, true)}
+    <div class="flex items-center bg-paper-soft border border-paper-edge rounded gap-2 py-1 px-2 min-w-[260px]">
+      <span class="kanji text-[11px] text-ink-soft">探</span>
+      <input
+        type="text"
+        bind:value={projectsView.query}
+        placeholder="search projects or clients…"
+        aria-label="search projects"
+        class="border-none outline-none bg-transparent text-[13px] flex-1 text-ink placeholder:text-ink-faint"
+      />
+      {#if projectsView.query}
+        <button
+          type="button"
+          onclick={() => projectsView.clearQuery()}
+          class="text-[11px] text-ink-faint hover:text-ink"
+          aria-label="clear search"
+        >×</button>
+      {/if}
+    </div>
+    <span class="font-mono text-[11px] text-ink-soft whitespace-nowrap">
+      {filtered.length} of {counts.all}
+    </span>
+  </div>
+
+  <!-- Body -->
+  <main class="flex-1 overflow-auto pt-5 pb-6 px-7">
+    {#if counts.all === 0}
+      <p class="text-sm text-ink-soft opacity-70 py-6 text-center">
+        No projects yet. Set up a project to get started.
+      </p>
+    {:else if filtered.length === 0}
+      <p class="text-[13px] text-ink-soft py-6 text-center">
+        {projectsView.query ? `No projects match “${projectsView.query}”.` : 'No projects in this bucket.'}
+      </p>
+    {:else if projectsView.view === 'grid'}
+      <div class="grid grid-cols-3 gap-3 items-start">
+        {#each filtered as p (p.id)}
+          <ProjectCard {p} onOpen={open} />
+        {/each}
+      </div>
+    {:else}
+      <div class="border border-paper-edge rounded-lg overflow-hidden bg-paper-soft">
+        {#each filtered as p, i (p.id)}
+          <ProjectRow {p} onOpen={open} last={i === filtered.length - 1} />
         {/each}
       </div>
     {/if}
-  {/if}
+  </main>
 </div>

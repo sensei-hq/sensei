@@ -16,6 +16,7 @@ import { appState } from '$lib/appstate.svelte.js';
 import type {
   McpToolManifest, SessionToolCall, ToolInsight, ToolSignal,
   SessionReplayCall, McpServerRow, McpServerToolsManifest,
+  ToolHealthSource,
 } from '$lib/types.js';
 
 type ToolStat = {
@@ -25,6 +26,23 @@ type ToolStat = {
   avg_duration_ms: number | null;
   last_used_at: string;
 };
+
+/** Per-tool health verdict for the Instruments · Health L2 usage table,
+ *  using the mockup's vocabulary. Pure derivation from an aggregate row's
+ *  call/error counts so it can be unit-tested without the store:
+ *  - `unused`  — no recorded calls in the window
+ *  - `warn`    — error rate above 10%
+ *  - `healthy` — calls recorded with zero errors
+ *  - `ok`      — calls recorded with a tolerable (≤10%) error rate
+ */
+export type ToolVerdict = 'healthy' | 'ok' | 'warn' | 'unused';
+
+export function toolVerdict(callCount: number, errorCount: number): ToolVerdict {
+  if (callCount <= 0) return 'unused';
+  if (errorCount / callCount > 0.1) return 'warn';
+  if (errorCount === 0) return 'healthy';
+  return 'ok';
+}
 
 // Loading lifecycle — 'idle' before first load, 'loading' during the
 // first fetch, 'ready' once populated, 'error' if the fetch threw. The
@@ -120,6 +138,58 @@ async function loadSessionReplay(
   return cache;
 }
 
+// ── Instruments · Health L1 — tool-health source grid ──────────────────
+
+/** One row per registered source (builtin tool set or probed MCP server)
+ *  from GET /api/instruments/tools-health. Drives the L1 share grid; the
+ *  L2 per-tool drill still reads tool-signals / tool-insights above. */
+let toolsHealth = $state<ToolHealthSource[]>([]);
+let toolsHealthStatus = $state<LoadStatus>('idle');
+
+/** Load the L1 source grid. Idempotent — a second call short-circuits once
+ *  ready unless `force` is set (mirrors loadCatalog / loadInsights). */
+async function loadToolsHealth(force = false): Promise<void> {
+  if (toolsHealthStatus === 'loading') return;
+  if (!force && toolsHealthStatus === 'ready') return;
+  toolsHealthStatus = 'loading';
+  try {
+    const api = senseiApi(appState.port);
+    const resp = await api.getToolsHealth();
+    toolsHealth = resp.sources ?? [];
+    toolsHealthStatus = 'ready';
+  } catch {
+    toolsHealthStatus = 'error';
+  }
+}
+
+/** Grid order — connected sources first, then by 14d call volume desc so
+ *  the surfaces earning their keep lead. */
+function sortedToolsHealth(): ToolHealthSource[] {
+  return [...toolsHealth].sort((a, b) =>
+    a.connected === b.connected
+      ? b.calls_14d - a.calls_14d
+      : (a.connected ? -1 : 1),
+  );
+}
+
+/** Header KPIs derived from the same grid rows. Tool coverage counts only
+ *  probed sources (tools_registered known); it is null when nothing has been
+ *  probed rather than a fabricated 0%. */
+function toolsHealthKpis(): {
+  total: number; connected: number;
+  sumRegistered: number; sumInvoked: number;
+  coverage: number | null; totalCalls: number;
+} {
+  const total = toolsHealth.length;
+  const connected = toolsHealth.filter((s) => s.connected).length;
+  const probed = toolsHealth.filter((s) => s.tools_registered != null);
+  const sumRegistered = probed.reduce((acc, s) => acc + (s.tools_registered ?? 0), 0);
+  const sumInvoked = probed.reduce((acc, s) => acc + s.tools_invoked_14d, 0);
+  const coverage = sumRegistered > 0 ? sumInvoked / sumRegistered : null;
+  const totalCalls = toolsHealth.reduce((acc, s) => acc + s.calls_14d, 0);
+  return { total, connected, sumRegistered, sumInvoked, coverage, totalCalls };
+}
+
 // ── #84 T2 Slice A/B — discovered MCP servers + tool manifests ──────────
 
 let mcpServers = $state<McpServerRow[]>([]);
@@ -180,11 +250,12 @@ async function refreshMcpServers(): Promise<{ discovered: number; pruned: number
 async function refresh(): Promise<void> {
   catalogStatus = 'idle';
   insightsStatus = 'idle';
+  toolsHealthStatus = 'idle';
   sessionTimelines = {};
   sessionReplays = {};
   serverToolManifests = {};
   mcpServersStatus = 'idle';
-  await Promise.all([loadCatalog(true), loadInsights(true)]);
+  await Promise.all([loadCatalog(true), loadInsights(true), loadToolsHealth(true)]);
 }
 
 /**
@@ -199,6 +270,11 @@ export const mcp = {
   get signalSource() { return signalSource; },
   get catalogStatus() { return catalogStatus; },
   get insightsStatus() { return insightsStatus; },
+  /** Instruments · Health L1 — source grid rows, connected-first. */
+  get toolsHealth() { return sortedToolsHealth(); },
+  get toolsHealthStatus() { return toolsHealthStatus; },
+  /** Header KPIs derived from the L1 grid rows. */
+  get toolsHealthKpis() { return toolsHealthKpis(); },
   get sessionTimelines() { return sessionTimelines; },
   /** #84 T2 Slice C — cached Replay responses (calls + summary) by session id. */
   get sessionReplays() { return sessionReplays; },
@@ -213,6 +289,7 @@ export const mcp = {
   },
   loadCatalog,
   loadInsights,
+  loadToolsHealth,
   loadSessionTimeline,
   loadSessionReplay,
   loadMcpServers,
