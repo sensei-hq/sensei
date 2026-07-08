@@ -28,6 +28,7 @@ use crate::api::handlers::gateway_chains;
 use crate::api::handlers::gateway_image;
 use crate::api::handlers::knowledge;
 use crate::api::handlers::dojo;
+use crate::api::handlers::share_review;
 use crate::api::handlers::corrections;
 
 pub fn create_router(state: AppState) -> Router {
@@ -247,6 +248,9 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/knowledge/sources/{id}/status",     get(knowledge::source_status))
         // Dōjō connections (memberships)
         .route("/api/dojo/memberships",                  get(dojo::list_memberships).post(dojo::create_membership))
+        // Dōjō upstream share review (C6)
+        .route("/api/share-review/next-batch",           get(share_review::next_batch))
+        .route("/api/share-review/{batch}/publish",      post(share_review::publish_batch))
         // Stop
         .route("/stop", post(workspace::stop))
         .with_state(state)

@@ -1146,3 +1146,21 @@ strip (project name/folder paths/repo names/session ids from DB context — the 
 generalize (reuse generalise/reasoning). FAIL-CLOSED (withhold if can't confidently strip; never leak).
 Heavy adversarial tests (identifiers in path/camel/snake/partial forms all caught). C4 routing already
 sets dereference=true for client work → C5 provides the stripper it calls.
+
+── DŌJŌ C5 ✅ COMMITTED `29971613` (2026-07-08) ──
+Confidentiality layer: dojo/attribution.rs (deterministic strip, all identifier forms + generic vectors,
+squash-scan backstop) + FAIL-CLOSED type-enforced `Dereferenced` (private field, constructor-only-on-clean
+→ C6 takes Dereferenced not String → publishing unchecked text is STRUCTURALLY IMPOSSIBLE) +
+collective/anonymize.rs (global: dereference-first, reasoning-chain generalize via Generalizer seam,
+LLM-post-check discards reintroductions, ProjectShape buckets + rotating irreversible anon_id). pg_store
+project_identifiers(). 26 tests (hostile-LLM, residual-risk, idempotent), 1242 pass, clippy 0.
+
+DŌJŌ on develop UNMERGED: C1 `37f30527`, dojo-protocol `1e963ab2`, C3 `122fad3f`, C4 `beacc421`, C5 `29971613`.
+⏳ DŌJŌ C6 BUILDING: upstream contribute — approved memory_share_batches → C4 client_precedence_route →
+CLIENT work MUST go through C5 Dereferenced (type-enforced) → DojoClient.publish (add publish method →
+POST /v1/t/{tenant}/artifacts, dojo-protocol PublishedArtifact) → tenant's Dōjō. + /api/share-review
+surface + daemon-side durable outbox (agent decides: extend memory_share_batches w/ sent flag OR small
+sensei outbox). Unit-tested; live HTTP round-trip DEFERRED to daemon↔service integration step.
+PLAN: C6 → C7 downstream inbox (pull approved→land per type; /api/upgrades) → then daemon↔service
+INTEGRATION test (run sensei-hive + daemon, contribute→pull round-trip) = FIRST FUNCTIONAL MILESTONE →
+merge+bump Dōjō foundation (validate dbd handles dojo scope+proc at that bump). Then C8 + screens C9-C11.

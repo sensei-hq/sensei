@@ -20,6 +20,7 @@ pub(crate) mod gateway_chains;
 pub(crate) mod gateway_image;
 pub(crate) mod knowledge;
 pub(crate) mod dojo;
+pub(crate) mod share_review;
 pub(crate) mod corrections;
 pub(crate) mod verdicts;
 pub(crate) mod mcp_servers;
