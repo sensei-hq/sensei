@@ -1,0 +1,45 @@
+set search_path to dojo, extensions;
+
+create table if not exists dojo.memberships (
+  id                   uuid                  primary key default gen_random_uuid()
+, tenant_id            uuid                  not null references dojo.tenants(id)
+, user_id              uuid                  not null
+, dojo_url             text                  not null
+, role                 dojo.member_role      not null default 'contributor'
+, kind                 dojo.membership_kind  not null
+, authenticated_via    dojo.auth_method      not null
+, attribution_default  dojo.attribution_mode not null default 'named'
+, sync_status          dojo.sync_status      not null default 'authenticating'
+, device_key           text
+, last_heartbeat_at    timestamptz
+, disabled_at          timestamptz
+, created_at           timestamptz           not null default now()
+, updated_at           timestamptz           not null default now()
+, constraint memberships_tenant_user_unique unique (tenant_id, user_id)
+);
+
+create index if not exists memberships_tenant_idx on dojo.memberships(tenant_id);
+create index if not exists memberships_user_idx on dojo.memberships(user_id);
+
+comment on table dojo.memberships is
+'A user''s participation in one Dōjō. A developer belongs to zero or many.
+sensei.projects.dojo_id points at a row here (the binding that routes a
+project''s findings). Rule: client kind takes precedence — a project bound to a
+client membership routes to the client Dōjō first and the client policy
+governs. The global collective is a membership with kind=community against the
+global-dojo tenant.';
+
+comment on column dojo.memberships.user_id
+     is 'The member (Supabase auth subject). See dojo.identities. Not a local FK — identity is owned by Supabase.';
+comment on column dojo.memberships.role
+     is 'contributor | maintainer | client_lead | admin — usually git-derived (see dojo.roles), admin-overridable.';
+comment on column dojo.memberships.kind
+     is 'employer | client | community | personal — drives routing precedence and attribution.';
+comment on column dojo.memberships.authenticated_via
+     is 'How this membership was paired: sso, github_oauth, or device_code.';
+comment on column dojo.memberships.attribution_default
+     is 'Default attribution for contributions from this membership: named, anonymous, or dereferenced. Client work is always dereferenced regardless.';
+comment on column dojo.memberships.sync_status
+     is 'Last-known connection health (healthy/stale/error/authenticating), mirrored from the daemon for the connections pane.';
+comment on column dojo.memberships.device_key
+     is 'Public device key for verifying signed federation payloads, captured at membership creation.';
