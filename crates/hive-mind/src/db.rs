@@ -6,6 +6,11 @@
 //! enforcement enum — and NO extensions), then seeds the scope ladder from the
 //! canonical `scopes.jsonl`. There is NO `design.hive.yaml`; the scope selection
 //! lives in `design.yaml`.
+//!
+//! It ADDITIONALLY deploys the `dojo` scope (Dōjō artifact federation) into the
+//! same embedded PG — the self-contained `dojo.*` enums/tables/procedure — and
+//! idempotently seeds the special-case global-dojo tenant. The `hive` deploy is
+//! unchanged; both scopes share the shared [`apply_scope`] path.
 
 use std::path::{Path, PathBuf};
 
@@ -73,13 +78,22 @@ impl HiveDb {
                 .map_err(|e| DbError::Embedded(e.to_string()))?;
         }
         let url = pg.settings().url("hive");
+        // The hive scope (rules federation) — deployed exactly as before.
         deploy_hive_schema(&url, &database_dir).await?;
+        // The dojo scope (Dōjō artifact federation) — additive, same embedded
+        // PG / same `hive` database. The dojo scope is self-contained (every FK
+        // stays inside the dojo schema), so its objects coexist with the
+        // hive/sensei objects without overlap.
+        deploy_dojo_schema(&url, &database_dir).await?;
         let pool = PgPoolOptions::new()
             .max_connections(10)
             .connect(&url)
             .await
             .map_err(|e| DbError::Pool(e.to_string()))?;
         seed_scopes(&pool, &database_dir).await?;
+        // Idempotently seed the special-case global-dojo tenant (the procedure's
+        // ON CONFLICT DO NOTHING makes re-running on every boot safe).
+        seed_global_dojo(&pool).await?;
         Ok(Self { _pg: pg, pool })
     }
 
@@ -166,7 +180,24 @@ fn workspace_database_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../database")
 }
 
+/// Deploy the `hive` scope (rules federation). Unchanged behavior — delegates
+/// to [`apply_scope`], the shared dbd apply path (DRY with the dojo deploy).
 async fn deploy_hive_schema(db_url: &str, database_dir: &Path) -> Result<(), DbError> {
+    apply_scope(db_url, database_dir, "hive").await
+}
+
+/// Deploy the `dojo` scope (Dōjō artifact federation) into the same embedded PG.
+/// Additive — brings up the `dojo.*` enums, tables (incl. `dojo.artifacts` with
+/// its `seq` cursor), and the `dojo.seed_global_dojo()` procedure.
+async fn deploy_dojo_schema(db_url: &str, database_dir: &Path) -> Result<(), DbError> {
+    apply_scope(db_url, database_dir, "dojo").await
+}
+
+/// Resolve `scope_name` from the single `database/design.yaml` and apply it to
+/// `db_url`. Both governance scopes (`hive`, `dojo`) go through here so the
+/// deploy path stays identical; the scope name doubles as the adapter's default
+/// schema (each scope's tables live in the schema of the same name).
+async fn apply_scope(db_url: &str, database_dir: &Path, scope_name: &str) -> Result<(), DbError> {
     use dbd_core::adapter::postgres::PostgresAdapter;
     use dbd_core::Design;
 
@@ -174,9 +205,9 @@ async fn deploy_hive_schema(db_url: &str, database_dir: &Path) -> Result<(), DbE
     let design = Design::from_config_with_dir(&cfg, "prod", Some(database_dir))
         .map_err(|e| DbError::Deploy(format!("config load: {e}")))?;
     let scope = design
-        .resolve_scope(Some("hive"), None)
-        .map_err(|e| DbError::Deploy(format!("resolve scope: {e}")))?;
-    let adapter = PostgresAdapter::new(db_url, "hive")
+        .resolve_scope(Some(scope_name), None)
+        .map_err(|e| DbError::Deploy(format!("resolve scope {scope_name}: {e}")))?;
+    let adapter = PostgresAdapter::new(db_url, scope_name)
         .await
         .map_err(|e| DbError::Deploy(format!("connect: {e}")))?;
     design
@@ -188,13 +219,24 @@ async fn deploy_hive_schema(db_url: &str, database_dir: &Path) -> Result<(), DbE
             |_| {},
             |desc: &str, err: Option<&str>| {
                 if let Some(e) = err {
-                    tracing::warn!(dbd_step = "apply", desc, error = e, "failed");
+                    tracing::warn!(dbd_step = "apply", scope = scope_name, desc, error = e, "failed");
                 }
             },
-            |_| tracing::info!("hive schema applied"),
+            |_| tracing::info!(scope = scope_name, "schema applied"),
         )
         .await
-        .map_err(|e| DbError::Deploy(format!("apply: {e}")))?;
+        .map_err(|e| DbError::Deploy(format!("apply {scope_name}: {e}")))?;
+    Ok(())
+}
+
+/// Idempotently seed the special-case global-dojo tenant via the deployed
+/// `dojo.seed_global_dojo()` procedure (its internal ON CONFLICT DO NOTHING
+/// makes re-running on every boot a no-op once the row exists).
+async fn seed_global_dojo(pool: &PgPool) -> Result<(), DbError> {
+    sqlx_core::query::query("CALL dojo.seed_global_dojo()")
+        .execute(pool)
+        .await
+        .map_err(|e| DbError::Seed(format!("seed_global_dojo: {e}")))?;
     Ok(())
 }
 

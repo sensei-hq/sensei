@@ -1007,3 +1007,108 @@ Build/verify: `make crates-debug && make install-service`, then curl :7744.
 - 2026-07-07: run started; env verified; recon done. Gate-1 spec-doc-reviewer PASSED
   (2 rounds). Baseline clean. Backend design LOCKED. Delegating backend impl to a fork
   (inherits full context) with TDD + build + curl evidence.
+
+═══════════════════════════════════════════════════════════════════════════════════════════════════
+⭐ LATEST STATE (2026-07-08 PM) — READ THIS FIRST ⭐
+═══════════════════════════════════════════════════════════════════════════════════════════════════
+5 MILESTONES SHIPPED TO MAIN this session (all gated: unit+check+autofixer+live-curl; Rust also clippy 0):
+  v0.2.25 insight-copy pipeline (Today/Overview/Insights mentor-voice; off-wire warm; chain-graft fix)
+  v0.2.26 memory ready/merge counts + project-impact read-path fix + project-sessions chart port
+  v0.2.27 memory generalise (LLM rewrite endpoint + ready-to-share frontend)
+  v0.2.28 upgrades actionType read-path fix + observatory-traceability un-stub
+  v0.2.29 project_patterns view DDL fix (was broken: dup project_id col; DROP+CREATE over detected_patterns)
+main @ `d41b0331`, develop @ `4c6cb3f5`, ALIGNED. Daemon healthy on :7744.
+
+PROJECT WINDOW: overview/sessions/memories/impact/traceability all REAL. Remaining: about (big: icon-
+pipeline+membership+split), patterns (family/promote — upstream data null), instruments (parked registry↔
+usage), libraries-wrap (PARKED design-fork: writes to user repos).
+OBSERVATORY: all screens REAL now (traceability un-stubbed). Not-built: consolidation (no route), federation
+set (dojo/collective/share-review — the Dōjō track).
+
+⏳ IN FLIGHT:
+  1. e2e re-run (bg b8okopbf0, log e2e-batch2.log): does the project_patterns view fix unblock the Tauri
+     e2e port-timeout? HYPOTHESIS: probably NOT (daemon degrades on view-apply failure) — but empirical.
+     If GREEN → Tauri visual verification unblocked (clears frontend visual-e2e debt). If port-timeout
+     again → e2e daemon boot blocker is elsewhere (debug-slow / other) → DEFER + FLAG for Jerry.
+  2. Dōjō SCOPING analysis (agent a12cdab3c506a3d1e): build plan for the Dōjō SaaS track (Supabase+kavach
+     auth, localhost registry). Reads dojo specs + hive-mind crate + ~/Developer/kavach + senseid identity
+     model. Output = ordered build chunks → then I execute them.
+
+⚠️ FLAGS FOR JERRY (surface on return):
+  - Tauri e2e infra BLOCKED (port 7744 daemon-boot timeout in globalSetup) → blocks ALL visual e2e. My
+    frontend ships on unit+check bar. Needs the e2e daemon boot log to diagnose properly.
+  - libraries-wrap PARKED: needs decision on what a generated wrapper contains + OK to write into user repos.
+  - make bump test gate is FLAKY (parallel DB-test deadlock on activity.assistant_events / non-isolated
+    list_memories+prune tests) — v0.2.29 bump failed once then passed on re-run. Test-isolation debt.
+
+NEXT AFTER SCOPING: execute Dōjō build chunks in dependency order (auth infra first). Standing policy:
+default-and-proceed on internal forks; PARK external/irreversible (real Supabase creds, writing outside
+sensei). assume-localhost for the dojo registry per Jerry.
+═══════════════════════════════════════════════════════════════════════════════════════════════════
+
+── DŌJŌ SCOPING DONE (2026-07-08) → plan at docs/llm-spec/park/_dojo-build-plan.md ──
+FINDING: federation SUBSTRATE fully shipped (hive-mind + daemon federation + hive-protocol + DDL);
+Dōjō SaaS layer ~entirely ABSENT (no dojo.* schema, no user/org identity, no multi-tenant, no consoles).
+kavach @adapter-supabase is REAL/production-ready. AUTH = DUAL-PLANE (humans→Supabase/kavach in a NEW
+console app; daemon keeps Keychain-Bearer, NO Supabase in senseid — preserves shipped boundary).
+★ FORK RESOLVED = FORK 1 (default-and-proceed): dojo.* lives in the Rust Dōjō-service Postgres (new `dojo`
+dbd scope); Supabase = AUTH ONLY. Matches user's literal "supabase for auth"; preserves hive investment;
+reversible. localhost registry = SENSEI_DOJO_URL default http://localhost:8787.
+14 chunks, order: C1(dojo DDL)+C2(supabase+kavach console) parallel → C3(service multi-tenant+dual auth)
+→ C4(daemon memberships) → {C5 dereference/anonymize, C7 downstream inbox} → C6(upstream) → C8(collective
+promote) → screens C9-C11 → consoles C12-C14.
+NEXT: await e2e (bg b8okopbf0) to finish (avoid daemon/DDL conflict), process its result, THEN start
+Dōjō C1 (dojo.* DDL — delegate). C2 is DB-independent (could parallelize later).
+
+── E2E VERDICT (2026-07-08): SYSTEMIC HARNESS DRIFT, NOT my screens ──
+Run 2 (post view-fix) got FURTHER: daemon opened :7744 (view fix / fresh bundle helped boot), playwright
+ran → 49 passed / 71 FAILED (27.6m). Failures cluster in UNTOUCHED areas: multi-window 113 (project
+window not opening in e2e Tauri env → ALL section specs fail downstream), setup-wizard 56, daemon-
+verification 21, settings-rail 19, configure-assistants 18, boot-flow 16. Pattern = "element not visible
+12s" across the WHOLE suite = systemic e2e-harness/environment issue (likely Tauri window-capability in
+e2e context: project-* windows / core:webview:allow-create-webview-window — memory
+project_ui_rebuild_2026_06_25). NOT my 5 screens (verified vs live daemon+real data; vacation-run
+visually verified project windows). ⚠️⚠️ FLAG FOR JERRY: Tauri e2e suite systemically failing (49/120)
+in this env — needs a DEDICATED e2e-infra session (27min/run, interactive debug, env-specific). DO NOT
+rabbit-hole; my work ships on unit+check+autofixer+live-curl bar. E2E visual-verification debt = flagged.
+Daemon healthy (pid 56627, :7744→200).
+
+→ STARTING DŌJŌ C1 now (e2e done, no daemon/DDL conflict).
+
+── DŌJŌ C1 ✅ COMMITTED `37f30527` (2026-07-08) ──
+16 enums + 15 dojo.* tables + seed_global_dojo() proc (CALL, not SELECT) + dojo dbd scope + projects.dojo_id.
+Validated on scratch DB (15 tables / 28 intra-schema FKs apply clean in dep order; dbd is graph-aware so
+ordering is automatic on real deploy). 165+929 tests pass. NOT bumped yet (dojo scope reaches bundle at
+next Dōjō milestone bump — verify dbd handles the dojo scope + procedure at bump time).
+
+⛔ NO-DOCKER BLOCKER (2026-07-08): docker not installed → `supabase start` can't run → C2 (local Supabase +
+kavach console + live login) PARKED (needs Docker / Jerry / Docker-capable env). supabase CLI present,
+kavach repo present, bun present — but no Docker = no local Supabase stack.
+PIVOT (Docker-free value path): C1 done → dojo-protocol crate [⏳ BUILDING, agent a6bbeaf17a767c39e] → C3
+Dōjō service (evolve hive-mind multi-tenant + dual-auth; API-key path real+tested, Supabase-JWT path
+synthetic-token tested; embedded PG, no Docker) → C4-C8 daemon collective-intelligence pipelines (all
+Rust, no Docker). PARKED-for-Docker: C2 console + live auth, C12-C14 SaaS web consoles. Desktop Dōjō
+screens C9-C11 buildable later (thin over daemon API, no Docker).
+⚠️ ADD TO JERRY FLAGS: no Docker in this env blocks the Dōjō SaaS *console* path (Supabase local). The
+collective-intelligence engine (service + daemon pipelines) proceeds without it.
+
+── DŌJŌ dojo-protocol ✅ COMMITTED `1e963ab2` (2026-07-08) ──
+New crate crates/dojo-protocol: ArtifactKind(6) + per-kind ArtifactPayload (spec-provenanced, internally
+tagged) + federation envelope (PublishedArtifact/PulledArtifact/ArtifactPullResponse cursor) mirroring
+hive-protocol; artifact_signature reuses hive-protocol content_hash (DRY). 15 tests, clippy 0, workspace
+builds. FLAGGED: dojo.artifacts has no `seq` column — pull cursor needs one (→ C3 adds it).
+
+⏳ DŌJŌ C3 BUILDING (agent aef437be43567433a): evolve hive-mind → multi-tenant + dual-auth. STRICTLY
+ADDITIVE (keep shipped rules path + all hive tests green). Scope: deploy dojo scope to service embedded
+PG + CALL seed_global_dojo; add seq to dojo.artifacts (mirror hive.shared_rules); tenant resolution via
+/v1/t/{tenant_key}/... path; dual-auth (existing API-key + NEW Supabase-JWT verify tested w/ synthetic
+jsonwebtoken tokens, SUPABASE_JWT_SECRET env); tenant-scoped POST/GET artifacts (dojo-protocol types,
+seq cursor, tenant isolation test). Docker-free. TDD.
+NEXT after C3: C4 daemon dojo/{memberships,routing} → C5 dereference/anonymize (hard confidentiality
+gate) → C7 downstream inbox → C6 upstream → C8 collective promote. Merge+bump the Dōjō track at first
+FUNCTIONAL milestone (verify dbd handles dojo scope+procedure at that bump). develop unmerged Dōjō
+commits so far: C1 `37f30527` + dojo-protocol `1e963ab2` (+ these will merge together at the milestone).
+
+═══ MERGE-CADENCE NOTE: Dōjō foundation (schema+protocol+service) accumulates on develop UNMERGED until
+the first functional collective-intelligence milestone (e.g. daemon can contribute→service→pull). App
+milestones (v0.2.25-29) already on main. main @ d41b0331; develop ahead by Dōjō + project_patterns-era. ═══

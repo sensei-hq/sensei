@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use clap::{Parser, Subcommand};
-use hive_mind::api::{build_router, SharedState};
+use hive_mind::api::{build_router_with_jwt, SharedState};
+use hive_mind::auth::JwtConfig;
 use hive_mind::config::HiveConfig;
 use hive_mind::db::HiveDb;
 use hive_mind::keygen::generate_key;
@@ -36,7 +37,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("API key for {name} ({role}) — store it now, shown once:\n{key}");
         }
         Cmd::Serve => {
-            let app = build_router(Arc::new(SharedState { store }));
+            let jwt = JwtConfig {
+                secret: cfg.supabase_jwt_secret.clone(),
+                audience: cfg.supabase_jwt_aud.clone(),
+            };
+            let app = build_router_with_jwt(Arc::new(SharedState { store }), jwt);
             let listener = tokio::net::TcpListener::bind(&cfg.bind).await?;
             tracing::info!(bind = %cfg.bind, "sensei-hive listening");
             axum::serve(listener, app).with_graceful_shutdown(async { let _ = tokio::signal::ctrl_c().await; }).await?;
