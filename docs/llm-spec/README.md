@@ -125,6 +125,12 @@ Every spec must honour these. If a spec pushes against one, call it out.
 
     ## Signals shown
 
+    Prefer the 4-column form when the screen has ≥ 4 rows and
+    signal density matters. For thin surfaces (one card, one
+    stat strip), a 2-column `Element | Value` table is
+    acceptable — but every ambiguous value must still carry a
+    worked example somewhere in the doc.
+
     | Element | Value shape | Meaning | Example |
     |---|---|---|---|
     | FTR chip | 0.00–1.00 pct | 14d rolling first-turn resolution | 0.63 → "63%, up 8 pts this window" |

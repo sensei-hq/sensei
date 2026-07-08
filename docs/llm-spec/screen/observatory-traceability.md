@@ -41,12 +41,23 @@ Kanji is 巻 — *scroll*.
 
 ## Done gate
 
-- Every open drift item on any project appears.
+- Every open drift item on any project appears; the visible
+  count equals `select count(*) from sensei.drift_items where
+  state = 'open'`.
 - Expected-vs-actual diff renders both signatures when both are
   populated.
-- Apply-fix on unambiguous renames rewrites the doc file and
-  advances the row to `resolved_auto` on the next scan.
+- Apply-fix on unambiguous renames (git-follow_count >= 3 AND
+  name_similarity >= 0.85) rewrites the doc file and advances
+  the row to `resolved_auto` on the next scan.
+- Confidence chip renders `green` iff `confidence >= 0.8`,
+  `amber` for `0.5–0.8`, `grey` below.
 - Dismissed rows suppress on subsequent scans by signature.
+
+Optional check:
+```
+curl -s http://localhost:7744/api/traceability \
+  | jq '.items | group_by(.confidence) | map({conf: .[0].confidence, n: length})'
+```
 
 ## Wrong gate
 

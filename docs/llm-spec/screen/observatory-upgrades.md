@@ -56,14 +56,26 @@ Kanji is 贈 — *gift*.
 
 - Every artifact in the downstream queue shows here with
   attribution + scope + received-at.
-- Applying an artifact installs it locally per its type
-  (rule / skill / agent / etc.).
-- Mute / Pin overrides persist and are respected by consumers
-  (rules resolver, skill loader).
+- Applying an artifact installs it locally per its type:
+  - `type = principle | pattern | rule` → new row in
+    `sensei.rules` with `source: dojo:{org}:{artifact_id}`
+  - `type = skill | agent | prompt` → installed under the
+    assistant plugin surface (verify with
+    `list_library_skills` for skills)
+  - `type = guard` → added to the CI/lint check config
+- Mute / Pin overrides persist across daemon restart and are
+  respected by consumers (rules resolver, skill loader).
 - Client-work artifacts carry a `dereferenced: true` badge and
   no repo identifiers.
 - New arrivals bump `unread_count` and land at the top of the
-  list.
+  list; clicking Apply decrements `unread_count` by 1 within
+  500ms.
+
+Optional check:
+```
+curl -s http://localhost:7744/api/upgrades \
+  | jq '{unread: .unread_count, n_artifacts: (.artifacts | length)}'
+```
 
 ## Wrong gate
 
