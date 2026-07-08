@@ -644,6 +644,56 @@ generalised_content + POST generalise endpoint [LLM rewrite, reuse insight-copy/
 ready-to-share hero + widen-scope submenu [existing /api/knowledge/memories/{id}/promote]) OR libraries
 wrap-action (audit #2; needs wrap endpoint+scaffold-gen, "wrap" semantics = design-fork, check spec).
 
+★★★ MILESTONE v0.2.26 → MAIN `08826d9c` (2026-07-08): Build C + impact + sessions. develop @ `1247b607`.
+subtrees synced (tap 79a2e13, mkt eea24ea). FULL Tauri visual e2e BATCHED (run make test-app-e2e once
+more frontend lands; exercises repointed impact/sessions e2e specs). main↔develop aligned.
+
+★ MEMORIES ⏳ BACKEND BUILDING (general-purpose): DDL sensei.memories +generalised bool +
+generalised_content text (live ALTER idempotent); POST /api/knowledge/memories/{id}/generalise (LLM
+rewrite via reasoning chain, corrections_llm pattern, 10s timeout, 503 on unavailable=honest degrade);
+expose generalised/generalisedContent in get_project_memories; PgStore::set_memory_generalisation.
+Widen REUSES existing promote_memory. After backend → FRONTEND (ready-to-share hero, generalised chip,
+both versions, widen submenu→promote). Existing batch-share flow already works — this ADDS to it.
+
+★ MEMORIES BACKEND ✅ DONE (staged, NOT committed): DDL +generalised/+generalised_content live;
+generalise_memory handler (knowledge.rs, reasoning chain, 10s timeout, 404/422/503/200); route
+registered; get_project_memories exposes generalised+generalisedContent (handler unchanged — forwards
+PgStore JSON); set_memory_generalisation(id,&str)->Result<Option<Uuid>,String>. 5 pure tests, 1197
+suite pass, clippy 0. WIRE: POST .../generalise → 200 {id,original,generalised} | 503 {error}.
+Agent flag: 2 pre-existing NON-ISOLATED DB tests (list_memories_filters_by_status, prune_activity...)
+race under parallelism — not our code; run suite single-threaded. ⏳ DEPLOY+VERIFY in flight (make
+install-debug + curl generalise on real memory → expect 200 faithful rewrite OR 503 cold-gemma honest
+degrade). If WORKS/DEGRADES-cleanly → COMMIT backend → delegate FRONTEND. If BUG → fix.
+
+★ MEMORIES BACKEND ✅ VERIFIED LIVE + COMMITTED `977f2362` (2026-07-08): generalise endpoint 200 in
+~1s, faithful rewrite (gateway-crate/keychain/bedrock stripped, point kept), persists, read-path
+exposes generalised+generalisedContent, idempotent, no 500s. Daemon redeployed pid 61544 (v0.2.26 debug,
+HAS the route). ⏳ MEMORIES FRONTEND BUILDING (svelte agent): ready-to-share hero (count generalised),
+generalised chip, Generalise action (loading state + both versions + 503 error surfaced), widen submenu
+→existing promoteMemory, governance note beyond project scope. ADDS to existing batch-share flow (kept).
+NOTE: daemon now pid 61544 has ALL committed backend (Build C + memory generalise); frontend impact/
+sessions/memories NOT in the running .app (Tauri) — still need batched make test-app-e2e visual pass.
+
+★ MEMORIES FRONTEND ✅ DONE + COMMITTED `0c40e2e7` (2026-07-08): ready-to-share hero, generalised chip
+(MemoryChip), Generalise action (loading→both versions; 503 inline error), widen submenu (user immediate;
+org/global governance-gated confirm). api.ts +generaliseMemory +promoteMemory(existing route). state in
+memories-state.svelte.ts. svelte-check 0, 911 tests (+40). Live: hero "1 ready to share", real generalise
+faithful rewrite, chip flips, batch-share intact. Spec-gaps deferred: queued_for_batch not on wire (use
+generalised===true); lateral scopes (stack/task_type) need folder context; body-aware 503 copy later.
+
+★★★ MERGE CADENCE RULE (adopted): merge develop→main + bump after EACH completed verified feature/screen
+(patch churn OK; DDL changes NEED the bump to regenerate bundle). Tauri visual e2e (make test-app-e2e)
+= BATCHED milestone verification every ~3-4 screens, NOT per-merge (expensive). Visual-e2e debt now:
+impact+sessions+memories frontends (unit/check/live-curl verified, NOT yet Tauri-visual).
+
+RELEASING v0.2.27 NOW: memory generalise backend `977f2362` + frontend `0c40e2e7` → main.
+
+═══ REMAINING PROJECT-WINDOW GAPS (after memories): libraries wrap-action (audit#2, big: wrap endpoint
++scaffold-gen, "wrap" semantics=design-fork — CHECK screen/project-libraries.md spec first), patterns
+(gated on upstream classification), about (membership/split/dōjō icon-picker), instruments (3-tab shell
++ registry↔usage join = parked), traceability (minor: coverage-summary + confidence/auto-fix chips).
+THEN observatory overflow screens + Phase 4 breadth + Phase 5 Dōjō (Supabase+kavach). ═══
+
 OLD NOTES BELOW (pre-insight-copy, historical) ↓↓↓
 THEN Build C (memory ready_to_share/to_merge read-path derivation per the design-fork note above).
 Build-B emission points located: observatory_home.rs pure fns early_hero/mature_hero/steady_hero/
