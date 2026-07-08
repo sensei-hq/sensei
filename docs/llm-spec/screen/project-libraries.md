@@ -33,7 +33,7 @@ Same as [[screen/observatory-libraries]] plus:
 | Element | Value |
 |---|---|
 | Wrap-me hero card | top candidate with reason ("used 84× in 14d, no wrapper") |
-| Version-conflict warning | when `sensei.project_dependencies` view shows conflicts (see [[project_p2_sweep_2026_07]]) |
+| Version-conflict warning | when `sensei.project_dependencies` view shows conflicts (see (memory: project_p2_sweep_2026_07)) |
 | Wrap-target picker | for multi-repo projects, choose which folder to wrap into |
 | Row action | Wrap (primary for candidates) · Docs · Details |
 

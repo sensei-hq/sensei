@@ -185,6 +185,6 @@ psql -A -t -c "select agent, verdict, count(*) from sensei.agent_runs
   analogous
 - [[pipeline/mcp-surface]] — tool declarations that agents draw
   from
-- [[project_vacation_run_2026_07]] (memory) — gated per-doc
+- (memory: project_vacation_run_2026_07) (memory) — gated per-doc
   execution recipe uses the agent set
-- [[archive/ideas/21-custom-agents]] — source design
+- (archive: ideas/21-custom-agents.md) — source design

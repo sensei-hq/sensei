@@ -55,7 +55,20 @@ Kanji is 今 — *now*.
 ## Generation
 
 `generate.rs` runs per project on the analyzer tick (see
-[[pipeline/analyzer]]). Sources of candidates, ordered:
+[[pipeline/analyzer]]). Two related lists: **sources** are the
+signals that seed a candidate; **types** are the shape of the
+resulting `inference.recommendations.type` value. The mapping:
+
+| Source (this doc) | Produces type (see [[pipeline/analyzer]]) |
+|---|---|
+| Correction clusters | `create_persona` OR `extract_helper` (which depends on cluster shape) |
+| Pattern effectiveness deltas | `promote_pattern` |
+| Persona / skill gaps | `create_persona` OR `enable_skill` |
+| Library-tier detections | `wrap_library` OR `enable_skill` |
+| Drift blockers | `fix_drift` |
+| (auto) Memory age without evidence | `audit_stale_memory` |
+
+Sources of candidates, ordered:
 
 1. **Correction clusters** — the dominant path. Signatures with
    count >= threshold across >= 2 sessions become a recommendation
@@ -199,7 +212,7 @@ effectiveness correlation on the enriched session corpus:
     effectiveness bubble up).
   - Insights hint on landing cards ("this pattern lifted FTR
     +18% in similar sessions").
-  - Model-effectiveness view ([[project_standalone_completion_plan]]
+  - Model-effectiveness view ((memory: project_standalone_completion_plan)
     already shipped a per-model version).
 
 ## Change-impact tracking

@@ -122,6 +122,6 @@ verified. If we haven't tested a tool, mark the cell
 - [[pipeline/impact]] — verdict measurement mechanics
 - [[pipeline/ftr]] — the metric measured
 - [[pipeline/analyzer]] — enrichment for benchmark sessions
-- [[project_website_hub_shipped]] (memory) — where the numbers
+- (memory: project_website_hub_shipped) (memory) — where the numbers
   publish
-- [[archive/ideas/19-benchmarking-credibility]] — source design
+- (archive: ideas/19-benchmarking-credibility.md) — source design

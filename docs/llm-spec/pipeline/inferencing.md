@@ -174,5 +174,5 @@ psql -A -t -c "select chain, provider, count(*) from sensei.inference_calls
   recommendations
 - [[pipeline/patterns]] — pattern promotion analysis
 - [[screen/preferences]] — Inference pane (chain config + costs)
-- [[project_p2_sweep_2026_07]] (memory) — gateway-embedded git
+- (memory: project_p2_sweep_2026_07) (memory) — gateway-embedded git
   dep at `sensei-hq/gateway` @ 01d0ab2

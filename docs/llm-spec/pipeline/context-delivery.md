@@ -167,4 +167,4 @@ mcp_call context_pack \
 - [[pipeline/memory]] — memory context competes for the same
   token budget on session-start assembly
 - [[pipeline/mcp-surface]] — `context_pack` tool
-- [[archive/ideas/14-context-delivery]] — the source design
+- (archive: ideas/14-context-delivery.md) — the source design

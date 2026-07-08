@@ -55,7 +55,7 @@ two-pane body, via the `subNav` JSX prop. See
 - **Argument defaults come from the tool declaration**, not the UI.
   The daemon computes them: for a `repoId` field, it defaults to
   the active project or an example project id (whichever is likely
-  useful), not empty. See [[feedback_no_command_guessing]] — the
+  useful), not empty. See (memory: feedback_no_command_guessing) — the
   UI can't guess defaults; the tool must declare them.
 
 ## Signals shown
