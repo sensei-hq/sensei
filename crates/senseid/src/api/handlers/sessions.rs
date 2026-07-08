@@ -50,6 +50,24 @@ pub(crate) async fn create_session(
     }
 }
 
+/// GET /api/sessions/{id} — one session row by UUID. Powers hero.source and
+/// recent-session link resolution on the Observatory · Today screen. Honors the
+/// session-id contract: a well-formed UUID with no row yields 404, not a 500.
+pub(crate) async fn get_session(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let uuid = uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?;
+    match state.pg.get_session(&uuid).await {
+        Ok(Some(row)) => Ok(Json(row)),
+        Ok(None) => Err(StatusCode::NOT_FOUND),
+        Err(e) => {
+            tracing::error!(error = %e, session = %id, "get_session failed");
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
 /// GET /api/sessions/{id}/tool-timeline — paired PreToolUse ↔ PostToolUse
 /// timeline for one assistant session. Query param `limit` (default 200)
 /// caps rows. `id` is the assistant string session id.
