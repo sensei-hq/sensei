@@ -5,6 +5,7 @@ export { default as GateRow } from './GateRow.svelte';
 export { default as Kanji } from './Kanji.svelte';
 export { default as KanjiHeader } from './KanjiHeader.svelte';
 export { default as MemoryList } from './MemoryList.svelte';
+export { default as MoeReasoningPanel } from './MoeReasoningPanel.svelte';
 export { default as PageHeader } from './PageHeader.svelte';
 export { default as ProgressCard } from './ProgressCard.svelte';
 export { default as Spinner } from './Spinner.svelte';
