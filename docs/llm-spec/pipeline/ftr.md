@@ -131,7 +131,7 @@ curl -s http://localhost:7744/api/projects/sensei/ftr | jq
   - Model effectiveness pane
   - Autonomous model preference in the analyzer's
     `model_insight` step (already shipped — see
-    [[project_standalone_completion_plan]])
+    (memory: project_standalone_completion_plan))
   Computed from `sessions.provider` + `sessions.model` +
   `sessions.ftr`, same view logic scoped by (provider, model).
 

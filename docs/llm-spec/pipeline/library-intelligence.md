@@ -1,4 +1,15 @@
-# 庫 · Pipeline · Library intelligence
+# 庫 · Pipeline · Library intelligence (ingestion internals)
+
+> **Scope note.** This spec covers the **ingestion internals** —
+> how docs come in (per-source), how version pins follow the
+> project lockfile, how custom / internal libraries get parsed
+> from source, how skills are generated, how drift-on-upgrade is
+> detected. The user-visible tables, screens, and detect/wrap/
+> query/watch workflow live in [[pipeline/libraries]]. Shared
+> tables (`sensei.libraries`, `sensei.library_pages`) are declared
+> there; new tables introduced by ingestion
+> (`sensei.library_versions`, `sensei.library_skills`) are
+> declared here.
 
 **Owner files:**
 - Manifest reading: `crates/senseid/src/adapters/manifest/*.rs`
@@ -9,7 +20,7 @@
 - Drift watch: reuses [[pipeline/traceability]]
 
 **Companion design doc:** [`docs/archive/ideas/09-library-intelligence.md`](../../archive/ideas/09-library-intelligence.md). Also see the operational memory
-[[project_mcp_libdocs_rokkit]].
+(memory: project_mcp_libdocs_rokkit).
 
 ## Purpose
 
@@ -178,6 +189,6 @@ mcp_call list_library_skills --library=rokkit
 - [[pipeline/patterns]] — library patterns source
 - [[pipeline/mcp-surface]] — skills as MCP tools
 - [[pipeline/capture]] — lockfile watcher triggers re-index
-- [[project_mcp_libdocs_rokkit]] (memory) — the live ingestion
+- (memory: project_mcp_libdocs_rokkit) (memory) — the live ingestion
   work
-- [[archive/ideas/09-library-intelligence]] — source design
+- (archive: ideas/09-library-intelligence.md) — source design

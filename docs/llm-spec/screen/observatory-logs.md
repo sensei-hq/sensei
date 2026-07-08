@@ -52,7 +52,7 @@ Kanji is 録 — *record*.
   Scheduler introspection incomplete.
 - **Log rows arrive delayed by minutes.** Buffering issue.
 - **Silent errors don't appear as `warn` / `error`.** See
-  [[feedback_no_silent_errors]] — this is the surface that
+  (memory: feedback_no_silent_errors) — this is the surface that
   reveals when the rule is violated.
 - **Level filter set to `error` hides warns.** Should be
   inclusive-below or clearly labeled.
@@ -61,4 +61,4 @@ Kanji is 録 — *record*.
 
 - [[pipeline/analyzer]] — scheduler state consumer
 - [[pipeline/capture]] — scanner + watcher events
-- [[feedback_no_silent_errors]] — the failure mode this reveals
+- (memory: feedback_no_silent_errors) — the failure mode this reveals

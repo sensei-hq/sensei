@@ -44,8 +44,15 @@ Kanji is 律 — *rule / discipline*.
     (`critical | high | med | low`), `text` text (the rule
     statement itself), `scope` jsonb (`{ level: 'user' | 'project'
     | 'org' | 'stack', project_id?, org_id?, stack? }`),
-    `source` (`file:~/.sensei/rules.md` | `promoted:memory:{id}` |
-    `dojo:{org_id}` | `user_added`), `state` (`active | archived`),
+    `source` — one of:
+      `file:~/.sensei/rules.md` (parsed from the user's global rules file) |
+      `promoted:memory:{id}` (widened from a memory) |
+      `promoted:pattern:{id}` (widened from a detected pattern — see [[pipeline/patterns]]) |
+      `chosen:option:{category}` (architectural option pick — see [[pipeline/patterns]]) |
+      `derived` (auto-promoted from consistent project usage) |
+      `dojo:{org_id}:{artifact_id?}` (from a Dōjō distribution) |
+      `user_added` (typed by the user in Preferences → Rules).
+    `state` (`active | archived`),
     `created_at`, `state_changed_at`.
 - **Mandatory rules** — rules with a `mandatory: true` flag in the
   source file (or promoted with that flag) cannot be overridden by
@@ -227,8 +234,21 @@ psql -A -t -c "select max(state_changed_at) from sensei.rules where source = 'fi
 
 ## Solution-scope cascade (multi-repo)
 
-When a solution has multiple projects (see
-[[screen/solution-dashboard]]), rules cascade:
+**Solution table.** A solution (see [[screen/solution-dashboard]])
+is declared in the same schema group as projects:
+
+- `sensei.solutions` — `id`, `name`, `client?`, `vision?`,
+  `icon`, `created_at`, `updated_at`, plus a `rules_json`
+  column (this cascade's storage — one JSON document per
+  solution containing the local rule ladder rows).
+- `sensei.solution_members` — join with `sensei.projects`
+  (`solution_id`, `project_id`, `role`, `added_at`).
+
+Both are **new tables** relative to the current DDL; not yet
+shipped in `daemon/database/`. Introduced by the solution track
+of the spec.
+
+When a solution has multiple projects, rules cascade:
 
     global (~/.sensei/rules.md)
         └── org (Dōjō distribution)
@@ -294,4 +314,4 @@ be designed with governance in mind from the start.
 - [[pipeline/dojo-lifecycle]] — org / collective governance layer
 - [[pipeline/capture]] — watches `~/.sensei/rules.md` for changes
 - [[screen/preferences]] — Rules panel
-- [[project_governance_plane_design]] (memory) — earlier design notes
+- (memory: project_governance_plane_design) (memory) — earlier design notes

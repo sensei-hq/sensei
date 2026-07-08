@@ -259,4 +259,4 @@ curl -s http://localhost:7744/api/dojo/queue?direction=downstream \
 - [[screen/dojo-maintainer-console]] — triage / approve surface
 - [[screen/dojo-admin-console]] — server & membership admin
 - [[screen/dojo-client-lead-console]] — engagement definition, audit
-- [[project_governance_plane_design]] (memory) — earlier design notes
+- (memory: project_governance_plane_design) (memory) — earlier design notes

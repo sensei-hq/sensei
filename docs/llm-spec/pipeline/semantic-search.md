@@ -146,4 +146,4 @@ psql -A -t -c "select
   packing (fast lookup for semantic fallback branch)
 - [[pipeline/analyzer]] — re-embeds changed nodes on tick
 - [[pipeline/mcp-surface]] — `search` tool declaration
-- [[archive/ideas/31-semantic-search-layer]] — source design
+- (archive: ideas/31-semantic-search-layer.md) — source design

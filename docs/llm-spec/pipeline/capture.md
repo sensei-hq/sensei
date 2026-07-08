@@ -64,10 +64,10 @@ Kanji is 捉 — *to catch / capture*.
 - The scanner is **incremental** — content-hash based. A folder
   whose hash is unchanged since last scan is skipped end-to-end.
   Branch switches trigger a re-hash but not a re-scan of unchanged
-  files. See [[project_incremental_indexing]] memory for the
+  files. See (memory: project_incremental_indexing) memory for the
   incremental indexing rules that shipped 2026-06-10.
 - Scanner writes signals reliably or logs. Silent errors have
-  burned us; see [[feedback_no_silent_errors]].
+  burned us; see (memory: feedback_no_silent_errors).
 
 ### Root-watcher (continuous)
 
@@ -117,7 +117,7 @@ scan graph must flip to the target branch's state.
      for the active view.
 - The switch is **incremental** — the same content-hash rules
   that make cross-tick scans cheap apply here (see
-  [[project_incremental_indexing]] memory for the 2026-06-10
+  (memory: project_incremental_indexing) memory for the 2026-06-10
   implementation).
 - **Branch scan modes** (open decision — bias: yes, worth
   supporting):
@@ -213,7 +213,7 @@ field.
   own client-side id (Claude Code's UUID, Zed's session id, etc.).
   Every join that starts from `sessions.id` must resolve back to
   `client_session_id` via `activity.sessions.client_session_id`.
-  Regression trap; see [[feedback_apis_consistent_with_data]].
+  Regression trap; see (memory: feedback_apis_consistent_with_data).
 - **No PII / no secrets in captured payloads.** Prompt text can
   contain code, project names, session context. It is stored
   locally, never egressed to a remote host by capture. If a payload
@@ -256,7 +256,7 @@ across the daemon.
 | `sensei.projects` (rows) | scan | every screen |
 | `sensei.folders` (rows) | scan | Project window Overview |
 | Multi-repo project suggestion | scan analyzer | [[screen/observatory-projects]] proposal card OR new banner |
-| `activity.hook_events` (rows) | assistant plugin / adapter | [[pipeline/analyzer]] materialisation |
+| `activity.assistant_events` (rows) | assistant plugin / adapter | [[pipeline/analyzer]] materialisation |
 | `activity.sessions` (rows) | materialisation | [[pipeline/ftr]], [[screen/observatory-sessions]] |
 | `activity.assistant_events` (rows) | materialisation | [[screen/observatory-instruments-replay]] |
 | `sensei.tool_usage_stats` (view) | roll-up over assistant_events | [[pipeline/signals]] |
@@ -270,8 +270,8 @@ across the daemon.
   cards. User accept merges via `POST /api/projects/merge`; user
   dismiss leaves the folders as independent projects.
 - Every Claude Code session with the sensei plugin installed
-  produces `activity.hook_events` rows continuously (not batched
-  at session end).
+  produces `activity.assistant_events` rows continuously (not
+  batched at session end).
 - Every session with hook events has an `activity.sessions` row
   after the next analyzer tick; every session row has non-null
   `analyzed_at`, `ftr`, `corrections` after enrichment.
@@ -311,7 +311,7 @@ curl -s http://localhost:7744/api/sessions/$CLIENT_SESSION_ID | jq '.id'
   client-session join is broken.
 - **`activity.assistant_events` grows to 1M+ rows and slows the
   scanner.** Retention isn't running; see the analyze-first-guard
-  retention task from [[project_ingest_scan_bug_batch]].
+  retention task from (memory: project_ingest_scan_bug_batch).
 - **Root-watcher misses a file addition made while the daemon was
   down.** Restart reconciliation isn't running against
   `content_hash`; the change is invisible until the periodic tick
@@ -334,7 +334,7 @@ curl -s http://localhost:7744/api/sessions/$CLIENT_SESSION_ID | jq '.id'
   attribution so the FTR view continues to compute cleanly.
 - **Zed sessions never carry a `model` field.** Zed-adapter
   regression; the multi-model corpus depends on this being populated
-  (see [[project_standalone_completion_plan]] memory).
+  (see (memory: project_standalone_completion_plan) memory).
 - **`~/Developer/rokkit` and `~/Developer` are both listed as
   scan roots and the inner is being redundantly indexed.** Root
   deduplication is missing; the outer subsumes.
@@ -375,6 +375,6 @@ curl -s http://localhost:7744/api/sessions/$CLIENT_SESSION_ID | jq '.id'
 - [[pipeline/project-icon]] — resolves against the primary folder
 - [[screen/observatory-projects]] — where multi-repo suggestions surface
 - [[screen/project-overview]] — where the multi-repo membership is shown
-- [[project_ingest_scan_bug_batch]] (memory) — historical scan bugs
-- [[project_stale_folder_reconcile]] (memory) — self-healing reconcile
-- [[project_incremental_indexing]] (memory) — content-hash incremental rules
+- (memory: project_ingest_scan_bug_batch) (memory) — historical scan bugs
+- (memory: project_stale_folder_reconcile) (memory) — self-healing reconcile
+- (memory: project_incremental_indexing) (memory) — content-hash incremental rules

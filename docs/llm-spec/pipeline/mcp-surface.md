@@ -48,7 +48,7 @@ Kanji is 具 — *instrument*.
 - `defaults` is the **contract**. The Playground argument form
   populates from this; the UI does not compute defaults itself
   (this was the reported UX bug where `repoId` fields came back
-  empty). See [[feedback_no_command_guessing]].
+  empty). See (memory: feedback_no_command_guessing).
 - Categories used today:
   - `Codebase` — `search`, `get_callers`, `get_callees`,
     `get_project_summary`, `get_duplicates`, `get_communities`,
@@ -172,5 +172,5 @@ psql -A -t -c "select acp_family, count(*) from sensei.mcp_servers
   `search_lib_docs`
 - [[screen/observatory-instruments-playground]] — Playground UI
 - [[screen/observatory-instruments-health]] — L1 MCP grid consumer
-- [[project_p2_sweep_2026_07]] (memory) — recent tool-surface fixes
-- [[feedback_no_command_guessing]] — defaults contract
+- (memory: project_p2_sweep_2026_07) (memory) — recent tool-surface fixes
+- (memory: feedback_no_command_guessing) — defaults contract

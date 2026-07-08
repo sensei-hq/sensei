@@ -20,7 +20,7 @@ Kanji is 推 — *inference*.
   ```json
   {
     "chains": [ { "name": "insight-copy", "primary": {…}, "fallback": [] }, … ],
-    "installed_models": [ { "provider": "ollama", "model": "gemma3:12b", "size_gb": 8 }, … ],
+    "installed_models": [ { "provider": "ollama", "model": "gemma4:12b", "size_gb": 8 }, … ],
     "recommended_tier": "balanced" | "advanced" | "lite" | "no-inference",
     "budget": { "daily_usd": number, "monthly_usd": number,
                  "consumed_today_usd": number, "consumed_month_usd": number },
@@ -54,7 +54,7 @@ Kanji is 推 — *inference*.
 - Circuit-state chip flips to `open` when the actual breaker
   trips.
 - Recommendation banner appears if the hardware tier changed
-  ("your machine can now run `gemma3:27b` — pull it?").
+  ("your machine can now run `gemma4:27b` — pull it?").
 
 ## Wrong gate
 
@@ -74,4 +74,6 @@ Kanji is 推 — *inference*.
 - [[pipeline/inferencing]] — the runtime this configures
 - [[pipeline/bootstrap-resolution]] — hardware tier detection
 - [[screen/preferences]] — parent
-- [[archive/ideas/28-inference-gateway]] · [[archive/ideas/20-local-inference]] — source designs
+- Source designs (external archive, not part of the spec tree):
+  `docs/archive/ideas/28-inference-gateway.md` +
+  `docs/archive/ideas/20-local-inference.md`

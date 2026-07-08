@@ -57,5 +57,5 @@ Kanji is 弟 — *disciple*.
 ## Related
 
 - [[pipeline/dojo-lifecycle]] — mechanics
-- [[Sensei Dōjō Journey Map.html]] — narrative source
+- (mockup: Sensei Dōjō Journey Map.html) — narrative source
 - Every screen mentioned in the Stages table above

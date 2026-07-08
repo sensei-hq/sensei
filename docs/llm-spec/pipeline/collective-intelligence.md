@@ -151,4 +151,4 @@ their own contributions accrue.
 - [[pipeline/inferencing]] — code-snippet generalisation
 - [[screen/observatory-collective]] — user-facing controls
 - [[screen/observatory-upgrades]] — downstream lane
-- [[archive/ideas/29-telemetry]] — source design
+- (archive: ideas/29-telemetry.md) — source design

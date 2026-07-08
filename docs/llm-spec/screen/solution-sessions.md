@@ -2,6 +2,7 @@
 
 **Segment:** 04 · Project window — solution variant
 **Route:** `/solution/[id]/sessions`
+**Source mockup:** _none yet — reuse `SessionsDigestZen` from `lib/sessions-zen.jsx` with the solution filter._
 **App file:** `app/src/routes/solution/[id]/sessions/+page.svelte`
 
 ## Purpose
