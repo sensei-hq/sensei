@@ -19,6 +19,7 @@ pub mod gateway_keys;
 pub mod gateway_routers;
 pub mod model_provision;
 pub mod maturity;
+pub mod observatory_home;
 pub mod pattern_effectiveness;
 pub mod corrections;
 pub mod verdicts;

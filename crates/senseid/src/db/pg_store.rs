@@ -1244,6 +1244,25 @@ impl PgStore {
         }).collect())
     }
 
+    /// In-force adopted memories across ALL projects — powers the Observatory ·
+    /// Today adopted lane. Same in-force filter as [`Self::list_active_memories`]
+    /// (`status='active'`, `strength>=1.0`) but not scoped to a single
+    /// project/global namespace.
+    pub async fn list_active_memories_global(&self, limit: i64) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, String, String, Option<String>, f64, chrono::DateTime<chrono::Utc>)> = sqlx_core::query_as::query_as(
+            "SELECT m.id, m.title, m.scope::text, m.impact, m.strength::float8, m.modified_at
+             FROM sensei.memories m
+             WHERE m.status = 'active' AND m.strength >= 1.0
+             ORDER BY m.strength DESC, m.modified_at DESC
+             LIMIT $1"
+        ).bind(limit).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id, title, scope, impact, strength, modified)| {
+            serde_json::json!({ "id": id, "title": title, "scope": scope,
+                                "impact": impact, "strength": strength,
+                                "modified_at": modified.to_rfc3339() })
+        }).collect())
+    }
+
     // ── Memory Examples ──────────────────────────────────────────────
 
     pub async fn add_memory_example(&self, memory_id: &uuid::Uuid, node_id: &str, is_good: bool, note: Option<&str>) -> Result<uuid::Uuid, String> {
@@ -2877,6 +2896,23 @@ impl PgStore {
         }).collect())
     }
 
+    /// Highest-priority pending recommendations across all projects — powers the
+    /// Observatory · Today hero + insight strip. Mirrors
+    /// [`Self::get_pending_recommendations`] without the project filter.
+    pub async fn get_pending_recommendations_global(&self, limit: i64) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, String, String, String, Option<String>, serde_json::Value)> = sqlx_core::query_as::query_as(
+            "SELECT id, urgency::text, title, why, impact, evidence
+             FROM inference.recommendations
+             WHERE status = 'pending'
+             ORDER BY CASE urgency WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, id
+             LIMIT $1"
+        ).bind(limit).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id, urgency, title, why, impact, evidence)| {
+            serde_json::json!({ "id": id, "urgency": urgency, "title": title,
+                                "why": why, "impact": impact, "evidence": evidence })
+        }).collect())
+    }
+
     pub async fn get_adopted_teachings(&self, project_id: &uuid::Uuid, limit: i64) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(uuid::Uuid, String, Option<String>, i32, chrono::DateTime<chrono::Utc>)> = sqlx_core::query_as::query_as(
             "SELECT dp.id, dp.name, dp.family, dp.instance_count, dp.modified_at
@@ -4314,6 +4350,47 @@ impl PgStore {
         }))
     }
 
+    /// Holistic First-Try-Right rollup across all sessions — powers the
+    /// Observatory · Today header. Mirrors [`Self::get_project_ftr`] without the
+    /// project filter: the 14d / prior-14d headline is session-weighted
+    /// (fraction of FTR-scored sessions), and the trend is a fixed 14
+    /// calendar-day array (0-filled on empty days) so the sparkline always has
+    /// 14 points.
+    pub async fn get_holistic_ftr(&self) -> Result<serde_json::Value, String> {
+        let row: (Option<f64>, Option<f64>, i64) = sqlx_core::query_as::query_as(
+            "SELECT
+               (avg(CASE WHEN ftr THEN 1.0 ELSE 0.0 END)
+                  FILTER (WHERE ftr IS NOT NULL AND started_at > now() - interval '14 days'))::float8,
+               (avg(CASE WHEN ftr THEN 1.0 ELSE 0.0 END)
+                  FILTER (WHERE ftr IS NOT NULL
+                          AND started_at <= now() - interval '14 days'
+                          AND started_at >  now() - interval '28 days'))::float8,
+               count(*) FILTER (WHERE started_at > now() - interval '7 days')
+             FROM activity.sessions"
+        ).fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        let (ftr_14d, ftr_14d_prev, sessions_7d) = row;
+
+        // Exactly 14 calendar-day trend points, oldest → newest, 0-filled on
+        // days with no FTR-scored session.
+        let daily: Vec<(chrono::NaiveDate, Option<f64>)> = sqlx_core::query_as::query_as(
+            "SELECT d::date,
+                    (SELECT avg(CASE WHEN s.ftr THEN 1.0 ELSE 0.0 END)::float8
+                       FROM activity.sessions s
+                      WHERE date_trunc('day', s.started_at)::date = d::date
+                        AND s.ftr IS NOT NULL)
+             FROM generate_series(current_date - 13, current_date, interval '1 day') d
+             ORDER BY d"
+        ).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        let trend: Vec<f64> = daily.into_iter().map(|(_, v)| v.unwrap_or(0.0)).collect();
+
+        Ok(serde_json::json!({
+            "ftr14d": ftr_14d.unwrap_or(0.0),
+            "ftr14dPrev": ftr_14d_prev.unwrap_or(0.0),
+            "ftrTrend": trend,
+            "sessions7d": sessions_7d,
+        }))
+    }
+
     pub async fn get_project_drift(&self, project_id: &uuid::Uuid) -> Result<serde_json::Value, String> {
         // `expected_signature` and `actual_signature` power the Traceability
         // detail drawer's Expected-vs-Actual diff. Both are nullable — `broken`
@@ -4685,6 +4762,19 @@ impl PgStore {
                (EXISTS(SELECT 1 FROM inference.recommendations WHERE project_id = $1)
                 OR EXISTS(SELECT 1 FROM sensei.memories WHERE project_id = $1 AND origin = 'learned'))"
         ).bind(project_id).fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row)
+    }
+
+    /// Aggregate maturity inputs across all sessions/projects — powers the
+    /// Observatory · Today maturity gate. Mirrors
+    /// [`Self::get_project_maturity_inputs`] without the project filter.
+    pub async fn get_global_maturity_inputs(&self) -> Result<(i64, bool), String> {
+        let row: (i64, bool) = sqlx_core::query_as::query_as(
+            "SELECT
+               (SELECT count(*) FROM activity.sessions WHERE analyzed_at IS NOT NULL),
+               (EXISTS(SELECT 1 FROM inference.recommendations)
+                OR EXISTS(SELECT 1 FROM sensei.memories WHERE origin = 'learned'))"
+        ).fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(row)
     }
 

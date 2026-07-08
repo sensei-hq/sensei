@@ -4,6 +4,7 @@ use axum::{
     response::Json,
 };
 use serde::Deserialize;
+use chrono::Timelike;
 use crate::api::state::AppState;
 
 // Re-use TagBody from workspace
@@ -673,4 +674,118 @@ pub(crate) async fn project_teachings(
     let data = state.pg.get_adopted_teachings(&project_id, q.limit).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(serde_json::json!({ "teachings": data })))
+}
+
+// ── Observatory · Today (Slot 1) ────────────────────────────────────────────
+
+/// Compact relative-time label ("2d ago", "3h ago", "just now").
+fn relative_when(then: chrono::DateTime<chrono::Utc>, now: chrono::DateTime<chrono::Utc>) -> String {
+    let secs = (now - then).num_seconds().max(0);
+    match secs {
+        0..=59 => "just now".to_string(),
+        60..=3_599 => format!("{}m ago", secs / 60),
+        3_600..=86_399 => format!("{}h ago", secs / 3_600),
+        86_400..=604_799 => format!("{}d ago", secs / 86_400),
+        _ => format!("{}w ago", secs / 604_800),
+    }
+}
+
+/// GET /api/observatory/today — the assembled Today payload. The daemon owns
+/// every decision this screen renders (maturity, hero koan, insights, adopted
+/// lane); the pure assembly lives in [`crate::observatory_home`]. The UI is a
+/// dumb renderer of this payload plus `/api/observatory/ftr`.
+pub(crate) async fn observatory_today(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    use crate::observatory_home as home;
+
+    let now_local = chrono::Local::now();
+    let greeting = home::greeting(now_local.hour());
+    let today = now_local.format("%a · %-d %b").to_string();
+
+    // Maturity is a daemon decision (aggregate across active projects), reusing
+    // the shared, already-tested maturity gate.
+    let (watched, has_insights) = state.pg.get_global_maturity_inputs().await
+        .map_err(|e| { tracing::error!(error = %e, "observatory_today: maturity inputs failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    let sig = crate::maturity::maturity_signal(watched, has_insights, crate::maturity::MATURITY_TARGET);
+
+    // Recent sessions — reuse the raw shape `/api/sessions` returns so the app's
+    // existing RecentSessions component + toRecentSessions() render them without
+    // a second shaping path. Drop content-less ghost rows (#61), cap at 5.
+    let all = state.pg.list_all_sessions(20).await
+        .map_err(|e| { tracing::error!(error = %e, "observatory_today: sessions failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    let recent: Vec<serde_json::Value> = all.into_iter()
+        .filter(|s| {
+            let has = |k: &str| s[k].as_str().map(|v| !v.trim().is_empty()).unwrap_or(false);
+            has("project") || has("task") || has("summary")
+        })
+        .take(5)
+        .collect();
+    let recent_ids: Vec<String> = recent.iter()
+        .filter_map(|s| s["id"].as_str().map(str::to_string))
+        .take(4)
+        .collect();
+
+    let now = chrono::Utc::now();
+    let (hero, insights, adopted) = if sig.stage == "mature" {
+        let recs = state.pg.get_pending_recommendations_global(4).await.unwrap_or_default();
+        let rec_lite: Vec<home::RecLite> = recs.iter().map(|r| home::RecLite {
+            urgency: r["urgency"].as_str().unwrap_or("low").to_string(),
+            title:   r["title"].as_str().unwrap_or("").to_string(),
+            why:     r["why"].as_str().unwrap_or("").to_string(),
+            impact:  r["impact"].as_str().map(str::to_string),
+        }).collect();
+
+        if let Some((top, rest)) = rec_lite.split_first() {
+            // Honest provenance: session ids drawn from the top rec's own
+            // evidence, not arbitrary recent sessions. Empty when it has none.
+            let sources = recs.first()
+                .map(|r| home::session_ids_from_evidence(&r["evidence"], 3))
+                .unwrap_or_default();
+            let hero = home::mature_hero(top, &sources, "");
+            let insights: Vec<serde_json::Value> = rest.iter().take(3).map(home::insight_card).collect();
+
+            let mems = state.pg.list_active_memories_global(5).await.unwrap_or_default();
+            let adopted: Vec<serde_json::Value> = mems.iter().map(|m| {
+                let when = m["modified_at"].as_str()
+                    .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                    .map(|t| relative_when(t.with_timezone(&chrono::Utc), now))
+                    .unwrap_or_default();
+                let scope = m["scope"].as_str().unwrap_or("project");
+                let source = m["impact"].as_str()
+                    .filter(|s| !s.trim().is_empty())
+                    .unwrap_or("adopted by sensei");
+                home::adopted_row(&when, m["title"].as_str().unwrap_or(""), scope, source)
+            }).collect();
+            (hero, insights, adopted)
+        } else {
+            (home::steady_hero(recent.len()), Vec::new(), Vec::new())
+        }
+    } else {
+        (
+            home::early_hero(watched, crate::maturity::MATURITY_TARGET, &recent_ids),
+            home::early_insights(),
+            Vec::new(),
+        )
+    };
+
+    Ok(Json(serde_json::json!({
+        "greeting": greeting,
+        "today": today,
+        "dataMaturity": sig.stage,
+        "hero": hero,
+        "insights": insights,
+        "adopted": adopted,
+        "recentSessions": recent,
+    })))
+}
+
+/// GET /api/observatory/ftr — holistic First-Try-Right rollup for the Today
+/// header: `{ ftr14d, ftr14dPrev, ftrTrend[14], sessions7d }`.
+pub(crate) async fn observatory_ftr(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let data = state.pg.get_holistic_ftr().await
+        .map_err(|e| { tracing::error!(error = %e, "observatory_ftr failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    Ok(Json(data))
 }

@@ -11,6 +11,7 @@ import type {
   McpToolManifest, SessionToolTimeline, MemoryShareBatch, ImpactVerdictEntry,
   ProjectMcpToolStat, ToolSignal, ProjectService, ToolInsight,
   SessionReplayResponse, McpServerRow, McpServerToolsManifest,
+  ObservatoryToday, ObservatoryFtr,
 } from './types.js';
 import type {
   MemoryListResponse, MemoryDetail, ContextResponse,
@@ -362,6 +363,26 @@ export function senseiApi(port: number) {
       get<{ sessions: ProjectSession[] }>(
         `/api/projects/${enc(id)}/sessions?limit=${limit}`, { sessions: [] }
       ),
+
+    // ── Observatory · Today (home screen) ───────────────────────────────
+    // The daemon assembles the whole screen — greeting, maturity gate, hero
+    // koan, insights, adopted lane, recent sessions. The screen renders it;
+    // it does not decide early-vs-mature. Fallback is the early state so a
+    // daemon hiccup degrades to "still listening", never a broken screen.
+    getObservatoryToday: () =>
+      get<ObservatoryToday>('/api/observatory/today', {
+        greeting: '',
+        today: '',
+        dataMaturity: 'early',
+        hero: { kanji: '観', koan: '', body: '', impact: null, action: null, source: '', noticed: '' },
+        insights: [],
+        adopted: [],
+        recentSessions: [],
+      }),
+
+    // Projection over sensei.ftr_daily → header chip + 14-bar strip.
+    getObservatoryFtr: () =>
+      get<ObservatoryFtr>('/api/observatory/ftr', { ftr14d: 0, ftr14dPrev: 0, ftrTrend: [], sessions7d: 0 }),
 
     // ── Observatory chart data ──────────────────────────────────────────
 
