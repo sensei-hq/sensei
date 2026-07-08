@@ -712,7 +712,7 @@ pub(crate) async fn observatory_today(
     // Recent sessions — reuse the raw shape `/api/sessions` returns so the app's
     // existing RecentSessions component + toRecentSessions() render them without
     // a second shaping path. Drop content-less ghost rows (#61), cap at 5.
-    let all = state.pg.list_all_sessions(20).await
+    let all = state.pg.list_all_sessions(20, None, None).await
         .map_err(|e| { tracing::error!(error = %e, "observatory_today: sessions failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
     let recent: Vec<serde_json::Value> = all.into_iter()
         .filter(|s| {

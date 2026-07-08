@@ -475,6 +475,34 @@ export interface SessionData {
   benchmarkPairs: unknown[];
 }
 
+// ── Observatory · Sessions digest (Slot 6) ────────────────────────────────
+// Wire shape for the range/project-scoped `GET /api/sessions?range=&project=`.
+// `outcome` is the real `sensei.session_outcome` enum; `agent` is the captured
+// assistant family ("claude" / "zed"). `ftr` is a boolean on this endpoint
+// (true = first-try-right) or null when the session isn't scored yet.
+export type SessionOutcome =
+  | 'completed' | 'corrected' | 'blocked' | 'partial' | 'abandoned';
+
+export interface SessionRow {
+  id: string;
+  project: string | null;
+  task: string;
+  summary: string | null;
+  // Kept string-tolerant so an unrecognized daemon enum value renders neutral
+  // rather than throwing — the quality mapper handles the known five.
+  outcome: SessionOutcome | string;
+  ftr: boolean | null;
+  turns: number;
+  corrections: number;
+  startedAt: string;
+  completedAt: string | null;
+  agent: string | null;
+}
+
+export interface SessionsDigest {
+  sessions: SessionRow[];
+}
+
 // ── Observatory · Today (home screen) ──────────────────────────────────────
 // Wire shapes for GET /api/observatory/today and /api/observatory/ftr. The
 // daemon owns the early/mature decision and the koan/insights/adopted

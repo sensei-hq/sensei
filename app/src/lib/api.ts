@@ -3,7 +3,7 @@ import type {
   SolutionGraphResponse, SolutionAnalysis, InferredRole,
   IndexQueueStatus, DirtyStatus, IndexError,
   FunctionDetail, TypeDetail, CommunityInfo, DocDrift,
-  LibEntry, LibDoc, DepVersion, SessionData,
+  LibEntry, LibDoc, DepVersion, SessionData, SessionsDigest,
   ProjectMemory, DriftItem, PatternEntry, Recommendation,
   ProjectSession, CallFlowModule, CallFlowCall,
   ProjectListItem,
@@ -566,6 +566,18 @@ export function senseiApi(port: number) {
     // ── Sessions ─────────────────────────────────────────────────────────
     getSessions: () =>
       get<SessionData>('/api/sessions', { stats: null, sessions: [], toolUsage: [], benchmarkPairs: [] }),
+
+    // Observatory · Sessions digest (Slot 6). Same `/api/sessions` handler,
+    // now scoped by an optional `range` (7d|30d|90d) and/or `project`
+    // (name-or-uuid). Both are additive server-side. Fallback is the empty
+    // digest so a daemon hiccup renders the quiet state, never a broken screen.
+    getSessionsDigest: (range?: string, project?: string) => {
+      const p = new URLSearchParams();
+      if (range) p.set('range', range);
+      if (project) p.set('project', project);
+      const qs = p.toString() ? `?${p.toString()}` : '';
+      return get<SessionsDigest>(`/api/sessions${qs}`, { sessions: [] });
+    },
 
     getMetrics: (project: string) =>
       get<Record<string, unknown>>(`/api/metrics/${encodeURIComponent(project)}`, {}),
