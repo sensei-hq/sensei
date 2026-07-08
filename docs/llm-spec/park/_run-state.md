@@ -17,15 +17,33 @@ resumes from the current slot/gate. Updated after every gate step.
 - Self-paced loop reschedules a wakeup at each pause so the run keeps advancing.
 
 ## Queue (from EXECUTION-PLAN.md)
-1. Observatory · Today — `screen/observatory-today.md`   ← CURRENT
-2. Observatory · Instruments · Health — `screen/observatory-instruments-health.md`
-3. Observatory · Projects (list view) — `screen/observatory-projects.md`
+1. Observatory · Today — `screen/observatory-today.md`   ✅ SHIPPED (commit 35a438ce, pushed develop)
+2. Observatory · Instruments · Health — `screen/observatory-instruments-health.md`  ⛔ PARKED
+   (data-model gap: registry↔usage don't join; no tools_registered for used MCPs → share_invoked
+   uncomputable. See park/observatory-instruments-health.md. AWAITS Jerry: unify/redefine/descope.)
+3. Observatory · Projects (list view) — `screen/observatory-projects.md`  ← CURRENT
 4. Project window · Overview — `screen/project-overview.md`
 5. Observatory · Insights — `screen/observatory-insights.md`
 6. Observatory · Sessions — `screen/observatory-sessions.md`
 (overflow: 7 Observatory·Memories, 8 Project·Sessions+Memories)
 
 ## Current position
+- **Slot 3 — Observatory · Projects (list-view addition)** — STARTING (gate 1 spec-doc-reviewer).
+  Plan notes: grid view already SHIPPED 2026-07-07; mockup adds a list-view toggle (≣) — small
+  addition. Needs view-pref persistence (localStorage or settings row) + a ProjectRow component.
+  project-icon image icons deferred if scope creeps. Reuse Slot-1 gate mechanics.
+- **Slot 2 PARKED** (see park/observatory-instruments-health.md) — 3-try-then-park invoked;
+  AWAITS Jerry. Continued to Slot 3 per plan.
+
+---
+### Slot 2 note: gate mechanics reminder (reuse for all slots)
+- Gate agents run as `general-purpose`/sonnet with the .claude/agents/*.md procedure inlined
+  (they aren't registered subagent types). svelte-file-editor for .svelte. Daemon on DEBUG
+  binary; iterate with `make install-debug`. node_modules is UNTRACKED+not-gitignored → never
+  `git add -A`; stage explicit trees. Pre-commit hook runs make test-fast (bootstrap+app).
+
+---
+### Slot 1 history (SHIPPED 35a438ce) — kept for reference
 - **Slot 1 — Observatory · Today** — gates 2/3 returned; 2 defects fixed; re-verifying.
 - **Gate 2 done-gate-verifier: not-ready** — 1 FAIL: hero.action "Review recommendation"
   used forbidden triage verb. FIXED → "Open insights" (observatory_home.rs mature_hero +
