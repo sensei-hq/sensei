@@ -4104,15 +4104,39 @@ impl PgStore {
     }
 
     pub async fn list_projects(&self) -> Result<Vec<serde_json::Value>, String> {
-        let rows: Vec<(uuid::Uuid, String, Option<String>, Option<String>, String, Vec<String>, chrono::DateTime<chrono::Utc>)> =
-            sqlx_core::query_as::query_as(
-                "SELECT id, name, description, client, maturity::text, tags, modified_at FROM sensei.projects ORDER BY name"
-            ).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        // Additive: also returns icon/stack/vision(goal) plus repos_count /
+        // libs_count / last_session_at / sessions7d so the Projects index can
+        // render its card + list layouts without a per-project fanout. Existing
+        // consumers (e.g. the Today loader) keep working — nothing is removed.
+        // repos_count counts only real repos (folders.kind git|standalone), NOT
+        // the ~10k nested `folder` rows.
+        #[allow(clippy::type_complexity)]
+        let rows: Vec<(
+            uuid::Uuid, String, Option<String>, Option<String>, String, Vec<String>,
+            chrono::DateTime<chrono::Utc>, Option<serde_json::Value>, Option<serde_json::Value>,
+            Option<String>, i64, i64, Option<chrono::DateTime<chrono::Utc>>, i64,
+        )> = sqlx_core::query_as::query_as(
+                "SELECT p.id, p.name, p.description, p.client, p.maturity::text, p.tags, p.modified_at,
+                        p.icon, p.stack, p.goal,
+                        (SELECT count(*) FROM sensei.folders f
+                          WHERE f.project_id = p.id AND f.kind::text IN ('git','standalone'))::bigint AS repos_count,
+                        (SELECT count(*) FROM sensei.project_libraries pl
+                          WHERE pl.project_id = p.id)::bigint AS libs_count,
+                        (SELECT max(s.started_at) FROM activity.sessions s WHERE s.project_id = p.id) AS last_session_at,
+                        (SELECT count(*) FROM activity.sessions s
+                          WHERE s.project_id = p.id AND s.started_at > now() - interval '7 days')::bigint AS sessions7d
+                 FROM sensei.projects p ORDER BY p.name"
+            ).fetch_all(&self.pool).await
+            .map_err(|e| { tracing::error!(error = %e, "list_projects failed"); e.to_string() })?;
 
-        Ok(rows.into_iter().map(|(id, name, desc, client, maturity, tags, modified)| {
+        Ok(rows.into_iter().map(|(id, name, desc, client, maturity, tags, modified, icon, stack, vision, repos_count, libs_count, last_session_at, sessions7d)| {
             serde_json::json!({
                 "id": id, "name": name, "description": desc, "client": client,
                 "maturity": maturity, "tags": tags, "modified_at": modified.to_rfc3339(),
+                "icon": icon, "stack": stack, "vision": vision,
+                "repos_count": repos_count, "libs_count": libs_count,
+                "last_session_at": last_session_at.map(|t| t.to_rfc3339()),
+                "sessions7d": sessions7d,
             })
         }).collect())
     }

@@ -25,6 +25,10 @@ export const STORAGE_KEYS = {
    *  version — used to detect "the binary I'm running now is older than
    *  the one we just installed" and trigger the upgrade screen. */
   appVersion:     `${NS}:app-version`,
+  /** Observatory · Projects grid/list view preference ("grid" | "list").
+   *  Defaults to "grid"; survives reloads so a return visit lands in the
+   *  same layout. No settings-row endpoint exists for this today. */
+  projectsView:   `${NS}:projects:view`,
 } as const;
 
 /** Re-exported namespace for any consumer that needs to build a key
