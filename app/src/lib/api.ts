@@ -9,7 +9,7 @@ import type {
   ProjectListItem,
   KnowledgeSource, NewKnowledgeSourceBody, SyncStats,
   McpToolManifest, SessionToolTimeline, MemoryShareBatch, ImpactVerdictEntry,
-  ProjectMcpToolStat, ToolSignal, ProjectService, ToolInsight,
+  ProjectMcpToolStat, ToolSignal, ProjectService, ToolInsight, ToolsHealth,
   SessionReplayResponse, McpServerRow, McpServerToolsManifest,
   ObservatoryToday, ObservatoryFtr, ProjectOverview,
   InsightsBoard,
@@ -462,6 +462,12 @@ export function senseiApi(port: number) {
       get<{ insights: ToolInsight[] }>(
         '/api/observatory/tool-insights', { insights: [] }
       ),
+
+    // L1 source grid for Instruments · Health — one card per registered
+    // source (builtin tool set or probed MCP server) with the share of
+    // registered tools actually invoked in the last 14 days.
+    getToolsHealth: () =>
+      get<ToolsHealth>('/api/instruments/tools-health', { sources: [] }),
 
     getLibraryUsage: (id: string) =>
       get<{ usage: Array<{ library_name: string; folder: string; version_used: string | null; import_count: number }> }>(
