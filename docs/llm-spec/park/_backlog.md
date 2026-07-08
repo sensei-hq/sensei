@@ -12,10 +12,10 @@ position) then this file (what's left).
 - [x] project-overview `fa18a4d1`
 - [x] observatory-insights `035a368c`
 - [x] observatory-sessions `a83303c6`
-- [~] observatory-instruments-health — un-parked, BUILDING (assistant_tools + capture + grid)
+- [x] observatory-instruments-health `6336dc6a` — un-parked + SHIPPED (full-capture tool-health grid; all gates + persona)
 
-## Phase 1 — finish Slot 2 (in progress)
-- [~] observatory-instruments-health (DDL assistant_tools → discovery trait → capture → grid endpoint → L1 UI)
+## Phase 1 — finish Slot 2 ✅ DONE
+- [x] observatory-instruments-health `6336dc6a` (assistant_tools inventory + per-assistant ToolDiscovery trait + full capture + real 14d grid + L1 UI). MILESTONE: merge develop→main + bump v0.2.24 IN PROGRESS.
 
 ## Phase 2 — DEPTH: make the 5 shipped screens fully real (burn down deferrals = build the pipeline gaps)
 - [ ] pipeline/insight-copy — wire gemma4 copy chain; replace raw-DB-text fallback on Today/Insights/Projects/Overview cards
