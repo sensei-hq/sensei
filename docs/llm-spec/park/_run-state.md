@@ -1130,3 +1130,19 @@ the new `dojo` scope + seed procedure (untested — could surface a dbd-scope is
 dry-run/graph first, not a blind bump). NEXT after C4: C5 dereference/anonymize (HARD confidentiality
 gate — client identifiers must NOT leak; heavy tests) → C7 downstream inbox → C6 upstream → C8 collective
 promote. Then daemon↔service integration test (run sensei-hive + daemon, contribute→pull round-trip).
+
+── DŌJŌ C4 ✅ COMMITTED `beacc421` (2026-07-08) ──
+Daemon Dōjō client: sensei.dojo_memberships (PK=service membership id), dojo/{mod,memberships,routing,
+client}.rs, client-precedence routing (13 tests: client excludes employer+dereferenced, fail-closed,
+all kinds), DojoClient seam (reuses federation http + Keychain bearer), sensei-config::dojo_registry_url
+(SENSEI_DOJO_URL), GET/POST /api/dojo/memberships. 19 dojo + 1216 senseid tests, clippy 0. FLAG: config
+in lightweight sensei-config crate (alongside SenseiConfig) — possible future consolidation. routing/
+set_sync_status = documented forward seams (callers in C5/C6).
+
+DŌJŌ on develop UNMERGED: C1 `37f30527`, dojo-protocol `1e963ab2`, C3 `122fad3f`, C4 `beacc421`.
+⏳ DŌJŌ C5 BUILDING: dojo/attribution.rs (universal client-work DEREFERENCE) + collective/anonymize.rs
+(stricter global-dojo anonymization). HARDEST CONFIDENTIALITY GATE. 2 layers: (a) DETERMINISTIC identifier
+strip (project name/folder paths/repo names/session ids from DB context — the safety net) + (b) LLM
+generalize (reuse generalise/reasoning). FAIL-CLOSED (withhold if can't confidently strip; never leak).
+Heavy adversarial tests (identifiers in path/camel/snake/partial forms all caught). C4 routing already
+sets dereference=true for client work → C5 provides the stripper it calls.
