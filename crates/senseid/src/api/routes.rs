@@ -168,6 +168,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/instruments/mcp-servers/{id}/enabled", put(mcp_servers_handler::set_enabled))
         .route("/api/instruments/mcp-servers/{id}/tools", get(mcp_servers_handler::get_tools))
         .route("/api/instruments/mcp-servers/refresh", post(mcp_servers_handler::refresh))
+        .route("/api/instruments/tools-health", get(crate::api::handlers::tools_health::grid))
+        .route("/api/instruments/tools/refresh", post(crate::api::handlers::tools_health::refresh))
         // Unified query (desktop/MCP)
         .route("/api/query", post(query::unified_query))
         // MCP tool proxy

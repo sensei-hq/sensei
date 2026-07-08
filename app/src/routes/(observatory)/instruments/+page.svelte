@@ -7,9 +7,10 @@
     import EmptyState from "$lib/components/EmptyState.svelte";
     import SignalCard from "$lib/components/SignalCard.svelte";
     import { Eyebrow, PageHeader } from "$lib/components";
-    import { mcp } from "$lib/state/mcp.svelte.js";
+    import { mcp, toolVerdict } from "$lib/state/mcp.svelte.js";
+    import ToolHealthCard from "./ToolHealthCard.svelte";
     import type {
-        McpToolManifest, SessionToolCall, SessionReplayCall,
+        McpToolManifest, SessionToolCall, SessionReplayCall, ToolHealthSource,
     } from "$lib/types.js";
 
     type Tool = McpToolManifest;
@@ -20,6 +21,22 @@
     const toolStats = $derived(mcp.toolStats);
     const toolSignals = $derived(mcp.toolSignals);
     const loading = $derived(mcp.catalogStatus === 'loading' || mcp.catalogStatus === 'idle');
+
+    // Health (insights) tab — L1 source grid + derived header KPIs. The grid
+    // rows come connected-first from the store; the KPIs derive from the same
+    // rows so the header never drifts from the cards below it.
+    const toolsHealth = $derived(mcp.toolsHealth);
+    const healthKpis = $derived(mcp.toolsHealthKpis);
+    // Holistic 14-day first-try rate for the L1 KPI header (一 first-try).
+    // Sourced from GET /api/observatory/ftr, page-local like the replay list.
+    // null until the fetch resolves so the card shows "—" rather than a
+    // fabricated 0%.
+    let holisticFtr = $state<number | null>(null);
+    // null = L1 overview grid; a source = L2 per-tool drill for that card.
+    let activeSource = $state<ToolHealthSource | null>(null);
+    function openSource(source: ToolHealthSource) {
+        activeSource = source;
+    }
 
     // Honor a deep-link from the Sessions digest (Slot 6):
     // /instruments?tab=replay&session={id}. The session is preselected once
@@ -345,6 +362,16 @@
         replayLoading = false;
     }
 
+    // Load the holistic 14-day FTR once, lazily, for the Health L1 header.
+    // Page-local (mirrors ensureReplaySessionsLoaded) — the mcp store owns
+    // tool data, this is observatory-wide.
+    async function ensureHolisticFtrLoaded() {
+        if (holisticFtr != null) return;
+        const api = senseiApi(appState.port);
+        const resp = await api.getObservatoryFtr();
+        holisticFtr = resp.ftr14d;
+    }
+
     // Kick off session loading the first time Replay is visible; and load
     // the tool_insights cache the first time Insights is visible. Playground
     // gets a lazy load of the discovered MCP servers panel.
@@ -356,7 +383,11 @@
             void ensureReplaySessionsLoaded();
         }
         if (tab === 'insights') {
+            // L1 grid + L2 drill data. loadCatalog (onMount) already primed
+            // toolStats/toolSignals for the L2 pane.
+            void mcp.loadToolsHealth();
             void mcp.loadInsights();
+            void ensureHolisticFtrLoaded();
         }
     });
 
@@ -835,15 +866,110 @@
             </div>
         {/if}
     {:else}
+        <!-- Health tab — L1 source grid by default; clicking a card drills
+             into the existing per-tool (L2) signals + table. L2 signals are
+             still all-source today, so the drill header labels that honestly
+             rather than faking per-source scoping. -->
         <div class="px-7 py-6">
-            {@render ToolInsights()}
+            {#if activeSource}
+                <button
+                    type="button"
+                    class="bg-transparent border-none cursor-pointer p-0 mb-4 text-sm text-ink-mute"
+                    onclick={() => (activeSource = null)}
+                    data-testid="tool-health-back"
+                >← all sources</button>
+                <div class="flex items-baseline gap-2 mb-4">
+                    <h3 class="display text-base font-normal m-0">{activeSource.name}</h3>
+                    <span class="font-mono text-xs text-ink-mute">
+                        · all sources · scoping per source coming
+                    </span>
+                </div>
+                {@render ToolInsights()}
+            {:else}
+                {@render ToolHealthGrid()}
+            {/if}
         </div>
     {/if}
 </div>
 
+{#snippet KpiCard(kanji: string, label: string, value: string, hint: string)}
+    <div class="py-3 px-3 bg-paper-soft border border-paper-mute rounded-md">
+        <div class="flex items-center gap-1 mb-1">
+            <span class="kanji text-sm text-accent">{kanji}</span>
+            <span class="text-xs uppercase tracking-wide text-ink-mute">{label}</span>
+        </div>
+        <div class="display text-xl" style='font-feature-settings: "tnum";'>{value}</div>
+        <div class="text-xs text-ink-mute mt-1">{hint}</div>
+    </div>
+{/snippet}
+
+{#snippet ToolHealthGrid()}
+    <!-- L1 — source grid. One card per registered source (builtin tool set
+         or probed MCP server) from GET /api/instruments/tools-health, with
+         KPI header derived from the same rows. The loading branch leads so
+         the empty state can't flash during the first fetch. -->
+    {#if mcp.toolsHealthStatus === 'loading' || mcp.toolsHealthStatus === 'idle'}
+        <p class="text-sm text-ink-soft" data-testid="tool-health-loading">Loading tool sources…</p>
+    {:else if toolsHealth.length === 0}
+        <EmptyState
+            kanji="健"
+            title="No tool sources discovered yet"
+            description="Sources appear once sensei has scanned your assistant configs and probed each MCP. Built-in tools and every installed MCP show up here with the share of registered tools actually in use."
+        />
+    {:else}
+        {@const k = healthKpis}
+        <!-- ── KPI header — derived from the grid rows ───────────────── -->
+        <div class="grid grid-cols-4 gap-3 mb-5">
+            {@render KpiCard(
+                '接', 'servers connected',
+                `${k.connected} of ${k.total}`,
+                `${k.total - k.connected} disconnected`,
+            )}
+            {@render KpiCard(
+                '具', 'tool coverage',
+                k.coverage != null ? `${Math.round(k.coverage * 100)}%` : '—',
+                `${k.sumInvoked} of ${k.sumRegistered} invoked`,
+            )}
+            {@render KpiCard(
+                '計', 'total tool calls',
+                k.totalCalls.toLocaleString(),
+                'across all sources · 14d',
+            )}
+            {@render KpiCard(
+                '一', 'first-try rate',
+                holisticFtr != null ? `${Math.round(holisticFtr * 100)}%` : '—',
+                'holistic · 14d',
+            )}
+        </div>
+
+        <!-- ── Source cards ──────────────────────────────────────────── -->
+        <div class="flex items-baseline justify-between mb-3">
+            <h3 class="display text-base font-normal m-0">
+                Sources
+                <span class="text-sm text-ink-mute ml-2">· what share of each source's tools is in use</span>
+            </h3>
+            <span class="font-mono text-xs text-ink-mute">open a source to drill in →</span>
+        </div>
+        <div
+            class="grid gap-3"
+            style="grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));"
+            data-testid="tool-health-grid"
+        >
+            {#each toolsHealth as source (source.source_type + ':' + source.source_key)}
+                <ToolHealthCard
+                    {source}
+                    active={activeSource?.source_type === source.source_type
+                        && activeSource?.source_key === source.source_key}
+                    onopen={openSource}
+                />
+            {/each}
+        </div>
+    {/if}
+{/snippet}
+
 {#snippet ToolInsights()}
     <!-- Health body — matches instruments.jsx InstrumentsHealth. KPI
-         row (5 cards) on top, then Signals grid, then per-tool usage
+         row (4 cards) on top, then Signals grid, then per-tool usage
          table. Verdict split bar layers into each expanded row (Slice D). -->
     {#if toolStats.length === 0}
         <EmptyState
@@ -860,8 +986,8 @@
              historical rows; the signal derives from last_used_at. -->
         {@const dormantTools = toolSignals.filter((s) => s.variant === 'unused').length}
 
-        <!-- ── KPI row — 5 cards, one per key metric ────────────────── -->
-        <div class="grid grid-cols-5 gap-3 mb-5">
+        <!-- ── KPI row — 4 cards, one per key metric ────────────────── -->
+        <div class="grid grid-cols-4 gap-3 mb-5">
             <div class="py-3 px-3 bg-paper-soft border border-paper-mute rounded-md">
                 <div class="flex items-center gap-1 mb-1">
                     <span class="kanji text-sm text-accent">計</span>
@@ -904,16 +1030,6 @@
                 </div>
                 <div class="text-xs text-ink-mute mt-1">0 calls</div>
             </div>
-            <div class="py-3 px-3 bg-paper-soft border border-paper-mute rounded-md">
-                <div class="flex items-center gap-1 mb-1">
-                    <span class="kanji text-sm text-accent">源</span>
-                    <span class="text-xs uppercase tracking-wide text-ink-mute">source</span>
-                </div>
-                <div class="text-xs text-ink" class:text-success={mcp.signalSource === 'cache'}>
-                    {mcp.signalSource ?? 'derived'}
-                </div>
-                <div class="text-xs text-ink-mute mt-1">signals</div>
-            </div>
         </div>
 
         <!-- ── Signals — cards grid ─────────────────────────────────── -->
@@ -947,19 +1063,21 @@
             <span class="font-mono text-xs text-ink-mute">{toolStats.length} tools · sorted by calls</span>
         </div>
         <div class="flex flex-col gap-1 border border-paper-mute rounded-md overflow-hidden bg-paper" data-testid="insights-table">
-            <div class="grid grid-cols-[1fr_80px_80px_100px_120px] gap-3 px-3 py-2 text-xs text-ink-soft tracking-wide uppercase">
+            <div class="grid grid-cols-[1fr_80px_80px_100px_120px_90px] gap-3 px-3 py-2 text-xs text-ink-soft tracking-wide uppercase">
                 <span>Tool</span>
                 <span class="text-right">Calls</span>
                 <span class="text-right">Errors</span>
                 <span class="text-right">Avg ms</span>
                 <span class="text-right">Last used</span>
+                <span class="text-right">Verdict</span>
             </div>
             {#each toolStats as stat (stat.tool_name)}
                 {@const errorRate = stat.call_count > 0 ? stat.error_count / stat.call_count : 0}
                 {@const expanded = selectedInsightTool === stat.tool_name}
+                {@const verdict = toolVerdict(stat.call_count, stat.error_count)}
                 <button
                     type="button"
-                    class="w-full text-left grid grid-cols-[1fr_80px_80px_100px_120px] gap-3 px-3 py-2.5 border-b border-paper-mute text-sm items-center bg-transparent border-l-0 border-r-0 border-t-0 cursor-pointer"
+                    class="w-full text-left grid grid-cols-[1fr_80px_80px_100px_120px_90px] gap-3 px-3 py-2.5 border-b border-paper-mute text-sm items-center bg-transparent border-l-0 border-r-0 border-t-0 cursor-pointer"
                     class:bg-paper-mute={expanded}
                     data-testid={`insights-row-${stat.tool_name}`}
                     aria-expanded={expanded}
@@ -967,7 +1085,7 @@
                 >
                     <span class="font-mono text-xs">{stat.tool_name}</span>
                     <span class="text-right font-mono text-xs">{stat.call_count}</span>
-                    <span class="text-right font-mono text-xs" class:text-error={errorRate > 0.1}>
+                    <span class="text-right font-mono text-xs" class:text-danger={errorRate > 0.1}>
                         {stat.error_count}
                         {#if errorRate > 0}
                             <span class="text-xs opacity-50">({Math.round(errorRate * 100)}%)</span>
@@ -978,6 +1096,17 @@
                     </span>
                     <span class="text-right text-xs text-ink-soft">
                         {new Date(stat.last_used_at).toLocaleDateString()}
+                    </span>
+                    <span class="flex justify-end">
+                        <span
+                            class="inline-flex items-center py-0.5 px-2 text-xs bg-paper-soft border border-paper-edge rounded uppercase tracking-wide"
+                            class:text-success={verdict === 'healthy'}
+                            class:text-ink-soft={verdict === 'ok'}
+                            class:text-warning={verdict === 'warn'}
+                            class:text-ink-mute={verdict === 'unused'}
+                            data-testid={`verdict-chip-${stat.tool_name}`}
+                            data-verdict={verdict}
+                        >{verdict}</span>
                     </span>
                 </button>
                 {#if expanded}
@@ -1068,19 +1197,3 @@
         </div>
     {/if}
 {/snippet}
-
-<style>
-    .tool-card:hover {
-        background: var(--paper-mute);
-    }
-    .tool-card.selected {
-        background: var(--paper-mute);
-    }
-
-    .param-input:focus {
-        border-color: var(--ink-soft);
-    }
-    .text-error {
-        color: var(--accent);
-    }
-</style>

@@ -22,6 +22,7 @@ pub mod maturity;
 pub mod observatory_home;
 pub mod project_overview;
 pub mod insights;
+pub mod tool_discovery;
 pub mod pattern_effectiveness;
 pub mod corrections;
 pub mod verdicts;

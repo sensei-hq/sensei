@@ -1004,6 +1004,35 @@ export interface ProjectService {
   globalEnabled: boolean | null;
 }
 
+// ─── Instruments · Health L1 source grid ─────────────────────────────────────
+// Shape of GET /api/instruments/tools-health — one row per registered source
+// (a builtin assistant tool set, or a probed MCP server). Drives the L1
+// "which sources earn their keep?" grid on the Instruments · Health surface.
+
+export interface ToolHealthSource {
+  assistant_family: string;
+  source_type: 'mcp' | 'builtin';
+  source_key: string;
+  name: string;
+  /** Normalised connection flag — the UI's primary discriminator. */
+  connected: boolean;
+  /** Raw enum from sensei.mcp_servers (unknown|connected|error|disabled), or
+   *  null for builtin / never-probed sources. */
+  connection_state: string | null;
+  server_id: string | null;
+  /** Null when the server was never probed — the card must then show
+   *  `registered —` and omit the share bar (share_invoked is also null). */
+  tools_registered: number | null;
+  tools_invoked_14d: number;
+  calls_14d: number;
+  /** tools_invoked_14d / tools_registered for probed sources; null otherwise. */
+  share_invoked: number | null;
+}
+
+export interface ToolsHealth {
+  sources: ToolHealthSource[];
+}
+
 // ─── Cached tool insights (T2 Slice D) ───────────────────────────────────────
 
 export interface ToolInsight {

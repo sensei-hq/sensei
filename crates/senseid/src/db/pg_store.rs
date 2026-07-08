@@ -3672,6 +3672,153 @@ impl PgStore {
         Ok(res.rows_affected())
     }
 
+    // ── Unified tool inventory (assistant_tools) + Instruments · Health grid ──
+
+    /// Wipe the inventory — the capture repopulates from scratch so tools that
+    /// vanished from a source don't linger.
+    pub async fn clear_assistant_tools(&self) -> Result<(), String> {
+        sqlx_core::query::query("DELETE FROM sensei.assistant_tools")
+            .execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Upsert one registered tool (idempotent on the (family, source_type,
+    /// source_key, tool_name) unique index).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn upsert_assistant_tool(
+        &self, assistant_family: &str, source_type: &str, source_key: &str,
+        tool_name: &str, invoked_name: &str, description: Option<&str>,
+        server_id: Option<uuid::Uuid>,
+    ) -> Result<(), String> {
+        sqlx_core::query::query(
+            "INSERT INTO sensei.assistant_tools
+                (assistant_family, source_type, source_key, tool_name, invoked_name, description, server_id)
+             VALUES ($1,$2,$3,$4,$5,$6,$7)
+             ON CONFLICT (assistant_family, source_type, source_key, tool_name)
+             DO UPDATE SET invoked_name = EXCLUDED.invoked_name,
+                           description  = EXCLUDED.description,
+                           server_id    = EXCLUDED.server_id,
+                           updated_at   = now()"
+        ).bind(assistant_family).bind(source_type).bind(source_key)
+         .bind(tool_name).bind(invoked_name).bind(description).bind(server_id)
+         .execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Distinct built-in (non-MCP) tool names observed in usage — the harness's
+    /// built-in catalog (no canonical list exists, so observed usage IS the
+    /// registry: Bash, Read, Edit, Task, Skill, …).
+    pub async fn distinct_builtin_tool_names(&self) -> Result<Vec<String>, String> {
+        let rows: Vec<(String,)> = sqlx_core::query_as::query_as(
+            "SELECT DISTINCT tool_name FROM sensei.tool_usage_stats
+              WHERE tool_name NOT LIKE 'mcp__%' ORDER BY tool_name"
+        ).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(n,)| n).collect())
+    }
+
+    /// Usage-observed MCP prefixes → their bare tool names. Powers the bridge
+    /// that maps a probed server to its harness usage key.
+    pub async fn usage_mcp_prefix_tools(
+        &self,
+    ) -> Result<std::collections::HashMap<String, std::collections::HashSet<String>>, String> {
+        let rows: Vec<(String, String)> = sqlx_core::query_as::query_as(
+            "SELECT split_part(tool_name,'__',2) AS prefix,
+                    split_part(tool_name,'__',3) AS bare
+               FROM sensei.tool_usage_stats
+              WHERE tool_name LIKE 'mcp__%'"
+        ).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        let mut map: std::collections::HashMap<String, std::collections::HashSet<String>> =
+            std::collections::HashMap::new();
+        for (p, b) in rows { map.entry(p).or_default().insert(b); }
+        Ok(map)
+    }
+
+    /// Set an MCP server's connection state (after a probe attempt).
+    pub async fn set_mcp_server_connection_state(
+        &self, id: &uuid::Uuid, state: &str,
+    ) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE sensei.mcp_servers SET connection_state = $2, last_seen_at = now() WHERE id = $1"
+        ).bind(id).bind(state).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// The Instruments · Health L1 grid — one row per tool source. Unions the
+    /// inventory (registered known) with usage-observed MCP sources not yet in
+    /// the inventory (registered unknown → null share, never a fabricated bar).
+    pub async fn get_tools_health(&self) -> Result<Vec<serde_json::Value>, String> {
+        #[allow(clippy::type_complexity)]
+        let rows: Vec<(String, String, String, Option<i64>, Option<uuid::Uuid>, i64, i64, Option<String>)> =
+            sqlx_core::query_as::query_as(
+            // `evt` is the real 14-day usage window: one row per tool with its
+            // PostToolUse count over the last 14 days. `assistant_events.ts` is
+            // epoch MILLIS (bigint), so the cutoff is computed in millis too.
+            // tool_usage_stats is an all-time view — never use it for the window.
+            "WITH evt AS (
+               SELECT h.tool_name AS tool_name, count(*)::bigint AS calls_14d
+                 FROM activity.assistant_events h
+                WHERE h.event_type = 'PostToolUse' AND h.tool_name IS NOT NULL
+                  AND h.ts >= (extract(epoch from now() - interval '14 days') * 1000)::bigint
+                GROUP BY h.tool_name ),
+             reg AS (
+               SELECT assistant_family, source_type, source_key,
+                      count(*)::bigint AS registered,
+                      (array_agg(server_id) FILTER (WHERE server_id IS NOT NULL))[1] AS server_id
+                 FROM sensei.assistant_tools
+                GROUP BY assistant_family, source_type, source_key ),
+             inv AS (
+               SELECT at.assistant_family, at.source_type, at.source_key,
+                      count(DISTINCT e.tool_name)::bigint AS invoked_14d,
+                      coalesce(sum(e.calls_14d),0)::bigint AS calls_14d
+                 FROM sensei.assistant_tools at
+                 JOIN evt e ON e.tool_name = at.invoked_name
+                GROUP BY at.assistant_family, at.source_type, at.source_key ),
+             uncovered AS (
+               SELECT 'claude'::text AS assistant_family, 'mcp'::text AS source_type,
+                      split_part(e.tool_name,'__',2) AS source_key,
+                      count(DISTINCT e.tool_name)::bigint AS invoked_14d,
+                      coalesce(sum(e.calls_14d),0)::bigint AS calls_14d
+                 FROM evt e
+                WHERE e.tool_name LIKE 'mcp__%'
+                  AND NOT EXISTS (SELECT 1 FROM sensei.assistant_tools at WHERE at.invoked_name = e.tool_name)
+                GROUP BY split_part(e.tool_name,'__',2) )
+             SELECT r.assistant_family, r.source_type, r.source_key,
+                    r.registered, r.server_id,
+                    coalesce(i.invoked_14d,0)::bigint, coalesce(i.calls_14d,0)::bigint,
+                    s.connection_state
+               FROM reg r
+               LEFT JOIN inv i ON i.assistant_family=r.assistant_family
+                              AND i.source_type=r.source_type AND i.source_key=r.source_key
+               LEFT JOIN sensei.mcp_servers s ON s.id = r.server_id
+             UNION ALL
+             SELECT assistant_family, source_type, source_key,
+                    NULL::bigint, NULL::uuid, invoked_14d, calls_14d, NULL::text
+               FROM uncovered
+             ORDER BY 7 DESC"
+        ).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+
+        Ok(rows.into_iter().map(|(family, stype, skey, registered, server_id, invoked, calls, conn)| {
+            let connected = match stype.as_str() {
+                "builtin" => true,
+                _ => conn.as_deref() == Some("connected"),
+            };
+            let share = registered.filter(|r| *r > 0).map(|r| invoked as f64 / r as f64);
+            serde_json::json!({
+                "assistant_family": family,
+                "source_type": stype,
+                "source_key": skey,
+                "name": crate::tool_discovery::pretty_source_name(&stype, &skey),
+                "connected": connected,
+                "connection_state": conn,
+                "server_id": server_id,
+                "tools_registered": registered,
+                "tools_invoked_14d": invoked,
+                "calls_14d": calls,
+                "share_invoked": share,
+            })
+        }).collect())
+    }
+
     /// All verdicts for one session, ordered by the underlying event ts.
     /// Consumed by the Replay tab's timeline read path (#84 / #90).
     pub async fn get_verdicts_for_session(

@@ -1,5 +1,36 @@
 # Vacation run — live state
 
+## ⭐⭐ STANDING OPERATING POLICY (set by Jerry 2026-07-08 — SUPERSEDES the plan's off-limits)
+The run is NOT done at the 6-slot queue. Keep working continuously (5-day intent). When the
+queue empties, PULL the next work — never stop and declare done. Policies:
+1. **FULL BUILD AUTHORITY.** DDL changes, new tables, new pipelines/generators, capture changes,
+   and `make bump`/release are all authorized. Rails still hold: gated per doc, tests green
+   (zero-errors), never touch .env/credentials, never destroy the data dir, DDL via .ddl-source-
+   first then dbd apply.
+2. **DEFAULT-AND-PROCEED on design forks.** Pick the best REVERSIBLE option, record the choice
+   here, keep moving. PARK only when a decision is irreversible / external / destructive / truly
+   un-defaultable. Do NOT stop and ask on ordinary design forks.
+0. **FULL SCOPE (Jerry 2026-07-08):** hit EVERYTHING specced in `docs/llm-spec/` (all screen/ +
+   pipeline/ docs) INCLUDING the Dōjō SaaS segment. "Complete as much as you can over the 5 days."
+   Never stop while backlog remains. **Dōjō auth:** use Supabase (can't deploy → assume a
+   localhost Supabase URL) + **kavach** (`~/Developer/kavach`) — EDIT kavach if needed for
+   Supabase auth in the Dōjō SaaS layer. Assume a **localhost Dōjō registry** URL for
+   registration/setup. Dōjō is the LAST big segment (needs the auth infra) — after depth+breadth.
+3. **DEPTH FIRST priority:** (a) finish Slot 2 (MCP registry) → (b) burn down the deferred
+   follow-ups across the 5 shipped screens = make them fully real: wire insight-copy (copy via
+   gemma4, not raw DB text), define the memory promotion/merge statuses + wire readyToShare/toMerge,
+   build the missing recommendation/pattern generators, the per-screen followup items → (c) overflow
+   7/8 (Memories, Project Sessions+Memories) → (d) new llm-spec screens. Work the followup notes in
+   park/ as a live work queue.
+4. **MERGE + BUMP AT MILESTONES.** After a clean segment (all gates green, tests pass), merge
+   develop→main and `make bump` so it's a real release. (Was: develop-only. NOW: release at milestones.)
+5. **Tool discovery = a per-assistant TRAIT** (like the assistant adapters). Discovery differs by
+   assistant (Claude Code ~/.claude/mcp.json + project .mcp.json; Zed context_servers; Cursor
+   .cursor/mcp.json). Refactor mcp_discovery.rs (AcpFamily + parse_mcp_section already there) into a
+   `ToolDiscovery` trait with per-assistant impls feeding the unified inventory.
+
+
+
 **Purpose:** durable, cross-session checkpoint of the autonomous run driven by
 `docs/llm-spec/EXECUTION-PLAN.md`. Any pickup (scheduled wakeup, phone session,
 cold restart after a usage limit) reads THIS file first, then the plan, and
@@ -358,6 +389,94 @@ wrong-gate-hunter → sensei-persona-reviewer → commit). NOT merged to main (J
 - Resolved: adopted lane = `sensei.memories` status IN (active,reinforced,battle_tested),
   NOT `inference.detected_patterns` (that's project-window teachings).
   `/api/observatory/today` + `/ftr` both 404 → build as new handlers.
+
+## Slot 2 UN-PARKED — Jerry decided the data model (2026-07-08)
+User authorized the capture/DDL build (overrides run off-limits). DECISION:
+- **Unified inventory + typed config.** New `sensei.assistant_tools` table = one row per
+  registered tool: (source_type: mcp|plugin|builtin, source_key, tool_name, + display meta).
+  `tool_type` lives on the inventory. CONFIG stays on the typed source tables:
+  `mcp_servers` (MCP launch/connect config), `extensions` (plugins). Built-ins need no config.
+- **Full capture (all sources).** Populate assistant_tools from: (a) MCP — read Claude Code's
+  MCP config (`.mcp.json` + plugin-provided MCPs), register into mcp_servers, probe →
+  mcp_tool_manifests → explode tools into assistant_tools; (b) plugins — ingest marketplace
+  plugin manifests into `extensions` → assistant_tools; (c) built-ins — static per-harness catalog.
+- **L1 grid** = `assistant_tools` (registry) ⟕ `tool_usage_stats` (usage) grouped by source →
+  `share_invoked = tools_invoked_14d / tools_registered`. Card config from the typed source table.
+- Reality found: tool_usage_stats sources = (builtin) 21 tools/46,591 calls; plugin_playwright,
+  plugin_sensei (11), svelte/plugin_svelte (naming INCONSISTENT — normalize source_key), playwright.
+  extensions table EMPTY. mcp_tool_manifests has server_id/tools jsonb/tool_count/probed_at.
+- LOCKED design (default-and-proceed, 2026-07-08):
+  - `sensei.assistant_tools` inventory = usage-joinable tools only (source_type ∈ mcp|builtin),
+    cols: assistant_family, source_type, source_key, tool_name(bare), invoked_name(harness-qualified,
+    joins tool_usage_stats.tool_name), description, server_id FK→mcp_servers. Config stays on
+    mcp_servers (MCP). Plugins are NOT in this table (not invoked as distinct usage tools) — they're
+    captured into `extensions` (typed home, for the Instruments/skills surface) during the burn-down.
+  - Discovery = `ToolDiscovery` trait per assistant (refactor mcp_discovery.rs AcpFamily+parse into it).
+  - Capture flow: discover MCP servers (per-assistant config) → upsert mcp_servers → probe_tools →
+    mcp_tool_manifests → explode into assistant_tools. Built-ins → static per-harness catalog →
+    assistant_tools. BRIDGE (the crux): a probed server's bare tools T match a tool_usage_stats prefix
+    P iff `mcp__P__t` exists for t∈T → invoked_name = mcp__P__t (tool-set matching reconciles the
+    forward-registry↔reverse-usage naming mismatch, e.g. playwright vs plugin_playwright_playwright).
+  - Grid endpoint: per-source {name, source_type, connected, tools_registered, tools_invoked_14d
+    (last_used_at within 14d), share_invoked} = assistant_tools GROUP BY source ⟕ tool_usage_stats.
+- PROGRESS: assistant_tools.ddl written+APPLIED live (21 builtin rows). Backend v1 SHIPPED by fork
+  (uncommitted): tool_discovery.rs (ToolDiscovery trait + ClaudeCode/Zed/Cursor + bridge + 4 tests),
+  6 pg_store methods, tools_health handler (refresh+grid), 2 routes. Grid LIVE: builtin card real
+  (registered 21, invoked 19, share 0.905); MCP cards honest usage-only (registered null). clippy clean.
+  Endpoints: `GET /api/instruments/tools-health` {sources:[{assistant_family,source_type(mcp|builtin),
+  source_key,name,connected,connection_state,server_id,tools_registered|null,tools_invoked_14d,
+  calls_14d,share_invoked|null}]} + `POST /api/instruments/tools/refresh`. Fork RESUMED to extend
+  ClaudeCode discovery → CC plugin MCPs (~/.claude/plugins/**/.mcp.json + ~/.claude.json mcpServers)
+  → probe (sensei-mcp runnable) → real registered/share; + startup trigger. Then: spec rewrite →
+  gate1 → frontend L1 (svelte-file-editor) → gates 2/3/4 → commit → PHASE 1 milestone merge+bump.
+- BACKEND ✅ COMPLETE+VERIFIED (full capture): plugin-MCP discovery wired (ClaudeCode scans
+  ~/.claude.json + ~/.claude/plugins/**/.mcp.json + sensei config.json), probe w/ cwd, startup capture.
+  assistant_tools=21 builtin + 67 MCP across 4 probed sources. Grid LIVE with REAL shares: builtin
+  0.90, sensei 0.18 (33 reg), playwright 0.48 (23), svelte 0.25 (4), semgrep 0.00 (7); honest
+  usage-only for plugin_svelte_svelte (cache command:null) + bare playwright + 2 Zed (not runnable).
+  clippy clean, 6 tests. Files: tool_discovery.rs, mcp_probe.rs (cwd), tools_health.rs, mcp_servers.rs,
+  server.rs (startup), pg_store.rs, routes.rs, main.rs, assistant_tools.ddl. FOLLOWUP: merge duplicate
+  svelte/playwright cards (normalization). NEXT: spec rewrite → gate1 → frontend L1 → gates → commit → merge+bump.
+- FRONTEND RECON: instruments = single `(observatory)/instruments/+page.svelte` (tabs: replay/insights/…),
+  data on `mcp` store (`$lib/state/mcp.svelte.js`). Health surface = the **'insights' tab ("Toolset
+  health.")**, currently renders OLD server list from `mcp.mcpServers`. L2 already fetched (tool-signals/
+  tool-insights via api.ts). Frontend task: add `getToolsHealth()` + a `toolsHealth` slice on the mcp
+  store; render the NEW L1 share grid (card per source, share bar OR "registered —", KPI header) in that
+  tab; keep the existing L2 drill on card click. Honest-degrade: share null → "invoked N · registered —".
+- SPEC REWRITTEN to built model (健 title, tools-health endpoint, assistant_tools, honest-degrade, KPIs,
+  L2 param-free note, done/wrong gates updated, fences balanced). SKIPPED redundant gate1 spec-doc-reviewer
+  (backend already built+verified live; frontend builds vs live wire+mockup; gates 2/3 verify vs running
+  system). FRONTEND L1 grid delegated to svelte-file-editor → then gates 2/3/4 → commit → PHASE 1 merge+bump.
+- FRONTEND ✅ GREEN: check 0/0 (874 files), test 851 (+13). ToolHealthCard(+harness+spec, share-bar +
+  null "registered —" variants), mcp store toolsHealth slice+KPIs(+spec), L1 grid + L1↔L2 drill in
+  instruments/+page.svelte (Health = 'insights' tab). Gates 2(done)+3(wrong) RUNNING (read-only). On
+  clear → persona → commit Slot 2 → PHASE 1 MILESTONE: merge develop→main + make bump. KNOWN followup:
+  merge duplicate svelte/playwright cards (source-key normalization).
+- Gate 2 done: ready-to-ship (all 9 code/API pass). Gate 3 wrong: one-or-more-tripping — FIXING:
+  (A) calls_14d was all-time not 14d → fork windowing to real 14d from assistant_events; (B) name=raw
+  source_key → fork prettifying (plugin_sensei_sensei→"sensei"); (C) missing 一 first-try KPI → add in
+  frontend pass (reuse holistic FTR). DEFERRED (default-and-proceed): duplicate cards dedup (bare vs
+  plugin prefix may be distinct servers; keep-both honest = safe reversible → followup). Backend fork
+  RESUMED (A+B), persona gate RUNNING. On both: frontend pass (一 KPI + persona items) → re-verify →
+  commit Slot 2 → PHASE 1 MILESTONE merge develop→main + make bump.
+- Gate 4 persona: Health grid does its job; found distinct cheap P0s for the FRONTEND PASS (batch w/ 一 KPI):
+  P0-A text-error→text-danger (remove <style> color block, +page.svelte ~1185); P0-B add Verdict chip
+  6th column to per-tool table (~1052); P0-C loading guard (read mcp.toolsHealthStatus before empty state
+  ~894); P0-D remove debug "源 source" L2 KPI (~1009); P0-E delete dead CSS (.tool-card/.param-input);
+  + C add 一 first-try KPI (reuse holistic FTR). (Persona wrongly said no ToolHealthCard tests — they
+  exist, 851 tests.) Minor backend: uncovered CTE hard-codes assistant_family='claude' (fine for now,
+  followup for multi-harness). AWAIT backend fork (A/B) → then ONE frontend pass (all above) → re-verify
+  → commit → milestone.
+- BACKEND A/B ✅ VERIFIED: calls_14d now real 14d (16,225 not 48,721; evt CTE over assistant_events,
+  ts is bigint epoch-ms → `ts >= (extract(epoch from now()-'14d')*1000)::bigint`); names prettified
+  (built-ins/sensei/playwright/…). clippy clean, 7 tests. FRONTEND polish pass (P0-A..E + 一 KPI)
+  RUNNING. On green → re-verify → commit Slot 2 (backend+frontend+DDL) → PHASE 1 MILESTONE merge+bump.
+- BUILD ORDER (gated): update spec instruments-health data-model → spec-doc-reviewer → DDL
+  (assistant_tools .ddl + apply via dbd) → capture (builtins catalog first, then MCP probe, then
+  plugin ingest) → endpoint (grid) → frontend L1 (L2 already works) → gates → commit.
+- DDL WORKFLOW (memory): edit .ddl SOURCE first, then apply via `dbd deploy`/`apply` (NOT combine);
+  daemon reads live DB for queries (apply to live sensei DB works immediately); boot auto-apply
+  reads RELEASED bundle → set SENSEI_DDL_DIR or make bump for boot; `make dbd-cache-clear` after bump.
 
 ## Gotchas (carry forward)
 - **Gate agents are NOT registered** as subagent types. `.claude/agents/{spec-doc-reviewer,
