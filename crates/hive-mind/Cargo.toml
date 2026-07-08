@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 hive-protocol = { path = "../hive-protocol" }
+dojo-protocol = { path = "../dojo-protocol" }
 dbd-core = { git = "https://github.com/sensei-hq/dbd", tag = "v0.8.1" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "fs", "sync"] }
 serde = { version = "1", features = ["derive"] }
@@ -25,6 +26,7 @@ sha2 = "0.10"
 rand = "0.8"
 subtle = "2"
 axum = "0.8"
+jsonwebtoken = "9"
 clap = { version = "4", features = ["derive"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
