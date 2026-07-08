@@ -497,6 +497,10 @@ export interface SessionRow {
   startedAt: string;
   completedAt: string | null;
   agent: string | null;
+  // Populated only for multi-repo projects once the daemon LEFT JOINs
+  // sensei.folders for `role`. Absent on the current endpoint, so the
+  // session row's folder-role chip stays dormant until then.
+  folderRole?: string | null;
 }
 
 export interface SessionsDigest {

@@ -1,7 +1,7 @@
 import type { PageLoad } from './$types.js';
 import { senseiApi } from '$lib/api.js';
 import { appState } from '$lib/appstate.svelte.js';
-import type { SessionRange } from './sessions-digest.js';
+import type { SessionRange } from '$lib/sessions-digest.js';
 
 // Default the digest to the last 7 days — the daily-use window the mockup
 // opens on. Range chips refetch client-side for 30d / 90d. Fallback is the

@@ -32,49 +32,54 @@ async function pickProject(): Promise<Project | null> {
   return projects.find(p => p.name === 'sensei') ?? projects[0] ?? null;
 }
 
-test.describe('Project window — Sessions table (T3 Slice 1.4)', () => {
-  test('renders session rows with corrections and outcome columns', async ({ tauriPage }) => {
+test.describe('Project window — Sessions digest (project-scoped)', () => {
+  // The project Sessions screen now shares the Observatory Sessions digest
+  // primitives (charts + rows), scoped to one project via
+  // /api/sessions?project=<id>&range=<range>. Markers mirror the observatory
+  // screen: [data-session-row], [data-testid="chart-chips"], range chips.
+  test('renders only this project\'s sessions — no cross-project leak', async ({ tauriPage }) => {
     const project = await pickProject();
     if (!project) { test.skip(true, 'no project'); return; }
-    const resp = await safeJson<{ sessions: Array<{ id: string; corrections: number; outcome: string | null }> }>(
-      `${DAEMON_URL}/api/projects/${project.id}/sessions?limit=5`, { sessions: [] },
+    // Widest window so the rendered 90d slice matches what we fetch.
+    const scoped = await safeJson<Array<{ id: string }>>(
+      `${DAEMON_URL}/api/sessions?project=${project.id}&range=90d`, [],
     );
-    if (resp.sessions.length === 0) { test.skip(true, 'no sessions on project'); return; }
+    if (scoped.length === 0) { test.skip(true, 'no sessions on project'); return; }
 
     await navigateTo(tauriPage, `/project/${project.id}/sessions`);
-    // Any real row should render at the new testid shape.
-    const firstId = resp.sessions[0].id;
-    await tauriPage.waitForSelector(`[data-testid="session-row-${firstId}"]`, 15_000);
-    // At least one row should be visible.
+    await tauriPage.waitForSelector('[data-testid="project-sessions"]', 15_000);
+    // Widen the range to 90d to match the scoped fetch above, then read rows.
+    await tauriPage.locator('[data-testid="range-90d"]').click();
+    await tauriPage.waitForSelector('[data-session-row]', 15_000);
+
     const rowIds = await tauriPage.evaluate(`
-      Array.from(document.querySelectorAll('[data-testid^="session-row-"]')).map(el => el.dataset.testid)
+      Array.from(document.querySelectorAll('[data-session-row]'))
+        .map(el => el.getAttribute('data-session-row'))
     `) as string[];
     expect(rowIds.length).toBeGreaterThan(0);
+    // Every rendered row must belong to this project's scoped set.
+    const scopedIds = new Set(scoped.map(s => s.id));
+    for (const id of rowIds) expect(scopedIds.has(id)).toBe(true);
   });
 
-  test('FTR filter narrows the list to passing sessions', async ({ tauriPage }) => {
+  test('all four chart variants render through the chip group', async ({ tauriPage }) => {
     const project = await pickProject();
     if (!project) { test.skip(true, 'no project'); return; }
-    const resp = await safeJson<{ sessions: Array<{ id: string; ftr: boolean | null }> }>(
-      `${DAEMON_URL}/api/projects/${project.id}/sessions?limit=50`, { sessions: [] },
-    );
-    const passing = resp.sessions.filter(s => s.ftr === true);
-    if (passing.length === 0) { test.skip(true, 'no FTR-passing sessions on project'); return; }
 
     await navigateTo(tauriPage, `/project/${project.id}/sessions`);
-    await tauriPage.waitForSelector('[data-testid="sessions-filter-all"]', 15_000);
+    await tauriPage.waitForSelector('[data-testid="chart-chips"]', 15_000);
 
-    // Click FTR pass filter — only passing rows should remain in the DOM.
-    await tauriPage.locator('[data-testid="sessions-filter-pass"]').click();
-    await new Promise<void>(r => setTimeout(r, 250));
-
-    const visibleIds = await tauriPage.evaluate(`
-      Array.from(document.querySelectorAll('[data-testid^="session-row-"]'))
-        .map(el => el.dataset.testid.replace('session-row-', ''))
-    `) as string[];
-    // Every visible id must be in the passing subset.
-    const passIds = new Set(passing.map(s => s.id));
-    for (const id of visibleIds) expect(passIds.has(id)).toBe(true);
+    // trend is the default; switching to each of the other three must swap the
+    // chart body without error (charts render even with an empty slice).
+    for (const [chip, component] of [
+      ['trend', 'trend-chart'],
+      ['stream', 'stream-chart'],
+      ['constellation', 'constellation-chart'],
+      ['bands', 'bands-chart'],
+    ] as const) {
+      await tauriPage.locator(`[data-testid="chip-${chip}"]`).click();
+      await tauriPage.waitForSelector(`[data-testid="chart-body"] [data-component="${component}"]`, 10_000);
+    }
   });
 });
 
