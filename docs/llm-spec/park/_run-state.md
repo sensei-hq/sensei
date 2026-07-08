@@ -644,6 +644,27 @@ generalised_content + POST generalise endpoint [LLM rewrite, reuse insight-copy/
 ready-to-share hero + widen-scope submenu [existing /api/knowledge/memories/{id}/promote]) OR libraries
 wrap-action (audit #2; needs wrap endpoint+scaffold-gen, "wrap" semantics = design-fork, check spec).
 
+★★★ MILESTONE v0.2.26 → MAIN `08826d9c` (2026-07-08): Build C + impact + sessions. develop @ `1247b607`.
+subtrees synced (tap 79a2e13, mkt eea24ea). FULL Tauri visual e2e BATCHED (run make test-app-e2e once
+more frontend lands; exercises repointed impact/sessions e2e specs). main↔develop aligned.
+
+★ MEMORIES ⏳ BACKEND BUILDING (general-purpose): DDL sensei.memories +generalised bool +
+generalised_content text (live ALTER idempotent); POST /api/knowledge/memories/{id}/generalise (LLM
+rewrite via reasoning chain, corrections_llm pattern, 10s timeout, 503 on unavailable=honest degrade);
+expose generalised/generalisedContent in get_project_memories; PgStore::set_memory_generalisation.
+Widen REUSES existing promote_memory. After backend → FRONTEND (ready-to-share hero, generalised chip,
+both versions, widen submenu→promote). Existing batch-share flow already works — this ADDS to it.
+
+★ MEMORIES BACKEND ✅ DONE (staged, NOT committed): DDL +generalised/+generalised_content live;
+generalise_memory handler (knowledge.rs, reasoning chain, 10s timeout, 404/422/503/200); route
+registered; get_project_memories exposes generalised+generalisedContent (handler unchanged — forwards
+PgStore JSON); set_memory_generalisation(id,&str)->Result<Option<Uuid>,String>. 5 pure tests, 1197
+suite pass, clippy 0. WIRE: POST .../generalise → 200 {id,original,generalised} | 503 {error}.
+Agent flag: 2 pre-existing NON-ISOLATED DB tests (list_memories_filters_by_status, prune_activity...)
+race under parallelism — not our code; run suite single-threaded. ⏳ DEPLOY+VERIFY in flight (make
+install-debug + curl generalise on real memory → expect 200 faithful rewrite OR 503 cold-gemma honest
+degrade). If WORKS/DEGRADES-cleanly → COMMIT backend → delegate FRONTEND. If BUG → fix.
+
 OLD NOTES BELOW (pre-insight-copy, historical) ↓↓↓
 THEN Build C (memory ready_to_share/to_merge read-path derivation per the design-fork note above).
 Build-B emission points located: observatory_home.rs pure fns early_hero/mature_hero/steady_hero/
