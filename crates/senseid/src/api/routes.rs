@@ -111,6 +111,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/observatory/tool-signals",          get(observatory::tool_signals))
         .route("/api/observatory/tool-insights",         get(observatory::tool_insights))
         .route("/api/observatory/model-effectiveness",   get(observatory::model_effectiveness))
+        .route("/api/observatory/today",                 get(observatory::observatory_today))
+        .route("/api/observatory/ftr",                   get(observatory::observatory_ftr))
         .route("/api/projects/{id}/ftr-daily",           get(observatory::project_ftr_daily))
         .route("/api/projects/{id}/hotspots",            get(observatory::project_hotspots))
         .route("/api/projects/{id}/quality-signals",     get(observatory::project_quality_signals))
@@ -192,7 +194,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/config/{key}", get(config::get_config_key).delete(config::delete_config_key))
         // Sessions
         .route("/api/sessions", get(sessions::get_sessions_stub).post(sessions::create_session))
-        .route("/api/sessions/{id}", put(sessions::update_session_handler))
+        .route("/api/sessions/{id}", get(sessions::get_session).put(sessions::update_session_handler))
         .route("/api/sessions/{id}/tool-timeline", get(sessions::get_session_tool_timeline))
         .route("/api/sessions/{id}/replay", get(sessions::get_session_replay))
         // Patterns

@@ -2,153 +2,195 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { mountComponent } from '$lib/test-mount.js';
 import Page from './+page.svelte';
+import type { ObservatoryToday, ObservatoryFtr } from '$lib/types.js';
+import type { RecentSession } from './recent-sessions.js';
 
 let cleanup: Array<() => void> = [];
 afterEach(() => { cleanup.forEach((fn) => fn()); cleanup = []; });
 
-// Synthesised PageData mirroring the loader's return shape.
 type Data = {
-  ftrDaily: Array<{ ftr_rate: number; day: string; session_count: number }>;
-  projectFtrs: Array<{ id: string; name: string; kanji: string; ftr: number; sessions7d: number }>;
-  teachings: Array<{ id: string; name: string; family?: string; instance_count: number }>;
-  topRecommendations: Array<{ id: string; title: string; why: string; urgency: string; impact?: string }>;
-  recentSessions: Array<{ id: string; task: string; project: string; startedAt: string; completedAt?: string; ftr?: number | null }>;
-  sessionsTotal: number;
+  today: ObservatoryToday;
+  ftr: ObservatoryFtr;
+  recentSessions: RecentSession[];
 };
 
-const emptyData = (): Data => ({
-  ftrDaily: [],
-  projectFtrs: [],
-  teachings: [],
-  topRecommendations: [],
+const ftr = (over: Partial<ObservatoryFtr> = {}): ObservatoryFtr => ({
+  ftr14d: 0.5,
+  ftr14dPrev: 0.7333333333333333,
+  ftrTrend: [0.2, 0.4, 0.6, 0.5, 0.7, 0.5, 0.55, 0.6, 0.5, 0.45, 0.5, 0.55, 0.5, 0.5],
+  sessions7d: 10,
+  ...over,
+});
+
+// The daemon owns the maturity gate and every user-facing string. These
+// fixtures mirror the two variants the /api/observatory/today handler emits.
+const matureToday = (): ObservatoryToday => ({
+  greeting: 'Good evening',
+  today: 'Tue · 7 Jul',
+  dataMaturity: 'mature',
+  hero: {
+    kanji: '聴',
+    koan: 'Recurring corrections in FizzBot',
+    body: '4 corrective prompts clustered here — a guard or skill could prevent the repeat.',
+    impact: null,
+    action: 'Review recommendation',
+    source: '',
+    noticed: '',
+  },
+  insights: [
+    { kanji: '繰', label: 'Recommendation', text: 'Recurring corrections in rokkit', tag: 'high', tone: 'warn' },
+    { kanji: '昇', label: 'Teaching adopted', text: 'Canvas smoothing promoted to rule', tag: '+7% FTR', tone: 'good' },
+  ],
+  adopted: [
+    { when: '1w ago', what: 'Prefer queue_duration over queue_time_ms', scope: 'project', source: 'from 3 prompts' },
+  ],
   recentSessions: [],
-  sessionsTotal: 0,
 });
 
-const matureData = (): Data => ({
-  ftrDaily: [
-    { ftr_rate: 0.72, day: '2026-05-15', session_count: 4 },
-    { ftr_rate: 0.74, day: '2026-05-16', session_count: 6 },
-    { ftr_rate: 0.78, day: '2026-05-17', session_count: 5 },
+const earlyToday = (): ObservatoryToday => ({
+  greeting: 'Good morning',
+  today: 'Tue · 7 Jul',
+  dataMaturity: 'early',
+  hero: {
+    kanji: '観',
+    koan: 'Still listening.',
+    body: 'sensei has watched 4 sessions so far. Nothing confident enough to teach yet.',
+    impact: '~2 more sessions until first lesson',
+    action: null,
+    source: '',
+    noticed: 'since setup · 2d ago',
+  },
+  insights: [
+    { kanji: '耳', label: 'Listening', text: 'Watching prompt style. Early signal forming.', tag: 'forming', tone: 'mute' },
   ],
-  projectFtrs: [
-    { id: 'p1', name: 'lumen-auth',   kanji: '場', ftr: 0.78, sessions7d: 12 },
-    { id: 'p2', name: 'lumen-canvas', kanji: '場', ftr: 0.82, sessions7d: 9  },
-  ],
-  teachings: [
-    { id: 't1', name: 'Canvas smoothing pattern', family: 'pattern', instance_count: 4 },
-  ],
-  topRecommendations: [
-    { id: 'r1', title: 'The AI does not know your auth.', why: 'Three sessions corrected refresh-or-device-flow this week.', urgency: 'high', impact: 'Projected FTR +14%' },
-    { id: 'r2', title: 'Cache invalidation missed again.', why: '3rd time in lumen-cloud.', urgency: 'medium' },
-  ],
-  recentSessions: [
-    { id: 's1', task: 'Fix auth', project: 'lumen-auth', startedAt: '2026-05-29T10:00:00Z', completedAt: '2026-05-29T10:38:00Z', ftr: 1 },
-  ],
-  sessionsTotal: 24,
+  adopted: [],
+  recentSessions: [],
 });
 
-describe('Observatory /+page — mode derivation', () => {
-  it('renders early mode when no teachings and no recommendations exist', () => {
-    const m = mountComponent(Page, { data: emptyData() });
+const recent = (): RecentSession[] => [
+  { id: 's1', task: 'Fix auth', project: 'lumen-auth', startedAt: '2026-07-06T10:00:00Z', completedAt: '2026-07-06T10:38:00Z', ftr: 1, corrections: 0 },
+];
+
+describe('Observatory /+page — maturity is the daemon decision', () => {
+  it('renders the mode the daemon reports (mature)', () => {
+    const m = mountComponent(Page, { data: { today: matureToday(), ftr: ftr(), recentSessions: [] } as Data });
     cleanup.push(m.destroy);
-    const root = m.container.querySelector('[data-mode]');
-    expect(root?.getAttribute('data-mode')).toBe('early');
+    expect(m.container.querySelector('[data-mode]')?.getAttribute('data-mode')).toBe('mature');
   });
 
-  it('renders mature mode once a recommendation exists', () => {
-    const data = emptyData();
-    data.topRecommendations = [{ id: 'r1', title: 'something', why: 'reason', urgency: 'high' }];
-    const m = mountComponent(Page, { data });
+  it('renders the mode the daemon reports (early)', () => {
+    const m = mountComponent(Page, { data: { today: earlyToday(), ftr: ftr(), recentSessions: [] } as Data });
     cleanup.push(m.destroy);
-    const root = m.container.querySelector('[data-mode]');
-    expect(root?.getAttribute('data-mode')).toBe('mature');
-  });
-
-  it('renders mature mode once a teaching exists', () => {
-    const data = emptyData();
-    data.teachings = [{ id: 't1', name: 'rule', family: 'pattern', instance_count: 1 }];
-    const m = mountComponent(Page, { data });
-    cleanup.push(m.destroy);
-    const root = m.container.querySelector('[data-mode]');
-    expect(root?.getAttribute('data-mode')).toBe('mature');
+    expect(m.container.querySelector('[data-mode]')?.getAttribute('data-mode')).toBe('early');
   });
 });
 
-describe('Observatory /+page — early mode rendering', () => {
-  it('hides the FTR header in early mode', () => {
-    const m = mountComponent(Page, { data: emptyData() });
+describe('Observatory /+page — FTR header', () => {
+  it('shows the chip integer and a directional arrow in mature mode', () => {
+    const m = mountComponent(Page, { data: { today: matureToday(), ftr: ftr(), recentSessions: [] } as Data });
     cleanup.push(m.destroy);
-    expect(m.container.querySelector('[data-ftr-header]')).toBeNull();
+    const header = m.container.querySelector('[data-ftr-header]');
+    expect(header?.textContent).toContain('50');
+    const arrow = m.container.querySelector('[data-ftr-arrow]');
+    expect(arrow?.getAttribute('data-ftr-arrow')).toBe('down');
+    expect(arrow?.textContent).toContain('↓');
+    expect(arrow?.textContent).toContain('23%');
   });
 
-  it('renders the 観 listening hero in early mode', () => {
-    const m = mountComponent(Page, { data: emptyData() });
+  it('is present but dimmed in early mode', () => {
+    const m = mountComponent(Page, { data: { today: earlyToday(), ftr: ftr(), recentSessions: [] } as Data });
     cleanup.push(m.destroy);
-    expect(m.container.querySelector('[data-hero-early]')).not.toBeNull();
-    expect(m.container.textContent).toContain('Still listening');
+    const header = m.container.querySelector('[data-ftr-header]');
+    expect(header).not.toBeNull();
+    expect(header?.getAttribute('data-dim')).toBe('true');
   });
 
-  it('renders the placeholder insights (耳 / 試) in early mode', () => {
-    const m = mountComponent(Page, { data: emptyData() });
+  it('is not dimmed in mature mode', () => {
+    const m = mountComponent(Page, { data: { today: matureToday(), ftr: ftr(), recentSessions: [] } as Data });
     cleanup.push(m.destroy);
-    const placeholder = m.container.querySelector('[data-early-insights]');
-    expect(placeholder).not.toBeNull();
-    expect(placeholder?.textContent).toContain('耳');
-    expect(placeholder?.textContent).toContain('試');
-  });
-
-  it('writes the early hero body in the lowercase "sensei" voice', () => {
-    const m = mountComponent(Page, { data: emptyData() });
-    cleanup.push(m.destroy);
-    const hero = m.container.querySelector('[data-hero-early]');
-    expect(hero?.textContent).toContain('sensei is ready to watch');
-    // No capital "Sensei" anywhere on the page (covers the empty-state copy too).
-    expect(m.container.textContent).not.toContain('Sensei');
-  });
-
-  it('keeps the mature-mode empty-state copy in the lowercase "sensei" voice', () => {
-    const data = emptyData();
-    data.topRecommendations = [{ id: 'r1', title: 'x', why: 'y', urgency: 'high' }]; // → mature, teachings empty
-    const m = mountComponent(Page, { data });
-    cleanup.push(m.destroy);
-    expect(m.container.textContent).not.toContain('Sensei');
-  });
-
-  it('renders a dynamic body referencing session count when sessions exist', () => {
-    const data = emptyData();
-    data.sessionsTotal = 4;
-    data.projectFtrs = [
-      { id: 'p1', name: 'lumen-auth', kanji: '場', ftr: 0, sessions7d: 4 },
-    ];
-    const m = mountComponent(Page, { data });
-    cleanup.push(m.destroy);
-    const hero = m.container.querySelector('[data-hero-early]');
-    expect(hero?.textContent).toMatch(/4 sessions/);
+    expect(m.container.querySelector('[data-ftr-header]')?.hasAttribute('data-dim')).toBe(false);
   });
 });
 
-describe('Observatory /+page — mature mode rendering', () => {
-  it('renders the FTR header in mature mode', () => {
-    const m = mountComponent(Page, { data: matureData() });
+describe('Observatory /+page — hero koan', () => {
+  it('renders the daemon koan, not a lorem placeholder', () => {
+    const m = mountComponent(Page, { data: { today: matureToday(), ftr: ftr(), recentSessions: [] } as Data });
     cleanup.push(m.destroy);
-    expect(m.container.querySelector('[data-ftr-header]')).not.toBeNull();
+    const hero = m.container.querySelector('[data-component="hero-koan"]');
+    expect(hero?.textContent).toContain('Recurring corrections in FizzBot');
   });
 
-  it('renders the top-recommendation hero (not the early hero)', () => {
-    const m = mountComponent(Page, { data: matureData() });
-    cleanup.push(m.destroy);
-    expect(m.container.querySelector('[data-hero-mature]')).not.toBeNull();
-    expect(m.container.querySelector('[data-hero-early]')).toBeNull();
+  it('renders the action button only when the hero carries an action', () => {
+    const mature = mountComponent(Page, { data: { today: matureToday(), ftr: ftr(), recentSessions: [] } as Data });
+    cleanup.push(mature.destroy);
+    expect(mature.container.querySelector('[data-hero-action]')).not.toBeNull();
+
+    const early = mountComponent(Page, { data: { today: earlyToday(), ftr: ftr(), recentSessions: [] } as Data });
+    cleanup.push(early.destroy);
+    expect(early.container.querySelector('[data-hero-action]')).toBeNull();
   });
 
-  it('renders Recent Sessions in both modes', () => {
-    const data = emptyData();
-    data.recentSessions = [
-      { id: 's1', task: 'Fix auth', project: 'lumen-auth', startedAt: '2026-05-29T10:00:00Z', completedAt: '2026-05-29T10:38:00Z', ftr: 1 },
-    ];
-    const m = mountComponent(Page, { data });
+  it('renders no dangling provenance when hero.source is empty', () => {
+    const m = mountComponent(Page, { data: { today: matureToday(), ftr: ftr(), recentSessions: [] } as Data });
+    cleanup.push(m.destroy);
+    // matureToday has empty source AND empty noticed → no provenance node at all.
+    expect(m.container.querySelector('[data-hero-source]')).toBeNull();
+  });
+});
+
+describe('Observatory /+page — insights + adopted', () => {
+  it('renders one insight card per daemon insight, titled for the mode', () => {
+    const m = mountComponent(Page, { data: { today: matureToday(), ftr: ftr(), recentSessions: [] } as Data });
+    cleanup.push(m.destroy);
+    expect(m.container.querySelectorAll('[data-component="insight-card"]')).toHaveLength(2);
+    expect(m.container.textContent).toContain('Also worth noticing');
+  });
+
+  it('titles the insights column "Early signals" in early mode', () => {
+    const m = mountComponent(Page, { data: { today: earlyToday(), ftr: ftr(), recentSessions: [] } as Data });
+    cleanup.push(m.destroy);
+    expect(m.container.textContent).toContain('Early signals');
+  });
+
+  it('renders adopted cards from the daemon adopted lane', () => {
+    const m = mountComponent(Page, { data: { today: matureToday(), ftr: ftr(), recentSessions: [] } as Data });
+    cleanup.push(m.destroy);
+    expect(m.container.querySelectorAll('[data-component="adopted-card"]')).toHaveLength(1);
+    expect(m.container.textContent).toContain('Prefer queue_duration over queue_time_ms');
+  });
+
+  it('shows the adopted empty-state (never a "loading" placeholder) when the lane is empty', () => {
+    const m = mountComponent(Page, { data: { today: earlyToday(), ftr: ftr(), recentSessions: [] } as Data });
+    cleanup.push(m.destroy);
+    const empty = m.container.querySelector('[data-adopted-empty]');
+    expect(empty).not.toBeNull();
+    expect(empty?.textContent).toContain('No teachings adopted yet');
+  });
+
+  it('shows the insights empty-state when there are no insights', () => {
+    const today = matureToday();
+    today.insights = [];
+    const m = mountComponent(Page, { data: { today, ftr: ftr(), recentSessions: [] } as Data });
+    cleanup.push(m.destroy);
+    expect(m.container.querySelector('[data-insights-empty]')).not.toBeNull();
+  });
+});
+
+describe('Observatory /+page — voice + recent sessions', () => {
+  it('keeps all copy in the lowercase "sensei" voice', () => {
+    const early = mountComponent(Page, { data: { today: earlyToday(), ftr: ftr(), recentSessions: [] } as Data });
+    cleanup.push(early.destroy);
+    expect(early.container.textContent).not.toContain('Sensei');
+
+    const mature = mountComponent(Page, { data: { today: matureToday(), ftr: ftr(), recentSessions: [] } as Data });
+    cleanup.push(mature.destroy);
+    expect(mature.container.textContent).not.toContain('Sensei');
+  });
+
+  it('renders the recent-sessions list from the shaped rows', () => {
+    const m = mountComponent(Page, { data: { today: matureToday(), ftr: ftr(), recentSessions: recent() } as Data });
     cleanup.push(m.destroy);
     expect(m.container.textContent).toContain('Recent sessions');
+    expect(m.container.querySelector('[data-session-row="s1"]')).not.toBeNull();
   });
 });

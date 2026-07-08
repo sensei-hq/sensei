@@ -461,6 +461,58 @@ export interface SessionData {
   benchmarkPairs: unknown[];
 }
 
+// ── Observatory · Today (home screen) ──────────────────────────────────────
+// Wire shapes for GET /api/observatory/today and /api/observatory/ftr. The
+// daemon owns the early/mature decision and the koan/insights/adopted
+// assembly — the screen renders these fields, it does not derive them.
+export interface ObservatoryTodayHero {
+  kanji: string;
+  koan: string;
+  body: string;
+  /** Projected effect, e.g. "Projected FTR +14%". Null when not quantified. */
+  impact: string | null;
+  /** Next-step CTA label. Null in the early state (no confident action yet). */
+  action: string | null;
+  /** Provenance, e.g. "from s-2891 · s-2889". May be empty. */
+  source: string;
+  /** Relative recency, e.g. "noticed 2 days ago". May be empty. */
+  noticed: string;
+}
+
+export interface ObservatoryInsight {
+  kanji: string;
+  label: string;
+  text: string;
+  tag: string;
+  tone: 'warn' | 'good' | 'mute';
+}
+
+export interface ObservatoryAdopted {
+  when: string;
+  what: string;
+  scope: string;
+  source: string;
+}
+
+export interface ObservatoryToday {
+  greeting: string;
+  today: string;
+  dataMaturity: 'early' | 'mature';
+  hero: ObservatoryTodayHero;
+  insights: ObservatoryInsight[];
+  adopted: ObservatoryAdopted[];
+  // Daemon-selected recent sessions in the standard wire-session shape; the
+  // page re-shapes them via toRecentSessions for the RecentSessions template.
+  recentSessions: SessionData['sessions'];
+}
+
+export interface ObservatoryFtr {
+  ftr14d: number;
+  ftr14dPrev: number;
+  ftrTrend: number[];
+  sessions7d: number;
+}
+
 export interface IndexError {
   repo_id: string;
   file_path: string;

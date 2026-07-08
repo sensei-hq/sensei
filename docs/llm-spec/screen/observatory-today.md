@@ -16,8 +16,9 @@ behalf, a running FTR chart to say whether the pairing is trending up
 or down, and a footer of recent sessions to jump into if they want to
 verify anything.
 
-The screen has **two mood states**. If the daemon has ≤ 4 enriched
-sessions on the project, it renders the *early* variant: "Still
+The screen has **two mood states**. If the daemon has not yet reached
+`MATURITY_TARGET` enriched sessions — or no insight has formed yet — it
+renders the *early* variant: "Still
 listening. A few early signals are forming. Nothing confident enough
 to teach yet." If it has enough signal, it renders the *mature*
 variant: a real koan with a specific action. **The early state is a
@@ -37,17 +38,52 @@ Kanji is 家 — *home*.
     "hero": { "kanji": "…", "koan": "…", "body": "…", "impact": "…", "action": "…" | null, "source": "…", "noticed": "…" },
     "insights": [ { "kanji": "…", "label": "…", "text": "…", "tag": "…", "tone": "warn|good|mute" }, … ],
     "adopted": [ { "when": "…", "what": "…", "scope": "…", "source": "…" }, … ],
-    "recentSessions": [ { "id": "…", "when": "…", "project": "…", "ftr": "…", "summary": "…" }, … ]
+    "recentSessions": [ { "id": "…", "when": "…", "project": "…", "ftr": true, "duration": "15 min", "corrections": 0, "summary": "…" }, … ]
   }
   ```
+  `recentSessions[].ftr` is a **per-session boolean** (pass/fail dot), NOT the
+  0–100 header metric; `corrections` is an integer (0 → "first-try"); `duration`
+  is a human string. (The header FTR chip comes from `/api/observatory/ftr`.)
 - FTR strip data comes from `GET /api/observatory/ftr` returning
   `{ ftr14d, ftr14dPrev, ftrTrend[], sessions7d }`.
-- `dataMaturity === "early"` when the analyzer has enriched < 5
-  sessions across the user's active projects. This is a daemon
-  decision, not a UI heuristic — the screen must not decide.
+- `dataMaturity` is the daemon's existing derived maturity gate — a daemon
+  decision, not a UI heuristic, and not a new threshold. The `today` handler
+  reads the enriched-session count (`activity.sessions` where `analyzed_at IS
+  NOT NULL`) and the insight-exists flag (`inference.recommendations` OR a
+  `sensei.memories` row with `origin = 'learned'`), **aggregated across the
+  user's active projects**, then applies the shared
+  `crate::maturity::maturity_signal(watched, has_insights, MATURITY_TARGET)`:
+  `mature ⇔ watched ≥ MATURITY_TARGET AND has_insights`, else `early`. Reuse
+  the shared function — do not re-implement it or hardcode a session count.
+- The `adopted` lane is sourced from `sensei.memories` rows that are **in
+  force** — `status = 'active'` with `strength >= 1.0` (exactly what
+  `PgStore::list_active_memories` returns) — strongest first, ≤ 5.
+  `list_active_memories(project, scope)` is project-scoped (or global when
+  project is `None`), so the `today` handler aggregates over the user's active
+  projects (loop them, or add a small cross-project variant). Not
+  `inference.detected_patterns` (that backs the project-window "teachings"
+  lane — a different surface).
 - The koan on mature days points at real sessions
   (`source: "from s-2891 · s-2889 · s-2886"`). Any session id in
   `source` must resolve to a real `activity.sessions` row.
+
+### New backend work (prerequisite — build as part of this task)
+
+Both endpoints below are **new handlers**, not pre-existing. Today the only
+registered `/api/observatory/*` routes are `ftr-daily`, `tool-usage`,
+`tool-signals`, `tool-insights`, `model-effectiveness`.
+
+- `GET /api/observatory/today` — new handler assembling the payload above:
+  maturity per the `dataMaturity` bullet; hero koan + `insights[]` from the
+  insights / tool-signal derivation (static fallback copy is acceptable until
+  [[pipeline/insight-copy]] is wired); `adopted[]` from `list_active_memories`;
+  `recentSessions[]` from the recent `activity.sessions` rows with their `ftr`.
+- `GET /api/observatory/ftr` — new handler that **projects** the existing
+  `sensei.ftr_daily` per-day rows (via `PgStore::get_ftr_daily(None, 28)`) into
+  `{ ftr14d, ftr14dPrev, ftrTrend[14], sessions7d }`: `ftr14d` = mean of the
+  last 14 days, `ftr14dPrev` = mean of the prior 14, `ftrTrend` = the last 14
+  daily points, `sessions7d` = summed `session_count` over 7 days. It is a
+  projection over `ftr-daily`, not a separate data source.
 
 ## Signals shown
 
@@ -79,9 +115,12 @@ Kanji is 家 — *home*.
   ("Nothing adopted yet — Sensei is still watching."). Never
   a "no data" or "loading…" placeholder.
 - Dark-mode: all four tones (warn/good/mute/plain) remain readable.
-- One-decision-one-default theme is honoured: the action button on
-  mature koan uses the standard Apply-family verb, not a bespoke
-  label.
+- One-decision-one-default is honoured. The koan action is a
+  navigation/creation call-to-action (e.g. "Draft a persona", "Open
+  s-2891"), NOT an insight-disposition verb — the Apply · Review · Dismiss
+  family governs insight-card triage, not the hero CTA. The koan action must
+  route somewhere real (no dead button); in the early state it is absent, not
+  a disabled shell.
 
 Optional check:
 ```
@@ -101,6 +140,9 @@ curl -s http://localhost:7744/api/observatory/today | jq '{maturity: .dataMaturi
 - **Adopted lane populated with items that don't exist in
   `memories`.** Read-path bug — the list is showing something derived
   the wrong way.
+- **Adopted lane shows the empty-state string while `sensei.memories`
+  has in-force rows** (`status IN ('active','reinforced','battle_tested')`)
+  for the user's active projects. The inverse read-path bug.
 - **Recent-sessions FTR badge shown but session detail says "no tool
   calls".** The client-session-id resolution regressed — same
   root cause we already fixed once.
@@ -113,4 +155,6 @@ curl -s http://localhost:7744/api/observatory/today | jq '{maturity: .dataMaturi
 - [[pipeline/ftr]] — the FTR chip
 - [[pipeline/memory]] — what feeds the adopted lane
 - [[pipeline/insights]] — the triage that produces the hero + insights
+- [[pipeline/insight-copy]] — the copy chain every koan / card / adopted
+  string routes through (static fallback until wired)
 - [[screen/observatory-sessions]] — where the recent-sessions row jumps
