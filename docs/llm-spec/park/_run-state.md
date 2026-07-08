@@ -694,6 +694,65 @@ RELEASING v0.2.27 NOW: memory generalise backend `977f2362` + frontend `0c40e2e7
 + registry↔usage join = parked), traceability (minor: coverage-summary + confidence/auto-fix chips).
 THEN observatory overflow screens + Phase 4 breadth + Phase 5 Dōjō (Supabase+kavach). ═══
 
+★★★ v0.2.27 SHIPPED → MAIN `fb8bf4c6` (2026-07-08). develop @ `f8236774`. 3 milestones this session:
+v0.2.25 insight-copy / v0.2.26 impact+sessions+counts / v0.2.27 memory generalise.
+
+⛔ LIBRARIES-WRAP PARKED (design-fork, needs Jerry): POST .../libraries/{id}/wrap GENERATES a wrapper
+module scaffold and WRITES it into the user's OWN project repo (~/Developer/~/Work — EXTERNAL side-
+effect). "What a wrapper contains" under-specified (minimal re-export facade? typed client? LLM-from-
+docs stub?). Per policy = park external+design-fork. NEEDS Jerry: (1) what the scaffold contains,
+(2) confirm writing files into user repos is wanted. Rest of screen (62 libs browse/search/conflict)
+already works.
+
+★ OBSERVATORY AUDIT ✅ DONE (2026-07-08, daemon pid 61544). NO frontend stubs EXCEPT traceability.
+Today/Projects/Insights/Memories/Impact/Sessions/Libraries/Instruments(3 tabs)/Logs(Tauri-IPC) all REAL.
+2 quick wins found (same "real data sits unused" pattern as impact):
+  1. ★UPGRADES read-path/field BUG → FIXED+COMMITTED `5e155849`: get_project_recommendations never
+     SELECTed action_type → loader's INSTALLABLE filter dropped all 50 pending recs → empty screen.
+     Added action_type→"actionType" to serializer (mirrors /impact). DB has audit_stale(299)/create_agent/
+     write_skill/enrich_memory/revise_rule/promote_pattern; INSTALLABLE set matches all but promote_pattern.
+     Frontend already reads action_type??actionType. clippy 0, 1197 tests. NEEDS deploy to see live.
+  2. ★TRACEABILITY (observatory) STUB → ⏳ UN-STUBBING (svelte agent, retry after transient 529 killed
+     1st attempt w/ 0 work): replace hardcoded EmptyState w/ +page.ts fanning getProjectDrift across
+     projects (sensei has 200 broken-link items). expectedSig/actualSig null + no confidence → render
+     detail+status only, defer diff/confidence/apply-fix/cross-project /api/traceability endpoint.
+Observatory NOT-BUILT specs: consolidation (route missing), federation set (collective/dojo-*/share-
+review — deferred standalone-first). Upgrades TRUE spec = Dōjō downstream inbox /api/upgrades (404, deferred).
+⚠️ WATCH: transient 529 Overloaded killing agents (retry w/ backoff).
+
+Remaining project-window: about (icon-pipeline+membership+split — big), patterns (gated), instruments
+(parked registry↔usage). traceability-chips (project) small. libraries-wrap PARKED (design-fork).
+NEXT AFTER traceability: deploy (make install-debug picks up upgrades fix) + batch Tauri visual e2e of
+all accumulated frontend (impact/sessions/memories/traceability) → merge+bump. Then about OR Dōjō track.
+
+★ TRACEABILITY (observatory) ✅ DONE + COMMITTED `ae7ddcef` (2026-07-08): un-stubbed → live cross-project
+drift (753 broken refs across 4 projects: dbd-rs/rokkit/sensei/dbd), rollup + per-project groups + status
+chips + deep-link to project traceability. pure state module 18 tests. svelte-check 0, 929 tests.
+Deferred: confidence/expected-vs-actual/apply-fix/cross-project /api/traceability endpoint.
+
+★ BATCHED TAURI E2E ⏳ RUNNING (bg bvva5xsd5, log e2e-batch.log): make test-app-e2e = app-e2e-build
+(install-debug rebuild+restart, picks up upgrades actionType fix) + build .app + tauri-mode playwright.
+Exercises repointed impact/sessions e2e specs + the app. FIRST Tauri visual/behavioral pass for the
+accumulated frontend (impact/sessions/memories/traceability/upgrades). On GREEN → merge develop→main +
+bump (upgrades fix `5e155849` + traceability `ae7ddcef`). On FAIL → triage: fix real regressions;
+note/defer pre-existing e2e flakes (don't rabbit-hole). develop ahead of main by 2 commits.
+
+★ BATCHED TAURI E2E = ❌ BLOCKED AT SETUP (2026-07-08, NOT my code): make test-app-e2e exit 2. Build
+SUCCEEDED (✓ vite built both bundles). Failed in globalSetup.ts:61 "Port 7744 did not open within
+120000ms" — globalSetup stops brew sensei + pkills senseid, spawns the Tauri APP_BINARY to start its
+OWN daemon (--instance=e2e) on :7744, which NEVER opened the port. Never reached any screen spec.
+⚠️⚠️ INFRA BLOCKER (needs attention, likely the recurring project_patterns DDL bug): the e2e daemon
+boot on the e2e DB instance hangs/fails — same `view:sensei.project_patterns "column project_id already
+exists"` + `activity.assistant_events deadlock` DDL-apply WARNs seen in every pre-commit. A daemon that
+hangs on boot DDL never opens its port → 120s timeout. THIS BLOCKS ALL TAURI VISUAL E2E. Dev daemon is
+FINE (brew auto-restarted, pid 89983, :7744→200). 
+DECISION: merge quick-wins on unit+check+autofixer+live-curl bar (same bar impact/sessions/memories
+shipped on); the Tauri e2e infra is a SEPARATE pre-existing blocker. Time-boxed look at project_patterns
+DDL idempotency next (recurs everywhere + likely the e2e unblocker). If deep → defer + surface to Jerry.
+Visual-e2e debt now spans ALL frontend screens until this infra is fixed — FLAG for Jerry's return.
+
+RELEASING v0.2.28: upgrades actionType fix + observatory-traceability un-stub → main.
+
 OLD NOTES BELOW (pre-insight-copy, historical) ↓↓↓
 THEN Build C (memory ready_to_share/to_merge read-path derivation per the design-fork note above).
 Build-B emission points located: observatory_home.rs pure fns early_hero/mature_hero/steady_hero/
