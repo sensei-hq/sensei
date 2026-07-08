@@ -789,3 +789,114 @@ pub(crate) async fn observatory_ftr(
         .map_err(|e| { tracing::error!(error = %e, "observatory_ftr failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
     Ok(Json(data))
 }
+
+#[derive(Deserialize)]
+pub(crate) struct InsightsQuery {
+    #[serde(default)]
+    project: Option<String>,
+}
+
+/// GET /api/insights?project=<name|uuid>? — the Learnings Triage aggregator.
+/// Bundles pending recommendations, in-force/violated memories, suggested/rule
+/// patterns, and top recurring corrections into Now / Soon / Settled columns
+/// (each item carries a `column` label the UI trusts). Cross-project by default;
+/// `?project=` scopes every column to one project. Read-only — the Apply/Dismiss
+/// actions reuse the per-project accept/reject endpoints.
+pub(crate) async fn get_insights(
+    State(state): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<InsightsQuery>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    use crate::insights as ins;
+
+    let project: Option<uuid::Uuid> = match q.project.as_deref() {
+        Some(p) if !p.trim().is_empty() => {
+            Some(resolve_project_uuid(&state, p).await.ok_or(StatusCode::NOT_FOUND)?)
+        }
+        _ => None,
+    };
+    let pref = project.as_ref();
+
+    let err = |label: &'static str| move |e: String| {
+        tracing::error!(error = %e, "get_insights: {label} failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    };
+
+    // Recommendations — always shown (bucketed by urgency), tagged with a column.
+    let mut recs = state.pg.get_insights_recommendations(pref).await.map_err(err("recommendations"))?;
+    for r in recs.iter_mut() {
+        let col = ins::rec_column(r["urgency"].as_str().unwrap_or("low"));
+        r["column"] = serde_json::json!(col);
+    }
+
+    // Memories — filtered + tagged; excluded when the bucket rule returns None.
+    let memories: Vec<serde_json::Value> = state.pg.get_insights_memories(pref).await.map_err(err("memories"))?
+        .into_iter()
+        .filter_map(|mut m| {
+            let vc = m["violated_count"].as_i64().unwrap_or(0);
+            ins::memory_column(m["status"].as_str().unwrap_or(""), vc).map(|col| {
+                m["column"] = serde_json::json!(col);
+                m
+            })
+        })
+        .collect();
+
+    // Patterns — suggested/rule only; tagged.
+    let patterns: Vec<serde_json::Value> = state.pg.get_insights_patterns(pref).await.map_err(err("patterns"))?
+        .into_iter()
+        .filter_map(|mut p| {
+            ins::pattern_column(p["lifecycle"].as_str().unwrap_or("")).map(|col| {
+                p["column"] = serde_json::json!(col);
+                p
+            })
+        })
+        .collect();
+
+    // Corrections — top 3, always Now.
+    let mut corrections = state.pg.get_insights_corrections(pref, 3).await.map_err(err("corrections"))?;
+    for c in corrections.iter_mut() {
+        c["column"] = serde_json::json!(ins::CORRECTION_COLUMN);
+    }
+
+    // Per-column totals across every source type.
+    let count_in = |col: &str| -> i64 {
+        let f = |v: &&serde_json::Value| v["column"].as_str() == Some(col);
+        (recs.iter().filter(f).count()
+            + memories.iter().filter(f).count()
+            + patterns.iter().filter(f).count()
+            + corrections.iter().filter(f).count()) as i64
+    };
+    let counts = serde_json::json!({
+        "now": count_in(ins::NOW), "soon": count_in(ins::SOON), "settled": count_in(ins::SETTLED),
+    });
+
+    // Project filter chips — the distinct projects that actually appear in the
+    // results, with their kanji from the project icon.
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for v in recs.iter().chain(memories.iter()).chain(patterns.iter()) {
+        if let Some(pid) = v["project_id"].as_str() {
+            seen.insert(pid.to_string());
+        }
+    }
+    let all_projects = state.pg.list_projects().await.unwrap_or_default();
+    let projects: Vec<serde_json::Value> = all_projects.iter().filter_map(|p| {
+        let pid = p["id"].as_str()?;
+        if !seen.contains(pid) {
+            return None;
+        }
+        let kanji = if p["icon"].get("kind").and_then(|k| k.as_str()) == Some("kanji") {
+            p["icon"].get("value").and_then(|v| v.as_str()).unwrap_or("場")
+        } else {
+            "場"
+        };
+        Some(serde_json::json!({ "id": pid, "name": p["name"], "kanji": kanji }))
+    }).collect();
+
+    Ok(Json(serde_json::json!({
+        "counts": counts,
+        "projects": projects,
+        "memories": memories,
+        "recommendations": recs,
+        "patterns": patterns,
+        "corrections": corrections,
+    })))
+}

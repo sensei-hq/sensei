@@ -114,6 +114,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/observatory/model-effectiveness",   get(observatory::model_effectiveness))
         .route("/api/observatory/today",                 get(observatory::observatory_today))
         .route("/api/observatory/ftr",                   get(observatory::observatory_ftr))
+        .route("/api/insights",                          get(observatory::get_insights))
         .route("/api/projects/{id}/ftr-daily",           get(observatory::project_ftr_daily))
         .route("/api/projects/{id}/hotspots",            get(observatory::project_hotspots))
         .route("/api/projects/{id}/quality-signals",     get(observatory::project_quality_signals))
