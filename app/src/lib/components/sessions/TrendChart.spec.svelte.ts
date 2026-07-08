@@ -2,7 +2,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { mountComponent } from '$lib/test-mount.js';
 import Harness from './TrendChart.harness.svelte';
-import type { DayBucket } from './sessions-digest.js';
+import type { DayBucket } from '$lib/sessions-digest.js';
 
 let cleanup: Array<() => void> = [];
 afterEach(() => { cleanup.forEach((fn) => fn()); cleanup = []; });

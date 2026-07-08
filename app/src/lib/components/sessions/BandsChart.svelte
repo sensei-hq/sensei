@@ -2,7 +2,7 @@
   // BANDS — one horizontal row per day, segment widths = minutes spent in
   // each quality class. Newest day on top. Pure presentation over the
   // per-day rollup from sessions-digest.ts.
-  import type { DayBucket } from './sessions-digest.js';
+  import type { DayBucket } from '$lib/sessions-digest.js';
 
   interface Props {
     buckets: DayBucket[];

@@ -1,141 +1,273 @@
 <script lang="ts">
-  import { PageHeader, TurnBar } from '$lib/components';
-  import type { ProjectSession } from '$lib/types.js';
-
-  // Same vocabulary as the daily observatory Recent Sessions — one word
-  // for "did this go right the first time" so both surfaces read the same.
-  function reworkLabel(c: number): string {
-    if (c === 0) return 'first-try';
-    return `${c}× rework`;
-  }
+  // Project window · Sessions — the same digest treatment as Observatory
+  // Sessions ([[screen/observatory-sessions]]) but scoped to one project: a
+  // retro hero, one quiet chart the user flips between four treatments, then
+  // this project's real captured sessions. All derivations + charts + rows are
+  // reused from $lib/sessions-digest.* and $lib/components/sessions — this
+  // screen only swaps in a project-scoped fetcher and a single-project totals
+  // line. Nothing here is a parallel copy of the observatory primitives.
+  //
+  // Spec:   docs/llm-spec/screen/project-sessions.md
+  // Mockup: docs/mockups/Sensei/lib/project-pages.jsx → sessions pane
+  import { untrack } from 'svelte';
+  import { goto } from '$app/navigation';
+  import { appState } from '$lib/appstate.svelte.js';
+  import { senseiApi } from '$lib/api.js';
+  import EmptyState from '$lib/components/EmptyState.svelte';
+  import Kanji from '$lib/components/Kanji.svelte';
+  import {
+    TrendChart,
+    StreamChart,
+    ConstellationChart,
+    BandsChart,
+    MiniChart,
+    SessionRow,
+  } from '$lib/components/sessions';
+  import { SessionsDigestState } from '$lib/sessions-digest.svelte.js';
+  import {
+    CHART_VARIANTS,
+    SESSION_RANGES,
+    compactDuration,
+    replayHref,
+    type ChartVariant,
+    type MiniMode,
+    type SessionRange,
+  } from '$lib/sessions-digest.js';
+  import { projectSessionsFetcher } from './project-sessions.js';
 
   let { data } = $props();
 
-  // Local filter — All / FTR-pass / FTR-fail — keeps the daemon
-  // round-trip out of the hot path. `outcome` is always shown regardless.
-  let filter = $state<'all' | 'pass' | 'fail'>('all');
+  const projectName = $derived(data.project?.name ?? 'project');
 
-  const sessions: ProjectSession[] = $derived(data.sessions);
-  const visible = $derived(
-    filter === 'all'
-      ? sessions
-      : sessions.filter(s => (filter === 'pass' ? s.ftr === true : s.ftr === false)),
+  // One state instance per mount, seeded once from the load result. The range
+  // chips refetch through a PROJECT-SCOPED fetcher thereafter, so no other
+  // project's sessions can leak in (spec wrong-gate). untrack makes the
+  // one-time reads of `data` explicit (see insights/+page.svelte).
+  const digest = new SessionsDigestState(
+    projectSessionsFetcher(senseiApi(appState.port), untrack(() => data.projectId)),
+    untrack(() => data.sessions),
+    untrack(() => data.range as SessionRange),
   );
 
-  // Aggregates for the header — total sessions, pass count, average turns
-  // + corrections give a one-glance quality read.
-  const total = $derived(sessions.length);
-  const passCount = $derived(sessions.filter(s => s.ftr === true).length);
-  const failCount = $derived(sessions.filter(s => s.ftr === false).length);
-  const avgTurns = $derived(
-    total === 0 ? 0 : Math.round(sessions.reduce((a, s) => a + (s.turns || 0), 0) / total),
+  // Memoized slices so the header and the chart read one filtered source.
+  const enriched = $derived(digest.enriched);
+  const buckets = $derived(digest.dayBuckets);
+  const days = $derived(digest.days);
+  const totals = $derived(digest.totals);
+  const miniChartMode = $derived(
+    (digest.miniMode === 'numbers' ? 'trend' : digest.miniMode) as Exclude<MiniMode, 'numbers'>,
   );
-  const totalCorrections = $derived(sessions.reduce((a, s) => a + (s.corrections || 0), 0));
+  const medianLabel = $derived(totals.medianMins > 0 ? compactDuration(totals.medianMins) : '—');
 
-  function fmtDate(iso: string): string {
-    return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-  }
-  function fmtDuration(started: string, completed: string | null): string {
-    if (!completed) return '—';
-    const ms = new Date(completed).getTime() - new Date(started).getTime();
-    if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
-    if (ms < 3_600_000) return `${Math.round(ms / 60_000)}m`;
-    return `${(ms / 3_600_000).toFixed(1)}h`;
-  }
-  function shortModel(model: string | null): string {
-    if (!model) return '—';
-    // Common model names — abbreviate for a tight column.
-    return model
-      .replace(/^claude-/, '')
-      .replace(/^gpt-/, 'gpt-')
-      .replace(/-\d{8}$/, '');
+  // Chip metadata + cycler glyphs (kanji per mode).
+  const CHIP_META: Record<ChartVariant, { kanji: string; sub: string }> = {
+    trend: { kanji: '線', sub: 'first-try-right over time' },
+    stream: { kanji: '流', sub: 'time spent, stacked' },
+    constellation: { kanji: '星', sub: 'duration vs day' },
+    bands: { kanji: '帯', sub: 'stacked per day' },
+  };
+  const MINI_GLYPH: Record<MiniMode, string> = {
+    numbers: '数',
+    trend: '線',
+    stream: '流',
+    constellation: '星',
+    bands: '帯',
+    pulse: '脈',
+  };
+  const RANGE_LABEL: Record<SessionRange, string> = {
+    '7d': '7 days',
+    '30d': '30 days',
+    '90d': '90 days',
+  };
+
+  function selectSession(id: string): void {
+    // Deep-link to the Instruments Replay tab; session-id resolves there via
+    // GET /api/sessions/{id} (shipped Slot 1). Same target as observatory.
+    goto(replayHref(id));
   }
 </script>
 
-<PageHeader title="Sessions">
-  {#snippet right()}
-    <div class="text-sm text-ink-mute flex gap-3">
-      <span>{total} total</span>
-      <span class="text-success">✓ {passCount}</span>
-      <span class="text-danger">✗ {failCount}</span>
-      <span class="opacity-70">avg {avgTurns} turns · {totalCorrections} corrections</span>
+<div class="bg-paper min-h-full flex flex-col" data-testid="project-sessions">
+  <!-- ── Hero ─────────────────────────────────────────────────────────── -->
+  <header class="flex items-center gap-5 pt-5 pb-4 px-6 border-b border-paper-edge shrink-0">
+    <Kanji char="刻" size="3xl" />
+    <div class="flex-1 min-w-0">
+      <div class="text-xs uppercase tracking-[0.18em] text-ink-mute mb-1">{projectName} · sessions</div>
+      <h1 class="display text-xl font-normal m-0 text-ink">The shape of this project.</h1>
+      <p class="text-sm text-ink-soft leading-normal mt-1 mb-0 max-w-[720px]">
+        A retrospective — this project only. Then one quiet chart, drawn the way you read it.
+      </p>
+      <!-- Range chips — each refetches /api/sessions?project=&range= -->
+      <div class="flex items-center gap-2 mt-3" data-testid="range-chips">
+        <span class="text-xs uppercase tracking-[0.14em] text-ink-faint">range</span>
+        {#each SESSION_RANGES as r (r)}
+          {@const on = digest.range === r}
+          <button
+            type="button"
+            class="py-1 px-2 text-xs rounded-full cursor-pointer border"
+            class:bg-ink={on}
+            class:text-paper={on}
+            class:border-ink={on}
+            class:bg-transparent={!on}
+            class:text-ink-soft={!on}
+            class:border-paper-edge={!on}
+            data-testid={`range-${r}`}
+            aria-pressed={on}
+            onclick={() => digest.setRange(r)}
+          >
+            {RANGE_LABEL[r]}
+          </button>
+        {/each}
+        {#if digest.loading}
+          <span class="text-xs text-ink-faint">updating…</span>
+        {/if}
+      </div>
     </div>
-  {/snippet}
-</PageHeader>
 
-<div class="px-6 py-6">
-  <div class="flex gap-2 mb-4" role="tablist" aria-label="FTR filter">
-    {#each [['all','All'],['pass','FTR ✓'],['fail','FTR ✗']] as [id, label]}
-      {@const active = filter === id}
+    <!-- Right cluster — numbers at rest, mini chart when cycled; the cycler
+         badge steps through numbers/trend/stream/constellation/bands/pulse.
+         Pulse lives ONLY on the cycler, never in the chip group below. -->
+    <div class="flex items-center gap-3 pl-5 border-l border-paper-edge shrink-0">
+      {#if digest.miniMode === 'numbers'}
+        <div class="flex gap-4" data-testid="mini-numbers">
+          {@render stat('bg-success', totals.good, 'first-try')}
+          {@render stat('bg-warning', totals.bad, 'corrected')}
+          {@render stat('bg-accent', totals.ugly, 'abandoned')}
+          <div class="w-px bg-paper-edge"></div>
+          <div class="text-center min-w-[56px]">
+            <div class="display text-lg leading-none text-ink" style='font-feature-settings: "tnum";'>{medianLabel}</div>
+            <div class="text-xs uppercase tracking-[0.12em] text-ink-faint mt-1">median</div>
+          </div>
+        </div>
+      {:else}
+        <div class="flex items-center gap-3" data-testid="mini-view">
+          <MiniChart mode={miniChartMode} {buckets} sessions={enriched} {days} />
+          <div class="min-w-[56px]">
+            <div class="display text-lg leading-none text-ink" style='font-feature-settings: "tnum";'>{totals.count}</div>
+            <div class="text-xs uppercase tracking-[0.12em] text-ink-faint mt-1">sessions</div>
+          </div>
+        </div>
+      {/if}
       <button
         type="button"
-        class="px-3 py-1 rounded-full border text-xs cursor-pointer transition-colors duration-fast"
-        class:bg-primary={active}
-        class:text-on-primary={active}
-        class:border-primary={active}
-        class:bg-transparent={!active}
-        class:text-ink-soft={!active}
-        class:border-paper-mute={!active}
-        role="tab"
-        aria-selected={active}
-        data-testid={`sessions-filter-${id}`}
-        onclick={() => (filter = id as 'all' | 'pass' | 'fail')}
-      >{label}</button>
-    {/each}
-  </div>
-
-  {#if visible.length === 0}
-    <p class="text-sm text-ink-soft">
-      {filter === 'all' ? 'No sessions recorded for this project yet.' : 'No sessions match this filter.'}
-    </p>
-  {:else}
-    <div class="grid grid-cols-[60px_1fr_100px_80px_100px_60px_80px] gap-3 px-3 py-2 text-xs text-ink-mute tracking-wide uppercase">
-      <span>Date</span>
-      <span>Task</span>
-      <span>Model</span>
-      <span>Timeline</span>
-      <span class="text-right">Rework</span>
-      <span class="text-right">FTR</span>
-      <span class="text-right">Outcome</span>
+        class="mini-cycler w-8 h-8 rounded-full bg-paper-soft border border-paper-edge inline-flex items-center justify-center cursor-pointer"
+        title={`viewing ${digest.miniMode} · click to cycle`}
+        data-testid="mini-cycler"
+        data-mode={digest.miniMode}
+        onclick={() => digest.cycleMiniMode()}
+      >
+        <span class="kanji text-sm text-accent leading-none">{MINI_GLYPH[digest.miniMode]}</span>
+      </button>
     </div>
-    {#each visible as s (s.id)}
-      <div class="session-row grid grid-cols-[60px_1fr_100px_80px_100px_60px_80px] gap-3 px-3 py-2 border-b border-paper-mute text-sm items-center" data-testid={`session-row-${s.id}`}>
-        <span class="text-xs text-ink-soft font-mono">{fmtDate(s.startedAt)}</span>
-        <div class="min-w-0">
-          <div class="truncate">{s.task}</div>
-          {#if s.completedAt}
-            <div class="text-xs text-ink-soft opacity-70">{fmtDuration(s.startedAt, s.completedAt)}</div>
-          {/if}
+  </header>
+
+  <!-- ── Body ─────────────────────────────────────────────────────────── -->
+  <div class="flex-1 min-h-0">
+    <!-- Totals strip + quality tally — single project, so no "across N
+         projects" split. -->
+    <div class="flex items-baseline flex-wrap gap-x-4 gap-y-1 pt-4 pb-3 px-6 border-b border-paper-edge">
+      <span class="text-sm text-ink">
+        <span class="display text-lg" style='font-feature-settings: "tnum";'>{totals.count}</span>
+        session{totals.count === 1 ? '' : 's'} · median {medianLabel}
+      </span>
+      <span class="flex-1"></span>
+      <span class="text-xs" data-testid="quality-tally">
+        <span class="text-success">{totals.good} first-try</span>
+        <span class="text-ink-faint"> · </span>
+        <span class="text-warning">{totals.bad} corrected</span>
+        <span class="text-ink-faint"> · </span>
+        <span class="text-accent">{totals.ugly} abandoned</span>
+      </span>
+    </div>
+
+    <!-- Chart frame — chip group selects the full chart area -->
+    <section class="pt-5 pb-4 px-6">
+      <div class="flex items-baseline gap-3 mb-3 pb-2 border-b border-paper-edge">
+        <span class="kanji text-base text-accent">{CHIP_META[digest.chart].kanji}</span>
+        <h2 class="display text-base font-normal m-0 text-ink capitalize">Sessions · {digest.chart}</h2>
+        <span class="text-xs text-ink-mute">· {CHIP_META[digest.chart].sub}</span>
+        <span class="flex-1"></span>
+        <!-- Exactly four chips. pulse is never here (mini-cycler only). -->
+        <div class="flex gap-0 p-1 bg-paper-soft border border-paper-edge rounded" data-testid="chart-chips">
+          {#each CHART_VARIANTS as v (v)}
+            {@const on = digest.chart === v}
+            <button
+              type="button"
+              class="py-1 px-3 text-xs rounded-sm cursor-pointer border capitalize"
+              class:bg-paper={on}
+              class:text-ink={on}
+              class:border-paper-edge={on}
+              class:bg-transparent={!on}
+              class:text-ink-mute={!on}
+              class:border-transparent={!on}
+              data-testid={`chip-${v}`}
+              aria-pressed={on}
+              onclick={() => digest.setChart(v)}
+            >
+              {v}
+            </button>
+          {/each}
         </div>
-        <span class="text-xs font-mono text-ink-soft truncate" title={s.model ?? undefined}>
-          {shortModel(s.model)}
-        </span>
-        <div class="flex items-center gap-2" title={`${s.turns} turns · ${s.corrections} rework`}>
-          <TurnBar turns={s.turns} corrections={s.corrections} width={60} height={8} />
-          <span class="font-mono text-xs text-ink-soft">{s.turns}</span>
-        </div>
-        <span class="text-right font-mono text-xs"
-              class:text-success={s.corrections === 0}
-              class:text-warning={s.corrections > 0 && s.corrections < 3}
-              class:text-danger={s.corrections >= 3}>
-          {reworkLabel(s.corrections)}
-        </span>
-        <span class="text-right font-mono text-sm"
-              class:text-success={s.ftr === true}
-              class:text-danger={s.ftr === false}>
-          {s.ftr === true ? '✓' : s.ftr === false ? '✗' : '—'}
-        </span>
-        <span class="text-right text-xs text-ink-soft truncate">{s.outcome ?? '—'}</span>
       </div>
-    {/each}
-  {/if}
+
+      <div class="bg-paper-soft border border-paper-edge rounded-lg pt-5 pb-4 px-5" data-testid="chart-body">
+        {#if digest.chart === 'trend'}
+          <TrendChart {buckets} />
+        {:else if digest.chart === 'stream'}
+          <StreamChart {buckets} />
+        {:else if digest.chart === 'constellation'}
+          <ConstellationChart sessions={enriched} {days} />
+        {:else}
+          <BandsChart {buckets} />
+        {/if}
+      </div>
+
+      <!-- Legend -->
+      <div class="flex justify-end gap-4 mt-3 text-xs text-ink-mute">
+        <span class="inline-flex items-center gap-1"><span class="w-2 h-2 rounded-sm bg-success"></span>first-try</span>
+        <span class="inline-flex items-center gap-1"><span class="w-2 h-2 rounded-sm bg-warning"></span>corrected</span>
+        <span class="inline-flex items-center gap-1"><span class="w-2 h-2 rounded-sm bg-accent"></span>abandoned</span>
+      </div>
+    </section>
+
+    <!-- Session list -->
+    <section class="pb-8 px-6">
+      <div class="flex items-baseline gap-3 mb-2 pb-2 border-b border-paper-edge">
+        <span class="kanji text-base text-accent">刻</span>
+        <h2 class="display text-base font-normal m-0 text-ink">Sessions</h2>
+        <span class="text-xs text-ink-mute">· newest first, click to replay</span>
+        <span class="flex-1"></span>
+        <span class="font-mono text-xs text-ink-faint">{enriched.length} shown</span>
+      </div>
+      {#if enriched.length === 0}
+        <EmptyState
+          kanji="刻"
+          title="No sessions in this window."
+          description="Start a session with your assistant on this project, or widen the range. Each session becomes a moment of learning."
+        />
+      {:else}
+        <div class="flex flex-col gap-px" data-testid="session-list">
+          {#each enriched as session (session.id)}
+            <SessionRow {session} onselect={selectSession} />
+          {/each}
+        </div>
+      {/if}
+    </section>
+  </div>
 </div>
 
+{#snippet stat(dotClass: string, n: number, label: string)}
+  <div class="text-center min-w-[56px]">
+    <div class="display text-lg leading-none text-ink inline-flex items-center gap-1" style='font-feature-settings: "tnum";'>
+      <span class="w-1.5 h-1.5 rounded-full {dotClass}"></span>
+      {n}
+    </div>
+    <div class="text-xs uppercase tracking-[0.12em] text-ink-faint mt-1">{label}</div>
+  </div>
+{/snippet}
+
 <style>
-  .session-row:last-child {
-    border-bottom: none;
-  }
-  .session-row:hover {
-    background: var(--paper-mute);
+  .mini-cycler:hover {
+    background: var(--paper);
   }
 </style>

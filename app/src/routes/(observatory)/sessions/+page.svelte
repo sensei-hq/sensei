@@ -12,13 +12,15 @@
   import { senseiApi } from '$lib/api.js';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import Kanji from '$lib/components/Kanji.svelte';
-  import TrendChart from './TrendChart.svelte';
-  import StreamChart from './StreamChart.svelte';
-  import ConstellationChart from './ConstellationChart.svelte';
-  import BandsChart from './BandsChart.svelte';
-  import MiniChart from './MiniChart.svelte';
-  import SessionRow from './SessionRow.svelte';
-  import { SessionsDigestState } from './sessions-digest.svelte.js';
+  import {
+    TrendChart,
+    StreamChart,
+    ConstellationChart,
+    BandsChart,
+    MiniChart,
+    SessionRow,
+  } from '$lib/components/sessions';
+  import { SessionsDigestState } from '$lib/sessions-digest.svelte.js';
   import {
     CHART_VARIANTS,
     SESSION_RANGES,
@@ -27,7 +29,7 @@
     type ChartVariant,
     type MiniMode,
     type SessionRange,
-  } from './sessions-digest.js';
+  } from '$lib/sessions-digest.js';
 
   let { data } = $props();
 

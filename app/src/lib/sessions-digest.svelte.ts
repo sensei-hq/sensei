@@ -1,4 +1,4 @@
-// Observatory · Sessions digest — reactive view state.
+// Sessions digest — reactive view state.
 //
 // Owns the chart chip, the mini-cycler mode, the range window, and the loaded
 // rows; exposes derived enriched/day-bucket/totals slices so the chart and the
@@ -6,8 +6,10 @@
 // and the totals row goes stale"). Range changes refetch through an injected
 // `fetcher` so the class is testable without the daemon.
 //
-// Pure math lives in ./sessions-digest.ts — this file only adds runes + the
-// refetch action on top of it.
+// Shared by the Observatory Sessions screen and the project-scoped Sessions
+// screen — the project page injects a project-scoped fetcher, the observatory
+// page a multi-project one. Pure math lives in ./sessions-digest.ts — this
+// file only adds runes + the refetch action on top of it.
 import type { SessionRow } from '$lib/types.js';
 import {
   aggregateByDay,
