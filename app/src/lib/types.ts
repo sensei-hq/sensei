@@ -932,3 +932,68 @@ export interface ToolInsight {
   title: string | null;
   detail: string | null;
 }
+
+// ─── Project window · Overview (Slot 4) ──────────────────────────────────────
+// Shape of GET /api/projects/{id}/overview — a server-side assembler that
+// composes the project window's landing pane from several sources. The wire is
+// camelCase throughout, except the top-level `top_recommendation` key.
+
+export interface ProjectOverviewFolder {
+  id: string;
+  name: string;
+  /** Folder-project membership role (backend/frontend/library/…); null when
+   *  the folder has no assigned role. */
+  role: string | null;
+  primary: boolean;
+}
+
+export interface ProjectOverviewHeader {
+  id: string;
+  name: string;
+  /** Single glyph from the project's icon; 場 when nothing is set. */
+  kanji: string;
+  client: string | null;
+  goal: string | null;
+  /** 14-day rolling FTR, 0..1 — same project_ftr_metrics view the
+   *  projects-index card reads, so the two numbers never disagree. */
+  ftr: number;
+  warn: boolean;
+  sessions7d: number;
+  folders: ProjectOverviewFolder[];
+}
+
+export interface ProjectOverviewTopRec {
+  id: string;
+  title: string;
+  why: string;
+  /** Session ids backing the recommendation; may be empty. */
+  evidence: string[];
+  /** Preferred ACP to route the rec to; null when none is set. */
+  defaultAcp: string | null;
+}
+
+export interface ProjectOverviewStats {
+  sessions7d: number;
+  sessions7dCorrected: number;
+  memories: { total: number; readyToShare: number; toMerge: number };
+  docDrift: { open: number; referencedDocs: number };
+}
+
+export interface ProjectOverviewSession {
+  id: string;
+  title: string;
+  startedAt: string;
+  completedAt: string | null;
+  corrections: number;
+  ftr: boolean;
+  /** Folder role for the repo this session touched; null for single-repo
+   *  projects or unassigned folders. */
+  role: string | null;
+}
+
+export interface ProjectOverview {
+  project: ProjectOverviewHeader;
+  top_recommendation: ProjectOverviewTopRec | null;
+  stats: ProjectOverviewStats;
+  recentSessions: ProjectOverviewSession[];
+}

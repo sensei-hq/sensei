@@ -37,10 +37,11 @@ A project can span multiple repos (see [[pipeline/capture]]
   a small `{n} repos` chip alongside the client label
   (`Project · Acme · 3 repos`).
 - **Recent-in-this-project list** — session `s-2891` may belong to
-  the `web` repo of the `acme` project; the row should say
-  `s-2891 · web · 42m · first-try right`. The role label
-  (`web`/`backend`/`docs`) comes from the folder-project
-  membership row.
+  the `frontend` repo of the `acme` project; the row should say
+  `s-2891 · frontend · 42m · first-try right`. The role label
+  comes from the folder-project membership row; valid `folder_role`
+  values are `backend`, `frontend`, `library`, `tool`, `docs`,
+  `infra`, `website`, `desktop`, `mobile`, `config`, `packaging`.
 - If multi-repo was auto-suggested and pending user acceptance
   ([[pipeline/capture]]), a small banner offers "combine with
   {other-project}?" instead of showing the merged view. Never
@@ -48,14 +49,25 @@ A project can span multiple repos (see [[pipeline/capture]]
 
 ## Data invariants
 
-- `GET /api/projects/{id}/overview` returns:
+- `GET /api/projects/{id}/overview` — **this endpoint does not yet exist and must be built as part of this task.** It is a server-side assembler that composes its payload from several existing sources:
+  - `project.*` ← `GET /api/projects/{id}` + `sensei.project_ftr_metrics` (for `ftr_14d`)
+  - `project.goal` ← `sensei.projects.goal` (the column is `goal`; no migration needed — the column already exists; the API field name is `goal`, not `vision`)
+  - `project.kanji` ← `icon->>'value'` from `sensei.projects.icon` jsonb where `icon->>'kind' = 'kanji'` (not a top-level column; extract at the assembler layer)
+  - `top_recommendation` ← top pending row of `inference.recommendations` (has `title`, `why`, `evidence`, `default_acp`)
+  - `stats.memories` ← `COUNT(*) FROM sensei.memories WHERE project_id = $project_id AND status != 'archived'`; the `ready_to_share` and `to_merge` sub-counts both use the promotion-/merge-readiness statuses defined in [[pipeline/memory]] (do not invent a status name)
+  - **Wire convention:** the assembler emits camelCase throughout to match the rest of the app's wire (`ftr14d`, `sessions7d`, …). The `stats` sub-object's `sessions_7d` / `sessions_7d_corrected` shown in the shape below are the same quantities and should be emitted as `sessions7d` / `sessions7dCorrected`.
+  - `stats.doc_drift` ← `sensei.project_drift` scoped to the project; `referenced_docs` = `COUNT(DISTINCT doc_node_id) FROM inference.drift_items` for the project's folders
+  - `recentSessions` ← recent `activity.sessions` for the project (limit 4)
+- Shape returned:
   ```json
   {
     "project": {
-      "id": "…", "name": "…", "kanji": "…", "client": "…"?,
-      "vision": "…"?, "ftr": 0.0..1.0, "warn": bool,
+      "id": "…", "name": "…",
+      "kanji": "…",
+      "client": "…"?,
+      "goal": "…"?, "ftr": 0.0..1.0, "warn": bool,
       "sessions7d": N, "folders": [
-        { "id": "…", "name": "web", "role": "web", "primary": true }, …
+        { "id": "…", "name": "frontend", "role": "frontend", "primary": true }, …
       ]
     },
     "top_recommendation": {
@@ -68,7 +80,7 @@ A project can span multiple repos (see [[pipeline/capture]]
       "doc_drift": { "open": N, "referenced_docs": N }
     },
     "recentSessions": [
-      { "id": "…", "title": "…", "duration": "…", "corrections": N, "ftr": bool, "time": "…", "role": "web"? }, …
+      { "id": "…", "title": "…", "duration": "…", "corrections": N, "ftr": bool, "time": "…", "role": "frontend"? }, …
     ]
   }
   ```
@@ -79,12 +91,16 @@ A project can span multiple repos (see [[pipeline/capture]]
 - FTR chip reads from
   `sensei.project_ftr_metrics.ftr_14d` — same view as the projects
   index (single source of truth).
-- Doc-drift count is the open row-count from
-  `inference.drift_items` scoped to this project's folders.
-- Memory counts scope to `scope_project_id == this project`. The
-  `ready_to_share` count is memories whose promotion to `user`,
-  `org`, or `collective` scope is queued (see
-  [[pipeline/memory]] promotion ladder).
+- Doc-drift `open` count is the open (drifted + broken) row-count from
+  `sensei.project_drift` — the project-scoped view over
+  `inference.drift_items`, the same source as `GET /api/projects/{id}/drift`.
+  `referenced_docs` = `COUNT(DISTINCT doc_node_id)` from
+  `inference.drift_items` for the project's folders. (Consistent with the
+  `stats.doc_drift` source bullet above — one table for the count, one for the
+  denominator.)
+- Memory counts: `WHERE memories.project_id = $project_id AND status != 'archived'`.
+  The `ready_to_share` sub-count uses the promotion-readiness status defined in
+  [[pipeline/memory]] — do not invent a status name.
 
 ## Signals shown
 
