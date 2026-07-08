@@ -990,29 +990,36 @@ impl PgStore {
     }
 
     /// List all sessions across all folders.
-    pub async fn list_all_sessions(&self, limit: i64) -> Result<Vec<serde_json::Value>, String> {
+    /// List recent sessions, newest first. `range_days` (when `Some`) filters to
+    /// sessions started within the last N days — powers the Observatory · Sessions
+    /// digest range chips (7d/30d/90d); `None` = no time filter. `project` (when
+    /// `Some`) scopes to one project. `agent` (the acp harness, e.g. "claude" /
+    /// "zed") lets the digest label each row's assistant.
+    pub async fn list_all_sessions(
+        &self,
+        limit: i64,
+        range_days: Option<i64>,
+        project: Option<&uuid::Uuid>,
+    ) -> Result<Vec<serde_json::Value>, String> {
         // Join the project name so each session can be labelled, and return the
         // timestamps in the camelCase shape the SessionData wire type and the
-        // observatory components actually read (startedAt / completedAt). The
-        // old shape returned folder_id (a bare uuid, never a project name) and
-        // snake_case `started_at` with no `completed_at`, so every displayed
-        // column — project, task time, duration — came back blank (#61).
-        //
-        // `corrections` is what powers the Today observatory's "Corrections"
-        // column (first-try / N× rework) per the mockup — same column the
-        // per-project session list has surfaced since T3 Slice 1.4.
+        // observatory components actually read (startedAt / completedAt). `corrections`
+        // powers the "Corrections" column (first-try / N× rework) per the mockup.
         type SessionRow = (
             uuid::Uuid, Option<String>, String, Option<String>, Option<String>,
             Option<bool>, i32, i32, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>,
+            Option<String>,
         );
         let rows: Vec<SessionRow> = sqlx_core::query_as::query_as(
             "SELECT s.id, p.name, s.task, s.summary, s.outcome::text, s.ftr, s.turns, s.corrections,
-                    s.started_at, s.completed_at
+                    s.started_at, s.completed_at, s.acp_id
              FROM activity.sessions s
              LEFT JOIN sensei.projects p ON p.id = s.project_id
+             WHERE ($2::int IS NULL OR s.started_at >= now() - make_interval(days => $2::int))
+               AND ($3::uuid IS NULL OR s.project_id = $3)
              ORDER BY s.started_at DESC LIMIT $1"
-        ).bind(limit).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
-        Ok(rows.into_iter().map(|(id, project, task, summary, outcome, ftr, turns, corrections, started, completed)| {
+        ).bind(limit).bind(range_days).bind(project).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id, project, task, summary, outcome, ftr, turns, corrections, started, completed, agent)| {
             serde_json::json!({
                 "id": id,
                 "project": project,
@@ -1024,6 +1031,7 @@ impl PgStore {
                 "corrections": corrections,
                 "startedAt": started.to_rfc3339(),
                 "completedAt": completed.map(|c| c.to_rfc3339()),
+                "agent": agent,
             })
         }).collect())
     }
@@ -7667,7 +7675,7 @@ mod tests {
         let session_id = s.record_session_event(&sid, &fid, Some(&pid), "claude", false).await.unwrap();
         s.record_session_event(&sid, &fid, Some(&pid), "claude", true).await.unwrap();
 
-        let all = s.list_all_sessions(500).await.unwrap();
+        let all = s.list_all_sessions(500, None, None).await.unwrap();
         let row = all.iter()
             .find(|r| r["id"].as_str() == Some(session_id.to_string().as_str()))
             .expect("our session is listed");
