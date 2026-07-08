@@ -698,6 +698,9 @@ pub(crate) async fn observatory_today(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     use crate::observatory_home as home;
+    use crate::analysis::insight_copy::{
+        copy_or_warm, CopyLimits, FallbackCopy, InsightKind,
+    };
 
     let now_local = chrono::Local::now();
     let greeting = home::greeting(now_local.hour());
@@ -742,8 +745,53 @@ pub(crate) async fn observatory_today(
             let sources = recs.first()
                 .map(|r| home::session_ids_from_evidence(&r["evidence"], 3))
                 .unwrap_or_default();
-            let hero = home::mature_hero(top, &sources, "");
-            let insights: Vec<serde_json::Value> = rest.iter().take(3).map(home::insight_card).collect();
+            // Mature hero — route the koan title + body through insight-copy
+            // (mature-only by design; see the early-branch note below). The
+            // model owns the sentence; the code owns the action/impact/source/
+            // noticed fields, which stay exactly as mature_hero set them.
+            // `copy_or_warm` reads the persisted row on the wire and warms in
+            // the background on a miss — this await never blocks on inference.
+            let mut hero = home::mature_hero(top, &sources, "");
+            let hero_facts = serde_json::json!({
+                "title": top.title,
+                "why": top.why,
+                "impact": top.impact,
+                "urgency": top.urgency,
+                "sources": sources,
+            });
+            let hero_fallback = FallbackCopy {
+                title: hero["koan"].as_str().unwrap_or_default().to_string(),
+                detail: hero["body"].as_str().unwrap_or_default().to_string(),
+            };
+            let hero_copy = copy_or_warm(
+                &state.pg, &state.gateway, InsightKind::HeroKoanMature,
+                &hero_facts, CopyLimits::default(), hero_fallback,
+            ).await;
+            hero["koan"] = hero_copy.title.into();
+            hero["body"] = hero_copy.detail.into();
+
+            // Supporting insight cards — route each card's one-liner through
+            // insight-copy. Each await is a cache read (+ a background warm on a
+            // miss), not a model call, so the ≤4 per-screen loop stays cheap.
+            let mut insights: Vec<serde_json::Value> = Vec::new();
+            for rec in rest.iter().take(3) {
+                let mut card = home::insight_card(rec);
+                let card_facts = serde_json::json!({
+                    "title": rec.title,
+                    "why": rec.why,
+                    "impact": rec.impact,
+                });
+                let card_fallback = FallbackCopy {
+                    title: card["label"].as_str().unwrap_or_default().to_string(),
+                    detail: card["text"].as_str().unwrap_or_default().to_string(),
+                };
+                let card_copy = copy_or_warm(
+                    &state.pg, &state.gateway, InsightKind::InsightRecurringPattern,
+                    &card_facts, CopyLimits::default(), card_fallback,
+                ).await;
+                card["text"] = card_copy.detail.into();
+                insights.push(card);
+            }
 
             let mems = state.pg.list_active_memories_global(5).await.unwrap_or_default();
             let adopted: Vec<serde_json::Value> = mems.iter().map(|m| {
@@ -762,6 +810,10 @@ pub(crate) async fn observatory_today(
             (home::steady_hero(recent.len()), Vec::new(), Vec::new())
         }
     } else {
+        // Early (and the steady-hero branch above) stay static by design:
+        // insight-copy is mature-only. Early copy is purpose-built calibration
+        // text; routing it through the model risks inventing a teaching where
+        // there is no signal (spec wrong-gate: "Koan is generic → early state").
         (
             home::early_hero(watched, crate::maturity::MATURITY_TARGET, &recent_ids),
             home::early_insights(),
