@@ -2,7 +2,12 @@
   // One session in the digest list. Clickable → the Instruments Replay tab
   // for this session (the parent builds the href / goto). Pure presentation:
   // every field is pre-derived on the EnrichedSession.
-  import type { EnrichedSession, QualityTone } from './sessions-digest.js';
+  //
+  // Shared by the Observatory Sessions screen and the project-scoped Sessions
+  // screen. The folder-role chip renders only when `folderRole` is populated
+  // (multi-repo projects); it stays dormant on the multi-project observatory
+  // view and on single-folder projects.
+  import type { EnrichedSession, QualityTone } from '$lib/sessions-digest.js';
 
   interface Props {
     session: EnrichedSession;
@@ -44,8 +49,14 @@
 
   <span class="flex flex-col gap-0.5 min-w-0">
     <span class="text-sm text-ink truncate">{session.title}</span>
-    <span class="text-xs text-ink-soft truncate">
-      {session.project || 'unlinked'}{#if session.agent} · {session.agent}{/if}
+    <span class="text-xs text-ink-soft truncate flex items-center gap-1.5">
+      <span class="truncate">{session.project || 'unlinked'}{#if session.agent} · {session.agent}{/if}</span>
+      {#if session.folderRole}
+        <span
+          class="shrink-0 py-px px-1.5 rounded-full bg-paper-mute text-ink-mute uppercase tracking-wide text-[10px]"
+          data-folder-role={session.folderRole}
+        >{session.folderRole}</span>
+      {/if}
     </span>
   </span>
 

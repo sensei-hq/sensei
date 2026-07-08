@@ -1,12 +1,17 @@
-// Observatory · Sessions digest — pure derivations (no runes).
+// Sessions digest — pure derivations (no runes).
 //
 // Everything the digest draws is computed here from the wire `SessionRow`s so
 // the state class and components stay thin. Kept framework-free so quality
 // mapping, per-day aggregation, and the row display strings are unit-testable
 // without mounting anything or standing up the daemon.
 //
-// Screen: docs/llm-spec/screen/observatory-sessions.md
-// Mockup: docs/mockups/Sensei/lib/sessions-zen.jsx → SessionsDigestZen
+// Shared by the Observatory Sessions screen and the project-scoped Sessions
+// screen — promoted out of (observatory)/sessions/ once a second consumer
+// appeared (frontend-svelte-guidelines §DRY).
+//
+// Screens: docs/llm-spec/screen/observatory-sessions.md
+//          docs/llm-spec/screen/project-sessions.md
+// Mockup:  docs/mockups/Sensei/lib/sessions-zen.jsx → SessionsDigestZen
 import type { SessionRow } from '$lib/types.js';
 
 /** The four chart chips (pulse is deliberately NOT here — it is a
@@ -145,6 +150,10 @@ export interface EnrichedSession {
   when: string;
   time: string;
   duration: string;
+  /** Folder role for multi-repo projects (`web` / `backend` / `docs`); null
+   *  when the endpoint doesn't carry it (single-folder projects, or the
+   *  observatory multi-project view). Drives the row's folder-role chip. */
+  folderRole: string | null;
 }
 
 /** Shape raw wire rows into the display contract. `now` injectable for tests. */
@@ -168,6 +177,7 @@ export function enrich(rows: SessionRow[], now: Date = new Date()): EnrichedSess
       when: relativeWhen(s.startedAt, now),
       time: timeOfDay(s.startedAt),
       duration: compactDuration(mins),
+      folderRole: s.folderRole?.trim() ? s.folderRole.trim() : null,
     };
   });
 }

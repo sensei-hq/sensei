@@ -2,7 +2,7 @@
   // STREAM — minutes per day stacked by quality (ugly → bad → good, bottom
   // up) as three filled areas over the range. Pure presentation over the
   // per-day rollup from sessions-digest.ts.
-  import type { DayBucket } from './sessions-digest.js';
+  import type { DayBucket } from '$lib/sessions-digest.js';
 
   interface Props {
     buckets: DayBucket[];
