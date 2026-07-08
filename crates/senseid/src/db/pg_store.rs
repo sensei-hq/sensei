@@ -4912,15 +4912,20 @@ impl PgStore {
         // `content`, `impact`, and the two counts power the Memory Anatomy
         // detail drawer (What / Because / Consequence + evidence). Cheap
         // to project — all existing columns on `sensei.memories`.
+        // `generalised` / `generalised_content` power the ready-to-share lane:
+        // the flag says sensei has rewritten this memory project-agnostic, and
+        // `generalised_content` carries that portable rewrite (null until then).
         type MemRow = (
             uuid::Uuid, String, String, String, String, Option<String>,
             f32, i32, i32, String, Option<String>,
             Option<chrono::DateTime<chrono::Utc>>,
+            bool, Option<String>,
         );
         let rows: Vec<MemRow> = sqlx_core::query_as::query_as(
                 "SELECT id, title, type::text, status::text, content, impact,
                         strength, reinforced_count, violated_count,
-                        scope::text, scope_filter, last_relevant_at
+                        scope::text, scope_filter, last_relevant_at,
+                        generalised, generalised_content
                  FROM sensei.memories WHERE project_id = $1
                  ORDER BY last_relevant_at DESC NULLS LAST LIMIT 100"
             ).bind(project_id)
@@ -4929,7 +4934,7 @@ impl PgStore {
         let total = rows.len();
         let active: Vec<_> = rows.into_iter()
             .filter(|r| r.3 == "active")
-            .map(|(id, title, typ, status, content, impact, strength, reinforced, violated, scope, scope_filter, last)| {
+            .map(|(id, title, typ, status, content, impact, strength, reinforced, violated, scope, scope_filter, last, generalised, generalised_content)| {
                 serde_json::json!({
                     "id": id, "title": title, "type": typ, "status": status,
                     "content": content, "impact": impact,
@@ -4938,6 +4943,8 @@ impl PgStore {
                     "violatedCount": violated,
                     "scope": scope, "scopeFilter": scope_filter,
                     "lastRelevantAt": last.map(|t| t.to_rfc3339()),
+                    "generalised": generalised,
+                    "generalisedContent": generalised_content,
                 })
             }).collect();
 
@@ -5233,6 +5240,32 @@ impl PgStore {
             .bind(source_id)
             .bind(target_namespace_id)
             .bind(enforcement)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(row.map(|(id,)| id))
+    }
+
+    /// Persist the project-agnostic rewrite of a memory and flag it
+    /// ready-to-share. Sets `generalised_content`, `generalised = true`, and
+    /// bumps `modified_at`. Returns the id when a row was updated, `None` when
+    /// no memory matched. Never panics — a DB error surfaces as `Err` for the
+    /// caller to log; the caller only sets the flag on success (never fabricated).
+    pub async fn set_memory_generalisation(
+        &self,
+        id: uuid::Uuid,
+        generalised: &str,
+    ) -> Result<Option<uuid::Uuid>, String> {
+        let row: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
+            "UPDATE sensei.memories
+                SET generalised_content = $2
+                  , generalised         = true
+                  , modified_at         = now()
+              WHERE id = $1
+              RETURNING id"
+        )
+            .bind(id)
+            .bind(generalised)
             .fetch_optional(&self.pool)
             .await
             .map_err(|e| e.to_string())?;
@@ -7569,7 +7602,7 @@ mod tests {
         // Insert an assistant_event with no matching session and old ts.
         let old_ts: i64 = (chrono::Utc::now() - chrono::Duration::days(90)).timestamp() * 1000;
         let orphan_csid = format!("orphan_prune_{}", uuid::Uuid::new_v4());
-        s.insert_hook_event(&orphan_csid, "claude", "PostToolUse", Some("Read".into()), None, old_ts, None,
+        s.insert_hook_event(&orphan_csid, "claude", "PostToolUse", Some("Read"), None, old_ts, None,
             &serde_json::json!({})).await.unwrap();
 
         let counts = s.prune_activity(30).await.unwrap();
