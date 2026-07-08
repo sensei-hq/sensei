@@ -1164,3 +1164,24 @@ sensei outbox). Unit-tested; live HTTP round-trip DEFERRED to daemon↔service i
 PLAN: C6 → C7 downstream inbox (pull approved→land per type; /api/upgrades) → then daemon↔service
 INTEGRATION test (run sensei-hive + daemon, contribute→pull round-trip) = FIRST FUNCTIONAL MILESTONE →
 merge+bump Dōjō foundation (validate dbd handles dojo scope+proc at that bump). Then C8 + screens C9-C11.
+
+── DŌJŌ C6 ✅ COMMITTED `9656ad71` (2026-07-08) ──
+Upstream contribute: DojoClient.publish_artifact (POST /v1/t/{tenant}/artifacts, Keychain Bearer via
+spawn_blocking, is_retryable); dojo/contribute.rs (approved batch → C4 route → C5 Dereferenced enforced,
+residual-risk HELD never published; global→anonymize; named→backstop; signature over CHECKED text);
+sensei.dojo_outbox durable ledger (unique(membership_id,signature) dedup, held/queued can't downgrade
+sent); share_review handlers (GET next-batch preview + POST publish). ArtifactPublisher/Outbox trait
+seams → confidentiality+dedup unit-tested w/o infra. 14 tests, 1256 pass, clippy 0. Live HTTP round-trip
+DEFERRED to integration step.
+
+DŌJŌ on develop UNMERGED (7 chunks): C1 `37f30527`, dojo-protocol `1e963ab2`, C3 `122fad3f`, C4
+`beacc421`, C5 `29971613`, C6 `9656ad71`.
+⏳ DŌJŌ C7 BUILDING: downstream inbox/distribution — DojoClient.pull_artifacts (GET /v1/t/{tenant}/
+artifacts?since=cursor); daemon-side downstream inbox (new sensei table or reuse; per-membership cursor +
+state pending|applied|muted|pinned); extend run_pull_loop to pull dojo artifacts alongside rules; GET
+/api/upgrades (the TRUE Dōjō inbox — audit noted /api/upgrades 404) + POST apply/mute/pin. Apply landing
+MVP = principle/pattern → sensei.memories origin=dojo; skill/agent/prompt/guard landing = FOLLOW-UP
+(record payload, don't auto-write plugins/lint). Docker-free unit-tested; live pull vs sensei-hive =
+integration step. After C7 → daemon↔service INTEGRATION test (run sensei-hive+daemon, contribute→pull
+round-trip) = FIRST FUNCTIONAL MILESTONE → merge+bump (validate dbd handles dojo scope+proc at bump).
+Then C8 collective-promote + screens C9-C11.

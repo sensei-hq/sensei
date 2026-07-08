@@ -201,6 +201,22 @@ pub fn run_pull_loop(pg: PgStore, interval_secs: u64) {
                     Err(e) => tracing::warn!(source=%src.name, error=%e, "federation: pull failed"),
                 }
             }
+            // C7: also pull each Dōjō membership's downstream artifacts into the
+            // local inbox. Fully guarded — a dojo pull failure (or the membership
+            // listing failing) must never break the rules pull above; log + move on.
+            match pg.list_dojo_memberships().await {
+                Ok(memberships) => {
+                    for m in memberships.into_iter().filter(|m| m.enabled) {
+                        match crate::collective::inbox::pull_membership(&pg, &m).await {
+                            Ok(o) if o.inserted > 0 =>
+                                tracing::info!(membership=%m.id, inserted=o.inserted, cursor=o.new_cursor, "dojo: pulled downstream artifacts"),
+                            Ok(_) => {}
+                            Err(e) => tracing::warn!(membership=%m.id, error=%e, "dojo: downstream pull failed"),
+                        }
+                    }
+                }
+                Err(e) => tracing::warn!(error=%e, "dojo: list memberships failed"),
+            }
         }
     });
 }

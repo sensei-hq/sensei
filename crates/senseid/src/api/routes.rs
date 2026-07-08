@@ -29,6 +29,7 @@ use crate::api::handlers::gateway_image;
 use crate::api::handlers::knowledge;
 use crate::api::handlers::dojo;
 use crate::api::handlers::share_review;
+use crate::api::handlers::upgrades;
 use crate::api::handlers::corrections;
 
 pub fn create_router(state: AppState) -> Router {
@@ -251,6 +252,11 @@ pub fn create_router(state: AppState) -> Router {
         // Dōjō upstream share review (C6)
         .route("/api/share-review/next-batch",           get(share_review::next_batch))
         .route("/api/share-review/{batch}/publish",      post(share_review::publish_batch))
+        // Dōjō downstream inbox / upgrades (C7)
+        .route("/api/upgrades",                          get(upgrades::list))
+        .route("/api/upgrades/{id}/apply",               post(upgrades::apply))
+        .route("/api/upgrades/{id}/mute",                post(upgrades::mute))
+        .route("/api/upgrades/{id}/pin",                 post(upgrades::pin))
         // Stop
         .route("/stop", post(workspace::stop))
         .with_state(state)
