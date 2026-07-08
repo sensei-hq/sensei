@@ -27,6 +27,47 @@ resumes from the current slot/gate. Updated after every gate step.
 6. Observatory · Sessions — `screen/observatory-sessions.md`  ✅ SHIPPED (all gates; chartedMins P0 fixed)
 
 **QUEUE COMPLETE: 5 of 6 shipped + verified (Slot 2 parked). Overflow 7/8 optional.**
+
+---
+
+## RUN COMPLETE — 2026-07-08 (queue slots 1–6 done)
+
+Vacation run (docs/llm-spec/EXECUTION-PLAN.md) target queue finished. All work on `develop`,
+each screen through the full gated loop (spec-doc-reviewer → implement → done-gate-verifier +
+wrong-gate-hunter → sensei-persona-reviewer → commit). NOT merged to main (Jerry does that).
+
+| Slot | Screen | Result | Commit |
+|---|---|---|---|
+| 1 | Observatory · Today | ✅ shipped | `35a438ce` |
+| 2 | Instruments · Health | ⛔ PARKED (AWAITS Jerry) | `15e680cb` (park record) |
+| 3 | Observatory · Projects (list view) | ✅ shipped | `ead8f971` |
+| 4 | Project window · Overview | ✅ shipped | `fa18a4d1` |
+| 5 | Observatory · Insights (triage) | ✅ shipped | `035a368c` |
+| 6 | Observatory · Sessions (digest) | ✅ shipped | `a83303c6` |
+
+**5 shipped-and-verified + 1 parked.** Overflow slots 7 (Observatory · Memories) and 8
+(Project · Sessions+Memories) NOT started — optional, deferred to a future session.
+
+### For Jerry on return
+1. `git fetch --all`; read the develop log (6 commits: 5 feature + 1 park).
+2. **One decision awaits you — Slot 2 (Instruments · Health):** the MCP registry
+   (`sensei.mcp_servers`, 2 Zed rows) and MCP usage (`sensei.tool_usage_stats`, Claude Code
+   plugin tools) are disjoint and don't join → the L1 `share_invoked` grid has no truthful
+   source. Pick: (A) unify capture, (B) redefine L1 off tool_usage_stats, (C) descope to L2.
+   Full analysis: `park/observatory-instruments-health.md`.
+3. Per-screen follow-ups (all non-blocking, documented): `park/observatory-today-followups.md`,
+   `park/observatory-projects-followups.md`, `park/project-overview-followups.md`,
+   `park/observatory-insights-followups.md`, `park/observatory-sessions-followups.md`.
+   Highlights: insight-copy not wired (raw text fallback, run-wide deferral); memory
+   promotion/merge statuses undefined (readyToShare/toMerge=0); Replay-nav is fully wired
+   from Sessions but pending from Project-overview until the Replay screen lands; `all` range
+   chip; ViolationCard review-nav. NONE block the shipped screens.
+4. New endpoints added this run: `/api/observatory/today`, `/api/observatory/ftr`,
+   `GET /api/sessions/{id}`, `/api/projects/{id}/overview`, `/api/insights`; extended
+   `/api/projects` (icon/stack/vision/repos_count/libs_count/last_session_at/sessions7d) and
+   `/api/sessions` (?range=/?project=/agent); accept-recommendation now enqueues MeasureVerdicts.
+   Daemon is running a DEBUG binary (make install-debug) — rebuild release / `make bump` on return.
+5. If ≥4 slots clean (they are), merge develop→main + bump per the plan.
 (overflow: 7 Observatory·Memories, 8 Project·Sessions+Memories)
 
 ## Current position
