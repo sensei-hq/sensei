@@ -7,6 +7,7 @@ members = [
     "crates/logger",
     "crates/hive-protocol",
     "crates/hive-mind",
+    "crates/dojo-protocol",
 ]
 resolver = "2"
 
