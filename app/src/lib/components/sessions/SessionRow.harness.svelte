@@ -2,7 +2,7 @@
   // Test wrapper — exposes the EnrichedSession surface as plain props so the
   // spec can drive every row variant without assembling wire rows + enrich().
   import SessionRow from './SessionRow.svelte';
-  import type { EnrichedSession, QualityTone } from './sessions-digest.js';
+  import type { EnrichedSession, QualityTone } from '$lib/sessions-digest.js';
 
   let {
     id = 's-1',
@@ -18,6 +18,7 @@
     time = '09:14',
     duration = '42m',
     when = 'today',
+    folderRole = null,
     onselect,
   }: {
     id?: string;
@@ -33,6 +34,7 @@
     time?: string;
     duration?: string;
     when?: string;
+    folderRole?: string | null;
     onselect?: (id: string) => void;
   } = $props();
 
@@ -53,6 +55,7 @@
     when,
     time,
     duration,
+    folderRole,
   });
 </script>
 

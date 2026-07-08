@@ -3,7 +3,7 @@
   // 7-day rolling average and daily dots colored by the day's dominant
   // quality. Pure presentation: the per-day rollup is computed upstream in
   // sessions-digest.ts and handed in as `buckets`.
-  import type { DayBucket, QualityTone } from './sessions-digest.js';
+  import type { DayBucket, QualityTone } from '$lib/sessions-digest.js';
 
   interface Props {
     buckets: DayBucket[];
