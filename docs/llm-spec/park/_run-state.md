@@ -506,6 +506,31 @@ bg warm (hero caches+renders mentor-voice), (c) warm failures visible in public.
 tuning note NOT blocker. If SHIP → persona-review → COMMIT insight-copy milestone (Build A+B+chain-fix+
 rework as one unit) → then B2 (project-overview+insights wiring) → Build C (memory share/merge counts).
 Do NOT keep looping on gemma2:2b card copy quality — architecture correctness is the milestone.
+
+VERIFY ROUND 3 = ✅ SHIP (2026-07-08). Live evidence: uncached /today ~8-12ms (was 1.77s); 4/4 rows
+cached (gemma-embedded), mentor-voice rephrased (banned "robust"→"more diverse"); self-heals after
+cache clear; warm failures → public.logs; never 500. PERSONA REVIEW = architecture right, copy-quality
+gap (3rd-person "The developer…" on 2/3 cards + template closing). Applied cheap CORE fixes (recs 1/2/4):
+task_line reword (HeroKoanMature "complete sentence not a label"; InsightRecurringPattern drop "the
+developer" subject), THIRD_PERSON_MARKERS const (DRY: prompt ban + voice_ok guard), +2 unit tests.
+Rec 3 (facts specificity: pass project name/pattern into card facts) = FOLLOW-UP ticket.
+
+★★★ INSIGHT-COPY TODAY MILESTONE COMPLETE + COMMITTED (2026-07-08) ★★★ develop:
+  chore `d62edf3c` (cleared 4 pre-existing clippy warnings → senseid 0 warnings)
+  feat  `96b1349a` (insight-copy pipeline: DDL + module + chain-fix + Today wiring + off-wire warm +
+        persona hardening). 1192 tests pass, clippy 0, gated loop fully executed.
+NOT merged to main yet (batching with B2). Running daemon (pid 5763) = round-3 build; does NOT yet have
+the persona third-person edits — redeploy at next milestone (also DELETE FROM sensei.insight_copy then
+to flush old "the developer" cached rows so live copy reflects the guard).
+NOTED-DEFERRED (unrelated): pre-commit bootstrap test logs a dbd apply WARN `view:sensei.project_patterns
+— column project_id already exists` (test still passes). DDL idempotency issue on that view; not chased.
+
+NEXT = B2 (mechanical, reuse proven copy_or_warm core): wire project_overview hero (HeroKoanMature when
+top_recommendation exists; all-quiet stays STATIC like Today early) + insights.rs/get_insights triage
+copy (InsightRecurringPattern for recs, PatternPromoted patterns, MemoryProposedAdopt/Review memories;
+cap top ~8 to avoid warm storm). Fallback = existing static text. Then redeploy+flush-cache+quick live
+verify → MERGE develop→main + make bump (insight-copy rollout milestone). THEN Build C (memory
+ready_to_share/to_merge read-path derivation per the design-fork note above).
 Build-B emission points located: observatory_home.rs pure fns early_hero/mature_hero/steady_hero/
 rec_to_insight_card (return serde_json::Value; keep as FALLBACK producers, route their koan+body/text
 through generate_insight_copy at the ASYNC handler boundary — don't make the pure fns async). Same

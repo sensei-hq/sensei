@@ -859,6 +859,7 @@ pub(crate) async fn get_insights(
     axum::extract::Query(q): axum::extract::Query<InsightsQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     use crate::insights as ins;
+    use crate::analysis::insight_copy::{copy_or_warm, CopyLimits, FallbackCopy, InsightKind};
 
     let project: Option<uuid::Uuid> = match q.project.as_deref() {
         Some(p) if !p.trim().is_empty() => {
@@ -881,7 +882,7 @@ pub(crate) async fn get_insights(
     }
 
     // Memories — filtered + tagged; excluded when the bucket rule returns None.
-    let memories: Vec<serde_json::Value> = state.pg.get_insights_memories(pref).await.map_err(err("memories"))?
+    let mut memories: Vec<serde_json::Value> = state.pg.get_insights_memories(pref).await.map_err(err("memories"))?
         .into_iter()
         .filter_map(|mut m| {
             let vc = m["violated_count"].as_i64().unwrap_or(0);
@@ -907,6 +908,71 @@ pub(crate) async fn get_insights(
     let mut corrections = state.pg.get_insights_corrections(pref, 3).await.map_err(err("corrections"))?;
     for c in corrections.iter_mut() {
         c["column"] = serde_json::json!(ins::CORRECTION_COLUMN);
+    }
+
+    // ── Mentor-voice copy (insight-copy) ─────────────────────────────────────
+    // Route each card's user-facing sentence through the insight-copy pipeline
+    // in triage order (Now → Soon → Settled). `copy_or_warm` is a wire-path
+    // cache read (+ a detached background warm on a miss), never a blocking model
+    // call — column / tone / action stay code-owned; only the sentence changes.
+    // Cap the model-routed items to the top 8 across the whole screen to avoid a
+    // warm storm on first load: the spec ([[pipeline/insight-copy]]) budgets
+    // "5 calls max per screen"; 8 is a safe ceiling here because warms are
+    // backgrounded and deduped by facts_hash. Cards beyond the cap render their
+    // static text (which is what they are until a warm caches them anyway).
+    // Corrections stay static — short, count-driven labels, not a mentor sentence.
+    // Corrections and patterns stay static: corrections are short, count-driven
+    // labels; a pattern card's only free-text field (`name`) renders as a mono,
+    // truncated identifier — a mentor sentence does not belong there (route
+    // patterns only once the card grows a prose body — a frontend change).
+    const COPY_CAP: usize = 8;
+    let routable = recs.len() + memories.len();
+    let mut budget = COPY_CAP;
+    'cap: for col in [ins::NOW, ins::SOON, ins::SETTLED] {
+        // Recommendations — title (headline) + why (impact sentence).
+        for r in recs.iter_mut().filter(|r| r["column"].as_str() == Some(col)) {
+            if budget == 0 { break 'cap; }
+            let facts = serde_json::json!({ "title": r["title"], "why": r["why"], "impact": r["impact"] });
+            let fallback = FallbackCopy {
+                title:  r["title"].as_str().unwrap_or_default().to_string(),
+                detail: r["why"].as_str().unwrap_or_default().to_string(),
+            };
+            let copy = copy_or_warm(&state.pg, &state.gateway, InsightKind::InsightRecurringPattern,
+                &facts, CopyLimits::default(), fallback).await;
+            r["title"] = copy.title.into();
+            r["why"] = copy.detail.into();
+            budget -= 1;
+        }
+        // Memories — title + content. Adopt-worthy when in-force and unviolated;
+        // otherwise it needs a human look (proposed, or violated regardless of
+        // status — a live violation is never "adopt as-is").
+        for m in memories.iter_mut().filter(|m| m["column"].as_str() == Some(col)) {
+            if budget == 0 { break 'cap; }
+            let status = m["status"].as_str().unwrap_or("");
+            let violated = m["violated_count"].as_i64().unwrap_or(0) > 0;
+            let kind = if !violated && matches!(status, "active" | "reinforced" | "battle_tested") {
+                InsightKind::MemoryProposedAdopt
+            } else {
+                InsightKind::MemoryProposedReview
+            };
+            let facts = serde_json::json!({ "title": m["title"], "status": status, "what": m["content"] });
+            let fallback = FallbackCopy {
+                title:  m["title"].as_str().unwrap_or_default().to_string(),
+                detail: m["content"].as_str().unwrap_or_default().to_string(),
+            };
+            let copy = copy_or_warm(&state.pg, &state.gateway, kind,
+                &facts, CopyLimits::default(), fallback).await;
+            m["title"] = copy.title.into();
+            m["content"] = copy.detail.into();
+            budget -= 1;
+        }
+        // Patterns intentionally NOT routed — see the note above (mono/truncated
+        // `name` field). They render their static identifier until the card gains
+        // a prose body.
+    }
+    if routable > COPY_CAP {
+        tracing::debug!(routable, cap = COPY_CAP,
+            "get_insights: capped insight-copy routing to the top cards; remainder render static text");
     }
 
     // Per-column totals across every source type.
