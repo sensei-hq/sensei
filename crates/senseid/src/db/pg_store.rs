@@ -115,6 +115,21 @@ pub struct FederatedLink {
     pub remote_seq: i64,
 }
 
+/// One member memory of a share batch, in the shape the C6 upstream-contribute
+/// path needs to build an artifact. `body` is the portable text that will be
+/// confidentiality-checked before it leaves the machine: the `generalised_content`
+/// rewrite when present, else the raw `content` (the deterministic dereference
+/// runs regardless — a raw content is still gated, never trusted).
+#[derive(Debug, Clone)]
+pub struct ShareBatchItem {
+    pub memory_id:   uuid::Uuid,
+    pub title:       String,
+    pub body:        String,
+    /// `sensei.memory_type` string — drives artifact-kind mapping (pattern → the
+    /// `pattern` artifact; everything else → `principle`).
+    pub memory_type: String,
+}
+
 /// Snapshot needed to publish a memory to a hive (+ namespace identity + origin/scope_key for gating).
 #[derive(Debug, Clone)]
 pub struct MemoryPushPayload {
@@ -5186,6 +5201,136 @@ impl PgStore {
         Ok(())
     }
 
+    // ── Dōjō upstream contribute (C6) ─────────────────────────────────
+
+    /// Load a share batch's `(project_id, status, member items)` for the C6
+    /// upstream-contribute path. `status` is returned so the caller can enforce
+    /// "only `approved` batches contribute". Each item's `body` is the
+    /// `generalised_content` rewrite when present, else the raw `content`.
+    pub async fn batch_share_items(
+        &self,
+        batch_id: &uuid::Uuid,
+    ) -> Result<Option<(uuid::Uuid, String, Vec<ShareBatchItem>)>, String> {
+        let head: Option<(uuid::Uuid, String)> = sqlx_core::query_as::query_as(
+            "SELECT project_id, status::text FROM sensei.memory_share_batches WHERE id = $1")
+            .bind(batch_id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+        let Some((project_id, status)) = head else { return Ok(None); };
+
+        let rows: Vec<(uuid::Uuid, String, String, String)> = sqlx_core::query_as::query_as(
+            "SELECT m.id, m.title,
+                    COALESCE(NULLIF(btrim(m.generalised_content), ''), m.content),
+                    m.type::text
+               FROM sensei.memory_share_batch_members mm
+               JOIN sensei.memories m ON m.id = mm.memory_id
+              WHERE mm.batch_id = $1
+              ORDER BY m.title")
+            .bind(batch_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+
+        let items = rows.into_iter()
+            .map(|(memory_id, title, body, memory_type)| ShareBatchItem { memory_id, title, body, memory_type })
+            .collect();
+        Ok(Some((project_id, status, items)))
+    }
+
+    /// The membership a project is bound to (`sensei.projects.dojo_id`), or `None`
+    /// when the project is unbound / unknown. The routing anchor for C6.
+    pub async fn project_bound_membership(&self, project_id: &uuid::Uuid) -> Result<Option<uuid::Uuid>, String> {
+        let row: Option<(Option<uuid::Uuid>,)> = sqlx_core::query_as::query_as(
+            "SELECT dojo_id FROM sensei.projects WHERE id = $1")
+            .bind(project_id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.and_then(|(d,)| d))
+    }
+
+    /// The oldest `approved` share batch that still has at least one member memory
+    /// with no `sent` outbox row — i.e. work the daemon still owes a Dōjō. Powers
+    /// `GET /api/share-review/next-batch`. Returns `(batch_id, project_id,
+    /// decided_at)`.
+    pub async fn next_unsent_approved_batch(
+        &self,
+    ) -> Result<Option<(uuid::Uuid, uuid::Uuid, Option<String>)>, String> {
+        let row: Option<(uuid::Uuid, uuid::Uuid, Option<String>)> = sqlx_core::query_as::query_as(
+            "SELECT b.id, b.project_id, b.decided_at::text
+               FROM sensei.memory_share_batches b
+              WHERE b.status = 'approved'
+                AND EXISTS (
+                  SELECT 1 FROM sensei.memory_share_batch_members mm
+                   WHERE mm.batch_id = b.id
+                     AND NOT EXISTS (
+                       SELECT 1 FROM sensei.dojo_outbox o
+                        WHERE o.memory_id = mm.memory_id AND o.state = 'sent'))
+              ORDER BY b.decided_at ASC NULLS LAST
+              LIMIT 1")
+            .fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row)
+    }
+
+    /// The stable local contributor key (a machine-local secret that NEVER leaves
+    /// the machine — only its rotated hash does, via [`crate::collective::anonymize`]).
+    /// Get-or-create in `sensei.config` under `collective.contributor_key`.
+    pub async fn get_or_create_contributor_key(&self) -> Result<String, String> {
+        const KEY: &str = "collective.contributor_key";
+        if let Some(v) = self.get_config(KEY).await?
+            && !v.trim().is_empty()
+        {
+            return Ok(v);
+        }
+        let fresh = uuid::Uuid::new_v4().to_string();
+        self.set_config(KEY, &fresh).await?;
+        Ok(fresh)
+    }
+
+    /// Has this artifact `signature` already been published to `membership_id`?
+    /// The pre-send dedup check — a retry after a federation drop skips a row
+    /// already `sent` rather than double-publishing.
+    pub async fn outbox_already_sent(&self, membership_id: &uuid::Uuid, signature: &str) -> Result<bool, String> {
+        let row: Option<(bool,)> = sqlx_core::query_as::query_as(
+            "SELECT state = 'sent' FROM sensei.dojo_outbox WHERE membership_id = $1 AND signature = $2")
+            .bind(membership_id).bind(signature).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.map(|(b,)| b).unwrap_or(false))
+    }
+
+    /// Record a successful publish (idempotent on the `(membership_id, signature)`
+    /// dedup key — a repeat send just refreshes the assigned seq/id).
+    pub async fn outbox_mark_sent(
+        &self, membership_id: &uuid::Uuid, batch_id: Option<&uuid::Uuid>,
+        memory_id: Option<&uuid::Uuid>, signature: &str, sent_seq: i64, remote_id: &str,
+    ) -> Result<(), String> {
+        sqlx_core::query::query(
+            "INSERT INTO sensei.dojo_outbox
+                (membership_id, batch_id, memory_id, signature, state, sent_seq, remote_id, last_attempt_at)
+             VALUES ($1,$2,$3,$4,'sent',$5,$6,now())
+             ON CONFLICT (membership_id, signature) DO UPDATE SET
+               state = 'sent', batch_id = EXCLUDED.batch_id, memory_id = EXCLUDED.memory_id,
+               sent_seq = EXCLUDED.sent_seq, remote_id = EXCLUDED.remote_id,
+               last_attempt_at = now(), updated_at = now()")
+            .bind(membership_id).bind(batch_id).bind(memory_id).bind(signature).bind(sent_seq).bind(remote_id)
+            .execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Record a non-sent outbox state (`held` | `queued` | `error`). Never
+    /// downgrades an already-`sent` row (the `WHERE` guard), so a late held/queued
+    /// signal can't erase a successful publish.
+    pub async fn outbox_mark_state(
+        &self, membership_id: &uuid::Uuid, batch_id: Option<&uuid::Uuid>,
+        memory_id: Option<&uuid::Uuid>, signature: &str, state: &str,
+    ) -> Result<(), String> {
+        if !matches!(state, "held" | "queued" | "error" | "pending") {
+            return Err(format!("invalid outbox state {state}"));
+        }
+        sqlx_core::query::query(
+            "INSERT INTO sensei.dojo_outbox
+                (membership_id, batch_id, memory_id, signature, state, last_attempt_at)
+             VALUES ($1,$2,$3,$4,$5,now())
+             ON CONFLICT (membership_id, signature) DO UPDATE SET
+               state = EXCLUDED.state, batch_id = EXCLUDED.batch_id, memory_id = EXCLUDED.memory_id,
+               last_attempt_at = now(), updated_at = now()
+             WHERE sensei.dojo_outbox.state <> 'sent'")
+            .bind(membership_id).bind(batch_id).bind(memory_id).bind(signature).bind(state)
+            .execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     pub async fn ensure_test_project(&self, name: &str) -> Result<uuid::Uuid, String> {
         // Namespace fixtures under `_test:` so leaked rows are identifiable
         // (and filterable by the Projects screen) and never masquerade as real
@@ -8707,6 +8852,64 @@ mod tests {
 
         assert!(pg.delete_dojo_membership(&mid).await.unwrap());
         assert!(pg.get_dojo_membership(&mid).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn dojo_outbox_and_batch_items_roundtrip() {
+        let Ok(pg) = PgStore::connect_test().await else { return; };
+
+        // A project + a memory to share + an APPROVED batch containing it.
+        let proj = pg.create_project("_test:dojo:outbox", None, None).await.unwrap();
+        let mem = pg.insert_memory(&InsertMemory {
+            project_id: Some(proj), scope: "project".into(), scope_filter: None,
+            mtype: "convention".into(), title: "prefer migration tools".into(),
+            content: "Use a dedicated migration tool over hand-rolled SQL.".into(),
+            impact: None, tags: vec![], triage_signal: None, status: "active".into(),
+            namespace_id: None, enforcement: None, origin: Some("learned".into()), source_id: None,
+        }).await.unwrap();
+        let batch = pg.create_memory_share_batch(&proj, &[mem], None).await.unwrap();
+        pg.set_memory_share_batch_status(&batch, "approved", None).await.unwrap();
+
+        // batch_share_items: approved batch, one member, body = content.
+        let (bp, status, items) = pg.batch_share_items(&batch).await.unwrap().expect("batch loads");
+        assert_eq!(bp, proj);
+        assert_eq!(status, "approved");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].memory_id, mem);
+        assert!(items[0].body.contains("migration tool"));
+        assert_eq!(items[0].memory_type, "convention");
+
+        // An unbound project → no routing anchor.
+        assert!(pg.project_bound_membership(&proj).await.unwrap().is_none());
+
+        // While the member has no `sent` outbox row, an unsent approved batch exists.
+        assert!(pg.next_unsent_approved_batch().await.unwrap().is_some());
+
+        // A destination membership + the outbox dedup ledger.
+        let mid = uuid::Uuid::new_v4();
+        pg.create_dojo_membership(&NewDojoMembership {
+            id: mid, registry_url: "http://localhost:8787".into(), tenant_key: "github/acme".into(),
+            dojo_url: "http://localhost:8787/github/acme".into(), kind: "client".into(),
+            role: "contributor".into(), authenticated_via: "device_code".into(),
+            attribution_default: "dereferenced".into(),
+            credential_ref: format!("dojo-{}", uuid::Uuid::new_v4()), sync_status: "healthy".into(),
+        }).await.unwrap();
+
+        assert!(!pg.outbox_already_sent(&mid, "sig-1").await.unwrap());
+        pg.outbox_mark_sent(&mid, Some(&batch), Some(&mem), "sig-1", 5, "remote-1").await.unwrap();
+        assert!(pg.outbox_already_sent(&mid, "sig-1").await.unwrap());
+        // A different signature is independent.
+        assert!(!pg.outbox_already_sent(&mid, "sig-2").await.unwrap());
+        // A late held/queued signal must NOT downgrade an already-sent row.
+        pg.outbox_mark_state(&mid, Some(&batch), Some(&mem), "sig-1", "queued").await.unwrap();
+        assert!(pg.outbox_already_sent(&mid, "sig-1").await.unwrap(), "sent row must survive a late queued mark");
+        // A held record for a fresh signature.
+        pg.outbox_mark_state(&mid, Some(&batch), Some(&mem), "sig-3", "held").await.unwrap();
+        assert!(!pg.outbox_already_sent(&mid, "sig-3").await.unwrap());
+
+        // Cleanup: membership delete cascades its outbox rows; then batch/memory/project.
+        assert!(pg.delete_dojo_membership(&mid).await.unwrap());
+        pg.delete_project(&proj).await.unwrap();
     }
 
     // ── scope_folder_ids tests (#60) ─────────────────────────────────
