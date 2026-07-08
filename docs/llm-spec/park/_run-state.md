@@ -395,6 +395,192 @@ Released all 6 completed screens (Today/Projects/Overview/Insights/Sessions + In
 `make bump` clean: tag v0.2.24 pushed, dbd cache cleared, subtrees synced (homebrew-tap 02c1970,
 marketplace ed81a5f). GitHub Actions building artifacts. NEXT: merge develop→main (0 conflicts;
 main's extra commits are just merge-commit history), then PHASE 2 (make shipped screens real).
+- ✅ MERGED develop→main (`47edc0e5`, 0 conflicts) + pushed. develop @ a66439de. main released v0.2.24.
+  PHASE 1 COMPLETE. → PHASE 2 START: pipeline/insight-copy (raw text → gemma4 copy across Today/
+  Insights/Projects/Overview), then pipeline/memory statuses (readyToShare/toMerge), then generators
+  (insights/patterns/signals writers). Assess each before building (don't rebuild what's live).
+
+## PHASE 2 — insight-copy (in progress, 2026-07-08)
+ASSESSMENT (done): insight-copy is GENUINELY unwired — no gateway copy call anywhere in senseid;
+screens emit raw DB text. memory_status enum has NO promotion/merge-readiness value (pg_store.rs:4352
+comment) ⇒ readyToShare/toMerge=0 until an enum+ladder is added. Recommendation generation EXISTS
+(337 recs). So Phase 2 real work = (1) insight-copy pipeline, (2) memory promotion/merge statuses,
+(3) audit generators. Doing insight-copy FIRST (linchpin — touches Today/Insights/Projects/Overview).
+KEY FACTS resolved:
+- Gateway chains are DAEMON-SIDE in `crates/senseid/src/api/gateway_init.rs` (lines 470-523:
+  text_chat/reasoning/embed/image_generate). Adding an `insight-copy` chain there is IN-SCOPE (not
+  the external gateway repo). Chain shape = FallbackChainConfig{id,capability:TextChat,models,triggers}.
+  insight-copy chain must be LOCAL-ONLY (gemma-embedded→gemma4, NO cloud legs) per "offline must work".
+- Gateway call pattern = `crates/senseid/src/tasks/handlers/corrections_llm.rs` (InferenceRequest{
+  capability:TextChat, chain:Some("..."), Payload::Chat{messages,system,max_tokens,temperature,tools}},
+  gateway.execute().await, graceful degrade to None/fallback). 400ms time-box = tokio::time::timeout.
+- deps present: sha2 0.10, hex 0.4, serde_json. analysis/ is a dir-module (analysis/doc_drift.rs,
+  `mod analysis` in main.rs) ⇒ add analysis/insight_copy.rs + register in analysis mod.
+- facts_hash = sha256(kind_str + canonical_json(facts)) hex. Table sensei.insight_copy PK(kind,facts_hash).
+BUILD SPLIT: A=core pipeline (DDL+module+chain+store methods+tests) [delegated general-purpose]; then
+B=wire consumers (Today koan/insights + project overview hero) with existing raw strings as fallback.
+
+BUILD A ✅ DONE+VERIFIED (2026-07-08): DDL sensei.insight_copy live (8 cols+2 idx), analysis/
+insight_copy.rs (17-variant InsightKind, facts_hash sha256+canonical_json, generate_insight_copy
+cache-first/400ms-timebox/60s-breaker[transport-only, validation-miss doesn't trip], voice_ok guard,
+build_prompt), insight-copy chain in gateway_init (local-only gemma-embedded→gemma4), pg_store
+get/upsert_insight_copy. 16 unit tests green, clippy clean on touched files. NOT committed (staged).
+Entry: generate_insight_copy(&state.pg, &state.gateway, kind, &facts, CopyLimits::default(), FallbackCopy).
+Deviations (all fine): #![allow(dead_code)] on module (Build B replaces w/ targeted enum allow);
+model_provider always None (InferenceResponse exposes only .model); get_insight_copy returns
+Option<(String,String)>. 30-day eviction sweep NOT built (needs daily maint task — later).
+Known tradeoff: 400ms is tight for cold gemma → lazy first-hit likely falls back then breaker 60s;
+real fix = EAGER warming at tick time (populate cache so wire reads hit). Out of scope now.
+
+BUILD B ⏳ IN FLIGHT (2026-07-08): wire Today mature hero (HeroKoanMature) + rec insight cards
+(InsightRecurringPattern) in observatory.rs::observatory_today (~L745). EARLY/STEADY stay STATIC by
+design (avoid "koan invents teaching w/ no signal" wrong-gate). ≤4 model calls/screen (under 5 cap).
+Replaces module dead_code allow w/ targeted enum allow. Fallback=existing mature_hero/insight_card text.
+DESIGN NOTE: project-overview.md's "project_top_rec_hero"/"project_all_quiet" kinds are DOC drift vs the
+canonical InsightKind enum — reuse HeroKoanMature/HeroKoanEarly with project-scoped facts (Build B2).
+GATED-LOOP PLAN after B: done-gate+wrong-gate verify (general-purpose/sonnet) on A+B combined →
+sensei-persona-reviewer → commit insight-copy milestone. THEN B2 (project-overview + insights-triage
+wiring, mechanical) → THEN Build C (memory ready_to_share/to_merge read-path, per design-fork note above).
+
+BUILD B ✅ DONE (2026-07-08): observatory.rs::observatory_today wired — mature hero koan+body →
+HeroKoanMature, ≤3 rec cards → InsightRecurringPattern (card.text=copy.detail). Early/steady STATIC.
+1187 tests pass (serial; 1 pre-existing parallel-DB flake unrelated). clippy clean on touched files.
+Module dead_code allow → targeted enum allow. NOT committed (staged).
+LATENCY FINDING: gemma2:2b (chain primary, in-process) ~390ms warm via CLI for ~120-tok JSON — RIGHT at
+the 400ms box. So the 400ms wire timeout is a HARD spec constraint ("wire never blocks on inference");
+correct fix for cold-gemma is EAGER WARMING (generate at rec-write/tick time → cache warm → wire hits
+cache), NOT bumping the timeout. ⏳ DEPLOY+LIVE-VERIFY agent running: make install-debug + restart +
+warm + curl /api/observatory/today, KEY QUESTION = does sensei.insight_copy get populated by the live
+wire path (model copy visible) or only fallback (→ eager warming needed = Build B-eager followup)?
+Awaiting verdict: SHIP / SHIP-WITH-FOLLOWUP(eager) / FIX.
+
+VERIFY ROUND 1 = FIX (real bug found, 2026-07-08): insight-copy chain was NEVER registered in the
+runtime gateway. Root cause: `merge_baseline_capability_gaps` (gateway_init.rs) grafts a baseline chain
+only when its whole Capability is absent from the DB config; TextChat is already covered by DB
+classify/reasoning/summarize, so the new named chain was SILENTLY DROPPED. `POST /api/gateway/infer
+{chain:insight-copy}` → instant `{"error":"no candidates available for capability 'TextChat'"}`. Wire
+path got instant Err → tripped 60s breaker → 100% fallback. Eager warming would NOT have fixed it.
+Done-gate structural checks all PASSED; wrong-gates none fired; fallback path honest (never 500s).
+FIX LANDED (staged, not committed): gateway_init.rs — extracted shared `graft_chain` helper (DRY),
+added `const REQUIRED_NAMED_CHAINS=["insight-copy"]` + `merge_required_named_chains` grafting by NAME
+even when capability covered, called right after the capability-gap merge (build baseline once). New
+regression test `merge_required_named_chains_grafts_insight_copy_even_when_textchat_covered`. build
+clean, 4 gateway_init tests pass, clippy clean. ⏳ VERIFY ROUND 2 in flight (resumed same agent):
+re-deploy + confirm chain resolves + MEASURE warm insight-copy latency vs 400ms + KEY QUESTION (does
+sensei.insight_copy populate on the wire now?). SECONDARY RISK still open: verifier measured ollama
+gemma2:2b ~455ms warm (>400ms) — if warm insight-copy chain >400ms, lazy wire can't fill cache inline
+⇒ need WARM-ON-MISS (tokio::spawn detached un-time-boxed generate+upsert on cache miss; wire still
+returns fallback instantly, NEXT request hits warm cache) = Build B-eager. Decide from measured latency.
+
+VERIFY ROUND 2 = SHIP-WITH-FOLLOWUP → converted to REWORK (2026-07-08): registration fix CONFIRMED
+CORRECT (chain resolves: POST /api/gateway/infer{chain:insight-copy}→gemma-embedded content, 0.239s).
+BUT model copy STILL doesn't reach the wire — TWO evidenced blockers:
+ (1) 400ms tokio::time::timeout does NOT bound the in-process embedded (blocking) inference — every
+     uncached /today load costs ~1.77s (all 4 calls run to completion; not preemptible). "Time-box" is
+     ILLUSORY, breaker never engages. → Today got SLOWER for zero gain = UX regression. NOT shippable.
+ (2) gemma2:2b routinely trips the guard: banned word "robust" + detail >180 chars → ~3/4 CARDS fail
+     validation → fallback; cache never fills. (HERO passes 10/10 in isolation, fits 180.)
+DECISION: don't merge the synchronous-wire wiring. Rework to spec's EAGER intent ("wire never blocks
+on inference"): wire reads cache-ONLY (instant); on miss → return fallback + fire DETACHED background
+warm (tokio::spawn) that generates+validates+caches for next load. + strengthen prompt (explicit
+banned-word list + hard char budget + casing) + ONE retry on validation-miss. Off-wire budget generous
+(~8s runaway guard; keep breaker so a down model doesn't pile warms). Facts: PgStore is Clone, AppState
+gateway=Arc<Gateway> → both clone into spawn. Handler swaps generate_insight_copy→copy_or_warm(&state.pg,
+&state.gateway,...). Registration fix (gateway_init) is KEPT + mergeable. ⏳ REWORK delegated.
+NOTE (no-silent-errors): insight_copy tracing warn/debug DON'T reach public.logs (only sensei_logger
+events do) — warm-path outcomes currently invisible; route through structured logger if easy.
+
+REWORK ✅ DONE (2026-07-08, staged not committed): insight_copy.rs reworked off-wire —
+copy_or_warm(store,&Arc<Gateway>,kind,facts,limits,fallback) = wire entry, CACHE-READ-ONLY (no
+inference await); miss → fallback instantly + spawn_warm detached tokio::spawn (dedup via inflight
+set, poisoned-mutex-safe). generate_and_cache = off-wire core (WARM_TIMEOUT_MS=8000 runaway guard,
+up to 2 attempts w/ corrective retry, breaker on transport-fail only). build_prompt gained retry
+param + strengthened limits (explicit char budget + banned-words line GENERATED from BANNED_WORDS =
+DRY single source). read_cached_copy = pure cache read. generate_insight_copy REMOVED (0 callers).
+Warm-path failures → public.logs via sensei_logger::Logger + LogWriter::pg(store.pool().clone())
+(same pattern as api/server.rs task_logger) — no-silent-errors gap CLOSED. observatory.rs both call
+sites swapped to copy_or_warm. 1191 tests pass (+3 new pure: banned-words-from-source, retry-prompt,
+claim_inflight-dedup), clippy clean on touched files. ⏳ VERIFY ROUND 3 in flight (same agent):
+SHIP BAR = (a) uncached /today latency fast again <~0.2s [was 1.77s], (b) model copy reaches wire after
+bg warm (hero caches+renders mentor-voice), (c) warm failures visible in public.logs. Card pass-rate =
+tuning note NOT blocker. If SHIP → persona-review → COMMIT insight-copy milestone (Build A+B+chain-fix+
+rework as one unit) → then B2 (project-overview+insights wiring) → Build C (memory share/merge counts).
+Do NOT keep looping on gemma2:2b card copy quality — architecture correctness is the milestone.
+
+VERIFY ROUND 3 = ✅ SHIP (2026-07-08). Live evidence: uncached /today ~8-12ms (was 1.77s); 4/4 rows
+cached (gemma-embedded), mentor-voice rephrased (banned "robust"→"more diverse"); self-heals after
+cache clear; warm failures → public.logs; never 500. PERSONA REVIEW = architecture right, copy-quality
+gap (3rd-person "The developer…" on 2/3 cards + template closing). Applied cheap CORE fixes (recs 1/2/4):
+task_line reword (HeroKoanMature "complete sentence not a label"; InsightRecurringPattern drop "the
+developer" subject), THIRD_PERSON_MARKERS const (DRY: prompt ban + voice_ok guard), +2 unit tests.
+Rec 3 (facts specificity: pass project name/pattern into card facts) = FOLLOW-UP ticket.
+
+★★★ INSIGHT-COPY TODAY MILESTONE COMPLETE + COMMITTED (2026-07-08) ★★★ develop:
+  chore `d62edf3c` (cleared 4 pre-existing clippy warnings → senseid 0 warnings)
+  feat  `96b1349a` (insight-copy pipeline: DDL + module + chain-fix + Today wiring + off-wire warm +
+        persona hardening). 1192 tests pass, clippy 0, gated loop fully executed.
+NOT merged to main yet (batching with B2). Running daemon (pid 5763) = round-3 build; does NOT yet have
+the persona third-person edits — redeploy at next milestone (also DELETE FROM sensei.insight_copy then
+to flush old "the developer" cached rows so live copy reflects the guard).
+NOTED-DEFERRED (unrelated): pre-commit bootstrap test logs a dbd apply WARN `view:sensei.project_patterns
+— column project_id already exists` (test still passes). DDL idempotency issue on that view; not chased.
+
+B2 ✅ DONE + COMMITTED `a43db8e2` (2026-07-08): project_detail.rs get_project_overview hero →
+HeroKoanMature (all-quiet static); observatory.rs get_insights → recs=InsightRecurringPattern,
+memories=MemoryProposedAdopt/Review (adopt when in-force+unviolated), cap COPY_CAP=8 Now→Soon→Settled.
+PATTERNS + corrections STAY STATIC (fixed a B2 regression: pattern card's only free-text `name` is
+mono/truncated — routing prose there breaks it; route only when card gets a prose body = frontend
+followup). project_detail impact always null (query doesn't select impact col — harmless facts field;
+followup if wanted). 1192 tests, clippy 0. ⏳ PRE-MERGE LIVE SMOKE in flight (verifier): deploy + FLUSH
+cache + smoke Today/Overview/Insights (fast <0.2s + cache fills mentor copy + NO "the developer"
+leakage + no 500s). If SHIP → MERGE develop→main + make bump (insight-copy rollout milestone).
+
+INSIGHT-COPY FOLLOWUP TICKETS (non-blocking, file when convenient):
+ - Rec 3 (persona): pass project_name + specific pattern into card facts for specificity (needs facts
+   shape + maybe query cols).
+ - Pattern insight-copy: needs a prose body field on the pattern card (frontend) before routing.
+ - project_detail overview: add impact column to get_top_recommendation query if non-null wanted.
+ - /api/gateway/infer handler hardcodes temperature:None (irrelevant to wire now; cleanup if that
+   endpoint is used for tuning).
+ - DDL idempotency: view:sensei.project_patterns "column project_id already exists" on apply.
+ - insight_copy 30-day eviction sweep (last_used_at < now()-30d) daily maint task NOT built.
+
+PRE-MERGE SMOKE = ✅ SHIP (2026-07-08). Live: Today 26ms / Overview 23ms / Insights 87ms uncached;
+cache 5 clean mentor rows (hero_koan_mature 1 + insight_recurring_pattern 4); Today renders mentor-voice;
+0 third-person leakage (guard working — 27 live rejections logged to public.logs); 9/9 curls 200 no 500s.
+CAVEAT (non-blocking, pre-classified): verbose recs (sensei's own ~400-char why) fail ≤180 guard every
+try → Overview shows RAW fallback (which itself contains "The developer…" — that's the REC GENERATOR
+writing 3rd-person, not an insight-copy bug; guard only gates MODEL copy). 2 more followup tickets:
+ - lift verbose-rec pass-rate: stronger "summarize aggressively, drop specifics to fit" prompt OR a
+   larger hero detail budget (hero body = 2-3 sentences, 180 tight); OR fix rec generator to write
+   tighter neutral-voice why. sensei's OWN overview is the visible sufferer (dogfooding project).
+ - warm-path WARN diagnosability: parse_and_validate returns Option (no reason); add kind + reject
+   reason (banned/over-limit/third-person) to the public.logs WARN context so pass-rate is tunable.
+
+★★★ INSIGHT-COPY ROLLOUT — MERGING NOW (2026-07-08) ★★★
+develop commits: d62edf3c (clippy chore) + 96b1349a (Today pipeline) + a43db8e2 (Overview+Insights B2).
+DOING: commit run-state → make bump v=patch (bundle now includes insight_copy.ddl so fresh installs get
+the table) → merge develop→main → push → back to develop.
+
+THEN Build C (memory ready_to_share/to_merge read-path derivation per the design-fork note above).
+Build-B emission points located: observatory_home.rs pure fns early_hero/mature_hero/steady_hero/
+rec_to_insight_card (return serde_json::Value; keep as FALLBACK producers, route their koan+body/text
+through generate_insight_copy at the ASYNC handler boundary — don't make the pure fns async). Same
+pattern for project_overview.rs hero + insights.rs.
+
+## PHASE 2 design-fork note — memory ready_to_share / to_merge (defer to Build C, after A+B)
+SPEC GAP: project-overview.md says the ready_to_share/to_merge sub-counts use "the promotion-/merge-
+readiness statuses defined in pipeline/memory — do not invent a status name", BUT pipeline/memory.md
+defines a scope LADDER (project→user→org→collective via scope_level) and NEVER names ready_to_share/
+to_merge as memory_status values. memory_status enum = proposed|active|reinforced|challenged|
+battle_tested|archived|rejected (no share/merge value). DEFAULT-AND-PROCEED decision (reversible read-
+path derivation, NOT a new enum value — which honors "do not invent a status name"):
+  ready_to_share = COUNT memories WHERE status IN (active,reinforced,battle_tested) AND scope_level
+    tighter than collective (i.e. promotable to the next ladder rung).
+  to_merge = COUNT memories that have a duplicate `signature` within an overlapping scope (dedup
+    candidates — the "merge" readiness the ladder's strength-recompute step implies).
+So Build C is likely READ-PATH ONLY (no DDL). Confirm columns (scope_level, signature) exist before
+building. Revisit if a later spec doc names these statuses explicitly.
 
 ## Slot 2 UN-PARKED — Jerry decided the data model (2026-07-08)
 User authorized the capture/DDL build (overrides run off-limits). DECISION:

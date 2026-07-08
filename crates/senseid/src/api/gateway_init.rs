@@ -199,7 +199,12 @@ pub async fn init_gateway(db_config: Option<GatewayConfig>) -> Arc<Gateway> {
             // touches nothing. Kept as belt-and-suspenders for the case
             // where the DB is somehow missing a capability at boot (partial
             // seed, mid-migration daemon).
-            merge_baseline_capability_gaps(&mut db, &baseline_production_config());
+            let baseline = baseline_production_config();
+            merge_baseline_capability_gaps(&mut db, &baseline);
+            // Specialized named chains (e.g. `insight-copy`) share an already-
+            // covered capability, so the capability-gap merge skips them — the
+            // DB seed predates them. Graft them explicitly by name.
+            merge_required_named_chains(&mut db, &baseline);
             db
         }
         None => {
@@ -505,6 +510,20 @@ fn baseline_production_config() -> GatewayConfig {
         models: chat_candidates(),
         fallback_triggers: chat_triggers(),
     });
+    // Mentor-voice insight copy (crates/senseid/src/analysis/insight_copy.rs).
+    // LOCAL-ONLY by design: the two local legs only — no claude/gpt fallback —
+    // so insight copy still generates offline and never spends a cloud call on
+    // card text. The producer time-boxes each call and degrades to a static
+    // template when both local legs are unavailable.
+    chains.insert("insight-copy".into(), FallbackChainConfig {
+        id: "insight-copy".into(),
+        capability: Capability::TextChat,
+        models: vec![
+            ChainEntry { model: "gemma-embedded".into(), router: Some("embedded-llama".into()), api_model_id: None, priority: 1 },
+            ChainEntry { model: "gemma4".into(),         router: Some("ollama".into()),         api_model_id: None, priority: 2 },
+        ],
+        fallback_triggers: vec![FallbackTrigger::RateLimit, FallbackTrigger::Timeout, FallbackTrigger::ProviderError],
+    });
     // Embedding chain — intentionally 384-dim models only, to honour the
     // sensei.nodes.embedding vector(384) contract. Do NOT add a 768-dim model
     // (e.g. gemini-text-embedding-004) here without first migrating the column.
@@ -523,6 +542,31 @@ fn baseline_production_config() -> GatewayConfig {
     GatewayConfig { routers, models, chains }
 }
 
+/// Copy one baseline chain into `db`, pulling in any models/routers it
+/// references that `db` lacks. Never overwrites existing DB entries. Shared by
+/// [`merge_baseline_capability_gaps`] and [`merge_required_named_chains`].
+fn graft_chain(
+    db: &mut GatewayConfig,
+    baseline: &GatewayConfig,
+    name: &str,
+    chain: &gateway::types::config::FallbackChainConfig,
+) {
+    for entry in &chain.models {
+        if !db.models.contains_key(&entry.model)
+            && let Some(m) = baseline.models.get(&entry.model)
+        {
+            db.models.insert(entry.model.clone(), m.clone());
+        }
+        if let Some(router) = &entry.router
+            && !db.routers.contains_key(router)
+            && let Some(r) = baseline.routers.get(router)
+        {
+            db.routers.insert(router.clone(), r.clone());
+        }
+    }
+    db.chains.insert(name.to_string(), chain.clone());
+}
+
 /// Graft baseline chains for any [`Capability`] the DB config doesn't cover.
 ///
 /// The DB is the source of truth for every capability it can express. Some
@@ -539,24 +583,37 @@ fn merge_baseline_capability_gaps(db: &mut GatewayConfig, baseline: &GatewayConf
         if covered.contains(&chain.capability) || db.chains.contains_key(name) {
             continue;
         }
-        for entry in &chain.models {
-            if !db.models.contains_key(&entry.model)
-                && let Some(m) = baseline.models.get(&entry.model)
-            {
-                db.models.insert(entry.model.clone(), m.clone());
-            }
-            if let Some(router) = &entry.router
-                && !db.routers.contains_key(router)
-                && let Some(r) = baseline.routers.get(router)
-            {
-                db.routers.insert(router.clone(), r.clone());
-            }
-        }
         tracing::info!(
             "Gateway: grafting baseline chain '{}' ({:?}) — DB config has no chain for that capability",
             name, chain.capability
         );
-        db.chains.insert(name.clone(), chain.clone());
+        graft_chain(db, baseline, name, chain);
+    }
+}
+
+/// Specialized baseline chains addressed by name at specific call sites that
+/// must exist even when their capability is *already covered* by a differently-
+/// named DB chain. `insight-copy` is local-only (no cloud legs) and voice-tuned
+/// — a generic `TextChat` chain (`reasoning`/`classify`) is not a substitute —
+/// yet it shares `Capability::TextChat`, so [`merge_baseline_capability_gaps`]
+/// (which skips covered capabilities) silently drops it. This grafts such
+/// chains by name after that merge, so the wire path can resolve them.
+const REQUIRED_NAMED_CHAINS: &[&str] = &["insight-copy"];
+
+fn merge_required_named_chains(db: &mut GatewayConfig, baseline: &GatewayConfig) {
+    for &name in REQUIRED_NAMED_CHAINS {
+        if db.chains.contains_key(name) {
+            continue;
+        }
+        match baseline.chains.get(name) {
+            Some(chain) => {
+                tracing::info!("Gateway: grafting required named chain '{name}'");
+                graft_chain(db, baseline, name, chain);
+            }
+            None => {
+                tracing::warn!("Gateway: required named chain '{name}' absent from baseline config");
+            }
+        }
     }
 }
 
@@ -784,5 +841,61 @@ mod tests {
         assert_eq!(db.chains["classify"].models.len(), 1);
         assert!(!db.chains.contains_key("text_chat"), "text-capability chains NOT grafted");
         assert!(!db.chains.contains_key("reasoning"), "text-capability chains NOT grafted");
+        // The capability-gap merge alone does NOT add the named insight-copy
+        // chain either (TextChat is covered) — that is the bug the required-
+        // named graft fixes; see the test below.
+        assert!(!db.chains.contains_key("insight-copy"), "named TextChat chain NOT grafted by capability-gap merge");
+    }
+
+    /// A DB config whose `TextChat` capability is already covered (e.g. a
+    /// `classify` chain) must STILL receive the named `insight-copy` chain: the
+    /// capability-gap merge skips it, and `merge_required_named_chains` grafts
+    /// it by name, pulling in its local-only model + router. Regression guard
+    /// for the "insight-copy silently dropped → 100% fallback" bug.
+    #[test]
+    fn merge_required_named_chains_grafts_insight_copy_even_when_textchat_covered() {
+        use gateway::types::capability::Capability;
+        use gateway::types::config::*;
+        use std::collections::HashMap;
+
+        let mut db = GatewayConfig {
+            routers: HashMap::new(),
+            models: HashMap::new(),
+            chains: HashMap::from([(
+                "classify".to_string(),
+                FallbackChainConfig {
+                    id: "classify".into(),
+                    capability: Capability::TextChat,
+                    models: vec![],
+                    fallback_triggers: vec![],
+                },
+            )]),
+        };
+
+        let baseline = baseline_production_config();
+
+        // Capability-gap merge alone leaves insight-copy out (TextChat covered).
+        merge_baseline_capability_gaps(&mut db, &baseline);
+        assert!(
+            !db.chains.contains_key("insight-copy"),
+            "capability-gap merge must skip a covered-capability named chain"
+        );
+
+        // The required-named graft adds it by name, with its deps.
+        merge_required_named_chains(&mut db, &baseline);
+        let ic = db.chains.get("insight-copy").expect("insight-copy grafted by name");
+        assert_eq!(ic.capability, Capability::TextChat);
+        assert!(!ic.models.is_empty(), "insight-copy carries its local model legs");
+        for entry in &ic.models {
+            assert!(db.models.contains_key(&entry.model), "grafted model {} present", entry.model);
+            if let Some(r) = &entry.router {
+                assert!(db.routers.contains_key(r), "grafted router {r} present");
+            }
+        }
+
+        // Idempotent — a second graft is a no-op.
+        let n = db.chains.len();
+        merge_required_named_chains(&mut db, &baseline);
+        assert_eq!(db.chains.len(), n, "second graft is a no-op");
     }
 }

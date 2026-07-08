@@ -165,6 +165,66 @@ impl PgStore {
         Ok(rows.into_iter().collect())
     }
 
+    // ── Insight copy cache (insight-copy pipeline) ────────────────────
+
+    /// Cache read for the insight-copy pipeline. Returns the persisted
+    /// `(title, detail)` for `(kind, facts_hash)` and bumps `last_used_at`
+    /// in the same statement so hot copy stays warm. `None` on cache miss or
+    /// DB error (the caller then generates fresh or falls back to a static
+    /// template). DB errors are logged, never swallowed silently.
+    pub async fn get_insight_copy(&self, kind: &str, facts_hash: &str) -> Option<(String, String)> {
+        let row: Result<Option<(String, String)>, _> = sqlx_core::query_as::query_as(
+            "UPDATE sensei.insight_copy SET last_used_at = now() \
+             WHERE kind = $1 AND facts_hash = $2 RETURNING title, detail"
+        )
+            .bind(kind)
+            .bind(facts_hash)
+            .fetch_optional(&self.pool)
+            .await;
+        match row {
+            Ok(hit) => hit,
+            Err(e) => {
+                tracing::warn!(error = %e, kind, "get_insight_copy: DB error — treating as cache miss");
+                None
+            }
+        }
+    }
+
+    /// Cache write for the insight-copy pipeline. Upserts the generated copy
+    /// for `(kind, facts_hash)`; a newer generation wins on conflict and both
+    /// timestamps reset. DB errors are logged and swallowed (the caller has
+    /// already returned copy to the user — a failed cache write is not fatal).
+    pub async fn upsert_insight_copy(
+        &self,
+        kind: &str,
+        facts_hash: &str,
+        title: &str,
+        detail: &str,
+        model_provider: Option<&str>,
+        model_id: Option<&str>,
+    ) {
+        let res = sqlx_core::query::query(
+            "INSERT INTO sensei.insight_copy \
+               (kind, facts_hash, title, detail, model_provider, model_id) \
+             VALUES ($1, $2, $3, $4, $5, $6) \
+             ON CONFLICT (kind, facts_hash) DO UPDATE SET \
+               title = EXCLUDED.title, detail = EXCLUDED.detail, \
+               model_provider = EXCLUDED.model_provider, model_id = EXCLUDED.model_id, \
+               generated_at = now(), last_used_at = now()"
+        )
+            .bind(kind)
+            .bind(facts_hash)
+            .bind(title)
+            .bind(detail)
+            .bind(model_provider)
+            .bind(model_id)
+            .execute(&self.pool)
+            .await;
+        if let Err(e) = res {
+            tracing::warn!(error = %e, kind, "upsert_insight_copy: DB error — copy not cached");
+        }
+    }
+
     // ── Tags (controlled vocabulary) ──────────────────────────────────
 
     pub async fn add_tag(&self, tag: &str, category: Option<&str>) -> Result<(), String> {

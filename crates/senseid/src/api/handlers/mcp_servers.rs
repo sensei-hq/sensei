@@ -86,18 +86,18 @@ pub(crate) async fn get_tools(
         age > ttl
     });
 
-    if !force && !stale && cached.is_some() {
-        return Ok(Json(cached.unwrap()));
-    }
-
-    if !allow_probe && cached.is_some() {
-        // Caller doesn't want us to spawn; return whatever we have with a
-        // `stale: true` hint so the UI can badge it.
-        let mut c = cached.unwrap();
-        if let Some(obj) = c.as_object_mut() {
-            obj.insert("stale".into(), serde_json::Value::Bool(true));
+    if let Some(mut c) = cached {
+        if !force && !stale {
+            return Ok(Json(c));
         }
-        return Ok(Json(c));
+        if !allow_probe {
+            // Caller doesn't want us to spawn; return whatever we have with a
+            // `stale: true` hint so the UI can badge it.
+            if let Some(obj) = c.as_object_mut() {
+                obj.insert("stale".into(), serde_json::Value::Bool(true));
+            }
+            return Ok(Json(c));
+        }
     }
 
     // Probe path: fetch the server config and spawn the tool manifest probe.
