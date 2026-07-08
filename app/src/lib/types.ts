@@ -584,6 +584,14 @@ export interface ProjectMemory {
   reinforcedCount?: number;
   violatedCount?: number;
   scopeFilter?: string | null;
+  // Ready-to-share lane — `generalised` is sensei's assessment that this memory
+  // has been rewritten stack-agnostic and is safe to widen up the scope ladder;
+  // `generalisedContent` carries that portable rewrite (null until generalised).
+  // Both are served by GET /api/projects/{id}/memories.
+  generalised?: boolean;
+  generalisedContent?: string | null;
+  /** MAX(reinforced_at, violated_at) — null for freshly minted memories. */
+  lastRelevantAt?: string | null;
 }
 
 export interface DriftItem {
