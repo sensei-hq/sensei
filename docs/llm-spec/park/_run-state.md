@@ -525,12 +525,44 @@ to flush old "the developer" cached rows so live copy reflects the guard).
 NOTED-DEFERRED (unrelated): pre-commit bootstrap test logs a dbd apply WARN `view:sensei.project_patterns
 — column project_id already exists` (test still passes). DDL idempotency issue on that view; not chased.
 
-NEXT = B2 (mechanical, reuse proven copy_or_warm core): wire project_overview hero (HeroKoanMature when
-top_recommendation exists; all-quiet stays STATIC like Today early) + insights.rs/get_insights triage
-copy (InsightRecurringPattern for recs, PatternPromoted patterns, MemoryProposedAdopt/Review memories;
-cap top ~8 to avoid warm storm). Fallback = existing static text. Then redeploy+flush-cache+quick live
-verify → MERGE develop→main + make bump (insight-copy rollout milestone). THEN Build C (memory
-ready_to_share/to_merge read-path derivation per the design-fork note above).
+B2 ✅ DONE + COMMITTED `a43db8e2` (2026-07-08): project_detail.rs get_project_overview hero →
+HeroKoanMature (all-quiet static); observatory.rs get_insights → recs=InsightRecurringPattern,
+memories=MemoryProposedAdopt/Review (adopt when in-force+unviolated), cap COPY_CAP=8 Now→Soon→Settled.
+PATTERNS + corrections STAY STATIC (fixed a B2 regression: pattern card's only free-text `name` is
+mono/truncated — routing prose there breaks it; route only when card gets a prose body = frontend
+followup). project_detail impact always null (query doesn't select impact col — harmless facts field;
+followup if wanted). 1192 tests, clippy 0. ⏳ PRE-MERGE LIVE SMOKE in flight (verifier): deploy + FLUSH
+cache + smoke Today/Overview/Insights (fast <0.2s + cache fills mentor copy + NO "the developer"
+leakage + no 500s). If SHIP → MERGE develop→main + make bump (insight-copy rollout milestone).
+
+INSIGHT-COPY FOLLOWUP TICKETS (non-blocking, file when convenient):
+ - Rec 3 (persona): pass project_name + specific pattern into card facts for specificity (needs facts
+   shape + maybe query cols).
+ - Pattern insight-copy: needs a prose body field on the pattern card (frontend) before routing.
+ - project_detail overview: add impact column to get_top_recommendation query if non-null wanted.
+ - /api/gateway/infer handler hardcodes temperature:None (irrelevant to wire now; cleanup if that
+   endpoint is used for tuning).
+ - DDL idempotency: view:sensei.project_patterns "column project_id already exists" on apply.
+ - insight_copy 30-day eviction sweep (last_used_at < now()-30d) daily maint task NOT built.
+
+PRE-MERGE SMOKE = ✅ SHIP (2026-07-08). Live: Today 26ms / Overview 23ms / Insights 87ms uncached;
+cache 5 clean mentor rows (hero_koan_mature 1 + insight_recurring_pattern 4); Today renders mentor-voice;
+0 third-person leakage (guard working — 27 live rejections logged to public.logs); 9/9 curls 200 no 500s.
+CAVEAT (non-blocking, pre-classified): verbose recs (sensei's own ~400-char why) fail ≤180 guard every
+try → Overview shows RAW fallback (which itself contains "The developer…" — that's the REC GENERATOR
+writing 3rd-person, not an insight-copy bug; guard only gates MODEL copy). 2 more followup tickets:
+ - lift verbose-rec pass-rate: stronger "summarize aggressively, drop specifics to fit" prompt OR a
+   larger hero detail budget (hero body = 2-3 sentences, 180 tight); OR fix rec generator to write
+   tighter neutral-voice why. sensei's OWN overview is the visible sufferer (dogfooding project).
+ - warm-path WARN diagnosability: parse_and_validate returns Option (no reason); add kind + reject
+   reason (banned/over-limit/third-person) to the public.logs WARN context so pass-rate is tunable.
+
+★★★ INSIGHT-COPY ROLLOUT — MERGING NOW (2026-07-08) ★★★
+develop commits: d62edf3c (clippy chore) + 96b1349a (Today pipeline) + a43db8e2 (Overview+Insights B2).
+DOING: commit run-state → make bump v=patch (bundle now includes insight_copy.ddl so fresh installs get
+the table) → merge develop→main → push → back to develop.
+
+THEN Build C (memory ready_to_share/to_merge read-path derivation per the design-fork note above).
 Build-B emission points located: observatory_home.rs pure fns early_hero/mature_hero/steady_hero/
 rec_to_insight_card (return serde_json::Value; keep as FALLBACK producers, route their koan+body/text
 through generate_insight_copy at the ASYNC handler boundary — don't make the pure fns async). Same
