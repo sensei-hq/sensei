@@ -129,6 +129,30 @@ pub struct MemoryPushPayload {
     pub name:        String,
 }
 
+/// Parse a git remote URL into its source-identifier tokens (owner + repo),
+/// e.g. `git@github.com:acme/acme-api.git` and
+/// `https://github.com/acme/acme-api` both → `["acme", "acme-api"]`. Used by
+/// [`PgStore::project_identifiers`] to feed the confidentiality dereference
+/// (C5) — both the org/owner and the repo name are source identifiers to strip.
+/// Host-like segments (containing a dot) are skipped. Pure — unit-tested.
+fn repo_tokens_from_remote(url: &str) -> Vec<String> {
+    let trimmed = url.trim().trim_end_matches(".git");
+    // Drop the scheme (`https://`, `ssh://`, …) if present.
+    let after_scheme = trimmed.rsplit("://").next().unwrap_or(trimmed);
+    // scp-like `git@host:owner/repo` — drop the `user@host:` head.
+    let path = match after_scheme.split_once(':') {
+        Some((head, tail)) if head.contains('@') || head.contains('.') => tail,
+        _ => after_scheme,
+    };
+    // Keep only path segments; a host-like segment (with a dot or `@`) is dropped
+    // so scheme/host never survive — the last two remaining are owner + repo.
+    let segments: Vec<&str> = path
+        .split('/')
+        .filter(|s| !s.is_empty() && !s.contains('.') && !s.contains('@'))
+        .collect();
+    segments.iter().rev().take(2).map(|s| s.to_string()).collect()
+}
+
 #[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
 // PgStore API surface — methods wired up incrementally; SQLx tuple return types
 // are inherently verbose and adding an extra layer of type aliases would
@@ -6297,6 +6321,77 @@ impl PgStore {
         Ok(rows)
     }
 
+    /// Gather every KNOWN sensitive identifier for a project into a
+    /// [`crate::dojo::attribution::ProjectIdentifiers`] — the deterministic
+    /// client-work dereference (C5) needs these to strip source references before
+    /// anything leaves the machine. Reads only; the strip itself is DB-free.
+    ///
+    /// Sources: `sensei.projects.{name, client}`, `sensei.folders.{name,
+    /// abs_path, remote_urls}` (repo name + git owner/repo parsed from remotes),
+    /// and `activity.sessions.{id, client_session_id}`.
+    pub async fn project_identifiers(
+        &self, project_id: &uuid::Uuid,
+    ) -> Result<crate::dojo::attribution::ProjectIdentifiers, String> {
+        use crate::dojo::attribution::ProjectIdentifiers;
+
+        let proj: Option<(String, Option<String>)> = sqlx_core::query_as::query_as(
+            "SELECT name, client FROM sensei.projects WHERE id = $1")
+            .bind(project_id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+        let (project_name, client_name) = match proj {
+            Some((name, client)) => (Some(name), client),
+            None => (None, None),
+        };
+
+        let folders: Vec<(String, String, serde_json::Value)> = sqlx_core::query_as::query_as(
+            "SELECT name, abs_path, remote_urls FROM sensei.folders WHERE project_id = $1")
+            .bind(project_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+
+        let mut repo_names: Vec<String> = Vec::new();
+        let mut folder_paths: Vec<String> = Vec::new();
+        for (name, abs_path, remotes) in folders {
+            if !name.trim().is_empty() {
+                repo_names.push(name);
+            }
+            if !abs_path.trim().is_empty() {
+                folder_paths.push(abs_path);
+            }
+            if let Some(arr) = remotes.as_array() {
+                for r in arr {
+                    if let Some(url) = r.get("url").and_then(serde_json::Value::as_str) {
+                        repo_names.extend(repo_tokens_from_remote(url));
+                    }
+                }
+            }
+        }
+
+        let sessions: Vec<(uuid::Uuid, Option<String>)> = sqlx_core::query_as::query_as(
+            "SELECT id, client_session_id FROM activity.sessions WHERE project_id = $1")
+            .bind(project_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        let mut session_ids: Vec<String> = Vec::new();
+        for (id, csid) in sessions {
+            session_ids.push(id.to_string());
+            if let Some(c) = csid.filter(|c| !c.trim().is_empty()) {
+                session_ids.push(c);
+            }
+        }
+
+        for v in [&mut repo_names, &mut folder_paths, &mut session_ids] {
+            v.sort();
+            v.dedup();
+        }
+
+        Ok(ProjectIdentifiers {
+            project_name,
+            client_name,
+            repo_names,
+            folder_paths,
+            session_ids,
+            // No reliable structured person-name source in the schema yet; C6 can
+            // enrich this from session/transcript metadata if one lands.
+            person_names: Vec::new(),
+        })
+    }
+
     // ── Federation ledger ─────────────────────────────────────────────
 
     pub async fn namespace_is_shareable(&self, namespace_id: &uuid::Uuid) -> Result<bool, String> {
@@ -6896,6 +6991,62 @@ mod tests {
             .bind(pid).bind(fid)
             .execute(s.pool()).await.unwrap();
         (pid, fid)
+    }
+
+    // ── Dōjō confidentiality: project identifiers (C5) ─────────────────
+
+    #[test]
+    fn repo_tokens_from_remote_parses_ssh_and_https() {
+        assert_eq!(
+            repo_tokens_from_remote("git@github.com:acme/acme-api.git"),
+            vec!["acme-api".to_string(), "acme".to_string()]
+        );
+        assert_eq!(
+            repo_tokens_from_remote("https://github.com/acme/acme-api"),
+            vec!["acme-api".to_string(), "acme".to_string()]
+        );
+        // Host-like and empty segments are skipped.
+        assert!(repo_tokens_from_remote("https://example.com").is_empty());
+    }
+
+    #[tokio::test]
+    async fn project_identifiers_gathers_names_paths_repos_and_sessions() {
+        let s = pg_store().await;
+        let suffix = format!("projident_{}", uuid::Uuid::new_v4());
+        let (pid, fid) = create_test_project_and_folder(&s, &suffix).await;
+        // Set the client + a git remote so the parser has something to chew on.
+        sqlx_core::query::query(
+            "UPDATE sensei.projects SET client = $2 WHERE id = $1",
+        )
+        .bind(pid)
+        .bind("Acme Corp")
+        .execute(s.pool())
+        .await
+        .unwrap();
+        sqlx_core::query::query(
+            "UPDATE sensei.folders SET remote_urls = $2 WHERE id = $1",
+        )
+        .bind(fid)
+        .bind(serde_json::json!([{ "name": "origin", "url": "git@github.com:acme/acme-api.git" }]))
+        .execute(s.pool())
+        .await
+        .unwrap();
+        // A session for the project, with a client_session_id.
+        let csid = format!("cs-{suffix}");
+        s.record_session_event(&csid, &fid, Some(&pid), "claude", true).await.unwrap();
+
+        let ids = s.project_identifiers(&pid).await.unwrap();
+        assert_eq!(ids.project_name.as_deref(), Some(format!("_test:{suffix}").as_str()));
+        assert_eq!(ids.client_name.as_deref(), Some("Acme Corp"));
+        assert!(ids.repo_names.iter().any(|r| r == "acme-api"), "repo from remote missing: {:?}", ids.repo_names);
+        assert!(ids.repo_names.iter().any(|r| r == "acme"), "owner from remote missing: {:?}", ids.repo_names);
+        assert!(ids.folder_paths.iter().any(|p| p.contains(&suffix)), "folder path missing: {:?}", ids.folder_paths);
+        assert!(ids.session_ids.iter().any(|sid| sid == &csid), "client_session_id missing: {:?}", ids.session_ids);
+        // The observatory session UUID is also present.
+        assert!(ids.session_ids.len() >= 2, "expected uuid + client_session_id: {:?}", ids.session_ids);
+
+        // Cleanup (project delete cascades folders/sessions via FKs).
+        s.delete_project(&pid).await.ok();
     }
 
     // ── PG Function tests ─────────────────────────────────────────────
