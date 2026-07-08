@@ -262,7 +262,7 @@ only, **todo** = not started.
 
 ## Reading order
 
-Newcomer to the codebase reads: this README → [MOCKUP-INDEX.md](MOCKUP-INDEX.md) (which mockup file to open for which screen — **never guess**) → [agents/README.md](agents/README.md) (the gate playbook) → [pipeline/analyzer.md](pipeline/analyzer.md) → [pipeline/ftr.md](pipeline/ftr.md) → any screen doc they own.
+Newcomer to the codebase reads: this README → [EXECUTION-PLAN.md](EXECUTION-PLAN.md) (the 5-day plan; picks up cold from a phone) → [MOCKUP-INDEX.md](MOCKUP-INDEX.md) (which mockup file to open for which screen — **never guess**) → [agents/README.md](agents/README.md) (the gate playbook) → [pipeline/analyzer.md](pipeline/analyzer.md) → [pipeline/ftr.md](pipeline/ftr.md) → any screen doc they own.
 A developer picking up an autonomous task reads: [screen/{their-target}.md](screen/) → the pipeline docs it references → the mockup file listed in the front-matter → then runs the gates from the playbook.
 
 The tie-breaker rule: **if this spec disagrees with the mockup, the
