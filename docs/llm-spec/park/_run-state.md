@@ -751,7 +751,23 @@ shipped on); the Tauri e2e infra is a SEPARATE pre-existing blocker. Time-boxed 
 DDL idempotency next (recurs everywhere + likely the e2e unblocker). If deep → defer + surface to Jerry.
 Visual-e2e debt now spans ALL frontend screens until this infra is fixed — FLAG for Jerry's return.
 
-RELEASING v0.2.28: upgrades actionType fix + observatory-traceability un-stub → main.
+RELEASING v0.2.28: upgrades actionType fix + observatory-traceability un-stub → main. ✅ SHIPPED `149cbe25`.
+
+★ project_patterns VIEW DDL BUG FIXED + COMMITTED `af4a6214` (2026-07-08): root cause = detected_patterns
+gained its own project_id (authoritative scope key), so the view's `SELECT dp.*, f.project_id` DUPLICATES
+project_id; CREATE OR REPLACE can't reorder → BROKEN on any current schema (fresh install can't create
+it; every re-apply + daemon boot logs the WARN). FIX: DROP VIEW + CREATE VIEW AS SELECT * FROM
+inference.detected_patterns (sole reader get_project_patterns filters pp.project_id, needs only dp cols;
+also more correct — includes folder-less patterns). Applied live to sensei + sensei_test; endpoint 200,
+208 anti + 1 followed unchanged. ⚠️ WARN PERSISTS in bootstrap test until BUMP — the test applies the
+RELEASED BUNDLE (database@v0.2.28, old view); bump regenerates bundle from repo source → clears it +
+reaches fresh installs + the e2e daemon.
+NOTE: `activity.assistant_events deadlock detected` is a SEPARATE WARN (concurrent DDL apply race in
+parallel test env) — not fixed here.
+
+RELEASING v0.2.29: project_patterns view fix → bundle+main. THEN re-run make test-app-e2e (bg): the e2e
+daemon now gets the FIXED view from the fresh bundle — if that was the boot blocker, e2e unblocks
+(enables Tauri visual verification). If still port-timeout → blocker is deadlock/debug-slow → defer+flag.
 
 OLD NOTES BELOW (pre-insight-copy, historical) ↓↓↓
 THEN Build C (memory ready_to_share/to_merge read-path derivation per the design-fork note above).
