@@ -3,15 +3,34 @@
   import { senseiApi } from '$lib/api.js';
   import { invalidateAll } from '$app/navigation';
   import { page } from '$app/state';
+  import { EmptyState, MoeReasoningPanel } from '$lib/components';
+  import {
+    formatDeltaPct,
+    pct,
+    verdictMeta,
+    verdictToneClass as toneClass,
+    type ImpactRow,
+  } from '$lib/impact.js';
   import type { ImpactVerdictEntry } from '$lib/types.js';
 
   let { data } = $props();
-  let selectedId = $state<string | null>(null);
-  // Auto-select first verdict on data load
-  $effect(() => { if (selectedId === null && data.verdicts.length > 0) selectedId = data.verdicts[0].id; });
-  let selected = $derived(data.verdicts.find((v: any) => v.id === selectedId) ?? null);
 
-  // Manual impact-log state (T3 Slice 3).
+  // Measured verdicts — negative first (loudest to act on), then positive,
+  // neutral, pending. Each bucket already sorts by |ftrDelta|.
+  const flat = $derived<ImpactRow[]>([
+    ...data.buckets.negative,
+    ...data.buckets.positive,
+    ...data.buckets.neutral,
+    ...data.buckets.pending,
+  ]);
+
+  // Picked row — null until the user clicks, then honoured; falls back to the
+  // first row when null or the picked row drops out of the list.
+  let selectedId = $state<string | null>(null);
+  const selected = $derived(flat.find((v) => v.id === selectedId) ?? flat[0]);
+  const selectedVm = $derived(selected ? verdictMeta(selected.verdict) : null);
+
+  // ── Manual impact-log lane (T3 Slice 3) — independent, user-logged ──────
   const projectId = $derived(page.params.id ?? '');
   let logForm = $state({ title: '', note: '' });
   let logging = $state(false);
@@ -45,126 +64,150 @@
   }
 
   const impactLog: ImpactVerdictEntry[] = $derived(data.impactLog);
-  const impactPending = $derived(impactLog.filter(e => e.verdict === 'pending'));
-  const impactDecided = $derived(impactLog.filter(e => e.verdict !== 'pending'));
+  const impactPending = $derived(impactLog.filter((e) => e.verdict === 'pending'));
+  const impactDecided = $derived(impactLog.filter((e) => e.verdict !== 'pending'));
 </script>
 
 <div class="px-6 py-6">
   <h2 class="text-xl font-normal m-0 mb-1">Impact</h2>
-  <p class="text-xs text-ink-soft m-0 mb-5">
-    Each accepted recommendation gets a measurement window. FTR before vs after tells you if it worked.
+  <p class="text-[13px] text-ink-mute m-0 mb-5 max-w-[640px] leading-relaxed">
+    Each accepted recommendation gets a measurement window. FTR baseline vs
+    current tells you whether it worked. The MOE panel writes the reasoning.
   </p>
 
-  <div class="flex gap-4 text-xl font-bold mb-5">
-    <span class="text-success">↑ {data.positiveCount}</span>
-    <span class="text-error">↓ {data.negativeCount}</span>
-    <span class="opacity-50">? {data.pendingCount}</span>
+  <!-- Verdict counts — measured impact at a glance -->
+  <div class="flex gap-6 mb-5" data-impact-total={data.total}>
+    <div>
+      <span class="font-mono text-[17px] font-light text-success">{data.buckets.positive.length}</span>
+      <span class="text-xs uppercase tracking-wider text-ink-faint ml-2">positive</span>
+    </div>
+    <div>
+      <span class="font-mono text-[17px] font-light text-ink">{data.buckets.neutral.length}</span>
+      <span class="text-xs uppercase tracking-wider text-ink-faint ml-2">neutral</span>
+    </div>
+    <div>
+      <span class="font-mono text-[17px] font-light text-warning">{data.buckets.negative.length}</span>
+      <span class="text-xs uppercase tracking-wider text-ink-faint ml-2">negative</span>
+    </div>
+    <div>
+      <span class="font-mono text-[17px] font-light text-ink-soft">{data.buckets.pending.length}</span>
+      <span class="text-xs uppercase tracking-wider text-ink-faint ml-2">pending</span>
+    </div>
   </div>
 
-  {#if data.verdicts.length === 0}
-    <p class="text-sm text-ink-soft opacity-50">No accepted recommendations yet.</p>
+  {#if data.total === 0 || !selected}
+    <EmptyState
+      kanji="果"
+      title="no measurements yet"
+      description="Accepted recommendations show up here once the analyzer's MeasureVerdicts pass has enough post-acceptance sessions to compare FTR before and after."
+    />
   {:else}
-    <div class="grid grid-cols-[280px_1fr] gap-6 min-h-0">
+    <div class="grid grid-cols-[280px_1fr] gap-6 items-start">
       <!-- Verdict list -->
-      <div class="flex flex-col gap-0.5 overflow-auto">
-        {#each data.verdicts as v (v.id)}
-          {@const isOpen = selectedId === v.id}
+      <div class="flex flex-col overflow-auto max-h-[560px]">
+        {#each flat as v (v.id)}
+          {@const vm = verdictMeta(v.verdict)}
+          {@const isOpen = selected.id === v.id}
           <button
-            class="verdict-item text-left px-3.5 py-3 rounded-md bg-transparent border-none cursor-pointer"
-            class:selected={isOpen}
-            onclick={() => selectedId = v.id}
+            type="button"
+            class="w-full text-left py-3 px-3.5 rounded-md cursor-pointer bg-transparent border-none border-l-2 text-inherit block"
+            class:bg-paper-mute={isOpen}
+            class:border-l-transparent={!isOpen}
+            class:border-l-success={isOpen && vm.tone === 'success'}
+            class:border-l-warning={isOpen && vm.tone === 'warning'}
+            class:border-l-ink-mute={isOpen && vm.tone === 'ink'}
+            data-verdict-row={v.id}
+            data-verdict-bucket={v.verdict}
+            onclick={() => (selectedId = v.id)}
           >
             <div class="flex items-center gap-2 mb-1">
-              <span class="text-xs font-mono" class:text-success={v.verdict === 'positive'} class:text-error={v.verdict === 'negative'} class:opacity-50={v.verdict === 'pending' || v.verdict === 'neutral'}>
-                {v.verdict === 'positive' ? '好' : v.verdict === 'negative' ? '悪' : v.verdict === 'neutral' ? '並' : '?'}
-              </span>
-              <span class="text-xs uppercase tracking-wide"
-                class:text-success={v.verdict === 'positive'}
-                class:text-error={v.verdict === 'negative'}
-              >{v.verdict}</span>
-              {#if v.baseline_ftr != null && v.current_ftr != null}
-                {@const delta = Math.round((v.current_ftr - v.baseline_ftr) * 100)}
-                <span class="ml-auto font-mono text-xs" class:text-success={delta > 0} class:text-error={delta < 0}>
-                  {delta > 0 ? '+' : ''}{delta}%
-                </span>
-              {/if}
+              <span class="kanji text-[13px] {toneClass(vm.tone)}">{vm.glyph}</span>
+              <span class="text-xs uppercase tracking-wider {toneClass(vm.tone)}">{v.verdict}</span>
+              <span class="flex-1"></span>
+              <span
+                class="font-mono text-xs"
+                class:text-success={v.ftrDelta != null && v.ftrDelta > 0}
+                class:text-warning={v.ftrDelta != null && v.ftrDelta < 0}
+                class:text-ink-mute={v.ftrDelta == null || v.ftrDelta === 0}
+              >{formatDeltaPct(v.ftrDelta)}</span>
             </div>
-            <p class="text-sm m-0 leading-snug">{v.title}</p>
-            {#if v.measured_at}
-              <span class="text-xs text-ink-soft font-mono mt-1 block">
-                measured {new Date(v.measured_at).toLocaleDateString()}
-              </span>
-            {/if}
+            <p class="text-[13px] m-0 leading-snug font-medium truncate"
+               class:text-ink={isOpen}
+               class:text-ink-mute={!isOpen}>{v.title}</p>
           </button>
         {/each}
       </div>
 
       <!-- Detail panel -->
-      {#if selected}
-        <div class="p-6 bg-paper-mute border border-paper-mute rounded-lg">
-          <div class="flex items-center gap-3 mb-4">
-            <span class="text-xs font-mono opacity-50">{selected.urgency}</span>
-            {#if selected.acted_at}
-              <span class="text-xs opacity-50">acted {new Date(selected.acted_at).toLocaleDateString()}</span>
-            {/if}
-            {#if selected.measured_at}
-              <span class="text-xs opacity-50">measured {new Date(selected.measured_at).toLocaleDateString()}</span>
-            {/if}
-          </div>
-
-          <h3 class="text-lg font-normal m-0 mb-3">{selected.title}</h3>
-          <p class="text-sm text-ink-mute leading-normal m-0 mb-5">{selected.why}</p>
-
-          {#if selected.baseline_ftr != null || selected.current_ftr != null}
-            <div class="grid grid-cols-4 gap-px bg-paper-mute rounded-md overflow-hidden mb-5">
-              <div class="bg-paper-soft p-3 text-center">
-                <span class="block text-xs text-ink-soft mb-1">FTR Before</span>
-                <span class="block text-lg font-bold">
-                  {selected.baseline_ftr != null ? Math.round(selected.baseline_ftr * 100) + '%' : '—'}
-                </span>
-              </div>
-              <div class="bg-paper-soft p-3 text-center">
-                <span class="block text-xs text-ink-soft mb-1">FTR After</span>
-                <span class="block text-lg font-bold">
-                  {selected.current_ftr != null ? Math.round(selected.current_ftr * 100) + '%' : '—'}
-                </span>
-              </div>
-              <div class="bg-paper-soft p-3 text-center">
-                <span class="block text-xs text-ink-soft mb-1">Delta</span>
-                {#if selected.baseline_ftr != null && selected.current_ftr != null}
-                  {@const d = Math.round((selected.current_ftr - selected.baseline_ftr) * 100)}
-                  <span class="block text-lg font-bold" class:text-success={d > 0} class:text-error={d < 0}>
-                    {d > 0 ? '+' : ''}{d}%
-                  </span>
-                {:else}
-                  <span class="block text-lg opacity-30">—</span>
-                {/if}
-              </div>
-              <div class="bg-paper-soft p-3 text-center">
-                <span class="block text-xs text-ink-soft mb-1">Verdict</span>
-                <span class="block text-lg font-bold"
-                  class:text-success={selected.verdict === 'positive'}
-                  class:text-error={selected.verdict === 'negative'}
-                >
-                  {selected.verdict}
-                </span>
-              </div>
-            </div>
+      <div class="min-w-0">
+        <!-- Eyebrow — action verb · status -->
+        <div class="flex items-center gap-3 text-xs uppercase tracking-wider text-ink-soft mb-3">
+          {#if selected.actionType}
+            <span class="font-mono normal-case tracking-normal">{selected.actionType}</span>
+            <span class="text-ink-faint">·</span>
           {/if}
-
-          {#if selected.impact}
-            <div class="flex items-center gap-2 text-xs mb-3">
-              <span class="w-1.5 h-1.5 rounded-full bg-accent"></span>
-              <span class="text-accent">{selected.impact}</span>
-            </div>
-          {/if}
+          <span>{selected.status}</span>
         </div>
-      {/if}
+
+        <h3 class="display text-xl font-normal mt-0 mb-4 leading-tight text-ink">{selected.title}</h3>
+
+        <!-- Verdict pill -->
+        {#if selectedVm}
+          <div class="flex items-center gap-3 mb-5">
+            <div
+              class="inline-flex items-center gap-2 py-1 px-3 rounded-full border"
+              class:bg-success-soft={selectedVm.tone === 'success'}
+              class:border-success={selectedVm.tone === 'success'}
+              class:bg-warning-soft={selectedVm.tone === 'warning'}
+              class:border-warning={selectedVm.tone === 'warning'}
+              class:bg-paper-mute={selectedVm.tone === 'ink'}
+              class:border-paper-edge={selectedVm.tone === 'ink'}
+            >
+              <span class="kanji text-[13px] {toneClass(selectedVm.tone)}">{selectedVm.glyph}</span>
+              <span class="text-xs uppercase tracking-wider font-medium {toneClass(selectedVm.tone)}">
+                {selectedVm.label}
+              </span>
+            </div>
+          </div>
+        {/if}
+
+        <!-- Before / after FTR strip -->
+        <div class="grid grid-cols-3 gap-[1px] bg-paper-edge rounded overflow-hidden mb-5">
+          <div class="bg-paper-mute py-3 px-4">
+            <div class="text-xs uppercase tracking-wider text-ink-faint mb-1">First-Try-Right</div>
+            <div class="font-mono text-sm text-ink-mute">{pct(selected.baselineFtr)}</div>
+            <div class="font-mono text-lg text-ink">{pct(selected.currentFtr)}</div>
+            <div
+              class="font-mono text-xs mt-1"
+              class:text-success={selected.ftrDelta != null && selected.ftrDelta > 0}
+              class:text-warning={selected.ftrDelta != null && selected.ftrDelta < 0}
+              class:text-ink-mute={selected.ftrDelta == null || selected.ftrDelta === 0}
+            >{formatDeltaPct(selected.ftrDelta)}</div>
+          </div>
+          <div class="bg-paper-mute py-3 px-4">
+            <div class="text-xs uppercase tracking-wider text-ink-faint mb-1">Status</div>
+            <div class="font-mono text-sm text-ink mt-3">{selected.status}</div>
+          </div>
+          <div class="bg-paper-mute py-3 px-4">
+            <div class="text-xs uppercase tracking-wider text-ink-faint mb-1">Verdict</div>
+            <div class="font-mono text-sm mt-3 {toneClass(selectedVm?.tone ?? 'ink')}">{selected.verdict}</div>
+          </div>
+        </div>
+
+        <!-- MOE reasoning — the expandable trace, when the daemon carries one -->
+        {#if selected.reasoning}
+          <MoeReasoningPanel reasoning={selected.reasoning} tone={selectedVm?.tone ?? 'ink'} />
+        {:else}
+          <p class="text-sm text-ink-soft italic m-0">
+            No MOE reasoning trace captured for this verdict yet.
+          </p>
+        {/if}
+      </div>
     </div>
   {/if}
 
   <!-- ── Manual impact log (T3 Slice 3) ─────────────────────────────── -->
-  <section class="mt-10 pt-6 border-t border-paper-mute">
+  <section class="mt-10 pt-6 border-t border-paper-edge">
     <h3 class="text-sm font-medium m-0 mb-1">Impact log</h3>
     <p class="text-xs text-ink-soft m-0 mb-4">
       Log a shipped change, then verdict it later once the outcome has had
@@ -199,10 +242,10 @@
     </form>
 
     {#if impactPending.length > 0}
-      <h4 class="text-xs uppercase tracking-wide opacity-60 m-0 mb-2">Pending verdict</h4>
+      <h4 class="text-xs uppercase tracking-wide text-ink-soft m-0 mb-2">Pending verdict</h4>
       <ul class="list-none m-0 p-0 flex flex-col gap-2 mb-6" data-testid="impact-pending-list">
         {#each impactPending as entry (entry.id)}
-          <li class="border border-paper-mute rounded-md px-3 py-2 flex items-center gap-2" data-testid={`impact-pending-${entry.id}`}>
+          <li class="border border-paper-edge rounded-md px-3 py-2 flex items-center gap-2" data-testid={`impact-pending-${entry.id}`}>
             <div class="flex-1 min-w-0">
               <div class="text-sm text-ink truncate">{entry.title}</div>
               {#if entry.note}
@@ -225,10 +268,10 @@
     {/if}
 
     {#if impactDecided.length > 0}
-      <h4 class="text-xs uppercase tracking-wide opacity-60 m-0 mb-2">Decided</h4>
+      <h4 class="text-xs uppercase tracking-wide text-ink-soft m-0 mb-2">Decided</h4>
       <ul class="list-none m-0 p-0 flex flex-col gap-1">
         {#each impactDecided as entry (entry.id)}
-          <li class="flex items-center gap-2 py-1.5 border-b border-paper-mute text-sm">
+          <li class="flex items-center gap-2 py-1.5 border-b border-paper-edge text-sm">
             <span class="text-xs uppercase tracking-wide font-mono w-16"
                   class:text-success={entry.verdict === 'success'}
                   class:text-warning={entry.verdict === 'mixed'}
@@ -244,14 +287,7 @@
     {/if}
 
     {#if impactLog.length === 0}
-      <p class="text-sm text-ink-soft opacity-60">No impact entries yet.</p>
+      <p class="text-sm text-ink-soft">No impact entries yet.</p>
     {/if}
   </section>
 </div>
-
-<style>
-  .verdict-item:hover { background: var(--paper-mute); }
-  .verdict-item.selected { background: var(--paper-mute); border-left: 2px solid var(--accent); }
-  .text-success { color: var(--success); }
-  .text-error { color: var(--accent); }
-</style>
