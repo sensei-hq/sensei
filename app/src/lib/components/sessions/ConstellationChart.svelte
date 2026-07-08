@@ -2,7 +2,7 @@
   // CONSTELLATION — one dot per session · x = duration · y = day · color =
   // quality. Reads the enriched rows directly (needs per-session minutes,
   // not the day rollup). Pure presentation.
-  import { shortDayLabel, type EnrichedSession, type QualityTone } from './sessions-digest.js';
+  import { shortDayLabel, type EnrichedSession, type QualityTone } from '$lib/sessions-digest.js';
 
   interface Props {
     sessions: EnrichedSession[];

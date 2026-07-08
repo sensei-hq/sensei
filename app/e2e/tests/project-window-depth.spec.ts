@@ -33,26 +33,34 @@ async function pickTestProject(): Promise<Project | null> {
 }
 
 test.describe('Project window — Sessions depth', () => {
-  test('TurnBar renders inline on session rows with real turns', async ({ tauriPage }) => {
+  test('session rows carry the shared quality-tone + corrections vocabulary', async ({ tauriPage }) => {
     const project = await pickTestProject();
     if (!project) { test.skip(true, 'no projects registered'); return; }
-    const sessions = await safeJson<{ sessions: Array<{ id: string; turns: number }> }>(
-      `${DAEMON_URL}/api/projects/${project.id}/sessions?limit=50`, { sessions: [] },
+    // Project Sessions now shares the Observatory digest rows; scope by the
+    // widest window so the rendered 90d slice matches this fetch.
+    const scoped = await safeJson<Array<{ id: string }>>(
+      `${DAEMON_URL}/api/sessions?project=${project.id}&range=90d`, [],
     );
-    const withTurns = sessions.sessions.filter(s => s.turns > 0);
-    if (withTurns.length === 0) { test.skip(true, 'no sessions with turns > 0 on this project'); return; }
+    if (scoped.length === 0) { test.skip(true, 'no sessions on this project'); return; }
 
     await navigateTo(tauriPage, `/project/${project.id}/sessions`);
-    await tauriPage.waitForSelector('[data-component="turn-bar"]', 15_000);
-    const attrs = await tauriPage.evaluate(`
-      Array.from(document.querySelectorAll('[data-component="turn-bar"]')).map(el => ({
-        turns:       Number(el.getAttribute('data-turns') ?? 0),
-        corrections: Number(el.getAttribute('data-corrections') ?? 0),
+    await tauriPage.waitForSelector('[data-testid="project-sessions"]', 15_000);
+    await tauriPage.locator('[data-testid="range-90d"]').click();
+    await tauriPage.waitForSelector('[data-session-row]', 15_000);
+
+    // Every row carries a quality tone (data-quality) and the corrections
+    // vocabulary the observatory list uses ("first-try" / "N× rework" / "—").
+    const rows = await tauriPage.evaluate(`
+      Array.from(document.querySelectorAll('[data-session-row]')).map(el => ({
+        quality: el.getAttribute('data-quality') ?? '',
+        text:    el.textContent ?? '',
       }))
-    `) as Array<{ turns: number; corrections: number }>;
-    expect(attrs.length).toBeGreaterThan(0);
-    // Every bar should have turns > 0 (rows without turns don't render one).
-    for (const a of attrs) expect(a.turns).toBeGreaterThan(0);
+    `) as Array<{ quality: string; text: string }>;
+    expect(rows.length).toBeGreaterThan(0);
+    for (const r of rows) {
+      expect(['good', 'bad', 'ugly', 'neutral']).toContain(r.quality);
+      expect(r.text).toMatch(/first-try|× rework|—/);
+    }
   });
 });
 

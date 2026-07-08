@@ -1,6 +1,12 @@
 <script lang="ts">
-  import { PageHeader, EmptyState, Eyebrow } from '$lib/components';
-  import { formatDeltaPct, type ImpactRow } from './aggregate.js';
+  import { EmptyState, Eyebrow, MoeReasoningPanel } from '$lib/components';
+  import {
+    formatDeltaPct,
+    pct,
+    verdictMeta as meta,
+    verdictToneClass as toneClass,
+    type ImpactRow,
+  } from '$lib/impact.js';
 
   let { data } = $props();
 
@@ -22,29 +28,6 @@
     flat.find((r) => r.id === openId) ?? flat[0],
   );
   const openVm = $derived(open ? meta(open.verdict) : null);
-
-  const VERDICT_META = {
-    positive: { glyph: '好', tone: 'success', label: 'positive impact' },
-    neutral:  { glyph: '並', tone: 'ink',     label: 'no measurable effect' },
-    negative: { glyph: '悪', tone: 'warning', label: 'negative impact' },
-    pending:  { glyph: '待', tone: 'ink',     label: 'measurement pending' },
-  } as const;
-
-  function meta(v: ImpactRow['verdict']) {
-    return VERDICT_META[v] ?? VERDICT_META.pending;
-  }
-
-  function pct(v: number | null): string {
-    if (v == null) return '—';
-    return `${Math.round(v * 100)}%`;
-  }
-
-  function toneClass(tone: string, kind: 'text' | 'bg' | 'border' = 'text'): string {
-    const prefix = kind === 'text' ? 'text' : kind === 'bg' ? 'bg' : 'border';
-    if (tone === 'success') return `${prefix}-success`;
-    if (tone === 'warning') return `${prefix}-warning`;
-    return `${prefix}-ink-mute`;
-  }
 </script>
 
 <div class="flex flex-col h-full" data-impact-total={data.total}>
@@ -186,61 +169,8 @@
 
         <!-- MOE reasoning — full panel shape when the daemon carries one -->
         {#if open.reasoning}
-          {@const models = open.reasoning.models ?? []}
-          <div
-            class="py-4 px-5 mb-5 rounded bg-paper-mute border border-paper-edge"
-            style={`border-left: 2px solid var(${openVm?.tone === 'success' ? '--success' : openVm?.tone === 'warning' ? '--warning' : '--ink-mute'});`}
-            data-testid="impact-moe-panel"
-          >
-            <!-- Header row: 議 + eyebrow + consensus summary -->
-            <div class="flex items-center gap-2 mb-2">
-              <span class="kanji text-[13px] text-accent">議</span>
-              <span class="text-xs uppercase tracking-wider text-ink-soft">MOE panel reasoning</span>
-              <span class="flex-1"></span>
-              {#if open.reasoning.consensus}
-                <span class="font-mono text-xs text-ink-soft" data-testid="impact-moe-consensus">
-                  {open.reasoning.consensus}
-                </span>
-              {/if}
-            </div>
-
-            <!-- Headline — 1 line, the sharpest sentence -->
-            {#if open.reasoning.headline}
-              <div class="text-[13px] text-ink font-medium leading-snug mb-2" data-testid="impact-moe-headline">
-                {open.reasoning.headline}
-              </div>
-            {/if}
-
-            <!-- Body — 2-3 sentence explanation -->
-            {#if open.reasoning.body}
-              <p class="text-[13px] text-ink-mute leading-relaxed m-0 mb-3" data-testid="impact-moe-body">
-                {open.reasoning.body}
-              </p>
-            {/if}
-
-            <!-- Per-model breakdown — name + role chip + note -->
-            {#if models.length > 0}
-              <div class="flex flex-col gap-1 pt-3 border-t border-paper-edge" data-testid="impact-moe-models">
-                {#each models as m (m.name)}
-                  <div class="grid grid-cols-[120px_14px_1fr] gap-2 items-start" data-testid={`impact-moe-model-${m.name}`}>
-                    <span class="font-mono text-xs text-ink truncate">{m.name}</span>
-                    <span class="kanji text-[13px] text-accent mt-1">議</span>
-                    <div>
-                      <span class="text-xs uppercase tracking-wider text-ink-soft">{m.role}</span>
-                      <p class="text-xs text-ink-mute leading-relaxed m-0 mt-0.5">{m.note}</p>
-                    </div>
-                  </div>
-                {/each}
-              </div>
-            {/if}
-
-            <!-- Suggested revision — only surfaced on a negative verdict -->
-            {#if open.reasoning.suggestedRevision}
-              <div class="mt-3 py-2 px-3 rounded bg-paper border border-paper-edge" data-testid="impact-moe-revision">
-                <div class="text-xs uppercase tracking-wider text-accent mb-1">Suggested revision</div>
-                <p class="text-xs text-ink-mute leading-relaxed m-0">{open.reasoning.suggestedRevision}</p>
-              </div>
-            {/if}
+          <div class="mb-5">
+            <MoeReasoningPanel reasoning={open.reasoning} tone={openVm?.tone ?? 'ink'} />
           </div>
         {:else}
           <p class="text-sm text-ink-soft italic">
