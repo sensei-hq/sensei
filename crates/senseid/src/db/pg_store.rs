@@ -20,6 +20,7 @@ pub struct ActivityPruneCounts {
     pub assistant_events:  u64,
 }
 
+#[derive(Clone)]
 pub struct InsertMemory {
     pub project_id:    Option<uuid::Uuid>,
     pub scope:         String,
@@ -5331,6 +5332,150 @@ impl PgStore {
         Ok(())
     }
 
+    // ── Dōjō downstream inbox (C7) — the DOWNSTREAM twin of the outbox above ──
+
+    /// Mirror one pulled artifact into `sensei.dojo_inbox` as `pending`, deduped
+    /// by `(membership_id, artifact_signature)`. Returns `true` when a NEW row was
+    /// inserted, `false` when the artifact was already present in any state — so a
+    /// re-pull is idempotent. scope/attribution ride as JSON text cast to jsonb
+    /// (no sqlx json feature needed on the bind side).
+    pub async fn upsert_dojo_inbox(&self, row: &crate::collective::inbox::InboxRow) -> Result<bool, String> {
+        let scope = serde_json::to_string(&row.scope).map_err(|e| e.to_string())?;
+        let attribution = serde_json::to_string(&row.attribution).map_err(|e| e.to_string())?;
+        let inserted: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.dojo_inbox
+                (membership_id, artifact_seq, artifact_signature, remote_id, kind, title, body, scope, attribution)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb)
+             ON CONFLICT (membership_id, artifact_signature) DO NOTHING
+             RETURNING id")
+            .bind(row.membership_id).bind(row.artifact_seq).bind(&row.signature).bind(&row.remote_id)
+            .bind(&row.kind).bind(&row.title).bind(&row.body).bind(&scope).bind(&attribution)
+            .fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(inserted.is_some())
+    }
+
+    /// Advance a membership's downstream pull cursor
+    /// (`sensei.dojo_memberships.last_seq`).
+    pub async fn set_dojo_pull_cursor(&self, membership_id: uuid::Uuid, cursor: i64) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE sensei.dojo_memberships SET last_seq = $2, updated_at = now() WHERE id = $1")
+            .bind(membership_id).bind(cursor).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    const DOJO_INBOX_SELECT: &'static str =
+        "SELECT id, membership_id, kind, title, body, scope, attribution, state, note,
+                applied_memory_id, received_at::text, artifact_signature
+           FROM sensei.dojo_inbox";
+
+    fn map_dojo_inbox_row(
+        row: (uuid::Uuid, uuid::Uuid, String, String, String, serde_json::Value, serde_json::Value,
+              String, Option<String>, Option<uuid::Uuid>, Option<String>, String),
+    ) -> crate::collective::inbox::InboxItem {
+        let (id, membership_id, kind, title, body, scope_v, attribution_v, state, note,
+             applied_memory_id, received_at, artifact_signature) = row;
+        // A malformed jsonb is logged and defaulted, never a silent panic on read.
+        let scope: dojo_protocol::ArtifactScope = serde_json::from_value(scope_v).unwrap_or_else(|e| {
+            tracing::warn!(error = %e, inbox = %id, "dojo inbox: scope jsonb parse failed — defaulting to empty scope");
+            dojo_protocol::ArtifactScope::default()
+        });
+        let attribution: dojo_protocol::Attribution = serde_json::from_value(attribution_v).unwrap_or_else(|e| {
+            tracing::warn!(error = %e, inbox = %id, "dojo inbox: attribution jsonb parse failed — defaulting");
+            dojo_protocol::Attribution {
+                mode: dojo_protocol::AttributionMode::Named,
+                author: None, org: None, anonymous_id: None, dereferenced: false,
+            }
+        });
+        crate::collective::inbox::InboxItem {
+            id, membership_id, kind, title, body, scope, attribution, state, note,
+            applied_memory_id, received_at, artifact_signature,
+        }
+    }
+
+    /// Load one inbox item by id.
+    pub async fn get_dojo_inbox(&self, inbox_id: uuid::Uuid) -> Result<Option<crate::collective::inbox::InboxItem>, String> {
+        let row: Option<(uuid::Uuid, uuid::Uuid, String, String, String, serde_json::Value, serde_json::Value,
+                         String, Option<String>, Option<uuid::Uuid>, Option<String>, String)> =
+            sqlx_core::query_as::query_as(&format!("{} WHERE id = $1", Self::DOJO_INBOX_SELECT))
+            .bind(inbox_id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.map(Self::map_dojo_inbox_row))
+    }
+
+    /// The daemon's downstream inbox across all memberships, ordered for the
+    /// Upgrades list (pinned first, then newest; muted hidden unless
+    /// `include_muted`). Reuses [`crate::collective::inbox::order_and_filter`] so
+    /// the ordering contract has a single home.
+    pub async fn list_dojo_inbox(&self, include_muted: bool) -> Result<Vec<crate::collective::inbox::InboxItem>, String> {
+        let rows: Vec<(uuid::Uuid, uuid::Uuid, String, String, String, serde_json::Value, serde_json::Value,
+                       String, Option<String>, Option<uuid::Uuid>, Option<String>, String)> =
+            sqlx_core::query_as::query_as(&format!("{} ORDER BY received_at DESC", Self::DOJO_INBOX_SELECT))
+            .fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        let items: Vec<_> = rows.into_iter().map(Self::map_dojo_inbox_row).collect();
+        Ok(crate::collective::inbox::order_and_filter(items, include_muted))
+    }
+
+    /// Resolve a local project by name → its id (scope-match for a project-scoped
+    /// artifact). `None` = no such project on this install.
+    pub async fn resolve_project_by_name(&self, name: String) -> Result<Option<uuid::Uuid>, String> {
+        let row: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
+            "SELECT id FROM sensei.projects WHERE name = $1 LIMIT 1")
+            .bind(&name).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.map(|(id,)| id))
+    }
+
+    /// Land an Applied principle/pattern: insert the memory (reusing
+    /// [`Self::insert_memory`] — the shared memory-insert, never reimplemented)
+    /// and flip the inbox row to `applied` + `applied_memory_id`. On a failed
+    /// mark, the just-inserted memory is compensatingly deleted so a retry cannot
+    /// double-land (the two writes are not one transaction because the insert goes
+    /// through the shared helper; the compensating delete preserves idempotency).
+    pub async fn land_dojo_inbox_memory(&self, inbox_id: uuid::Uuid, m: &InsertMemory) -> Result<uuid::Uuid, String> {
+        let memory_id = self.insert_memory(m).await?;
+        if let Err(e) = self.mark_dojo_inbox_applied(inbox_id, memory_id).await {
+            if let Err(de) = sqlx_core::query::query("DELETE FROM sensei.memories WHERE id = $1")
+                .bind(memory_id).execute(&self.pool).await
+            {
+                tracing::error!(error = %de, memory = %memory_id, "dojo inbox: compensating memory delete failed after mark-applied error");
+            }
+            return Err(e);
+        }
+        Ok(memory_id)
+    }
+
+    /// Flip an inbox row to `applied` (guarded so it never clobbers a concurrent
+    /// apply). Errors when the row is unknown or already applied.
+    async fn mark_dojo_inbox_applied(&self, inbox_id: uuid::Uuid, memory_id: uuid::Uuid) -> Result<(), String> {
+        let res = sqlx_core::query::query(
+            "UPDATE sensei.dojo_inbox SET state = 'applied', applied_memory_id = $2, note = NULL, updated_at = now()
+              WHERE id = $1 AND applied_memory_id IS NULL")
+            .bind(inbox_id).bind(memory_id).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        if res.rows_affected() == 0 {
+            return Err(format!("dojo inbox {inbox_id} not found or already applied"));
+        }
+        Ok(())
+    }
+
+    /// Record why an Apply did not land (deferred kind / scope mismatch). The item
+    /// stays `pending`.
+    pub async fn set_dojo_inbox_note(&self, inbox_id: uuid::Uuid, note: String) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE sensei.dojo_inbox SET note = $2, updated_at = now() WHERE id = $1")
+            .bind(inbox_id).bind(&note).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Set an inbox item's state (mute → `muted`, pin → `pinned`). Returns `false`
+    /// when the id is unknown (drives a 404). Never lands anything.
+    pub async fn set_dojo_inbox_state(&self, inbox_id: uuid::Uuid, state: &str) -> Result<bool, String> {
+        if !matches!(state, "pending" | "applied" | "muted" | "pinned") {
+            return Err(format!("invalid dojo_inbox state {state}"));
+        }
+        let res = sqlx_core::query::query(
+            "UPDATE sensei.dojo_inbox SET state = $2, updated_at = now() WHERE id = $1")
+            .bind(inbox_id).bind(state).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(res.rows_affected() > 0)
+    }
+
     pub async fn ensure_test_project(&self, name: &str) -> Result<uuid::Uuid, String> {
         // Namespace fixtures under `_test:` so leaked rows are identifiable
         // (and filterable by the Projects screen) and never masquerade as real
@@ -8909,6 +9054,80 @@ mod tests {
 
         // Cleanup: membership delete cascades its outbox rows; then batch/memory/project.
         assert!(pg.delete_dojo_membership(&mid).await.unwrap());
+        pg.delete_project(&proj).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn dojo_inbox_upsert_apply_and_state_roundtrip() {
+        let Ok(pg) = PgStore::connect_test().await else { return; };
+
+        // A source membership (inbox rows cascade with it on delete).
+        let mid = uuid::Uuid::new_v4();
+        pg.create_dojo_membership(&NewDojoMembership {
+            id: mid, registry_url: "http://localhost:8787".into(), tenant_key: "github/acme".into(),
+            dojo_url: "http://localhost:8787/github/acme".into(), kind: "community".into(),
+            role: "contributor".into(), authenticated_via: "device_code".into(),
+            attribution_default: "anonymous".into(),
+            credential_ref: format!("dojo-{}", uuid::Uuid::new_v4()), sync_status: "healthy".into(),
+        }).await.unwrap();
+
+        let attribution = dojo_protocol::Attribution {
+            mode: dojo_protocol::AttributionMode::Anonymous,
+            author: None, org: None, anonymous_id: Some("anon-1".into()), dereferenced: true,
+        };
+        let row = |sig: &str, title: &str| crate::collective::inbox::InboxRow {
+            membership_id: mid, artifact_seq: 3, signature: sig.into(), remote_id: "art-x".into(),
+            kind: "principle".into(), title: title.into(), body: "keep units testable".into(),
+            scope: dojo_protocol::ArtifactScope::default(), attribution: attribution.clone(),
+        };
+
+        // Upsert is idempotent by (membership, signature): first inserts, re-pull skips.
+        assert!(pg.upsert_dojo_inbox(&row("inbox-sig-1", "prefer small fns")).await.unwrap());
+        assert!(!pg.upsert_dojo_inbox(&row("inbox-sig-1", "prefer small fns")).await.unwrap(), "re-pull dedups");
+        pg.upsert_dojo_inbox(&row("inbox-sig-2", "write tests first")).await.unwrap();
+
+        let items = pg.list_dojo_inbox(true).await.unwrap();
+        let item1 = items.iter().find(|i| i.artifact_signature == "inbox-sig-1").expect("row 1 present").clone();
+        let id2 = items.iter().find(|i| i.artifact_signature == "inbox-sig-2").expect("row 2 present").id;
+        assert_eq!(item1.kind, "principle");
+        assert_eq!(item1.state, "pending");
+        assert_eq!(item1.attribution.anonymous_id.as_deref(), Some("anon-1"));
+
+        // resolve_project_by_name — the scope-match lookup.
+        let proj = pg.create_project("_test:dojo:inbox", None, None).await.unwrap();
+        assert_eq!(pg.resolve_project_by_name("_test:dojo:inbox".into()).await.unwrap(), Some(proj));
+        assert!(pg.resolve_project_by_name(format!("nope-{}", uuid::Uuid::new_v4())).await.unwrap().is_none());
+
+        // Land item1 as a global origin='dojo' memory; the row flips to applied.
+        let mem_input = InsertMemory {
+            project_id: None, scope: "global".into(), scope_filter: None, mtype: "convention".into(),
+            title: item1.title.clone(), content: item1.body.clone(), impact: None,
+            tags: vec!["dojo".into()], triage_signal: None, status: "active".into(),
+            namespace_id: None, enforcement: Some("recommended".into()), origin: Some("dojo".into()), source_id: None,
+        };
+        let memory_id = pg.land_dojo_inbox_memory(item1.id, &mem_input).await.unwrap();
+        let (origin,): (String,) = sqlx_core::query_as::query_as(
+            "SELECT origin FROM sensei.memories WHERE id = $1").bind(memory_id).fetch_one(pg.pool()).await.unwrap();
+        assert_eq!(origin, "dojo");
+        let applied = pg.get_dojo_inbox(item1.id).await.unwrap().unwrap();
+        assert_eq!(applied.state, "applied");
+        assert_eq!(applied.applied_memory_id, Some(memory_id));
+
+        // mute hides from the default list; pin floats to the top; unknown → false.
+        assert!(pg.set_dojo_inbox_state(id2, "muted").await.unwrap());
+        assert!(pg.list_dojo_inbox(false).await.unwrap().iter().all(|i| i.id != id2), "muted hidden by default");
+        assert!(pg.list_dojo_inbox(true).await.unwrap().iter().any(|i| i.id == id2), "include_muted surfaces it");
+        assert!(pg.set_dojo_inbox_state(id2, "pinned").await.unwrap());
+        assert_eq!(pg.list_dojo_inbox(false).await.unwrap()[0].id, id2, "pinned floats to the top");
+        assert!(!pg.set_dojo_inbox_state(uuid::Uuid::new_v4(), "muted").await.unwrap(), "unknown id → false");
+
+        // Cursor advance lives on the membership's last_seq.
+        pg.set_dojo_pull_cursor(mid, 42).await.unwrap();
+        assert_eq!(pg.get_dojo_membership(&mid).await.unwrap().unwrap().last_seq, 42);
+
+        // Cleanup: membership delete cascades inbox rows; then memory + project.
+        assert!(pg.delete_dojo_membership(&mid).await.unwrap());
+        sqlx_core::query::query("DELETE FROM sensei.memories WHERE id = $1").bind(memory_id).execute(pg.pool()).await.unwrap();
         pg.delete_project(&proj).await.unwrap();
     }
 

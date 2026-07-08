@@ -16,8 +16,9 @@
 //!   readability, then re-checked deterministically (the model must not
 //!   reintroduce anything).
 //!
-//! Not here yet: [`promote`] (C8, receiving side) and [`inbox`] (C7,
-//! distribution) — the pipeline owner-files list them, but this chunk (C5)
-//! delivers only [`anonymize`].
+//! Not here yet: [`promote`] (C8, receiving side) — the pipeline owner-files list
+//! it. [`inbox`] (C7, the downstream distribution / Upgrades inbox) now lives
+//! here alongside [`anonymize`].
 
 pub mod anonymize;
+pub mod inbox;
