@@ -2,7 +2,7 @@ import type { PageLoad } from './$types.js';
 import { senseiApi } from '$lib/api.js';
 import { appState } from '$lib/appstate.svelte.js';
 import type { ProjectListItem } from '$lib/types.js';
-import { bucketImpact, type ImpactRow } from './aggregate.js';
+import { bucketImpact, type ImpactRow } from '$lib/impact.js';
 
 export const load: PageLoad = async () => {
   const api = senseiApi(appState.port);
@@ -21,6 +21,7 @@ export const load: PageLoad = async () => {
         projectName: p.name,
         title: r.title,
         status: r.status,
+        actionType: r.actionType ?? null,
         verdict: (r.verdict ?? 'pending') as ImpactRow['verdict'],
         baselineFtr: r.baselineFtr,
         currentFtr:  r.currentFtr,

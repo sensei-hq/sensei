@@ -562,6 +562,89 @@ develop commits: d62edf3c (clippy chore) + 96b1349a (Today pipeline) + a43db8e2 
 DOING: commit run-state → make bump v=patch (bundle now includes insight_copy.ddl so fresh installs get
 the table) → merge develop→main → push → back to develop.
 
+★ INSIGHT-COPY ROLLOUT SHIPPED: v0.2.25 on main (`b2382855`), develop @ `47fcc41f`. subtrees synced.
+
+BUILD C ✅ DONE + COMMITTED `5d4f89c5` (2026-07-08): get_project_overview_stats (pg_store.rs ~4414) now
+DERIVES readyToShare + toMerge (was hardcoded 0). NO DDL, NO new status (honors "don't invent a status").
+memory_scope ladder = {global,project,stack,task_type,module} (widens→global). No signature col.
+  readyToShare = status::text IN (active,reinforced,battle_tested) AND scope::text<>'global' (promotable).
+  toMerge = sum of memories sharing lower(btrim(title)) within project (dup-title groups>1; folded-title
+    proxy, no signature). sum→::bigint (numeric won't map to i64). SQL validated live (sensei: 1/1/0).
+  clippy 0, 1192 tests. NOT deployed yet (batch w/ next screen); running daemon pid 20630 lacks Build C.
+
+═══ PHASE 2 "make the 6 shipped screens real" = ✅ COMPLETE (insight-copy Today/Overview/Insights +
+memory counts). Rec generation already exists (337 recs) — no generator gap. ═══
+NEXT = PHASE 3 overflow screens (NEW: backend endpoint + frontend svelte each, gated loop):
+  observatory-memories, project-sessions, project-memories. project-sessions lowest-risk
+  (list_all_sessions already takes ?project=). Frontend=svelte:svelte-file-editor MANDATORY; shared
+  api.ts/types.ts/state → DON'T parallelize frontend (conflict). 24 named tokens only. Next deploy =
+  make install-debug (picks up Build C). THEN Phase 4 breadth (~30) → Phase 5 Dōjō (Supabase+kavach).
+
+═══ PROJECT-WINDOW AUDIT (2026-07-08, daemon pid 31736 = current develop deployed, Build C LIVE
+confirmed: sensei overview memories {total 1, readyToShare 1, toMerge 0}) ═══
+KEY: NO frontend stubs — all 10 project-window screens fetch real /api/projects/{id}/* endpoints. Gaps
+are SPEC-DIVERGENCE, not missing screens. Per-screen:
+  overview      REAL (Build C counts now correct; sensei single-folder so multi-repo chip N/A)
+  traceability  REAL-minor (/drift 200 items rich; missing coverage-summary + confidence/auto-fix chips;
+                200-broken/0-drifted classification skew worth a glance)
+  sessions      SPEC-GAP: plain filter+table, spec wants observatory-sessions chart variants (trend/
+                stream/constellation/bands + range chips). Live rows task=""/model=null (capture gap).
+  memories      SPEC-GAP: has batch-share flow; missing generalise action (POST /memories/{id}/generalise),
+                ready-to-share hero, generalised chip, widen-scope ladder.
+  about         SPEC-GAP: edits 5 identity fields; missing folder membership add/remove, split-project,
+                dōjō binding strip, icon picker w/ inferred source.
+  ★impact       SPEC-GAP → BUILDING NOW: READ-PATH BUG — loads getProjectRecommendations(id,'accepted')=0
+                rows → EMPTY, while 7 REAL measured verdicts sit UNUSED at getProjectImpact /api/projects/
+                {id}/impact (camelCase baselineFtr/currentFtr/ftrDelta/reasoning MOE panel). Delegated to
+                svelte agent: repoint loader + render verdicts+reasoning + FTR trend (from verdict points
+                if timestamps exist, else defer chart to backend series). Keep manual impact-log lane.
+  instruments   SPEC-GAP (larger, partly parked): services real+toggle; /mcp-tool-stats 19 rows all 0
+                calls (registry↔usage join — Slot-2 park); not the 3-tab Playground/Replay/Health shell.
+  libraries     SPEC-GAP: /libraries 62 real browse/search/conflict; MISSING primary action = one-click
+                wrap (POST .../libraries/{id}/wrap + scaffold gen + wrap-me hero + docs button).
+  patterns      SPEC-GAP (gated on upstream): /patterns followed=1 anti=208 raw churn (null confidence/
+                desc/family); missing family taxonomy filter + state filter + promote-to-rule.
+RANKED next after impact: 2.libraries wrap-action (new endpoint+scaffold gen), 3.sessions chart-variant
+port (reuse observatory charts), 4.patterns family+promote (needs better upstream classification first).
+
+★ IMPACT ✅ DONE + COMMITTED `b19cb0e4` (2026-07-08): read-path repointed getProjectRecommendations
+('accepted'=0)→getProjectImpact (7 verdicts render w/ badge + baseline→current FTR + MOE reasoning
+panel). DRY WIN: promoted verdict→tone + bucketing → $lib/impact.ts, MOE panel → $lib/components/
+MoeReasoningPanel.svelte; observatory-impact peer now consumes both (aggregate.ts deleted). svelte-check
+0, 867 tests (+18). Manual impact-log lane kept. TREND CHART DEFERRED (honest): all 7 verdicts=pending,
+baseline/current FTR null, no applied_at → nothing to plot until recs accepted+MeasureVerdicts populates
+applied_at+FTR = DAEMON FOLLOWUP. NOT deployed (frontend; batch w/ next app-dev). NOT merged to main.
+
+★ SESSIONS ⏳ BUILDING (svelte agent): port observatory chart variants (trend/stream/constellation/bands
++ range chips + totals + quality tally) to project-sessions, DRY-promote observatory charts+SessionRow+
+sessions-digest → $lib (repoint observatory too, keep its e2e markers). Data = /api/sessions?project=&
+range= (already supported). folder-role chip DEFERRED (list_all_sessions lacks folder_role; sensei is
+single-folder) = small daemon followup. Row-click→Replay. No synthetic rows.
+
+DAEMON FOLLOWUPS accumulating (batch into a backend session later):
+ - impact: populate verdict applied_at + baselineFtr/currentFtr on accept+MeasureVerdicts (unblocks trend chart)
+ - sessions: add folder_role to list_all_sessions (LEFT JOIN sensei.folders) for multi-repo chip
+ - capture gap: session task=""/model=null on live rows
+ - (earlier) insight-copy verbose-rec pass-rate, warm WARN reason, 30d eviction; project_patterns DDL
+   idempotency; /api/gateway/infer temperature hardcoded.
+DEPLOY/MERGE cadence: frontend screen fixes (impact, sessions) are on develop uncommitted-to-main;
+batch a develop→main merge + app-dev visual e2e after a few screens land.
+
+★ SESSIONS ✅ DONE + COMMITTED `7313e900` (2026-07-08): DRY-promoted observatory charts+SessionRow+
+sessions-digest → $lib (git renames), rebuilt project-sessions w/ 4 chart variants + range chips scoped
+/api/sessions?project=&range=. Observatory unchanged (import-only diff, e2e markers kept). svelte-check
+0, 871 tests. folderRole chip multi-repo-ready (renders only when populated) — daemon followup: add
+folder_role to list_all_sessions LEFT JOIN sensei.folders. e2e specs repointed (NOT run — needs Tauri).
+
+MILESTONE CHECKPOINT (2026-07-08): merging Build C `5d4f89c5` + impact `b19cb0e4` + sessions `7313e900`
+→ main + bump. Frontend verified at unit/check/autofixer level (incremental bar); FULL Tauri visual
+e2e (make test-app-e2e = expensive app-e2e-build) BATCHED for later once more screens land. e2e mode=
+'tauri' needs pre-built .app (no vite dev server). Then NEXT = memories (big: DDL generalised flag +
+generalised_content + POST generalise endpoint [LLM rewrite, reuse insight-copy/reasoning pattern] +
+ready-to-share hero + widen-scope submenu [existing /api/knowledge/memories/{id}/promote]) OR libraries
+wrap-action (audit #2; needs wrap endpoint+scaffold-gen, "wrap" semantics = design-fork, check spec).
+
+OLD NOTES BELOW (pre-insight-copy, historical) ↓↓↓
 THEN Build C (memory ready_to_share/to_merge read-path derivation per the design-fork note above).
 Build-B emission points located: observatory_home.rs pure fns early_hero/mature_hero/steady_hero/
 rec_to_insight_card (return serde_json::Value; keep as FALLBACK producers, route their koan+body/text

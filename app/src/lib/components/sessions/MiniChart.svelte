@@ -3,7 +3,7 @@
   // the five chart-ish modes (trend / stream / constellation / bands / pulse);
   // the sixth cycler mode, `numbers`, is the resting stat trio drawn by the
   // hero itself. `pulse` is reachable ONLY through the cycler — never a chip.
-  import type { DayBucket, EnrichedSession, QualityTone } from './sessions-digest.js';
+  import type { DayBucket, EnrichedSession, QualityTone } from '$lib/sessions-digest.js';
 
   type MiniChartMode = 'trend' | 'stream' | 'constellation' | 'bands' | 'pulse';
 

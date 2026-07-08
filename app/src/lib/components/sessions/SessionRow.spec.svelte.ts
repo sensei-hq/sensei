@@ -17,6 +17,7 @@ type Props = Partial<{
   quality: 'good' | 'bad' | 'ugly' | 'neutral';
   time: string;
   duration: string;
+  folderRole: string | null;
   onselect: (id: string) => void;
 }>;
 
@@ -83,6 +84,21 @@ describe('SessionRow — meta', () => {
   it('falls back to "unlinked" for a project-less session', () => {
     const m = mount({ project: '' });
     expect(row(m).textContent ?? '').toContain('unlinked');
+  });
+});
+
+describe('SessionRow — folder-role chip (multi-repo)', () => {
+  it('renders the folder-role chip when folderRole is populated', () => {
+    const m = mount({ folderRole: 'backend' });
+    const chip = row(m).querySelector('[data-folder-role]');
+    expect(chip).toBeTruthy();
+    expect(chip?.getAttribute('data-folder-role')).toBe('backend');
+    expect(chip?.textContent).toContain('backend');
+  });
+
+  it('omits the chip when folderRole is absent (single-folder / observatory)', () => {
+    const m = mount({ folderRole: null });
+    expect(row(m).querySelector('[data-folder-role]')).toBeNull();
   });
 });
 
