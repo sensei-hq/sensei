@@ -227,6 +227,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/knowledge/memories",                get(knowledge::list_memories).post(knowledge::save_memory))
         .route("/api/knowledge/memories/{id}",           get(knowledge::get_memory))
         .route("/api/knowledge/memories/{id}/promote",   post(knowledge::promote_memory))
+        .route("/api/knowledge/memories/{id}/generalise", post(knowledge::generalise_memory))
         .route("/api/knowledge/promotion-candidates",    get(knowledge::promotion_candidates))
         .route("/api/knowledge/proposals",               post(knowledge::propose_memory))
         .route("/api/knowledge/proposals/{id}/accept",   post(knowledge::accept_proposal))
