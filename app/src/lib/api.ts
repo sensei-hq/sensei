@@ -3,14 +3,16 @@ import type {
   SolutionGraphResponse, SolutionAnalysis, InferredRole,
   IndexQueueStatus, DirtyStatus, IndexError,
   FunctionDetail, TypeDetail, CommunityInfo, DocDrift,
-  LibEntry, LibDoc, DepVersion, SessionData,
+  LibEntry, LibDoc, DepVersion, SessionData, SessionsDigest,
   ProjectMemory, DriftItem, PatternEntry, Recommendation,
   ProjectSession, CallFlowModule, CallFlowCall,
   ProjectListItem,
   KnowledgeSource, NewKnowledgeSourceBody, SyncStats,
   McpToolManifest, SessionToolTimeline, MemoryShareBatch, ImpactVerdictEntry,
-  ProjectMcpToolStat, ToolSignal, ProjectService, ToolInsight,
+  ProjectMcpToolStat, ToolSignal, ProjectService, ToolInsight, ToolsHealth,
   SessionReplayResponse, McpServerRow, McpServerToolsManifest,
+  ObservatoryToday, ObservatoryFtr, ProjectOverview,
+  InsightsBoard,
 } from './types.js';
 import type {
   MemoryListResponse, MemoryDetail, ContextResponse,
@@ -358,10 +360,63 @@ export function senseiApi(port: number) {
         `/api/projects/${enc(id)}/recommendations/${enc(recId)}/reject`, {}, { ok: false },
       ),
 
+    // ── Observatory · Insights (Slot 5) ─────────────────────────────────
+    // Server-side triage aggregator: bundles recs, memories, patterns and
+    // corrections pre-bucketed into Now / Soon / Settled. `project` scopes
+    // all three columns to one project (name-or-uuid). Fallback is the empty
+    // board so a daemon hiccup renders the quiet-state, never a broken screen.
+    getInsights: (project?: string) =>
+      get<InsightsBoard>(
+        `/api/insights${project ? `?project=${enc(project)}` : ''}`,
+        {
+          counts: { now: 0, soon: 0, settled: 0 },
+          projects: [], recommendations: [], memories: [], patterns: [], corrections: [],
+        },
+      ),
+
     getProjectSessions: (id: string, limit = 50) =>
       get<{ sessions: ProjectSession[] }>(
         `/api/projects/${enc(id)}/sessions?limit=${limit}`, { sessions: [] }
       ),
+
+    // ── Project window · Overview (Slot 4) ──────────────────────────────
+    // Server-assembled landing pane: header + top rec + stats + recent
+    // sessions in one call. Fallback is the all-quiet shape so a daemon
+    // hiccup renders the calm empty pane, never a broken screen.
+    getProjectOverview: (id: string) =>
+      get<ProjectOverview>(`/api/projects/${enc(id)}/overview`, {
+        project: {
+          id, name: '', kanji: '場', client: null, goal: null,
+          ftr: 0, warn: false, sessions7d: 0, folders: [],
+        },
+        top_recommendation: null,
+        stats: {
+          sessions7d: 0, sessions7dCorrected: 0,
+          memories: { total: 0, readyToShare: 0, toMerge: 0 },
+          docDrift: { open: 0, referencedDocs: 0 },
+        },
+        recentSessions: [],
+      }),
+
+    // ── Observatory · Today (home screen) ───────────────────────────────
+    // The daemon assembles the whole screen — greeting, maturity gate, hero
+    // koan, insights, adopted lane, recent sessions. The screen renders it;
+    // it does not decide early-vs-mature. Fallback is the early state so a
+    // daemon hiccup degrades to "still listening", never a broken screen.
+    getObservatoryToday: () =>
+      get<ObservatoryToday>('/api/observatory/today', {
+        greeting: '',
+        today: '',
+        dataMaturity: 'early',
+        hero: { kanji: '観', koan: '', body: '', impact: null, action: null, source: '', noticed: '' },
+        insights: [],
+        adopted: [],
+        recentSessions: [],
+      }),
+
+    // Projection over sensei.ftr_daily → header chip + 14-bar strip.
+    getObservatoryFtr: () =>
+      get<ObservatoryFtr>('/api/observatory/ftr', { ftr14d: 0, ftr14dPrev: 0, ftrTrend: [], sessions7d: 0 }),
 
     // ── Observatory chart data ──────────────────────────────────────────
 
@@ -407,6 +462,12 @@ export function senseiApi(port: number) {
       get<{ insights: ToolInsight[] }>(
         '/api/observatory/tool-insights', { insights: [] }
       ),
+
+    // L1 source grid for Instruments · Health — one card per registered
+    // source (builtin tool set or probed MCP server) with the share of
+    // registered tools actually invoked in the last 14 days.
+    getToolsHealth: () =>
+      get<ToolsHealth>('/api/instruments/tools-health', { sources: [] }),
 
     getLibraryUsage: (id: string) =>
       get<{ usage: Array<{ library_name: string; folder: string; version_used: string | null; import_count: number }> }>(
@@ -511,6 +572,18 @@ export function senseiApi(port: number) {
     // ── Sessions ─────────────────────────────────────────────────────────
     getSessions: () =>
       get<SessionData>('/api/sessions', { stats: null, sessions: [], toolUsage: [], benchmarkPairs: [] }),
+
+    // Observatory · Sessions digest (Slot 6). Same `/api/sessions` handler,
+    // now scoped by an optional `range` (7d|30d|90d) and/or `project`
+    // (name-or-uuid). Both are additive server-side. Fallback is the empty
+    // digest so a daemon hiccup renders the quiet state, never a broken screen.
+    getSessionsDigest: (range?: string, project?: string) => {
+      const p = new URLSearchParams();
+      if (range) p.set('range', range);
+      if (project) p.set('project', project);
+      const qs = p.toString() ? `?${p.toString()}` : '';
+      return get<SessionsDigest>(`/api/sessions${qs}`, { sessions: [] });
+    },
 
     getMetrics: (project: string) =>
       get<Record<string, unknown>>(`/api/metrics/${encodeURIComponent(project)}`, {}),

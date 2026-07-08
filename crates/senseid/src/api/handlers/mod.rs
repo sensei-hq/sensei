@@ -9,6 +9,7 @@ pub(crate) mod query;
 pub(crate) mod mcp;
 pub(crate) mod mcp_manifests;
 pub(crate) mod tool_signals;
+pub(crate) mod tools_health;
 pub(crate) mod gateway;
 pub(crate) mod scan_events;
 pub(crate) mod project_detail;

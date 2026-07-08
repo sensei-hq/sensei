@@ -30,7 +30,7 @@ const { useState: iUseS, useMemo: iUseM } = React;
 // Shared shell
 // ═══════════════════════════════════════════════════════════════════════
 function InstrumentsShell({ activeTab, onTab, embedded = false,
-                             simple = false,
+                             simple = false, subNav,
                              kanji, tagline, sub, chip, children }) {
   const tabs = [
     { id: "playground", kanji: "具", label: "Playground",
@@ -145,6 +145,8 @@ function InstrumentsShell({ activeTab, onTab, embedded = false,
         </>
       )}
 
+      {subNav}
+
       <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex',
                      flexDirection: 'column' }}>
         {children}
@@ -159,7 +161,7 @@ function InstrumentsShell({ activeTab, onTab, embedded = false,
 // within the selected MCP. Kind chips (all/action/query) + search.
 // ═══════════════════════════════════════════════════════════════════════
 function InstrumentsPlayground({ activeTab = "playground", onTab = () => {},
-                                  embedded = false, simple = false } = {}) {
+                                  embedded = false, simple = false, subNav } = {}) {
   const I = window.INSTRUMENTS;
   const [mcpId, setMcpId] = iUseS("sensei");
   const [kind, setKind]   = iUseS("all");  // all · action · query
@@ -180,6 +182,7 @@ function InstrumentsPlayground({ activeTab = "playground", onTab = () => {},
 
   return (
     <InstrumentsShell activeTab={activeTab} onTab={onTab} embedded={embedded} simple={simple}
+      subNav={subNav}
       kanji={mcp.kanji}
       tagline={`${mcp.name} · ${mcp.tagline}`}
       sub={mcp.id === "sensei"
@@ -601,7 +604,7 @@ function EmptyFocus() {
 // No "what assistant did next" semantic — just the transaction.
 // ═══════════════════════════════════════════════════════════════════════
 function InstrumentsReplay({ activeTab = "replay", onTab = () => {},
-                              embedded = false, simple = false } = {}) {
+                              embedded = false, simple = false, subNav } = {}) {
   const all = window.SENSEI_DATA.sessions;
   const signals = window.MCP_SIGNALS.sessions;
   const sessionIds = Object.keys(signals);
@@ -614,6 +617,7 @@ function InstrumentsReplay({ activeTab = "replay", onTab = () => {},
 
   return (
     <InstrumentsShell activeTab={activeTab} onTab={onTab} embedded={embedded} simple={simple}
+      subNav={subNav}
       kanji="録"
       tagline="Every instrument call, in order."
       sub="Step through the tools the assistant reached for during a session. Pure request + response — what was asked, what came back, how long it took."
@@ -853,16 +857,44 @@ function inferKind(toolName) {
 // INSIGHTS — unchanged, re-exported with new label
 // ═══════════════════════════════════════════════════════════════════════
 function InstrumentsHealth({ activeTab = "health", onTab = () => {},
-                              embedded = false, simple = false } = {}) {
+                              embedded = false, simple = false, subNav } = {}) {
   const I = window.MCP_SIGNALS.insights;
   const [window_, setWindow] = iUseS(I.window);
   const [focusTool, setFocusTool] = iUseS(null);
+  const [activeMcp, setActiveMcp] = iUseS(null);   // null = MCP overview, else drill-down
+
+  // Assemble the per-MCP rollup from meta + Sensei tools + third-party tools.
+  const senseiTools = I.toolUsage.map(t => ({ ...t, mcp: t.mcp || "sensei" }));
+  const allTools = [...senseiTools, ...(I.thirdPartyUsage || [])];
+  const mcpRows = I.mcpMeta.map(m => {
+    const tools = allTools.filter(t => t.mcp === m.id)
+                          .slice().sort((a, b) => b.calls - a.calls);
+    const invoked = tools.filter(t => t.calls > 0).length;
+    const calls = tools.reduce((s, t) => s + t.calls, 0);
+    const warn = tools.filter(t => t.verdict === "warn").length;
+    const dormant = tools.filter(t => t.calls === 0).length;
+    const wsum = calls || 1;
+    const ftrDelta = tools.reduce((s, t) => s + t.ftrDelta * t.calls, 0) / wsum;
+    return {
+      ...m, tools, toolsTotal: tools.length, invoked, calls, warn, dormant, ftrDelta,
+      coverage: tools.length ? invoked / tools.length : 0
+    };
+  });
+  const drill = activeMcp ? mcpRows.find(m => m.id === activeMcp) : null;
+
+  const enterMcp = (id) => { setActiveMcp(id); setFocusTool(null); };
+  const exitMcp = () => { setActiveMcp(null); setFocusTool(null); };
 
   return (
     <InstrumentsShell activeTab={activeTab} onTab={onTab} embedded={embedded} simple={simple}
+      subNav={subNav}
       kanji="健"
-      tagline="Which instruments earn their keep — and what to change."
-      sub="Aggregated across every session in the window. Usage alone isn't success; the signal is whether the assistant DID something with the response, and whether sessions that touched the tool landed first-try more often than ones that didn't."
+      tagline={drill
+        ? `${drill.name} · which tools earn their keep`
+        : "Which instruments earn their keep — and what to change."}
+      sub={drill
+        ? `${drill.invoked} of ${drill.toolsTotal} tools invoked this window · ${drill.calls.toLocaleString()} calls. Sorted by how often each is called; the split shows whether the assistant acted on the response.`
+        : "Start at the server level: what share of each MCP's registered tools is the assistant actually invoking? Coverage alone isn't success — the signal is whether the tools that get called change what the assistant does. Open a server to see the per-tool breakdown."}
       chip={
         <div style={{
  display: 'flex', background: 'var(--paper-2)', borderRadius: 5, border: 'var(--hairline)'
@@ -880,107 +912,321 @@ function InstrumentsHealth({ activeTab = "health", onTab = () => {},
       }>
 
       <main style={{ overflow: 'auto' }} className="pt-5 pb-6 px-7" >
-        <div style={{
- display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)'
-}} className="gap-3 mb-5" >
-          <Kpi kanji="録" label="sessions analyzed"
-               value={I.sessionsAnalyzed} hint={window_}/>
-          <Kpi kanji="計" label="total tool calls"
-               value={I.deltas.totalCalls.toLocaleString()}
-               delta={`${I.deltas.totalCallsTrend > 0 ? "+" : ""}${Math.round(I.deltas.totalCallsTrend * 100)}%`}
-               deltaTone={I.deltas.totalCallsTrend > 0 ? "good" : "warn"}/>
-          <Kpi kanji="一" label="first-try rate"
-               value={`${Math.round(I.deltas.ftrThisWindow * 100)}%`}
-               delta={`${I.deltas.ftrTrend > 0 ? "+" : ""}${Math.round(I.deltas.ftrTrend * 100)} pts`}
-               deltaTone={I.deltas.ftrTrend > 0 ? "good" : "warn"}/>
-          <Kpi kanji="警" label="tools with warnings"
-               value={I.deltas.warnTools} hint="ignored · low usage"
-               tone={I.deltas.warnTools > 0 ? "warn" : "neutral"}/>
-          <Kpi kanji="眠" label="dormant tools"
-               value={I.deltas.unusedTools} hint="0 calls this window"
-               tone={I.deltas.unusedTools > 0 ? "warn" : "neutral"}/>
-        </div>
+        {drill
+          ? <McpDrilldown m={drill} focusTool={focusTool} setFocusTool={setFocusTool}
+                          onBack={exitMcp}/>
+          : <McpOverview I={I} mcpRows={mcpRows} onOpen={enterMcp}/>}
+      </main>
+    </InstrumentsShell>
+  );
+}
 
-        <div className="mb-5" >
-          <div style={{
- display: 'flex', alignItems: 'baseline',
-                         justifyContent: 'space-between'
+// ─── Level 1 — the MCP overview ────────────────────────────────────────
+function McpOverview({ I, mcpRows, onOpen }) {
+  const connected = mcpRows.filter(m => m.connected);
+  const totalTools = connected.reduce((s, m) => s + m.toolsTotal, 0);
+  const totalInvoked = connected.reduce((s, m) => s + m.invoked, 0);
+  const overallCoverage = totalTools ? Math.round((totalInvoked / totalTools) * 100) : 0;
+
+  // Signals split: warn/opportunity/win stay as their own actionable cards;
+  // every dormant tool collapses into one summary card so the list stays short.
+  const actionable = I.signals.filter(s => s.kind !== "unused");
+  const dormantTools = connected
+    .flatMap(m => m.tools.filter(t => t.calls === 0).map(t => shortName(t.tool)));
+
+  return (
+    <>
+      <div style={{
+ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)'
+}} className="gap-3 mb-5" >
+        <Kpi kanji="接" label="servers connected"
+             value={`${connected.length} of ${mcpRows.length}`}
+             hint={`${mcpRows.length - connected.length} available`}/>
+        <Kpi kanji="具" label="tool coverage"
+             value={`${overallCoverage}%`}
+             hint={`${totalInvoked} of ${totalTools} invoked`}/>
+        <Kpi kanji="計" label="total tool calls"
+             value={I.deltas.totalCalls.toLocaleString()}
+             delta={`${I.deltas.totalCallsTrend > 0 ? "+" : ""}${Math.round(I.deltas.totalCallsTrend * 100)}%`}
+             deltaTone={I.deltas.totalCallsTrend > 0 ? "good" : "warn"}/>
+        <Kpi kanji="一" label="first-try rate"
+             value={`${Math.round(I.deltas.ftrThisWindow * 100)}%`}
+             delta={`${I.deltas.ftrTrend > 0 ? "+" : ""}${Math.round(I.deltas.ftrTrend * 100)} pts`}
+             deltaTone={I.deltas.ftrTrend > 0 ? "good" : "warn"}/>
+      </div>
+
+      <div className="mb-5" >
+        <div style={{
+ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between'
 }} className="mb-3" >
-            <h3 className="display m-0" style={{ fontSize: 15, fontWeight: 400 }}>
-              Signals
-              <span style={{ fontSize: 13, color: 'var(--ink-3)' }} className="ml-2" >
-                · what the data suggests you change
-              </span>
-            </h3>
-            <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
-              {I.signals.length} signals
+          <h3 className="display m-0" style={{ fontSize: 15, fontWeight: 400 }}>
+            Servers
+            <span style={{ fontSize: 13, color: 'var(--ink-3)' }} className="ml-2" >
+              · what share of each server's tools is in use
             </span>
-          </div>
-          <div style={{
+          </h3>
+          <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+            open a server to drill in →
+          </span>
+        </div>
+        <div style={{
+ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))'
+}} className="gap-3" >
+          {mcpRows.map(m => <McpCard key={m.id} m={m} onOpen={onOpen}/>)}
+        </div>
+      </div>
+
+      <div className="mb-5" >
+        <div style={{
+ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between'
+}} className="mb-3" >
+          <h3 className="display m-0" style={{ fontSize: 15, fontWeight: 400 }}>
+            Signals
+            <span style={{ fontSize: 13, color: 'var(--ink-3)' }} className="ml-2" >
+              · what the data suggests you change
+            </span>
+          </h3>
+          <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+            {actionable.length} to act on
+          </span>
+        </div>
+        <div style={{
  display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))'
 }} className="gap-3" >
-            {I.signals.map((s, i) => <SignalCard key={i} s={s}/>)}
+          {actionable.map((s, i) => <SignalCard key={i} s={s}/>)}
+          {dormantTools.length > 0 && <DormantSummary tools={dormantTools}/>}
+        </div>
+      </div>
+    </>
+  );
+}
+
+// One server card — headline is the % of its tools being invoked.
+function McpCard({ m, onOpen }) {
+  const pct = Math.round(m.coverage * 100);
+  const disabled = !m.connected;
+  return (
+    <button onClick={() => !disabled && onOpen(m.id)}
+            disabled={disabled}
+            style={{
+ width: '100%', textAlign: 'left',
+              background: 'var(--paper-2)', border: 'var(--hairline)', borderRadius: 8,
+              cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.55 : 1,
+              display: 'flex', flexDirection: 'column',
+              transition: 'background 0.12s'
+}}
+            onMouseEnter={(e) => { if (!disabled) e.currentTarget.style.background = 'var(--paper-3)'; }}
+            onMouseLeave={(e) => { if (!disabled) e.currentTarget.style.background = 'var(--paper-2)'; }}
+            className="py-3 px-4 gap-3" >
+      <div style={{ display: 'flex', alignItems: 'flex-start' }} className="gap-2" >
+        <span className="kanji" style={{ fontSize: 22, color: 'var(--accent)', lineHeight: 1,
+                      width: 26, textAlign: 'center', flexShrink: 0 }}>{m.kanji}</span>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 15, color: 'var(--ink)' }}>{m.name}</div>
+          <div className="mono mt-1" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+            {m.publisher} · {m.toolsTotal} tools
           </div>
         </div>
+        {disabled && (
+          <span className="mono" style={{ fontSize: 11, color: 'var(--ink-4)',
+                        textTransform: 'uppercase', letterSpacing: '0.12em' }}>off</span>
+        )}
+      </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1.6fr 1fr' }} className="gap-5" >
-          <div>
-            <div style={{
- display: 'flex', alignItems: 'baseline',
-                           justifyContent: 'space-between'
+      {m.connected ? (
+        <>
+          <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2" >
+            <span className="display" style={{ fontSize: 28, fontWeight: 400,
+                          color: pct >= 70 ? 'var(--ink)' : 'var(--warning)',
+                          fontFeatureSettings: '"tnum"' }}>{pct}%</span>
+            <span style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+              of tools invoked · {m.invoked}/{m.toolsTotal}
+            </span>
+          </div>
+          <CoverageBar invoked={m.invoked} total={m.toolsTotal}/>
+          <div style={{ display: 'flex', borderTop: 'var(--hairline)',
+                         color: 'var(--ink-3)', fontFeatureSettings: '"tnum"' }}
+               className="gap-3 pt-2 mono" >
+            <span style={{ fontSize: 11 }}>{m.calls.toLocaleString()} calls</span>
+            <span style={{ fontSize: 11, color: m.ftrDelta >= 0 ? 'var(--success)' : 'var(--warning)' }}>
+              {m.ftrDelta >= 0 ? "+" : ""}{Math.round(m.ftrDelta * 100)} pts ftr
+            </span>
+            {m.warn > 0 && (
+              <span style={{ fontSize: 11, color: 'var(--warning)' }}>{m.warn} warn</span>
+            )}
+            {m.dormant > 0 && (
+              <span style={{ fontSize: 11, color: 'var(--ink-4)' }}>{m.dormant} dormant</span>
+            )}
+          </div>
+        </>
+      ) : (
+        <div style={{ fontSize: 11, color: 'var(--ink-3)', lineHeight: 1.5,
+                       borderTop: 'var(--hairline)' }} className="pt-2" >
+          {m.note}
+        </div>
+      )}
+    </button>
+  );
+}
+
+// The invoked/idle coverage bar for a server card.
+function CoverageBar({ invoked, total }) {
+  return (
+    <div style={{ display: 'flex', height: 6, borderRadius: 3, overflow: 'hidden',
+                   background: 'var(--paper-3)', gap: 2 }}>
+      {Array.from({ length: total }).map((_, i) => (
+        <div key={i} style={{ flex: 1,
+                      background: i < invoked ? 'var(--accent)' : 'var(--paper-3)',
+                      opacity: i < invoked ? 1 : 0.5 }}/>
+      ))}
+    </div>
+  );
+}
+
+// ─── Level 2 — the per-tool drill-down for one server ──────────────────
+function McpDrilldown({ m, focusTool, setFocusTool, onBack }) {
+  const maxCalls = Math.max(1, ...m.tools.map(t => t.calls));
+  return (
+    <>
+      <button onClick={onBack}
+              style={{
+ background: 'transparent', border: 'none', cursor: 'pointer',
+                fontSize: 13, color: 'var(--ink-3)'
+}} className="p-0 mb-4" >
+        ← all servers
+      </button>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr' }} className="gap-5" >
+        {/* Calls-per-tool chart — which tools are called more often */}
+        <div>
+          <div style={{
+ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between'
 }} className="mb-3" >
-              <h3 className="display m-0" style={{ fontSize: 15, fontWeight: 400 }}>
-                Per-tool usage
-              </h3>
-              <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
-                {I.toolUsage.length} tools · sorted by calls
-              </span>
-            </div>
-            <div style={{ border: 'var(--hairline)', borderRadius: 7,
-                           overflow: 'hidden', background: 'var(--paper)' }}>
-              <ToolRowHeader/>
-              {I.toolUsage.map((t, idx) => (
-                <ToolUsageRow key={t.tool} t={t}
-                              focus={focusTool === t.tool}
-                              onFocus={() => setFocusTool(
-                                focusTool === t.tool ? null : t.tool
-                              )}
-                              last={idx === I.toolUsage.length - 1}/>
+            <h3 className="display m-0" style={{ fontSize: 15, fontWeight: 400 }}>
+              Calls per tool
+            </h3>
+            <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+              {m.calls.toLocaleString()} calls · this window
+            </span>
+          </div>
+          <div style={{ border: 'var(--hairline)', borderRadius: 7,
+                         background: 'var(--paper)' }} className="py-3 px-4" >
+            <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-3" >
+              {m.tools.map(t => (
+                <CallsBar key={t.tool} t={t} max={maxCalls}
+                          active={focusTool === t.tool}
+                          onFocus={() => setFocusTool(focusTool === t.tool ? null : t.tool)}/>
               ))}
             </div>
           </div>
+        </div>
 
-          <div>
-            <h3 className="display mt-0 mb-3" style={{
- fontSize: 15, fontWeight: 400
-}}>
-              By project
-            </h3>
-            <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-2" >
-              {I.byProject.map(p => <ProjectUsageRow key={p.project} p={p}/>)}
+        {/* Server summary rail */}
+        <div>
+          <h3 className="display mt-0 mb-3" style={{ fontSize: 15, fontWeight: 400 }}>
+            {m.name}
+          </h3>
+          <div style={{ background: 'var(--paper-2)', border: 'var(--hairline)',
+                         borderRadius: 7 }} className="py-3 px-4" >
+            <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2 mb-2" >
+              <span className="display" style={{ fontSize: 40, fontWeight: 300,
+                            color: 'var(--ink)', fontFeatureSettings: '"tnum"' }}>
+                {Math.round(m.coverage * 100)}%
+              </span>
+              <span style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+                of tools invoked<br/>{m.invoked} of {m.toolsTotal}
+              </span>
             </div>
-
-            <div style={{
-                           background: 'var(--paper-2)', border: 'var(--hairline)',
-                           borderRadius: 7
-}} className="mt-5 py-3 px-4" >
-              <div style={{
- fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
-                             textTransform: 'uppercase'
-}} className="mb-1" >
-                how insights work
-              </div>
-              <div style={{ fontSize: 11, color: 'var(--ink-2)', lineHeight: 1.6 }}>
-                Sensei logs every instrument call its assistants make, pairs the response
-                with the next turn, and asks: did the assistant cite the result, ignore it,
-                or only use part of it? Roll that up across sessions and you see which
-                tools actually change what the assistant does — and which deserve a rewrite.
-              </div>
+            <CoverageBar invoked={m.invoked} total={m.toolsTotal}/>
+            <div style={{ borderTop: 'var(--hairline)', display: 'flex',
+                           flexDirection: 'column' }} className="gap-1 mt-3 pt-3" >
+              <SummaryLine label="tool calls" value={m.calls.toLocaleString()}/>
+              <SummaryLine label="ftr delta"
+                           value={`${m.ftrDelta >= 0 ? "+" : ""}${Math.round(m.ftrDelta * 100)} pts`}
+                           tone={m.ftrDelta >= 0 ? 'var(--success)' : 'var(--warning)'}/>
+              {m.warn > 0 && <SummaryLine label="warnings" value={m.warn} tone="var(--warning)"/>}
+              {m.dormant > 0 && <SummaryLine label="dormant tools" value={m.dormant} tone="var(--ink-3)"/>}
             </div>
           </div>
+          <div style={{ fontSize: 11, color: 'var(--ink-2)', lineHeight: 1.6 }} className="mt-3" >
+            Click a bar to read why a tool looks healthy or off. The split under each bar
+            is how often the assistant used, half-used, or ignored the response.
+          </div>
         </div>
-      </main>
-    </InstrumentsShell>
+      </div>
+
+      {/* Full per-tool table for this server */}
+      <div className="mt-6" >
+        <div style={{
+ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between'
+}} className="mb-3" >
+          <h3 className="display m-0" style={{ fontSize: 15, fontWeight: 400 }}>
+            Per-tool detail
+          </h3>
+          <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+            {m.tools.length} tools · sorted by calls
+          </span>
+        </div>
+        <div style={{ border: 'var(--hairline)', borderRadius: 7,
+                       overflow: 'hidden', background: 'var(--paper)' }}>
+          <ToolRowHeader/>
+          {m.tools.map((t, idx) => (
+            <ToolUsageRow key={t.tool} t={t}
+                          focus={focusTool === t.tool}
+                          onFocus={() => setFocusTool(focusTool === t.tool ? null : t.tool)}
+                          last={idx === m.tools.length - 1}/>
+          ))}
+        </div>
+      </div>
+    </>
+  );
+}
+
+// A single horizontal bar in the calls-per-tool chart.
+function CallsBar({ t, max, active, onFocus }) {
+  const pct = Math.round((t.calls / max) * 100);
+  const dormant = t.calls === 0;
+  const barColor = t.verdict === "warn" ? 'var(--warning)'
+                 : dormant ? 'var(--paper-3)' : 'var(--accent)';
+  return (
+    <button onClick={onFocus} style={{
+ width: '100%', textAlign: 'left', background: 'transparent',
+      border: 'none', cursor: 'pointer', display: 'flex', flexDirection: 'column'
+}} className="p-0 gap-1" >
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
+        <span className="mono" style={{ fontSize: 11,
+                      color: dormant ? 'var(--ink-4)' : 'var(--ink)' }}>
+          {shortName(t.tool)}
+        </span>
+        <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)',
+                      fontFeatureSettings: '"tnum"' }}>{t.calls}</span>
+      </div>
+      <div style={{ height: 10, borderRadius: 3, background: 'var(--paper-3)',
+                     overflow: 'hidden', outline: active ? '1px solid var(--accent)' : 'none',
+                     outlineOffset: 1 }}>
+        <div style={{ width: `${Math.max(pct, dormant ? 0 : 3)}%`, height: '100%',
+                       background: barColor, transition: 'width 0.18s' }}/>
+      </div>
+      {active && (
+        <div style={{ fontSize: 11, color: 'var(--ink-2)', lineHeight: 1.5 }} className="mt-1" >
+          <span style={{ color: 'var(--success)' }}>{t.usedPct}% used</span>
+          {t.partialPct > 0 && <span> · {t.partialPct}% partial</span>}
+          {t.ignoredPct > 0 && <span style={{ color: 'var(--accent)' }}> · {t.ignoredPct}% ignored</span>}
+          {t.note && <span> — {t.note}</span>}
+        </div>
+      )}
+    </button>
+  );
+}
+
+function SummaryLine({ label, value, tone = 'var(--ink)' }) {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+      <span style={{ fontSize: 11, letterSpacing: '0.12em', color: 'var(--ink-3)',
+                     textTransform: 'uppercase' }}>{label}</span>
+      <span className="mono" style={{ fontSize: 13, color: tone,
+                    fontFeatureSettings: '"tnum"' }}>{value}</span>
+    </div>
   );
 }
 
@@ -1044,6 +1290,47 @@ function SignalCard({ s }) {
                           letterSpacing: '0.04em'
 }} className="p-0" >
           {s.action} →
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// One dormant-tools summary — collapses every 0-call tool into a single
+// card with the first three names and an "N more" tail, so the actionable
+// signals aren't buried under a wall of never-called tools.
+function DormantSummary({ tools }) {
+  const shown = tools.slice(0, 3);
+  const rest = tools.length - shown.length;
+  return (
+    <div style={{
+ background: 'var(--paper-2)',
+                   border: 'var(--hairline)', borderLeft: '3px solid var(--ink-3)',
+                   borderRadius: 5
+}} className="py-3 px-4" >
+      <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2 mb-1" >
+        <span className="kanji" style={{ fontSize: 13, color: 'var(--ink-3)' }}>眠</span>
+        <span style={{ fontSize: 11, letterSpacing: '0.16em', color: 'var(--ink-3)',
+                        textTransform: 'uppercase' }}>dormant</span>
+      </div>
+      <div className="display mb-1" style={{ fontSize: 13 }}>
+        {tools.length} tool{tools.length !== 1 ? "s" : ""} dormant
+      </div>
+      <div style={{ fontSize: 11, color: 'var(--ink-2)', lineHeight: 1.55 }}>
+        Registered but never called this window — likely undiscoverable or contradicted
+        by a skill.
+      </div>
+      <div className="mono mt-2" style={{ fontSize: 11, color: 'var(--ink-3)',
+                    lineHeight: 1.6 }}>
+        {shown.join(" · ")}{rest > 0 && <span style={{ color: 'var(--ink-4)' }}> · {rest} more</span>}
+      </div>
+      <div style={{ borderTop: 'var(--hairline)' }} className="mt-2 pt-2" >
+        <button style={{
+ fontSize: 11, color: 'var(--ink-3)',
+                          background: 'transparent', border: 'none', cursor: 'pointer',
+                          letterSpacing: '0.04em'
+}} className="p-0" >
+          Review dormant tools →
         </button>
       </div>
     </div>

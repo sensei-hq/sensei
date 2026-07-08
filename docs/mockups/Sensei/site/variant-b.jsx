@@ -51,7 +51,7 @@ function NavB() {
 }} className="py-5 px-7 mx-auto" >
       <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2" >
         <span style={{ display: 'inline-block', width: 26, height: 26, background: 'var(--accent)',
-                       WebkitMaskImage: 'url(uploads/sensei.svg?v=2)', maskImage: 'url(uploads/sensei.svg?v=2)',
+                       WebkitMaskImage: 'url(uploads/sensei.svg?v=3)', maskImage: 'url(uploads/sensei.svg?v=3)',
                        WebkitMaskSize: 'contain', maskSize: 'contain', WebkitMaskRepeat: 'no-repeat', maskRepeat: 'no-repeat',
                        WebkitMaskPosition: 'center', maskPosition: 'center', alignSelf: 'center', flexShrink: 0 }} />
         <span className="display" style={{ fontSize: 22,
@@ -699,7 +699,7 @@ function FooterB() {
  display: 'flex', alignItems: 'baseline'
 }} className="gap-2 mb-3" >
             <span style={{ display: 'inline-block', width: 22, height: 22, background: 'var(--accent)',
-                           WebkitMaskImage: 'url(uploads/sensei.svg?v=2)', maskImage: 'url(uploads/sensei.svg?v=2)',
+                           WebkitMaskImage: 'url(uploads/sensei.svg?v=3)', maskImage: 'url(uploads/sensei.svg?v=3)',
                            WebkitMaskSize: 'contain', maskSize: 'contain', WebkitMaskRepeat: 'no-repeat', maskRepeat: 'no-repeat',
                            WebkitMaskPosition: 'center', maskPosition: 'center', alignSelf: 'center', flexShrink: 0 }} />
             <span className="display" style={{ fontSize: 15,
