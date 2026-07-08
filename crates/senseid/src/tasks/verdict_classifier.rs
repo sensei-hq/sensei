@@ -250,7 +250,9 @@ pub async fn classify_session(
 
     // Walk the event list in ts order. For every PostToolUse, look at the
     // next event on the same session (i+1) and derive a verdict.
-    let mut rows: Vec<(String, i64, Option<String>, &'static str, f32, String)> = Vec::new();
+    // Row = (event_id, ts, tool_name, verdict, confidence, reason).
+    type VerdictRow = (String, i64, Option<String>, &'static str, f32, String);
+    let mut rows: Vec<VerdictRow> = Vec::new();
     for i in 0..events.len() {
         let (event_id, event_type, tool_name, _ts, payload) = &events[i];
         if event_type != "PostToolUse" {

@@ -4,3 +4,4 @@
 //! *when* to run things) so the heuristics stay unit-testable.
 
 pub mod doc_drift;
+pub mod insight_copy;

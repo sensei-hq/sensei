@@ -78,6 +78,7 @@ pub(crate) async fn get_project_overview(
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     use crate::project_overview as po;
+    use crate::analysis::insight_copy::{copy_or_warm, CopyLimits, FallbackCopy, InsightKind};
 
     let uuid = crate::api::util::resolve_project_uuid(&state, &id).await.ok_or(StatusCode::NOT_FOUND)?;
     let project = state.pg.get_project(&uuid).await
@@ -116,7 +117,35 @@ pub(crate) async fn get_project_overview(
         first["primary"] = serde_json::json!(true);
     }
 
-    let top = state.pg.get_top_recommendation(&uuid).await.unwrap_or(None);
+    // Hero headline + body come through insight-copy when a top recommendation
+    // exists — the model owns the sentence; the code owns the evidence /
+    // defaultAcp / action fields (left untouched). All-quiet (top == None) stays
+    // static: the pane renders the "Sensei is observing…" copy client-side, and
+    // routing a teaching where there is no signal is the spec's wrong-gate.
+    // `copy_or_warm` is a wire-path cache read (+ a detached background warm on a
+    // miss) — this await never blocks on inference. Mirrors `observatory_today`.
+    let top = match state.pg.get_top_recommendation(&uuid).await.unwrap_or(None) {
+        Some(mut rec) => {
+            let facts = serde_json::json!({
+                "title":   rec["title"],
+                "why":     rec["why"],
+                "impact":  rec["impact"],
+                "project": project["name"],
+            });
+            let fallback = FallbackCopy {
+                title:  rec["title"].as_str().unwrap_or_default().to_string(),
+                detail: rec["why"].as_str().unwrap_or_default().to_string(),
+            };
+            let copy = copy_or_warm(
+                &state.pg, &state.gateway, InsightKind::HeroKoanMature,
+                &facts, CopyLimits::default(), fallback,
+            ).await;
+            rec["title"] = copy.title.into();
+            rec["why"] = copy.detail.into();
+            Some(rec)
+        }
+        None => None,
+    };
     let recent = state.pg.list_recent_project_sessions_with_role(&uuid, 4).await.unwrap_or_default();
 
     Ok(Json(serde_json::json!({
