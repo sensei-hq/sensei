@@ -26,6 +26,21 @@ project has a vision, one row of three stats. No wasted vertical space.
     `stack.languages`, optional `icon: { kind, value }`,
     `repos_count`, `libs_count`, `sessions7d` (via join),
     `last_session_at` (ISO for dormant/archived).
+- **Daemon extension required before this screen builds.** `list_projects`
+  (`crates/senseid/src/db/pg_store.rs`) today SELECTs only
+  `id, name, description, client, maturity, tags, modified_at`. Extend it to
+  also return (all read-only query joins — no schema change):
+  - `icon` (`sensei.projects.icon` jsonb) + `stack` (`sensei.projects.stack`
+    jsonb) — existing columns, just add to the SELECT.
+  - `vision` — `sensei.projects.goal` aliased (see the vision bullet below).
+  - `repos_count` — COUNT of the project's **repo-root** folders in
+    `sensei.folders` (filter to roots/repo-kind, not every nested subfolder —
+    that table holds 10k+ rows including sub-directories).
+  - `libs_count` — COUNT over `sensei.project_libraries` for the project.
+  - `last_session_at` — MAX(`activity.sessions.started_at`) grouped by
+    `project_id`; `sessions7d` — COUNT of the same within 7 days. (`sessions7d`
+    may instead reuse the existing per-project `/api/projects/{id}/ftr` fanout
+    in `+page.ts` if a list-endpoint join is undesirable.)
 - `GET /api/projects/{id}/ftr` returns `{ ftr14d, sessions7d }`.
 - `GET /api/projects/{id}/quality-signals` returns
   `{ open_drift_count, ftr_7d }` — powers the `warn` dot.
@@ -34,9 +49,11 @@ project has a vision, one row of three stats. No wasted vertical space.
   `kind: "image"` and `value` is a URL/path resolved via
   [[pipeline/project-icon]] — README logo, favicon, or a repo
   logo file. See that spec for the inference chain and cache.
-- **`vision` is daemon-owned.** Nullable text on `sensei.projects`.
-  Editable from Project › About. Empty when absent — the description
-  row simply isn't rendered.
+- **`vision` is sourced from `sensei.projects.goal`** (nullable "purpose"
+  text). There is no `vision` column — `goal` is the semantic match; the
+  separate `description` column is the short summary. The API exposes it as
+  `vision` (`SELECT goal AS vision`). Editable from Project › About (which
+  edits `goal`). Empty when absent — the description row isn't rendered.
 
 ## Signals shown
 
@@ -47,8 +64,8 @@ project has a vision, one row of three stats. No wasted vertical space.
 | Header kanji + title | 場 · "All the places you work." | Fixed voice statement | — |
 | Filter chip: All (全) | integer count | Total projects | `12` |
 | Filter chip: Active (動) | integer count | Projects with `sessions7d > 0` | `4` |
-| Filter chip: Dormant (眠) | integer count | Projects with `sessions7d == 0 && !archived` | `7` |
-| Filter chip: Archived (蔵) | integer count | Projects with `archived == true` | `1` |
+| Filter chip: Dormant (眠) | integer count | Projects with `sessions7d == 0 && maturity != "archived"` | `7` |
+| Filter chip: Archived (蔵) | integer count | Projects with `maturity == "archived"` (there is no `archived` boolean — it is the `maturity` enum value) | `1` |
 | **View toggle** | 2-way: grid (田) / list (≣) | User-persisted preference. Defaults to `grid`. | selected: `list` |
 | Search input (探) | text | Matches `name` OR `client` case-insensitively | Type `sen` → `sensei` |
 | Running tally | `{filtered} of {total}` | After chip + search filter | `3 of 12` |
@@ -127,9 +144,9 @@ a hairline separator.
   and better when the user wants to eyeball FTR across many
   projects at once.
 
-The user preference is **persisted** on the client (localStorage or
-a small settings row) so a return visit lands in the same view. No
-per-project override.
+The user preference is **persisted** in `localStorage` under the key
+`sensei:projects:view` (value `"grid"` | `"list"`; no settings-row endpoint
+exists today) so a return visit lands in the same view. No per-project override.
 
 ## Done gate
 
@@ -156,10 +173,11 @@ per-project override.
 - Dark-mode: all text remains readable; pill backgrounds shift with
   theme.
 
-Optional check:
+Optional check (passes only after the `list_projects` daemon extension above):
 ```
-curl -s http://localhost:7744/api/projects | jq '.[0] | {name, icon, vision, repos_count, libs_count}'
-# expected: icon is a { kind, value } union; vision may be null
+curl -s http://localhost:7744/api/projects | jq '.[0] | {name, icon, vision, repos_count, libs_count, last_session_at}'
+# expected: icon is a { kind, value } union; vision may be null (sourced from goal)
+# before the extension, icon/vision/repos_count/libs_count are absent
 ```
 
 ## Wrong gate

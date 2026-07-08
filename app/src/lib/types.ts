@@ -288,8 +288,22 @@ export interface ProjectListItem {
   goal?: string | null;
   maturity: string;
   stack: { languages?: string[]; frameworks?: string[]; runtimes?: string[]; services?: string[] };
-  icon?: { kind: string; value: string };
+  /** Small icon union. `kind:"kanji"` → `value` is a single glyph;
+   *  `kind:"image"` → `value` is a URL/path from the project-icon pipeline.
+   *  The wire may send an empty `{}` (nothing inferred yet) or `null`. */
+  icon?: { kind?: string; value?: string } | null;
   preferred_acp?: string;
+  /** Project "purpose" text — sourced from `sensei.projects.goal` and
+   *  exposed by the list endpoint as `vision`. Null when absent. */
+  vision?: string | null;
+  /** COUNT of the project's repo-root folders (not nested subfolders). */
+  repos_count?: number;
+  /** COUNT of the project's linked libraries. */
+  libs_count?: number;
+  /** MAX(sessions.started_at) for the project, ISO. Null when never run. */
+  last_session_at?: string | null;
+  /** COUNT of sessions in the last 7 days. Also available via the /ftr fanout. */
+  sessions7d?: number;
   [key: string]: unknown;
 }
 

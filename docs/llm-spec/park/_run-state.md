@@ -28,10 +28,50 @@ resumes from the current slot/gate. Updated after every gate step.
 (overflow: 7 Observatory·Memories, 8 Project·Sessions+Memories)
 
 ## Current position
-- **Slot 3 — Observatory · Projects (list-view addition)** — STARTING (gate 1 spec-doc-reviewer).
-  Plan notes: grid view already SHIPPED 2026-07-07; mockup adds a list-view toggle (≣) — small
-  addition. Needs view-pref persistence (localStorage or settings row) + a ProjectRow component.
-  project-icon image icons deferred if scope creeps. Reuse Slot-1 gate mechanics.
+- **Slot 3 — Observatory · Projects** — gate1 ✅; BACKEND ✅ DONE+VERIFIED (list_projects
+  extended additively w/ icon/stack/vision/repos_count/libs_count/last_session_at/sessions7d;
+  clippy clean; max repos_count=5 correct; Today not regressed; install-debug live; uncommitted).
+  FRONTEND now in flight (svelte-file-editor): update ProjectListItem type, buckets
+  (archived=maturity==='archived'), grid/list toggle persisted localStorage
+  `sensei:projects:view`, card refactor (active ftr/repos/libs; dormant repos/libs/last-session),
+  ProjectRow list component, tests. Then gates 2/3/4 → commit.
+- FRONTEND ✅ GREEN: check 0/0 (837 files), test 744 pass (701+43, 0 regress), all svelte
+  MCP-validated. New: ProjPill/ProjectDot/ProjectCard(refactor)/ProjectRow (+harness+spec),
+  projects-view.svelte.ts (+spec), buckets rewritten (+spec), types/storage-keys/+page.ts/svelte.
+  Decisions: stack kept object shape (4 other consumers use stack.languages — DRY); localStorage
+  feature-detected (no silent errors). Gates 2(done)+3(wrong) LAUNCHED. Backend clippy clean
+  per fork; frontend green ⇒ zero-errors checkpoint-2 satisfied (no separate rust re-run).
+- Gate 2 done-gate-verifier: **ready-to-ship** (297 total = 5 active + 292 dormant + 0 archived,
+  sum ok; card ftr/repos/libs; view persists; vision truncates; Tauri-visual not-verifiable).
+- Gate 3 wrong-gate-hunter: **CLEAN** (all 11 absent). Flags → observatory-projects-followups.md:
+  stack shape mismatch (harmless/unused), list-vs-Overview repo kind filters (equivalent today),
+  N+1 folders enrichment (pre-existing perf). None block.
+- Gate 4 sensei-persona-reviewer: ran. P0 finding FIXED before commit — isWarning fired amber
+  on all 292 dormant projects (ftr_7d:0 fallback); now guarded on sessions7d + fanout collapsed
+  to active-only (594→~10 req). Verified check 0/0, 745 tests. Deferred persona items (adaptive
+  default deviates from spec, dormant-pill noise, recency sort, minor) → followups. ALL GATES CLEARED.
+- **Slot 3 COMPLETE.** Committing (spec + pg_store + all projects/ frontend + followups) + push develop.
+  KEY DATA MODEL: repos_count = `sensei.folders` WHERE `kind IN ('git','standalone')` (NOT
+  kind='folder' — those are 10.7k nested dirs); libs_count = `sensei.project_libraries`;
+  last_session_at=MAX/sessions7d=COUNT7d over `activity.sessions.project_id/started_at`;
+  vision=`projects.goal`; icon/stack are jsonb cols. list_projects @ pg_store.rs ~4109;
+  handler `observatory::list_solutions` already enriches `folders[]` (keep; ADD scalar fields).
+  Reviewer clarifications to honor: `status` derived (sessions7d==0||maturity=='archived');
+  `ftr14d` stays in +page.ts /ftr fanout (NOT this endpoint); `warn` from quality-signals.
+  Frontend: EXISTING `app/src/routes/(observatory)/projects/` (+page.svelte/+page.ts/buckets.ts,
+  ProjectListItem type) — add list-view toggle + card refactor.
+
+### Slot 3 detail (superseded)
+- **Slot 3 — Observatory · Projects (list-view addition)** — gate1 `needs-fixes` (3 FAIL, all
+  field-availability, FEASIBLE — verified data sources exist); spec FIXED; re-review launched.
+  Fixes: vision→`sensei.projects.goal` (aliased); added "Daemon extension required" note to
+  extend `list_projects` (pg_store.rs) w/ icon+stack+goal + join aggregates repos_count
+  (folders, repo-roots only), libs_count (project_libraries), last_session_at+sessions7d
+  (activity.sessions); archived = `maturity='archived'` (no bool col); localStorage key
+  `sensei:projects:view`; done-gate curl prereq note.
+  IMPL when ready: backend list_projects SQL extension + frontend list-view toggle + card
+  refactor (drop 7d, add repos/libs) on EXISTING `app/src/routes/(observatory)/projects/`.
+  project-icon image icons deferred (kanji fallback ok). Reuse Slot-1 gate mechanics.
 - **Slot 2 PARKED** (see park/observatory-instruments-health.md) — 3-try-then-park invoked;
   AWAITS Jerry. Continued to Slot 3 per plan.
 
