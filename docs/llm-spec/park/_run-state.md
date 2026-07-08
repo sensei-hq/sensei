@@ -24,10 +24,58 @@ resumes from the current slot/gate. Updated after every gate step.
 3. Observatory · Projects (list view) — `screen/observatory-projects.md`  ✅ SHIPPED (ead8f971)
 4. Project window · Overview — `screen/project-overview.md`  ✅ SHIPPED (all 4 gates; P0-B drift-source fixed)
 5. Observatory · Insights — `screen/observatory-insights.md`  ✅ SHIPPED (all gates; MeasureVerdicts wired)
-6. Observatory · Sessions — `screen/observatory-sessions.md`  ← CURRENT (final target slot)
+6. Observatory · Sessions — `screen/observatory-sessions.md`  ✅ SHIPPED (all gates; chartedMins P0 fixed)
+
+**QUEUE COMPLETE: 5 of 6 shipped + verified (Slot 2 parked). Overflow 7/8 optional.**
 (overflow: 7 Observatory·Memories, 8 Project·Sessions+Memories)
 
 ## Current position
+- **Slot 6 — Observatory · Sessions** — gate1 ✅ (2 rounds: not-ready→needs-fixes→fixed; residual
+  `shipped`→`completed` + header wording applied w/o 3rd round). BACKEND (range+agent) delegated
+  to fork; then frontend chart-variant digest; then gates 2/3/4; commit → RUN QUEUE COMPLETE.
+- BACKEND ✅ VERIFIED: list_all_sessions(limit,range_days,project) + get_sessions_stub parses
+  ?range=/?project= (pure range_to_days +2 tests) + `agent` (from acp_id harness — NO
+  assistant_family col; agent="claude"/"zed"). Today caller updated. clippy clean. Wire row:
+  {id,project,task,summary,outcome,ftr,turns,corrections,startedAt,completedAt,agent}. Live:
+  total=27, ?range=7d→10, ?project=sensei→11. FRONTEND now (svelte-file-editor): SessionsDigestZen
+  at /sessions; chip group trend(default)/stream/constellation/bands + mini-cycler(+pulse);
+  row→goto('/instruments?tab=replay&session={id}'); derive when/time/duration; per-day agg client;
+  range chips refetch; outcome→good(completed+ftr)/bad(corrected)/ugly(abandoned).
+- FRONTEND ✅ GREEN: check 0/0 (871 files), test 837 (47 new, 0 regress), MCP-validated. Files:
+  sessions-digest.ts(pure)+.svelte.ts(state)+2 specs, Trend/Bands/Stream/Constellation/MiniChart,
+  SessionRow(+harness+spec), +page.ts/svelte, types.ts, api.ts. BONUS: agent WIRED instruments
+  Replay deep-link (?tab=replay&session={id} → resolves via GET /api/sessions/{id}) — cross-screen
+  dep CLOSED. 4 chips(no pulse), pulse mini-only, range refetch (?range=7d→10/27; project=sensei&7d→3).
+  Gates 2(done)+3(wrong) LAUNCHED (read-only endpoint, no mutation risk).
+- Gate 2 done: partially-verified, all 9 code/API gates PASS (session-id resolution CLEAN,
+  Replay deep-link honored, range works, 4-chips/no-pulse). Gate 3 wrong: CLEAN (all 7 absent;
+  regression clean — 148 replay calls). Non-block items: `all` range chip missing (signals-table
+  deviation, cheap — SESSION_RANGES; range_to_days already treats all/unknown→no-filter);
+  single-session GET returns snake_case vs list camelCase (latent, screens unaffected); long
+  durations (backend data-quality). Gate 4 persona LAUNCHED → then batch `all` chip + persona P0s
+  → commit Slot 6 (FINAL).
+
+### Slot 6 detail (superseded)
+- **Slot 6 — Observatory · Sessions** — gate1 `not-ready` (5 FAIL, all field/endpoint, FEASIBLE).
+  Spec fix DELEGATED w/ LOCKED decisions; then re-review; then impl. DECISIONS: (1) add optional
+  `?range=7d|30d|90d` (cutoff on activity.sessions.started_at) + `assistant_family`(→`agent`) to
+  the sessions list endpoint (get_sessions_stub/list_all_sessions); UI derives when/time/duration
+  from startedAt/completedAt; wire `title`=`task`. (2) real outcome enum completed|corrected|blocked|
+  partial|abandoned → good=completed(+ftr) / bad=corrected / ugly=abandoned(blocked/partial neutral).
+  (3) row-click→`goto('/instruments?tab=replay&session={id}')` (cross-screen dep; id resolves via
+  GET /api/sessions/{id} from Slot 1). (4) pulse=mini-cycler mode NOT a full chart; full charts=
+  trend(default)/stream/constellation/bands. (5) DROP synthetic history (real ~216 sessions).
+  (6) per-day aggregation client-side. Mockup: sessions-zen.jsx SessionsDigestZen.
+
+### Slot 6 detail (superseded)
+- **Slot 6 — Observatory · Sessions** — STARTING (gate 1 spec-doc-reviewer). FINAL target slot.
+  Plan notes: compact activity digest; chart-variant work new (trend/stream/constellation/bands/
+  pulse); session-id resolution regression already fixed once (MUST survive — recentSessions row
+  click → Replay resolves session-id). Data: `GET /api/sessions?range=&project=` mostly present.
+  Definition of shipped: default trend variant renders; ≥1 alternate variant works; row click →
+  Replay resolves session-id. Mockup: find via MOCKUP-INDEX. Reuse gate mechanics.
+
+### Slot 5 detail (SHIPPED 035a368c — superseded)
 - **Slot 5 — Observatory · Insights** — gate1 ✅ (2 rounds: not-ready→needs-fixes→all fixed;
   trivial impact→urgency parentheticals + inference.corrections source applied w/o 3rd round).
   BACKEND (aggregating /api/insights) delegated to fork; then frontend triage; then gates 2/3/4.

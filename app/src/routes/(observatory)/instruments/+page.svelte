@@ -1,5 +1,6 @@
 <script lang="ts">
-    import { onMount } from "svelte";
+    import { onMount, untrack } from "svelte";
+    import { page } from "$app/state";
     import { appState } from "$lib/appstate.svelte.js";
     import { senseiApi } from "$lib/api.js";
     import TabBar from "$lib/components/TabBar.svelte";
@@ -20,7 +21,16 @@
     const toolSignals = $derived(mcp.toolSignals);
     const loading = $derived(mcp.catalogStatus === 'loading' || mcp.catalogStatus === 'idle');
 
-    let tab = $state("playground");
+    // Honor a deep-link from the Sessions digest (Slot 6):
+    // /instruments?tab=replay&session={id}. The session is preselected once
+    // the replay list loads (see the effect below). Session-id resolves
+    // through GET /api/sessions/{id} inside loadSessionReplay.
+    const tabParam = untrack(() => page.url.searchParams.get("tab"));
+    const sessionParam = untrack(() => page.url.searchParams.get("session"));
+    let tab = $state(
+        tabParam === "replay" || tabParam === "insights" ? tabParam : "playground",
+    );
+    let honoredSessionParam = false;
     let kindFilter = $state<'all' | 'query' | 'action'>('all');
     // `selectedTool` is $derived from `selectedToolId` + the sensei catalog
     // below; kept reactive so a catalog reload doesn't strand a stale ref.
@@ -348,6 +358,18 @@
         if (tab === 'insights') {
             void mcp.loadInsights();
         }
+    });
+
+    // Preselect the deep-linked session once the replay list is available.
+    // Runs at most once — re-fires only while waiting for the list to load.
+    $effect(() => {
+        if (honoredSessionParam || !sessionParam || tab !== 'replay') return;
+        if (replaySessions.length === 0) {
+            void ensureReplaySessionsLoaded();
+            return;
+        }
+        honoredSessionParam = true;
+        void selectReplaySession(sessionParam);
     });
 
     // Format request/response payloads for the detail pane — pretty JSON
