@@ -858,6 +858,31 @@ export function senseiApi(port: number) {
     saveMemory: (body: MemoryCreateBody) =>
       tryPost<{ id: string; status: 'active' }>('/api/knowledge/memories', body),
 
+    // Ready-to-share lane — rewrite a project-scoped memory into a portable,
+    // project-agnostic rule. `tryPost` so the 503 honest-degrade path (model
+    // unavailable / returned nothing usable) surfaces as `{ ok: false, error }`
+    // instead of a fabricated rewrite — the UI shows the error, keeps the
+    // original. On success the daemon flips `generalised = true` and stores the
+    // rewrite, so the caller re-fetches to reflect the new chip state.
+    generaliseMemory: (id: string) =>
+      tryPost<{ id: string; original: string; generalised: string }>(
+        `/api/knowledge/memories/${enc(id)}/generalise`, {},
+      ),
+
+    // Widen a proven memory up the scope ladder (project → user → org →
+    // collective). Reuses the EXISTING promote route — it creates a `proposed`
+    // copy on the target namespace (origin=promoted); accepting it through the
+    // normal proposal flow is the governance gate, so it never auto-applies.
+    // `gov_scope` names the target scope ("user" | "org" | "global"); the other
+    // fields stay optional for namespace/folder-resolved promotions.
+    promoteMemory: (
+      id: string,
+      body: { gov_scope?: string; namespace_id?: string; folder?: string; enforcement?: string } = {},
+    ) =>
+      tryPost<{ id: string; status: string; origin: string }>(
+        `/api/knowledge/memories/${enc(id)}/promote`, body,
+      ),
+
     acceptProposal: (id: string) =>
       tryPost<{ id: string; status: string }>(`/api/knowledge/proposals/${encodeURIComponent(id)}/accept`, {}),
 

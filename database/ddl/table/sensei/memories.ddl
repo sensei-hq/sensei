@@ -28,6 +28,11 @@ create table if not exists memories (
 , category                 memory_category
 , created_at               timestamptz   not null default now()
 , modified_at              timestamptz   not null default now()
+-- Ready-to-share lane: sensei's assessment that this memory has been rewritten
+-- project-agnostic and is ready to widen up the scope ladder, plus the portable
+-- rewrite itself (null until generalised).
+, generalised              boolean       not null default false
+, generalised_content      text
 );
 
 create index if not exists memories_project_id_idx
@@ -106,3 +111,7 @@ comment on column memories.category
      is 'Quality dimension for the learnings UI anatomy, orthogonal to `type`: correctness, convention, pattern, preference. Null until classified.';
 comment on column memories.created_at
      is 'When this memory was first learned/created (stable). Distinct from modified_at, which moves on every reinforcement; the UI shows this as "learned".';
+comment on column memories.generalised
+     is 'Ready-to-share flag: true once sensei has rewritten this memory into a project-agnostic rule (stored in generalised_content), meaning it is ready to widen up the scope ladder. Set only by an explicit /generalise action; never fabricated.';
+comment on column memories.generalised_content
+     is 'The project-agnostic rewrite of `content` — identifiers (project/repo/file/service/person names) stripped and restated as a general principle. Null until generalised.';
