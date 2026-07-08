@@ -69,6 +69,74 @@ pub(crate) async fn get_project_ftr(
     Ok(Json(data))
 }
 
+/// GET /api/projects/{id}/overview — the Project window · Overview pane
+/// (Slot 4). A server-side assembler that composes the project header, top
+/// recommendation, stat blocks, and recent sessions into one payload so the
+/// pane stays a pure renderer.
+pub(crate) async fn get_project_overview(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    use crate::project_overview as po;
+
+    let uuid = crate::api::util::resolve_project_uuid(&state, &id).await.ok_or(StatusCode::NOT_FOUND)?;
+    let project = state.pg.get_project(&uuid).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    // Stats first — the assembler reads the authoritative 7-day session count
+    // from here so the warn rule and the project header agree (one source).
+    let stats = state.pg.get_project_overview_stats(&uuid).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let sessions_7d = stats["sessions7d"].as_i64().unwrap_or(0);
+
+    let ftr = state.pg.get_project_ftr(&uuid).await.unwrap_or_else(|_| serde_json::json!({}));
+    let ftr_14d = ftr["ftr14d"].as_f64().unwrap_or(0.0);
+
+    // The warn rule reads the SAME drift count the stat block displays
+    // (`stats.docDrift.open`, status IN drifted/broken) so the warning dot can
+    // never disagree with the number the user sees. `get_quality_signals`
+    // (a different `status != 'current'` predicate) supplies only the 7-day FTR.
+    let open_drift = stats["docDrift"]["open"].as_i64().unwrap_or(0);
+    let signals = state.pg.get_quality_signals(&uuid).await.unwrap_or_else(|_| serde_json::json!({}));
+    let ftr_7d = signals["ftr_7d"].as_f64().unwrap_or(0.0);
+    let warn = po::is_warn(sessions_7d, open_drift, ftr_7d);
+
+    let kanji = po::kanji_from_icon(&project["icon"]);
+
+    // Multi-repo membership: the project's repo folders (git/standalone), not
+    // the thousands of nested dirs. The first repo is flagged primary.
+    let mut folders: Vec<serde_json::Value> = state.pg.list_folders_by_project(&uuid).await
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|f| matches!(f["kind"].as_str(), Some("git") | Some("standalone")))
+        .map(|f| serde_json::json!({ "id": f["id"], "name": f["name"], "role": f["role"] }))
+        .collect();
+    if let Some(first) = folders.first_mut() {
+        first["primary"] = serde_json::json!(true);
+    }
+
+    let top = state.pg.get_top_recommendation(&uuid).await.unwrap_or(None);
+    let recent = state.pg.list_recent_project_sessions_with_role(&uuid, 4).await.unwrap_or_default();
+
+    Ok(Json(serde_json::json!({
+        "project": {
+            "id":         project["id"],
+            "name":       project["name"],
+            "kanji":      kanji,
+            "client":     project["client"],
+            "goal":       project["goal"],
+            "ftr":        ftr_14d,
+            "warn":       warn,
+            "sessions7d": sessions_7d,
+            "folders":    folders,
+        },
+        "top_recommendation": top,
+        "stats":             stats,
+        "recentSessions":    recent,
+    })))
+}
+
 pub(crate) async fn get_project_repos(
     State(state): State<AppState>,
     Path(id): Path<String>,

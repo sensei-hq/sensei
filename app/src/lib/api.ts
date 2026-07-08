@@ -11,7 +11,7 @@ import type {
   McpToolManifest, SessionToolTimeline, MemoryShareBatch, ImpactVerdictEntry,
   ProjectMcpToolStat, ToolSignal, ProjectService, ToolInsight,
   SessionReplayResponse, McpServerRow, McpServerToolsManifest,
-  ObservatoryToday, ObservatoryFtr,
+  ObservatoryToday, ObservatoryFtr, ProjectOverview,
 } from './types.js';
 import type {
   MemoryListResponse, MemoryDetail, ContextResponse,
@@ -363,6 +363,25 @@ export function senseiApi(port: number) {
       get<{ sessions: ProjectSession[] }>(
         `/api/projects/${enc(id)}/sessions?limit=${limit}`, { sessions: [] }
       ),
+
+    // ── Project window · Overview (Slot 4) ──────────────────────────────
+    // Server-assembled landing pane: header + top rec + stats + recent
+    // sessions in one call. Fallback is the all-quiet shape so a daemon
+    // hiccup renders the calm empty pane, never a broken screen.
+    getProjectOverview: (id: string) =>
+      get<ProjectOverview>(`/api/projects/${enc(id)}/overview`, {
+        project: {
+          id, name: '', kanji: '場', client: null, goal: null,
+          ftr: 0, warn: false, sessions7d: 0, folders: [],
+        },
+        top_recommendation: null,
+        stats: {
+          sessions7d: 0, sessions7dCorrected: 0,
+          memories: { total: 0, readyToShare: 0, toMerge: 0 },
+          docDrift: { open: 0, referencedDocs: 0 },
+        },
+        recentSessions: [],
+      }),
 
     // ── Observatory · Today (home screen) ───────────────────────────────
     // The daemon assembles the whole screen — greeting, maturity gate, hero

@@ -4074,18 +4074,93 @@ impl PgStore {
     }
 
     pub async fn get_project(&self, id: &uuid::Uuid) -> Result<Option<serde_json::Value>, String> {
-        let row: Option<(uuid::Uuid, String, Option<String>, Option<String>, String, Option<String>, serde_json::Value, serde_json::Value, Vec<String>, chrono::DateTime<chrono::Utc>)> =
+        #[allow(clippy::type_complexity)]
+        let row: Option<(uuid::Uuid, String, Option<String>, Option<String>, String, Option<String>, serde_json::Value, serde_json::Value, serde_json::Value, Vec<String>, chrono::DateTime<chrono::Utc>)> =
             sqlx_core::query_as::query_as(
-                "SELECT id, name, description, client, maturity::text, goal, stack, links, tags, modified_at FROM sensei.projects WHERE id = $1"
+                "SELECT id, name, description, client, maturity::text, goal, icon, stack, links, tags, modified_at FROM sensei.projects WHERE id = $1"
             ).bind(id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
 
-        Ok(row.map(|(id, name, desc, client, maturity, goal, stack, links, tags, modified)| {
+        Ok(row.map(|(id, name, desc, client, maturity, goal, icon, stack, links, tags, modified)| {
             serde_json::json!({
                 "id": id, "name": name, "description": desc, "client": client,
-                "maturity": maturity, "goal": goal, "stack": stack, "links": links,
+                "maturity": maturity, "goal": goal, "icon": icon, "stack": stack, "links": links,
                 "tags": tags, "modified_at": modified.to_rfc3339(),
             })
         }))
+    }
+
+    /// Top pending recommendation for a project — highest urgency, then id —
+    /// including `default_acp` for the Overview hero's "send to {acp}" action.
+    /// `None` when the project has no pending recommendation.
+    pub async fn get_top_recommendation(&self, project_id: &uuid::Uuid) -> Result<Option<serde_json::Value>, String> {
+        let row: Option<(uuid::Uuid, String, String, serde_json::Value, Option<String>)> = sqlx_core::query_as::query_as(
+            "SELECT id, title, why, evidence, default_acp
+             FROM inference.recommendations
+             WHERE project_id = $1 AND status = 'pending'
+             ORDER BY CASE urgency WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, id
+             LIMIT 1"
+        ).bind(project_id).fetch_optional(&self.pool).await
+            .map_err(|e| { tracing::error!(error = %e, "get_top_recommendation failed"); e.to_string() })?;
+        Ok(row.map(|(id, title, why, evidence, default_acp)| serde_json::json!({
+            "id": id, "title": title, "why": why, "evidence": evidence, "defaultAcp": default_acp,
+        })))
+    }
+
+    /// Overview stat scalars for a project in one round trip: active (non-
+    /// archived) memory count, 7-day session + corrected counts, and open
+    /// doc-drift + distinct-referenced-doc counts. `readyToShare` / `toMerge`
+    /// are 0 — the memory_status enum has no promotion/merge-readiness value yet
+    /// ([[pipeline/memory]]); they are surfaced as 0 rather than invented.
+    pub async fn get_project_overview_stats(&self, project_id: &uuid::Uuid) -> Result<serde_json::Value, String> {
+        let (mem_total, sessions_7d, sessions_7d_corrected, drift_open, referenced_docs):
+            (i64, i64, i64, i64, i64) = sqlx_core::query_as::query_as(
+            "SELECT
+               (SELECT count(*) FROM sensei.memories
+                  WHERE project_id = $1 AND status != 'archived'),
+               (SELECT count(*) FROM activity.sessions
+                  WHERE project_id = $1 AND started_at > now() - interval '7 days'),
+               (SELECT count(*) FROM activity.sessions
+                  WHERE project_id = $1 AND started_at > now() - interval '7 days' AND corrections > 0),
+               (SELECT count(*) FROM sensei.project_drift
+                  WHERE project_id = $1 AND status::text IN ('drifted','broken')),
+               (SELECT count(DISTINCT di.doc_node_id) FROM inference.drift_items di
+                  JOIN sensei.folders f ON f.id = di.folder_id WHERE f.project_id = $1)"
+        ).bind(project_id).fetch_one(&self.pool).await
+            .map_err(|e| { tracing::error!(error = %e, "get_project_overview_stats failed"); e.to_string() })?;
+        Ok(serde_json::json!({
+            "sessions7d": sessions_7d,
+            "sessions7dCorrected": sessions_7d_corrected,
+            "memories": { "total": mem_total, "readyToShare": 0, "toMerge": 0 },
+            "docDrift": { "open": drift_open, "referencedDocs": referenced_docs },
+        }))
+    }
+
+    /// Recent sessions for a project with the folder role they ran in (the
+    /// multi-repo membership chip). Newest first, capped at `limit`. Duration
+    /// and relative time are formatted client-side from the ISO timestamps, the
+    /// same as the shared RecentSessions component.
+    pub async fn list_recent_project_sessions_with_role(&self, project_id: &uuid::Uuid, limit: i64) -> Result<Vec<serde_json::Value>, String> {
+        #[allow(clippy::type_complexity)]
+        let rows: Vec<(uuid::Uuid, Option<String>, Option<bool>, i32, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>, Option<String>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT s.id, s.task, s.ftr, s.corrections, s.started_at, s.completed_at, f.role::text
+                 FROM activity.sessions s
+                 LEFT JOIN sensei.folders f ON f.id = s.folder_id
+                 WHERE s.project_id = $1
+                 ORDER BY s.started_at DESC LIMIT $2"
+            ).bind(project_id).bind(limit).fetch_all(&self.pool).await
+            .map_err(|e| { tracing::error!(error = %e, "list_recent_project_sessions_with_role failed"); e.to_string() })?;
+        Ok(rows.into_iter().map(|(id, task, ftr, corrections, started, completed, role)| {
+            serde_json::json!({
+                "id": id,
+                "title": task,
+                "ftr": ftr,
+                "corrections": corrections,
+                "startedAt": started.to_rfc3339(),
+                "completedAt": completed.map(|t| t.to_rfc3339()),
+                "role": role,
+            })
+        }).collect())
     }
 
     pub async fn get_project_by_name(&self, name: &str) -> Result<Option<serde_json::Value>, String> {

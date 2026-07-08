@@ -21,13 +21,70 @@ resumes from the current slot/gate. Updated after every gate step.
 2. Observatory · Instruments · Health — `screen/observatory-instruments-health.md`  ⛔ PARKED
    (data-model gap: registry↔usage don't join; no tools_registered for used MCPs → share_invoked
    uncomputable. See park/observatory-instruments-health.md. AWAITS Jerry: unify/redefine/descope.)
-3. Observatory · Projects (list view) — `screen/observatory-projects.md`  ← CURRENT
-4. Project window · Overview — `screen/project-overview.md`
-5. Observatory · Insights — `screen/observatory-insights.md`
+3. Observatory · Projects (list view) — `screen/observatory-projects.md`  ✅ SHIPPED (ead8f971)
+4. Project window · Overview — `screen/project-overview.md`  ✅ SHIPPED (all 4 gates; P0-B drift-source fixed)
+5. Observatory · Insights — `screen/observatory-insights.md`  ← CURRENT
 6. Observatory · Sessions — `screen/observatory-sessions.md`
 (overflow: 7 Observatory·Memories, 8 Project·Sessions+Memories)
 
 ## Current position
+- **Slot 4 — Project window · Overview** — gate1 ✅ (2 rounds: not-ready→needs-fixes→all fixed;
+  doc-drift source consistency + to_merge/casing recs applied without 3rd round). BACKEND
+  (assembling endpoint) delegated to fork; then frontend overview pane; then gates 2/3/4; commit.
+  Endpoint `GET /api/projects/{id}/overview` = NEW server assembler. Sources: project (get_project
+  + project_ftr_metrics.ftr_14d + kanji from icon->>'value' + folders w/ folder_role), top_rec
+  (top pending inference.recommendations w/ default_acp), stats (sessions7d+corrected, memory
+  counts total/ready_to_share/to_merge via pipeline/memory statuses, doc_drift open from
+  sensei.project_drift + referenced_docs=COUNT(DISTINCT doc_node_id) from drift_items),
+  recentSessions (recent activity.sessions w/ role). camelCase wire. Mockup: project-lite-panes.jsx
+  ProjOverviewLite. App: (observatory)/projects/[id]/.
+- BACKEND ✅ VERIFIED: new `project_overview.rs` pure module (4 tests) + get_project_overview
+  handler + route + pg_store helpers + main.rs. clippy clean (4 pre-existing warns, none new).
+  Live /api/projects/{id}/overview: project{id,name,kanji,client,goal,ftr,warn,sessions7d,
+  folders[{id,name,role,primary}]}, top_recommendation{id,title,why,evidence,defaultAcp}|null,
+  stats{sessions7d,sessions7dCorrected,memories{total,readyToShare,toMerge},docDrift{open,referencedDocs}},
+  recentSessions[{id,title,startedAt,completedAt,corrections,ftr,role}]. sensei: ftr0.2 warn true
+  drift open1541. rokkit role"library". CAVEATS for frontend: role can be null (sensei), defaultAcp
+  can be null, top_recommendation can be null (all-quiet state), sessions give startedAt/completedAt
+  (derive duration/time). FRONTEND now (svelte-file-editor): [id]/+page.svelte is the overview pane
+  (only +page.svelte exists, no loader/tabs yet).
+- FRONTEND ✅ GREEN. ROUTE CORRECTION: real project window is `(project)/project/[id]/overview/`
+  (NOT observatory/projects/[id] which is DEAD/legacy TabBar — candidate for deletion). Built there.
+  check 0/0 (839 files), test 767 (745+22, 0 regress), MCP-validated. Files: types.ts (ProjectOverview),
+  api.ts (getProjectOverview), overview-view.svelte.ts (+22-test spec), +page.ts (loader),
+  +page.svelte (rebuilt to ProjOverviewLite). Handles null role/defaultAcp/top_recommendation
+  (all-quiet 静). FTR consistency verified (project.ftr==/ftr). DEVIATIONS (accepted): kept
+  Accept/Reject hero controls (only UI feeding MeasureVerdicts, has live e2e) + added send-to-acp;
+  mockup shows only send-to-acp — note for Jerry. Minor: duration/time in 3 places → future
+  src/lib/time.ts. Gates 2(done)+3(wrong) LAUNCHED @ correct route + /api/projects/{id}/overview.
+- Gate 2 done-gate-verifier: all 12 curl/code gates PASS (partially-verified only for 4 Tauri-visual;
+  FTR single-source confirmed sensei/rokkit). Gate 3 wrong-gate-hunter: CLEAN (multi-repo verified
+  live documentation.wiki→"2 repos"). Flags→project-overview-followups.md: session-row nav→sessions
+  list not Replay (Replay screen UNBUILT — working link, defer); readyToShare/toMerge=0 (no
+  memory_status promotion value); Accept/Reject kept (e2e/MeasureVerdicts); time DRY; legacy dead
+  route. None block. Gate 4 persona LAUNCHED → then commit Slot 4 + push → Slot 5.
+
+### Slot 4 detail (superseded)
+- **Slot 4 — Project window · Overview** — gate1 `not-ready` (4 FAIL, all field/enum naming,
+  FEASIBLE — reviewer verified all tables/views exist). Spec fix DELEGATED; then re-review;
+  then impl (new assembling endpoint `/api/projects/{id}/overview` + frontend overview pane).
+  FIXES: (1) declare `/overview` a NEW assembling endpoint (server assembles project+
+  top_recommendation+stats+recentSessions), map each key to source; (2) vision→`goal` (alias in
+  API, no migration); (3) `scope_project_id`→`memories.project_id`+status filter; (4) role "web"
+  →real folder_role enum (backend/frontend/library/tool/docs/infra/website/desktop/mobile/config/
+  packaging); recs: kanji from `projects.icon`→>'value', referenced_docs=COUNT(DISTINCT doc_node_id)
+  from drift_items, ready_to_share status → link pipeline/memory.
+  Sources verified: project_ftr_metrics.ftr_14d, project_drift view, inference.recommendations
+  (has default_acp), folders.role (folder_role enum).
+  Plan notes: landing pane inside a project window; deps FTR ✅ + top recommendation (partial)
+  + memory counts ✅ + doc-drift (partial); multi-repo folder-role chip on sessions is new.
+  `GET /api/projects/{id}/overview` — assemble from existing pieces if absent. NOTE: plan said
+  "vision column migration needed" — NOT needed, `sensei.projects.goal` already exists (used in
+  Slot 3). Existing per-project endpoints: /ftr, /drift, /patterns, /libraries, /instruments,
+  /memories, /recommendations, /impact, /sessions, /maturity, /quality-signals, /hotspots.
+  App project window: `app/src/routes/(observatory)/projects/[id]/` (exists). Reuse gate mechanics.
+
+### Slot 3 detail (SHIPPED ead8f971 — superseded)
 - **Slot 3 — Observatory · Projects** — gate1 ✅; BACKEND ✅ DONE+VERIFIED (list_projects
   extended additively w/ icon/stack/vision/repos_count/libs_count/last_session_at/sessions7d;
   clippy clean; max repos_count=5 correct; Today not regressed; install-debug live; uncommitted).
