@@ -4408,12 +4408,19 @@ impl PgStore {
 
     /// Overview stat scalars for a project in one round trip: active (non-
     /// archived) memory count, 7-day session + corrected counts, and open
-    /// doc-drift + distinct-referenced-doc counts. `readyToShare` / `toMerge`
-    /// are 0 — the memory_status enum has no promotion/merge-readiness value yet
-    /// ([[pipeline/memory]]); they are surfaced as 0 rather than invented.
+    /// doc-drift + distinct-referenced-doc counts.
+    ///
+    /// `readyToShare` / `toMerge` are DERIVED from existing columns (no invented
+    /// status — [[pipeline/memory]] defines a scope *ladder*, not new statuses):
+    /// - `readyToShare` = established memories (status active/reinforced/
+    ///   battle_tested) whose `scope` is narrower than the widest rung
+    ///   (`global`) — i.e. promotable up the ladder (project→…→global).
+    /// - `toMerge` = memories that share a normalized `title` with at least one
+    ///   other memory in the project (dedup candidates). There is no signature
+    ///   column, so a case/whitespace-folded title is the merge-candidate proxy.
     pub async fn get_project_overview_stats(&self, project_id: &uuid::Uuid) -> Result<serde_json::Value, String> {
-        let (mem_total, sessions_7d, sessions_7d_corrected, drift_open, referenced_docs):
-            (i64, i64, i64, i64, i64) = sqlx_core::query_as::query_as(
+        let (mem_total, sessions_7d, sessions_7d_corrected, drift_open, referenced_docs, ready_to_share, to_merge):
+            (i64, i64, i64, i64, i64, i64, i64) = sqlx_core::query_as::query_as(
             "SELECT
                (SELECT count(*) FROM sensei.memories
                   WHERE project_id = $1 AND status != 'archived'),
@@ -4424,13 +4431,21 @@ impl PgStore {
                (SELECT count(*) FROM sensei.project_drift
                   WHERE project_id = $1 AND status::text IN ('drifted','broken')),
                (SELECT count(DISTINCT di.doc_node_id) FROM inference.drift_items di
-                  JOIN sensei.folders f ON f.id = di.folder_id WHERE f.project_id = $1)"
+                  JOIN sensei.folders f ON f.id = di.folder_id WHERE f.project_id = $1),
+               (SELECT count(*) FROM sensei.memories
+                  WHERE project_id = $1
+                    AND status::text IN ('active','reinforced','battle_tested')
+                    AND scope::text <> 'global'),
+               (SELECT coalesce(sum(c), 0)::bigint FROM (
+                    SELECT count(*) AS c FROM sensei.memories
+                      WHERE project_id = $1 AND status != 'archived'
+                      GROUP BY lower(btrim(title)) HAVING count(*) > 1) g)"
         ).bind(project_id).fetch_one(&self.pool).await
             .map_err(|e| { tracing::error!(error = %e, "get_project_overview_stats failed"); e.to_string() })?;
         Ok(serde_json::json!({
             "sessions7d": sessions_7d,
             "sessions7dCorrected": sessions_7d_corrected,
-            "memories": { "total": mem_total, "readyToShare": 0, "toMerge": 0 },
+            "memories": { "total": mem_total, "readyToShare": ready_to_share, "toMerge": to_merge },
             "docDrift": { "open": drift_open, "referencedDocs": referenced_docs },
         }))
     }
