@@ -43,8 +43,9 @@ Kanji is 庫 — *repository*.
 
 - Every library detected by the scanner appears; ecosystem +
   wrapped + drift chips render truthfully.
-- Wrap-me strip surfaces the highest-impact candidates by
-  usage × unwrapped × ftr-delta-potential.
+- Wrap-me strip surfaces up to 3 candidates; each cited
+  candidate has `usage_count_14d >= WRAP_MIN` (default 12) AND
+  `wrapped = false`.
 - Add-library succeeds for all three source shapes (local /
   github / website llms url).
 - Clicking a row's docs source opens
@@ -52,6 +53,14 @@ Kanji is 庫 — *repository*.
   focused on `search_lib_docs` and the library pre-filled.
 - Drift chip count on the row matches
   [[pipeline/traceability]] counts for that library.
+
+Optional check:
+```
+curl -s http://localhost:7744/api/libraries \
+  | jq '{n_libs: (.libraries | length),
+         wrap_me: [.libraries[] | select(.usage_count_14d >= 12 and (.wrapped | not))] | length}'
+# expected: n_libs > 0 on Jerry's data; wrap_me is what the strip shows
+```
 
 ## Wrong gate
 

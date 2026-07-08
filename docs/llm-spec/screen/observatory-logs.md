@@ -39,12 +39,22 @@ Kanji is 録 — *record*.
 
 ## Done gate
 
-- Task strip shows every scheduled task; last-run and next-run
-  populate from the scheduler state (see
+- Task strip shows every scheduled task (`AnalyzeProject`,
+  `MeasureVerdicts`, `AggregateToolInsights`,
+  `AggregateCorrections`, `DetectCommunities`); last-run and
+  next-run populate from the scheduler state (see
   [[pipeline/analyzer]] watermark).
-- Log rows stream in real time when Follow is on.
-- Level + source filters narrow correctly.
+- Log rows stream in real time when Follow is on — a new
+  scanner tick appears in the visible list within 2s.
+- Level + source filters narrow correctly; combining `level=warn`
+  with `source=scanner` shows only the intersection.
 - Payload expand shows the raw jsonb without truncation.
+
+Optional check:
+```
+curl -s "http://localhost:7744/api/scheduler/tasks" | jq
+curl -s "http://localhost:7744/api/logs?level=info&since=1m" | jq 'length'
+```
 
 ## Wrong gate
 

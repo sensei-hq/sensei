@@ -42,11 +42,26 @@ Kanji is 検 — *inspect*.
 
 ## Done gate
 
-- Every triage row shows its evidence + similarity to existing
-  artifacts.
-- Approve requires a distribution scope decision.
-- Decline requires a reason.
-- Post-publish metrics flow back with adopted / muted counts.
+- Every triage row shows its evidence + similarity chip
+  (numeric value 0..1 against nearest existing artifact).
+- Approve requires a distribution scope decision — API rejects
+  a POST without `distribution_scope`.
+- Decline requires a reason (non-empty text field).
+- Post-publish metrics flow back within 14d: `adopted_count`
+  and `muted_count` populate on the row from downstream
+  telemetry.
+- Every action is logged in `dojo.events` — audit-log row count
+  for a given maintainer equals the number of actions
+  performed.
+- **DDL note:** `dojo.triage_queue`, `dojo.artifacts`,
+  `dojo.decisions`, `dojo.events` are new tables required by
+  this screen. Not yet in `daemon/database/`.
+
+Optional check:
+```
+curl -s https://dojo.sensei-hq.org/{org}/api/triage/queue?owner={maintainer_id} \
+  | jq '{n_open: (.queue | length), oldest_days: (.queue | map(.age_days) | max)}'
+```
 
 ## Wrong gate
 

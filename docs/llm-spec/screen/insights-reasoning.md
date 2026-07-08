@@ -47,11 +47,26 @@ Kanji is 論 — *debate / discourse*.
 
 - Every MOE-produced insight (memory consolidation, negative-
   verdict analysis, pattern promotion) writes a
-  `reasoning_traces` row.
+  `reasoning_traces` row. `sensei.reasoning_traces` is a new
+  table required by this screen — see [[pipeline/inferencing]]
+  MOE section.
 - The reasoning drawer opens without a full navigation from the
-  Insights screen.
-- Disagreements are highlighted when present.
-- Raw trace is available for the technically-inclined user.
+  Insights screen; deep-link at
+  `/insights/{id}/reasoning` opens direct.
+- Opening the drawer for a MOE-produced insight shows ≥ 2 rows
+  under `models_used`.
+- Disagreements are highlighted when present (non-empty
+  `disagreements` array on the trace).
+- Raw trace is available for the technically-inclined user
+  (toggle in the drawer).
+
+Optional check:
+```
+curl -s http://localhost:7744/api/insights/{id}/reasoning \
+  | jq '{stage: .stage, models: (.models_used | length),
+         disagreements: (.disagreements | length),
+         confidence: .confidence}'
+```
 
 ## Wrong gate
 

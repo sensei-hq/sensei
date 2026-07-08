@@ -50,12 +50,27 @@ Kanji is 群 — *collective*.
   batch honors the new setting).
 - The two destinations are independent — enabling Dōjō doesn't
   side-effect global; disabling one doesn't affect the other.
+- With both toggles off, `/api/share-review/next-batch` returns
+  an empty items array.
 - Category toggles are respected by the loop
-  ([[pipeline/dojo-lifecycle]] contribute step).
+  ([[pipeline/dojo-lifecycle]] contribute step) — turning
+  `memory` off drops memory items from the next batch and only
+  memory items.
 - Attribution defaults per destination match the rules in
   [[pipeline/dojo-lifecycle]] attribution table.
 - Manual cadence pauses batching until the user clicks the
   next-batch trigger.
+
+Optional check:
+```
+curl -s http://localhost:7744/api/preferences/collective | jq
+# then flip a toggle:
+curl -X PUT http://localhost:7744/api/preferences/collective/global_memory \
+     -H 'Content-Type: application/json' -d 'false'
+curl -s http://localhost:7744/api/share-review/next-batch \
+  | jq '[.items[] | select(.type=="memory" and .destination=="collective")] | length'
+# expected: 0
+```
 
 ## Wrong gate
 

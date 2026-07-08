@@ -63,13 +63,26 @@ Same shape as [[screen/project-overview]] but aggregated:
 
 ## Done gate
 
-- Aggregate FTR is a weighted mean (by session count), not a
-  naive average.
+- Aggregate FTR is a weighted mean by session count:
+  `sum(sessions_i × ftr_i) / sum(sessions_i)` — chip value
+  matches this formula within ±0.005.
 - Per-project rows link to each project's own Overview.
-- Cross-project connections surface where they exist (e.g. UI
-  project imports API types from Backend project).
+- Cross-project connections surface where they exist. At least
+  one edge appears when `sensei.project_dependencies` has a row
+  where source and target project ids differ but both belong
+  to the solution.
 - Adding / removing a project from the solution updates
-  aggregates on next tick.
+  aggregates on the next analyzer tick.
+
+Optional check:
+```
+curl -s http://localhost:7744/api/solutions/{id}/dashboard \
+  | jq '{aggregate_ftr,
+         members: (.projects | length),
+         weighted: (
+           [.projects[] | .sessions_7d * .ftr_14d] | add
+           / ([.projects[] | .sessions_7d] | add))}'
+```
 
 ## Wrong gate
 

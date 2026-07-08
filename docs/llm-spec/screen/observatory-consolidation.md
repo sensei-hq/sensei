@@ -40,12 +40,21 @@ Kanji is 統 — *unify*.
 
 ## Done gate
 
-- Every candidate cluster surfaces with the right kind and
-  member count.
-- Merging preserves the strongest member's identity; archives
-  the others with a back-link.
-- Dismissed clusters don't re-appear unless materially different
-  members join.
+- Every candidate cluster with `similarity >= 0.7` surfaces
+  with the right kind and member count.
+- Merging preserves the strongest member's identity; archived
+  members carry `merged_into: representative_id` back-link and
+  are hidden from `get_memories` retrieval.
+- Dismissed clusters don't re-appear unless a new member
+  joins with a materially different signature.
+- Similarity chip renders the numeric value (e.g. `0.87`) so
+  the user can compare across clusters.
+
+Optional check:
+```
+curl -s http://localhost:7744/api/consolidation/candidates \
+  | jq '.clusters | group_by(.suggestion) | map({s: .[0].suggestion, n: length})'
+```
 
 ## Wrong gate
 

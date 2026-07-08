@@ -43,12 +43,29 @@ Kanji is 長 — *elder / senior*.
 
 ## Done gate
 
-- Adding a member auto-provisions with git-derived role;
-  overrides work.
-- SSO login end-to-end works.
-- Policy edits take effect on next batch.
-- Health strip shows real numbers.
-- Audit log persists every admin action.
+- Adding a member auto-provisions with the git-derived role
+  (verify: creating a member with a GitHub `write` role lands
+  as `contributor` in `dojo.roles`).
+- SSO login end-to-end works — first login for a new member
+  auto-creates a `dojo.memberships` row.
+- Policy edits take effect on next batch (verify with a curl
+  before/after against `/api/share-review/next-batch`).
+- Health strip shows real numbers from `dojo.events` rollups:
+  connection count = distinct members active in last 5min,
+  queue depth = `count(*) from dojo.triage_queue where state =
+  'queued'`.
+- Audit log persists every admin action — `select count(*) from
+  dojo.audit_events where actor_id = {admin}` equals the number
+  of admin actions in the session.
+- **DDL note:** `dojo.memberships`, `dojo.roles`,
+  `dojo.identities`, `dojo.policies`, `dojo.audit_events` are
+  new tables required by this screen.
+
+Optional check:
+```
+curl -s https://dojo.sensei-hq.org/{org}/api/health \
+  | jq '{connections, queue_depth, publish_rate_1h, error_rate_1h}'
+```
 
 ## Wrong gate
 

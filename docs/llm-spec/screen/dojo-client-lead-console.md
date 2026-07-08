@@ -47,10 +47,26 @@ Kanji is 守 — *guard*.
 
 - Engagements can be created and bound to projects.
 - Universal strip renders in the audit view for every client-
-  work artifact (no exceptions).
-- Incident creation with severity + owner works.
+  work artifact (no exceptions). Audit-view row count for a
+  client-work engagement equals `select count(*) from
+  dojo.artifacts where engagement_id = {x} and dereferenced =
+  true`; if any row has `dereferenced = false`, a red fail chip
+  renders and blocks compliance-report export.
+- Incident creation with severity + owner works; open
+  incidents count = `select count(*) from dojo.incidents where
+  resolved_at is null`.
 - Audit trail export produces a CSV / PDF suitable for
-  compliance evidence.
+  compliance evidence — the exported columns are a subset
+  covered by the universal strip; no source references leak.
+- **DDL note:** `dojo.engagements`, `dojo.incidents`,
+  `dojo.audit_events` are new tables required by this screen.
+
+Optional check:
+```
+curl -s https://dojo.sensei-hq.org/{org}/api/audit/artifacts?engagement={x} \
+  | jq '{n: length, non_dereferenced: [.[] | select(.dereferenced == false)] | length}'
+# expected: non_dereferenced == 0
+```
 
 ## Wrong gate
 
