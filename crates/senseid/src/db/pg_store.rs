@@ -5808,11 +5808,13 @@ impl PgStore {
     pub async fn get_project_recommendations(&self, project_id: &uuid::Uuid, status: Option<&str>) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(uuid::Uuid, String, String, String, Option<String>, String, Option<String>,
                         Option<f64>, Option<f64>, Option<chrono::DateTime<chrono::Utc>>, Option<chrono::DateTime<chrono::Utc>>,
-                        Option<f64>, bool)> =
+                        Option<f64>, bool, String)> =
             sqlx_core::query_as::query_as(
+                // `action_type` powers the Upgrades screen's installable filter; it is
+                // `not null` on the table and mirrors the impact serializer's `actionType`.
                 "SELECT id, title, urgency::text, status::text, verdict::text, why, impact,
                         baseline_ftr::float8, current_ftr::float8, acted_at, measured_at,
-                        score::float8, focal
+                        score::float8, focal, action_type
                  FROM inference.recommendations WHERE project_id = $1
                    AND ($2::text IS NULL OR status::text = $2)
                  ORDER BY focal DESC, score DESC NULLS LAST,
@@ -5821,10 +5823,10 @@ impl PgStore {
             ).bind(project_id).bind(status)
             .fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
 
-        Ok(rows.into_iter().map(|(id, title, urgency, status, verdict, why, impact, baseline, current, acted, measured, score, focal)| {
+        Ok(rows.into_iter().map(|(id, title, urgency, status, verdict, why, impact, baseline, current, acted, measured, score, focal, action_type)| {
             serde_json::json!({
                 "id": id, "title": title, "urgency": urgency, "status": status, "verdict": verdict,
-                "why": why, "impact": impact,
+                "why": why, "impact": impact, "actionType": action_type,
                 "baseline_ftr": baseline, "current_ftr": current,
                 "acted_at": acted.map(|t| t.to_rfc3339()), "measured_at": measured.map(|t| t.to_rfc3339()),
                 "score": score, "focal": focal,
