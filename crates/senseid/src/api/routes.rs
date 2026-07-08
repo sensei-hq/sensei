@@ -27,6 +27,7 @@ use crate::api::handlers::gateway_routers;
 use crate::api::handlers::gateway_chains;
 use crate::api::handlers::gateway_image;
 use crate::api::handlers::knowledge;
+use crate::api::handlers::dojo;
 use crate::api::handlers::corrections;
 
 pub fn create_router(state: AppState) -> Router {
@@ -244,6 +245,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/knowledge/sources/{id}",            delete(knowledge::delete_source))
         .route("/api/knowledge/sources/{id}/sync",       post(knowledge::sync_source))
         .route("/api/knowledge/sources/{id}/status",     get(knowledge::source_status))
+        // Dōjō connections (memberships)
+        .route("/api/dojo/memberships",                  get(dojo::list_memberships).post(dojo::create_membership))
         // Stop
         .route("/stop", post(workspace::stop))
         .with_state(state)

@@ -5124,6 +5124,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "sensei-config"
+version = "0.2.29"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "sensei-logger"
 version = "0.2.29"
 dependencies = [
@@ -5156,6 +5164,7 @@ dependencies = [
  "chrono",
  "clap",
  "dirs",
+ "dojo-protocol",
  "gateway",
  "gateway-embedded",
  "globset",
@@ -5177,6 +5186,7 @@ dependencies = [
  "rusqlite",
  "ruzstd",
  "sensei-bootstrap",
+ "sensei-config",
  "sensei-logger",
  "serde",
  "serde_json",

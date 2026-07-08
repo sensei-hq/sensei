@@ -1112,3 +1112,21 @@ commits so far: C1 `37f30527` + dojo-protocol `1e963ab2` (+ these will merge tog
 ═══ MERGE-CADENCE NOTE: Dōjō foundation (schema+protocol+service) accumulates on develop UNMERGED until
 the first functional collective-intelligence milestone (e.g. daemon can contribute→service→pull). App
 milestones (v0.2.25-29) already on main. main @ d41b0331; develop ahead by Dōjō + project_patterns-era. ═══
+
+── DŌJŌ C3 ✅ COMMITTED `122fad3f` (2026-07-08) ──
+hive-mind → multi-tenant + dual-auth, strictly additive (32 tests: 15 pre-existing unchanged + 17 new,
+clippy 0). dojo scope deployed to service embedded PG + seed_global_dojo; seq cursor on dojo.artifacts;
+tenant via /v1/t/{tenant_key}/...; dual-auth (API-key + Supabase-JWT synthetic-tested, jsonwebtoken 9);
+tenant-scoped POST/GET artifacts w/ isolation test. DRY apply_scope (hive deploy identical, tests green).
+⏳ DŌJŌ C4 BUILDING (agent ab3bf6cbf352195db): daemon-side dojo client — SENSEI_DOJO_URL config, daemon
+connection model (extend knowledge_sources OR new sensei.dojo_memberships — agent decides+documents),
+dojo/{mod,memberships,routing}.rs, client-precedence routing (pure, tested), /api/dojo/memberships,
+Keychain creds via gateway_keys. NO artifact push/pull yet (C6/C7) — just the connection+routing+client
+seam. Docker-free, unit-tested (daemon→service integration deferred to when sensei-hive runs).
+
+DŌJŌ chunks on develop UNMERGED: C1 `37f30527` + dojo-protocol `1e963ab2` + C3 `122fad3f` (+ C4 pending).
+Merge+bump at first FUNCTIONAL milestone. ⚠️ BEFORE that bump: validate `make bump`/dbd-combine handles
+the new `dojo` scope + seed procedure (untested — could surface a dbd-scope issue; validate via a dbd
+dry-run/graph first, not a blind bump). NEXT after C4: C5 dereference/anonymize (HARD confidentiality
+gate — client identifiers must NOT leak; heavy tests) → C7 downstream inbox → C6 upstream → C8 collective
+promote. Then daemon↔service integration test (run sensei-hive + daemon, contribute→pull round-trip).

@@ -69,6 +69,45 @@ pub struct KnowledgeSource {
     pub enabled:        bool,
 }
 
+/// Input for registering a daemon-side Dōjō connection
+/// (`sensei.dojo_memberships`). The device token is stored in the OS Keychain
+/// (referenced by `credential_ref`), never here — mirrors [`NewKnowledgeSource`].
+pub struct NewDojoMembership {
+    /// The service membership id (`dojo.memberships.id`); becomes the local PK
+    /// and the value `sensei.projects.dojo_id` points at. Service-assigned.
+    pub id:                  uuid::Uuid,
+    pub registry_url:        String,
+    pub tenant_key:          String,
+    pub dojo_url:            String,
+    pub kind:                String, // employer | client | community | personal
+    pub role:                String,
+    pub authenticated_via:   String,
+    pub attribution_default: String,
+    pub credential_ref:      String,
+    pub sync_status:         String,
+}
+
+/// A daemon-side Dōjō connection (row of `sensei.dojo_memberships`). Carries
+/// `credential_ref` for C6/C7 token resolution; the API view omits it.
+#[derive(Debug, Clone)]
+pub struct DojoMembership {
+    pub id:                  uuid::Uuid,
+    pub registry_url:        String,
+    pub tenant_key:          String,
+    pub dojo_url:            String,
+    pub kind:                String,
+    pub role:                String,
+    pub authenticated_via:   String,
+    pub attribution_default: String,
+    pub credential_ref:      String,
+    pub sync_status:         String,
+    pub last_seq:            i64,
+    /// RFC-3339 text (SELECTed as `::text`) so the API can serialize it without
+    /// pulling chrono into the row tuple. `None` until the first heartbeat.
+    pub last_heartbeat_at:   Option<String>,
+    pub enabled:             bool,
+}
+
 /// A federated_memories ledger row.
 #[derive(Debug, Clone)]
 pub struct FederatedLink {
@@ -6172,6 +6211,92 @@ impl PgStore {
         Ok(res.rows_affected() > 0)
     }
 
+    // ── Dōjō connections (daemon-side membership mirror) ───────────────
+    //
+    // Local mirror of the Dōjōs this install is connected to (Fork 1: the
+    // authoritative dojo.memberships row lives in the Dōjō service DB). Mirrors
+    // the knowledge_sources CRUD discipline; the credential lives in the OS
+    // Keychain (credential_ref), never in these rows.
+
+    /// Insert a Dōjō connection with the service-assigned `id` as the PK.
+    pub async fn create_dojo_membership(&self, m: &NewDojoMembership) -> Result<uuid::Uuid, String> {
+        let (id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.dojo_memberships
+                (id, registry_url, tenant_key, dojo_url, kind, role,
+                 authenticated_via, attribution_default, credential_ref, sync_status)
+             VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id")
+            .bind(m.id).bind(&m.registry_url).bind(&m.tenant_key).bind(&m.dojo_url)
+            .bind(&m.kind).bind(&m.role).bind(&m.authenticated_via)
+            .bind(&m.attribution_default).bind(&m.credential_ref).bind(&m.sync_status)
+            .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(id)
+    }
+
+    fn map_dojo_row(
+        row: (uuid::Uuid, String, String, String, String, String, String, String, String, String, i64, Option<String>, bool),
+    ) -> DojoMembership {
+        let (id, registry_url, tenant_key, dojo_url, kind, role, authenticated_via,
+             attribution_default, credential_ref, sync_status, last_seq, last_heartbeat_at, enabled) = row;
+        DojoMembership {
+            id, registry_url, tenant_key, dojo_url, kind, role, authenticated_via,
+            attribution_default, credential_ref, sync_status, last_seq, last_heartbeat_at, enabled,
+        }
+    }
+
+    const DOJO_SELECT: &'static str =
+        "SELECT id, registry_url, tenant_key, dojo_url, kind, role, authenticated_via,
+                attribution_default, credential_ref, sync_status, last_seq,
+                last_heartbeat_at::text, enabled
+           FROM sensei.dojo_memberships";
+
+    pub async fn list_dojo_memberships(&self) -> Result<Vec<DojoMembership>, String> {
+        let rows: Vec<(uuid::Uuid, String, String, String, String, String, String, String, String, String, i64, Option<String>, bool)> =
+            sqlx_core::query_as::query_as(&format!("{} ORDER BY created_at", Self::DOJO_SELECT))
+            .fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(Self::map_dojo_row).collect())
+    }
+
+    pub async fn get_dojo_membership(&self, id: &uuid::Uuid) -> Result<Option<DojoMembership>, String> {
+        let row: Option<(uuid::Uuid, String, String, String, String, String, String, String, String, String, i64, Option<String>, bool)> =
+            sqlx_core::query_as::query_as(&format!("{} WHERE id = $1", Self::DOJO_SELECT))
+            .bind(id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.map(Self::map_dojo_row))
+    }
+
+    /// Update a connection's sync status. Returns `false` if unknown.
+    pub async fn set_dojo_sync_status(&self, id: &uuid::Uuid, sync_status: &str) -> Result<bool, String> {
+        let res = sqlx_core::query::query(
+            "UPDATE sensei.dojo_memberships SET sync_status = $2, updated_at = now() WHERE id = $1")
+            .bind(id).bind(sync_status).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    pub async fn delete_dojo_membership(&self, id: &uuid::Uuid) -> Result<bool, String> {
+        let res = sqlx_core::query::query("DELETE FROM sensei.dojo_memberships WHERE id = $1")
+            .bind(id).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    /// Bind (or, with `None`, unbind) a project to a Dōjō membership by setting
+    /// `sensei.projects.dojo_id`. Returns `false` if the project is unknown.
+    pub async fn bind_project_to_dojo(
+        &self, project_id: &uuid::Uuid, membership_id: Option<&uuid::Uuid>,
+    ) -> Result<bool, String> {
+        let res = sqlx_core::query::query(
+            "UPDATE sensei.projects SET dojo_id = $2, modified_at = now() WHERE id = $1")
+            .bind(project_id).bind(membership_id).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    /// Projects bound to a membership (`projects.dojo_id = id`) — the
+    /// connections pane's "bound projects" strip.
+    pub async fn projects_bound_to_dojo(&self, membership_id: &uuid::Uuid) -> Result<Vec<(uuid::Uuid, String)>, String> {
+        let rows: Vec<(uuid::Uuid, String)> = sqlx_core::query_as::query_as(
+            "SELECT id, name FROM sensei.projects WHERE dojo_id = $1 ORDER BY name")
+            .bind(membership_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows)
+    }
+
     // ── Federation ledger ─────────────────────────────────────────────
 
     pub async fn namespace_is_shareable(&self, namespace_id: &uuid::Uuid) -> Result<bool, String> {
@@ -8384,6 +8509,53 @@ mod tests {
 
         assert!(pg.delete_knowledge_source(&id).await.unwrap());
         assert!(pg.get_knowledge_source(&id).await.unwrap().is_none());
+    }
+
+    // ── Dōjō connections tests ────────────────────────────────────────
+
+    #[tokio::test]
+    async fn dojo_membership_crud_and_project_binding_roundtrip() {
+        let Ok(pg) = PgStore::connect_test().await else { return; };
+        // Service-assigned membership id (the local PK; projects.dojo_id → this).
+        let mid = uuid::Uuid::new_v4();
+        pg.create_dojo_membership(&NewDojoMembership {
+            id: mid,
+            registry_url: "http://localhost:8787".into(),
+            tenant_key: "github/acme".into(),
+            dojo_url: "http://localhost:8787/github/acme".into(),
+            kind: "client".into(),
+            role: "contributor".into(),
+            authenticated_via: "device_code".into(),
+            attribution_default: "dereferenced".into(),
+            credential_ref: format!("dojo-{}", uuid::Uuid::new_v4()),
+            sync_status: "authenticating".into(),
+        }).await.unwrap();
+
+        // Present in the list with sane defaults.
+        let all = pg.list_dojo_memberships().await.unwrap();
+        let row = all.iter().find(|m| m.id == mid).expect("membership listed");
+        assert_eq!(row.kind, "client");
+        assert_eq!(row.last_seq, 0);
+        assert!(row.enabled);
+        assert!(row.last_heartbeat_at.is_none());
+
+        // sync-status update.
+        assert!(pg.set_dojo_sync_status(&mid, "healthy").await.unwrap());
+        assert_eq!(pg.get_dojo_membership(&mid).await.unwrap().unwrap().sync_status, "healthy");
+
+        // Bind a project → projects.dojo_id → appears in the bound-projects strip.
+        let proj = pg.create_project("_test:dojo:bind", None, None).await.unwrap();
+        assert!(pg.bind_project_to_dojo(&proj, Some(&mid)).await.unwrap());
+        let bound = pg.projects_bound_to_dojo(&mid).await.unwrap();
+        assert!(bound.iter().any(|(id, _)| *id == proj), "bound project surfaces");
+
+        // Unbind + cleanup.
+        assert!(pg.bind_project_to_dojo(&proj, None).await.unwrap());
+        assert!(pg.projects_bound_to_dojo(&mid).await.unwrap().is_empty());
+        pg.delete_project(&proj).await.unwrap();
+
+        assert!(pg.delete_dojo_membership(&mid).await.unwrap());
+        assert!(pg.get_dojo_membership(&mid).await.unwrap().is_none());
     }
 
     // ── scope_folder_ids tests (#60) ─────────────────────────────────

@@ -87,7 +87,9 @@ gateway = { git = "ssh://git@github.com/sensei-hq/gateway.git", rev = "01d0ab2" 
 # `embedded-*` cargo features above.
 gateway-embedded = { git = "ssh://git@github.com/sensei-hq/gateway.git", rev = "01d0ab2" }
 hive-protocol = { path = "../hive-protocol" }
+dojo-protocol = { path = "../dojo-protocol" }
 sensei-bootstrap = { path = "../bootstrap" }
+sensei-config = { path = "../sensei-config" }
 sensei-logger = { path = "../logger" }
 
 [build-dependencies]

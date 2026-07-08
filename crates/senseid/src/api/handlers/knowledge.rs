@@ -725,14 +725,10 @@ pub(crate) async fn create_source(
     Json(b): Json<NewSourceBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let url = b.url.trim().to_string();
-    // Parse the URL rather than substring-match: require https unless the host is
-    // exactly a loopback (so `http://127.0.0.1.evil.com` can't smuggle the bearer
-    // token to an attacker host in cleartext).
-    let parsed = reqwest::Url::parse(&url).map_err(|_| err(StatusCode::BAD_REQUEST, "invalid source url"))?;
-    let is_loopback = matches!(parsed.host_str(), Some("127.0.0.1") | Some("::1") | Some("localhost"));
-    if parsed.scheme() != "https" && !is_loopback {
-        return Err(err(StatusCode::BAD_REQUEST, "non-loopback source url must be https"));
-    }
+    // Require https unless the host is exactly a loopback — see
+    // `api::util::require_secure_url` (shared with the Dōjō registration path).
+    crate::api::util::require_secure_url(&url, "source url")
+        .map_err(|e| err(StatusCode::BAD_REQUEST, &e))?;
     let namespace_id = match b.namespace_id.as_deref() {
         Some(s) => Some(uuid::Uuid::parse_str(s).map_err(|_| err(StatusCode::BAD_REQUEST, "bad namespace_id"))?),
         None => None,
