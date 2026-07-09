@@ -1363,10 +1363,41 @@ REAL remaining gaps (verified live, grep — code-graph empty for this project =
      screen — cheapest next); rank4 get_project_impact (unlocks FtrLift/FtrRegression). Spec drift: impl is
      off-wire warm-on-miss, spec says 400ms sync (impl wins).
 
-⭐✅ ANALYZER-COMPLETENESS MILESTONE (2026-07-08): pattern→rule promotion `5a89a165` + tool-health
-  insight-copy `afe11d2d`. ⏳ MERGE+BUMP IN PROGRESS (v0.2.33→0.2.34, develop→main).
-  NEXT candidates after this: rank3 get_project_recommendations insight-copy (cheapest, reuses
-  InsightRecurringPattern verbatim, LIVE screen) → rank4 get_project_impact → then item 3/4 below.
+⭐✅ ANALYZER-COMPLETENESS MILESTONE SHIPPED & RELEASED (2026-07-08): pattern→rule promotion `5a89a165`
+  + tool-health insight-copy `afe11d2d` → **v0.2.34** (`7f6e8596`) MERGED→main (`a39c267c`, tag pushed,
+  tap+marketplace synced). `main..develop` EMPTY. THREE milestones this session (v0.2.32 Dōjō UI, v0.2.33
+  analyzer wiring, v0.2.34 analyzer completeness).
+  ✅ SHIPPED `5f12a757` (2026-07-08): rank3 get_project_recommendations insight-copy — extracted shared
+  insights::rec_copy_inputs + apply_rec_copy, called from BOTH get_insights + get_project_recommendations →
+  ONE (kind,facts_hash) cache entry shared across screens (proven by test). 5 pure tests; clippy 0; 1309 pass.
+  ON DEVELOP (unmerged — rides the next milestone merge; 1 commit, low divergence).
+  ⏸️ rank4 get_project_impact DEPRIORITIZED: marginal value + RISK — impact_verdicts may be USER-AUTHORED text
+  (created via POST), which must NOT be rewritten by gemma4. Only route if verified daemon-generated. Skip for now.
+  insight-copy sweep = substantially DONE (tool-health + project-recs = the 2 biggest gaps shipped + done-set).
+  ⭐ NEXT TRACK: **memory-usage feedback loop** — SURVEY DONE (agent ad38315a). KEY FINDING: the use-report
+  half ALREADY EXISTS = `sensei.memory_outcomes` (enum applied|consulted|violated|ignored + memory_outcome_apply
+  trigger + record_outcome MCP tool + POST /api/knowledge/outcomes). So `memory_use_reports` DOES NOT need building
+  — map followed←applied, skipped←ignored. ONLY the LOAD side is missing (activity.memory_loads absent). Memories
+  are PULL (get_layered_context MCP → assemble_context pg_store.rs:6109 → returns memories, logs nothing), NOT
+  pushed at session-start (session-start hook injects RULES only). Doc drift: endpoint=/api/knowledge/memories,
+  screen=(observatory)/learnings/ (NOT /api/memories or /memories). ~1-day track, mostly pure-daemon.
+  ✅ DAEMON SLICE SHIPPED `553a6203` (2026-07-09): activity.memory_loads (one-row-per-memory, joins default
+  scope, applied to sensei_test) + NON-FATAL writer in assemble_context (FOR SHARE-hardened vs concurrent-delete
+  FK race) + memory_telemetry_7d(id)→(loaded,followed,skipped) single query (followed=applied/skipped=ignored
+  over memory_outcomes, NO new table) + get_memory_detail exposes loaded/followed/skipped_last_7d (top-level,
+  additive). 4 db-gated tests; clippy 0; standard gate 1313 pass. ⭐ BONUS BUG FIX: memory_outcome_apply trigger
+  cast 'archived'/'challenged'::memory_status UNQUALIFIED → record_outcome(violated) crashed live (42704, daemon
+  search_path lacks sensei); qualified to sensei.memory_status. SHIPS LIVE VIA BUMP (both new table + trigger fix).
+  ⚠️ 2 PRE-EXISTING DB-test-isolation issues (NOT this change, pass single-threaded/isolated; pre-commit skips
+  DB tests = green): list_memories_filters_by_status (non-self-isolating fixture accumulates proposed memories),
+  prune_activity_prunes_orphan_events_by_ts (known parallel-prune flake). Follow-up: make those fixtures self-isolating.
+  ✅ P3-UI SHIPPED `7cf3c37f` (2026-07-09): MemoryDetail.svelte usage strip → loaded/followed/skipped_7d
+  (memoryUsageStrip pure helper, honest zeros); lifetime kept as secondary "all-time" line; bonus: legacy
+  <style> hex→rokkit tokens. +6 tests; svelte-check 0/0; 1046 app tests. Matches learnings-anatomy-v2 mockup.
+  ⭐ MEMORY-FEEDBACK LOOP COMPLETE (daemon 553a6203 + UI 7cf3c37f). ⏳ MERGE MILESTONE IN PROGRESS:
+  rank3 `5f12a757` + memory-feedback → v0.2.34→0.2.35 → main (ships activity.memory_loads table + trigger bugfix LIVE).
+  DEFERRED follow-ups: per-session load correlation (thread client_session_id through get_context/MCP → needs
+  plugin republish); P2c behavioral use-classifier (reuse verdict_classifier fragment overlap).
 
   3. **memory promote/merge statuses** defined + readyToShare/toMerge wired (Memories screen / overflow 7).
   4. HARDEST (new DDL + CAPTURE hooks in marketplace/ plugin, multi-part): memory-usage telemetry
