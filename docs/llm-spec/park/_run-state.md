@@ -1374,10 +1374,21 @@ REAL remaining gaps (verified live, grep — code-graph empty for this project =
   ⏸️ rank4 get_project_impact DEPRIORITIZED: marginal value + RISK — impact_verdicts may be USER-AUTHORED text
   (created via POST), which must NOT be rewritten by gemma4. Only route if verified daemon-generated. Skip for now.
   insight-copy sweep = substantially DONE (tool-health + project-recs = the 2 biggest gaps shipped + done-set).
-  ⏳ NEXT TRACK (highest value, survey in flight): **memory-usage feedback loop** — "did injected memory help?"
-  observatory-memories screen reads activity.memory_loads + memory_use_reports (loaded/followed/skipped_7d) but
-  NEITHER table nor capture exists. Multi-part: DDL + capture hooks (marketplace plugin) + writer + reader.
-  Survey scopes it. NOTE: capture-hook changes need plugin republish/reinstall to verify live (deferred, like Dōjō).
+  ⭐ NEXT TRACK: **memory-usage feedback loop** — SURVEY DONE (agent ad38315a). KEY FINDING: the use-report
+  half ALREADY EXISTS = `sensei.memory_outcomes` (enum applied|consulted|violated|ignored + memory_outcome_apply
+  trigger + record_outcome MCP tool + POST /api/knowledge/outcomes). So `memory_use_reports` DOES NOT need building
+  — map followed←applied, skipped←ignored. ONLY the LOAD side is missing (activity.memory_loads absent). Memories
+  are PULL (get_layered_context MCP → assemble_context pg_store.rs:6109 → returns memories, logs nothing), NOT
+  pushed at session-start (session-start hook injects RULES only). Doc drift: endpoint=/api/knowledge/memories,
+  screen=(observatory)/learnings/ (NOT /api/memories or /memories). ~1-day track, mostly pure-daemon.
+  ⏳ BUILDING NOW (agent, daemon slice P1+P2+P3-API): P1 new activity.memory_loads DDL (one-row-per-memory:
+  memory_id + optional session/project + source + loaded_at; apply to sensei_test; live via bump) + writer in
+  assemble_context (batch-insert per returned memory, session_id NULL for v1, NON-FATAL log-not-block) +
+  loaded_last_7d reader. P2 followed_last_7d(applied)/skipped_last_7d(ignored) readers over existing
+  memory_outcomes (NO new table). P3-API add the 3 fields to get_memory_detail JSON. Defaults: reuse outcomes,
+  self-report=followed, one-row-per-memory. DEFERRED follow-ups: per-session load correlation (thread client_session_id
+  through get_context/MCP → needs plugin republish); P2c behavioral classifier (reuse verdict_classifier fragment
+  overlap); P3-UI MemoryDetail.svelte strip (separate svelte build). DDL-source-first; no P2c now.
 
   3. **memory promote/merge statuses** defined + readyToShare/toMerge wired (Memories screen / overflow 7).
   4. HARDEST (new DDL + CAPTURE hooks in marketplace/ plugin, multi-part): memory-usage telemetry
