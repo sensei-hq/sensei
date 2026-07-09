@@ -16,6 +16,7 @@ create table if not exists projects (
 , privacy                  jsonb            not null default '{}'
 , excluded_globs           jsonb            not null default '[]'
 , tags                     text[]           not null default '{}'
+, dojo_id                  uuid
 , modified_at              timestamptz      not null default now()
 );
 
@@ -24,6 +25,9 @@ create index if not exists projects_maturity_idx
 
 create index if not exists projects_tags_idx
     on projects using gin(tags);
+
+create index if not exists projects_dojo_id_idx
+    on projects(dojo_id);
 
 comment on table projects is
 'Projects — independent grouping entity for 1+ folders.
@@ -70,5 +74,7 @@ comment on column projects.excluded_globs
      is 'Glob patterns to exclude from indexing for this project: ["dist/**", "*.generated.*"]. Layered on top of folders_to_watch.excluded.';
 comment on column projects.tags
      is 'Array of tag strings for quick filtering. Vocabulary controlled by sensei.tags table.';
+comment on column projects.dojo_id
+     is 'Optional binding to the Dōjō membership this project routes findings to (dojo.memberships.id in the separate Dōjō service DB). Nullable — most projects have no Dōjō. Not a DB-level FK: dojo.* lives in another database (Fork 1). Client-membership bindings take precedence over employer ones.';
 comment on column projects.modified_at
      is 'Timestamp of the last modification to this row.';
