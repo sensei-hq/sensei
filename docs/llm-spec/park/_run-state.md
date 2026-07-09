@@ -1311,13 +1311,17 @@ Wire shape (VERIFIED live: table on pg 5432; 13 tests pass; clippy 0):
   learned memories (generate.rs), corrections (corrections.rs), communities (community.rs), tool_insights
   (tool_insights.rs), verdicts (verdicts.rs). derive_signals + MeasureVerdicts CONFIRMED wired.
 REAL remaining gaps (verified live, grep — code-graph empty for this project = known segmentation bug):
-  • ⏳ BUILDING NOW (agent ac6f1941): **doc-drift never auto-scans** — writer pg_store::scan_project_doc_drift
-    (:1899) exists + tested, but ONLY caller is manual POST /api/projects/{id}/drift/scan. So inference.drift_items
-    (backs project-overview docDrift, projects warn-dot, quality-signals, Traceability) reads 0 until user clicks.
-    FIX = wire TaskKind::ScanDocDrift + thin handler + executor dispatch + enqueue alongside AnalyzeProject in
-    the due-project loop (analyzer_scheduler.rs:203-204). No DDL. TDD. Reuse writer unchanged.
-  • tool_call_verdicts (#90) classified LAZILY only (on Replay-tab view, sessions.rs:180) — not batch/scheduled;
-    so used/partial/ignored tool split only covers opened sessions. RUNNER-UP: schedule it as a global task.
+  • ✅ SHIPPED `c679f8d6` (2026-07-08): **doc-drift now auto-scans** — TaskKind::ScanDocDrift + thin handler
+    (reuses pg_store::scan_project_doc_drift unchanged) + executor dispatch + enqueue alongside AnalyzeProject
+    in the scheduler due-project loop (enqueue_due_project helper). 4 tests + enum coverage; clippy 0; 1289 pass.
+    inference.drift_items now populates on its own (project-overview docDrift, projects warn-dot, quality-signals,
+    Traceability). NOT merged to main yet (batching a few gap-fills before next merge+bump milestone).
+  • ⏳ BUILDING NOW (agent): **tool_call_verdicts classified LAZILY only** (on Replay-tab view, sessions.rs:180 +
+    manual verdicts.rs:46) — not scheduled; so aggregate_tool_insights' used/partial/ignored split only covers
+    OPENED sessions. classify_session is IDEMPOTENT (upsert_verdicts_batch) → safe to re-run. FIX = new global
+    TaskKind::ClassifyPendingVerdicts: pg query for in-window session ids with PostToolUse hook events but NO
+    tool_call_verdicts rows (unclassified-only = cheap gap-fill) → loop classify_session → enqueue BEFORE
+    AggregateToolInsights in the scheduler global-pass. Reuse HEALTH_VERDICT_WINDOW_DAYS. No DDL. TDD.
   • HARD gaps (need new DDL + capture, larger): memory-usage telemetry (activity.memory_loads/memory_use_reports
     — NEITHER table nor capture exists; the "did injected memory help?" loop is unbuilt); impact_regressions table;
     pattern-lifecycle promotion writer (detected_patterns.lifecycle stuck at 'suggested'); structural/GoF pattern
