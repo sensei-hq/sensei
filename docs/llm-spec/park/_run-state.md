@@ -1328,10 +1328,14 @@ REAL remaining gaps (verified live, grep — code-graph empty for this project =
   tap+marketplace synced). `main..develop` EMPTY (synced). Both make analyzer outputs self-populate.
 
 ── NEXT TRACK (pick on next tick, fresh context) — remaining REAL gaps, roughly small→large:
-  1. **pattern-lifecycle promotion writer** — detected_patterns.lifecycle stuck at 'suggested'; nothing
-     advances it to 'rule'/'gap'. Smallest HARD-ish gap: a writer over existing tables (likely tied to
-     recommendation acceptance / promote_pattern), NO new capture hooks. Good next pick. VERIFY the
-     lifecycle enum + how promote_pattern recs relate before building.
+  1. **pattern-lifecycle promotion writer** — ⏳ SURVEY IN FLIGHT (agent). ANCHORS FOUND: writer
+     `pg_store::promote_pattern(id, lifecycle)` EXISTS (:2503, UPDATEs detected_patterns.lifecycle ::
+     sensei.pattern_lifecycle); `accept_recommendation(id)` EXISTS (:1543, sets rec status='accepted').
+     Readers: insights.rs::pattern_column(:41), pattern_effectiveness::pattern_kind (lifecycle=='rule'→adopted).
+     Screen project-patterns.md wants kind=emerging|promoted|anti_pattern, state=detected|promoted|dismissed,
+     Promote → create `sensei.rules` row source=promoted:pattern:{id}; also references `sensei.promoted_patterns`.
+     LIKELY GAP: accepting a promote_pattern-action rec does NOT call promote_pattern() nor create the rule —
+     survey confirms who-calls-promote_pattern + whether sensei.rules/promoted_patterns exist + the clean loop.
   2. **insight-copy wiring** — route user-facing insight strings through gemma4 (insight-copy chain) where
      still raw DB text. Check which read-paths bypass insight_copy. [[feedback_llm_insight_copy]].
   3. **memory promote/merge statuses** defined + readyToShare/toMerge wired (Memories screen / overflow 7).
