@@ -1,6 +1,8 @@
 mod types;
 mod db;
 mod federation;
+mod dojo;
+mod collective;
 mod languages;
 mod indexer;
 mod config;

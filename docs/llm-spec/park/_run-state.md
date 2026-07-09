@@ -1007,3 +1007,219 @@ Build/verify: `make crates-debug && make install-service`, then curl :7744.
 - 2026-07-07: run started; env verified; recon done. Gate-1 spec-doc-reviewer PASSED
   (2 rounds). Baseline clean. Backend design LOCKED. Delegating backend impl to a fork
   (inherits full context) with TDD + build + curl evidence.
+
+═══════════════════════════════════════════════════════════════════════════════════════════════════
+⭐ LATEST STATE (2026-07-08 PM) — READ THIS FIRST ⭐
+═══════════════════════════════════════════════════════════════════════════════════════════════════
+5 MILESTONES SHIPPED TO MAIN this session (all gated: unit+check+autofixer+live-curl; Rust also clippy 0):
+  v0.2.25 insight-copy pipeline (Today/Overview/Insights mentor-voice; off-wire warm; chain-graft fix)
+  v0.2.26 memory ready/merge counts + project-impact read-path fix + project-sessions chart port
+  v0.2.27 memory generalise (LLM rewrite endpoint + ready-to-share frontend)
+  v0.2.28 upgrades actionType read-path fix + observatory-traceability un-stub
+  v0.2.29 project_patterns view DDL fix (was broken: dup project_id col; DROP+CREATE over detected_patterns)
+main @ `d41b0331`, develop @ `4c6cb3f5`, ALIGNED. Daemon healthy on :7744.
+
+PROJECT WINDOW: overview/sessions/memories/impact/traceability all REAL. Remaining: about (big: icon-
+pipeline+membership+split), patterns (family/promote — upstream data null), instruments (parked registry↔
+usage), libraries-wrap (PARKED design-fork: writes to user repos).
+OBSERVATORY: all screens REAL now (traceability un-stubbed). Not-built: consolidation (no route), federation
+set (dojo/collective/share-review — the Dōjō track).
+
+⏳ IN FLIGHT:
+  1. e2e re-run (bg b8okopbf0, log e2e-batch2.log): does the project_patterns view fix unblock the Tauri
+     e2e port-timeout? HYPOTHESIS: probably NOT (daemon degrades on view-apply failure) — but empirical.
+     If GREEN → Tauri visual verification unblocked (clears frontend visual-e2e debt). If port-timeout
+     again → e2e daemon boot blocker is elsewhere (debug-slow / other) → DEFER + FLAG for Jerry.
+  2. Dōjō SCOPING analysis (agent a12cdab3c506a3d1e): build plan for the Dōjō SaaS track (Supabase+kavach
+     auth, localhost registry). Reads dojo specs + hive-mind crate + ~/Developer/kavach + senseid identity
+     model. Output = ordered build chunks → then I execute them.
+
+⚠️ FLAGS FOR JERRY (surface on return):
+  - Tauri e2e infra BLOCKED (port 7744 daemon-boot timeout in globalSetup) → blocks ALL visual e2e. My
+    frontend ships on unit+check bar. Needs the e2e daemon boot log to diagnose properly.
+  - libraries-wrap PARKED: needs decision on what a generated wrapper contains + OK to write into user repos.
+  - make bump test gate is FLAKY (parallel DB-test deadlock on activity.assistant_events / non-isolated
+    list_memories+prune tests) — v0.2.29 bump failed once then passed on re-run. Test-isolation debt.
+
+NEXT AFTER SCOPING: execute Dōjō build chunks in dependency order (auth infra first). Standing policy:
+default-and-proceed on internal forks; PARK external/irreversible (real Supabase creds, writing outside
+sensei). assume-localhost for the dojo registry per Jerry.
+═══════════════════════════════════════════════════════════════════════════════════════════════════
+
+── DŌJŌ SCOPING DONE (2026-07-08) → plan at docs/llm-spec/park/_dojo-build-plan.md ──
+FINDING: federation SUBSTRATE fully shipped (hive-mind + daemon federation + hive-protocol + DDL);
+Dōjō SaaS layer ~entirely ABSENT (no dojo.* schema, no user/org identity, no multi-tenant, no consoles).
+kavach @adapter-supabase is REAL/production-ready. AUTH = DUAL-PLANE (humans→Supabase/kavach in a NEW
+console app; daemon keeps Keychain-Bearer, NO Supabase in senseid — preserves shipped boundary).
+★ FORK RESOLVED = FORK 1 (default-and-proceed): dojo.* lives in the Rust Dōjō-service Postgres (new `dojo`
+dbd scope); Supabase = AUTH ONLY. Matches user's literal "supabase for auth"; preserves hive investment;
+reversible. localhost registry = SENSEI_DOJO_URL default http://localhost:8787.
+14 chunks, order: C1(dojo DDL)+C2(supabase+kavach console) parallel → C3(service multi-tenant+dual auth)
+→ C4(daemon memberships) → {C5 dereference/anonymize, C7 downstream inbox} → C6(upstream) → C8(collective
+promote) → screens C9-C11 → consoles C12-C14.
+NEXT: await e2e (bg b8okopbf0) to finish (avoid daemon/DDL conflict), process its result, THEN start
+Dōjō C1 (dojo.* DDL — delegate). C2 is DB-independent (could parallelize later).
+
+── E2E VERDICT (2026-07-08): SYSTEMIC HARNESS DRIFT, NOT my screens ──
+Run 2 (post view-fix) got FURTHER: daemon opened :7744 (view fix / fresh bundle helped boot), playwright
+ran → 49 passed / 71 FAILED (27.6m). Failures cluster in UNTOUCHED areas: multi-window 113 (project
+window not opening in e2e Tauri env → ALL section specs fail downstream), setup-wizard 56, daemon-
+verification 21, settings-rail 19, configure-assistants 18, boot-flow 16. Pattern = "element not visible
+12s" across the WHOLE suite = systemic e2e-harness/environment issue (likely Tauri window-capability in
+e2e context: project-* windows / core:webview:allow-create-webview-window — memory
+project_ui_rebuild_2026_06_25). NOT my 5 screens (verified vs live daemon+real data; vacation-run
+visually verified project windows). ⚠️⚠️ FLAG FOR JERRY: Tauri e2e suite systemically failing (49/120)
+in this env — needs a DEDICATED e2e-infra session (27min/run, interactive debug, env-specific). DO NOT
+rabbit-hole; my work ships on unit+check+autofixer+live-curl bar. E2E visual-verification debt = flagged.
+Daemon healthy (pid 56627, :7744→200).
+
+→ STARTING DŌJŌ C1 now (e2e done, no daemon/DDL conflict).
+
+── DŌJŌ C1 ✅ COMMITTED `37f30527` (2026-07-08) ──
+16 enums + 15 dojo.* tables + seed_global_dojo() proc (CALL, not SELECT) + dojo dbd scope + projects.dojo_id.
+Validated on scratch DB (15 tables / 28 intra-schema FKs apply clean in dep order; dbd is graph-aware so
+ordering is automatic on real deploy). 165+929 tests pass. NOT bumped yet (dojo scope reaches bundle at
+next Dōjō milestone bump — verify dbd handles the dojo scope + procedure at bump time).
+
+⛔ NO-DOCKER BLOCKER (2026-07-08): docker not installed → `supabase start` can't run → C2 (local Supabase +
+kavach console + live login) PARKED (needs Docker / Jerry / Docker-capable env). supabase CLI present,
+kavach repo present, bun present — but no Docker = no local Supabase stack.
+PIVOT (Docker-free value path): C1 done → dojo-protocol crate [⏳ BUILDING, agent a6bbeaf17a767c39e] → C3
+Dōjō service (evolve hive-mind multi-tenant + dual-auth; API-key path real+tested, Supabase-JWT path
+synthetic-token tested; embedded PG, no Docker) → C4-C8 daemon collective-intelligence pipelines (all
+Rust, no Docker). PARKED-for-Docker: C2 console + live auth, C12-C14 SaaS web consoles. Desktop Dōjō
+screens C9-C11 buildable later (thin over daemon API, no Docker).
+⚠️ ADD TO JERRY FLAGS: no Docker in this env blocks the Dōjō SaaS *console* path (Supabase local). The
+collective-intelligence engine (service + daemon pipelines) proceeds without it.
+
+── DŌJŌ dojo-protocol ✅ COMMITTED `1e963ab2` (2026-07-08) ──
+New crate crates/dojo-protocol: ArtifactKind(6) + per-kind ArtifactPayload (spec-provenanced, internally
+tagged) + federation envelope (PublishedArtifact/PulledArtifact/ArtifactPullResponse cursor) mirroring
+hive-protocol; artifact_signature reuses hive-protocol content_hash (DRY). 15 tests, clippy 0, workspace
+builds. FLAGGED: dojo.artifacts has no `seq` column — pull cursor needs one (→ C3 adds it).
+
+⏳ DŌJŌ C3 BUILDING (agent aef437be43567433a): evolve hive-mind → multi-tenant + dual-auth. STRICTLY
+ADDITIVE (keep shipped rules path + all hive tests green). Scope: deploy dojo scope to service embedded
+PG + CALL seed_global_dojo; add seq to dojo.artifacts (mirror hive.shared_rules); tenant resolution via
+/v1/t/{tenant_key}/... path; dual-auth (existing API-key + NEW Supabase-JWT verify tested w/ synthetic
+jsonwebtoken tokens, SUPABASE_JWT_SECRET env); tenant-scoped POST/GET artifacts (dojo-protocol types,
+seq cursor, tenant isolation test). Docker-free. TDD.
+NEXT after C3: C4 daemon dojo/{memberships,routing} → C5 dereference/anonymize (hard confidentiality
+gate) → C7 downstream inbox → C6 upstream → C8 collective promote. Merge+bump the Dōjō track at first
+FUNCTIONAL milestone (verify dbd handles dojo scope+procedure at that bump). develop unmerged Dōjō
+commits so far: C1 `37f30527` + dojo-protocol `1e963ab2` (+ these will merge together at the milestone).
+
+═══ MERGE-CADENCE NOTE: Dōjō foundation (schema+protocol+service) accumulates on develop UNMERGED until
+the first functional collective-intelligence milestone (e.g. daemon can contribute→service→pull). App
+milestones (v0.2.25-29) already on main. main @ d41b0331; develop ahead by Dōjō + project_patterns-era. ═══
+
+── DŌJŌ C3 ✅ COMMITTED `122fad3f` (2026-07-08) ──
+hive-mind → multi-tenant + dual-auth, strictly additive (32 tests: 15 pre-existing unchanged + 17 new,
+clippy 0). dojo scope deployed to service embedded PG + seed_global_dojo; seq cursor on dojo.artifacts;
+tenant via /v1/t/{tenant_key}/...; dual-auth (API-key + Supabase-JWT synthetic-tested, jsonwebtoken 9);
+tenant-scoped POST/GET artifacts w/ isolation test. DRY apply_scope (hive deploy identical, tests green).
+⏳ DŌJŌ C4 BUILDING (agent ab3bf6cbf352195db): daemon-side dojo client — SENSEI_DOJO_URL config, daemon
+connection model (extend knowledge_sources OR new sensei.dojo_memberships — agent decides+documents),
+dojo/{mod,memberships,routing}.rs, client-precedence routing (pure, tested), /api/dojo/memberships,
+Keychain creds via gateway_keys. NO artifact push/pull yet (C6/C7) — just the connection+routing+client
+seam. Docker-free, unit-tested (daemon→service integration deferred to when sensei-hive runs).
+
+DŌJŌ chunks on develop UNMERGED: C1 `37f30527` + dojo-protocol `1e963ab2` + C3 `122fad3f` (+ C4 pending).
+Merge+bump at first FUNCTIONAL milestone. ⚠️ BEFORE that bump: validate `make bump`/dbd-combine handles
+the new `dojo` scope + seed procedure (untested — could surface a dbd-scope issue; validate via a dbd
+dry-run/graph first, not a blind bump). NEXT after C4: C5 dereference/anonymize (HARD confidentiality
+gate — client identifiers must NOT leak; heavy tests) → C7 downstream inbox → C6 upstream → C8 collective
+promote. Then daemon↔service integration test (run sensei-hive + daemon, contribute→pull round-trip).
+
+── DŌJŌ C4 ✅ COMMITTED `beacc421` (2026-07-08) ──
+Daemon Dōjō client: sensei.dojo_memberships (PK=service membership id), dojo/{mod,memberships,routing,
+client}.rs, client-precedence routing (13 tests: client excludes employer+dereferenced, fail-closed,
+all kinds), DojoClient seam (reuses federation http + Keychain bearer), sensei-config::dojo_registry_url
+(SENSEI_DOJO_URL), GET/POST /api/dojo/memberships. 19 dojo + 1216 senseid tests, clippy 0. FLAG: config
+in lightweight sensei-config crate (alongside SenseiConfig) — possible future consolidation. routing/
+set_sync_status = documented forward seams (callers in C5/C6).
+
+DŌJŌ on develop UNMERGED: C1 `37f30527`, dojo-protocol `1e963ab2`, C3 `122fad3f`, C4 `beacc421`.
+⏳ DŌJŌ C5 BUILDING: dojo/attribution.rs (universal client-work DEREFERENCE) + collective/anonymize.rs
+(stricter global-dojo anonymization). HARDEST CONFIDENTIALITY GATE. 2 layers: (a) DETERMINISTIC identifier
+strip (project name/folder paths/repo names/session ids from DB context — the safety net) + (b) LLM
+generalize (reuse generalise/reasoning). FAIL-CLOSED (withhold if can't confidently strip; never leak).
+Heavy adversarial tests (identifiers in path/camel/snake/partial forms all caught). C4 routing already
+sets dereference=true for client work → C5 provides the stripper it calls.
+
+── DŌJŌ C5 ✅ COMMITTED `29971613` (2026-07-08) ──
+Confidentiality layer: dojo/attribution.rs (deterministic strip, all identifier forms + generic vectors,
+squash-scan backstop) + FAIL-CLOSED type-enforced `Dereferenced` (private field, constructor-only-on-clean
+→ C6 takes Dereferenced not String → publishing unchecked text is STRUCTURALLY IMPOSSIBLE) +
+collective/anonymize.rs (global: dereference-first, reasoning-chain generalize via Generalizer seam,
+LLM-post-check discards reintroductions, ProjectShape buckets + rotating irreversible anon_id). pg_store
+project_identifiers(). 26 tests (hostile-LLM, residual-risk, idempotent), 1242 pass, clippy 0.
+
+DŌJŌ on develop UNMERGED: C1 `37f30527`, dojo-protocol `1e963ab2`, C3 `122fad3f`, C4 `beacc421`, C5 `29971613`.
+⏳ DŌJŌ C6 BUILDING: upstream contribute — approved memory_share_batches → C4 client_precedence_route →
+CLIENT work MUST go through C5 Dereferenced (type-enforced) → DojoClient.publish (add publish method →
+POST /v1/t/{tenant}/artifacts, dojo-protocol PublishedArtifact) → tenant's Dōjō. + /api/share-review
+surface + daemon-side durable outbox (agent decides: extend memory_share_batches w/ sent flag OR small
+sensei outbox). Unit-tested; live HTTP round-trip DEFERRED to daemon↔service integration step.
+PLAN: C6 → C7 downstream inbox (pull approved→land per type; /api/upgrades) → then daemon↔service
+INTEGRATION test (run sensei-hive + daemon, contribute→pull round-trip) = FIRST FUNCTIONAL MILESTONE →
+merge+bump Dōjō foundation (validate dbd handles dojo scope+proc at that bump). Then C8 + screens C9-C11.
+
+── DŌJŌ C6 ✅ COMMITTED `9656ad71` (2026-07-08) ──
+Upstream contribute: DojoClient.publish_artifact (POST /v1/t/{tenant}/artifacts, Keychain Bearer via
+spawn_blocking, is_retryable); dojo/contribute.rs (approved batch → C4 route → C5 Dereferenced enforced,
+residual-risk HELD never published; global→anonymize; named→backstop; signature over CHECKED text);
+sensei.dojo_outbox durable ledger (unique(membership_id,signature) dedup, held/queued can't downgrade
+sent); share_review handlers (GET next-batch preview + POST publish). ArtifactPublisher/Outbox trait
+seams → confidentiality+dedup unit-tested w/o infra. 14 tests, 1256 pass, clippy 0. Live HTTP round-trip
+DEFERRED to integration step.
+
+DŌJŌ on develop UNMERGED (7 chunks): C1 `37f30527`, dojo-protocol `1e963ab2`, C3 `122fad3f`, C4
+`beacc421`, C5 `29971613`, C6 `9656ad71`.
+⏳ DŌJŌ C7 BUILDING: downstream inbox/distribution — DojoClient.pull_artifacts (GET /v1/t/{tenant}/
+artifacts?since=cursor); daemon-side downstream inbox (new sensei table or reuse; per-membership cursor +
+state pending|applied|muted|pinned); extend run_pull_loop to pull dojo artifacts alongside rules; GET
+/api/upgrades (the TRUE Dōjō inbox — audit noted /api/upgrades 404) + POST apply/mute/pin. Apply landing
+MVP = principle/pattern → sensei.memories origin=dojo; skill/agent/prompt/guard landing = FOLLOW-UP
+(record payload, don't auto-write plugins/lint). Docker-free unit-tested; live pull vs sensei-hive =
+integration step. After C7 → daemon↔service INTEGRATION test (run sensei-hive+daemon, contribute→pull
+round-trip) = FIRST FUNCTIONAL MILESTONE → merge+bump (validate dbd handles dojo scope+proc at bump).
+Then C8 collective-promote + screens C9-C11.
+
+── DŌJŌ C7 ✅ COMMITTED `a989feb5` (2026-07-08) ──
+Downstream inbox: DojoClient.pull_artifacts; sensei.dojo_inbox (dedup unique(membership,signature),
+state pending|applied|muted|pinned, cursor reuses dojo_memberships.last_seq); collective/inbox.rs
+(Puller/Inbox seams: pull idempotent+cursor-advance; apply principle/pattern→memories origin='dojo'
+scope-mapped, reuse insert_memory + compensating delete; skill/agent/prompt/guard=Deferred nothing-
+written; mute/pin never land; scope-mismatch→reason); run_pull_loop pulls dojo inboxes (guarded);
+GET /api/upgrades[?include_muted] + POST apply|mute|pin. 16 tests, 1272 pass, clippy 0.
+
+⚠️ LOOP NOT YET CLOSED: C6 publishes status='submitted'; C7 pulls only 'published'. Nothing moves
+submitted→published → C8 (service triage/promote) is REQUIRED to close the loop (not optional).
+DŌJŌ on develop UNMERGED (8 chunks): C1 `37f30527`, dojo-protocol `1e963ab2`, C3 `122fad3f`, C4
+`beacc421`, C5 `29971613`, C6 `9656ad71`, C7 `a989feb5`.
+⏳ DŌJŌ C8 BUILDING: hive-mind service-side triage/promote — on publish/tick: cluster submitted artifacts
+by signature (dedup across contributors), score (confidence + contributor_count), AUTO-APPROVE high-bar
+→ status='published' (so C7 pulls them); else insert triage_queue for human decision; k-anonymity gate
+for global-dojo (N contributors before publish). + minimal maintainer endpoints (list triage_queue,
+POST decision). Additive on hive-mind, keep all tests green. Docker-free (embedded PG).
+AFTER C8: daemon↔service INTEGRATION round-trip (run sensei-hive+daemon: contribute→triage→publish→pull→
+inbox) = PROVEN loop → then merge+bump Dōjō (validate dbd handles dojo scope+proc at bump). Then screens
+C9-C11 (make it user-facing). Consoles C12-C14 = Docker-blocked (parked).
+
+── DŌJŌ C8 ✅ COMMITTED `f29cbd0c` (2026-07-08) — LOOP CLOSED ──
+hive-mind collective/promote.rs: cluster-by-signature, score(breadth+efficacy), AUTO_APPROVE 0.8,
+K_ANONYMITY 3 (independent gate, global only). inline-after-publish + /triage/promote sweep, idempotent
+(seq lock, publish 1 rep + archive dups). Maintainer endpoints (GET /triage, POST /triage/{sig}/decide,
+/promote) + DojoAccess::Maintainer. 51 tests (32 baseline green + 10 pure + 9 integration: high-bar
+auto-publishes→pull returns it; low-bar→triage_queue; global blocked<K published@K; maintainer decide;
+idempotent; 403/400/404). clippy 0. LOOP PROVEN IN-SERVICE (publish→promote→pull integration-tested w/
+embedded PG). Daemon side unit-tested. Wire compat GUARANTEED by shared dojo-protocol types.
+
+★★★ DŌJŌ BACKEND MILESTONE COMPLETE — 9 chunks on develop: C1 `37f30527`, dojo-protocol `1e963ab2`,
+C3 `122fad3f`, C4 `beacc421`, C5 `29971613`, C6 `9656ad71`, C7 `a989feb5`, C8 `f29cbd0c`. The entire
+collective-intelligence backend (schema+protocol+multi-tenant service+dual-auth+daemon client+confidentiality
++contribute+distribute+triage). RELEASING v0.2.30 → main (validates dbd handles dojo scope+seed proc at
+bump — the flagged risk; if bump fails on dojo scope, reset + diagnose).
+DEFERRED follow-ups: live daemon↔service round-trip (low risk — shared types); screens C9-C11 (user-facing,
+next); consoles C12-C14 (Docker-blocked). Insight-copy/e2e/etc flags still open for Jerry.

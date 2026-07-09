@@ -1,6 +1,10 @@
 //! `HiveStore` — the data layer for the hive: publish/pull of shared rules,
 //! plus member/api-key/audit management.
 
+use dojo_protocol::{
+    ArtifactPayload, ArtifactPullResponse, ArtifactScope, ArtifactStatus, Attribution,
+    PublishArtifactResponse, PublishedArtifact, PulledArtifact,
+};
 use hive_protocol::{PublishResponse, PublishedRule, PullResponse, PulledRule};
 use rand::RngCore;
 use sha2::{Digest, Sha256};
@@ -14,6 +18,15 @@ use uuid::Uuid;
 /// puller that has advanced past seq N has necessarily already seen every
 /// committed row with seq < N (no row can commit out of seq order and be skipped).
 const SHARED_RULES_SEQ_LOCK: i64 = 0x6869_7665_5f73_6571; // ascii "hive_seq"
+
+/// Advisory-lock key that serializes `dojo.artifacts.seq` assignment, the
+/// artifact analogue of `SHARED_RULES_SEQ_LOCK`. A distinct key so artifact
+/// publishes and rule publishes never contend (they share one embedded PG).
+///
+/// `pub(crate)` so the collective/promote runner ([`crate::collective::promote`])
+/// takes the SAME lock when it advances `seq` on publish — publish and promote
+/// must share this lock so the monotonic pull cursor stays gap-free.
+pub(crate) const ARTIFACTS_SEQ_LOCK: i64 = 0x646f_6a6f_5f73_6571; // ascii "dojo_seq"
 
 /// The authenticated identity resolved from a presented API key.
 #[derive(Debug, Clone)]
@@ -54,6 +67,13 @@ impl HiveStore {
     /// Build a store over an existing pool (cloned from `HiveDb::pool()`).
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
+    }
+
+    /// Borrow the underlying pool — used by the collective/promote runner
+    /// ([`crate::collective::promote`]) so its transactional writes run against
+    /// the same pool and reuse the shared [`ARTIFACTS_SEQ_LOCK`] seq discipline.
+    pub(crate) fn pool(&self) -> &PgPool {
+        &self.pool
     }
 
     /// Publish a rule: upsert its namespace, then insert-or-bump the shared rule.
@@ -359,5 +379,255 @@ impl HiveStore {
         .await
         .map_err(|e| e.to_string())?;
         Ok(())
+    }
+
+    // ── Dōjō multi-tenancy (additive; tenant-scoped artifact federation) ──────
+
+    /// Resolve a tenant discovery key (`"<origin>/<org>[/<dojo>]"`) to its
+    /// tenant id. `None` when no such tenant exists (the caller maps that to
+    /// 404). Every dojo.* query is scoped by the id this returns.
+    pub async fn resolve_tenant(&self, key: &str) -> Result<Option<Uuid>, String> {
+        let row: Option<(Uuid,)> =
+            sqlx_core::query_as::query_as("SELECT id FROM dojo.tenants WHERE key = $1 LIMIT 1")
+                .bind(key)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| e.to_string())?;
+        Ok(row.map(|(id,)| id))
+    }
+
+    /// Create a tenant Dōjō (the isolation boundary). Used to stand up a tenant
+    /// before its artifacts flow (console/admin surface is C13). Returns its id.
+    pub async fn create_tenant(
+        &self,
+        key: &str,
+        origin: &str,
+        org: &str,
+        dojo: Option<&str>,
+        name: &str,
+        dojo_url: &str,
+    ) -> Result<Uuid, String> {
+        let (id,): (Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO dojo.tenants(key, origin, org, dojo, name, dojo_url)
+             VALUES($1, $2::dojo.tenant_origin, $3, $4, $5, $6)
+             RETURNING id",
+        )
+        .bind(key)
+        .bind(origin)
+        .bind(org)
+        .bind(dojo)
+        .bind(name)
+        .bind(dojo_url)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(id)
+    }
+
+    /// Enrol a user in a tenant (the Supabase-JWT plane authenticates against
+    /// this). `dojo_url` is inherited from the tenant. Returns the membership id.
+    pub async fn create_membership(
+        &self,
+        tenant_id: &Uuid,
+        user_id: &Uuid,
+        kind: &str,
+        authenticated_via: &str,
+        role: &str,
+    ) -> Result<Uuid, String> {
+        let (id,): (Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO dojo.memberships(tenant_id, user_id, dojo_url, kind, authenticated_via, role)
+             SELECT $1, $2, t.dojo_url, $3::dojo.membership_kind, $4::dojo.auth_method, $5::dojo.member_role
+             FROM dojo.tenants t WHERE t.id = $1
+             RETURNING id",
+        )
+        .bind(tenant_id)
+        .bind(user_id)
+        .bind(kind)
+        .bind(authenticated_via)
+        .bind(role)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(id)
+    }
+
+    /// Resolve a verified JWT subject to its role in `tenant_id`. `None` when the
+    /// subject isn't a member here (or the subject isn't a uuid). Only active
+    /// (non-disabled) memberships match.
+    pub async fn find_membership_role(
+        &self,
+        tenant_id: &Uuid,
+        user_id: &str,
+    ) -> Result<Option<String>, String> {
+        // A JWT `sub` that isn't a uuid can't match `dojo.memberships.user_id`.
+        let Ok(uid) = Uuid::parse_str(user_id) else {
+            return Ok(None);
+        };
+        let row: Option<(String,)> = sqlx_core::query_as::query_as(
+            "SELECT role::text FROM dojo.memberships
+             WHERE tenant_id = $1 AND user_id = $2 AND disabled_at IS NULL
+             LIMIT 1",
+        )
+        .bind(tenant_id)
+        .bind(uid)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(row.map(|(r,)| r))
+    }
+
+    /// Publish (contribute) an artifact under `tenant_id`, assigning a fresh
+    /// `seq` under `ARTIFACTS_SEQ_LOCK` so the pull cursor stays gap-free (the
+    /// artifact analogue of [`publish`](Self::publish)). `contributed_by` is set
+    /// from the authenticated caller — the body can't spoof it. The row lands at
+    /// the DDL-default status (`submitted`, pending triage); triage/approval
+    /// (→ `published`) is C8.
+    pub async fn publish_artifact(
+        &self,
+        tenant_id: &Uuid,
+        a: &PublishedArtifact,
+        contributed_by: Option<Uuid>,
+    ) -> Result<PublishArtifactResponse, String> {
+        let payload = serde_json::to_value(&a.payload).map_err(|e| e.to_string())?;
+        let scope = serde_json::to_value(&a.scope).map_err(|e| e.to_string())?;
+        let attribution = serde_json::to_value(&a.attribution).map_err(|e| e.to_string())?;
+        let engagement_id = match &a.engagement_id {
+            Some(s) => Some(Uuid::parse_str(s).map_err(|e| e.to_string())?),
+            None => None,
+        };
+
+        let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
+        sqlx_core::query::query("SELECT pg_advisory_xact_lock($1)")
+            .bind(ARTIFACTS_SEQ_LOCK)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let (id, seq): (Uuid, i64) = sqlx_core::query_as::query_as(
+            "INSERT INTO dojo.artifacts
+               (tenant_id, engagement_id, kind, title, body, payload, scope,
+                signature, attribution, dereferenced, contributed_by, seq)
+             VALUES
+               ($1, $2, $3::dojo.artifact_kind, $4, $5, $6::jsonb, $7::jsonb,
+                $8, $9::jsonb, $10, $11, nextval('dojo.artifacts_seq'))
+             RETURNING id, seq",
+        )
+        .bind(tenant_id)
+        .bind(engagement_id)
+        .bind(a.kind.as_db_str())
+        .bind(&a.title)
+        .bind(&a.body)
+        .bind(payload)
+        .bind(scope)
+        .bind(&a.signature)
+        .bind(attribution)
+        .bind(a.dereferenced)
+        .bind(contributed_by)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        tx.commit().await.map_err(|e| e.to_string())?;
+        Ok(PublishArtifactResponse {
+            id: id.to_string(),
+            seq,
+        })
+    }
+
+    /// Pull a tenant's artifacts with `seq > since`, ordered by `seq` (the
+    /// artifact analogue of [`pull_since`](Self::pull_since)). Strictly scoped to
+    /// `tenant_id`, so one tenant never sees another's artifacts. The returned
+    /// cursor is the max `seq` seen (or `since` if empty).
+    pub async fn pull_artifacts_since(
+        &self,
+        tenant_id: &Uuid,
+        since: i64,
+    ) -> Result<ArtifactPullResponse, String> {
+        #[allow(clippy::type_complexity)]
+        let rows: Vec<(
+            Uuid,               // id
+            i64,                // seq
+            String,             // status
+            String,             // tenant key
+            Option<Uuid>,       // engagement_id
+            String,             // kind
+            String,             // title
+            String,             // body
+            serde_json::Value,  // payload
+            serde_json::Value,  // scope
+            String,             // signature
+            serde_json::Value,  // attribution
+            bool,               // dereferenced
+            Option<Uuid>,       // contributed_by
+            Option<String>,     // published_at
+        )> = sqlx_core::query_as::query_as(
+            "SELECT a.id, a.seq, a.status::text, t.key, a.engagement_id,
+                    a.kind::text, a.title, a.body, a.payload, a.scope,
+                    a.signature, a.attribution, a.dereferenced, a.contributed_by,
+                    to_char(a.published_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')
+             FROM dojo.artifacts a
+             JOIN dojo.tenants t ON t.id = a.tenant_id
+             WHERE a.tenant_id = $1 AND a.seq > $2
+             ORDER BY a.seq",
+        )
+        .bind(tenant_id)
+        .bind(since)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        let mut cursor = since;
+        let mut artifacts = Vec::with_capacity(rows.len());
+        for (
+            id,
+            seq,
+            status,
+            tenant_key,
+            engagement_id,
+            kind,
+            title,
+            body,
+            payload,
+            scope,
+            signature,
+            attribution,
+            dereferenced,
+            contributed_by,
+            published_at,
+        ) in rows
+        {
+            if seq > cursor {
+                cursor = seq;
+            }
+            let kind = dojo_protocol::ArtifactKind::from_db_str(&kind)
+                .ok_or_else(|| format!("unknown artifact kind '{kind}'"))?;
+            let status = ArtifactStatus::from_db_str(&status)
+                .ok_or_else(|| format!("unknown artifact status '{status}'"))?;
+            let payload: ArtifactPayload =
+                serde_json::from_value(payload).map_err(|e| e.to_string())?;
+            let scope: ArtifactScope = serde_json::from_value(scope).map_err(|e| e.to_string())?;
+            let attribution: Attribution =
+                serde_json::from_value(attribution).map_err(|e| e.to_string())?;
+            artifacts.push(PulledArtifact {
+                id: id.to_string(),
+                seq,
+                status,
+                artifact: PublishedArtifact {
+                    signature,
+                    tenant_key,
+                    engagement_id: engagement_id.map(|u| u.to_string()),
+                    kind,
+                    title,
+                    body,
+                    payload,
+                    scope,
+                    attribution,
+                    dereferenced,
+                    contributed_by: contributed_by.map(|u| u.to_string()),
+                    published_at,
+                },
+            });
+        }
+        Ok(ArtifactPullResponse { artifacts, cursor })
     }
 }

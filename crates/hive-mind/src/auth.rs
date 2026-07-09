@@ -1,12 +1,27 @@
 //! Bearer-token auth + role-floor enforcement.
+//!
+//! Two authentication planes coexist here (all additive to the shipped
+//! API-key path):
+//!
+//! * **API-key plane** (`require`, [`Role`]) — the original sha256 bearer-key
+//!   middleware, unchanged. Guards the `/v1/rules` / `/v1/members` federation
+//!   routes AND is accepted on the new tenant-scoped `/v1/t/…` dojo routes
+//!   (daemon / federation traffic).
+//! * **Supabase-JWT plane** ([`verify_supabase_jwt`]) — human / console traffic
+//!   on the dojo routes. A request to a dojo route authenticates if EITHER a
+//!   valid API key OR a valid Supabase JWT is presented; the dual check lives in
+//!   [`authenticate_dojo`].
 
 use crate::api::AppState;
+use crate::store::HiveStore;
 use axum::{
     extract::{Request, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     middleware::Next,
     response::Response,
 };
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Role {
@@ -39,13 +54,19 @@ pub struct AuthCaller {
     pub role: Role,
 }
 
-fn bearer(req: &Request) -> Option<String> {
-    req.headers()
+/// Extract the `Bearer <token>` value from an Authorization header map.
+/// Shared by the API-key middleware and the dojo dual-auth path (DRY).
+pub fn token_from_headers(headers: &HeaderMap) -> Option<String> {
+    headers
         .get(axum::http::header::AUTHORIZATION)?
         .to_str()
         .ok()?
         .strip_prefix("Bearer ")
         .map(|s| s.to_string())
+}
+
+fn bearer(req: &Request) -> Option<String> {
+    token_from_headers(req.headers())
 }
 
 /// Middleware: resolve the bearer key → 401 if invalid; attach `AuthCaller`.
@@ -68,4 +89,200 @@ pub async fn require(
         role,
     });
     Ok(next.run(req).await)
+}
+
+// ── Supabase-JWT plane (dojo routes) ─────────────────────────────────────────
+
+/// The Supabase local-development JWT secret (the value the Supabase CLI ships
+/// in `config.toml`). Used as the default when `SUPABASE_JWT_SECRET` is unset —
+/// tests sign synthetic tokens with it, so no running Supabase is needed.
+pub const DEFAULT_SUPABASE_JWT_SECRET: &str =
+    "super-secret-jwt-token-with-at-least-32-characters-long";
+
+/// The audience Supabase stamps on user access tokens.
+pub const DEFAULT_SUPABASE_JWT_AUD: &str = "authenticated";
+
+/// Verification parameters for the Supabase-JWT plane. Injected into the router
+/// (see `api::build_router_with_jwt`); production overrides the secret/audience
+/// from env, tests inject a known secret to sign synthetic tokens.
+#[derive(Debug, Clone)]
+pub struct JwtConfig {
+    pub secret: String,
+    pub audience: String,
+}
+
+impl Default for JwtConfig {
+    fn default() -> Self {
+        Self {
+            secret: DEFAULT_SUPABASE_JWT_SECRET.to_string(),
+            audience: DEFAULT_SUPABASE_JWT_AUD.to_string(),
+        }
+    }
+}
+
+/// The subset of a Supabase access token we consume. `sub` is the stable user
+/// id (matched against `dojo.memberships.user_id`); `email` / `role` are carried
+/// through when present. `exp` / `aud` back the signature-independent checks
+/// (expiry + audience) enforced by [`verify_supabase_jwt`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SupabaseClaims {
+    pub sub: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+    pub exp: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aud: Option<String>,
+}
+
+/// Verify a Supabase HS256 JWT against `secret`, enforcing expiry and the
+/// expected `audience`. Returns the decoded claims on success; any failure
+/// (bad signature, expired, wrong audience, missing `sub`/`exp`/`aud`,
+/// malformed) is a single `Err` the caller maps to 401. Pure + synchronous, so
+/// it is unit-testable with synthetic tokens (no running Supabase).
+pub fn verify_supabase_jwt(
+    token: &str,
+    secret: &str,
+    audience: &str,
+) -> Result<SupabaseClaims, jsonwebtoken::errors::Error> {
+    use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
+    let mut validation = Validation::new(Algorithm::HS256);
+    validation.set_audience(&[audience]);
+    // Require the registered claims we rely on to be present (exp/aud validated
+    // above; sub is what we resolve the membership by).
+    validation.set_required_spec_claims(&["exp", "aud", "sub"]);
+    let data = decode::<SupabaseClaims>(
+        token,
+        &DecodingKey::from_secret(secret.as_bytes()),
+        &validation,
+    )?;
+    Ok(data.claims)
+}
+
+// ── Dojo dual-auth (tenant-scoped) ───────────────────────────────────────────
+
+/// Authority a caller carries on a tenant's dojo routes. `Member` may pull;
+/// `Contributor` may additionally publish; `Maintainer` may additionally triage
+/// (list the queue, decide, run the promotion sweep). Ordered so a floor check
+/// is a comparison, mirroring [`Role`]/[`role_satisfies`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum DojoAccess {
+    /// Read-only: pull artifacts (`member+`).
+    Member = 0,
+    /// Read-write: publish + pull (`contributor+`).
+    Contributor = 1,
+    /// Triage authority: list/decide/promote the queue (`maintainer+`). Maps
+    /// from the `maintainer`/`admin` dojo membership roles and the `admin`
+    /// hive API-key role.
+    Maintainer = 2,
+}
+
+/// Which plane authenticated a dojo caller.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DojoAuthVia {
+    /// A hive API key (daemon / federation traffic).
+    ApiKey,
+    /// A Supabase JWT resolved to a tenant membership (console traffic).
+    Supabase,
+}
+
+/// The resolved caller on a tenant-scoped dojo route.
+#[derive(Debug, Clone)]
+pub struct DojoCaller {
+    /// The tenant the caller is acting within (resolved from the path).
+    pub tenant_id: Uuid,
+    /// Stable subject id — the hive member id (API-key plane) or the Supabase
+    /// `sub` (JWT plane). Recorded as the artifact's `contributed_by`.
+    pub subject: String,
+    /// Human-facing label (member name or JWT email/sub), for audit.
+    pub display: String,
+    pub access: DojoAccess,
+    pub via: DojoAuthVia,
+}
+
+/// Why a dojo auth attempt failed — mapped to a status code by the handler.
+#[derive(Debug)]
+pub enum DojoAuthError {
+    /// No usable credential: missing bearer, or neither a valid API key nor a
+    /// valid JWT. → 401.
+    Unauthenticated,
+    /// A valid JWT, but the subject has no membership in this tenant. → 403.
+    Forbidden,
+    /// A backend failure while resolving the credential. → 500 (never silent).
+    Internal(String),
+}
+
+/// Map a hive API-key role onto dojo access: `member` pulls; `publisher`
+/// contributes; `admin` additionally maintains (triage). An unparseable role
+/// falls back to the least-privilege `Member`.
+fn hive_role_to_access(role: &str) -> DojoAccess {
+    match Role::parse(role) {
+        Some(Role::Admin) => DojoAccess::Maintainer,
+        Some(Role::Publisher) => DojoAccess::Contributor,
+        Some(Role::Member) | None => DojoAccess::Member,
+    }
+}
+
+/// Map a `dojo.member_role` string (JWT plane) onto dojo access:
+/// `maintainer`/`admin` maintain (triage); `contributor`/`client_lead`
+/// contribute; anything unrecognised falls back to least-privilege `Member`.
+/// (`client_lead` guards client confidentiality — it is not a triage role.)
+fn dojo_role_to_access(role: &str) -> DojoAccess {
+    match role {
+        "maintainer" | "admin" => DojoAccess::Maintainer,
+        "contributor" | "client_lead" => DojoAccess::Contributor,
+        _ => DojoAccess::Member,
+    }
+}
+
+/// Dual-auth for the dojo routes: accept EITHER a valid hive API key OR a valid
+/// Supabase JWT bound to a membership in `tenant_id`.
+///
+/// Order: API-key first (federation traffic), then Supabase JWT. A JWT that
+/// verifies but resolves no membership in this tenant is `Forbidden` (the human
+/// is authenticated but not a member here). Any other missing/invalid
+/// credential is `Unauthenticated`.
+pub async fn authenticate_dojo(
+    store: &HiveStore,
+    jwt: &JwtConfig,
+    headers: &HeaderMap,
+    tenant_id: Uuid,
+) -> Result<DojoCaller, DojoAuthError> {
+    let token = token_from_headers(headers).ok_or(DojoAuthError::Unauthenticated)?;
+
+    // Plane 1 — API key (daemon / federation). Same sha256 lookup as `require`.
+    if let Some(c) = store
+        .find_member_by_key(&token)
+        .await
+        .map_err(DojoAuthError::Internal)?
+    {
+        return Ok(DojoCaller {
+            tenant_id,
+            subject: c.member_id.to_string(),
+            display: c.name,
+            access: hive_role_to_access(&c.role),
+            via: DojoAuthVia::ApiKey,
+        });
+    }
+
+    // Plane 2 — Supabase JWT (console). Verify, then resolve membership+role.
+    let claims = verify_supabase_jwt(&token, &jwt.secret, &jwt.audience)
+        .map_err(|_| DojoAuthError::Unauthenticated)?;
+    match store
+        .find_membership_role(&tenant_id, &claims.sub)
+        .await
+        .map_err(DojoAuthError::Internal)?
+    {
+        // Every dojo membership role (contributor+) may contribute; maintainer/
+        // admin additionally carry triage authority (see `dojo_role_to_access`).
+        Some(role) => Ok(DojoCaller {
+            tenant_id,
+            subject: claims.sub.clone(),
+            display: claims.email.unwrap_or(claims.sub),
+            access: dojo_role_to_access(&role),
+            via: DojoAuthVia::Supabase,
+        }),
+        None => Err(DojoAuthError::Forbidden),
+    }
 }
