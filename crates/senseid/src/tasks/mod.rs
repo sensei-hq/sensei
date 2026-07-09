@@ -51,6 +51,11 @@ pub enum TaskKind {
     /// Enrich a project's sessions from the captured hook-event stream —
     /// derive turns/corrections/outcome/ftr/duration/module (analyzer L0, #66).
     AnalyzeProject,
+    /// Scan a project's doc nodes for backtick identifier mentions that no
+    /// longer resolve to a live code node, materialising `inference.drift_items`
+    /// (analyzer-driven counterpart to the manual `/drift/scan` endpoint).
+    /// Per-project: `path` carries the project id, exactly like `AnalyzeProject`.
+    ScanDocDrift,
     /// Dispatcher: enqueue one `BackfillTranscriptFile` per changed transcript
     /// so ingestion chunks + interleaves with other work (#73).
     BackfillTranscripts,
@@ -65,6 +70,13 @@ pub enum TaskKind {
     /// cached row per tool instead of re-computing on every request (T2 Slice D).
     /// Enqueued once per scheduler tick alongside AggregateCorrections.
     AggregateToolInsights,
+    /// Global: classify per-tool-call usage verdicts for sessions with a recent
+    /// `PostToolUse` that have no rows in `sensei.tool_call_verdicts` yet —
+    /// gap-filling the sessions never opened in Replay so the Health-tab
+    /// aggregate reflects the whole window. Enqueued each tick BEFORE
+    /// `AggregateToolInsights` so the same tick's aggregate reads the fresh
+    /// verdicts. Reuses the idempotent `verdict_classifier::classify_session`.
+    ClassifyPendingVerdicts,
 }
 
 impl std::fmt::Display for TaskKind {
@@ -90,10 +102,12 @@ impl std::fmt::Display for TaskKind {
             Self::MeasureVerdicts => write!(f, "measure_verdicts"),
             Self::ReconcileIdentity => write!(f, "reconcile_identity"),
             Self::AnalyzeProject => write!(f, "analyze_project"),
+            Self::ScanDocDrift => write!(f, "scan_doc_drift"),
             Self::BackfillTranscripts => write!(f, "backfill_transcripts"),
             Self::BackfillTranscriptFile => write!(f, "backfill_transcript_file"),
             Self::AggregateCorrections => write!(f, "aggregate_corrections"),
             Self::AggregateToolInsights => write!(f, "aggregate_tool_insights"),
+            Self::ClassifyPendingVerdicts => write!(f, "classify_pending_verdicts"),
         }
     }
 }
@@ -140,6 +154,13 @@ impl TaskKind {
             | TaskKind::IndexLibraryPage
             | TaskKind::DetectCommunities
             | TaskKind::AnalyzeProject
+            // Doc-drift scan walks up to 500 doc nodes, reading each file off
+            // disk — on a large repo that's the same order as AnalyzeProject.
+            | TaskKind::ScanDocDrift
+            // Verdict gap-fill loops every unclassified in-window session, each
+            // a couple of DB round-trips + string classification — a batch that
+            // scales with the backlog, so it shares the generous batch budget.
+            | TaskKind::ClassifyPendingVerdicts
             | TaskKind::AggregateCorrections => Duration::from_secs(600),
         }
     }
@@ -288,6 +309,8 @@ mod tests {
         assert_eq!(TaskKind::DetectCommunities.to_string(), "detect_communities");
         assert_eq!(TaskKind::ExtractDeps.to_string(), "extract_deps");
         assert_eq!(TaskKind::MeasureVerdicts.to_string(), "measure_verdicts");
+        assert_eq!(TaskKind::ScanDocDrift.to_string(), "scan_doc_drift");
+        assert_eq!(TaskKind::ClassifyPendingVerdicts.to_string(), "classify_pending_verdicts");
     }
 
     #[test]
@@ -301,6 +324,8 @@ mod tests {
         assert_eq!(TaskKind::ResolveEdges.watchdog_timeout(), long);
         assert_eq!(TaskKind::EmbedNodes.watchdog_timeout(), long);
         assert_eq!(TaskKind::ScanRoot.watchdog_timeout(), long);
+        assert_eq!(TaskKind::ScanDocDrift.watchdog_timeout(), long);
+        assert_eq!(TaskKind::ClassifyPendingVerdicts.watchdog_timeout(), long);
         for k in [
             TaskKind::ScanRoot, TaskKind::ProcessGitFolder, TaskKind::ProcessFolder,
             TaskKind::ProcessFile, TaskKind::DeleteFile, TaskKind::DeleteFolder,
@@ -308,9 +333,10 @@ mod tests {
             TaskKind::BranchSwitch, TaskKind::BuildConnections, TaskKind::ReconcileConnections,
             TaskKind::EmbedNodes, TaskKind::IndexLibrary, TaskKind::IndexLibraryPage,
             TaskKind::DetectCommunities, TaskKind::ExtractDeps, TaskKind::MeasureVerdicts,
-            TaskKind::ReconcileIdentity, TaskKind::AnalyzeProject, TaskKind::BackfillTranscripts,
+            TaskKind::ReconcileIdentity, TaskKind::AnalyzeProject, TaskKind::ScanDocDrift,
+            TaskKind::BackfillTranscripts,
             TaskKind::BackfillTranscriptFile, TaskKind::AggregateCorrections,
-            TaskKind::AggregateToolInsights,
+            TaskKind::AggregateToolInsights, TaskKind::ClassifyPendingVerdicts,
         ] {
             assert!(k.watchdog_timeout().as_secs() > 0, "{k} must have a positive cap");
         }
