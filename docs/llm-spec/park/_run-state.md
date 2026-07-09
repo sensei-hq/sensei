@@ -1316,12 +1316,15 @@ REAL remaining gaps (verified live, grep — code-graph empty for this project =
     in the scheduler due-project loop (enqueue_due_project helper). 4 tests + enum coverage; clippy 0; 1289 pass.
     inference.drift_items now populates on its own (project-overview docDrift, projects warn-dot, quality-signals,
     Traceability). NOT merged to main yet (batching a few gap-fills before next merge+bump milestone).
-  • ⏳ BUILDING NOW (agent): **tool_call_verdicts classified LAZILY only** (on Replay-tab view, sessions.rs:180 +
-    manual verdicts.rs:46) — not scheduled; so aggregate_tool_insights' used/partial/ignored split only covers
-    OPENED sessions. classify_session is IDEMPOTENT (upsert_verdicts_batch) → safe to re-run. FIX = new global
-    TaskKind::ClassifyPendingVerdicts: pg query for in-window session ids with PostToolUse hook events but NO
-    tool_call_verdicts rows (unclassified-only = cheap gap-fill) → loop classify_session → enqueue BEFORE
-    AggregateToolInsights in the scheduler global-pass. Reuse HEALTH_VERDICT_WINDOW_DAYS. No DDL. TDD.
+  • ✅ SHIPPED `c668d4b9` (2026-07-08): **tool_call_verdicts now classified on a SCHEDULE** — global
+    TaskKind::ClassifyPendingVerdicts: pg query unclassified_verdict_sessions (in-window PostToolUse sessions
+    with NO tool_call_verdicts rows, mirrors assistant_events millis-window idiom) → loop classify_session
+    (idempotent upsert) → enqueued BEFORE AggregateToolInsights (enqueue_global_passes helper). No-silent-errors
+    (warn+continue per session). 600s tier. 5 tests + enum coverage; clippy 0; 1293 pass. aggregate_tool_insights
+    used/partial/ignored split now covers ALL in-window sessions, not just Replay-opened ones.
+
+⭐✅ ANALYZER-WIRING MILESTONE (2026-07-08): doc-drift auto-scan `c679f8d6` + scheduled verdict-classify
+  `c668d4b9` — both make analyzer outputs self-populate. ⏳ MERGE+BUMP IN PROGRESS (v0.2.32→0.2.33, develop→main).
   • HARD gaps (need new DDL + capture, larger): memory-usage telemetry (activity.memory_loads/memory_use_reports
     — NEITHER table nor capture exists; the "did injected memory help?" loop is unbuilt); impact_regressions table;
     pattern-lifecycle promotion writer (detected_patterns.lifecycle stuck at 'suggested'); structural/GoF pattern
