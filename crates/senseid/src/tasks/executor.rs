@@ -103,8 +103,10 @@ async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
             TaskKind::MeasureVerdicts => handlers::measure_verdicts(ctx, task).await,
             TaskKind::ReconcileIdentity => handlers::reconcile_identity(ctx, task).await,
             TaskKind::AnalyzeProject => handlers::analyze_project(ctx, task).await,
+            TaskKind::ScanDocDrift => handlers::scan_doc_drift(ctx, task).await,
             TaskKind::AggregateCorrections => handlers::aggregate_corrections(ctx, task).await,
             TaskKind::AggregateToolInsights => handlers::aggregate_tool_insights(ctx, task).await,
+            TaskKind::ClassifyPendingVerdicts => handlers::classify_pending_verdicts(ctx, task).await,
             TaskKind::BackfillTranscripts => crate::transcript::run_backfill(ctx, task).await,
             TaskKind::BackfillTranscriptFile => crate::transcript::run_backfill_file(ctx, task).await,
         }
@@ -264,6 +266,49 @@ mod tests {
         let result = execute_task(&ctx, &task).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("branch"));
+    }
+
+    #[tokio::test]
+    async fn execute_task_dispatches_scan_doc_drift() {
+        let ctx = make_ctx().await;
+        // A bad project-id payload reaches the doc-drift handler's parse guard —
+        // proving the executor routes ScanDocDrift to scan_doc_drift.
+        let task = Task::new(TaskKind::ScanDocDrift, "", "not-a-uuid");
+        let result = execute_task(&ctx, &task).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("invalid project id"));
+    }
+
+    #[tokio::test]
+    async fn execute_task_dispatches_classify_pending_verdicts() {
+        let ctx = make_ctx().await;
+        // Seed a classifiable, unclassified in-window session, then dispatch the
+        // global task. If the executor routes to classify_pending_verdicts, the
+        // handler classifies the session and it drops out of the pending set.
+        let sid = format!("_test-exec-classify-{}", uuid::Uuid::new_v4());
+        let now = chrono::Utc::now().timestamp_millis();
+        ctx.pg().insert_hook_event(
+            &sid, "claude", "PostToolUse", Some("Read"), None, now, Some(true),
+            &serde_json::json!({
+                "tool_input": {"file_path": "crates/senseid/src/db/pg_store.rs"},
+                "tool_response": "see crates/senseid/src/db/pg_store.rs:3421",
+            }),
+        ).await.unwrap();
+        ctx.pg().insert_hook_event(
+            &sid, "claude", "PreToolUse", Some("Edit"), None, now + 1, None,
+            &serde_json::json!({"tool_input": {"file_path": "crates/senseid/src/db/pg_store.rs"}}),
+        ).await.unwrap();
+
+        let window = crate::tasks::handlers::tool_insights::HEALTH_VERDICT_WINDOW_DAYS;
+        assert!(ctx.pg().unclassified_verdict_sessions(window).await.unwrap().contains(&sid));
+
+        let task = Task::new(TaskKind::ClassifyPendingVerdicts, "", "");
+        let result = execute_task(&ctx, &task).await;
+        assert!(result.is_ok(), "classify pass should succeed: {result:?}");
+        assert!(
+            !ctx.pg().unclassified_verdict_sessions(window).await.unwrap().contains(&sid),
+            "dispatched handler classified the fixture session",
+        );
     }
 
     #[tokio::test]

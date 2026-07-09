@@ -1294,10 +1294,40 @@ Wire shape (VERIFIED live: table on pg 5432; 13 tests pass; clippy 0):
   types.ts +CollectivePreferences + enums. Rail entry 群·Sharing after Dōjō connections. +38 tests
   (1002→1040), svelte-check 0/0. Verified: test:unit 1040 pass, check 0/0.
 
-⭐ DŌJŌ UI COMPLETE — all buildable Dōjō UI shipped on develop: C10 `892e348f` (connections),
-  C11 `bce039a3` (upgrades inbox lane), C9-backend `8763a17f`, C9-frontend `4f0992ac`.
-  ⏳ MILESTONE IN PROGRESS: make bump v=patch (0.2.31→0.2.32) on develop, then merge develop→main.
-  After merge+bump: DŌJŌ TRACK = as complete as possible. GENUINELY BLOCKED remainder (needs Jerry /
-  Docker): consoles C12-C14 (SaaS web console — Docker/Supabase); running-Dōjō visual-verify of C9-C11
-  (need a configured Dōjō + Tauri e2e which is systemically broken in this env). NEXT WORK after this
-  milestone: pull the next llm-spec segment / burn down the 5-screen depth-first followups per policy #3.
+⭐✅ DŌJŌ UI MILESTONE SHIPPED & RELEASED (2026-07-08) — v0.2.32 (`4e45a140` develop) MERGED→main
+  (`56529f73`, tag v0.2.32 pushed, tap+marketplace synced, dbd cache cleared). `main..develop` EMPTY
+  (fully synced). All buildable Dōjō UI live: C10 `892e348f` (connections), C11 `bce039a3` (upgrades
+  inbox lane), C9-backend `8763a17f` + C9-frontend `4f0992ac` (collective sharing prefs).
+  DŌJŌ TRACK = as complete as possible. GENUINELY BLOCKED remainder (needs Jerry / Docker):
+  consoles C12-C14 (SaaS web console — Docker/Supabase); running-Dōjō visual-verify of C9-C11 (need a
+  configured Dōjō + Tauri e2e which is systemically broken in this env). The whole Dōjō backend loop
+  (C1-C8) was proven LIVE end-to-end earlier + is on main.
+
+── NEXT WORK (policy #3 DEPTH-FIRST, after Dōjō) — SURVEY DONE (agent acef89fb, 2026-07-08) ──
+⚠️ RECORD CORRECTED: the "recommendation/pattern generators are ABSENT (tables exist, no writers)" claim
+  (MEMORY project_core_gap_analysis) is OUTDATED. All analyzer generators are BUILT + WIRED via
+  analyzer_scheduler.rs::run → executor.rs → analyze_project: recommendations
+  (generate.rs+consolidate.rs+model_insight.rs+rank.rs), detected_patterns (analyze.rs::derive_signals),
+  learned memories (generate.rs), corrections (corrections.rs), communities (community.rs), tool_insights
+  (tool_insights.rs), verdicts (verdicts.rs). derive_signals + MeasureVerdicts CONFIRMED wired.
+REAL remaining gaps (verified live, grep — code-graph empty for this project = known segmentation bug):
+  • ✅ SHIPPED `c679f8d6` (2026-07-08): **doc-drift now auto-scans** — TaskKind::ScanDocDrift + thin handler
+    (reuses pg_store::scan_project_doc_drift unchanged) + executor dispatch + enqueue alongside AnalyzeProject
+    in the scheduler due-project loop (enqueue_due_project helper). 4 tests + enum coverage; clippy 0; 1289 pass.
+    inference.drift_items now populates on its own (project-overview docDrift, projects warn-dot, quality-signals,
+    Traceability). NOT merged to main yet (batching a few gap-fills before next merge+bump milestone).
+  • ✅ SHIPPED `c668d4b9` (2026-07-08): **tool_call_verdicts now classified on a SCHEDULE** — global
+    TaskKind::ClassifyPendingVerdicts: pg query unclassified_verdict_sessions (in-window PostToolUse sessions
+    with NO tool_call_verdicts rows, mirrors assistant_events millis-window idiom) → loop classify_session
+    (idempotent upsert) → enqueued BEFORE AggregateToolInsights (enqueue_global_passes helper). No-silent-errors
+    (warn+continue per session). 600s tier. 5 tests + enum coverage; clippy 0; 1293 pass. aggregate_tool_insights
+    used/partial/ignored split now covers ALL in-window sessions, not just Replay-opened ones.
+
+⭐✅ ANALYZER-WIRING MILESTONE (2026-07-08): doc-drift auto-scan `c679f8d6` + scheduled verdict-classify
+  `c668d4b9` — both make analyzer outputs self-populate. ⏳ MERGE+BUMP IN PROGRESS (v0.2.32→0.2.33, develop→main).
+  • HARD gaps (need new DDL + capture, larger): memory-usage telemetry (activity.memory_loads/memory_use_reports
+    — NEITHER table nor capture exists; the "did injected memory help?" loop is unbuilt); impact_regressions table;
+    pattern-lifecycle promotion writer (detected_patterns.lifecycle stuck at 'suggested'); structural/GoF pattern
+    detection (derive_signals only emits 3 behavioral kinds).
+  • insight-copy wiring + memory promote/merge statuses + overflow 7/8 (Memories screen) remain in queue.
+  Slot 2 (Instruments·Health) stays PARKED (registry↔usage join gap — awaits Jerry).
