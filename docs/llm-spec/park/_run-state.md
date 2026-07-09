@@ -1323,11 +1323,20 @@ REAL remaining gaps (verified live, grep — code-graph empty for this project =
     (warn+continue per session). 600s tier. 5 tests + enum coverage; clippy 0; 1293 pass. aggregate_tool_insights
     used/partial/ignored split now covers ALL in-window sessions, not just Replay-opened ones.
 
-⭐✅ ANALYZER-WIRING MILESTONE (2026-07-08): doc-drift auto-scan `c679f8d6` + scheduled verdict-classify
-  `c668d4b9` — both make analyzer outputs self-populate. ⏳ MERGE+BUMP IN PROGRESS (v0.2.32→0.2.33, develop→main).
-  • HARD gaps (need new DDL + capture, larger): memory-usage telemetry (activity.memory_loads/memory_use_reports
-    — NEITHER table nor capture exists; the "did injected memory help?" loop is unbuilt); impact_regressions table;
-    pattern-lifecycle promotion writer (detected_patterns.lifecycle stuck at 'suggested'); structural/GoF pattern
-    detection (derive_signals only emits 3 behavioral kinds).
-  • insight-copy wiring + memory promote/merge statuses + overflow 7/8 (Memories screen) remain in queue.
+⭐✅ ANALYZER-WIRING MILESTONE SHIPPED & RELEASED (2026-07-08): doc-drift auto-scan `c679f8d6` +
+  scheduled verdict-classify `c668d4b9` → **v0.2.33** (`d3298d8d`) MERGED→main (`fbe73fb7`, tag pushed,
+  tap+marketplace synced). `main..develop` EMPTY (synced). Both make analyzer outputs self-populate.
+
+── NEXT TRACK (pick on next tick, fresh context) — remaining REAL gaps, roughly small→large:
+  1. **pattern-lifecycle promotion writer** — detected_patterns.lifecycle stuck at 'suggested'; nothing
+     advances it to 'rule'/'gap'. Smallest HARD-ish gap: a writer over existing tables (likely tied to
+     recommendation acceptance / promote_pattern), NO new capture hooks. Good next pick. VERIFY the
+     lifecycle enum + how promote_pattern recs relate before building.
+  2. **insight-copy wiring** — route user-facing insight strings through gemma4 (insight-copy chain) where
+     still raw DB text. Check which read-paths bypass insight_copy. [[feedback_llm_insight_copy]].
+  3. **memory promote/merge statuses** defined + readyToShare/toMerge wired (Memories screen / overflow 7).
+  4. HARDEST (new DDL + CAPTURE hooks in marketplace/ plugin, multi-part): memory-usage telemetry
+     (activity.memory_loads/memory_use_reports — the "did injected memory help?" loop); impact_regressions;
+     structural/GoF pattern detection. Each = its own track (DDL source-first → writer → reader → capture).
   Slot 2 (Instruments·Health) stays PARKED (registry↔usage join gap — awaits Jerry).
+  Genuinely BLOCKED (needs Jerry/Docker): Dōjō consoles C12-C14; running-Dōjō + Tauri-e2e visual verify.
