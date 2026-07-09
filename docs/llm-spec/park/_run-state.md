@@ -1249,3 +1249,11 @@ Regression test: bootstrap non-temp → drop → re-bootstrap same dir reopens +
 DŌJŌ BACKEND NOW COMPLETE + OPERATIONAL (proven live + provisionable + persistent). RELEASING v0.2.31.
 REMAINING: screens C9-C11 (user-facing; buildable but hard to visually-verify — need a running configured
 Dōjō + Tauri e2e is systemically broken); consoles C12-C14 (Docker-blocked). Both DEFERRED/blocked.
+
+── v0.2.31 SHIPPED → MAIN `47b033c8` (2026-07-08). develop @ `cecf8cfe`. 7 milestones this session. ──
+⏳ DŌJŌ SCREENS phase (make backend user-facing). C10 dojo-connections BUILDING (svelte agent): list +
+connect flow over shipped GET/POST /api/dojo/memberships; +getDojoMemberships/connectDojo in api.ts +
+DojoMembership type; honest empty state (no Dōjō connected live); rail entry. unit+check bar; VISUAL
+verify DEFERRED (needs running configured Dōjō + Tauri e2e systemically broken). NEXT: C11 (wire Upgrades
+screen → real /api/upgrades C7 inbox, replacing recommendations-repurposing) + C9 (Preferences→Sharing,
+needs new /api/preferences/collective endpoint). Consoles C12-C14 Docker-blocked.

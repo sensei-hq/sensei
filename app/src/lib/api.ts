@@ -8,6 +8,7 @@ import type {
   ProjectSession, CallFlowModule, CallFlowCall,
   ProjectListItem,
   KnowledgeSource, NewKnowledgeSourceBody, SyncStats,
+  DojoMembership, ConnectDojoBody,
   McpToolManifest, SessionToolTimeline, MemoryShareBatch, ImpactVerdictEntry,
   ProjectMcpToolStat, ToolSignal, ProjectService, ToolInsight, ToolsHealth,
   SessionReplayResponse, McpServerRow, McpServerToolsManifest,
@@ -904,6 +905,21 @@ export function senseiApi(port: number) {
 
     syncKnowledgeSource: (id: string) =>
       tryPost<SyncStats>(`/api/knowledge/sources/${encodeURIComponent(id)}/sync`, {}),
+
+    // ── Dōjō connections (memberships) ───────────────────────────────────
+    // Mirrors the federation knowledge-sources surface. GET returns a
+    // top-level array (empty when no Dōjō is connected — the honest empty
+    // state). `credential_ref` is never exposed; the device token on connect
+    // is write-only. Fallback is the empty array so a daemon hiccup renders
+    // the empty state, never a broken screen.
+    getDojoMemberships: () =>
+      get<DojoMembership[]>('/api/dojo/memberships', []),
+
+    // Register a Dōjō connection. `tryPost` so the validation/registration
+    // errors (bad membership uuid, insecure registry url, unknown project to
+    // bind) surface as `{ ok: false, error }` for the connect form to show.
+    connectDojo: (body: ConnectDojoBody) =>
+      tryPost<{ id: string }>('/api/dojo/memberships', body),
 
     // ── Lifecycle ────────────────────────────────────────────────────────
     stop: () => post('/stop', {}, {}),
