@@ -5,6 +5,7 @@ use hive_mind::auth::JwtConfig;
 use hive_mind::config::HiveConfig;
 use hive_mind::db::HiveDb;
 use hive_mind::keygen::generate_key;
+use hive_mind::provision::provision;
 use hive_mind::store::HiveStore;
 
 #[derive(Parser)]
@@ -21,6 +22,21 @@ enum Cmd {
         #[arg(long, default_value = "member")] role: String,
         #[arg(long)] label: Option<String>,
     },
+    /// Provision a Dōjō tenant + membership + API key (bootstrap a tenant).
+    Provision {
+        /// Tenant origin: `github` (backed by a GitHub org) or `org` (custom).
+        #[arg(long)] origin: String,
+        /// The GitHub org id or custom org name.
+        #[arg(long)] org: String,
+        /// Optional sub-Dōjō path (e.g. a per-client engagement).
+        #[arg(long)] dojo: Option<String>,
+        /// The member's identity (email) — becomes the API-key member name.
+        #[arg(long)] user: String,
+        /// Dojo authority: contributor | maintainer | admin.
+        #[arg(long)] role: String,
+        /// Tenant visibility: private (default) | global.
+        #[arg(long, default_value = "private")] scope: String,
+    },
 }
 
 #[tokio::main]
@@ -35,6 +51,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Cmd::Keygen { name, role, label } => {
             let key = generate_key(&store, &name, &role, label.as_deref()).await?;
             println!("API key for {name} ({role}) — store it now, shown once:\n{key}");
+        }
+        Cmd::Provision { origin, org, dojo, user, role, scope } => {
+            let p = provision(&store, &origin, &org, dojo.as_deref(), &user, &role, &scope).await?;
+            println!("provisioned dojo tenant — store the token now, shown once:");
+            println!("  tenant_key    {}", p.tenant_key);
+            println!("  tenant_id     {}", p.tenant_id);
+            println!("  membership_id {}", p.membership_id);
+            println!("  hive_role     {}", p.hive_role);
+            println!("  token         {}", p.token);
         }
         Cmd::Serve => {
             let jwt = JwtConfig {

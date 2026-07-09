@@ -451,6 +451,23 @@ impl HiveStore {
         Ok(id)
     }
 
+    /// Set a tenant's visibility scope (`private` | `global`). Used by the
+    /// provisioning CLI to apply `--scope` after the tenant row exists (the DDL
+    /// default is `private`). Idempotent — re-setting the same scope is a no-op
+    /// update. Returns whether a row was updated.
+    pub async fn set_tenant_scope(&self, tenant_id: &Uuid, scope: &str) -> Result<bool, String> {
+        let res = sqlx_core::query::query(
+            "UPDATE dojo.tenants SET scope = $2::dojo.tenant_scope, updated_at = now()
+             WHERE id = $1",
+        )
+        .bind(tenant_id)
+        .bind(scope)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(res.rows_affected() > 0)
+    }
+
     /// Resolve a verified JWT subject to its role in `tenant_id`. `None` when the
     /// subject isn't a member here (or the subject isn't a uuid). Only active
     /// (non-disabled) memberships match.
