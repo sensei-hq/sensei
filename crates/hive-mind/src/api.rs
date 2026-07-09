@@ -4,6 +4,7 @@ use crate::auth::{
     authenticate_dojo, require, role_satisfies, AuthCaller, DojoAccess, DojoAuthError, JwtConfig,
     Role,
 };
+use crate::collective::promote::{DecideOutcome, DecideStatus};
 use crate::store::HiveStore;
 use axum::{
     extract::{Extension, Query, State},
@@ -240,6 +241,18 @@ async fn publish_artifact(
         .publish_artifact(&tenant_id, &artifact, contributed_by)
         .await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+    // Close the loop inline: triage this signature-cluster (auto-publish if it
+    // clears the bar, else queue for a maintainer). Promotion failure must NOT
+    // fail the already-committed contribution — surface it in the log instead
+    // (a later publish or a maintainer promote sweep re-runs it idempotently).
+    if let Err(e) = state.store.promote_cluster(&tenant_id, &artifact.signature).await {
+        tracing::error!(
+            tenant = %tenant_id,
+            signature = %artifact.signature,
+            error = %e,
+            "collective promotion failed after publish"
+        );
+    }
     Ok(Json(serde_json::to_value(resp).unwrap()))
 }
 
@@ -271,6 +284,137 @@ async fn pull_artifacts(
     Ok(Json(serde_json::to_value(page).unwrap()))
 }
 
+// ── Maintainer triage routes (service-side; serve the C12 console) ───────────
+
+/// Resolve the path tenant then dual-authenticate a maintainer (`maintainer+`).
+/// Reuses C3's tenant resolution + dual auth; a non-maintainer → 403.
+async fn resolve_maintainer(
+    state: &AppState,
+    jwt: &JwtConfig,
+    headers: &HeaderMap,
+    tenant_key: &str,
+) -> Result<(Uuid, crate::auth::DojoCaller), (StatusCode, Json<serde_json::Value>)> {
+    let tenant_id = state
+        .store
+        .resolve_tenant(tenant_key)
+        .await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "no such tenant"))?;
+    let caller = authenticate_dojo(&state.store, jwt, headers, tenant_id)
+        .await
+        .map_err(dojo_auth_status)?;
+    if caller.access < DojoAccess::Maintainer {
+        return Err(err(StatusCode::FORBIDDEN, "maintainer role required"));
+    }
+    Ok((tenant_id, caller))
+}
+
+/// `GET /v1/t/{tenant_key}/triage` — list the tenant's open triage rows
+/// (queued / in_review) with cluster info. Maintainer+.
+async fn list_triage(
+    State(state): State<AppState>,
+    Extension(jwt): Extension<Arc<JwtConfig>>,
+    axum::extract::Path(tenant_key): axum::extract::Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let (tenant_id, _caller) = resolve_maintainer(&state, &jwt, &headers, &tenant_key).await?;
+    let rows = state
+        .store
+        .list_triage(&tenant_id)
+        .await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+    Ok(Json(serde_json::json!({ "queue": rows })))
+}
+
+/// `POST /v1/t/{tenant_key}/triage/promote` — run the tenant promotion sweep
+/// (idempotent). Maintainer+. Lets a maintainer flush the queue on demand.
+async fn promote_sweep(
+    State(state): State<AppState>,
+    Extension(jwt): Extension<Arc<JwtConfig>>,
+    axum::extract::Path(tenant_key): axum::extract::Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let (tenant_id, _caller) = resolve_maintainer(&state, &jwt, &headers, &tenant_key).await?;
+    let outcomes = state
+        .store
+        .promote_tenant(&tenant_id)
+        .await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+    let promoted: Vec<serde_json::Value> = outcomes
+        .into_iter()
+        .map(|(signature, outcome)| serde_json::json!({ "signature": signature, "result": outcome }))
+        .collect();
+    Ok(Json(serde_json::json!({ "promoted": promoted })))
+}
+
+#[derive(Deserialize)]
+struct DecideBody {
+    status: String,
+    #[serde(default)]
+    distribution_scope: Option<serde_json::Value>,
+    #[serde(default)]
+    reason: Option<String>,
+}
+
+/// `POST /v1/t/{tenant_key}/triage/{signature}/decide` — record a maintainer
+/// decision. Maintainer+. `approve` requires `distribution_scope`; `decline`
+/// requires a non-empty `reason` (both rejected with 400 otherwise).
+async fn decide_triage(
+    State(state): State<AppState>,
+    Extension(jwt): Extension<Arc<JwtConfig>>,
+    axum::extract::Path((tenant_key, signature)): axum::extract::Path<(String, String)>,
+    headers: HeaderMap,
+    Json(body): Json<DecideBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let (tenant_id, caller) = resolve_maintainer(&state, &jwt, &headers, &tenant_key).await?;
+    let status = DecideStatus::parse(&body.status)
+        .ok_or_else(|| err(StatusCode::BAD_REQUEST, "status must be approve|revise|decline"))?;
+    // Safe-default gates (maintainer-console done-gate): approve must name a
+    // distribution scope; decline must give a reason.
+    match status {
+        DecideStatus::Approve if body.distribution_scope.is_none() => {
+            return Err(err(
+                StatusCode::BAD_REQUEST,
+                "approve requires distribution_scope",
+            ));
+        }
+        DecideStatus::Decline
+            if body
+                .reason
+                .as_deref()
+                .map(|r| r.trim().is_empty())
+                .unwrap_or(true) =>
+        {
+            return Err(err(
+                StatusCode::BAD_REQUEST,
+                "decline requires a non-empty reason",
+            ));
+        }
+        _ => {}
+    }
+    let maintainer_id = Uuid::parse_str(&caller.subject).ok();
+    let outcome = state
+        .store
+        .decide_triage(
+            &tenant_id,
+            &signature,
+            status,
+            body.distribution_scope,
+            body.reason,
+            maintainer_id,
+        )
+        .await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+    match outcome {
+        DecideOutcome::NotFound => Err(err(StatusCode::NOT_FOUND, "no such triage candidate")),
+        DecideOutcome::Published { artifact_id, seq } => Ok(Json(serde_json::json!({
+            "status": "approved", "artifact_id": artifact_id, "seq": seq,
+        }))),
+        DecideOutcome::Declined => Ok(Json(serde_json::json!({ "status": "declined" }))),
+        DecideOutcome::Revised => Ok(Json(serde_json::json!({ "status": "revised" }))),
+    }
+}
+
 /// Build the router with the default (Supabase local-dev) JWT config. Existing
 /// callers keep this exact signature; the dojo routes get a default verifier.
 pub fn build_router(state: AppState) -> Router {
@@ -293,6 +437,12 @@ pub fn build_router_with_jwt(state: AppState, jwt: JwtConfig) -> Router {
         .route(
             "/v1/t/{tenant_key}/artifacts",
             post(publish_artifact).get(pull_artifacts),
+        )
+        .route("/v1/t/{tenant_key}/triage", get(list_triage))
+        .route("/v1/t/{tenant_key}/triage/promote", post(promote_sweep))
+        .route(
+            "/v1/t/{tenant_key}/triage/{signature}/decide",
+            post(decide_triage),
         )
         .layer(Extension(Arc::new(jwt)));
     Router::new()

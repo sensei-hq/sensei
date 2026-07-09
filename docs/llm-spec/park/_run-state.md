@@ -1185,3 +1185,24 @@ MVP = principle/pattern → sensei.memories origin=dojo; skill/agent/prompt/guar
 integration step. After C7 → daemon↔service INTEGRATION test (run sensei-hive+daemon, contribute→pull
 round-trip) = FIRST FUNCTIONAL MILESTONE → merge+bump (validate dbd handles dojo scope+proc at bump).
 Then C8 collective-promote + screens C9-C11.
+
+── DŌJŌ C7 ✅ COMMITTED `a989feb5` (2026-07-08) ──
+Downstream inbox: DojoClient.pull_artifacts; sensei.dojo_inbox (dedup unique(membership,signature),
+state pending|applied|muted|pinned, cursor reuses dojo_memberships.last_seq); collective/inbox.rs
+(Puller/Inbox seams: pull idempotent+cursor-advance; apply principle/pattern→memories origin='dojo'
+scope-mapped, reuse insert_memory + compensating delete; skill/agent/prompt/guard=Deferred nothing-
+written; mute/pin never land; scope-mismatch→reason); run_pull_loop pulls dojo inboxes (guarded);
+GET /api/upgrades[?include_muted] + POST apply|mute|pin. 16 tests, 1272 pass, clippy 0.
+
+⚠️ LOOP NOT YET CLOSED: C6 publishes status='submitted'; C7 pulls only 'published'. Nothing moves
+submitted→published → C8 (service triage/promote) is REQUIRED to close the loop (not optional).
+DŌJŌ on develop UNMERGED (8 chunks): C1 `37f30527`, dojo-protocol `1e963ab2`, C3 `122fad3f`, C4
+`beacc421`, C5 `29971613`, C6 `9656ad71`, C7 `a989feb5`.
+⏳ DŌJŌ C8 BUILDING: hive-mind service-side triage/promote — on publish/tick: cluster submitted artifacts
+by signature (dedup across contributors), score (confidence + contributor_count), AUTO-APPROVE high-bar
+→ status='published' (so C7 pulls them); else insert triage_queue for human decision; k-anonymity gate
+for global-dojo (N contributors before publish). + minimal maintainer endpoints (list triage_queue,
+POST decision). Additive on hive-mind, keep all tests green. Docker-free (embedded PG).
+AFTER C8: daemon↔service INTEGRATION round-trip (run sensei-hive+daemon: contribute→triage→publish→pull→
+inbox) = PROVEN loop → then merge+bump Dōjō (validate dbd handles dojo scope+proc at bump). Then screens
+C9-C11 (make it user-facing). Consoles C12-C14 = Docker-blocked (parked).

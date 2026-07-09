@@ -22,7 +22,11 @@ const SHARED_RULES_SEQ_LOCK: i64 = 0x6869_7665_5f73_6571; // ascii "hive_seq"
 /// Advisory-lock key that serializes `dojo.artifacts.seq` assignment, the
 /// artifact analogue of `SHARED_RULES_SEQ_LOCK`. A distinct key so artifact
 /// publishes and rule publishes never contend (they share one embedded PG).
-const ARTIFACTS_SEQ_LOCK: i64 = 0x646f_6a6f_5f73_6571; // ascii "dojo_seq"
+///
+/// `pub(crate)` so the collective/promote runner ([`crate::collective::promote`])
+/// takes the SAME lock when it advances `seq` on publish — publish and promote
+/// must share this lock so the monotonic pull cursor stays gap-free.
+pub(crate) const ARTIFACTS_SEQ_LOCK: i64 = 0x646f_6a6f_5f73_6571; // ascii "dojo_seq"
 
 /// The authenticated identity resolved from a presented API key.
 #[derive(Debug, Clone)]
@@ -63,6 +67,13 @@ impl HiveStore {
     /// Build a store over an existing pool (cloned from `HiveDb::pool()`).
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
+    }
+
+    /// Borrow the underlying pool — used by the collective/promote runner
+    /// ([`crate::collective::promote`]) so its transactional writes run against
+    /// the same pool and reuse the shared [`ARTIFACTS_SEQ_LOCK`] seq discipline.
+    pub(crate) fn pool(&self) -> &PgPool {
+        &self.pool
     }
 
     /// Publish a rule: upsert its namespace, then insert-or-bump the shared rule.
