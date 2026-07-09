@@ -1391,9 +1391,11 @@ REAL remaining gaps (verified live, grep — code-graph empty for this project =
   ⚠️ 2 PRE-EXISTING DB-test-isolation issues (NOT this change, pass single-threaded/isolated; pre-commit skips
   DB tests = green): list_memories_filters_by_status (non-self-isolating fixture accumulates proposed memories),
   prune_activity_prunes_orphan_events_by_ts (known parallel-prune flake). Follow-up: make those fixtures self-isolating.
-  ⏳ P3-UI BUILDING (svelte agent): MemoryDetail.svelte usage strip → loaded/followed/skipped_7d (from new wire
-  fields) replacing lifetime applied×/violated×; render 0·0·0 not blank; rokkit tokens; svelte MCP.
-  Then MERGE MILESTONE: rank3 `5f12a757` + memory-feedback (daemon `553a6203` + UI) → v0.2.35 → main.
+  ✅ P3-UI SHIPPED `7cf3c37f` (2026-07-09): MemoryDetail.svelte usage strip → loaded/followed/skipped_7d
+  (memoryUsageStrip pure helper, honest zeros); lifetime kept as secondary "all-time" line; bonus: legacy
+  <style> hex→rokkit tokens. +6 tests; svelte-check 0/0; 1046 app tests. Matches learnings-anatomy-v2 mockup.
+  ⭐ MEMORY-FEEDBACK LOOP COMPLETE (daemon 553a6203 + UI 7cf3c37f). ⏳ MERGE MILESTONE IN PROGRESS:
+  rank3 `5f12a757` + memory-feedback → v0.2.34→0.2.35 → main (ships activity.memory_loads table + trigger bugfix LIVE).
   DEFERRED follow-ups: per-session load correlation (thread client_session_id through get_context/MCP → needs
   plugin republish); P2c behavioral use-classifier (reuse verdict_classifier fragment overlap).
 
