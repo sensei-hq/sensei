@@ -15,6 +15,19 @@ pub(crate) fn require_secure_url(raw: &str, resource: &str) -> Result<reqwest::U
     Ok(parsed)
 }
 
+/// Validate that `value` is one of `allowed`, returning a field-named error
+/// otherwise. The shared enum-membership check behind the Dōjō membership
+/// (`dojo::memberships`) and collective-preferences (`collective::preferences`)
+/// validators — keeps the `invalid {field}: … (allowed: …)` message identical
+/// across every enum-typed API field.
+pub(crate) fn require_member_of(value: &str, allowed: &[&str], field: &str) -> Result<(), String> {
+    if allowed.contains(&value) {
+        Ok(())
+    } else {
+        Err(format!("invalid {field}: {value:?} (allowed: {})", allowed.join(", ")))
+    }
+}
+
 /// Extract a UUID from a JSON value's string field.
 pub(crate) fn json_uuid(v: &serde_json::Value) -> Option<uuid::Uuid> {
     v.as_str().and_then(|s| uuid::Uuid::parse_str(s).ok())

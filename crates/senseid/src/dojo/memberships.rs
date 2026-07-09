@@ -11,6 +11,7 @@
 //! module owns the domain types, input validation, and the create/list/bind/
 //! set-sync-status orchestration the API handlers call.
 
+use crate::api::util::require_member_of;
 use crate::db::pg_store::{DojoMembership, NewDojoMembership, PgStore};
 pub use dojo_protocol::AttributionMode;
 
@@ -59,14 +60,6 @@ pub const MEMBER_ROLES: [&str; 4] = ["contributor", "maintainer", "client_lead",
 pub const AUTH_METHODS: [&str; 3] = ["sso", "github_oauth", "device_code"];
 /// Allowed `sync_status` values — mirrors `dojo.sync_status` (sync_status.ddl).
 pub const SYNC_STATUSES: [&str; 4] = ["healthy", "stale", "error", "authenticating"];
-
-fn require_member_of(value: &str, allowed: &[&str], field: &str) -> Result<(), String> {
-    if allowed.contains(&value) {
-        Ok(())
-    } else {
-        Err(format!("invalid {field}: {value:?} (allowed: {})", allowed.join(", ")))
-    }
-}
 
 /// Derive the full membership URL from the registry base + tenant discovery
 /// path, e.g. `("http://localhost:8787", "github/sensei-hq")` →
