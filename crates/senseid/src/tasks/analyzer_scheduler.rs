@@ -58,6 +58,21 @@ pub fn projects_due(
     due
 }
 
+/// Enqueue the per-project analyzer tasks for one due project. Kept as a small
+/// helper so the "what runs when a project is due" contract is unit-testable
+/// against a real queue without driving the scheduler's infinite `run` loop.
+///
+/// Both tasks ride the same due signal (new activity, or the daily full
+/// refresh): `AnalyzeProject` enriches sessions and derives signals, and
+/// `ScanDocDrift` refreshes `inference.drift_items` so doc-drift populates on
+/// its own instead of only via the manual `/drift/scan` endpoint. The drift
+/// writer dedups + resolves in place, so re-running per due tick is safe and
+/// bounded to active projects.
+async fn enqueue_due_project(queue: &TaskQueue, pid: &uuid::Uuid) {
+    queue.enqueue(Task::new(TaskKind::AnalyzeProject, "", &pid.to_string())).await;
+    queue.enqueue(Task::new(TaskKind::ScanDocDrift, "", &pid.to_string())).await;
+}
+
 /// Resolve the tick interval from a config value, falling back to the default
 /// for missing / unparseable / zero values.
 fn parse_interval(cfg: Option<String>) -> u64 {
@@ -201,7 +216,7 @@ async fn run(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
 
         let any_due = !due.is_empty();
         for pid in &due {
-            queue.enqueue(Task::new(TaskKind::AnalyzeProject, "", &pid.to_string())).await;
+            enqueue_due_project(&queue, pid).await;
         }
         // Global passes once per tick when work happened: corrections cluster
         // across projects; verdicts re-measure accepted recs' before/after FTR;
@@ -247,6 +262,25 @@ mod tests {
 
         // Only p1's activity advanced → only p1 due.
         assert_eq!(projects_due(&[(p1, ts(200)), (p2, ts(100))], &mut wm), vec![p1]);
+    }
+
+    #[tokio::test]
+    async fn due_project_enqueues_analyze_and_doc_drift() {
+        let queue = TaskQueue::new();
+        let pid = uuid::Uuid::new_v4();
+        enqueue_due_project(&queue, &pid).await;
+
+        // Exactly two tasks, both targeting this project: AnalyzeProject +
+        // ScanDocDrift (doc-drift rides the same due signal).
+        assert_eq!(queue.status().await.pending, 2);
+        let mut kinds: Vec<TaskKind> = Vec::new();
+        for _ in 0..2 {
+            let t = queue.next_task().await;
+            assert_eq!(t.path, pid.to_string(), "task carries the project id");
+            kinds.push(t.kind);
+        }
+        kinds.sort_by_key(|k| k.to_string());
+        assert_eq!(kinds, vec![TaskKind::AnalyzeProject, TaskKind::ScanDocDrift]);
     }
 
     #[test]
