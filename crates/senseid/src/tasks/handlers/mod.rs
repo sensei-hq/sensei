@@ -11,6 +11,7 @@ mod libraries;
 mod community;
 mod verdicts;
 mod analyze;
+mod doc_drift;
 mod corrections;
 mod generate;
 mod consolidate;
@@ -29,5 +30,6 @@ pub use libraries::{resolve_libs, import_lib, index_library, index_library_page,
 pub use community::detect_communities;
 pub use verdicts::measure_verdicts;
 pub use analyze::analyze_project;
+pub use doc_drift::scan_doc_drift;
 pub use corrections::aggregate_corrections;
 pub use tool_insights::aggregate_tool_insights;
