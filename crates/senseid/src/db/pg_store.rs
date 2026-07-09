@@ -109,6 +109,18 @@ pub struct DojoMembership {
     pub enabled:             bool,
 }
 
+/// A row of `sensei.collective_preferences` — the single-row collective sharing
+/// settings backing `GET/PUT /api/preferences/collective`. `categories` is the
+/// raw jsonb toggle map; `updated_at` is RFC-3339 text (SELECTed `::text`).
+#[derive(Debug, Clone)]
+pub struct CollectivePrefsRow {
+    pub destination:         String,
+    pub cadence:             String,
+    pub categories:          serde_json::Value,
+    pub attribution_default: String,
+    pub updated_at:          String,
+}
+
 /// A federated_memories ledger row.
 #[derive(Debug, Clone)]
 pub struct FederatedLink {
@@ -242,6 +254,50 @@ impl PgStore {
             .await
             .map_err(|e| e.to_string())?;
         Ok(rows.into_iter().collect())
+    }
+
+    // ── Collective sharing preferences (single row) ───────────────────
+    //
+    // One logical setting for the one local user: the table holds exactly one row
+    // guarded by the `singleton` boolean PK (see collective_preferences.ddl).
+    // Enum validation lives in `crate::collective::preferences` — these methods
+    // only read/upsert.
+
+    /// Read the single collective-preferences row, or `None` when unset (the API
+    /// then returns conservative defaults). `categories` comes back as raw jsonb.
+    pub async fn get_collective_preferences(&self) -> Result<Option<CollectivePrefsRow>, String> {
+        let row: Option<(String, String, serde_json::Value, String, String)> =
+            sqlx_core::query_as::query_as(
+                "SELECT destination, cadence, categories, attribution_default, updated_at::text
+                   FROM sensei.collective_preferences WHERE singleton = true")
+            .fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.map(|(destination, cadence, categories, attribution_default, updated_at)|
+            CollectivePrefsRow { destination, cadence, categories, attribution_default, updated_at }))
+    }
+
+    /// Upsert the single collective-preferences row (keys on the `singleton` PK)
+    /// and return the new `updated_at`. Callers validate the enum fields first.
+    pub async fn set_collective_preferences(
+        &self,
+        destination: &str,
+        cadence: &str,
+        categories: &serde_json::Value,
+        attribution_default: &str,
+    ) -> Result<String, String> {
+        let (updated_at,): (String,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.collective_preferences
+                (singleton, destination, cadence, categories, attribution_default, updated_at)
+             VALUES (true, $1, $2, $3, $4, now())
+             ON CONFLICT (singleton) DO UPDATE SET
+                destination         = EXCLUDED.destination,
+                cadence             = EXCLUDED.cadence,
+                categories          = EXCLUDED.categories,
+                attribution_default = EXCLUDED.attribution_default,
+                updated_at          = now()
+             RETURNING updated_at::text")
+            .bind(destination).bind(cadence).bind(categories).bind(attribution_default)
+            .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(updated_at)
     }
 
     // ── Insight copy cache (insight-copy pipeline) ────────────────────
@@ -8997,6 +9053,59 @@ mod tests {
 
         assert!(pg.delete_dojo_membership(&mid).await.unwrap());
         assert!(pg.get_dojo_membership(&mid).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn collective_preferences_defaults_and_upsert_roundtrip() {
+        let Ok(pg) = PgStore::connect_test().await else { return; };
+        use crate::collective::preferences::{self, CollectivePreferences};
+        let _guard = preferences::test_lock().lock().await;
+
+        // Clean slate — the singleton row may linger from a prior run.
+        sqlx_core::query::query("DELETE FROM sensei.collective_preferences")
+            .execute(pg.pool()).await.unwrap();
+
+        // Defaults-when-empty: no row → conservative defaults, updated_at None.
+        assert!(pg.get_collective_preferences().await.unwrap().is_none());
+        let defaults = preferences::get(&pg).await.unwrap();
+        assert_eq!(defaults.destination, "none");
+        assert_eq!(defaults.cadence, "manual");
+        assert_eq!(defaults.attribution_default, "dereferenced");
+        assert_eq!(defaults.updated_at, None);
+
+        // Upsert a validated body, then read it back.
+        let body = serde_json::json!({
+            "destination": "both", "cadence": "daily", "attribution_default": "named",
+            "categories": { "memory": false, "guard": false }
+        });
+        let saved = preferences::set(&pg, CollectivePreferences::from_request(&body).unwrap())
+            .await.unwrap();
+        assert!(saved.updated_at.is_some(), "upsert assigns updated_at");
+
+        let got = preferences::get(&pg).await.unwrap();
+        assert_eq!(got.destination, "both");
+        assert_eq!(got.cadence, "daily");
+        assert_eq!(got.attribution_default, "named");
+        assert_eq!(got.categories.get("memory"), Some(&false));
+        assert_eq!(got.categories.get("guard"), Some(&false));
+        assert_eq!(got.categories.get("pattern"), Some(&true));
+        assert!(got.updated_at.is_some());
+
+        // Re-upsert → still exactly one row (singleton), values fully replaced.
+        let body2 = serde_json::json!({ "destination": "global", "cadence": "weekly" });
+        preferences::set(&pg, CollectivePreferences::from_request(&body2).unwrap())
+            .await.unwrap();
+        let (n,): (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*) FROM sensei.collective_preferences")
+            .fetch_one(pg.pool()).await.unwrap();
+        assert_eq!(n, 1, "singleton table holds exactly one row after re-upsert");
+        let got2 = preferences::get(&pg).await.unwrap();
+        assert_eq!(got2.destination, "global");
+        assert_eq!(got2.categories.get("memory"), Some(&true), "full replace resets toggles to default");
+
+        // Cleanup.
+        sqlx_core::query::query("DELETE FROM sensei.collective_preferences")
+            .execute(pg.pool()).await.unwrap();
     }
 
     #[tokio::test]
