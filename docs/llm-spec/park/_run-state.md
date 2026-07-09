@@ -1381,14 +1381,21 @@ REAL remaining gaps (verified live, grep — code-graph empty for this project =
   are PULL (get_layered_context MCP → assemble_context pg_store.rs:6109 → returns memories, logs nothing), NOT
   pushed at session-start (session-start hook injects RULES only). Doc drift: endpoint=/api/knowledge/memories,
   screen=(observatory)/learnings/ (NOT /api/memories or /memories). ~1-day track, mostly pure-daemon.
-  ⏳ BUILDING NOW (agent, daemon slice P1+P2+P3-API): P1 new activity.memory_loads DDL (one-row-per-memory:
-  memory_id + optional session/project + source + loaded_at; apply to sensei_test; live via bump) + writer in
-  assemble_context (batch-insert per returned memory, session_id NULL for v1, NON-FATAL log-not-block) +
-  loaded_last_7d reader. P2 followed_last_7d(applied)/skipped_last_7d(ignored) readers over existing
-  memory_outcomes (NO new table). P3-API add the 3 fields to get_memory_detail JSON. Defaults: reuse outcomes,
-  self-report=followed, one-row-per-memory. DEFERRED follow-ups: per-session load correlation (thread client_session_id
-  through get_context/MCP → needs plugin republish); P2c behavioral classifier (reuse verdict_classifier fragment
-  overlap); P3-UI MemoryDetail.svelte strip (separate svelte build). DDL-source-first; no P2c now.
+  ✅ DAEMON SLICE SHIPPED `553a6203` (2026-07-09): activity.memory_loads (one-row-per-memory, joins default
+  scope, applied to sensei_test) + NON-FATAL writer in assemble_context (FOR SHARE-hardened vs concurrent-delete
+  FK race) + memory_telemetry_7d(id)→(loaded,followed,skipped) single query (followed=applied/skipped=ignored
+  over memory_outcomes, NO new table) + get_memory_detail exposes loaded/followed/skipped_last_7d (top-level,
+  additive). 4 db-gated tests; clippy 0; standard gate 1313 pass. ⭐ BONUS BUG FIX: memory_outcome_apply trigger
+  cast 'archived'/'challenged'::memory_status UNQUALIFIED → record_outcome(violated) crashed live (42704, daemon
+  search_path lacks sensei); qualified to sensei.memory_status. SHIPS LIVE VIA BUMP (both new table + trigger fix).
+  ⚠️ 2 PRE-EXISTING DB-test-isolation issues (NOT this change, pass single-threaded/isolated; pre-commit skips
+  DB tests = green): list_memories_filters_by_status (non-self-isolating fixture accumulates proposed memories),
+  prune_activity_prunes_orphan_events_by_ts (known parallel-prune flake). Follow-up: make those fixtures self-isolating.
+  ⏳ P3-UI BUILDING (svelte agent): MemoryDetail.svelte usage strip → loaded/followed/skipped_7d (from new wire
+  fields) replacing lifetime applied×/violated×; render 0·0·0 not blank; rokkit tokens; svelte MCP.
+  Then MERGE MILESTONE: rank3 `5f12a757` + memory-feedback (daemon `553a6203` + UI) → v0.2.35 → main.
+  DEFERRED follow-ups: per-session load correlation (thread client_session_id through get_context/MCP → needs
+  plugin republish); P2c behavioral use-classifier (reuse verdict_classifier fragment overlap).
 
   3. **memory promote/merge statuses** defined + readyToShare/toMerge wired (Memories screen / overflow 7).
   4. HARDEST (new DDL + CAPTURE hooks in marketplace/ plugin, multi-part): memory-usage telemetry
