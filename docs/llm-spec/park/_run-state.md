@@ -1223,3 +1223,19 @@ collective-intelligence backend (schema+protocol+multi-tenant service+dual-auth+
 bump — the flagged risk; if bump fails on dojo scope, reset + diagnose).
 DEFERRED follow-ups: live daemon↔service round-trip (low risk — shared types); screens C9-C11 (user-facing,
 next); consoles C12-C14 (Docker-blocked). Insight-copy/e2e/etc flags still open for Jerry.
+
+★★★ v0.2.30 DŌJŌ BACKEND SHIPPED → MAIN `5bcd1d37` (2026-07-08) ★★★ develop @ `38603a64`. dbd HANDLED the
+dojo scope+seed proc at bump (flagged risk RESOLVED — clean bump). 6 milestones this session: v0.2.25
+insight-copy / v0.2.26 impact+sessions+counts / v0.2.27 memory-generalise / v0.2.28 upgrades+traceability
+/ v0.2.29 project_patterns-fix / v0.2.30 Dōjō backend (9 chunks).
+
+⏳ CAPSTONE BUILDING: sensei-hive PROVISIONING CLI + live daemon↔service ROUND-TRIP. Provisioning is the
+missing bootstrap (service has no tenant/membership provisioning endpoint — that's admin console C13,
+Docker-blocked). CLI creates dojo tenant + membership(role) + api-key device-token (mirror keygen).
+Then round-trip: start sensei-hive → provision → rebuild+restart daemon → register daemon dojo membership
+(POST /api/dojo/memberships w/ token) → create+approve share batch → publish → service promotes →
+daemon pulls → GET /api/upgrades shows it. PROVES the shipped backend end-to-end + UNBLOCKS real screen
+verification (a configured Dōjō). If round-trip snags on friction, provisioning CLI still valuable + report.
+DEFERRED: screens C9-C11 (dormant until a Dōjō configured — the round-trip configures one); consoles
+C12-C14 (Docker). Open Jerry flags: no-Docker(console/Supabase), Tauri e2e systemic, libraries-wrap park,
+insight-copy verbose-rec pass-rate, flaky bump gate.
