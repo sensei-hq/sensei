@@ -619,6 +619,7 @@ pub(crate) async fn tool_signals(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     use crate::api::handlers::tool_signals as ts;
+    use crate::analysis::insight_copy::{copy_or_warm, CopyLimits};
 
     let rows = state.pg.get_tool_usage_stats().await
         .map_err(|e| { tracing::error!(error = %e, "tool_signals: get_tool_usage_stats failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
@@ -626,7 +627,26 @@ pub(crate) async fn tool_signals(
         .filter_map(|v| serde_json::from_value(v).ok())
         .collect();
     let raw = ts::derive_signals(&stats, chrono::Utc::now(), &ts::SignalThresholds::default());
-    let signals = ts::curate_insights(raw);
+    let mut signals = ts::curate_insights(raw);
+
+    // ── Mentor-voice copy (insight-copy) ─────────────────────────────────────
+    // Route each curated card's title + detail through the insight-copy pipeline.
+    // `copy_or_warm` is a wire-path cache read (+ a detached background warm on a
+    // miss), never a blocking model call — variant / action / tool_name stay
+    // code-owned; only the sentence changes. The eager warm in
+    // `tasks::tool_insights::aggregate_tool_insights` primes the per-tool cards so
+    // this read is a pure cache hit in steady state; summary cards warm on first
+    // miss. Cap at COPY_CAP as a belt-and-braces guard against a warm storm —
+    // curation already collapses the list, so this rarely bites (same idiom as
+    // `get_insights`).
+    const COPY_CAP: usize = 8;
+    for s in signals.iter_mut().take(COPY_CAP) {
+        let (kind, facts, fb) = ts::signal_copy_inputs(s);
+        let c = copy_or_warm(&state.pg, &state.gateway, kind, &facts, CopyLimits::default(), fb).await;
+        s.title = c.title;
+        s.detail = c.detail;
+    }
+
     Ok(Json(serde_json::json!({ "signals": signals, "source": "derived" })))
 }
 
