@@ -146,6 +146,9 @@ export function mockMemoryDetail(overrides: Partial<MemoryDetail> = {}): MemoryD
     evidence: [],
     examples: [],
     outcomes: [],
+    loaded_last_7d: 0,
+    followed_last_7d: 0,
+    skipped_last_7d: 0,
     ...overrides,
   };
 }
