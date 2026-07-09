@@ -1336,14 +1336,21 @@ REAL remaining gaps (verified live, grep — code-graph empty for this project =
      straight from `sensei.memories` (resolve_rules_raw :5906, enforcement DESC/level/strength). The
      rule-candidates branch (generate.rs:151-163) ALREADY makes a convention memory linked to the pattern
      (source_id=pattern.id) but persisted `enforcement: None` (generate.rs:316) = stays soft.
-     ⏳ BUILDING NOW (agent): CORE = make accept_recommendation action-aware (RETURNING action_type,based_on;
-     if promote_pattern → promote_pattern(pid,'rule'); preserve pending-guard; defensive no-op if patterns
-     empty; atomic). GOVERNANCE HOOK (if cleanly verifiable, else ship core+flag) = on accept, enforce the
-     linked convention memory so get_rules returns it as a hard rule. No DDL. TDD (survey's 5 tests + rule test).
-     Enum pattern_lifecycle=(suggested,gap,rule); reader pattern_kind flips emerging→adopted at 'rule' (no reader
-     change). ('gap' has no writer either — separate.) Optional polish: 'promoted'/'state' alias to match spec vocab.
-  2. **insight-copy wiring** — route user-facing insight strings through gemma4 (insight-copy chain) where
-     still raw DB text. Check which read-paths bypass insight_copy. [[feedback_llm_insight_copy]].
+     ✅ SHIPPED `5a89a165` (2026-07-08): accept_recommendation now action-aware — a promote_pattern rec
+     advances its source pattern (based_on.patterns[0]) to lifecycle='rule' (read path renders 'adopted');
+     RETURNING action_type,based_on; verbatim pending-guard; defensive no-op on missing provenance; sequential
+     (DRY: reuse promote_pattern, guard blocks re-promote, post-flip failure logged at error). 6 tests; clippy 0;
+     1299 pass. based_on_first_pattern pure extractor. NOT merged (batching with insight-copy before merge+bump).
+     ⭐ SURVEY FINDING: the rule-candidate convention memory is ALREADY a resolved rule at 'recommended' tier
+     (resolve_rules_raw does NOT filter on enforcement — only status IN active/reinforced/battle_tested + ORDER
+     BY enforcement). So the governance loop substantially WORKS already. PART 2 (deferred, needs POLICY call +
+     2 small methods, NO gap): to BUMP a promoted pattern's memory to required/mandatory authority on accept →
+     add fetch_memory_id_by_source(pattern_id) + set_memory_enforcement (neither exists; siblings set_memory_
+     status/category/generalisation do). Low priority — enhancement not gap. ('gap' lifecycle still has no writer.)
+  2. ⏳ **insight-copy wiring** — SURVEY IN FLIGHT (agent). Route user-facing insight strings through gemma4
+     (insight-copy chain) where still raw DB text. NOTE: some read-paths ALREADY warm insight_copy
+     (observatory_home.rs/observatory.rs per [[project_insight_copy]]) — survey finds which read-paths still
+     emit raw DB text + scopes the wiring. [[feedback_llm_insight_copy]].
   3. **memory promote/merge statuses** defined + readyToShare/toMerge wired (Memories screen / overflow 7).
   4. HARDEST (new DDL + CAPTURE hooks in marketplace/ plugin, multi-part): memory-usage telemetry
      (activity.memory_loads/memory_use_reports — the "did injected memory help?" loop); impact_regressions;
