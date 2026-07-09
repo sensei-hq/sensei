@@ -5850,6 +5850,29 @@ impl PgStore {
         Ok(row.map(|r| r.0))
     }
 
+    /// Rolling 7-day telemetry for one memory: `(loaded, followed, skipped)`.
+    /// - `loaded`   = load events in `activity.memory_loads` (injected into context)
+    /// - `followed` = `memory_outcomes` with outcome `applied` (used in output)
+    /// - `skipped`  = `memory_outcomes` with outcome `ignored` (loaded but discarded)
+    ///
+    /// `consulted`/`violated` are deliberately NOT folded into followed/skipped.
+    /// One round-trip via scalar subqueries (loads and outcomes live in different
+    /// tables) — fewer round-trips than three separate readers.
+    pub async fn memory_telemetry_7d(&self, memory_id: uuid::Uuid) -> Result<(i64, i64, i64), String> {
+        let row: (i64, i64, i64) = sqlx_core::query_as::query_as(
+            "SELECT
+               (SELECT count(*) FROM activity.memory_loads
+                 WHERE memory_id = $1 AND loaded_at   > now() - interval '7 days'),
+               (SELECT count(*) FROM sensei.memory_outcomes
+                 WHERE memory_id = $1 AND outcome = 'applied' AND recorded_at > now() - interval '7 days'),
+               (SELECT count(*) FROM sensei.memory_outcomes
+                 WHERE memory_id = $1 AND outcome = 'ignored' AND recorded_at > now() - interval '7 days')"
+        )
+            .bind(memory_id)
+            .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row)
+    }
+
     /// Full memory detail bundle: row + evidence + examples + recent outcomes.
     pub async fn get_memory_detail(&self, id: uuid::Uuid) -> Result<serde_json::Value, String> {
         let row: Option<(uuid::Uuid, Option<uuid::Uuid>, String, Option<String>, String, String, String,
@@ -5924,8 +5947,16 @@ impl PgStore {
                   LIMIT 20"
             ).bind(id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
 
+        // Rolling 7-day telemetry ("did injected memory help?"): loaded / followed
+        // / skipped. Additive to the lifetime applied_count/violated_count on the
+        // memory row above.
+        let (loaded_7d, followed_7d, skipped_7d) = self.memory_telemetry_7d(id).await?;
+
         Ok(serde_json::json!({
             "memory":   memory,
+            "loaded_last_7d":   loaded_7d,
+            "followed_last_7d": followed_7d,
+            "skipped_last_7d":  skipped_7d,
             "evidence": evidence.into_iter().map(|(session_id, note, ts)|
                 serde_json::json!({ "session_id": session_id, "note": note, "recorded_at": ts.to_rfc3339() })
             ).collect::<Vec<_>>(),
@@ -6140,6 +6171,34 @@ impl PgStore {
             .bind(&allowed_owned).bind(project_id).bind(&stack_owned)
             .bind(&tags_owned).bind(limit)
             .fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+
+        // Telemetry: log one memory_loads row per delivered memory ("did injected
+        // memory help?" — loads here vs applied/ignored outcomes there). The status
+        // filter above already excludes archived/rejected, so these are the same
+        // memories record_outcomes_batch would accept. NON-FATAL: this is the hot
+        // context-delivery path — a logging failure must warn and continue, never
+        // block or error the returned context.
+        let memory_ids: Vec<uuid::Uuid> = rows.iter().map(|r| r.0).collect();
+        if !memory_ids.is_empty() {
+            let logged = sqlx_core::query::query(
+                // `FOR SHARE` pins each referenced memory row for the duration of
+                // this insert, so a concurrent DELETE (which cascades to memory_loads)
+                // blocks until we commit rather than racing the FK check. The CTE
+                // also filters to memories that still exist — a memory already gone
+                // is simply not logged, never a whole-batch FK abort.
+                "WITH existing AS (
+                     SELECT id FROM sensei.memories WHERE id = ANY($1::uuid[]) FOR SHARE
+                 )
+                 INSERT INTO activity.memory_loads (memory_id, project_id, source)
+                 SELECT id, $2, 'get_layered_context' FROM existing"
+            )
+                .bind(&memory_ids).bind(project_id)
+                .execute(&self.pool).await;
+            if let Err(e) = logged {
+                tracing::warn!(error = %e, count = memory_ids.len(),
+                    "assemble_context: failed to log memory loads (non-fatal — context still delivered)");
+            }
+        }
 
         let memories: Vec<serde_json::Value> = rows.into_iter().map(|r| serde_json::json!({
             "id":               r.0,
@@ -9725,6 +9784,123 @@ mod knowledge_tests {
             .map(|m| m["title"].as_str().unwrap().to_string()).collect();
         assert!(!titles2.contains(&"PROP".to_string()));
         let _ = m_prop;
+    }
+
+    #[tokio::test]
+    async fn assemble_context_logs_one_load_per_memory() {
+        if ddl_test_skip() { return; }
+        let pg = PgStore::connect(&std::env::var("SENSEI_TEST_DB_URL").unwrap()).await.unwrap();
+        let pid = pg.ensure_test_project("loads-writer").await.unwrap();
+        // Project-scoped active memory → loaded exactly once per assemble_context
+        // call on this (test-unique) project.
+        let mid = pg.insert_memory(&InsertMemory {
+            project_id: Some(pid), scope: "project".into(), scope_filter: None,
+            mtype: "convention".into(), title: "L".into(), content: "l".into(),
+            impact: None, tags: vec![], triage_signal: None, status: "active".into(),
+            namespace_id: None, enforcement: None, origin: None, source_id: None,
+        }).await.unwrap();
+
+        let blob = pg.assemble_context(pid, &[], None, 50).await.unwrap();
+        // Context is still delivered (writer is additive, non-fatal).
+        assert!(blob["memories"].as_array().unwrap().iter()
+            .any(|m| m["id"].as_str() == Some(&mid.to_string())));
+
+        let (loaded, followed, skipped) = pg.memory_telemetry_7d(mid).await.unwrap();
+        assert_eq!(loaded, 1, "one load row per delivered memory");
+        assert_eq!(followed, 0);
+        assert_eq!(skipped, 0);
+
+        // A second delivery logs a second load row.
+        pg.assemble_context(pid, &[], None, 50).await.unwrap();
+        let (loaded2, _, _) = pg.memory_telemetry_7d(mid).await.unwrap();
+        assert_eq!(loaded2, 2);
+
+        // Source + a non-null loaded_at are recorded; session_id NULL is tolerated.
+        let (source, sess_null): (String, bool) = sqlx_core::query_as::query_as(
+            "SELECT source, session_id IS NULL FROM activity.memory_loads
+              WHERE memory_id = $1 ORDER BY id DESC LIMIT 1"
+        ).bind(mid).fetch_one(pg.pool()).await.unwrap();
+        assert_eq!(source, "get_layered_context");
+        assert!(sess_null, "v1 logs loads with session_id NULL");
+    }
+
+    #[tokio::test]
+    async fn memory_loaded_last_7d_respects_window() {
+        if ddl_test_skip() { return; }
+        let pg = PgStore::connect(&std::env::var("SENSEI_TEST_DB_URL").unwrap()).await.unwrap();
+        let pid = pg.ensure_test_project("loads-window").await.unwrap();
+        let mid = pg.insert_memory(&InsertMemory {
+            project_id: Some(pid), scope: "project".into(), scope_filter: None,
+            mtype: "convention".into(), title: "W".into(), content: "w".into(),
+            impact: None, tags: vec![], triage_signal: None, status: "active".into(),
+            namespace_id: None, enforcement: None, origin: None, source_id: None,
+        }).await.unwrap();
+
+        // One load in-window, one back-dated outside the 7d window.
+        sqlx_core::query::query("INSERT INTO activity.memory_loads (memory_id) VALUES ($1)")
+            .bind(mid).execute(pg.pool()).await.unwrap();
+        sqlx_core::query::query(
+            "INSERT INTO activity.memory_loads (memory_id, loaded_at) VALUES ($1, now() - interval '10 days')"
+        ).bind(mid).execute(pg.pool()).await.unwrap();
+
+        let (loaded, _, _) = pg.memory_telemetry_7d(mid).await.unwrap();
+        assert_eq!(loaded, 1, "only the in-window load is counted");
+    }
+
+    #[tokio::test]
+    async fn memory_followed_skipped_last_7d_over_outcomes() {
+        if ddl_test_skip() { return; }
+        let pg = PgStore::connect(&std::env::var("SENSEI_TEST_DB_URL").unwrap()).await.unwrap();
+        let pid = pg.ensure_test_project("followed-skipped").await.unwrap();
+        let mid = pg.insert_memory(&InsertMemory {
+            project_id: Some(pid), scope: "project".into(), scope_filter: None,
+            mtype: "convention".into(), title: "F".into(), content: "f".into(),
+            impact: None, tags: vec![], triage_signal: None, status: "active".into(),
+            namespace_id: None, enforcement: None, origin: None, source_id: None,
+        }).await.unwrap();
+
+        // In-window outcomes: applied + ignored count; consulted + violated do not.
+        for oc in ["applied", "ignored", "consulted", "violated"] {
+            sqlx_core::query::query(
+                "INSERT INTO sensei.memory_outcomes (memory_id, outcome) VALUES ($1, $2::sensei.memory_outcome)"
+            ).bind(mid).bind(oc).execute(pg.pool()).await.unwrap();
+        }
+        // Back-dated applied must NOT count toward followed.
+        sqlx_core::query::query(
+            "INSERT INTO sensei.memory_outcomes (memory_id, outcome, recorded_at)
+             VALUES ($1, 'applied'::sensei.memory_outcome, now() - interval '10 days')"
+        ).bind(mid).execute(pg.pool()).await.unwrap();
+
+        let (loaded, followed, skipped) = pg.memory_telemetry_7d(mid).await.unwrap();
+        assert_eq!(loaded, 0, "no loads logged in this test");
+        assert_eq!(followed, 1, "only the in-window applied outcome");
+        assert_eq!(skipped, 1, "only the in-window ignored outcome");
+    }
+
+    #[tokio::test]
+    async fn get_memory_detail_includes_7d_telemetry() {
+        if ddl_test_skip() { return; }
+        let pg = PgStore::connect(&std::env::var("SENSEI_TEST_DB_URL").unwrap()).await.unwrap();
+        let pid = pg.ensure_test_project("detail-telemetry").await.unwrap();
+        let mid = pg.insert_memory(&InsertMemory {
+            project_id: Some(pid), scope: "project".into(), scope_filter: None,
+            mtype: "convention".into(), title: "D".into(), content: "d".into(),
+            impact: None, tags: vec![], triage_signal: None, status: "active".into(),
+            namespace_id: None, enforcement: None, origin: None, source_id: None,
+        }).await.unwrap();
+
+        sqlx_core::query::query("INSERT INTO activity.memory_loads (memory_id) VALUES ($1)")
+            .bind(mid).execute(pg.pool()).await.unwrap();
+        for oc in ["applied", "ignored"] {
+            sqlx_core::query::query(
+                "INSERT INTO sensei.memory_outcomes (memory_id, outcome) VALUES ($1, $2::sensei.memory_outcome)"
+            ).bind(mid).bind(oc).execute(pg.pool()).await.unwrap();
+        }
+
+        let detail = pg.get_memory_detail(mid).await.unwrap();
+        assert_eq!(detail["loaded_last_7d"].as_i64().unwrap(), 1);
+        assert_eq!(detail["followed_last_7d"].as_i64().unwrap(), 1);
+        assert_eq!(detail["skipped_last_7d"].as_i64().unwrap(), 1);
     }
 
     #[tokio::test]

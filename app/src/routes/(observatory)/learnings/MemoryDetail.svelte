@@ -1,76 +1,101 @@
 <script lang="ts">
-    import { memoryState } from '$lib/memoryState.svelte.js';
+    import { memoryState, memoryUsageStrip } from '$lib/memoryState.svelte.js';
     const d = $derived(memoryState.detail);
 </script>
 
 {#if !d}
-    <p class="empty">Select a memory to view details.</p>
+    <p class="text-sm text-ink-mute">Select a memory to view details.</p>
 {:else}
-    <header class="head">
-        <span class="chip scope">{d.memory.scope}{d.memory.scope_filter ? ':' + d.memory.scope_filter : ''}</span>
-        <span class="chip status status-{d.memory.status}">{d.memory.status}</span>
-        {#each d.memory.tags as tag}<span class="chip tag">{tag}</span>{/each}
+    {@const usage = memoryUsageStrip(d)}
+    <header class="flex flex-wrap gap-1 mb-2">
+        <span class="inline-block px-2 py-0.5 rounded-full text-xs bg-paper-mute text-ink">
+            {d.memory.scope}{d.memory.scope_filter ? ':' + d.memory.scope_filter : ''}
+        </span>
+        <span class="inline-block px-2 py-0.5 rounded-full text-xs bg-paper-mute text-ink">
+            {d.memory.status}
+        </span>
+        {#each d.memory.tags as tag (tag)}
+            <span class="inline-block px-2 py-0.5 rounded-full text-xs bg-paper-mute text-ink">{tag}</span>
+        {/each}
     </header>
 
-    <h2>{d.memory.title}</h2>
-    <p class="content" data-testid="detail-content">{d.memory.content}</p>
+    <h2 class="text-xl font-light text-ink my-2">{d.memory.title}</h2>
+    <p class="whitespace-pre-wrap text-sm text-ink m-0" data-testid="detail-content">{d.memory.content}</p>
 
     {#if d.memory.impact}
-        <section><h4>Impact</h4><p>{d.memory.impact}</p></section>
+        <section class="mt-4">
+            <h4 class="text-xs uppercase tracking-wide text-ink-mute m-0 mb-1">Impact</h4>
+            <p class="text-sm text-ink m-0">{d.memory.impact}</p>
+        </section>
     {/if}
 
-    <section><h4>Metrics</h4>
-        <p>Strength: <strong>{d.memory.strength.toFixed(1)} / 5</strong>
-           — applied {d.memory.applied_count}× · violated {d.memory.violated_count}×</p>
+    <section class="mt-4">
+        <h4 class="text-xs uppercase tracking-wide text-ink-mute m-0 mb-1">Usage</h4>
+        <p data-testid="usage-strip" class="text-sm text-ink m-0">
+            <span data-testid="usage-loaded">{usage.loaded}</span>
+            <span class="text-ink-faint"> · </span>
+            <span data-testid="usage-followed">{usage.followed}</span>
+            <span class="text-ink-faint"> · </span>
+            <span data-testid="usage-skipped">{usage.skipped}</span>
+            <span class="text-ink-mute"> {usage.window}</span>
+        </p>
+        <p data-testid="usage-lifetime" class="text-xs text-ink-mute m-0 mt-1">
+            strength {d.memory.strength.toFixed(1)} / 5
+            · applied {d.memory.applied_count}× · violated {d.memory.violated_count}× all-time
+        </p>
     </section>
 
     {#if d.evidence.length}
-        <section><h4>Evidence</h4>
-            <ul>{#each d.evidence as e}
-                <li>
-                    {#if e.session_id}<code>{e.session_id.slice(0, 8)}</code>{/if}
-                    {e.note ?? ''}
-                </li>
-            {/each}</ul>
+        <section class="mt-4">
+            <h4 class="text-xs uppercase tracking-wide text-ink-mute m-0 mb-1">Evidence</h4>
+            <ul class="pl-5 m-0 text-sm text-ink">
+                {#each d.evidence as e, i (i)}
+                    <li class="my-1">
+                        {#if e.session_id}<code class="font-mono text-xs bg-paper-mute px-1 rounded">{e.session_id.slice(0, 8)}</code>{/if}
+                        {e.note ?? ''}
+                    </li>
+                {/each}
+            </ul>
         </section>
     {/if}
 
     {#if d.examples.length}
-        <section><h4>Examples</h4>
-            <ul>{#each d.examples as ex}
-                <li>
-                    <span class="chip ex-{ex.is_good ? 'good' : 'bad'}">{ex.is_good ? 'good' : 'bad'}</span>
-                    {#if ex.node_id}<code>{ex.node_id}</code>{/if}
-                    {ex.note ?? ''}
-                </li>
-            {/each}</ul>
+        <section class="mt-4">
+            <h4 class="text-xs uppercase tracking-wide text-ink-mute m-0 mb-1">Examples</h4>
+            <ul class="pl-5 m-0 text-sm text-ink">
+                {#each d.examples as ex, i (i)}
+                    <li class="my-1">
+                        <span
+                            class="inline-block px-2 py-0.5 rounded-full text-xs {ex.is_good
+                                ? 'bg-success-soft text-success'
+                                : 'bg-danger-soft text-danger'}"
+                        >{ex.is_good ? 'good' : 'bad'}</span>
+                        {#if ex.node_id}<code class="font-mono text-xs bg-paper-mute px-1 rounded">{ex.node_id}</code>{/if}
+                        {ex.note ?? ''}
+                    </li>
+                {/each}
+            </ul>
         </section>
     {/if}
 
     {#if d.outcomes.length}
-        <section data-testid="detail-outcomes"><h4>Recent outcomes</h4>
-            <ul>{#each d.outcomes as o}
-                <li>
-                    <span class="chip outcome-{o.outcome}">{o.outcome}</span>
-                    <time>{new Date(o.recorded_at).toLocaleString()}</time>
-                    {#if o.context}— {o.context}{/if}
-                </li>
-            {/each}</ul>
+        <section class="mt-4" data-testid="detail-outcomes">
+            <h4 class="text-xs uppercase tracking-wide text-ink-mute m-0 mb-1">Recent outcomes</h4>
+            <ul class="pl-5 m-0 text-sm text-ink">
+                {#each d.outcomes as o, i (i)}
+                    <li class="my-1">
+                        <span
+                            class="inline-block px-2 py-0.5 rounded-full text-xs {o.outcome === 'applied'
+                                ? 'bg-success-soft text-success'
+                                : o.outcome === 'violated'
+                                    ? 'bg-danger-soft text-danger'
+                                    : 'bg-paper-mute text-ink'}"
+                        >{o.outcome}</span>
+                        <time class="text-xs text-ink-mute">{new Date(o.recorded_at).toLocaleString()}</time>
+                        {#if o.context}— {o.context}{/if}
+                    </li>
+                {/each}
+            </ul>
         </section>
     {/if}
 {/if}
-
-<style>
-    .empty { color: var(--text-muted); }
-    .head { display: flex; gap: 0.25rem; flex-wrap: wrap; margin-bottom: 0.5rem; }
-    .chip { padding: 0.1rem 0.5rem; border-radius: 99px; font-size: 0.75rem; background: var(--paper-mute); }
-    h2 { margin: 0.5rem 0; }
-    .content { white-space: pre-wrap; }
-    section { margin-top: 1rem; }
-    section h4 { margin: 0 0 0.25rem 0; font-size: 0.85rem; opacity: 0.7; text-transform: uppercase; letter-spacing: 0.05em; }
-    .chip.outcome-applied,  .chip.ex-good { background: var(--success-bg, #353); }
-    .chip.outcome-violated, .chip.ex-bad  { background: var(--danger-bg, #533); }
-    ul { padding-left: 1.25rem; margin: 0; }
-    li { margin: 0.25rem 0; }
-    code { font-size: 0.85em; background: var(--paper-mute); padding: 0 0.25rem; border-radius: 3px; }
-</style>

@@ -949,18 +949,16 @@ pub(crate) async fn get_insights(
     let routable = recs.len() + memories.len();
     let mut budget = COPY_CAP;
     'cap: for col in [ins::NOW, ins::SOON, ins::SETTLED] {
-        // Recommendations — title (headline) + why (impact sentence).
+        // Recommendations — title (headline) + why (impact sentence). Facts +
+        // fallback come from the shared `ins::rec_copy_inputs` so this board and
+        // the per-project recommendations endpoint hash to the SAME cache key
+        // (one warm serves both screens).
         for r in recs.iter_mut().filter(|r| r["column"].as_str() == Some(col)) {
             if budget == 0 { break 'cap; }
-            let facts = serde_json::json!({ "title": r["title"], "why": r["why"], "impact": r["impact"] });
-            let fallback = FallbackCopy {
-                title:  r["title"].as_str().unwrap_or_default().to_string(),
-                detail: r["why"].as_str().unwrap_or_default().to_string(),
-            };
-            let copy = copy_or_warm(&state.pg, &state.gateway, InsightKind::InsightRecurringPattern,
+            let (kind, facts, fallback) = ins::rec_copy_inputs(r);
+            let copy = copy_or_warm(&state.pg, &state.gateway, kind,
                 &facts, CopyLimits::default(), fallback).await;
-            r["title"] = copy.title.into();
-            r["why"] = copy.detail.into();
+            ins::apply_rec_copy(r, copy);
             budget -= 1;
         }
         // Memories — title + content. Adopt-worthy when in-force and unviolated;

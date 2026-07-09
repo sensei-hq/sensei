@@ -53,8 +53,8 @@ begin
            set violated_count = violated_count + 1
              , strength       = greatest(strength - 0.7, 0.0)
              , status         = case when greatest(strength - 0.7, 0.0) < 1.0
-                                     then 'archived'::memory_status
-                                     else 'challenged'::memory_status end
+                                     then 'archived'::sensei.memory_status
+                                     else 'challenged'::sensei.memory_status end
              , last_relevant_at = now()
              , modified_at      = now()
          where id = NEW.memory_id;

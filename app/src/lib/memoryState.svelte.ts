@@ -4,6 +4,34 @@ import type { Memory, MemoryDetail, MemoryStatus } from './setup/contracts.js';
 
 type Tab = 'triage' | 'active' | 'archive';
 
+/** The formatted 7-day usage strip for the memory-detail stage. */
+export interface MemoryUsageStrip {
+    loaded:   string;
+    followed: string;
+    skipped:  string;
+    window:   string;
+}
+
+/**
+ * Format the 7-day memory-usage telemetry into the detail "usage" strip.
+ * The numbers are deterministic; only the pluralization/labels live here so
+ * the component stays a pure template. Genuinely-zero telemetry renders as
+ * zeros ("loaded 0 times · followed 0 · skipped 0"), never blank.
+ */
+export function memoryUsageStrip(u: {
+    loaded_last_7d:   number;
+    followed_last_7d: number;
+    skipped_last_7d:  number;
+}): MemoryUsageStrip {
+    const loaded = u.loaded_last_7d;
+    return {
+        loaded:   `loaded ${loaded} ${loaded === 1 ? 'time' : 'times'}`,
+        followed: `followed ${u.followed_last_7d}`,
+        skipped:  `skipped ${u.skipped_last_7d}`,
+        window:   'in the last 7 days',
+    };
+}
+
 const STATUSES_BY_TAB: Record<Tab, MemoryStatus[]> = {
     triage:  ['proposed'],
     active:  ['active', 'reinforced', 'challenged', 'battle_tested'],
