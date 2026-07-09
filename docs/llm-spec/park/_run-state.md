@@ -1239,3 +1239,13 @@ verification (a configured Dōjō). If round-trip snags on friction, provisionin
 DEFERRED: screens C9-C11 (dormant until a Dōjō configured — the round-trip configures one); consoles
 C12-C14 (Docker). Open Jerry flags: no-Docker(console/Supabase), Tauri e2e systemic, libraries-wrap park,
 insight-copy verbose-rec pass-rate, flaky bump gate.
+
+── DŌJŌ OPERATIONAL COMPLETENESS (2026-07-08 late) ──
+provision CLI ✅ `cf9d1e9b` (sensei-hive provision → tenant+membership+token; live loop PROVEN:
+publish→promote→pull over real HTTP+auth, byte-identical artifact, 403/401 gates). embedded-pg restart-
+persistence ✅ FIXED `8f463039` (pinned superuser password via SENSEI_HIVE_DB_PASSWORD; postgresql_embedded
+default randomised it per process → serve couldn't reopen a persisted cluster → data lost on restart.
+Regression test: bootstrap non-temp → drop → re-bootstrap same dir reopens + probe row survives).
+DŌJŌ BACKEND NOW COMPLETE + OPERATIONAL (proven live + provisionable + persistent). RELEASING v0.2.31.
+REMAINING: screens C9-C11 (user-facing; buildable but hard to visually-verify — need a running configured
+Dōjō + Tauri e2e is systemically broken); consoles C12-C14 (Docker-blocked). Both DEFERRED/blocked.
