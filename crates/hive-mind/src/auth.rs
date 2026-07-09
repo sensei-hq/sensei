@@ -163,14 +163,19 @@ pub fn verify_supabase_jwt(
 // ── Dojo dual-auth (tenant-scoped) ───────────────────────────────────────────
 
 /// Authority a caller carries on a tenant's dojo routes. `Member` may pull;
-/// `Contributor` may additionally publish. Ordered so a floor check is a
-/// comparison, mirroring [`Role`]/[`role_satisfies`].
+/// `Contributor` may additionally publish; `Maintainer` may additionally triage
+/// (list the queue, decide, run the promotion sweep). Ordered so a floor check
+/// is a comparison, mirroring [`Role`]/[`role_satisfies`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum DojoAccess {
     /// Read-only: pull artifacts (`member+`).
     Member = 0,
     /// Read-write: publish + pull (`contributor+`).
     Contributor = 1,
+    /// Triage authority: list/decide/promote the queue (`maintainer+`). Maps
+    /// from the `maintainer`/`admin` dojo membership roles and the `admin`
+    /// hive API-key role.
+    Maintainer = 2,
 }
 
 /// Which plane authenticated a dojo caller.
@@ -208,12 +213,26 @@ pub enum DojoAuthError {
     Internal(String),
 }
 
-/// Map a hive API-key role onto dojo access: `member` pulls; `publisher`/`admin`
-/// publish. An unparseable role falls back to the least-privilege `Member`.
+/// Map a hive API-key role onto dojo access: `member` pulls; `publisher`
+/// contributes; `admin` additionally maintains (triage). An unparseable role
+/// falls back to the least-privilege `Member`.
 fn hive_role_to_access(role: &str) -> DojoAccess {
     match Role::parse(role) {
-        Some(Role::Publisher) | Some(Role::Admin) => DojoAccess::Contributor,
+        Some(Role::Admin) => DojoAccess::Maintainer,
+        Some(Role::Publisher) => DojoAccess::Contributor,
         Some(Role::Member) | None => DojoAccess::Member,
+    }
+}
+
+/// Map a `dojo.member_role` string (JWT plane) onto dojo access:
+/// `maintainer`/`admin` maintain (triage); `contributor`/`client_lead`
+/// contribute; anything unrecognised falls back to least-privilege `Member`.
+/// (`client_lead` guards client confidentiality — it is not a triage role.)
+fn dojo_role_to_access(role: &str) -> DojoAccess {
+    match role {
+        "maintainer" | "admin" => DojoAccess::Maintainer,
+        "contributor" | "client_lead" => DojoAccess::Contributor,
+        _ => DojoAccess::Member,
     }
 }
 
@@ -255,12 +274,13 @@ pub async fn authenticate_dojo(
         .await
         .map_err(DojoAuthError::Internal)?
     {
-        // Every dojo membership role (contributor+) may contribute.
-        Some(_role) => Ok(DojoCaller {
+        // Every dojo membership role (contributor+) may contribute; maintainer/
+        // admin additionally carry triage authority (see `dojo_role_to_access`).
+        Some(role) => Ok(DojoCaller {
             tenant_id,
             subject: claims.sub.clone(),
             display: claims.email.unwrap_or(claims.sub),
-            access: DojoAccess::Contributor,
+            access: dojo_role_to_access(&role),
             via: DojoAuthVia::Supabase,
         }),
         None => Err(DojoAuthError::Forbidden),
