@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { memoryState } from './memoryState.svelte.js';
+import { memoryState, memoryUsageStrip } from './memoryState.svelte.js';
 import { mockMemory, mockMemoryDetail } from './setup/mock-contracts.js';
 
 const listMemoriesMock = vi.fn();
@@ -82,5 +82,27 @@ describe('memoryState', () => {
         await memoryState.select('m-1');
         expect(memoryState.selected).toBe('m-1');
         expect(memoryState.detail).not.toBeNull();
+    });
+});
+
+describe('memoryUsageStrip', () => {
+    it('formats the three 7-day counters with the last-7-days window', () => {
+        const s = memoryUsageStrip({ loaded_last_7d: 5, followed_last_7d: 3, skipped_last_7d: 1 });
+        expect(s.loaded).toBe('loaded 5 times');
+        expect(s.followed).toBe('followed 3');
+        expect(s.skipped).toBe('skipped 1');
+        expect(s.window).toBe('in the last 7 days');
+    });
+
+    it('renders genuine zeros, never blank', () => {
+        const s = memoryUsageStrip({ loaded_last_7d: 0, followed_last_7d: 0, skipped_last_7d: 0 });
+        expect(s.loaded).toBe('loaded 0 times');
+        expect(s.followed).toBe('followed 0');
+        expect(s.skipped).toBe('skipped 0');
+    });
+
+    it('pluralizes a single load as "time"', () => {
+        expect(memoryUsageStrip({ loaded_last_7d: 1, followed_last_7d: 0, skipped_last_7d: 0 }).loaded)
+            .toBe('loaded 1 time');
     });
 });
