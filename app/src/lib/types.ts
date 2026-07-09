@@ -817,6 +817,60 @@ export interface SyncStats {
   [k: string]: unknown;
 }
 
+// ─── Dōjō connections (memberships) ──────────────────────────────────────────
+//
+// Wire shape returned by `GET /api/dojo/memberships` — a top-level array whose
+// items mirror `ConnectionView` in `crates/senseid/src/dojo/memberships.rs`.
+// `credential_ref` is deliberately NOT part of the shape: the Keychain
+// reference is never exposed over the API, and the device token is write-only
+// (sent on connect, never read back).
+
+/** A local project bound to a membership via `projects.dojo_id`. */
+export interface DojoBoundProject {
+  id: string;
+  name: string;
+}
+
+/** One Dōjō connection as surfaced by `GET /api/dojo/memberships`. */
+export interface DojoMembership {
+  id: string;
+  registry_url: string;
+  tenant_key: string;
+  dojo_url: string;
+  /** employer | client | community | personal. */
+  kind: string;
+  /** contributor | maintainer | client_lead | admin. */
+  role: string;
+  /** sso | github_oauth | device_code. */
+  authenticated_via: string;
+  /** named | anonymous | dereferenced. */
+  attribution_default: string;
+  /** healthy | stale | error | authenticating. */
+  sync_status: string;
+  last_seq: number;
+  last_heartbeat_at: string | null;
+  enabled: boolean;
+  bound_projects: DojoBoundProject[];
+}
+
+/** Body for `POST /api/dojo/memberships` — register a connection. `credential`
+ *  is the write-only device token (stored in the OS Keychain, never returned).
+ *  `registry_url` defaults server-side when omitted. */
+export interface ConnectDojoBody {
+  /** Service membership id (`dojo.memberships.id`, a uuid) — becomes the PK. */
+  membership_id: string;
+  registry_url?: string;
+  tenant_key: string;
+  kind: string;
+  role?: string;
+  authenticated_via?: string;
+  attribution_default?: string;
+  /** The device token (Bearer). Write-only — never read back. */
+  credential: string;
+  /** Optional project to bind to this membership on connect. */
+  project_id?: string;
+}
+
 // ─── MCP tool manifests (playground / instruments) ───────────────────────────
 //
 // Wire shape returned by `GET /api/mcp/tools`. One entry per tool the daemon
