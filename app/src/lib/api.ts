@@ -8,7 +8,7 @@ import type {
   ProjectSession, CallFlowModule, CallFlowCall,
   ProjectListItem,
   KnowledgeSource, NewKnowledgeSourceBody, SyncStats,
-  DojoMembership, ConnectDojoBody,
+  DojoMembership, ConnectDojoBody, DojoUpgradesResponse,
   McpToolManifest, SessionToolTimeline, MemoryShareBatch, ImpactVerdictEntry,
   ProjectMcpToolStat, ToolSignal, ProjectService, ToolInsight, ToolsHealth,
   SessionReplayResponse, McpServerRow, McpServerToolsManifest,
@@ -920,6 +920,31 @@ export function senseiApi(port: number) {
     // bind) surface as `{ ok: false, error }` for the connect form to show.
     connectDojo: (body: ConnectDojoBody) =>
       tryPost<{ id: string }>('/api/dojo/memberships', body),
+
+    // ── Dōjō downstream inbox (Observatory · Upgrades · C7) ──────────────
+    // The daemon's inbox of approved Dōjō / Collective artifacts pulled back
+    // for the user to review. Muted are hidden unless `includeMuted`; pinned
+    // float to the top; `unread_count` counts the still-pending items. Fallback
+    // is the empty inbox so a daemon that predates the route (404) degrades to
+    // the empty state, never a broken screen.
+    getUpgrades: (includeMuted = false) =>
+      get<DojoUpgradesResponse>(
+        `/api/upgrades${includeMuted ? '?include_muted=1' : ''}`,
+        { artifacts: [], unread_count: 0 },
+      ),
+
+    // Apply / Mute / Pin one artifact. `tryPost` so a failure surfaces as
+    // `{ ok: false, error }` for the row to show and retry, rather than being
+    // absorbed into a fallback — the screen re-loads on success via
+    // `invalidateAll`. Apply lands a principle/pattern as a dojo memory
+    // (skill/agent/prompt/guard defer); Mute hides it locally; Pin floats it to
+    // the top and lets it outrank ambiguous local alternatives.
+    applyUpgrade: (id: string) =>
+      tryPost<Record<string, unknown>>(`/api/upgrades/${enc(id)}/apply`, {}),
+    muteUpgrade: (id: string) =>
+      tryPost<{ id: string; state: string }>(`/api/upgrades/${enc(id)}/mute`, {}),
+    pinUpgrade: (id: string) =>
+      tryPost<{ id: string; state: string }>(`/api/upgrades/${enc(id)}/pin`, {}),
 
     // ── Lifecycle ────────────────────────────────────────────────────────
     stop: () => post('/stop', {}, {}),

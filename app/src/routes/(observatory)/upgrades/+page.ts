@@ -29,6 +29,11 @@ function toUpgrade(r: Recommendation, project: ProjectListItem): Upgrade {
 
 export const load: PageLoad = async () => {
   const api = senseiApi(appState.port);
+
+  // The Dōjō downstream inbox is independent of the local recommendations,
+  // so kick it off in parallel with the projects → recommendations chain.
+  const dojoP = api.getUpgrades();
+
   const projects = (await api.listProjects()) as ProjectListItem[];
 
   const perProject = await Promise.all(
@@ -41,5 +46,11 @@ export const load: PageLoad = async () => {
   );
 
   const all = perProject.flat();
-  return { buckets: bucketUpgrades(all), total: all.length };
+  const dojo = await dojoP;
+  return {
+    buckets: bucketUpgrades(all),
+    total: all.length,
+    dojoUpgrades: dojo.artifacts,
+    dojoUnread: dojo.unread_count,
+  };
 };
