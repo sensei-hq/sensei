@@ -1206,3 +1206,20 @@ POST decision). Additive on hive-mind, keep all tests green. Docker-free (embedd
 AFTER C8: daemon↔service INTEGRATION round-trip (run sensei-hive+daemon: contribute→triage→publish→pull→
 inbox) = PROVEN loop → then merge+bump Dōjō (validate dbd handles dojo scope+proc at bump). Then screens
 C9-C11 (make it user-facing). Consoles C12-C14 = Docker-blocked (parked).
+
+── DŌJŌ C8 ✅ COMMITTED `f29cbd0c` (2026-07-08) — LOOP CLOSED ──
+hive-mind collective/promote.rs: cluster-by-signature, score(breadth+efficacy), AUTO_APPROVE 0.8,
+K_ANONYMITY 3 (independent gate, global only). inline-after-publish + /triage/promote sweep, idempotent
+(seq lock, publish 1 rep + archive dups). Maintainer endpoints (GET /triage, POST /triage/{sig}/decide,
+/promote) + DojoAccess::Maintainer. 51 tests (32 baseline green + 10 pure + 9 integration: high-bar
+auto-publishes→pull returns it; low-bar→triage_queue; global blocked<K published@K; maintainer decide;
+idempotent; 403/400/404). clippy 0. LOOP PROVEN IN-SERVICE (publish→promote→pull integration-tested w/
+embedded PG). Daemon side unit-tested. Wire compat GUARANTEED by shared dojo-protocol types.
+
+★★★ DŌJŌ BACKEND MILESTONE COMPLETE — 9 chunks on develop: C1 `37f30527`, dojo-protocol `1e963ab2`,
+C3 `122fad3f`, C4 `beacc421`, C5 `29971613`, C6 `9656ad71`, C7 `a989feb5`, C8 `f29cbd0c`. The entire
+collective-intelligence backend (schema+protocol+multi-tenant service+dual-auth+daemon client+confidentiality
++contribute+distribute+triage). RELEASING v0.2.30 → main (validates dbd handles dojo scope+seed proc at
+bump — the flagged risk; if bump fails on dojo scope, reset + diagnose).
+DEFERRED follow-ups: live daemon↔service round-trip (low risk — shared types); screens C9-C11 (user-facing,
+next); consoles C12-C14 (Docker-blocked). Insight-copy/e2e/etc flags still open for Jerry.
