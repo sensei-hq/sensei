@@ -11,8 +11,9 @@
 
 use super::super::executor::TaskContext;
 use super::super::Task;
+use crate::analysis::insight_copy::{generate_and_cache, CopyLimits};
 use crate::api::handlers::tool_signals::{
-    derive_signals, Signal, SignalThresholds, SignalVariant, ToolUsageRow,
+    derive_signals, signal_copy_inputs, Signal, SignalThresholds, SignalVariant, ToolUsageRow,
 };
 
 /// Verdict-window for the Health tab metrics — 14 days matches the ticket
@@ -93,6 +94,18 @@ pub async fn aggregate_tool_insights(ctx: &TaskContext, _task: &Task) -> Result<
             .await
             .map_err(|e| format!("insert_tool_insight({}): {e}", row.tool_name))?;
         written += 1;
+    }
+
+    // 4. Eager-warm the mentor-voice copy for each per-tool signal so the wire
+    //    read (`GET /api/observatory/tool-signals`) is a pure cache hit for warns
+    //    and opportunities in steady state. This is OFF the hot path (a scheduled
+    //    task, not a request). `generate_and_cache` logs + trips its own 60s
+    //    back-off on a gateway failure and never errors — a down model simply
+    //    leaves the deterministic template in place, so we continue the tick.
+    //    Summary cards are wire-only (produced by curation) and warm on first miss.
+    for s in &signals {
+        let (kind, facts, _fallback) = signal_copy_inputs(s);
+        let _ = generate_and_cache(ctx.pg(), &ctx.app_state.gateway, kind, &facts, CopyLimits::default()).await;
     }
 
     tracing::info!(
