@@ -1,7 +1,19 @@
 //! Runtime config for sensei-hive (env-driven, with sane defaults).
+use crate::auth::{DEFAULT_SUPABASE_JWT_AUD, DEFAULT_SUPABASE_JWT_SECRET};
 use std::path::PathBuf;
 
-pub struct HiveConfig { pub data_dir: PathBuf, pub database_dir: PathBuf, pub bind: String }
+pub struct HiveConfig {
+    pub data_dir: PathBuf,
+    pub database_dir: PathBuf,
+    pub bind: String,
+    /// Secret used to verify Supabase JWTs on the dojo routes. Defaults to the
+    /// Supabase local-dev secret so tests (and a bare local run) work without a
+    /// running Supabase; production sets `SUPABASE_JWT_SECRET`.
+    pub supabase_jwt_secret: String,
+    /// Expected audience on Supabase JWTs (`SUPABASE_JWT_AUD`, default
+    /// `authenticated`).
+    pub supabase_jwt_aud: String,
+}
 
 impl HiveConfig {
     /// Build config from env. Requires either `HOME` (for the default
@@ -25,7 +37,17 @@ impl HiveConfig {
         let database_dir = std::env::var("SENSEI_HIVE_DDL_DIR").map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../database"));
         let bind = std::env::var("SENSEI_HIVE_BIND").unwrap_or_else(|_| "127.0.0.1:7755".into());
-        Ok(Self { data_dir, database_dir, bind })
+        let supabase_jwt_secret = std::env::var("SUPABASE_JWT_SECRET")
+            .unwrap_or_else(|_| DEFAULT_SUPABASE_JWT_SECRET.into());
+        let supabase_jwt_aud = std::env::var("SUPABASE_JWT_AUD")
+            .unwrap_or_else(|_| DEFAULT_SUPABASE_JWT_AUD.into());
+        Ok(Self {
+            data_dir,
+            database_dir,
+            bind,
+            supabase_jwt_secret,
+            supabase_jwt_aud,
+        })
     }
 }
 

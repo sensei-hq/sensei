@@ -1601,6 +1601,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "dojo-protocol"
+version = "0.2.29"
+dependencies = [
+ "hive-protocol",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "dotenvy"
 version = "0.15.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2302,8 +2311,10 @@ dependencies = [
  "axum",
  "clap",
  "dbd-core",
+ "dojo-protocol",
  "hive-protocol",
  "http-body-util",
+ "jsonwebtoken",
  "postgresql_embedded",
  "rand 0.8.6",
  "reqwest",
@@ -2928,6 +2939,21 @@ dependencies = [
  "pest",
  "pest_derive",
  "serde",
+]
+
+[[package]]
+name = "jsonwebtoken"
+version = "9.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a87cc7a48537badeae96744432de36f4be2b4a34a05a5ef32e9dd8a1c169dde"
+dependencies = [
+ "base64 0.22.1",
+ "js-sys",
+ "pem",
+ "ring",
+ "serde",
+ "serde_json",
+ "simple_asn1",
 ]
 
 [[package]]
@@ -3995,6 +4021,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "35fb2e5f958ec131621fdd531e9fc186ed768cbe395337403ae56c17a74c68ec"
 
 [[package]]
+name = "pem"
+version = "3.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d30c53c26bc5b31a98cd02d20f25a7c8567146caf63ed593a9d87b2775291be"
+dependencies = [
+ "base64 0.22.1",
+ "serde_core",
+]
+
+[[package]]
 name = "pem-rfc7468"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5058,7 +5094,7 @@ checksum = "8a7852d02fc848982e0c167ef163aaff9cd91dc640ba85e263cb1ce46fae51cd"
 
 [[package]]
 name = "sensei-bootstrap"
-version = "0.2.29"
+version = "0.2.30"
 dependencies = [
  "chrono",
  "dbd-core",
@@ -5075,7 +5111,7 @@ dependencies = [
 
 [[package]]
 name = "sensei-cli"
-version = "0.2.29"
+version = "0.2.30"
 dependencies = [
  "chrono",
  "clap",
@@ -5088,8 +5124,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "sensei-config"
+version = "0.2.30"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "sensei-logger"
-version = "0.2.29"
+version = "0.2.30"
 dependencies = [
  "chrono",
  "reqwest",
@@ -5102,7 +5146,7 @@ dependencies = [
 
 [[package]]
 name = "sensei-mcp"
-version = "0.2.29"
+version = "0.2.30"
 dependencies = [
  "reqwest",
  "sensei-bootstrap",
@@ -5112,7 +5156,7 @@ dependencies = [
 
 [[package]]
 name = "senseid"
-version = "0.2.29"
+version = "0.2.30"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -5120,6 +5164,7 @@ dependencies = [
  "chrono",
  "clap",
  "dirs",
+ "dojo-protocol",
  "gateway",
  "gateway-embedded",
  "globset",
@@ -5141,6 +5186,7 @@ dependencies = [
  "rusqlite",
  "ruzstd",
  "sensei-bootstrap",
+ "sensei-config",
  "sensei-logger",
  "serde",
  "serde_json",
@@ -5353,6 +5399,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "95890f873bec569a0362c235787f3aca6e1e887302ba4840839bcc6459c42da6"
 dependencies = [
  "quote",
+]
+
+[[package]]
+name = "simple_asn1"
+version = "0.6.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0d585997b0ac10be3c5ee635f1bab02d512760d14b7c468801ac8a01d9ae5f1d"
+dependencies = [
+ "num-bigint",
+ "num-traits",
+ "thiserror 2.0.18",
+ "time",
 ]
 
 [[package]]

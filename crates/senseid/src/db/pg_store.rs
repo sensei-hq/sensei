@@ -20,6 +20,7 @@ pub struct ActivityPruneCounts {
     pub assistant_events:  u64,
 }
 
+#[derive(Clone)]
 pub struct InsertMemory {
     pub project_id:    Option<uuid::Uuid>,
     pub scope:         String,
@@ -69,11 +70,65 @@ pub struct KnowledgeSource {
     pub enabled:        bool,
 }
 
+/// Input for registering a daemon-side Dōjō connection
+/// (`sensei.dojo_memberships`). The device token is stored in the OS Keychain
+/// (referenced by `credential_ref`), never here — mirrors [`NewKnowledgeSource`].
+pub struct NewDojoMembership {
+    /// The service membership id (`dojo.memberships.id`); becomes the local PK
+    /// and the value `sensei.projects.dojo_id` points at. Service-assigned.
+    pub id:                  uuid::Uuid,
+    pub registry_url:        String,
+    pub tenant_key:          String,
+    pub dojo_url:            String,
+    pub kind:                String, // employer | client | community | personal
+    pub role:                String,
+    pub authenticated_via:   String,
+    pub attribution_default: String,
+    pub credential_ref:      String,
+    pub sync_status:         String,
+}
+
+/// A daemon-side Dōjō connection (row of `sensei.dojo_memberships`). Carries
+/// `credential_ref` for C6/C7 token resolution; the API view omits it.
+#[derive(Debug, Clone)]
+pub struct DojoMembership {
+    pub id:                  uuid::Uuid,
+    pub registry_url:        String,
+    pub tenant_key:          String,
+    pub dojo_url:            String,
+    pub kind:                String,
+    pub role:                String,
+    pub authenticated_via:   String,
+    pub attribution_default: String,
+    pub credential_ref:      String,
+    pub sync_status:         String,
+    pub last_seq:            i64,
+    /// RFC-3339 text (SELECTed as `::text`) so the API can serialize it without
+    /// pulling chrono into the row tuple. `None` until the first heartbeat.
+    pub last_heartbeat_at:   Option<String>,
+    pub enabled:             bool,
+}
+
 /// A federated_memories ledger row.
 #[derive(Debug, Clone)]
 pub struct FederatedLink {
     pub memory_id:  Option<uuid::Uuid>,
     pub remote_seq: i64,
+}
+
+/// One member memory of a share batch, in the shape the C6 upstream-contribute
+/// path needs to build an artifact. `body` is the portable text that will be
+/// confidentiality-checked before it leaves the machine: the `generalised_content`
+/// rewrite when present, else the raw `content` (the deterministic dereference
+/// runs regardless — a raw content is still gated, never trusted).
+#[derive(Debug, Clone)]
+pub struct ShareBatchItem {
+    pub memory_id:   uuid::Uuid,
+    pub title:       String,
+    pub body:        String,
+    /// `sensei.memory_type` string — drives artifact-kind mapping (pattern → the
+    /// `pattern` artifact; everything else → `principle`).
+    pub memory_type: String,
 }
 
 /// Snapshot needed to publish a memory to a hive (+ namespace identity + origin/scope_key for gating).
@@ -88,6 +143,30 @@ pub struct MemoryPushPayload {
     pub scope_key:   String,
     pub slug:        String,
     pub name:        String,
+}
+
+/// Parse a git remote URL into its source-identifier tokens (owner + repo),
+/// e.g. `git@github.com:acme/acme-api.git` and
+/// `https://github.com/acme/acme-api` both → `["acme", "acme-api"]`. Used by
+/// [`PgStore::project_identifiers`] to feed the confidentiality dereference
+/// (C5) — both the org/owner and the repo name are source identifiers to strip.
+/// Host-like segments (containing a dot) are skipped. Pure — unit-tested.
+fn repo_tokens_from_remote(url: &str) -> Vec<String> {
+    let trimmed = url.trim().trim_end_matches(".git");
+    // Drop the scheme (`https://`, `ssh://`, …) if present.
+    let after_scheme = trimmed.rsplit("://").next().unwrap_or(trimmed);
+    // scp-like `git@host:owner/repo` — drop the `user@host:` head.
+    let path = match after_scheme.split_once(':') {
+        Some((head, tail)) if head.contains('@') || head.contains('.') => tail,
+        _ => after_scheme,
+    };
+    // Keep only path segments; a host-like segment (with a dot or `@`) is dropped
+    // so scheme/host never survive — the last two remaining are owner + repo.
+    let segments: Vec<&str> = path
+        .split('/')
+        .filter(|s| !s.is_empty() && !s.contains('.') && !s.contains('@'))
+        .collect();
+    segments.iter().rev().take(2).map(|s| s.to_string()).collect()
 }
 
 #[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
@@ -5123,6 +5202,280 @@ impl PgStore {
         Ok(())
     }
 
+    // ── Dōjō upstream contribute (C6) ─────────────────────────────────
+
+    /// Load a share batch's `(project_id, status, member items)` for the C6
+    /// upstream-contribute path. `status` is returned so the caller can enforce
+    /// "only `approved` batches contribute". Each item's `body` is the
+    /// `generalised_content` rewrite when present, else the raw `content`.
+    pub async fn batch_share_items(
+        &self,
+        batch_id: &uuid::Uuid,
+    ) -> Result<Option<(uuid::Uuid, String, Vec<ShareBatchItem>)>, String> {
+        let head: Option<(uuid::Uuid, String)> = sqlx_core::query_as::query_as(
+            "SELECT project_id, status::text FROM sensei.memory_share_batches WHERE id = $1")
+            .bind(batch_id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+        let Some((project_id, status)) = head else { return Ok(None); };
+
+        let rows: Vec<(uuid::Uuid, String, String, String)> = sqlx_core::query_as::query_as(
+            "SELECT m.id, m.title,
+                    COALESCE(NULLIF(btrim(m.generalised_content), ''), m.content),
+                    m.type::text
+               FROM sensei.memory_share_batch_members mm
+               JOIN sensei.memories m ON m.id = mm.memory_id
+              WHERE mm.batch_id = $1
+              ORDER BY m.title")
+            .bind(batch_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+
+        let items = rows.into_iter()
+            .map(|(memory_id, title, body, memory_type)| ShareBatchItem { memory_id, title, body, memory_type })
+            .collect();
+        Ok(Some((project_id, status, items)))
+    }
+
+    /// The membership a project is bound to (`sensei.projects.dojo_id`), or `None`
+    /// when the project is unbound / unknown. The routing anchor for C6.
+    pub async fn project_bound_membership(&self, project_id: &uuid::Uuid) -> Result<Option<uuid::Uuid>, String> {
+        let row: Option<(Option<uuid::Uuid>,)> = sqlx_core::query_as::query_as(
+            "SELECT dojo_id FROM sensei.projects WHERE id = $1")
+            .bind(project_id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.and_then(|(d,)| d))
+    }
+
+    /// The oldest `approved` share batch that still has at least one member memory
+    /// with no `sent` outbox row — i.e. work the daemon still owes a Dōjō. Powers
+    /// `GET /api/share-review/next-batch`. Returns `(batch_id, project_id,
+    /// decided_at)`.
+    pub async fn next_unsent_approved_batch(
+        &self,
+    ) -> Result<Option<(uuid::Uuid, uuid::Uuid, Option<String>)>, String> {
+        let row: Option<(uuid::Uuid, uuid::Uuid, Option<String>)> = sqlx_core::query_as::query_as(
+            "SELECT b.id, b.project_id, b.decided_at::text
+               FROM sensei.memory_share_batches b
+              WHERE b.status = 'approved'
+                AND EXISTS (
+                  SELECT 1 FROM sensei.memory_share_batch_members mm
+                   WHERE mm.batch_id = b.id
+                     AND NOT EXISTS (
+                       SELECT 1 FROM sensei.dojo_outbox o
+                        WHERE o.memory_id = mm.memory_id AND o.state = 'sent'))
+              ORDER BY b.decided_at ASC NULLS LAST
+              LIMIT 1")
+            .fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row)
+    }
+
+    /// The stable local contributor key (a machine-local secret that NEVER leaves
+    /// the machine — only its rotated hash does, via [`crate::collective::anonymize`]).
+    /// Get-or-create in `sensei.config` under `collective.contributor_key`.
+    pub async fn get_or_create_contributor_key(&self) -> Result<String, String> {
+        const KEY: &str = "collective.contributor_key";
+        if let Some(v) = self.get_config(KEY).await?
+            && !v.trim().is_empty()
+        {
+            return Ok(v);
+        }
+        let fresh = uuid::Uuid::new_v4().to_string();
+        self.set_config(KEY, &fresh).await?;
+        Ok(fresh)
+    }
+
+    /// Has this artifact `signature` already been published to `membership_id`?
+    /// The pre-send dedup check — a retry after a federation drop skips a row
+    /// already `sent` rather than double-publishing.
+    pub async fn outbox_already_sent(&self, membership_id: &uuid::Uuid, signature: &str) -> Result<bool, String> {
+        let row: Option<(bool,)> = sqlx_core::query_as::query_as(
+            "SELECT state = 'sent' FROM sensei.dojo_outbox WHERE membership_id = $1 AND signature = $2")
+            .bind(membership_id).bind(signature).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.map(|(b,)| b).unwrap_or(false))
+    }
+
+    /// Record a successful publish (idempotent on the `(membership_id, signature)`
+    /// dedup key — a repeat send just refreshes the assigned seq/id).
+    pub async fn outbox_mark_sent(
+        &self, membership_id: &uuid::Uuid, batch_id: Option<&uuid::Uuid>,
+        memory_id: Option<&uuid::Uuid>, signature: &str, sent_seq: i64, remote_id: &str,
+    ) -> Result<(), String> {
+        sqlx_core::query::query(
+            "INSERT INTO sensei.dojo_outbox
+                (membership_id, batch_id, memory_id, signature, state, sent_seq, remote_id, last_attempt_at)
+             VALUES ($1,$2,$3,$4,'sent',$5,$6,now())
+             ON CONFLICT (membership_id, signature) DO UPDATE SET
+               state = 'sent', batch_id = EXCLUDED.batch_id, memory_id = EXCLUDED.memory_id,
+               sent_seq = EXCLUDED.sent_seq, remote_id = EXCLUDED.remote_id,
+               last_attempt_at = now(), updated_at = now()")
+            .bind(membership_id).bind(batch_id).bind(memory_id).bind(signature).bind(sent_seq).bind(remote_id)
+            .execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Record a non-sent outbox state (`held` | `queued` | `error`). Never
+    /// downgrades an already-`sent` row (the `WHERE` guard), so a late held/queued
+    /// signal can't erase a successful publish.
+    pub async fn outbox_mark_state(
+        &self, membership_id: &uuid::Uuid, batch_id: Option<&uuid::Uuid>,
+        memory_id: Option<&uuid::Uuid>, signature: &str, state: &str,
+    ) -> Result<(), String> {
+        if !matches!(state, "held" | "queued" | "error" | "pending") {
+            return Err(format!("invalid outbox state {state}"));
+        }
+        sqlx_core::query::query(
+            "INSERT INTO sensei.dojo_outbox
+                (membership_id, batch_id, memory_id, signature, state, last_attempt_at)
+             VALUES ($1,$2,$3,$4,$5,now())
+             ON CONFLICT (membership_id, signature) DO UPDATE SET
+               state = EXCLUDED.state, batch_id = EXCLUDED.batch_id, memory_id = EXCLUDED.memory_id,
+               last_attempt_at = now(), updated_at = now()
+             WHERE sensei.dojo_outbox.state <> 'sent'")
+            .bind(membership_id).bind(batch_id).bind(memory_id).bind(signature).bind(state)
+            .execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    // ── Dōjō downstream inbox (C7) — the DOWNSTREAM twin of the outbox above ──
+
+    /// Mirror one pulled artifact into `sensei.dojo_inbox` as `pending`, deduped
+    /// by `(membership_id, artifact_signature)`. Returns `true` when a NEW row was
+    /// inserted, `false` when the artifact was already present in any state — so a
+    /// re-pull is idempotent. scope/attribution ride as JSON text cast to jsonb
+    /// (no sqlx json feature needed on the bind side).
+    pub async fn upsert_dojo_inbox(&self, row: &crate::collective::inbox::InboxRow) -> Result<bool, String> {
+        let scope = serde_json::to_string(&row.scope).map_err(|e| e.to_string())?;
+        let attribution = serde_json::to_string(&row.attribution).map_err(|e| e.to_string())?;
+        let inserted: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.dojo_inbox
+                (membership_id, artifact_seq, artifact_signature, remote_id, kind, title, body, scope, attribution)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb)
+             ON CONFLICT (membership_id, artifact_signature) DO NOTHING
+             RETURNING id")
+            .bind(row.membership_id).bind(row.artifact_seq).bind(&row.signature).bind(&row.remote_id)
+            .bind(&row.kind).bind(&row.title).bind(&row.body).bind(&scope).bind(&attribution)
+            .fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(inserted.is_some())
+    }
+
+    /// Advance a membership's downstream pull cursor
+    /// (`sensei.dojo_memberships.last_seq`).
+    pub async fn set_dojo_pull_cursor(&self, membership_id: uuid::Uuid, cursor: i64) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE sensei.dojo_memberships SET last_seq = $2, updated_at = now() WHERE id = $1")
+            .bind(membership_id).bind(cursor).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    const DOJO_INBOX_SELECT: &'static str =
+        "SELECT id, membership_id, kind, title, body, scope, attribution, state, note,
+                applied_memory_id, received_at::text, artifact_signature
+           FROM sensei.dojo_inbox";
+
+    fn map_dojo_inbox_row(
+        row: (uuid::Uuid, uuid::Uuid, String, String, String, serde_json::Value, serde_json::Value,
+              String, Option<String>, Option<uuid::Uuid>, Option<String>, String),
+    ) -> crate::collective::inbox::InboxItem {
+        let (id, membership_id, kind, title, body, scope_v, attribution_v, state, note,
+             applied_memory_id, received_at, artifact_signature) = row;
+        // A malformed jsonb is logged and defaulted, never a silent panic on read.
+        let scope: dojo_protocol::ArtifactScope = serde_json::from_value(scope_v).unwrap_or_else(|e| {
+            tracing::warn!(error = %e, inbox = %id, "dojo inbox: scope jsonb parse failed — defaulting to empty scope");
+            dojo_protocol::ArtifactScope::default()
+        });
+        let attribution: dojo_protocol::Attribution = serde_json::from_value(attribution_v).unwrap_or_else(|e| {
+            tracing::warn!(error = %e, inbox = %id, "dojo inbox: attribution jsonb parse failed — defaulting");
+            dojo_protocol::Attribution {
+                mode: dojo_protocol::AttributionMode::Named,
+                author: None, org: None, anonymous_id: None, dereferenced: false,
+            }
+        });
+        crate::collective::inbox::InboxItem {
+            id, membership_id, kind, title, body, scope, attribution, state, note,
+            applied_memory_id, received_at, artifact_signature,
+        }
+    }
+
+    /// Load one inbox item by id.
+    pub async fn get_dojo_inbox(&self, inbox_id: uuid::Uuid) -> Result<Option<crate::collective::inbox::InboxItem>, String> {
+        let row: Option<(uuid::Uuid, uuid::Uuid, String, String, String, serde_json::Value, serde_json::Value,
+                         String, Option<String>, Option<uuid::Uuid>, Option<String>, String)> =
+            sqlx_core::query_as::query_as(&format!("{} WHERE id = $1", Self::DOJO_INBOX_SELECT))
+            .bind(inbox_id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.map(Self::map_dojo_inbox_row))
+    }
+
+    /// The daemon's downstream inbox across all memberships, ordered for the
+    /// Upgrades list (pinned first, then newest; muted hidden unless
+    /// `include_muted`). Reuses [`crate::collective::inbox::order_and_filter`] so
+    /// the ordering contract has a single home.
+    pub async fn list_dojo_inbox(&self, include_muted: bool) -> Result<Vec<crate::collective::inbox::InboxItem>, String> {
+        let rows: Vec<(uuid::Uuid, uuid::Uuid, String, String, String, serde_json::Value, serde_json::Value,
+                       String, Option<String>, Option<uuid::Uuid>, Option<String>, String)> =
+            sqlx_core::query_as::query_as(&format!("{} ORDER BY received_at DESC", Self::DOJO_INBOX_SELECT))
+            .fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        let items: Vec<_> = rows.into_iter().map(Self::map_dojo_inbox_row).collect();
+        Ok(crate::collective::inbox::order_and_filter(items, include_muted))
+    }
+
+    /// Resolve a local project by name → its id (scope-match for a project-scoped
+    /// artifact). `None` = no such project on this install.
+    pub async fn resolve_project_by_name(&self, name: String) -> Result<Option<uuid::Uuid>, String> {
+        let row: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
+            "SELECT id FROM sensei.projects WHERE name = $1 LIMIT 1")
+            .bind(&name).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.map(|(id,)| id))
+    }
+
+    /// Land an Applied principle/pattern: insert the memory (reusing
+    /// [`Self::insert_memory`] — the shared memory-insert, never reimplemented)
+    /// and flip the inbox row to `applied` + `applied_memory_id`. On a failed
+    /// mark, the just-inserted memory is compensatingly deleted so a retry cannot
+    /// double-land (the two writes are not one transaction because the insert goes
+    /// through the shared helper; the compensating delete preserves idempotency).
+    pub async fn land_dojo_inbox_memory(&self, inbox_id: uuid::Uuid, m: &InsertMemory) -> Result<uuid::Uuid, String> {
+        let memory_id = self.insert_memory(m).await?;
+        if let Err(e) = self.mark_dojo_inbox_applied(inbox_id, memory_id).await {
+            if let Err(de) = sqlx_core::query::query("DELETE FROM sensei.memories WHERE id = $1")
+                .bind(memory_id).execute(&self.pool).await
+            {
+                tracing::error!(error = %de, memory = %memory_id, "dojo inbox: compensating memory delete failed after mark-applied error");
+            }
+            return Err(e);
+        }
+        Ok(memory_id)
+    }
+
+    /// Flip an inbox row to `applied` (guarded so it never clobbers a concurrent
+    /// apply). Errors when the row is unknown or already applied.
+    async fn mark_dojo_inbox_applied(&self, inbox_id: uuid::Uuid, memory_id: uuid::Uuid) -> Result<(), String> {
+        let res = sqlx_core::query::query(
+            "UPDATE sensei.dojo_inbox SET state = 'applied', applied_memory_id = $2, note = NULL, updated_at = now()
+              WHERE id = $1 AND applied_memory_id IS NULL")
+            .bind(inbox_id).bind(memory_id).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        if res.rows_affected() == 0 {
+            return Err(format!("dojo inbox {inbox_id} not found or already applied"));
+        }
+        Ok(())
+    }
+
+    /// Record why an Apply did not land (deferred kind / scope mismatch). The item
+    /// stays `pending`.
+    pub async fn set_dojo_inbox_note(&self, inbox_id: uuid::Uuid, note: String) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE sensei.dojo_inbox SET note = $2, updated_at = now() WHERE id = $1")
+            .bind(inbox_id).bind(&note).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Set an inbox item's state (mute → `muted`, pin → `pinned`). Returns `false`
+    /// when the id is unknown (drives a 404). Never lands anything.
+    pub async fn set_dojo_inbox_state(&self, inbox_id: uuid::Uuid, state: &str) -> Result<bool, String> {
+        if !matches!(state, "pending" | "applied" | "muted" | "pinned") {
+            return Err(format!("invalid dojo_inbox state {state}"));
+        }
+        let res = sqlx_core::query::query(
+            "UPDATE sensei.dojo_inbox SET state = $2, updated_at = now() WHERE id = $1")
+            .bind(inbox_id).bind(state).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(res.rows_affected() > 0)
+    }
+
     pub async fn ensure_test_project(&self, name: &str) -> Result<uuid::Uuid, String> {
         // Namespace fixtures under `_test:` so leaked rows are identifiable
         // (and filterable by the Projects screen) and never masquerade as real
@@ -6172,6 +6525,163 @@ impl PgStore {
         Ok(res.rows_affected() > 0)
     }
 
+    // ── Dōjō connections (daemon-side membership mirror) ───────────────
+    //
+    // Local mirror of the Dōjōs this install is connected to (Fork 1: the
+    // authoritative dojo.memberships row lives in the Dōjō service DB). Mirrors
+    // the knowledge_sources CRUD discipline; the credential lives in the OS
+    // Keychain (credential_ref), never in these rows.
+
+    /// Insert a Dōjō connection with the service-assigned `id` as the PK.
+    pub async fn create_dojo_membership(&self, m: &NewDojoMembership) -> Result<uuid::Uuid, String> {
+        let (id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.dojo_memberships
+                (id, registry_url, tenant_key, dojo_url, kind, role,
+                 authenticated_via, attribution_default, credential_ref, sync_status)
+             VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id")
+            .bind(m.id).bind(&m.registry_url).bind(&m.tenant_key).bind(&m.dojo_url)
+            .bind(&m.kind).bind(&m.role).bind(&m.authenticated_via)
+            .bind(&m.attribution_default).bind(&m.credential_ref).bind(&m.sync_status)
+            .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(id)
+    }
+
+    fn map_dojo_row(
+        row: (uuid::Uuid, String, String, String, String, String, String, String, String, String, i64, Option<String>, bool),
+    ) -> DojoMembership {
+        let (id, registry_url, tenant_key, dojo_url, kind, role, authenticated_via,
+             attribution_default, credential_ref, sync_status, last_seq, last_heartbeat_at, enabled) = row;
+        DojoMembership {
+            id, registry_url, tenant_key, dojo_url, kind, role, authenticated_via,
+            attribution_default, credential_ref, sync_status, last_seq, last_heartbeat_at, enabled,
+        }
+    }
+
+    const DOJO_SELECT: &'static str =
+        "SELECT id, registry_url, tenant_key, dojo_url, kind, role, authenticated_via,
+                attribution_default, credential_ref, sync_status, last_seq,
+                last_heartbeat_at::text, enabled
+           FROM sensei.dojo_memberships";
+
+    pub async fn list_dojo_memberships(&self) -> Result<Vec<DojoMembership>, String> {
+        let rows: Vec<(uuid::Uuid, String, String, String, String, String, String, String, String, String, i64, Option<String>, bool)> =
+            sqlx_core::query_as::query_as(&format!("{} ORDER BY created_at", Self::DOJO_SELECT))
+            .fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(Self::map_dojo_row).collect())
+    }
+
+    pub async fn get_dojo_membership(&self, id: &uuid::Uuid) -> Result<Option<DojoMembership>, String> {
+        let row: Option<(uuid::Uuid, String, String, String, String, String, String, String, String, String, i64, Option<String>, bool)> =
+            sqlx_core::query_as::query_as(&format!("{} WHERE id = $1", Self::DOJO_SELECT))
+            .bind(id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.map(Self::map_dojo_row))
+    }
+
+    /// Update a connection's sync status. Returns `false` if unknown.
+    pub async fn set_dojo_sync_status(&self, id: &uuid::Uuid, sync_status: &str) -> Result<bool, String> {
+        let res = sqlx_core::query::query(
+            "UPDATE sensei.dojo_memberships SET sync_status = $2, updated_at = now() WHERE id = $1")
+            .bind(id).bind(sync_status).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    pub async fn delete_dojo_membership(&self, id: &uuid::Uuid) -> Result<bool, String> {
+        let res = sqlx_core::query::query("DELETE FROM sensei.dojo_memberships WHERE id = $1")
+            .bind(id).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    /// Bind (or, with `None`, unbind) a project to a Dōjō membership by setting
+    /// `sensei.projects.dojo_id`. Returns `false` if the project is unknown.
+    pub async fn bind_project_to_dojo(
+        &self, project_id: &uuid::Uuid, membership_id: Option<&uuid::Uuid>,
+    ) -> Result<bool, String> {
+        let res = sqlx_core::query::query(
+            "UPDATE sensei.projects SET dojo_id = $2, modified_at = now() WHERE id = $1")
+            .bind(project_id).bind(membership_id).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    /// Projects bound to a membership (`projects.dojo_id = id`) — the
+    /// connections pane's "bound projects" strip.
+    pub async fn projects_bound_to_dojo(&self, membership_id: &uuid::Uuid) -> Result<Vec<(uuid::Uuid, String)>, String> {
+        let rows: Vec<(uuid::Uuid, String)> = sqlx_core::query_as::query_as(
+            "SELECT id, name FROM sensei.projects WHERE dojo_id = $1 ORDER BY name")
+            .bind(membership_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows)
+    }
+
+    /// Gather every KNOWN sensitive identifier for a project into a
+    /// [`crate::dojo::attribution::ProjectIdentifiers`] — the deterministic
+    /// client-work dereference (C5) needs these to strip source references before
+    /// anything leaves the machine. Reads only; the strip itself is DB-free.
+    ///
+    /// Sources: `sensei.projects.{name, client}`, `sensei.folders.{name,
+    /// abs_path, remote_urls}` (repo name + git owner/repo parsed from remotes),
+    /// and `activity.sessions.{id, client_session_id}`.
+    pub async fn project_identifiers(
+        &self, project_id: &uuid::Uuid,
+    ) -> Result<crate::dojo::attribution::ProjectIdentifiers, String> {
+        use crate::dojo::attribution::ProjectIdentifiers;
+
+        let proj: Option<(String, Option<String>)> = sqlx_core::query_as::query_as(
+            "SELECT name, client FROM sensei.projects WHERE id = $1")
+            .bind(project_id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+        let (project_name, client_name) = match proj {
+            Some((name, client)) => (Some(name), client),
+            None => (None, None),
+        };
+
+        let folders: Vec<(String, String, serde_json::Value)> = sqlx_core::query_as::query_as(
+            "SELECT name, abs_path, remote_urls FROM sensei.folders WHERE project_id = $1")
+            .bind(project_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+
+        let mut repo_names: Vec<String> = Vec::new();
+        let mut folder_paths: Vec<String> = Vec::new();
+        for (name, abs_path, remotes) in folders {
+            if !name.trim().is_empty() {
+                repo_names.push(name);
+            }
+            if !abs_path.trim().is_empty() {
+                folder_paths.push(abs_path);
+            }
+            if let Some(arr) = remotes.as_array() {
+                for r in arr {
+                    if let Some(url) = r.get("url").and_then(serde_json::Value::as_str) {
+                        repo_names.extend(repo_tokens_from_remote(url));
+                    }
+                }
+            }
+        }
+
+        let sessions: Vec<(uuid::Uuid, Option<String>)> = sqlx_core::query_as::query_as(
+            "SELECT id, client_session_id FROM activity.sessions WHERE project_id = $1")
+            .bind(project_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        let mut session_ids: Vec<String> = Vec::new();
+        for (id, csid) in sessions {
+            session_ids.push(id.to_string());
+            if let Some(c) = csid.filter(|c| !c.trim().is_empty()) {
+                session_ids.push(c);
+            }
+        }
+
+        for v in [&mut repo_names, &mut folder_paths, &mut session_ids] {
+            v.sort();
+            v.dedup();
+        }
+
+        Ok(ProjectIdentifiers {
+            project_name,
+            client_name,
+            repo_names,
+            folder_paths,
+            session_ids,
+            // No reliable structured person-name source in the schema yet; C6 can
+            // enrich this from session/transcript metadata if one lands.
+            person_names: Vec::new(),
+        })
+    }
+
     // ── Federation ledger ─────────────────────────────────────────────
 
     pub async fn namespace_is_shareable(&self, namespace_id: &uuid::Uuid) -> Result<bool, String> {
@@ -6771,6 +7281,62 @@ mod tests {
             .bind(pid).bind(fid)
             .execute(s.pool()).await.unwrap();
         (pid, fid)
+    }
+
+    // ── Dōjō confidentiality: project identifiers (C5) ─────────────────
+
+    #[test]
+    fn repo_tokens_from_remote_parses_ssh_and_https() {
+        assert_eq!(
+            repo_tokens_from_remote("git@github.com:acme/acme-api.git"),
+            vec!["acme-api".to_string(), "acme".to_string()]
+        );
+        assert_eq!(
+            repo_tokens_from_remote("https://github.com/acme/acme-api"),
+            vec!["acme-api".to_string(), "acme".to_string()]
+        );
+        // Host-like and empty segments are skipped.
+        assert!(repo_tokens_from_remote("https://example.com").is_empty());
+    }
+
+    #[tokio::test]
+    async fn project_identifiers_gathers_names_paths_repos_and_sessions() {
+        let s = pg_store().await;
+        let suffix = format!("projident_{}", uuid::Uuid::new_v4());
+        let (pid, fid) = create_test_project_and_folder(&s, &suffix).await;
+        // Set the client + a git remote so the parser has something to chew on.
+        sqlx_core::query::query(
+            "UPDATE sensei.projects SET client = $2 WHERE id = $1",
+        )
+        .bind(pid)
+        .bind("Acme Corp")
+        .execute(s.pool())
+        .await
+        .unwrap();
+        sqlx_core::query::query(
+            "UPDATE sensei.folders SET remote_urls = $2 WHERE id = $1",
+        )
+        .bind(fid)
+        .bind(serde_json::json!([{ "name": "origin", "url": "git@github.com:acme/acme-api.git" }]))
+        .execute(s.pool())
+        .await
+        .unwrap();
+        // A session for the project, with a client_session_id.
+        let csid = format!("cs-{suffix}");
+        s.record_session_event(&csid, &fid, Some(&pid), "claude", true).await.unwrap();
+
+        let ids = s.project_identifiers(&pid).await.unwrap();
+        assert_eq!(ids.project_name.as_deref(), Some(format!("_test:{suffix}").as_str()));
+        assert_eq!(ids.client_name.as_deref(), Some("Acme Corp"));
+        assert!(ids.repo_names.iter().any(|r| r == "acme-api"), "repo from remote missing: {:?}", ids.repo_names);
+        assert!(ids.repo_names.iter().any(|r| r == "acme"), "owner from remote missing: {:?}", ids.repo_names);
+        assert!(ids.folder_paths.iter().any(|p| p.contains(&suffix)), "folder path missing: {:?}", ids.folder_paths);
+        assert!(ids.session_ids.iter().any(|sid| sid == &csid), "client_session_id missing: {:?}", ids.session_ids);
+        // The observatory session UUID is also present.
+        assert!(ids.session_ids.len() >= 2, "expected uuid + client_session_id: {:?}", ids.session_ids);
+
+        // Cleanup (project delete cascades folders/sessions via FKs).
+        s.delete_project(&pid).await.ok();
     }
 
     // ── PG Function tests ─────────────────────────────────────────────
@@ -8384,6 +8950,185 @@ mod tests {
 
         assert!(pg.delete_knowledge_source(&id).await.unwrap());
         assert!(pg.get_knowledge_source(&id).await.unwrap().is_none());
+    }
+
+    // ── Dōjō connections tests ────────────────────────────────────────
+
+    #[tokio::test]
+    async fn dojo_membership_crud_and_project_binding_roundtrip() {
+        let Ok(pg) = PgStore::connect_test().await else { return; };
+        // Service-assigned membership id (the local PK; projects.dojo_id → this).
+        let mid = uuid::Uuid::new_v4();
+        pg.create_dojo_membership(&NewDojoMembership {
+            id: mid,
+            registry_url: "http://localhost:8787".into(),
+            tenant_key: "github/acme".into(),
+            dojo_url: "http://localhost:8787/github/acme".into(),
+            kind: "client".into(),
+            role: "contributor".into(),
+            authenticated_via: "device_code".into(),
+            attribution_default: "dereferenced".into(),
+            credential_ref: format!("dojo-{}", uuid::Uuid::new_v4()),
+            sync_status: "authenticating".into(),
+        }).await.unwrap();
+
+        // Present in the list with sane defaults.
+        let all = pg.list_dojo_memberships().await.unwrap();
+        let row = all.iter().find(|m| m.id == mid).expect("membership listed");
+        assert_eq!(row.kind, "client");
+        assert_eq!(row.last_seq, 0);
+        assert!(row.enabled);
+        assert!(row.last_heartbeat_at.is_none());
+
+        // sync-status update.
+        assert!(pg.set_dojo_sync_status(&mid, "healthy").await.unwrap());
+        assert_eq!(pg.get_dojo_membership(&mid).await.unwrap().unwrap().sync_status, "healthy");
+
+        // Bind a project → projects.dojo_id → appears in the bound-projects strip.
+        let proj = pg.create_project("_test:dojo:bind", None, None).await.unwrap();
+        assert!(pg.bind_project_to_dojo(&proj, Some(&mid)).await.unwrap());
+        let bound = pg.projects_bound_to_dojo(&mid).await.unwrap();
+        assert!(bound.iter().any(|(id, _)| *id == proj), "bound project surfaces");
+
+        // Unbind + cleanup.
+        assert!(pg.bind_project_to_dojo(&proj, None).await.unwrap());
+        assert!(pg.projects_bound_to_dojo(&mid).await.unwrap().is_empty());
+        pg.delete_project(&proj).await.unwrap();
+
+        assert!(pg.delete_dojo_membership(&mid).await.unwrap());
+        assert!(pg.get_dojo_membership(&mid).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn dojo_outbox_and_batch_items_roundtrip() {
+        let Ok(pg) = PgStore::connect_test().await else { return; };
+
+        // A project + a memory to share + an APPROVED batch containing it.
+        let proj = pg.create_project("_test:dojo:outbox", None, None).await.unwrap();
+        let mem = pg.insert_memory(&InsertMemory {
+            project_id: Some(proj), scope: "project".into(), scope_filter: None,
+            mtype: "convention".into(), title: "prefer migration tools".into(),
+            content: "Use a dedicated migration tool over hand-rolled SQL.".into(),
+            impact: None, tags: vec![], triage_signal: None, status: "active".into(),
+            namespace_id: None, enforcement: None, origin: Some("learned".into()), source_id: None,
+        }).await.unwrap();
+        let batch = pg.create_memory_share_batch(&proj, &[mem], None).await.unwrap();
+        pg.set_memory_share_batch_status(&batch, "approved", None).await.unwrap();
+
+        // batch_share_items: approved batch, one member, body = content.
+        let (bp, status, items) = pg.batch_share_items(&batch).await.unwrap().expect("batch loads");
+        assert_eq!(bp, proj);
+        assert_eq!(status, "approved");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].memory_id, mem);
+        assert!(items[0].body.contains("migration tool"));
+        assert_eq!(items[0].memory_type, "convention");
+
+        // An unbound project → no routing anchor.
+        assert!(pg.project_bound_membership(&proj).await.unwrap().is_none());
+
+        // While the member has no `sent` outbox row, an unsent approved batch exists.
+        assert!(pg.next_unsent_approved_batch().await.unwrap().is_some());
+
+        // A destination membership + the outbox dedup ledger.
+        let mid = uuid::Uuid::new_v4();
+        pg.create_dojo_membership(&NewDojoMembership {
+            id: mid, registry_url: "http://localhost:8787".into(), tenant_key: "github/acme".into(),
+            dojo_url: "http://localhost:8787/github/acme".into(), kind: "client".into(),
+            role: "contributor".into(), authenticated_via: "device_code".into(),
+            attribution_default: "dereferenced".into(),
+            credential_ref: format!("dojo-{}", uuid::Uuid::new_v4()), sync_status: "healthy".into(),
+        }).await.unwrap();
+
+        assert!(!pg.outbox_already_sent(&mid, "sig-1").await.unwrap());
+        pg.outbox_mark_sent(&mid, Some(&batch), Some(&mem), "sig-1", 5, "remote-1").await.unwrap();
+        assert!(pg.outbox_already_sent(&mid, "sig-1").await.unwrap());
+        // A different signature is independent.
+        assert!(!pg.outbox_already_sent(&mid, "sig-2").await.unwrap());
+        // A late held/queued signal must NOT downgrade an already-sent row.
+        pg.outbox_mark_state(&mid, Some(&batch), Some(&mem), "sig-1", "queued").await.unwrap();
+        assert!(pg.outbox_already_sent(&mid, "sig-1").await.unwrap(), "sent row must survive a late queued mark");
+        // A held record for a fresh signature.
+        pg.outbox_mark_state(&mid, Some(&batch), Some(&mem), "sig-3", "held").await.unwrap();
+        assert!(!pg.outbox_already_sent(&mid, "sig-3").await.unwrap());
+
+        // Cleanup: membership delete cascades its outbox rows; then batch/memory/project.
+        assert!(pg.delete_dojo_membership(&mid).await.unwrap());
+        pg.delete_project(&proj).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn dojo_inbox_upsert_apply_and_state_roundtrip() {
+        let Ok(pg) = PgStore::connect_test().await else { return; };
+
+        // A source membership (inbox rows cascade with it on delete).
+        let mid = uuid::Uuid::new_v4();
+        pg.create_dojo_membership(&NewDojoMembership {
+            id: mid, registry_url: "http://localhost:8787".into(), tenant_key: "github/acme".into(),
+            dojo_url: "http://localhost:8787/github/acme".into(), kind: "community".into(),
+            role: "contributor".into(), authenticated_via: "device_code".into(),
+            attribution_default: "anonymous".into(),
+            credential_ref: format!("dojo-{}", uuid::Uuid::new_v4()), sync_status: "healthy".into(),
+        }).await.unwrap();
+
+        let attribution = dojo_protocol::Attribution {
+            mode: dojo_protocol::AttributionMode::Anonymous,
+            author: None, org: None, anonymous_id: Some("anon-1".into()), dereferenced: true,
+        };
+        let row = |sig: &str, title: &str| crate::collective::inbox::InboxRow {
+            membership_id: mid, artifact_seq: 3, signature: sig.into(), remote_id: "art-x".into(),
+            kind: "principle".into(), title: title.into(), body: "keep units testable".into(),
+            scope: dojo_protocol::ArtifactScope::default(), attribution: attribution.clone(),
+        };
+
+        // Upsert is idempotent by (membership, signature): first inserts, re-pull skips.
+        assert!(pg.upsert_dojo_inbox(&row("inbox-sig-1", "prefer small fns")).await.unwrap());
+        assert!(!pg.upsert_dojo_inbox(&row("inbox-sig-1", "prefer small fns")).await.unwrap(), "re-pull dedups");
+        pg.upsert_dojo_inbox(&row("inbox-sig-2", "write tests first")).await.unwrap();
+
+        let items = pg.list_dojo_inbox(true).await.unwrap();
+        let item1 = items.iter().find(|i| i.artifact_signature == "inbox-sig-1").expect("row 1 present").clone();
+        let id2 = items.iter().find(|i| i.artifact_signature == "inbox-sig-2").expect("row 2 present").id;
+        assert_eq!(item1.kind, "principle");
+        assert_eq!(item1.state, "pending");
+        assert_eq!(item1.attribution.anonymous_id.as_deref(), Some("anon-1"));
+
+        // resolve_project_by_name — the scope-match lookup.
+        let proj = pg.create_project("_test:dojo:inbox", None, None).await.unwrap();
+        assert_eq!(pg.resolve_project_by_name("_test:dojo:inbox".into()).await.unwrap(), Some(proj));
+        assert!(pg.resolve_project_by_name(format!("nope-{}", uuid::Uuid::new_v4())).await.unwrap().is_none());
+
+        // Land item1 as a global origin='dojo' memory; the row flips to applied.
+        let mem_input = InsertMemory {
+            project_id: None, scope: "global".into(), scope_filter: None, mtype: "convention".into(),
+            title: item1.title.clone(), content: item1.body.clone(), impact: None,
+            tags: vec!["dojo".into()], triage_signal: None, status: "active".into(),
+            namespace_id: None, enforcement: Some("recommended".into()), origin: Some("dojo".into()), source_id: None,
+        };
+        let memory_id = pg.land_dojo_inbox_memory(item1.id, &mem_input).await.unwrap();
+        let (origin,): (String,) = sqlx_core::query_as::query_as(
+            "SELECT origin FROM sensei.memories WHERE id = $1").bind(memory_id).fetch_one(pg.pool()).await.unwrap();
+        assert_eq!(origin, "dojo");
+        let applied = pg.get_dojo_inbox(item1.id).await.unwrap().unwrap();
+        assert_eq!(applied.state, "applied");
+        assert_eq!(applied.applied_memory_id, Some(memory_id));
+
+        // mute hides from the default list; pin floats to the top; unknown → false.
+        assert!(pg.set_dojo_inbox_state(id2, "muted").await.unwrap());
+        assert!(pg.list_dojo_inbox(false).await.unwrap().iter().all(|i| i.id != id2), "muted hidden by default");
+        assert!(pg.list_dojo_inbox(true).await.unwrap().iter().any(|i| i.id == id2), "include_muted surfaces it");
+        assert!(pg.set_dojo_inbox_state(id2, "pinned").await.unwrap());
+        assert_eq!(pg.list_dojo_inbox(false).await.unwrap()[0].id, id2, "pinned floats to the top");
+        assert!(!pg.set_dojo_inbox_state(uuid::Uuid::new_v4(), "muted").await.unwrap(), "unknown id → false");
+
+        // Cursor advance lives on the membership's last_seq.
+        pg.set_dojo_pull_cursor(mid, 42).await.unwrap();
+        assert_eq!(pg.get_dojo_membership(&mid).await.unwrap().unwrap().last_seq, 42);
+
+        // Cleanup: membership delete cascades inbox rows; then memory + project.
+        assert!(pg.delete_dojo_membership(&mid).await.unwrap());
+        sqlx_core::query::query("DELETE FROM sensei.memories WHERE id = $1").bind(memory_id).execute(pg.pool()).await.unwrap();
+        pg.delete_project(&proj).await.unwrap();
     }
 
     // ── scope_folder_ids tests (#60) ─────────────────────────────────

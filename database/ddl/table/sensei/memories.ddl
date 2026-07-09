@@ -76,7 +76,7 @@ comment on column memories.namespace_id
 comment on column memories.enforcement
      is 'Authority axis: advisory < recommended < required < mandatory. mandatory = non-overridable constitution tier (a more specific scope cannot weaken it).';
 comment on column memories.origin
-     is 'Provenance: learned (knowledge plane), authored (written directly), promoted (elevated from a narrower scope), federated (pulled from a hive-mind).';
+     is 'Provenance: learned (knowledge plane), authored (written directly), promoted (elevated from a narrower scope), federated (pulled from a hive-mind), dojo (applied from a Dōjō downstream artifact — see sensei.dojo_inbox).';
 comment on column memories.source_id
      is 'When origin=promoted/federated, the id of the source memory (or remote record) this was derived from. Null otherwise.';
 comment on column memories.scope_filter
