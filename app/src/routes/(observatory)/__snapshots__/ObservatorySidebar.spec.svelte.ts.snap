@@ -650,6 +650,45 @@ exports[`ObservatorySidebar > hides the Review group and Settings when Focus is 
       </a>
       
       <!---->
+      <a
+        data-level="2"
+        data-list-item=""
+        data-path="3-4"
+        href="/dojo/connections"
+      >
+        <!---->
+        <!---->
+        <!---->
+        <span
+          aria-hidden="true"
+          data-item-icon-literal=""
+        >
+          結
+        </span>
+        
+        
+        <!---->
+         
+        <span
+          data-item-text=""
+        >
+          <span
+            data-item-label=""
+          >
+            Dōjō
+          </span>
+           
+          <!---->
+        </span>
+        <!---->
+         
+        <!---->
+         
+        <!---->
+        <!---->
+      </a>
+      
+      <!---->
       <hr
         data-list-separator=""
       />
