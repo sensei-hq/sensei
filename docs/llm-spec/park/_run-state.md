@@ -1394,10 +1394,20 @@ REAL remaining gaps (verified live, grep — code-graph empty for this project =
   ✅ P3-UI SHIPPED `7cf3c37f` (2026-07-09): MemoryDetail.svelte usage strip → loaded/followed/skipped_7d
   (memoryUsageStrip pure helper, honest zeros); lifetime kept as secondary "all-time" line; bonus: legacy
   <style> hex→rokkit tokens. +6 tests; svelte-check 0/0; 1046 app tests. Matches learnings-anatomy-v2 mockup.
-  ⭐ MEMORY-FEEDBACK LOOP COMPLETE (daemon 553a6203 + UI 7cf3c37f). ⏳ MERGE MILESTONE IN PROGRESS:
-  rank3 `5f12a757` + memory-feedback → v0.2.34→0.2.35 → main (ships activity.memory_loads table + trigger bugfix LIVE).
-  DEFERRED follow-ups: per-session load correlation (thread client_session_id through get_context/MCP → needs
-  plugin republish); P2c behavioral use-classifier (reuse verdict_classifier fragment overlap).
+  ⭐✅ MEMORY-FEEDBACK MILESTONE SHIPPED & RELEASED (2026-07-09): rank3 `5f12a757` + memory-feedback
+  (daemon `553a6203` + UI `7cf3c37f`) → **v0.2.35** (`f926e9c1`) MERGED→main (`92fd29e4`, tag pushed,
+  tap+marketplace synced, activity.memory_loads table + memory_outcome trigger bugfix LIVE via bundle).
+  `main..develop` EMPTY. FOUR milestones this session (v0.2.32 Dōjō UI, v0.2.33 analyzer wiring, v0.2.34
+  analyzer completeness, v0.2.35 memory-feedback loop).
+  DEFERRED (memory-feedback follow-ups): per-session load correlation (thread client_session_id through
+  get_context/MCP → needs plugin republish) → then P2c behavioral use-classifier (reuse verdict_classifier
+  fragment overlap; DEPENDS on per-session correlation). Both refine an already-shipped v1.
+
+⏳ REPRIORITIZATION SWEEP IN FLIGHT (agent): after 4 milestones, a broad completeness re-survey of ALL
+  docs/llm-spec/ screens+pipelines vs current impl → fresh prioritized list of the highest-value REMAINING
+  gaps, so the rest of the vacation run hits the biggest wins (not a possibly-stale queue). Known-open before
+  sweep: item 3 memory promote/merge statuses; impact_regressions; structural/GoF patterns; rank4 (deprioritized);
+  memory-feedback follow-ups above. Slot 2 Instruments·Health + Dōjō consoles C12-14 remain BLOCKED (Jerry/Docker).
 
   3. **memory promote/merge statuses** defined + readyToShare/toMerge wired (Memories screen / overflow 7).
   4. HARDEST (new DDL + CAPTURE hooks in marketplace/ plugin, multi-part): memory-usage telemetry
