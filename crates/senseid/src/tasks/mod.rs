@@ -51,6 +51,11 @@ pub enum TaskKind {
     /// Enrich a project's sessions from the captured hook-event stream —
     /// derive turns/corrections/outcome/ftr/duration/module (analyzer L0, #66).
     AnalyzeProject,
+    /// Scan a project's doc nodes for backtick identifier mentions that no
+    /// longer resolve to a live code node, materialising `inference.drift_items`
+    /// (analyzer-driven counterpart to the manual `/drift/scan` endpoint).
+    /// Per-project: `path` carries the project id, exactly like `AnalyzeProject`.
+    ScanDocDrift,
     /// Dispatcher: enqueue one `BackfillTranscriptFile` per changed transcript
     /// so ingestion chunks + interleaves with other work (#73).
     BackfillTranscripts,
@@ -90,6 +95,7 @@ impl std::fmt::Display for TaskKind {
             Self::MeasureVerdicts => write!(f, "measure_verdicts"),
             Self::ReconcileIdentity => write!(f, "reconcile_identity"),
             Self::AnalyzeProject => write!(f, "analyze_project"),
+            Self::ScanDocDrift => write!(f, "scan_doc_drift"),
             Self::BackfillTranscripts => write!(f, "backfill_transcripts"),
             Self::BackfillTranscriptFile => write!(f, "backfill_transcript_file"),
             Self::AggregateCorrections => write!(f, "aggregate_corrections"),
@@ -140,6 +146,9 @@ impl TaskKind {
             | TaskKind::IndexLibraryPage
             | TaskKind::DetectCommunities
             | TaskKind::AnalyzeProject
+            // Doc-drift scan walks up to 500 doc nodes, reading each file off
+            // disk — on a large repo that's the same order as AnalyzeProject.
+            | TaskKind::ScanDocDrift
             | TaskKind::AggregateCorrections => Duration::from_secs(600),
         }
     }
@@ -288,6 +297,7 @@ mod tests {
         assert_eq!(TaskKind::DetectCommunities.to_string(), "detect_communities");
         assert_eq!(TaskKind::ExtractDeps.to_string(), "extract_deps");
         assert_eq!(TaskKind::MeasureVerdicts.to_string(), "measure_verdicts");
+        assert_eq!(TaskKind::ScanDocDrift.to_string(), "scan_doc_drift");
     }
 
     #[test]
@@ -301,6 +311,7 @@ mod tests {
         assert_eq!(TaskKind::ResolveEdges.watchdog_timeout(), long);
         assert_eq!(TaskKind::EmbedNodes.watchdog_timeout(), long);
         assert_eq!(TaskKind::ScanRoot.watchdog_timeout(), long);
+        assert_eq!(TaskKind::ScanDocDrift.watchdog_timeout(), long);
         for k in [
             TaskKind::ScanRoot, TaskKind::ProcessGitFolder, TaskKind::ProcessFolder,
             TaskKind::ProcessFile, TaskKind::DeleteFile, TaskKind::DeleteFolder,
@@ -308,7 +319,8 @@ mod tests {
             TaskKind::BranchSwitch, TaskKind::BuildConnections, TaskKind::ReconcileConnections,
             TaskKind::EmbedNodes, TaskKind::IndexLibrary, TaskKind::IndexLibraryPage,
             TaskKind::DetectCommunities, TaskKind::ExtractDeps, TaskKind::MeasureVerdicts,
-            TaskKind::ReconcileIdentity, TaskKind::AnalyzeProject, TaskKind::BackfillTranscripts,
+            TaskKind::ReconcileIdentity, TaskKind::AnalyzeProject, TaskKind::ScanDocDrift,
+            TaskKind::BackfillTranscripts,
             TaskKind::BackfillTranscriptFile, TaskKind::AggregateCorrections,
             TaskKind::AggregateToolInsights,
         ] {
