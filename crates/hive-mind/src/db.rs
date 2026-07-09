@@ -17,6 +17,24 @@ use std::path::{Path, PathBuf};
 use postgresql_embedded::{PostgreSQL, Settings};
 use sqlx_postgres::{PgPool, PgPoolOptions};
 
+/// Fallback embedded-Postgres superuser password. `postgresql_embedded`'s
+/// `Settings::default()` mints a fresh RANDOM password every process, and the
+/// password is baked into the cluster at `initdb`. That silently breaks
+/// persistence: a `serve` after a prior process (or a restart) can't reopen the
+/// existing data dir because the new random password no longer matches — auth
+/// fails. Pinning it (env-overridable) makes a persisted cluster reopenable
+/// across restarts. The embedded PG binds loopback only, so a stable local
+/// default is acceptable; override via `SENSEI_HIVE_DB_PASSWORD` for anything
+/// sensitive.
+const DEFAULT_EMBEDDED_PASSWORD: &str = "sensei-hive-local";
+
+fn embedded_password() -> String {
+    std::env::var("SENSEI_HIVE_DB_PASSWORD")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| DEFAULT_EMBEDDED_PASSWORD.to_string())
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum DbError {
     #[error("embedded postgres: {0}")]
@@ -59,6 +77,10 @@ impl HiveDb {
         let settings = Settings {
             data_dir,
             temporary,
+            // Pin the superuser password so a persisted cluster reopens across
+            // restarts (default() would randomise it per process — see
+            // DEFAULT_EMBEDDED_PASSWORD).
+            password: embedded_password(),
             ..Default::default()
         };
         let mut pg = PostgreSQL::new(settings);
