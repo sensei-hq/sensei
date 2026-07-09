@@ -1363,10 +1363,14 @@ REAL remaining gaps (verified live, grep — code-graph empty for this project =
      screen — cheapest next); rank4 get_project_impact (unlocks FtrLift/FtrRegression). Spec drift: impl is
      off-wire warm-on-miss, spec says 400ms sync (impl wins).
 
-⭐✅ ANALYZER-COMPLETENESS MILESTONE (2026-07-08): pattern→rule promotion `5a89a165` + tool-health
-  insight-copy `afe11d2d`. ⏳ MERGE+BUMP IN PROGRESS (v0.2.33→0.2.34, develop→main).
-  NEXT candidates after this: rank3 get_project_recommendations insight-copy (cheapest, reuses
-  InsightRecurringPattern verbatim, LIVE screen) → rank4 get_project_impact → then item 3/4 below.
+⭐✅ ANALYZER-COMPLETENESS MILESTONE SHIPPED & RELEASED (2026-07-08): pattern→rule promotion `5a89a165`
+  + tool-health insight-copy `afe11d2d` → **v0.2.34** (`7f6e8596`) MERGED→main (`a39c267c`, tag pushed,
+  tap+marketplace synced). `main..develop` EMPTY. THREE milestones this session (v0.2.32 Dōjō UI, v0.2.33
+  analyzer wiring, v0.2.34 analyzer completeness).
+  ⏳ NEXT (building): rank3 get_project_recommendations insight-copy (route title/why/impact via copy_or_warm
+  + InsightKind::InsightRecurringPattern — reuse the done-set shape VERBATIM; LIVE Project·Recommendations
+  screen; cap 8; degrade-safe; eager-warm optional). Then rank4 get_project_impact (FtrLift/FtrRegression) →
+  item 3 memory statuses → item 4 HARDEST (memory-usage telemetry, needs DDL+capture).
 
   3. **memory promote/merge statuses** defined + readyToShare/toMerge wired (Memories screen / overflow 7).
   4. HARDEST (new DDL + CAPTURE hooks in marketplace/ plugin, multi-part): memory-usage telemetry
