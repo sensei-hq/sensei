@@ -1540,18 +1540,63 @@ impl PgStore {
         Ok(row.0)
     }
 
+    /// Extract the source pattern id from a recommendation's `based_on` JSON
+    /// (`{"patterns":[<uuid>, ...]}` — the shape the L2 generator writes via
+    /// `create_recommendation_full`). Returns `None` when the key is absent,
+    /// the array is empty, or the first entry isn't a uuid: a manual rec may
+    /// legitimately omit provenance, and the caller treats that as a no-op
+    /// rather than an error.
+    fn based_on_first_pattern(based_on_json: &str) -> Option<uuid::Uuid> {
+        serde_json::from_str::<serde_json::Value>(based_on_json)
+            .ok()?
+            .get("patterns")?
+            .get(0)?
+            .as_str()
+            .and_then(|s| uuid::Uuid::parse_str(s).ok())
+    }
+
+    /// Accept a `pending` recommendation and carry out the action it stands for.
+    ///
+    /// Guards the transition to `accepted` at the `pending` state so a
+    /// double-click / stale UI can't push an already-decided rec back to
+    /// accepted — errors (verbatim) when the row is missing or already decided,
+    /// which the HTTP handler maps to 409. Because the guard fires at most once,
+    /// the action side effect below runs at most once too.
+    ///
+    /// A `promote_pattern` rec advances its source pattern's lifecycle to `rule`
+    /// (`based_on.patterns[0]`), which the Patterns read path then renders as an
+    /// `adopted` pattern. Non-atomic by design: the status flip and the
+    /// lifecycle advance are two autocommit statements rather than one
+    /// transaction, because reusing `promote_pattern` (DRY) precludes enrolling
+    /// it in a caller-side tx without duplicating its SQL. The pending-guard
+    /// already makes re-promotion impossible, so the only failure window —
+    /// status flipped, promote failed — is a logged inconsistency (surfaced at
+    /// error level), never a double-write.
     pub async fn accept_recommendation(&self, id: &uuid::Uuid) -> Result<(), String> {
-        // Guard the transition to `accepted` at the `pending` state so a
-        // double-click / stale UI can't push an already-decided rec back to
-        // accepted. Errors when the row is missing or already decided.
-        let result = sqlx_core::query::query(
+        let row: Option<(String, String)> = sqlx_core::query_as::query_as(
             "UPDATE inference.recommendations
                 SET status = 'accepted'::sensei.recommendation_status,
                     acted_at = now()
-              WHERE id = $1 AND status = 'pending'"
-        ).bind(id).execute(&self.pool).await.map_err(|e| e.to_string())?;
-        if result.rows_affected() == 0 {
+              WHERE id = $1 AND status = 'pending'
+          RETURNING action_type, based_on::text"
+        ).bind(id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+        let Some((action_type, based_on)) = row else {
             return Err("recommendation not found or already decided".into());
+        };
+
+        // A missing/empty/non-uuid `based_on.patterns[0]` yields None here, so a
+        // promote_pattern rec with no provenance short-circuits to a no-op.
+        if action_type == "promote_pattern"
+            && let Some(pattern_id) = Self::based_on_first_pattern(&based_on)
+            && let Err(e) = self.promote_pattern(&pattern_id, "rule").await
+        {
+            // The status flip already committed; the guard blocks a
+            // retry-promotion, so log loudly rather than swallow — the
+            // rec IS accepted, only the lifecycle advance was lost.
+            tracing::error!(
+                error = %e, recommendation = %id, pattern = %pattern_id,
+                "accept_recommendation: pattern promotion failed after status flip"
+            );
         }
         Ok(())
     }
@@ -7773,6 +7818,146 @@ mod tests {
 
         sqlx_core::query::query("DELETE FROM inference.recommendations WHERE id = $1").bind(rid).execute(s.pool()).await.unwrap();
         s.delete_project(&pid).await.unwrap();
+    }
+
+    // ── Accept-driven pattern promotion ──────────────────────────────
+    // Accepting a `promote_pattern` rec advances its source pattern's
+    // lifecycle to `rule` (the read path renders it `adopted`). The action
+    // is store-owned so it stays single-call-site + unit-testable.
+
+    /// Seed a (project, folder, pattern, promote_pattern rec) fixture. The rec's
+    /// `based_on.patterns[0]` cites the pattern (unless `cite_pattern` is false,
+    /// exercising the defensive no-op path). Returns (proj, folder, pattern, rec).
+    async fn seed_promote_fixture(
+        s: &PgStore, suffix: &str, action_type: &str, cite_pattern: bool,
+    ) -> (uuid::Uuid, uuid::Uuid, uuid::Uuid, uuid::Uuid) {
+        let (proj_id, fid) = create_test_project_and_folder(s, suffix).await;
+        let pat_id = s
+            .upsert_pattern(&proj_id, Some(&fid), "_test:rule-candidates", false, None, &serde_json::json!([]))
+            .await
+            .unwrap();
+        // suggested is the seeded lifecycle default; assert the precondition so a
+        // schema default change can't make the promotion test vacuously pass.
+        let patterns = s.list_patterns_by_folder(&fid).await.unwrap();
+        let seeded = patterns.iter().find(|p| p["id"] == pat_id.to_string()).unwrap();
+        assert_eq!(seeded["lifecycle"], "suggested", "pattern starts at suggested");
+
+        let based_on = if cite_pattern {
+            serde_json::json!({ "patterns": [pat_id] })
+        } else {
+            serde_json::json!({ "patterns": [] })
+        };
+        let rid = s
+            .create_recommendation_full(&proj_id, "_test:promote", "why", None, action_type, "medium", &based_on, None, None)
+            .await
+            .unwrap();
+        (proj_id, fid, pat_id, rid)
+    }
+
+    async fn cleanup_promote_fixture(s: &PgStore, proj_id: &uuid::Uuid, pat_id: &uuid::Uuid, rid: &uuid::Uuid) {
+        sqlx_core::query::query("DELETE FROM inference.recommendations WHERE id = $1").bind(rid).execute(s.pool()).await.unwrap();
+        sqlx_core::query::query("DELETE FROM inference.detected_patterns WHERE id = $1").bind(pat_id).execute(s.pool()).await.unwrap();
+        s.delete_project(proj_id).await.unwrap();
+    }
+
+    /// Pure extractor: only a well-formed `patterns[0]` uuid comes back; a
+    /// missing key, empty array, or non-uuid is `None` (the no-op signal).
+    #[test]
+    fn based_on_first_pattern_parses_uuid_and_defends() {
+        let id = uuid::Uuid::new_v4();
+        let good = serde_json::json!({ "patterns": [id] }).to_string();
+        assert_eq!(PgStore::based_on_first_pattern(&good), Some(id));
+        assert_eq!(PgStore::based_on_first_pattern("{}"), None);
+        assert_eq!(PgStore::based_on_first_pattern(r#"{"patterns":[]}"#), None);
+        assert_eq!(PgStore::based_on_first_pattern(r#"{"patterns":["not-a-uuid"]}"#), None);
+        assert_eq!(PgStore::based_on_first_pattern("not json"), None);
+    }
+
+    /// (1) Accepting a promote_pattern rec advances the cited pattern to `rule`.
+    #[tokio::test]
+    async fn accept_promote_pattern_advances_lifecycle_to_rule() {
+        let s = pg_store().await;
+        let suffix = format!("accept_promote_{}", uuid::Uuid::new_v4());
+        let (proj_id, fid, pat_id, rid) = seed_promote_fixture(&s, &suffix, "promote_pattern", true).await;
+
+        s.accept_recommendation(&rid).await.unwrap();
+
+        let patterns = s.list_patterns_by_folder(&fid).await.unwrap();
+        let p = patterns.iter().find(|p| p["id"] == pat_id.to_string()).unwrap();
+        assert_eq!(p["lifecycle"], "rule", "accepting a promote_pattern rec advances the pattern to rule");
+
+        cleanup_promote_fixture(&s, &proj_id, &pat_id, &rid).await;
+    }
+
+    /// (2) A non-promote action (e.g. write_skill) leaves the pattern untouched.
+    #[tokio::test]
+    async fn accept_non_promote_leaves_pattern_untouched() {
+        let s = pg_store().await;
+        let suffix = format!("accept_writeskill_{}", uuid::Uuid::new_v4());
+        let (proj_id, fid, pat_id, rid) = seed_promote_fixture(&s, &suffix, "write_skill", true).await;
+
+        s.accept_recommendation(&rid).await.unwrap();
+
+        let patterns = s.list_patterns_by_folder(&fid).await.unwrap();
+        let p = patterns.iter().find(|p| p["id"] == pat_id.to_string()).unwrap();
+        assert_eq!(p["lifecycle"], "suggested", "a non-promote action must not advance the pattern");
+
+        cleanup_promote_fixture(&s, &proj_id, &pat_id, &rid).await;
+    }
+
+    /// (3) A promote_pattern rec with no cited pattern accepts as a no-op —
+    /// returns Ok, the pattern is unchanged, and nothing panics.
+    #[tokio::test]
+    async fn accept_promote_pattern_without_provenance_is_noop() {
+        let s = pg_store().await;
+        let suffix = format!("accept_noprov_{}", uuid::Uuid::new_v4());
+        let (proj_id, fid, pat_id, rid) = seed_promote_fixture(&s, &suffix, "promote_pattern", false).await;
+
+        s.accept_recommendation(&rid).await.expect("empty provenance accepts without error");
+
+        let patterns = s.list_patterns_by_folder(&fid).await.unwrap();
+        let p = patterns.iter().find(|p| p["id"] == pat_id.to_string()).unwrap();
+        assert_eq!(p["lifecycle"], "suggested", "no cited pattern → nothing to promote");
+
+        cleanup_promote_fixture(&s, &proj_id, &pat_id, &rid).await;
+    }
+
+    /// (4) The pending-guard holds: a second accept errors, and the promotion
+    /// fired exactly once (the pattern is still `rule`, not re-touched into error).
+    #[tokio::test]
+    async fn accept_promote_pattern_guard_fires_promotion_once() {
+        let s = pg_store().await;
+        let suffix = format!("accept_guard_{}", uuid::Uuid::new_v4());
+        let (proj_id, fid, pat_id, rid) = seed_promote_fixture(&s, &suffix, "promote_pattern", true).await;
+
+        s.accept_recommendation(&rid).await.unwrap();
+        let err = s.accept_recommendation(&rid).await.expect_err("second accept is guarded at pending");
+        assert!(err.contains("already decided") || err.contains("not found"), "guard error text: {err}");
+
+        let patterns = s.list_patterns_by_folder(&fid).await.unwrap();
+        let p = patterns.iter().find(|p| p["id"] == pat_id.to_string()).unwrap();
+        assert_eq!(p["lifecycle"], "rule", "promotion fired once; the guarded re-accept is inert");
+
+        cleanup_promote_fixture(&s, &proj_id, &pat_id, &rid).await;
+    }
+
+    /// (5) Read-path: after accept, get_project_patterns surfaces the pattern
+    /// with kind='adopted' (pattern_kind maps lifecycle='rule' → adopted).
+    #[tokio::test]
+    async fn accept_promote_pattern_reads_back_as_adopted() {
+        let s = pg_store().await;
+        let suffix = format!("accept_adopted_{}", uuid::Uuid::new_v4());
+        let (proj_id, _fid, pat_id, rid) = seed_promote_fixture(&s, &suffix, "promote_pattern", true).await;
+
+        s.accept_recommendation(&rid).await.unwrap();
+
+        let view = s.get_project_patterns(&proj_id).await.unwrap();
+        let followed = view["followed"].as_array().expect("followed array");
+        let p = followed.iter().find(|p| p["id"] == pat_id.to_string()).expect("promoted pattern in followed set");
+        assert_eq!(p["kind"], "adopted", "lifecycle='rule' reads back as adopted");
+        assert_eq!(p["lifecycle"], "rule");
+
+        cleanup_promote_fixture(&s, &proj_id, &pat_id, &rid).await;
     }
 
     // ── Gateway chains / role assignments tests ─────────────────────

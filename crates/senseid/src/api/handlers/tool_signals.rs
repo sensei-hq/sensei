@@ -20,6 +20,7 @@
 //! - `unused`      — no activity in the last two weeks.
 //! - `win`         — high traffic + clean. A workhorse.
 
+use crate::analysis::insight_copy::{FallbackCopy, InsightKind};
 use serde::{Deserialize, Serialize};
 
 /// Raw tool-usage row as decoded from `sensei.tool_usage_stats`. Only the
@@ -54,6 +55,30 @@ pub struct Signal {
     /// mockup's SignalCard. `None` when the card is informational only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub action: Option<String>,
+
+    // ── Raw metrics for the insight-copy facts builder ──────────────────────
+    // Carried so [`signal_copy_inputs`] can hand stable facts to the mentor-voice
+    // pipeline without re-parsing the rendered title/detail. NOT serialized —
+    // the wire shape stays `{ tool_name, variant, title, detail, action? }`.
+    /// Total calls (per-tool cards). `0` on summary cards.
+    #[serde(skip)]
+    pub calls: i64,
+    /// Errored calls (per-tool cards). `0` on summary cards.
+    #[serde(skip)]
+    pub errors: i64,
+    /// `errors / calls` (per-tool cards). `0.0` on summary cards.
+    #[serde(skip)]
+    pub error_rate: f64,
+    /// Days since last use (per-tool cards). `0` on summary cards.
+    #[serde(skip)]
+    pub days_since_last_use: i64,
+    /// How many tools this aggregate card rolls up. `0` on per-tool cards.
+    #[serde(skip)]
+    pub summary_count: i64,
+    /// Up-to-three short tool names sampled into an aggregate card. Empty on
+    /// per-tool cards.
+    #[serde(skip)]
+    pub summary_sample: Vec<String>,
 }
 
 /// Derivation thresholds. Extracted so tests can pin known-good values
@@ -120,6 +145,8 @@ pub fn derive_signals(
                 title:     format!("{short}: dormant"),
                 detail,
                 action:    Some(format!("Trace: why is {short} unused?")),
+                calls, errors, error_rate, days_since_last_use,
+                summary_count: 0, summary_sample: Vec::new(),
             });
             continue;
         }
@@ -133,6 +160,8 @@ pub fn derive_signals(
                     "{calls} calls, {errors} errored. High-traffic tool with sharp edges — fix these first.",
                 ),
                 action: Some(format!("Edit tool: {tool}")),
+                calls, errors, error_rate, days_since_last_use,
+                summary_count: 0, summary_sample: Vec::new(),
             });
             continue;
         }
@@ -147,6 +176,8 @@ pub fn derive_signals(
                     rate = pct(error_rate),
                 ),
                 action: Some(format!("Edit tool: {tool}")),
+                calls, errors, error_rate, days_since_last_use,
+                summary_count: 0, summary_sample: Vec::new(),
             });
             continue;
         }
@@ -161,6 +192,8 @@ pub fn derive_signals(
                     rate = pct(error_rate),
                 ),
                 action: None,
+                calls, errors, error_rate, days_since_last_use,
+                summary_count: 0, summary_sample: Vec::new(),
             });
             continue;
         }
@@ -234,6 +267,9 @@ fn summarise_unused(dormants: &[Signal]) -> Signal {
             "{list} haven't been called in the last two weeks. Either wire them into a skill or persona, or archive them.",
         ),
         action: Some("Review tool registry".into()),
+        calls: 0, errors: 0, error_rate: 0.0, days_since_last_use: 0,
+        summary_count: n as i64,
+        summary_sample: names.iter().map(|s| s.to_string()).collect(),
     }
 }
 
@@ -258,6 +294,9 @@ fn summarise_wins(wins: &[Signal]) -> Signal {
         title:     format!("{n} workhorse tools"),
         detail: format!("{list} are running high-volume with clean error rates."),
         action:  None,
+        calls: 0, errors: 0, error_rate: 0.0, days_since_last_use: 0,
+        summary_count: n as i64,
+        summary_sample: names.iter().map(|s| s.to_string()).collect(),
     }
 }
 
@@ -280,6 +319,57 @@ fn short_name(tool: &str) -> &str {
 
 fn pct(f: f64) -> i64 {
     (f * 100.0).round() as i64
+}
+
+/// Round an error-rate fraction to two decimals so the insight-copy facts stay
+/// stable and human-clean (`0.10`, not `0.10344…`). Two decimals is
+/// whole-percent granularity, matching the integer percentage the templates
+/// render — a facts_hash cannot drift on inference-noise-sized fraction diffs.
+fn round2(f: f64) -> f64 {
+    (f * 100.0).round() / 100.0
+}
+
+/// Map one curated [`Signal`] to the inputs the mentor-voice insight-copy
+/// pipeline needs: the [`InsightKind`], the stable `facts` object, and the
+/// deterministic [`FallbackCopy`] (the current template text).
+///
+/// Pure — no DB, no gateway. The same mapping feeds both the wire read
+/// (`copy_or_warm` in `observatory::tool_signals`) and the eager warm
+/// (`generate_and_cache` in `tasks::tool_insights`) so a warmed row is a guaranteed
+/// cache hit on the wire.
+///
+/// Facts are code-owned and STABLE: they never carry `action`/`variant` (those
+/// are code-owned and would poison the `(kind, facts_hash)` cache key). Per-tool
+/// cards key on the metrics; summary cards key on `{ count, sample }`.
+pub fn signal_copy_inputs(s: &Signal) -> (InsightKind, serde_json::Value, FallbackCopy) {
+    let is_summary = s.tool_name.is_empty();
+    let kind = match s.variant {
+        SignalVariant::Warn        => InsightKind::ToolWarn,
+        SignalVariant::Opportunity => InsightKind::ToolOpportunity,
+        SignalVariant::Unused =>
+            if is_summary { InsightKind::ToolsDormantSummary } else { InsightKind::ToolDormant },
+        SignalVariant::Win =>
+            if is_summary { InsightKind::ToolsWorkhorseSummary } else { InsightKind::ToolWorkhorse },
+    };
+
+    let facts = if is_summary {
+        serde_json::json!({
+            "count":  s.summary_count,
+            "sample": s.summary_sample,
+        })
+    } else {
+        serde_json::json!({
+            "short":               short_name(&s.tool_name),
+            "tool":                s.tool_name,
+            "calls":               s.calls,
+            "errors":              s.errors,
+            "error_rate":          round2(s.error_rate),
+            "days_since_last_use": s.days_since_last_use,
+        })
+    };
+
+    let fallback = FallbackCopy { title: s.title.clone(), detail: s.detail.clone() };
+    (kind, facts, fallback)
 }
 
 #[cfg(test)]
@@ -360,14 +450,113 @@ mod tests {
             title: "t".into(),
             detail: "d".into(),
             action: Some("do it".into()),
+            calls: 100, errors: 5, error_rate: 0.05, days_since_last_use: 1,
+            summary_count: 0, summary_sample: Vec::new(),
         };
         let v = serde_json::to_value(&s).unwrap();
         assert_eq!(v["variant"], "warn");
         assert_eq!(v["action"], "do it");
+        // The raw metric fields are internal to the facts builder — the wire
+        // shape stays { tool_name, variant, title, detail, action? }.
+        assert!(v.get("calls").is_none(), "calls must not serialize onto the wire");
+        assert!(v.get("errors").is_none());
+        assert!(v.get("error_rate").is_none());
+        assert!(v.get("days_since_last_use").is_none());
+        assert!(v.get("summary_count").is_none());
+        assert!(v.get("summary_sample").is_none());
 
         let s2 = Signal { action: None, ..s };
         let v2 = serde_json::to_value(&s2).unwrap();
         assert!(v2.get("action").is_none(), "None action should be omitted");
+    }
+
+    // ── insight-copy facts builder (pure) ───────────────────────────────────
+
+    #[test]
+    fn signal_copy_inputs_per_tool_warn_maps_and_carries_facts() {
+        let stats = vec![row("sensei.shakey", 100, 10, 1)];
+        let signals = derive_signals(&stats, now(), &SignalThresholds::default());
+        let s = &signals[0];
+        assert_eq!(s.variant, SignalVariant::Warn);
+
+        let (kind, facts, fb) = signal_copy_inputs(s);
+        assert_eq!(kind, InsightKind::ToolWarn);
+        // Discriminating facts are present.
+        assert_eq!(facts["tool"], "sensei.shakey");
+        assert_eq!(facts["short"], "shakey");
+        assert_eq!(facts["calls"], 100);
+        assert_eq!(facts["errors"], 10);
+        assert_eq!(facts["days_since_last_use"], 1);
+        assert!((facts["error_rate"].as_f64().unwrap() - 0.10).abs() < 1e-9, "error_rate rounded to 2dp");
+        // action / variant are code-owned — never in the facts (would poison the key).
+        assert!(facts.get("action").is_none(), "action must not appear in facts");
+        assert!(facts.get("variant").is_none(), "variant must not appear in facts");
+        // Fallback carries the current template verbatim.
+        assert_eq!(fb.title, s.title);
+        assert_eq!(fb.detail, s.detail);
+    }
+
+    #[test]
+    fn signal_copy_inputs_variant_to_kind_per_tool() {
+        // opportunity → ToolOpportunity
+        let opp = derive_signals(&[row("sensei.teetering", 20, 2, 1)], now(), &SignalThresholds::default());
+        assert_eq!(signal_copy_inputs(&opp[0]).0, InsightKind::ToolOpportunity);
+        // single win → ToolWorkhorse (per-tool, kept as-is by curate)
+        let win = derive_signals(&[row("sensei.workhorse", 200, 0, 1)], now(), &SignalThresholds::default());
+        assert_eq!(signal_copy_inputs(&win[0]).0, InsightKind::ToolWorkhorse);
+        // single dormant → ToolDormant
+        let cold = derive_signals(&[row("sensei.cold", 30, 0, 30)], now(), &SignalThresholds::default());
+        assert_eq!(signal_copy_inputs(&cold[0]).0, InsightKind::ToolDormant);
+    }
+
+    #[test]
+    fn signal_copy_inputs_days_change_alters_facts_hash() {
+        use crate::analysis::insight_copy::facts_hash;
+        let a = derive_signals(&[row("sensei.cold", 30, 0, 30)], now(), &SignalThresholds::default());
+        let b = derive_signals(&[row("sensei.cold", 30, 0, 40)], now(), &SignalThresholds::default());
+        let (ka, fa, _) = signal_copy_inputs(&a[0]);
+        let (kb, fb, _) = signal_copy_inputs(&b[0]);
+        assert_eq!(ka, kb, "same kind");
+        assert_ne!(
+            facts_hash(ka, &fa), facts_hash(kb, &fb),
+            "a changed days_since_last_use must change the cache key (guards stale copy)"
+        );
+    }
+
+    #[test]
+    fn signal_copy_inputs_summary_dormant_uses_summary_kind_and_count() {
+        let stats = vec![
+            row("sensei.a", 0, 0, 0), row("sensei.b", 0, 0, 0),
+            row("sensei.c", 0, 0, 0), row("sensei.d", 0, 0, 0),
+        ];
+        let curated = curate_insights(derive_signals(&stats, now(), &SignalThresholds::default()));
+        let summary = curated.iter()
+            .find(|s| s.variant == SignalVariant::Unused && s.tool_name.is_empty())
+            .expect("collapsed dormant summary");
+
+        let (kind, facts, fb) = signal_copy_inputs(summary);
+        assert_eq!(kind, InsightKind::ToolsDormantSummary);
+        assert_eq!(facts["count"], 4);
+        assert_eq!(facts["sample"][0], "a", "sample threads the short tool names");
+        // Summary facts use { count, sample }, not per-tool metrics.
+        assert!(facts.get("calls").is_none());
+        assert!(facts.get("tool").is_none());
+        assert_eq!(fb.title, summary.title);
+        assert_eq!(fb.detail, summary.detail);
+    }
+
+    #[test]
+    fn signal_copy_inputs_summary_wins_uses_summary_kind() {
+        let stats = vec![
+            row("sensei.a", 200, 0, 1), row("sensei.b", 200, 0, 1), row("sensei.c", 200, 0, 1),
+        ];
+        let curated = curate_insights(derive_signals(&stats, now(), &SignalThresholds::default()));
+        let summary = curated.iter()
+            .find(|s| s.variant == SignalVariant::Win && s.tool_name.is_empty())
+            .expect("collapsed win summary");
+        let (kind, facts, _fb) = signal_copy_inputs(summary);
+        assert_eq!(kind, InsightKind::ToolsWorkhorseSummary);
+        assert_eq!(facts["count"], 3);
     }
 
     #[test]
