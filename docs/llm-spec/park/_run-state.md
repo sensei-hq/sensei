@@ -1328,14 +1328,20 @@ REAL remaining gaps (verified live, grep — code-graph empty for this project =
   tap+marketplace synced). `main..develop` EMPTY (synced). Both make analyzer outputs self-populate.
 
 ── NEXT TRACK (pick on next tick, fresh context) — remaining REAL gaps, roughly small→large:
-  1. **pattern-lifecycle promotion writer** — ⏳ SURVEY IN FLIGHT (agent). ANCHORS FOUND: writer
-     `pg_store::promote_pattern(id, lifecycle)` EXISTS (:2503, UPDATEs detected_patterns.lifecycle ::
-     sensei.pattern_lifecycle); `accept_recommendation(id)` EXISTS (:1543, sets rec status='accepted').
-     Readers: insights.rs::pattern_column(:41), pattern_effectiveness::pattern_kind (lifecycle=='rule'→adopted).
-     Screen project-patterns.md wants kind=emerging|promoted|anti_pattern, state=detected|promoted|dismissed,
-     Promote → create `sensei.rules` row source=promoted:pattern:{id}; also references `sensei.promoted_patterns`.
-     LIKELY GAP: accepting a promote_pattern-action rec does NOT call promote_pattern() nor create the rule —
-     survey confirms who-calls-promote_pattern + whether sensei.rules/promoted_patterns exist + the clean loop.
+  1. **pattern→rule promotion loop** — ⏳ SURVEY DONE (agent a63dc716). VERDICT (B): `promote_pattern`
+     (:2503) is ORPHANED (only caller = a unit test). `accept_recommendation` (:1543) just flips rec
+     status='accepted' + enqueues MeasureVerdicts; never advances the pattern nor makes a rule. Rec ALREADY
+     carries source pattern id in `based_on.patterns[0]` (generate.rs:265) → NO schema change needed.
+     `sensei.rules`/`promoted_patterns` DO NOT EXIST (aspirational in llm-spec); governance rules resolve
+     straight from `sensei.memories` (resolve_rules_raw :5906, enforcement DESC/level/strength). The
+     rule-candidates branch (generate.rs:151-163) ALREADY makes a convention memory linked to the pattern
+     (source_id=pattern.id) but persisted `enforcement: None` (generate.rs:316) = stays soft.
+     ⏳ BUILDING NOW (agent): CORE = make accept_recommendation action-aware (RETURNING action_type,based_on;
+     if promote_pattern → promote_pattern(pid,'rule'); preserve pending-guard; defensive no-op if patterns
+     empty; atomic). GOVERNANCE HOOK (if cleanly verifiable, else ship core+flag) = on accept, enforce the
+     linked convention memory so get_rules returns it as a hard rule. No DDL. TDD (survey's 5 tests + rule test).
+     Enum pattern_lifecycle=(suggested,gap,rule); reader pattern_kind flips emerging→adopted at 'rule' (no reader
+     change). ('gap' has no writer either — separate.) Optional polish: 'promoted'/'state' alias to match spec vocab.
   2. **insight-copy wiring** — route user-facing insight strings through gemma4 (insight-copy chain) where
      still raw DB text. Check which read-paths bypass insight_copy. [[feedback_llm_insight_copy]].
   3. **memory promote/merge statuses** defined + readyToShare/toMerge wired (Memories screen / overflow 7).
