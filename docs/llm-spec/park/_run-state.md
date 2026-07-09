@@ -1257,3 +1257,14 @@ DojoMembership type; honest empty state (no Dōjō connected live); rail entry. 
 verify DEFERRED (needs running configured Dōjō + Tauri e2e systemically broken). NEXT: C11 (wire Upgrades
 screen → real /api/upgrades C7 inbox, replacing recommendations-repurposing) + C9 (Preferences→Sharing,
 needs new /api/preferences/collective endpoint). Consoles C12-C14 Docker-blocked.
+
+── DŌJŌ C10 ✅ COMMITTED `892e348f` (2026-07-08) ── dojo-connections screen: list + connect form + empty
+state, api.ts getDojoMemberships/connectDojo, DojoMembership type, 結 Dōjō rail entry, sync/kind chips,
+credential_ref never exposed. svelte-check 0, 965 tests (+36). Empty live (no Dōjō). Visual verify deferred.
+⏳ C11 BUILDING (svelte): ADD "From your Dōjō" lane to Upgrades screen (wire shipped /api/upgrades C7 +
+Apply/Mute/Pin) ALONGSIDE the existing local-recommendations lane — NON-REGRESSIVE (recs kept; Dōjō lane
+empty until connected). +getUpgrades/apply/mute/pin in api.ts + DojoUpgrade type. NEXT: C9 (Preferences→
+Sharing / observatory-collective — needs new /api/preferences/collective endpoint = backend+frontend).
+Then Dōjō UI spec is complete (minus Docker-blocked consoles C12-C14).
+NOTE ON REMAINING VALUE: high-value work DONE (7 milestones, Dōjō backend proven+operational). Remaining
+Dōjō UI is DORMANT (needs configured Dōjō) but completes the user's explicit "all specced work incl dojo".

@@ -1192,3 +1192,66 @@ export interface ProjectOverview {
   stats: ProjectOverviewStats;
   recentSessions: ProjectOverviewSession[];
 }
+
+// ─── Dōjō downstream inbox (Observatory · Upgrades · C7) ──────────────────────
+//
+// Wire shape returned by `GET /api/upgrades[?include_muted=1]` — the daemon's
+// downstream inbox of APPROVED Dōjō / Collective artifacts pulled back for the
+// user to Apply / Mute / Pin. Mirrors `InboxItem` in
+// `crates/senseid/src/collective/inbox.rs` (serde renames `kind` → `type`) plus
+// the `ArtifactScope` / `Attribution` jsonb shapes from the `dojo-protocol`
+// crate. Muted items are hidden unless `include_muted`; pinned float to the top;
+// `unread_count` is the number of items still `pending`.
+
+/** The six downstream artifact kinds — `dojo.artifact_kind`. */
+export type DojoUpgradeType = 'principle' | 'pattern' | 'prompt' | 'guard' | 'skill' | 'agent';
+
+/** Local override state of an inbox item — `dojo_inbox.state`. */
+export type DojoUpgradeState = 'pending' | 'applied' | 'muted' | 'pinned';
+
+/** Scope tag deciding where an artifact applies — the `dojo.artifacts.scope`
+ *  jsonb. Every field is optional (an unscoped artifact applies everywhere). */
+export interface DojoUpgradeScope {
+  company?: string;
+  team?: string;
+  project?: string;
+  stack?: string;
+}
+
+/** How the artifact is credited — the `dojo.artifacts.attribution` jsonb.
+ *  `dereferenced: true` marks client-work whose source reference was stripped. */
+export interface DojoUpgradeAttribution {
+  /** named | anonymous | dereferenced (string-tolerant on the wire). */
+  mode: DojoUpgradeAttributionMode | string;
+  author?: string;
+  org?: string;
+  anonymous_id?: string;
+  dereferenced: boolean;
+}
+
+export type DojoUpgradeAttributionMode = 'named' | 'anonymous' | 'dereferenced';
+
+/** One downstream artifact as surfaced by `GET /api/upgrades`. `type` and
+ *  `state` are kept string-tolerant so a new wire value renders neutral rather
+ *  than throwing — wire-API-wins. */
+export interface DojoUpgrade {
+  id: string;
+  membership_id: string;
+  type: DojoUpgradeType | string;
+  title: string;
+  body: string;
+  scope: DojoUpgradeScope;
+  attribution: DojoUpgradeAttribution;
+  state: DojoUpgradeState | string;
+  /** Why an Apply didn't land (a deferred kind, or a scope mismatch). */
+  note?: string;
+  /** Set once an Applied principle/pattern lands as a `sensei.memories` row. */
+  applied_memory_id?: string;
+  received_at?: string;
+}
+
+/** Response shape of `GET /api/upgrades`. */
+export interface DojoUpgradesResponse {
+  artifacts: DojoUpgrade[];
+  unread_count: number;
+}
