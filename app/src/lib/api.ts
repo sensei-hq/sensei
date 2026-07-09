@@ -8,7 +8,7 @@ import type {
   ProjectSession, CallFlowModule, CallFlowCall,
   ProjectListItem,
   KnowledgeSource, NewKnowledgeSourceBody, SyncStats,
-  DojoMembership, ConnectDojoBody, DojoUpgradesResponse,
+  DojoMembership, ConnectDojoBody, DojoUpgradesResponse, CollectivePreferences,
   McpToolManifest, SessionToolTimeline, MemoryShareBatch, ImpactVerdictEntry,
   ProjectMcpToolStat, ToolSignal, ProjectService, ToolInsight, ToolsHealth,
   SessionReplayResponse, McpServerRow, McpServerToolsManifest,
@@ -121,6 +121,29 @@ export function senseiApi(port: number) {
       });
       if (res.ok) return { ok: true, data: await res.json() as T };
       return { ok: false, error: { status: res.status, message: res.statusText } };
+    } catch (e) {
+      return { ok: false, error: { status: 0, message: e instanceof Error ? e.message : 'Network error' } };
+    }
+  }
+
+  // Error-propagating PUT that returns the parsed response body — the
+  // whole-object full-replace endpoints (e.g. collective preferences) echo the
+  // saved object back and the caller adopts it. On a non-ok it surfaces the
+  // daemon's `{ "error": "..." }` message when present, else the status text.
+  async function tryPutJson<T>(path: string, body: unknown): Promise<ApiResult<T>> {
+    try {
+      const res = await fetch(`${base}${path}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (res.ok) return { ok: true, data: await res.json() as T };
+      let message = res.statusText;
+      try {
+        const j = await res.json() as { error?: string };
+        if (j && typeof j.error === 'string' && j.error) message = j.error;
+      } catch { /* non-JSON error body — keep the status text */ }
+      return { ok: false, error: { status: res.status, message } };
     } catch (e) {
       return { ok: false, error: { status: 0, message: e instanceof Error ? e.message : 'Network error' } };
     }
@@ -945,6 +968,28 @@ export function senseiApi(port: number) {
       tryPost<{ id: string; state: string }>(`/api/upgrades/${enc(id)}/mute`, {}),
     pinUpgrade: (id: string) =>
       tryPost<{ id: string; state: string }>(`/api/upgrades/${enc(id)}/pin`, {}),
+
+    // ── Collective sharing preferences (Observatory · Collective · C9) ───────
+    // GET always returns a FULL object (the stored row, or the defaults when
+    // unset), so the fallback here mirrors the daemon's defaults — a daemon
+    // hiccup renders the defaults, never a broken screen. PUT is a whole-object
+    // full-replace that echoes the saved object back (fresh updated_at);
+    // `tryPutJson` so a 400 (bad enum / unknown category / non-boolean) surfaces
+    // as `{ ok: false, error }` with the daemon's message for the screen to show.
+    getCollectivePreferences: () =>
+      get<CollectivePreferences>('/api/preferences/collective', {
+        destination: 'none',
+        cadence: 'manual',
+        categories: {
+          memory: true, pattern: true, rule: true, prompt: true,
+          guard: true, skill: true, agent: true,
+        },
+        attribution_default: 'dereferenced',
+        updated_at: null,
+      }),
+
+    putCollectivePreferences: (body: CollectivePreferences) =>
+      tryPutJson<CollectivePreferences>('/api/preferences/collective', body),
 
     // ── Lifecycle ────────────────────────────────────────────────────────
     stop: () => post('/stop', {}, {}),
