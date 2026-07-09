@@ -1294,10 +1294,20 @@ Wire shape (VERIFIED live: table on pg 5432; 13 tests pass; clippy 0):
   types.ts +CollectivePreferences + enums. Rail entry 群·Sharing after Dōjō connections. +38 tests
   (1002→1040), svelte-check 0/0. Verified: test:unit 1040 pass, check 0/0.
 
-⭐ DŌJŌ UI COMPLETE — all buildable Dōjō UI shipped on develop: C10 `892e348f` (connections),
-  C11 `bce039a3` (upgrades inbox lane), C9-backend `8763a17f`, C9-frontend `4f0992ac`.
-  ⏳ MILESTONE IN PROGRESS: make bump v=patch (0.2.31→0.2.32) on develop, then merge develop→main.
-  After merge+bump: DŌJŌ TRACK = as complete as possible. GENUINELY BLOCKED remainder (needs Jerry /
-  Docker): consoles C12-C14 (SaaS web console — Docker/Supabase); running-Dōjō visual-verify of C9-C11
-  (need a configured Dōjō + Tauri e2e which is systemically broken in this env). NEXT WORK after this
-  milestone: pull the next llm-spec segment / burn down the 5-screen depth-first followups per policy #3.
+⭐✅ DŌJŌ UI MILESTONE SHIPPED & RELEASED (2026-07-08) — v0.2.32 (`4e45a140` develop) MERGED→main
+  (`56529f73`, tag v0.2.32 pushed, tap+marketplace synced, dbd cache cleared). `main..develop` EMPTY
+  (fully synced). All buildable Dōjō UI live: C10 `892e348f` (connections), C11 `bce039a3` (upgrades
+  inbox lane), C9-backend `8763a17f` + C9-frontend `4f0992ac` (collective sharing prefs).
+  DŌJŌ TRACK = as complete as possible. GENUINELY BLOCKED remainder (needs Jerry / Docker):
+  consoles C12-C14 (SaaS web console — Docker/Supabase); running-Dōjō visual-verify of C9-C11 (need a
+  configured Dōjō + Tauri e2e which is systemically broken in this env). The whole Dōjō backend loop
+  (C1-C8) was proven LIVE end-to-end earlier + is on main.
+
+── NEXT WORK (policy #3 DEPTH-FIRST, after Dōjō) ── Burn down the deferred follow-ups that make the
+  shipped screens fully real. Candidate queue (survey park/ + the 5 screen followups to pick highest-value):
+  • the missing recommendation/pattern GENERATORS (tables exist, writers absent — core gap per
+    project_core_gap_analysis: "build the missing recommendation/pattern generators").
+  • insight-copy wiring: user-facing insight strings via gemma4 (insight-copy chain), not raw DB text.
+  • memory promotion/merge statuses defined + readyToShare/toMerge wired (Memories screen depends on it).
+  • overflow 7/8: Memories screen, Project Sessions+Memories.
+  Slot 2 (Instruments·Health) stays PARKED (registry↔usage join gap — awaits Jerry).
