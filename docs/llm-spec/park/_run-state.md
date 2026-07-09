@@ -1303,11 +1303,24 @@ Wire shape (VERIFIED live: table on pg 5432; 13 tests pass; clippy 0):
   configured Dōjō + Tauri e2e which is systemically broken in this env). The whole Dōjō backend loop
   (C1-C8) was proven LIVE end-to-end earlier + is on main.
 
-── NEXT WORK (policy #3 DEPTH-FIRST, after Dōjō) ── Burn down the deferred follow-ups that make the
-  shipped screens fully real. Candidate queue (survey park/ + the 5 screen followups to pick highest-value):
-  • the missing recommendation/pattern GENERATORS (tables exist, writers absent — core gap per
-    project_core_gap_analysis: "build the missing recommendation/pattern generators").
-  • insight-copy wiring: user-facing insight strings via gemma4 (insight-copy chain), not raw DB text.
-  • memory promotion/merge statuses defined + readyToShare/toMerge wired (Memories screen depends on it).
-  • overflow 7/8: Memories screen, Project Sessions+Memories.
+── NEXT WORK (policy #3 DEPTH-FIRST, after Dōjō) — SURVEY DONE (agent acef89fb, 2026-07-08) ──
+⚠️ RECORD CORRECTED: the "recommendation/pattern generators are ABSENT (tables exist, no writers)" claim
+  (MEMORY project_core_gap_analysis) is OUTDATED. All analyzer generators are BUILT + WIRED via
+  analyzer_scheduler.rs::run → executor.rs → analyze_project: recommendations
+  (generate.rs+consolidate.rs+model_insight.rs+rank.rs), detected_patterns (analyze.rs::derive_signals),
+  learned memories (generate.rs), corrections (corrections.rs), communities (community.rs), tool_insights
+  (tool_insights.rs), verdicts (verdicts.rs). derive_signals + MeasureVerdicts CONFIRMED wired.
+REAL remaining gaps (verified live, grep — code-graph empty for this project = known segmentation bug):
+  • ⏳ BUILDING NOW (agent ac6f1941): **doc-drift never auto-scans** — writer pg_store::scan_project_doc_drift
+    (:1899) exists + tested, but ONLY caller is manual POST /api/projects/{id}/drift/scan. So inference.drift_items
+    (backs project-overview docDrift, projects warn-dot, quality-signals, Traceability) reads 0 until user clicks.
+    FIX = wire TaskKind::ScanDocDrift + thin handler + executor dispatch + enqueue alongside AnalyzeProject in
+    the due-project loop (analyzer_scheduler.rs:203-204). No DDL. TDD. Reuse writer unchanged.
+  • tool_call_verdicts (#90) classified LAZILY only (on Replay-tab view, sessions.rs:180) — not batch/scheduled;
+    so used/partial/ignored tool split only covers opened sessions. RUNNER-UP: schedule it as a global task.
+  • HARD gaps (need new DDL + capture, larger): memory-usage telemetry (activity.memory_loads/memory_use_reports
+    — NEITHER table nor capture exists; the "did injected memory help?" loop is unbuilt); impact_regressions table;
+    pattern-lifecycle promotion writer (detected_patterns.lifecycle stuck at 'suggested'); structural/GoF pattern
+    detection (derive_signals only emits 3 behavioral kinds).
+  • insight-copy wiring + memory promote/merge statuses + overflow 7/8 (Memories screen) remain in queue.
   Slot 2 (Instruments·Health) stays PARKED (registry↔usage join gap — awaits Jerry).
