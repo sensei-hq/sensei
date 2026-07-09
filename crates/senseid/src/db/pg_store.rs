@@ -3420,6 +3420,40 @@ impl PgStore {
         Ok(rows.len())
     }
 
+    /// Distinct session ids that still need verdict classification: sessions
+    /// with a `PostToolUse` event inside the window that have no rows in
+    /// `sensei.tool_call_verdicts` yet. Feeds the scheduled classifier
+    /// (`ClassifyPendingVerdicts`) so the Health-tab aggregate reflects every
+    /// session, not just the ones whose Replay tab was opened.
+    ///
+    /// Unclassified-only is a cheap gap-fill: it bounds the per-tick cost so we
+    /// don't re-classify the whole corpus each scheduler tick. Correctness for
+    /// anything already classified is covered by `upsert_verdicts_batch`'s
+    /// idempotent upsert.
+    ///
+    /// `assistant_events.ts` is epoch millis (bigint), so the window cutoff is
+    /// computed in millis — mirrors `get_tools_health`'s 14-day `PostToolUse`
+    /// window; the parametrised-days form mirrors `get_verdict_split_per_tool`.
+    /// Session-less events (`session_id = ''`) are excluded — they'd otherwise
+    /// collapse every unattached event into one pseudo-session.
+    pub async fn unclassified_verdict_sessions(&self, window_days: i32) -> Result<Vec<String>, String> {
+        let rows: Vec<(String,)> = sqlx_core::query_as::query_as(
+            "SELECT DISTINCT h.session_id
+               FROM activity.assistant_events h
+              WHERE h.event_type = 'PostToolUse'
+                AND h.session_id <> ''
+                AND h.ts >= (extract(epoch from now() - ($1::int || ' days')::interval) * 1000)::bigint
+                AND NOT EXISTS (
+                    SELECT 1 FROM sensei.tool_call_verdicts v WHERE v.session_id = h.session_id
+                )"
+        )
+        .bind(window_days)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(s,)| s).collect())
+    }
+
     // ── #84 Track 2 Slice B — MCP tool manifest cache ─────────────────────
 
     /// Read the cached tool manifest for a server. `None` when nothing has
@@ -8771,6 +8805,37 @@ mod tests {
             chrono::Utc::now().timestamp_millis(), None, &payload,
         ).await.unwrap();
         assert!(id > 0);
+    }
+
+    #[tokio::test]
+    async fn unclassified_verdict_sessions_returns_only_in_window_unclassified() {
+        use crate::tasks::handlers::tool_insights::HEALTH_VERDICT_WINDOW_DAYS;
+        let s = pg_store().await;
+        let now = chrono::Utc::now().timestamp_millis();
+        let day_ms = 86_400_000i64;
+
+        // (a) in-window PostToolUse, never classified → should appear.
+        let pending_sid = format!("_test-unclassified-pending-{}", uuid::Uuid::new_v4());
+        s.insert_hook_event(&pending_sid, "claude", "PostToolUse", Some("Read"), None,
+            now, Some(true), &serde_json::json!({"tool_response": "x"})).await.unwrap();
+
+        // (b) in-window PostToolUse that already carries a verdict row → excluded.
+        let classified_sid = format!("_test-unclassified-classified-{}", uuid::Uuid::new_v4());
+        let ev_id = s.insert_hook_event(&classified_sid, "claude", "PostToolUse", Some("Read"), None,
+            now, Some(true), &serde_json::json!({"tool_response": "y"})).await.unwrap();
+        s.upsert_verdicts_batch(&[(
+            classified_sid.clone(), ev_id, Some("Read".to_string()), "used", 0.9f32, "seed".to_string(),
+        )]).await.unwrap();
+
+        // (c) out-of-window PostToolUse (30 days old), unclassified → excluded.
+        let old_sid = format!("_test-unclassified-old-{}", uuid::Uuid::new_v4());
+        s.insert_hook_event(&old_sid, "claude", "PostToolUse", Some("Read"), None,
+            now - 30 * day_ms, Some(true), &serde_json::json!({"tool_response": "z"})).await.unwrap();
+
+        let pending = s.unclassified_verdict_sessions(HEALTH_VERDICT_WINDOW_DAYS).await.unwrap();
+        assert!(pending.contains(&pending_sid), "in-window unclassified session is pending");
+        assert!(!pending.contains(&classified_sid), "already-classified session excluded");
+        assert!(!pending.contains(&old_sid), "out-of-window session excluded");
     }
 
     // ── Projects tests ────────────────────────────────────────────────

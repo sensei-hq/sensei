@@ -73,6 +73,21 @@ async fn enqueue_due_project(queue: &TaskQueue, pid: &uuid::Uuid) {
     queue.enqueue(Task::new(TaskKind::ScanDocDrift, "", &pid.to_string())).await;
 }
 
+/// Enqueue the once-per-tick global aggregation passes, in dependency order.
+/// Extracted as a small helper (like [`enqueue_due_project`]) so the ordering
+/// contract is unit-testable without driving `run`'s infinite loop.
+///
+/// Order matters: `ClassifyPendingVerdicts` gap-fills verdicts for sessions
+/// never opened in Replay and MUST run before `AggregateToolInsights`, which
+/// reads `get_verdict_split_per_tool` — so the same tick's Health-tab snapshot
+/// reflects the freshly-classified sessions, not just opened ones.
+async fn enqueue_global_passes(queue: &TaskQueue) {
+    queue.enqueue(Task::new(TaskKind::AggregateCorrections, "", "")).await;
+    queue.enqueue(Task::new(TaskKind::MeasureVerdicts, "", "")).await;
+    queue.enqueue(Task::new(TaskKind::ClassifyPendingVerdicts, "", "")).await;
+    queue.enqueue(Task::new(TaskKind::AggregateToolInsights, "", "")).await;
+}
+
 /// Resolve the tick interval from a config value, falling back to the default
 /// for missing / unparseable / zero values.
 fn parse_interval(cfg: Option<String>) -> u64 {
@@ -220,12 +235,11 @@ async fn run(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
         }
         // Global passes once per tick when work happened: corrections cluster
         // across projects; verdicts re-measure accepted recs' before/after FTR;
-        // tool insights snapshot the per-tool signal cards so the observatory
-        // Insights tab reads from cache (T2 Slice D).
+        // pending verdicts get classified so the Health-tab aggregate sees every
+        // session (not just opened ones); tool insights snapshot the per-tool
+        // signal cards so the observatory Insights tab reads from cache (T2 Slice D).
         if any_due {
-            queue.enqueue(Task::new(TaskKind::AggregateCorrections, "", "")).await;
-            queue.enqueue(Task::new(TaskKind::MeasureVerdicts, "", "")).await;
-            queue.enqueue(Task::new(TaskKind::AggregateToolInsights, "", "")).await;
+            enqueue_global_passes(&queue).await;
             // Persist the advanced watermark so a restart doesn't redo this work.
             // Same restart-risk category as LAST_REFRESH_KEY — log on failure
             // so an operator can see we're at risk of re-analyzing after boot.
@@ -281,6 +295,28 @@ mod tests {
         }
         kinds.sort_by_key(|k| k.to_string());
         assert_eq!(kinds, vec![TaskKind::AnalyzeProject, TaskKind::ScanDocDrift]);
+    }
+
+    #[tokio::test]
+    async fn global_passes_classify_before_aggregate_tool_insights() {
+        // Generous per-folder budget so draining the "" (global) folder doesn't
+        // hit the concurrency cap while we read the FIFO enqueue order.
+        let queue = TaskQueue::with_max_repos(16);
+        enqueue_global_passes(&queue).await;
+
+        let n = queue.status().await.pending;
+        let mut kinds: Vec<TaskKind> = Vec::new();
+        for _ in 0..n {
+            kinds.push(queue.next_task().await.kind);
+        }
+        let ci = kinds.iter().position(|k| *k == TaskKind::ClassifyPendingVerdicts)
+            .expect("ClassifyPendingVerdicts enqueued");
+        let ai = kinds.iter().position(|k| *k == TaskKind::AggregateToolInsights)
+            .expect("AggregateToolInsights enqueued");
+        assert!(
+            ci < ai,
+            "ClassifyPendingVerdicts must be enqueued before AggregateToolInsights, got {kinds:?}",
+        );
     }
 
     #[test]
