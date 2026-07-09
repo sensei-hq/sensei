@@ -28,6 +28,7 @@ use crate::api::handlers::gateway_chains;
 use crate::api::handlers::gateway_image;
 use crate::api::handlers::knowledge;
 use crate::api::handlers::dojo;
+use crate::api::handlers::preferences;
 use crate::api::handlers::share_review;
 use crate::api::handlers::upgrades;
 use crate::api::handlers::corrections;
@@ -247,6 +248,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/knowledge/sources/{id}",            delete(knowledge::delete_source))
         .route("/api/knowledge/sources/{id}/sync",       post(knowledge::sync_source))
         .route("/api/knowledge/sources/{id}/status",     get(knowledge::source_status))
+        // Collective sharing preferences (Preferences → Sharing, C9)
+        .route("/api/preferences/collective",            get(preferences::get_collective).put(preferences::put_collective))
         // Dōjō connections (memberships)
         .route("/api/dojo/memberships",                  get(dojo::list_memberships).post(dojo::create_membership))
         // Dōjō upstream share review (C6)
@@ -523,6 +526,63 @@ mod tests {
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert!(json["status"].is_string());
         assert!(json["adapters"].is_array());
+    }
+
+    #[tokio::test]
+    async fn collective_preferences_put_then_get_roundtrip() {
+        let (app, state) = test_app().await;
+        // Serialize with the pg_store singleton test (shared one-row table).
+        let _guard = crate::collective::preferences::test_lock().lock().await;
+
+        // PUT a known-valid body → 200; the response echoes the saved shape.
+        let put = app.clone().oneshot(
+            Request::builder().method("PUT").uri("/api/preferences/collective")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::json!({
+                    "destination": "global", "cadence": "weekly", "attribution_default": "anonymous",
+                    "categories": { "memory": false }
+                }).to_string())).unwrap()
+        ).await.unwrap();
+        assert_eq!(put.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(put.into_body(), usize::MAX).await.unwrap();
+        let saved: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(saved["destination"], "global");
+        assert_eq!(saved["cadence"], "weekly");
+        assert_eq!(saved["attribution_default"], "anonymous");
+        assert_eq!(saved["categories"]["memory"], false);
+        assert_eq!(saved["categories"]["pattern"], true);
+        assert!(saved["updated_at"].is_string(), "PUT response carries updated_at");
+
+        // GET reflects the write, with the full category shape.
+        let get = app.oneshot(
+            Request::builder().uri("/api/preferences/collective").body(Body::empty()).unwrap()
+        ).await.unwrap();
+        assert_eq!(get.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(get.into_body(), usize::MAX).await.unwrap();
+        let got: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(got["destination"], "global");
+        assert_eq!(got["categories"]["memory"], false);
+        for cat in ["memory", "pattern", "rule", "prompt", "guard", "skill", "agent"] {
+            assert!(got["categories"][cat].is_boolean(), "category {cat} present in GET");
+        }
+
+        // Cleanup the shared singleton row.
+        sqlx_core::query::query("DELETE FROM sensei.collective_preferences")
+            .execute(state.pg.pool()).await.ok();
+    }
+
+    #[tokio::test]
+    async fn collective_preferences_put_rejects_invalid_destination() {
+        let (app, _) = test_app().await;
+        let resp = app.oneshot(
+            Request::builder().method("PUT").uri("/api/preferences/collective")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"destination":"everyone"}"#)).unwrap()
+        ).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(json["error"].as_str().unwrap_or_default().contains("destination"));
     }
 
     #[tokio::test]
