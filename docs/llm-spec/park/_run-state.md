@@ -1367,10 +1367,17 @@ REAL remaining gaps (verified live, grep — code-graph empty for this project =
   + tool-health insight-copy `afe11d2d` → **v0.2.34** (`7f6e8596`) MERGED→main (`a39c267c`, tag pushed,
   tap+marketplace synced). `main..develop` EMPTY. THREE milestones this session (v0.2.32 Dōjō UI, v0.2.33
   analyzer wiring, v0.2.34 analyzer completeness).
-  ⏳ NEXT (building): rank3 get_project_recommendations insight-copy (route title/why/impact via copy_or_warm
-  + InsightKind::InsightRecurringPattern — reuse the done-set shape VERBATIM; LIVE Project·Recommendations
-  screen; cap 8; degrade-safe; eager-warm optional). Then rank4 get_project_impact (FtrLift/FtrRegression) →
-  item 3 memory statuses → item 4 HARDEST (memory-usage telemetry, needs DDL+capture).
+  ✅ SHIPPED `5f12a757` (2026-07-08): rank3 get_project_recommendations insight-copy — extracted shared
+  insights::rec_copy_inputs + apply_rec_copy, called from BOTH get_insights + get_project_recommendations →
+  ONE (kind,facts_hash) cache entry shared across screens (proven by test). 5 pure tests; clippy 0; 1309 pass.
+  ON DEVELOP (unmerged — rides the next milestone merge; 1 commit, low divergence).
+  ⏸️ rank4 get_project_impact DEPRIORITIZED: marginal value + RISK — impact_verdicts may be USER-AUTHORED text
+  (created via POST), which must NOT be rewritten by gemma4. Only route if verified daemon-generated. Skip for now.
+  insight-copy sweep = substantially DONE (tool-health + project-recs = the 2 biggest gaps shipped + done-set).
+  ⏳ NEXT TRACK (highest value, survey in flight): **memory-usage feedback loop** — "did injected memory help?"
+  observatory-memories screen reads activity.memory_loads + memory_use_reports (loaded/followed/skipped_7d) but
+  NEITHER table nor capture exists. Multi-part: DDL + capture hooks (marketplace plugin) + writer + reader.
+  Survey scopes it. NOTE: capture-hook changes need plugin republish/reinstall to verify live (deferred, like Dōjō).
 
   3. **memory promote/merge statuses** defined + readyToShare/toMerge wired (Memories screen / overflow 7).
   4. HARDEST (new DDL + CAPTURE hooks in marketplace/ plugin, multi-part): memory-usage telemetry
