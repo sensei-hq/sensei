@@ -229,6 +229,12 @@ export interface MemoryDetail {
     evidence:  MemoryEvidence[];
     examples:  MemoryExample[];
     outcomes:  MemoryOutcomeRecord[];
+    /** Times this memory was surfaced into a session in the last 7 days. */
+    loaded_last_7d:   number;
+    /** Outcomes 'applied' in the last 7 days. */
+    followed_last_7d: number;
+    /** Outcomes 'ignored' in the last 7 days. */
+    skipped_last_7d:  number;
 }
 
 export interface MemoryListResponse { memories: Memory[]; }
