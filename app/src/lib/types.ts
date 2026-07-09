@@ -1255,3 +1255,47 @@ export interface DojoUpgradesResponse {
   artifacts: DojoUpgrade[];
   unread_count: number;
 }
+
+// ─── Collective sharing preferences (Observatory · Collective · C9) ──────────
+//
+// Wire shape of `GET/PUT /api/preferences/collective`. The daemon always
+// returns a FULL object — the stored row, or the defaults when unset — and PUT
+// is a whole-object full-replace (any omitted field takes its default), echoing
+// back the saved object with a fresh `updated_at`. A bad enum / unknown category
+// key / non-boolean category value is a 400 `{ "error": "..." }`. So the client
+// holds the full object and does read-modify-write: mutate one field, PUT the
+// whole thing, adopt the returned saved object as the new truth.
+
+/** Where shared insight leaves the machine. `both` = global + dojo at once —
+ *  a single enum here, not two independent toggles on the wire. */
+export type CollectiveDestination = 'none' | 'global' | 'dojo' | 'both';
+
+/** How often batches are prepared. */
+export type CollectiveCadence = 'manual' | 'daily' | 'weekly';
+
+/** Default authorship applied to what is shared. `dereferenced` (strip the
+ *  source reference) is the safest and the wire default. */
+export type CollectiveAttribution = 'named' | 'anonymous' | 'dereferenced';
+
+/** The seven share categories — all keys always present, stable order. */
+export type CollectiveCategoryKey =
+  | 'memory'
+  | 'pattern'
+  | 'rule'
+  | 'prompt'
+  | 'guard'
+  | 'skill'
+  | 'agent';
+
+/** Per-category share on/off. Every key is always present on the wire. */
+export type CollectiveCategories = Record<CollectiveCategoryKey, boolean>;
+
+/** The full collective-sharing preferences object. */
+export interface CollectivePreferences {
+  destination: CollectiveDestination;
+  cadence: CollectiveCadence;
+  categories: CollectiveCategories;
+  attribution_default: CollectiveAttribution;
+  /** RFC-3339 once saved; null while still on defaults. */
+  updated_at: string | null;
+}
