@@ -90,8 +90,18 @@ describe("buildNavItems", () => {
     ).toBe(12);
   });
 
-  it("omits Dōjō (standalone-deferred)", () => {
-    expect(byHref(buildNavItems({ focus: false }), "/dojo")).toBeUndefined();
+  it("surfaces Dōjō connections in the Review group (hidden in Focus)", () => {
+    const dojo = byHref(buildNavItems({ focus: false }), "/dojo/connections");
+    expect(dojo?.text).toBe("Dōjō");
+    expect(dojo?.kanji).toBe("結");
+    expect(byHref(buildNavItems({ focus: true }), "/dojo/connections")).toBeUndefined();
+  });
+
+  it("surfaces Collective sharing next to Dōjō in the Review group (hidden in Focus)", () => {
+    const sharing = byHref(buildNavItems({ focus: false }), "/dojo/sharing");
+    expect(sharing?.text).toBe("Sharing");
+    expect(sharing?.kanji).toBe("群");
+    expect(byHref(buildNavItems({ focus: true }), "/dojo/sharing")).toBeUndefined();
   });
 });
 

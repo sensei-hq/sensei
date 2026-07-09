@@ -22,3 +22,4 @@
 
 pub mod anonymize;
 pub mod inbox;
+pub mod preferences;

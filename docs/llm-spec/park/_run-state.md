@@ -1249,3 +1249,55 @@ Regression test: bootstrap non-temp → drop → re-bootstrap same dir reopens +
 DŌJŌ BACKEND NOW COMPLETE + OPERATIONAL (proven live + provisionable + persistent). RELEASING v0.2.31.
 REMAINING: screens C9-C11 (user-facing; buildable but hard to visually-verify — need a running configured
 Dōjō + Tauri e2e is systemically broken); consoles C12-C14 (Docker-blocked). Both DEFERRED/blocked.
+
+── v0.2.31 SHIPPED → MAIN `47b033c8` (2026-07-08). develop @ `cecf8cfe`. 7 milestones this session. ──
+⏳ DŌJŌ SCREENS phase (make backend user-facing). C10 dojo-connections BUILDING (svelte agent): list +
+connect flow over shipped GET/POST /api/dojo/memberships; +getDojoMemberships/connectDojo in api.ts +
+DojoMembership type; honest empty state (no Dōjō connected live); rail entry. unit+check bar; VISUAL
+verify DEFERRED (needs running configured Dōjō + Tauri e2e systemically broken). NEXT: C11 (wire Upgrades
+screen → real /api/upgrades C7 inbox, replacing recommendations-repurposing) + C9 (Preferences→Sharing,
+needs new /api/preferences/collective endpoint). Consoles C12-C14 Docker-blocked.
+
+── DŌJŌ C10 ✅ COMMITTED `892e348f` (2026-07-08) ── dojo-connections screen: list + connect form + empty
+state, api.ts getDojoMemberships/connectDojo, DojoMembership type, 結 Dōjō rail entry, sync/kind chips,
+credential_ref never exposed. svelte-check 0, 965 tests (+36). Empty live (no Dōjō). Visual verify deferred.
+⏳ C11 BUILDING (svelte): ADD "From your Dōjō" lane to Upgrades screen (wire shipped /api/upgrades C7 +
+Apply/Mute/Pin) ALONGSIDE the existing local-recommendations lane — NON-REGRESSIVE (recs kept; Dōjō lane
+empty until connected). +getUpgrades/apply/mute/pin in api.ts + DojoUpgrade type. NEXT: C9 (Preferences→
+Sharing / observatory-collective — needs new /api/preferences/collective endpoint = backend+frontend).
+Then Dōjō UI spec is complete (minus Docker-blocked consoles C12-C14).
+NOTE ON REMAINING VALUE: high-value work DONE (7 milestones, Dōjō backend proven+operational). Remaining
+Dōjō UI is DORMANT (needs configured Dōjō) but completes the user's explicit "all specced work incl dojo".
+
+── DŌJŌ C11 ✅ COMMITTED `bce039a3` (2026-07-08) ── Upgrades screen: added "From your Dōjō" lane (wire
+/api/upgrades C7 + Apply/Mute/Pin, pinned-first, empty state) ABOVE unchanged local-recs lane (buckets.ts
+byte-identical). api.ts +getUpgrades/apply/mute/pin, DojoUpgrade types. svelte-check 0, 1002 tests (+37).
+── DŌJŌ C9 BACKEND ✅ COMMITTED `8763a17f` (2026-07-08) ── sensei.collective_preferences (single-row:
+singleton boolean PK + CHECK; upsert ON CONFLICT (singleton)) + GET/PUT /api/preferences/collective.
+Wire shape (VERIFIED live: table on pg 5432; 13 tests pass; clippy 0):
+  GET → {destination:"none"|global|dojo|both, cadence:"manual"|daily|weekly,
+        categories:{memory,pattern,rule,prompt,guard,skill,agent → bool (all 7 always present)},
+        attribution_default:"dereferenced"|named|anonymous, updated_at: RFC3339|null}
+  PUT (whole-object full-replace; absent field → default; 400 on bad enum/category) → 200 saved shape.
+  Defaults-when-empty: destination=none, cadence=manual, all categories true, attr=dereferenced, updated_at=null.
+  attribution_default validates vs dojo_protocol::AttributionMode; require_member_of moved to api::util (DRY).
+⚠️ SPEC DIVERGENCE (default-and-proceed, honor wire-API-wins): screen spec asks for per-key
+  PUT .../{key} + a 2-col global/dojo category grid + per-destination attribution. BUILT = flat model
+  (4-state destination enum where `both`=global+dojo; ONE categories map; ONE attribution_default;
+  whole-object PUT). Frontend builds to the SHIPPED flat contract. Richer 2-col grid = follow-up if Jerry wants it.
+── DŌJŌ C9 FRONTEND ✅ COMMITTED `4f0992ac` (2026-07-08) ── (observatory)/dojo/sharing/ Preferences→
+  Sharing (群) screen: destination as two mapped toggles (global commons / company Dōjō) over the flat
+  4-state enum (pure destinationFromToggles/togglesFromDestination), cadence chip strip, 7-category
+  toggle grid, attribution_default selector. State in collective-sharing-state.svelte.ts (holds full wire
+  object, whole-object read-modify-write PUT, one-write guard, 400 leaves current untouched + surfaces
+  daemon msg). api.ts +getCollectivePreferences/putCollectivePreferences (new tryPutJson wrapper);
+  types.ts +CollectivePreferences + enums. Rail entry 群·Sharing after Dōjō connections. +38 tests
+  (1002→1040), svelte-check 0/0. Verified: test:unit 1040 pass, check 0/0.
+
+⭐ DŌJŌ UI COMPLETE — all buildable Dōjō UI shipped on develop: C10 `892e348f` (connections),
+  C11 `bce039a3` (upgrades inbox lane), C9-backend `8763a17f`, C9-frontend `4f0992ac`.
+  ⏳ MILESTONE IN PROGRESS: make bump v=patch (0.2.31→0.2.32) on develop, then merge develop→main.
+  After merge+bump: DŌJŌ TRACK = as complete as possible. GENUINELY BLOCKED remainder (needs Jerry /
+  Docker): consoles C12-C14 (SaaS web console — Docker/Supabase); running-Dōjō visual-verify of C9-C11
+  (need a configured Dōjō + Tauri e2e which is systemically broken in this env). NEXT WORK after this
+  milestone: pull the next llm-spec segment / burn down the 5-screen depth-first followups per policy #3.

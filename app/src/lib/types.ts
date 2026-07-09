@@ -817,6 +817,60 @@ export interface SyncStats {
   [k: string]: unknown;
 }
 
+// ─── Dōjō connections (memberships) ──────────────────────────────────────────
+//
+// Wire shape returned by `GET /api/dojo/memberships` — a top-level array whose
+// items mirror `ConnectionView` in `crates/senseid/src/dojo/memberships.rs`.
+// `credential_ref` is deliberately NOT part of the shape: the Keychain
+// reference is never exposed over the API, and the device token is write-only
+// (sent on connect, never read back).
+
+/** A local project bound to a membership via `projects.dojo_id`. */
+export interface DojoBoundProject {
+  id: string;
+  name: string;
+}
+
+/** One Dōjō connection as surfaced by `GET /api/dojo/memberships`. */
+export interface DojoMembership {
+  id: string;
+  registry_url: string;
+  tenant_key: string;
+  dojo_url: string;
+  /** employer | client | community | personal. */
+  kind: string;
+  /** contributor | maintainer | client_lead | admin. */
+  role: string;
+  /** sso | github_oauth | device_code. */
+  authenticated_via: string;
+  /** named | anonymous | dereferenced. */
+  attribution_default: string;
+  /** healthy | stale | error | authenticating. */
+  sync_status: string;
+  last_seq: number;
+  last_heartbeat_at: string | null;
+  enabled: boolean;
+  bound_projects: DojoBoundProject[];
+}
+
+/** Body for `POST /api/dojo/memberships` — register a connection. `credential`
+ *  is the write-only device token (stored in the OS Keychain, never returned).
+ *  `registry_url` defaults server-side when omitted. */
+export interface ConnectDojoBody {
+  /** Service membership id (`dojo.memberships.id`, a uuid) — becomes the PK. */
+  membership_id: string;
+  registry_url?: string;
+  tenant_key: string;
+  kind: string;
+  role?: string;
+  authenticated_via?: string;
+  attribution_default?: string;
+  /** The device token (Bearer). Write-only — never read back. */
+  credential: string;
+  /** Optional project to bind to this membership on connect. */
+  project_id?: string;
+}
+
 // ─── MCP tool manifests (playground / instruments) ───────────────────────────
 //
 // Wire shape returned by `GET /api/mcp/tools`. One entry per tool the daemon
@@ -1137,4 +1191,111 @@ export interface ProjectOverview {
   top_recommendation: ProjectOverviewTopRec | null;
   stats: ProjectOverviewStats;
   recentSessions: ProjectOverviewSession[];
+}
+
+// ─── Dōjō downstream inbox (Observatory · Upgrades · C7) ──────────────────────
+//
+// Wire shape returned by `GET /api/upgrades[?include_muted=1]` — the daemon's
+// downstream inbox of APPROVED Dōjō / Collective artifacts pulled back for the
+// user to Apply / Mute / Pin. Mirrors `InboxItem` in
+// `crates/senseid/src/collective/inbox.rs` (serde renames `kind` → `type`) plus
+// the `ArtifactScope` / `Attribution` jsonb shapes from the `dojo-protocol`
+// crate. Muted items are hidden unless `include_muted`; pinned float to the top;
+// `unread_count` is the number of items still `pending`.
+
+/** The six downstream artifact kinds — `dojo.artifact_kind`. */
+export type DojoUpgradeType = 'principle' | 'pattern' | 'prompt' | 'guard' | 'skill' | 'agent';
+
+/** Local override state of an inbox item — `dojo_inbox.state`. */
+export type DojoUpgradeState = 'pending' | 'applied' | 'muted' | 'pinned';
+
+/** Scope tag deciding where an artifact applies — the `dojo.artifacts.scope`
+ *  jsonb. Every field is optional (an unscoped artifact applies everywhere). */
+export interface DojoUpgradeScope {
+  company?: string;
+  team?: string;
+  project?: string;
+  stack?: string;
+}
+
+/** How the artifact is credited — the `dojo.artifacts.attribution` jsonb.
+ *  `dereferenced: true` marks client-work whose source reference was stripped. */
+export interface DojoUpgradeAttribution {
+  /** named | anonymous | dereferenced (string-tolerant on the wire). */
+  mode: DojoUpgradeAttributionMode | string;
+  author?: string;
+  org?: string;
+  anonymous_id?: string;
+  dereferenced: boolean;
+}
+
+export type DojoUpgradeAttributionMode = 'named' | 'anonymous' | 'dereferenced';
+
+/** One downstream artifact as surfaced by `GET /api/upgrades`. `type` and
+ *  `state` are kept string-tolerant so a new wire value renders neutral rather
+ *  than throwing — wire-API-wins. */
+export interface DojoUpgrade {
+  id: string;
+  membership_id: string;
+  type: DojoUpgradeType | string;
+  title: string;
+  body: string;
+  scope: DojoUpgradeScope;
+  attribution: DojoUpgradeAttribution;
+  state: DojoUpgradeState | string;
+  /** Why an Apply didn't land (a deferred kind, or a scope mismatch). */
+  note?: string;
+  /** Set once an Applied principle/pattern lands as a `sensei.memories` row. */
+  applied_memory_id?: string;
+  received_at?: string;
+}
+
+/** Response shape of `GET /api/upgrades`. */
+export interface DojoUpgradesResponse {
+  artifacts: DojoUpgrade[];
+  unread_count: number;
+}
+
+// ─── Collective sharing preferences (Observatory · Collective · C9) ──────────
+//
+// Wire shape of `GET/PUT /api/preferences/collective`. The daemon always
+// returns a FULL object — the stored row, or the defaults when unset — and PUT
+// is a whole-object full-replace (any omitted field takes its default), echoing
+// back the saved object with a fresh `updated_at`. A bad enum / unknown category
+// key / non-boolean category value is a 400 `{ "error": "..." }`. So the client
+// holds the full object and does read-modify-write: mutate one field, PUT the
+// whole thing, adopt the returned saved object as the new truth.
+
+/** Where shared insight leaves the machine. `both` = global + dojo at once —
+ *  a single enum here, not two independent toggles on the wire. */
+export type CollectiveDestination = 'none' | 'global' | 'dojo' | 'both';
+
+/** How often batches are prepared. */
+export type CollectiveCadence = 'manual' | 'daily' | 'weekly';
+
+/** Default authorship applied to what is shared. `dereferenced` (strip the
+ *  source reference) is the safest and the wire default. */
+export type CollectiveAttribution = 'named' | 'anonymous' | 'dereferenced';
+
+/** The seven share categories — all keys always present, stable order. */
+export type CollectiveCategoryKey =
+  | 'memory'
+  | 'pattern'
+  | 'rule'
+  | 'prompt'
+  | 'guard'
+  | 'skill'
+  | 'agent';
+
+/** Per-category share on/off. Every key is always present on the wire. */
+export type CollectiveCategories = Record<CollectiveCategoryKey, boolean>;
+
+/** The full collective-sharing preferences object. */
+export interface CollectivePreferences {
+  destination: CollectiveDestination;
+  cadence: CollectiveCadence;
+  categories: CollectiveCategories;
+  attribution_default: CollectiveAttribution;
+  /** RFC-3339 once saved; null while still on defaults. */
+  updated_at: string | null;
 }

@@ -8,6 +8,7 @@ import type {
   ProjectSession, CallFlowModule, CallFlowCall,
   ProjectListItem,
   KnowledgeSource, NewKnowledgeSourceBody, SyncStats,
+  DojoMembership, ConnectDojoBody, DojoUpgradesResponse, CollectivePreferences,
   McpToolManifest, SessionToolTimeline, MemoryShareBatch, ImpactVerdictEntry,
   ProjectMcpToolStat, ToolSignal, ProjectService, ToolInsight, ToolsHealth,
   SessionReplayResponse, McpServerRow, McpServerToolsManifest,
@@ -120,6 +121,29 @@ export function senseiApi(port: number) {
       });
       if (res.ok) return { ok: true, data: await res.json() as T };
       return { ok: false, error: { status: res.status, message: res.statusText } };
+    } catch (e) {
+      return { ok: false, error: { status: 0, message: e instanceof Error ? e.message : 'Network error' } };
+    }
+  }
+
+  // Error-propagating PUT that returns the parsed response body — the
+  // whole-object full-replace endpoints (e.g. collective preferences) echo the
+  // saved object back and the caller adopts it. On a non-ok it surfaces the
+  // daemon's `{ "error": "..." }` message when present, else the status text.
+  async function tryPutJson<T>(path: string, body: unknown): Promise<ApiResult<T>> {
+    try {
+      const res = await fetch(`${base}${path}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (res.ok) return { ok: true, data: await res.json() as T };
+      let message = res.statusText;
+      try {
+        const j = await res.json() as { error?: string };
+        if (j && typeof j.error === 'string' && j.error) message = j.error;
+      } catch { /* non-JSON error body — keep the status text */ }
+      return { ok: false, error: { status: res.status, message } };
     } catch (e) {
       return { ok: false, error: { status: 0, message: e instanceof Error ? e.message : 'Network error' } };
     }
@@ -904,6 +928,68 @@ export function senseiApi(port: number) {
 
     syncKnowledgeSource: (id: string) =>
       tryPost<SyncStats>(`/api/knowledge/sources/${encodeURIComponent(id)}/sync`, {}),
+
+    // ── Dōjō connections (memberships) ───────────────────────────────────
+    // Mirrors the federation knowledge-sources surface. GET returns a
+    // top-level array (empty when no Dōjō is connected — the honest empty
+    // state). `credential_ref` is never exposed; the device token on connect
+    // is write-only. Fallback is the empty array so a daemon hiccup renders
+    // the empty state, never a broken screen.
+    getDojoMemberships: () =>
+      get<DojoMembership[]>('/api/dojo/memberships', []),
+
+    // Register a Dōjō connection. `tryPost` so the validation/registration
+    // errors (bad membership uuid, insecure registry url, unknown project to
+    // bind) surface as `{ ok: false, error }` for the connect form to show.
+    connectDojo: (body: ConnectDojoBody) =>
+      tryPost<{ id: string }>('/api/dojo/memberships', body),
+
+    // ── Dōjō downstream inbox (Observatory · Upgrades · C7) ──────────────
+    // The daemon's inbox of approved Dōjō / Collective artifacts pulled back
+    // for the user to review. Muted are hidden unless `includeMuted`; pinned
+    // float to the top; `unread_count` counts the still-pending items. Fallback
+    // is the empty inbox so a daemon that predates the route (404) degrades to
+    // the empty state, never a broken screen.
+    getUpgrades: (includeMuted = false) =>
+      get<DojoUpgradesResponse>(
+        `/api/upgrades${includeMuted ? '?include_muted=1' : ''}`,
+        { artifacts: [], unread_count: 0 },
+      ),
+
+    // Apply / Mute / Pin one artifact. `tryPost` so a failure surfaces as
+    // `{ ok: false, error }` for the row to show and retry, rather than being
+    // absorbed into a fallback — the screen re-loads on success via
+    // `invalidateAll`. Apply lands a principle/pattern as a dojo memory
+    // (skill/agent/prompt/guard defer); Mute hides it locally; Pin floats it to
+    // the top and lets it outrank ambiguous local alternatives.
+    applyUpgrade: (id: string) =>
+      tryPost<Record<string, unknown>>(`/api/upgrades/${enc(id)}/apply`, {}),
+    muteUpgrade: (id: string) =>
+      tryPost<{ id: string; state: string }>(`/api/upgrades/${enc(id)}/mute`, {}),
+    pinUpgrade: (id: string) =>
+      tryPost<{ id: string; state: string }>(`/api/upgrades/${enc(id)}/pin`, {}),
+
+    // ── Collective sharing preferences (Observatory · Collective · C9) ───────
+    // GET always returns a FULL object (the stored row, or the defaults when
+    // unset), so the fallback here mirrors the daemon's defaults — a daemon
+    // hiccup renders the defaults, never a broken screen. PUT is a whole-object
+    // full-replace that echoes the saved object back (fresh updated_at);
+    // `tryPutJson` so a 400 (bad enum / unknown category / non-boolean) surfaces
+    // as `{ ok: false, error }` with the daemon's message for the screen to show.
+    getCollectivePreferences: () =>
+      get<CollectivePreferences>('/api/preferences/collective', {
+        destination: 'none',
+        cadence: 'manual',
+        categories: {
+          memory: true, pattern: true, rule: true, prompt: true,
+          guard: true, skill: true, agent: true,
+        },
+        attribution_default: 'dereferenced',
+        updated_at: null,
+      }),
+
+    putCollectivePreferences: (body: CollectivePreferences) =>
+      tryPutJson<CollectivePreferences>('/api/preferences/collective', body),
 
     // ── Lifecycle ────────────────────────────────────────────────────────
     stop: () => post('/stop', {}, {}),

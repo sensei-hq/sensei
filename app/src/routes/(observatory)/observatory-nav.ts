@@ -62,7 +62,8 @@ const MOCK = {
 /**
  * Build the rail entries. In Focus mode the Review group, the separator and
  * Preferences are dropped — leaving anchors + "Needs you" (just what needs a
- * decision). Dōjō is omitted (standalone-deferred).
+ * decision). Dōjō connections sit in Review (reached periodically, hidden in
+ * Focus) — the entry point for pairing with an employer/client/community Dōjō.
  */
 export function buildNavItems({ focus, projectCount }: NavOptions): NavEntry[] {
   const entries: NavEntry[] = [
@@ -95,6 +96,8 @@ export function buildNavItems({ focus, projectCount }: NavOptions): NavEntry[] {
         link("庫", "Libraries", "/libraries", { badge: MOCK.libraries }),
         link("具", "Instruments", "/instruments"),
         link("診", "Logs", "/logs"),
+        link("結", "Dōjō", "/dojo/connections"),
+        link("群", "Sharing", "/dojo/sharing"),
       ],
     });
     // Settings — visited when something needs changing, hidden in Focus.
