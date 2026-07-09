@@ -299,12 +299,33 @@ pub(crate) async fn get_project_recommendations(
     Path(id): Path<String>,
     Query(q): Query<RecoQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    use crate::analysis::insight_copy::{copy_or_warm, CopyLimits};
+    use crate::insights;
+
     let uuid = crate::api::util::resolve_project_uuid(&state, &id).await.ok_or(StatusCode::NOT_FOUND)?;
     state.pg.get_project(&uuid).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
-    let recs = state.pg.get_project_recommendations(&uuid, q.status.as_deref()).await
+    let mut recs = state.pg.get_project_recommendations(&uuid, q.status.as_deref()).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    // Mentor-voice copy (insight-copy) — route each rec's user-facing title +
+    // why through the shared pipeline, exactly as `observatory::get_insights`
+    // does. Wire path only: a `sensei.insight_copy` cache read plus a detached
+    // background warm on a miss — never a blocking model call, so the endpoint
+    // never stalls or errors on the gateway (a miss ships the raw DB prose).
+    // `insights::rec_copy_inputs` builds the SAME facts the Learnings board
+    // uses, so both screens share one `(kind, facts_hash)` cache entry — one
+    // warm serves both. Capped at the top COPY_CAP recs (ordered focal/score)
+    // to bound the first-load warm burst; the remainder ship their raw prose.
+    const COPY_CAP: usize = 8;
+    for r in recs.iter_mut().take(COPY_CAP) {
+        let (kind, facts, fallback) = insights::rec_copy_inputs(r);
+        let copy = copy_or_warm(&state.pg, &state.gateway, kind,
+            &facts, CopyLimits::default(), fallback).await;
+        insights::apply_rec_copy(r, copy);
+    }
+
     Ok(Json(serde_json::json!(recs)))
 }
 
