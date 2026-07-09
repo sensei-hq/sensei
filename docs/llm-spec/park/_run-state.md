@@ -1354,15 +1354,20 @@ REAL remaining gaps (verified live, grep — code-graph empty for this project =
      derive_signals/curate_insights emit hardcoded format! title/detail; AggregateToolInsights persists same raw
      templates. The 6 InsightKind variants (ToolWarn/Opportunity/Dormant/Workhorse/+2 summaries) EXIST as
      dead-code built for this. Feeds shipped Insights Health strip + (parked) Instruments·Health L2.
-     ⏳ BUILDING NOW (agent): A shared pure facts-builder signal_copy_inputs(&Signal)→(kind,facts,FallbackCopy)
-     — VERIFIED: must THREAD raw calls/errors/error_rate/days_since_last_use onto the Signal struct (derive_signals
-     computes them but Signal only stores rendered title/detail) for a stable facts_hash; B wire loop in
-     observatory.rs::tool_signals (copy_or_warm each, cap 8, keep variant/action); C eager warm in
-     tool_insights.rs::aggregate_tool_insights (generate_and_cache, gateway = ctx.app_state.gateway NOT
-     ctx.gateway()). Reuse both fns; drop dead-code #[allow]; degrade-safe fallback=template. No DDL. TDD.
+     ✅ SHIPPED `afe11d2d` (2026-07-08): tool-health signals now route through insight-copy. signal_copy_inputs
+     pure facts-builder (raw metrics threaded onto Signal as #[serde(skip)] → stable facts_hash, wire shape
+     unchanged); wire loop copy_or_warm cap 8 (observatory.rs::tool_signals); eager warm generate_and_cache
+     (tool_insights.rs, gateway=ctx.app_state.gateway); dead-code #[allow] narrowed to 7 still-unwired variants.
+     5 tests (incl. days-change→different hash); clippy 0; 1304 pass. Mentor voice on shipped Insights Health strip.
      Secondary gaps (deferred): rank3 get_project_recommendations (reuses InsightRecurringPattern verbatim, LIVE
      screen — cheapest next); rank4 get_project_impact (unlocks FtrLift/FtrRegression). Spec drift: impl is
      off-wire warm-on-miss, spec says 400ms sync (impl wins).
+
+⭐✅ ANALYZER-COMPLETENESS MILESTONE (2026-07-08): pattern→rule promotion `5a89a165` + tool-health
+  insight-copy `afe11d2d`. ⏳ MERGE+BUMP IN PROGRESS (v0.2.33→0.2.34, develop→main).
+  NEXT candidates after this: rank3 get_project_recommendations insight-copy (cheapest, reuses
+  InsightRecurringPattern verbatim, LIVE screen) → rank4 get_project_impact → then item 3/4 below.
+
   3. **memory promote/merge statuses** defined + readyToShare/toMerge wired (Memories screen / overflow 7).
   4. HARDEST (new DDL + CAPTURE hooks in marketplace/ plugin, multi-part): memory-usage telemetry
      (activity.memory_loads/memory_use_reports — the "did injected memory help?" loop); impact_regressions;
