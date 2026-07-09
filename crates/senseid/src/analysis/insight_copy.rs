@@ -80,12 +80,12 @@ static LAST_FAIL_MS: AtomicU64 = AtomicU64::new(0);
 /// Which insight card this copy is for. `as_str` is the stable snake_case key
 /// used in both the `facts_hash` and the `sensei.insight_copy.kind` column;
 /// `task_line` is the per-kind `<task>` instruction for the prompt.
-// Variants are wired to producers incrementally: Today (HeroKoanMature +
-// InsightRecurringPattern) is the first consumer; project-overview, insights-
-// triage, tool-health, and impact wire the rest in follow-up builds. The
-// unwired kinds are constructed there, so allow dead_code on the enum until then.
+// Variants are wired to producers incrementally. The tool-health six + Today
+// (HeroKoanMature + InsightRecurringPattern) + Learnings-triage memory kinds are
+// LIVE — routed by real producers. The remaining kinds (pattern-promoted, drift,
+// early-koan, insight-adopted/drift, ftr-lift/regression) still have no producer,
+// so `#[allow(dead_code)]` sits on those individual variants until they are wired.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 pub enum InsightKind {
     // Health signals
     ToolWarn,
@@ -97,16 +97,23 @@ pub enum InsightKind {
     // Learnings triage
     MemoryProposedAdopt,
     MemoryProposedReview,
+    #[allow(dead_code)]
     PatternPromoted,
+    #[allow(dead_code)]
     DriftDetected,
     // Today koan
+    #[allow(dead_code)]
     HeroKoanEarly,
     HeroKoanMature,
     InsightRecurringPattern,
+    #[allow(dead_code)]
     InsightAdopted,
+    #[allow(dead_code)]
     InsightDrift,
     // Impact
+    #[allow(dead_code)]
     FtrLift,
+    #[allow(dead_code)]
     FtrRegression,
 }
 
