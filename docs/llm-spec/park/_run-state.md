@@ -1446,8 +1446,16 @@ Ranked highest-value BUILDABLE-NOW (each cites the code anchor; verify before bu
    (reinforce/challenge/archive/dismiss) → optimistic tab re-fetch (scoped to project — fixed a latent
    unscoped-refetch bug); challenge/dismiss disabled on terminal (isTerminalStatus) → 409 surfaces inline;
    merge DEFERRED (no survivor picker; mergeMemory in api.ts for later). +13 tests; svelte-check 0/0; 1059 app.
-   ⭐ #1 TRACK COMPLETE (daemon `06e7ff3b` + UI `a8375624`). Both on develop, UNMERGED — batching with #2.
-   ⏳ #2 BUILDING (observatory-logs GET).
+   ⭐ #1 TRACK COMPLETE (daemon `06e7ff3b` + UI `a8375624`).
+2. **observatory-logs** — ✅ DAEMON GET SHIPPED `307cd5c0` (2026-07-12): GET /api/logs?level&source&module&since&limit
+   over public.logs (level/running_on/context->>'module'/logged_at, all indexed; fully parameterized; since=
+   30s|15m|1h|24h|7d|rfc3339|all, garbage→400; limit 200/max1000; newest-first; []→empty). query_logs reader +
+   get_logs handler + parse_since. 10 tests; clippy 0; 1331 pass. ⚠️ UI FOLLOW-UP NEEDED: (observatory)/logs screen
+   does NOT exist; rail 診 "Logs" (observatory-nav.ts:98) currently resolves to (health)/logs = DIFFERENT screen
+   (bootstrap diagnostics, data.sessions). Real spec = kanji 録, mockup project-logs.jsx→ObsLogs. UI chunk must
+   create (observatory)/logs + +page.ts calling GET /api/logs + resolve the 診/録 nav collision.
+   ⭐⭐ MILESTONE: #1 memory-triage (daemon 06e7ff3b + UI a8375624) + #2 logs-GET (307cd5c0). ⏳ MERGE+BUMP
+   v0.2.35→0.2.36 → main IN PROGRESS.
 2. **observatory-logs GET** — /api/logs is POST-only (routes.rs:218, logs.rs only ingest_log); public.logs
    table+indices exist. Add a GET read handler (level/source/since filters). Pure daemon, S. Resurrects a DEAD screen.
 3. **project-about field-widening** — update_solution (pg_store.rs:4750) writes only name/desc/maturity; the
