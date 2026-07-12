@@ -1454,8 +1454,13 @@ Ranked highest-value BUILDABLE-NOW (each cites the code anchor; verify before bu
    does NOT exist; rail 診 "Logs" (observatory-nav.ts:98) currently resolves to (health)/logs = DIFFERENT screen
    (bootstrap diagnostics, data.sessions). Real spec = kanji 録, mockup project-logs.jsx→ObsLogs. UI chunk must
    create (observatory)/logs + +page.ts calling GET /api/logs + resolve the 診/録 nav collision.
-   ⭐⭐ MILESTONE: #1 memory-triage (daemon 06e7ff3b + UI a8375624) + #2 logs-GET (307cd5c0). ⏳ MERGE+BUMP
-   v0.2.35→0.2.36 → main IN PROGRESS.
+   ⭐⭐✅ MILESTONE SHIPPED & RELEASED (2026-07-12): #1 memory-triage (daemon 06e7ff3b + UI a8375624) +
+   #2 logs-GET (307cd5c0) → **v0.2.36** (MERGED→main `27a0619d`, tag pushed, tap+marketplace synced).
+   `main..develop` EMPTY. FIFTH milestone this run (v0.2.32-36).
+   ⏸️ #2-UI DEFERRED (flagged): (observatory)/logs would ROUTE-COLLIDE — rail 診 "Logs" → /logs already
+   resolves to (health)/logs (bootstrap diagnostics). Needs a decision on /logs ownership (distinct route/
+   kanji 録 for observatory-logs vs relocate health-diagnostics) — risky blind (Tauri e2e broken). Endpoint
+   live+tested; UI awaits that call. ⏳ #3 BUILDING (project-about field-widening) — next clean pure-daemon.
 2. **observatory-logs GET** — /api/logs is POST-only (routes.rs:218, logs.rs only ingest_log); public.logs
    table+indices exist. Add a GET read handler (level/source/since filters). Pure daemon, S. Resurrects a DEAD screen.
 3. **project-about field-widening** — update_solution (pg_store.rs:4750) writes only name/desc/maturity; the
