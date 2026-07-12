@@ -1578,3 +1578,24 @@ ACTIVE BUILD QUEUE (default-and-proceed order, highest value first):
   G. DEFERRED-REFINE: per-session memory-load correlation; P2c behavioral memory-use classifier; rank4 impact copy.
 TRUE-BLOCKED (only these genuinely wait on Jerry/Docker): Instruments·Health registry↔usage join (data-model
   contradiction); Dōjō consoles C12-14 (Docker/Supabase). Everything else = default-and-proceed.
+
+═══════════════════════════════════════════════════════════════════════════════
+🛑 THREE FALSE-BLOCKER ASSUMPTIONS CORRECTED (2026-07-12, Jerry) — supersede ALL "blocked" notes above
+[[reference_verified_tooling]] [[feedback_autonomous_no_premature_stop]]. VERIFY via CLI before parking.
+1. "Tauri e2e broken / can't visually verify UI" = FALSE. Harness WORKS: `make test-app-e2e` (builds e2e .app +
+   boots sensei_e2e DB/daemon/Tauri IPC). I ran `bun run test:e2e` without building → mis-diagnosed. MUST visually
+   verify every UI screen with e2e now (Atlas + all queue UI). Add/extend app/e2e/tests/*.spec.ts per screen.
+2. "Docker unavailable → no-Docker pivot, park C2 + consoles + supabase" = FALSE. Docker Desktop RUNNING (socket
+   /var/run/docker.sock; binary /Applications/Docker.app/Contents/Resources/bin/docker; not on sandbox PATH).
+   Supabase CLI INSTALLED (v2.109.1). `supabase start` CAN run. UN-PARK the Dōjō SaaS console + supabase.
+3. "Verifiable backlog exhausted → idle" = premature stop (already reversed).
+── DŌJŌ GAPS NOW UNBLOCKED (specced + mockup'd, wrongly parked) — ADD TO QUEUE:
+   • Dōjō SaaS CONSOLE web app (new folder, SvelteKit + kavach/@kavach/sentry): mockups dojo-saas.jsx +
+     dojo-console.jsx; specs screen/dojo-maintainer-console.md, dojo-admin-console.md, dojo-client-lead-console.md,
+     dojo-developer-flow.md. (C2 scaffold + C12/C13/C14 console screens.)
+   • supabase/ config folder in-repo (config.toml + migrations/seed + kavach wiring) — model on ~/Developer/kavach/supabase.
+   • Then run `supabase start` + the console locally and VERIFY the login/dual-plane auth (was PARKED as un-runnable).
+── HIVE vs DOJO PROTOCOL (Jerry's Q): dojo-protocol DEPENDS ON + re-exports hive-protocol (content_hash/normalize) —
+   LAYERED, not overridden. hive-protocol = rules-only wire (shipped rule-sync substrate); dojo-protocol = 6-artifact
+   wire on top. CONSOLIDATION into one protocol (fold rules in as an artifact kind) is a reasonable refactor —
+   flagged for Jerry (touches shipped federation), see the answer.
