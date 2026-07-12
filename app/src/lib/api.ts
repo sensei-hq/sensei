@@ -907,6 +907,46 @@ export function senseiApi(port: number) {
         `/api/knowledge/memories/${enc(id)}/promote`, body,
       ),
 
+    // ── Memory lifecycle (triage → active → archive) ─────────────────────
+    // Deterministic status transitions for an existing memory. All POST, no
+    // body (except merge). `tryPost` so the daemon's `{ "error": "..." }` /
+    // 409-terminal path surfaces as `{ ok: false, error }` and the UI can
+    // degrade gracefully instead of crashing — mirrors promote/generalise.
+
+    // Retire a memory. → `archived`.
+    archiveMemory: (id: string) =>
+      tryPost<{ id: string; status: 'archived' }>(
+        `/api/knowledge/memories/${enc(id)}/archive`, {},
+      ),
+
+    // Strengthen a memory that proved out. → still active, `reinforced: true`.
+    reinforceMemory: (id: string) =>
+      tryPost<{ id: string; reinforced: boolean }>(
+        `/api/knowledge/memories/${enc(id)}/reinforce`, {},
+      ),
+
+    // Contest a memory. → `challenged` (stays in the active set). 409 when the
+    // memory is already in a terminal state (archived / rejected).
+    challengeMemory: (id: string) =>
+      tryPost<{ id: string; status: 'challenged' }>(
+        `/api/knowledge/memories/${enc(id)}/challenge`, {},
+      ),
+
+    // Reject a memory outright. → `rejected`. 409 when already terminal.
+    dismissMemory: (id: string) =>
+      tryPost<{ id: string; status: 'rejected' }>(
+        `/api/knowledge/memories/${enc(id)}/dismiss`, {},
+      ),
+
+    // Fold this memory into a surviving one (`into`). The folded memory is
+    // archived. 400 on a missing/self merge, 404 when the survivor is unknown.
+    // No merge-target picker exists on the triage screen yet, so this is not
+    // wired to a button — kept here for when that affordance lands.
+    mergeMemory: (id: string, into: string) =>
+      tryPost<{ id: string; into: string; status: 'archived' }>(
+        `/api/knowledge/memories/${enc(id)}/merge`, { into },
+      ),
+
     acceptProposal: (id: string) =>
       tryPost<{ id: string; status: string }>(`/api/knowledge/proposals/${encodeURIComponent(id)}/accept`, {}),
 
