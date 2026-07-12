@@ -9,6 +9,23 @@ pub struct PgStore {
     pool: PgPool,
 }
 
+/// Render a float slice to pgvector's text literal (`[v1,v2,...]`) so it can be
+/// bound as text and cast with `$n::vector` — no pgvector crate needed. Shared
+/// by `set_node_embedding` (writes) and `semantic_search_nodes` (query vector).
+fn vector_literal(v: &[f32]) -> String {
+    use std::fmt::Write as _;
+    let mut buf = String::with_capacity(v.len() * 8 + 2);
+    buf.push('[');
+    for (i, x) in v.iter().enumerate() {
+        if i > 0 {
+            buf.push(',');
+        }
+        let _ = write!(buf, "{x}");
+    }
+    buf.push(']');
+    buf
+}
+
 /// Valid `projects.maturity` lifecycle values — mirrors the
 /// `sensei.project_maturity` enum in
 /// `database/ddl/enum/sensei/project_maturity.ddl`. Used to reject an unknown
@@ -821,16 +838,7 @@ impl PgStore {
         node_id: &uuid::Uuid,
         embedding: &[f32],
     ) -> Result<(), String> {
-        use std::fmt::Write as _;
-        let mut buf = String::with_capacity(embedding.len() * 8 + 2);
-        buf.push('[');
-        for (i, v) in embedding.iter().enumerate() {
-            if i > 0 {
-                buf.push(',');
-            }
-            let _ = write!(buf, "{v}");
-        }
-        buf.push(']');
+        let buf = vector_literal(embedding);
         sqlx_core::query::query("UPDATE sensei.nodes SET embedding = $1::vector WHERE id = $2")
             .bind(buf)
             .bind(node_id)
@@ -838,6 +846,47 @@ impl PgStore {
             .await
             .map_err(|e| e.to_string())?;
         Ok(())
+    }
+
+    /// Semantic nearest-neighbour search over node embeddings, scoped to the
+    /// given folders + node kinds. Reuses the same pgvector cosine-distance
+    /// operator (`<=>`) as `find_duplicates`, ordering by ascending distance so
+    /// the most semantically similar nodes come first. The query embedding is
+    /// rendered with `vector_literal` and cast to `vector`, matching how
+    /// `set_node_embedding` stores node vectors. Bounded by `limit` so it never
+    /// materially slows the common query path. Returns
+    /// `(id, name, file_path, signature, line_start)` — the fields the query
+    /// handler projects into function/type hits for fusion with lexical results.
+    pub async fn semantic_search_nodes(
+        &self,
+        folder_ids: &[uuid::Uuid],
+        query_embedding: &[f32],
+        kinds: &[&str],
+        limit: i64,
+    ) -> Result<Vec<(uuid::Uuid, String, String, Option<String>, Option<i32>)>, String> {
+        if folder_ids.is_empty() || query_embedding.is_empty() || kinds.is_empty() {
+            return Ok(Vec::new());
+        }
+        let vec_literal = vector_literal(query_embedding);
+        let kind_strs: Vec<String> = kinds.iter().map(|k| k.to_string()).collect();
+        let rows: Vec<(uuid::Uuid, String, String, Option<String>, Option<i32>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT id, name, file_path, signature, line_start
+                   FROM sensei.nodes
+                  WHERE folder_id = ANY($1::uuid[])
+                    AND kind::text = ANY($3::text[])
+                    AND embedding IS NOT NULL
+                  ORDER BY embedding <=> $2::vector
+                  LIMIT $4",
+            )
+            .bind(folder_ids)
+            .bind(vec_literal)
+            .bind(kind_strs)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(rows)
     }
 
     /// Find near-duplicate function/method pairs within a folder by cosine
@@ -7765,6 +7814,51 @@ mod tests {
             pending.iter().any(|(_, kind, name, _, _)| kind == "doc" && name == "README"),
             "doc node not returned by nodes_without_embeddings"
         );
+        s.delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn semantic_search_nodes_ranks_by_cosine() {
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("sem_{}", uuid::Uuid::new_v4())).await;
+
+        // Two function nodes whose *names* share no keyword with the query.
+        // 384-dim (matches the vector(384) column). `alpha` points along dim 0,
+        // `beta` along dim 1 — orthogonal, so the query vector's direction alone
+        // decides ranking (purely semantic, no lexical overlap).
+        let dim = 384usize;
+        let mut e_alpha = vec![0.0f32; dim];
+        e_alpha[0] = 1.0;
+        let mut e_beta = vec![0.0f32; dim];
+        e_beta[1] = 1.0;
+
+        let id_alpha = s.upsert_node(&fid, "function", "alpha", "a.rs", None, None, Some(1), Some(9)).await.unwrap();
+        let id_beta = s.upsert_node(&fid, "function", "beta", "b.rs", None, None, Some(1), Some(9)).await.unwrap();
+        s.set_node_embedding(&id_alpha, &e_alpha).await.unwrap();
+        s.set_node_embedding(&id_beta, &e_beta).await.unwrap();
+
+        // Query vector leans toward alpha's direction.
+        let mut query = vec![0.0f32; dim];
+        query[0] = 0.9;
+        query[1] = 0.1;
+
+        let hits = s
+            .semantic_search_nodes(&[fid], &query, &["function", "method"], 10)
+            .await
+            .unwrap();
+
+        let names: Vec<&str> = hits.iter().map(|(_, name, ..)| name.as_str()).collect();
+        assert!(names.contains(&"alpha") && names.contains(&"beta"), "both nodes should surface, got {names:?}");
+        assert_eq!(names.first(), Some(&"alpha"), "alpha is the closest by cosine — must rank first, got {names:?}");
+
+        // A kind filter that matches neither node returns nothing.
+        let none = s.semantic_search_nodes(&[fid], &query, &["class"], 10).await.unwrap();
+        assert!(none.is_empty(), "kind filter should exclude functions, got {none:?}");
+
+        // Empty inputs are cheap no-ops, never a query.
+        assert!(s.semantic_search_nodes(&[], &query, &["function"], 10).await.unwrap().is_empty());
+        assert!(s.semantic_search_nodes(&[fid], &[], &["function"], 10).await.unwrap().is_empty());
+
         s.delete_nodes_by_folder(&fid).await.unwrap();
     }
 

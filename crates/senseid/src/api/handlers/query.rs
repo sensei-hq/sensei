@@ -119,7 +119,9 @@ pub(crate) async fn query_functions(state: &AppState, q: &str, repo_id: &str) ->
     let term = extract_search_term(q);
     let ids = resolve_scope_ids(state, repo_id).await;
     let results = if !ids.is_empty() {
-        state.pg.search_functions_scoped(&ids, &term).await.unwrap_or_default()
+        let lexical = state.pg.search_functions_scoped(&ids, &term).await.unwrap_or_default();
+        let query_vec = embed_query(state, q).await;
+        fuse_semantic(state, query_vec.as_ref(), &ids, lexical, FUNCTION_KINDS, function_hit).await
     } else {
         vec![]
     };
@@ -134,7 +136,9 @@ pub(crate) async fn query_types(state: &AppState, q: &str, repo_id: &str) -> ser
     let term = extract_search_term(q);
     let ids = resolve_scope_ids(state, repo_id).await;
     let results = if !ids.is_empty() {
-        state.pg.search_types_scoped(&ids, &term).await.unwrap_or_default()
+        let lexical = state.pg.search_types_scoped(&ids, &term).await.unwrap_or_default();
+        let query_vec = embed_query(state, q).await;
+        fuse_semantic(state, query_vec.as_ref(), &ids, lexical, TYPE_KINDS, type_hit).await
     } else {
         vec![]
     };
@@ -211,8 +215,12 @@ pub(crate) async fn query_general(state: &AppState, q: &str, repo_id: &str) -> s
     let term = extract_search_term(q);
     let ids = resolve_scope_ids(state, repo_id).await;
     let (functions, types) = if !ids.is_empty() {
-        let fns = state.pg.search_functions_scoped(&ids, &term).await.unwrap_or_default();
-        let tys = state.pg.search_types_scoped(&ids, &term).await.unwrap_or_default();
+        let fns_lex = state.pg.search_functions_scoped(&ids, &term).await.unwrap_or_default();
+        let tys_lex = state.pg.search_types_scoped(&ids, &term).await.unwrap_or_default();
+        // Embed once, fuse the semantic candidates into both node result sets.
+        let query_vec = embed_query(state, q).await;
+        let fns = fuse_semantic(state, query_vec.as_ref(), &ids, fns_lex, FUNCTION_KINDS, function_hit).await;
+        let tys = fuse_semantic(state, query_vec.as_ref(), &ids, tys_lex, TYPE_KINDS, type_hit).await;
         (fns, tys)
     } else {
         (vec![], vec![])
@@ -229,6 +237,180 @@ pub(crate) async fn query_general(state: &AppState, q: &str, repo_id: &str) -> s
             "title": d["name"], "summary": d.get("description").unwrap_or(&serde_json::json!(null)),
         })).collect::<Vec<_>>(),
     })
+}
+
+// ── Hybrid ranking (lexical + semantic fusion) ───────────────────────────────
+//
+// `/api/query`'s node searches are keyword-only (ILIKE over sensei.nodes). This
+// layer fuses in embedding nearest-neighbours so a query is ranked by BOTH
+// lexical and semantic relevance. It is strictly additive and fail-open: with no
+// query embedding (gateway down / no embed chain) or no semantic hits, the
+// lexical order is returned unchanged — never worse than keyword-only.
+
+/// Node kinds treated as "functions" for the scoped lexical search + semantic NN.
+const FUNCTION_KINDS: &[&str] = &["function", "method"];
+/// Node kinds treated as "types" for the scoped lexical search + semantic NN.
+const TYPE_KINDS: &[&str] = &["class", "struct", "interface", "enum", "type"];
+/// Max semantic NN candidates fused per query — bounds the extra work so the
+/// common path doesn't get materially slower.
+const SEM_CANDIDATES: i64 = 25;
+/// Upper bound on fused results returned (mirrors the lexical `LIMIT 50`).
+const HYBRID_MAX: usize = 50;
+/// Query-embed timeout. Semantic ranking is additive, so a slow embed backend
+/// must never stall the query — on timeout we return keyword-only results.
+const EMBED_QUERY_TIMEOUT_SECS: u64 = 10;
+/// RRF constant. 60 is the value from Cormack et al. and the de-facto default;
+/// it damps low-ranked items so a hit near the top of either list dominates.
+const RRF_K: f64 = 60.0;
+
+/// Row shape returned by `PgStore::semantic_search_nodes`.
+type SemRow = (uuid::Uuid, String, String, Option<String>, Option<i32>);
+
+/// A single ranked search hit: a de-duplication key (`id`) plus the JSON item
+/// returned to the caller unchanged.
+#[derive(Clone, Debug)]
+pub(crate) struct Hit {
+    pub id: String,
+    pub item: serde_json::Value,
+}
+
+/// Project a semantic row into a function hit — identical shape to
+/// `PgStore::search_functions_scoped` so fused results stay homogeneous.
+fn function_hit(r: SemRow) -> serde_json::Value {
+    serde_json::json!({ "id": r.0, "name": r.1, "file_path": r.2, "signature": r.3, "line_start": r.4 })
+}
+
+/// Project a semantic row into a type hit — identical shape to
+/// `PgStore::search_types_scoped` (no `signature`).
+fn type_hit(r: SemRow) -> serde_json::Value {
+    serde_json::json!({ "id": r.0, "name": r.1, "file_path": r.2, "line_start": r.4 })
+}
+
+/// Fuse a lexical (keyword) and a semantic (embedding NN) ranked list with
+/// Reciprocal Rank Fusion. Each hit contributes `1 / (RRF_K + rank)` (rank
+/// 1-based); an item present in both lists sums both contributions, so it
+/// outranks an item ranked highly in only one list. De-dupes by `id`.
+///
+/// Fail-open by construction: an empty `semantic` list reproduces the lexical
+/// order exactly (scores strictly decrease with rank) and an empty `lexical`
+/// list reproduces the semantic order — so a missing query embedding degrades to
+/// keyword-only ranking with no special-casing.
+pub(crate) fn fuse_rankings(lexical: &[Hit], semantic: &[Hit]) -> Vec<Hit> {
+    use std::collections::HashMap;
+    let mut scores: HashMap<String, f64> = HashMap::new();
+    let mut items: HashMap<String, serde_json::Value> = HashMap::new();
+    // First-seen (lexical-first) order gives a stable tie-break on equal scores.
+    let mut order: Vec<String> = Vec::new();
+    for list in [lexical, semantic] {
+        for (rank, hit) in list.iter().enumerate() {
+            let contrib = 1.0 / (RRF_K + (rank + 1) as f64);
+            let entry = scores.entry(hit.id.clone()).or_insert_with(|| {
+                order.push(hit.id.clone());
+                items.insert(hit.id.clone(), hit.item.clone());
+                0.0
+            });
+            *entry += contrib;
+        }
+    }
+    // Stable sort by score desc keeps first-seen order on exact ties.
+    order.sort_by(|a, b| {
+        scores[b]
+            .partial_cmp(&scores[a])
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    order
+        .into_iter()
+        .filter_map(|id| items.remove(&id).map(|item| Hit { id, item }))
+        .collect()
+}
+
+/// Convert JSON result items into `Hit`s keyed by their `id` field. Items
+/// without a string `id` are dropped (they can't be de-duplicated or fused).
+fn to_hits(items: Vec<serde_json::Value>) -> Vec<Hit> {
+    items
+        .into_iter()
+        .filter_map(|item| {
+            let id = item.get("id")?.as_str()?.to_string();
+            Some(Hit { id, item })
+        })
+        .collect()
+}
+
+/// Embed the query string via the pinned 384-dim `embed` chain — the same chain
+/// `EmbedNodes` uses, so query and node vectors share a space. Fail-open: any
+/// gateway error, missing chain, timeout, or empty result logs a warning and
+/// yields `None`, so the caller falls back to keyword-only ranking.
+async fn embed_query(state: &AppState, text: &str) -> Option<Vec<f32>> {
+    use gateway::types::capability::Capability;
+    use gateway::types::request::{InferenceRequest, Payload};
+    if text.trim().is_empty() {
+        return None;
+    }
+    let request = InferenceRequest {
+        capability: Capability::TextEmbed,
+        model: None,
+        router: None,
+        chain: Some("embed".to_string()),
+        payload: Payload::Embed { texts: vec![text.to_string()] },
+        budget: None,
+    };
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(EMBED_QUERY_TIMEOUT_SECS),
+        state.gateway.execute(&request),
+    )
+    .await
+    {
+        Ok(Ok(resp)) => match resp.embeddings.and_then(|mut e| e.pop()) {
+            Some(v) if !v.is_empty() => Some(v),
+            _ => {
+                tracing::warn!("embed_query: empty embedding — keyword-only ranking");
+                None
+            }
+        },
+        Ok(Err(e)) => {
+            tracing::warn!(error = %e, "embed_query: gateway embed failed — keyword-only ranking");
+            None
+        }
+        Err(_) => {
+            tracing::warn!("embed_query: embed timed out — keyword-only ranking");
+            None
+        }
+    }
+}
+
+/// Fetch semantic NN candidates for the same folders + node kinds and fuse them
+/// with the lexical results. Additive + fail-open: no query embedding
+/// (`query_vec = None`), an empty NN, or a failed NN all return the lexical
+/// order unchanged.
+async fn fuse_semantic(
+    state: &AppState,
+    query_vec: Option<&Vec<f32>>,
+    ids: &[uuid::Uuid],
+    lexical: Vec<serde_json::Value>,
+    kinds: &[&str],
+    projector: fn(SemRow) -> serde_json::Value,
+) -> Vec<serde_json::Value> {
+    let Some(query_vec) = query_vec else {
+        return lexical;
+    };
+    let sem_rows = match state.pg.semantic_search_nodes(ids, query_vec, kinds, SEM_CANDIDATES).await {
+        Ok(rows) => rows,
+        Err(e) => {
+            tracing::warn!(error = %e, "fuse_semantic: semantic_search_nodes failed — keyword-only ranking");
+            return lexical;
+        }
+    };
+    if sem_rows.is_empty() {
+        return lexical;
+    }
+    let semantic: Vec<serde_json::Value> = sem_rows.into_iter().map(projector).collect();
+    let mut fused: Vec<serde_json::Value> =
+        fuse_rankings(&to_hits(lexical), &to_hits(semantic))
+            .into_iter()
+            .map(|h| h.item)
+            .collect();
+    fused.truncate(HYBRID_MAX);
+    fused
 }
 
 /// Extract the most meaningful search term from a natural language query.
@@ -249,4 +431,61 @@ pub(crate) fn extract_search_term(q: &str) -> String {
         .max_by_key(|w| w.len())
         .unwrap_or("")
         .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Build a hit whose id doubles as its item, so ranking order is readable.
+    fn hit(id: &str) -> Hit {
+        Hit { id: id.to_string(), item: serde_json::json!({ "id": id }) }
+    }
+
+    fn ids(hits: &[Hit]) -> Vec<String> {
+        hits.iter().map(|h| h.id.clone()).collect()
+    }
+
+    #[test]
+    fn fuse_ranks_shared_hit_first_and_dedupes() {
+        // C is ranked in both lists → its RRF score sums both contributions and
+        // beats every item present in only one list. Each id appears once.
+        let lexical = [hit("A"), hit("B"), hit("C")];
+        let semantic = [hit("C"), hit("D")];
+        let fused = fuse_rankings(&lexical, &semantic);
+        assert_eq!(ids(&fused), vec!["C", "A", "B", "D"], "shared-in-both C leads; single-list order preserved");
+        assert_eq!(fused.len(), 4, "C is de-duplicated, not counted twice");
+    }
+
+    #[test]
+    fn fuse_empty_semantic_preserves_lexical_order() {
+        // Fallback path: no query embedding ⇒ empty semantic ⇒ lexical unchanged.
+        let lexical = [hit("A"), hit("B"), hit("C")];
+        let fused = fuse_rankings(&lexical, &[]);
+        assert_eq!(ids(&fused), vec!["A", "B", "C"]);
+    }
+
+    #[test]
+    fn fuse_empty_lexical_uses_semantic_order() {
+        // Pure-semantic path (no keyword matches) ⇒ semantic order.
+        let semantic = [hit("X"), hit("Y"), hit("Z")];
+        let fused = fuse_rankings(&[], &semantic);
+        assert_eq!(ids(&fused), vec!["X", "Y", "Z"]);
+    }
+
+    #[test]
+    fn fuse_both_empty_is_empty() {
+        assert!(fuse_rankings(&[], &[]).is_empty());
+    }
+
+    #[test]
+    fn to_hits_keys_by_id_and_drops_idless() {
+        let items = vec![
+            serde_json::json!({ "id": "n1", "name": "a" }),
+            serde_json::json!({ "name": "no id" }),
+            serde_json::json!({ "id": 42 }), // non-string id is dropped
+        ];
+        let hits = to_hits(items);
+        assert_eq!(ids(&hits), vec!["n1"], "only the string-id item survives");
+    }
 }
