@@ -4471,6 +4471,20 @@ impl PgStore {
         Ok(())
     }
 
+    /// Persist a session's retrospective summary — but only when the row has no
+    /// summary yet (NULL or blank). `activity.sessions.summary` may be authored
+    /// by the assistant at checkpoint time; this fills the (large) gap of empty
+    /// summaries with the analyzer-derived narrative without ever clobbering an
+    /// existing one. Idempotent and safe to re-run — a populated summary is left
+    /// untouched. Called from `analyze::enrich_session` on each analysis pass.
+    pub async fn set_session_summary_if_empty(&self, session_id: &uuid::Uuid, summary: &str) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE activity.sessions SET summary = $2
+              WHERE id = $1 AND (summary IS NULL OR btrim(summary) = '')"
+        ).bind(session_id).bind(summary).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     /// Replace a session's per-turn rows (#66). Deletes the session's existing
     /// turns and re-inserts from a JSON array `[{turn_number, segment,
     /// started_ms, ended_ms, duration_ms, is_correction, triage_signal,
@@ -8973,6 +8987,32 @@ mod tests {
             .bind(session_id).execute(s.pool()).await.unwrap();
         sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
             .bind(pid).execute(s.pool()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn set_session_summary_if_empty_writes_then_preserves() {
+        // The retrospective producer fills an empty summary, but must never
+        // clobber one that already exists (assistant checkpoint summaries).
+        let s = pg_store().await;
+        let pid = s.create_project(&format!("_test:sum-{}", uuid::Uuid::new_v4()), None, None).await.unwrap();
+        let fid = create_test_folder(&s, &format!("sum-{}", uuid::Uuid::new_v4())).await;
+        let sid = format!("_test-sid-{}", uuid::Uuid::new_v4());
+        let session_id = s.record_session_event(&sid, &fid, Some(&pid), "claude", true).await.unwrap();
+
+        // Fresh session → summary NULL → the guarded write persists.
+        s.set_session_summary_if_empty(&session_id, "touched 2 files; outcome completed").await.unwrap();
+        let first: (Option<String>,) = sqlx_core::query_as::query_as("SELECT summary FROM activity.sessions WHERE id = $1")
+            .bind(session_id).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(first.0.as_deref(), Some("touched 2 files; outcome completed"));
+
+        // Second write with a populated summary must be a no-op (not clobbered).
+        s.set_session_summary_if_empty(&session_id, "a different summary").await.unwrap();
+        let second: (Option<String>,) = sqlx_core::query_as::query_as("SELECT summary FROM activity.sessions WHERE id = $1")
+            .bind(session_id).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(second.0.as_deref(), Some("touched 2 files; outcome completed"), "populated summary preserved");
+
+        sqlx_core::query::query("DELETE FROM activity.sessions WHERE id = $1").bind(session_id).execute(s.pool()).await.ok();
+        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1").bind(pid).execute(s.pool()).await.ok();
     }
 
     #[tokio::test]

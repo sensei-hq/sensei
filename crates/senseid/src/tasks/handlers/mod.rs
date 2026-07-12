@@ -12,6 +12,7 @@ mod community;
 mod verdicts;
 mod verdicts_classify;
 mod analyze;
+mod session_retro;
 mod doc_drift;
 mod corrections;
 mod generate;
