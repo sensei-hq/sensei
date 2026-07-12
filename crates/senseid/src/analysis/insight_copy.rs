@@ -81,10 +81,11 @@ static LAST_FAIL_MS: AtomicU64 = AtomicU64::new(0);
 /// used in both the `facts_hash` and the `sensei.insight_copy.kind` column;
 /// `task_line` is the per-kind `<task>` instruction for the prompt.
 // Variants are wired to producers incrementally. The tool-health six + Today
-// (HeroKoanMature + InsightRecurringPattern) + Learnings-triage memory kinds are
-// LIVE — routed by real producers. The remaining kinds (pattern-promoted, drift,
-// early-koan, insight-adopted/drift, ftr-lift/regression) still have no producer,
-// so `#[allow(dead_code)]` sits on those individual variants until they are wired.
+// (HeroKoanMature + InsightRecurringPattern) + Learnings-triage memory kinds +
+// SessionRetrospective (per-session narrative, off the analyzer enrichment tick)
+// are LIVE — routed by real producers. The remaining kinds (pattern-promoted,
+// drift, early-koan, insight-adopted/drift, ftr-lift/regression) still have no
+// producer, so `#[allow(dead_code)]` sits on those individual variants until wired.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InsightKind {
     // Health signals
@@ -115,6 +116,8 @@ pub enum InsightKind {
     FtrLift,
     #[allow(dead_code)]
     FtrRegression,
+    // Sessions
+    SessionRetrospective,
 }
 
 impl InsightKind {
@@ -139,6 +142,7 @@ impl InsightKind {
             InsightKind::InsightDrift => "insight_drift",
             InsightKind::FtrLift => "ftr_lift",
             InsightKind::FtrRegression => "ftr_regression",
+            InsightKind::SessionRetrospective => "session_retrospective",
         }
     }
 
@@ -181,6 +185,8 @@ impl InsightKind {
                 "Kind: ftr_lift. Report that first-try resolution improved. Give the before and after and what likely helped.",
             InsightKind::FtrRegression =>
                 "Kind: ftr_regression. Report that first-try resolution dropped. Give the before and after and where to look.",
+            InsightKind::SessionRetrospective =>
+                "Kind: session_retrospective. Summarise what this coding session accomplished. The title is a short headline of the main work; the detail states the outcome and any corrections. Ground both in the facts. Write plainly, sentence case.",
         }
     }
 }

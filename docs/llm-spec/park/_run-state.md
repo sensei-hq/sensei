@@ -1454,8 +1454,13 @@ Ranked highest-value BUILDABLE-NOW (each cites the code anchor; verify before bu
    does NOT exist; rail 診 "Logs" (observatory-nav.ts:98) currently resolves to (health)/logs = DIFFERENT screen
    (bootstrap diagnostics, data.sessions). Real spec = kanji 録, mockup project-logs.jsx→ObsLogs. UI chunk must
    create (observatory)/logs + +page.ts calling GET /api/logs + resolve the 診/録 nav collision.
-   ⭐⭐ MILESTONE: #1 memory-triage (daemon 06e7ff3b + UI a8375624) + #2 logs-GET (307cd5c0). ⏳ MERGE+BUMP
-   v0.2.35→0.2.36 → main IN PROGRESS.
+   ⭐⭐✅ MILESTONE SHIPPED & RELEASED (2026-07-12): #1 memory-triage (daemon 06e7ff3b + UI a8375624) +
+   #2 logs-GET (307cd5c0) → **v0.2.36** (MERGED→main `27a0619d`, tag pushed, tap+marketplace synced).
+   `main..develop` EMPTY. FIFTH milestone this run (v0.2.32-36).
+   ⏸️ #2-UI DEFERRED (flagged): (observatory)/logs would ROUTE-COLLIDE — rail 診 "Logs" → /logs already
+   resolves to (health)/logs (bootstrap diagnostics). Needs a decision on /logs ownership (distinct route/
+   kanji 録 for observatory-logs vs relocate health-diagnostics) — risky blind (Tauri e2e broken). Endpoint
+   live+tested; UI awaits that call. ⏳ #3 BUILDING (project-about field-widening) — next clean pure-daemon.
 2. **observatory-logs GET** — /api/logs is POST-only (routes.rs:218, logs.rs only ingest_log); public.logs
    table+indices exist. Add a GET read handler (level/source/since filters). Pure daemon, S. Resurrects a DEAD screen.
 3. **project-about field-widening** — update_solution (pg_store.rs:4750) writes only name/desc/maturity; the
@@ -1476,3 +1481,16 @@ QUEUE RECONCILE: About EDIT UI exists (only daemon field-widen left); rules-cons
 Instruments Playground/Replay FUNCTIONAL (only Health blocked); settings/prefs writable e2e. DROP these from "gaps".
 BLOCKED (Jerry/Docker): Instruments·Health registry-join; Dōjō consoles C12-14; clarification-prompting (spec-deferred v2);
 per-session memory-load correlation; impact insight-copy (user-authored verdicts).
+
+── QUEUE PROGRESS (2026-07-12, post-v0.2.36) ──
+#3 project-about field-widening ✅ SHIPPED `b0f5f6e2` (ProjectPatch + COALESCE; client/goal/preferred_acp were
+   dropped; maturity 400-validated; icon/stack/links jsonb wired though form doesn't expose inputs yet). On develop.
+#4 session-retrospective narrative writer ⏳ BUILDING (a7f4376a): facts-gatherer → insight-copy (SessionRetrospective
+   kind) → activity.sessions.summary via analyzer enrichment; deterministic fallback; non-fatal. High product value.
+NEXT after #4: batch-merge #3+#4 → v0.2.37; then #7 project-icon inference (pure-daemon), #5 Atlas graph-viz (UI, L),
+   #6 traceability action (daemon+UI), #8 impact-regression surface. #2-UI (logs screen) still DEFERRED (route collision).
+
+#4 session-retrospective narrative writer ✅ SHIPPED `93dff585` (2026-07-12): session_retro.rs facts-gatherer →
+   insight-copy (SessionRetrospective kind) → activity.sessions.summary via enrich_session (guarded only-if-empty,
+   non-fatal, deterministic fallback). Reader list_all_sessions already selects summary. 10 tests; clippy 0; 1344.
+⭐⭐ MILESTONE #3+#4 → ⏳ MERGE+BUMP v0.2.36→0.2.37 → main IN PROGRESS.
