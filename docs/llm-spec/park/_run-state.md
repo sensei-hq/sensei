@@ -1641,3 +1641,11 @@ A ✅ SHIPPED `30ac7f8b` (2026-07-12): daemon get_context/get_rules accept proje
   re-verify THROUGH the MCP tools. (3) Then B (contract coverage) → C (find/pin) → D (install+assistant-upgrade+
   version worker) → E (dedup) → F (3-repo live check) → resume autopilot.
 NOTE: true single-process proxy→daemon test blocked by binary-only crates (no lib/cross-dep) — workstream B may add lib targets.
+
+A ✅ VERIFIED LIVE (daemon-side) 2026-07-12: after install-service, daemon 0.2.39; /api/knowledge/context?project=sensei
+  → 200 (1 memory); /api/knowledge/rules?project=sensei → 200 (8 rules, folder=sensei repo). Name resolution WORKS.
+  ⚠️ OBSERVED: only 1 memory for sensei project — LOW; check memory generation/association for the project (F gate).
+  PENDING: Jerry `claude plugin update sensei` → verify THROUGH the MCP tools (my proxy still disconnected).
+⏳ B BUILDING: anti-drift MCP↔daemon CONTRACT coverage — table-driven test over knowledge/project tools asserting
+  the proxy's request shape is accepted by the daemon + returns genuine results; make the seam testable (mcp lib
+  target / dev-dep) since both crates are binary-only. This is the "tighten tests so it can't drift" guard.
