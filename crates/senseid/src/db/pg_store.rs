@@ -4549,6 +4549,25 @@ impl PgStore {
         Ok(())
     }
 
+    /// Overwrite a project's `icon` jsonb with a deterministically inferred icon
+    /// ([[pipeline/project-icon]]). The caller guards against clobbering an
+    /// author choice; this setter just persists the value.
+    pub async fn set_project_icon(
+        &self,
+        id: &uuid::Uuid,
+        icon: &serde_json::Value,
+    ) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE sensei.projects SET icon = $2, modified_at = now() WHERE id = $1",
+        )
+        .bind(id)
+        .bind(icon)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     /// Get-or-create a namespace instance by (scope_key, slug). Returns its id.
     pub async fn upsert_namespace(
         &self,
@@ -9324,6 +9343,19 @@ mod tests {
         ).bind(id).fetch_one(s.pool()).await.unwrap();
         assert_eq!(acp.as_deref(), Some("zed"), "preferred_acp text must persist");
 
+        s.delete_project(&id).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn set_project_icon_round_trips() {
+        // The inferred-icon write path persists the jsonb verbatim, overwriting
+        // the '{}' default the row was created with.
+        let s = pg_store().await;
+        let id = s.create_project("_test:proj:icon", None, None).await.unwrap();
+        let icon = serde_json::json!({"kind":"kanji","value":"鉄","source":"kanji_map"});
+        s.set_project_icon(&id, &icon).await.unwrap();
+        let p = s.get_project(&id).await.unwrap().unwrap();
+        assert_eq!(p["icon"], icon, "inferred icon jsonb must persist verbatim");
         s.delete_project(&id).await.unwrap();
     }
 
