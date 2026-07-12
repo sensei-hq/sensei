@@ -1489,3 +1489,8 @@ per-session memory-load correlation; impact insight-copy (user-authored verdicts
    kind) → activity.sessions.summary via analyzer enrichment; deterministic fallback; non-fatal. High product value.
 NEXT after #4: batch-merge #3+#4 → v0.2.37; then #7 project-icon inference (pure-daemon), #5 Atlas graph-viz (UI, L),
    #6 traceability action (daemon+UI), #8 impact-regression surface. #2-UI (logs screen) still DEFERRED (route collision).
+
+#4 session-retrospective narrative writer ✅ SHIPPED `93dff585` (2026-07-12): session_retro.rs facts-gatherer →
+   insight-copy (SessionRetrospective kind) → activity.sessions.summary via enrich_session (guarded only-if-empty,
+   non-fatal, deterministic fallback). Reader list_all_sessions already selects summary. 10 tests; clippy 0; 1344.
+⭐⭐ MILESTONE #3+#4 → ⏳ MERGE+BUMP v0.2.36→0.2.37 → main IN PROGRESS.
