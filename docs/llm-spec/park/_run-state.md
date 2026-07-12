@@ -1435,13 +1435,17 @@ REAL remaining gaps (verified live, grep — code-graph empty for this project =
 Most of the spec is SHIPPED; remaining gaps = a few "DB-right, no path" bridges + 2 net-new subsystems.
 Ranked highest-value BUILDABLE-NOW (each cites the code anchor; verify before building):
 
-1. ⏳ BUILDING NOW — **memory-triage lifecycle actions** (archive/reinforce/challenge/dismiss/merge).
-   Pure daemon + tiny UI wire. Writers EXIST (pg_store.rs:1398 reinforce_memory, :1405 archive_memory,
-   :5833 set_memory_status, :1509 link_memories); UI tabs+buttons exist; only promote/generalise are wired;
-   /api/knowledge/memories/{id} is GET-only (routes.rs:232). Add 5 thin handlers in knowledge.rs next to
-   promote_memory + routes (POST /api/knowledge/memories/{id}/{action}; merge takes {into}); wire buttons in
-   (observatory)/memories + (observatory)/learnings + (project)/project/[id]/memories. READ THE memory_status
-   ENUM FIRST (challenged/rejected). Confirmations via insight-copy. Additive; no schema change. FLAGSHIP screen.
+1. **memory-triage lifecycle actions** — ✅ DAEMON SHIPPED `06e7ff3b` (2026-07-12): 5 POST routes
+   /api/knowledge/memories/{id}/{archive|reinforce|challenge|dismiss|merge} (routes.rs:235-239) + thin handlers
+   over existing writers. Enum: NO 'dismissed' → dismiss='rejected'; challenge='challenged'; CURATABLE_STATES
+   guard → 409 on terminal; merge={into} links parent=into/child=id + archives child (pipeline/memory.md), 400
+   self/missing, 404 unknown survivor. 8 route tests; clippy 0; 1321 pass. Shapes: archive→{id,status:archived};
+   reinforce→{id,reinforced:true}; challenge→{id,status:challenged}|409; dismiss→{id,status:rejected}|409;
+   merge {into}→{id,into,status:archived}|400|404. errors {error}.
+   ⏳ UI WIRING BUILDING (svelte agent ad13c9c8): api.ts +the 5 helpers; wire triage buttons in
+   (observatory)/learnings (+memories/project mirrors) → optimistic tab transitions; disable challenge/dismiss on
+   terminal; merge only if a target-picker exists else defer. DETERMINISTIC (no insight-copy). Then #1 COMPLETE →
+   merge+bump (batch with #2 logs GET).
 2. **observatory-logs GET** — /api/logs is POST-only (routes.rs:218, logs.rs only ingest_log); public.logs
    table+indices exist. Add a GET read handler (level/source/since filters). Pure daemon, S. Resurrects a DEAD screen.
 3. **project-about field-widening** — update_solution (pg_store.rs:4750) writes only name/desc/maturity; the
