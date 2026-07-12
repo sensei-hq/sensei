@@ -214,8 +214,9 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/patterns/{project}/conventions", get(codebase::project_conventions_handler))
         // Hook event ingestion (from sensei-hook.ts)
         .route("/hook/event", post(sessions::ingest_hook_event))
-        // Structured logging (remote writers: CLI, MCP, app)
-        .route("/api/logs", post(logs::ingest_log))
+        // Structured logging: POST ingests (CLI, MCP, app); GET reads for the
+        // Observatory · Logs screen.
+        .route("/api/logs", post(logs::ingest_log).get(logs::get_logs))
         // Metrics
         .route("/api/metrics/{project}", get(observatory::get_metrics))
         // Workflow state
