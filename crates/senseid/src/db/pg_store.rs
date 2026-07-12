@@ -3045,7 +3045,7 @@ impl PgStore {
         // design (the scheduler retries every full-refresh window).
         type Row = (
             uuid::Uuid, Option<uuid::Uuid>, f64, f64,
-            Option<Vec<String>>,
+            Option<Vec<String>>, String,
         );
         let rows: Vec<Row> = sqlx_core::query_as::query_as(
             "WITH current AS (
@@ -3065,7 +3065,8 @@ impl PgStore {
                     r.reasoning_trace_id,
                     COALESCE(r.baseline_ftr, 0)::float8,
                     c.current_ftr,
-                    t.models_used
+                    t.models_used,
+                    r.based_on::text
                FROM inference.recommendations r
                JOIN current c ON c.rec_id = r.id
           LEFT JOIN inference.reasoning_traces t ON t.id = r.reasoning_trace_id"
@@ -3074,7 +3075,7 @@ impl PgStore {
         if rows.is_empty() { return Ok(0); }
 
         let mut updated: i64 = 0;
-        for (rec_id, trace_id, baseline_ftr, current_ftr, models_used_opt) in rows {
+        for (rec_id, trace_id, baseline_ftr, current_ftr, models_used_opt, based_on) in rows {
             let verdict = crate::verdicts::Verdict::from_ftr_delta(current_ftr - baseline_ftr);
             let models_used = models_used_opt.unwrap_or_default();
             let consensus = crate::verdicts::synthesize_reasoning(
@@ -3086,15 +3087,31 @@ impl PgStore {
                     SET verdict     = $2::sensei.recommendation_verdict,
                         current_ftr = $3,
                         measured_at = now()
-                  WHERE id = $1"
+                  WHERE id = $1 AND verdict = 'pending'"
             )
             .bind(rec_id)
             .bind(verdict.as_wire())
             .bind(current_ftr)
             .execute(&self.pool).await.map_err(|e| e.to_string())?;
 
+            // The `verdict = 'pending'` guard makes the flip win exactly once, so a
+            // concurrent scheduler tick can't measure (or challenge) the same rec
+            // twice. `rows_affected == 0` means another tick already claimed it.
             if upd.rows_affected() == 0 { continue; }
             updated += 1;
+
+            // Learning-loop feedback: an accepted rec whose FTR REGRESSED after
+            // acceptance discredits the memory that spawned it. Challenge (weaken)
+            // that source memory through the existing memory_outcome pipeline — the
+            // `memory_outcome_apply` trigger does the strength/status math. This
+            // fires at most once per rec (the atomic pending→negative flip above is
+            // the transition signal). Non-fatal: a challenge-write failure must not
+            // abort verdict measurement.
+            if verdict == crate::verdicts::Verdict::Negative
+                && let Err(e) = self.challenge_source_memory_for_rec(&rec_id, &based_on).await
+            {
+                tracing::warn!(error = %e, rec = %rec_id, "measure_pending_verdicts: challenge source memory failed");
+            }
 
             match trace_id {
                 Some(id) => {
@@ -5839,6 +5856,60 @@ impl PgStore {
         Ok(row.0)
     }
 
+    /// Fetch the learned memory that sources `source_id` (a detected-pattern id),
+    /// if any. Companion to [`Self::memory_exists_with_source`] — returns the id
+    /// so a caller can act on the memory (e.g. record a challenge outcome when a
+    /// recommendation built on the same pattern later regresses).
+    pub async fn memory_id_by_source(&self, source_id: &uuid::Uuid) -> Result<Option<uuid::Uuid>, String> {
+        let row: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
+            "SELECT id FROM sensei.memories WHERE source_id = $1 AND origin = 'learned' LIMIT 1"
+        ).bind(source_id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.map(|(id,)| id))
+    }
+
+    /// Challenge (weaken) the learned memory that sourced a now-regressed
+    /// recommendation. Resolves `based_on.patterns[0]` → the convention memory
+    /// (`source_id = pattern`), then records ONE `'violated'` memory_outcome so
+    /// the `memory_outcome_apply` trigger does the actual strength/status math —
+    /// no hand-rolled weakening here, DRY with the outcome pipeline.
+    ///
+    /// Idempotent: the outcome `context` carries a `rec:<id>` marker and the write
+    /// is gated on that marker not already existing, so a rec that is somehow
+    /// re-measured never penalises the same memory twice. Returns `Ok(true)` when
+    /// a fresh violation was recorded, `Ok(false)` for the no-op paths (the rec
+    /// has no source memory, was already challenged for this rec, or the memory is
+    /// archived/rejected).
+    pub async fn challenge_source_memory_for_rec(
+        &self, rec_id: &uuid::Uuid, based_on_json: &str,
+    ) -> Result<bool, String> {
+        // A missing/empty/non-uuid `patterns[0]` → manual rec / no provenance → no-op.
+        let Some(pattern_id) = Self::based_on_first_pattern(based_on_json) else {
+            return Ok(false);
+        };
+        let Some(memory_id) = self.memory_id_by_source(&pattern_id).await? else {
+            return Ok(false); // the rec's pattern never spawned a memory
+        };
+        let marker = format!("rec:{rec_id} regression");
+        // Idempotency guard: skip if this rec already challenged this memory.
+        let already: (bool,) = sqlx_core::query_as::query_as(
+            "SELECT EXISTS(SELECT 1 FROM sensei.memory_outcomes
+                            WHERE memory_id = $1 AND outcome = 'violated' AND context = $2)"
+        ).bind(memory_id).bind(&marker).fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        if already.0 {
+            return Ok(false);
+        }
+        // The memory_outcome_apply trigger applies strength -= 0.7 and moves the
+        // memory to challenged/archived. record_outcomes_batch skips archived/
+        // rejected memories, so an empty `skipped` means a violation landed.
+        let skipped = self.record_outcomes_batch(&[OutcomeRow {
+            memory_id,
+            session_id: None,
+            outcome: "violated".to_string(),
+            context: Some(marker),
+        }]).await?;
+        Ok(skipped.is_empty())
+    }
+
     /// Promote a proven memory to a higher (broader) scope: copy it as a
     /// `proposed` memory on `target_namespace_id` with `origin='promoted'` and
     /// `source_id` pointing back at the original. The copy lands in the triage
@@ -8270,6 +8341,172 @@ mod tests {
         assert_eq!(p["lifecycle"], "rule");
 
         cleanup_promote_fixture(&s, &proj_id, &pat_id, &rid).await;
+    }
+
+    // ── Verdict regression → challenge the source memory ────────────────
+    // When an accepted rec's FTR REGRESSES after acceptance, the memory that
+    // spawned it (via based_on.patterns[0] → memories.source_id) is challenged
+    // (weakened) through the existing memory_outcome pipeline.
+
+    /// Seed a (project, folder, pattern, learned memory sourced by the pattern)
+    /// fixture. The memory starts at 1.0 + `strength_bump` so a single violation
+    /// (−0.7) challenges rather than archives it. Returns (proj, folder, pat, mem).
+    async fn seed_pattern_and_sourced_memory(
+        s: &PgStore, suffix: &str, strength_bump: f64,
+    ) -> (uuid::Uuid, uuid::Uuid, uuid::Uuid, uuid::Uuid) {
+        let (proj_id, fid) = create_test_project_and_folder(s, suffix).await;
+        let pat_id = s
+            .upsert_pattern(&proj_id, Some(&fid), "_test:regressed-rule", false, None, &serde_json::json!([]))
+            .await
+            .unwrap();
+        // Convention memory sourced by the pattern — mirrors the rule-candidates generator.
+        let mem = InsertMemory {
+            project_id: Some(proj_id),
+            scope: "project".to_string(),
+            scope_filter: None,
+            mtype: "convention".to_string(),
+            title: format!("_test:regressed-memory:{suffix}"),
+            content: "always foo".to_string(),
+            impact: None,
+            tags: Vec::new(),
+            triage_signal: None,
+            status: "active".to_string(),
+            namespace_id: None,
+            enforcement: None,
+            origin: Some("learned".to_string()),
+            source_id: Some(pat_id),
+        };
+        let mem_id = s.insert_memory(&mem).await.unwrap();
+        if strength_bump > 0.0 {
+            s.reinforce_memory(&mem_id, strength_bump).await.unwrap();
+        }
+        (proj_id, fid, pat_id, mem_id)
+    }
+
+    /// Extend the memory fixture with an accepted+regressed promote_pattern rec:
+    /// acted 4 days ago at baseline FTR 0.9, then ≥3 post-acceptance sessions that
+    /// all fail (ftr=false) so the measured current FTR is 0.0 → a negative verdict.
+    async fn seed_regressed_rec_with_memory(
+        s: &PgStore, suffix: &str,
+    ) -> (uuid::Uuid, uuid::Uuid, uuid::Uuid, uuid::Uuid) {
+        let (proj_id, fid, pat_id, mem_id) = seed_pattern_and_sourced_memory(s, suffix, 2.0).await;
+        let based_on = serde_json::json!({ "patterns": [pat_id] });
+        let rec_id = s
+            .create_recommendation_full(&proj_id, "_test:regressed-rec", "why", None, "promote_pattern", "medium", &based_on, None, None)
+            .await
+            .unwrap();
+        sqlx_core::query::query(
+            "UPDATE inference.recommendations
+                SET status = 'accepted'::sensei.recommendation_status,
+                    acted_at = now() - interval '4 days',
+                    baseline_ftr = 0.900
+              WHERE id = $1"
+        ).bind(rec_id).execute(s.pool()).await.unwrap();
+        for _ in 0..3 {
+            sqlx_core::query::query(
+                "INSERT INTO activity.sessions (folder_id, project_id, outcome, ftr, started_at)
+                 VALUES ($1, $2, 'corrected'::sensei.session_outcome, false, now())"
+            ).bind(fid).bind(proj_id).execute(s.pool()).await.unwrap();
+        }
+        (proj_id, pat_id, mem_id, rec_id)
+    }
+
+    async fn cleanup_regressed_fixture(s: &PgStore, proj_id: &uuid::Uuid) {
+        // Sessions FK to the folder (persisted), not the project, so drop them
+        // explicitly; delete_project cascades recs, memories(+outcomes), patterns.
+        sqlx_core::query::query("DELETE FROM activity.sessions WHERE project_id = $1")
+            .bind(proj_id).execute(s.pool()).await.ok();
+        s.delete_project(proj_id).await.ok();
+    }
+
+    async fn violated_count(s: &PgStore, mem_id: &uuid::Uuid) -> i64 {
+        let row: (i64,) = query_as(
+            "SELECT count(*) FROM sensei.memory_outcomes WHERE memory_id = $1 AND outcome = 'violated'"
+        ).bind(mem_id).fetch_one(s.pool()).await.unwrap();
+        row.0
+    }
+
+    /// Full round-trip: measuring a regressed rec flips its verdict to negative
+    /// AND challenges the source memory exactly once — re-measuring is inert
+    /// (the rec is no longer pending, so the transition never re-fires).
+    #[tokio::test]
+    async fn measure_regressed_rec_challenges_source_memory_once() {
+        let s = pg_store().await;
+        let suffix = format!("regress_challenge_{}", uuid::Uuid::new_v4());
+        let (proj_id, _pat_id, mem_id, _rec_id) = seed_regressed_rec_with_memory(&s, &suffix).await;
+
+        let m0 = s.get_memory(&mem_id).await.unwrap().unwrap();
+        assert!((m0["strength"].as_f64().unwrap() - 3.0).abs() < 1e-6, "seed strength 3.0");
+        assert_eq!(m0["status"], "active", "memory starts active");
+
+        s.measure_pending_verdicts().await.unwrap();
+
+        let recs = s.list_recommendations(&proj_id).await.unwrap();
+        let r = recs.iter().find(|r| r["title"] == "_test:regressed-rec").unwrap();
+        assert_eq!(r["verdict"], "negative", "FTR dropped 0.9→0.0 → negative verdict");
+
+        assert_eq!(violated_count(&s, &mem_id).await, 1, "one violation recorded for the source memory");
+        let m1 = s.get_memory(&mem_id).await.unwrap().unwrap();
+        assert!((m1["strength"].as_f64().unwrap() - 2.3).abs() < 1e-6, "trigger dropped strength 3.0→2.3");
+        assert_eq!(m1["status"], "challenged", "trigger moved memory to challenged");
+
+        // Re-measure: the rec is no longer pending → not re-measured → no second hit.
+        s.measure_pending_verdicts().await.unwrap();
+        assert_eq!(violated_count(&s, &mem_id).await, 1, "idempotent: no second violation on re-run");
+        let m2 = s.get_memory(&mem_id).await.unwrap().unwrap();
+        assert!((m2["strength"].as_f64().unwrap() - 2.3).abs() < 1e-6, "strength did not drop again");
+
+        cleanup_regressed_fixture(&s, &proj_id).await;
+    }
+
+    /// Method-level idempotency: the `rec:<id>` context marker gates the write, so
+    /// challenging the same memory for the same rec twice records only one violation.
+    #[tokio::test]
+    async fn challenge_source_memory_for_rec_is_idempotent_per_rec() {
+        let s = pg_store().await;
+        let suffix = format!("challenge_idem_{}", uuid::Uuid::new_v4());
+        let (proj_id, _fid, pat_id, mem_id) = seed_pattern_and_sourced_memory(&s, &suffix, 2.0).await;
+        let based_on = serde_json::json!({ "patterns": [pat_id] }).to_string();
+        let rec_id = uuid::Uuid::new_v4();
+
+        assert!(s.challenge_source_memory_for_rec(&rec_id, &based_on).await.unwrap(), "first challenge records a violation");
+        assert_eq!(violated_count(&s, &mem_id).await, 1);
+        let m1 = s.get_memory(&mem_id).await.unwrap().unwrap();
+        assert!((m1["strength"].as_f64().unwrap() - 2.3).abs() < 1e-6, "strength 3.0→2.3");
+        assert_eq!(m1["status"], "challenged");
+
+        // Same rec again → no-op, no second violation, strength unchanged.
+        assert!(!s.challenge_source_memory_for_rec(&rec_id, &based_on).await.unwrap(), "second challenge for same rec is a no-op");
+        assert_eq!(violated_count(&s, &mem_id).await, 1, "still exactly one violation");
+        let m2 = s.get_memory(&mem_id).await.unwrap().unwrap();
+        assert!((m2["strength"].as_f64().unwrap() - 2.3).abs() < 1e-6, "strength did not drop again");
+
+        cleanup_regressed_fixture(&s, &proj_id).await;
+    }
+
+    /// A rec with no resolvable source memory is a clean no-op (not an error):
+    /// a pattern that never spawned a memory, and empty/absent provenance.
+    #[tokio::test]
+    async fn challenge_source_memory_for_rec_no_source_memory_is_noop() {
+        let s = pg_store().await;
+        let suffix = format!("challenge_nomem_{}", uuid::Uuid::new_v4());
+        let (proj_id, fid) = create_test_project_and_folder(&s, &suffix).await;
+        // Pattern with NO sourced memory.
+        let pat_id = s
+            .upsert_pattern(&proj_id, Some(&fid), "_test:orphan-rule", false, None, &serde_json::json!([]))
+            .await
+            .unwrap();
+        let rec_id = uuid::Uuid::new_v4();
+
+        let based_on = serde_json::json!({ "patterns": [pat_id] }).to_string();
+        assert!(!s.challenge_source_memory_for_rec(&rec_id, &based_on).await.unwrap(), "no memory sources this pattern → no-op");
+        // Empty / absent provenance → no-op, no panic.
+        assert!(!s.challenge_source_memory_for_rec(&rec_id, r#"{"patterns":[]}"#).await.unwrap());
+        assert!(!s.challenge_source_memory_for_rec(&rec_id, "{}").await.unwrap());
+        assert!(s.memory_id_by_source(&pat_id).await.unwrap().is_none(), "sanity: pattern has no learned memory");
+
+        sqlx_core::query::query("DELETE FROM inference.detected_patterns WHERE id = $1").bind(pat_id).execute(s.pool()).await.ok();
+        s.delete_project(&proj_id).await.ok();
     }
 
     // ── Gateway chains / role assignments tests ─────────────────────
