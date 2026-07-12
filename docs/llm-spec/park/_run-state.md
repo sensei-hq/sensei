@@ -1494,3 +1494,9 @@ NEXT after #4: batch-merge #3+#4 → v0.2.37; then #7 project-icon inference (pu
    insight-copy (SessionRetrospective kind) → activity.sessions.summary via enrich_session (guarded only-if-empty,
    non-fatal, deterministic fallback). Reader list_all_sessions already selects summary. 10 tests; clippy 0; 1344.
 ⭐⭐ MILESTONE #3+#4 → ⏳ MERGE+BUMP v0.2.36→0.2.37 → main IN PROGRESS.
+
+⭐⭐✅ MILESTONE #3+#4 SHIPPED & RELEASED (2026-07-12): project-about field-widening `b0f5f6e2` + session
+   retrospective `93dff585` → **v0.2.37** (MERGED→main `d397dc40`, synced). SIXTH milestone (v0.2.32-37).
+⏳ #7 project-icon inference BUILDING — pure-daemon, deterministic (README-image/logo-glob/favicon/kanji-from-
+   stack/letter fallback chain → projects.icon; removes generic-場 fallback). Favoring verifiable daemon work;
+   #5 Atlas-viz / #6 traceability-action / #8 impact-regression are UI-heavy (can't visually verify, Tauri e2e broken).
