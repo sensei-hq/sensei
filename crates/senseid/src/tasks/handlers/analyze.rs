@@ -206,7 +206,9 @@ fn derive_outcome(events: &[HookEvent], corrections: i32) -> &'static str {
     }
 }
 
-fn parent_dir(path: &str) -> Option<String> {
+/// Parent directory of a file path — the "module" locus. `pub(super)` so the
+/// sibling `session_retro` facts-gatherer derives "module" the same way.
+pub(super) fn parent_dir(path: &str) -> Option<String> {
     path.rsplit_once('/').map(|(dir, _)| dir.to_string()).filter(|d| !d.is_empty())
 }
 
@@ -337,6 +339,20 @@ pub async fn enrich_session(
                 )
                 .await?;
             ctx.pg().replace_session_turns(session_id, &turns_to_json(&m.turns)).await?;
+
+            // Retrospective narrative → activity.sessions.summary. Deterministic
+            // facts stay code-owned; only the prose routes through insight-copy,
+            // which degrades to a deterministic fallback on a gateway miss. The
+            // write is guarded (only-if-empty), so this is non-fatal and never
+            // clobbers an assistant-authored checkpoint summary — a failure is
+            // logged, not propagated (it must not abort enrichment).
+            let facts = super::session_retro::gather_session_facts(&events, &m);
+            let summary = super::session_retro::generate_session_summary(
+                ctx.pg(), &ctx.app_state.gateway, &facts,
+            ).await;
+            if let Err(e) = ctx.pg().set_session_summary_if_empty(session_id, &summary).await {
+                tracing::warn!(error = %e, session = %session_id, "enrich_session: set_session_summary_if_empty failed");
+            }
             Ok(true)
         }
         None => Ok(false),
@@ -749,6 +765,16 @@ mod tests {
         assert_eq!(row.2, Some(false));
         assert_eq!(row.3.as_deref(), Some("corrected"));
         assert_eq!(row.4, Some(2000.0), "gap-aware active duration");
+
+        // retrospective summary persisted by enrichment. The test gateway has no
+        // insight-copy chain, so `generate_and_cache` misses → the deterministic
+        // fallback is written (non-empty, names the outcome).
+        let summary: (Option<String>,) = sqlx_core::query_as::query_as(
+            "SELECT summary FROM activity.sessions WHERE id = $1"
+        ).bind(sid).fetch_one(pg.pool()).await.unwrap();
+        let summary = summary.0.expect("summary written");
+        assert!(!summary.trim().is_empty(), "session summary is non-empty: {summary:?}");
+        assert!(summary.contains("outcome corrected"), "fallback names the outcome: {summary:?}");
 
         // turn rows written, ordered, segmented.
         let turns: Vec<(i32, i32, bool)> = sqlx_core::query_as::query_as(
