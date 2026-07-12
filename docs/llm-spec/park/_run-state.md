@@ -1494,3 +1494,24 @@ NEXT after #4: batch-merge #3+#4 → v0.2.37; then #7 project-icon inference (pu
    insight-copy (SessionRetrospective kind) → activity.sessions.summary via enrich_session (guarded only-if-empty,
    non-fatal, deterministic fallback). Reader list_all_sessions already selects summary. 10 tests; clippy 0; 1344.
 ⭐⭐ MILESTONE #3+#4 → ⏳ MERGE+BUMP v0.2.36→0.2.37 → main IN PROGRESS.
+
+⭐⭐✅ MILESTONE #3+#4 SHIPPED & RELEASED (2026-07-12): project-about field-widening `b0f5f6e2` + session
+   retrospective `93dff585` → **v0.2.37** (MERGED→main `d397dc40`, synced). SIXTH milestone (v0.2.32-37).
+⏳ #7 project-icon inference BUILDING — pure-daemon, deterministic (README-image/logo-glob/favicon/kanji-from-
+   stack/letter fallback chain → projects.icon; removes generic-場 fallback). Favoring verifiable daemon work;
+   #5 Atlas-viz / #6 traceability-action / #8 impact-regression are UI-heavy (can't visually verify, Tauri e2e broken).
+
+#7 project-icon inference ✅ SHIPPED `8181ee7a` (2026-07-12): pure infer_icon chain (author→[logo GATED]→
+   kanji-from-stack→letter→場) + re-scan guard + set_project_icon, hooked in reconcile_repo_identity. IMAGE TIER
+   GATED at hook (no asset-serve route → <img> would 404; logo-projects fall to kanji). 15 tests; clippy 0. On develop.
+⏳ #8 (next) semantic-search hybrid ranking BUILDING — fuse embedding similarity into unified_query (query.rs:33,
+   keyword-only today; embeddings only power dup-detection). Pure-daemon, no DDL, verifiable.
+── BACKLOG HONESTY: cleanest pure-daemon sweep items (#1-4,#7) DONE. Remaining rich items are UI-heavy + need
+   visual verification (BLOCKED: Tauri e2e): #5 Atlas graph-viz (L), #6 traceability actions (daemon+UI), #8-impact
+   surface (UI), #2-UI logs screen (route-collision decision). After semantic-search, reassess: may slow cadence /
+   flag that top remaining value needs Jerry (visual verify + the /logs route decision + asset-serve infra for icons).
+
+#8 semantic-search hybrid ranking ✅ SHIPPED `9e7f911c` (2026-07-12): RRF fusion (pure) + semantic_search_nodes
+   (reuses pgvector <=> cosine) fused into query_functions/types/general; fail-open (no embed→lexical); vector_literal
+   DRY. 6 tests; clippy 0; 1369 pass. On develop.
+⭐⭐ MILESTONE #7+#8 → ⏳ MERGE+BUMP v0.2.37→0.2.38 → main IN PROGRESS.
