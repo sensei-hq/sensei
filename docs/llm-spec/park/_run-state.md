@@ -1628,3 +1628,16 @@ Full spec: docs/llm-spec/park/_tooling-verification-plan.md. Sequence A→F, the
     (cd repo → resolve project → summary/search/context/rules/patterns → assert GENUINE non-empty DB results)
 THEN full-steam autopilot on the ORIGINAL queue (sweep A–G + Dōjō console/supabase + protocol consolidation).
 Standing: default-and-proceed; install(release) after every bump; visually verify UI via `make test-app-e2e`.
+
+── P0 TOOLING PROGRESS ──
+A ✅ SHIPPED `30ac7f8b` (2026-07-12): daemon get_context/get_rules accept project NAME (via resolve_project_uuid,
+  the /commands resolver) → 400 only if unresolvable; mcp proxy sends project=<name> (not project_id=<name>) /
+  resolved project for rules. SEAM TEST added (routes.rs::mcp_proxy_knowledge_context_and_rules_resolve_by_project_name
+  + 2 mcp pure tests) — all RED on the old bug (400), green after. senseid 1369 / mcp 17 / clippy 0.
+  ⏳ INSTALLING release (make install-service, bl9jjl9lv) so the RUNNING daemon carries the fix.
+  NEXT: (1) curl-verify daemon /api/knowledge/context?project=sensei + /rules?project=sensei → 200 + real data
+  (my MCP proxy is disconnected from the earlier kill — curl is how I verify the daemon side).
+  (2) Jerry: `claude plugin update sensei` (or /mcp reconnect) → picks up fixed mcp proxy + reconnects → then
+  re-verify THROUGH the MCP tools. (3) Then B (contract coverage) → C (find/pin) → D (install+assistant-upgrade+
+  version worker) → E (dedup) → F (3-repo live check) → resume autopilot.
+NOTE: true single-process proxy→daemon test blocked by binary-only crates (no lib/cross-dep) — workstream B may add lib targets.
