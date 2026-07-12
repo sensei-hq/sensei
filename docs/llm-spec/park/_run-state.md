@@ -1649,3 +1649,6 @@ A ✅ VERIFIED LIVE (daemon-side) 2026-07-12: after install-service, daemon 0.2.
 ⏳ B BUILDING: anti-drift MCP↔daemon CONTRACT coverage — table-driven test over knowledge/project tools asserting
   the proxy's request shape is accepted by the daemon + returns genuine results; make the seam testable (mcp lib
   target / dev-dep) since both crates are binary-only. This is the "tighten tests so it can't drift" guard.
+
+── B (contract coverage) was KILLED by the session limit (0 file changes, tree clean); RE-RUNNING ab9e30401
+  (limit reset). Same scope: mcp lib split + table-driven proxy→daemon contract test over knowledge/project tools.
