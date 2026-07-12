@@ -1510,3 +1510,8 @@ NEXT after #4: batch-merge #3+#4 → v0.2.37; then #7 project-icon inference (pu
    visual verification (BLOCKED: Tauri e2e): #5 Atlas graph-viz (L), #6 traceability actions (daemon+UI), #8-impact
    surface (UI), #2-UI logs screen (route-collision decision). After semantic-search, reassess: may slow cadence /
    flag that top remaining value needs Jerry (visual verify + the /logs route decision + asset-serve infra for icons).
+
+#8 semantic-search hybrid ranking ✅ SHIPPED `9e7f911c` (2026-07-12): RRF fusion (pure) + semantic_search_nodes
+   (reuses pgvector <=> cosine) fused into query_functions/types/general; fail-open (no embed→lexical); vector_literal
+   DRY. 6 tests; clippy 0; 1369 pass. On develop.
+⭐⭐ MILESTONE #7+#8 → ⏳ MERGE+BUMP v0.2.37→0.2.38 → main IN PROGRESS.
