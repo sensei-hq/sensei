@@ -1,32 +1,51 @@
-# Sensei tooling verification — steps (2026-07-12)
+# SPEC — Sensei tooling correctness, anti-drift, upgrade hardening, live verification
+Owner: autonomous run · Priority: **TOP — before all remaining sweep/Dōjō/UI work** (Jerry, 2026-07-12)
 
-**Mandate (Jerry):** verify the sensei MCP/context loop works end-to-end with GENUINE DB-backed results
-BEFORE resuming the original build plan. sensei must make the assistant efficient (folder → project →
-search/context/rules/memories). Dogfood it. **Always `make install` (release) after `make bump`.**
+## Why (root causes, all dogfooded live)
+The assistant kept re-deriving wrong conclusions because sensei's own tools didn't work here:
+- **Stale daemon:** running daemon was **v0.2.29**, repo **v0.2.39** — 10 releases. `make bump` never installs; nobody ran `make install`. → all MCP calls hit old code.
+- **MCP↔daemon param DRIFT:** the MCP proxy sends params the daemon rejects — `get_layered_context` sends `project_id=<NAME>` (daemon wants a UUID → 400); `get_rules` sends `folder=<mcp-process-cwd>` (wrong folder). Each side is unit-green; the **seam is untested** (`knowledge_api.rs:45` tests the daemon with a UUID — the very contract the proxy violates).
+- **Stale processes after upgrade:** the sensei MCP is a **long-lived stdio subprocess owned by Claude Code**, not a brew service. `make install` restarts the daemon (launchd) but leaves the old `sensei-mcp` process in memory → tools keep running old code until the MCP connection is reloaded.
+- **Data is fine:** 558,904 nodes; `sensei` repo → project `ff1ccea2` (3395 fns). Scanner picked the right context. Also a **duplicate empty** `sensei` project `2efd4ecf` (0 nodes) that `list_projects` surfaces.
 
-## Findings (dogfooded against the live daemon)
-- Daemon was **v0.2.29**, repo **v0.2.39** — 10 releases stale (bump never installed). Now release v0.2.39 installed + live. ✅
-- Data IS indexed: **558,904 nodes**; the sensei repo folders map to project **`ff1ccea2…` ("sensei", 3395 fns/664 types)**. Scanner picked the right context. ✅
-- Tools returning GENUINE results (with explicit `project:"sensei"`): `get_project_summary`, `search`, `list_projects`. ✅
-- BUGS found:
-  - **B1 — stale MCP proxy:** running `sensei-mcp` processes still run the OLD binary (0.2.29); the new binary is on disk but the process wasn't reloaded → some tools 404/behave old. **Needs an MCP-server reload.**
-  - **B2 — get_rules:** daemon `GET /api/knowledge/rules` needs `?folder=<abs_path>` (returns real rules with it; 400 without). The MCP tool doesn't pass the folder.
-  - **B3 — get_layered_context:** daemon `GET /api/knowledge/context` needs `project_id=<uuid>` (returns real memories); `?project=<name>` → 400. The tool passes a name, no name→id resolution.
-  - **B4 — cwd project resolution:** the MCP resolves project from the MCP-server PROCESS cwd (`main.rs:30`), which isn't the repo → "no project resolved." Fragile by design.
-  - **B5 — duplicate project:** two "sensei" projects — `2efd4ecf` (0 nodes, what list_projects surfaces) vs `ff1ccea2` (the real index). Dedup needed.
+## Goals
+1. MCP tools return GENUINE DB-backed results for the folder/project you're working in.
+2. The MCP↔daemon contract **cannot silently drift** — enforced by tests.
+3. Upgrades leave **no stale processes** — daemon + MCP both current after an install.
+4. The **full cycle is live-verified on 3 first-class example repos**, repeatably.
 
-## Steps
-1. **Reload the MCP server** so the harness runs the new 0.2.39 `sensei-mcp` binary (fixes B1). [Harness-level — Jerry reloads the sensei MCP / restarts Claude Code, OR kill the stale PIDs to force respawn.]
-2. **Fix the MCP proxy param-passing** (in `crates/mcp`): B2 pass `folder` (the resolved project's abs_path or cwd) to `get_rules`; B3 resolve project name→`project_id` and pass `project_id` to `get_layered_context`. Rebuild + `make install-service` + reload.
-3. **Folder→project resolution + the workflow Jerry wants (B4):**
-   - `find_projects` (or `list_projects` + `under=<path>` filter): list projects whose `abs_path` is under a given folder (default cwd) → "find projects under current folder".
-   - `use_project`/pin: a way to set the active project for the session (env var `SENSEI_PROJECT` / a pin file the MCP reads, or per-call `project`), so all tools resolve to it regardless of cwd → "I'm working on sensei".
-4. **Dedup the empty `sensei` project** `2efd4ecf` (B5) — merge/prune to the real `ff1ccea2`.
-5. **Re-verify EVERY tool** returns genuine DB-backed results: get_rules, get_project_summary, search, get_layered_context, get_patterns, get_project_conventions, get_duplicates, get_commands. Record pass/fail.
-6. **Workflow fix (process):** `make ship` = bump + install; autonomous loop installs after every milestone bump; consider a version-change worker (rescan/reanalyze on binary version change).
-7. **Full-cycle tests** (real use cases): folder → project resolution → search/context/rules → assert DB-backed non-empty genuine results.
-8. **THEN resume the original plan** (sweep queue A–G + Dōjō console/supabase + protocol consolidation).
+## First-class example repos (live test corpus)
+Diverse, real, already-indexed (all in `list_projects`):
+- **sensei** `ff1ccea2` — monorepo (rust + sveltekit + tauri + postgres). `/Users/Jerry/Developer/sensei-hq/sensei`
+- **rokkit** `86066f90` — svelte UI library. `/Users/Jerry/Developer/rokkit`
+- **dbd-rs** `6b95f063` — rust CLI. `/Users/Jerry/Developer/dbd-rs`
+(kavach `71f7a319` is a 4th if we want a 2nd auth/TS repo.) The full-cycle harness (F) runs against these.
+
+## Workstreams (sequenced; this whole block is P0)
+### A. Resolution correctness  — ⏳ BUILDING (agent aa37a598)
+Daemon `get_context`/`get_rules` accept `project` (name) → resolve name→uuid daemon-side (reuse the `resolve_project_uuid` used by `/commands`); MCP proxy sends a value the daemon accepts; keep `project_id`/`folder` working. + the first MCP↔daemon integration test (must go red on proxy-sends-name → daemon-400).
+
+### B. Anti-drift contract coverage
+A test that, for **every** MCP tool, boots the daemon (in-process axum app / the `tests/` harness against `sensei_test`) with a seeded project, invokes the MCP proxy's `handle_call_tool` (or the exact HTTP it builds), and asserts a non-error, genuinely-shaped result. Enumerated + ideally table-driven over the tool list so a NEW tool or a changed daemon param FAILS the suite. This is the regression guard against future drift.
+
+### C. Folder→project workflow (the "which project am I on" fix)
+- `find_projects` (or `list_projects?under=<path>`): projects whose `abs_path` is under a folder (default cwd) → "find projects under current folder".
+- `use_project`/pin: write the active project to a pin file `~/.sensei/active-project` (name+id) that the MCP reads per-call as the default when cwd doesn't resolve → "I'm working on sensei" works regardless of cwd. (MCP process cwd is fixed, so a pin file is the robust mechanism.)
+
+### D. Upgrade / install hardening
+- **bump ⇒ install (release):** a `make ship` = `make bump && make install`; the autonomous loop runs `make install` (release) after every milestone bump. [[feedback_bump_then_install]]
+- **no stale processes:** `make install` should also nudge the MCP to reload — at minimum `pkill sensei-mcp` so Claude Code respawns it on the new binary (verify this respawns cleanly), and document that a full pickup needs a Claude Code MCP reconnect. Investigate a cleaner signal.
+- **version-change worker:** on daemon boot, compare running binary version vs a stored `last_analyzed_version`; if changed, enqueue a full rescan + re-analysis so the graph/memories rebuild against the new binary (a fresh binary on a stale index is the exact failure).
+
+### E. Dedup the duplicate empty project
+Merge/prune `2efd4ecf` (empty "sensei") into `ff1ccea2` (the real index); prevent name-duplicate projects (scan-reconcile guard).
+
+### F. Live full-cycle verification on the 3 repos
+A repeatable check (script or db-gated test) that, per repo, resolves the project **from its folder**, runs get_project_summary / search / get_layered_context / get_rules / get_patterns / get_project_conventions / get_duplicates, and asserts genuine NON-EMPTY DB-backed results. Run it after install + MCP reload. This is the "is the cycle working" gate, first-class going forward.
+
+## Exit → resume autopilot
+When A–F are done + the 3-repo live check is green, RESUME the original queue full-steam (sweep A–G: Atlas/logs-UI/traceability/impact/icon-asset-serve/benchmarks/TDD-gate; Dōjō console + supabase + protocol consolidation). Standing rules unchanged: default-and-proceed, install-after-bump, visually verify UI via `make test-app-e2e`.
 
 ## Status
-- [x] Daemon current (release v0.2.39 installed + live)
-- [ ] Step 1 reload MCP · [ ] Step 2 param fixes · [ ] Step 3 resolution+tools · [ ] Step 4 dedup · [ ] Step 5 re-verify all · [ ] Step 6 ship/worker · [ ] Step 7 tests · [ ] Step 8 resume plan
+- [x] Daemon current (release v0.2.39 live) · [x] Diagnosis · [x] Spec
+- [ ] A resolution+first integration test (building) · [ ] B contract coverage · [ ] C find/pin · [ ] D install-hardening+worker · [ ] E dedup · [ ] F 3-repo live check · [ ] resume autopilot

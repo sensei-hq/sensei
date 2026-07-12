@@ -1614,3 +1614,17 @@ project_id=UUID, proving the contract the proxy violates); (E) duplicate empty "
 mcp send valid id; B get_rules pass the resolved project's folder) + ADD the MCP↔daemon integration test that catches
 it. Then make install-service + Jerry reloads MCP → re-verify. CHUNK 2: find_projects(under=path) + use_project(pin).
 CHUNK 3: dedup empty project. ALWAYS make install (release) after bump.
+
+═══════════════════════════════════════════════════════════════════════════════
+⭐⭐⭐ MASTER PRIORITY REORDER (2026-07-12, Jerry) — P0 TOOLING TRACK BEFORE ALL REMAINING WORK.
+Full spec: docs/llm-spec/park/_tooling-verification-plan.md. Sequence A→F, then resume autopilot:
+  A resolution correctness + first MCP↔daemon integration test  ⏳ BUILDING (aa37a598)
+  B anti-drift CONTRACT test coverage (every MCP tool vs daemon, table-driven — so the seam can't drift)
+  C folder→project workflow: find_projects(under=path) + use_project pin (~/.sensei/active-project)
+  D upgrade/install hardening: bump⇒install(release) / `make ship`; install kills stale sensei-mcp; version-change
+    worker (rescan+reanalyze on binary version change)
+  E dedup the empty duplicate "sensei" project 2efd4ecf → ff1ccea2
+  F LIVE full-cycle verification on 3 first-class repos: sensei ff1ccea2, rokkit 86066f90, dbd-rs 6b95f063
+    (cd repo → resolve project → summary/search/context/rules/patterns → assert GENUINE non-empty DB results)
+THEN full-steam autopilot on the ORIGINAL queue (sweep A–G + Dōjō console/supabase + protocol consolidation).
+Standing: default-and-proceed; install(release) after every bump; visually verify UI via `make test-app-e2e`.
