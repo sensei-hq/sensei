@@ -45,7 +45,16 @@ resumes from the current slot/gate. Updated after every gate step.
 - Hard usage cap → harness pauses/resumes the turn; if the session is killed,
   resume cold from the last committed gate checkpoint below.
 - Checkpoint cadence: update this file after every gate; commit+push per doc.
-- Self-paced loop reschedules a wakeup at each pause so the run keeps advancing.
+- ⭐ LOOP DRIVER = RECURRING CRON (switched 2026-07-12, Jerry's call after the one-shot
+  ScheduleWakeup chain broke across a multi-day usage-limit window). Cron `2a3c3926`,
+  `13,43 * * * *` (every 30m, session-only, auto-expires 7 days). Each tick reads THIS file,
+  no-ops if a subagent is in flight (TaskList), else advances the next chunk. Independent
+  recurring ticks AUTO-RECOVER after a limit reset — unlike a one-shot wakeup which only
+  re-arms when a firing runs. DO NOT re-arm ScheduleWakeup anymore (retiring the dynamic
+  chain; a lingering pending wakeup may fire once — handle it, then omit re-arm). Agent
+  completions still wake via task-notifications (independent of cron). If cron `2a3c3926`
+  is gone (session restart / >7d), re-create it with the same spec. Pace: ONE subagent at a
+  time (shared usage limit).
 
 ## Queue (from EXECUTION-PLAN.md)
 1. Observatory · Today — `screen/observatory-today.md`   ✅ SHIPPED (commit 35a438ce, pushed develop)
