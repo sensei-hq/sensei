@@ -506,9 +506,12 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
     }
 
     if tool_name == "get_rules" {
-        // Resolve governance rules for the session's repo (its cwd abs_path).
+        // Resolve governance rules for the session's project. Prefer the
+        // resolved project NAME so the daemon resolves the right repo folder;
+        // fall back to the process cwd only when no project resolved.
+        let (key, val) = rules_query_param(&repo_id, cwd);
         let result = client.get(format!("{}/api/knowledge/rules", daemon_url()))
-            .query(&[("folder", cwd)])
+            .query(&[(key, val)])
             .send();
         return daemon_result(result);
     }
@@ -640,12 +643,13 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
 
     if tool_name == "get_layered_context" {
         let explicit_pid = args["project_id"].as_str().unwrap_or("");
-        let pid = if !explicit_pid.is_empty() { explicit_pid.to_string() } else { repo_id.clone() };
-        if pid.is_empty() {
+        // `repo_id` is a project NAME (resolve_project). Send it as `project`
+        // so the (fixed) daemon resolves it; forward an explicit uuid verbatim.
+        let Some((key, val)) = context_project_param(explicit_pid, &repo_id) else {
             return json!({"content":[{"type":"text","text":"No project resolved. Pass project_id or run from a project directory."}], "isError": true});
-        }
+        };
         let mut req = client.get(format!("{}/api/knowledge/context", daemon_url()))
-            .query(&[("project_id", pid.as_str())]);
+            .query(&[(key, val)]);
         if let Some(l) = args["limit"].as_str().filter(|s| !s.is_empty()) {
             req = req.query(&[("limit", l)]);
         }
@@ -792,6 +796,37 @@ fn build_daemon_params(args: &Value, repo_id: &str) -> Value {
     daemon_params
 }
 
+/// Pure: pick the query param the daemon's `GET /api/knowledge/context`
+/// accepts for the resolved project. An explicit `project_id` (a UUID the
+/// caller passed) is forwarded as `project_id`; otherwise the resolved project
+/// **name** is sent as `project` (the daemon resolves names → UUIDs, mirroring
+/// `get_commands`). Returns `None` when neither is known.
+///
+/// The original bug lived here: the name was sent as `project_id`, which the
+/// daemon's uuid-only handler rejected with HTTP 400.
+fn context_project_param<'a>(explicit_pid: &'a str, repo_id: &'a str) -> Option<(&'static str, &'a str)> {
+    if !explicit_pid.is_empty() {
+        Some(("project_id", explicit_pid))
+    } else if !repo_id.is_empty() {
+        Some(("project", repo_id))
+    } else {
+        None
+    }
+}
+
+/// Pure: pick the query param the daemon's `GET /api/knowledge/rules` accepts.
+/// Prefer the resolved project **name** (`project`) so the daemon resolves the
+/// governing folder itself; fall back to `folder=<cwd>` only when no project
+/// resolved. The original bug always sent the MCP process's own `cwd`, which is
+/// not the repo path.
+fn rules_query_param<'a>(repo_id: &'a str, cwd: &'a str) -> (&'static str, &'a str) {
+    if !repo_id.is_empty() {
+        ("project", repo_id)
+    } else {
+        ("folder", cwd)
+    }
+}
+
 /// Pure: map an MCP tool name to the daemon's internal tool name. Most pass
 /// through unchanged; `get_patterns` is the daemon's `get_file_tags`.
 fn map_daemon_tool(tool_name: &str) -> &str {
@@ -853,6 +888,33 @@ mod tests {
     fn resolve_from_cwd_no_folders_is_empty() {
         let projects = vec![json!({ "id": "a", "name": "x" })]; // no folders key
         assert_eq!(resolve_from_cwd_in(&projects, "/anywhere"), "".to_string());
+    }
+
+    // ── MCP↔daemon seam: the knowledge params the proxy sends ─────────────
+    // These pin the request SHAPE that the (fixed) daemon accepts. They go RED
+    // on the original bug, which sent the project NAME as `project_id` (context)
+    // and the process `cwd` as `folder` (rules).
+
+    #[test]
+    fn context_param_sends_project_name_not_project_id() {
+        // Resolved-from-cwd/hint: `repo_id` is a NAME → send it as `project`
+        // (the daemon resolves names). Sending it as `project_id` was the bug.
+        assert_eq!(context_project_param("", "sensei"), Some(("project", "sensei")));
+        // An explicit uuid passes straight through as `project_id`.
+        assert_eq!(
+            context_project_param("11111111-1111-1111-1111-111111111111", "sensei"),
+            Some(("project_id", "11111111-1111-1111-1111-111111111111")),
+        );
+        // Nothing resolved → caller returns a "no project" error.
+        assert_eq!(context_project_param("", ""), None);
+    }
+
+    #[test]
+    fn rules_param_prefers_project_name_over_cwd() {
+        // Fixed: send the resolved project NAME so the daemon finds the repo.
+        assert_eq!(rules_query_param("sensei", "/mcp/proc/cwd"), ("project", "sensei"));
+        // Fall back to folder=cwd ONLY when no project resolved.
+        assert_eq!(rules_query_param("", "/mcp/proc/cwd"), ("folder", "/mcp/proc/cwd"));
     }
 
     // ── Tool catalog contract ────────────────────────────────────────────

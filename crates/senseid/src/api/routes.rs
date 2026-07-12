@@ -736,4 +736,84 @@ mod tests {
         ).await.unwrap();
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
+
+    // ── MCP-proxy ↔ daemon seam ──────────────────────────────────────────
+    //
+    // The sensei MCP proxy (crates/mcp) resolves a caller's project to its
+    // *name* (see `resolve_project`) and drives these two knowledge endpoints
+    // with it. This test crosses that seam by issuing the EXACT query shapes
+    // the (fixed) proxy sends — `?project=<name>` — and asserting a genuine,
+    // correctly-resolved, non-empty result.
+    //
+    // It goes RED on the original bug: the proxy sent a name but the context
+    // handler required `project_id=<uuid>` and the rules handler required
+    // `folder=<abs_path>`, so `?project=<name>` → HTTP 400 and every sensei
+    // MCP knowledge lookup came back empty. Unit tests on each side stayed
+    // green in isolation because nothing exercised the crossing.
+    async fn get_json(app: &Router, uri: &str) -> (StatusCode, serde_json::Value) {
+        let resp = app.clone().oneshot(
+            Request::builder().uri(uri).body(Body::empty()).unwrap()
+        ).await.unwrap();
+        let status = resp.status();
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let json = serde_json::from_slice(&body).unwrap_or(serde_json::json!(null));
+        (status, json)
+    }
+
+    #[tokio::test]
+    async fn mcp_proxy_knowledge_context_and_rules_resolve_by_project_name() {
+        let (app, state) = test_app().await;
+
+        // Seed: a project + a git repo folder linked to it (so name→abs_path
+        // resolves) + a project-scoped memory + a general-scoped rule.
+        let pid = state.pg.ensure_test_project("mcp-seam").await.unwrap();
+        let name = state.pg.get_project(&pid).await.unwrap().unwrap()["name"]
+            .as_str().unwrap().to_string();               // "_test:mcp-seam"
+        let abs_path = "/_test/mcp-seam/repo".to_string();
+        let root_id = state.pg.add_watch_root(&abs_path, "mcp-seam", &serde_json::json!([]))
+            .await.unwrap();
+        state.pg.upsert_folder(&root_id, "git", "repo", "repo", &abs_path, None, Some(&pid))
+            .await.unwrap();
+
+        let mem_title = format!("_test:mcp-seam-memory-{}", std::process::id());
+        state.pg.create_memory(Some(&pid), "project", None, "convention", &mem_title, "seam memory", None, None)
+            .await.unwrap();
+        // A general-scoped rule (namespace_id NULL, active) so the resolved
+        // folder's ruleset is non-empty regardless of DB baseline.
+        state.pg.create_memory(None, "global", None, "convention", "_test:mcp-seam-rule", "seam rule", None, None)
+            .await.unwrap();
+
+        // ── get_layered_context: proxy sends ?project=<name> ──
+        let (st_name, ctx_by_name) =
+            get_json(&app, &format!("/api/knowledge/context?project={name}")).await;
+        assert_eq!(st_name, StatusCode::OK,
+            "context by project NAME must resolve — this was HTTP 400 on the original bug");
+        let has_title = |ctx: &serde_json::Value| ctx["memories"].as_array().unwrap().iter()
+            .any(|m| m["title"].as_str() == Some(mem_title.as_str()));
+        assert!(has_title(&ctx_by_name),
+            "context resolved by name must contain the project-scoped memory (proves name→correct project uuid)");
+
+        // Old contract still works AND resolves to the SAME project's memories.
+        let (st_uuid, ctx_by_uuid) =
+            get_json(&app, &format!("/api/knowledge/context?project_id={pid}")).await;
+        assert_eq!(st_uuid, StatusCode::OK, "explicit project_id=<uuid> must keep working");
+        assert!(has_title(&ctx_by_uuid),
+            "name and uuid must resolve to the same project → same project memory present");
+
+        // ── get_rules: proxy sends ?project=<name> ──
+        let (st_rules, rules_by_name) =
+            get_json(&app, &format!("/api/knowledge/rules?project={name}")).await;
+        assert_eq!(st_rules, StatusCode::OK,
+            "rules by project NAME must resolve the folder — this was HTTP 400 on the original bug");
+        assert_eq!(rules_by_name["folder"], abs_path,
+            "rules-by-name must resolve to the project's repo abs_path");
+        assert!(rules_by_name["total"].as_i64().unwrap_or(0) >= 1,
+            "the general-scoped rule must resolve for the project");
+
+        // Old contract still works: ?folder=<abs_path>.
+        let (st_folder, rules_by_folder) =
+            get_json(&app, &format!("/api/knowledge/rules?folder={abs_path}")).await;
+        assert_eq!(st_folder, StatusCode::OK, "explicit folder=<abs_path> must keep working");
+        assert_eq!(rules_by_folder["folder"], abs_path);
+    }
 }
