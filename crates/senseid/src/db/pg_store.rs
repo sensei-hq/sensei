@@ -6608,6 +6608,71 @@ impl PgStore {
         Ok(())
     }
 
+    /// Read structured log rows from `public.logs` for the Observatory · Logs
+    /// screen. All filters are optional (`None` = no constraint) and fully
+    /// parameterized — never string-interpolated. Rows come back newest-first
+    /// (`logged_at DESC`), capped at `limit`.
+    ///
+    /// - `level`   → exact match on the indexed `level` column.
+    /// - `source`  → exact match on the indexed `running_on` column (which
+    ///   component wrote the log: daemon / cli / mcp / app).
+    /// - `module`  → exact match on the indexed `context->>'module'` bucket
+    ///   (finer source: scanner / watcher / analyzer / scheduler / …).
+    /// - `since`   → lower bound on the indexed `logged_at` timestamp.
+    pub async fn query_logs(
+        &self,
+        level: Option<&str>,
+        source: Option<&str>,
+        module: Option<&str>,
+        since: Option<chrono::DateTime<chrono::Utc>>,
+        limit: i64,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        type LogRow = (
+            uuid::Uuid,
+            String,
+            String,
+            chrono::DateTime<chrono::Utc>,
+            Option<String>,
+            serde_json::Value,
+            Option<serde_json::Value>,
+            Option<serde_json::Value>,
+        );
+        let rows: Vec<LogRow> = sqlx_core::query_as::query_as(
+            "SELECT id, level, running_on, logged_at, message, context, data, error
+             FROM public.logs
+             WHERE ($1::text IS NULL OR level = $1)
+               AND ($2::text IS NULL OR running_on = $2)
+               AND ($3::text IS NULL OR context->>'module' = $3)
+               AND ($4::timestamptz IS NULL OR logged_at >= $4)
+             ORDER BY logged_at DESC
+             LIMIT $5",
+        )
+        .bind(level)
+        .bind(source)
+        .bind(module)
+        .bind(since)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| format!("query_logs: {}", e))?;
+
+        Ok(rows
+            .into_iter()
+            .map(|(id, level, running_on, logged_at, message, context, data, error)| {
+                serde_json::json!({
+                    "id": id,
+                    "level": level,
+                    "source": running_on,
+                    "logged_at": logged_at.to_rfc3339(),
+                    "message": message,
+                    "context": context,
+                    "data": data,
+                    "error": error,
+                })
+            })
+            .collect())
+    }
+
     // ── Task Executions (activity.task_executions) ──────────────────
 
     /// Insert a running task execution record. Returns the row UUID.
@@ -9662,6 +9727,133 @@ mod tests {
             .bind(vec![child_id, root_id]).execute(s.pool()).await.unwrap();
         s.delete_project(&proj_id).await.unwrap();
         let _ = (fn_id, tgt_id);
+    }
+
+    // ── public.logs read path (Observatory · Logs) ───────────────────
+
+    /// Seed three log rows spanning levels / sources / timestamps and return
+    /// a marker (via `running_on`) so the assertions can isolate this run's
+    /// rows from anything already in the shared test DB.
+    async fn seed_logs(pg: &PgStore, marker: &str) {
+        // Oldest → newest so `logged_at DESC` ordering is observable.
+        let base = chrono::Utc::now() - chrono::Duration::hours(2);
+        let rows = [
+            ("info",  format!("{marker}-a"), "scanner",   base),
+            ("warn",  format!("{marker}-a"), "watcher",   base + chrono::Duration::minutes(30)),
+            ("error", format!("{marker}-b"), "analyzer",  base + chrono::Duration::minutes(90)),
+        ];
+        for (level, running_on, module, ts) in rows {
+            pg.insert_log(
+                level,
+                &running_on,
+                &ts.to_rfc3339(),
+                &format!("{marker} {level} message"),
+                &serde_json::json!({ "module": module }),
+                &None,
+                &None,
+            ).await.unwrap();
+        }
+    }
+
+    async fn cleanup_logs(pg: &PgStore, marker: &str) {
+        sqlx_core::query::query("DELETE FROM public.logs WHERE running_on LIKE $1")
+            .bind(format!("{marker}-%"))
+            .execute(pg.pool()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn query_logs_no_filter_newest_first_and_capped() {
+        let Ok(pg) = PgStore::connect_test().await else { return; };
+        let marker = format!("_test:logs:{}", uuid::Uuid::new_v4());
+        seed_logs(&pg, &marker).await;
+
+        // Scope to this run via the `source` (running_on) filter is not enough
+        // (two distinct sources), so fetch broadly and filter in-memory.
+        let all = pg.query_logs(None, None, None, None, 1000).await.unwrap();
+        let mine: Vec<_> = all.iter()
+            .filter(|r| r["source"].as_str().is_some_and(|s| s.starts_with(&marker)))
+            .collect();
+        assert_eq!(mine.len(), 3, "all three seeded rows returned");
+
+        // Newest-first: the analyzer/error row (base+90m) precedes the others.
+        assert_eq!(mine[0]["level"], "error");
+        assert_eq!(mine[2]["level"], "info");
+
+        // Stable wire shape: source mirrors running_on, module lives in context.
+        assert_eq!(mine[0]["source"], format!("{marker}-b"));
+        assert_eq!(mine[0]["context"]["module"], "analyzer");
+        assert!(mine[0]["logged_at"].as_str().unwrap().contains('T'));
+
+        cleanup_logs(&pg, &marker).await;
+    }
+
+    #[tokio::test]
+    async fn query_logs_level_and_source_and_module_filters() {
+        let Ok(pg) = PgStore::connect_test().await else { return; };
+        let marker = format!("_test:logs:{}", uuid::Uuid::new_v4());
+        seed_logs(&pg, &marker).await;
+
+        // level filter → only the warn row.
+        let warns = pg.query_logs(Some("warn"), Some(&format!("{marker}-a")), None, None, 1000).await.unwrap();
+        assert_eq!(warns.len(), 1);
+        assert_eq!(warns[0]["level"], "warn");
+
+        // source (running_on) filter → the two `-a` rows only.
+        let a_rows = pg.query_logs(None, Some(&format!("{marker}-a")), None, None, 1000).await.unwrap();
+        assert_eq!(a_rows.len(), 2);
+        assert!(a_rows.iter().all(|r| r["source"] == format!("{marker}-a")));
+
+        // module (context->>'module') filter → only the analyzer row.
+        let ana = pg.query_logs(None, None, Some("analyzer"), None, 1000).await.unwrap();
+        let mine: Vec<_> = ana.iter()
+            .filter(|r| r["source"].as_str().is_some_and(|s| s.starts_with(&marker)))
+            .collect();
+        assert_eq!(mine.len(), 1);
+        assert_eq!(mine[0]["context"]["module"], "analyzer");
+
+        cleanup_logs(&pg, &marker).await;
+    }
+
+    #[tokio::test]
+    async fn query_logs_since_excludes_older_rows() {
+        let Ok(pg) = PgStore::connect_test().await else { return; };
+        let marker = format!("_test:logs:{}", uuid::Uuid::new_v4());
+        seed_logs(&pg, &marker).await;
+
+        // Cutoff at 1h ago excludes the two rows at base(-2h) and base+30m(-90m),
+        // keeping only the base+90m(-30m) analyzer/error row.
+        let since = chrono::Utc::now() - chrono::Duration::hours(1);
+        let recent = pg.query_logs(None, None, None, Some(since), 1000).await.unwrap();
+        let mine: Vec<_> = recent.iter()
+            .filter(|r| r["source"].as_str().is_some_and(|s| s.starts_with(&marker)))
+            .collect();
+        assert_eq!(mine.len(), 1, "since cutoff drops the two older rows");
+        assert_eq!(mine[0]["level"], "error");
+
+        cleanup_logs(&pg, &marker).await;
+    }
+
+    #[tokio::test]
+    async fn query_logs_limit_is_honored() {
+        let Ok(pg) = PgStore::connect_test().await else { return; };
+        let marker = format!("_test:logs:{}", uuid::Uuid::new_v4());
+        seed_logs(&pg, &marker).await;
+
+        // Scope to this run's sources so the global limit is deterministic.
+        let a = pg.query_logs(None, Some(&format!("{marker}-a")), None, None, 1).await.unwrap();
+        assert_eq!(a.len(), 1, "limit=1 returns exactly one of the two -a rows");
+        // Newest -a row is the warn/watcher one.
+        assert_eq!(a[0]["level"], "warn");
+
+        cleanup_logs(&pg, &marker).await;
+    }
+
+    #[tokio::test]
+    async fn query_logs_empty_result_is_empty_array() {
+        let Ok(pg) = PgStore::connect_test().await else { return; };
+        // A source that never exists → empty Vec, not an error.
+        let none = pg.query_logs(None, Some("_test:logs:does-not-exist"), None, None, 200).await.unwrap();
+        assert!(none.is_empty());
     }
 }
 
