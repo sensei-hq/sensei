@@ -5094,7 +5094,7 @@ checksum = "8a7852d02fc848982e0c167ef163aaff9cd91dc640ba85e263cb1ce46fae51cd"
 
 [[package]]
 name = "sensei-bootstrap"
-version = "0.2.37"
+version = "0.2.38"
 dependencies = [
  "chrono",
  "dbd-core",
@@ -5111,7 +5111,7 @@ dependencies = [
 
 [[package]]
 name = "sensei-cli"
-version = "0.2.37"
+version = "0.2.38"
 dependencies = [
  "chrono",
  "clap",
@@ -5125,7 +5125,7 @@ dependencies = [
 
 [[package]]
 name = "sensei-config"
-version = "0.2.37"
+version = "0.2.38"
 dependencies = [
  "serde",
  "serde_json",
@@ -5133,7 +5133,7 @@ dependencies = [
 
 [[package]]
 name = "sensei-logger"
-version = "0.2.37"
+version = "0.2.38"
 dependencies = [
  "chrono",
  "reqwest",
@@ -5146,7 +5146,7 @@ dependencies = [
 
 [[package]]
 name = "sensei-mcp"
-version = "0.2.37"
+version = "0.2.38"
 dependencies = [
  "reqwest",
  "sensei-bootstrap",
@@ -5156,7 +5156,7 @@ dependencies = [
 
 [[package]]
 name = "senseid"
-version = "0.2.37"
+version = "0.2.38"
 dependencies = [
  "axum",
  "base64 0.22.1",
