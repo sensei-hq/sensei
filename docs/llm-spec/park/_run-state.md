@@ -1481,3 +1481,11 @@ QUEUE RECONCILE: About EDIT UI exists (only daemon field-widen left); rules-cons
 Instruments Playground/Replay FUNCTIONAL (only Health blocked); settings/prefs writable e2e. DROP these from "gaps".
 BLOCKED (Jerry/Docker): Instruments·Health registry-join; Dōjō consoles C12-14; clarification-prompting (spec-deferred v2);
 per-session memory-load correlation; impact insight-copy (user-authored verdicts).
+
+── QUEUE PROGRESS (2026-07-12, post-v0.2.36) ──
+#3 project-about field-widening ✅ SHIPPED `b0f5f6e2` (ProjectPatch + COALESCE; client/goal/preferred_acp were
+   dropped; maturity 400-validated; icon/stack/links jsonb wired though form doesn't expose inputs yet). On develop.
+#4 session-retrospective narrative writer ⏳ BUILDING (a7f4376a): facts-gatherer → insight-copy (SessionRetrospective
+   kind) → activity.sessions.summary via analyzer enrichment; deterministic fallback; non-fatal. High product value.
+NEXT after #4: batch-merge #3+#4 → v0.2.37; then #7 project-icon inference (pure-daemon), #5 Atlas graph-viz (UI, L),
+   #6 traceability action (daemon+UI), #8 impact-regression surface. #2-UI (logs screen) still DEFERRED (route collision).
