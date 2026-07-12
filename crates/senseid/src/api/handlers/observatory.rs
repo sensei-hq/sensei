@@ -89,19 +89,55 @@ pub(crate) async fn create_solution(
     Ok((StatusCode::CREATED, Json(serde_json::json!({"ok": true, "id": id}))))
 }
 
+/// A jsonb project field from the request body: present as an object or array
+/// (icon/stack are objects, links an array). A scalar or `null` is treated as
+/// "not provided" so a malformed value can't clobber a good column.
+fn jsonb_field<'a>(body: &'a serde_json::Value, key: &str) -> Option<&'a serde_json::Value> {
+    body.get(key).filter(|v| v.is_object() || v.is_array())
+}
+
+/// PUT /api/projects/{id} — update a project's editable identity. Persists the
+/// full About-form field set (name/description/maturity/client/goal/
+/// preferred_acp + icon/stack/links jsonb); omitted fields are left unchanged
+/// (partial-update). An unknown `maturity` is rejected with 400 before the DB
+/// write rather than surfacing the Postgres enum cast as a 500.
 pub(crate) async fn update_solution(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    use crate::db::pg_store::{ProjectPatch, PROJECT_MATURITIES};
+
     let project_id = uuid::Uuid::parse_str(&id)
         .map_err(|_| StatusCode::BAD_REQUEST)?;
-    state.pg.update_project(
-        &project_id,
-        body["name"].as_str(),
-        body["description"].as_str(),
-        body["maturity"].as_str(),
-    ).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    // Validate the only enum-backed field (maturity) up front → 400, not 500.
+    // client/goal/preferred_acp are free text; icon/stack/links are jsonb.
+    let maturity = body.get("maturity").and_then(|v| v.as_str());
+    if let Some(m) = maturity
+        && !PROJECT_MATURITIES.contains(&m)
+    {
+        tracing::warn!(maturity = m, "update_solution rejected unknown maturity");
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    let patch = ProjectPatch {
+        name:          body.get("name").and_then(|v| v.as_str()),
+        description:   body.get("description").and_then(|v| v.as_str()),
+        maturity,
+        client:        body.get("client").and_then(|v| v.as_str()),
+        goal:          body.get("goal").and_then(|v| v.as_str()),
+        preferred_acp: body.get("preferred_acp").and_then(|v| v.as_str()),
+        icon:          jsonb_field(&body, "icon"),
+        stack:         jsonb_field(&body, "stack"),
+        links:         jsonb_field(&body, "links"),
+    };
+
+    state.pg.update_project(&project_id, &patch).await
+        .map_err(|e| {
+            tracing::error!(error = %e, "update_solution failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
     Ok(Json(serde_json::json!({"ok": true})))
 }
 
