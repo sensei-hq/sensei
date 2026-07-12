@@ -1526,3 +1526,8 @@ NEXT after #4: batch-merge #3+#4 → v0.2.37; then #7 project-icon inference (pu
 ── AFTER THIS: write Jerry an honest status + EASE CADENCE. Remaining rich items need HIM: UI visual-verify
    (Tauri e2e broken) for Atlas-viz/traceability-UI/logs-UI/impact-UI; the /logs route-ownership decision; icon
    asset-serve infra; big net-new subsystems (benchmarks, testability/TDD-gate) that want design input.
+
+⭐ verdict-regression → memory-challenge feedback ✅ SHIPPED `76355abb` (2026-07-12): measure_pending_verdicts
+   negative flip → challenge_source_memory_for_rec (based_on→pattern→memory, records 'violated', trigger weakens);
+   2-layer idempotency (verdict='pending' transition + context-marker EXISTS). No DDL. 3 tests; clippy 0; 1368 pass.
+⭐⭐ MILESTONE (single-chunk, merging before cadence-ease) → ⏳ BUMP v0.2.38→0.2.39 → main.
