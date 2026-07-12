@@ -468,8 +468,10 @@ pub async fn reconcile_repo_identity(ctx: &TaskContext, repo_abs_path: &str) -> 
     // Project identity + role + namespaces (only when linked to a project).
     if let Some(pid) = folder["project_id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) {
         // Authoritative project name (matches what the scan created) for the
-        // `project` namespace; fall back to frontmatter / folder name.
-        let project_name = ctx.pg().get_project(&pid).await.ok().flatten()
+        // `project` namespace; fall back to frontmatter / folder name. Fetched
+        // once and reused below for icon inference (name + current icon).
+        let project = ctx.pg().get_project(&pid).await.ok().flatten();
+        let project_name = project.as_ref()
             .and_then(|p| p["name"].as_str().map(String::from))
             .or_else(|| fm.project.clone())
             .or_else(|| folder["name"].as_str().map(String::from))
@@ -500,6 +502,30 @@ pub async fn reconcile_repo_identity(ctx: &TaskContext, repo_abs_path: &str) -> 
             &pid, fm.summary.as_deref(), fm.client.as_deref(), &id_stack, &tags,
         ).await {
             tracing::warn!(project_id = %pid, error = %e, "set_project_identity (reconcile) failed");
+        }
+
+        // Deterministic project-icon inference — fills the generic 場 fallback
+        // so the project card shows something recognisable (kanji-from-stack /
+        // letter initial). Never overrides an author choice; only upgrades a
+        // prior machine icon; non-fatal. [[pipeline/project-icon]].
+        //
+        // IMAGE ICONS GATED: we deliberately pass NO asset paths yet. The app
+        // renders <img src={icon.value}> and the daemon has no asset-serve
+        // route, so a repo-relative logo path 404s in the Tauri webview — a
+        // broken image is worse than a kanji. Re-enable the image tier by
+        // passing the scanned `icon.path` here once the asset-cache/serve step
+        // lands (the pure chooser + its tests already cover the image tier).
+        use crate::analysis::project_icon::{infer_icon, IconDecision};
+        let existing_icon = project.as_ref()
+            .map(|p| p["icon"].clone())
+            .unwrap_or(serde_json::Value::Null);
+        if let IconDecision::Set(inferred) =
+            infer_icon(&project_name, &id_stack, &existing_icon, &[])
+            && let Err(e) = ctx.pg()
+                .set_project_icon(&pid, &serde_json::to_value(&inferred).unwrap_or(serde_json::Value::Null))
+                .await
+        {
+            tracing::warn!(project_id = %pid, error = %e, "set_project_icon (reconcile) failed");
         }
 
         let mut ns: Vec<(&str, String)> = Vec::new();
