@@ -9,6 +9,33 @@ pub struct PgStore {
     pool: PgPool,
 }
 
+/// Valid `projects.maturity` lifecycle values — mirrors the
+/// `sensei.project_maturity` enum in
+/// `database/ddl/enum/sensei/project_maturity.ddl`. Used to reject an unknown
+/// maturity with a clear error (and a 400 at the HTTP layer) instead of
+/// leaking a raw Postgres enum-cast failure as a 500.
+pub const PROJECT_MATURITIES: [&str; 4] = ["discovery", "active", "maintenance", "archived"];
+
+/// Partial update for a project's editable identity fields (the About screen).
+/// Every field is optional: `None` leaves the column unchanged (COALESCE
+/// semantics), matching the About form which strips empty inputs and PUTs only
+/// the fields the user touched. Text columns bind `Option<&str>`; the three
+/// jsonb columns (`icon`/`stack`/`links`) bind `Option<&serde_json::Value>`;
+/// `maturity` is the `sensei.project_maturity` enum and is validated against
+/// [`PROJECT_MATURITIES`] before the write.
+#[derive(Debug, Default, Clone)]
+pub struct ProjectPatch<'a> {
+    pub name:          Option<&'a str>,
+    pub description:   Option<&'a str>,
+    pub maturity:      Option<&'a str>,
+    pub client:        Option<&'a str>,
+    pub goal:          Option<&'a str>,
+    pub preferred_acp: Option<&'a str>,
+    pub icon:          Option<&'a serde_json::Value>,
+    pub stack:         Option<&'a serde_json::Value>,
+    pub links:         Option<&'a serde_json::Value>,
+}
+
 /// Per-table row counts from a single `PgStore::prune_activity` run (#74).
 /// Everything is `u64` so callers can report a single log line without
 /// per-field conversions.
@@ -4745,11 +4772,45 @@ impl PgStore {
         }).collect())
     }
 
-    pub async fn update_project(&self, id: &uuid::Uuid, name: Option<&str>, description: Option<&str>, maturity: Option<&str>) -> Result<(), String> {
+    /// Partial-update a project's editable identity fields. Omitted (`None`)
+    /// fields are left untouched via COALESCE, so a lossless patch from the
+    /// About form only overwrites the columns the user actually edited. An
+    /// unknown `maturity` is rejected up front (before the DB round trip)
+    /// rather than allowed to fail as a raw Postgres enum-cast error.
+    pub async fn update_project(&self, id: &uuid::Uuid, patch: &ProjectPatch<'_>) -> Result<(), String> {
+        if let Some(m) = patch.maturity
+            && !PROJECT_MATURITIES.contains(&m)
+        {
+            return Err(format!(
+                "invalid maturity '{m}': expected one of {PROJECT_MATURITIES:?}"
+            ));
+        }
         sqlx_core::query::query(
-            "UPDATE sensei.projects SET name = COALESCE($2, name), description = COALESCE($3, description), maturity = COALESCE($4::sensei.project_maturity, maturity), modified_at = now() WHERE id = $1"
-        ).bind(id).bind(name).bind(description).bind(maturity)
-            .execute(&self.pool).await.map_err(|e| e.to_string())?;
+            "UPDATE sensei.projects SET
+                 name          = COALESCE($2, name),
+                 description   = COALESCE($3, description),
+                 maturity      = COALESCE($4::sensei.project_maturity, maturity),
+                 client        = COALESCE($5, client),
+                 goal          = COALESCE($6, goal),
+                 preferred_acp = COALESCE($7, preferred_acp),
+                 icon          = COALESCE($8, icon),
+                 stack         = COALESCE($9, stack),
+                 links         = COALESCE($10, links),
+                 modified_at   = now()
+             WHERE id = $1"
+        )
+        .bind(id)
+        .bind(patch.name)
+        .bind(patch.description)
+        .bind(patch.maturity)
+        .bind(patch.client)
+        .bind(patch.goal)
+        .bind(patch.preferred_acp)
+        .bind(patch.icon)
+        .bind(patch.stack)
+        .bind(patch.links)
+        .execute(&self.pool).await
+        .map_err(|e| { tracing::error!(error = %e, "update_project failed"); e.to_string() })?;
         Ok(())
     }
 
@@ -9178,10 +9239,93 @@ mod tests {
     async fn project_update() {
         let s = pg_store().await;
         let id = s.create_project("_test:proj:update", None, None).await.unwrap();
-        s.update_project(&id, Some("renamed"), None, Some("active")).await.unwrap();
+        s.update_project(&id, &ProjectPatch {
+            name: Some("renamed"),
+            maturity: Some("active"),
+            ..Default::default()
+        }).await.unwrap();
         let p = s.get_project(&id).await.unwrap().unwrap();
         assert_eq!(p["name"], "renamed");
         assert_eq!(p["maturity"], "active");
+        s.delete_project(&id).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn project_update_persists_widened_identity_fields() {
+        // The About-edit form PUTs goal/icon/stack/links/client/preferred_acp
+        // alongside name/maturity; all must round-trip through update_project.
+        let s = pg_store().await;
+        let id = s.create_project("_test:proj:widen", None, None).await.unwrap();
+        let icon = serde_json::json!({"kind":"kanji","value":"識","bg":"var(--shu-soft)","fg":"var(--shu)"});
+        let stack = serde_json::json!({"languages":["rust"],"frameworks":["axum"]});
+        let links = serde_json::json!([{"id":"1","kind":"docs","label":"Docs","url":"https://example.com"}]);
+        s.update_project(&id, &ProjectPatch {
+            goal: Some("teach sensei"),
+            client: Some("acme"),
+            preferred_acp: Some("zed"),
+            maturity: Some("active"),
+            icon: Some(&icon),
+            stack: Some(&stack),
+            links: Some(&links),
+            ..Default::default()
+        }).await.unwrap();
+
+        let p = s.get_project(&id).await.unwrap().unwrap();
+        assert_eq!(p["goal"], "teach sensei");
+        assert_eq!(p["client"], "acme");
+        assert_eq!(p["maturity"], "active");
+        assert_eq!(p["icon"], icon, "icon jsonb must persist verbatim");
+        assert_eq!(p["stack"], stack, "stack jsonb must persist verbatim");
+        assert_eq!(p["links"], links, "links jsonb must persist verbatim");
+
+        // preferred_acp isn't in get_project's projection — read it directly.
+        let (acp,): (Option<String>,) = query_as(
+            "SELECT preferred_acp FROM sensei.projects WHERE id = $1"
+        ).bind(id).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(acp.as_deref(), Some("zed"), "preferred_acp text must persist");
+
+        s.delete_project(&id).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn project_update_rejects_unknown_maturity() {
+        // maturity is the sensei.project_maturity enum — an unknown value must
+        // be rejected (Err → 400 at the HTTP layer), never a raw cast 500, and
+        // the row must be left untouched.
+        let s = pg_store().await;
+        let id = s.create_project("_test:proj:badmaturity", None, None).await.unwrap();
+        let res = s.update_project(&id, &ProjectPatch {
+            maturity: Some("spike"),
+            ..Default::default()
+        }).await;
+        assert!(res.is_err(), "unknown maturity must be rejected");
+        let p = s.get_project(&id).await.unwrap().unwrap();
+        assert_eq!(p["maturity"], "discovery", "rejected update must not mutate the row");
+        s.delete_project(&id).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn project_update_omitted_fields_unchanged() {
+        // Partial-update (COALESCE) semantics: a patch that only sets `name`
+        // must leave goal/client/description/maturity exactly as they were.
+        let s = pg_store().await;
+        let id = s.create_project("_test:proj:partial", Some("orig desc"), Some("orig client")).await.unwrap();
+        s.update_project(&id, &ProjectPatch {
+            goal: Some("g1"),
+            maturity: Some("active"),
+            ..Default::default()
+        }).await.unwrap();
+        s.update_project(&id, &ProjectPatch {
+            name: Some("renamed2"),
+            ..Default::default()
+        }).await.unwrap();
+
+        let p = s.get_project(&id).await.unwrap().unwrap();
+        assert_eq!(p["name"], "renamed2");
+        assert_eq!(p["goal"], "g1", "omitted goal must be unchanged");
+        assert_eq!(p["client"], "orig client", "omitted client must be unchanged");
+        assert_eq!(p["description"], "orig desc", "omitted description must be unchanged");
+        assert_eq!(p["maturity"], "active", "omitted maturity must be unchanged");
         s.delete_project(&id).await.unwrap();
     }
 
