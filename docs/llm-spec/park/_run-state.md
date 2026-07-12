@@ -1531,3 +1531,25 @@ NEXT after #4: batch-merge #3+#4 → v0.2.37; then #7 project-icon inference (pu
    negative flip → challenge_source_memory_for_rec (based_on→pattern→memory, records 'violated', trigger weakens);
    2-layer idempotency (verdict='pending' transition + context-marker EXISTS). No DDL. 3 tests; clippy 0; 1368 pass.
 ⭐⭐ MILESTONE (single-chunk, merging before cadence-ease) → ⏳ BUMP v0.2.38→0.2.39 → main.
+
+═══════════════════════════════════════════════════════════════════════════════
+⏸️⏸️ CADENCE EASED — BUILDABLE-NOW-VERIFIABLE BACKLOG EXHAUSTED (2026-07-12, v0.2.39)
+EIGHT milestones shipped to main this run (v0.2.32→v0.2.39). All cleanly pure-daemon, fully-verifiable
+sweep items are DONE (#1 memory-triage daemon+UI, #2 logs-GET, #3 project-about, #4 session-retrospective,
+#7 project-icon, #8 semantic-search, verdict-regression feedback). CRON `30218bd9`: from now, idle ticks =
+CHEAP NO-OPS (run disk-guard + this check, then end). Do NOT spawn new builds until Jerry steers — the
+remaining work is NOT cleanly buildable-now-verifiable; each needs HIM:
+  • VISUAL-VERIFY-GATED (Tauri e2e broken here — building blind risks poor UI): #5 Atlas/code-graph viz
+    (backend 100% shipped + unused: getSolutionGraph/getCommunities/getCallFlow — needs a real graph-viz
+    component); traceability fix/dismiss UI; impact-regression alert screen; #2-UI observatory-logs screen.
+  • DECISIONS ONLY JERRY CAN MAKE: the /logs route ownership (observatory-logs 録 vs the (health)/logs
+    diagnostics that currently owns /logs); project-icon ASSET-SERVE infra (daemon route to serve repo logos
+    so kind:"image" icons render instead of 404 — until then image tier stays gated, kanji/letter ship).
+  • BIG NET-NEW SUBSYSTEMS (L, want design input): benchmarks (benchmark_runs.ddl has zero writers — needs
+    a registry/runner + competitor set); testability/TDD-gate (no function_shapes/tdd_proposals DDL, propose_
+    tests/approve_tests) ; collective CONTRIBUTE lane (privacy-sensitive; part of the Dōjō track).
+  • DEFERRED FOLLOW-UPS (refine shipped v1s): per-session memory-load correlation (needs plugin republish);
+    P2c behavioral memory-use classifier; rank4 impact insight-copy (user-authored-verdict risk).
+STILL BLOCKED (unchanged): Instruments·Health registry↔usage join; Dōjō consoles C12-14 (Docker/Supabase).
+IF JERRY WANTS MORE AUTONOMOUS WORK: he can say "build the UI screens to spec (accept deferred visual verify)"
+or pick a net-new subsystem or decide the /logs+asset-serve questions — then the cron resumes spawning builds.
