@@ -1599,3 +1599,18 @@ TRUE-BLOCKED (only these genuinely wait on Jerry/Docker): Instruments·Health re
    LAYERED, not overridden. hive-protocol = rules-only wire (shipped rule-sync substrate); dojo-protocol = 6-artifact
    wire on top. CONSOLIDATION into one protocol (fold rules in as an artifact kind) is a reasonable refactor —
    flagged for Jerry (touches shipped federation), see the answer.
+
+═══════════════════════════════════════════════════════════════════════════════
+▶️ ACTIVE TRACK = TOOLING VERIFICATION (2026-07-12, Jerry redirect) — SUPERSEDES the UI sweep queue.
+"verify the tooling works as expected, THEN continue with the original plan." UI sweep (Atlas etc.) PAUSED;
+Atlas WIP stashed. Plan + findings: docs/llm-spec/park/_tooling-verification-plan.md.
+KEY DIAGNOSIS (dogfooded live): daemon was v0.2.29 (10 stale) → now release v0.2.39 installed. Data OK (558K nodes,
+sensei→ff1ccea2 3395 fns). Bugs: (A) get_layered_context sends project_id=NAME → daemon 400 (wants UUID);
+(B) get_rules sends folder=mcp-process-cwd (wrong folder); (C) MCP proxy is a LONG-LIVED stdio subprocess owned by
+Claude Code — `make install` restarts the daemon but NOT the mcp process → stale until Jerry reloads the MCP;
+(D) NO MCP↔daemon integration test (each side unit-green, seam untested — knowledge_api.rs:45 tests the daemon with
+project_id=UUID, proving the contract the proxy violates); (E) duplicate empty "sensei" project 2efd4ecf vs ff1ccea2.
+⏳ CHUNK 1 BUILDING: fix proxy resolution (A name→uuid: make daemon /api/knowledge/context accept project name too +
+mcp send valid id; B get_rules pass the resolved project's folder) + ADD the MCP↔daemon integration test that catches
+it. Then make install-service + Jerry reloads MCP → re-verify. CHUNK 2: find_projects(under=path) + use_project(pin).
+CHUNK 3: dedup empty project. ALWAYS make install (release) after bump.
