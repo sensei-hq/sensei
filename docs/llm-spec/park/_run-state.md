@@ -1515,3 +1515,14 @@ NEXT after #4: batch-merge #3+#4 → v0.2.37; then #7 project-icon inference (pu
    (reuses pgvector <=> cosine) fused into query_functions/types/general; fail-open (no embed→lexical); vector_literal
    DRY. 6 tests; clippy 0; 1369 pass. On develop.
 ⭐⭐ MILESTONE #7+#8 → ⏳ MERGE+BUMP v0.2.37→0.2.38 → main IN PROGRESS.
+
+⭐⭐✅ MILESTONE #7+#8 SHIPPED & RELEASED (2026-07-12): project-icon `8181ee7a` + semantic-search `9e7f911c`
+   → **v0.2.38** (MERGED→main `f3f47755`, synced). SEVENTH milestone (v0.2.32-38).
+⏳ NEXT (last clean pure-daemon high-value): verdict-regression → challenge source memory. Sweep gap: "verdicts
+   don't reinforce/challenge the underlying memory". When measure_pending_verdicts finds an accepted rec whose FTR
+   REGRESSED after acceptance, resolve its source memory (rec based_on.patterns → pattern → convention memory via
+   source_id) and record a 'violated' memory_outcome (existing memory_outcome_apply trigger already weakens
+   strength + challenges) — closes the learning loop. Reuses the pipeline I built earlier. Pure-daemon, testable.
+── AFTER THIS: write Jerry an honest status + EASE CADENCE. Remaining rich items need HIM: UI visual-verify
+   (Tauri e2e broken) for Atlas-viz/traceability-UI/logs-UI/impact-UI; the /logs route-ownership decision; icon
+   asset-serve infra; big net-new subsystems (benchmarks, testability/TDD-gate) that want design input.
