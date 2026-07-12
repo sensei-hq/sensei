@@ -1553,3 +1553,28 @@ remaining work is NOT cleanly buildable-now-verifiable; each needs HIM:
 STILL BLOCKED (unchanged): Instruments·Health registry↔usage join; Dōjō consoles C12-14 (Docker/Supabase).
 IF JERRY WANTS MORE AUTONOMOUS WORK: he can say "build the UI screens to spec (accept deferred visual verify)"
 or pick a net-new subsystem or decide the /logs+asset-serve questions — then the cron resumes spawning builds.
+
+═══════════════════════════════════════════════════════════════════════════════
+▶️▶️ RESUMED — CONTINUOUS DEFAULT-AND-PROCEED (2026-07-12, Jerry: "continue until complete")
+REVERSES the "cadence eased / awaiting steer" block above — that was a PREMATURE STOP (Jerry corrected it).
+Per STANDING POLICY: build EVERYTHING specced, default-and-proceed, DON'T wait for Jerry on UI/decisions.
+[[feedback_autonomous_no_premature_stop]]. Cron resumes spawning ONE build per idle tick.
+DEFAULTS CHOSEN (reversible; flagged for Jerry to change later):
+  • UI I can't visually verify → BUILD TO SPEC + unit-test the .svelte.ts state + svelte-check, flag "visual-
+    verify deferred". (Same as all UI shipped this session.)
+  • /logs route collision → observatory-logs gets a NEW route `(observatory)/activity-logs/` (rail 診 "Logs"
+    repoints there); leave (health)/logs diagnostics at /logs untouched. Reversible.
+  • project-icon images → keep gated AND build the asset-serve daemon route as its own queue item so images render.
+ACTIVE BUILD QUEUE (default-and-proceed order, highest value first):
+  A. ⏳ BUILDING — #5 Atlas / code-graph visualization (flagship; backend 100% shipped+unused:
+     getSolutionGraph/getCommunities/getCallFlow). Build the graph-viz screen/component to spec.
+  B. #2-UI observatory-logs screen (route (observatory)/activity-logs → GET /api/logs; filters level/source/since).
+  C. #6 traceability fix/dismiss (daemon action endpoints over drift_items + UI drawer).
+  D. #8 impact-regression surface: impact_regressions DDL + writer (record on negative verdict) + alert screen.
+  E. project-icon ASSET-SERVE daemon route (serve repo logos) → then un-gate the image tier.
+  F. NET-NEW: benchmarks (registry+runner over benchmark_runs.ddl); testability/TDD-gate (function_shapes/
+     tdd_proposals DDL + propose_tests/approve_tests); collective CONTRIBUTE lane (wire scheduling for the
+     already-built C6 contribute path; privacy via the shipped Dereferenced/anonymize seams).
+  G. DEFERRED-REFINE: per-session memory-load correlation; P2c behavioral memory-use classifier; rank4 impact copy.
+TRUE-BLOCKED (only these genuinely wait on Jerry/Docker): Instruments·Health registry↔usage join (data-model
+  contradiction); Dōjō consoles C12-14 (Docker/Supabase). Everything else = default-and-proceed.
