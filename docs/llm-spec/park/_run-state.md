@@ -46,15 +46,20 @@ resumes from the current slot/gate. Updated after every gate step.
   resume cold from the last committed gate checkpoint below.
 - Checkpoint cadence: update this file after every gate; commit+push per doc.
 - ⭐ LOOP DRIVER = RECURRING CRON (switched 2026-07-12, Jerry's call after the one-shot
-  ScheduleWakeup chain broke across a multi-day usage-limit window). Cron `2a3c3926`,
+  ScheduleWakeup chain broke across a multi-day usage-limit window). Cron **`30218bd9`**,
   `13,43 * * * *` (every 30m, session-only, auto-expires 7 days). Each tick reads THIS file,
-  no-ops if a subagent is in flight (TaskList), else advances the next chunk. Independent
-  recurring ticks AUTO-RECOVER after a limit reset — unlike a one-shot wakeup which only
-  re-arms when a firing runs. DO NOT re-arm ScheduleWakeup anymore (retiring the dynamic
-  chain; a lingering pending wakeup may fire once — handle it, then omit re-arm). Agent
-  completions still wake via task-notifications (independent of cron). If cron `2a3c3926`
-  is gone (session restart / >7d), re-create it with the same spec. Pace: ONE subagent at a
-  time (shared usage limit).
+  no-ops if a subagent is in flight (TaskList), runs a DISK GUARD, else advances the next chunk.
+  Independent recurring ticks AUTO-RECOVER after a limit reset — unlike a one-shot wakeup which
+  only re-arms when a firing runs. DO NOT re-arm ScheduleWakeup anymore (dynamic chain retired).
+  Agent completions still wake via task-notifications (independent of cron). If cron `30218bd9`
+  is gone (session restart / >7d), re-create it with the same spec (incl. disk guard). Pace: ONE
+  subagent at a time (shared usage limit).
+- ⭐ DISK GUARD (2026-07-12): `target/` had bloated to **176G** (target/debug/deps 165G / 396K
+  files — `make bump` orphans versioned artifacts, cargo never GCs; `make bump`'s clean-cache only
+  prunes incremental/, NOT deps). `cargo clean` (root + app/src-tauri) reclaimed **269G** →
+  disk 86%→64% used, 324G free. Each cron tick checks `df`; if <~40G free → `cargo clean` both
+  workspaces before building (one full rebuild expected after). Root-cause follow-up (optional):
+  teach `make bump` clean-cache to prune stale-version deps, or add cargo-sweep.
 
 ## Queue (from EXECUTION-PLAN.md)
 1. Observatory · Today — `screen/observatory-today.md`   ✅ SHIPPED (commit 35a438ce, pushed develop)
@@ -1424,3 +1429,36 @@ REAL remaining gaps (verified live, grep — code-graph empty for this project =
      structural/GoF pattern detection. Each = its own track (DDL source-first → writer → reader → capture).
   Slot 2 (Instruments·Health) stays PARKED (registry↔usage join gap — awaits Jerry).
   Genuinely BLOCKED (needs Jerry/Docker): Dōjō consoles C12-C14; running-Dōjō + Tauri-e2e visual verify.
+
+═══════════════════════════════════════════════════════════════════════════════
+⭐⭐ REPRIORITIZED QUEUE (2026-07-12 completeness sweep, agent a91f272c) — AUTHORITATIVE
+Most of the spec is SHIPPED; remaining gaps = a few "DB-right, no path" bridges + 2 net-new subsystems.
+Ranked highest-value BUILDABLE-NOW (each cites the code anchor; verify before building):
+
+1. ⏳ BUILDING NOW — **memory-triage lifecycle actions** (archive/reinforce/challenge/dismiss/merge).
+   Pure daemon + tiny UI wire. Writers EXIST (pg_store.rs:1398 reinforce_memory, :1405 archive_memory,
+   :5833 set_memory_status, :1509 link_memories); UI tabs+buttons exist; only promote/generalise are wired;
+   /api/knowledge/memories/{id} is GET-only (routes.rs:232). Add 5 thin handlers in knowledge.rs next to
+   promote_memory + routes (POST /api/knowledge/memories/{id}/{action}; merge takes {into}); wire buttons in
+   (observatory)/memories + (observatory)/learnings + (project)/project/[id]/memories. READ THE memory_status
+   ENUM FIRST (challenged/rejected). Confirmations via insight-copy. Additive; no schema change. FLAGSHIP screen.
+2. **observatory-logs GET** — /api/logs is POST-only (routes.rs:218, logs.rs only ingest_log); public.logs
+   table+indices exist. Add a GET read handler (level/source/since filters). Pure daemon, S. Resurrects a DEAD screen.
+3. **project-about field-widening** — update_solution (pg_store.rs:4750) writes only name/desc/maturity; the
+   edit form already POSTs goal/icon/stack/links/client/preferred_acp (projects.ddl:6-14). Widen the UPDATE. S–M.
+4. **session-retrospective narrative writer** — sessions.summary col has NO producer; get_sessions_stub
+   (sessions.rs:22) hardcodes toolUsage:[]/benchmarkPairs:[]. Reuse per-session analyze.rs + insight-copy. M. High product value.
+5. **Atlas / code-graph viz screen** — backend 100% shipped+UNUSED (getSolutionGraph/getCommunities/getCallFlow,
+   zero consumers, no graph-viz component). Needs-UI, L. High-visibility.
+6. **traceability fix/dismiss action + expected-vs-actual drawer** — drift_items rollup renders read-only; no
+   traceability.rs handler, no action. Daemon+UI, M.
+7. **project-icon inference chain** (README-image/logo-glob/favicon/kanji-from-stack/letter). Pure daemon, M, deterministic.
+8. **impact regression surface + verdict→memory downstream** — applied_recommendations/impact_regressions tables
+   absent; verdicts don't reinforce/challenge the underlying memory. Daemon+small UI, M.
+NET-NEW SUBSYSTEMS (L, Med value, later): benchmarks (benchmark_runs.ddl zero writers); testability/TDD-gate
+(no function_shapes/tdd_proposals DDL); collective CONTRIBUTE lane (anonymize.rs dead-code, privacy-sensitive);
+semantic-search hybrid ranking (query.rs:33 keyword-only).
+QUEUE RECONCILE: About EDIT UI exists (only daemon field-widen left); rules-consolidation SHIPPED (knowledge.rs:523);
+Instruments Playground/Replay FUNCTIONAL (only Health blocked); settings/prefs writable e2e. DROP these from "gaps".
+BLOCKED (Jerry/Docker): Instruments·Health registry-join; Dōjō consoles C12-14; clarification-prompting (spec-deferred v2);
+per-session memory-load correlation; impact insight-copy (user-authored verdicts).
