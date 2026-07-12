@@ -1442,10 +1442,12 @@ Ranked highest-value BUILDABLE-NOW (each cites the code anchor; verify before bu
    self/missing, 404 unknown survivor. 8 route tests; clippy 0; 1321 pass. Shapes: archive→{id,status:archived};
    reinforce→{id,reinforced:true}; challenge→{id,status:challenged}|409; dismiss→{id,status:rejected}|409;
    merge {into}→{id,into,status:archived}|400|404. errors {error}.
-   ⏳ UI WIRING BUILDING (svelte agent ad13c9c8): api.ts +the 5 helpers; wire triage buttons in
-   (observatory)/learnings (+memories/project mirrors) → optimistic tab transitions; disable challenge/dismiss on
-   terminal; merge only if a target-picker exists else defer. DETERMINISTIC (no insight-copy). Then #1 COMPLETE →
-   merge+bump (batch with #2 logs GET).
+   ✅ UI SHIPPED `a8375624` (2026-07-12): api.ts +5 helpers; 4 lifecycle buttons on ActiveList.svelte
+   (reinforce/challenge/archive/dismiss) → optimistic tab re-fetch (scoped to project — fixed a latent
+   unscoped-refetch bug); challenge/dismiss disabled on terminal (isTerminalStatus) → 409 surfaces inline;
+   merge DEFERRED (no survivor picker; mergeMemory in api.ts for later). +13 tests; svelte-check 0/0; 1059 app.
+   ⭐ #1 TRACK COMPLETE (daemon `06e7ff3b` + UI `a8375624`). Both on develop, UNMERGED — batching with #2.
+   ⏳ #2 BUILDING (observatory-logs GET).
 2. **observatory-logs GET** — /api/logs is POST-only (routes.rs:218, logs.rs only ingest_log); public.logs
    table+indices exist. Add a GET read handler (level/source/since filters). Pure daemon, S. Resurrects a DEAD screen.
 3. **project-about field-widening** — update_solution (pg_store.rs:4750) writes only name/desc/maturity; the
