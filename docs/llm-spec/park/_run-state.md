@@ -45,7 +45,21 @@ resumes from the current slot/gate. Updated after every gate step.
 - Hard usage cap → harness pauses/resumes the turn; if the session is killed,
   resume cold from the last committed gate checkpoint below.
 - Checkpoint cadence: update this file after every gate; commit+push per doc.
-- Self-paced loop reschedules a wakeup at each pause so the run keeps advancing.
+- ⭐ LOOP DRIVER = RECURRING CRON (switched 2026-07-12, Jerry's call after the one-shot
+  ScheduleWakeup chain broke across a multi-day usage-limit window). Cron **`30218bd9`**,
+  `13,43 * * * *` (every 30m, session-only, auto-expires 7 days). Each tick reads THIS file,
+  no-ops if a subagent is in flight (TaskList), runs a DISK GUARD, else advances the next chunk.
+  Independent recurring ticks AUTO-RECOVER after a limit reset — unlike a one-shot wakeup which
+  only re-arms when a firing runs. DO NOT re-arm ScheduleWakeup anymore (dynamic chain retired).
+  Agent completions still wake via task-notifications (independent of cron). If cron `30218bd9`
+  is gone (session restart / >7d), re-create it with the same spec (incl. disk guard). Pace: ONE
+  subagent at a time (shared usage limit).
+- ⭐ DISK GUARD (2026-07-12): `target/` had bloated to **176G** (target/debug/deps 165G / 396K
+  files — `make bump` orphans versioned artifacts, cargo never GCs; `make bump`'s clean-cache only
+  prunes incremental/, NOT deps). `cargo clean` (root + app/src-tauri) reclaimed **269G** →
+  disk 86%→64% used, 324G free. Each cron tick checks `df`; if <~40G free → `cargo clean` both
+  workspaces before building (one full rebuild expected after). Root-cause follow-up (optional):
+  teach `make bump` clean-cache to prune stale-version deps, or add cargo-sweep.
 
 ## Queue (from EXECUTION-PLAN.md)
 1. Observatory · Today — `screen/observatory-today.md`   ✅ SHIPPED (commit 35a438ce, pushed develop)
@@ -1394,10 +1408,20 @@ REAL remaining gaps (verified live, grep — code-graph empty for this project =
   ✅ P3-UI SHIPPED `7cf3c37f` (2026-07-09): MemoryDetail.svelte usage strip → loaded/followed/skipped_7d
   (memoryUsageStrip pure helper, honest zeros); lifetime kept as secondary "all-time" line; bonus: legacy
   <style> hex→rokkit tokens. +6 tests; svelte-check 0/0; 1046 app tests. Matches learnings-anatomy-v2 mockup.
-  ⭐ MEMORY-FEEDBACK LOOP COMPLETE (daemon 553a6203 + UI 7cf3c37f). ⏳ MERGE MILESTONE IN PROGRESS:
-  rank3 `5f12a757` + memory-feedback → v0.2.34→0.2.35 → main (ships activity.memory_loads table + trigger bugfix LIVE).
-  DEFERRED follow-ups: per-session load correlation (thread client_session_id through get_context/MCP → needs
-  plugin republish); P2c behavioral use-classifier (reuse verdict_classifier fragment overlap).
+  ⭐✅ MEMORY-FEEDBACK MILESTONE SHIPPED & RELEASED (2026-07-09): rank3 `5f12a757` + memory-feedback
+  (daemon `553a6203` + UI `7cf3c37f`) → **v0.2.35** (`f926e9c1`) MERGED→main (`92fd29e4`, tag pushed,
+  tap+marketplace synced, activity.memory_loads table + memory_outcome trigger bugfix LIVE via bundle).
+  `main..develop` EMPTY. FOUR milestones this session (v0.2.32 Dōjō UI, v0.2.33 analyzer wiring, v0.2.34
+  analyzer completeness, v0.2.35 memory-feedback loop).
+  DEFERRED (memory-feedback follow-ups): per-session load correlation (thread client_session_id through
+  get_context/MCP → needs plugin republish) → then P2c behavioral use-classifier (reuse verdict_classifier
+  fragment overlap; DEPENDS on per-session correlation). Both refine an already-shipped v1.
+
+⏳ REPRIORITIZATION SWEEP IN FLIGHT (agent): after 4 milestones, a broad completeness re-survey of ALL
+  docs/llm-spec/ screens+pipelines vs current impl → fresh prioritized list of the highest-value REMAINING
+  gaps, so the rest of the vacation run hits the biggest wins (not a possibly-stale queue). Known-open before
+  sweep: item 3 memory promote/merge statuses; impact_regressions; structural/GoF patterns; rank4 (deprioritized);
+  memory-feedback follow-ups above. Slot 2 Instruments·Health + Dōjō consoles C12-14 remain BLOCKED (Jerry/Docker).
 
   3. **memory promote/merge statuses** defined + readyToShare/toMerge wired (Memories screen / overflow 7).
   4. HARDEST (new DDL + CAPTURE hooks in marketplace/ plugin, multi-part): memory-usage telemetry
@@ -1405,3 +1429,50 @@ REAL remaining gaps (verified live, grep — code-graph empty for this project =
      structural/GoF pattern detection. Each = its own track (DDL source-first → writer → reader → capture).
   Slot 2 (Instruments·Health) stays PARKED (registry↔usage join gap — awaits Jerry).
   Genuinely BLOCKED (needs Jerry/Docker): Dōjō consoles C12-C14; running-Dōjō + Tauri-e2e visual verify.
+
+═══════════════════════════════════════════════════════════════════════════════
+⭐⭐ REPRIORITIZED QUEUE (2026-07-12 completeness sweep, agent a91f272c) — AUTHORITATIVE
+Most of the spec is SHIPPED; remaining gaps = a few "DB-right, no path" bridges + 2 net-new subsystems.
+Ranked highest-value BUILDABLE-NOW (each cites the code anchor; verify before building):
+
+1. **memory-triage lifecycle actions** — ✅ DAEMON SHIPPED `06e7ff3b` (2026-07-12): 5 POST routes
+   /api/knowledge/memories/{id}/{archive|reinforce|challenge|dismiss|merge} (routes.rs:235-239) + thin handlers
+   over existing writers. Enum: NO 'dismissed' → dismiss='rejected'; challenge='challenged'; CURATABLE_STATES
+   guard → 409 on terminal; merge={into} links parent=into/child=id + archives child (pipeline/memory.md), 400
+   self/missing, 404 unknown survivor. 8 route tests; clippy 0; 1321 pass. Shapes: archive→{id,status:archived};
+   reinforce→{id,reinforced:true}; challenge→{id,status:challenged}|409; dismiss→{id,status:rejected}|409;
+   merge {into}→{id,into,status:archived}|400|404. errors {error}.
+   ✅ UI SHIPPED `a8375624` (2026-07-12): api.ts +5 helpers; 4 lifecycle buttons on ActiveList.svelte
+   (reinforce/challenge/archive/dismiss) → optimistic tab re-fetch (scoped to project — fixed a latent
+   unscoped-refetch bug); challenge/dismiss disabled on terminal (isTerminalStatus) → 409 surfaces inline;
+   merge DEFERRED (no survivor picker; mergeMemory in api.ts for later). +13 tests; svelte-check 0/0; 1059 app.
+   ⭐ #1 TRACK COMPLETE (daemon `06e7ff3b` + UI `a8375624`).
+2. **observatory-logs** — ✅ DAEMON GET SHIPPED `307cd5c0` (2026-07-12): GET /api/logs?level&source&module&since&limit
+   over public.logs (level/running_on/context->>'module'/logged_at, all indexed; fully parameterized; since=
+   30s|15m|1h|24h|7d|rfc3339|all, garbage→400; limit 200/max1000; newest-first; []→empty). query_logs reader +
+   get_logs handler + parse_since. 10 tests; clippy 0; 1331 pass. ⚠️ UI FOLLOW-UP NEEDED: (observatory)/logs screen
+   does NOT exist; rail 診 "Logs" (observatory-nav.ts:98) currently resolves to (health)/logs = DIFFERENT screen
+   (bootstrap diagnostics, data.sessions). Real spec = kanji 録, mockup project-logs.jsx→ObsLogs. UI chunk must
+   create (observatory)/logs + +page.ts calling GET /api/logs + resolve the 診/録 nav collision.
+   ⭐⭐ MILESTONE: #1 memory-triage (daemon 06e7ff3b + UI a8375624) + #2 logs-GET (307cd5c0). ⏳ MERGE+BUMP
+   v0.2.35→0.2.36 → main IN PROGRESS.
+2. **observatory-logs GET** — /api/logs is POST-only (routes.rs:218, logs.rs only ingest_log); public.logs
+   table+indices exist. Add a GET read handler (level/source/since filters). Pure daemon, S. Resurrects a DEAD screen.
+3. **project-about field-widening** — update_solution (pg_store.rs:4750) writes only name/desc/maturity; the
+   edit form already POSTs goal/icon/stack/links/client/preferred_acp (projects.ddl:6-14). Widen the UPDATE. S–M.
+4. **session-retrospective narrative writer** — sessions.summary col has NO producer; get_sessions_stub
+   (sessions.rs:22) hardcodes toolUsage:[]/benchmarkPairs:[]. Reuse per-session analyze.rs + insight-copy. M. High product value.
+5. **Atlas / code-graph viz screen** — backend 100% shipped+UNUSED (getSolutionGraph/getCommunities/getCallFlow,
+   zero consumers, no graph-viz component). Needs-UI, L. High-visibility.
+6. **traceability fix/dismiss action + expected-vs-actual drawer** — drift_items rollup renders read-only; no
+   traceability.rs handler, no action. Daemon+UI, M.
+7. **project-icon inference chain** (README-image/logo-glob/favicon/kanji-from-stack/letter). Pure daemon, M, deterministic.
+8. **impact regression surface + verdict→memory downstream** — applied_recommendations/impact_regressions tables
+   absent; verdicts don't reinforce/challenge the underlying memory. Daemon+small UI, M.
+NET-NEW SUBSYSTEMS (L, Med value, later): benchmarks (benchmark_runs.ddl zero writers); testability/TDD-gate
+(no function_shapes/tdd_proposals DDL); collective CONTRIBUTE lane (anonymize.rs dead-code, privacy-sensitive);
+semantic-search hybrid ranking (query.rs:33 keyword-only).
+QUEUE RECONCILE: About EDIT UI exists (only daemon field-widen left); rules-consolidation SHIPPED (knowledge.rs:523);
+Instruments Playground/Replay FUNCTIONAL (only Health blocked); settings/prefs writable e2e. DROP these from "gaps".
+BLOCKED (Jerry/Docker): Instruments·Health registry-join; Dōjō consoles C12-14; clarification-prompting (spec-deferred v2);
+per-session memory-load correlation; impact insight-copy (user-authored verdicts).

@@ -214,8 +214,9 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/patterns/{project}/conventions", get(codebase::project_conventions_handler))
         // Hook event ingestion (from sensei-hook.ts)
         .route("/hook/event", post(sessions::ingest_hook_event))
-        // Structured logging (remote writers: CLI, MCP, app)
-        .route("/api/logs", post(logs::ingest_log))
+        // Structured logging: POST ingests (CLI, MCP, app); GET reads for the
+        // Observatory · Logs screen.
+        .route("/api/logs", post(logs::ingest_log).get(logs::get_logs))
         // Metrics
         .route("/api/metrics/{project}", get(observatory::get_metrics))
         // Workflow state
@@ -232,6 +233,11 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/knowledge/memories/{id}",           get(knowledge::get_memory))
         .route("/api/knowledge/memories/{id}/promote",   post(knowledge::promote_memory))
         .route("/api/knowledge/memories/{id}/generalise", post(knowledge::generalise_memory))
+        .route("/api/knowledge/memories/{id}/archive",   post(knowledge::archive_memory))
+        .route("/api/knowledge/memories/{id}/reinforce", post(knowledge::reinforce_memory))
+        .route("/api/knowledge/memories/{id}/challenge", post(knowledge::challenge_memory))
+        .route("/api/knowledge/memories/{id}/dismiss",   post(knowledge::dismiss_memory))
+        .route("/api/knowledge/memories/{id}/merge",     post(knowledge::merge_memory))
         .route("/api/knowledge/promotion-candidates",    get(knowledge::promotion_candidates))
         .route("/api/knowledge/proposals",               post(knowledge::propose_memory))
         .route("/api/knowledge/proposals/{id}/accept",   post(knowledge::accept_proposal))
@@ -609,5 +615,125 @@ mod tests {
         let result: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(result["ok"], true);
         assert_eq!(result["scanning"], true);
+    }
+
+    // ── Memory lifecycle action routes (archive/reinforce/challenge/dismiss/merge) ──
+
+    /// Seed one active memory (`status='active'`, `strength=1.0`) and return its id.
+    async fn seed_memory(state: &AppState, title: &str, content: &str) -> uuid::Uuid {
+        state.pg.create_memory(None, "global", None, "decision", title, content, None, None)
+            .await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn memory_archive_action_sets_archived() {
+        let (app, state) = test_app().await;
+        let mid = seed_memory(&state, "_test:route_archive", "rule a").await;
+        let resp = app.oneshot(
+            Request::builder().method("POST")
+                .uri(format!("/api/knowledge/memories/{mid}/archive"))
+                .body(Body::empty()).unwrap()
+        ).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let m = state.pg.get_memory(&mid).await.unwrap().unwrap();
+        assert_eq!(m["status"], "archived");
+    }
+
+    #[tokio::test]
+    async fn memory_reinforce_action_bumps_strength() {
+        let (app, state) = test_app().await;
+        let mid = seed_memory(&state, "_test:route_reinforce", "rule r").await;
+        assert_eq!(state.pg.get_memory(&mid).await.unwrap().unwrap()["strength"], 1.0);
+        let resp = app.oneshot(
+            Request::builder().method("POST")
+                .uri(format!("/api/knowledge/memories/{mid}/reinforce"))
+                .body(Body::empty()).unwrap()
+        ).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        // Strength moves; status promotion is the analyzer's job, not this action.
+        assert_eq!(state.pg.get_memory(&mid).await.unwrap().unwrap()["strength"], 2.0);
+    }
+
+    #[tokio::test]
+    async fn memory_challenge_action_sets_challenged() {
+        let (app, state) = test_app().await;
+        let mid = seed_memory(&state, "_test:route_challenge", "rule c").await;
+        let resp = app.oneshot(
+            Request::builder().method("POST")
+                .uri(format!("/api/knowledge/memories/{mid}/challenge"))
+                .body(Body::empty()).unwrap()
+        ).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["status"], "challenged");
+        assert_eq!(state.pg.get_memory(&mid).await.unwrap().unwrap()["status"], "challenged");
+    }
+
+    #[tokio::test]
+    async fn memory_dismiss_action_sets_rejected() {
+        let (app, state) = test_app().await;
+        let mid = seed_memory(&state, "_test:route_dismiss", "rule d").await;
+        let resp = app.oneshot(
+            Request::builder().method("POST")
+                .uri(format!("/api/knowledge/memories/{mid}/dismiss"))
+                .body(Body::empty()).unwrap()
+        ).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(state.pg.get_memory(&mid).await.unwrap().unwrap()["status"], "rejected");
+    }
+
+    #[tokio::test]
+    async fn memory_merge_action_links_and_archives_member() {
+        let (app, state) = test_app().await;
+        let member = seed_memory(&state, "_test:route_merge_member", "member text").await;
+        let rep = seed_memory(&state, "_test:route_merge_rep", "surviving text").await;
+        let resp = app.oneshot(
+            Request::builder().method("POST")
+                .uri(format!("/api/knowledge/memories/{member}/merge"))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::json!({"into": rep.to_string()}).to_string())).unwrap()
+        ).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        // Member leaves the active set (archived) and is linked under the survivor.
+        assert_eq!(state.pg.get_memory(&member).await.unwrap().unwrap()["status"], "archived");
+        assert_eq!(state.pg.get_memory_parent(&member).await.unwrap(), Some(rep));
+    }
+
+    #[tokio::test]
+    async fn memory_action_bad_uuid_is_400() {
+        let (app, _) = test_app().await;
+        let resp = app.oneshot(
+            Request::builder().method("POST")
+                .uri("/api/knowledge/memories/not-a-uuid/archive")
+                .body(Body::empty()).unwrap()
+        ).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn memory_merge_missing_into_is_400() {
+        let (app, state) = test_app().await;
+        let mid = seed_memory(&state, "_test:route_merge_nointo", "x").await;
+        let resp = app.oneshot(
+            Request::builder().method("POST")
+                .uri(format!("/api/knowledge/memories/{mid}/merge"))
+                .header("content-type", "application/json")
+                .body(Body::from("{}")).unwrap()
+        ).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn memory_merge_invalid_into_is_400() {
+        let (app, state) = test_app().await;
+        let mid = seed_memory(&state, "_test:route_merge_badinto", "x").await;
+        let resp = app.oneshot(
+            Request::builder().method("POST")
+                .uri(format!("/api/knowledge/memories/{mid}/merge"))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"into":"not-a-uuid"}"#)).unwrap()
+        ).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 }

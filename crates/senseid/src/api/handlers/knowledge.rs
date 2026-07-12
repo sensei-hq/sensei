@@ -375,6 +375,123 @@ pub(crate) async fn promote_memory(
 }
 
 // ============================================================================
+// Memory lifecycle actions — the triage / active / archive curation surface
+// (see [[screen/observatory-memories]]). Thin bridges over existing PgStore
+// writers; results are deterministic action outcomes, NOT generated prose, so
+// they never route through insight-copy.
+//   POST /api/knowledge/memories/{id}/archive    → status = archived
+//   POST /api/knowledge/memories/{id}/reinforce  → strength += REINFORCE_AMOUNT
+//   POST /api/knowledge/memories/{id}/challenge  → status = challenged
+//   POST /api/knowledge/memories/{id}/dismiss    → status = rejected
+//   POST /api/knowledge/memories/{id}/merge      → link under {into} + archive
+// ============================================================================
+
+/// Live (non-terminal) memory states a curator can still challenge / dismiss
+/// from the triage + active surface. `archived` and `rejected` are terminal, so
+/// the status guard won't match them → CONFLICT (can't re-terminate a memory).
+const CURATABLE_STATES: &[&str] = &["proposed", "active", "reinforced", "challenged", "battle_tested"];
+
+/// Strength increment applied by one reinforce action — the standard per-event
+/// bump (`reinforce_memory` caps the running total).
+const REINFORCE_AMOUNT: f64 = 1.0;
+
+/// Parse an `{id}` path segment into a memory `Uuid`, or 400.
+fn parse_memory_id(id: &str) -> Result<uuid::Uuid, (StatusCode, Json<serde_json::Value>)> {
+    uuid::Uuid::parse_str(id).map_err(|_| err(StatusCode::BAD_REQUEST, "bad memory id"))
+}
+
+/// Archive a memory — hides it from LLM retrieval while keeping it visible in
+/// the anatomy view under the Archived filter.
+pub(crate) async fn archive_memory(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let mid = parse_memory_id(&id)?;
+    state.pg.archive_memory(&mid).await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+    Ok(Json(serde_json::json!({ "id": mid, "status": "archived" })))
+}
+
+/// Reinforce a memory — bump its strength (capped in the writer). Status
+/// promotion to `reinforced` / `battle_tested` is derived by the analyzer, not
+/// this action, so only strength moves here.
+pub(crate) async fn reinforce_memory(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let mid = parse_memory_id(&id)?;
+    state.pg.reinforce_memory(&mid, REINFORCE_AMOUNT).await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+    Ok(Json(serde_json::json!({ "id": mid, "reinforced": true })))
+}
+
+/// Challenge a memory — flag it contested. Only applies to a live state
+/// ([`CURATABLE_STATES`]); a terminal memory returns CONFLICT.
+pub(crate) async fn challenge_memory(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let mid = parse_memory_id(&id)?;
+    match state.pg.set_memory_status(mid, "challenged", CURATABLE_STATES).await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
+    {
+        Some(s) => Ok(Json(serde_json::json!({ "id": mid, "status": s }))),
+        None => Err(err(StatusCode::CONFLICT, "memory is not in a challengeable state")),
+    }
+}
+
+/// Dismiss a memory — reject it (the enum's terminal `rejected` value; there is
+/// no separate `dismissed` variant). Only applies to a live state.
+pub(crate) async fn dismiss_memory(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let mid = parse_memory_id(&id)?;
+    match state.pg.set_memory_status(mid, "rejected", CURATABLE_STATES).await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
+    {
+        Some(s) => Ok(Json(serde_json::json!({ "id": mid, "status": s }))),
+        None => Err(err(StatusCode::CONFLICT, "memory is not in a dismissable state")),
+    }
+}
+
+#[derive(Deserialize)]
+pub(crate) struct MergeBody {
+    /// The surviving representative memory this one is folded into.
+    pub into: Option<String>,
+}
+
+/// Merge a memory into a surviving representative: the member (`{id}`) is linked
+/// under the representative (`into`) and archived, so it leaves the active set
+/// while staying visible in the anatomy view. Matches the consolidation
+/// invariant — "members archive with `merged_into: representative_id`" (see
+/// [[pipeline/memory]]). Absorbing the survivor's strength / reinforcement
+/// counts is the consolidation flow's job; this is the thin manual-merge bridge.
+pub(crate) async fn merge_memory(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<MergeBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let mid = parse_memory_id(&id)?;
+    let into = body.into.as_deref().map(str::trim).filter(|s| !s.is_empty())
+        .ok_or_else(|| err(StatusCode::BAD_REQUEST, "into (surviving memory id) required"))?;
+    let into = uuid::Uuid::parse_str(into).map_err(|_| err(StatusCode::BAD_REQUEST, "bad into id"))?;
+    if into == mid {
+        return Err(err(StatusCode::BAD_REQUEST, "cannot merge a memory into itself"));
+    }
+    // The survivor must exist — otherwise the link FK would surface as a 500.
+    state.pg.get_memory(&into).await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "merge target (into) not found"))?;
+    // parent = surviving representative; child = merged-in member (DDL semantics).
+    state.pg.link_memories(&into, &mid).await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+    state.pg.archive_memory(&mid).await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+    Ok(Json(serde_json::json!({ "id": mid, "into": into, "status": "archived" })))
+}
+
+// ============================================================================
 // POST /api/knowledge/memories/{id}/generalise  — rewrite project-agnostic
 // ============================================================================
 
