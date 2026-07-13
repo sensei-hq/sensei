@@ -1850,10 +1850,13 @@ port mismatch hive 7755 vs config 8787 (🟢), etc. Chunk order: {R1,R2}→R3→
    ('approved','published','distributed'), error_rate counts 'error'; confirm the promote loop actually emits those
    (today it emits 'approved', not 'distributed'/'error'). (2) roles→git-role mapping CRUD not exposed as endpoints
    (out of R7 scope; small follow-up if the console UI needs to edit mappings).
-   🟢 NEXT: R8 (client-lead console backend on dojo-mind — engagements/incidents CRUD + artifacts dereferenced=true
-   audit view + compliance export; client-lead role-floor; non_dereferenced==0 gate). Same service/harness as R7 =
-   clean + buildable. THEN R6 console (greenfield SvelteKit, @kavach on npm) or record clean-backlog state. Next
-   heartbeat advances R8.
+   🔨 IN PROGRESS: R8 (client-lead console backend on dojo-mind) → subagent a73bbd38 — engagements/incidents CRUD +
+   artifacts dereferenced=true audit view + compliance export (strip source refs); client-lead role-floor via R7's
+   resolve_tenant_access; gates non_dereferenced==0 + export-leaks-no-source-refs; keep 67 existing green. GUARDRAIL
+   given: derive the client-lead↔DojoAccess floor FROM THE SPEC; a code-level DojoAccess::Lead variant is OK, but a
+   SHIPPED DDL role-enum change must STOP+flag (not invent). No commit until I verify.
+   THEN R6 console (greenfield SvelteKit, @kavach on npm) — last big buildable Dōjō chunk; after that only Jerry-
+   blocked (R3/R4) + live-auth-verify (R6/R9-11) remain → would record clean-backlog state per heartbeat step 6.
    Dōjō is NOT deferred (LOCAL-FIRST=RELAY-ONLY). Consolidation was cleanup = shipped.
 Assets: _dojo-build-plan.md (refreshed) + 4 console specs + dojo-developer-flow.md; ~/Developer/kavach/supabase model.
 
