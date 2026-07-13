@@ -1978,6 +1978,11 @@ port mismatch hive 7755 vs config 8787 (🟢), etc. Chunk order: {R1,R2}→R3→
    locals.session.access_token → data → triage-data.ts Authorization: Bearer. Makes R9/R10/R11 functional-on-login
    (live login + running dojo service still Jerry). Verify check+build+TEST (0/green).
    ✅ R10 SHIPPED `da3f4d63` (subagent a7b582eb) — admin console (members/identities/policies/health/audit) over R7. VERIFIED check 0, 80 tests, build ok. DRY: shared lib/dojo-api.ts core (triage-data.ts refactored to it, R9 importers untouched).
+   🔨 IN PROGRESS: R11 — Client-lead console (subagent acd047bb, LAST console screen): engagements+incidents CRUD +
+   dereferenced-artifacts audit (non_dereferenced==0 gate) + compliance export (source-ref-free) over R8, on dojo-api.ts
+   + the tenant/token wiring. Verify check+build+test. 🟢 THEN R3 (infer+confirm bind + setup org-tagging) — needs the
+   small dojo.memberships org-field DDL; ⚠️ FLAG before the schema change (DDL-source-first, shipped dojo scope). R4
+   dropped. After R11+R3: console track UI complete; remaining = Jerry live-verify (magic-link + running dojo service).
    ✅ sensei-mcp RESILIENCE SHIPPED `89de7c59` (2026-07-13) — ⚠️ INVESTIGATION FLIPPED THE FIX. The proposed "add
    reconnect logic + re-fetch the tool list" was based on a WRONG premise. Reading crates/mcp: `handle_list_tools`
    returns a fully STATIC list (hardcoded json!, NOT daemon-fetched), and tool CALLS are per-call reqwest to :7744.
