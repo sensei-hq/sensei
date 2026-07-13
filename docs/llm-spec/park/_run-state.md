@@ -1648,12 +1648,22 @@ ACTIVE BUILD QUEUE (default-and-proceed order, highest value first):
 ▶️ CORRECTION (2026-07-13): the "backlog exhausted" call below was WRONG — I under-reached. The DŌJŌ segment (the
 LAST big specced piece) is NOT blocked: Docker RUNNING (socket + com.docker.backend) + Supabase CLI 2.109.1 both
 CONFIRMED live this tick; the run-state's own note says "UN-PARK the Dōjō SaaS console + supabase" and Jerry's
-STANDING POLICY authorized full-scope Dōjō (Supabase-localhost + kavach, pre-decided). ⏳ DŌJŌ SURVEY/BLUEPRINT
-BUILDING (agent a06f0afe, read-only) → refreshes docs/llm-spec/park/_dojo-build-plan.md with a dependency-ordered,
-chunk-by-chunk plan tagging 🟢 autonomy-safe (schema/config/scaffold/backend) vs 🔴 auth-sensitive (Supabase/kavach
-→ Jerry's eye). Then build the 🟢 chunks one at a time; hold 🔴 auth chunks for Jerry. NEVER touch .env/real creds.
-Assets present: _dojo-build-plan.md + 4 console specs + dojo-developer-flow.md; crates hive-mind/dojo-protocol/
-collective; ~/Developer/kavach/supabase model; in-repo supabase/ to create.
+STANDING POLICY authorized full-scope Dōjō (Supabase-localhost + kavach, pre-decided). ✅ DŌJŌ SURVEY DONE (a06f0afe) — plan refreshed `d6f1ba9f`. KEY: the Dōjō is FAR more built than the stale plan
+implied — the WHOLE Docker-free spine is built+tested: dojo schema (C1), dojo-protocol wire, the `hive-mind`
+service (`sensei-hive` binary, runnable, embedded PG no-Docker, dual auth API-key+Supabase-JWT synthetic-testable,
+full triage/promotion engine k-anon≥3 auto-approve 0.80), daemon routes (memberships/preferences/share-review/
+upgrades) + strict anonymise/fail-closed-dereference + durable outbox + 300s downstream pull, 3 of 4 desktop screens.
+MISSING (G1-G11): SaaS console web app + in-repo supabase/ + kavach wiring (🔴), admin/client-lead console BACKEND
+endpoints (🟢), share-review desktop screen (🟢), UPSTREAM contribute cadence scheduler (🟢, publish is manual-only),
+port mismatch hive 7755 vs config 8787 (🟢), etc. Chunk order: {R1,R2}→R3→{R7,R8}→R5→R6🔴→{R9,R10,R11}🔴→polish.
+⏳ R1 BUILDING (agent a5b85ba8): contribute-cadence scheduler (mirror analyzer_scheduler). SAFETY: STAGE-ONLY into
+the local outbox on the user's cadence (default PAUSED→no-op), NO auto-publish / NO egress (publish stays manual C6),
+reuse the existing strict anonymise/eligibility. Then R2 (share-review screen), R7/R8 (console backends) — all 🟢.
+⭐ OPEN QUESTIONS FOR JERRY (gate the 🔴 console/auth chunks, not the 🟢 ones): (1) console app location (top-level
+console/ vs subtree vs separate repo)? (2) port — standardize on 7755 or 8787? (3) mode=auto cadence = auto-publish
+or stage-then-human-Publish? (I default to stage-only for R1.) (4) deploy target (dojo.sensei-hq.org soon vs
+localhost-only)? (5) console→service via user JWT direct (built) or a BFF? (6) seed-catalogue source/format?
+Assets: _dojo-build-plan.md (refreshed) + 4 console specs + dojo-developer-flow.md; ~/Developer/kavach/supabase model.
 
 ⏸️ (SUPERSEDED by the correction above) STEP-6: CLEAN AUTONOMOUS-SAFE BACKLOG EXHAUSTED (2026-07-13).
 Post-rescan health CONFIRMED: analyzer generating richly (sensei 225 detected_patterns + 194 recommendations;
