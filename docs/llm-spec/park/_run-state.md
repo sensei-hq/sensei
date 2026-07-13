@@ -1620,20 +1620,19 @@ ACTIVE BUILD QUEUE (default-and-proceed order, highest value first):
    • D2 fired: daemon.last_version=0.2.42 → ScanRoot rescan ENQUEUED (async, draining; 562K nodes).
    app UI (Atlas/logs/icon) live in the release .app via Actions; local .app updates at a future full install.
 
-── 🔴🔴 P0 BUG FOUND (2026-07-13, dogfood) — SCANNING CRASHES THE DAEMON → STALE INDEX. ⏳ FIX BUILDING (a2d911f2).
-   Verified the rescan re-index (last tick's flag): resolve_project_uuid + ALL v0.2.40–0.2.42 symbols STILL count 0;
-   sensei = EXACTLY 6598 nodes (frozen). ROOT CAUSE: `/opt/homebrew/var/log/sensei.error.log` has 105×
-   `GGML_ASSERT(cparams.n_ubatch >= n_tokens) failed` + crash backtrace at the 0.2.42 boot — the embedded llama-cpp
-   embedder HARD-ABORTS (uncatchable) on an over-long node text during indexing → daemon crashes mid-scan → restart →
-   D2 idempotent (last_version already 0.2.42, set BEFORE the async scan) → rescan never re-runs → index frozen. The
-   embed.rs:214 cap is CHARS(≤256) but the assert is TOKENS → wrong unit / not on scan path. Daemon currently stable
-   ONLY because no scan runs; ANY scan (manual/file-change/D2) crashes it. This freezes capture — the thing dogfooding
-   + search + graph all depend on. Fix scope: (1) bound each embed input to a TOKEN-SAFE length pre-encode so the
-   assert can't fire (PREVENT, not catch); (2) D2 crash-recovery — mark version consumed only AFTER the rescan
-   completes so an aborted scan retries. senseid-side (flag gateway-embedded n_ubatch as a GH issue only if needed).
-   ON DONE: verify build+clippy+tests → commit → then a TARGETED install + live scan to confirm sensei re-indexes
-   (resolve_project_uuid appears) WITHOUT crashing. THIS is the highest-value item — supersedes F-contribute.
-   (Relates to [[project_executor_hang]] embed cap+fallback — that cap was insufficient for n_ubatch.)
+── ✅ P0 FIX SHIPPED `c9ef8b61` (2026-07-13, develop) — ⏳ INSTALLING FOR LIVE VERIFY (b7iguu4po, no bump).
+   Real root cause (sharper than hypothesis): per-BATCH token overflow — embed_nodes packed 64 texts into ONE
+   Payload::Embed; gateway-embedded LlamaCppAdapter sums ALL seqs into a SINGLE ctx.encode() bounded by n_ubatch=512
+   (BERT encoder, no ubatch split) → 64 code texts ≫512 tok → GGML_ASSERT abort. Char cap was wrong unit AND wrong
+   level (per-input, not per-batch). FIX (senseid): cap_embed_input (token-safe per-input) + est_tokens + greedy
+   pack_embed_batches (≤384 tok & ≤64 seq/batch) + compile-time asserts; embed_nodes iterates packed batches. Found
+   +fixed a 2ND abort vector (corrections.rs aggregate_corrections embedded 64 uncapped prompts). D2 crash-recovery:
+   last_version now committed only AFTER the rescan drains (spawn_version_commit_watcher) → aborted scan re-triggers.
+   29 tests, clippy 0, no DDL. GH-issue flagged (NOT edited): sensei-hq/gateway LlamaCppAdapter should split encodes
+   ≤n_ubatch / guard the abort. VERIFY ON INSTALL: daemon 0.2.42 (no bump) → `sensei scan <sensei repo>` → daemon
+   does NOT crash + sensei node count grows past 6598 + resolve_project_uuid indexes. (D2 won't auto-fire — same
+   version; targeted scan tests the embed path directly. D2 crash-recovery is unit-proven.) Release via next milestone.
+   (Was: FIX BUILDING a2d911f2.) — [[project_executor_hang]] embed cap was insufficient for n_ubatch.
 
 ── ⭐ MILESTONE DUE: develop has accumulated since v0.2.41 → Atlas `ff8299af`, logs `b5685e69`, icon `c8054297`,
    get_rules `3089ffd0` (+run-state). Merge develop→main + `make ship`/full `make install` (service+app) to make them
