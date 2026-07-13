@@ -1682,6 +1682,17 @@ port mismatch hive 7755 vs config 8787 (🟢), etc. Chunk order: {R1,R2}→R3→
    advisory→mandatory + set focus + tiebreak "what's canon here"** (the lead-only power vs admin; a person may hold
    both). Fallback if too much for v1: 3 roles (admin absorbs canon, drop lead) — but KEEP lead recommended (canon is
    the Dōjō's whole point). → member_role enum change = DDL chunk, do AFTER the hive→dojo consolidation lands.
+── ⭐ NEW (Jerry 2026-07-13): SENSEI WEBSITE UPDATES → END OF QUEUE (build after Dōjō). Mockups replace screenshots
+   with FLOWS + screen-agnostic content + add DŌJŌ content. ⏳ REVIEW/ANALYZE agent aae53ef1 → surfacing suggestions/
+   enhancements from the mockups (→ docs/analysis/2026-07-13-website-redesign-review.md) so Jerry can add his own,
+   BEFORE the build. Don't `bun run build` against a live website dev server [[feedback_no_build_against_live_dev]].
+── ⭐ PHASE 2/3 RESEARCH (Jerry 2026-07-13, "on the side", NOT a build): embed/reuse ZED's assistant (in-app agentic
+   coding) into sensei + the vision: sensei as agentic-execution CONTROL PLANE (planner mapping phases/features/spec
+   + progress+decision capture via mcp/daemon — the autonomous-run loop is a working prototype) AND a RELAY COMPANION
+   mobile app (remote track/interact for multi-day runs; human-in-the-loop response from mobile; push notifs desktop+
+   mobile; sensei/dojo as middleman relaying user↔LLM). ⏳ research agent a6b8955f → docs/analysis/2026-07-13-zed-embed
+   -and-relay-control-plane-research.md (Zed ACP/crate/license options; reuse gateway+Zed-adapter+daemon/MCP+transcript
+   capture; control-plane+relay arch; phasing). Informs a future phase; nothing to build now.
 ⏳ HIVE→DOJO CONSOLIDATION BUILDING (agent ab63f054, Jerry directive — one name `dojo`). Phase 1 CODE: merge
    hive-protocol→dojo-protocol (delete crate), rename hive-mind→dojo-mind + binary sensei-hive→**sensei-dojo**, port
    8787→7755, global hive→dojo (≈123 files/142 refs). Phase 2 DDL (source-first): fold hive schema→dojo schema + hive
