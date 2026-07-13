@@ -1620,7 +1620,11 @@ ACTIVE BUILD QUEUE (default-and-proceed order, highest value first):
    • D2 fired: daemon.last_version=0.2.42 → ScanRoot rescan ENQUEUED (async, draining; 562K nodes).
    app UI (Atlas/logs/icon) live in the release .app via Actions; local .app updates at a future full install.
 
-── ✅ P0 FIX SHIPPED `c9ef8b61` (2026-07-13, develop) — ⏳ INSTALLING FOR LIVE VERIFY (b7iguu4po, no bump).
+── ✅✅ P0 FIX SHIPPED `c9ef8b61` + VERIFIED LIVE (2026-07-13). Targeted `sensei scan` of the sensei repo:
+   daemon PID UNCHANGED (no crash), GGML_ASSERT stayed 106 (zero new aborts), sensei nodes 6598→9340 (+2742),
+   resolve_project_uuid 0→2 + pack_embed_batches/cap_embed_input now indexed. CAPTURE UNFROZEN. search/graph now
+   see current code. NEXT milestone bump+install → clean FULL D2 rescan (all watch roots, crash-free) refreshes the
+   whole graph.  [Prior line:] ── ✅ P0 FIX SHIPPED `c9ef8b61` (2026-07-13, develop):
    Real root cause (sharper than hypothesis): per-BATCH token overflow — embed_nodes packed 64 texts into ONE
    Payload::Embed; gateway-embedded LlamaCppAdapter sums ALL seqs into a SINGLE ctx.encode() bounded by n_ubatch=512
    (BERT encoder, no ubatch split) → 64 code texts ≫512 tok → GGML_ASSERT abort. Char cap was wrong unit AND wrong
