@@ -1598,12 +1598,20 @@ ACTIVE BUILD QUEUE (default-and-proceed order, highest value first):
    develop (NOT merged/bumped — batch the UI sweep into ONE milestone later; app UI needs install-app to go live).
    3 large subagents run back-to-back (~577K tok) → PACING to heartbeat cadence (one per idle tick), not back-to-back.
 ── NEXT (autonomous-safe, no-DDL; pick highest-value per tick):
-   • ⏳ get_rules SCOPE HYGIENE — BUILDING (agent a87bbf32, diagnose+fix). Bug: get_rules(sensei) surfaced 8
-     general-scope "guiding principle across N prompts" rules incl. an UNRELATED fiction project ("nigel/essence
-     system"). Note: generate.rs:305-306 ALREADY writes rule-candidate memories scope=project+project_id (correct) —
-     so the bleed is elsewhere in the /api/knowledge/rules path (governance.rs:120 defaults empty scope→general; or
-     the rules query surfaces project principles cross-project). No-DDL code fix + TDD; FLAG any prod-row data
-     correction (don't blind-UPDATE). ON DONE: verify + commit (+ apply flagged SQL only if trivially-safe/reviewed).
+   • ✅ get_rules SCOPE HYGIENE SHIPPED `3089ffd0` (2026-07-13). Root cause: resolve_rules_raw admitted every
+     namespace_id-NULL memory as an always-on `general` rule for ALL folders; L2 conventions are project_id-set +
+     namespace_id-NULL (governance reads only namespace_id, not the legacy project_id/scope) → leaked cross-project.
+     Fix (query-side, NO DDL, no data correction — rows correctly stored, only mis-surfaced): general catch-all
+     narrowed to (namespace_id NULL AND project_id NULL); project-tied branch resolves a project's principle ONLY for
+     its own repo, labeled `project`; resolve_global_rules likewise. Live sim sensei 9→1. +1 regression test;
+     governance 8/8 + knowledge_api green. Follow-up flagged: attach project namespace at generation (scan-time).
+   • NEXT no-DDL: search recall gaps (signature-substring misses real symbols → query.rs) ; F-contribute lane (wire
+     C6 scheduling). [F-benchmarks/F-TDD-gate + C/D remain DDL-coordinated.]
+
+── ⭐ MILESTONE DUE: develop has accumulated since v0.2.41 → Atlas `ff8299af`, logs `b5685e69`, icon `c8054297`,
+   get_rules `3089ffd0` (+run-state). Merge develop→main + `make ship`/full `make install` (service+app) to make them
+   LIVE (app UI needs install-app; get_rules/icon-serve need install-service) — HEAVY (release+Tauri build ~15-20m,
+   pkills MCP, publishes). Batch a couple more no-DDL chunks then ONE milestone, or trigger when Jerry's around.
    • tooling follow-up: search recall gaps (signature-substring match misses some real symbols) — query.rs.
    • F-contribute lane: wire scheduling for the already-built C6 contribute path (no DDL). [F-benchmarks/F-TDD-gate
      need DDL → defer w/ C+D.]
