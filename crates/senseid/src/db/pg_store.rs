@@ -4834,6 +4834,21 @@ impl PgStore {
     }
 
     pub async fn list_projects(&self) -> Result<Vec<serde_json::Value>, String> {
+        self.list_projects_under(None).await
+    }
+
+    /// Like [`list_projects`], optionally scoped to a folder. When `under` is
+    /// `Some(path)`, only projects that own at least one folder whose `abs_path`
+    /// is `path` itself OR lives beneath `path` are returned — path-boundary-safe,
+    /// so a sibling `path-other` is NOT matched (the boundary test is
+    /// `left(abs_path, len(path)+1) = path || '/'`, never a raw `LIKE` prefix
+    /// that would let `_`/`%` in the path act as wildcards). `None` returns every
+    /// project (unchanged behavior). The path is a bound parameter — never
+    /// interpolated.
+    pub async fn list_projects_under(
+        &self,
+        under: Option<&str>,
+    ) -> Result<Vec<serde_json::Value>, String> {
         // Additive: also returns icon/stack/vision(goal) plus repos_count /
         // libs_count / last_session_at / sessions7d so the Projects index can
         // render its card + list layouts without a per-project fanout. Existing
@@ -4855,8 +4870,14 @@ impl PgStore {
                         (SELECT max(s.started_at) FROM activity.sessions s WHERE s.project_id = p.id) AS last_session_at,
                         (SELECT count(*) FROM activity.sessions s
                           WHERE s.project_id = p.id AND s.started_at > now() - interval '7 days')::bigint AS sessions7d
-                 FROM sensei.projects p ORDER BY p.name"
-            ).fetch_all(&self.pool).await
+                 FROM sensei.projects p
+                 WHERE $1::text IS NULL OR EXISTS (
+                          SELECT 1 FROM sensei.folders f
+                           WHERE f.project_id = p.id
+                             AND (f.abs_path = $1::text
+                               OR left(f.abs_path, length($1::text) + 1) = $1::text || '/'))
+                 ORDER BY p.name"
+            ).bind(under).fetch_all(&self.pool).await
             .map_err(|e| { tracing::error!(error = %e, "list_projects failed"); e.to_string() })?;
 
         Ok(rows.into_iter().map(|(id, name, desc, client, maturity, tags, modified, icon, stack, vision, repos_count, libs_count, last_session_at, sessions7d)| {
@@ -9623,6 +9644,55 @@ mod tests {
         assert!(names.contains(&"_test:proj:list_b"));
         s.delete_project(&id1).await.unwrap();
         s.delete_project(&id2).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn list_projects_under_filters_by_folder_path_boundary() {
+        // find_projects (MCP) needs a folder-scoped view: only projects whose
+        // folders live under a given path. This pins the SQL boundary rule —
+        // exact match + child match, but never a sibling that merely shares the
+        // textual prefix (`/x` must not catch `/x-other`).
+        let s = pg_store().await;
+        let short = uuid::Uuid::new_v4().simple().to_string()[..8].to_string();
+        let base = format!("/tmp/_test-fpu-{short}");
+        let under = format!("{base}/x");
+        let root = s.add_watch_root(&base, &format!("fpu-{short}"), &serde_json::json!([]))
+            .await.unwrap();
+
+        // A: folder strictly beneath `under`.
+        let a = s.ensure_test_project(&format!("fpu-a-{short}")).await.unwrap();
+        s.upsert_folder(&root, "git", "a", "x/a", &format!("{under}/a"), None, Some(&a)).await.unwrap();
+        // B: folder exactly equal to `under` (boundary: abs_path == under).
+        let b = s.ensure_test_project(&format!("fpu-b-{short}")).await.unwrap();
+        s.upsert_folder(&root, "git", "b", "x", &under, None, Some(&b)).await.unwrap();
+        // C: folder elsewhere under base but outside `under`.
+        let c = s.ensure_test_project(&format!("fpu-c-{short}")).await.unwrap();
+        s.upsert_folder(&root, "git", "c", "elsewhere", &format!("{base}/elsewhere"), None, Some(&c)).await.unwrap();
+        // D: sibling sharing the `under` prefix textually but across a path boundary.
+        let d = s.ensure_test_project(&format!("fpu-d-{short}")).await.unwrap();
+        s.upsert_folder(&root, "git", "d", "x-other", &format!("{under}-other/z"), None, Some(&d)).await.unwrap();
+
+        let scoped: Vec<String> = s.list_projects_under(Some(&under)).await.unwrap()
+            .iter().filter_map(|p| p["id"].as_str().map(str::to_string)).collect();
+        let has = |id: &uuid::Uuid| scoped.contains(&id.to_string());
+        assert!(has(&a), "folder strictly under `under` must match");
+        assert!(has(&b), "folder equal to `under` must match (boundary)");
+        assert!(!has(&c), "folder outside `under` must NOT match");
+        assert!(!has(&d), "sibling `{under}-other` must NOT match (path boundary, not raw prefix)");
+
+        // No-filter returns everything — all four present.
+        let all: Vec<String> = s.list_projects_under(None).await.unwrap()
+            .iter().filter_map(|p| p["id"].as_str().map(str::to_string)).collect();
+        for id in [&a, &b, &c, &d] {
+            assert!(all.contains(&id.to_string()), "no-filter list must include every project");
+        }
+        // list_projects() (public no-arg) is equivalent to the None filter.
+        let plain: Vec<String> = s.list_projects().await.unwrap()
+            .iter().filter_map(|p| p["id"].as_str().map(str::to_string)).collect();
+        assert!(plain.contains(&a.to_string()) && plain.contains(&c.to_string()),
+            "list_projects() must stay unfiltered");
+
+        for id in [a, b, c, d] { s.delete_project(&id).await.unwrap(); }
     }
 
     #[tokio::test]
