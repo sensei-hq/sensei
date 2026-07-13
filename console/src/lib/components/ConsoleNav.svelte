@@ -1,11 +1,9 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import { TENANT_PARAM } from '$lib/tenant';
 
 	// Left nav (mockup DojoNav): grouped destinations with a kanji glyph. In R9
 	// only Overview + Triage are wired; the rest render as "soon" (non-interactive)
-	// per the mockup's DOJO_BUILT gating. `active` is the current section id; the
-	// tenant is threaded onto every built link so navigation keeps the selection.
+	// per the mockup's DOJO_BUILT gating. `active` is the current section id.
 	let { active, tenantKey }: { active: string; tenantKey: string } = $props();
 
 	// `to` marks a built (linked) destination in R9; absent → a "soon" placeholder.
@@ -21,10 +19,8 @@
 		items: NavItem[];
 	}
 
-	const tenant = $derived(encodeURIComponent(tenantKey));
-
 	// Only Overview + Triage are wired in R9; the rest stay "soon". The href is
-	// built inline in the template with resolve(), tenant threaded via the query.
+	// built inline in the template with resolve().
 	const groups = $derived<NavGroup[]>([
 		{
 			group: 'Govern',
@@ -69,11 +65,7 @@
 					{@const on = active === it.id}
 					{#if it.to}
 						<a
-							href={resolve(
-								it.to === 'triage'
-									? `/(console)/console/triage?${TENANT_PARAM}=${tenant}`
-									: `/(console)/console?${TENANT_PARAM}=${tenant}`
-							)}
+							href={resolve(it.to === 'triage' ? '/(console)/console/triage' : '/(console)/console')}
 							aria-current={on ? 'page' : undefined}
 							class="grid w-full items-center gap-2 rounded-lg no-underline {on
 								? 'bg-paper border-paper-edge text-ink border'

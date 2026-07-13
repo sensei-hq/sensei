@@ -51,6 +51,18 @@ describe('listTriage', () => {
 		expect(headers.Authorization).toBe('Bearer jwt-123');
 	});
 
+	it('omits the Authorization header when the token is null or absent', async () => {
+		const nullToken = fakeFetch(200, { queue: [] });
+		await listTriage('t/x', { fetch: nullToken.fn, accessToken: null });
+		const nullHeaders = (nullToken.calls[0].init?.headers ?? {}) as Record<string, string>;
+		expect(nullHeaders.Authorization).toBeUndefined();
+
+		const noToken = fakeFetch(200, { queue: [] });
+		await listTriage('t/x', { fetch: noToken.fn });
+		const noHeaders = (noToken.calls[0].init?.headers ?? {}) as Record<string, string>;
+		expect(noHeaders.Authorization).toBeUndefined();
+	});
+
 	it('returns an empty array when the envelope has no queue', async () => {
 		const { fn } = fakeFetch(200, {});
 		expect(await listTriage('t/x', { fetch: fn })).toEqual([]);

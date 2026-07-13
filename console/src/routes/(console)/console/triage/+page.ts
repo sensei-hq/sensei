@@ -5,11 +5,11 @@ import { listTriage, TriageApiError, type TriageRow } from '$lib/triage-data';
 // queue + a surfaced error so the screen renders under SSR/prerender and without
 // a live dojo service (Jerry's live-verify step).
 export const load: PageLoad = async ({ parent, fetch }) => {
-	const { tenantKey } = await parent();
+	const { tenantKey, accessToken } = await parent();
 	let queue: TriageRow[] = [];
 	let error: string | null = null;
 	try {
-		queue = await listTriage(tenantKey, { fetch });
+		queue = await listTriage(tenantKey, { fetch, accessToken });
 	} catch (e) {
 		error = e instanceof TriageApiError ? e.message : 'could not reach the dojo service';
 	}

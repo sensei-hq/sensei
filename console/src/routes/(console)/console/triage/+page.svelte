@@ -4,7 +4,6 @@
 	import ConsoleHead from '$lib/components/ConsoleHead.svelte';
 	import Confidence from '$lib/components/Confidence.svelte';
 	import DojoChip from '$lib/components/DojoChip.svelte';
-	import { TENANT_PARAM } from '$lib/tenant';
 	import { promoteSweep, TriageApiError, type PromoteResult } from '$lib/triage-data';
 	import {
 		groupByScope,
@@ -21,7 +20,6 @@
 	let { data } = $props();
 
 	const groups = $derived(groupByScope(data.queue));
-	const tenant = $derived(encodeURIComponent(data.tenantKey));
 
 	let sweeping = $state(false);
 	let sweepError = $state<string | null>(null);
@@ -32,7 +30,7 @@
 		sweepError = null;
 		sweepResult = null;
 		try {
-			sweepResult = await promoteSweep(data.tenantKey, { fetch });
+			sweepResult = await promoteSweep(data.tenantKey, { fetch, accessToken: data.accessToken });
 			await invalidateAll();
 		} catch (e) {
 			sweepError = e instanceof TriageApiError ? e.message : 'promotion sweep failed';
@@ -138,7 +136,7 @@
 					{#each g.rows as c, i (c.signature)}
 						{@const band = similarityBand(c.similarity)}
 						<a
-							href={resolve(`/(console)/console/triage/[signature]?${TENANT_PARAM}=${tenant}`, {
+							href={resolve('/(console)/console/triage/[signature]', {
 								signature: c.signature
 							})}
 							class="grid items-center gap-4 no-underline {i < g.rows.length - 1 ? 'border-paper-edge border-b' : ''}"

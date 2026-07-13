@@ -4,7 +4,6 @@
 	import ConsoleHead from '$lib/components/ConsoleHead.svelte';
 	import DojoChip from '$lib/components/DojoChip.svelte';
 	import EnsoRing from '$lib/components/EnsoRing.svelte';
-	import { TENANT_PARAM } from '$lib/tenant';
 	import { decideTriage, TriageApiError, type DecideStatus } from '$lib/triage-data';
 	import {
 		confidencePct,
@@ -22,7 +21,6 @@
 	// the triage endpoint — flagged inline where the mockup shows it.
 	let { data } = $props();
 
-	const tenant = $derived(encodeURIComponent(data.tenantKey));
 	const row = $derived(data.row);
 	const scope = $derived(row ? scopeLabel(row.owner_scope) : '');
 
@@ -54,10 +52,10 @@
 					distribution_scope: status === 'approve' ? row.owner_scope : undefined,
 					reason: reason.trim() || undefined
 				},
-				{ fetch }
+				{ fetch, accessToken: data.accessToken }
 			);
 			// On success the row leaves the open queue — return to the queue.
-			await goto(resolve(`/(console)/console/triage?${TENANT_PARAM}=${tenant}`));
+			await goto(resolve('/(console)/console/triage'));
 		} catch (e) {
 			decideError = e instanceof TriageApiError ? e.message : 'the decision could not be recorded';
 			deciding = null;
@@ -73,7 +71,7 @@
 	<!-- breadcrumb -->
 	<div class="border-paper-edge flex flex-shrink-0 items-center gap-2 border-b" style="padding: 12px 28px">
 		<a
-			href={resolve(`/(console)/console/triage?${TENANT_PARAM}=${tenant}`)}
+			href={resolve('/(console)/console/triage')}
 			class="mono text-accent text-xs no-underline">← Triage</a
 		>
 		{#if row}
@@ -95,7 +93,7 @@
 				</div>
 			{/if}
 			<a
-				href={resolve(`/(console)/console/triage?${TENANT_PARAM}=${tenant}`)}
+				href={resolve('/(console)/console/triage')}
 				class="bg-paper border-paper-edge text-ink mono rounded-lg border text-xs no-underline"
 				style="padding: 8px 14px; margin-top: 4px">← Back to triage</a
 			>
