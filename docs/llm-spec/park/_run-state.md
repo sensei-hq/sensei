@@ -1769,10 +1769,17 @@ port mismatch hive 7755 vs config 8787 (🟢), etc. Chunk order: {R1,R2}→R3→
    (638696c0 hive-mind, ed42fa27 …/src, a8900cb3 …/src/collective) + 137 orphan nodes. ROOT CAUSE: prune_vanished
    scopes to ONE folder_id's (repo-root) file set; nodes under a VANISHED SUBFOLDER row are out of scope + the scanner
    never descends into a gone dir, so no path reconciles them. reconcile_roots=roots only; heal=standalone only. →
-   🔨 FOLLOW-UP FIX delegated to subagent a0cd31ad: PgStore::prune_vanished_folders(root) — drop folder rows whose
-   dir vanished (cascade subtree via delete_folder_tree), wired into reconcile, SAFE (skip absent/unmounted roots),
-   TDD. Post-install the reconcile self-heals the 137 hive-mind orphans. NOTE: 11247 folder rows total — the sweep may
-   clear other moved/deleted-dir ghosts too (good). LESSON: unit-green ≠ live-converged — always live-verify.
+   ✅ FOLLOW-UP FIX SHIPPED `80e8f0f4` (agent a0cd31ad, scan.rs only) — `prune_vanished_folders(pg, root_id)`
+   (scan.rs:212, wired scan.rs:105 after heal+reconcile_roots): enumerates folder rows via list_folders_by_root, drops
+   each kind='folder' row whose dir is confirmed gone via delete_folder_tree (subtree cascades through existing
+   ON DELETE CASCADE FKs). SAFE: only under roots confirmed present on disk (never nukes unmounted-root subtree);
+   Path::try_exists() Ok(false)=gone, errored check=keep (fail-safe); roots never pruned here; idempotent, logged
+   ghost_folders=N. No DDL. Verified by me: clippy 0, 2 db-gated tests pass (drops_ghost_subtree_keeps_live +
+   skips_when_enclosing_root_absent), related cascade/reconcile tests unaffected.
+   ⏳ DEPLOYING (install bvtne4blr) → verify hive-mind 3 ghost folders + 137 orphans SWEPT. ⚠️ WATERMARK GATE: boot
+   reconcile is storm-gated by reconcile.last_run (set ~08:17); if <interval since, the boot reconcile SKIPS on this
+   restart → force with `sensei scan` (runs the same scan_root reconcile path) then re-check. Sweep may also clear
+   other moved-dir ghosts across the 11247 folder rows (good). LESSON: unit-green ≠ live-converged — always live-verify.
 
 ── 🐛 CI FAILURE (Jerry flagged 2026-07-13): GitHub Actions release.yml failing on the gateway dep. ROOT CAUSE =
    NOT a private-repo/rev problem. sensei-hq/gateway is PUBLIC + rev 01d0ab2 (=HEAD of main) resolves anonymously
