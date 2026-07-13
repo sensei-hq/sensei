@@ -1587,10 +1587,25 @@ ACTIVE BUILD QUEUE (default-and-proceed order, highest value first):
      • D impact-regression: needs a NEW impact_regressions table (DDL) + writer. Same released-bundle constraint.
      → Do C+D in a DELIBERATE DDL pass (DDL-source-first → dbd apply → bump+install → verify), or flag to Jerry
        (schema change to shipped inference.drift_items). Skipped per "don't do risky DDL blind" + conservative pacing.
-  ⏳ E BUILDING (agent a31f9be7) — project-icon asset-serve: GET /api/projects/{id}/icon (secure file-serve, path-
-     traversal-guarded) + un-gate infer_icon logo tier + UI <img> w/ kanji fallback. NO DDL (icon jsonb exists).
-     ON DONE: senseid build+clippy+test + app check+test:unit → commit. Then F (net-new) / G (refine) / tooling
-     follow-ups (search recall, get_rules scope hygiene, patterns sparse) — all no-DDL, autonomous-safe.
+  E. ✅ SHIPPED `c8054297` (2026-07-13) — project-icon asset-serve: GET /api/projects/{id}/icon (secure file-serve;
+     resolve_icon_path pure-rejects ../abs/non-image, read_icon_bytes canonicalize+starts_with root defeats
+     symlink-out) + un-gated infer_icon logo tier (process.rs:521, was &[] "IMAGE ICONS GATED") + UI ProjectGlyph
+     <img>→kanji fallback (DRY: ProjectCard+ProjectRow). NO DDL. clippy 0; senseid project_icon 27; app check 0/0
+     (936); test:unit 1131 (+). LIVE: 299 projects (291 empty/8 kanji/0 image) → 404 correct today; images serve
+     after redeploy+rescan writes logos. (app UI not live until a full `make install` rebuilds the .app.)
+
+── AUTOPILOT PROGRESS (post-P0, 2026-07-13): A Atlas `ff8299af` + B logs `b5685e69` + E icon `c8054297` shipped to
+   develop (NOT merged/bumped — batch the UI sweep into ONE milestone later; app UI needs install-app to go live).
+   3 large subagents run back-to-back (~577K tok) → PACING to heartbeat cadence (one per idle tick), not back-to-back.
+── NEXT (autonomous-safe, no-DDL; pick highest-value per tick):
+   • ⭐ tooling follow-up: get_rules SCOPE HYGIENE — F3 dogfood found general-scope "rules" derived from raw prompt
+     fragments, incl. an UNRELATED fiction project bleeding into sensei's rules. Investigate the rule-derivation
+     (which pipeline promotes prompts→rules + why scope=general/cross-project) → scope-correct + quality-gate. Daemon.
+   • tooling follow-up: search recall gaps (signature-substring match misses some real symbols) — query.rs.
+   • F-contribute lane: wire scheduling for the already-built C6 contribute path (no DDL). [F-benchmarks/F-TDD-gate
+     need DDL → defer w/ C+D.]
+── DDL-COORDINATED (deferred, need bump+install to verify): C traceability states, D impact_regressions table,
+   F-TDD-gate (function_shapes/tdd_proposals tables). Do in a deliberate DDL pass or flag to Jerry.
   C. #6 traceability fix/dismiss (daemon action endpoints over drift_items + UI drawer).
   D. #8 impact-regression surface: impact_regressions DDL + writer (record on negative verdict) + alert screen.
   E. project-icon ASSET-SERVE daemon route (serve repo logos) → then un-gate the image tier.
