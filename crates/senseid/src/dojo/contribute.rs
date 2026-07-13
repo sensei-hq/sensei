@@ -72,6 +72,9 @@ pub trait ArtifactPublisher {
 /// A non-sent outbox state recorded by the contribute path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutboxState {
+    /// Planned, not yet attempted — the cadence scheduler STAGES a batch here
+    /// ([`stage_contribution`]); the outbox→hive publish stays the manual C6 step.
+    Pending,
     /// Confidentiality gate refused it (residual identifier risk).
     Held,
     /// Transient transport failure — awaits replay.
@@ -83,6 +86,7 @@ pub enum OutboxState {
 impl OutboxState {
     fn as_str(self) -> &'static str {
         match self {
+            OutboxState::Pending => "pending",
             OutboxState::Held => "held",
             OutboxState::Queued => "queued",
             OutboxState::Error => "error",
@@ -309,6 +313,10 @@ async fn build_artifact_for_target<G: Generalizer>(
 pub enum ItemResult {
     /// Published — the Dōjō assigned `seq` / `remote_id`.
     Published { seq: i64, remote_id: String },
+    /// Staged into the durable outbox as `pending` by the cadence scheduler
+    /// ([`stage_contribution`]) — prepared, not yet published. The outbox→hive
+    /// send stays the explicit manual C6 step.
+    Staged,
     /// Held: the confidentiality gate refused it (residual identifier risk).
     HeldResidualRisk,
     /// A transient failure — left queued for replay.
@@ -364,7 +372,42 @@ impl ContributeOutcome {
                 ItemResult::QueuedRetry => o.queued += 1,
                 ItemResult::Error { .. } => o.errored += 1,
                 ItemResult::AlreadySent => o.already_sent += 1,
-                ItemResult::NoDestination => {}
+                // `Staged` is only produced by the stage-only path; the publish
+                // path never yields it.
+                ItemResult::Staged | ItemResult::NoDestination => {}
+            }
+        }
+        o
+    }
+}
+
+/// The outcome of STAGING a whole batch into the durable outbox (the prepare-only
+/// path the cadence scheduler runs) — per-item plus roll-up counts. Distinct from
+/// [`ContributeOutcome`] because staging never publishes: an item is `staged`
+/// (`pending` in the outbox), `held` (confidentiality gate), `already_sent`
+/// (skipped — earlier manual publish), or `errored` (outbox write failed).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StageOutcome {
+    pub batch_id: Uuid,
+    pub staged: usize,
+    pub held: usize,
+    pub already_sent: usize,
+    pub errored: usize,
+    pub items: Vec<ItemOutcome>,
+}
+
+impl StageOutcome {
+    fn from_items(batch_id: Uuid, items: Vec<ItemOutcome>) -> Self {
+        let mut o = StageOutcome { batch_id, staged: 0, held: 0, already_sent: 0, errored: 0, items };
+        for it in &o.items {
+            match it.result {
+                ItemResult::Staged => o.staged += 1,
+                ItemResult::HeldResidualRisk => o.held += 1,
+                ItemResult::AlreadySent => o.already_sent += 1,
+                ItemResult::Error { .. } => o.errored += 1,
+                // Published / QueuedRetry never occur on the stage-only path;
+                // NoDestination is reported but not counted.
+                _ => {}
             }
         }
         o
@@ -550,6 +593,114 @@ async fn publish_one<P: ArtifactPublisher, O: Outbox>(
             }
         }
     }
+}
+
+/// Orchestrate a loaded batch through the STAGE-ONLY path: build the safe
+/// artifact for each (memory × destination) using the SAME confidentiality gate
+/// as the publish path ([`build_artifact_for_target`]) and record it in the
+/// durable outbox as `pending` — it NEVER publishes / egresses to any Dōjō.
+///
+/// This is what the contribute *cadence scheduler* runs: it PREPARES an approved
+/// batch into the local outbox; the outbox→hive send stays the explicit manual
+/// C6 step ([`run_contribution`]). A held item is recorded `held` (never staged),
+/// and an item already `sent` by an earlier manual publish is skipped — so
+/// re-staging within a cadence window is idempotent (also guarded by the outbox's
+/// `unique(membership_id, signature)` + the `state <> 'sent'` write guard).
+pub async fn stage_contribution<O, G>(
+    loaded: &LoadedBatch,
+    outbox: &O,
+    generalizer: &G,
+    contributor: &ContributorIdentity,
+    rotation_bucket: i64,
+) -> StageOutcome
+where
+    O: Outbox,
+    G: Generalizer,
+{
+    let mut items = Vec::new();
+
+    if loaded.routing.targets.is_empty() {
+        // Nothing is bound / no memberships — surface it, never silently drop.
+        for it in &loaded.items {
+            items.push(ItemOutcome {
+                memory_id: it.memory_id,
+                membership_id: None,
+                tenant_key: None,
+                kind: artifact_kind_for(&it.memory_type),
+                result: ItemResult::NoDestination,
+            });
+        }
+        return StageOutcome::from_items(loaded.batch_id, items);
+    }
+
+    for target in &loaded.routing.targets {
+        let Some(membership) = loaded.memberships.get(&target.membership_id) else {
+            tracing::error!(membership = %target.membership_id, "stage: routed target missing from membership map — skipping");
+            continue;
+        };
+        for it in &loaded.items {
+            let kind = artifact_kind_for(&it.memory_type);
+            let plan = build_artifact_for_target(
+                it,
+                membership,
+                target.dereference,
+                &loaded.identifiers,
+                &loaded.shape,
+                contributor,
+                rotation_bucket,
+                generalizer,
+            )
+            .await;
+
+            let result = match plan {
+                ItemPlan::Held { signature } => {
+                    let key = OutboxKey {
+                        membership_id: target.membership_id,
+                        batch_id: loaded.batch_id,
+                        memory_id: it.memory_id,
+                        signature: &signature,
+                    };
+                    if let Err(e) = outbox.mark_state(key, OutboxState::Held).await {
+                        tracing::error!(error = %e, memory = %it.memory_id, "stage: outbox held-record failed");
+                    }
+                    ItemResult::HeldResidualRisk
+                }
+                ItemPlan::Publish(art) => {
+                    let key = OutboxKey {
+                        membership_id: target.membership_id,
+                        batch_id: loaded.batch_id,
+                        memory_id: it.memory_id,
+                        signature: &art.signature,
+                    };
+                    match outbox.already_sent(target.membership_id, &art.signature).await {
+                        // A prior manual publish already sent this — never downgrade to pending.
+                        Ok(true) => ItemResult::AlreadySent,
+                        Ok(false) => match outbox.mark_state(key, OutboxState::Pending).await {
+                            Ok(()) => ItemResult::Staged,
+                            Err(e) => {
+                                tracing::error!(error = %e, memory = %it.memory_id, "stage: outbox pending-record failed");
+                                ItemResult::Error { message: e }
+                            }
+                        },
+                        Err(e) => {
+                            tracing::error!(error = %e, memory = %it.memory_id, "stage: outbox dedup check failed");
+                            ItemResult::Error { message: e }
+                        }
+                    }
+                }
+            };
+
+            items.push(ItemOutcome {
+                memory_id: it.memory_id,
+                membership_id: Some(target.membership_id),
+                tenant_key: Some(membership.tenant_key.clone()),
+                kind,
+                result,
+            });
+        }
+    }
+
+    StageOutcome::from_items(loaded.batch_id, items)
 }
 
 /// Production entry point: contribute an approved batch to its routed Dōjō(s).
@@ -1002,6 +1153,83 @@ mod tests {
         assert_eq!(v["items"][0]["result"], serde_json::json!("published"));
         assert_eq!(v["items"][0]["seq"], serde_json::json!(7));
         assert!(v["items"][0]["tenant_key"].is_string());
+    }
+
+    // ── stage-only path (cadence scheduler): NEVER publishes ─────────────────
+
+    #[tokio::test]
+    async fn stage_records_pending_and_never_publishes() {
+        // A clean employer (named) item → the stage path records it `pending` in
+        // the outbox and — structurally — cannot publish (no publisher seam).
+        let l = loaded(
+            membership("employer", "github/acme-corp"),
+            false,
+            vec![item("use ci gates", "Gate merges on a green pipeline.", "convention")],
+        );
+        let obx = MemOutbox::default();
+        let out = stage_contribution(&l, &obx, &NoLlm, &contributor(), 1).await;
+
+        assert_eq!(out.staged, 1);
+        assert_eq!(out.held, 0);
+        assert!(matches!(out.items[0].result, ItemResult::Staged));
+        // Exactly one `pending` outbox row recorded — nothing sent.
+        let states = obx.states.lock().unwrap();
+        assert_eq!(states.len(), 1);
+        assert_eq!(states[0].2, OutboxState::Pending);
+        assert!(obx.sent.lock().unwrap().is_empty(), "stage-only must never mark anything sent");
+    }
+
+    #[tokio::test]
+    async fn stage_holds_residual_risk_and_stages_nothing() {
+        // The SAME hard confidentiality gate as the publish path: a surviving
+        // secret is held, never staged.
+        let l = loaded(
+            membership("client", "github/acme"),
+            true,
+            vec![item("a lesson", "export ACME_PROD_DB_PASSWORD before deploy", "convention")],
+        );
+        let obx = MemOutbox::default();
+        let out = stage_contribution(&l, &obx, &NoLlm, &contributor(), 1).await;
+
+        assert_eq!(out.held, 1);
+        assert_eq!(out.staged, 0);
+        assert!(matches!(out.items[0].result, ItemResult::HeldResidualRisk));
+        assert_eq!(obx.states.lock().unwrap()[0].2, OutboxState::Held);
+    }
+
+    #[tokio::test]
+    async fn stage_skips_an_already_sent_item() {
+        // If an earlier manual publish already sent this artifact, staging must
+        // skip it (never downgrade sent→pending).
+        let l = loaded(
+            membership("employer", "github/acme-corp"),
+            false,
+            vec![item("use ci gates", "Gate merges on a green pipeline.", "convention")],
+        );
+        let obx = MemOutbox::default();
+        // First stage computes the signature and records pending; capture it, then
+        // mark it sent to simulate a prior manual publish.
+        let first = stage_contribution(&l, &obx, &NoLlm, &contributor(), 1).await;
+        assert_eq!(first.staged, 1);
+        let sig = obx.states.lock().unwrap()[0].1.clone();
+        let mid = l.routing.targets[0].membership_id;
+        obx.sent.lock().unwrap().insert((mid, sig));
+
+        let second = stage_contribution(&l, &obx, &NoLlm, &contributor(), 1).await;
+        assert_eq!(second.staged, 0);
+        assert_eq!(second.already_sent, 1);
+        assert!(matches!(second.items[0].result, ItemResult::AlreadySent));
+    }
+
+    #[tokio::test]
+    async fn stage_no_destination_when_unbound() {
+        let mut l = loaded(membership("client", "github/acme"), true, vec![item("x", "y", "convention")]);
+        l.routing = RoutingDecision::default(); // no targets
+        let obx = MemOutbox::default();
+        let out = stage_contribution(&l, &obx, &NoLlm, &contributor(), 1).await;
+        assert!(matches!(out.items[0].result, ItemResult::NoDestination));
+        assert_eq!(out.staged, 0);
+        assert!(obx.states.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
