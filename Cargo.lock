@@ -5188,6 +5188,7 @@ dependencies = [
  "sensei-bootstrap",
  "sensei-config",
  "sensei-logger",
+ "sensei-mcp",
  "serde",
  "serde_json",
  "serde_yaml",
