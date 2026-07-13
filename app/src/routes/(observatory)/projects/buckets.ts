@@ -73,20 +73,42 @@ export function isWarning(
   return signals.open_drift_count > 0 || signals.ftr_7d < 0.6;
 }
 
+/** The default hero/list glyph — 場 (place) — when nothing else is known.
+ *  Mirrors the daemon's `project_overview::DEFAULT_KANJI` fallback. */
+export const DEFAULT_GLYPH = '場';
+
 /** The card/row icon, resolved so a kanji glyph and an inferred image can
- *  never render together (the fallback OR-collapse is the wrong-gate). */
+ *  never render together (the fallback OR-collapse is the wrong-gate). The
+ *  `image` variant also carries `glyph` — the kanji to fall back to when the
+ *  `<img>` fails to load (a broken image is worse than a glyph). */
 export type ProjectIcon =
-  | { kind: 'image'; src: string }
+  | { kind: 'image'; src: string; glyph: string }
   | { kind: 'kanji'; glyph: string };
 
-/** Pure: pick the project's icon. An `image` icon wins only when it carries
- *  a value; otherwise fall back to the kanji glyph on the icon, and finally
- *  to 場 (place) — the screen's default when nothing is known. */
-export function projectIcon(p: Pick<EnrichedProject, 'icon'>): ProjectIcon {
+/** Pure: does a stored icon value already point somewhere the browser can load
+ *  directly? An author/About-form icon may be an absolute URL or a data URI;
+ *  a machine-inferred image is a repo-relative path that must go through the
+ *  daemon's serve route instead. */
+function isDirectUrl(value: string): boolean {
+  return /^(?:https?:)?\/\//i.test(value) || value.startsWith('data:');
+}
+
+/** Pure: pick the project's icon. An `image` icon wins only when it carries a
+ *  value — an absolute URL/data URI is used as-is, while a repo-relative path
+ *  is served by the daemon at `{base}/api/projects/{id}/icon` (the app renders
+ *  it with a kanji fallback on load error). Otherwise fall back to the kanji
+ *  glyph on the icon, and finally to 場 (place). `base` is the daemon origin
+ *  (e.g. `apiBase(port)`); it defaults to '' so tests read a bare route path. */
+export function projectIcon(p: Pick<EnrichedProject, 'id' | 'icon'>, base = ''): ProjectIcon {
   const icon = p.icon;
-  if (icon && icon.kind === 'image' && icon.value) return { kind: 'image', src: icon.value };
+  if (icon && icon.kind === 'image' && icon.value) {
+    const src = isDirectUrl(icon.value)
+      ? icon.value
+      : `${base}/api/projects/${encodeURIComponent(p.id)}/icon`;
+    return { kind: 'image', src, glyph: DEFAULT_GLYPH };
+  }
   if (icon && icon.kind === 'kanji' && icon.value) return { kind: 'kanji', glyph: icon.value };
-  return { kind: 'kanji', glyph: '場' };
+  return { kind: 'kanji', glyph: DEFAULT_GLYPH };
 }
 
 /** Pure: compact "last session" label from an ISO timestamp. `now` is
