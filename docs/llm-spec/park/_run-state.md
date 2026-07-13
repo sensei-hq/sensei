@@ -1670,10 +1670,11 @@ Everything cleanly buildable + no-DDL + end-to-end-verifiable is DONE this run. 
        e2e"` + `brew services start sensei` → real daemon (PID 59123) restored. Post-restore the tools serve RICH real
        data: get_project_summary 8090 fns/1520 types (was 3395 pre-rescan → the P0 embed-fix rescan indexed 2.4×
        more), graph_nodes 16354 nodes/21504 edges, get_rules 1. Saved [[reference_e2e_7744_leftover]].
-    ── (a) E2E HARNESS follow-ups (test-infra, filed — NOT app bugs): (i) :7744 ISOLATION — the harness stops the real
-       brew daemon + runs an e2e daemon on the SAME :7744; a SIGTERM/interrupt skips teardown → system left broken
-       (caused the (b) red herring). Fix: run e2e on a DIFFERENT port OR trap-restore the brew service on any exit.
-       (ii) SUITE FLAKINESS on v0.2.43 — the observatory e2e suite is heavily red run-to-run (boot-flow fails 4/4 even
+    ── (a) E2E HARNESS follow-ups (test-infra, NOT app bugs): (i) :7744 ISOLATION = ✅ FIXED `7f8ee664` — added a
+       shell `trap ... EXIT INT TERM` to `make test-app-e2e` that pkills the e2e daemon + `brew services start sensei`
+       on ANY exit (redundant with globalTeardown on success, the fix on interrupt). No more "fake data loss" if a
+       run is killed. (A separate-port redesign is still the cleaner long-term option — left to Jerry.)
+       (ii) SUITE FLAKINESS on v0.2.43 = ⏳ FILED (NOT done — touches install path) — the observatory e2e suite is heavily red run-to-run (boot-flow fails 4/4 even
        with my specs ABSENT). Mechanism: `make test-app-e2e` runs `db-backup` of the 502MB prod DB → Spotlight
        indexing → 94% CPU → the cold health-bootstrap gate (wizard-state.svelte.ts:333 `setupComplete` reconciles only
        inside a `$effect` gated on healthState.isOk CHANGING) balloons 3s→50-100s → nav timeouts cascade. Fix: skip/
