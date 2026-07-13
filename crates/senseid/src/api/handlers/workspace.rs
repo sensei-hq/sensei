@@ -550,6 +550,15 @@ pub(crate) async fn task_status(
     Json(serde_json::json!({ "queue": status, "repos": progress }))
 }
 
+/// Read-only index integrity report (P2 — `GET /api/index/doctor`). Runs the
+/// invariant self-audit in READ-ONLY mode and returns per-class drift counts +
+/// samples. Never mutates — the periodic repair pass owns fixing. Backs
+/// `sensei index doctor`.
+pub(crate) async fn index_doctor(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let report = crate::tasks::index_audit::run_doctor(&state.pg).await;
+    Json(serde_json::to_value(&report).unwrap_or_else(|_| serde_json::json!({})))
+}
+
 pub(crate) async fn index_progress_sse(
     State(state): State<AppState>,
 ) -> Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>> {

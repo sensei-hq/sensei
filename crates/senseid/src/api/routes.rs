@@ -131,6 +131,7 @@ pub fn create_router(state: AppState) -> Router {
         // Indexing
         .route("/api/index", post(workspace::index_project))
         .route("/api/index/status", get(workspace::task_status))
+        .route("/api/index/doctor", get(workspace::index_doctor))
         .route("/api/index/progress", get(workspace::index_progress_sse))
         // dirty_status removed — task queue handles incremental
         .route("/api/index/errors", get(workspace::list_index_errors))
@@ -353,6 +354,24 @@ mod tests {
             matches!(status, "ok" | "needs-action" | "checking" | "resolving"),
             "unexpected status {status}"
         );
+    }
+
+    #[tokio::test]
+    async fn index_doctor_endpoint_returns_readonly_report() {
+        let (app, _) = test_app().await;
+        let resp = app.oneshot(
+            Request::builder().uri("/api/index/doctor").body(Body::empty()).unwrap()
+        ).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        // The read-only doctor report carries the per-class drift shape.
+        assert_eq!(json["repair"], false, "doctor is read-only");
+        assert!(json["orphan_files"].is_number());
+        assert!(json["ghost_folders"].is_number());
+        assert!(json["nested_standalone"].is_number());
+        assert!(json["duplicate_name_projects"].is_number());
+        assert!(json["samples"].is_object());
     }
 
     #[tokio::test]

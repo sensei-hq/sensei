@@ -15,6 +15,7 @@ pub mod contribute_scheduler;
 pub mod log_pruner;
 pub mod activity_pruner;
 pub mod reconcile_scheduler;
+pub mod index_audit;
 pub mod processors;
 pub mod resume;
 pub mod version_rescan;
