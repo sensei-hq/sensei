@@ -1659,24 +1659,26 @@ Everything cleanly buildable + no-DDL + end-to-end-verifiable is DONE this run. 
   • DŌJŌ / DOCKER-BLOCKED: F-contribute lane (scheduler shell buildable but pushes to a hive/Dōjō — no destination to
     verify against); Dōjō consoles C12-14 + supabase/ (need `supabase start` + the console app).
   • DATA-MODEL (Jerry decision): Instruments·Health registry↔usage join.
-  • ✅ E2E VERIFY DONE — specs committed `c4b5a7be` (atlas.spec.ts + activity-logs.spec.ts + helpers.ts).
-    RELIABLE results: activity-logs ✓✓ (injected rows render per-level + level filter refetches); atlas-toggle ✓.
-    atlas-MOUNT ✘ but = ENV ARTIFACT: the full `make test-app-e2e` run was environmentally broken (34 passed/46
-    FAILED incl. core `daemon /health returns valid JSON` + boot-flow, then SIGTERM) — the e2e daemon (:7744)
-    collided with the live 0.2.43 daemon this session kept restarting + the run got killed on subagent cleanup.
-    Atlas loader endpoints respond in 2-3ms on the healthy real daemon (no hang) + empty-state satisfies the
-    assertion → the mount test passes in a healthy env. Specs are correct; committed with the caveat documented.
+  • ✅✅ E2E VERIFY DONE + 4/4 GREEN — `c4b5a7be` (initial) + `5d143fc7` (hardened). atlas + activity-logs both
+    PASS in the mandated harness (`make reset-e2e-db && bun run test:e2e activity-logs atlas`). activity-logs ✓✓
+    (injected rows render per-level + level filter refetches); atlas ✓✓ (mounts+chrome+empty/canvas either-or; toggle).
+    The earlier atlas-MOUNT ✘ was a TEST-AUTHORING RACE (branched on a hasGraph() pre-fetch racing the loader) — FIXED
+    with a robust either-or + navigateToScreen() retry-helper (absorbs the cold health-gate). NOT a screen bug.
     ── (b) "graph_nodes empty" = ❌ RED HERRING, RESOLVED (2026-07-13). NOT a graph bug: the SIGTERM'd e2e run left
        its `senseid --port 7744 --instance e2e` daemon (empty **sensei_e2e** DB) on :7744 + the real brew service
        STOPPED → every tool/API returned empty while `psql -d sensei` had all the data. FIXED: `pkill -f "instance
        e2e"` + `brew services start sensei` → real daemon (PID 59123) restored. Post-restore the tools serve RICH real
        data: get_project_summary 8090 fns/1520 types (was 3395 pre-rescan → the P0 embed-fix rescan indexed 2.4×
        more), graph_nodes 16354 nodes/21504 edges, get_rules 1. Saved [[reference_e2e_7744_leftover]].
-    ── (a) E2E HARNESS :7744 ISOLATION = ✅ CONFIRMED REAL (this is what caused (b)). The harness stops the real brew
-       daemon + runs an e2e daemon on the SAME :7744; a SIGTERM/interrupt skips teardown → leaves the system broken
-       (real daemon down, e2e daemon on :7744 w/ empty DB). FIX (filed, test-infra): run the e2e daemon on a
-       DIFFERENT port OR trap-restore the brew service on any exit. Also re-run the 2 specs on a clean env to certify
-       atlas-mount (its full-run failure was this same env breakage).
+    ── (a) E2E HARNESS follow-ups (test-infra, filed — NOT app bugs): (i) :7744 ISOLATION — the harness stops the real
+       brew daemon + runs an e2e daemon on the SAME :7744; a SIGTERM/interrupt skips teardown → system left broken
+       (caused the (b) red herring). Fix: run e2e on a DIFFERENT port OR trap-restore the brew service on any exit.
+       (ii) SUITE FLAKINESS on v0.2.43 — the observatory e2e suite is heavily red run-to-run (boot-flow fails 4/4 even
+       with my specs ABSENT). Mechanism: `make test-app-e2e` runs `db-backup` of the 502MB prod DB → Spotlight
+       indexing → 94% CPU → the cold health-bootstrap gate (wizard-state.svelte.ts:333 `setupComplete` reconciles only
+       inside a `$effect` gated on healthState.isOk CHANGING) balloons 3s→50-100s → nav timeouts cascade. Fix: skip/
+       shrink the db-backup for e2e, or make the health-gate not depend on the isOk transition. On a settled machine
+       all pass in ~3s. My 2 specs use navigateToScreen (120s budget) which absorbs this.
   • LOW-VALUE REFINE (G): rank4 impact-copy, per-session memory-load correlation, P2c behavioral classifier.
 IDLE-TICK POLICY: each heartbeat still runs the DISK GUARD + checks whether anything unblocked (Jerry steer / a
 DDL pass authorized / Docker), else NO-OP. Do NOT spawn a shipped-schema DDL change unattended. If Jerry wants a
