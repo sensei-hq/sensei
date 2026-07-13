@@ -205,6 +205,7 @@ install-service: db-backup crates
 	echo "Overlaid fresh release binaries into $$DEST (codesigned)"
 	@echo "Restarting sensei service so the new daemon is live..."
 	-@brew services start sensei
+	@$(MAKE) mcp-refresh-note
 
 # Build the desktop .app bundle and install it to /Applications/.
 # Stop any running instance first — `cp -R` over a running .app would mix
@@ -247,6 +248,28 @@ install-debug: db-backup crates-debug
 	echo "Overlaid debug binaries into $$DEST (codesigned)"
 	@echo "Restarting sensei service so the new daemon is live..."
 	-@brew services start sensei
+	@$(MAKE) mcp-refresh-note
+
+# Post-install MCP/plugin refresh (shared by install-service + install-debug).
+# The sensei MCP is a long-lived stdio subprocess owned by the Claude Code
+# session — NOT a brew service — so `brew services restart` above never touches
+# it; it keeps the OLD in-memory binary until the client reconnects. Kill any
+# straggler so the next session/reconnect execs the freshly-overlaid binary,
+# best-effort refresh each assistant's plugin via the new `sensei upgrade` (runs
+# `claude plugin update sensei` daemon-side; the daemon is up from the restart
+# above), and always print the reminder since an in-session MCP still needs the
+# CLIENT to reconnect — an install cannot self-heal an in-session subprocess.
+.PHONY: mcp-refresh-note
+mcp-refresh-note:
+	-@pkill -x sensei-mcp 2>/dev/null || true
+	-@"$$(brew --prefix sensei)/bin/sensei" upgrade >/dev/null 2>&1 \
+	  && echo "  ✓ ran 'sensei upgrade' — assistant plugins refreshed" || true
+	@echo ""
+	@echo "  ⚠  Refresh the sensei MCP/plugin so clients run this binary:"
+	@echo "       claude plugin update sensei"
+	@echo "     (a running Claude Code session must reconnect its sensei MCP —"
+	@echo "      an in-session stdio subprocess cannot be self-healed by install)"
+	@echo ""
 
 # ── Desktop app dev / e2e ─────────────────────────────────────────────────────
 
@@ -380,6 +403,16 @@ update:
 # and tag (which triggers the GitHub Actions release workflows), then syncs
 # the updated Homebrew formula version to the tap and marketplace.
 # GitHub Actions will fill in the real SHA256s once artifacts are built.
+
+# One-shot local release: bump the version then install the RELEASE build, so
+# the running daemon + brew binaries are never left stale behind a bump (the
+# stale-daemon class of bug where the daemon ran v0.2.29 for 10 releases).
+# Usage: make ship v=patch
+.PHONY: ship
+ship:
+	@if [ -z "$(v)" ]; then echo "Usage: make ship v=patch|minor|major|<version>"; exit 1; fi
+	$(MAKE) bump v=$(v)
+	$(MAKE) install
 
 bump:
 	@if [ -z "$(v)" ]; then echo "Usage: make bump v=patch|minor|major|<version>"; exit 1; fi
