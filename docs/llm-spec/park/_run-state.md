@@ -1644,6 +1644,30 @@ ACTIVE BUILD QUEUE (default-and-proceed order, highest value first):
    version; targeted scan tests the embed path directly. D2 crash-recovery is unit-proven.) Release via next milestone.
    (Was: FIX BUILDING a2d911f2.) — [[project_executor_hang]] embed cap was insufficient for n_ubatch.
 
+═══════════════════════════════════════════════════════════════════════════════
+⏸️ STEP-6: CLEAN AUTONOMOUS-SAFE BACKLOG EXHAUSTED (2026-07-13) — easing to cheap idle no-op ticks.
+Post-rescan health CONFIRMED: analyzer generating richly (sensei 225 detected_patterns + 194 recommendations;
+memories=1 is by-design — active memory is the top confidence tier). "patterns sparse" follow-up = explained
+(get_patterns is a file-TAG match; detected_patterns is rich). search-recall = fixed by the rescan. Capture unfrozen.
+
+Everything cleanly buildable + no-DDL + end-to-end-verifiable is DONE this run. What REMAINS is gated:
+  • DDL-COORDINATED (need schema changes to SHIPPED tables → risky to apply UNATTENDED; a botched dbd apply can fail
+    the daemon's boot schema-apply → daemon down until Jerry. Do as a DELIBERATE pass when Jerry's reachable):
+    C traceability fix/dismiss (drift_status enum → open/fixed/resolved_auto/dismissed + signature suppression);
+    D impact-regression (new impact_regressions table + writer); F-benchmarks (benchmark_runs registry+runner);
+    F-TDD-gate (function_shapes/tdd_proposals tables).
+  • DŌJŌ / DOCKER-BLOCKED: F-contribute lane (scheduler shell buildable but pushes to a hive/Dōjō — no destination to
+    verify against); Dōjō consoles C12-14 + supabase/ (need `supabase start` + the console app).
+  • DATA-MODEL (Jerry decision): Instruments·Health registry↔usage join. VISUAL: Tauri-e2e visual verify of the
+    shipped UI screens (Atlas/logs/icon/all v0.2.42 screens) — needs `make test-app-e2e` + eyeballing.
+  • LOW-VALUE REFINE (G): rank4 impact-copy, per-session memory-load correlation, P2c behavioral classifier.
+IDLE-TICK POLICY: each heartbeat still runs the DISK GUARD + checks whether anything unblocked (Jerry steer / a
+DDL pass authorized / Docker), else NO-OP. Do NOT spawn a shipped-schema DDL change unattended. If Jerry wants a
+specific gated item, that's the trigger to proceed.
+
+── ✅ ALL RELEASED: v0.2.40/41 (P0 tooling track A–F), v0.2.42 (Atlas/logs/icon/get_rules), v0.2.43 (P0 embed-crash
+   fix, capture unfrozen). main @ `1c43f4f8`. Daemon live 0.2.43, index refreshed (sensei 6598→16354).
+
 ── ⭐ MILESTONE DUE: develop has accumulated since v0.2.41 → Atlas `ff8299af`, logs `b5685e69`, icon `c8054297`,
    get_rules `3089ffd0` (+run-state). Merge develop→main + `make ship`/full `make install` (service+app) to make them
    LIVE (app UI needs install-app; get_rules/icon-serve need install-service) — HEAVY (release+Tauri build ~15-20m,
