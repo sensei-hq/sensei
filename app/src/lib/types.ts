@@ -346,6 +346,35 @@ export interface GraphEdge {
   repoId?: string;
 }
 
+/**
+ * Raw symbol node as returned by `GET /api/graph/nodes?repoId=…`
+ * (the daemon's `get_nodes_scoped` shape). Distinct from `GraphNode`,
+ * which is the *mapped* solution-graph shape (`file`/`line`). Here the
+ * wire carries `file_path`/`line_start` and the owning `folder_id`.
+ */
+export interface GraphSymbolNode {
+  id: string;
+  kind: string;
+  name: string;
+  file_path: string;
+  folder_id?: string;
+  parent_id?: string | null;
+  line_start?: number | null;
+  line_end?: number | null;
+}
+
+/**
+ * Raw call edge from `GET /api/graph/nodes` / `GET /api/graph/call-flow`.
+ * `target_id` is null for calls that resolve to an out-of-scope / stdlib
+ * symbol (only `target_name` is known); those are dropped from the graph.
+ */
+export interface GraphCallEdge {
+  id: string;
+  source_id: string;
+  target_id: string | null;
+  target_name?: string | null;
+}
+
 export interface GraphData {
   summary: { totalSymbols: number; totalEdges: number; communities: number };
   communities: Array<{
@@ -412,10 +441,17 @@ export interface TypeDetail {
   kind: string;
 }
 
+/**
+ * A detected code community as returned by
+ * `GET /api/graph/communities/info?repoId=…`. `label` is a representative
+ * `"{kind} ({directory})"` summary; `node_count` is the community size.
+ * There is no per-node membership on the wire — communities are graph-
+ * clustered, so the atlas uses this only for the collapsed overview.
+ */
 export interface CommunityInfo {
-  id: number;
-  size: number;
-  sample_members: string[];
+  id: string;
+  label: string;
+  node_count: number;
 }
 
 export interface DocDrift {
@@ -1298,4 +1334,31 @@ export interface CollectivePreferences {
   attribution_default: CollectiveAttribution;
   /** RFC-3339 once saved; null while still on defaults. */
   updated_at: string | null;
+}
+
+// ── Observatory · Logs (activity logs) ─────────────────────────────────────
+// Wire shape of a `GET /api/logs` row (see senseid logs handler `query_logs`).
+// The daemon SELECTs `id, level, running_on, logged_at, message, context,
+// data, error` and re-labels `running_on` → `source` in the JSON.
+
+/** Ordered severity levels the daemon writes. `level` is kept as `string`
+ *  on the row for forward-compatibility, but these are the known values. */
+export type LogLevel = 'trace' | 'debug' | 'info' | 'warn' | 'error';
+
+/** One structured log row from `GET /api/logs`. `context` is always an object
+ *  (defaults to `{}`); `data`/`error` are null unless the writer set them.
+ *  `source` (the daemon's `running_on`) is null until the writer populates it. */
+export interface LogRow {
+  id: string;
+  /** One of `LogLevel` in practice; typed wide so an unknown level renders. */
+  level: string;
+  /** `running_on` — daemon / cli / mcp / app. Null when the writer omits it. */
+  source: string | null;
+  /** RFC-3339 timestamp. */
+  logged_at: string;
+  message: string;
+  /** Free-form jsonb; carries `module`, `folder`, `path`, etc. */
+  context: Record<string, unknown> | null;
+  data: Record<string, unknown> | null;
+  error: Record<string, unknown> | null;
 }

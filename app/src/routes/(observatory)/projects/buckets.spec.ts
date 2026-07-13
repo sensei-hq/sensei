@@ -88,10 +88,38 @@ describe('bucketProjects', () => {
 });
 
 describe('projectIcon', () => {
-  it('uses an image when the icon is an image with a value', () => {
+  it('uses an absolute-URL image value as-is (author/custom icon)', () => {
     expect(projectIcon(p({ icon: { kind: 'image', value: 'http://x/y.png' } }))).toEqual({
       kind: 'image',
       src: 'http://x/y.png',
+      glyph: '場',
+    });
+  });
+
+  it('passes a data-URI image value straight through', () => {
+    const value = 'data:image/svg+xml;base64,AAA';
+    expect(projectIcon(p({ icon: { kind: 'image', value } }))).toEqual({
+      kind: 'image',
+      src: value,
+      glyph: '場',
+    });
+  });
+
+  it('routes a repo-relative image value through the daemon serve route', () => {
+    expect(
+      projectIcon(p({ id: 'p-9', icon: { kind: 'image', value: 'assets/logo.svg' } }), 'http://127.0.0.1:7744'),
+    ).toEqual({
+      kind: 'image',
+      src: 'http://127.0.0.1:7744/api/projects/p-9/icon',
+      glyph: '場',
+    });
+  });
+
+  it('serve route defaults to a bare path when no base is given', () => {
+    expect(projectIcon(p({ id: 'a b', icon: { kind: 'image', value: 'logo.png' } }))).toEqual({
+      kind: 'image',
+      src: '/api/projects/a%20b/icon',
+      glyph: '場',
     });
   });
 

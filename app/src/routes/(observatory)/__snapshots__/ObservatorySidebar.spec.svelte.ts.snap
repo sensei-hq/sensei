@@ -576,6 +576,45 @@ exports[`ObservatorySidebar > hides the Review group and Settings when Focus is 
         data-level="2"
         data-list-item=""
         data-path="3-2"
+        href="/atlas"
+      >
+        <!---->
+        <!---->
+        <!---->
+        <span
+          aria-hidden="true"
+          data-item-icon-literal=""
+        >
+          図
+        </span>
+        
+        
+        <!---->
+         
+        <span
+          data-item-text=""
+        >
+          <span
+            data-item-label=""
+          >
+            Atlas
+          </span>
+           
+          <!---->
+        </span>
+        <!---->
+         
+        <!---->
+         
+        <!---->
+        <!---->
+      </a>
+      
+      <!---->
+      <a
+        data-level="2"
+        data-list-item=""
+        data-path="3-3"
         href="/instruments"
       >
         <!---->
@@ -614,8 +653,8 @@ exports[`ObservatorySidebar > hides the Review group and Settings when Focus is 
       <a
         data-level="2"
         data-list-item=""
-        data-path="3-3"
-        href="/logs"
+        data-path="3-4"
+        href="/activity-logs"
       >
         <!---->
         <!---->
@@ -653,7 +692,7 @@ exports[`ObservatorySidebar > hides the Review group and Settings when Focus is 
       <a
         data-level="2"
         data-list-item=""
-        data-path="3-4"
+        data-path="3-5"
         href="/dojo/connections"
       >
         <!---->
@@ -692,7 +731,7 @@ exports[`ObservatorySidebar > hides the Review group and Settings when Focus is 
       <a
         data-level="2"
         data-list-item=""
-        data-path="3-5"
+        data-path="3-6"
         href="/dojo/sharing"
       >
         <!---->
