@@ -3,15 +3,17 @@
 	import { resolve } from '$app/paths';
 	import DojoOrgs from '$lib/components/DojoOrgs.svelte';
 	import type { DojoOrg } from '$lib/dojo-data';
-	import { TENANT_PARAM, tenantKeyOf } from '$lib/tenant';
+	import { TENANT_COOKIE, tenantKeyOf } from '$lib/tenant';
 
 	function enter(org: DojoOrg) {
-		// The per-org console lands on the guarded group. The selected org's
-		// discovery url is its tenant key; thread it to the console via a query
-		// param (R9 placeholder transport — see $lib/tenant.ts for the flagged gap:
-		// R6 didn't persist the selection into the session).
-		const tenant = encodeURIComponent(tenantKeyOf(org));
-		goto(resolve(`/(console)/console?${TENANT_PARAM}=${tenant}`));
+		// The per-org console lands on the guarded group. Persist the selected
+		// org as the session tenant via the `dojo_tenant` cookie (org's discovery
+		// url is its tenant key), read server-side in `(console)/+layout.server.ts`.
+		// Session cookie (no expiry), path=/, SameSite=Lax; not httpOnly since it's
+		// server-owned but not secret. Then navigate to the plain console route.
+		const tenant = tenantKeyOf(org);
+		document.cookie = `${TENANT_COOKIE}=${encodeURIComponent(tenant)}; path=/; SameSite=Lax`;
+		goto(resolve('/(console)/console'));
 	}
 </script>
 

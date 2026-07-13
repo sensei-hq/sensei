@@ -5,7 +5,6 @@
 	import DojoChip from '$lib/components/DojoChip.svelte';
 	import Spark from '$lib/components/Spark.svelte';
 	import { metrics } from '$lib/dojo-data';
-	import { TENANT_PARAM } from '$lib/tenant';
 	import { kindKanji, kindLabel, scopeLabel } from '$lib/triage-view';
 
 	// Overview — the maintainer dashboard (mockup DojoOverview). The pending-triage
@@ -16,7 +15,6 @@
 	let { data } = $props();
 
 	const m = metrics;
-	const tenant = $derived(encodeURIComponent(data.tenantKey));
 	const pending = $derived(data.queue.length);
 	const preview = $derived(data.queue.slice(0, 4));
 
@@ -87,7 +85,7 @@
 		<!-- metric row -->
 		<div class="flex gap-4">
 			<a
-				href={resolve(`/(console)/console/triage?${TENANT_PARAM}=${tenant}`)}
+				href={resolve('/(console)/console/triage')}
 				class="bg-paper-soft border-paper-edge flex-1 rounded-xl border no-underline"
 				style="padding: 16px 18px; min-width: 0"
 			>
@@ -147,7 +145,7 @@
 					<span class="text-ink-mute uppercase" style="font-size: 11px; letter-spacing: 0.14em">Top of the triage queue</span>
 					<span class="flex-1"></span>
 					<a
-					href={resolve(`/(console)/console/triage?${TENANT_PARAM}=${tenant}`)}
+					href={resolve('/(console)/console/triage')}
 					class="mono text-accent text-xs no-underline">all {pending} →</a
 				>
 				</div>
@@ -158,7 +156,7 @@
 				{:else}
 					{#each preview as c, i (c.signature)}
 						<a
-							href={resolve(`/(console)/console/triage/[signature]?${TENANT_PARAM}=${tenant}`, {
+							href={resolve('/(console)/console/triage/[signature]', {
 								signature: c.signature
 							})}
 							class="grid items-center gap-3 no-underline {i < preview.length - 1
