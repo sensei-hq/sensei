@@ -1900,8 +1900,12 @@ port mismatch hive 7755 vs config 8787 (🟢), etc. Chunk order: {R1,R2}→R3→
    OR let it ride to the next milestone release. (v0.2.44 ≡ v0.2.43 functionally, so tap-broken is low-impact.)
    ⚑ FOLLOW-UP (non-blocking): semgrep flags release.yml actions (checkout@v5 etc.) unpinned to SHAs — pre-existing
    supply-chain hardening, separate sweep.
-   P1 follow-ups queued: watcher watchdog (kill silent freeze) + FSEvents cursor persist + .git/HEAD watch. P2: invariant
-   self-audit + `sensei index doctor` + chaos test.
+   🔨 P1 IN PROGRESS (subagent ab2cc01c) — watcher resilience: (1) liveness heartbeat + WATCHDOG that detects a
+   stalled/dead watcher → forces reconcile + surfaces watcher health in the status/health API (kills the SILENT
+   5h-freeze); (2) FSEvents overflow/Rescan → force reconcile (classify_event drops Rescan today); (3) .git/HEAD
+   branch-switch → immediate repo reconcile (is_branch_switch exists). DEFERRED = P1b FSEvents-cursor persistence
+   (needs raw-FSEvents spike; P0's always-on-boot reconcile already covers the restart-gap, so low priority). No DDL
+   (sensei.config). Verify cargo test -p senseid. P2 next: invariant self-audit + `sensei index doctor` + chaos test.
    ★ DESIGN DOC OF RECORD: docs/analysis/2026-07-13-index-reliability-rock-solid.md (a8b09407) — full architecture,
    root-cause, per-tier done-gates. ★ JERRY CONFIRMED (2026-07-13): build the FULL "resilient watcher/scanner" as
    outlined — so the RELIABILITY TRACK is now the PRIORITY: P0 (in progress) → P1 → P2 as sequential chunks, AHEAD of
