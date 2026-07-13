@@ -23,12 +23,12 @@
 //!    global artifact can never de-anonymise a lone contributor.
 //!
 //! The pure decision logic ([`ClusterSignals`] / [`score`] / [`decide`]) is
-//! unit-tested with no database. The store-backed runner ([`HiveStore`]
+//! unit-tested with no database. The store-backed runner ([`DojoStore`]
 //! methods below) is transactional and idempotent: re-running never
 //! double-publishes and never double-decides (it guards on artifact status /
 //! triage state).
 
-use crate::store::{HiveStore, ARTIFACTS_SEQ_LOCK};
+use crate::store::{DojoStore, ARTIFACTS_SEQ_LOCK};
 use serde::Serialize;
 use serde_json::{json, Value};
 use sqlx_postgres::PgConnection;
@@ -208,7 +208,7 @@ pub struct TriageRow {
 
 // ── Store-backed runner (transactional, idempotent) ──────────────────────────
 
-impl HiveStore {
+impl DojoStore {
     /// Promote one signature-cluster within `tenant_id`. Runs in a single
     /// transaction holding [`ARTIFACTS_SEQ_LOCK`] (the same lock publish takes,
     /// so a published `seq` stays gap-free for the pull cursor).

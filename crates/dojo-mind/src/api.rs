@@ -5,7 +5,7 @@ use crate::auth::{
     Role,
 };
 use crate::collective::promote::{DecideOutcome, DecideStatus};
-use crate::store::HiveStore;
+use crate::store::DojoStore;
 use axum::{
     extract::{Extension, Query, State},
     http::{HeaderMap, StatusCode},
@@ -14,13 +14,13 @@ use axum::{
     Json, Router,
 };
 use dojo_protocol::PublishedArtifact;
-use hive_protocol::PublishedRule;
+use dojo_protocol::PublishedRule;
 use serde::Deserialize;
 use std::sync::Arc;
 use uuid::Uuid;
 
 pub struct SharedState {
-    pub store: HiveStore,
+    pub store: DojoStore,
 }
 pub type AppState = Arc<SharedState>;
 
@@ -39,7 +39,7 @@ fn require_role(
 }
 
 async fn health() -> impl IntoResponse {
-    Json(serde_json::json!({ "status": "ok", "service": "sensei-hive", "scope": "hive" }))
+    Json(serde_json::json!({ "status": "ok", "service": "sensei-dojo", "scope": "dojo" }))
 }
 
 async fn publish_rule(

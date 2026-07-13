@@ -1,15 +1,15 @@
 use std::sync::Arc;
 use clap::{Parser, Subcommand};
-use hive_mind::api::{build_router_with_jwt, SharedState};
-use hive_mind::auth::JwtConfig;
-use hive_mind::config::HiveConfig;
-use hive_mind::db::HiveDb;
-use hive_mind::keygen::generate_key;
-use hive_mind::provision::provision;
-use hive_mind::store::HiveStore;
+use dojo_mind::api::{build_router_with_jwt, SharedState};
+use dojo_mind::auth::JwtConfig;
+use dojo_mind::config::DojoConfig;
+use dojo_mind::db::DojoDb;
+use dojo_mind::keygen::generate_key;
+use dojo_mind::provision::provision;
+use dojo_mind::store::DojoStore;
 
 #[derive(Parser)]
-#[command(name = "sensei-hive", about = "sensei hive-mind shared-brain service")]
+#[command(name = "sensei-dojo", about = "sensei dojo-mind shared-brain service")]
 struct Cli { #[command(subcommand)] cmd: Option<Cmd> }
 
 #[derive(Subcommand)]
@@ -44,9 +44,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt().with_env_filter(
         tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into())).init();
     let cli = Cli::parse();
-    let cfg = HiveConfig::from_env().map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
-    let db = HiveDb::bootstrap(cfg.data_dir.clone(), cfg.database_dir.clone()).await?;
-    let store = HiveStore::new(db.pool().clone());
+    let cfg = DojoConfig::from_env().map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+    let db = DojoDb::bootstrap(cfg.data_dir.clone(), cfg.database_dir.clone()).await?;
+    let store = DojoStore::new(db.pool().clone());
     match cli.cmd.unwrap_or(Cmd::Serve) {
         Cmd::Keygen { name, role, label } => {
             let key = generate_key(&store, &name, &role, label.as_deref()).await?;
@@ -58,7 +58,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("  tenant_key    {}", p.tenant_key);
             println!("  tenant_id     {}", p.tenant_id);
             println!("  membership_id {}", p.membership_id);
-            println!("  hive_role     {}", p.hive_role);
+            println!("  member_role     {}", p.member_role);
             println!("  token         {}", p.token);
         }
         Cmd::Serve => {
@@ -68,7 +68,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
             let app = build_router_with_jwt(Arc::new(SharedState { store }), jwt);
             let listener = tokio::net::TcpListener::bind(&cfg.bind).await?;
-            tracing::info!(bind = %cfg.bind, "sensei-hive listening");
+            tracing::info!(bind = %cfg.bind, "sensei-dojo listening");
             axum::serve(listener, app).with_graceful_shutdown(async { let _ = tokio::signal::ctrl_c().await; }).await?;
         }
     }

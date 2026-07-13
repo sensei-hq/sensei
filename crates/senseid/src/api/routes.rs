@@ -251,7 +251,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/knowledge/rules/consolidate",       post(knowledge::consolidate_rules))
         .route("/api/knowledge/rules/consolidated",      get(knowledge::get_consolidated))
         .route("/api/knowledge/rules/consolidate/{id}/approve", post(knowledge::approve_consolidated))
-        // Federation sources (hive-mind)
+        // Federation sources (dojo-mind)
         .route("/api/knowledge/sources",                 get(knowledge::list_sources).post(knowledge::create_source))
         .route("/api/knowledge/sources/{id}",            delete(knowledge::delete_source))
         .route("/api/knowledge/sources/{id}/sync",       post(knowledge::sync_source))

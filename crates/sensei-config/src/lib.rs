@@ -12,7 +12,7 @@
 
 /// Default Dōjō registry base URL. The localhost dev registry — matches the
 /// console's `PUBLIC_DOJO_API_URL` and the `_dojo-build-plan.md` default.
-pub const DEFAULT_DOJO_REGISTRY_URL: &str = "http://localhost:8787";
+pub const DEFAULT_DOJO_REGISTRY_URL: &str = "http://localhost:7755";
 
 /// Env var overriding [`DEFAULT_DOJO_REGISTRY_URL`]. Mirrors `SENSEI_DDL_DIR`.
 pub const DOJO_REGISTRY_URL_ENV: &str = "SENSEI_DOJO_URL";
@@ -44,7 +44,7 @@ mod tests {
 
         // 1. Default — no env var set.
         unsafe { std::env::remove_var(DOJO_REGISTRY_URL_ENV); }
-        assert_eq!(dojo_registry_url(), "http://localhost:8787", "default → localhost registry");
+        assert_eq!(dojo_registry_url(), "http://localhost:7755", "default → localhost registry");
 
         // 2. Override — SENSEI_DOJO_URL set (trailing slash trimmed).
         unsafe { std::env::set_var(DOJO_REGISTRY_URL_ENV, "https://dojo.sensei-hq.org/"); }
@@ -52,7 +52,7 @@ mod tests {
 
         // 3. Empty value — falls back to default.
         unsafe { std::env::set_var(DOJO_REGISTRY_URL_ENV, "   "); }
-        assert_eq!(dojo_registry_url(), "http://localhost:8787", "blank falls back to default");
+        assert_eq!(dojo_registry_url(), "http://localhost:7755", "blank falls back to default");
 
         unsafe { std::env::remove_var(DOJO_REGISTRY_URL_ENV); }
     }

@@ -5,8 +5,7 @@ members = [
     "crates/mcp",
     "crates/bootstrap",
     "crates/logger",
-    "crates/hive-protocol",
-    "crates/hive-mind",
+    "crates/dojo-mind",
     "crates/dojo-protocol",
     "crates/sensei-config",
 ]

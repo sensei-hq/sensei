@@ -30,7 +30,7 @@ comment on table memory_share_batches is
 'Batched proposal to share memories from a project to the federation.
 Users review a group of learned memories together and approve or reject
 the batch as a unit. On approve, the daemon iterates the linked members
-and pushes each to the configured hive-mind. Kept as a first-class
+and pushes each to the configured DÅjÅ. Kept as a first-class
 entity (not a memory-status flag) so verdicts stay auditable and the
 UI can surface a per-project "pending review" queue.
 - proposed: created, awaiting user decision

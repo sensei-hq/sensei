@@ -7,7 +7,7 @@
 ##     cli        — sensei CLI (binary: sensei)
 ##     mcp        — MCP server
 ##     bootstrap  — installer/prereq checker
-##     hive-mind  — federated shared-brain service
+##     dojo-mind  — federated shared-brain service
 ##     logger     — structured logging crate
 ##   website/     — Marketing website
 ##   docs/        — Documentation
@@ -76,9 +76,9 @@ crates-all:
 	# embedded-llama-cpp code that the plain --workspace build skips.
 	cargo build --release -p senseid --features senseid/embedded-llama-cpp
 
-.PHONY: hive
-hive:  ## Build the sensei-hive service binary
-	cargo build --release -p hive-mind
+.PHONY: dojo
+dojo:  ## Build the sensei-dojo service binary
+	cargo build --release -p dojo-mind
 
 # ── Install ───────────────────────────────────────────────────────────────────
 #

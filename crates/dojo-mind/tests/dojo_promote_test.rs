@@ -11,10 +11,10 @@
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
-use hive_mind::api::{build_router, SharedState};
-use hive_mind::auth::{DEFAULT_SUPABASE_JWT_AUD, DEFAULT_SUPABASE_JWT_SECRET};
-use hive_mind::db::HiveDb;
-use hive_mind::store::HiveStore;
+use dojo_mind::api::{build_router, SharedState};
+use dojo_mind::auth::{DEFAULT_SUPABASE_JWT_AUD, DEFAULT_SUPABASE_JWT_SECRET};
+use dojo_mind::db::DojoDb;
+use dojo_mind::store::DojoStore;
 use http_body_util::BodyExt;
 use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
 use serde_json::{json, Value};
@@ -85,10 +85,10 @@ fn principle_body(signature: &str, title: &str) -> String {
     .to_string()
 }
 
-async fn boot() -> (Router, HiveStore, PgPool) {
-    let db = HiveDb::bootstrap_temp().await.unwrap();
+async fn boot() -> (Router, DojoStore, PgPool) {
+    let db = DojoDb::bootstrap_temp().await.unwrap();
     let pool = db.pool().clone();
-    let store = HiveStore::new(pool.clone());
+    let store = DojoStore::new(pool.clone());
     Box::leak(Box::new(db)); // keep embedded PG alive for the test
     let app = build_router(Arc::new(SharedState {
         store: store.clone(),
@@ -148,7 +148,7 @@ async fn decide(
     send(app, req).await
 }
 
-async fn key_for(store: &HiveStore, name: &str, role: &str) -> String {
+async fn key_for(store: &DojoStore, name: &str, role: &str) -> String {
     let m = store.create_member(name, None, role).await.unwrap();
     store.issue_key(&m, None).await.unwrap().plaintext
 }
@@ -451,7 +451,7 @@ async fn promotion_is_idempotent() {
     assert!(
         matches!(
             outcome,
-            hive_mind::collective::promote::PromoteOutcome::NoOp
+            dojo_mind::collective::promote::PromoteOutcome::NoOp
         ),
         "re-promoting a published cluster is a no-op, got {outcome:?}"
     );

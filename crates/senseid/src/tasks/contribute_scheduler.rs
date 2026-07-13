@@ -11,7 +11,7 @@
 //! ([`crate::dojo::contribute::stage_contribution`]): it runs the SAME strict
 //! anonymise + confidentiality gate as the publish path and writes `pending`
 //! rows into `sensei.dojo_outbox`. It does NOT push anything to a Dōjō. The
-//! outbox→hive publish stays the explicit manual C6 step
+//! outbox→dojo publish stays the explicit manual C6 step
 //! (`POST /api/share-review/{batch}/publish`). Auto-publish is deliberately not
 //! implemented (a Jerry decision — open question #3 in the build plan).
 //!
@@ -137,7 +137,7 @@ pub async fn maybe_prepare_contribution_batch<G: Generalizer>(
     };
 
     // 4. STAGE-ONLY: load → anonymise (the REAL gate) → write outbox `pending`.
-    //    Never publishes; the outbox→hive send stays the manual C6 step.
+    //    Never publishes; the outbox→dojo send stays the manual C6 step.
     let loaded = match load_batch(pg, batch_id).await {
         Ok(l) => l,
         Err(e) => {
@@ -245,8 +245,8 @@ mod tests {
 
         let mid = uuid::Uuid::new_v4();
         pg.create_dojo_membership(&NewDojoMembership {
-            id: mid, registry_url: "http://localhost:8787".into(), tenant_key: "github/acme-corp".into(),
-            dojo_url: "http://localhost:8787/github/acme-corp".into(), kind: "employer".into(),
+            id: mid, registry_url: "http://localhost:7755".into(), tenant_key: "github/acme-corp".into(),
+            dojo_url: "http://localhost:7755/github/acme-corp".into(), kind: "employer".into(),
             role: "contributor".into(), authenticated_via: "device_code".into(),
             attribution_default: "named".into(),
             credential_ref: format!("dojo-{}", uuid::Uuid::new_v4()), sync_status: "healthy".into(),

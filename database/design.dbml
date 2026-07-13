@@ -838,7 +838,7 @@ Table "sensei"."scopes" {
   "key" TEXT [pk, not null, note: 'Stable identifier (e.g. general, user, organization, client, technology, team, project, repository).']
   "name" TEXT [not null, note: 'Human-readable label.']
   "level" INTEGER [not null, note: 'Precedence rank. Higher = more specific = wins. general=0 … repository=70.']
-  "shareable" BOOLEAN [not null, default: false, note: 'Whether knowledge at this scope federates to a shared hive-mind (organization/client/team = true).']
+  "shareable" BOOLEAN [not null, default: false, note: 'Whether knowledge at this scope federates to a shared DÅjÅ (organization/client/team = true).']
   "description" TEXT [note: 'What this scope is for.']
   "modified_at" TIMESTAMPTZ [not null, default: `now()`, note: 'Timestamp of the last modification to this row.']
 
@@ -1287,7 +1287,7 @@ Table "sensei"."memory_share_batches" {
 Batched proposal to share memories from a project to the federation.
 Users review a group of learned memories together and approve or reject
 the batch as a unit. On approve, the daemon iterates the linked members
-and pushes each to the configured hive-mind. Kept as a first-class
+and pushes each to the configured DÅjÅ. Kept as a first-class
 entity (not a memory-status flag) so verdicts stay auditable and the
 UI can surface a per-project "pending review" queue.
 - proposed: created, awaiting user decision
@@ -1661,7 +1661,7 @@ Table "sensei"."memories" {
   "scope_filter" TEXT [note: 'Qualifier for scope: stack name (e.g. "rust"), task type (e.g. "fix"), module path (e.g. "src/api"). Null for global/project scope.']
   "namespace_id" UUID [note: 'Governance scope instance this rule applies to (organization/project/technology/...). Null = unscoped (general). Resolution gathers rules across a repo\'s member namespaces + always-on general/user.']
   "enforcement" enforcement [not null, default: 'recommended', note: 'Authority axis: advisory < recommended < required < mandatory. mandatory = non-overridable constitution tier (a more specific scope cannot weaken it).']
-  "origin" TEXT [not null, default: 'learned', note: 'Provenance: learned (knowledge plane), authored (written directly), promoted (elevated from a narrower scope), federated (pulled from a hive-mind).']
+  "origin" TEXT [not null, default: 'learned', note: 'Provenance: learned (knowledge plane), authored (written directly), promoted (elevated from a narrower scope), federated (pulled from a DÅjÅ).']
   "source_id" UUID [note: 'When origin=promoted/federated, the id of the source memory (or remote record) this was derived from. Null otherwise.']
   "type" memory_type [not null, note: 'Knowledge category: decision (architectural), pattern (code convention), convention (team norm), preference (style rule), continuity (session handoff), question (open issue).']
   "title" TEXT [not null, note: 'Short label used as heading in context output.']

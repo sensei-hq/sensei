@@ -1,7 +1,7 @@
 //! Unit tests for the Supabase-JWT verification path, driven entirely by
 //! SYNTHETIC tokens signed with the test secret — no running Supabase needed.
 
-use hive_mind::auth::{
+use dojo_mind::auth::{
     verify_supabase_jwt, DEFAULT_SUPABASE_JWT_AUD, DEFAULT_SUPABASE_JWT_SECRET,
 };
 use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};

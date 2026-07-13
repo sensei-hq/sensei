@@ -86,7 +86,6 @@ gateway = { git = "ssh://git@github.com/sensei-hq/gateway.git", rev = "01d0ab2" 
 # Registry + trait types only by default — engine adapters land via the
 # `embedded-*` cargo features above.
 gateway-embedded = { git = "ssh://git@github.com/sensei-hq/gateway.git", rev = "01d0ab2" }
-hive-protocol = { path = "../hive-protocol" }
 dojo-protocol = { path = "../dojo-protocol" }
 sensei-bootstrap = { path = "../bootstrap" }
 sensei-config = { path = "../sensei-config" }
@@ -99,7 +98,7 @@ cc = "1"
 tempfile = "3"
 tokio-test = "0.4"
 tower = { version = "0.5", features = ["util"] }
-hive-mind = { path = "../hive-mind" }
+dojo-mind = { path = "../dojo-mind" }
 # Contract test only — cross the MCP↔daemon seam by shaping requests with the
 # real proxy code and issuing them against the in-process router. senseid has no
 # runtime dependency on mcp, so this stays acyclic.

@@ -1,6 +1,6 @@
-use hive_mind::api::{build_router, SharedState};
-use hive_mind::db::HiveDb;
-use hive_mind::store::HiveStore;
+use dojo_mind::api::{build_router, SharedState};
+use dojo_mind::db::DojoDb;
+use dojo_mind::store::DojoStore;
 use std::sync::Arc;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -8,8 +8,8 @@ use http_body_util::BodyExt;
 use tower::ServiceExt; // oneshot
 
 async fn app_with_keys() -> (axum::Router, String, String) {
-    let db = HiveDb::bootstrap_temp().await.unwrap();
-    let store = HiveStore::new(db.pool().clone());
+    let db = DojoDb::bootstrap_temp().await.unwrap();
+    let store = DojoStore::new(db.pool().clone());
     let pub_member = store.create_member("Pub", None, "publisher").await.unwrap();
     let mem_member = store.create_member("Mem", None, "member").await.unwrap();
     let pub_key = store.issue_key(&pub_member, None).await.unwrap().plaintext;
@@ -21,7 +21,7 @@ async fn app_with_keys() -> (axum::Router, String, String) {
 
 fn publish_body() -> String {
     serde_json::json!({
-        "content_hash": hive_protocol::content_hash("always tdd"),
+        "content_hash": dojo_protocol::content_hash("always tdd"),
         "scope_key": "organization", "namespace_slug": "sensei-hq", "namespace_name": "Sensei HQ",
         "rule_type": "convention", "title": "TDD", "content": "always tdd",
         "impact": null, "enforcement": "mandatory",
@@ -69,7 +69,7 @@ async fn publish_attribution_is_server_controlled() {
     // published_at must both be ignored in favor of server-side values.
     let (app, pub_key, _mem) = app_with_keys().await; // publisher member is named "Pub"
     let body = serde_json::json!({
-        "content_hash": hive_protocol::content_hash("attributed rule"),
+        "content_hash": dojo_protocol::content_hash("attributed rule"),
         "scope_key": "organization", "namespace_slug": "sensei-hq", "namespace_name": "Sensei HQ",
         "rule_type": "convention", "title": "Attr", "content": "attributed rule",
         "impact": null, "enforcement": "advisory",

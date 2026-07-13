@@ -211,7 +211,7 @@ mod tests {
     fn membership(dojo_url: &str, credential_ref: &str) -> DojoMembership {
         DojoMembership {
             id: uuid::Uuid::new_v4(),
-            registry_url: "http://localhost:8787".into(),
+            registry_url: "http://localhost:7755".into(),
             tenant_key: "github/acme".into(),
             dojo_url: dojo_url.into(),
             kind: "client".into(),
@@ -228,16 +228,16 @@ mod tests {
 
     #[test]
     fn base_url_trims_trailing_slash() {
-        let c = DojoClient::for_membership(&membership("http://localhost:8787/github/acme/", "dojo-x"));
-        assert_eq!(c.base_url(), "http://localhost:8787/github/acme");
+        let c = DojoClient::for_membership(&membership("http://localhost:7755/github/acme/", "dojo-x"));
+        assert_eq!(c.base_url(), "http://localhost:7755/github/acme");
     }
 
     #[test]
     fn artifacts_url_encodes_tenant_as_single_segment() {
         // tenant_key "github/acme" must ride as ONE segment (`github%2Facme`)
         // under the registry root — NOT under the dojo_url tenant path.
-        let c = DojoClient::for_membership(&membership("http://localhost:8787/github/acme", "dojo-x"));
-        assert_eq!(c.artifacts_url(), "http://localhost:8787/v1/t/github%2Facme/artifacts");
+        let c = DojoClient::for_membership(&membership("http://localhost:7755/github/acme", "dojo-x"));
+        assert_eq!(c.artifacts_url(), "http://localhost:7755/v1/t/github%2Facme/artifacts");
     }
 
     #[test]
@@ -308,7 +308,7 @@ mod tests {
 
         let cref = format!("dojo-pull-{}", uuid::Uuid::new_v4());
         crate::gateway_keys::set_key(&cref, "device-token-pull").unwrap();
-        let mut m = membership("http://localhost:8787/github/acme", &cref);
+        let mut m = membership("http://localhost:7755/github/acme", &cref);
         m.registry_url = format!("http://{addr}");
         let c = DojoClient::for_membership(&m);
 
@@ -327,7 +327,7 @@ mod tests {
     fn bearer_resolves_from_keychain_roundtrip() {
         let cref = format!("dojo-test-{}", uuid::Uuid::new_v4());
         crate::gateway_keys::set_key(&cref, "device-token-abc").unwrap();
-        let c = DojoClient::for_membership(&membership("http://localhost:8787/github/acme", &cref));
+        let c = DojoClient::for_membership(&membership("http://localhost:7755/github/acme", &cref));
         assert_eq!(c.bearer().unwrap(), "device-token-abc");
         crate::gateway_keys::delete_key(&cref).unwrap();
     }

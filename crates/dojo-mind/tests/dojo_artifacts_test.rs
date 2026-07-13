@@ -7,10 +7,10 @@
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
-use hive_mind::api::{build_router, SharedState};
-use hive_mind::auth::{DEFAULT_SUPABASE_JWT_AUD, DEFAULT_SUPABASE_JWT_SECRET};
-use hive_mind::db::HiveDb;
-use hive_mind::store::HiveStore;
+use dojo_mind::api::{build_router, SharedState};
+use dojo_mind::auth::{DEFAULT_SUPABASE_JWT_AUD, DEFAULT_SUPABASE_JWT_SECRET};
+use dojo_mind::db::DojoDb;
+use dojo_mind::store::DojoStore;
 use http_body_util::BodyExt;
 use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
 use serde_json::{json, Value};
@@ -63,12 +63,12 @@ fn artifact_body(title: &str) -> String {
     .to_string()
 }
 
-/// Boot embedded PG (deploys hive + dojo scopes) and build the router. Returns
+/// Boot embedded PG (deploys the unified dojo scope) and build the router. Returns
 /// a store sharing the same pool as the router's store, so a test seeds tenants
 /// / members / memberships through it and the router sees them.
-async fn boot() -> (Router, HiveStore) {
-    let db = HiveDb::bootstrap_temp().await.unwrap();
-    let store = HiveStore::new(db.pool().clone());
+async fn boot() -> (Router, DojoStore) {
+    let db = DojoDb::bootstrap_temp().await.unwrap();
+    let store = DojoStore::new(db.pool().clone());
     Box::leak(Box::new(db)); // keep embedded PG alive for the test
     let app = build_router(Arc::new(SharedState {
         store: store.clone(),
@@ -105,7 +105,7 @@ async fn pull(app: &Router, enc_key: &str, bearer: Option<&str>, since: i64) -> 
     send(app, b.body(Body::empty()).unwrap()).await
 }
 
-async fn publisher_key(store: &HiveStore) -> String {
+async fn publisher_key(store: &DojoStore) -> String {
     let m = store.create_member("Pub", None, "publisher").await.unwrap();
     store.issue_key(&m, None).await.unwrap().plaintext
 }

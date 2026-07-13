@@ -1,16 +1,14 @@
-//! Embedded-Postgres lifecycle + schema deploy for the hive.
+//! Embedded-Postgres lifecycle + schema deploy for the Dōjō service.
 //!
-//! `HiveDb::bootstrap` spins up an embedded PostgreSQL instance, creates the
-//! `hive` database, deploys the `hive` scope from the single `database/design.yaml`
-//! (its own tables + the shared governance closure — schemas, scope ladder,
-//! enforcement enum — and NO extensions), then seeds the scope ladder from the
-//! canonical `scopes.jsonl`. There is NO `design.hive.yaml`; the scope selection
-//! lives in `design.yaml`.
+//! `DojoDb::bootstrap` spins up an embedded PostgreSQL instance, creates the
+//! `dojo` database, deploys the unified `dojo` scope from the single
+//! `database/design.yaml` — BOTH the governance-federation tables
+//! (shared_rules/members/api_keys/audit_log) AND the SaaS-layer artifact
+//! tables/enums/procedure, plus the shared governance closure (schemas, scope
+//! ladder, enforcement enum) and NO extensions — then seeds the scope ladder
+//! from the canonical `scopes.jsonl`. The scope selection lives in `design.yaml`.
 //!
-//! It ADDITIONALLY deploys the `dojo` scope (Dōjō artifact federation) into the
-//! same embedded PG — the self-contained `dojo.*` enums/tables/procedure — and
-//! idempotently seeds the special-case global-dojo tenant. The `hive` deploy is
-//! unchanged; both scopes share the shared [`apply_scope`] path.
+//! It idempotently seeds the special-case global-dojo tenant on every boot.
 
 use std::path::{Path, PathBuf};
 
@@ -24,12 +22,12 @@ use sqlx_postgres::{PgPool, PgPoolOptions};
 /// existing data dir because the new random password no longer matches — auth
 /// fails. Pinning it (env-overridable) makes a persisted cluster reopenable
 /// across restarts. The embedded PG binds loopback only, so a stable local
-/// default is acceptable; override via `SENSEI_HIVE_DB_PASSWORD` for anything
+/// default is acceptable; override via `SENSEI_DOJO_DB_PASSWORD` for anything
 /// sensitive.
-const DEFAULT_EMBEDDED_PASSWORD: &str = "sensei-hive-local";
+const DEFAULT_EMBEDDED_PASSWORD: &str = "sensei-dojo-local";
 
 fn embedded_password() -> String {
-    std::env::var("SENSEI_HIVE_DB_PASSWORD")
+    std::env::var("SENSEI_DOJO_DB_PASSWORD")
         .ok()
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| DEFAULT_EMBEDDED_PASSWORD.to_string())
@@ -47,19 +45,19 @@ pub enum DbError {
     Pool(String),
 }
 
-/// A running embedded Postgres with the hive schema applied + scopes seeded.
-pub struct HiveDb {
+/// A running embedded Postgres with the dojo schema applied + scopes seeded.
+pub struct DojoDb {
     _pg: PostgreSQL, // owns the process; dropped on shutdown
     pool: PgPool,
 }
 
-impl HiveDb {
-    /// The connection pool to the hive database.
+impl DojoDb {
+    /// The connection pool to the dojo database.
     pub fn pool(&self) -> &PgPool {
         &self.pool
     }
 
-    /// Boot an embedded Postgres at `data_dir`, deploy the `hive` scope from the
+    /// Boot an embedded Postgres at `data_dir`, deploy the `dojo` scope from the
     /// `database/` tree at `database_dir`, and seed the scope ladder.
     ///
     /// `temporary`: caller decides. Tests should set this to `true` (via
@@ -91,21 +89,18 @@ impl HiveDb {
             .await
             .map_err(|e| DbError::Embedded(e.to_string()))?;
         if !pg
-            .database_exists("hive")
+            .database_exists("dojo")
             .await
             .map_err(|e| DbError::Embedded(e.to_string()))?
         {
-            pg.create_database("hive")
+            pg.create_database("dojo")
                 .await
                 .map_err(|e| DbError::Embedded(e.to_string()))?;
         }
-        let url = pg.settings().url("hive");
-        // The hive scope (rules federation) — deployed exactly as before.
-        deploy_hive_schema(&url, &database_dir).await?;
-        // The dojo scope (Dōjō artifact federation) — additive, same embedded
-        // PG / same `hive` database. The dojo scope is self-contained (every FK
-        // stays inside the dojo schema), so its objects coexist with the
-        // hive/sensei objects without overlap.
+        let url = pg.settings().url("dojo");
+        // Deploy the unified `dojo` scope — the governance-federation tables
+        // (shared_rules/members/api_keys/audit_log) AND the artifact-federation
+        // tables/enums/procedure — plus the shared sensei governance closure.
         deploy_dojo_schema(&url, &database_dir).await?;
         let pool = PgPoolOptions::new()
             .max_connections(10)
@@ -136,12 +131,12 @@ impl HiveDb {
         static SEQ: AtomicU64 = AtomicU64::new(0);
         let n = SEQ.fetch_add(1, Ordering::Relaxed);
         let tmp = std::env::temp_dir()
-            .join(format!("sensei-hive-test-{}-{n}", std::process::id()));
+            .join(format!("sensei-dojo-test-{}-{n}", std::process::id()));
         Self::bootstrap_with_settings(tmp, workspace_database_dir(), true).await
     }
 }
 
-/// Sweep `$TMPDIR/sensei-hive-test-*` directories left behind by prior test
+/// Sweep `$TMPDIR/sensei-dojo-test-*` directories left behind by prior test
 /// runs whose parent PID is no longer alive, killing any embedded-Postgres
 /// child that's still holding the dir and then rm'ing the tree.
 ///
@@ -159,8 +154,8 @@ fn sweep_orphaned_test_dirs() {
 
     for entry in entries.flatten() {
         let Ok(file_name) = entry.file_name().into_string() else { continue };
-        let Some(rest) = file_name.strip_prefix("sensei-hive-test-") else { continue };
-        // Name shape: sensei-hive-test-{pid}-{n} — parse the pid segment.
+        let Some(rest) = file_name.strip_prefix("sensei-dojo-test-") else { continue };
+        // Name shape: sensei-dojo-test-{pid}-{n} — parse the pid segment.
         let Some((pid_str, _)) = rest.split_once('-') else { continue };
         let Ok(pid) = pid_str.parse::<u32>() else { continue };
 
@@ -197,28 +192,23 @@ fn is_pid_alive(pid: u32) -> bool {
         .unwrap_or(false)
 }
 
-/// `crates/hive-mind/ -> ../../database`
+/// `crates/dojo-mind/ -> ../../database`
 fn workspace_database_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../database")
 }
 
-/// Deploy the `hive` scope (rules federation). Unchanged behavior — delegates
-/// to [`apply_scope`], the shared dbd apply path (DRY with the dojo deploy).
-async fn deploy_hive_schema(db_url: &str, database_dir: &Path) -> Result<(), DbError> {
-    apply_scope(db_url, database_dir, "hive").await
-}
-
-/// Deploy the `dojo` scope (Dōjō artifact federation) into the same embedded PG.
-/// Additive — brings up the `dojo.*` enums, tables (incl. `dojo.artifacts` with
-/// its `seq` cursor), and the `dojo.seed_global_dojo()` procedure.
+/// Deploy the unified `dojo` scope (governance + artifact federation). Brings up
+/// the `dojo.*` enums, tables (the governance-federation tables
+/// shared_rules/members/api_keys/audit_log AND the artifact tables incl.
+/// `dojo.artifacts` with its `seq` cursor), the `dojo.seed_global_dojo()`
+/// procedure, and the shared sensei governance closure.
 async fn deploy_dojo_schema(db_url: &str, database_dir: &Path) -> Result<(), DbError> {
     apply_scope(db_url, database_dir, "dojo").await
 }
 
 /// Resolve `scope_name` from the single `database/design.yaml` and apply it to
-/// `db_url`. Both governance scopes (`hive`, `dojo`) go through here so the
-/// deploy path stays identical; the scope name doubles as the adapter's default
-/// schema (each scope's tables live in the schema of the same name).
+/// `db_url`. The scope name doubles as the adapter's default schema (the scope's
+/// tables live in the schema of the same name).
 async fn apply_scope(db_url: &str, database_dir: &Path, scope_name: &str) -> Result<(), DbError> {
     use dbd_core::adapter::postgres::PostgresAdapter;
     use dbd_core::Design;

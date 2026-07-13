@@ -1,10 +1,10 @@
-use hive_mind::db::HiveDb;
-use hive_mind::store::HiveStore;
+use dojo_mind::db::DojoDb;
+use dojo_mind::store::DojoStore;
 
 #[tokio::test]
 async fn member_key_issue_lookup_and_revoke() {
-    let db = HiveDb::bootstrap_temp().await.unwrap();
-    let store = HiveStore::new(db.pool().clone());
+    let db = DojoDb::bootstrap_temp().await.unwrap();
+    let store = DojoStore::new(db.pool().clone());
     let member = store.create_member("Jerry", Some("jerry@x.io"), "publisher").await.unwrap();
     let issued = store.issue_key(&member, Some("laptop")).await.unwrap();
     assert!(issued.plaintext.len() >= 40);

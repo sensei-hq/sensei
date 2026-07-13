@@ -1,6 +1,6 @@
-use hive_mind::db::HiveDb;
-use hive_mind::store::HiveStore;
-use hive_protocol::{content_hash, PublishedRule};
+use dojo_mind::db::DojoDb;
+use dojo_mind::store::DojoStore;
+use dojo_protocol::{content_hash, PublishedRule};
 
 fn rule(content: &str, title: &str) -> PublishedRule {
     PublishedRule {
@@ -14,8 +14,8 @@ fn rule(content: &str, title: &str) -> PublishedRule {
 
 #[tokio::test]
 async fn publish_creates_then_republish_bumps_version_and_seq() {
-    let db = HiveDb::bootstrap_temp().await.unwrap();
-    let store = HiveStore::new(db.pool().clone());
+    let db = DojoDb::bootstrap_temp().await.unwrap();
+    let store = DojoStore::new(db.pool().clone());
     let r1 = store.publish(&rule("always use tdd", "TDD")).await.unwrap();
     assert_eq!(r1.version, 1);
     let mut again = rule("always use tdd", "TDD (revised)");

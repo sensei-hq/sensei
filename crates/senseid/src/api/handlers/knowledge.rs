@@ -855,7 +855,7 @@ pub(crate) async fn record_outcomes(
 
 // ============================================================================
 // Federation sources — /api/knowledge/sources*
-// GET    /api/knowledge/sources             — list registered hive-mind sources
+// GET    /api/knowledge/sources             — list registered dojo-mind sources
 // POST   /api/knowledge/sources             — register a source (+ Keychain cred)
 // DELETE /api/knowledge/sources/{id}         — deregister (+ purge Keychain cred)
 // POST   /api/knowledge/sources/{id}/sync    — pull this source now
@@ -885,7 +885,7 @@ pub(crate) async fn create_source(
         Some(s) => Some(uuid::Uuid::parse_str(s).map_err(|_| err(StatusCode::BAD_REQUEST, "bad namespace_id"))?),
         None => None,
     };
-    let credential_ref = format!("hive-{}", uuid::Uuid::new_v4());
+    let credential_ref = format!("dojo-{}", uuid::Uuid::new_v4());
     let cref = credential_ref.clone();
     let api_key = b.api_key.clone();
     tokio::task::spawn_blocking(move || crate::gateway_keys::set_key(&cref, &api_key))
