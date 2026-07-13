@@ -12,7 +12,9 @@
 //! single place that decides the shape, so a drift is catchable by a test that
 //! crosses the seam.
 
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::path::{Path, PathBuf};
 
 /// HTTP method for a shaped daemon request. Mirrors the reqwest verbs the
 /// binary drives; kept dependency-free so the library needs no HTTP client.
@@ -88,7 +90,19 @@ pub fn daemon_request_for(
 
     match tool {
         // ── Handled inline by the binary (custom client / response / no-op) ──
-        "infer" | "embed" | "gateway_status" | "consensus" | "generate_image" | "log_event" => None,
+        // `use_project` is here too: it needs the daemon project list, a
+        // {id,name} resolve, and a pin-file WRITE — no single daemon call.
+        "infer" | "embed" | "gateway_status" | "consensus" | "generate_image" | "log_event"
+        | "use_project" => None,
+
+        // ── Folder-scoped project discovery ─────────────────────────────────
+        // `find_projects` is the folder-scoped view of `list_projects`: shape
+        // `GET /api/projects?under=<path>`, defaulting the scope to the MCP
+        // call's cwd when the caller gives no `under`.
+        "find_projects" => {
+            let under = args["under"].as_str().filter(|s| !s.is_empty()).unwrap_or(cwd);
+            Some(DaemonRequest::get("/api/projects").with_query("under", under))
+        }
 
         // ── Workflow state ──────────────────────────────────────────────────
         "update_phase" => {
@@ -296,6 +310,12 @@ pub fn handle_list_tools() -> Value {
                 ("project", "string", "Project name. Defaults to current project."),
             ]),
             tool("list_projects", "List all known projects and their index status.", &[], &[]),
+            tool("find_projects", "List the projects that live under a folder — the folder-scoped view of list_projects (which returns every project on the machine). Use this to discover which sensei project owns the directory you're working in. Defaults to the current working directory when 'under' is omitted.", &[], &[
+                ("under", "string", "Absolute folder path to scope the search to. Defaults to the current working directory."),
+            ]),
+            tool("use_project", "Pin the active project so every subsequent tool call resolves to it regardless of the server's working directory. Call this when the user tells you which project they're working on (e.g. use_project 'sensei'). The pin persists until you switch it by calling use_project again; an explicit project= argument on any other tool still overrides it for that one call.", &[
+                ("project", "string", "Project name or UUID to pin as active (e.g. 'sensei')."),
+            ], &[]),
             tool("create_session", "Start tracking a new coding session. Call at the beginning of a task.", &[
                 ("task", "string", "Description of what you're working on"),
             ], &[]),
@@ -537,38 +557,128 @@ pub fn map_daemon_tool(tool_name: &str) -> &str {
     }
 }
 
-/// Pure function: resolve a project hint to a project **name** from a slice of
-/// `/api/projects` rows.  Matching order:
+// ── Active-project pin (`~/.sensei/active-project`) ──────────────────────────
+//
+// The MCP server process's cwd is fixed at launch and is usually NOT the repo,
+// so cwd-based resolution says "no project resolved". `use_project` writes this
+// pin so a chosen project survives across every subsequent tool call regardless
+// of cwd; the default resolver (see `resolve_default_project`) consults it after
+// an explicit `project=` arg but before cwd.
+
+/// The pinned active project, persisted as JSON `{"id": "...", "name": "..."}`
+/// to `~/.sensei/active-project`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActiveProject {
+    pub id: String,
+    pub name: String,
+}
+
+/// The pin file path: `<sensei_dir>/active-project`. `sensei_dir` is injected
+/// (the binary passes `sensei_bootstrap::config().sensei_dir()`; a test passes a
+/// temp dir) so the read/write seam is unit-testable without touching `~`.
+pub fn active_project_path(sensei_dir: &Path) -> PathBuf {
+    sensei_dir.join("active-project")
+}
+
+/// Persist the active-project pin, creating the parent dir if missing. The one
+/// side-effecting function in the library.
+pub fn write_active_project(path: &Path, pin: &ActiveProject) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let json = serde_json::to_string_pretty(pin).unwrap_or_default();
+    std::fs::write(path, json)
+}
+
+/// Read + parse the pin. Returns `None` when the file is absent (the normal
+/// unpinned case) OR unreadable / corrupt / missing a name — a bad pin must
+/// never crash resolution, only fall through to cwd. Corruption is logged to
+/// stderr (never stdout — that's the JSON-RPC channel) so it can be inspected.
+pub fn read_active_project(path: &Path) -> Option<ActiveProject> {
+    let raw = match std::fs::read_to_string(path) {
+        Ok(s) => s,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(e) => {
+            eprintln!("sensei-mcp: cannot read active-project pin {}: {e}", path.display());
+            return None;
+        }
+    };
+    match serde_json::from_str::<ActiveProject>(&raw) {
+        Ok(pin) if !pin.name.is_empty() => Some(pin),
+        Ok(_) => {
+            eprintln!("sensei-mcp: active-project pin {} has an empty name; ignoring", path.display());
+            None
+        }
+        Err(e) => {
+            eprintln!("sensei-mcp: active-project pin {} is not valid JSON: {e}", path.display());
+            None
+        }
+    }
+}
+
+/// Pure: choose the DEFAULT project name (used when a tool carries no explicit
+/// `project` arg), in precedence order **explicit → pin → cwd → none**:
+///   * `explicit` — the name a non-empty `project=` arg already resolved to;
+///   * `pin`      — the parsed `~/.sensei/active-project` (survives cwd changes);
+///   * `cwd_name` — `resolve_from_cwd_in(...)` ("" when nothing matched).
+///
+/// An empty explicit / empty-name pin is treated as absent. Returns `None` when
+/// none of the three yields a name.
+pub fn resolve_default_project(
+    explicit: Option<&str>,
+    pin: Option<&ActiveProject>,
+    cwd_name: &str,
+) -> Option<String> {
+    if let Some(e) = explicit.filter(|s| !s.is_empty()) {
+        return Some(e.to_string());
+    }
+    if let Some(p) = pin.filter(|p| !p.name.is_empty()) {
+        return Some(p.name.clone());
+    }
+    (!cwd_name.is_empty()).then(|| cwd_name.to_string())
+}
+
+/// Pure: find the project row matching `hint` among `/api/projects` rows.
+/// Matching order:
 ///   1. Exact `id` (UUID) match
 ///   2. Exact `name` match (case-insensitive)
 ///   3. Partial `name` match (`contains`, case-insensitive)
 ///
-/// Returns `None` when nothing matches.
-pub fn resolve_project_in(projects: &[Value], hint: &str) -> Option<String> {
+/// Shared by the name-only [`resolve_project_in`] and the `{id,name}`
+/// [`resolve_active_project_in`] so the match order is defined exactly once.
+fn find_project<'a>(projects: &'a [Value], hint: &str) -> Option<&'a Value> {
     let hint_lower = hint.to_lowercase();
-    let name_of = |p: &Value| p["name"].as_str().map(str::to_string);
 
     // 1. Exact id match
-    if let Some(p) = projects.iter().find(|p| p["id"].as_str() == Some(hint))
-        && let Some(name) = name_of(p) {
-        return Some(name);
+    if let Some(p) = projects.iter().find(|p| p["id"].as_str() == Some(hint)) {
+        return Some(p);
     }
-
     // 2. Exact name match (case-insensitive)
-    if let Some(p) = projects.iter().find(|p| {
-        p["name"].as_str().map(|n| n.to_lowercase()) == Some(hint_lower.clone())
-    }) && let Some(name) = name_of(p) {
-        return Some(name);
+    if let Some(p) = projects.iter()
+        .find(|p| p["name"].as_str().map(|n| n.to_lowercase()) == Some(hint_lower.clone()))
+    {
+        return Some(p);
     }
-
     // 3. Partial name match
-    if let Some(p) = projects.iter().find(|p| {
-        p["name"].as_str().map(|n| n.to_lowercase().contains(&hint_lower)) == Some(true)
-    }) && let Some(name) = name_of(p) {
-        return Some(name);
-    }
+    projects.iter()
+        .find(|p| p["name"].as_str().map(|n| n.to_lowercase().contains(&hint_lower)) == Some(true))
+}
 
-    None
+/// Pure function: resolve a project hint to a project **name** from a slice of
+/// `/api/projects` rows (see [`find_project`] for the match order). Returns
+/// `None` when nothing matches.
+pub fn resolve_project_in(projects: &[Value], hint: &str) -> Option<String> {
+    find_project(projects, hint).and_then(|p| p["name"].as_str().map(str::to_string))
+}
+
+/// Pure function: resolve a hint to the matching project's `{id, name}` — what
+/// `use_project` pins. Same match order as [`resolve_project_in`]. Returns
+/// `None` when nothing matches or the row has no `name`.
+pub fn resolve_active_project_in(projects: &[Value], hint: &str) -> Option<ActiveProject> {
+    let p = find_project(projects, hint)?;
+    let name = p["name"].as_str()?.to_string();
+    let id = p["id"].as_str().unwrap_or_default().to_string();
+    Some(ActiveProject { id, name })
 }
 
 /// Pure function: resolve a project name from `cwd` by matching against each
@@ -682,7 +792,7 @@ mod tests {
     const EXPECTED_TOOLS: &[&str] = &[
         "search", "get_callers", "get_callees", "get_project_summary",
         "get_lib_docs", "search_lib_docs", "get_communities", "get_patterns",
-        "list_projects", "create_session", "update_session", "add_library",
+        "list_projects", "find_projects", "use_project", "create_session", "update_session", "add_library",
         "update_phase", "get_workflow_state", "match_pattern", "get_pattern_for",
         "get_duplicates", "get_project_conventions", "get_rules", "get_commands", "infer", "embed",
         "gateway_status", "consensus", "generate_image", "log_event",
@@ -1039,5 +1149,108 @@ mod tests {
         let req = daemon_request_for("totally_made_up", &json!({}), "/cwd", Some("sensei")).unwrap();
         assert_eq!(req.path, "/api/mcp/call");
         assert_eq!(req.body.unwrap()["tool"], "totally_made_up");
+    }
+
+    // ── Folder→project workflow: find_projects / use_project + the pin ───────
+
+    #[test]
+    fn find_projects_defaults_under_to_cwd() {
+        // No `under` arg → scope to the MCP call's cwd (the whole point: the
+        // assistant just wants "projects under here").
+        let req = daemon_request_for("find_projects", &json!({}), "/my/cwd", None).unwrap();
+        assert_eq!(req.method, HttpMethod::Get);
+        assert_eq!(req.path, "/api/projects");
+        assert_eq!(q(&req, "under"), Some("/my/cwd"), "no `under` arg → default to call cwd");
+    }
+
+    #[test]
+    fn find_projects_uses_explicit_under_over_cwd() {
+        let req = daemon_request_for(
+            "find_projects", &json!({ "under": "/some/dir" }), "/my/cwd", None,
+        ).unwrap();
+        assert_eq!(req.path, "/api/projects");
+        assert_eq!(q(&req, "under"), Some("/some/dir"), "explicit `under` overrides cwd");
+    }
+
+    #[test]
+    fn use_project_is_handled_inline() {
+        // The binary owns use_project (resolve + pin write); the lib shapes no
+        // single daemon request, so daemon_request_for must return None.
+        assert_eq!(
+            daemon_request_for("use_project", &json!({ "project": "sensei" }), "/cwd", None),
+            None
+        );
+    }
+
+    #[test]
+    fn resolve_active_project_returns_id_and_name() {
+        let ap = resolve_active_project_in(&sample(), "sensei").unwrap();
+        assert_eq!(ap.name, "sensei");
+        assert_eq!(ap.id, "11111111-1111-1111-1111-111111111111");
+        // by uuid resolves the same row
+        assert_eq!(
+            resolve_active_project_in(&sample(), "11111111-1111-1111-1111-111111111111").unwrap().name,
+            "sensei"
+        );
+        assert!(resolve_active_project_in(&sample(), "nope").is_none());
+    }
+
+    #[test]
+    fn default_project_precedence_is_explicit_then_pin_then_cwd_then_none() {
+        let pin = ActiveProject { id: "id".into(), name: "pinned".into() };
+        // explicit wins over pin AND cwd
+        assert_eq!(resolve_default_project(Some("explicit"), Some(&pin), "cwdname"), Some("explicit".into()));
+        // pin wins over cwd when there's no explicit arg
+        assert_eq!(resolve_default_project(None, Some(&pin), "cwdname"), Some("pinned".into()));
+        // cwd used when neither explicit nor pin
+        assert_eq!(resolve_default_project(None, None, "cwdname"), Some("cwdname".into()));
+        // none when nothing resolves
+        assert_eq!(resolve_default_project(None, None, ""), None);
+        // empty explicit is ignored → pin wins
+        assert_eq!(resolve_default_project(Some(""), Some(&pin), "cwd"), Some("pinned".into()));
+        // empty-name pin is treated as absent → falls through to cwd
+        let empty = ActiveProject { id: "id".into(), name: String::new() };
+        assert_eq!(resolve_default_project(None, Some(&empty), "cwdname"), Some("cwdname".into()));
+    }
+
+    /// A unique temp dir for pin-file tests (no external tempdir dep in this crate).
+    fn temp_pin_dir(tag: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        std::env::temp_dir().join(format!("sensei-mcp-test-{}-{tag}-{nanos}", std::process::id()))
+    }
+
+    #[test]
+    fn pin_round_trips_through_the_injected_path() {
+        let dir = temp_pin_dir("roundtrip");
+        let path = active_project_path(&dir);
+        assert_eq!(path.file_name().unwrap(), "active-project");
+        // Absent pin → None (the normal unpinned case), never an error.
+        assert_eq!(read_active_project(&path), None, "absent pin reads as None");
+
+        let pin = ActiveProject {
+            id: "11111111-1111-1111-1111-111111111111".into(),
+            name: "sensei".into(),
+        };
+        write_active_project(&path, &pin).unwrap(); // creates the parent dir
+        assert_eq!(read_active_project(&path), Some(pin), "pin round-trips");
+
+        // The persisted bytes are the documented {id,name} JSON shape.
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(v["id"], "11111111-1111-1111-1111-111111111111");
+        assert_eq!(v["name"], "sensei");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn corrupt_pin_is_ignored_not_fatal() {
+        let dir = temp_pin_dir("corrupt");
+        let path = active_project_path(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(&path, "{ not valid json").unwrap();
+        // A bad pin must be ignored (fall through to cwd), never crash.
+        assert_eq!(read_active_project(&path), None);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
