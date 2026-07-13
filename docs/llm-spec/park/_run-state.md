@@ -1658,8 +1658,12 @@ Everything cleanly buildable + no-DDL + end-to-end-verifiable is DONE this run. 
     F-TDD-gate (function_shapes/tdd_proposals tables).
   • DŌJŌ / DOCKER-BLOCKED: F-contribute lane (scheduler shell buildable but pushes to a hive/Dōjō — no destination to
     verify against); Dōjō consoles C12-14 + supabase/ (need `supabase start` + the console app).
-  • DATA-MODEL (Jerry decision): Instruments·Health registry↔usage join. VISUAL: Tauri-e2e visual verify of the
-    shipped UI screens (Atlas/logs/icon/all v0.2.42 screens) — needs `make test-app-e2e` + eyeballing.
+  • DATA-MODEL (Jerry decision): Instruments·Health registry↔usage join.
+  • ⏳ E2E VERIFY (autonomous, NOT blocked — corrects the over-call; Jerry has repeatedly reinstated this) BUILDING
+    (agent afd9b828): atlas.spec.ts + activity-logs.spec.ts → `make test-app-e2e`. FUNCTIONAL verify (boot/render/
+    interact without runtime errors — the loader hitting the e2e daemon, d3-force not crashing, filters refetch);
+    subjective aesthetics still = Jerry eyeball. This closes the visual-verify debt on the new screens. ON DONE:
+    verify green + commit; then remaining truly-gated = DDL-coordinated + Dōjō/Docker only.
   • LOW-VALUE REFINE (G): rank4 impact-copy, per-session memory-load correlation, P2c behavioral classifier.
 IDLE-TICK POLICY: each heartbeat still runs the DISK GUARD + checks whether anything unblocked (Jerry steer / a
 DDL pass authorized / Docker), else NO-OP. Do NOT spawn a shipped-schema DDL change unattended. If Jerry wants a
