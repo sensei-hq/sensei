@@ -1878,11 +1878,28 @@ port mismatch hive 7755 vs config 8787 (🟢), etc. Chunk order: {R1,R2}→R3→
   reconcile + persist the FSEvents cursor (restart-gap) + watch .git/HEAD. P2: continuous invariant self-audit
   (generalize prune_vanished_folders/heal_nested) + `sensei index doctor` + a chaos test injecting watcher drops.
   → OFFERED to build P0 as the next reliability chunk (argued it earns priority over more console screens).
-   🔨 P0 INDEXING-HARDENING IN PROGRESS (subagent ab76b535) — Jerry asked "how to make rock solid" → building it.
-   scan_state ALREADY has mtime (bigint) → fast-path needs NO DDL. Scope: (1) mtime fast-path in process_git_folder
-   change-detection (stat mtime vs stored; skip hashing unchanged files; dir-mtime subtree skip) → no-op scan becomes
-   stats-only; (2) reconcile_scheduler runs FREQUENT (default ~120-300s not hourly) + ALWAYS on boot (cheap pass not
-   watermark-gated) ⇒ worst-case staleness ~seconds, watcher no longer load-bearing. Verify cargo test -p senseid.
+   ✅ P0 SHIPPED `da915e82` (agent ab76b535) — VERIFIED by me: clippy 0, 12 P0 tests + 29 process/scan/queue green.
+   (1) TWO-TIER change-detection `scan_logic::plan_reindex`: mtime gate (stat-only, skip unchanged) + content-hash
+   short-circuit (mtime drifted → hash via injected closure; identical ⇒ 'touched'=refresh mtime only, NO reindex;
+   diff/new ⇒ reindex). No-op reconcile = 0 reads/0 hashes; touch-without-change re-hashes once instead of full
+   re-parse. pg_store.list_scan_state_full; hash_file→helpers (DRY). (2) reconcile_scheduler 3600s→300s + boot ALWAYS
+   runs (removed the storm-guard that skipped boot & left drift) + overlap guard (has_pending_kind). NO DDL.
+   ⚠️ P0 NOT dir-subtree-skip: the ignore-walker still traverses the whole tree each pass (stat-only, cheap enough at
+   300s; a per-dir mtime skip needs persisted dir mtimes = DDL, deferred to P1/opt). ⚠️ OPTIONAL DDL flagged (NOT
+   added): mtime-only can miss same-mtime-diff-content; closing it = a `scan_state.size` column. Awaits Jerry.
+   ⏳ P0 live-verify DEFERRED to end of the P0→P1→P2 track (single install, like the capture cluster).
+
+── CI/TAP THREAD (v0.2.44 release): ✅ GATEWAY FIX PROVEN — v0.2.44 build-daemon×4 + build-app + release all GREEN,
+   binaries+DMG published (v0.2.43 died in 1s at the ssh fetch; v0.2.44 built past it). 🐛 SEPARATE PRE-EXISTING BUG
+   FOUND+FIXED: `update-tap` job failed (private repo → unauthenticated `curl` at releases/download 404s; attempt 2
+   failed identically = not a race). FIXED on develop `ba44ecd7`: use `gh release download` (auths via GH_TOKEN) for
+   tarballs+DMG. ⚠️ RESIDUALS: (a) the release.yml fix is on develop → reaches main at next develop→main merge (or
+   cherry-pick if a main-only release comes first). (b) v0.2.44 tap formula has PLACEHOLDER sha256 (make bump pushes
+   placeholders, CI fills them; update-tap failed) → `brew install sensei` @0.2.44 fails SHA until fixed. ⚑ JERRY
+   DECISION PENDING: cut v0.2.45 (cherry-pick ba44ecd7→main + bump) to prove the FULL pipeline green + restore the tap,
+   OR let it ride to the next milestone release. (v0.2.44 ≡ v0.2.43 functionally, so tap-broken is low-impact.)
+   ⚑ FOLLOW-UP (non-blocking): semgrep flags release.yml actions (checkout@v5 etc.) unpinned to SHAs — pre-existing
+   supply-chain hardening, separate sweep.
    P1 follow-ups queued: watcher watchdog (kill silent freeze) + FSEvents cursor persist + .git/HEAD watch. P2: invariant
    self-audit + `sensei index doctor` + chaos test.
    ★ DESIGN DOC OF RECORD: docs/analysis/2026-07-13-index-reliability-rock-solid.md (a8b09407) — full architecture,
