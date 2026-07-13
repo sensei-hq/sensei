@@ -1915,13 +1915,18 @@ port mismatch hive 7755 vs config 8787 (🟢), etc. Chunk order: {R1,R2}→R3→
    ScanRoot reconcile (fires on detached HEAD too). No DDL (watcher.stall_secs in config). P1b FSEvents-cursor
    DEFERRED (raw-FSEvents spike; P0 boot-reconcile covers restart-gap). NOTE: idle repo (>30min no edits) trips a
    time-based stall → 1 cheap proactive restart/window (INFO) — widen watcher.stall_secs if that cadence bugs.
-   🔨 P2 IN PROGRESS (subagent a957d045, last reliability tier): `audit_index_integrity(pg, roots, repair)` —
-   orchestrates the existing prune_vanished/prune_vanished_folders/heal_nested_standalone/heal_duplicate primitives
-   (DRY) into one invariant audit; repair=true wired periodically (hourly/daily, own `audit.last_run` watermark, NOT
-   every 300s reconcile — it stats every node); repair=false = read-only for `sensei index doctor` (new CLI cmd → new
-   GET /api/index/doctor). Convergence test (simulate multi-class drift in the DB → repair → assert clean = the
-   "chaos" intent, since real FSEvents drops aren't unit-testable). No DDL. Verify cargo test.
-   THEN install + live-verify the whole P0→P1→P2 track (single install, like the capture cluster), then R6 console.
+   ✅ P2 SHIPPED `9f4c7eaa` (subagent a957d045) — VERIFIED by me: clippy 0, cargo test -p senseid --bins 1459 pass +
+   sensei-cli 9. `index_audit::audit_index_integrity(pg, roots, repair)` orchestrates the existing prune/heal
+   primitives (DRY: split prune_vanished_folders→detect+apply, added pg detect_* read-only fns); repair=false =
+   read-only report. Periodic repair = DAILY (audit.interval_secs, own audit.last_run watermark, NOT the 300s tick).
+   `sensei index doctor` CLI → GET /api/index/doctor. Convergence test seeds all 4 drift classes → repair → clean.
+   ALSO fixed a pre-existing flaky test (heal_nested_standalone …_reabsorbs asserted the GLOBAL heal count==0 on
+   re-run, races with the audit suite on shared sensei_test → per-row idempotency assert). No DDL. Left: on-disk-but-
+   unindexed doctor reporting (needs gitignore-aware walk, deferred).
+   ✅✅✅ RELIABILITY TRACK (P0+P1+P2) CODE-COMPLETE. 🔨 NOW: install + LIVE-VERIFY the whole hardened watcher/scanner
+   (install-service → restart → confirm `sensei index doctor` runs, GET /api/watcher/status healthy, 300s+boot reconcile
+   + daily audit spawn in logs). No new sensei-scope DDL in the track (reliability = config-only), so the install is
+   DDL-safe (same as the several develop installs this session). THEN R6 console.
    ★ DESIGN DOC OF RECORD: docs/analysis/2026-07-13-index-reliability-rock-solid.md (a8b09407) — full architecture,
    root-cause, per-tier done-gates. ★ JERRY CONFIRMED (2026-07-13): build the FULL "resilient watcher/scanner" as
    outlined — so the RELIABILITY TRACK is now the PRIORITY: P0 (in progress) → P1 → P2 as sequential chunks, AHEAD of
