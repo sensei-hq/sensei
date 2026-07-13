@@ -271,22 +271,29 @@ install-debug: db-backup crates-debug
 # session — NOT a brew service — so `brew services restart` above never touches
 # it; it keeps the OLD in-memory binary until the client reconnects. Kill any
 # straggler so the next session/reconnect execs the freshly-overlaid binary,
-# best-effort refresh each assistant's plugin via the new `sensei upgrade` (runs
+# best-effort refresh each assistant's plugin via `sensei upgrade` (runs
 # `claude plugin update sensei` daemon-side; the daemon is up from the restart
-# above), and always print the reminder since an in-session MCP still needs the
-# CLIENT to reconnect — an install cannot self-heal an in-session subprocess.
+# above), then print the reminder for the plugin/tool-surface-change case.
+#
+# We deliberately DO NOT kill sensei-mcp here. It's a thin stdio proxy with a
+# STATIC tool list (lib::handle_list_tools) and per-call HTTP to :7744, so a
+# RUNNING proxy stays correct across a daemon restart with zero client action.
+# Killing it only matters when the tool SURFACE changed (new mcp binary), and
+# even then relies on the client auto-respawning the stdio server — which it
+# often doesn't, silently dropping the tools until a manual /mcp (the bug this
+# used to cause). So a daemon-only upgrade is truly live-immediately, and a
+# tool-surface change is covered by the plugin-update reminder below.
 .PHONY: mcp-refresh-note
 mcp-refresh-note:
-	-@pkill -x sensei-mcp 2>/dev/null || true
 	-@"$$(brew --prefix sensei)/bin/sensei" upgrade >/dev/null 2>&1 \
 	  && echo "  ✓ ran 'sensei upgrade' — assistant plugins refreshed" || true
 	@echo ""
-	@echo "  ⚠  Refresh the sensei MCP/plugin so clients run this binary:"
+	@echo "  ℹ  Daemon-only upgrades are LIVE IMMEDIATELY — the sensei MCP is a thin"
+	@echo "     proxy to :7744, so a running session keeps working, no reconnect needed."
+	@echo "     Only if the MCP TOOL SURFACE or plugin hooks changed, refresh the plugin:"
 	@echo "       claude plugin update sensei@sensei-marketplace"
-	@echo "     (the marketplace qualifier is REQUIRED — a bare 'sensei' is 'not found'.)"
-	@echo "     Only needed when the MCP tool surface or plugin hooks change; daemon-only"
-	@echo "     upgrades are live immediately (the MCP is a thin proxy to :7744). A running"
-	@echo "     Claude Code session applies it on restart (or an /mcp reconnect)."
+	@echo "     (marketplace qualifier REQUIRED; a running session picks it up on /mcp"
+	@echo "     reconnect or restart.)"
 	@echo ""
 
 # ── Desktop app dev / e2e ─────────────────────────────────────────────────────

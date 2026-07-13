@@ -32,19 +32,34 @@ fn send_daemon_request(
     req: &DaemonRequest,
 ) -> reqwest::Result<reqwest::blocking::Response> {
     let url = format!("{}{}", daemon_url(), req.path);
-    let mut rb = match req.method {
-        HttpMethod::Get => client.get(&url),
-        HttpMethod::Post => client.post(&url),
-        HttpMethod::Put => client.put(&url),
-        HttpMethod::Delete => client.delete(&url),
+    // Build a fresh RequestBuilder each attempt (send() consumes it).
+    let build = || {
+        let mut rb = match req.method {
+            HttpMethod::Get => client.get(&url),
+            HttpMethod::Post => client.post(&url),
+            HttpMethod::Put => client.put(&url),
+            HttpMethod::Delete => client.delete(&url),
+        };
+        if !req.query.is_empty() {
+            rb = rb.query(&req.query);
+        }
+        if let Some(body) = &req.body {
+            rb = rb.json(body);
+        }
+        rb
     };
-    if !req.query.is_empty() {
-        rb = rb.query(&req.query);
+    // The daemon bounces during an upgrade (stop → overlay → restart). A request
+    // in that window fails to connect — but the proxy keeps running, so retry once
+    // after a short pause and a daemon restart never surfaces as a failed tool call.
+    // Only retry on a CONNECT error: the request never reached the daemon, so
+    // there's no double-apply risk (unlike a timeout mid-request).
+    match build().send() {
+        Err(e) if e.is_connect() => {
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            build().send()
+        }
+        other => other,
     }
-    if let Some(body) = &req.body {
-        rb = rb.json(body);
-    }
-    rb.send()
 }
 
 fn main() {
