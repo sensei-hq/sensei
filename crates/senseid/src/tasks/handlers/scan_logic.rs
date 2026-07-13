@@ -71,6 +71,25 @@ pub fn ancestor_set(root: &Path, git_folders: &[PathBuf]) -> std::collections::H
     ancestors
 }
 
+/// True when `dir` lives INSIDE a git repository — i.e. any ancestor strictly
+/// above it holds a `.git` directory. Walks the real filesystem upward, so it
+/// still detects an enclosing repo whose `.git` sits AT or ABOVE the scan root
+/// (or beyond the scan's depth bound) — cases the `git_folders` set (only the
+/// repos discovered *under* the scan root) misses. This is the invariant behind
+/// Bug 3: a manifest-bearing sub-dir inside a git repo (e.g. a moved
+/// `crates/*`) must attribute to that repo, never be promoted to its own
+/// `standalone` project just because it carries a `Cargo.toml`.
+pub fn is_inside_git_repo(dir: &Path) -> bool {
+    let mut cur = dir.parent();
+    while let Some(p) = cur {
+        if p.join(".git").is_dir() {
+            return true;
+        }
+        cur = p.parent();
+    }
+    false
+}
+
 /// Collect all non-ignored subdirectories under root (one level deep per directory, recursive).
 pub fn all_directories(root: &Path, max_depth: u32) -> Vec<PathBuf> {
     let mut result = Vec::new();
@@ -136,9 +155,9 @@ pub fn classify_folders(
 
     // Candidate non-git directories, shallowest first.
     let mut candidates: Vec<&PathBuf> = all_dirs.iter()
-        .filter(|d| !git_set.contains(*d))                              // not a git repo
-        .filter(|d| !ancestors.contains(*d))                           // not a git-repo grouping container
-        .filter(|d| !git_folders.iter().any(|gf| d.starts_with(gf)))   // not inside a git repo
+        .filter(|d| !git_set.contains(*d))                             // not a git repo itself
+        .filter(|d| !ancestors.contains(*d))                          // not a git-repo grouping container
+        .filter(|d| !is_inside_git_repo(d))                           // not inside ANY git repo (fs-checked, incl. a repo at/above the scan root)
         .collect();
     candidates.sort_by_key(|d| d.components().count());
 
@@ -819,6 +838,48 @@ mod tests {
         assert_eq!(classified.len(), 1);
         assert_eq!(classified[0].name, "proj");
         assert_eq!(classified[0].kind, FolderKind::Standalone);
+    }
+
+    #[test]
+    fn is_inside_git_repo_detects_enclosing_repo_at_or_above() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("repo");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        let crate_dir = repo.join("crates/mycrate");
+        std::fs::create_dir_all(&crate_dir).unwrap();
+        // A dir inside the repo (repo's .git is an ancestor) → inside a git repo.
+        assert!(is_inside_git_repo(&crate_dir));
+        assert!(is_inside_git_repo(&repo.join("crates")));
+        // A sibling of the repo (no .git ancestor) → not inside a git repo.
+        let outside = tmp.path().join("loose");
+        std::fs::create_dir_all(&outside).unwrap();
+        assert!(!is_inside_git_repo(&outside));
+    }
+
+    #[test]
+    fn classify_does_not_promote_manifest_subdir_inside_a_git_repo() {
+        // Bug 3: when the scan is rooted AT a git repo (its own `.git` sits at the
+        // scan root, so `find_git_folders` — which starts at children — never
+        // discovers it), a manifest-bearing sub-crate must NOT be promoted to its
+        // own standalone project. It belongs to the enclosing repo's project.
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("repo");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::create_dir_all(repo.join("crates/mycrate/src")).unwrap();
+        std::fs::write(repo.join("crates/mycrate/Cargo.toml"), "[package]\nname=\"mycrate\"").unwrap();
+        std::fs::write(repo.join("crates/mycrate/src/lib.rs"), "pub fn a() {}").unwrap();
+
+        // Scan rooted at the repo itself → its own `.git` is not among git_folders.
+        let gits = find_git_folders(&repo, 3);
+        assert!(gits.is_empty(), "repo's own .git at the scan root is not discovered as a child git folder");
+        let dirs = all_directories(&repo, 3);
+        let classified = classify_folders(&repo, &gits, &dirs, has_indexable_code);
+
+        // The manifest-bearing sub-crate must NOT become a standalone project root.
+        assert!(
+            !classified.iter().any(|f| f.kind == FolderKind::Standalone),
+            "a Cargo.toml sub-dir inside a git repo must not be promoted to standalone, got {classified:?}",
+        );
     }
 
     #[test]
