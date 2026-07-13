@@ -10,8 +10,6 @@ use super::corrections_llm::{summarize_cluster, ClusterSummary};
 use super::prompt_classify::{classify_batch, PromptClass};
 use crate::corrections::{self, parse_cluster_min, parse_similarity_threshold, Cluster, CorrItem, CorrectionRow};
 
-/// Prompts embedded per gateway call.
-const EMBED_BATCH: usize = 64;
 /// Per-batch embedding wall-clock cap — a stalled backend must not wedge the task.
 const EMBED_TIMEOUT_SECS: u64 = 30;
 /// Expected embedding width (the pinned 384-dim `embed` chain). A different width
@@ -71,15 +69,26 @@ pub fn build_rows(
 async fn embed_items(ctx: &TaskContext, items: &[CorrItem]) -> Option<Vec<Vec<f32>>> {
     use gateway::types::capability::Capability;
     use gateway::types::request::{InferenceRequest, Payload};
+    // Cap each prompt, then pack into token-bounded batches, reusing the
+    // node-embed guards. User prompts are unbounded, and a fixed 64-count batch
+    // of them sums past the embed encoder's n_ubatch and calls a GGML abort()
+    // that kills the daemon — so both the per-input and per-batch token totals
+    // must be bounded before the call. `pack_embed_batches` preserves order, so
+    // `out` stays aligned with `items`.
+    let texts: Vec<String> = items
+        .iter()
+        .map(|it| super::embed::cap_embed_input(corrections::normalize(&it.prompt)))
+        .collect();
+    let batches = super::embed::pack_embed_batches(&texts);
     let mut out: Vec<Vec<f32>> = Vec::with_capacity(items.len());
-    for chunk in items.chunks(EMBED_BATCH) {
-        let texts: Vec<String> = chunk.iter().map(|it| corrections::normalize(&it.prompt)).collect();
+    for batch in &batches {
+        let batch_texts: Vec<String> = batch.iter().map(|&i| texts[i].clone()).collect();
         let request = InferenceRequest {
             capability: Capability::TextEmbed,
             model: None,
             router: None,
             chain: Some("embed".to_string()),
-            payload: Payload::Embed { texts },
+            payload: Payload::Embed { texts: batch_texts },
             budget: None,
         };
         match tokio::time::timeout(
@@ -90,9 +99,9 @@ async fn embed_items(ctx: &TaskContext, items: &[CorrItem]) -> Option<Vec<Vec<f3
         {
             Ok(Ok(resp)) => {
                 let embs = resp.embeddings.unwrap_or_default();
-                if embs.len() != chunk.len() {
+                if embs.len() != batch.len() {
                     tracing::warn!(
-                        got = embs.len(), expected = chunk.len(),
+                        got = embs.len(), expected = batch.len(),
                         "aggregate_corrections: embedding count mismatch — lexical fallback"
                     );
                     return None;
