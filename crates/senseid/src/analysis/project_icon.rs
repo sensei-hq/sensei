@@ -13,6 +13,8 @@
 //!
 //! Voice: sentence case, lowercase "sensei", no filler.
 
+use std::path::{Component, Path, PathBuf};
+
 use serde::Serialize;
 use serde_json::Value;
 
@@ -174,6 +176,86 @@ pub fn kanji_from_stack(stack: &[String]) -> Option<&'static str> {
 fn kanji_for(label: &str) -> Option<&'static str> {
     let l = label.trim().to_ascii_lowercase();
     KANJI_MAP.iter().find(|(k, _)| *k == l).map(|(_, v)| *v)
+}
+
+// ── serve-side: resolve + read an image icon's bytes ──────────────────────
+//
+// The daemon serves an inferred image icon at `GET /api/projects/{id}/icon`.
+// Because that streams a file from a repo-relative path, path-traversal is the
+// risk: the resolver must never read outside the repo root. Safety is split so
+// the security boundary is unit-testable:
+//   * [`resolve_icon_path`]  — PURE lexical check (no disk): rejects `..`,
+//     absolute paths, and non-image extensions.
+//   * [`read_icon_bytes`]    — disk read that ALSO canonicalizes and asserts
+//     the file stays inside the (canonicalized) root, defeating symlink-out.
+
+/// Content-Type for a served icon extension, or `None` for a non-image
+/// extension. This allowlist IS the security boundary for the serve route: an
+/// unlisted extension is never resolved, read, or streamed.
+pub fn icon_content_type(ext: &str) -> Option<&'static str> {
+    match ext.to_ascii_lowercase().as_str() {
+        "svg" => Some("image/svg+xml"),
+        "png" => Some("image/png"),
+        "ico" => Some("image/x-icon"),
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "webp" => Some("image/webp"),
+        "gif" => Some("image/gif"),
+        _ => None,
+    }
+}
+
+/// Lexically resolve a repo-relative icon path against a repo `root`, rejecting
+/// anything that could escape the root. PURE — no disk, no canonicalize — so
+/// traversal rejection is unit-testable in isolation. Returns `None` when `rel`
+/// is empty, absolute, contains any non-`Normal` component (`..`, `.`, a root,
+/// or a Windows prefix), or has a non-image extension. A returned path is only
+/// *lexically* safe — the caller ([`read_icon_bytes`]) still canonicalizes and
+/// asserts the result stays inside the root to defeat a symlink that points out
+/// of the tree.
+pub fn resolve_icon_path(root: &Path, rel: &str) -> Option<PathBuf> {
+    let rel = rel.trim();
+    if rel.is_empty() {
+        return None;
+    }
+    let rel_path = Path::new(rel);
+    // Every component must be a plain name — this rejects `..` traversal,
+    // absolute paths, `.`, and prefixes lexically, before any disk access.
+    if !rel_path.components().all(|c| matches!(c, Component::Normal(_))) {
+        return None;
+    }
+    // Allowlist image extensions only.
+    let ext = rel_path.extension().and_then(|e| e.to_str())?;
+    icon_content_type(ext)?;
+    Some(root.join(rel_path))
+}
+
+/// Read an image icon's bytes for a repo-relative path, enforcing that the
+/// resolved file stays inside `root` on disk. Canonicalizes both sides so a
+/// symlink pointing out of the repo is rejected (`canonical.starts_with(root)`).
+/// Returns the Content-Type + bytes, or `None` when the path is unsafe, has a
+/// non-image extension, or the file is missing/unreadable. Blocking disk I/O —
+/// call from `spawn_blocking`.
+pub fn read_icon_bytes(root: &Path, rel: &str) -> Option<(&'static str, Vec<u8>)> {
+    let candidate = resolve_icon_path(root, rel)?;
+    let ext = candidate.extension().and_then(|e| e.to_str())?;
+    let content_type = icon_content_type(ext)?;
+    // Canonicalize both sides and assert containment — defeats symlink-out and
+    // any residual traversal the lexical check couldn't see.
+    let canon = candidate.canonicalize().ok()?;
+    let root_canon = root.canonicalize().ok()?;
+    if !canon.starts_with(&root_canon) {
+        return None;
+    }
+    let bytes = std::fs::read(&canon).ok()?;
+    Some((content_type, bytes))
+}
+
+/// Serve an inferred image icon by trying each repo root in turn — the stored
+/// relative path belongs to exactly one of a project's repos. Returns the first
+/// root where the path resolves safely (inside the root, image extension) and
+/// the file reads. Blocking disk I/O — call from `spawn_blocking`.
+pub fn serve_icon_from_roots(roots: &[String], rel: &str) -> Option<(&'static str, Vec<u8>)> {
+    roots.iter().find_map(|root| read_icon_bytes(Path::new(root), rel))
 }
 
 /// Stack label → single domain kanji. Covers every label the scanner's
@@ -408,5 +490,131 @@ mod tests {
             serde_json::to_value(&icon).unwrap(),
             json!({ "kind": "kanji", "value": "鉄", "source": "kanji_map" })
         );
+    }
+
+    // ── serve-side: content-type allowlist ────────────────────────────
+
+    #[test]
+    fn content_type_maps_known_image_extensions() {
+        assert_eq!(icon_content_type("svg"), Some("image/svg+xml"));
+        assert_eq!(icon_content_type("SVG"), Some("image/svg+xml")); // case-insensitive
+        assert_eq!(icon_content_type("png"), Some("image/png"));
+        assert_eq!(icon_content_type("ico"), Some("image/x-icon"));
+        assert_eq!(icon_content_type("jpg"), Some("image/jpeg"));
+        assert_eq!(icon_content_type("jpeg"), Some("image/jpeg"));
+        assert_eq!(icon_content_type("webp"), Some("image/webp"));
+        assert_eq!(icon_content_type("gif"), Some("image/gif"));
+    }
+
+    #[test]
+    fn content_type_rejects_non_image_extensions() {
+        for ext in ["txt", "exe", "sh", "html", "js", "", "svgz"] {
+            assert_eq!(icon_content_type(ext), None, "{ext} must not be servable");
+        }
+    }
+
+    // ── serve-side: lexical path safety (no disk) ─────────────────────
+
+    #[test]
+    fn resolve_accepts_a_safe_relative_image_path() {
+        let root = Path::new("/repo");
+        assert_eq!(resolve_icon_path(root, "logo.svg"), Some(PathBuf::from("/repo/logo.svg")));
+        assert_eq!(
+            resolve_icon_path(root, "assets/logo.png"),
+            Some(PathBuf::from("/repo/assets/logo.png"))
+        );
+        // Leading/trailing whitespace is trimmed.
+        assert_eq!(resolve_icon_path(root, "  logo.svg  "), Some(PathBuf::from("/repo/logo.svg")));
+    }
+
+    #[test]
+    fn resolve_rejects_parent_traversal() {
+        let root = Path::new("/repo");
+        // `..` at any position escapes the root — must be rejected lexically.
+        assert_eq!(resolve_icon_path(root, "../secret.svg"), None);
+        assert_eq!(resolve_icon_path(root, "assets/../../secret.png"), None);
+        assert_eq!(resolve_icon_path(root, "a/../../b.svg"), None);
+    }
+
+    #[test]
+    fn resolve_rejects_absolute_and_dotslash_and_prefix() {
+        let root = Path::new("/repo");
+        assert_eq!(resolve_icon_path(root, "/etc/passwd.png"), None); // absolute
+        assert_eq!(resolve_icon_path(root, "./logo.svg"), None); // CurDir component
+    }
+
+    #[test]
+    fn resolve_rejects_non_image_extension() {
+        let root = Path::new("/repo");
+        assert_eq!(resolve_icon_path(root, "logo.txt"), None);
+        assert_eq!(resolve_icon_path(root, "run.sh"), None);
+        assert_eq!(resolve_icon_path(root, "noext"), None);
+    }
+
+    #[test]
+    fn resolve_rejects_empty() {
+        let root = Path::new("/repo");
+        assert_eq!(resolve_icon_path(root, ""), None);
+        assert_eq!(resolve_icon_path(root, "   "), None);
+    }
+
+    // ── serve-side: on-disk read + containment (canonicalize) ─────────
+
+    #[test]
+    fn read_serves_a_file_inside_the_root_with_its_content_type() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("assets")).unwrap();
+        std::fs::write(dir.path().join("assets/logo.svg"), b"<svg/>").unwrap();
+
+        let got = read_icon_bytes(dir.path(), "assets/logo.svg");
+        assert_eq!(got, Some(("image/svg+xml", b"<svg/>".to_vec())));
+    }
+
+    #[test]
+    fn read_returns_none_for_a_missing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(read_icon_bytes(dir.path(), "logo.svg"), None);
+    }
+
+    #[test]
+    fn read_returns_none_for_traversal_even_when_target_exists() {
+        // A real file outside the root must NOT be reachable via `..`.
+        let outer = tempfile::tempdir().unwrap();
+        std::fs::write(outer.path().join("secret.svg"), b"secret").unwrap();
+        let root = outer.path().join("repo");
+        std::fs::create_dir_all(&root).unwrap();
+        assert_eq!(read_icon_bytes(&root, "../secret.svg"), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn read_rejects_a_symlink_pointing_out_of_the_root() {
+        // Lexically the path is a plain name, but it symlinks OUT of the repo —
+        // the canonicalize + starts_with check is what rejects it.
+        let outer = tempfile::tempdir().unwrap();
+        std::fs::write(outer.path().join("secret.svg"), b"secret").unwrap();
+        let root = outer.path().join("repo");
+        std::fs::create_dir_all(&root).unwrap();
+        std::os::unix::fs::symlink(outer.path().join("secret.svg"), root.join("logo.svg")).unwrap();
+
+        // resolve_icon_path passes (lexically safe), read must still reject it.
+        assert!(resolve_icon_path(&root, "logo.svg").is_some());
+        assert_eq!(read_icon_bytes(&root, "logo.svg"), None);
+    }
+
+    #[test]
+    fn serve_from_roots_picks_the_repo_that_has_the_file() {
+        let a = tempfile::tempdir().unwrap();
+        let b = tempfile::tempdir().unwrap();
+        // Only repo `b` actually has the asset.
+        std::fs::write(b.path().join("logo.png"), b"PNG").unwrap();
+
+        let roots = vec![
+            a.path().to_string_lossy().to_string(),
+            b.path().to_string_lossy().to_string(),
+        ];
+        assert_eq!(serve_icon_from_roots(&roots, "logo.png"), Some(("image/png", b"PNG".to_vec())));
+        // No repo has it → None (→ the handler 404s).
+        assert_eq!(serve_icon_from_roots(&roots, "missing.svg"), None);
     }
 }

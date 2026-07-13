@@ -25,9 +25,14 @@ export type ApiError = { status: number; message: string } | { status: 0; messag
 
 export type ApiResult<T> = { ok: true; data: T } | { ok: false; error: ApiError };
 
+/** The daemon's origin for a given port. The single source of truth for the
+ *  loopback base URL, shared by `senseiApi` and any non-fetch consumer (e.g.
+ *  an `<img src>` that streams bytes from the daemon, like a project icon). */
+export const apiBase = (port: number): string => `http://127.0.0.1:${port}`;
+
 /** Create a typed API client for the sensei Rust daemon. */
 export function senseiApi(port: number) {
-  const base = `http://127.0.0.1:${port}`;
+  const base = apiBase(port);
 
   // Legacy fallback-returning helpers — kept for callers that pre-date
   // the Result-based `tryGet`/`tryPost` etc. New code should use the
