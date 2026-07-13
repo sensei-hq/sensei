@@ -1972,9 +1972,13 @@ port mismatch hive 7755 vs config 8787 (🟢), etc. Chunk order: {R1,R2}→R3→
    console API calls go UNAUTHENTICATED (401) + degrade to an error banner. Both are CODE wiring (persist org on session
    + read session token → API client) that makes the console functional the moment Jerry logs in — buildable without a
    live login; the live magic-link + running dojo service is Jerry's verify. Until then R9/R10/R11 are static shells.
-   🟢 NEXT: R10/R11 (admin + client-lead console screens over R7/R8 — same placeholder-wired pattern) OR the console
-   wiring (tenant+token, the linchpin) → then R3 (infer+confirm bind + setup org-tagging; small dojo.memberships DDL).
-   R4 dropped. Reliability + MCP tracks complete.
+   🔨 IN PROGRESS: CONSOLE WIRING (the linchpin) — subagent a7bfeca. kavach already puts the Supabase Session (w/
+   access_token) on event.locals.session; wiring = (1) persist selected org as a `dojo_tenant` cookie on /orgs enter +
+   a (console)/+layout.server.ts that reads it → replaces R9's ?tenant= placeholder; (2) surface
+   locals.session.access_token → data → triage-data.ts Authorization: Bearer. Makes R9/R10/R11 functional-on-login
+   (live login + running dojo service still Jerry). Verify check+build+TEST (0/green).
+   🟢 NEXT after wiring: R10/R11 (admin + client-lead console screens over R7/R8) → then R3 (infer+confirm bind + setup
+   org-tagging; small dojo.memberships DDL). R4 dropped. Reliability + MCP tracks complete.
    ✅ sensei-mcp RESILIENCE SHIPPED `89de7c59` (2026-07-13) — ⚠️ INVESTIGATION FLIPPED THE FIX. The proposed "add
    reconnect logic + re-fetch the tool list" was based on a WRONG premise. Reading crates/mcp: `handle_list_tools`
    returns a fully STATIC list (hardcoded json!, NOT daemon-fetched), and tool CALLS are per-call reqwest to :7744.
