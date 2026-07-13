@@ -71,6 +71,25 @@ pub fn ancestor_set(root: &Path, git_folders: &[PathBuf]) -> std::collections::H
     ancestors
 }
 
+/// True when `dir` lives INSIDE a git repository — i.e. any ancestor strictly
+/// above it holds a `.git` directory. Walks the real filesystem upward, so it
+/// still detects an enclosing repo whose `.git` sits AT or ABOVE the scan root
+/// (or beyond the scan's depth bound) — cases the `git_folders` set (only the
+/// repos discovered *under* the scan root) misses. This is the invariant behind
+/// Bug 3: a manifest-bearing sub-dir inside a git repo (e.g. a moved
+/// `crates/*`) must attribute to that repo, never be promoted to its own
+/// `standalone` project just because it carries a `Cargo.toml`.
+pub fn is_inside_git_repo(dir: &Path) -> bool {
+    let mut cur = dir.parent();
+    while let Some(p) = cur {
+        if p.join(".git").is_dir() {
+            return true;
+        }
+        cur = p.parent();
+    }
+    false
+}
+
 /// Collect all non-ignored subdirectories under root (one level deep per directory, recursive).
 pub fn all_directories(root: &Path, max_depth: u32) -> Vec<PathBuf> {
     let mut result = Vec::new();
@@ -136,9 +155,9 @@ pub fn classify_folders(
 
     // Candidate non-git directories, shallowest first.
     let mut candidates: Vec<&PathBuf> = all_dirs.iter()
-        .filter(|d| !git_set.contains(*d))                              // not a git repo
-        .filter(|d| !ancestors.contains(*d))                           // not a git-repo grouping container
-        .filter(|d| !git_folders.iter().any(|gf| d.starts_with(gf)))   // not inside a git repo
+        .filter(|d| !git_set.contains(*d))                             // not a git repo itself
+        .filter(|d| !ancestors.contains(*d))                          // not a git-repo grouping container
+        .filter(|d| !is_inside_git_repo(d))                           // not inside ANY git repo (fs-checked, incl. a repo at/above the scan root)
         .collect();
     candidates.sort_by_key(|d| d.components().count());
 
@@ -276,36 +295,74 @@ pub fn is_monorepo(path: &Path) -> bool {
     false
 }
 
-/// The incremental re-index decision for a folder: which files to (re)process
-/// and which to drop. Pure output of [`incremental_plan`].
+/// The incremental re-index decision for a folder. Pure output of
+/// [`plan_reindex`]: the two-tier gate that keeps a no-op / touch-only re-scan
+/// near-free.
 #[derive(Debug, Default, PartialEq)]
-pub struct IncrementalPlan {
-    /// Files to (re)index: new, or whose mtime changed since the last index.
+pub struct ReindexPlan {
+    /// Files to (re)index: new, or whose mtime AND content changed.
     pub changed: std::collections::HashSet<String>,
+    /// Files whose mtime drifted but whose bytes are identical (touch, checkout,
+    /// branch-switch-to-same-content). Their nodes/embeddings are still valid,
+    /// so we DON'T reindex — we only refresh the stored mtime so the cheap gate
+    /// hits next pass. `(rel_path, new_mtime, content_hash)`.
+    pub touched: Vec<(String, i64, String)>,
     /// Files indexed before but no longer present on disk — drop their nodes.
     pub removed: Vec<String>,
+    /// Count of files the cheap mtime gate skipped (never read, never hashed).
+    /// Surfaced for logging so a no-op scan can be shown to be stats-only.
+    pub unchanged: usize,
 }
 
-/// Diff the working tree against the last index. `current` is the set of
-/// indexable files as `(rel_path, mtime_ms)` found on disk now; `prior` maps
-/// each previously-indexed `rel_path` to its recorded mtime. A file is
-/// `changed` when it is new or its mtime differs; `removed` when it was indexed
-/// before but is gone now. An empty `prior` (first index) marks everything
-/// changed. Pure — all I/O happens in the caller.
-pub fn incremental_plan(
+/// Diff the working tree against the last index with a two-tier gate so a
+/// no-op or touch-only re-scan is near-free (this is what makes a *frequent*
+/// safety-net reconcile affordable):
+///
+///   1. **mtime gate (cheap, stat-only):** a file whose on-disk mtime equals
+///      its stored mtime is UNCHANGED — never read, never hashed, never
+///      reindexed. This is the common case on a no-op scan.
+///   2. **content-hash gate:** a file whose mtime differs (or that has no prior)
+///      is a *candidate*. A file with a prior fingerprint is hashed (via the
+///      injected `hash_file`) and compared to its stored hash — identical ⇒
+///      `touched` (refresh mtime only), different ⇒ `changed` (reindex). A
+///      brand-new file goes straight to `changed` (nothing to compare, so it is
+///      never hashed here).
+///
+/// `current` is the set of indexable files as `(rel_path, mtime_ms)` on disk
+/// now; `prior` maps each previously-indexed `rel_path` to its
+/// `(mtime, content_hash)`. `hash_file(rel_path) -> Option<hex>` performs the
+/// only I/O — injecting it keeps this function pure and lets tests spy the
+/// hash-call count. A candidate whose hash can't be computed (unreadable) is
+/// treated as `changed` so it is never silently dropped.
+pub fn plan_reindex<F>(
     current: &[(String, i64)],
-    prior: &std::collections::HashMap<String, i64>,
-) -> IncrementalPlan {
+    prior: &std::collections::HashMap<String, (i64, String)>,
+    mut hash_file: F,
+) -> ReindexPlan
+where
+    F: FnMut(&str) -> Option<String>,
+{
     let current_set: std::collections::HashSet<&String> = current.iter().map(|(p, _)| p).collect();
-    let changed = current.iter()
-        .filter(|(path, mtime)| prior.get(path).is_none_or(|prev| prev != mtime))
-        .map(|(path, _)| path.clone())
-        .collect();
-    let removed = prior.keys()
+    let mut plan = ReindexPlan::default();
+    for (path, mtime) in current {
+        match prior.get(path) {
+            // Cheap mtime gate: unchanged → skip without any read/hash.
+            Some((prev_mtime, _)) if prev_mtime == mtime => plan.unchanged += 1,
+            // mtime drifted with a prior on record: hash to tell a real edit
+            // from a mere touch.
+            Some((_, prev_hash)) => match hash_file(path) {
+                Some(h) if &h == prev_hash => plan.touched.push((path.clone(), *mtime, h)),
+                _ => { plan.changed.insert(path.clone()); }
+            },
+            // Brand-new file: reindex (no prior to compare against, so no hash).
+            None => { plan.changed.insert(path.clone()); }
+        }
+    }
+    plan.removed = prior.keys()
         .filter(|path| !current_set.contains(*path))
         .cloned()
         .collect();
-    IncrementalPlan { changed, removed }
+    plan
 }
 
 /// Detect technology stack from config files in a git folder.
@@ -822,6 +879,48 @@ mod tests {
     }
 
     #[test]
+    fn is_inside_git_repo_detects_enclosing_repo_at_or_above() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("repo");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        let crate_dir = repo.join("crates/mycrate");
+        std::fs::create_dir_all(&crate_dir).unwrap();
+        // A dir inside the repo (repo's .git is an ancestor) → inside a git repo.
+        assert!(is_inside_git_repo(&crate_dir));
+        assert!(is_inside_git_repo(&repo.join("crates")));
+        // A sibling of the repo (no .git ancestor) → not inside a git repo.
+        let outside = tmp.path().join("loose");
+        std::fs::create_dir_all(&outside).unwrap();
+        assert!(!is_inside_git_repo(&outside));
+    }
+
+    #[test]
+    fn classify_does_not_promote_manifest_subdir_inside_a_git_repo() {
+        // Bug 3: when the scan is rooted AT a git repo (its own `.git` sits at the
+        // scan root, so `find_git_folders` — which starts at children — never
+        // discovers it), a manifest-bearing sub-crate must NOT be promoted to its
+        // own standalone project. It belongs to the enclosing repo's project.
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("repo");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::create_dir_all(repo.join("crates/mycrate/src")).unwrap();
+        std::fs::write(repo.join("crates/mycrate/Cargo.toml"), "[package]\nname=\"mycrate\"").unwrap();
+        std::fs::write(repo.join("crates/mycrate/src/lib.rs"), "pub fn a() {}").unwrap();
+
+        // Scan rooted at the repo itself → its own `.git` is not among git_folders.
+        let gits = find_git_folders(&repo, 3);
+        assert!(gits.is_empty(), "repo's own .git at the scan root is not discovered as a child git folder");
+        let dirs = all_directories(&repo, 3);
+        let classified = classify_folders(&repo, &gits, &dirs, has_indexable_code);
+
+        // The manifest-bearing sub-crate must NOT become a standalone project root.
+        assert!(
+            !classified.iter().any(|f| f.kind == FolderKind::Standalone),
+            "a Cargo.toml sub-dir inside a git repo must not be promoted to standalone, got {classified:?}",
+        );
+    }
+
+    #[test]
     fn has_indexable_code_distinguishes_projects_from_junk() {
         let tmp = tempfile::tempdir().unwrap();
         let manifest = tmp.path().join("m");
@@ -944,34 +1043,104 @@ mod tests {
         assert_eq!(detect_stack(tmp.path()), vec!["svelte"]);
     }
 
-    #[test]
-    fn incremental_plan_classifies_new_changed_unchanged_removed() {
-        use std::collections::HashMap;
-        let prior: HashMap<String, i64> = [
-            ("src/a.rs".to_string(), 100i64),
-            ("src/b.rs".to_string(), 200i64),
-            ("src/gone.rs".to_string(), 300i64),
-        ].into_iter().collect();
-        let current = vec![
-            ("src/a.rs".to_string(), 100),   // unchanged
-            ("src/b.rs".to_string(), 250),   // mtime changed
-            ("src/new.rs".to_string(), 400), // new
-        ];
-        let plan = incremental_plan(&current, &prior);
-        assert!(plan.changed.contains("src/b.rs"), "mtime change → reindex");
-        assert!(plan.changed.contains("src/new.rs"), "new file → index");
-        assert!(!plan.changed.contains("src/a.rs"), "unchanged mtime → skip");
-        assert_eq!(plan.removed, vec!["src/gone.rs".to_string()], "vanished file → removed");
+    /// Helper: build a prior map of `rel -> (mtime, hash)`.
+    fn prior_of(entries: &[(&str, i64, &str)]) -> std::collections::HashMap<String, (i64, String)> {
+        entries.iter().map(|(p, m, h)| (p.to_string(), (*m, h.to_string()))).collect()
     }
 
+    /// The cheap mtime gate must skip an unchanged file WITHOUT ever hashing it
+    /// (proven by the spy counter staying 0) — this is what keeps a no-op scan
+    /// stats-only.
     #[test]
-    fn incremental_plan_first_index_marks_everything_changed() {
-        use std::collections::HashMap;
-        let prior: HashMap<String, i64> = HashMap::new();
-        let current = vec![("a.rs".to_string(), 1), ("b.rs".to_string(), 2)];
-        let plan = incremental_plan(&current, &prior);
-        assert_eq!(plan.changed.len(), 2, "empty prior → full index");
+    fn plan_reindex_mtime_gate_skips_unchanged_without_hashing() {
+        let prior = prior_of(&[("a.rs", 100, "hash_a")]);
+        let current = vec![("a.rs".to_string(), 100i64)];
+        let mut hash_calls = 0usize;
+        let plan = plan_reindex(&current, &prior, |_p| { hash_calls += 1; Some("x".into()) });
+        assert_eq!(hash_calls, 0, "an unchanged-mtime file must never be hashed");
+        assert_eq!(plan.unchanged, 1);
+        assert!(plan.changed.is_empty());
+        assert!(plan.touched.is_empty());
         assert!(plan.removed.is_empty());
+    }
+
+    /// mtime drifted but content is byte-identical (a `touch`): the file is
+    /// hashed exactly once, lands in `touched` (so its mtime is refreshed), and
+    /// is NOT reindexed — no duplicate work.
+    #[test]
+    fn plan_reindex_touched_rehashes_but_does_not_reindex() {
+        let prior = prior_of(&[("a.rs", 100, "same_hash")]);
+        let current = vec![("a.rs".to_string(), 999i64)]; // mtime changed
+        let mut hash_calls = 0usize;
+        let plan = plan_reindex(&current, &prior, |_p| { hash_calls += 1; Some("same_hash".into()) });
+        assert_eq!(hash_calls, 1, "a touched candidate is hashed once to confirm identity");
+        assert!(plan.changed.is_empty(), "identical content must NOT reindex");
+        assert_eq!(plan.touched, vec![("a.rs".to_string(), 999i64, "same_hash".to_string())],
+            "touched file carries its NEW mtime so the gate hits next pass");
+    }
+
+    /// mtime drifted AND content changed: hashed once, lands in `changed`.
+    #[test]
+    fn plan_reindex_reindexes_genuine_change() {
+        let prior = prior_of(&[("a.rs", 100, "old_hash")]);
+        let current = vec![("a.rs".to_string(), 200i64)];
+        let mut hash_calls = 0usize;
+        let plan = plan_reindex(&current, &prior, |_p| { hash_calls += 1; Some("new_hash".into()) });
+        assert_eq!(hash_calls, 1);
+        assert!(plan.changed.contains("a.rs"), "changed content → reindex");
+        assert!(plan.touched.is_empty());
+    }
+
+    /// A brand-new file (no prior fingerprint) is reindexed WITHOUT hashing —
+    /// there is nothing to compare it against.
+    #[test]
+    fn plan_reindex_new_file_reindexed_without_hashing() {
+        let prior = prior_of(&[]);
+        let current = vec![("new.rs".to_string(), 400i64)];
+        let mut hash_calls = 0usize;
+        let plan = plan_reindex(&current, &prior, |_p| { hash_calls += 1; Some("x".into()) });
+        assert_eq!(hash_calls, 0, "a new file needs no hash comparison");
+        assert!(plan.changed.contains("new.rs"));
+    }
+
+    /// A file that vanished on disk is `removed`; an unreadable candidate
+    /// (hash_file → None) falls through to `changed` rather than being dropped.
+    #[test]
+    fn plan_reindex_removed_and_unreadable_candidate() {
+        let prior = prior_of(&[("gone.rs", 300, "h"), ("bad.rs", 100, "h")]);
+        let current = vec![("bad.rs".to_string(), 200i64)]; // mtime drifted, unreadable
+        let plan = plan_reindex(&current, &prior, |_p| None);
+        assert_eq!(plan.removed, vec!["gone.rs".to_string()], "vanished file → removed");
+        assert!(plan.changed.contains("bad.rs"), "unreadable candidate must not be silently dropped");
+    }
+
+    /// Full mixed working tree exercised end-to-end through one call.
+    #[test]
+    fn plan_reindex_classifies_new_changed_touched_unchanged_removed() {
+        let prior = prior_of(&[
+            ("src/a.rs", 100, "ha"),   // unchanged
+            ("src/b.rs", 200, "hb"),   // will reindex
+            ("src/t.rs", 300, "ht"),   // will be touched (same content)
+            ("src/gone.rs", 400, "hg"),// removed
+        ]);
+        let current = vec![
+            ("src/a.rs".to_string(), 100),   // mtime unchanged
+            ("src/b.rs".to_string(), 250),   // mtime + content changed
+            ("src/t.rs".to_string(), 350),   // mtime changed, content same
+            ("src/new.rs".to_string(), 500), // new
+        ];
+        let plan = plan_reindex(&current, &prior, |p| match p {
+            "src/b.rs" => Some("hb_new".into()),
+            "src/t.rs" => Some("ht".into()), // identical → touched
+            other => panic!("unexpected hash of {other} (a.rs/new.rs must not be hashed)"),
+        });
+        assert_eq!(plan.unchanged, 1);
+        assert!(plan.changed.contains("src/b.rs"));
+        assert!(plan.changed.contains("src/new.rs"));
+        assert!(!plan.changed.contains("src/a.rs"));
+        assert_eq!(plan.touched.len(), 1);
+        assert_eq!(plan.touched[0].0, "src/t.rs");
+        assert_eq!(plan.removed, vec!["src/gone.rs".to_string()]);
     }
 
     #[test]

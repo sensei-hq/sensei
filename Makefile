@@ -7,7 +7,7 @@
 ##     cli        — sensei CLI (binary: sensei)
 ##     mcp        — MCP server
 ##     bootstrap  — installer/prereq checker
-##     hive-mind  — federated shared-brain service
+##     dojo-mind  — federated shared-brain service
 ##     logger     — structured logging crate
 ##   website/     — Marketing website
 ##   docs/        — Documentation
@@ -76,9 +76,21 @@ crates-all:
 	# embedded-llama-cpp code that the plain --workspace build skips.
 	cargo build --release -p senseid --features senseid/embedded-llama-cpp
 
-.PHONY: hive
-hive:  ## Build the sensei-hive service binary
-	cargo build --release -p hive-mind
+.PHONY: dojo
+dojo:  ## Build the sensei-dojo service binary
+	cargo build --release -p dojo-mind
+
+# ── Dōjō local auth stack (localhost supabase — un-parks the console) ──────────
+# Boots a LOCAL-ONLY supabase stack (auth + db + studio + inbucket) for developing
+# the Dōjō SaaS console. Config + seed live in supabase/. No real secrets — every
+# credential resolves via env(). Nothing leaves the machine.
+#   Studio            → http://127.0.0.1:54323
+#   Inbucket (mail)   → http://127.0.0.1:54324   (magic-link emails land here)
+.PHONY: supabase-up supabase-down
+supabase-up:  ## Boot the local Dōjō supabase auth stack (localhost only)
+	supabase start
+supabase-down:  ## Stop the local Dōjō supabase auth stack
+	supabase stop
 
 # ── Install ───────────────────────────────────────────────────────────────────
 #
@@ -102,6 +114,10 @@ install: install-service install-app
 #   pg_restore -d sensei -c $$(ls -t database/backup/backup-*.dump | head -1)
 db-backup: db-backup-rotate
 	@mkdir -p database/backup
+	@# Keep Spotlight from indexing the multi-hundred-MB .dump files. Without
+	@# this, every backup write triggers mds indexing → CPU spike (observed at
+	@# 94%, which starved the e2e health-bootstrap gate and made the suite flaky).
+	@touch database/backup/.metadata_never_index
 	@if psql -d sensei -c "SELECT 1" >/dev/null 2>&1; then \
 	  ts=$$(date +%Y%m%d-%H%M%S); \
 	  out="database/backup/backup-$${ts}.dump"; \
@@ -335,7 +351,14 @@ reset-e2e-db:
 reset ?= true
 test-app-e2e: app-e2e-build
 	$(if $(filter true,$(reset)),$(MAKE) reset-e2e-db)
-	cd app && bun run test:e2e
+	@# Safety net: globalSetup stops the real brew `sensei` daemon and runs an
+	@# e2e daemon (--instance e2e, throwaway sensei_e2e DB) on the SAME :7744.
+	@# globalTeardown restores it on a clean exit, but a SIGTERM/interrupt to
+	@# Playwright skips teardown → the system is left with the real daemon down
+	@# and the empty-DB e2e daemon squatting on :7744 (looks like total data
+	@# loss; see reference_e2e_7744_leftover). This trap restores the real daemon
+	@# on ANY exit — redundant with teardown on success, the actual fix on kill.
+	cd app && trap 'pkill -f "instance e2e" 2>/dev/null; brew services start sensei >/dev/null 2>&1 || true' EXIT INT TERM; bun run test:e2e
 
 # ── Cold-start E2E ────────────────────────────────────────────────────────────
 # Verifies the health page drives itself through the full check → resolve →

@@ -86,20 +86,34 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
         ctx.queue.enqueue(process_task).await;
     }
 
-    // 4.5 Reconcile: prune roots the scan no longer discovers (self-healing).
-    //     The scan is additive — without this, a root that lost its `.git`, was
-    //     emptied, or moved lingers forever as a phantom project.
+    // 4.5 Reconcile: self-heal the index the scan can't fix additively.
+    //     First re-absorb any `standalone` root mis-scoped inside a git repo
+    //     (Bug 3) — it becomes a `kind=folder` of the repo's project, so a
+    //     later `reconcile_roots` no longer sees it as a stale root. Then prune
+    //     roots the scan no longer discovers (a root that lost its `.git`, was
+    //     emptied, or moved lingers forever as a phantom project otherwise).
+    let reabsorbed = ctx.pg().heal_nested_standalone_roots().await
+        .unwrap_or_else(|e| { tracing::warn!(error = %e, "scan_root: heal_nested_standalone_roots failed"); 0 });
     let live: std::collections::HashSet<std::path::PathBuf> =
         classified.iter().map(|f| f.path.clone()).collect();
     let (removed, marked) = reconcile_roots(ctx.pg(), &root_id, &live).await;
+    // Then prune ghost folder subtrees whose directory was deleted/moved on disk
+    // (e.g. a renamed sub-crate). `reconcile_roots` only prunes project ROOTS and
+    // `prune_vanished` only reconciles files *within* an indexed folder, so nothing
+    // else removes a non-root `kind='folder'` row whose dir vanished — it lingers
+    // dragging its whole subtree of nodes/edges/scan_state.
+    let ghosts = prune_vanished_folders(ctx.pg(), &root_id).await;
     let orphaned = ctx.pg().mark_orphaned_projects().await.unwrap_or_else(|e| { tracing::warn!(error = %e, "scan_root: mark_orphaned_projects failed"); 0 });
-    if removed > 0 || marked > 0 {
+    if reabsorbed > 0 {
+        tracing::info!("scan_root reconcile: re-absorbed {reabsorbed} nested standalone root(s) into their enclosing repo's project");
+    }
+    if removed > 0 || marked > 0 || ghosts > 0 {
         emit(StateEvent::activity(ActivityEvent::new(
             ActivityLevel::Info,
-            &format!("reconcile · {removed} stale roots removed · {marked} flagged stale · {orphaned} projects re-tagged"),
+            &format!("reconcile · {removed} stale roots removed · {ghosts} ghost folders pruned · {marked} flagged stale · {orphaned} projects re-tagged"),
             start.elapsed().as_secs_f64(),
         )));
-        tracing::info!("scan_root reconcile: removed={removed} marked={marked} orphaned_retagged={orphaned}");
+        tracing::info!("scan_root reconcile: removed={removed} ghost_folders={ghosts} marked={marked} orphaned_retagged={orphaned}");
     }
 
     // 5. Register watcher
@@ -175,6 +189,149 @@ async fn reconcile_roots(
         }
     }
     (removed, marked)
+}
+
+/// Prune ghost folder subtrees the scan can never re-materialise: a non-root
+/// `kind='folder'` row whose DIRECTORY was deleted or moved on disk (e.g.
+/// `crates/hive-mind` renamed to `crates/dojo-mind`). The scanner never descends
+/// into a directory that is gone, [`prune_vanished`] only reconciles FILE nodes
+/// *within* one indexed folder, and [`reconcile_roots`] only prunes project
+/// ROOTS — so nothing else ever removes such a row, and it lingers dragging its
+/// whole subtree of nodes/edges/scan_state (137 orphan nodes in the live sensei
+/// index). Each ghost folder row is deleted via [`crate::db::pg_store::PgStore::delete_folder_tree`],
+/// cascading its nodes, edges, scan_state and descendant folder rows.
+///
+/// SAFETY: a subfolder is pruned only when its enclosing project ROOT (kind
+/// git/standalone/subtree) is confirmed PRESENT on disk. A root whose own
+/// directory is absent (unmounted drive, moved repo) is skipped entirely so a
+/// temporarily-missing volume never nukes a live index — [`reconcile_roots`] owns
+/// absent roots. A folder whose existence check *errors* (permission/symlink) is
+/// treated as present and kept (never delete on uncertainty). Root folders are
+/// never pruned here. Non-fatal — every DB error is logged and skipped.
+/// Idempotent. Returns the number of ghost folder rows pruned.
+///
+/// Orchestration only: it delegates detection to [`detect_vanished_folders`] and
+/// deletion to [`apply_folder_prune`], so the read-only index integrity audit can
+/// reuse the exact same ghost-folder detection without mutating anything.
+async fn prune_vanished_folders(
+    pg: &crate::db::pg_store::PgStore,
+    root_id: &uuid::Uuid,
+) -> u64 {
+    apply_folder_prune(pg, &detect_vanished_folders(pg, root_id).await).await
+}
+
+/// Detect (WITHOUT mutating) the ghost folder subtrees under one watch root: a
+/// non-root `kind='folder'` row whose directory is *confirmed* gone on disk, and
+/// which sits under a confirmed-PRESENT project root (the unmounted-volume guard —
+/// see [`prune_vanished_folders`]). Returns `(folder_id, abs_path)` per ghost.
+///
+/// This is the detection half shared by [`prune_vanished_folders`] (which deletes
+/// what this finds) and [`crate::tasks::index_audit`] (which reports it read-only
+/// in `sensei index doctor`, and repairs via [`apply_folder_prune`]). Keeping one
+/// detector means both paths agree on exactly what a "ghost folder" is.
+pub(crate) async fn detect_vanished_folders(
+    pg: &crate::db::pg_store::PgStore,
+    root_id: &uuid::Uuid,
+) -> Vec<(uuid::Uuid, String)> {
+    let recorded = pg.list_folders_by_root(root_id).await.unwrap_or_else(|e| { tracing::warn!(error = %e, root_id = %root_id, "detect_vanished_folders: list_folders_by_root failed, skipping"); Vec::new() });
+
+    // Present project roots — a subfolder is eligible only when the root it lives
+    // under is confirmed on disk (guards against an unmounted volume / moved repo).
+    let present_roots: Vec<String> = recorded.iter()
+        .filter(|r| matches!(r["kind"].as_str().unwrap_or(""), "git" | "standalone" | "subtree"))
+        .filter_map(|r| r["abs_path"].as_str().map(String::from))
+        .filter(|abs| dir_present(std::path::Path::new(abs)))
+        .collect();
+    if present_roots.is_empty() {
+        return Vec::new(); // no confirmed-present root under this watch root — nothing eligible
+    }
+
+    let mut ghosts = Vec::new();
+    for r in &recorded {
+        // Only non-root subfolders; roots are owned by reconcile_roots.
+        if r["kind"].as_str() != Some("folder") {
+            continue;
+        }
+        let Some(abs) = r["abs_path"].as_str() else { continue };
+        // Must sit under a confirmed-present project root (exact-prefix + '/',
+        // mirroring heal_nested_standalone_roots' starts_with).
+        if !present_roots.iter().any(|root| abs.starts_with(&format!("{root}/"))) {
+            continue; // enclosing root absent/unknown → leave the subtree intact
+        }
+        // Keep unless the directory is *confirmed* gone (errored check → present).
+        if dir_present(std::path::Path::new(abs)) {
+            continue;
+        }
+        let Some(id) = crate::api::util::json_uuid(&r["id"]) else { continue };
+        ghosts.push((id, abs.to_string()));
+    }
+    ghosts
+}
+
+/// Delete each detected ghost folder subtree via
+/// [`crate::db::pg_store::PgStore::delete_folder_tree`], cascading its nodes,
+/// edges, scan_state and descendant folder rows. Non-fatal — a failed delete is
+/// logged and skipped. Idempotent. Returns the number pruned. The apply half of
+/// [`detect_vanished_folders`], shared by the scan reconcile and the audit.
+pub(crate) async fn apply_folder_prune(
+    pg: &crate::db::pg_store::PgStore,
+    ghosts: &[(uuid::Uuid, String)],
+) -> u64 {
+    let mut pruned = 0u64;
+    for (id, abs) in ghosts {
+        match pg.delete_folder_tree(id).await {
+            Ok(()) => { pruned += 1; tracing::info!("prune_vanished_folders: pruned ghost folder subtree {abs} (dir gone)"); }
+            Err(e) => tracing::warn!(error = %e, path = %abs, "prune_vanished_folders: delete_folder_tree failed"),
+        }
+    }
+    pruned
+}
+
+/// True unless the path is *confirmed* absent (`try_exists() == Ok(false)`). An
+/// errored check (permission, symlink loop) is treated as present so reconcile
+/// never deletes a live index on uncertainty (fail-safe). Works for both files
+/// and directories — the index audit reuses it to test a node's file existence.
+pub(crate) fn dir_present(p: &std::path::Path) -> bool {
+    !matches!(p.try_exists(), Ok(false))
+}
+
+/// Prune indexed nodes whose file no longer exists on disk (Bug 2 safety net).
+/// Compares the folder's indexed file paths (`sensei.nodes`, module nodes
+/// excluded) against `live_paths` — the repo-relative paths present on disk now
+/// — and drops nodes for any indexed path not in the live set. This catches
+/// orphans the incremental `scan_state` diff and the fs-watcher missed (e.g. a
+/// moved sub-crate whose files vanished but whose struct nodes lingered). For
+/// each vanished file it un-resolves inbound edges (preserving `target_name` for
+/// re-resolution), deletes the nodes (cascading their edges) and clears the
+/// scan-state row. Non-fatal — every DB error is logged and skipped. Returns the
+/// number of files pruned.
+pub async fn prune_vanished(
+    pg: &crate::db::pg_store::PgStore,
+    folder_id: &uuid::Uuid,
+    live_paths: &std::collections::HashSet<String>,
+) -> u64 {
+    let indexed = pg.list_indexed_files(folder_id).await.unwrap_or_else(|e| {
+        tracing::warn!(folder_id = %folder_id, error = %e, "prune_vanished: list_indexed_files failed");
+        Vec::new()
+    });
+    let mut pruned = 0u64;
+    for path in indexed {
+        if live_paths.contains(&path) {
+            continue;
+        }
+        if let Err(e) = pg.unresolve_edges_to_file(folder_id, &path).await {
+            tracing::warn!(folder_id = %folder_id, file = %path, error = %e, "prune_vanished: unresolve_edges_to_file failed");
+        }
+        if let Err(e) = pg.delete_nodes_by_file(folder_id, &path).await {
+            tracing::warn!(folder_id = %folder_id, file = %path, error = %e, "prune_vanished: delete_nodes_by_file failed");
+            continue;
+        }
+        if let Err(e) = pg.delete_scan_state_file(folder_id, &path).await {
+            tracing::warn!(folder_id = %folder_id, file = %path, error = %e, "prune_vanished: delete_scan_state_file failed");
+        }
+        pruned += 1;
+    }
+    pruned
 }
 
 // ── Branch Switch ─────────────────────────────────────────────────────────
@@ -412,6 +569,120 @@ mod tests {
             ctx.pg().get_repo_by_path(&root.join("data-only").to_string_lossy()).await.unwrap().is_none(),
             "data-only folder should not be promoted to a project root"
         );
+    }
+
+    #[tokio::test]
+    async fn prune_vanished_drops_orphan_nodes_and_keeps_live() {
+        let ctx = make_ctx().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let repo_path = tmp.path().to_string_lossy().to_string();
+        let root_id = ctx.pg().add_watch_root(&repo_path, "pv", &serde_json::json!([])).await.unwrap();
+        let fid = ctx.pg().upsert_repo(&root_id, "pv-repo", &repo_path).await.unwrap();
+
+        // Two indexed files: a.rs (still on disk) and a moved-away b.rs (orphan),
+        // plus a module node (abs dir path) that must never be pruned.
+        ctx.pg().upsert_node(&fid, "file", "a.rs", "a.rs", None, None, None, None).await.unwrap();
+        ctx.pg().upsert_node(&fid, "struct", "Gone", "crates/hive-mind/src/config.rs", None, None, None, None).await.unwrap();
+        ctx.pg().upsert_node(&fid, "module", "src", &format!("{repo_path}/src"), None, None, None, None).await.unwrap();
+        ctx.pg().upsert_scan_state(&fid, "crates/hive-mind/src/config.rs", 1, "h").await.unwrap();
+
+        // Live working-tree set: only a.rs survives.
+        let live: std::collections::HashSet<String> = ["a.rs".to_string()].into_iter().collect();
+        let pruned = prune_vanished(ctx.pg(), &fid, &live).await;
+        assert_eq!(pruned, 1, "the one vanished file's nodes should be pruned");
+
+        let files = ctx.pg().list_indexed_files(&fid).await.unwrap();
+        assert!(files.contains(&"a.rs".to_string()), "live file's nodes survive");
+        assert!(!files.iter().any(|p| p.contains("hive-mind")), "vanished file's nodes are gone");
+        // The vanished file's scan-state row was cleared too.
+        let ss = ctx.pg().list_scan_state(&fid).await.unwrap();
+        assert!(ss.iter().all(|(p, _)| !p.contains("hive-mind")), "scan_state for the vanished file cleared");
+    }
+
+    #[tokio::test]
+    async fn prune_vanished_folders_drops_ghost_subtree_keeps_live() {
+        let ctx = make_ctx().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let root_str = root.to_string_lossy().to_string();
+
+        // A present git repo — the enclosing project root, confirmed on disk.
+        let repo = root.join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        let root_id = ctx.pg().add_watch_root(&root_str, "pvf", &serde_json::json!([])).await.unwrap();
+        let repo_fid = ctx.pg().upsert_repo_kind(&root_id, "git", "repo", &repo.to_string_lossy()).await.unwrap();
+
+        // A LIVE subfolder: its dir exists on disk → must be KEPT with its node.
+        let live_dir = repo.join("live");
+        std::fs::create_dir_all(&live_dir).unwrap();
+        let live_fid = ctx.pg().upsert_subfolder(&root_id, "live", "live", &live_dir.to_string_lossy(), Some(&repo_fid), None).await.unwrap();
+        let live_node = ctx.pg().upsert_node(&live_fid, "struct", "Kept", "live/mod.rs", None, None, None, None).await.unwrap();
+
+        // A GHOST subtree: `gone/` (renamed/moved away) + its child `gone/sub/` no
+        // longer exist on disk, yet still carry folder rows + nodes/edge/scan_state.
+        let gone_dir = repo.join("gone");     // NOT created on disk
+        let gone_sub = gone_dir.join("sub");  // NOT created on disk
+        let gone_fid = ctx.pg().upsert_subfolder(&root_id, "gone", "gone", &gone_dir.to_string_lossy(), Some(&repo_fid), None).await.unwrap();
+        let sub_fid = ctx.pg().upsert_subfolder(&root_id, "sub", "gone/sub", &gone_sub.to_string_lossy(), Some(&gone_fid), None).await.unwrap();
+        let ghost_a = ctx.pg().upsert_node(&gone_fid, "struct", "HiveConfig", "gone/config.rs", None, None, None, None).await.unwrap();
+        let ghost_b = ctx.pg().upsert_node(&sub_fid, "struct", "HiveStore", "gone/sub/store.rs", None, None, None, None).await.unwrap();
+        let ghost_edge = ctx.pg().insert_edge(&gone_fid, &ghost_a, Some(&ghost_b), None, "references").await.unwrap();
+        ctx.pg().upsert_scan_state(&gone_fid, "gone/config.rs", 1, "h").await.unwrap();
+
+        // Prune: both ghost folder rows go, the live one stays.
+        let pruned = prune_vanished_folders(ctx.pg(), &root_id).await;
+        assert_eq!(pruned, 2, "both ghost folder rows (gone + gone/sub) should be pruned");
+
+        // Ghost folder rows removed; repo + live folder rows survive.
+        let abs_paths: std::collections::HashSet<String> = ctx.pg().list_folders_by_root(&root_id).await.unwrap()
+            .iter().filter_map(|r| r["abs_path"].as_str().map(String::from)).collect();
+        assert!(!abs_paths.contains(&gone_dir.to_string_lossy().to_string()), "ghost folder row pruned");
+        assert!(!abs_paths.contains(&gone_sub.to_string_lossy().to_string()), "ghost child folder row pruned");
+        assert!(abs_paths.contains(&live_dir.to_string_lossy().to_string()), "live folder row kept");
+        assert!(abs_paths.contains(&repo.to_string_lossy().to_string()), "repo root kept");
+
+        // Cascade: ghost nodes + edge + scan_state gone; live node survives.
+        let (ghost_nodes,): (i64,) = sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.nodes WHERE id = ANY($1)")
+            .bind(vec![ghost_a, ghost_b]).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(ghost_nodes, 0, "ghost nodes cascade-deleted");
+        let (live_nodes,): (i64,) = sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.nodes WHERE id = $1")
+            .bind(live_node).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(live_nodes, 1, "live node preserved");
+        let (edge_count,): (i64,) = sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.edges WHERE id = $1")
+            .bind(ghost_edge).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(edge_count, 0, "ghost edge cascade-deleted");
+        assert!(ctx.pg().list_scan_state(&gone_fid).await.unwrap().is_empty(), "ghost scan_state cascade-deleted");
+        assert_eq!(ctx.pg().list_indexed_files(&live_fid).await.unwrap(), vec!["live/mod.rs".to_string()], "live folder's nodes intact");
+
+        // Idempotent: a second run prunes nothing.
+        assert_eq!(prune_vanished_folders(ctx.pg(), &root_id).await, 0, "re-run is a no-op");
+    }
+
+    #[tokio::test]
+    async fn prune_vanished_folders_skips_when_enclosing_root_absent() {
+        let ctx = make_ctx().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let root_str = root.to_string_lossy().to_string();
+        let root_id = ctx.pg().add_watch_root(&root_str, "pvf_absent", &serde_json::json!([])).await.unwrap();
+
+        // A project root whose OWN directory is absent on disk (never created) —
+        // simulates an unmounted volume / moved repo. reconcile_roots owns this;
+        // prune_vanished_folders must NOT touch anything under it.
+        let absent_repo = root.join("absent-repo"); // NOT created on disk
+        let repo_fid = ctx.pg().upsert_repo_kind(&root_id, "git", "absent-repo", &absent_repo.to_string_lossy()).await.unwrap();
+        let sub = absent_repo.join("src");           // also absent
+        let sub_fid = ctx.pg().upsert_subfolder(&root_id, "src", "src", &sub.to_string_lossy(), Some(&repo_fid), None).await.unwrap();
+        let node = ctx.pg().upsert_node(&sub_fid, "struct", "Untouched", "src/lib.rs", None, None, None, None).await.unwrap();
+
+        // Prune: enclosing root absent → nothing under it is pruned.
+        let pruned = prune_vanished_folders(ctx.pg(), &root_id).await;
+        assert_eq!(pruned, 0, "an absent root must not have its subtree pruned (unmounted-volume safety)");
+
+        // The subfolder row + its node survive.
+        let (exists,): (bool,) = sqlx_core::query_as::query_as("SELECT EXISTS(SELECT 1 FROM sensei.nodes WHERE id = $1)")
+            .bind(node).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert!(exists, "subtree under an absent root must be preserved");
     }
 
     #[tokio::test]

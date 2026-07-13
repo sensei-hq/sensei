@@ -1,26 +1,91 @@
-//! Shared wire contract for sensei Dōjō artifact federation.
+//! Shared wire contract for sensei Dōjō federation.
 //!
-//! The Dōjō carries six artifact primitives around the contribute → triage →
-//! approve → distribute loop (see `docs/llm-spec/pipeline/dojo-lifecycle.md`).
-//! These are the pure wire types the daemon (C6 publish) and consumers (C7
-//! pull) exchange with a Dōjō server over the `hive-mind` federation transport.
+//! This crate carries two wire contracts over the Dōjō federation transport,
+//! sharing one hashing/normalization discipline (DRY):
 //!
-//! This is the artifact analogue of [`hive_protocol`] (the rules wire
-//! contract). It serializes to/from the `dojo.artifacts` DDL shape: a `kind`
-//! enum, a jsonb `payload` keyed by kind, plus scope / signature / attribution
-//! / dereferenced / status fields.
+//! 1. The **rules** contract — [`PublishedRule`] / [`PublishResponse`] /
+//!    [`PulledRule`] / [`PullResponse`] plus the [`content_hash`] dedup key,
+//!    pushed/pulled by the daemon's governance federation. `content_hash` MUST
+//!    stay in lockstep with the daemon's dedup normalization in
+//!    `senseid/src/governance.rs` (trim + lowercase).
+//! 2. The **artifact** contract — the six artifact primitives that ride the
+//!    contribute → triage → approve → distribute loop (see
+//!    `docs/llm-spec/pipeline/dojo-lifecycle.md`): the pure wire types the
+//!    daemon (C6 publish) and consumers (C7 pull) exchange with a Dōjō server.
+//!    Serializes to/from the `dojo.artifacts` DDL shape: a `kind` enum, a jsonb
+//!    `payload` keyed by kind, plus scope / signature / attribution /
+//!    dereferenced / status fields.
 //!
 //! No daemon or DB dependencies — pure serde wire types. The artifact
-//! `signature` is derived through [`hive_protocol::content_hash`] so the
-//! normalization discipline (trim + lowercase, stable, order-insensitive) stays
-//! in lockstep with the rules federation contract (DRY — we depend on it rather
-//! than re-implement it).
+//! `signature` reuses the same [`content_hash`] normalization as the rules
+//! contract (trim + lowercase, stable, order-insensitive).
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
-// Re-export the reused normalization primitives so callers derive signatures
-// through the same discipline the rules contract uses.
-pub use hive_protocol::{content_hash, normalize_content};
+// ---------------------------------------------------------------------------
+// Rules wire contract + shared hashing discipline.
+//
+// `content_hash` MUST stay in lockstep with the daemon's dedup normalization in
+// `senseid/src/governance.rs` (trim + lowercase). The artifact `signature`
+// below reuses it so both federation contracts share one discipline.
+// ---------------------------------------------------------------------------
+
+/// Normalize rule content for dedup/identity: trim + lowercase.
+/// Mirrors `governance::structure_ruleset`'s dedup key.
+pub fn normalize_content(content: &str) -> String {
+    content.trim().to_lowercase()
+}
+
+/// Stable dedup key for a rule's content (sha256 hex of the normalized form).
+pub fn content_hash(content: &str) -> String {
+    let mut h = Sha256::new();
+    h.update(normalize_content(content).as_bytes());
+    format!("{:x}", h.finalize())
+}
+
+/// A rule published to a Dōjō — a flattened snapshot (no memory graph).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PublishedRule {
+    pub content_hash: String,
+    pub scope_key: String,
+    pub namespace_slug: String,
+    pub namespace_name: String,
+    pub rule_type: String,
+    pub title: String,
+    pub content: String,
+    pub impact: Option<String>,
+    pub enforcement: String,
+    pub origin_repo: Option<String>,
+    pub published_by: String,
+    pub published_at: String,
+}
+
+/// Response to a publish: the canonical identity assigned by the Dōjō.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PublishResponse {
+    pub id: String,
+    pub version: i32,
+    pub seq: i64,
+}
+
+/// A rule as returned by a pull (snapshot + Dōjō identity + lifecycle).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PulledRule {
+    pub id: String,
+    pub seq: i64,
+    pub status: String, // "active" | "tombstoned"
+    pub version: i32,
+    #[serde(flatten)]
+    pub rule: PublishedRule,
+}
+
+/// Response to a pull: deltas + the new cursor to persist.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PullResponse {
+    pub rules: Vec<PulledRule>,
+    pub cursor: i64,
+}
 
 /// The six primitives that ride the Dōjō loop. Matches the `dojo.artifact_kind`
 /// enum exactly (`principle | pattern | prompt | guard | skill | agent`).
@@ -319,7 +384,8 @@ fn canonical_json(value: &serde_json::Value) -> String {
 /// used for dedup / clustering (near-identical contributions share a signature
 /// and are merged in triage).
 ///
-/// Reuses [`hive_protocol`]'s normalization discipline (DRY): each textual
+/// Reuses the rules contract's [`normalize_content`] / [`content_hash`]
+/// discipline (DRY): each textual
 /// component is passed through [`normalize_content`] (trim + lowercase) and the
 /// payload is canonicalized with sorted keys, so the signature is stable and
 /// insensitive to surrounding whitespace, case, and payload key order — exactly
@@ -344,8 +410,8 @@ pub fn artifact_signature(
 }
 
 /// An artifact contributed / published to a Dōjō — a flattened snapshot
-/// carrying its type-specific payload. The analogue of
-/// [`hive_protocol::PublishedRule`]. Server-assigned identity (`id`, `seq`) and
+/// carrying its type-specific payload. The artifact analogue of
+/// [`PublishedRule`]. Server-assigned identity (`id`, `seq`) and
 /// downstream telemetry are not part of the contribution snapshot.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PublishedArtifact {
@@ -387,8 +453,8 @@ impl PublishedArtifact {
     }
 }
 
-/// Canonical identity a Dōjō assigns on publish. The analogue of
-/// [`hive_protocol::PublishResponse`] (artifacts have no version column, so no
+/// Canonical identity a Dōjō assigns on publish. The artifact analogue of
+/// [`PublishResponse`] (artifacts have no version column, so no
 /// `version` field). `seq` is the federation cursor value.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PublishArtifactResponse {
@@ -397,7 +463,7 @@ pub struct PublishArtifactResponse {
 }
 
 /// An artifact as returned by a pull — the snapshot plus Dōjō identity and
-/// lifecycle state. The analogue of [`hive_protocol::PulledRule`].
+/// lifecycle state. The artifact analogue of [`PulledRule`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PulledArtifact {
     pub id: String,
@@ -408,7 +474,7 @@ pub struct PulledArtifact {
 }
 
 /// Response to a pull: the delta artifacts plus the new cursor to persist. The
-/// analogue of [`hive_protocol::PullResponse`] — `seq`-cursor pagination so C7
+/// artifact analogue of [`PullResponse`] — `seq`-cursor pagination so C7
 /// resumes gap-free from the last seen `seq`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ArtifactPullResponse {
@@ -588,7 +654,7 @@ mod tests {
         assert_eq!(back, resp);
     }
 
-    // ---- signature determinism + insensitivity (mirrors hive-protocol) --
+    // ---- signature determinism + insensitivity (mirrors the rules content_hash) --
 
     #[test]
     fn signature_is_deterministic_and_sha256_hex() {
@@ -596,12 +662,12 @@ mod tests {
         let a = artifact_signature(ArtifactKind::Principle, "Title", "Body", &payload);
         let b = artifact_signature(ArtifactKind::Principle, "Title", "Body", &payload);
         assert_eq!(a, b);
-        assert_eq!(a.len(), 64); // sha256 hex, same as hive-protocol
+        assert_eq!(a.len(), 64); // sha256 hex, same as the rules content_hash
     }
 
     #[test]
     fn signature_is_whitespace_and_case_insensitive() {
-        // Mirrors hive-protocol's content_hash test: differing only by
+        // Mirrors the rules content_hash test: differing only by
         // surrounding whitespace / case yields the same signature.
         let payload = sample_payload(ArtifactKind::Guard);
         let a = artifact_signature(ArtifactKind::Guard, "  Use TDD  ", "  Always.  ", &payload);
@@ -662,5 +728,44 @@ mod tests {
             artifact.compute_signature(),
             artifact_signature(artifact.kind, &artifact.title, &artifact.body, &artifact.payload)
         );
+    }
+
+    // ---- rules wire contract (folded in from the former protocol crate) --
+
+    #[test]
+    fn content_hash_matches_governance_normalization() {
+        // governance.rs dedups on `content.trim().to_lowercase()`.
+        // Same logical content (differing only by surrounding ws / case) → same hash.
+        let a = content_hash("  Use TDD always.  ");
+        let b = content_hash("use tdd always.");
+        assert_eq!(a, b);
+        assert_eq!(a.len(), 64); // sha256 hex
+    }
+
+    #[test]
+    fn content_hash_differs_for_different_content() {
+        assert_ne!(content_hash("rule one"), content_hash("rule two"));
+    }
+
+    #[test]
+    fn published_rule_round_trips() {
+        let r = PublishedRule {
+            content_hash: content_hash("x"),
+            scope_key: "organization".into(),
+            namespace_slug: "sensei-hq".into(),
+            namespace_name: "Sensei HQ".into(),
+            rule_type: "convention".into(),
+            title: "t".into(),
+            content: "x".into(),
+            impact: None,
+            enforcement: "mandatory".into(),
+            origin_repo: Some("sensei/daemon".into()),
+            published_by: "jerry".into(),
+            published_at: "2026-06-11T00:00:00Z".into(),
+        };
+        let json = serde_json::to_string(&r).unwrap();
+        let back: PublishedRule = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.namespace_slug, "sensei-hq");
+        assert_eq!(back.enforcement, "mandatory");
     }
 }

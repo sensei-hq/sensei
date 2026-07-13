@@ -209,6 +209,27 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
         Arc::new(state.pg.clone()),
     );
 
+    // Watcher safety net: frequently (boot + every reconcile.interval_secs,
+    // default 300s) re-scan every watch root so the index converges even when
+    // the fs-watcher misses events (daemon restarts / stale FSEvents gaps).
+    // Reuses the self-healing scan pipeline — re-absorbs mis-scoped roots
+    // (Bug 3) + prunes orphan nodes (Bug 2). The two-tier mtime gate makes a
+    // no-op re-scan stat-only, so this is cheap to run often. The boot reconcile
+    // ALWAYS runs (drift-safety); overlap-guarded so reconciles never stack.
+    crate::tasks::reconcile_scheduler::spawn(
+        task_queue.clone(),
+        Arc::new(state.pg.clone()),
+    );
+
+    // Index integrity self-audit (P2): a conservative (daily, watermark-gated)
+    // sweep that GENERALIZES the point-fix self-heals into one continuous
+    // invariant checker + repairer — orphan nodes, ghost folders, nested
+    // standalone roots, duplicate-name phantoms. It stats every indexed
+    // file/folder (heavier than the reconcile), so it runs on its own
+    // `audit.last_run` cadence, NOT every reconcile tick. Read-only twin behind
+    // `GET /api/index/doctor` / `sensei index doctor`.
+    crate::tasks::index_audit::spawn(Arc::new(state.pg.clone()));
+
     // Log retention (#74): periodically prune `public.logs` older than the
     // configured window (default 30d, daily). First tick prunes on startup.
     crate::tasks::log_pruner::spawn(Arc::new(state.pg.clone()));
@@ -294,8 +315,19 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
         });
     }
 
-    // Federation: poll registered hive-mind sources for applicable rule deltas.
+    // Federation: poll registered dojo-mind sources for applicable rule deltas.
     crate::federation::run_pull_loop(state.pg.clone(), 300);
+
+    // Dōjō upstream contribute cadence (R1): the upstream twin of the pull loop
+    // above. On the user's configured cadence (PAUSED by default) it PREPARES an
+    // approved memory-share batch into the durable outbox as `pending`, running
+    // the same strict anonymise + confidentiality gate as the manual publish.
+    // STAGE-ONLY — it never publishes / egresses; the outbox→dojo send stays the
+    // explicit manual C6 step. No-op until the user sets a daily/weekly cadence.
+    crate::tasks::contribute_scheduler::spawn(
+        Arc::new(state.pg.clone()),
+        state.gateway.clone(),
+    );
 
     // Capture watchdog: hourly sweep over configured ACP adapters. Auto-resolves
     // config-side failures (reinstall), trips a per-adapter breaker on give-up,

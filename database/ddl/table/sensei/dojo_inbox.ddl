@@ -5,7 +5,7 @@ set search_path to sensei, extensions;
 --
 -- Fork 1: the authoritative distribution ledger is dojo.downstream_inbox in the
 -- Dōjō service DB. The daemon pulls each membership's published artifacts (the
--- `hive`-style seq cursor lives on sensei.dojo_memberships.last_seq) and mirrors
+-- `dojo`-style seq cursor lives on sensei.dojo_memberships.last_seq) and mirrors
 -- them here as `pending`, so the Upgrades screen has a local, offline-readable
 -- inbox and mute/pin overrides are honoured locally without a round-trip.
 --

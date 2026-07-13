@@ -187,7 +187,7 @@ pub struct ShareBatchItem {
     pub memory_type: String,
 }
 
-/// Snapshot needed to publish a memory to a hive (+ namespace identity + origin/scope_key for gating).
+/// Snapshot needed to publish a memory to a dojo (+ namespace identity + origin/scope_key for gating).
 #[derive(Debug, Clone)]
 pub struct MemoryPushPayload {
     pub title:       String,
@@ -577,6 +577,19 @@ impl PgStore {
         sqlx_core::query::query("DELETE FROM sensei.nodes WHERE folder_id = $1 AND file_path = $2")
             .bind(folder_id).bind(file_path).execute(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(())
+    }
+
+    /// Distinct file paths (repo-relative) that a folder has indexed nodes for.
+    /// Excludes `module` nodes — those record an ABSOLUTE directory path (not a
+    /// file) and are re-derived structurally, so mixing them into a rel-path
+    /// comparison would be wrong. Used by the reconcile's `prune_vanished` safety
+    /// net to find nodes whose file no longer exists on disk.
+    pub async fn list_indexed_files(&self, folder_id: &uuid::Uuid) -> Result<Vec<String>, String> {
+        let rows: Vec<(String,)> = sqlx_core::query_as::query_as(
+            "SELECT DISTINCT file_path FROM sensei.nodes
+              WHERE folder_id = $1 AND kind::text <> 'module' AND file_path <> ''"
+        ).bind(folder_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(p,)| p).collect())
     }
 
     pub async fn clear_all_nodes(&self, folder_id: &uuid::Uuid) -> Result<(), String> {
@@ -2542,15 +2555,25 @@ impl PgStore {
         Ok(())
     }
 
-    /// All scan-state fingerprints for a folder as `(file_path, mtime)`. Loaded
-    /// once per scan so the indexer can diff the working tree against the last
-    /// index in memory (skip unchanged files, re-index changed, drop removed)
-    /// instead of N per-file queries.
-    pub async fn list_scan_state(&self, folder_id: &uuid::Uuid) -> Result<Vec<(String, i64)>, String> {
-        let rows: Vec<(String, i64)> = sqlx_core::query_as::query_as(
-            "SELECT file_path, mtime FROM sensei.scan_state WHERE folder_id = $1"
+    /// All scan-state fingerprints for a folder as `(file_path, mtime,
+    /// content_hash)`. Loaded once per scan so the indexer can run the two-tier
+    /// change-detection (cheap mtime gate → content-hash gate) entirely in
+    /// memory instead of N per-file queries. The `content_hash` lets a re-scan
+    /// short-circuit a *touched-but-identical* file (mtime drifted, bytes same)
+    /// without reindexing it. See [`crate::tasks::handlers::scan_logic::plan_reindex`].
+    pub async fn list_scan_state_full(&self, folder_id: &uuid::Uuid) -> Result<Vec<(String, i64, String)>, String> {
+        let rows: Vec<(String, i64, String)> = sqlx_core::query_as::query_as(
+            "SELECT file_path, mtime, content_hash FROM sensei.scan_state WHERE folder_id = $1"
         ).bind(folder_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(rows)
+    }
+
+    /// All scan-state fingerprints for a folder as `(file_path, mtime)`. A thin
+    /// projection over [`Self::list_scan_state_full`] for callers that only need
+    /// the mtime (removed-file diff, tests).
+    pub async fn list_scan_state(&self, folder_id: &uuid::Uuid) -> Result<Vec<(String, i64)>, String> {
+        Ok(self.list_scan_state_full(folder_id).await?
+            .into_iter().map(|(p, m, _)| (p, m)).collect())
     }
 
     /// Drop a single file's scan-state row (used when a file no longer exists on
@@ -5092,21 +5115,7 @@ impl PgStore {
     /// left untouched for [`Self::mark_orphaned_projects`] to tag. Returns the
     /// number of phantoms merged away.
     pub async fn heal_duplicate_name_projects(&self) -> Result<u64, String> {
-        // (phantom_id, survivor_id) pairs — one per phantom. The `= 1` guard
-        // ensures the survivor is the single folder-bearing project for that
-        // name (unambiguous), so a two-folder-bearing collision is excluded.
-        let pairs: Vec<(uuid::Uuid, uuid::Uuid)> = sqlx_core::query_as::query_as(
-            "SELECT empty.id, keep.id
-               FROM sensei.projects empty
-               JOIN sensei.projects keep
-                 ON keep.name = empty.name AND keep.id <> empty.id
-              WHERE empty.maturity = 'discovery'
-                AND NOT EXISTS (SELECT 1 FROM sensei.folders f WHERE f.project_id = empty.id)
-                AND EXISTS     (SELECT 1 FROM sensei.folders f WHERE f.project_id = keep.id)
-                AND (SELECT count(*) FROM sensei.projects k
-                       WHERE k.name = empty.name
-                         AND EXISTS (SELECT 1 FROM sensei.folders f WHERE f.project_id = k.id)) = 1",
-        ).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        let pairs = self.duplicate_name_phantom_pairs().await?;
 
         let mut healed = 0u64;
         for (phantom, survivor) in pairs {
@@ -5121,6 +5130,139 @@ impl PgStore {
             }
         }
         Ok(healed)
+    }
+
+    /// `(phantom_id, survivor_id)` pairs — one per name-duplicate phantom that
+    /// [`Self::heal_duplicate_name_projects`] would merge. The `= 1` guard ensures
+    /// the survivor is the single folder-bearing project for that name
+    /// (unambiguous), so a two-folder-bearing collision is excluded. Shared by the
+    /// heal (which merges each) and [`Self::detect_duplicate_name_phantoms`] (which
+    /// reports read-only) so both agree on exactly what a phantom is.
+    async fn duplicate_name_phantom_pairs(&self) -> Result<Vec<(uuid::Uuid, uuid::Uuid)>, String> {
+        sqlx_core::query_as::query_as(
+            "SELECT empty.id, keep.id
+               FROM sensei.projects empty
+               JOIN sensei.projects keep
+                 ON keep.name = empty.name AND keep.id <> empty.id
+              WHERE empty.maturity = 'discovery'
+                AND NOT EXISTS (SELECT 1 FROM sensei.folders f WHERE f.project_id = empty.id)
+                AND EXISTS     (SELECT 1 FROM sensei.folders f WHERE f.project_id = keep.id)
+                AND (SELECT count(*) FROM sensei.projects k
+                       WHERE k.name = empty.name
+                         AND EXISTS (SELECT 1 FROM sensei.folders f WHERE f.project_id = k.id)) = 1",
+        ).fetch_all(&self.pool).await.map_err(|e| e.to_string())
+    }
+
+    /// Read-only detection counterpart to [`Self::heal_duplicate_name_projects`]:
+    /// the phantom project ids that WOULD be merged into their folder-bearing
+    /// survivor. Shares the candidate query; performs no mutation. Used by the
+    /// index integrity audit's read-only (`doctor`) pass.
+    pub async fn detect_duplicate_name_phantoms(&self) -> Result<Vec<uuid::Uuid>, String> {
+        Ok(self.duplicate_name_phantom_pairs().await?.into_iter().map(|(phantom, _)| phantom).collect())
+    }
+
+    /// Self-heal Bug 3: re-absorb a `standalone` project root that was
+    /// mis-scoped INSIDE an existing git repo (e.g. a moved `crates/*` sub-crate
+    /// registered as its own project instead of a folder of the monorepo). For
+    /// each standalone folder nested under a git-repo folder that belongs to a
+    /// DIFFERENT project:
+    ///
+    /// 1. Its own (repo-relative-to-itself) nodes are dropped — the enclosing
+    ///    repo re-indexes the subtree with repo-relative paths on its next
+    ///    `ProcessGitFolder`, so no duplicate nodes survive. (Node deletion
+    ///    cascades edges; it does NOT touch `activity.sessions`, which key on
+    ///    `folder_id` — those are preserved.)
+    /// 2. The folder row is re-classified `kind='folder'`, re-parented under the
+    ///    repo, and re-pointed at the repo's project — so its code attributes to
+    ///    the repo's project, exactly like `crates/hive-mind` used to.
+    /// 3. When the mis-scoped project then lives ENTIRELY inside the repo, it is
+    ///    folded into the repo's project via [`Self::merge_projects`] (moving any
+    ///    sessions/memories, CASCADE-trimming derived rows, deleting the phantom).
+    ///    A phantom that also owns unrelated folders elsewhere is left for
+    ///    [`Self::mark_orphaned_projects`] rather than dragged in.
+    ///
+    /// Idempotent — once re-absorbed the candidate query returns nothing.
+    /// Returns the number of roots re-absorbed.
+    pub async fn heal_nested_standalone_roots(&self) -> Result<u64, String> {
+        let pairs = self.nested_standalone_candidates().await?;
+
+        let mut healed = 0u64;
+        for (s_id, s_pid, g_id, g_pid, g_root, g_abs) in pairs {
+            // 1. Drop the mis-scoped root's own nodes (repo re-indexes the subtree).
+            if let Err(e) = self.delete_nodes_by_folder(&s_id).await {
+                tracing::warn!(folder = %s_id, error = %e, "heal_nested_standalone_roots: delete_nodes_by_folder failed");
+                continue;
+            }
+            // 2. Re-classify as a folder of the enclosing repo's project, under
+            //    the repo's watch root (it may have been registered under another).
+            if let Err(e) = sqlx_core::query::query(
+                "UPDATE sensei.folders
+                    SET kind = 'folder'::sensei.folder_kind,
+                        parent_id = $2, project_id = $3, root_id = $4, modified_at = now()
+                  WHERE id = $1",
+            ).bind(s_id).bind(g_id).bind(g_pid).bind(g_root).execute(&self.pool).await {
+                tracing::warn!(folder = %s_id, error = %e, "heal_nested_standalone_roots: re-attribute failed");
+                continue;
+            }
+            // 3. Fold the phantom project into the repo's project when it lives
+            //    entirely inside the repo (the folder above was already re-pointed
+            //    to g_pid, so it no longer counts against s_pid).
+            if let Some(s_pid) = s_pid.filter(|p| *p != g_pid) {
+                let outside: (i64,) = sqlx_core::query_as::query_as(
+                    "SELECT count(*) FROM sensei.folders
+                      WHERE project_id = $1 AND NOT starts_with(abs_path, $2 || '/')",
+                ).bind(s_pid).bind(&g_abs).fetch_one(&self.pool).await.unwrap_or((1,));
+                if outside.0 == 0 {
+                    match self.merge_projects(&s_pid, &g_pid).await {
+                        Ok(()) => tracing::info!(phantom = %s_pid, survivor = %g_pid,
+                            "heal_nested_standalone_roots: merged phantom project into enclosing repo's project"),
+                        Err(e) => tracing::warn!(phantom = %s_pid, survivor = %g_pid, error = %e,
+                            "heal_nested_standalone_roots: merge_projects failed"),
+                    }
+                } else {
+                    tracing::info!(phantom = %s_pid, outside = outside.0,
+                        "heal_nested_standalone_roots: phantom has folders outside the repo — left for orphan-tagging");
+                }
+            }
+            healed += 1;
+            tracing::info!(folder = %s_id, project = %g_pid, "heal_nested_standalone_roots: re-absorbed nested standalone root");
+        }
+        Ok(healed)
+    }
+
+    /// Candidate rows for [`Self::heal_nested_standalone_roots`]: each mis-scoped
+    /// `standalone` root paired with the DEEPEST enclosing git repo it sits inside
+    /// (DISTINCT ON + length DESC picks the closest repo, never a grandparent).
+    /// `starts_with` is exact-prefix (no LIKE wildcard hazard in paths). Requires
+    /// the git repo to already have a project so there is somewhere to attribute
+    /// to. Tuple: `(standalone_id, standalone_project, git_id, git_project,
+    /// git_root, git_abs_path)`. Shared by the heal (which re-absorbs each) and
+    /// [`Self::detect_nested_standalone_roots`] (which reports read-only).
+    #[allow(clippy::type_complexity)]
+    async fn nested_standalone_candidates(
+        &self,
+    ) -> Result<Vec<(uuid::Uuid, Option<uuid::Uuid>, uuid::Uuid, uuid::Uuid, uuid::Uuid, String)>, String> {
+        sqlx_core::query_as::query_as(
+            "SELECT DISTINCT ON (s.id)
+                    s.id, s.project_id, g.id, g.project_id, g.root_id, g.abs_path
+               FROM sensei.folders s
+               JOIN sensei.folders g
+                 ON g.kind = 'git'::sensei.folder_kind
+                AND g.project_id IS NOT NULL
+                AND s.abs_path <> g.abs_path
+                AND starts_with(s.abs_path, g.abs_path || '/')
+              WHERE s.kind = 'standalone'::sensei.folder_kind
+                AND s.project_id IS DISTINCT FROM g.project_id
+              ORDER BY s.id, length(g.abs_path) DESC",
+        ).fetch_all(&self.pool).await.map_err(|e| e.to_string())
+    }
+
+    /// Read-only detection counterpart to [`Self::heal_nested_standalone_roots`]:
+    /// the abs_paths of standalone roots currently mis-scoped inside a git repo
+    /// (what the heal WOULD re-absorb). Shares the candidate query; performs no
+    /// mutation. Used by the index integrity audit's read-only (`doctor`) pass.
+    pub async fn detect_nested_standalone_roots(&self) -> Result<Vec<String>, String> {
+        Ok(self.nested_standalone_candidates().await?.into_iter().map(|c| c.5).collect())
     }
 
     pub async fn get_project_libraries(&self, project_id: &uuid::Uuid) -> Result<Vec<serde_json::Value>, String> {
@@ -9077,6 +9219,91 @@ mod tests {
             .bind(real).execute(s.pool()).await.ok();
     }
 
+    // ── Bug 3: re-absorb a standalone root mis-scoped inside a git repo ────
+
+    #[tokio::test]
+    async fn heal_nested_standalone_roots_reabsorbs_and_removes_phantom() {
+        let s = pg_store().await;
+        let uniq = uuid::Uuid::new_v4();
+        let root_path = format!("/_test/heal_nested/{uniq}");
+        let root_id = s.add_watch_root(&root_path, "heal_nested_root", &serde_json::json!([])).await.unwrap();
+
+        // A git repo (like the sensei monorepo) with its own project.
+        let repo_abs = format!("{root_path}/repo");
+        let repo_pid = s.create_project(&format!("_test:heal_repo_{uniq}"), None, None).await.unwrap();
+        let repo_fid = s.upsert_repo_kind(&root_id, "git", "repo", &repo_abs).await.unwrap();
+        sqlx_core::query::query("UPDATE sensei.folders SET project_id = $1 WHERE id = $2")
+            .bind(repo_pid).bind(repo_fid).execute(s.pool()).await.unwrap();
+
+        // A sub-crate INSIDE the repo, mis-scoped as its own standalone project
+        // (the Bug 3 phantom). Give it a node so we can prove its nodes are dropped.
+        let crate_abs = format!("{repo_abs}/crates/dojo-mind");
+        let phantom_pid = s.create_project(&format!("_test:heal_phantom_{uniq}"), None, None).await.unwrap();
+        let crate_fid = s.upsert_repo_kind(&root_id, "standalone", "dojo-mind", &crate_abs).await.unwrap();
+        sqlx_core::query::query("UPDATE sensei.folders SET project_id = $1 WHERE id = $2")
+            .bind(phantom_pid).bind(crate_fid).execute(s.pool()).await.unwrap();
+        let node_id = s.upsert_node(&crate_fid, "struct", "DojoStore", "src/store.rs", None, None, None, None).await.unwrap();
+
+        // Heal.
+        let healed = s.heal_nested_standalone_roots().await.unwrap();
+        assert!(healed >= 1, "the nested standalone root should be re-absorbed");
+
+        // The nested root is now a folder of the repo's project, parented to the repo.
+        let (kind, pid, parent): (String, Option<uuid::Uuid>, Option<uuid::Uuid>) =
+            sqlx_core::query_as::query_as("SELECT kind::text, project_id, parent_id FROM sensei.folders WHERE id = $1")
+                .bind(crate_fid).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(kind, "folder", "mis-scoped standalone should be re-classified as a folder");
+        assert_eq!(pid, Some(repo_pid), "should now belong to the enclosing repo's project");
+        assert_eq!(parent, Some(repo_fid), "should be parented under the enclosing repo");
+
+        // Its own nodes were dropped (the repo re-indexes the subtree).
+        let (node_exists,): (bool,) = sqlx_core::query_as::query_as("SELECT EXISTS(SELECT 1 FROM sensei.nodes WHERE id = $1)")
+            .bind(node_id).fetch_one(s.pool()).await.unwrap();
+        assert!(!node_exists, "the mis-scoped root's own nodes should be pruned");
+
+        // The phantom project (lived entirely inside the repo) is gone.
+        let (phantom_exists,): (bool,) = sqlx_core::query_as::query_as("SELECT EXISTS(SELECT 1 FROM sensei.projects WHERE id = $1)")
+            .bind(phantom_pid).fetch_one(s.pool()).await.unwrap();
+        assert!(!phantom_exists, "the phantom project should be merged away");
+
+        // Idempotent for THIS test's rows: a second run leaves the phantom merged
+        // away. The returned count is GLOBAL — db-gated tests share `sensei_test`
+        // and other tests (e.g. the index-audit suite) may seed nested-standalone
+        // rows concurrently — so assert on our own row, not the global count.
+        s.heal_nested_standalone_roots().await.unwrap();
+        let (phantom_gone_after_rerun,): (bool,) = sqlx_core::query_as::query_as("SELECT NOT EXISTS(SELECT 1 FROM sensei.projects WHERE id = $1)")
+            .bind(phantom_pid).fetch_one(s.pool()).await.unwrap();
+        assert!(phantom_gone_after_rerun, "re-run leaves the phantom merged away (idempotent)");
+
+        // cleanup
+        s.delete_folder_tree(&repo_fid).await.ok();
+        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1").bind(repo_pid).execute(s.pool()).await.ok();
+        s.remove_watch_root(&root_id).await.ok();
+    }
+
+    #[tokio::test]
+    async fn list_indexed_files_excludes_modules_and_empties() {
+        let s = pg_store().await;
+        let uniq = uuid::Uuid::new_v4();
+        let root_path = format!("/_test/idx_files/{uniq}");
+        let root_id = s.add_watch_root(&root_path, "idx_files_root", &serde_json::json!([])).await.unwrap();
+        let repo_abs = format!("{root_path}/repo");
+        let fid = s.upsert_repo_kind(&root_id, "git", "repo", &repo_abs).await.unwrap();
+
+        s.upsert_node(&fid, "file", "a.rs", "a.rs", None, None, None, None).await.unwrap();
+        s.upsert_node(&fid, "struct", "B", "b.rs", None, None, None, None).await.unwrap();
+        // A module node records an ABSOLUTE dir path — must be excluded so it never
+        // pollutes the rel-path comparison in prune_vanished.
+        s.upsert_node(&fid, "module", "src", &format!("{repo_abs}/src"), None, None, None, None).await.unwrap();
+
+        let mut files = s.list_indexed_files(&fid).await.unwrap();
+        files.sort();
+        assert_eq!(files, vec!["a.rs".to_string(), "b.rs".to_string()], "only real (rel) file paths, no module");
+
+        s.delete_folder_tree(&fid).await.ok();
+        s.remove_watch_root(&root_id).await.ok();
+    }
+
     // ── Activity pruner tests (#74) ────────────────────────────────────
 
     #[tokio::test]
@@ -10295,8 +10522,8 @@ mod tests {
     async fn knowledge_source_crud_roundtrip() {
         let Ok(pg) = PgStore::connect_test().await else { return; };
         let id = pg.create_knowledge_source(&NewKnowledgeSource {
-            kind: "hive_mind".into(), name: "Org Hive".into(), url: "https://hive.example".into(),
-            namespace_id: None, credential_ref: "hive-test".into(), direction: "both".into(),
+            kind: "hive_mind".into(), name: "Org Dōjō".into(), url: "https://dojo.example".into(),
+            namespace_id: None, credential_ref: "dojo-test".into(), direction: "both".into(),
         }).await.unwrap();
 
         let all = pg.list_knowledge_sources().await.unwrap();
@@ -10320,9 +10547,9 @@ mod tests {
         let mid = uuid::Uuid::new_v4();
         pg.create_dojo_membership(&NewDojoMembership {
             id: mid,
-            registry_url: "http://localhost:8787".into(),
+            registry_url: "http://localhost:7755".into(),
             tenant_key: "github/acme".into(),
-            dojo_url: "http://localhost:8787/github/acme".into(),
+            dojo_url: "http://localhost:7755/github/acme".into(),
             kind: "client".into(),
             role: "contributor".into(),
             authenticated_via: "device_code".into(),
@@ -10445,8 +10672,8 @@ mod tests {
         // A destination membership + the outbox dedup ledger.
         let mid = uuid::Uuid::new_v4();
         pg.create_dojo_membership(&NewDojoMembership {
-            id: mid, registry_url: "http://localhost:8787".into(), tenant_key: "github/acme".into(),
-            dojo_url: "http://localhost:8787/github/acme".into(), kind: "client".into(),
+            id: mid, registry_url: "http://localhost:7755".into(), tenant_key: "github/acme".into(),
+            dojo_url: "http://localhost:7755/github/acme".into(), kind: "client".into(),
             role: "contributor".into(), authenticated_via: "device_code".into(),
             attribution_default: "dereferenced".into(),
             credential_ref: format!("dojo-{}", uuid::Uuid::new_v4()), sync_status: "healthy".into(),
@@ -10476,8 +10703,8 @@ mod tests {
         // A source membership (inbox rows cascade with it on delete).
         let mid = uuid::Uuid::new_v4();
         pg.create_dojo_membership(&NewDojoMembership {
-            id: mid, registry_url: "http://localhost:8787".into(), tenant_key: "github/acme".into(),
-            dojo_url: "http://localhost:8787/github/acme".into(), kind: "community".into(),
+            id: mid, registry_url: "http://localhost:7755".into(), tenant_key: "github/acme".into(),
+            dojo_url: "http://localhost:7755/github/acme".into(), kind: "community".into(),
             role: "contributor".into(), authenticated_via: "device_code".into(),
             attribution_default: "anonymous".into(),
             credential_ref: format!("dojo-{}", uuid::Uuid::new_v4()), sync_status: "healthy".into(),

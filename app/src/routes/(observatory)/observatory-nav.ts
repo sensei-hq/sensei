@@ -99,6 +99,7 @@ export function buildNavItems({ focus, projectCount }: NavOptions): NavEntry[] {
         link("診", "Logs", "/activity-logs"),
         link("結", "Dōjō", "/dojo/connections"),
         link("群", "Sharing", "/dojo/sharing"),
+        link("送", "Share review", "/share-review"),
       ],
     });
     // Settings — visited when something needs changing, hidden in Focus.

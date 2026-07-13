@@ -24,7 +24,7 @@ comment on column scopes.name
 comment on column scopes.level
      is 'Precedence rank. Higher = more specific = wins. general=0 … repository=70.';
 comment on column scopes.shareable
-     is 'Whether knowledge at this scope federates to a shared hive-mind (organization/client/team = true).';
+     is 'Whether knowledge at this scope federates to a shared DÅjÅ (organization/client/team = true).';
 comment on column scopes.description
      is 'What this scope is for.';
 comment on column scopes.modified_at
