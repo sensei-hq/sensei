@@ -2,7 +2,7 @@
 //!
 //! Split by pipeline phase: scan, process, resolve, libraries, helpers.
 
-mod scan;
+pub(crate) mod scan;
 pub(crate) mod scan_logic;
 mod process;
 mod resolve;

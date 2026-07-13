@@ -103,6 +103,14 @@ describe("buildNavItems", () => {
     expect(sharing?.kanji).toBe("群");
     expect(byHref(buildNavItems({ focus: true }), "/dojo/sharing")).toBeUndefined();
   });
+
+  it("surfaces Share review (the upstream publish-gate) in the Review group (hidden in Focus)", () => {
+    const review = byHref(buildNavItems({ focus: false }), "/share-review");
+    expect(review?.text).toBe("Share review");
+    expect(review?.kanji).toBe("送");
+    expect(review?.value).toBe("/share-review");
+    expect(byHref(buildNavItems({ focus: true }), "/share-review")).toBeUndefined();
+  });
 });
 
 describe("resolveActiveHref", () => {

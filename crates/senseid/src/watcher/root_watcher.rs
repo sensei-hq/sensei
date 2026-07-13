@@ -3,6 +3,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 use std::collections::{HashMap, HashSet};
@@ -40,6 +41,152 @@ pub(crate) enum ChangeKind {
     Delete,
 }
 
+// ── Watcher liveness / health ─────────────────────────────────────────────
+
+/// Lock-free liveness + health of the watch thread, shared between the
+/// singleton [`RootWatcher`] (read side — the status API + watchdog) and the
+/// spawned notify thread (write side). Kept as plain atomics so the watchdog can
+/// snapshot health WITHOUT contending on the watch loop or the singleton mutex.
+///
+/// This is what makes a silent freeze impossible: `last_event_at_ms` is a
+/// heartbeat updated on every delivered fs event (previously a local var inside
+/// the thread — invisible from outside), and the flags let the watchdog tell a
+/// dead thread / errored stream apart from a merely-idle one.
+#[derive(Debug)]
+pub struct WatcherHealth {
+    /// Epoch millis of the last delivered fs event (0 = none since start).
+    last_event_at_ms: AtomicI64,
+    /// Epoch millis of the last (re)start of the watch thread.
+    started_at_ms: AtomicI64,
+    /// Number of roots the notify backend is actively watching.
+    roots_watched: AtomicUsize,
+    /// False once the notify callback reports an error (stream degraded).
+    stream_healthy: AtomicBool,
+    /// True while the watch thread is alive; flipped false on exit (incl. panic,
+    /// via the drop guard).
+    thread_alive: AtomicBool,
+    /// Watchdog verdict — the single "is the watcher OK?" flag the status API
+    /// exposes. Also gates warn-once-per-episode so a stall doesn't spam logs.
+    healthy: AtomicBool,
+}
+
+impl WatcherHealth {
+    fn new() -> Self {
+        Self {
+            last_event_at_ms: AtomicI64::new(0),
+            started_at_ms: AtomicI64::new(0),
+            roots_watched: AtomicUsize::new(0),
+            stream_healthy: AtomicBool::new(true),
+            thread_alive: AtomicBool::new(false),
+            healthy: AtomicBool::new(false),
+        }
+    }
+
+    pub fn last_event_at_ms(&self) -> i64 { self.last_event_at_ms.load(Ordering::Relaxed) }
+    pub fn started_at_ms(&self) -> i64 { self.started_at_ms.load(Ordering::Relaxed) }
+    pub fn roots_watched(&self) -> usize { self.roots_watched.load(Ordering::Relaxed) }
+    pub fn stream_healthy(&self) -> bool { self.stream_healthy.load(Ordering::Relaxed) }
+    pub fn thread_alive(&self) -> bool { self.thread_alive.load(Ordering::Relaxed) }
+    pub fn healthy(&self) -> bool { self.healthy.load(Ordering::Relaxed) }
+
+    /// Heartbeat — record that the stream just delivered an event.
+    fn touch(&self, now_ms: i64) { self.last_event_at_ms.store(now_ms, Ordering::Relaxed); }
+
+    /// The notify callback reported an error — the stream can no longer be
+    /// trusted. Never swallowed silently: the caller also logs it.
+    fn mark_stream_error(&self) { self.stream_healthy.store(false, Ordering::Relaxed); }
+
+    /// Called by the watch thread once it is up and watching. Resets the stall
+    /// clock so a fresh (re)start isn't immediately flagged stalled.
+    fn on_thread_start(&self, now_ms: i64, roots_watched: usize) {
+        self.started_at_ms.store(now_ms, Ordering::Relaxed);
+        self.last_event_at_ms.store(now_ms, Ordering::Relaxed);
+        self.roots_watched.store(roots_watched, Ordering::Relaxed);
+        self.stream_healthy.store(true, Ordering::Relaxed);
+        self.thread_alive.store(true, Ordering::Relaxed);
+        self.healthy.store(true, Ordering::Relaxed);
+    }
+
+    /// Called when the watch thread exits (any reason, incl. panic via the guard).
+    fn on_thread_exit(&self) {
+        self.thread_alive.store(false, Ordering::Relaxed);
+        self.healthy.store(false, Ordering::Relaxed);
+    }
+
+    /// Watchdog sets the overall verdict (surfaced by the status API).
+    pub fn set_healthy(&self, v: bool) { self.healthy.store(v, Ordering::Relaxed); }
+}
+
+/// Flips `thread_alive` false whenever the watch thread unwinds — break, return,
+/// OR panic. Without this a panicked thread would leave `thread_alive == true`
+/// forever and the watchdog would never restart it.
+struct AliveGuard(Arc<WatcherHealth>);
+impl Drop for AliveGuard {
+    fn drop(&mut self) { self.0.on_thread_exit(); }
+}
+
+/// Pure watchdog verdict: is the watch thread stalled? A dead thread is stalled
+/// unconditionally; a live thread that has delivered no event for `threshold_ms`
+/// is *suspected* stalled (indistinguishable from merely idle, so the watchdog's
+/// response — a cheap reconcile + stream re-establish — is safe either way).
+/// Clock injected so it is testable without sleeping.
+pub(crate) fn watcher_is_stalled(
+    last_event_at_ms: i64,
+    now_ms: i64,
+    threshold_ms: i64,
+    thread_alive: bool,
+) -> bool {
+    !thread_alive || now_ms.saturating_sub(last_event_at_ms) >= threshold_ms
+}
+
+/// The registered watch root that contains `path` (longest matching prefix), or
+/// `None` if `path` is outside every root. Uses component-wise `Path::starts_with`
+/// (so `/a/proj` is NOT treated as a prefix of `/a/project`). Pure — reused by
+/// the branch-switch and rescan reconcile paths to pick which root to re-scan.
+pub(crate) fn watch_root_for_path(path: &Path, roots: &[PathBuf]) -> Option<PathBuf> {
+    roots.iter()
+        .filter(|r| path.starts_with(r))
+        .max_by_key(|r| r.as_os_str().len())
+        .cloned()
+}
+
+/// Given an FSEvents rescan/overflow event's paths and the watch roots, return
+/// the roots to force-reconcile. An empty path list (a global overflow with no
+/// specific path), or a path outside every root, conservatively reconciles ALL
+/// roots — a dropped-events signal must never be under-served. Pure/testable.
+pub(crate) fn rescan_reconcile_roots(paths: &[PathBuf], roots: &[PathBuf]) -> Vec<PathBuf> {
+    if paths.is_empty() {
+        return roots.to_vec();
+    }
+    let mut out: Vec<PathBuf> = Vec::new();
+    for p in paths {
+        if let Some(r) = watch_root_for_path(p, roots)
+            && !out.contains(&r)
+        {
+            out.push(r);
+        }
+    }
+    if out.is_empty() { roots.to_vec() } else { out }
+}
+
+/// Enqueue one `ScanRoot` reconcile per target root — the same task the
+/// `scan_folder` API, version-rescan, and reconcile-scheduler use. Overlap-guarded
+/// (skips when a `ScanRoot` is already in flight) so watcher-driven reconciles
+/// never stack on top of a running scan. Fire-and-forget onto the tokio runtime
+/// because the caller is the (non-async) watch thread.
+fn enqueue_scanroot_reconcile(rt: &tokio::runtime::Handle, queue: &Arc<TaskQueue>, roots: Vec<PathBuf>) {
+    if roots.is_empty() { return; }
+    let q = queue.clone();
+    rt.spawn(async move {
+        if q.has_pending_kind(TaskKind::ScanRoot).await {
+            return; // a scan/reconcile already covers these roots
+        }
+        for r in roots {
+            q.enqueue(Task::new(TaskKind::ScanRoot, "", &r.to_string_lossy())).await;
+        }
+    });
+}
+
 // ── Singleton ────────────────────────────────────────────────────────────
 
 static INSTANCE: OnceLock<Mutex<RootWatcher>> = OnceLock::new();
@@ -54,6 +201,9 @@ pub struct RootWatcher {
     status: WatcherStatus,
     stop_flag: Arc<std::sync::atomic::AtomicBool>,
     thread: Option<std::thread::JoinHandle<()>>,
+    /// Liveness/health shared with the watch thread; survives restarts so the
+    /// status API + watchdog always read the same handle.
+    health: Arc<WatcherHealth>,
 }
 
 impl RootWatcher {
@@ -69,6 +219,7 @@ impl RootWatcher {
             status: WatcherStatus::Stopped("no roots".into()),
             stop_flag: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             thread: None,
+            health: Arc::new(WatcherHealth::new()),
         }
     }
 
@@ -82,6 +233,12 @@ impl RootWatcher {
 
     pub fn status(&self) -> &WatcherStatus {
         &self.status
+    }
+
+    /// Shared liveness/health handle — cloned by the watchdog + status API so a
+    /// watcher freeze is queryable from OUTSIDE the watch thread.
+    pub fn health(&self) -> Arc<WatcherHealth> {
+        self.health.clone()
     }
 
     pub fn roots(&self) -> &HashMap<PathBuf, WatchedRoot> {
@@ -106,25 +263,41 @@ impl RootWatcher {
             .flat_map(|r| r.excluded.clone())
             .collect();
         let queue = self.queue.clone();
+        let health = self.health.clone();
 
         let rt = tokio::runtime::Handle::try_current()
             .map_err(|_| "RootWatcher requires tokio runtime".to_string())?;
 
         let thread = std::thread::spawn(move || {
             let (tx, rx) = std::sync::mpsc::channel();
+            // The callback used to drop `Err(_)` silently — a stream error would
+            // vanish. Now it logs AND marks the stream degraded so the watchdog
+            // re-establishes it (no silent errors).
+            let health_cb = health.clone();
             let mut watcher = notify::recommended_watcher(move |res: Result<Event, notify::Error>| {
-                if let Ok(event) = res {
-                    let _ = tx.send(event);
+                match res {
+                    Ok(event) => { let _ = tx.send(event); }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "RootWatcher: notify stream error — marking stream degraded");
+                        health_cb.mark_stream_error();
+                    }
                 }
             }).expect("failed to create watcher");
 
+            let mut watched = 0usize;
             for root in &roots {
-                if let Err(e) = watcher.watch(root, RecursiveMode::Recursive) {
-                    tracing::warn!(error = %e, root = %root.display(), "failed to watch root");
+                match watcher.watch(root, RecursiveMode::Recursive) {
+                    Ok(()) => watched += 1,
+                    Err(e) => tracing::warn!(error = %e, root = %root.display(), "failed to watch root"),
                 }
             }
 
-            tracing::info!("RootWatcher started: {} roots", roots.len());
+            // Publish liveness BEFORE the loop, and flip it false on ANY exit
+            // (break / return / panic) via the drop guard.
+            health.on_thread_start(chrono::Utc::now().timestamp_millis(), watched);
+            let _alive = AliveGuard(health.clone());
+
+            tracing::info!("RootWatcher started: {} roots ({} watched)", roots.len(), watched);
 
             let mut pending: HashMap<PathBuf, ChangeKind> = HashMap::new();
             let mut last_event = std::time::Instant::now();
@@ -147,25 +320,45 @@ impl RootWatcher {
                 }
                 match rx.recv_timeout(Duration::from_millis(DEBOUNCE_MS)) {
                     Ok(event) => {
+                        // Heartbeat: any delivered event is liveness proof.
+                        health.touch(chrono::Utc::now().timestamp_millis());
+
+                        // FSEvents overflow / kernel-or-user-dropped events. The
+                        // notify Rescan flag means "events were lost — the state
+                        // you have can no longer be trusted". classify_event would
+                        // silently fold this into a Modify and drop it, so handle
+                        // it explicitly: force a reconcile of the affected root(s).
+                        if event.need_rescan() {
+                            let targets = rescan_reconcile_roots(&event.paths, &roots);
+                            tracing::warn!(
+                                targets = targets.len(),
+                                paths = ?event.paths,
+                                "RootWatcher: FSEvents rescan/overflow — forcing reconcile of affected root(s)",
+                            );
+                            enqueue_scanroot_reconcile(&rt, &queue, targets);
+                            continue;
+                        }
+
                         let change_kind = RootWatcher::classify_event(&event.kind);
 
                         for path in event.paths {
+                            // A branch switch / rebase / checkout rewrote .git/HEAD.
+                            // This is where drift is born (a rename/move under a
+                            // switched tree), so force a FULL repo reconcile
+                            // (ScanRoot → prunes ghost folders, re-scopes phantom
+                            // standalone roots, re-indexes changed files) rather
+                            // than only an incremental re-index. Fire even when the
+                            // branch is unreadable (detached HEAD mid-rebase).
                             if RootWatcher::is_branch_switch(&path) {
-                                let new_branch = read_git_head(&path.to_string_lossy());
-                                if let Some(branch) = new_branch
-                                    && let Some((repo_id, _)) = projects.iter()
-                                        .find(|(_, rp)| path.to_string_lossy().starts_with(rp.as_str()))
-                                    {
-                                        let q = queue.clone();
-                                        let rid = repo_id.clone();
-                                        let br = branch.clone();
-                                        rt.spawn(async move {
-                                            let task = Task::new(TaskKind::BranchSwitch, &rid, "")
-                                                .with_branch(&br);
-                                            q.enqueue(task).await;
-                                        });
-                                        tracing::info!("Branch switch: {} → {}", repo_id, branch);
-                                    }
+                                if let Some(root) = watch_root_for_path(&path, &roots) {
+                                    let branch = read_git_head(&path.to_string_lossy());
+                                    tracing::info!(
+                                        root = %root.display(),
+                                        branch = ?branch,
+                                        ".git/HEAD changed — forcing repo reconcile",
+                                    );
+                                    enqueue_scanroot_reconcile(&rt, &queue, vec![root]);
+                                }
                                 continue;
                             }
 
@@ -501,6 +694,142 @@ mod tests {
     #[test]
     fn non_git_file_is_not_branch_switch() {
         assert!(!RootWatcher::is_branch_switch(&PathBuf::from("/project/src/main.rs")));
+    }
+
+    // ── watcher_is_stalled (watchdog decision) ────────────────────────
+
+    #[test]
+    fn watcher_is_stalled_dead_thread_is_always_stalled() {
+        // A dead thread is stalled regardless of how recent the last event was.
+        assert!(watcher_is_stalled(1_000_000, 1_000_000, 900_000, false));
+    }
+
+    #[test]
+    fn watcher_is_stalled_live_and_fresh_is_not_stalled() {
+        let now = 1_000_000;
+        assert!(!watcher_is_stalled(now - 10_000, now, 900_000, true));
+    }
+
+    #[test]
+    fn watcher_is_stalled_live_but_quiet_past_threshold() {
+        let now = 2_000_000;
+        // Exactly at the threshold counts as stalled (>=), and beyond it too.
+        assert!(watcher_is_stalled(now - 900_000, now, 900_000, true));
+        assert!(watcher_is_stalled(now - 900_001, now, 900_000, true));
+        // One ms under the threshold is still healthy.
+        assert!(!watcher_is_stalled(now - 899_999, now, 900_000, true));
+    }
+
+    // ── watch_root_for_path ───────────────────────────────────────────
+
+    #[test]
+    fn watch_root_for_path_matches_containing_root() {
+        let roots = vec![PathBuf::from("/a/project")];
+        assert_eq!(
+            watch_root_for_path(&PathBuf::from("/a/project/src/main.rs"), &roots),
+            Some(PathBuf::from("/a/project")),
+        );
+    }
+
+    #[test]
+    fn watch_root_for_path_none_when_outside() {
+        let roots = vec![PathBuf::from("/a/project")];
+        assert_eq!(watch_root_for_path(&PathBuf::from("/b/other/x.rs"), &roots), None);
+    }
+
+    #[test]
+    fn watch_root_for_path_is_component_wise_not_string_prefix() {
+        // /a/project must NOT match /a/projectX (the classic string-prefix bug).
+        let roots = vec![PathBuf::from("/a/project")];
+        assert_eq!(watch_root_for_path(&PathBuf::from("/a/projectX/f.rs"), &roots), None);
+    }
+
+    #[test]
+    fn watch_root_for_path_picks_longest_prefix_for_nested_roots() {
+        let roots = vec![PathBuf::from("/a"), PathBuf::from("/a/nested")];
+        assert_eq!(
+            watch_root_for_path(&PathBuf::from("/a/nested/src/x.rs"), &roots),
+            Some(PathBuf::from("/a/nested")),
+        );
+    }
+
+    #[test]
+    fn watch_root_for_path_maps_git_head_to_its_root() {
+        // The branch-switch path: .git/HEAD resolves to the repo's watch root.
+        let roots = vec![PathBuf::from("/a/repo")];
+        assert_eq!(
+            watch_root_for_path(&PathBuf::from("/a/repo/.git/HEAD"), &roots),
+            Some(PathBuf::from("/a/repo")),
+        );
+    }
+
+    // ── rescan_reconcile_roots (FSEvents overflow) ────────────────────
+
+    #[test]
+    fn rescan_empty_paths_reconciles_all_roots() {
+        let roots = vec![PathBuf::from("/a"), PathBuf::from("/b")];
+        assert_eq!(rescan_reconcile_roots(&[], &roots), roots);
+    }
+
+    #[test]
+    fn rescan_targets_only_affected_root_and_dedupes() {
+        let roots = vec![PathBuf::from("/a"), PathBuf::from("/b")];
+        let paths = vec![
+            PathBuf::from("/a/one.rs"),
+            PathBuf::from("/a/two.rs"), // same root → deduped
+        ];
+        assert_eq!(rescan_reconcile_roots(&paths, &roots), vec![PathBuf::from("/a")]);
+    }
+
+    #[test]
+    fn rescan_path_outside_all_roots_falls_back_to_all() {
+        let roots = vec![PathBuf::from("/a"), PathBuf::from("/b")];
+        let paths = vec![PathBuf::from("/z/orphan.rs")];
+        assert_eq!(rescan_reconcile_roots(&paths, &roots), roots);
+    }
+
+    #[test]
+    fn need_rescan_detects_the_flag() {
+        // Guards our reliance on notify's Rescan flag: a flagged event reports
+        // need_rescan(), a plain one does not.
+        use notify::event::Flag;
+        let rescan = Event::new(EventKind::Any).set_flag(Flag::Rescan);
+        assert!(rescan.need_rescan());
+        let plain = Event::new(EventKind::Modify(notify::event::ModifyKind::Any));
+        assert!(!plain.need_rescan());
+    }
+
+    // ── WatcherHealth ─────────────────────────────────────────────────
+
+    #[test]
+    fn watcher_health_lifecycle() {
+        let h = WatcherHealth::new();
+        // Fresh: not alive, not healthy, stream assumed ok.
+        assert!(!h.thread_alive());
+        assert!(!h.healthy());
+        assert!(h.stream_healthy());
+        assert_eq!(h.last_event_at_ms(), 0);
+
+        // Thread comes up → alive + healthy, clock reset, roots recorded.
+        h.on_thread_start(1_000, 3);
+        assert!(h.thread_alive());
+        assert!(h.healthy());
+        assert_eq!(h.roots_watched(), 3);
+        assert_eq!(h.last_event_at_ms(), 1_000);
+
+        // Heartbeat advances the clock.
+        h.touch(5_000);
+        assert_eq!(h.last_event_at_ms(), 5_000);
+
+        // A stream error degrades the stream (but doesn't touch liveness).
+        h.mark_stream_error();
+        assert!(!h.stream_healthy());
+        assert!(h.thread_alive());
+
+        // Exit flips alive + healthy false.
+        h.on_thread_exit();
+        assert!(!h.thread_alive());
+        assert!(!h.healthy());
     }
 
     // ── read_git_head ─────────────────────────────────────────────────

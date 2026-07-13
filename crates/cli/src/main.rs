@@ -86,6 +86,12 @@ enum Commands {
         path: String,
     },
 
+    /// Inspect the code index (read-only diagnostics)
+    Index {
+        #[command(subcommand)]
+        cmd: IndexCommands,
+    },
+
     /// Add an external library's documentation
     AddLib {
         /// Library name
@@ -112,6 +118,14 @@ enum Commands {
         #[arg(long)]
         acp: Option<String>,
     },
+}
+
+/// `sensei index <cmd>` — index diagnostics. Read-only; the daemon owns repair.
+#[derive(Subcommand)]
+enum IndexCommands {
+    /// Report index integrity drift (orphan nodes, ghost folders, mis-scoped
+    /// roots, duplicate-name projects) without repairing — read-only.
+    Doctor,
 }
 
 /// Daemon route the `upgrade` subcommand POSTs to. Kept as a const so the code
@@ -153,6 +167,9 @@ fn main() -> ExitCode {
         Some(Commands::Restart { port }) => restart_daemon(port.unwrap_or_else(|| cfg().daemon_port)),
         Some(Commands::Status) => daemon_cmd("status", None),
         Some(Commands::Scan { path }) => scan(&path),
+        Some(Commands::Index { cmd }) => match cmd {
+            IndexCommands::Doctor => index_doctor(),
+        },
         Some(Commands::AddLib { name, url }) => add_lib(&name, url.as_deref()),
         Some(Commands::Doctor { fix }) => return ExitCode::from(doctor::run(fix) as u8),
         Some(Commands::Upgrade { acp }) => upgrade_cmd(acp.as_deref()),
@@ -965,6 +982,57 @@ fn scan(path: &str) {
     }
 }
 
+/// `sensei index doctor` — GET the daemon's read-only index integrity report and
+/// print per-class drift counts + a few samples. Read-only: the daemon's periodic
+/// audit owns repair.
+fn index_doctor() {
+    ensure_daemon();
+    match client().get(format!("{}/api/index/doctor", daemon_url())).send() {
+        Ok(r) if r.status().is_success() => {
+            let report: serde_json::Value = r.json().unwrap_or_default();
+            print_index_doctor(&report);
+        }
+        Ok(r) => eprintln!("index doctor failed: HTTP {}", r.status()),
+        Err(e) => eprintln!("index doctor failed: {}", e),
+    }
+}
+
+/// Render an index-doctor report. Kept separate from the HTTP call so the format
+/// is pure over the JSON payload.
+fn print_index_doctor(r: &serde_json::Value) {
+    let n = |k: &str| r[k].as_u64().unwrap_or(0);
+    println!("=== index doctor ===\n");
+    println!(
+        "roots: {} checked, {} present, {} absent (unmounted — skipped)\n",
+        n("roots_checked"), n("roots_present"), n("roots_absent")
+    );
+
+    let classes = [
+        ("orphan nodes (indexed file gone)", "orphan_files", "orphan_files"),
+        ("ghost folders (directory gone)", "ghost_folders", "ghost_folders"),
+        ("nested standalone (mis-scoped in a repo)", "nested_standalone", "nested_standalone"),
+        ("duplicate-name projects", "duplicate_name_projects", "duplicate_name_projects"),
+    ];
+    let total: u64 = classes.iter().map(|(_, count_key, _)| n(count_key)).sum();
+    if total == 0 {
+        println!("index is invariant-clean — no drift detected.");
+        return;
+    }
+
+    println!("drift detected (repaired automatically by the daemon's periodic audit):");
+    for (label, count_key, sample_key) in classes {
+        let count = n(count_key);
+        println!("  {:<42} {}", label, count);
+        if count > 0
+            && let Some(samples) = r["samples"][sample_key].as_array()
+        {
+            for s in samples.iter().filter_map(|s| s.as_str()) {
+                println!("      - {s}");
+            }
+        }
+    }
+}
+
 fn add_lib(name: &str, url: Option<&str>) {
     ensure_daemon();
     let c = client_with_timeout(45);
@@ -1037,6 +1105,41 @@ mod tests {
     fn upgrade_targets_assistants_upgrade_endpoint() {
         // The subcommand must POST to the daemon's assistant-upgrade route.
         assert_eq!(UPGRADE_ENDPOINT, "/api/assistants/upgrade");
+    }
+
+    #[test]
+    fn index_doctor_subcommand_parses_and_dispatches() {
+        // `sensei index doctor` → Index { cmd: Doctor }. Unit-level: proves the
+        // arg surface parses + routes to the doctor branch without a live daemon.
+        let cli = Cli::parse_from(["sensei", "index", "doctor"]);
+        match cli.command {
+            Some(Commands::Index { cmd: IndexCommands::Doctor }) => {}
+            other => panic!("expected Index doctor, got {:?}", other.is_some()),
+        }
+    }
+
+    #[test]
+    fn index_requires_a_subcommand() {
+        // Bare `sensei index` must not parse (a subcommand is required), so the
+        // command never silently no-ops.
+        assert!(Cli::try_parse_from(["sensei", "index"]).is_err());
+    }
+
+    #[test]
+    fn print_index_doctor_handles_clean_and_drift_reports() {
+        // Clean report: zero counts → no panic (renders the clean line).
+        print_index_doctor(&serde_json::json!({
+            "roots_checked": 3, "roots_present": 3, "roots_absent": 0,
+            "orphan_files": 0, "ghost_folders": 0, "nested_standalone": 0,
+            "duplicate_name_projects": 0, "samples": {}
+        }));
+        // Drift report with samples → no panic (renders per-class + samples).
+        print_index_doctor(&serde_json::json!({
+            "roots_checked": 2, "roots_present": 1, "roots_absent": 1,
+            "orphan_files": 2, "ghost_folders": 1, "nested_standalone": 0,
+            "duplicate_name_projects": 0,
+            "samples": { "orphan_files": ["/a/b.rs", "/a/c.rs"], "ghost_folders": ["/a/gone"] }
+        }));
     }
 
     #[test]
