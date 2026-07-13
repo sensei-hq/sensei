@@ -1292,6 +1292,94 @@ export interface DojoUpgradesResponse {
   unread_count: number;
 }
 
+// ─── Share review (Observatory · Share review · C11) ─────────────────────────
+//
+// Wire shapes of `GET /api/share-review/next-batch` and
+// `POST /api/share-review/{batch}/publish`. Derived from the Rust `BatchPreview`
+// / `ItemPreview` / `ContributeOutcome` / `ItemOutcome` structs in
+// `crates/senseid/src/dojo/contribute.rs`. The upstream publish-gate: the next
+// approved-but-unsent batch with its per-item dereference PREVIEW. `type`,
+// `state`, attribution.mode and `result` stay string-tolerant so a new wire
+// value renders neutral rather than throwing — wire-API-wins. Attribution reuses
+// `DojoUpgradeAttribution` (the same `dojo.artifacts.attribution` jsonb shape as
+// the downstream Upgrades inbox).
+
+/** One item as previewed on the share-review surface — the redacted text about
+ *  to leave, plus whether it is held for residual identifier risk. `held` items
+ *  never ship this batch; `queued` items ship on publish. `will_dereference`
+ *  marks client-work whose source reference is stripped (mandatory — the user
+ *  cannot override it). */
+export interface ShareReviewItem {
+  memory_id: string;
+  type: DojoUpgradeType | string;
+  title: string;
+  body: string;
+  attribution: DojoUpgradeAttribution;
+  will_dereference: boolean;
+  /** `queued` (ships next batch) or `held` (residual risk — won't ship). */
+  state: 'queued' | 'held' | string;
+}
+
+/** The next approved-but-unsent batch preview surfaced by
+ *  `GET /api/share-review/next-batch`. */
+export interface ShareReviewBatch {
+  batch_id: string;
+  /** The routed destination tenant keys (`[]` when unbound / no memberships). */
+  destination: string[];
+  /** Cadence controls (Observatory · Collective / C9) are not modelled yet —
+   *  currently always `manual`. */
+  cadence: string;
+  next_batch_at?: string;
+  items: ShareReviewItem[];
+}
+
+/** Response of `GET /api/share-review/next-batch` — `batch: null` when nothing
+ *  is pending. */
+export interface ShareReviewResponse {
+  batch: ShareReviewBatch | null;
+}
+
+/** Per-item outcome kind of a publish — the `result` tag of the Rust
+ *  `ItemResult`. `published` landed (with `seq`/`remote_id`);
+ *  `held_residual_risk` was refused by the confidentiality gate;
+ *  `queued_retry` left queued after a transient failure; `already_sent` was
+ *  deduped; `error` carries a `message`; `no_destination` had no routed Dōjō. */
+export type PublishResultKind =
+  | 'published'
+  | 'staged'
+  | 'held_residual_risk'
+  | 'queued_retry'
+  | 'already_sent'
+  | 'error'
+  | 'no_destination';
+
+/** The outcome of contributing one memory to one destination — the Rust
+ *  `ItemOutcome` (`result` flattened onto the row). */
+export interface PublishItemOutcome {
+  memory_id: string;
+  membership_id?: string;
+  tenant_key?: string;
+  kind: DojoUpgradeType | string;
+  result: PublishResultKind | string;
+  /** Present when `result === 'published'`. */
+  seq?: number;
+  remote_id?: string;
+  /** Present when `result === 'error'`. */
+  message?: string;
+}
+
+/** Response of `POST /api/share-review/{batch}/publish` — the Rust
+ *  `ContributeOutcome` (per-item outcomes plus roll-up counts). */
+export interface PublishBatchOutcome {
+  batch_id: string;
+  published: number;
+  held: number;
+  queued: number;
+  errored: number;
+  already_sent: number;
+  items: PublishItemOutcome[];
+}
+
 // ─── Collective sharing preferences (Observatory · Collective · C9) ──────────
 //
 // Wire shape of `GET/PUT /api/preferences/collective`. The daemon always
