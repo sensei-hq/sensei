@@ -1857,6 +1857,27 @@ port mismatch hive 7755 vs config 8787 (🟢), etc. Chunk order: {R1,R2}→R3→
    SHIPPED DDL role-enum change must STOP+flag (not invent). No commit until I verify.
    THEN R6 console (greenfield SvelteKit, @kavach on npm) — last big buildable Dōjō chunk; after that only Jerry-
    blocked (R3/R4) + live-auth-verify (R6/R9-11) remain → would record clean-backlog state per heartbeat step 6.
+
+★★ JERRY DECISIONS 2026-07-13 (UNBLOCK R3/R4/CI) — asked+answered:
+ • R3 BIND = INFER + CONFIRM (was blocked). Match project git-remote owner (GitHub/GitLab org) vs the user's joined
+   dojo memberships; if one matches, SUGGEST the binding in the project About panel → user CONFIRMS (confirm-inferred,
+   InappBind chip). Needs a small org-slug/owners[] field on the membership (dojo.memberships is a dojo-SERVICE table →
+   DDL-source-first add). R3 NOW UNBLOCKED + specced. Chunk spans: DDL (memberships.org) + daemon infer-at-detect
+   (reuse client_precedence_route candidate-building) + About confirm chip + setup tagging (below).
+ • R3 CLASSIFICATION = ASK ONCE IN SETUP. First-join/setup lists the user's orgs → user tags each company vs client;
+   store on the membership; overridable later. Feeds client-precedence routing (client wins over employer).
+ • R4 SEED = DROPPED (no synthetic community insights). Jerry: fresh installs may have none; community insights
+   accumulate ORGANICALLY once there's momentum via real sharing. The BUNDLED marketplace kit (skills/agents/tools
+   sensei ships) IS the initial kit. → "seed a fake community catalogue" is NOT built. Empty community/peer metrics on
+   a fresh install are CORRECT, not a gap. R4 reframes to (at most) "ensure the bundled marketplace kit is present" —
+   which marketplace install already does. Effectively R4 = done/no-op. [[feedback_apis_consistent_with_data]]
+ • CI = PATCH RELEASE NOW. Cherry-pick the gateway https fix (d5bdf9b1, Cargo.toml+lock ssh→https) onto main + patch
+   bump to prove Actions goes GREEN, WITHOUT releasing the unmerged Dōjō stack. ⏳ SEQUENCING: do this RIGHT AFTER the
+   R8 subagent finishes + commits (cherry-pick needs `git checkout main`; must not interleave with R8's uncommitted
+   develop work). Steps: finish+commit R8 → `git checkout main` → `git cherry-pick d5bdf9b1` → `make bump v=patch` →
+   watch the release workflow go green → back to develop. (main currently lacks the https fix so its CI is red too.)
+ UPDATED QUEUE: [R8 in progress] → CI patch release → R6 console → R3 (infer+confirm bind + setup org-tagging, now
+ specced, DDL+daemon+frontend) → then Dōjō console screens R9-11 (live-auth = Jerry). R4 dropped.
    Dōjō is NOT deferred (LOCAL-FIRST=RELAY-ONLY). Consolidation was cleanup = shipped.
 Assets: _dojo-build-plan.md (refreshed) + 4 console specs + dojo-developer-flow.md; ~/Developer/kavach/supabase model.
 
