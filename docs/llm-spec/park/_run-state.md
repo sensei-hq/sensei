@@ -1961,12 +1961,17 @@ port mismatch hive 7755 vs config 8787 (🟢), etc. Chunk order: {R1,R2}→R3→
    limit) — a follow-up glance advisable but check+build are green.
    ⛔ SESSION USAGE LIMIT HIT (resets ~2:40pm America/Chicago) — CANNOT spawn subagents until reset. So the next chunk
    waits.
-   🟢 QUEUED (Jerry approved 2026-07-13): **sensei-mcp AUTO-RECONNECT** — next reliability chunk AFTER R6. Make the
-   crates/mcp stdio proxy resilient to the daemon restarting: retry-with-backoff reconnect to :7744 + re-fetch the tool
-   list when the daemon bounces, so a daemon-only upgrade is truly live-immediately (no pkill nudge, no manual /mcp).
-   Root cause of the "tools not loading" this session: the proxy drops when the daemon stops during install + never
-   recovers. The existing mcp-refresh-note pkill is an unreliable client-nudge; THIS kills the root cause. (My redundant
-   Makefile pkill dup was reverted — the pkill already lives in mcp-refresh-note.)
+   ✅ sensei-mcp RESILIENCE SHIPPED `89de7c59` (2026-07-13) — ⚠️ INVESTIGATION FLIPPED THE FIX. The proposed "add
+   reconnect logic + re-fetch the tool list" was based on a WRONG premise. Reading crates/mcp: `handle_list_tools`
+   returns a fully STATIC list (hardcoded json!, NOT daemon-fetched), and tool CALLS are per-call reqwest to :7744.
+   So there's NO persistent connection to re-establish + NO dynamic list to re-fetch — a RUNNING proxy is already
+   resilient across a daemon restart. The ACTUAL culprit of "tools vanish after upgrade": the `pkill -x sensei-mcp` in
+   mcp-refresh-note KILLED the working proxy on every upgrade, and Claude Code doesn't reliably auto-respawn the stdio
+   server → tools dropped until manual /mcp. FIX = (1) REMOVE the pkill (+ correct the stale comment/note: daemon-only
+   upgrades are truly live-immediately; tool-surface change → `claude plugin update`); (2) send_daemon_request retries
+   once (300ms) on is_connect so a request in the brief daemon-down restart window isn't a failed tool call. clippy 0,
+   sensei-mcp 42 tests. LESSON: read the code before trusting the proposed mechanism — "resilient proxy" meant STOP
+   breaking it, not add reconnect machinery.
    develop continues from the merged base @ v0.3.0. Reliability track (P0-P2) complete — capture is rock-solid.
    ★ DESIGN DOC OF RECORD: docs/analysis/2026-07-13-index-reliability-rock-solid.md (a8b09407) — full architecture,
    root-cause, per-tier done-gates. ★ JERRY CONFIRMED (2026-07-13): build the FULL "resilient watcher/scanner" as
