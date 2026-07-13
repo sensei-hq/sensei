@@ -1884,7 +1884,12 @@ port mismatch hive 7755 vs config 8787 (🟢), etc. Chunk order: {R1,R2}→R3→
    stats-only; (2) reconcile_scheduler runs FREQUENT (default ~120-300s not hourly) + ALWAYS on boot (cheap pass not
    watermark-gated) ⇒ worst-case staleness ~seconds, watcher no longer load-bearing. Verify cargo test -p senseid.
    P1 follow-ups queued: watcher watchdog (kill silent freeze) + FSEvents cursor persist + .git/HEAD watch. P2: invariant
-   self-audit + `sensei index doctor` + chaos test. THEN R6 console.
+   self-audit + `sensei index doctor` + chaos test.
+   ★ DESIGN DOC OF RECORD: docs/analysis/2026-07-13-index-reliability-rock-solid.md (a8b09407) — full architecture,
+   root-cause, per-tier done-gates. ★ JERRY CONFIRMED (2026-07-13): build the FULL "resilient watcher/scanner" as
+   outlined — so the RELIABILITY TRACK is now the PRIORITY: P0 (in progress) → P1 → P2 as sequential chunks, AHEAD of
+   R6 console. Each tier: survey → one subagent → verify → commit; install+live-verify at the end of the track (like
+   the capture-cluster). R6 console + remaining Dōjō screens resume after the watcher/scanner is rock-solid.
 
 ★★ JERRY DECISIONS 2026-07-13 (UNBLOCK R3/R4/CI) — asked+answered:
  • R3 BIND = INFER + CONFIRM (was blocked). Match project git-remote owner (GitHub/GitLab org) vs the user's joined
