@@ -1652,3 +1652,11 @@ A ✅ VERIFIED LIVE (daemon-side) 2026-07-12: after install-service, daemon 0.2.
 
 ── B (contract coverage) was KILLED by the session limit (0 file changes, tree clean); RE-RUNNING ab9e30401
   (limit reset). Same scope: mcp lib split + table-driven proxy→daemon contract test over knowledge/project tools.
+
+B ✅ SHIPPED `8fa61da4` (2026-07-13): mcp lib split (sensei_mcp lib + daemon_request_for = single request-shaper) +
+  table-driven contract test (routes.rs::mcp_proxy_knowledge_and_project_tools_contract) over 8 knowledge/project
+  tools boots daemon in-process, asserts 200 + genuine seeded resolution; RED on Chunk-A shape (verified). mcp 34 /
+  senseid 1370 / clippy 0. NOT installed (behavior-preserving; running daemon already has A's fix). NOT merged.
+⏳ C BUILDING: folder→project workflow — find_projects(under=<path>) (list projects whose abs_path is under a folder,
+  daemon filter + mcp tool) + use_project pin (~/.sensei/active-project name+id; mcp reads per-call as default when
+  cwd doesn't resolve; use_project tool writes it). Builds on A's daemon name-resolution + B's mcp lib. TDD.
