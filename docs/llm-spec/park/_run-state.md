@@ -1905,12 +1905,19 @@ port mismatch hive 7755 vs config 8787 (🟢), etc. Chunk order: {R1,R2}→R3→
    gets real SHAs (brew fixed) + the FULL pipeline is proven. main release.yml now HAS the update-tap fix too.
    ⚑ FOLLOW-UP (non-blocking): semgrep flags release.yml actions (checkout@v5 etc.) unpinned to SHAs — pre-existing
    supply-chain hardening, separate sweep.
-   🔨 P1 IN PROGRESS (subagent ab2cc01c) — watcher resilience: (1) liveness heartbeat + WATCHDOG that detects a
-   stalled/dead watcher → forces reconcile + surfaces watcher health in the status/health API (kills the SILENT
-   5h-freeze); (2) FSEvents overflow/Rescan → force reconcile (classify_event drops Rescan today); (3) .git/HEAD
-   branch-switch → immediate repo reconcile (is_branch_switch exists). DEFERRED = P1b FSEvents-cursor persistence
-   (needs raw-FSEvents spike; P0's always-on-boot reconcile already covers the restart-gap, so low priority). No DDL
-   (sensei.config). Verify cargo test -p senseid. P2 next: invariant self-audit + `sensei index doctor` + chaos test.
+   ✅ P1 SHIPPED `e00aa238` (agent ab2cc01c) — VERIFIED by me: clippy 0, 47 watcher tests (watcher_is_stalled,
+   watch_root_for_path component-wise, rescan, need_rescan, health-lifecycle) + executor/queue 22 regression green.
+   (1) WatcherHealth lock-free atomics lifted out of the thread + heartbeat/event + AliveGuard flips thread_alive on
+   ANY exit incl. PANIC + notify Err now logged (was silently dropped); WATCHDOG each reconcile tick →
+   watcher_is_stalled() → forces reconcile + RE-start()s the stream + WARNs once/episode; health at
+   GET /api/watcher/status. (2) event.need_rescan() → force ScanRoot reconcile. (3) .git/HEAD → full self-healing
+   ScanRoot reconcile (fires on detached HEAD too). No DDL (watcher.stall_secs in config). P1b FSEvents-cursor
+   DEFERRED (raw-FSEvents spike; P0 boot-reconcile covers restart-gap). NOTE: idle repo (>30min no edits) trips a
+   time-based stall → 1 cheap proactive restart/window (INFO) — widen watcher.stall_secs if that cadence bugs.
+   🟢 P2 NEXT (last reliability tier): continuous invariant self-audit (generalize prune_vanished_folders/heal_nested
+   → auto-repair any node-file-gone/folder-ghost/nested-standalone) + `sensei index doctor` (read-only drift report) +
+   a chaos test (inject FSEvents drops + mid-scan restart → assert convergence). THEN install + live-verify the whole
+   P0→P1→P2 track (single install, like the capture cluster), then R6 console.
    ★ DESIGN DOC OF RECORD: docs/analysis/2026-07-13-index-reliability-rock-solid.md (a8b09407) — full architecture,
    root-cause, per-tier done-gates. ★ JERRY CONFIRMED (2026-07-13): build the FULL "resilient watcher/scanner" as
    outlined — so the RELIABILITY TRACK is now the PRIORITY: P0 (in progress) → P1 → P2 as sequential chunks, AHEAD of
