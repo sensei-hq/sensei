@@ -1645,7 +1645,17 @@ ACTIVE BUILD QUEUE (default-and-proceed order, highest value first):
    (Was: FIX BUILDING a2d911f2.) — [[project_executor_hang]] embed cap was insufficient for n_ubatch.
 
 ═══════════════════════════════════════════════════════════════════════════════
-⏸️ STEP-6: CLEAN AUTONOMOUS-SAFE BACKLOG EXHAUSTED (2026-07-13) — easing to cheap idle no-op ticks.
+▶️ CORRECTION (2026-07-13): the "backlog exhausted" call below was WRONG — I under-reached. The DŌJŌ segment (the
+LAST big specced piece) is NOT blocked: Docker RUNNING (socket + com.docker.backend) + Supabase CLI 2.109.1 both
+CONFIRMED live this tick; the run-state's own note says "UN-PARK the Dōjō SaaS console + supabase" and Jerry's
+STANDING POLICY authorized full-scope Dōjō (Supabase-localhost + kavach, pre-decided). ⏳ DŌJŌ SURVEY/BLUEPRINT
+BUILDING (agent a06f0afe, read-only) → refreshes docs/llm-spec/park/_dojo-build-plan.md with a dependency-ordered,
+chunk-by-chunk plan tagging 🟢 autonomy-safe (schema/config/scaffold/backend) vs 🔴 auth-sensitive (Supabase/kavach
+→ Jerry's eye). Then build the 🟢 chunks one at a time; hold 🔴 auth chunks for Jerry. NEVER touch .env/real creds.
+Assets present: _dojo-build-plan.md + 4 console specs + dojo-developer-flow.md; crates hive-mind/dojo-protocol/
+collective; ~/Developer/kavach/supabase model; in-repo supabase/ to create.
+
+⏸️ (SUPERSEDED by the correction above) STEP-6: CLEAN AUTONOMOUS-SAFE BACKLOG EXHAUSTED (2026-07-13).
 Post-rescan health CONFIRMED: analyzer generating richly (sensei 225 detected_patterns + 194 recommendations;
 memories=1 is by-design — active memory is the top confidence tier). "patterns sparse" follow-up = explained
 (get_patterns is a file-TAG match; detected_patterns is rich). search-recall = fixed by the rescan. Capture unfrozen.
