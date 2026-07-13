@@ -1923,10 +1923,18 @@ port mismatch hive 7755 vs config 8787 (🟢), etc. Chunk order: {R1,R2}→R3→
    ALSO fixed a pre-existing flaky test (heal_nested_standalone …_reabsorbs asserted the GLOBAL heal count==0 on
    re-run, races with the audit suite on shared sensei_test → per-row idempotency assert). No DDL. Left: on-disk-but-
    unindexed doctor reporting (needs gitignore-aware walk, deferred).
-   ✅✅✅ RELIABILITY TRACK (P0+P1+P2) CODE-COMPLETE. 🔨 NOW: install + LIVE-VERIFY the whole hardened watcher/scanner
-   (install-service → restart → confirm `sensei index doctor` runs, GET /api/watcher/status healthy, 300s+boot reconcile
-   + daily audit spawn in logs). No new sensei-scope DDL in the track (reliability = config-only), so the install is
-   DDL-safe (same as the several develop installs this session). THEN R6 console.
+   ✅✅✅ RELIABILITY TRACK (P0+P1+P2) DONE + LIVE-VERIFIED (install bu95j4xes @12:53 → restart): reconcile.last_run +
+   audit.last_run BOTH = 12:54 (P0 boot-reconcile + P2 daily-audit spawned+ran on boot ✓); GET /api/watcher/status =
+   {healthy, thread_alive, stream_healthy, roots_watched:5, status:Watching} (P1 ✓); `sensei index doctor` runs →
+   "index is invariant-clean, 5/5 roots present" (P2 ✓); sensei nodes 16326 (healthy, no drift, no regression). The
+   silent-5h-freeze failure mode is CLOSED. NEW DIAGNOSTICS for future drift debugging: `sensei index doctor` (drift
+   report) + GET /api/watcher/status (watcher health) supersede manual DB spelunking. [[reference_scan_reconcile_ops]]
+   ⚑ MERGE MILESTONE (flag for Jerry): develop is now FAR ahead of main (main=v0.2.45 hive-world CI-patches only;
+   develop = dojo consolidation + capture cluster + reliability P0-P2 + R2/R5/R7/R8 + CI fix). A develop→main merge +
+   bump (v0.3.0?) is a big outward release that also publishes the whole dojo-world — hold until Jerry says (or the
+   Dōjō console track R6/R9-11 completes). NOT auto-merged.
+   🟢 NEXT: R6 console (greenfield SvelteKit console/ app + @kavach auth plane; scaffold+static render 🟢, live magic-
+   link auth = Jerry). Reliability track complete — capture is now rock-solid.
    ★ DESIGN DOC OF RECORD: docs/analysis/2026-07-13-index-reliability-rock-solid.md (a8b09407) — full architecture,
    root-cause, per-tier done-gates. ★ JERRY CONFIRMED (2026-07-13): build the FULL "resilient watcher/scanner" as
    outlined — so the RELIABILITY TRACK is now the PRIORITY: P0 (in progress) → P1 → P2 as sequential chunks, AHEAD of
