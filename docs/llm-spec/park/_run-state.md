@@ -1808,10 +1808,14 @@ port mismatch hive 7755 vs config 8787 (🟢), etc. Chunk order: {R1,R2}→R3→
    NOT merge+bump (would prematurely release the whole Dōjō stack + the deferred knowledge_sources.kind='hive_mind'
    migration). If you want CI proven GREEN now without releasing Dōjō: cherry-pick d5bdf9b1 onto main + patch-bump
    (clean main+urlfix release). Otherwise it self-proves at the next real milestone bump. Your call.
-   🔨 IN PROGRESS: Dōjō chunk R2 — Share-review desktop screen (C11), delegated to subagent a82296b1 (frontend,
-   app/SvelteKit, svelte MCP mandatory, rokkit tokens, TDD). New `(observatory)/share-review/` over existing
-   `/api/share-review/*` (handler share_review.rs exists). Verify: `cd app && bun run check` 0 + `test:unit`. NO commit
-   until I verify. (Chose R2 over member-role enum = frontend lower-risk + cleanly verifiable vs unattended DDL.)
+   ✅ R2 SHIPPED `6a7526c6` (agent a82296b1) — Share-review desktop screen (C11). New `(observatory)/share-review/`
+   bound to REAL structs (dojo/contribute.rs BatchPreview + share_review.rs ContributeOutcome, NOT the idealized spec
+   JSON). Held/gated items non-shippable (mandatory-strip honored); >10-item publish confirm; post-publish "watch it
+   travel" from real per-item outcome. DRY: typePill/attributionSummary→lib/dojo-artifacts.ts (2nd consumer). Svelte
+   MCP autofixer clean; rokkit tokens; runes. VERIFIED by me: svelte-check 0/0, test:unit 1173 pass (+42). DEFERRED
+   (need daemon work, filed as follow-ups): persistent batch-history endpoint for InappTravel (app has no history API,
+   only next-batch+publish); org-policy floor chips (not in API); live-daemon Playwright e2e. Nav placed in Review
+   group (mockup wanted a Memories sub-tab; flat rail doesn't model sub-tabs — moveable if Jerry prefers "Needs you").
    ⚑ STALE-PLAN NOTE (fix before R7/R8): `_dojo-build-plan.md` R7/R8 still cite `crates/hive-mind/…` + `cargo test -p
    hive-mind` — post-consolidation these are `crates/dojo-mind/` + `cargo test -p dojo-mind` (binary sensei-dojo).
    AFTER R2: R3, then R7+R8 (console backends, dojo-mind service, synthetic-JWT), then member-role enum.
