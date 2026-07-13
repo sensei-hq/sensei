@@ -1566,8 +1566,12 @@ DEFAULTS CHOSEN (reversible; flagged for Jerry to change later):
     repoints there); leave (health)/logs diagnostics at /logs untouched. Reversible.
   • project-icon images → keep gated AND build the asset-serve daemon route as its own queue item so images render.
 ACTIVE BUILD QUEUE (default-and-proceed order, highest value first):
-  A. ⏳ BUILDING — #5 Atlas / code-graph visualization (flagship; backend 100% shipped+unused:
-     getSolutionGraph/getCommunities/getCallFlow). Build the graph-viz screen/component to spec.
+  A. ⏳ BUILDING (agent a5354f81, resumed 2026-07-13 post-P0) — #5 Atlas / code-graph visualization (flagship;
+     backend shipped: GET /api/projects/{id}/graph=observatory::solution_graph; /api/graph/communities(+/info);
+     /api/graph/call-flow=codebase.rs). Spec docs/llm-spec/screen/solution-architecture.md; d3-force ALREADY a dep
+     (d3-force/zoom/selection/scale); NEW (observatory) route + sidebar wiring; svelte MCP mandatory; cap render
+     (3395 fns → top-N by degree, "showing N of M"). Core = solution-graph render+zoom+community color; call-flow
+     overlay if time. ON DONE: bun check 0/0 + test:unit → commit → visual-verify=e2e follow-up. Then queue B (logs).
   B. #2-UI observatory-logs screen (route (observatory)/activity-logs → GET /api/logs; filters level/source/since).
   C. #6 traceability fix/dismiss (daemon action endpoints over drift_items + UI drawer).
   D. #8 impact-regression surface: impact_regressions DDL + writer (record on negative verdict) + alert screen.
