@@ -1746,6 +1746,17 @@ port mismatch hive 7755 vs config 8787 (🟢), etc. Chunk order: {R1,R2}→R3→
    restarts) left gaps in the FSEvents stream. ⏳ Triggered a MANUAL `sensei scan` (watcher bsyqrj344) to (a) catch the
    index up + (b) confirm scanning works so the gap is the AUTO-TRIGGER not the scan. → real follow-up: watcher
    reliability (survive restarts / periodic reconcile-scan safety net so the index can't silently drift).
+   ── MANUAL-SCAN RESULT (bsyqrj344): scan WORKS (Dojo* indexed ~10s, no crash) → gap = AUTO-TRIGGER not scan. NO DATA
+   LOSS (PgStore/resolve_project_uuid/build_full_app intact, 0 dupes). BUT 2 RECONCILIATION BUGS: (a) ORPHANS NOT
+   PRUNED — HiveConfig/HiveStore/HiveDb nodes persist pointing at crates/hive-mind/src/*.rs (files MOVED to dojo-mind,
+   gone) — scan doesn't delete nodes for moved/deleted files. (b) MOVED SUB-CRATE RE-SCOPED TO A PHANTOM PROJECT —
+   crates/dojo-mind registered as its OWN `standalone` project 81694788 (NOT a folder under the sensei monorepo
+   ff1ccea2, which is how crates/hive-mind WAS scoped) → sensei "dropped" 16354→11181 = dojo-mind nodes LEFT sensei
+   into a phantom project → search/graph for sensei now MISSES dojo-mind + returns stale Hive*. Same segmentation
+   class as the junk-sub-project bug. ⭐ RECOMMENDED FIX CLUSTER (local-first-aligned, CORE capture — I lean fix-next):
+   (1) watcher survives restarts + periodic reconcile-scan safety net; (2) prune orphaned nodes on file/dir
+   delete/move; (3) a folder that MOVES within a repo stays attributed to that repo's project (no new standalone).
+   ⏳ AWAITING JERRY priority: fix this capture-reliability cluster NEXT vs continue Dōjō/control-plane + file it.
    NEXT 🟢 (per Jerry local-first): R2 share-review screen (local desktop) — see LOCAL-FIRST PRIORITIZATION above
    (AWAITING Jerry: pause networked Dōjō vs keep local-safe chunks). Consolidation was cleanup = local-safe, shipped.
 Assets: _dojo-build-plan.md (refreshed) + 4 console specs + dojo-developer-flow.md; ~/Developer/kavach/supabase model.
