@@ -1850,13 +1850,35 @@ port mismatch hive 7755 vs config 8787 (🟢), etc. Chunk order: {R1,R2}→R3→
    ('approved','published','distributed'), error_rate counts 'error'; confirm the promote loop actually emits those
    (today it emits 'approved', not 'distributed'/'error'). (2) roles→git-role mapping CRUD not exposed as endpoints
    (out of R7 scope; small follow-up if the console UI needs to edit mappings).
-   🔨 IN PROGRESS: R8 (client-lead console backend on dojo-mind) → subagent a73bbd38 — engagements/incidents CRUD +
-   artifacts dereferenced=true audit view + compliance export (strip source refs); client-lead role-floor via R7's
-   resolve_tenant_access; gates non_dereferenced==0 + export-leaks-no-source-refs; keep 67 existing green. GUARDRAIL
-   given: derive the client-lead↔DojoAccess floor FROM THE SPEC; a code-level DojoAccess::Lead variant is OK, but a
-   SHIPPED DDL role-enum change must STOP+flag (not invent). No commit until I verify.
-   THEN R6 console (greenfield SvelteKit, @kavach on npm) — last big buildable Dōjō chunk; after that only Jerry-
-   blocked (R3/R4) + live-auth-verify (R6/R9-11) remain → would record clean-backlog state per heartbeat step 6.
+   ✅ R8 SHIPPED `310c3477` (agent a73bbd38) — client-lead console backend on dojo-mind. Added DojoAccess::Lead (code
+   enum, between Contributor & Maintainer; JWT-only; NO DDL — dojo.member_role already has client_lead). Endpoints
+   engagements CRUD+bind / incidents CRUD+open_count / audit artifacts (dereferenced filter) / compliance export.
+   Export is source-ref-free BY CONSTRUCTION (SELECT lists only covered cols, 409s if any non-dereferenced). VERIFIED
+   by me: clippy -D warnings 0, cargo test -p dojo-mind 74 pass (7 new incl. non_dereferenced==0 + no-source-leak +
+   role-floor 403). ⚑ JERRY-FLAGS: (1) LINEAR floor ⇒ maintainer/admin inherit the client-lead console (pinned by
+   test); strict role isolation would need a role-SET model (bigger, not invented). (2) 🐛 dbd materializes enums in
+   ALPHABETICAL order, NOT DDL declaration order → `ORDER BY severity DESC` gave [medium,low,high,critical]; the
+   incident_severity.ddl comment claiming declaration-order is FALSE-as-deployed. R8 worked around with a CASE rank;
+   broader audit + DDL-comment fix worth a pass.
+
+★ CI PATCH RELEASE DONE (Jerry approved) — v0.2.44 shipped from MAIN. main was hive-world @ v0.2.43 with ssh:// gateway
+  (cherry-pick conflicted on hive-protocol adjacency → aborted, made the 2-line https edit DIRECTLY on main `91b26568`
+  + verified main compiles). `make bump v=patch` → v0.2.44 (`e9637a9a`), tag pushed, homebrew+marketplace subtrees
+  synced. PROOF: v0.2.43 release FAILED in ~1s at `unable to update ssh://…gateway`; v0.2.44 cleared setup/checkout/
+  toolchain/cmake + is COMPILING in "Build binaries" (past the exact fetch that killed v0.2.43) ⇒ https fix works in
+  CI. Full green pending the long llama.cpp build — bg watch bv76nkgsk (run 29266053488) reports final verdict.
+  main now diverges from develop by ONLY the https URL (both have it) → trivial at the next real develop→main merge.
+  NB: dependabot flagged 1 moderate vuln on main (worth a look, non-blocking).
+
+── INDEXING "ROCK SOLID" PLAN (Jerry asked how to harden capture; answered in-chat, awaiting go): principle = events
+  are a latency optimization, NEVER the source of truth; the index converges to the fs via a cheap frequent reconcile.
+  P0 (highest leverage): mtime/size fast-path in scan_state (skip unchanged subtrees by dir-mtime) → makes a no-op
+  reconcile near-free → run it every ~30-60s + ALWAYS on boot (not watermark-gated) ⇒ worst-case staleness = seconds,
+  watcher stops being load-bearing. P1: watcher liveness/watchdog (kill the SILENT 5h-freeze) + FSEvents overflow→
+  reconcile + persist the FSEvents cursor (restart-gap) + watch .git/HEAD. P2: continuous invariant self-audit
+  (generalize prune_vanished_folders/heal_nested) + `sensei index doctor` + a chaos test injecting watcher drops.
+  → OFFERED to build P0 as the next reliability chunk (argued it earns priority over more console screens).
+   NEXT after CI: R6 console (greenfield SvelteKit, @kavach on npm) OR the P0 indexing-hardening chunk (my rec).
 
 ★★ JERRY DECISIONS 2026-07-13 (UNBLOCK R3/R4/CI) — asked+answered:
  • R3 BIND = INFER + CONFIRM (was blocked). Match project git-remote owner (GitHub/GitLab org) vs the user's joined
