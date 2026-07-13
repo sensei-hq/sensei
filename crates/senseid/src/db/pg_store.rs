@@ -6329,15 +6329,23 @@ impl PgStore {
     /// Governance Tier-1 resolution: the active rules that apply to a repo,
     /// ordered strongest-first. A rule applies when it sits on one of the repo's
     /// member namespaces (`folder_namespaces`), on an always-on `general`/`user`
-    /// scope, or is unscoped (`namespace_id IS NULL`). Ordering is the two-axis
-    /// precedence — enforcement desc (mandatory first), then scope level desc
-    /// (most-specific first), then strength. Structuring (dedup + mandatory-lock)
-    /// is done by `crate::governance::structure_ruleset` so it stays pure.
+    /// scope, is genuinely global (unscoped **and** not tied to a project —
+    /// `namespace_id IS NULL AND project_id IS NULL`), or is a project-tied
+    /// learned convention for **this repo's own project** (`namespace_id IS NULL
+    /// AND project_id = the folder's project`). The last clause is what keeps a
+    /// project's learned principle scoped to that project instead of bleeding
+    /// into every repo's always-on `general` set: an unscoped memory carrying a
+    /// `project_id` is that project's convention, not a global rule. Ordering is
+    /// the two-axis precedence — enforcement desc (mandatory first), then scope
+    /// level desc (most-specific first), then strength. Structuring (dedup +
+    /// mandatory-lock) is done by `crate::governance::structure_ruleset` so it
+    /// stays pure.
     pub async fn resolve_rules_raw(&self, folder_id: &uuid::Uuid) -> Result<Vec<crate::governance::RawRule>, String> {
         let rows: Vec<(uuid::Uuid, String, String, Option<String>, String, String, Option<String>)> =
             sqlx_core::query_as::query_as(
                 "SELECT m.id, m.title, m.content, m.impact, m.enforcement::text,
-                        COALESCE(n.scope_key, 'general') AS scope,
+                        COALESCE(n.scope_key,
+                                 CASE WHEN m.project_id IS NOT NULL THEN 'project' ELSE 'general' END) AS scope,
                         n.name AS namespace
                    FROM sensei.memories m
                    LEFT JOIN sensei.namespaces n ON n.id = m.namespace_id
@@ -6345,11 +6353,13 @@ impl PgStore {
                   WHERE m.status IN ('active'::sensei.memory_status,
                                      'reinforced'::sensei.memory_status,
                                      'battle_tested'::sensei.memory_status)
-                    AND ( m.namespace_id IS NULL
+                    AND ( (m.namespace_id IS NULL AND m.project_id IS NULL)
                           OR n.scope_key IN ('general', 'user')
                           OR m.namespace_id IN (
                                 SELECT namespace_id FROM sensei.folder_namespaces WHERE folder_id = $1
-                          ) )
+                          )
+                          OR ( m.namespace_id IS NULL
+                               AND m.project_id = (SELECT project_id FROM sensei.folders WHERE id = $1) ) )
                   ORDER BY m.enforcement DESC,
                            COALESCE(n.level, s.level, 0) DESC,
                            m.strength DESC",
@@ -6391,8 +6401,12 @@ impl PgStore {
     }
 
     /// The global, repo-independent ruleset: rules at the always-on `general`
-    /// and `user` scopes (plus unscoped). These apply everywhere and are what
-    /// the daemon materializes into `~/.sensei/rules.md`. Same ordering as
+    /// and `user` scopes plus genuinely-global unscoped rules (`namespace_id IS
+    /// NULL AND project_id IS NULL`). These apply everywhere and are what the
+    /// daemon materializes into `~/.sensei/rules.md`. A project-tied unscoped
+    /// memory (a learned convention with a `project_id`) is that project's, not
+    /// global, so it is deliberately excluded here — it surfaces only via
+    /// [`Self::resolve_rules_raw`] for its own repo. Same ordering as
     /// `resolve_rules_raw` but with no folder dimension.
     pub async fn resolve_global_rules(&self) -> Result<Vec<crate::governance::RawRule>, String> {
         let rows: Vec<(uuid::Uuid, String, String, Option<String>, String, String, Option<String>)> =
@@ -6406,7 +6420,8 @@ impl PgStore {
                   WHERE m.status IN ('active'::sensei.memory_status,
                                      'reinforced'::sensei.memory_status,
                                      'battle_tested'::sensei.memory_status)
-                    AND ( m.namespace_id IS NULL OR n.scope_key IN ('general', 'user') )
+                    AND ( (m.namespace_id IS NULL AND m.project_id IS NULL)
+                          OR n.scope_key IN ('general', 'user') )
                   ORDER BY m.enforcement DESC,
                            COALESCE(n.level, s.level, 0) DESC,
                            m.strength DESC",
@@ -11025,6 +11040,76 @@ mod knowledge_tests {
             .bind(id).fetch_one(pg.pool()).await.unwrap();
         assert_eq!(got.0, Some(src));
         sqlx_core::query::query("DELETE FROM sensei.memories WHERE id = $1").bind(id).execute(pg.pool()).await.unwrap();
+    }
+
+    /// Governance scope hygiene: a project's learned convention (an unscoped
+    /// memory carrying a `project_id`, exactly what the L2 generator writes in
+    /// `tasks::handlers::generate::generate_for_project`) must resolve ONLY for
+    /// its own project's repo — labeled `project`, not the always-on `general`
+    /// set — and must never bleed into another project's ruleset or the global
+    /// `~/.sensei/rules.md`. Regression for the cross-project general-rule bleed
+    /// found by dogfooding `get_rules`.
+    #[tokio::test]
+    async fn project_learned_convention_scopes_to_its_own_project_not_general() {
+        let Ok(pg) = PgStore::connect_test().await else { return; };
+        let pool = pg.pool();
+
+        // Two projects, each with its own repo folder attributed to it.
+        let proj_a = pg.create_project(&format!("_test:rules-A-{}", uuid::Uuid::new_v4()), None, None).await.unwrap();
+        let proj_b = pg.create_project(&format!("_test:rules-B-{}", uuid::Uuid::new_v4()), None, None).await.unwrap();
+        let root = pg.add_watch_root(&format!("/_test/rules-root-{}", uuid::Uuid::new_v4()), "t", &serde_json::json!([])).await.unwrap();
+        let folder_a = pg.upsert_repo(&root, "rules-repo-a", &format!("/_test/rules-a-{}", uuid::Uuid::new_v4())).await.unwrap();
+        let folder_b = pg.upsert_repo(&root, "rules-repo-b", &format!("/_test/rules-b-{}", uuid::Uuid::new_v4())).await.unwrap();
+        pg.set_folder_project(&folder_a, &proj_a, "root", None).await.unwrap();
+        pg.set_folder_project(&folder_b, &proj_b, "root", None).await.unwrap();
+
+        // A learned convention captured for project A: namespace_id NULL,
+        // project-tied — the shape the L2 generator emits.
+        let conv_content = format!("project A convention {}", uuid::Uuid::new_v4());
+        let conv = pg.insert_memory(&InsertMemory {
+            project_id: Some(proj_a), scope: "project".into(), scope_filter: None,
+            mtype: "convention".into(), title: "conv A".into(), content: conv_content.clone(),
+            impact: None, tags: vec![], triage_signal: Some("repeat_pattern".into()), status: "active".into(),
+            namespace_id: None, enforcement: None, origin: Some("learned".into()), source_id: None,
+        }).await.unwrap();
+
+        // A genuinely-global rule: unscoped AND not tied to a project — the real
+        // always-on set that must keep working.
+        let global_content = format!("genuinely global rule {}", uuid::Uuid::new_v4());
+        let global = pg.insert_memory(&InsertMemory {
+            project_id: None, scope: "global".into(), scope_filter: None,
+            mtype: "convention".into(), title: "global rule".into(), content: global_content.clone(),
+            impact: None, tags: vec![], triage_signal: None, status: "active".into(),
+            namespace_id: None, enforcement: Some("recommended".into()), origin: Some("authored".into()), source_id: None,
+        }).await.unwrap();
+
+        // Project A's ruleset: A's convention (labeled `project`) + the global rule.
+        let a_rules = pg.resolve_rules_raw(&folder_a).await.unwrap();
+        let a_conv = a_rules.iter().find(|r| r.content == conv_content).expect("A's convention resolves for A");
+        assert_eq!(a_conv.scope, "project", "a project-tied unscoped convention is labeled project, not general");
+        assert!(a_rules.iter().any(|r| r.content == global_content), "the genuinely-global rule applies to A");
+
+        // Project B's ruleset: MUST NOT contain A's convention; the global rule still applies.
+        let b_rules = pg.resolve_rules_raw(&folder_b).await.unwrap();
+        assert!(!b_rules.iter().any(|r| r.content == conv_content), "A's learned convention must NOT bleed into project B");
+        assert!(b_rules.iter().any(|r| r.content == global_content), "the genuinely-global rule still applies to B");
+
+        // Global always-on set: the genuinely-global rule, NOT any project convention.
+        let global_set = pg.resolve_global_rules().await.unwrap();
+        assert!(global_set.iter().any(|r| r.content == global_content), "genuinely-global rule is in the always-on set");
+        assert!(!global_set.iter().any(|r| r.content == conv_content), "a project convention must NOT be in the always-on global set");
+
+        // cleanup (best-effort)
+        for id in [conv, global] {
+            sqlx_core::query::query("DELETE FROM sensei.memories WHERE id = $1").bind(id).execute(pool).await.ok();
+        }
+        for f in [folder_a, folder_b] {
+            sqlx_core::query::query("DELETE FROM sensei.folders WHERE id = $1").bind(f).execute(pool).await.ok();
+        }
+        sqlx_core::query::query("DELETE FROM sensei.folders_to_watch WHERE id = $1").bind(root).execute(pool).await.ok();
+        for p in [proj_a, proj_b] {
+            sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1").bind(p).execute(pool).await.ok();
+        }
     }
 
     #[tokio::test]
