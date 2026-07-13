@@ -82,10 +82,10 @@ thiserror = "2"
 chrono = { version = "0.4", features = ["serde"] }
 dirs = "6"
 reqwest = { version = "0.12", default-features = false, features = ["json", "blocking", "rustls-tls", "stream"] }
-gateway = { git = "https://github.com/sensei-hq/gateway.git", rev = "01d0ab2" }
+gateway = { git = "https://github.com/sensei-hq/gateway.git", rev = "d8ec222" }
 # Registry + trait types only by default — engine adapters land via the
 # `embedded-*` cargo features above.
-gateway-embedded = { git = "https://github.com/sensei-hq/gateway.git", rev = "01d0ab2" }
+gateway-embedded = { git = "https://github.com/sensei-hq/gateway.git", rev = "d8ec222" }
 dojo-protocol = { path = "../dojo-protocol" }
 sensei-bootstrap = { path = "../bootstrap" }
 sensei-config = { path = "../sensei-config" }
