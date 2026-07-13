@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::Json,
 };
@@ -25,8 +25,21 @@ async fn resolve_project_uuid(state: &AppState, id: &str) -> Option<uuid::Uuid> 
 
 // ── Solutions CRUD ──────────────────────────────────────────────────────────
 
-pub(crate) async fn list_solutions(State(state): State<AppState>) -> Result<Json<serde_json::Value>, StatusCode> {
-    let projects = state.pg.list_projects().await
+/// Query params for [`list_solutions`]. `under` scopes the list to projects
+/// whose folders live under an absolute path (the sensei MCP `find_projects`
+/// tool sends it); omitted → every project (unchanged).
+#[derive(Deserialize)]
+pub(crate) struct ListSolutionsQuery {
+    #[serde(default)]
+    under: Option<String>,
+}
+
+pub(crate) async fn list_solutions(
+    State(state): State<AppState>,
+    Query(q): Query<ListSolutionsQuery>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let under = q.under.as_deref().filter(|s| !s.is_empty());
+    let projects = state.pg.list_projects_under(under).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // Enrich each project with its folder membership so the Projects setup
