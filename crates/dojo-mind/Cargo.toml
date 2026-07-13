@@ -25,7 +25,7 @@ sha2 = "0.10"
 rand = "0.8"
 subtle = "2"
 axum = "0.8"
-jsonwebtoken = "9"
+jsonwebtoken = { version = "10", features = ["rust_crypto"] }
 clap = { version = "4", features = ["derive"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
