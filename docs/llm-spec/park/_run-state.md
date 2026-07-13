@@ -1839,10 +1839,21 @@ port mismatch hive 7755 vs config 8787 (🟢), etc. Chunk order: {R1,R2}→R3→
    (database/ddl/table/dojo/{roles,identities,policies,engagements,incidents,audit_events,events}.ddl present), test
    harness exists (crates/dojo-mind/tests/*, synthetic-JWT via jwt_test/auth_test), dual-auth build_router_with_jwt +
    DojoAccess role-floor exist → pure endpoint+handler+store work, NO DDL, no Docker/Supabase, no design openness.
-   🔨 IN PROGRESS: R7 (ADMIN console backend) → subagent a8f8cdc7 (members/identities/policies/health/audit, admin
-   role-floor, synthetic-JWT tests, -p dojo-mind). Told it the hive-mind→dojo-mind path correction. R8 (client-lead)
-   next. Verify: cargo test -p dojo-mind (new 403 role-floor + done-gate curls + keep ~16 existing green). NO commit
-   until I verify. AFTER R7/R8: R6 console (greenfield, deps available) or record clean-backlog state for Jerry.
+   ✅ R7 SHIPPED `4167a310` (agent a8f8cdc7) — admin console backend on dojo-mind. Endpoints members/identities/
+   policies (CRUD) + health rollup {connections,queue_depth,publish_rate_1h,error_rate_1h} + audit list, all admin
+   role-floor. Added DojoAccess::Admin=3; refactored resolve_maintainer→shared resolve_tenant_access(floor). KEY
+   SECURITY CALL (good): Admin granted ONLY via JWT/SSO plane, API-key plane capped at Maintainer (provision squashes
+   maintainer+admin onto one api-key role) → a maintainer key can't escalate to the console. No DDL (existing dojo.*
+   tables). VERIFIED by me: clippy 0, cargo test -p dojo-mind 67 passed (9 new incl. non_admin_cannot_reach 403 +
+   audit_log_persists done-gate; 58 existing green), cargo check -p senseid clean.
+   ⚑ JERRY-GLANCE (non-blocking, from R7): (1) health action-strings — publish_rate counts action IN
+   ('approved','published','distributed'), error_rate counts 'error'; confirm the promote loop actually emits those
+   (today it emits 'approved', not 'distributed'/'error'). (2) roles→git-role mapping CRUD not exposed as endpoints
+   (out of R7 scope; small follow-up if the console UI needs to edit mappings).
+   🟢 NEXT: R8 (client-lead console backend on dojo-mind — engagements/incidents CRUD + artifacts dereferenced=true
+   audit view + compliance export; client-lead role-floor; non_dereferenced==0 gate). Same service/harness as R7 =
+   clean + buildable. THEN R6 console (greenfield SvelteKit, @kavach on npm) or record clean-backlog state. Next
+   heartbeat advances R8.
    Dōjō is NOT deferred (LOCAL-FIRST=RELAY-ONLY). Consolidation was cleanup = shipped.
 Assets: _dojo-build-plan.md (refreshed) + 4 console specs + dojo-developer-flow.md; ~/Developer/kavach/supabase model.
 
