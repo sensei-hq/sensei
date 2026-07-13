@@ -8,8 +8,8 @@ use crate::collective::promote::{DecideOutcome, DecideStatus};
 use crate::store::DojoStore;
 use axum::{
     extract::{Extension, Query, State},
-    http::{HeaderMap, StatusCode},
-    response::IntoResponse,
+    http::{header, HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
     routing::{delete, get, patch, post},
     Json, Router,
 };
@@ -306,6 +306,7 @@ fn access_label(a: DojoAccess) -> &'static str {
     match a {
         DojoAccess::Member => "member",
         DojoAccess::Contributor => "contributor",
+        DojoAccess::Lead => "client-lead",
         DojoAccess::Maintainer => "maintainer",
         DojoAccess::Admin => "admin",
     }
@@ -360,6 +361,19 @@ async fn resolve_admin(
     tenant_key: &str,
 ) -> Result<(Uuid, DojoCaller), (StatusCode, Json<serde_json::Value>)> {
     resolve_tenant_access(state, jwt, headers, tenant_key, DojoAccess::Admin).await
+}
+
+/// Resolve the path tenant then dual-authenticate a client-lead (`client_lead`,
+/// i.e. `Lead+`). The floor for every client-lead-console route; a plain
+/// contributor (or an API-key caller, which never carries `Lead`) → 403.
+/// `Maintainer`/`Admin` sit above `Lead` and so also pass (linear floor).
+async fn resolve_lead(
+    state: &AppState,
+    jwt: &JwtConfig,
+    headers: &HeaderMap,
+    tenant_key: &str,
+) -> Result<(Uuid, DojoCaller), (StatusCode, Json<serde_json::Value>)> {
+    resolve_tenant_access(state, jwt, headers, tenant_key, DojoAccess::Lead).await
 }
 
 /// `GET /v1/t/{tenant_key}/triage` — list the tenant's open triage rows
@@ -940,6 +954,592 @@ async fn list_audit(
     Ok(Json(json!({ "events": events })))
 }
 
+// ── Client-lead console routes (dual-auth; LEAD floor) ───────────────────────
+//
+// Every handler resolves the path tenant + dual-authenticates behind
+// `resolve_lead` (floor = `DojoAccess::Lead`), so a plain contributor (and any
+// API-key caller, which never carries `Lead`) is 403 and the work is strictly
+// tenant-scoped. Mutations stamp a `dojo.audit_events` row (the same
+// non-repudiation trail the admin console writes) via `record_audit_event`,
+// surfaced (not swallowed) so a missing audit entry can never hide a
+// client-lead action. Reads (list / audit view / export) add no audit rows.
+
+fn is_engagement_status(s: &str) -> bool {
+    matches!(s, "active" | "ended")
+}
+fn is_incident_severity(s: &str) -> bool {
+    matches!(s, "low" | "medium" | "high" | "critical")
+}
+fn is_incident_status(s: &str) -> bool {
+    matches!(s, "open" | "investigating" | "resolved")
+}
+
+/// Parse an optional uuid body/query field, 400 on a malformed value.
+fn parse_opt_uuid(
+    s: &Option<String>,
+    what: &str,
+) -> Result<Option<Uuid>, (StatusCode, Json<Value>)> {
+    match s {
+        Some(v) => Uuid::parse_str(v)
+            .map(Some)
+            .map_err(|_| err(StatusCode::BAD_REQUEST, &format!("bad {what}"))),
+        None => Ok(None),
+    }
+}
+
+// ── engagements (CRUD + project bind) ────────────────────────────────────────
+
+/// `GET /v1/t/{tenant_key}/engagements` — the tenant's engagements (client-lead).
+async fn list_engagements(
+    State(state): State<AppState>,
+    Extension(jwt): Extension<Arc<JwtConfig>>,
+    axum::extract::Path(tenant_key): axum::extract::Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let (tenant_id, _c) = resolve_lead(&state, &jwt, &headers, &tenant_key).await?;
+    let engagements = state.store.list_engagements(&tenant_id).await.map_err(ise)?;
+    Ok(Json(json!({ "engagements": engagements })))
+}
+
+#[derive(Deserialize)]
+struct NewEngagement {
+    client: String,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    project_bindings: Option<Value>,
+    #[serde(default)]
+    policy_overrides: Option<Value>,
+    #[serde(default)]
+    starts_on: Option<String>,
+    #[serde(default)]
+    ends_on: Option<String>,
+}
+
+/// `POST /v1/t/{tenant_key}/engagements` — register a client engagement. Stamps
+/// an `engagement_created` audit event.
+async fn create_engagement(
+    State(state): State<AppState>,
+    Extension(jwt): Extension<Arc<JwtConfig>>,
+    axum::extract::Path(tenant_key): axum::extract::Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<NewEngagement>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let (tenant_id, caller) = resolve_lead(&state, &jwt, &headers, &tenant_key).await?;
+    if body.client.trim().is_empty() {
+        return Err(err(StatusCode::BAD_REQUEST, "client is required"));
+    }
+    let id = state
+        .store
+        .create_engagement(
+            &tenant_id,
+            &body.client,
+            body.description.as_deref(),
+            body.project_bindings,
+            body.policy_overrides,
+            body.starts_on.as_deref(),
+            body.ends_on.as_deref(),
+        )
+        .await
+        .map_err(ise)?;
+    state
+        .store
+        .record_audit_event(
+            &tenant_id,
+            actor_of(&caller).as_ref(),
+            "engagement_created",
+            Some(&id.to_string()),
+            json!({ "client": body.client }),
+        )
+        .await
+        .map_err(ise)?;
+    Ok(Json(json!({ "id": id.to_string() })))
+}
+
+#[derive(Deserialize)]
+struct PatchEngagement {
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    starts_on: Option<String>,
+    #[serde(default)]
+    ends_on: Option<String>,
+    #[serde(default)]
+    policy_overrides: Option<Value>,
+    #[serde(default)]
+    project_bindings: Option<Value>,
+}
+
+/// `PATCH /v1/t/{tenant_key}/engagements/{id}` — edit an engagement (incl. close
+/// via `status = ended`). An absent field is left unchanged. Stamps an
+/// `engagement_updated` audit event.
+async fn update_engagement(
+    State(state): State<AppState>,
+    Extension(jwt): Extension<Arc<JwtConfig>>,
+    axum::extract::Path((tenant_key, id)): axum::extract::Path<(String, String)>,
+    headers: HeaderMap,
+    Json(body): Json<PatchEngagement>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let (tenant_id, caller) = resolve_lead(&state, &jwt, &headers, &tenant_key).await?;
+    let eid = Uuid::parse_str(&id).map_err(|_| err(StatusCode::BAD_REQUEST, "bad engagement id"))?;
+    if let Some(s) = &body.status
+        && !is_engagement_status(s)
+    {
+        return Err(err(StatusCode::BAD_REQUEST, "status must be active|ended"));
+    }
+    let changed = state
+        .store
+        .update_engagement(
+            &tenant_id,
+            &eid,
+            body.description.as_deref(),
+            body.status.as_deref(),
+            body.starts_on.as_deref(),
+            body.ends_on.as_deref(),
+            body.policy_overrides,
+            body.project_bindings,
+        )
+        .await
+        .map_err(ise)?;
+    if !changed {
+        return Err(err(StatusCode::NOT_FOUND, "no such engagement"));
+    }
+    state
+        .store
+        .record_audit_event(
+            &tenant_id,
+            actor_of(&caller).as_ref(),
+            "engagement_updated",
+            Some(&id),
+            json!({ "status": body.status }),
+        )
+        .await
+        .map_err(ise)?;
+    Ok(Json(json!({ "id": id })))
+}
+
+#[derive(Deserialize)]
+struct BindProject {
+    project_id: String,
+    #[serde(default)]
+    name: Option<String>,
+}
+
+/// `POST /v1/t/{tenant_key}/engagements/{id}/bind` — bind a project to the
+/// engagement (append `{project_id, name}` to its bindings). Stamps an
+/// `engagement_bound` audit event.
+async fn bind_engagement_project(
+    State(state): State<AppState>,
+    Extension(jwt): Extension<Arc<JwtConfig>>,
+    axum::extract::Path((tenant_key, id)): axum::extract::Path<(String, String)>,
+    headers: HeaderMap,
+    Json(body): Json<BindProject>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let (tenant_id, caller) = resolve_lead(&state, &jwt, &headers, &tenant_key).await?;
+    let eid = Uuid::parse_str(&id).map_err(|_| err(StatusCode::BAD_REQUEST, "bad engagement id"))?;
+    if body.project_id.trim().is_empty() {
+        return Err(err(StatusCode::BAD_REQUEST, "project_id is required"));
+    }
+    let binding = json!({ "project_id": body.project_id, "name": body.name });
+    let changed = state
+        .store
+        .bind_engagement_project(&tenant_id, &eid, binding)
+        .await
+        .map_err(ise)?;
+    if !changed {
+        return Err(err(StatusCode::NOT_FOUND, "no such engagement"));
+    }
+    state
+        .store
+        .record_audit_event(
+            &tenant_id,
+            actor_of(&caller).as_ref(),
+            "engagement_bound",
+            Some(&id),
+            json!({ "project_id": body.project_id }),
+        )
+        .await
+        .map_err(ise)?;
+    Ok(Json(json!({ "id": id, "bound": true })))
+}
+
+/// `DELETE /v1/t/{tenant_key}/engagements/{id}` — hard-delete an engagement.
+/// (Closing is `PATCH status = ended`, which retains it for the audit trail.)
+/// Stamps an `engagement_deleted` audit event.
+async fn delete_engagement(
+    State(state): State<AppState>,
+    Extension(jwt): Extension<Arc<JwtConfig>>,
+    axum::extract::Path((tenant_key, id)): axum::extract::Path<(String, String)>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let (tenant_id, caller) = resolve_lead(&state, &jwt, &headers, &tenant_key).await?;
+    let eid = Uuid::parse_str(&id).map_err(|_| err(StatusCode::BAD_REQUEST, "bad engagement id"))?;
+    let removed = state.store.delete_engagement(&tenant_id, &eid).await.map_err(ise)?;
+    if !removed {
+        return Err(err(StatusCode::NOT_FOUND, "no such engagement"));
+    }
+    state
+        .store
+        .record_audit_event(
+            &tenant_id,
+            actor_of(&caller).as_ref(),
+            "engagement_deleted",
+            Some(&id),
+            json!({}),
+        )
+        .await
+        .map_err(ise)?;
+    Ok(Json(json!({ "deleted": true })))
+}
+
+// ── incidents (CRUD + severity / SLA) ────────────────────────────────────────
+
+/// `GET /v1/t/{tenant_key}/incidents` — the tenant's incidents (worst-first),
+/// plus `open_count` (rows where `resolved_at is null` — the done-gate).
+async fn list_incidents(
+    State(state): State<AppState>,
+    Extension(jwt): Extension<Arc<JwtConfig>>,
+    axum::extract::Path(tenant_key): axum::extract::Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let (tenant_id, _c) = resolve_lead(&state, &jwt, &headers, &tenant_key).await?;
+    let incidents = state.store.list_incidents(&tenant_id).await.map_err(ise)?;
+    let open_count = incidents
+        .iter()
+        .filter(|i| i["resolved_at"].is_null())
+        .count();
+    Ok(Json(json!({ "incidents": incidents, "open_count": open_count })))
+}
+
+#[derive(Deserialize)]
+struct NewIncident {
+    title: String,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    severity: Option<String>,
+    #[serde(default)]
+    engagement_id: Option<String>,
+    #[serde(default)]
+    artifact_id: Option<String>,
+    #[serde(default)]
+    owner_id: Option<String>,
+    #[serde(default)]
+    sla_due_at: Option<String>,
+}
+
+/// `POST /v1/t/{tenant_key}/incidents` — open an incident (severity defaults to
+/// `medium`). Stamps an `incident_opened` audit event.
+async fn create_incident(
+    State(state): State<AppState>,
+    Extension(jwt): Extension<Arc<JwtConfig>>,
+    axum::extract::Path(tenant_key): axum::extract::Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<NewIncident>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let (tenant_id, caller) = resolve_lead(&state, &jwt, &headers, &tenant_key).await?;
+    if body.title.trim().is_empty() {
+        return Err(err(StatusCode::BAD_REQUEST, "title is required"));
+    }
+    let severity = body.severity.as_deref().unwrap_or("medium");
+    if !is_incident_severity(severity) {
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "severity must be low|medium|high|critical",
+        ));
+    }
+    let engagement_id = parse_opt_uuid(&body.engagement_id, "engagement_id")?;
+    let artifact_id = parse_opt_uuid(&body.artifact_id, "artifact_id")?;
+    let owner_id = parse_opt_uuid(&body.owner_id, "owner_id")?;
+    let id = state
+        .store
+        .create_incident(
+            &tenant_id,
+            engagement_id,
+            artifact_id,
+            &body.title,
+            body.description.as_deref(),
+            severity,
+            owner_id,
+            body.sla_due_at.as_deref(),
+        )
+        .await
+        .map_err(ise)?;
+    state
+        .store
+        .record_audit_event(
+            &tenant_id,
+            actor_of(&caller).as_ref(),
+            "incident_opened",
+            Some(&id.to_string()),
+            json!({ "severity": severity }),
+        )
+        .await
+        .map_err(ise)?;
+    Ok(Json(json!({ "id": id.to_string(), "severity": severity })))
+}
+
+#[derive(Deserialize)]
+struct PatchIncident {
+    #[serde(default)]
+    severity: Option<String>,
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    owner_id: Option<String>,
+    #[serde(default)]
+    sla_due_at: Option<String>,
+    #[serde(default)]
+    resolution: Option<String>,
+    #[serde(default)]
+    resolved: Option<bool>,
+}
+
+/// `PATCH /v1/t/{tenant_key}/incidents/{id}` — update an incident. `resolved:
+/// true` (or `status: resolved`) closes it (`resolved_at = now()`); reopening
+/// (`status: open|investigating`) clears `resolved_at`. Stamps an
+/// `incident_updated` audit event.
+async fn update_incident(
+    State(state): State<AppState>,
+    Extension(jwt): Extension<Arc<JwtConfig>>,
+    axum::extract::Path((tenant_key, id)): axum::extract::Path<(String, String)>,
+    headers: HeaderMap,
+    Json(body): Json<PatchIncident>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let (tenant_id, caller) = resolve_lead(&state, &jwt, &headers, &tenant_key).await?;
+    let iid = Uuid::parse_str(&id).map_err(|_| err(StatusCode::BAD_REQUEST, "bad incident id"))?;
+    if let Some(s) = &body.severity
+        && !is_incident_severity(s)
+    {
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "severity must be low|medium|high|critical",
+        ));
+    }
+    if let Some(s) = &body.status
+        && !is_incident_status(s)
+    {
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "status must be open|investigating|resolved",
+        ));
+    }
+    // Resolving wins: `resolved: true` or `status: resolved` closes the incident
+    // (and forces status = resolved); an explicit open/investigating reopens it.
+    let resolve = body.resolved == Some(true) || body.status.as_deref() == Some("resolved");
+    let status = if resolve { Some("resolved") } else { body.status.as_deref() };
+    let reopen = matches!(status, Some("open") | Some("investigating"));
+    let owner_id = parse_opt_uuid(&body.owner_id, "owner_id")?;
+    let changed = state
+        .store
+        .update_incident(
+            &tenant_id,
+            &iid,
+            body.severity.as_deref(),
+            status,
+            owner_id,
+            body.sla_due_at.as_deref(),
+            body.resolution.as_deref(),
+            resolve,
+            reopen,
+        )
+        .await
+        .map_err(ise)?;
+    if !changed {
+        return Err(err(StatusCode::NOT_FOUND, "no such incident"));
+    }
+    state
+        .store
+        .record_audit_event(
+            &tenant_id,
+            actor_of(&caller).as_ref(),
+            "incident_updated",
+            Some(&id),
+            json!({ "status": status, "resolved": resolve }),
+        )
+        .await
+        .map_err(ise)?;
+    Ok(Json(json!({ "id": id })))
+}
+
+/// `DELETE /v1/t/{tenant_key}/incidents/{id}` — delete an incident. Stamps an
+/// `incident_deleted` audit event.
+async fn delete_incident(
+    State(state): State<AppState>,
+    Extension(jwt): Extension<Arc<JwtConfig>>,
+    axum::extract::Path((tenant_key, id)): axum::extract::Path<(String, String)>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let (tenant_id, caller) = resolve_lead(&state, &jwt, &headers, &tenant_key).await?;
+    let iid = Uuid::parse_str(&id).map_err(|_| err(StatusCode::BAD_REQUEST, "bad incident id"))?;
+    let removed = state.store.delete_incident(&tenant_id, &iid).await.map_err(ise)?;
+    if !removed {
+        return Err(err(StatusCode::NOT_FOUND, "no such incident"));
+    }
+    state
+        .store
+        .record_audit_event(
+            &tenant_id,
+            actor_of(&caller).as_ref(),
+            "incident_deleted",
+            Some(&id),
+            json!({}),
+        )
+        .await
+        .map_err(ise)?;
+    Ok(Json(json!({ "deleted": true })))
+}
+
+// ── artifact audit view + compliance export ──────────────────────────────────
+
+#[derive(Deserialize)]
+struct AuditArtifactsQuery {
+    #[serde(default)]
+    engagement: Option<String>,
+    #[serde(default)]
+    dereferenced: Option<bool>,
+}
+
+/// `GET /v1/t/{tenant_key}/audit/artifacts?engagement={id}[&dereferenced=true]` —
+/// the artifact audit view: every artifact shared under the tenant (optionally
+/// one engagement), each carrying its `dereferenced` strip status + `attribution`
+/// (strip verification). Returns a BARE JSON ARRAY so the console can compute the
+/// done-gate directly (`non_dereferenced == count(dereferenced == false)`);
+/// `dereferenced=true` filters to only stripped rows. Client-lead+.
+async fn audit_artifacts(
+    State(state): State<AppState>,
+    Extension(jwt): Extension<Arc<JwtConfig>>,
+    axum::extract::Path(tenant_key): axum::extract::Path<String>,
+    Query(q): Query<AuditArtifactsQuery>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let (tenant_id, _c) = resolve_lead(&state, &jwt, &headers, &tenant_key).await?;
+    let engagement_id = parse_opt_uuid(&q.engagement, "engagement")?;
+    let dereferenced_only = q.dereferenced.unwrap_or(false);
+    let rows = state
+        .store
+        .list_audit_artifacts(&tenant_id, engagement_id.as_ref(), dereferenced_only)
+        .await
+        .map_err(ise)?;
+    Ok(Json(Value::Array(rows)))
+}
+
+#[derive(Deserialize)]
+struct ExportQuery {
+    #[serde(default)]
+    engagement: Option<String>,
+    #[serde(default)]
+    format: Option<String>,
+}
+
+/// The compliance-export column set — the source-ref-free subset emitted by
+/// `store::export_compliance_rows` (never a source column). Shared by the CSV
+/// header and the per-row cell order so the two can't drift.
+const COMPLIANCE_COLUMNS: &[&str] = &[
+    "artifact_id",
+    "engagement_id",
+    "client",
+    "kind",
+    "title",
+    "dereferenced",
+    "status",
+    "published_at",
+    "created_at",
+];
+
+/// Quote a CSV field per RFC 4180 — wrap in quotes and double any internal quote
+/// when it holds a comma / quote / CR / LF; otherwise emit it as-is.
+fn csv_field(s: &str) -> String {
+    if s.contains([',', '"', '\n', '\r']) {
+        format!("\"{}\"", s.replace('"', "\"\""))
+    } else {
+        s.to_string()
+    }
+}
+
+/// Render the compliance rows as RFC-4180 CSV over [`COMPLIANCE_COLUMNS`] only.
+/// Because the columns are the source-ref-free subset, the CSV cannot carry a
+/// source reference.
+fn compliance_csv(rows: &[Value]) -> String {
+    let mut out = String::new();
+    out.push_str(&COMPLIANCE_COLUMNS.join(","));
+    out.push('\n');
+    for r in rows {
+        let cells: Vec<String> = COMPLIANCE_COLUMNS
+            .iter()
+            .map(|c| {
+                let cell = match &r[*c] {
+                    Value::Null => String::new(),
+                    Value::String(s) => s.clone(),
+                    other => other.to_string(),
+                };
+                csv_field(&cell)
+            })
+            .collect();
+        out.push_str(&cells.join(","));
+        out.push('\n');
+    }
+    out
+}
+
+/// `GET /v1/t/{tenant_key}/compliance/export?engagement={id}[&format=csv|json]` —
+/// the compliance report for an engagement (or the whole tenant). BLOCKED with
+/// 409 when any in-scope artifact is non-dereferenced (the red-fail chip): a
+/// broken strip must never be certified. On success emits ONLY the source-ref-
+/// free subset ([`COMPLIANCE_COLUMNS`]) as CSV (default) or JSON — provably no
+/// source reference leaks (the store never selects a source column).
+/// Client-lead+.
+async fn compliance_export(
+    State(state): State<AppState>,
+    Extension(jwt): Extension<Arc<JwtConfig>>,
+    axum::extract::Path(tenant_key): axum::extract::Path<String>,
+    Query(q): Query<ExportQuery>,
+    headers: HeaderMap,
+) -> Result<Response, (StatusCode, Json<Value>)> {
+    let (tenant_id, _c) = resolve_lead(&state, &jwt, &headers, &tenant_key).await?;
+    let engagement_id = parse_opt_uuid(&q.engagement, "engagement")?;
+    // Done-gate: a non-dereferenced client-work artifact blocks the export.
+    let non_dereferenced = state
+        .store
+        .count_non_dereferenced_artifacts(&tenant_id, engagement_id.as_ref())
+        .await
+        .map_err(ise)?;
+    if non_dereferenced > 0 {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(json!({
+                "error": "compliance export blocked: non-dereferenced artifacts present",
+                "non_dereferenced": non_dereferenced,
+            })),
+        ));
+    }
+    let rows = state
+        .store
+        .export_compliance_rows(&tenant_id, engagement_id.as_ref())
+        .await
+        .map_err(ise)?;
+    match q.format.as_deref() {
+        Some("json") => Ok(Json(json!({ "rows": rows })).into_response()),
+        _ => {
+            let csv = compliance_csv(&rows);
+            Ok((
+                StatusCode::OK,
+                [
+                    (header::CONTENT_TYPE, "text/csv; charset=utf-8".to_string()),
+                    (
+                        header::CONTENT_DISPOSITION,
+                        "attachment; filename=\"compliance.csv\"".to_string(),
+                    ),
+                ],
+                csv,
+            )
+                .into_response())
+        }
+    }
+}
+
 /// Build the router with the default (Supabase local-dev) JWT config. Existing
 /// callers keep this exact signature; the dojo routes get a default verifier.
 pub fn build_router(state: AppState) -> Router {
@@ -996,6 +1596,29 @@ pub fn build_router_with_jwt(state: AppState, jwt: JwtConfig) -> Router {
         )
         .route("/v1/t/{tenant_key}/health", get(admin_health))
         .route("/v1/t/{tenant_key}/audit", get(list_audit))
+        // Client-lead console (LEAD floor; every handler behind `resolve_lead`).
+        .route(
+            "/v1/t/{tenant_key}/engagements",
+            get(list_engagements).post(create_engagement),
+        )
+        .route(
+            "/v1/t/{tenant_key}/engagements/{id}",
+            patch(update_engagement).delete(delete_engagement),
+        )
+        .route(
+            "/v1/t/{tenant_key}/engagements/{id}/bind",
+            post(bind_engagement_project),
+        )
+        .route(
+            "/v1/t/{tenant_key}/incidents",
+            get(list_incidents).post(create_incident),
+        )
+        .route(
+            "/v1/t/{tenant_key}/incidents/{id}",
+            patch(update_incident).delete(delete_incident),
+        )
+        .route("/v1/t/{tenant_key}/audit/artifacts", get(audit_artifacts))
+        .route("/v1/t/{tenant_key}/compliance/export", get(compliance_export))
         .layer(Extension(Arc::new(jwt)));
     Router::new()
         .route("/v1/health", get(health))

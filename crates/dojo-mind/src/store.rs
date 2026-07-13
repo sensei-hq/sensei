@@ -1125,4 +1125,542 @@ impl DojoStore {
             })
             .collect())
     }
+
+    // ── Client-lead console (tenant-scoped; the LEAD floor is enforced at the
+    //    handler via `DojoAccess::Lead`). Every method is scoped by `tenant_id`
+    //    so one tenant's client-lead never reads or mutates another's rows. The
+    //    compliance export is provably source-ref-free: its SQL selects ONLY the
+    //    dereferenced/covered subset and never names a source-reference column
+    //    (`contributed_by` / `attribution` / `signature` / `approved_by`). ──────
+
+    /// List a tenant's client engagements (newest first), each with its project
+    /// bindings + policy overrides + status + dates.
+    #[allow(clippy::type_complexity)]
+    pub async fn list_engagements(
+        &self,
+        tenant_id: &Uuid,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(
+            Uuid,              // id
+            String,            // client
+            Option<String>,    // description
+            serde_json::Value, // project_bindings
+            serde_json::Value, // policy_overrides
+            String,            // status
+            Option<String>,    // starts_on
+            Option<String>,    // ends_on
+            String,            // created_at
+            String,            // updated_at
+        )> = sqlx_core::query_as::query_as(
+            "SELECT id, client, description, project_bindings, policy_overrides,
+                    status::text,
+                    to_char(starts_on,  'YYYY-MM-DD'),
+                    to_char(ends_on,    'YYYY-MM-DD'),
+                    to_char(created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'),
+                    to_char(updated_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')
+             FROM dojo.engagements
+             WHERE tenant_id = $1
+             ORDER BY created_at DESC, id",
+        )
+        .bind(tenant_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(rows
+            .into_iter()
+            .map(
+                |(
+                    id,
+                    client,
+                    description,
+                    project_bindings,
+                    policy_overrides,
+                    status,
+                    starts_on,
+                    ends_on,
+                    created_at,
+                    updated_at,
+                )| {
+                    serde_json::json!({
+                        "id": id.to_string(),
+                        "client": client,
+                        "description": description,
+                        "project_bindings": project_bindings,
+                        "policy_overrides": policy_overrides,
+                        "status": status,
+                        "starts_on": starts_on,
+                        "ends_on": ends_on,
+                        "created_at": created_at,
+                        "updated_at": updated_at,
+                    })
+                },
+            )
+            .collect())
+    }
+
+    /// Register a client engagement. `project_bindings` (jsonb array) and
+    /// `policy_overrides` (jsonb object) default at the DDL level when the passed
+    /// value is `null`. `starts_on` / `ends_on` are `YYYY-MM-DD` strings cast to
+    /// `date`. Returns the new engagement id.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_engagement(
+        &self,
+        tenant_id: &Uuid,
+        client: &str,
+        description: Option<&str>,
+        project_bindings: Option<serde_json::Value>,
+        policy_overrides: Option<serde_json::Value>,
+        starts_on: Option<&str>,
+        ends_on: Option<&str>,
+    ) -> Result<Uuid, String> {
+        let (id,): (Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO dojo.engagements
+               (tenant_id, client, description, project_bindings, policy_overrides,
+                starts_on, ends_on)
+             VALUES
+               ($1, $2, $3,
+                COALESCE($4::jsonb, '[]'::jsonb),
+                COALESCE($5::jsonb, '{}'::jsonb),
+                $6::date, $7::date)
+             RETURNING id",
+        )
+        .bind(tenant_id)
+        .bind(client)
+        .bind(description)
+        .bind(project_bindings)
+        .bind(policy_overrides)
+        .bind(starts_on)
+        .bind(ends_on)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(id)
+    }
+
+    /// Patch an engagement (scoped by `tenant_id`). A `None` leaves that column
+    /// unchanged (`COALESCE`); `status` is validated at the handler against
+    /// `dojo.engagement_status`. Returns whether a row changed.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn update_engagement(
+        &self,
+        tenant_id: &Uuid,
+        id: &Uuid,
+        description: Option<&str>,
+        status: Option<&str>,
+        starts_on: Option<&str>,
+        ends_on: Option<&str>,
+        policy_overrides: Option<serde_json::Value>,
+        project_bindings: Option<serde_json::Value>,
+    ) -> Result<bool, String> {
+        let res = sqlx_core::query::query(
+            "UPDATE dojo.engagements SET
+               description      = COALESCE($3, description),
+               status           = COALESCE($4::dojo.engagement_status, status),
+               starts_on        = COALESCE($5::date, starts_on),
+               ends_on          = COALESCE($6::date, ends_on),
+               policy_overrides = COALESCE($7::jsonb, policy_overrides),
+               project_bindings = COALESCE($8::jsonb, project_bindings),
+               updated_at       = now()
+             WHERE tenant_id = $1 AND id = $2",
+        )
+        .bind(tenant_id)
+        .bind(id)
+        .bind(description)
+        .bind(status)
+        .bind(starts_on)
+        .bind(ends_on)
+        .bind(policy_overrides)
+        .bind(project_bindings)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    /// Append one project binding (`{project_id, name}`) to an engagement's
+    /// `project_bindings` array (scoped by `tenant_id`). Returns whether a row
+    /// changed.
+    pub async fn bind_engagement_project(
+        &self,
+        tenant_id: &Uuid,
+        id: &Uuid,
+        binding: serde_json::Value,
+    ) -> Result<bool, String> {
+        let res = sqlx_core::query::query(
+            "UPDATE dojo.engagements
+             SET project_bindings = project_bindings || jsonb_build_array($3::jsonb),
+                 updated_at = now()
+             WHERE tenant_id = $1 AND id = $2",
+        )
+        .bind(tenant_id)
+        .bind(id)
+        .bind(binding)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    /// Delete an engagement (scoped by `tenant_id`). Returns whether a row was
+    /// removed. Referenced artifacts/incidents keep the FK — a hard delete of a
+    /// referenced engagement raises the FK error (surfaced, never silent);
+    /// closing an engagement is `update_engagement(status = 'ended')`.
+    pub async fn delete_engagement(&self, tenant_id: &Uuid, id: &Uuid) -> Result<bool, String> {
+        let res = sqlx_core::query::query(
+            "DELETE FROM dojo.engagements WHERE tenant_id = $1 AND id = $2",
+        )
+        .bind(tenant_id)
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    /// List a tenant's confidentiality incidents (worst severity + newest first),
+    /// each with severity / status / owner / SLA / resolution. `resolved_at` is
+    /// carried so the console can count open incidents (`resolved_at is null`).
+    ///
+    /// Worst-first is ordered by an EXPLICIT severity rank, not `ORDER BY
+    /// severity`: `dbd` materializes the enum with its values in ALPHABETICAL
+    /// order (not the DDL declaration order), so a bare enum sort would be
+    /// meaningless (critical/high/low/medium). The rank keeps ordering correct
+    /// regardless of the deployed enum's physical order.
+    #[allow(clippy::type_complexity)]
+    pub async fn list_incidents(
+        &self,
+        tenant_id: &Uuid,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(
+            Uuid,           // id
+            Option<Uuid>,   // engagement_id
+            Option<Uuid>,   // artifact_id
+            String,         // title
+            Option<String>, // description
+            String,         // severity
+            String,         // status
+            Option<Uuid>,   // owner_id
+            Option<String>, // sla_due_at
+            Option<String>, // resolution
+            String,         // opened_at
+            Option<String>, // resolved_at
+        )> = sqlx_core::query_as::query_as(
+            "SELECT id, engagement_id, artifact_id, title, description,
+                    severity::text, status::text, owner_id,
+                    to_char(sla_due_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'),
+                    resolution,
+                    to_char(opened_at,   'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'),
+                    to_char(resolved_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')
+             FROM dojo.incidents
+             WHERE tenant_id = $1
+             ORDER BY CASE severity::text
+                        WHEN 'critical' THEN 4
+                        WHEN 'high'     THEN 3
+                        WHEN 'medium'   THEN 2
+                        WHEN 'low'      THEN 1
+                        ELSE 0 END DESC,
+                      opened_at DESC, id",
+        )
+        .bind(tenant_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(rows
+            .into_iter()
+            .map(
+                |(
+                    id,
+                    engagement_id,
+                    artifact_id,
+                    title,
+                    description,
+                    severity,
+                    status,
+                    owner_id,
+                    sla_due_at,
+                    resolution,
+                    opened_at,
+                    resolved_at,
+                )| {
+                    serde_json::json!({
+                        "id": id.to_string(),
+                        "engagement_id": engagement_id.map(|u| u.to_string()),
+                        "artifact_id": artifact_id.map(|u| u.to_string()),
+                        "title": title,
+                        "description": description,
+                        "severity": severity,
+                        "status": status,
+                        "owner_id": owner_id.map(|u| u.to_string()),
+                        "sla_due_at": sla_due_at,
+                        "resolution": resolution,
+                        "opened_at": opened_at,
+                        "resolved_at": resolved_at,
+                    })
+                },
+            )
+            .collect())
+    }
+
+    /// Open a confidentiality incident. `severity` is a `dojo.incident_severity`
+    /// (validated at the handler); `sla_due_at` is an ISO-8601 string cast to
+    /// `timestamptz`. Returns the new incident id.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_incident(
+        &self,
+        tenant_id: &Uuid,
+        engagement_id: Option<Uuid>,
+        artifact_id: Option<Uuid>,
+        title: &str,
+        description: Option<&str>,
+        severity: &str,
+        owner_id: Option<Uuid>,
+        sla_due_at: Option<&str>,
+    ) -> Result<Uuid, String> {
+        let (id,): (Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO dojo.incidents
+               (tenant_id, engagement_id, artifact_id, title, description,
+                severity, owner_id, sla_due_at)
+             VALUES
+               ($1, $2, $3, $4, $5, $6::dojo.incident_severity, $7, $8::timestamptz)
+             RETURNING id",
+        )
+        .bind(tenant_id)
+        .bind(engagement_id)
+        .bind(artifact_id)
+        .bind(title)
+        .bind(description)
+        .bind(severity)
+        .bind(owner_id)
+        .bind(sla_due_at)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(id)
+    }
+
+    /// Patch an incident (scoped by `tenant_id`). A `None` leaves that column
+    /// unchanged (`COALESCE`). `resolve` stamps `resolved_at = now()` (closing
+    /// the incident); `reopen` clears it (`resolved_at = null`); neither leaves
+    /// it unchanged. Returns whether a row changed.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn update_incident(
+        &self,
+        tenant_id: &Uuid,
+        id: &Uuid,
+        severity: Option<&str>,
+        status: Option<&str>,
+        owner_id: Option<Uuid>,
+        sla_due_at: Option<&str>,
+        resolution: Option<&str>,
+        resolve: bool,
+        reopen: bool,
+    ) -> Result<bool, String> {
+        let res = sqlx_core::query::query(
+            "UPDATE dojo.incidents SET
+               severity    = COALESCE($3::dojo.incident_severity, severity),
+               status      = COALESCE($4::dojo.incident_status, status),
+               owner_id    = COALESCE($5, owner_id),
+               sla_due_at  = COALESCE($6::timestamptz, sla_due_at),
+               resolution  = COALESCE($7, resolution),
+               resolved_at = CASE WHEN $8 THEN now()
+                                  WHEN $9 THEN NULL
+                                  ELSE resolved_at END,
+               updated_at  = now()
+             WHERE tenant_id = $1 AND id = $2",
+        )
+        .bind(tenant_id)
+        .bind(id)
+        .bind(severity)
+        .bind(status)
+        .bind(owner_id)
+        .bind(sla_due_at)
+        .bind(resolution)
+        .bind(resolve)
+        .bind(reopen)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    /// Delete an incident (scoped by `tenant_id`). Returns whether a row was
+    /// removed.
+    pub async fn delete_incident(&self, tenant_id: &Uuid, id: &Uuid) -> Result<bool, String> {
+        let res =
+            sqlx_core::query::query("DELETE FROM dojo.incidents WHERE tenant_id = $1 AND id = $2")
+                .bind(tenant_id)
+                .bind(id)
+                .execute(&self.pool)
+                .await
+                .map_err(|e| e.to_string())?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    /// The artifact audit view (client-lead console): every artifact shared under
+    /// the tenant — optionally scoped to one engagement — carrying its `strip
+    /// status` (`dereferenced`) plus the `attribution` so the console can render
+    /// what was stripped. When `dereferenced_only` is set, only stripped rows are
+    /// returned (the `dereferenced=true` filter); otherwise ALL rows are returned
+    /// so a non-dereferenced client-work artifact surfaces as a red-fail row.
+    /// Ordered by `seq`.
+    #[allow(clippy::type_complexity)]
+    pub async fn list_audit_artifacts(
+        &self,
+        tenant_id: &Uuid,
+        engagement_id: Option<&Uuid>,
+        dereferenced_only: bool,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(
+            Uuid,              // id
+            i64,               // seq
+            Option<Uuid>,      // engagement_id
+            String,            // kind
+            String,            // title
+            bool,              // dereferenced
+            serde_json::Value, // attribution (strip verification)
+            String,            // status
+            Option<String>,    // published_at
+            String,            // created_at
+        )> = sqlx_core::query_as::query_as(
+            "SELECT a.id, a.seq, a.engagement_id, a.kind::text, a.title,
+                    a.dereferenced, a.attribution, a.status::text,
+                    to_char(a.published_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'),
+                    to_char(a.created_at,   'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')
+             FROM dojo.artifacts a
+             WHERE a.tenant_id = $1
+               AND ($2::uuid IS NULL OR a.engagement_id = $2)
+               AND (NOT $3 OR a.dereferenced = true)
+             ORDER BY a.seq",
+        )
+        .bind(tenant_id)
+        .bind(engagement_id)
+        .bind(dereferenced_only)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(rows
+            .into_iter()
+            .map(
+                |(
+                    id,
+                    seq,
+                    engagement_id,
+                    kind,
+                    title,
+                    dereferenced,
+                    attribution,
+                    status,
+                    published_at,
+                    created_at,
+                )| {
+                    serde_json::json!({
+                        "id": id.to_string(),
+                        "seq": seq,
+                        "engagement_id": engagement_id.map(|u| u.to_string()),
+                        "kind": kind,
+                        "title": title,
+                        "dereferenced": dereferenced,
+                        "attribution": attribution,
+                        "status": status,
+                        "published_at": published_at,
+                        "created_at": created_at,
+                    })
+                },
+            )
+            .collect())
+    }
+
+    /// Count artifacts under the tenant (optionally one engagement) whose source
+    /// reference was NOT stripped (`dereferenced = false`). A non-zero count is
+    /// the audit view's red-fail chip and blocks the compliance export.
+    pub async fn count_non_dereferenced_artifacts(
+        &self,
+        tenant_id: &Uuid,
+        engagement_id: Option<&Uuid>,
+    ) -> Result<i64, String> {
+        let (n,): (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*) FROM dojo.artifacts
+             WHERE tenant_id = $1
+               AND ($2::uuid IS NULL OR engagement_id = $2)
+               AND dereferenced = false",
+        )
+        .bind(tenant_id)
+        .bind(engagement_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(n)
+    }
+
+    /// The compliance-export rows for the tenant (optionally one engagement).
+    ///
+    /// Provably source-ref-free: the SELECT lists ONLY the dereferenced/covered
+    /// subset — artifact id, engagement (id + client), kind, title, `dereferenced`
+    /// proof, status, timestamps — and NEVER names a source-reference column
+    /// (`contributed_by`, `attribution`, `signature`, `approved_by`, `payload`,
+    /// `scope`, `body`). So no source reference can leak into the export, whatever
+    /// the caller does with the rows. The handler blocks the export entirely when
+    /// [`count_non_dereferenced_artifacts`](Self::count_non_dereferenced_artifacts)
+    /// is non-zero.
+    #[allow(clippy::type_complexity)]
+    pub async fn export_compliance_rows(
+        &self,
+        tenant_id: &Uuid,
+        engagement_id: Option<&Uuid>,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(
+            Uuid,           // artifact id
+            Option<Uuid>,   // engagement_id
+            Option<String>, // engagement client
+            String,         // kind
+            String,         // title
+            bool,           // dereferenced
+            String,         // status
+            Option<String>, // published_at
+            String,         // created_at
+        )> = sqlx_core::query_as::query_as(
+            "SELECT a.id, a.engagement_id, e.client, a.kind::text, a.title,
+                    a.dereferenced, a.status::text,
+                    to_char(a.published_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'),
+                    to_char(a.created_at,   'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')
+             FROM dojo.artifacts a
+             LEFT JOIN dojo.engagements e ON e.id = a.engagement_id
+             WHERE a.tenant_id = $1
+               AND ($2::uuid IS NULL OR a.engagement_id = $2)
+             ORDER BY a.seq",
+        )
+        .bind(tenant_id)
+        .bind(engagement_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(rows
+            .into_iter()
+            .map(
+                |(
+                    id,
+                    engagement_id,
+                    client,
+                    kind,
+                    title,
+                    dereferenced,
+                    status,
+                    published_at,
+                    created_at,
+                )| {
+                    serde_json::json!({
+                        "artifact_id": id.to_string(),
+                        "engagement_id": engagement_id.map(|u| u.to_string()),
+                        "client": client,
+                        "kind": kind,
+                        "title": title,
+                        "dereferenced": dereferenced,
+                        "status": status,
+                        "published_at": published_at,
+                        "created_at": created_at,
+                    })
+                },
+            )
+            .collect())
+    }
 }
