@@ -25,11 +25,12 @@ Plus a smaller shift: the **hero centerpiece** stops being a `MockToday` screens
 `HeroBrief` — a chrome-less "example morning" showing the *artifact Sensei produces* (one focal
 teaching + three dimmed secondary signals), which is durable across UI churn.
 
-The direction is strong and on-brand. My highest-value additions: (a) reconcile the absolute
-local-first promise ("0 external requests / nothing leaves your machine") with the networked,
-opt-in Dōjō so the two messages don't contradict; (b) tighten Dōjō copy to what is actually
-built (console + auto-discovery + cadence scheduler are **not shipped** — see §5); (c) close the
-already-tracked SEO/OG gap; (d) split the CTA path for the two audiences (solo dev vs team lead).
+The direction is strong and on-brand. My highest-value additions: 
+
+(a) reconcile the absolute local-first promise ("0 external requests / nothing leaves your machine") with the networked, opt-in Dōjō so the two messages don't contradict; 
+(b) tighten Dōjō copy to what is actually built (console + auto-discovery + cadence scheduler are **not shipped** — see §5); 
+(c) close the already-tracked SEO/OG gap; 
+(d) split the CTA path for the two audiences (solo dev vs team lead).
 
 ---
 
