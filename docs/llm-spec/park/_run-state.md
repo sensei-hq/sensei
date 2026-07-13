@@ -1939,17 +1939,20 @@ port mismatch hive 7755 vs config 8787 (🟢), etc. Chunk order: {R1,R2}→R3→
    ⚑ FLAGS: (1) LOCAL DAEMON: 🔨 REBUILDING v0.3.0 (install bfz7tm28s, Jerry asked) → will report 0.3.0 + use v0.3.0
    DDL bundle. (2) dojo-mind NOT in the `make bump` crate-version list → stays 0.2.17 (cosmetic; not in release
    artifacts; tiny Makefile follow-up).
-   ── 🔒 DEPENDABOT TRIAGE (Jerry approved fix, 2026-07-13) — 9 open alerts, fixes vary in difficulty:
-     • EASY (semver-compat cargo/bun update): `tar` 0.4.45→0.4.46 (patch); `@sveltejs/kit` 2.59→2.60.1 (app minor).
-     • HIGH `rustls-webpki` 0.101.7→0.103.13 (DoS panic on malformed CRL, senseid TLS): cross-major for a pre-1.0
-       crate → needs the **rustls parent bumped** (cascades reqwest/tls) — not a one-line lock update. Also clears the
-       2 LOW webpki alerts.
-     • `jsonwebtoken` 9.3.1→10.3.0 (type-confusion→auth-bypass; dojo-mind Supabase JWT, direct dep `= "9"`): MAJOR
-       bump → constraint change + API fixes in dojo-mind/src/auth.rs (verify_supabase_jwt).
-     • `glib`→0.20 (Tauri transitive): likely needs a Tauri bump; assess/defer if it cascades too far.
-     PLAN: apply as ONE chunk AFTER the install finishes (cargo update changes Cargo.lock → can't interleave with the
-     in-flight release build). Order: easy bumps → rustls cascade (HIGH) → jsonwebtoken major (+auth code) → glib
-     assess. Verify full build+clippy+tests; commit on develop; deploys at next build/release.
+   ── ✅ DEPENDABOT (Jerry approved fix, 2026-07-13) — 3/5 groups FIXED + committed `3fd79eb7` (agent a80ac998):
+     • `tar` 0.4.45→0.4.46 (lock-only) ✓ • `@sveltejs/kit` 2.59→2.69.2 (app, ≥2.60.1) ✓ • `jsonwebtoken` 9.3.1→10.4.0
+       ✓ — v10 dropped bundled crypto → selected `rust_crypto` feature (dojo-mind only does HS256, avoids C toolchain);
+       auth.rs source-compatible, auth+jwt 8/8 green. VERIFIED by me: dojo-mind clippy 0 + auth/jwt pass.
+     • ⚠️ HIGH `rustls-webpki` 0.101.7 = UNFIXABLE IN THIS REPO. Root: comes ONLY from the AWS SDK legacy
+       hyper-0.14/rustls-0.21 connector via `aws-sdk-bedrockruntime` default `"rustls"` feature, pulled through the
+       EXTERNAL `gateway` crate. Cargo feature unification is additive → no local edit can subtract it. → **GH ISSUE
+       FILED: sensei-hq/gateway#1** (proposed fix: aws-sdk deps `default-features=false` + `default-https-client` =
+       rustls 0.23/webpki 0.103, then re-pin gateway rev). reqwest already uses the good 0.103.13. [[feedback_external_dep_issue]]
+     • ⚠️ `glib` 0.18.5 (MED) DEFERRED — gtk-rs pinned by Tauri 2.11, Linux-only (not compiled on macOS); needs a
+       Tauri major bump. Leave until Tauri adopts gtk-rs 0.20.
+     ── ✅ DE-FLAKED a pre-existing test `a74c57da`: prune_activity_prunes_orphan_events_by_ts asserted the GLOBAL
+       prune count (races with sibling prune_activity on shared test DB) → dropped it; the per-row (unique-csid) check
+       is deterministic. senseid db suite now clean under parallelism. (Same race-class as the P2 heal fix.)
    🟢 NEXT: R6 console (greenfield SvelteKit console/ app + @kavach auth plane; scaffold+static render 🟢, live magic-
    link auth = Jerry). Reliability track complete — capture is now rock-solid. develop continues from the merged base.
    ★ DESIGN DOC OF RECORD: docs/analysis/2026-07-13-index-reliability-rock-solid.md (a8b09407) — full architecture,
