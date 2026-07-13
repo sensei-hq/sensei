@@ -1818,7 +1818,23 @@ port mismatch hive 7755 vs config 8787 (🟢), etc. Chunk order: {R1,R2}→R3→
    group (mockup wanted a Memories sub-tab; flat rail doesn't model sub-tabs — moveable if Jerry prefers "Needs you").
    ⚑ STALE-PLAN NOTE (fix before R7/R8): `_dojo-build-plan.md` R7/R8 still cite `crates/hive-mind/…` + `cargo test -p
    hive-mind` — post-consolidation these are `crates/dojo-mind/` + `cargo test -p dojo-mind` (binary sensei-dojo).
-   AFTER R2: R3, then R7+R8 (console backends, dojo-mind service, synthetic-JWT), then member-role enum.
+   ⛔ R3 BLOCKED-ON-JERRY-DESIGN (do NOT default-and-proceed — CLAUDE.md forbids inventing shipped-schema/architecture
+   silently): R3 "auto-bind at detect → set projects.dojo_id" has NO mechanism today — `dojo_memberships` has
+   kind/tenant_key but NO org/git-owner field to match a project's `folders.remote_urls` against, and
+   `client_precedence_route` (dojo/routing.rs:119) only routes a CONTRIBUTION by precedence, it does NOT map an org→
+   membership. Auto-bind needs a NEW org→membership mapping (schema field + discovery flow) = exactly the company-vs-
+   client ORG CLASSIFICATION Jerry RESERVED ("surface to user which orgs are company vs client"). → JERRY DECISION
+   NEEDED: how does a project's git-remote owner map to a dojo membership/tenant (new dojo_memberships.org_slug[]? a
+   discovery+confirm flow? tenant_key==org?) + who classifies company vs client. Documented, not built.
+   ✅ R5 SHIPPED `b1aceb0e` (done DIRECTLY, no subagent — mechanical port). New `supabase/` (config.toml
+   project_id=sensei-dojo + [inbucket]→[local_smtp] for CLI 2.109; seed.sql = 4 console-persona users
+   admin/maintainer/lead/contributor w/ app_metadata.role; .gitignore) + `make supabase-up/down`. No real secrets
+   (env() only), localhost only. VERIFIED LIVE: `supabase start` booted the stack, Studio :54323 (307) + Mailpit :54324
+   (200) reachable, all 4 role users seeded in auth.users, config re-validates with NO deprecation warning, stopped
+   clean. NEXT for the console track = R6 (SvelteKit console app + auth plane — was 🔴; now unblocked by R5).
+   ⚑ STALE-PLAN (fix before R7/R8): `_dojo-build-plan.md` R7/R8 cite `crates/hive-mind/` + `cargo test -p hive-mind`
+   → now `crates/dojo-mind/` + `-p dojo-mind`. QUEUE: [R3 awaits Jerry design] → R4 seed catalogue → R6 console →
+   R7+R8 console backends. Next heartbeat advances R4 (or surveys R6).
    Dōjō is NOT deferred (LOCAL-FIRST=RELAY-ONLY). Consolidation was cleanup = shipped.
 Assets: _dojo-build-plan.md (refreshed) + 4 console specs + dojo-developer-flow.md; ~/Developer/kavach/supabase model.
 
