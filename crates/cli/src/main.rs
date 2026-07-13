@@ -23,7 +23,13 @@ fn daemon_url() -> String {
 #[command(name = SENSEI_BIN, about = "Sensei — AI coding companion", version)]
 struct Cli {
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
+
+    /// Upgrade sensei's integration for ALL detected assistants — a flag alias
+    /// for the `upgrade` subcommand, so `sensei --upgrade` refreshes every ACP's
+    /// plugin/MCP in one shot after a sensei upgrade.
+    #[arg(long)]
+    upgrade: bool,
 }
 
 #[derive(Subcommand)]
@@ -114,29 +120,42 @@ const UPGRADE_ENDPOINT: &str = "/api/assistants/upgrade";
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
+
+    // `sensei --upgrade` (flag form) — refresh every detected assistant, the
+    // same all-ACP fan-out as the `upgrade` subcommand with no --acp.
+    if cli.upgrade && cli.command.is_none() {
+        upgrade_cmd(None);
+        return ExitCode::SUCCESS;
+    }
+
     match cli.command {
-        Commands::Init {
+        None => {
+            // No subcommand and no --upgrade → show help rather than erroring.
+            let _ = <Cli as clap::CommandFactory>::command().print_help();
+            println!();
+        }
+        Some(Commands::Init {
             scope,
             acp,
             recommended,
-        } => {
+        }) => {
             init(scope.as_deref(), acp.as_deref(), recommended);
         }
-        Commands::Remove {
+        Some(Commands::Remove {
             target,
             name,
             purge,
-        } => remove_cmd(&target, name.as_deref(), purge),
-        Commands::Start { port } => {
+        }) => remove_cmd(&target, name.as_deref(), purge),
+        Some(Commands::Start { port }) => {
             daemon_cmd("start", Some(port.unwrap_or_else(|| cfg().daemon_port)))
         }
-        Commands::Stop => daemon_cmd("stop", None),
-        Commands::Restart { port } => restart_daemon(port.unwrap_or_else(|| cfg().daemon_port)),
-        Commands::Status => daemon_cmd("status", None),
-        Commands::Scan { path } => scan(&path),
-        Commands::AddLib { name, url } => add_lib(&name, url.as_deref()),
-        Commands::Doctor { fix } => return ExitCode::from(doctor::run(fix) as u8),
-        Commands::Upgrade { acp } => upgrade_cmd(acp.as_deref()),
+        Some(Commands::Stop) => daemon_cmd("stop", None),
+        Some(Commands::Restart { port }) => restart_daemon(port.unwrap_or_else(|| cfg().daemon_port)),
+        Some(Commands::Status) => daemon_cmd("status", None),
+        Some(Commands::Scan { path }) => scan(&path),
+        Some(Commands::AddLib { name, url }) => add_lib(&name, url.as_deref()),
+        Some(Commands::Doctor { fix }) => return ExitCode::from(doctor::run(fix) as u8),
+        Some(Commands::Upgrade { acp }) => upgrade_cmd(acp.as_deref()),
     }
     ExitCode::SUCCESS
 }
@@ -983,7 +1002,7 @@ mod tests {
     fn upgrade_subcommand_parses_without_acp() {
         let cli = Cli::parse_from(["sensei", "upgrade"]);
         match cli.command {
-            Commands::Upgrade { acp } => assert!(acp.is_none(), "no --acp → all detected"),
+            Some(Commands::Upgrade { acp }) => assert!(acp.is_none(), "no --acp → all detected"),
             _ => panic!("expected Upgrade command"),
         }
     }
@@ -992,9 +1011,26 @@ mod tests {
     fn upgrade_subcommand_parses_with_acp() {
         let cli = Cli::parse_from(["sensei", "upgrade", "--acp", "claude"]);
         match cli.command {
-            Commands::Upgrade { acp } => assert_eq!(acp.as_deref(), Some("claude")),
+            Some(Commands::Upgrade { acp }) => assert_eq!(acp.as_deref(), Some("claude")),
             _ => panic!("expected Upgrade command"),
         }
+    }
+
+    #[test]
+    fn upgrade_flag_parses_as_all_acp_shortcut() {
+        // `sensei --upgrade` (flag form Jerry asked for) → no subcommand, flag
+        // set → main dispatches upgrade_cmd(None) = all detected assistants.
+        let cli = Cli::parse_from(["sensei", "--upgrade"]);
+        assert!(cli.upgrade, "--upgrade flag set");
+        assert!(cli.command.is_none(), "flag form carries no subcommand");
+    }
+
+    #[test]
+    fn bare_invocation_has_no_command_and_no_upgrade() {
+        // `sensei` alone → help path (command None, upgrade false), never a panic.
+        let cli = Cli::parse_from(["sensei"]);
+        assert!(cli.command.is_none());
+        assert!(!cli.upgrade);
     }
 
     #[test]
