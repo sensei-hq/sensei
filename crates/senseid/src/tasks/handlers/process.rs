@@ -283,6 +283,19 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
                 tracing::warn!(folder_id = %fid, file = %path, error = %e, "delete_scan_state_file (removed) failed");
             }
         }
+
+        // Safety net (Bug 2): the incremental diff above only drops files that
+        // were in scan_state. Nodes can outlive their scan_state row — an
+        // interrupted index, or a moved dir the fs-watcher missed (e.g.
+        // crates/hive-mind → crates/dojo-mind, leaving Hive* struct nodes at
+        // vanished paths). `current` is the complete live working-tree file set,
+        // so prune any indexed node whose file is no longer present. Idempotent.
+        let live: std::collections::HashSet<String> =
+            current.iter().map(|(rel, _)| rel.clone()).collect();
+        let pruned = super::scan::prune_vanished(ctx.pg(), fid, &live).await;
+        if pruned > 0 {
+            tracing::info!(folder = %folder_name, pruned, "process_git_folder: pruned orphan nodes for vanished files");
+        }
     }
 
     // Materialize the subfolder tree as kind=folder rows so the project's
