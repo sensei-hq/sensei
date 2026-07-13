@@ -1698,13 +1698,18 @@ D2 ✅ SHIPPED `2f6f1de9` (2026-07-13): version-change rescan worker — boot ho
 ⭐⭐⭐ P0 TOOLING-VERIFICATION TRACK A–F COMPLETE + SHIPPED v0.2.41 (2026-07-13).
   Merged develop→main `67027a89`, bump `6a2c26f1` (tag v0.2.41; subtrees synced tap 4a7ccf7 / marketplace 47d0e76
   → plugin now advertises 0.2.41). Commits: D1 d6b3ae30, D2 2f6f1de9, D3 ccef0324, plugin-ref+--upgrade 7d618c82,
-  E e706484a, bloat-fix 81fac7be. ⏳ `make install-service` (release) running bg bik0e3td5 → makes D/E/bloat LIVE +
-  live-tests the upgrade pipeline (install → sensei upgrade → claude plugin update sensei@sensei-marketplace) +
-  pkills sensei-mcp (this session's MCP disconnects; /mcp reconnect to resume — bloat fix is daemon-only so it's
-  live over the same connection regardless). ON INSTALL DONE: curl-verify /health=0.2.41 + /api/projects?under=sensei
-  compact + inspect mcp-refresh output (did sensei upgrade run the correct ref?).
-  FOLLOW-UPS filed (defects 2–4, non-blocking): search recall gaps; get_rules mis-scoped prompt-fragment "rules"
-  (incl. an unrelated fiction project bleeding in); patterns/memories sparse. THEN RESUME AUTOPILOT (UI sweep / Dōjō).
+  E e706484a, bloat-fix 81fac7be. ✅ `make install-service` (release) DONE + VERIFIED LIVE (bik0e3td5, exit 0):
+  • /health = 0.2.41 (daemon is the new binary; D/E/bloat LIVE).
+  • UPGRADE PIPELINE PROVEN LIVE: install → mcp-refresh-note → `✓ ran 'sensei upgrade' — assistant plugins
+    refreshed` → assistant upgrade() → `claude plugin update sensei@sensei-marketplace` SUCCEEDED (D1+D3+plugin-ref
+    fix end-to-end, live). Reminder printed with the correct qualified ref.
+  • BLOAT FIX LIVE: /api/projects?under=sensei = 831 chars (was 71,756 — 86×), 1 project, 1 folder kind=git only.
+  • D2 WORKER FIRED: sensei.config daemon.last_version = 0.2.41 (detected 0.2.40→0.2.41 on boot, persisted).
+  • This session's sensei MCP pkilled (disconnected) as designed; curl proof suffices (same endpoints the proxy hits).
+  FOLLOW-UPS filed (defects 2–4, non-blocking, for autopilot): search recall gaps; get_rules mis-scoped
+  prompt-fragment "rules" (incl. an unrelated fiction project bleeding in); patterns/memories sparse.
+  ⭐ P0 TRACK DONE. NEXT: RESUME AUTOPILOT — original queue (UI sweep: Atlas/logs/traceability/impact/icon-asset;
+  Dōjō consoles+supabase; protocol consolidation) + the 3 tooling follow-ups. Next heartbeat pulls the next chunk.
 
 ⭐⭐ F ✅ LIVE-VERIFIED THROUGH THE REAL MCP TOOLS (2026-07-13, MCP reconnected by Jerry → plugin 0.2.40).
 DOGFOODED, not simulated. The folder→project→tools CYCLE WORKS end-to-end (Jerry's core ask):
