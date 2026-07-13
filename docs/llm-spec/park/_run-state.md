@@ -1695,6 +1695,17 @@ D2 ✅ SHIPPED `2f6f1de9` (2026-07-13): version-change rescan worker — boot ho
 ⭐ WORKSTREAM D COMPLETE (D1 d6b3ae30 + D2 2f6f1de9 + D3 ccef0324). NOT yet installed live (develop-only; installs
   at the A–F milestone merge+bump).
 
+⭐⭐⭐ P0 TOOLING-VERIFICATION TRACK A–F COMPLETE + SHIPPED v0.2.41 (2026-07-13).
+  Merged develop→main `67027a89`, bump `6a2c26f1` (tag v0.2.41; subtrees synced tap 4a7ccf7 / marketplace 47d0e76
+  → plugin now advertises 0.2.41). Commits: D1 d6b3ae30, D2 2f6f1de9, D3 ccef0324, plugin-ref+--upgrade 7d618c82,
+  E e706484a, bloat-fix 81fac7be. ⏳ `make install-service` (release) running bg bik0e3td5 → makes D/E/bloat LIVE +
+  live-tests the upgrade pipeline (install → sensei upgrade → claude plugin update sensei@sensei-marketplace) +
+  pkills sensei-mcp (this session's MCP disconnects; /mcp reconnect to resume — bloat fix is daemon-only so it's
+  live over the same connection regardless). ON INSTALL DONE: curl-verify /health=0.2.41 + /api/projects?under=sensei
+  compact + inspect mcp-refresh output (did sensei upgrade run the correct ref?).
+  FOLLOW-UPS filed (defects 2–4, non-blocking): search recall gaps; get_rules mis-scoped prompt-fragment "rules"
+  (incl. an unrelated fiction project bleeding in); patterns/memories sparse. THEN RESUME AUTOPILOT (UI sweep / Dōjō).
+
 ⭐⭐ F ✅ LIVE-VERIFIED THROUGH THE REAL MCP TOOLS (2026-07-13, MCP reconnected by Jerry → plugin 0.2.40).
 DOGFOODED, not simulated. The folder→project→tools CYCLE WORKS end-to-end (Jerry's core ask):
   • find_projects(under=/…/dbd-rs) → 1 project boundary-safe; use_project sensei → pinned to REAL ff1ccea2
