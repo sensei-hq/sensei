@@ -1676,6 +1676,20 @@ C ✅ SHIPPED `6405447f` (2026-07-13): find_projects(under) + use_project pin (~
 ✅ find_projects VERIFIED LIVE (2026-07-13, daemon 0.2.40): /api/projects?under=/Users/Jerry/Developer/sensei-hq
   → 5 (corpus,minilm-bench,products,sensei,sponsor) from 297 total; under=.../sensei-hq/sensei → 1 (boundary-safe).
   A+B+C daemon-side PROVEN LIVE (name-resolution + find_projects). Pin (use_project) round-trip awaits MCP reconnect.
-⏳ D1 BUILDING: assistant upgrade() — add upgrade() to the Assistant trait (ClaudeCodeAssistant → `claude plugin
-  update sensei`, mirror install+verify) + POST /api/assistants/upgrade (fan out detected) + `sensei upgrade` CLI.
-  Then D2 version-change worker, D3 Makefile pkill+reminder. Then E dedup, F 3-repo gate.
+D1 ✅ SHIPPED `d6b3ae30` (2026-07-13): Assistant::upgrade() trait method (defaulted no-op Ok; only ClaudeCodeAssistant
+  overrides → `claude plugin update sensei` via plugin_update_args() argv seam, reuses find_claude_binary +
+  verify_plugin_installed gate) + assistants::upgrade(ids) fan-out (reuses configure target selection) +
+  POST /api/assistants/upgrade → Vec<AdapterResolveReport> + `sensei upgrade [--acp]` CLI. 8 tests (default/argv/verify/
+  version-readback/fan-out/handler/CLI-parse×2); real `claude plugin update` never executed (tests target file-based
+  cursor id). clippy 0; sensei-cli 4 + senseid assistants:: 116 green. No DDL.
+D3 ✅ SHIPPED `ccef0324` (2026-07-13): Makefile — install-service + install-debug now run shared `mcp-refresh-note`
+  (pkill -x sensei-mcp so next session/reconnect execs fresh binary; best-effort `sensei upgrade` [daemon up from
+  restart; freshly-overlaid release sensei has the subcommand]; always PRINT `claude plugin update sensei` reminder
+  since in-session MCP needs CLIENT reconnect). + `make ship v=patch` = bump+install (release) so daemon/binaries
+  never left stale behind a bump. Validated `make -n` (parses; note runs after restart before app build). No code/DDL.
+⏳ D2 BUILDING (aeeac75b): version-change worker — daemon boot compares running binary version vs stored
+  daemon.last_version (sensei.config); if changed → enqueue existing full re-scan/re-analyze (rebuild graph/derived
+  against new binary) + persist new version; idempotent (fires once per change). Pure gate `version_changed` +
+  testable `maybe_rescan_on_version_change`. No DDL (reuse sensei.config). Assistant-upgrade-on-boot INTENTIONALLY
+  NOT in D2 (that's install-flow D3 — daemon shouldn't run `claude plugin update`). Then E dedup, F 3-repo gate.
+  NOTE: sensei MCP tools STILL disconnected (ToolSearch finds none) — through-tools pin verify awaits Jerry reconnect.
