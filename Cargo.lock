@@ -2067,7 +2067,7 @@ dependencies = [
 [[package]]
 name = "gateway"
 version = "0.2.23"
-source = "git+ssh://git@github.com/sensei-hq/gateway.git?rev=01d0ab2#01d0ab27358c38b3cc4cbabcde76274d81bfa90a"
+source = "git+https://github.com/sensei-hq/gateway.git?rev=01d0ab2#01d0ab27358c38b3cc4cbabcde76274d81bfa90a"
 dependencies = [
  "async-trait",
  "aws-config",
@@ -2090,7 +2090,7 @@ dependencies = [
 [[package]]
 name = "gateway-embedded"
 version = "0.2.23"
-source = "git+ssh://git@github.com/sensei-hq/gateway.git?rev=01d0ab2#01d0ab27358c38b3cc4cbabcde76274d81bfa90a"
+source = "git+https://github.com/sensei-hq/gateway.git?rev=01d0ab2#01d0ab27358c38b3cc4cbabcde76274d81bfa90a"
 dependencies = [
  "async-trait",
  "fastembed",
