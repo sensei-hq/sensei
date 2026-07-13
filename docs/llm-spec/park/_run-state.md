@@ -1687,9 +1687,18 @@ D3 ✅ SHIPPED `ccef0324` (2026-07-13): Makefile — install-service + install-d
   restart; freshly-overlaid release sensei has the subcommand]; always PRINT `claude plugin update sensei` reminder
   since in-session MCP needs CLIENT reconnect). + `make ship v=patch` = bump+install (release) so daemon/binaries
   never left stale behind a bump. Validated `make -n` (parses; note runs after restart before app build). No code/DDL.
-⏳ D2 BUILDING (aeeac75b): version-change worker — daemon boot compares running binary version vs stored
-  daemon.last_version (sensei.config); if changed → enqueue existing full re-scan/re-analyze (rebuild graph/derived
-  against new binary) + persist new version; idempotent (fires once per change). Pure gate `version_changed` +
-  testable `maybe_rescan_on_version_change`. No DDL (reuse sensei.config). Assistant-upgrade-on-boot INTENTIONALLY
-  NOT in D2 (that's install-flow D3 — daemon shouldn't run `claude plugin update`). Then E dedup, F 3-repo gate.
+D2 ✅ SHIPPED `2f6f1de9` (2026-07-13): version-change rescan worker — boot hook maybe_rescan_on_version_change
+  (tasks/version_rescan.rs) compares running binary vs stored daemon.last_version (sensei.config, no DDL); on change
+  enqueues one ScanRoot per watch root (same task scan_folder uses) + clears analyzer.last_full_refresh watermark so
+  the scheduler's first tick re-analyzes every project; persists version LAST (crash-safe re-trigger); non-fatal +
+  idempotent. Wired server.rs:188 BEFORE analyzer_scheduler::spawn. 2 tests; clippy 0; senseid 1382+2 green.
+⭐ WORKSTREAM D COMPLETE (D1 d6b3ae30 + D2 2f6f1de9 + D3 ccef0324). NOT yet installed live (develop-only; installs
+  at the A–F milestone merge+bump).
+
+E ✅ PRUNE ALREADY HEALED (verified live 2026-07-13): duplicate empty `2efd4ecf` is GONE (0 rows); ff1ccea2 is the
+  sole "sensei" (247 folders); ZERO duplicate project names in the DB; no unique index on projects.name (dups CAN
+  recur); create_project (pg_store.rs:4577) = bare INSERT no dedup; 297 projects / 44 zero-folder (NOT dup-names —
+  likely legit Zed corpus). ⏳ E GUARD BUILDING (a36787d8): trace scan-time project mint + add creation guard and/or
+  deterministic reconcile-heal for name-duplicate 0-folder phantoms + regression tests (NO unique(name) index —
+  same-name-different-path repos are legit; NO mass-delete of 0-folder projects). Then F 3-repo live gate.
   NOTE: sensei MCP tools STILL disconnected (ToolSearch finds none) — through-tools pin verify awaits Jerry reconnect.
