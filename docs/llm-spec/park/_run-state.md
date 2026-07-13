@@ -1943,18 +1943,25 @@ port mismatch hive 7755 vs config 8787 (🟢), etc. Chunk order: {R1,R2}→R3→
      • `tar` 0.4.45→0.4.46 (lock-only) ✓ • `@sveltejs/kit` 2.59→2.69.2 (app, ≥2.60.1) ✓ • `jsonwebtoken` 9.3.1→10.4.0
        ✓ — v10 dropped bundled crypto → selected `rust_crypto` feature (dojo-mind only does HS256, avoids C toolchain);
        auth.rs source-compatible, auth+jwt 8/8 green. VERIFIED by me: dojo-mind clippy 0 + auth/jwt pass.
-     • ⚠️ HIGH `rustls-webpki` 0.101.7 = UNFIXABLE IN THIS REPO. Root: comes ONLY from the AWS SDK legacy
-       hyper-0.14/rustls-0.21 connector via `aws-sdk-bedrockruntime` default `"rustls"` feature, pulled through the
-       EXTERNAL `gateway` crate. Cargo feature unification is additive → no local edit can subtract it. → **GH ISSUE
-       FILED: sensei-hq/gateway#1** (proposed fix: aws-sdk deps `default-features=false` + `default-https-client` =
-       rustls 0.23/webpki 0.103, then re-pin gateway rev). reqwest already uses the good 0.103.13. [[feedback_external_dep_issue]]
+     • ✅ HIGH `rustls-webpki` 0.101.7 = FIXED `02431692`. Root was the AWS SDK legacy hyper-0.14/rustls-0.21
+       connector via the EXTERNAL `gateway` crate. gateway#1 CLOSED (Jerry resolved upstream) → re-pinned gateway +
+       gateway-embedded 01d0ab2→**d8ec222** (v0.2.23→0.2.24) → dropped rustls-webpki 0.101.7 + the whole legacy stack
+       (hyper 0.14/rustls 0.21/hyper-rustls/tokio-rustls/h2 0.3); tree now only webpki 0.103.13; senseid+dojo-mind
+       compile clean. [[feedback_external_dep_issue]] worked as designed (issue→upstream fix→re-pin).
      • ⚠️ `glib` 0.18.5 (MED) DEFERRED — gtk-rs pinned by Tauri 2.11, Linux-only (not compiled on macOS); needs a
        Tauri major bump. Leave until Tauri adopts gtk-rs 0.20.
      ── ✅ DE-FLAKED a pre-existing test `a74c57da`: prune_activity_prunes_orphan_events_by_ts asserted the GLOBAL
        prune count (races with sibling prune_activity on shared test DB) → dropped it; the per-row (unique-csid) check
        is deterministic. senseid db suite now clean under parallelism. (Same race-class as the P2 heal fix.)
-   🟢 NEXT: R6 console (greenfield SvelteKit console/ app + @kavach auth plane; scaffold+static render 🟢, live magic-
-   link auth = Jerry). Reliability track complete — capture is now rock-solid. develop continues from the merged base.
+   🔨 IN PROGRESS: R6 console (greenfield SvelteKit console/ app + @kavach auth plane; scaffold+static render 🟢, live
+   magic-link auth = Jerry) — subagent aac1c0e8.
+   🟢 QUEUED (Jerry approved 2026-07-13): **sensei-mcp AUTO-RECONNECT** — next reliability chunk AFTER R6. Make the
+   crates/mcp stdio proxy resilient to the daemon restarting: retry-with-backoff reconnect to :7744 + re-fetch the tool
+   list when the daemon bounces, so a daemon-only upgrade is truly live-immediately (no pkill nudge, no manual /mcp).
+   Root cause of the "tools not loading" this session: the proxy drops when the daemon stops during install + never
+   recovers. The existing mcp-refresh-note pkill is an unreliable client-nudge; THIS kills the root cause. (My redundant
+   Makefile pkill dup was reverted — the pkill already lives in mcp-refresh-note.)
+   develop continues from the merged base @ v0.3.0. Reliability track (P0-P2) complete — capture is rock-solid.
    ★ DESIGN DOC OF RECORD: docs/analysis/2026-07-13-index-reliability-rock-solid.md (a8b09407) — full architecture,
    root-cause, per-tier done-gates. ★ JERRY CONFIRMED (2026-07-13): build the FULL "resilient watcher/scanner" as
    outlined — so the RELIABILITY TRACK is now the PRIORITY: P0 (in progress) → P1 → P2 as sequential chunks, AHEAD of
