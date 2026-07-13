@@ -1598,9 +1598,12 @@ ACTIVE BUILD QUEUE (default-and-proceed order, highest value first):
    develop (NOT merged/bumped — batch the UI sweep into ONE milestone later; app UI needs install-app to go live).
    3 large subagents run back-to-back (~577K tok) → PACING to heartbeat cadence (one per idle tick), not back-to-back.
 ── NEXT (autonomous-safe, no-DDL; pick highest-value per tick):
-   • ⭐ tooling follow-up: get_rules SCOPE HYGIENE — F3 dogfood found general-scope "rules" derived from raw prompt
-     fragments, incl. an UNRELATED fiction project bleeding into sensei's rules. Investigate the rule-derivation
-     (which pipeline promotes prompts→rules + why scope=general/cross-project) → scope-correct + quality-gate. Daemon.
+   • ⏳ get_rules SCOPE HYGIENE — BUILDING (agent a87bbf32, diagnose+fix). Bug: get_rules(sensei) surfaced 8
+     general-scope "guiding principle across N prompts" rules incl. an UNRELATED fiction project ("nigel/essence
+     system"). Note: generate.rs:305-306 ALREADY writes rule-candidate memories scope=project+project_id (correct) —
+     so the bleed is elsewhere in the /api/knowledge/rules path (governance.rs:120 defaults empty scope→general; or
+     the rules query surfaces project principles cross-project). No-DDL code fix + TDD; FLAG any prod-row data
+     correction (don't blind-UPDATE). ON DONE: verify + commit (+ apply flagged SQL only if trivially-safe/reviewed).
    • tooling follow-up: search recall gaps (signature-substring match misses some real symbols) — query.rs.
    • F-contribute lane: wire scheduling for the already-built C6 contribute path (no DDL). [F-benchmarks/F-TDD-gate
      need DDL → defer w/ C+D.]
