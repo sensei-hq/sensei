@@ -1972,7 +1972,7 @@ port mismatch hive 7755 vs config 8787 (🟢), etc. Chunk order: {R1,R2}→R3→
    console API calls go UNAUTHENTICATED (401) + degrade to an error banner. Both are CODE wiring (persist org on session
    + read session token → API client) that makes the console functional the moment Jerry logs in — buildable without a
    live login; the live magic-link + running dojo service is Jerry's verify. Until then R9/R10/R11 are static shells.
-   🔨 IN PROGRESS: CONSOLE WIRING (the linchpin) — subagent a7bfeca. kavach already puts the Supabase Session (w/
+   ✅ CONSOLE WIRING SHIPPED `98103d58` (subagent a7bfeca) — VERIFIED: check 0, build ok, 44/44 tests. (console)/+layout.server.ts reads dojo_tenant cookie + locals.session.access_token → data; /orgs sets the cookie on enter; triage-data.ts sends Bearer. R9/R10/R11 now functional-on-login (live login+dojo svc = Jerry). Was subagent a7bfeca. kavach already puts the Supabase Session (w/
    access_token) on event.locals.session; wiring = (1) persist selected org as a `dojo_tenant` cookie on /orgs enter +
    a (console)/+layout.server.ts that reads it → replaces R9's ?tenant= placeholder; (2) surface
    locals.session.access_token → data → triage-data.ts Authorization: Bearer. Makes R9/R10/R11 functional-on-login
