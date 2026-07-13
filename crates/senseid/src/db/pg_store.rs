@@ -5115,21 +5115,7 @@ impl PgStore {
     /// left untouched for [`Self::mark_orphaned_projects`] to tag. Returns the
     /// number of phantoms merged away.
     pub async fn heal_duplicate_name_projects(&self) -> Result<u64, String> {
-        // (phantom_id, survivor_id) pairs — one per phantom. The `= 1` guard
-        // ensures the survivor is the single folder-bearing project for that
-        // name (unambiguous), so a two-folder-bearing collision is excluded.
-        let pairs: Vec<(uuid::Uuid, uuid::Uuid)> = sqlx_core::query_as::query_as(
-            "SELECT empty.id, keep.id
-               FROM sensei.projects empty
-               JOIN sensei.projects keep
-                 ON keep.name = empty.name AND keep.id <> empty.id
-              WHERE empty.maturity = 'discovery'
-                AND NOT EXISTS (SELECT 1 FROM sensei.folders f WHERE f.project_id = empty.id)
-                AND EXISTS     (SELECT 1 FROM sensei.folders f WHERE f.project_id = keep.id)
-                AND (SELECT count(*) FROM sensei.projects k
-                       WHERE k.name = empty.name
-                         AND EXISTS (SELECT 1 FROM sensei.folders f WHERE f.project_id = k.id)) = 1",
-        ).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        let pairs = self.duplicate_name_phantom_pairs().await?;
 
         let mut healed = 0u64;
         for (phantom, survivor) in pairs {
@@ -5144,6 +5130,35 @@ impl PgStore {
             }
         }
         Ok(healed)
+    }
+
+    /// `(phantom_id, survivor_id)` pairs — one per name-duplicate phantom that
+    /// [`Self::heal_duplicate_name_projects`] would merge. The `= 1` guard ensures
+    /// the survivor is the single folder-bearing project for that name
+    /// (unambiguous), so a two-folder-bearing collision is excluded. Shared by the
+    /// heal (which merges each) and [`Self::detect_duplicate_name_phantoms`] (which
+    /// reports read-only) so both agree on exactly what a phantom is.
+    async fn duplicate_name_phantom_pairs(&self) -> Result<Vec<(uuid::Uuid, uuid::Uuid)>, String> {
+        sqlx_core::query_as::query_as(
+            "SELECT empty.id, keep.id
+               FROM sensei.projects empty
+               JOIN sensei.projects keep
+                 ON keep.name = empty.name AND keep.id <> empty.id
+              WHERE empty.maturity = 'discovery'
+                AND NOT EXISTS (SELECT 1 FROM sensei.folders f WHERE f.project_id = empty.id)
+                AND EXISTS     (SELECT 1 FROM sensei.folders f WHERE f.project_id = keep.id)
+                AND (SELECT count(*) FROM sensei.projects k
+                       WHERE k.name = empty.name
+                         AND EXISTS (SELECT 1 FROM sensei.folders f WHERE f.project_id = k.id)) = 1",
+        ).fetch_all(&self.pool).await.map_err(|e| e.to_string())
+    }
+
+    /// Read-only detection counterpart to [`Self::heal_duplicate_name_projects`]:
+    /// the phantom project ids that WOULD be merged into their folder-bearing
+    /// survivor. Shares the candidate query; performs no mutation. Used by the
+    /// index integrity audit's read-only (`doctor`) pass.
+    pub async fn detect_duplicate_name_phantoms(&self) -> Result<Vec<uuid::Uuid>, String> {
+        Ok(self.duplicate_name_phantom_pairs().await?.into_iter().map(|(phantom, _)| phantom).collect())
     }
 
     /// Self-heal Bug 3: re-absorb a `standalone` project root that was
@@ -5169,25 +5184,7 @@ impl PgStore {
     /// Idempotent — once re-absorbed the candidate query returns nothing.
     /// Returns the number of roots re-absorbed.
     pub async fn heal_nested_standalone_roots(&self) -> Result<u64, String> {
-        // Deepest enclosing git repo per mis-scoped standalone root (DISTINCT ON
-        // + length DESC picks the closest repo, never a grandparent). `starts_with`
-        // is exact-prefix (no LIKE wildcard hazard in paths). Requires the git
-        // repo to already have a project so we have somewhere to attribute to.
-        #[allow(clippy::type_complexity)]
-        let pairs: Vec<(uuid::Uuid, Option<uuid::Uuid>, uuid::Uuid, uuid::Uuid, uuid::Uuid, String)> =
-            sqlx_core::query_as::query_as(
-                "SELECT DISTINCT ON (s.id)
-                        s.id, s.project_id, g.id, g.project_id, g.root_id, g.abs_path
-                   FROM sensei.folders s
-                   JOIN sensei.folders g
-                     ON g.kind = 'git'::sensei.folder_kind
-                    AND g.project_id IS NOT NULL
-                    AND s.abs_path <> g.abs_path
-                    AND starts_with(s.abs_path, g.abs_path || '/')
-                  WHERE s.kind = 'standalone'::sensei.folder_kind
-                    AND s.project_id IS DISTINCT FROM g.project_id
-                  ORDER BY s.id, length(g.abs_path) DESC",
-            ).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        let pairs = self.nested_standalone_candidates().await?;
 
         let mut healed = 0u64;
         for (s_id, s_pid, g_id, g_pid, g_root, g_abs) in pairs {
@@ -5231,6 +5228,41 @@ impl PgStore {
             tracing::info!(folder = %s_id, project = %g_pid, "heal_nested_standalone_roots: re-absorbed nested standalone root");
         }
         Ok(healed)
+    }
+
+    /// Candidate rows for [`Self::heal_nested_standalone_roots`]: each mis-scoped
+    /// `standalone` root paired with the DEEPEST enclosing git repo it sits inside
+    /// (DISTINCT ON + length DESC picks the closest repo, never a grandparent).
+    /// `starts_with` is exact-prefix (no LIKE wildcard hazard in paths). Requires
+    /// the git repo to already have a project so there is somewhere to attribute
+    /// to. Tuple: `(standalone_id, standalone_project, git_id, git_project,
+    /// git_root, git_abs_path)`. Shared by the heal (which re-absorbs each) and
+    /// [`Self::detect_nested_standalone_roots`] (which reports read-only).
+    #[allow(clippy::type_complexity)]
+    async fn nested_standalone_candidates(
+        &self,
+    ) -> Result<Vec<(uuid::Uuid, Option<uuid::Uuid>, uuid::Uuid, uuid::Uuid, uuid::Uuid, String)>, String> {
+        sqlx_core::query_as::query_as(
+            "SELECT DISTINCT ON (s.id)
+                    s.id, s.project_id, g.id, g.project_id, g.root_id, g.abs_path
+               FROM sensei.folders s
+               JOIN sensei.folders g
+                 ON g.kind = 'git'::sensei.folder_kind
+                AND g.project_id IS NOT NULL
+                AND s.abs_path <> g.abs_path
+                AND starts_with(s.abs_path, g.abs_path || '/')
+              WHERE s.kind = 'standalone'::sensei.folder_kind
+                AND s.project_id IS DISTINCT FROM g.project_id
+              ORDER BY s.id, length(g.abs_path) DESC",
+        ).fetch_all(&self.pool).await.map_err(|e| e.to_string())
+    }
+
+    /// Read-only detection counterpart to [`Self::heal_nested_standalone_roots`]:
+    /// the abs_paths of standalone roots currently mis-scoped inside a git repo
+    /// (what the heal WOULD re-absorb). Shares the candidate query; performs no
+    /// mutation. Used by the index integrity audit's read-only (`doctor`) pass.
+    pub async fn detect_nested_standalone_roots(&self) -> Result<Vec<String>, String> {
+        Ok(self.nested_standalone_candidates().await?.into_iter().map(|c| c.5).collect())
     }
 
     pub async fn get_project_libraries(&self, project_id: &uuid::Uuid) -> Result<Vec<serde_json::Value>, String> {
@@ -9234,8 +9266,14 @@ mod tests {
             .bind(phantom_pid).fetch_one(s.pool()).await.unwrap();
         assert!(!phantom_exists, "the phantom project should be merged away");
 
-        // Idempotent: a second run finds nothing.
-        assert_eq!(s.heal_nested_standalone_roots().await.unwrap(), 0, "re-run is a no-op");
+        // Idempotent for THIS test's rows: a second run leaves the phantom merged
+        // away. The returned count is GLOBAL — db-gated tests share `sensei_test`
+        // and other tests (e.g. the index-audit suite) may seed nested-standalone
+        // rows concurrently — so assert on our own row, not the global count.
+        s.heal_nested_standalone_roots().await.unwrap();
+        let (phantom_gone_after_rerun,): (bool,) = sqlx_core::query_as::query_as("SELECT NOT EXISTS(SELECT 1 FROM sensei.projects WHERE id = $1)")
+            .bind(phantom_pid).fetch_one(s.pool()).await.unwrap();
+        assert!(phantom_gone_after_rerun, "re-run leaves the phantom merged away (idempotent)");
 
         // cleanup
         s.delete_folder_tree(&repo_fid).await.ok();
