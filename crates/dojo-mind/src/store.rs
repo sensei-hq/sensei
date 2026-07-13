@@ -647,4 +647,482 @@ impl DojoStore {
         }
         Ok(ArtifactPullResponse { artifacts, cursor })
     }
+
+    // ── Admin console (tenant-scoped; the ADMIN floor is enforced at the
+    //    handler via `DojoAccess::Admin`). Every method is scoped by `tenant_id`
+    //    so one tenant's admin never reads or mutates another's rows. ──────────
+
+    /// List a tenant's memberships (the admin console members list), newest
+    /// first. `device_key` (a signing secret) is deliberately not returned.
+    #[allow(clippy::type_complexity)]
+    pub async fn list_memberships(
+        &self,
+        tenant_id: &Uuid,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(
+            Uuid,           // id
+            Uuid,           // user_id
+            String,         // role
+            String,         // kind
+            String,         // authenticated_via
+            String,         // sync_status
+            String,         // attribution_default
+            Option<String>, // last_heartbeat_at
+            Option<String>, // disabled_at
+            String,         // created_at
+        )> = sqlx_core::query_as::query_as(
+            "SELECT id, user_id, role::text, kind::text, authenticated_via::text,
+                    sync_status::text, attribution_default::text,
+                    to_char(last_heartbeat_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'),
+                    to_char(disabled_at,       'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'),
+                    to_char(created_at,        'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')
+             FROM dojo.memberships
+             WHERE tenant_id = $1
+             ORDER BY created_at DESC, id",
+        )
+        .bind(tenant_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(rows
+            .into_iter()
+            .map(
+                |(
+                    id,
+                    user_id,
+                    role,
+                    kind,
+                    via,
+                    sync_status,
+                    attribution,
+                    last_heartbeat_at,
+                    disabled_at,
+                    created_at,
+                )| {
+                    serde_json::json!({
+                        "id": id.to_string(),
+                        "user_id": user_id.to_string(),
+                        "role": role,
+                        "kind": kind,
+                        "authenticated_via": via,
+                        "sync_status": sync_status,
+                        "attribution_default": attribution,
+                        "last_heartbeat_at": last_heartbeat_at,
+                        "disabled_at": disabled_at,
+                        "created_at": created_at,
+                    })
+                },
+            )
+            .collect())
+    }
+
+    /// Set a membership's role (admin override). Returns whether a row changed.
+    /// Scoped by `tenant_id` — an admin can only re-role their own tenant.
+    pub async fn set_membership_role(
+        &self,
+        tenant_id: &Uuid,
+        user_id: &Uuid,
+        role: &str,
+    ) -> Result<bool, String> {
+        let res = sqlx_core::query::query(
+            "UPDATE dojo.memberships SET role = $3::dojo.member_role, updated_at = now()
+             WHERE tenant_id = $1 AND user_id = $2",
+        )
+        .bind(tenant_id)
+        .bind(user_id)
+        .bind(role)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    /// Derive the Dōjō role a git-provider role provisions as, from the
+    /// `dojo.roles` map. A tenant-specific override (`tenant_id = $1`) wins over
+    /// a global default (`tenant_id IS NULL`). `None` when no mapping exists (the
+    /// handler then falls back to the least-privilege `contributor`).
+    pub async fn derive_role_for_git_role(
+        &self,
+        tenant_id: &Uuid,
+        git_provider_role: &str,
+    ) -> Result<Option<String>, String> {
+        let row: Option<(String,)> = sqlx_core::query_as::query_as(
+            "SELECT role::text FROM dojo.roles
+             WHERE git_provider_role = $2 AND (tenant_id = $1 OR tenant_id IS NULL)
+             ORDER BY (tenant_id IS NOT NULL) DESC
+             LIMIT 1",
+        )
+        .bind(tenant_id)
+        .bind(git_provider_role)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(row.map(|(r,)| r))
+    }
+
+    /// Upsert a git-provider-role → Dōjō-role mapping in `dojo.roles`.
+    /// `tenant_id = None` is a global default; `Some` is a tenant override.
+    /// Keyed on the `roles_tenant_git_role_unique` constraint. Returns the row id.
+    pub async fn upsert_role_mapping(
+        &self,
+        tenant_id: Option<&Uuid>,
+        role: &str,
+        git_provider_role: &str,
+        description: Option<&str>,
+    ) -> Result<Uuid, String> {
+        let (id,): (Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO dojo.roles(tenant_id, role, git_provider_role, description)
+             VALUES($1, $2::dojo.member_role, $3, $4)
+             ON CONFLICT ON CONSTRAINT roles_tenant_git_role_unique DO UPDATE SET
+               role = EXCLUDED.role, description = EXCLUDED.description, updated_at = now()
+             RETURNING id",
+        )
+        .bind(tenant_id)
+        .bind(role)
+        .bind(git_provider_role)
+        .bind(description)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(id)
+    }
+
+    /// List a tenant's identity-provider mappings (SSO / GitHub / device-code).
+    #[allow(clippy::type_complexity)]
+    pub async fn list_identities(
+        &self,
+        tenant_id: &Uuid,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(
+            Uuid,           // id
+            Uuid,           // user_id
+            String,         // provider
+            String,         // subject
+            Option<String>, // email
+            Option<String>, // display_name
+            String,         // created_at
+            Option<String>, // last_login_at
+        )> = sqlx_core::query_as::query_as(
+            "SELECT id, user_id, provider::text, subject, email, display_name,
+                    to_char(created_at,    'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'),
+                    to_char(last_login_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')
+             FROM dojo.identities
+             WHERE tenant_id = $1
+             ORDER BY created_at DESC, id",
+        )
+        .bind(tenant_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(rows
+            .into_iter()
+            .map(
+                |(id, user_id, provider, subject, email, display_name, created_at, last_login_at)| {
+                    serde_json::json!({
+                        "id": id.to_string(),
+                        "user_id": user_id.to_string(),
+                        "provider": provider,
+                        "subject": subject,
+                        "email": email,
+                        "display_name": display_name,
+                        "created_at": created_at,
+                        "last_login_at": last_login_at,
+                    })
+                },
+            )
+            .collect())
+    }
+
+    /// Create an identity mapping. `provider` is a `dojo.auth_method`
+    /// (`sso` | `github_oauth` | `device_code`). Returns the row id.
+    pub async fn create_identity(
+        &self,
+        tenant_id: &Uuid,
+        user_id: &Uuid,
+        provider: &str,
+        subject: &str,
+        email: Option<&str>,
+        display_name: Option<&str>,
+    ) -> Result<Uuid, String> {
+        let (id,): (Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO dojo.identities(tenant_id, user_id, provider, subject, email, display_name)
+             VALUES($1, $2, $3::dojo.auth_method, $4, $5, $6)
+             RETURNING id",
+        )
+        .bind(tenant_id)
+        .bind(user_id)
+        .bind(provider)
+        .bind(subject)
+        .bind(email)
+        .bind(display_name)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(id)
+    }
+
+    /// Update an identity's mutable fields (`email` / `display_name`). A `None`
+    /// leaves the existing value unchanged (`COALESCE`). Scoped by `tenant_id`.
+    pub async fn update_identity(
+        &self,
+        tenant_id: &Uuid,
+        id: &Uuid,
+        email: Option<&str>,
+        display_name: Option<&str>,
+    ) -> Result<bool, String> {
+        let res = sqlx_core::query::query(
+            "UPDATE dojo.identities
+             SET email = COALESCE($3, email), display_name = COALESCE($4, display_name)
+             WHERE tenant_id = $1 AND id = $2",
+        )
+        .bind(tenant_id)
+        .bind(id)
+        .bind(email)
+        .bind(display_name)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    /// Delete an identity mapping (scoped by `tenant_id`). Returns whether a row
+    /// was removed.
+    pub async fn delete_identity(&self, tenant_id: &Uuid, id: &Uuid) -> Result<bool, String> {
+        let res = sqlx_core::query::query(
+            "DELETE FROM dojo.identities WHERE tenant_id = $1 AND id = $2",
+        )
+        .bind(tenant_id)
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    /// List a tenant's per-scope policies (the policy grid).
+    #[allow(clippy::type_complexity)]
+    pub async fn list_policies(
+        &self,
+        tenant_id: &Uuid,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(
+            Uuid,              // id
+            String,            // scope_key
+            String,            // attribution_default
+            serde_json::Value, // confidentiality
+            Option<i32>,       // retention_days
+            String,            // created_at
+            String,            // updated_at
+        )> = sqlx_core::query_as::query_as(
+            "SELECT id, scope_key, attribution_default::text, confidentiality, retention_days,
+                    to_char(created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'),
+                    to_char(updated_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')
+             FROM dojo.policies
+             WHERE tenant_id = $1
+             ORDER BY scope_key",
+        )
+        .bind(tenant_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(rows
+            .into_iter()
+            .map(
+                |(id, scope_key, attribution_default, confidentiality, retention_days, created_at, updated_at)| {
+                    serde_json::json!({
+                        "id": id.to_string(),
+                        "scope_key": scope_key,
+                        "attribution_default": attribution_default,
+                        "confidentiality": confidentiality,
+                        "retention_days": retention_days,
+                        "created_at": created_at,
+                        "updated_at": updated_at,
+                    })
+                },
+            )
+            .collect())
+    }
+
+    /// Upsert a policy for a scope (create, or edit-in-place by `scope_key` on
+    /// the `policies_tenant_scope_unique` constraint). This is the primary policy
+    /// edit path — the change takes effect on the next batch. Returns the row id.
+    pub async fn upsert_policy(
+        &self,
+        tenant_id: &Uuid,
+        scope_key: &str,
+        attribution_default: &str,
+        confidentiality: serde_json::Value,
+        retention_days: Option<i32>,
+    ) -> Result<Uuid, String> {
+        let (id,): (Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO dojo.policies(tenant_id, scope_key, attribution_default, confidentiality, retention_days)
+             VALUES($1, $2, $3::dojo.attribution_mode, $4::jsonb, $5)
+             ON CONFLICT ON CONSTRAINT policies_tenant_scope_unique DO UPDATE SET
+               attribution_default = EXCLUDED.attribution_default,
+               confidentiality = EXCLUDED.confidentiality,
+               retention_days = EXCLUDED.retention_days,
+               updated_at = now()
+             RETURNING id",
+        )
+        .bind(tenant_id)
+        .bind(scope_key)
+        .bind(attribution_default)
+        .bind(confidentiality)
+        .bind(retention_days)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(id)
+    }
+
+    /// Patch a policy by id. A `None` for `attribution_default` / `confidentiality`
+    /// / `retention_days` leaves that field unchanged (`COALESCE`). To clear
+    /// `retention_days`, upsert by `scope_key` instead. Scoped by `tenant_id`.
+    pub async fn update_policy(
+        &self,
+        tenant_id: &Uuid,
+        id: &Uuid,
+        attribution_default: Option<&str>,
+        confidentiality: Option<serde_json::Value>,
+        retention_days: Option<i32>,
+    ) -> Result<bool, String> {
+        let res = sqlx_core::query::query(
+            "UPDATE dojo.policies SET
+               attribution_default = COALESCE($3::dojo.attribution_mode, attribution_default),
+               confidentiality = COALESCE($4::jsonb, confidentiality),
+               retention_days = COALESCE($5, retention_days),
+               updated_at = now()
+             WHERE tenant_id = $1 AND id = $2",
+        )
+        .bind(tenant_id)
+        .bind(id)
+        .bind(attribution_default)
+        .bind(confidentiality)
+        .bind(retention_days)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    /// Delete a policy (scoped by `tenant_id`). Returns whether a row was removed.
+    pub async fn delete_policy(&self, tenant_id: &Uuid, id: &Uuid) -> Result<bool, String> {
+        let res =
+            sqlx_core::query::query("DELETE FROM dojo.policies WHERE tenant_id = $1 AND id = $2")
+                .bind(tenant_id)
+                .bind(id)
+                .execute(&self.pool)
+                .await
+                .map_err(|e| e.to_string())?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    /// Compute the admin-console health rollups for a tenant from `dojo.events`
+    /// (plus the triage queue). Returns `(connections, queue_depth,
+    /// publish_rate_1h, error_rate_1h)`:
+    ///
+    /// * `connections`     — distinct actors seen in `dojo.events` in the last
+    ///   5 minutes (per the done-gate: members active in the last 5min).
+    /// * `queue_depth`     — `dojo.triage_queue` rows in state `queued`.
+    /// * `publish_rate_1h` — events publishing an artifact in the last hour
+    ///   (`approved` — the loop's publish event — plus `published`/`distributed`).
+    /// * `error_rate_1h`   — `error` events in the last hour (so the strip can't
+    ///   mask a broken queue).
+    pub async fn health_rollup(&self, tenant_id: &Uuid) -> Result<(i64, i64, i64, i64), String> {
+        let row: (i64, i64, i64, i64) = sqlx_core::query_as::query_as(
+            "SELECT
+               (SELECT count(DISTINCT actor_id) FROM dojo.events
+                  WHERE tenant_id = $1 AND actor_id IS NOT NULL
+                    AND ts > now() - interval '5 minutes'),
+               (SELECT count(*) FROM dojo.triage_queue
+                  WHERE tenant_id = $1 AND state = 'queued'),
+               (SELECT count(*) FROM dojo.events
+                  WHERE tenant_id = $1 AND action IN ('approved', 'published', 'distributed')
+                    AND ts > now() - interval '1 hour'),
+               (SELECT count(*) FROM dojo.events
+                  WHERE tenant_id = $1 AND action = 'error'
+                    AND ts > now() - interval '1 hour')",
+        )
+        .bind(tenant_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(row)
+    }
+
+    /// Append a tenant-scoped compliance audit event (`dojo.audit_events` — the
+    /// non-repudiation trail the admin console lists). Distinct from
+    /// [`record_audit`](Self::record_audit), which writes the legacy
+    /// federation `dojo.audit_log`; the admin console's done-gate counts
+    /// `dojo.audit_events` by `actor_id`, so admin actions are stamped here.
+    /// Returns the new event id.
+    pub async fn record_audit_event(
+        &self,
+        tenant_id: &Uuid,
+        actor_id: Option<&Uuid>,
+        action: &str,
+        target: Option<&str>,
+        detail: serde_json::Value,
+    ) -> Result<i64, String> {
+        let (id,): (i64,) = sqlx_core::query_as::query_as(
+            "INSERT INTO dojo.audit_events(tenant_id, actor_id, action, target, detail)
+             VALUES($1, $2, $3, $4, $5::jsonb)
+             RETURNING id",
+        )
+        .bind(tenant_id)
+        .bind(actor_id)
+        .bind(action)
+        .bind(target)
+        .bind(detail)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(id)
+    }
+
+    /// List a tenant's audit events (the admin console audit log), most recent
+    /// first, capped at `limit`.
+    #[allow(clippy::type_complexity)]
+    pub async fn list_audit_events(
+        &self,
+        tenant_id: &Uuid,
+        limit: i64,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(
+            i64,               // id
+            String,            // ts
+            Option<Uuid>,      // actor_id
+            Option<Uuid>,      // engagement_id
+            String,            // action
+            Option<String>,    // target
+            serde_json::Value, // detail
+        )> = sqlx_core::query_as::query_as(
+            "SELECT id,
+                    to_char(ts, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'),
+                    actor_id, engagement_id, action, target, detail
+             FROM dojo.audit_events
+             WHERE tenant_id = $1
+             ORDER BY ts DESC, id DESC
+             LIMIT $2",
+        )
+        .bind(tenant_id)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(rows
+            .into_iter()
+            .map(|(id, ts, actor_id, engagement_id, action, target, detail)| {
+                serde_json::json!({
+                    "id": id,
+                    "ts": ts,
+                    "actor_id": actor_id.map(|u| u.to_string()),
+                    "engagement_id": engagement_id.map(|u| u.to_string()),
+                    "action": action,
+                    "target": target,
+                    "detail": detail,
+                })
+            })
+            .collect())
+    }
 }

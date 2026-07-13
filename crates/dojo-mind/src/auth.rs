@@ -164,8 +164,9 @@ pub fn verify_supabase_jwt(
 
 /// Authority a caller carries on a tenant's dojo routes. `Member` may pull;
 /// `Contributor` may additionally publish; `Maintainer` may additionally triage
-/// (list the queue, decide, run the promotion sweep). Ordered so a floor check
-/// is a comparison, mirroring [`Role`]/[`role_satisfies`].
+/// (list the queue, decide, run the promotion sweep); `Admin` may additionally
+/// run the admin console (members / identities / policies / health / audit).
+/// Ordered so a floor check is a comparison, mirroring [`Role`]/[`role_satisfies`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum DojoAccess {
     /// Read-only: pull artifacts (`member+`).
@@ -173,9 +174,16 @@ pub enum DojoAccess {
     /// Read-write: publish + pull (`contributor+`).
     Contributor = 1,
     /// Triage authority: list/decide/promote the queue (`maintainer+`). Maps
-    /// from the `maintainer`/`admin` dojo membership roles and the `admin`
-    /// API-key member role.
+    /// from the `maintainer` dojo membership role and the `admin` API-key member
+    /// role (the API-key plane's ceiling — see `member_role_to_access`).
     Maintainer = 2,
+    /// Admin-console authority: provision members, wire identities, set
+    /// policies, read health + audit (`admin`). Reachable ONLY via the
+    /// Supabase-JWT plane with the `admin` dojo membership role — the admin
+    /// console is human / SSO traffic. The API-key plane deliberately tops out
+    /// at `Maintainer` (a daemon key never carries console-admin authority, and
+    /// provisioning squashes `maintainer`/`admin` onto one API-key role).
+    Admin = 3,
 }
 
 /// Which plane authenticated a dojo caller.
@@ -215,7 +223,12 @@ pub enum DojoAuthError {
 
 /// Map an API-key member role onto dojo access: `member` pulls; `publisher`
 /// contributes; `admin` additionally maintains (triage). An unparseable role
-/// falls back to the least-privilege `Member`.
+/// falls back to the least-privilege `Member`. The API-key plane tops out at
+/// `Maintainer` on purpose — console-admin authority (`DojoAccess::Admin`) is
+/// human / SSO traffic, reached only through the JWT plane (see
+/// `dojo_role_to_access`). Provisioning also squashes the `maintainer`/`admin`
+/// dojo roles onto this one API-key role, so an API key can't be trusted to
+/// distinguish them.
 fn member_role_to_access(role: &str) -> DojoAccess {
     match Role::parse(role) {
         Some(Role::Admin) => DojoAccess::Maintainer,
@@ -224,13 +237,16 @@ fn member_role_to_access(role: &str) -> DojoAccess {
     }
 }
 
-/// Map a `dojo.member_role` string (JWT plane) onto dojo access:
-/// `maintainer`/`admin` maintain (triage); `contributor`/`client_lead`
-/// contribute; anything unrecognised falls back to least-privilege `Member`.
-/// (`client_lead` guards client confidentiality — it is not a triage role.)
+/// Map a `dojo.member_role` string (JWT plane) onto dojo access: `admin` runs
+/// the console (`Admin`); `maintainer` triages (`Maintainer`);
+/// `contributor`/`client_lead` contribute; anything unrecognised falls back to
+/// least-privilege `Member`. (`client_lead` guards client confidentiality — it
+/// is not a triage role.) Only this JWT plane can grant `Admin`, so the admin
+/// console is gated to a human with the `admin` dojo membership role.
 fn dojo_role_to_access(role: &str) -> DojoAccess {
     match role {
-        "maintainer" | "admin" => DojoAccess::Maintainer,
+        "admin" => DojoAccess::Admin,
+        "maintainer" => DojoAccess::Maintainer,
         "contributor" | "client_lead" => DojoAccess::Contributor,
         _ => DojoAccess::Member,
     }
