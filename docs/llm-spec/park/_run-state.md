@@ -1660,3 +1660,10 @@ B ✅ SHIPPED `8fa61da4` (2026-07-13): mcp lib split (sensei_mcp lib + daemon_re
 ⏳ C BUILDING: folder→project workflow — find_projects(under=<path>) (list projects whose abs_path is under a folder,
   daemon filter + mcp tool) + use_project pin (~/.sensei/active-project name+id; mcp reads per-call as default when
   cwd doesn't resolve; use_project tool writes it). Builds on A's daemon name-resolution + B's mcp lib. TDD.
+
+C ✅ SHIPPED `6405447f` (2026-07-13): find_projects(under) + use_project pin (~/.sensei/active-project) + resolution
+  precedence explicit→pin→cwd→none. daemon list_projects_under (path-boundary EXISTS). mcp 41 / senseid 1372 / clippy 0.
+⭐⭐ MILESTONE A+B+C (MCP integration core: resolution + anti-drift coverage + folder→project workflow).
+  ⏳ BUMP v0.2.39→0.2.40 + merge→main + install-service (release) so find/pin is RUNNING. Then Jerry:
+  `claude plugin update sensei` → LIVE-VERIFY: cd rokkit → find_projects → use_project sensei → tools resolve sensei.
+  Remaining P0: D (upgrade hardening + assistant upgrade() + version worker), E (dedup 2efd4ecf), F (3-repo live gate).
