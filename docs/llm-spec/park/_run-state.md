@@ -1666,12 +1666,17 @@ Everything cleanly buildable + no-DDL + end-to-end-verifiable is DONE this run. 
     collided with the live 0.2.43 daemon this session kept restarting + the run got killed on subagent cleanup.
     Atlas loader endpoints respond in 2-3ms on the healthy real daemon (no hang) + empty-state satisfies the
     assertion → the mount test passes in a healthy env. Specs are correct; committed with the caveat documented.
-    ── 2 NEW FOLLOW-UPS (filed): (a) E2E HARNESS :7744 ISOLATION — running the full e2e suite while the live daemon
-       holds :7744 is fragile (stop the brew daemon first / isolate the e2e port); re-run the 2 specs clean to certify
-       atlas-mount. (b) ⚠️ /api/graph/nodes?repoId=sensei returns 0 despite 16354 indexed nodes (was 6598 pre-rescan);
-       communities/call-flow also empty → the graph EDGE/community derivations haven't re-run post-rescan (node
-       indexing done, but resolve/analyze graph phase pending) → Atlas renders EMPTY for sensei until they rebuild.
-       Likely transient (analyzer/resolve will repopulate) — VERIFY next tick whether edges/communities came back.
+    ── (b) "graph_nodes empty" = ❌ RED HERRING, RESOLVED (2026-07-13). NOT a graph bug: the SIGTERM'd e2e run left
+       its `senseid --port 7744 --instance e2e` daemon (empty **sensei_e2e** DB) on :7744 + the real brew service
+       STOPPED → every tool/API returned empty while `psql -d sensei` had all the data. FIXED: `pkill -f "instance
+       e2e"` + `brew services start sensei` → real daemon (PID 59123) restored. Post-restore the tools serve RICH real
+       data: get_project_summary 8090 fns/1520 types (was 3395 pre-rescan → the P0 embed-fix rescan indexed 2.4×
+       more), graph_nodes 16354 nodes/21504 edges, get_rules 1. Saved [[reference_e2e_7744_leftover]].
+    ── (a) E2E HARNESS :7744 ISOLATION = ✅ CONFIRMED REAL (this is what caused (b)). The harness stops the real brew
+       daemon + runs an e2e daemon on the SAME :7744; a SIGTERM/interrupt skips teardown → leaves the system broken
+       (real daemon down, e2e daemon on :7744 w/ empty DB). FIX (filed, test-infra): run the e2e daemon on a
+       DIFFERENT port OR trap-restore the brew service on any exit. Also re-run the 2 specs on a clean env to certify
+       atlas-mount (its full-run failure was this same env breakage).
   • LOW-VALUE REFINE (G): rank4 impact-copy, per-session memory-load correlation, P2c behavioral classifier.
 IDLE-TICK POLICY: each heartbeat still runs the DISK GUARD + checks whether anything unblocked (Jerry steer / a
 DDL pass authorized / Docker), else NO-OP. Do NOT spawn a shipped-schema DDL change unattended. If Jerry wants a
