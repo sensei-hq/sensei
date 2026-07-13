@@ -108,6 +108,28 @@ pub(super) fn plugin_install_path(manifest_path: &Path) -> Option<PathBuf> {
     first.get("installPath").and_then(|p| p.as_str()).map(PathBuf::from)
 }
 
+/// Read the recorded `version` for `sensei@*` from installed_plugins.json.
+/// Mirrors [`plugin_install_path`] but reads the sibling `version` field.
+/// Purely diagnostic for `upgrade()` — the post-condition gate is presence
+/// (via `verify_plugin_installed`); this just lets the daemon log which
+/// version the update landed so an operator can confirm it advanced.
+fn plugin_recorded_version(manifest_path: &Path) -> Option<String> {
+    let content = std::fs::read_to_string(manifest_path).ok()?;
+    let v = serde_json::from_str::<serde_json::Value>(&content).ok()?;
+    let plugins = v.get("plugins")?.as_object()?;
+    let (_k, entries) = plugins.iter().find(|(k, _)| k.starts_with("sensei@"))?;
+    let first = entries.as_array()?.first()?;
+    first.get("version").and_then(|p| p.as_str()).map(String::from)
+}
+
+/// argv for `claude plugin update sensei`. Extracted so the exact invocation
+/// can be asserted in a unit test without executing it — running the real
+/// `claude plugin update` would mutate the installed plugin. Mirrors the
+/// inline install args (`plugin install sensei …`) in `configure()`.
+fn plugin_update_args() -> [&'static str; 3] {
+    ["plugin", "update", "sensei"]
+}
+
 /// Path to Claude Code's `installed_plugins.json` (under the user's home).
 fn installed_plugins_manifest() -> PathBuf {
     home().join(".claude/plugins/installed_plugins.json")
@@ -455,6 +477,49 @@ impl Assistant for ClaudeCodeAssistant {
         }
 
         Ok(AssistantConfigureOk { plugin: true, warnings })
+    }
+
+    /// Advance the out-of-band sensei plugin to match a freshly upgraded sensei
+    /// binary via `claude plugin update sensei`. Claude Code's plugin is a
+    /// copied-out install; a new sensei binary otherwise leaves the old
+    /// plugin/MCP behind (the class of bug this fixes). Mirrors `configure()`'s
+    /// discipline: don't trust the subprocess exit code — re-read
+    /// `installed_plugins.json` and confirm sensei is still recorded before
+    /// declaring success.
+    fn upgrade(&self) -> Result<AssistantConfigureOk, String> {
+        let claude_bin = find_claude_binary()
+            .ok_or_else(|| "claude binary not found on PATH".to_string())?;
+
+        let update_out = std::process::Command::new(&claude_bin)
+            .args(plugin_update_args())
+            .output()
+            .map_err(|e| format!("plugin update: spawn failed: {}", e))?;
+        log_subprocess("claude plugin update sensei", &update_out);
+        if !update_out.status.success() {
+            return Err(format!("plugin update: {}", combined_output(&update_out)));
+        }
+
+        // Post-condition gate — same reused check as configure(). `claude
+        // plugin update` can exit 0 without leaving a valid recorded install
+        // (partial update, race); confirm the manifest still records sensei
+        // before we call the upgrade a success.
+        let manifest = installed_plugins_manifest();
+        if !verify_plugin_installed(&manifest, "sensei") {
+            return Err(format!(
+                "plugin update: returned success but {} does not record sensei. \
+                 Command output:\n{}",
+                manifest.display(),
+                combined_output(&update_out),
+            ));
+        }
+
+        // Diagnostic breadcrumb: log which version the update landed so an
+        // operator can confirm it advanced. Presence (above) is the gate.
+        if let Some(v) = plugin_recorded_version(&manifest) {
+            info!(version = %v, "claude plugin update sensei: manifest records sensei@{}", v);
+        }
+
+        Ok(AssistantConfigureOk { plugin: true, warnings: Vec::new() })
     }
 
     fn remove(&self) -> bool {
@@ -1052,6 +1117,65 @@ mod tests {
         std::fs::write(&m, r#"{"plugins":{"sensei@sensei-marketplace":[{"installPath":"/foo/bar"}]}}"#).unwrap();
         assert_eq!(plugin_install_path(&m), Some(PathBuf::from("/foo/bar")));
     }
+    // ── upgrade: command construction + version readback ─────────────────────
+    //
+    // The real `claude plugin update sensei` is a side effect (mutates the
+    // installed plugin), so it is NOT executed here. The testable parts mirror
+    // the install path: the exact argv, and the installed_plugins.json readback
+    // that gates/annotates success.
+
+    #[test]
+    fn plugin_update_args_are_update_sensei() {
+        // Lock the exact invocation. A silent reshuffle here (e.g. dropping the
+        // plugin name, or reordering) would send `claude` a different command
+        // and the upgrade would no-op or error without an obvious cause.
+        assert_eq!(plugin_update_args(), ["plugin", "update", "sensei"]);
+    }
+
+    #[test]
+    fn upgrade_reuses_verify_plugin_installed_as_gate() {
+        // upgrade()'s post-condition gate is the same verify_plugin_installed
+        // check configure() uses. Exercise the gate directly on a manifest that
+        // records sensei (post-update happy path) vs one that doesn't.
+        let tmp = make_tmp_home();
+        let manifest = tmp.path().join("installed_plugins.json");
+        std::fs::write(&manifest, r#"{"plugins":{"sensei@sensei-marketplace":[
+            {"scope":"user","installPath":"/foo","version":"0.2.14"}
+        ]}}"#).unwrap();
+        assert!(verify_plugin_installed(&manifest, "sensei"),
+            "gate must pass when the update left sensei recorded");
+
+        let empty = tmp.path().join("empty.json");
+        std::fs::write(&empty, r#"{"plugins":{}}"#).unwrap();
+        assert!(!verify_plugin_installed(&empty, "sensei"),
+            "gate must fail when the update left no sensei record");
+    }
+
+    #[test]
+    fn plugin_recorded_version_reads_version() {
+        let tmp = make_tmp_home();
+        let m = tmp.path().join("installed_plugins.json");
+        std::fs::write(&m, r#"{"plugins":{"sensei@sensei-marketplace":[
+            {"installPath":"/foo","version":"0.2.14"}
+        ]}}"#).unwrap();
+        assert_eq!(plugin_recorded_version(&m).as_deref(), Some("0.2.14"));
+    }
+
+    #[test]
+    fn plugin_recorded_version_none_when_field_or_plugin_absent() {
+        let tmp = make_tmp_home();
+        let no_field = tmp.path().join("no_field.json");
+        std::fs::write(&no_field, r#"{"plugins":{"sensei@sensei-marketplace":[{"installPath":"/foo"}]}}"#).unwrap();
+        assert_eq!(plugin_recorded_version(&no_field), None);
+
+        let no_plugin = tmp.path().join("no_plugin.json");
+        std::fs::write(&no_plugin, r#"{"plugins":{"other@mp":[]}}"#).unwrap();
+        assert_eq!(plugin_recorded_version(&no_plugin), None);
+
+        let missing = tmp.path().join("missing.json");
+        assert_eq!(plugin_recorded_version(&missing), None);
+    }
+
     #[test]
     fn plugin_install_path_none_on_empty_entries() {
         // Plugin key present but no install entry recorded → None (caller treats
