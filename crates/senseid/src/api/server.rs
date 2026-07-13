@@ -185,11 +185,22 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
     // the scheduler re-analyzes every project. Runs BEFORE the scheduler spawns
     // so the cleared watermark is observed on its first (immediate) tick.
     // Non-fatal: internal failures are logged, never propagated.
-    crate::tasks::version_rescan::maybe_rescan_on_version_change(
+    //
+    // Crash-safe: the new version is recorded only after the enqueued rescan
+    // has drained (arm the commit watcher on trigger). If the daemon aborts
+    // mid-rescan — e.g. an over-long embed input tripping a GGML abort — the
+    // version stays unrecorded and the next boot re-runs the rebuild.
+    if crate::tasks::version_rescan::maybe_rescan_on_version_change(
         &state.pg,
         &task_queue,
         env!("CARGO_PKG_VERSION"),
-    ).await;
+    ).await {
+        crate::tasks::version_rescan::spawn_version_commit_watcher(
+            Arc::new(state.pg.clone()),
+            task_queue.clone(),
+            env!("CARGO_PKG_VERSION").to_string(),
+        );
+    }
 
     // Periodically enrich/analyze projects whose sessions changed (#67). First
     // tick fires immediately, so a freshly-started daemon backfills enrichment.

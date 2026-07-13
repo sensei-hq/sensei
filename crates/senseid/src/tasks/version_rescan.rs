@@ -17,6 +17,9 @@
 //!   project via the existing daily-refresh path, rather than duplicating the
 //!   per-project `AnalyzeProject` enqueue loop.
 
+use std::sync::Arc;
+use std::time::Duration;
+
 use crate::db::pg_store::PgStore;
 use crate::tasks::queue::TaskQueue;
 use crate::tasks::{Task, TaskKind};
@@ -40,13 +43,19 @@ pub fn version_changed(stored: Option<&str>, current: &str) -> bool {
 }
 
 /// Boot hook: if the binary version changed since this DB was last scanned,
-/// re-scan all indexed roots, force a full re-analysis, and persist the new
-/// version. Returns `true` when it triggered a rebuild.
+/// re-scan all indexed roots and force a full re-analysis. Returns `true` when
+/// it triggered a rebuild — the caller then arms [`spawn_version_commit_watcher`]
+/// to record the new version once the rescan actually completes.
 ///
 /// - **Non-fatal**: every DB/enqueue failure is logged and swallowed — a
 ///   version-rescan hiccup must never block daemon boot.
-/// - **Idempotent**: gated by the persisted `daemon.last_version`, so a
-///   restart on the same version is a no-op; it fires once per version change.
+/// - **Crash-safe**: it deliberately does NOT write `daemon.last_version` here.
+///   The version is committed only after the enqueued rescan has drained (see
+///   [`spawn_version_commit_watcher`]). If the daemon aborts mid-rescan (e.g.
+///   an embed GGML abort), the version stays unwritten and the next boot
+///   re-triggers the rebuild instead of silently skipping it.
+/// - **Idempotent** for the completed case: once the watcher records the
+///   version, a restart on the same version is a no-op.
 ///
 /// Structured as a free async fn (not inlined into boot) so it is DB-testable
 /// without standing up the whole daemon.
@@ -95,18 +104,65 @@ pub async fn maybe_rescan_on_version_change(
 
     // Re-analyze: reset the scheduler's full-refresh watermark so its next tick
     // re-analyzes every active project. delete is idempotent (absent ⇒ no-op).
+    // Safe to clear eagerly — re-clearing on a re-triggered boot is a no-op.
     if let Err(e) = pg.delete_config(ANALYZER_LAST_REFRESH_KEY).await {
         tracing::warn!(error = %e, "version rescan: clearing analyzer full-refresh watermark failed; re-analysis waits for the daily cadence");
     }
 
-    // Persist the new version LAST: if a crash lands between the enqueue and
-    // here, the (idempotent) rescan simply re-triggers next boot rather than
-    // being silently skipped.
-    if let Err(e) = pg.set_config(LAST_VERSION_KEY, current_version).await {
-        tracing::warn!(error = %e, "version rescan: persisting {LAST_VERSION_KEY} failed; rebuild may re-trigger next boot");
-    }
-
+    // NOTE: `daemon.last_version` is intentionally NOT written here. It is
+    // committed by `spawn_version_commit_watcher` only after the rescan drains,
+    // so an aborted rescan re-triggers next boot instead of being skipped.
     true
+}
+
+/// Arm the crash-safe version commit. After a rescan is triggered, this waits
+/// (off the boot path) for the task queue to fully drain — the observable
+/// signal that the enqueued rescan fan-out has completed — and only then writes
+/// `daemon.last_version`.
+///
+/// Because the queue is in-memory, a daemon abort before the drain simply
+/// leaves the version unwritten, so the next boot re-runs the rebuild. On a
+/// clean completion the version is recorded and future boots on the same
+/// version are no-ops. Returns the spawned handle so tests can await it.
+pub fn spawn_version_commit_watcher(
+    pg: Arc<PgStore>,
+    queue: Arc<TaskQueue>,
+    version: String,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        wait_for_scan_drain(&queue).await;
+        match pg.set_config(LAST_VERSION_KEY, &version).await {
+            Ok(_) => tracing::info!("version rescan: scan drained — recorded {LAST_VERSION_KEY}={version}"),
+            Err(e) => tracing::warn!(error = %e, "version rescan: recording {LAST_VERSION_KEY} after drain failed; rebuild may re-trigger next boot"),
+        }
+    })
+}
+
+/// True when the queue holds no pending, blocked, or running tasks.
+async fn queue_idle(queue: &TaskQueue) -> bool {
+    let s = queue.status().await;
+    s.pending == 0 && s.blocked == 0 && s.running == 0
+}
+
+/// Poll until the queue has stayed idle across a short debounce window. The
+/// debounce guards against a momentary gap between fan-out levels being
+/// mistaken for completion (a barrier sits in `blocked` while its file tasks
+/// run, so a live scan is never fully idle — but the debounce is cheap
+/// insurance). Committing after the whole queue drains is safe: the rescan has
+/// certainly finished by then, and committing late only risks a cheap redundant
+/// ScanRoot on an intervening boot, never data loss.
+async fn wait_for_scan_drain(queue: &TaskQueue) {
+    const POLL: Duration = Duration::from_secs(2);
+    const DEBOUNCE: Duration = Duration::from_millis(750);
+    loop {
+        if queue_idle(queue).await {
+            tokio::time::sleep(DEBOUNCE).await;
+            if queue_idle(queue).await {
+                return;
+            }
+        }
+        tokio::time::sleep(POLL).await;
+    }
 }
 
 #[cfg(test)]
@@ -124,25 +180,37 @@ mod tests {
         assert!(version_changed(Some("0.2.39"), "0.2.40"));
     }
 
-    /// Drain immediately-available tasks (short per-call timeout so a test can
-    /// never hang), mirroring the resume-module helper.
-    async fn drain(queue: &TaskQueue) -> Vec<Task> {
+    /// Drain immediately-available tasks AND complete each so the per-folder
+    /// concurrency cap never accumulates (all ScanRoots share folder_path="",
+    /// so drain-without-complete would stall at the cap). Mirrors a boot whose
+    /// scan runs to completion; leaves the queue idle.
+    async fn drain_all(queue: &TaskQueue) -> Vec<Task> {
         let mut out = Vec::new();
         while let Ok(task) =
             tokio::time::timeout(Duration::from_millis(50), queue.next_task()).await
         {
+            queue.complete(task.id).await;
             out.push(task);
         }
         out
     }
 
+    /// Count ScanRoot tasks in a drained set targeting a specific root path.
+    fn scanroots_for<'a>(tasks: &'a [Task], root_path: &str) -> Vec<&'a Task> {
+        tasks
+            .iter()
+            .filter(|t| t.kind == TaskKind::ScanRoot && t.path == root_path)
+            .collect()
+    }
+
+    /// End-to-end D2 contract: a version change re-scans WITHOUT committing the
+    /// version; an aborted (never-committed) rescan re-triggers next boot; the
+    /// commit watcher records the version only once the queue drains; and once
+    /// committed the same version is a no-op. Each "boot" uses a fresh queue,
+    /// mirroring the in-memory queue being recreated on every daemon start.
     #[tokio::test]
-    async fn rescans_once_per_version_change_and_is_idempotent() {
+    async fn rescan_is_crash_safe_then_commits_and_is_idempotent() {
         let pg = PgStore::connect_test().await.unwrap();
-        // Generous per-folder budget: all ScanRoot tasks share folder_path=""
-        // (matching the scan_folder API), so drain-without-complete would
-        // otherwise stall at the default concurrency cap before reaching ours.
-        let queue = TaskQueue::with_max_repos(4096);
 
         // A watch root we can assert a ScanRoot targets. The shared test DB may
         // hold other roots, so we always filter observations to this path.
@@ -160,39 +228,62 @@ mod tests {
 
         let current = "9.9.9-new";
 
-        // First boot on the new version → triggers.
-        let triggered = maybe_rescan_on_version_change(&pg, &queue, current).await;
-        assert!(triggered, "version change must trigger a rebuild");
-
-        let tasks = drain(&queue).await;
-        let mine: Vec<&Task> = tasks
-            .iter()
-            .filter(|t| t.kind == TaskKind::ScanRoot && t.path == root_path)
-            .collect();
-        assert_eq!(mine.len(), 1, "exactly one ScanRoot for our root, got {mine:?}");
-
-        // Version persisted to current.
+        // ── Boot 1: version change triggers a rescan but does NOT record it ──
+        let q1 = Arc::new(TaskQueue::with_max_repos(4096));
+        assert!(
+            maybe_rescan_on_version_change(&pg, &q1, current).await,
+            "version change must trigger a rebuild",
+        );
+        assert_eq!(scanroots_for(&drain_all(&q1).await, &root_path).len(), 1, "one ScanRoot for our root");
         assert_eq!(
             pg.get_config(LAST_VERSION_KEY).await.unwrap().as_deref(),
-            Some(current),
-            "daemon.last_version advanced to the running version",
+            Some("0.0.0-old"),
+            "version must NOT be recorded before the rescan completes (crash-safety)",
         );
-        // Analyzer full-refresh watermark cleared → scheduler re-analyzes all.
         assert_eq!(
             pg.get_config(ANALYZER_LAST_REFRESH_KEY).await.unwrap(),
             None,
             "analyzer full-refresh watermark cleared to force re-analysis",
         );
 
-        // Second boot on the SAME version → no-op (idempotent).
-        let triggered_again = maybe_rescan_on_version_change(&pg, &queue, current).await;
-        assert!(!triggered_again, "same version must not re-trigger");
-        let after = drain(&queue).await;
-        let mine_after: Vec<&Task> = after
-            .iter()
-            .filter(|t| t.kind == TaskKind::ScanRoot && t.path == root_path)
-            .collect();
-        assert!(mine_after.is_empty(), "no rescan on an unchanged version, got {mine_after:?}");
+        // ── Boot 2: the daemon 'aborted' before commit (fresh queue) → version
+        //    still old → the rescan MUST re-trigger, not be silently skipped. ──
+        let q2 = Arc::new(TaskQueue::with_max_repos(4096));
+        assert!(
+            maybe_rescan_on_version_change(&pg, &q2, current).await,
+            "an uncommitted (aborted) rescan must re-trigger next boot",
+        );
+        assert_eq!(scanroots_for(&drain_all(&q2).await, &root_path).len(), 1, "ScanRoot re-enqueued after abort");
+
+        // The commit watcher must hold off while work is in flight, then record
+        // the version once the queue drains. Drive it with a controlled task so
+        // the transition idle→busy→idle is deterministic.
+        let busy = q2.enqueue(Task::new(TaskKind::ScanRoot, "", "/probe")).await;
+        let _running = q2.next_task().await; // → `running`, queue not idle
+        let handle =
+            spawn_version_commit_watcher(Arc::new(pg.clone()), q2.clone(), current.to_string());
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(!handle.is_finished(), "watcher must block while the rescan is in-flight");
+        assert_eq!(
+            pg.get_config(LAST_VERSION_KEY).await.unwrap().as_deref(),
+            Some("0.0.0-old"),
+            "version must stay uncommitted while work is in-flight",
+        );
+        q2.complete(busy).await; // queue idle → watcher wakes, debounces, commits
+        handle.await.unwrap();
+        assert_eq!(
+            pg.get_config(LAST_VERSION_KEY).await.unwrap().as_deref(),
+            Some(current),
+            "version recorded once the rescan drained",
+        );
+
+        // ── Boot 3: same version, now committed → no-op (idempotent). ──
+        let q3 = Arc::new(TaskQueue::with_max_repos(4096));
+        assert!(
+            !maybe_rescan_on_version_change(&pg, &q3, current).await,
+            "same version must not re-trigger once committed",
+        );
+        assert!(scanroots_for(&drain_all(&q3).await, &root_path).is_empty(), "no rescan on a committed version");
 
         // Cleanup shared-DB state.
         pg.remove_watch_root(&rid).await.unwrap();
