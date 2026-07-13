@@ -1574,7 +1574,14 @@ ACTIVE BUILD QUEUE (default-and-proceed order, highest value first):
      membership unpopulated in DB → Atlas falls back to /api/graph/nodes (roll-up counts only from solution_graph).
      Also deferred (endpoint gaps): inter-community edges (communities/info has no per-node membership); docs/doc-drift
      overlay + 4-level drill. → these = daemon follow-ups (populate project↔node membership; per-node community id).
-  B. #2-UI observatory-logs screen (route (observatory)/activity-logs → GET /api/logs; filters level/source/since).
+  B. ✅ SHIPPED `b5685e69` (2026-07-13) — Observatory·Logs at (observatory)/activity-logs/; nav 診 repointed /logs→
+     /activity-logs ((health)/logs untouched). GET /api/logs server-filtered (level/source/module/since/limit) +
+     client text search; level→role tokens; capped-warning. check 0/0 (933); test:unit 1125 (+30). visual=e2e.
+     Deferred (need other surfaces): task strip (/api/scheduler/tasks), SSE Follow, inclusive-below level filter.
+     NOTE: source(running_on) null in all live rows until writers populate.
+  ── NEXT = C (traceability fix/dismiss). SURVEY then delegate: daemon action endpoints over sensei.project_drift/
+     drift_items (fix vs dismiss on a drift_item) + UI drawer on the traceability screen. Check existing drift
+     endpoints (/api/projects/{id}/drift) + the traceability screen/mockup + drift_items DDL before building.
   C. #6 traceability fix/dismiss (daemon action endpoints over drift_items + UI drawer).
   D. #8 impact-regression surface: impact_regressions DDL + writer (record on negative verdict) + alert screen.
   E. project-icon ASSET-SERVE daemon route (serve repo logos) → then un-gate the image tier.
