@@ -1656,13 +1656,18 @@ upgrades) + strict anonymise/fail-closed-dereference + durable outbox + 300s dow
 MISSING (G1-G11): SaaS console web app + in-repo supabase/ + kavach wiring (🔴), admin/client-lead console BACKEND
 endpoints (🟢), share-review desktop screen (🟢), UPSTREAM contribute cadence scheduler (🟢, publish is manual-only),
 port mismatch hive 7755 vs config 8787 (🟢), etc. Chunk order: {R1,R2}→R3→{R7,R8}→R5→R6🔴→{R9,R10,R11}🔴→polish.
-⏳ R1 BUILDING (agent a5b85ba8): contribute-cadence scheduler (mirror analyzer_scheduler). SAFETY: STAGE-ONLY into
-the local outbox on the user's cadence (default PAUSED→no-op), NO auto-publish / NO egress (publish stays manual C6),
-reuse the existing strict anonymise/eligibility. Then R2 (share-review screen), R7/R8 (console backends) — all 🟢.
-⭐ OPEN QUESTIONS FOR JERRY (gate the 🔴 console/auth chunks, not the 🟢 ones): (1) console app location (top-level
-console/ vs subtree vs separate repo)? (2) port — standardize on 7755 or 8787? (3) mode=auto cadence = auto-publish
-or stage-then-human-Publish? (I default to stage-only for R1.) (4) deploy target (dojo.sensei-hq.org soon vs
-localhost-only)? (5) console→service via user JWT direct (built) or a BFF? (6) seed-catalogue source/format?
+✅ R1 SHIPPED `3e11c2bb` (contribute-cadence scheduler — stage-only, honors paused default, reuses strict anonymise;
+   no DDL; tests green). ⭐ JERRY DECISIONS LOCKED (2026-07-13): (1) console app = IN-REPO top-level **dojo/** (console
+   + supabase/); (2) port = **7755** (fix config's 8787); (3) cadence = **stage-then-human ALWAYS** (auto-publish
+   deferred — R1 already does this); (5) console↔service auth = **SvelteKit BFF** (server routes proxy to sensei-dojo,
+   Supabase session server-side). (4) deploy = localhost-first, config-driven (I proceed this way). STILL OPEN:
+   (6) seed-catalogue source/format — deferred (gates G8 only, not the rename or the 🟢 chunks).
+⏳ HIVE→DOJO CONSOLIDATION BUILDING (agent ab63f054, Jerry directive — one name `dojo`). Phase 1 CODE: merge
+   hive-protocol→dojo-protocol (delete crate), rename hive-mind→dojo-mind + binary sensei-hive→**sensei-dojo**, port
+   8787→7755, global hive→dojo (≈123 files/142 refs). Phase 2 DDL (source-first): fold hive schema→dojo schema + hive
+   scope→dojo scope in design.yaml, PRESERVING the daemon `default` scope's exclusion of the service tables; verify via
+   dbd graph / scratch-DB (NEVER prod). Contained risk: a wrong fold is caught at build/dbd verify before it lands.
+   ON DONE: verify whole-workspace build+clippy+tests + scope separation → commit. THEN next 🟢: R2 share-review screen.
 Assets: _dojo-build-plan.md (refreshed) + 4 console specs + dojo-developer-flow.md; ~/Developer/kavach/supabase model.
 
 ⏸️ (SUPERSEDED by the correction above) STEP-6: CLEAN AUTONOMOUS-SAFE BACKLOG EXHAUSTED (2026-07-13).
