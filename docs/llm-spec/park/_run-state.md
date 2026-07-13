@@ -1935,12 +1935,20 @@ port mismatch hive 7755 vs config 8787 (🟢), etc. Chunk order: {R1,R2}→R3→
    building (run 29272868309, watch bfhg6d2w9). main now = the full dojo-world (consolidation + capture cluster +
    reliability P0-P2 + R2/R5/R7/R8 + CI fixes). develop==main content now (both at the same code; develop VERSION
    still 0.2.43-era, main 0.3.0 — next develop work continues from here).
-   ⚑ FLAGS: (1) DEPENDABOT on main: 1 HIGH + 6 medium + 2 low open alerts (surfaced now the full dep tree is scanned)
-   — worth a `cargo audit`/triage pass, the HIGH especially. (2) LOCAL DAEMON runs the develop build I installed
-   @12:53 = v0.3.0's CODE (identical); reporting v0.2.43 internally. A reinstall to sync the version string/DDL bundle
-   is OPTIONAL (nothing broken; skipped the 30-min rebuild since code is identical). (3) dojo-mind NOT in the `make
-   bump` crate-version list → stays 0.2.17 while others = 0.3.0 (cosmetic; dojo-mind isn't in release artifacts; tiny
-   Makefile follow-up to add it).
+   ⚑ FLAGS: (1) LOCAL DAEMON: 🔨 REBUILDING v0.3.0 (install bfz7tm28s, Jerry asked) → will report 0.3.0 + use v0.3.0
+   DDL bundle. (2) dojo-mind NOT in the `make bump` crate-version list → stays 0.2.17 (cosmetic; not in release
+   artifacts; tiny Makefile follow-up).
+   ── 🔒 DEPENDABOT TRIAGE (Jerry approved fix, 2026-07-13) — 9 open alerts, fixes vary in difficulty:
+     • EASY (semver-compat cargo/bun update): `tar` 0.4.45→0.4.46 (patch); `@sveltejs/kit` 2.59→2.60.1 (app minor).
+     • HIGH `rustls-webpki` 0.101.7→0.103.13 (DoS panic on malformed CRL, senseid TLS): cross-major for a pre-1.0
+       crate → needs the **rustls parent bumped** (cascades reqwest/tls) — not a one-line lock update. Also clears the
+       2 LOW webpki alerts.
+     • `jsonwebtoken` 9.3.1→10.3.0 (type-confusion→auth-bypass; dojo-mind Supabase JWT, direct dep `= "9"`): MAJOR
+       bump → constraint change + API fixes in dojo-mind/src/auth.rs (verify_supabase_jwt).
+     • `glib`→0.20 (Tauri transitive): likely needs a Tauri bump; assess/defer if it cascades too far.
+     PLAN: apply as ONE chunk AFTER the install finishes (cargo update changes Cargo.lock → can't interleave with the
+     in-flight release build). Order: easy bumps → rustls cascade (HIGH) → jsonwebtoken major (+auth code) → glib
+     assess. Verify full build+clippy+tests; commit on develop; deploys at next build/release.
    🟢 NEXT: R6 console (greenfield SvelteKit console/ app + @kavach auth plane; scaffold+static render 🟢, live magic-
    link auth = Jerry). Reliability track complete — capture is now rock-solid. develop continues from the merged base.
    ★ DESIGN DOC OF RECORD: docs/analysis/2026-07-13-index-reliability-rock-solid.md (a8b09407) — full architecture,
