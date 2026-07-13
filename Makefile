@@ -80,6 +80,18 @@ crates-all:
 dojo:  ## Build the sensei-dojo service binary
 	cargo build --release -p dojo-mind
 
+# ── Dōjō local auth stack (localhost supabase — un-parks the console) ──────────
+# Boots a LOCAL-ONLY supabase stack (auth + db + studio + inbucket) for developing
+# the Dōjō SaaS console. Config + seed live in supabase/. No real secrets — every
+# credential resolves via env(). Nothing leaves the machine.
+#   Studio            → http://127.0.0.1:54323
+#   Inbucket (mail)   → http://127.0.0.1:54324   (magic-link emails land here)
+.PHONY: supabase-up supabase-down
+supabase-up:  ## Boot the local Dōjō supabase auth stack (localhost only)
+	supabase start
+supabase-down:  ## Stop the local Dōjō supabase auth stack
+	supabase stop
+
 # ── Install ───────────────────────────────────────────────────────────────────
 #
 # `make install` does the full install: the service binaries (CLI, daemon,
