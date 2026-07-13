@@ -149,3 +149,66 @@ export async function navigateTo(
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
+
+/** Captured runtime-error buffers from the webview. */
+export interface ErrBuf {
+  /** `console.error(...)` invocations, joined per call. */
+  console: string[];
+  /** Uncaught `window` `error` events. */
+  error: string[];
+  /** Uncaught `unhandledrejection` events. */
+  rejection: string[];
+}
+
+/**
+ * Install a runtime-error trap in the webview. Wraps `console.error` and
+ * listens for uncaught errors + unhandled rejections, stashing them on a
+ * global we read back after an interaction. Install it BEFORE a client-side
+ * navigation so a throw during the route's mount is captured — the global
+ * survives SvelteKit's reload-free navigation.
+ *
+ * Buffers reset on each install; the `console.error` wrap happens once so we
+ * never stack wrappers across tests. Pair with {@link readErrors}.
+ */
+export async function installErrorTrap(
+  tauriPage: { evaluate: (script: string) => Promise<unknown> },
+): Promise<void> {
+  await tauriPage.evaluate(`
+    (function() {
+      window.__e2e_err__ = { console: [], error: [], rejection: [] };
+      if (!window.__e2e_hooked__) {
+        window.__e2e_hooked__ = true;
+        var orig = console.error.bind(console);
+        console.error = function() {
+          try { window.__e2e_err__.console.push(Array.prototype.map.call(arguments, String).join(' ')); } catch (e) { /* ignore */ }
+          return orig.apply(null, arguments);
+        };
+        window.addEventListener('error', function(e) { window.__e2e_err__.error.push(String((e && (e.message || e.error)) || e)); });
+        window.addEventListener('unhandledrejection', function(e) { window.__e2e_err__.rejection.push(String(e && e.reason)); });
+      }
+    })()
+  `);
+}
+
+/** Read the buffers stashed by {@link installErrorTrap}. */
+export async function readErrors(
+  tauriPage: { evaluate: (script: string) => Promise<unknown> },
+): Promise<ErrBuf> {
+  return (await tauriPage.evaluate(
+    `window.__e2e_err__ || { console: [], error: [], rejection: [] }`,
+  )) as ErrBuf;
+}
+
+/**
+ * Poll a DOM predicate evaluated INSIDE the webview until it returns `true`.
+ * `expr` must be a JS expression string (e.g. `document.querySelectorAll('x').length === 1`).
+ * A deterministic alternative to arbitrary sleeps when waiting on a client-side
+ * refetch or re-render to land.
+ */
+export async function waitForDom(
+  tauriPage: { evaluate: (script: string) => Promise<unknown> },
+  expr: string,
+  timeoutMs = 15_000,
+): Promise<void> {
+  await waitFor(async () => (await tauriPage.evaluate(expr)) === true, timeoutMs);
+}
