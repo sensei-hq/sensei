@@ -96,7 +96,21 @@ enum Commands {
         #[arg(long)]
         fix: bool,
     },
+
+    /// Refresh assistant integrations after a sensei upgrade — advances each
+    /// assistant's sensei plugin/MCP so a new sensei binary doesn't leave a
+    /// stale plugin behind. Claude Code runs `claude plugin update sensei`;
+    /// file-based MCP assistants re-read their config on their own restart.
+    Upgrade {
+        /// Target ACP (default: all detected). e.g. claude, cursor, zed
+        #[arg(long)]
+        acp: Option<String>,
+    },
 }
+
+/// Daemon route the `upgrade` subcommand POSTs to. Kept as a const so the code
+/// path and its parse/target test share one source of truth.
+const UPGRADE_ENDPOINT: &str = "/api/assistants/upgrade";
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
@@ -122,6 +136,7 @@ fn main() -> ExitCode {
         Commands::Scan { path } => scan(&path),
         Commands::AddLib { name, url } => add_lib(&name, url.as_deref()),
         Commands::Doctor { fix } => return ExitCode::from(doctor::run(fix) as u8),
+        Commands::Upgrade { acp } => upgrade_cmd(acp.as_deref()),
     }
     ExitCode::SUCCESS
 }
@@ -792,6 +807,64 @@ fn remove_all(purge: bool) {
     }
 }
 
+// ── Upgrade ───────────────────────────────────────────────────────────────
+
+/// Refresh assistant integrations after a sensei upgrade. POSTs
+/// [`UPGRADE_ENDPOINT`] and prints one line per assistant (name → ok/failed +
+/// message). With no `--acp`, the daemon targets every detected assistant.
+fn upgrade_cmd(acp: Option<&str>) {
+    println!("=== sensei upgrade ===\n");
+
+    // Daemon must be available to resolve the ACP id and run the upgrade.
+    ensure_daemon();
+
+    let acps: Vec<String> = match acp {
+        // resolve_acp_id exits on an unknown name and returns None for "all".
+        Some(name) => resolve_acp_id(name).into_iter().collect(),
+        None => vec![], // empty = all detected
+    };
+
+    match client()
+        .post(format!("{}{}", daemon_url(), UPGRADE_ENDPOINT))
+        .json(&serde_json::json!({ "acps": acps }))
+        .send()
+    {
+        Ok(r) if r.status().is_success() => {
+            let reports: Vec<serde_json::Value> = r.json().unwrap_or_default();
+            if reports.is_empty() {
+                println!("  No assistants to upgrade.");
+                return;
+            }
+            for rep in &reports {
+                let id = rep["adapter_id"].as_str().unwrap_or("?");
+                let ok = rep["ok"].as_bool() == Some(true);
+                if ok {
+                    let msg = join_strs(&rep["actions"]);
+                    println!("  ✓ {} — {}", id, if msg.is_empty() { "ok".into() } else { msg });
+                } else {
+                    let msg = join_strs(&rep["errors"]);
+                    eprintln!("  ✗ {} — {}", id, if msg.is_empty() { "failed".into() } else { msg });
+                }
+            }
+        }
+        Ok(r) => eprintln!("Upgrade failed: HTTP {}", r.status()),
+        Err(e) => eprintln!("Upgrade failed: {}", e),
+    }
+}
+
+/// Join a JSON array of strings into a `; `-separated line (empty when the
+/// value isn't an array of strings).
+fn join_strs(v: &serde_json::Value) -> String {
+    v.as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|x| x.as_str())
+                .collect::<Vec<_>>()
+                .join("; ")
+        })
+        .unwrap_or_default()
+}
+
 // ── Daemon / Scan / AddLib ──────────────────────────────────────────────────
 
 fn restart_daemon(port: u16) {
@@ -899,5 +972,48 @@ fn add_lib(name: &str, url: Option<&str>) {
             }
         }
         _ => eprintln!("Request failed"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn upgrade_subcommand_parses_without_acp() {
+        let cli = Cli::parse_from(["sensei", "upgrade"]);
+        match cli.command {
+            Commands::Upgrade { acp } => assert!(acp.is_none(), "no --acp → all detected"),
+            _ => panic!("expected Upgrade command"),
+        }
+    }
+
+    #[test]
+    fn upgrade_subcommand_parses_with_acp() {
+        let cli = Cli::parse_from(["sensei", "upgrade", "--acp", "claude"]);
+        match cli.command {
+            Commands::Upgrade { acp } => assert_eq!(acp.as_deref(), Some("claude")),
+            _ => panic!("expected Upgrade command"),
+        }
+    }
+
+    #[test]
+    fn upgrade_targets_assistants_upgrade_endpoint() {
+        // The subcommand must POST to the daemon's assistant-upgrade route.
+        assert_eq!(UPGRADE_ENDPOINT, "/api/assistants/upgrade");
+    }
+
+    #[test]
+    fn join_strs_joins_string_arrays_and_ignores_non_arrays() {
+        assert_eq!(
+            join_strs(&serde_json::json!(["upgraded claude-code plugin"])),
+            "upgraded claude-code plugin"
+        );
+        assert_eq!(
+            join_strs(&serde_json::json!(["a", "b"])),
+            "a; b"
+        );
+        assert_eq!(join_strs(&serde_json::json!([])), "");
+        assert_eq!(join_strs(&serde_json::json!("not an array")), "");
     }
 }
