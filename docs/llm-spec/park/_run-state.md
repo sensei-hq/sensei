@@ -1776,10 +1776,16 @@ port mismatch hive 7755 vs config 8787 (🟢), etc. Chunk order: {R1,R2}→R3→
    Path::try_exists() Ok(false)=gone, errored check=keep (fail-safe); roots never pruned here; idempotent, logged
    ghost_folders=N. No DDL. Verified by me: clippy 0, 2 db-gated tests pass (drops_ghost_subtree_keeps_live +
    skips_when_enclosing_root_absent), related cascade/reconcile tests unaffected.
-   ⏳ DEPLOYING (install bvtne4blr) → verify hive-mind 3 ghost folders + 137 orphans SWEPT. ⚠️ WATERMARK GATE: boot
-   reconcile is storm-gated by reconcile.last_run (set ~08:17); if <interval since, the boot reconcile SKIPS on this
-   restart → force with `sensei scan` (runs the same scan_root reconcile path) then re-check. Sweep may also clear
-   other moved-dir ghosts across the 11247 folder rows (good). LESSON: unit-green ≠ live-converged — always live-verify.
+   ✅✅ FULLY VERIFIED LIVE (install bvtne4blr @08:47 → `sensei scan /Users/Jerry/Developer`): 3 ghost hive-mind
+   folders + 137 orphan nodes + Hive* class nodes ALL → 0 in ~15s. CAPTURE-RELIABILITY CLUSTER COMPLETE (all 3 bugs
+   live-verified): sub-dir attribution/phantom-heal ✓, vanished-file + vanished-DIR prune ✓, reconcile safety-net ✓.
+   ── OPS NOTES for future scan/reconcile debugging: (1) `reconcile.last_run` watermark gates ONLY the scheduler's
+   boot/hourly auto-tick (stayed unchanged through the manual scan); a manual `sensei scan <PATH>` runs the SAME
+   scan_root reconcile path (heal+reconcile_roots+prune_vanished_folders) regardless — the prune is in the ScanRoot
+   handler, so any scan triggers it. (2) `sensei scan` REQUIRES a <PATH> arg. (3) `folders.root_id` → `folders_to_watch.id`
+   (NOT a folder row); 5 watch roots incl. NESTED /Users/Jerry/Developer (ea79b055) + /…/sensei (57f95953) — the ghost
+   folders were under the Developer root, so scan THAT path to prune them. LESSON: unit-green ≠ live-converged — always
+   live-verify (v1 passed unit tests but missed the dir-move ghost class; only the live check caught it).
 
 ── 🐛 CI FAILURE (Jerry flagged 2026-07-13): GitHub Actions release.yml failing on the gateway dep. ROOT CAUSE =
    NOT a private-repo/rev problem. sensei-hq/gateway is PUBLIC + rev 01d0ab2 (=HEAD of main) resolves anonymously
@@ -1794,9 +1800,17 @@ port mismatch hive 7755 vs config 8787 (🟢), etc. Chunk order: {R1,R2}→R3→
    milestone bump (develop→main merge carries it to the tagged commit). Nothing more to do until then; the next
    release will be the end-to-end proof.
 
-   NEXT 🟢: (a) install-service + restart → verify capture self-heal live (dojo-mind under sensei, phantom gone,
-   Hive* pruned). (b) resume Dōjō chunks (R2 share-review, member-role enum) — Dōjō is NOT deferred (see
-   LOCAL-FIRST=RELAY-ONLY correction above). Consolidation was cleanup = shipped.
+   ✅ DONE THIS SESSION (all of Jerry's 3 flags + the reliability cluster): local-first=relay-only correction
+   (`98839e0a`); CI gateway https fix (`d5bdf9b1`, verified local anon fetch); capture-reliability cluster v1
+   (`867a6502`) + v2 ghost-folder prune (`80e8f0f4`) — FULLY VERIFIED LIVE. develop @ ~dbe48d73+ (this run-state).
+   ⚑ JERRY-FLAG (release decision, NOT auto-done): CI fix takes effect only on the NEXT tag push (release.yml runs on
+   tags). develop is intentionally UNMERGED to main (Dōjō foundation accumulates until the Dōjō milestone), so I did
+   NOT merge+bump (would prematurely release the whole Dōjō stack + the deferred knowledge_sources.kind='hive_mind'
+   migration). If you want CI proven GREEN now without releasing Dōjō: cherry-pick d5bdf9b1 onto main + patch-bump
+   (clean main+urlfix release). Otherwise it self-proves at the next real milestone bump. Your call.
+   NEXT 🟢 (next heartbeat advances): resume Dōjō chunks — R2 share-review screen (app/SvelteKit, svelte MCP) OR
+   member-role enum (DDL: client_lead→lead + admin/maintainer/contributor/lead; dojo scope, DDL-source-first, careful).
+   Dōjō is NOT deferred (LOCAL-FIRST=RELAY-ONLY). Consolidation was cleanup = shipped.
 Assets: _dojo-build-plan.md (refreshed) + 4 console specs + dojo-developer-flow.md; ~/Developer/kavach/supabase model.
 
 ⏸️ (SUPERSEDED by the correction above) STEP-6: CLEAN AUTONOMOUS-SAFE BACKLOG EXHAUSTED (2026-07-13).
