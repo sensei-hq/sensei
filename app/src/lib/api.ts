@@ -10,6 +10,7 @@ import type {
   ProjectListItem,
   KnowledgeSource, NewKnowledgeSourceBody, SyncStats,
   DojoMembership, ConnectDojoBody, DojoUpgradesResponse, CollectivePreferences,
+  ShareReviewResponse, PublishBatchOutcome,
   McpToolManifest, SessionToolTimeline, MemoryShareBatch, ImpactVerdictEntry,
   ProjectMcpToolStat, ToolSignal, ProjectService, ToolInsight, ToolsHealth,
   SessionReplayResponse, McpServerRow, McpServerToolsManifest,
@@ -1032,6 +1033,22 @@ export function senseiApi(port: number) {
       tryPost<{ id: string; state: string }>(`/api/upgrades/${enc(id)}/mute`, {}),
     pinUpgrade: (id: string) =>
       tryPost<{ id: string; state: string }>(`/api/upgrades/${enc(id)}/pin`, {}),
+
+    // ── Share review (Observatory · Share review · C11) ──────────────────
+    // The upstream publish-gate. GET returns the next approved-but-unsent batch
+    // with its per-item dereference PREVIEW, or `{ batch: null }` when nothing is
+    // pending; the `get` fallback is that empty state so a daemon that predates
+    // the route (404) degrades to the empty screen, never a broken one. Publish
+    // runs the confidentiality-gated contribute path (client-work dereference is
+    // mandatory and cannot be overridden); `tryPost` so a missing (404) or
+    // not-approved (409) batch surfaces as `{ ok: false, error }` for the screen
+    // to show, rather than being absorbed into a fallback. On success the screen
+    // re-loads via `invalidateAll` and the returned outcome is shown.
+    getShareReviewBatch: () =>
+      get<ShareReviewResponse>('/api/share-review/next-batch', { batch: null }),
+
+    publishBatch: (batchId: string) =>
+      tryPost<PublishBatchOutcome>(`/api/share-review/${enc(batchId)}/publish`, {}),
 
     // ── Collective sharing preferences (Observatory · Collective · C9) ───────
     // GET always returns a FULL object (the stored row, or the defaults when

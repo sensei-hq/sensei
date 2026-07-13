@@ -38,7 +38,7 @@ pub(crate) struct NewMembershipBody {
     /// Service membership id (`dojo.memberships.id`) — becomes the local PK.
     pub membership_id: String,
     /// Registry base URL. Defaults to `sensei_config::dojo_registry_url()`
-    /// (`SENSEI_DOJO_URL`, default `http://localhost:8787`) when omitted.
+    /// (`SENSEI_DOJO_URL`, default `http://localhost:7755`) when omitted.
     pub registry_url: Option<String>,
     /// `<origin>/<org>[/<dojo>]` discovery path of the tenant Dōjō.
     pub tenant_key: String,

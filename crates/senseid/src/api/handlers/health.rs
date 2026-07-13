@@ -40,7 +40,20 @@ pub(crate) async fn watcher_status(State(state): State<AppState>) -> Json<serde_
                 "excluded": root.excluded,
             })
         }).collect();
-        Json(serde_json::json!({ "status": status, "roots": roots }))
+        // Liveness surface (P1): so a stalled/dead watcher is never silent again.
+        // The watchdog owns `healthy`; `last_event_at_ms` is the heartbeat the
+        // watch thread updates on every fs event, queryable from out here.
+        let h = w.health();
+        Json(serde_json::json!({
+            "status": status,
+            "roots": roots,
+            "healthy": h.healthy(),
+            "thread_alive": h.thread_alive(),
+            "stream_healthy": h.stream_healthy(),
+            "last_event_at_ms": h.last_event_at_ms(),
+            "started_at_ms": h.started_at_ms(),
+            "roots_watched": h.roots_watched(),
+        }))
     } else {
         Json(serde_json::json!({ "status": "error", "message": "lock poisoned" }))
     }

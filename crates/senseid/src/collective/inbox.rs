@@ -443,9 +443,9 @@ mod tests {
     fn membership() -> DojoMembership {
         DojoMembership {
             id: Uuid::new_v4(),
-            registry_url: "http://localhost:8787".into(),
+            registry_url: "http://localhost:7755".into(),
             tenant_key: "github/acme".into(),
-            dojo_url: "http://localhost:8787/github/acme".into(),
+            dojo_url: "http://localhost:7755/github/acme".into(),
             kind: "community".into(),
             role: "contributor".into(),
             authenticated_via: "device_code".into(),
