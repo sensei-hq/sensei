@@ -335,7 +335,14 @@ reset-e2e-db:
 reset ?= true
 test-app-e2e: app-e2e-build
 	$(if $(filter true,$(reset)),$(MAKE) reset-e2e-db)
-	cd app && bun run test:e2e
+	@# Safety net: globalSetup stops the real brew `sensei` daemon and runs an
+	@# e2e daemon (--instance e2e, throwaway sensei_e2e DB) on the SAME :7744.
+	@# globalTeardown restores it on a clean exit, but a SIGTERM/interrupt to
+	@# Playwright skips teardown → the system is left with the real daemon down
+	@# and the empty-DB e2e daemon squatting on :7744 (looks like total data
+	@# loss; see reference_e2e_7744_leftover). This trap restores the real daemon
+	@# on ANY exit — redundant with teardown on success, the actual fix on kill.
+	cd app && trap 'pkill -f "instance e2e" 2>/dev/null; brew services start sensei >/dev/null 2>&1 || true' EXIT INT TERM; bun run test:e2e
 
 # ── Cold-start E2E ────────────────────────────────────────────────────────────
 # Verifies the health page drives itself through the full check → resolve →
