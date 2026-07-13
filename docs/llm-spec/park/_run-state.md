@@ -1579,9 +1579,18 @@ ACTIVE BUILD QUEUE (default-and-proceed order, highest value first):
      client text search; level→role tokens; capped-warning. check 0/0 (933); test:unit 1125 (+30). visual=e2e.
      Deferred (need other surfaces): task strip (/api/scheduler/tasks), SSE Follow, inclusive-below level filter.
      NOTE: source(running_on) null in all live rows until writers populate.
-  ── NEXT = C (traceability fix/dismiss). SURVEY then delegate: daemon action endpoints over sensei.project_drift/
-     drift_items (fix vs dismiss on a drift_item) + UI drawer on the traceability screen. Check existing drift
-     endpoints (/api/projects/{id}/drift) + the traceability screen/mockup + drift_items DDL before building.
+  C+D ⏸️ DEFERRED — DDL-COORDINATED (not autonomous-safe blind). Surveyed 2026-07-13:
+     • C traceability fix/dismiss: spec (observatory-/project-traceability.md) needs states open/fixed/resolved_auto/
+       dismissed + signature-suppression, but inference.drift_items.status = enum drift_status{current,drifted,broken}
+       only → needs a DRIFT_STATUS ENUM EXPANSION (or resolution model) on a SHIPPED table. DDL won't be live until
+       `make bump` republishes the bundle (daemon reads database@vVERSION, not repo) → can't build+verify in one tick.
+     • D impact-regression: needs a NEW impact_regressions table (DDL) + writer. Same released-bundle constraint.
+     → Do C+D in a DELIBERATE DDL pass (DDL-source-first → dbd apply → bump+install → verify), or flag to Jerry
+       (schema change to shipped inference.drift_items). Skipped per "don't do risky DDL blind" + conservative pacing.
+  ⏳ E BUILDING (agent a31f9be7) — project-icon asset-serve: GET /api/projects/{id}/icon (secure file-serve, path-
+     traversal-guarded) + un-gate infer_icon logo tier + UI <img> w/ kanji fallback. NO DDL (icon jsonb exists).
+     ON DONE: senseid build+clippy+test + app check+test:unit → commit. Then F (net-new) / G (refine) / tooling
+     follow-ups (search recall, get_rules scope hygiene, patterns sparse) — all no-DDL, autonomous-safe.
   C. #6 traceability fix/dismiss (daemon action endpoints over drift_items + UI drawer).
   D. #8 impact-regression surface: impact_regressions DDL + writer (record on negative verdict) + alert screen.
   E. project-icon ASSET-SERVE daemon route (serve repo logos) → then un-gate the image tier.
