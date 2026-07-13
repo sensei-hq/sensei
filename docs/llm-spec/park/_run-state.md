@@ -1704,6 +1704,20 @@ port mismatch hive 7755 vs config 8787 (🟢), etc. Chunk order: {R1,R2}→R3→
    decision table; mobile PWA; push infra (APNs/FCM); interactive HITL channel. LOAD-BEARING open decisions for Jerry:
    relay-through-dōjō vs expose-daemon; where a multi-day run EXECUTES (laptop-through-dōjō vs hosted runner + key
    custody); PWA vs native; ACP pre-1.0 risk. Informs phase 2/3; nothing to build now.
+   ⭐ JERRY REFINEMENTS (2026-07-13) — phase-2 shape: (1) STRUCTURED RUN OBJECT in the daemon: Run→Phase→Feature/
+   Chunk→Task, each node = status{todo|in-progress|blocked|awaiting-input|done} + 1-line summary + the detailed
+   narrative attached PER NODE. The human "checklist/status list" is a PROJECTION of this tree (no separate
+   distiller to drift); the dense _run-state.md prose becomes per-node activity logs. Expose via an MCP TOOLKIT
+   (plan_create / plan_update_task(status,summary) / plan_status / plan_park_decision) that the executing agent +
+   gate subagents call INSTEAD of appending prose; a PLANNING SKILL seeds the tree from a goal (idea→blueprint→plan
+   but emitting structure). Mobile relay reads the checklist; `awaiting-input` nodes = the push triggers.
+   (2) FOLD CRON INTO THE DAEMON: a run-scheduler (mirrors analyzer/federation/version-rescan schedulers) owns the
+   loop for an active run — on tick, advance next `todo`, drive the executor, capture result into the run object.
+   Kills the session-bound-cron fragility (heartbeat currently dies with the terminal/auto-expires); daemon = durable
+   orchestrator. COUPLING: a daemon-driven loop must INVOKE the executor = the ACP piece (2a daemon spawns an ACP
+   client like Claude Code + feeds the next task; 2b later sensei IS the ACP agent). So "fold cron in" + "adopt ACP"
+   land together as the phase-2 CORE: daemon run-scheduler → ACP executor → structured run object → checklist(desktop)
+   / push(mobile via dōjō relay). ~70% of parts exist. → fold into the research doc when phase 2 starts.
 ⏳ HIVE→DOJO CONSOLIDATION BUILDING (agent ab63f054, Jerry directive — one name `dojo`). Phase 1 CODE: merge
    hive-protocol→dojo-protocol (delete crate), rename hive-mind→dojo-mind + binary sensei-hive→**sensei-dojo**, port
    8787→7755, global hive→dojo (≈123 files/142 refs). Phase 2 DDL (source-first): fold hive schema→dojo schema + hive
