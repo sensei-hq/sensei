@@ -1718,20 +1718,20 @@ port mismatch hive 7755 vs config 8787 (🟢), etc. Chunk order: {R1,R2}→R3→
    client like Claude Code + feeds the next task; 2b later sensei IS the ACP agent). So "fold cron in" + "adopt ACP"
    land together as the phase-2 CORE: daemon run-scheduler → ACP executor → structured run object → checklist(desktop)
    / push(mobile via dōjō relay). ~70% of parts exist. → fold into the research doc when phase 2 starts.
-── ⭐⭐ LOCAL-FIRST PRIORITIZATION (Jerry 2026-07-13): "focus local only, continue the NOTHING-LEAVES-YOUR-MACHINE
-   philosophy." Networked features are OPT-IN + DEFERRED. This re-orders the queue + resolves the website contradiction:
-   • DEFER (anything that leaves the machine): Dōjō SaaS console + admin/client-lead backends (C12-14, R7/R8);
-     publish-to-collective / relay (R1 already stages to a LOCAL outbox + never auto-publishes = correct posture;
-     actual push-to-hive stays opt-in); ORG AUTO-DISCOVERY (calls the GitHub API = a network request → opt-in/defer);
-     the relay-companion / mobile / push (phase-3 networked reach).
-   • KEEP/FOCUS (all on-machine): the CONTROL PLANE wrapped under the daemon (daemon run-scheduler + structured run
-     object + checklist + MCP toolkit + plan skill + LOCAL ACP executor) — the natural next big LOCAL build; local
-     memories/analysis; desktop polish; FINISH the hive→dojo cleanup (tidy-up, not networked).
-   • WEBSITE: lead with the local "nothing leaves your machine" story; Dōjō = opt-in future for teams (NOT a headline)
-     — exactly the review's recommended reframe.
-   ⏳ AWAITING JERRY: pause the Dōjō NETWORKED build entirely (finish rename + keep only local-safe scaffolding, pivot
-   to the local control plane) — OR keep local-safe Dōjō chunks moving (R2 share-review screen, member-role enum) while
-   holding anything that crosses the network? (Proceeding local-first regardless; this only sets the exact next target.)
+── ⭐⭐ LOCAL-FIRST = THE RELAY ONLY (Jerry CORRECTION 2026-07-13): "local-first comment was for the RELAY not for
+   dojo." My earlier block WRONGLY read "focus local only" as deferring the whole networked Dōjō — REVERSED. The
+   NOTHING-LEAVES-YOUR-MACHINE / local-first posture scopes to the **RELAY** (phase-2/3 relay companion), NOT the Dōjō.
+   • DŌJŌ = NOT DEPRIORITIZED. Proceeds per STANDING POLICY (full-scope Dōjō authorized: Supabase-localhost + kavach).
+     Its networked pieces are IN SCOPE: SaaS console (C12-14, in-repo dojo/), member-role enum, ORG AUTO-DISCOVERY,
+     share-review (R2), collective publish (opt-in, R1 outbox already correct), R7/R8 backends. Resume per _dojo-build-plan.
+   • RELAY = the only thing deferred/local-first-for-now: the relay-companion / mobile app / push notifications /
+     remote daemon reach (phase-3 networked reach). Build the LOCAL control plane first (daemon run-scheduler +
+     structured run object + checklist + MCP toolkit + plan skill + LOCAL ACP executor); the relay rides on it later.
+   • WEBSITE: still lead with the local "nothing leaves your machine" story as PRIMARY; Dōjō = the teams/collective
+     offering (opt-in, not the headline) — the review's reframe still holds. This framing is about the RELAY/mobile
+     posture, not a reason to slow the Dōjō backend.
+   ✅ RESOLVED (was AWAITING JERRY): do NOT pause the Dōjō networked build — only the relay is paused. Dōjō chunks
+   (R2 share-review, member-role enum, consoles, org-discovery) are all live targets again.
 
 ✅ HIVE→DOJO CONSOLIDATION SHIPPED `2e97b709` (agent ab63f054, verified: workspace build+clippy 0, dojo-protocol 18,
    scope_test 2 [default EXCLUDES dojo + unified dojo resolves], senseid federation e2e cross-crate, app 1131).
@@ -1753,12 +1753,27 @@ port mismatch hive 7755 vs config 8787 (🟢), etc. Chunk order: {R1,R2}→R3→
    crates/dojo-mind registered as its OWN `standalone` project 81694788 (NOT a folder under the sensei monorepo
    ff1ccea2, which is how crates/hive-mind WAS scoped) → sensei "dropped" 16354→11181 = dojo-mind nodes LEFT sensei
    into a phantom project → search/graph for sensei now MISSES dojo-mind + returns stale Hive*. Same segmentation
-   class as the junk-sub-project bug. ⭐ RECOMMENDED FIX CLUSTER (local-first-aligned, CORE capture — I lean fix-next):
+   class as the junk-sub-project bug. ⭐ FIX CLUSTER (Jerry APPROVED 2026-07-13 "fix now, this is a reliability issue"):
    (1) watcher survives restarts + periodic reconcile-scan safety net; (2) prune orphaned nodes on file/dir
-   delete/move; (3) a folder that MOVES within a repo stays attributed to that repo's project (no new standalone).
-   ⏳ AWAITING JERRY priority: fix this capture-reliability cluster NEXT vs continue Dōjō/control-plane + file it.
-   NEXT 🟢 (per Jerry local-first): R2 share-review screen (local desktop) — see LOCAL-FIRST PRIORITIZATION above
-   (AWAITING Jerry: pause networked Dōjō vs keep local-safe chunks). Consolidation was cleanup = local-safe, shipped.
+   delete/move; (3) a folder that MOVES within a repo stays attributed to that repo's project (no new standalone);
+   (4) reconcile self-heals the live drift (re-attach dojo-mind 81694788→sensei ff1ccea2 + prune hive orphans).
+   🔨 IN PROGRESS — delegated to subagent ae6ed6e4 (TDD, develop, no commit). Live cleanup happens when the fixed
+   reconcile runs post-install. Verify live after install: dojo-mind under sensei, phantom 81694788 gone, Hive* pruned.
+
+── 🐛 CI FAILURE (Jerry flagged 2026-07-13): GitHub Actions release.yml failing on the gateway dep. ROOT CAUSE =
+   NOT a private-repo/rev problem. sensei-hq/gateway is PUBLIC + rev 01d0ab2 (=HEAD of main) resolves anonymously
+   over HTTPS (verified: git ls-remote https://github.com/sensei-hq/gateway.git → 01d0ab27… HEAD). The dep just uses
+   an `ssh://git@github.com/...` URL (crates/senseid/Cargo.toml:85,88 + Cargo.lock:2070,2093) and GitHub's SSH
+   endpoint ALWAYS needs key auth — which CI runners don't have (GITHUB_TOKEN is scoped to sensei only). "revision
+   not found" was a downstream symptom of the failed clone. FIX (no secret, default-and-proceed): swap ssh:// →
+   https:// in Cargo.toml (both gateway + gateway-embedded) + Cargo.lock source lines. Anonymous public clone works
+   in CI, in `cross` Docker, and locally. ⏳ HELD until the capture-cluster subagent finishes (it's building senseid
+   against gateway — changing the source URL mid-run would force a re-fetch + Cargo.lock rewrite under it). Apply +
+   `cargo build -p senseid` to refresh lock + commit on develop right after.
+
+   NEXT 🟢: (a) apply the CI gateway https fix (after subagent). (b) land the capture-cluster fix + install + verify
+   the live self-heal. (c) resume Dōjō chunks (R2 share-review, member-role enum) — Dōjō is NOT deferred (see
+   LOCAL-FIRST=RELAY-ONLY correction above). Consolidation was cleanup = shipped.
 Assets: _dojo-build-plan.md (refreshed) + 4 console specs + dojo-developer-flow.md; ~/Developer/kavach/supabase model.
 
 ⏸️ (SUPERSEDED by the correction above) STEP-6: CLEAN AUTONOMOUS-SAFE BACKLOG EXHAUSTED (2026-07-13).
