@@ -209,12 +209,13 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
         Arc::new(state.pg.clone()),
     );
 
-    // Watcher safety net: periodically (boot + hourly) re-scan every watch root
-    // so the index converges even when the fs-watcher misses events (daemon
-    // restarts / stale FSEvents gaps). Reuses the self-healing scan pipeline —
-    // re-absorbs mis-scoped roots (Bug 3) + prunes orphan nodes (Bug 2). First
-    // tick fires immediately (a boot reconcile), gated by a config watermark so
-    // a rapid restart doesn't re-storm.
+    // Watcher safety net: frequently (boot + every reconcile.interval_secs,
+    // default 300s) re-scan every watch root so the index converges even when
+    // the fs-watcher misses events (daemon restarts / stale FSEvents gaps).
+    // Reuses the self-healing scan pipeline — re-absorbs mis-scoped roots
+    // (Bug 3) + prunes orphan nodes (Bug 2). The two-tier mtime gate makes a
+    // no-op re-scan stat-only, so this is cheap to run often. The boot reconcile
+    // ALWAYS runs (drift-safety); overlap-guarded so reconciles never stack.
     crate::tasks::reconcile_scheduler::spawn(
         task_queue.clone(),
         Arc::new(state.pg.clone()),

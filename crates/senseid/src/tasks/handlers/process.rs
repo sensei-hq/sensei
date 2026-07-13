@@ -172,14 +172,16 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
             }
     }
 
-    // Incremental index: load the prior per-file fingerprints so we only
-    // re-process files whose mtime changed (edited / new / pulled / brought in
-    // by a branch switch), skip unchanged files (their nodes + embeddings stay
-    // valid), and drop files no longer on disk. The first index sees an empty
-    // scan_state and processes everything, populating it. This replaces the old
-    // blanket `delete_nodes_by_folder` wipe + full re-parse on every scan.
-    let prior_state: std::collections::HashMap<String, i64> = match &folder_uuid {
-        Some(fid) => ctx.pg().list_scan_state(fid).await.unwrap_or_default().into_iter().collect(),
+    // Incremental index: load the prior per-file fingerprints `(mtime, hash)` so
+    // the two-tier gate can (a) skip files whose mtime is unchanged without any
+    // read/hash, (b) re-hash only the mtime-drifted candidates and skip
+    // reindexing the ones whose content is byte-identical, (c) reindex genuine
+    // edits + new files, and (d) drop files no longer on disk. The first index
+    // sees an empty scan_state and processes everything, populating it. This is
+    // what makes a frequent no-op reconcile near-free.
+    let prior_state: std::collections::HashMap<String, (i64, String)> = match &folder_uuid {
+        Some(fid) => ctx.pg().list_scan_state_full(fid).await.unwrap_or_default()
+            .into_iter().map(|(p, m, h)| (p, (m, h))).collect(),
         None => std::collections::HashMap::new(),
     };
 
@@ -230,8 +232,25 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
             }
         }
     }
-    // Diff against the last index → which files to (re)process, which to drop.
-    let plan = super::scan_logic::incremental_plan(&current, &prior_state);
+    // Diff against the last index with the two-tier gate. The injected hasher
+    // reads+hashes ONLY the mtime-drifted candidates (an unchanged-mtime file is
+    // never touched), so a no-op re-scan is stat-only. `plan.changed` needs
+    // reindexing, `plan.touched` only needs its mtime refreshed, `plan.removed`
+    // is gone from disk.
+    let plan = super::scan_logic::plan_reindex(&current, &prior_state, |rel| {
+        super::helpers::hash_file(&repo_path.join(rel))
+    });
+
+    // Touched-but-identical files: refresh the stored mtime so the cheap gate
+    // hits next pass, but DON'T reindex — their nodes/embeddings are still valid.
+    // (mtime drift with no content change: touch, checkout, branch-switch-to-same.)
+    if let Some(ref fid) = folder_uuid {
+        for (path, mtime, hash) in &plan.touched {
+            if let Err(e) = ctx.pg().upsert_scan_state(fid, path, *mtime, hash).await {
+                tracing::warn!(folder_id = %fid, file = %path, error = %e, "upsert_scan_state (touched refresh) failed");
+            }
+        }
+    }
 
     // Enqueue ProcessFolder + ProcessFile only for changed files, grouped by dir
     // so each gets its module/package context. Unchanged dirs enqueue nothing.
@@ -421,7 +440,10 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
         tracing::warn!(error = %e, "mark_orphaned_projects failed");
     }
 
-    tracing::info!("process_git_folder: {} — {} dirs, {} changed files, {} removed", folder_name, dirs.len(), all_file_task_ids.len(), plan.removed.len());
+    tracing::info!(
+        "process_git_folder: {} — {} dirs, {} changed files, {} touched (mtime-only), {} unchanged (stat-only), {} removed",
+        folder_name, dirs.len(), all_file_task_ids.len(), plan.touched.len(), plan.unchanged, plan.removed.len()
+    );
     Ok(all_file_task_ids.len() as u32)
 }
 
