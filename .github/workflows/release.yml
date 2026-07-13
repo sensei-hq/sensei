@@ -178,9 +178,12 @@ jobs:
 
       - name: Download CLI tarballs and compute SHA256s
         run: |
-          BASE="https://github.com/sensei-hq/sensei/releases/download/${TAG}"
+          # sensei-hq/sensei is PRIVATE, so release assets require auth — a bare
+          # `curl` at the releases/download URL 404s. Use `gh release download`,
+          # which authenticates via GH_TOKEN (set at the job level).
           for artifact in sensei-macos-arm64 sensei-macos-x86_64 sensei-linux-arm64 sensei-linux-x86_64; do
-            curl -fsSL -o "${artifact}.tar.gz" "${BASE}/${artifact}.tar.gz"
+            gh release download "${TAG}" --repo sensei-hq/sensei \
+              -p "${artifact}.tar.gz" -O "${artifact}.tar.gz" --clobber
             sha=$(sha256sum "${artifact}.tar.gz" | cut -d' ' -f1)
             key="SHA256_${artifact//-/_}"
             echo "${key}=${sha}" >> "$GITHUB_ENV"
@@ -188,12 +191,12 @@ jobs:
 
       - name: Find DMG asset and compute SHA256
         run: |
-          dmg_url=$(gh api "repos/sensei-hq/sensei/releases/tags/${TAG}" \
-            --jq '.assets[] | select(.name | endswith(".dmg")) | .browser_download_url' \
+          dmg_name=$(gh release view "${TAG}" --repo sensei-hq/sensei \
+            --json assets --jq '.assets[] | select(.name | endswith(".dmg")) | .name' \
             | head -1)
-          if [ -n "$dmg_url" ]; then
-            dmg_name=$(basename "$dmg_url")
-            curl -fsSL -o "$dmg_name" "$dmg_url"
+          if [ -n "$dmg_name" ]; then
+            gh release download "${TAG}" --repo sensei-hq/sensei \
+              -p "$dmg_name" -O "$dmg_name" --clobber
             sha=$(sha256sum "$dmg_name" | cut -d' ' -f1)
             echo "SHA256_dmg=${sha}" >> "$GITHUB_ENV"
             echo "DMG_FOUND=true" >> "$GITHUB_ENV"
