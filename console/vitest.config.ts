@@ -15,7 +15,13 @@ export default defineConfig({
 	},
 	resolve: {
 		alias: {
-			$lib: new URL('./src/lib', import.meta.url).pathname
+			$lib: new URL('./src/lib', import.meta.url).pathname,
+			// $env/dynamic/public isn't generated outside the SvelteKit plugin; point
+			// it at a stub so the triage API client imports cleanly under vitest.
+			'$env/dynamic/public': new URL(
+				'./src/lib/test-stubs/env-dynamic-public.ts',
+				import.meta.url
+			).pathname
 		}
 	}
 });
