@@ -1718,12 +1718,36 @@ port mismatch hive 7755 vs config 8787 (🟢), etc. Chunk order: {R1,R2}→R3→
    client like Claude Code + feeds the next task; 2b later sensei IS the ACP agent). So "fold cron in" + "adopt ACP"
    land together as the phase-2 CORE: daemon run-scheduler → ACP executor → structured run object → checklist(desktop)
    / push(mobile via dōjō relay). ~70% of parts exist. → fold into the research doc when phase 2 starts.
-⏳ HIVE→DOJO CONSOLIDATION BUILDING (agent ab63f054, Jerry directive — one name `dojo`). Phase 1 CODE: merge
-   hive-protocol→dojo-protocol (delete crate), rename hive-mind→dojo-mind + binary sensei-hive→**sensei-dojo**, port
-   8787→7755, global hive→dojo (≈123 files/142 refs). Phase 2 DDL (source-first): fold hive schema→dojo schema + hive
-   scope→dojo scope in design.yaml, PRESERVING the daemon `default` scope's exclusion of the service tables; verify via
-   dbd graph / scratch-DB (NEVER prod). Contained risk: a wrong fold is caught at build/dbd verify before it lands.
-   ON DONE: verify whole-workspace build+clippy+tests + scope separation → commit. THEN next 🟢: R2 share-review screen.
+── ⭐⭐ LOCAL-FIRST PRIORITIZATION (Jerry 2026-07-13): "focus local only, continue the NOTHING-LEAVES-YOUR-MACHINE
+   philosophy." Networked features are OPT-IN + DEFERRED. This re-orders the queue + resolves the website contradiction:
+   • DEFER (anything that leaves the machine): Dōjō SaaS console + admin/client-lead backends (C12-14, R7/R8);
+     publish-to-collective / relay (R1 already stages to a LOCAL outbox + never auto-publishes = correct posture;
+     actual push-to-hive stays opt-in); ORG AUTO-DISCOVERY (calls the GitHub API = a network request → opt-in/defer);
+     the relay-companion / mobile / push (phase-3 networked reach).
+   • KEEP/FOCUS (all on-machine): the CONTROL PLANE wrapped under the daemon (daemon run-scheduler + structured run
+     object + checklist + MCP toolkit + plan skill + LOCAL ACP executor) — the natural next big LOCAL build; local
+     memories/analysis; desktop polish; FINISH the hive→dojo cleanup (tidy-up, not networked).
+   • WEBSITE: lead with the local "nothing leaves your machine" story; Dōjō = opt-in future for teams (NOT a headline)
+     — exactly the review's recommended reframe.
+   ⏳ AWAITING JERRY: pause the Dōjō NETWORKED build entirely (finish rename + keep only local-safe scaffolding, pivot
+   to the local control plane) — OR keep local-safe Dōjō chunks moving (R2 share-review screen, member-role enum) while
+   holding anything that crosses the network? (Proceeding local-first regardless; this only sets the exact next target.)
+
+✅ HIVE→DOJO CONSOLIDATION SHIPPED `2e97b709` (agent ab63f054, verified: workspace build+clippy 0, dojo-protocol 18,
+   scope_test 2 [default EXCLUDES dojo + unified dojo resolves], senseid federation e2e cross-crate, app 1131).
+   hive-protocol→dojo-protocol (crate deleted), hive-mind→dojo-mind + binary sensei-hive→**sensei-dojo**, port
+   8787→7755, hive schema→dojo schema + scope fold (default excludes dojo), ~230 refs/59 files. DEFERRED (data
+   contract): knowledge_sources.kind="hive_mind" needs a coordinated daemon+app+data migration → FOLLOW-UP ISSUE.
+   ⚠️🐛 WATCHER DOGFOOD FINDING (Jerry asked 2026-07-13): the daemon file-watcher did NOT auto-re-index the
+   consolidation OR R1 — index still had HiveConfig/HiveStore/HiveDb (renamed away), Dojo*/stage_contribution absent,
+   sensei frozen at 16354 nodes (the v0.2.43-rescan snapshot), zero scan/watch log activity for hours. Watcher IS
+   spawned (server.rs:231, registered /Users/Jerry/Developer) but nothing committed since the ~5h-ago v0.2.43 rescan
+   got picked up. Likely cause: today's heavy daemon churn (v0.2.42/43 installs + e2e-daemon squatting :7744 + brew
+   restarts) left gaps in the FSEvents stream. ⏳ Triggered a MANUAL `sensei scan` (watcher bsyqrj344) to (a) catch the
+   index up + (b) confirm scanning works so the gap is the AUTO-TRIGGER not the scan. → real follow-up: watcher
+   reliability (survive restarts / periodic reconcile-scan safety net so the index can't silently drift).
+   NEXT 🟢 (per Jerry local-first): R2 share-review screen (local desktop) — see LOCAL-FIRST PRIORITIZATION above
+   (AWAITING Jerry: pause networked Dōjō vs keep local-safe chunks). Consolidation was cleanup = local-safe, shipped.
 Assets: _dojo-build-plan.md (refreshed) + 4 console specs + dojo-developer-flow.md; ~/Developer/kavach/supabase model.
 
 ⏸️ (SUPERSEDED by the correction above) STEP-6: CLEAN AUTONOMOUS-SAFE BACKLOG EXHAUSTED (2026-07-13).
