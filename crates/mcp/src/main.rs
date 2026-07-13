@@ -1,6 +1,12 @@
 use serde_json::{json, Value};
 use std::io::{BufRead, Write};
 
+use sensei_mcp::{
+    active_project_path, daemon_request_for, handle_initialize, handle_list_tools,
+    read_active_project, resolve_active_project_in, resolve_default_project,
+    resolve_from_cwd_in, resolve_project_in, write_active_project, DaemonRequest, HttpMethod,
+};
+
 fn daemon_url() -> String {
     sensei_bootstrap::daemon_url()
 }
@@ -15,6 +21,30 @@ fn daemon_result(result: reqwest::Result<reqwest::blocking::Response>) -> Value 
         Ok(resp) => json!({"content": [{"type": "text", "text": format!("Daemon error: HTTP {}", resp.status())}], "isError": true}),
         Err(e) => json!({"content": [{"type": "text", "text": format!("Cannot reach senseid daemon: {}", e)}], "isError": true}),
     }
+}
+
+/// Send a lib-shaped [`DaemonRequest`] with the given client. The library
+/// decides the method / path / query / body; here we only prepend the base URL
+/// and drive reqwest. Keeping the shaping in the library is what lets the
+/// contract test cross the MCP↔daemon seam in-process.
+fn send_daemon_request(
+    client: &reqwest::blocking::Client,
+    req: &DaemonRequest,
+) -> reqwest::Result<reqwest::blocking::Response> {
+    let url = format!("{}{}", daemon_url(), req.path);
+    let mut rb = match req.method {
+        HttpMethod::Get => client.get(&url),
+        HttpMethod::Post => client.post(&url),
+        HttpMethod::Put => client.put(&url),
+        HttpMethod::Delete => client.delete(&url),
+    };
+    if !req.query.is_empty() {
+        rb = rb.query(&req.query);
+    }
+    if let Some(body) = &req.body {
+        rb = rb.json(body);
+    }
+    rb.send()
 }
 
 fn main() {
@@ -71,216 +101,27 @@ fn main() {
     }
 }
 
-fn handle_initialize() -> Value {
-    json!({
-        "protocolVersion": "2024-11-05",
-        "capabilities": { "tools": {} },
-        "serverInfo": { "name": "sensei", "version": env!("CARGO_PKG_VERSION") }
-    })
-}
-
-fn handle_list_tools() -> Value {
-    json!({
-        "tools": [
-            tool("search", "Search functions, types, and symbols in the current project or a named library/project. Use this when you need to find where something is defined.", &[
-                ("query", "string", "What to search for (function name, type name, etc)"),
-            ], &[
-                ("project", "string", "Project or library name to search in (e.g. 'rokkit', 'kavach'). Defaults to current project."),
-            ]),
-            tool("get_callers", "Find all functions that call a given function. Use this to understand who depends on a function.", &[
-                ("name", "string", "Function name to find callers of"),
-            ], &[
-                ("project", "string", "Project name. Defaults to current project."),
-            ]),
-            tool("get_callees", "Find all functions called by a given function. Use this to understand what a function depends on.", &[
-                ("name", "string", "Function name to find callees of"),
-            ], &[
-                ("project", "string", "Project name. Defaults to current project."),
-            ]),
-            tool("get_project_summary", "Get overview of a project — function count, types, libraries used, tech stack.", &[], &[
-                ("project", "string", "Project name. Defaults to current project."),
-            ]),
-            tool("get_lib_docs", "Get indexed documentation for a library. Without component param returns the index/overview. With component returns that specific component's docs (e.g. 'list', 'select', 'button').", &[
-                ("name", "string", "Library name (e.g. 'bits-ui', 'rokkit', 'hono')"),
-            ], &[
-                ("component", "string", "Specific component name to get docs for (e.g. 'list', 'select', 'button'). Omit for the library index."),
-            ]),
-            tool("search_lib_docs", "Search across all indexed library documentation. Use when looking for how to use a feature.", &[
-                ("query", "string", "What to search for in library docs"),
-            ], &[]),
-            tool("get_communities", "Get code architecture — clusters of related functions detected by community analysis.", &[], &[
-                ("project", "string", "Project name. Defaults to current project."),
-            ]),
-            tool("get_patterns", "Get files tagged with a framework pattern (e.g. 'hook', 'middleware', 'route', 'component').", &[
-                ("pattern", "string", "Pattern to search for"),
-            ], &[
-                ("project", "string", "Project name. Defaults to current project."),
-            ]),
-            tool("list_projects", "List all known projects and their index status.", &[], &[]),
-            tool("create_session", "Start tracking a new coding session. Call at the beginning of a task.", &[
-                ("task", "string", "Description of what you're working on"),
-            ], &[]),
-            tool("update_session", "Update a session with outcome and summary. Call when task is complete or blocked.", &[
-                ("sessionId", "string", "Session ID returned by create_session"),
-                ("outcome", "string", "completed, partial, or blocked"),
-            ], &[
-                ("summary", "string", "What was accomplished"),
-                ("cost", "string", "Cost in USD"),
-                ("tokensIn", "string", "Input tokens used"),
-                ("tokensOut", "string", "Output tokens used"),
-            ]),
-            tool("add_library", "Index an external library's documentation. Tries to auto-discover llms.txt from common URLs. Provide url only if auto-discovery fails.", &[
-                ("name", "string", "Library name (e.g. 'bits-ui', 'hono', 'drizzle-orm')"),
-            ], &[
-                ("url", "string", "Explicit URL if auto-discovery fails"),
-                ("version", "string", "Library version"),
-            ]),
-            // Workflow state
-            tool("update_phase", "Update the workflow phase, task, or active issue. Call this at the start of every phase command. MANDATORY — do not skip.", &[
-                ("phase", "string", "Phase name: ideate, analyze, blueprint, experiment, plan, build, validate, brainstorm"),
-            ], &[
-                ("task", "string", "Active task description"),
-                ("issue", "string", "GitHub issue number"),
-                ("plan", "string", "Path to active plan doc"),
-                ("checkpoint", "string", "Checkpoint description"),
-            ]),
-            tool("get_workflow_state", "Get current workflow state — active phase, task, issue, checkpoint. Call when you need orientation or feel lost.", &[], &[]),
-            // Pattern matching
-            tool("match_pattern", "Find applicable patterns for a task. Returns detected patterns from the codebase that match the description. Call during the locate step before writing code. MANDATORY in /sensei:build.", &[
-                ("description", "string", "What you're about to build (e.g. 'add SQL parsing', 'new API endpoint')"),
-            ], &[]),
-            tool("get_pattern_for", "Check if a specific symbol belongs to a detected pattern. Use during /sensei:review to check pattern conformance.", &[
-                ("symbol", "string", "Symbol name to check (e.g. 'SqlAdapter', 'TaskWorker')"),
-            ], &[]),
-            tool("get_duplicates", "Find duplicate or very similar functions across different files. Use during /sensei:review to catch code duplication.", &[], &[]),
-            tool("get_project_conventions", "Analyze project conventions — naming patterns, directory structure, design patterns. Use to understand how this project is structured.", &[], &[]),
-            tool("get_rules", "Get the governance rules that apply to this repository, resolved across its scopes (organization / project / technology / …) and ranked by enforcement. Rules flagged mandatory are non-negotiable and cannot be overridden. Call at the start of a task to learn the constraints you must obey.", &[], &[]),
-            tool("get_commands", "List the discoverable commands for this project — the actual `test` / `build` / `lint` / `e2e` invocations, derived from each folder's manifest (package.json scripts, etc.). Call when you need to know how to run tests, build, or lint here without guessing. Optionally filter by canonical category verb.", &[], &[
-                ("project",  "string", "Project name. Defaults to current project."),
-                ("category", "string", "Canonical verb filter — test | build | lint | e2e | run | format | typecheck | bench | docs | dev | start."),
-            ]),
-            // Inference
-            tool("infer", "Run inference using the gateway — chat, classify, summarize, or reason about text. Routes to the best available model automatically.", &[
-                ("prompt", "string", "The text prompt or question"),
-            ], &[
-                ("system", "string", "System prompt to guide the response"),
-                ("model", "string", "Specific model to use (e.g. 'gemma3:27b', 'claude-haiku')"),
-                ("max_tokens", "string", "Maximum tokens in response"),
-                ("capability", "string", "Capability: text_chat (default), text_complete"),
-            ]),
-            tool("embed", "Generate vector embeddings for text. Used for semantic search.", &[
-                ("texts", "string", "Comma-separated texts to embed, or a single text"),
-            ], &[
-                ("model", "string", "Embedding model to use"),
-            ]),
-            tool("gateway_status", "Show inference gateway status — available adapters, models, health.", &[], &[]),
-            tool("consensus", "Run a multi-model consensus analysis (MOE). Three models debate: proposer analyzes, challenger reviews, synthesizer produces consensus. Use for root cause analysis, architecture decisions, or any analysis that benefits from multiple perspectives.", &[
-                ("signal", "string", "The signal, question, or topic to analyze"),
-            ], &[
-                ("context", "string", "Additional context (metrics, history, code snippets)"),
-                ("proposer_model", "string", "Model for the proposer (default: best available)"),
-                ("challenger_model", "string", "Model for the challenger (default: balanced)"),
-                ("synthesizer_model", "string", "Model for the synthesizer (default: best available)"),
-            ]),
-            tool("generate_image", "Generate an image from a text prompt using the configured image provider (OpenAI by default). Saves to the given output_path (relative paths are resolved against CWD) or to a sensei-managed cache when omitted. Returns the absolute file path. Use this when the user asks for visual assets — logos, illustrations, diagrams, character art, mockup imagery — that belong in the project.", &[
-                ("prompt", "string", "Description of the image to generate"),
-            ], &[
-                ("output_path", "string", "Where to save the image. Relative to the current working directory, or absolute. If omitted, saves to ~/.sensei/generated/<hash>.png"),
-                ("model", "string", "Model id, bare or router-qualified (e.g. 'dall-e-3', 'openai/dall-e-3')"),
-                ("router", "string", "Which router to use (openai, stability, fal, replicate). Defaults to gateway selection."),
-                ("size", "string", "Image size — provider-specific (e.g. 1024x1024 for OpenAI)"),
-                ("quality", "string", "Image quality — provider-specific (standard|hd for OpenAI)"),
-                ("style", "string", "Image style — provider-specific (vivid|natural for OpenAI)"),
-                ("n", "string", "Number of images to generate (default 1)"),
-            ]),
-            // Event logging
-            tool("log_event", "Log a workflow event. Call this to record phase transitions, locate steps, issue lifecycle, review findings. MANDATORY in commands — do not skip.", &[
-                ("type", "string", "Event type: phase_transition, command_invoked, locate, issue_started, issue_completed, review_finding, rework, checkpoint, context_loaded, files_modified"),
-            ], &[
-                ("data", "string", "JSON string with event-specific data"),
-                ("session_id", "string", "Session ID if known"),
-            ]),
-            // ── Knowledge plane ───────────────────────────────────────
-            tool("propose_memory",
-                "Capture an AI-detected learning into the triage queue. Use when a heuristic fires \
-                 (revert / correction / 'actually...' / repeat_pattern / override / test_failure). \
-                 User reviews these in the Learnings UI before they enter active memory.",
-                &[
-                    ("scope",         "string", "global | project | stack"),
-                    ("type",          "string", "memory_type enum value (e.g. convention, pattern, decision)"),
-                    ("title",         "string", "Short heading"),
-                    ("content",       "string", "Rule body — what the agent should know"),
-                    ("triage_signal", "string", "Which capture heuristic fired"),
-                ],
-                &[
-                    ("project_id",   "string", "Project UUID (required when scope=project)"),
-                    ("scope_filter", "string", "Required when scope=stack (e.g. 'rust')"),
-                    ("impact",       "string", "What breaks if ignored"),
-                    ("tags",         "string", "Comma-separated tag list (e.g. 'security,performance')"),
-                    ("gov_scope",    "string", "Governance scope this rule governs: general|user|organization|client|technology|team|project|repository (resolved against the current repo)"),
-                    ("enforcement",  "string", "Authority: advisory|recommended|required|mandatory (default recommended; mandatory = non-overridable)"),
-                ]),
-            tool("save_memory",
-                "Explicit memory save — used when the user runs /save. Goes straight into active state. \
-                 Never call this on heuristic detection — use propose_memory for that.",
-                &[
-                    ("scope",   "string", "global | project | stack"),
-                    ("type",    "string", "memory_type enum value"),
-                    ("title",   "string", "Short heading"),
-                    ("content", "string", "Rule body"),
-                ],
-                &[
-                    ("project_id",   "string", "Project UUID"),
-                    ("scope_filter", "string", "Required when scope=stack"),
-                    ("impact",       "string", "What breaks if ignored"),
-                    ("tags",         "string", "Comma-separated tags"),
-                    ("gov_scope",    "string", "Governance scope this rule governs: general|user|organization|client|technology|team|project|repository (resolved against the current repo)"),
-                    ("enforcement",  "string", "Authority: advisory|recommended|required|mandatory (default recommended; mandatory = non-overridable)"),
-                ]),
-            tool("promote_memory",
-                "Promote a proven (battle-tested) rule to a broader governance scope, e.g. project → organization. \
-                 Creates a proposal at the new scope for the user to accept; it never auto-applies.",
-                &[("id", "string", "Memory id (UUID) to promote")],
-                &[
-                    ("gov_scope",   "string", "Target scope: organization|client|technology|team|project (resolved against the current repo)"),
-                    ("enforcement", "string", "Authority at the new scope: advisory|recommended|required|mandatory"),
-                ]),
-            tool("accept_proposal",
-                "Accept a proposed memory — moves it from triage to active.",
-                &[("id", "string", "Proposal memory id (UUID)")],
-                &[]),
-            tool("reject_proposal",
-                "Reject a proposed memory — moves it to rejected state.",
-                &[("id", "string", "Proposal memory id (UUID)")],
-                &[("reason", "string", "Why it was rejected (logged)")]),
-            tool("record_outcome",
-                "Record one or more memory outcomes (applied / consulted / violated / ignored). \
-                 Batched — call once per turn with all outcomes the session generated.",
-                &[("outcomes", "string", "JSON array string of {memory_id, outcome[, session_id, context]}")],
-                &[]),
-            tool("get_layered_context",
-                "Fetch the blended memory context for the current project — global + project + \
-                 stack-matched memories, ordered by strength. Call at session start and on /recall.",
-                &[],
-                &[
-                    ("project",    "string", "Project name. Defaults to current project."),
-                    ("project_id", "string", "Project UUID — overrides project name lookup."),
-                    ("limit",      "string", "Max memories to return (default 200, cap 500)"),
-                    ("tags",       "string", "Comma-separated tag filter"),
-                ]),
-        ]
-    })
-}
-
 fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &str) -> Value {
     let tool_name = params["name"].as_str().unwrap_or("");
     let args = params.get("arguments").cloned().unwrap_or(json!({}));
 
-    // Resolve project: explicit "project" param → or detect from CWD
+    // `use_project` pins the named project; its `project` arg is the pin TARGET,
+    // not a scoping hint, so handle it before the generic resolution below.
+    if tool_name == "use_project" {
+        return handle_use_project(&args, client);
+    }
+
+    // Resolve the project for scoping. `repo_id` is the resolved project NAME
+    // (or "" when nothing resolved). Precedence: explicit `project=` arg →
+    // pin file (`~/.sensei/active-project`, persists across cwd changes) → cwd
+    // resolution → none. An explicit-but-unresolvable arg errors (it never
+    // silently falls through to the pin/cwd).
     let project_hint = args["project"].as_str().unwrap_or("");
-    let repo_id = if !project_hint.is_empty() {
+    let explicit = if project_hint.is_empty() {
+        None
+    } else {
         match resolve_project(project_hint, client) {
-            Some(id) => id,
+            Some(name) => Some(name),
             None => return json!({
                 "content": [{"type": "text", "text": format!(
                     "Project '{}' not found. Use the list_projects tool to see available projects.",
@@ -289,382 +130,262 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
                 "isError": true
             }),
         }
-    } else {
-        resolve_project_from_cwd(cwd, client)
     };
+    // Only read the pin + resolve cwd when there's no explicit arg (explicit wins).
+    let (pin, cwd_name) = if explicit.is_some() {
+        (None, String::new())
+    } else {
+        (read_active_project(&pin_path()), resolve_project_from_cwd(cwd, client))
+    };
+    let repo_id = resolve_default_project(explicit.as_deref(), pin.as_ref(), &cwd_name)
+        .unwrap_or_default();
+    let resolved = (!repo_id.is_empty()).then_some(repo_id.as_str());
 
-    // Build daemon call params — forward all args + resolved repoId + query aliases.
-    let daemon_params = build_daemon_params(&args, &repo_id);
+    // The library shapes every straightforward daemon call (knowledge / project
+    // / patterns / workflow / mcp-proxy). Send it here and pipe through the
+    // standard response conversion.
+    if let Some(req) = daemon_request_for(tool_name, &args, cwd, resolved) {
+        return daemon_result(send_daemon_request(client, &req));
+    }
 
-    // ── Inference tools (direct endpoints, not mcp proxy) ──────────────
-    if tool_name == "infer" {
-        let prompt = args["prompt"].as_str().unwrap_or("");
-        let system = args["system"].as_str();
-        let model = args["model"].as_str();
-        let max_tokens = args["max_tokens"].as_str().and_then(|s| s.parse::<u32>().ok());
-        let capability = args["capability"].as_str().unwrap_or("text_chat");
+    // `None` → tools the binary owns because they need a custom HTTP client
+    // (longer timeout), bespoke response parsing, or make no daemon call. Plus
+    // `get_layered_context`'s one no-project guard.
+    match tool_name {
+        // ── Inference tools (direct endpoints, not mcp proxy) ──────────────
+        "infer" => {
+            let prompt = args["prompt"].as_str().unwrap_or("");
+            let system = args["system"].as_str();
+            let model = args["model"].as_str();
+            let max_tokens = args["max_tokens"].as_str().and_then(|s| s.parse::<u32>().ok());
+            let capability = args["capability"].as_str().unwrap_or("text_chat");
 
-        let body = json!({
-            "capability": capability,
-            "prompt": prompt,
-            "system": system,
-            "model": model,
-            "max_tokens": max_tokens,
-        });
+            let body = json!({
+                "capability": capability,
+                "prompt": prompt,
+                "system": system,
+                "model": model,
+                "max_tokens": max_tokens,
+            });
 
-        let result = client.post(format!("{}/api/gateway/infer", daemon_url()))
-            .json(&body)
-            .send();
+            let result = client.post(format!("{}/api/gateway/infer", daemon_url()))
+                .json(&body)
+                .send();
 
-        return match result {
-            Ok(resp) if resp.status().is_success() => {
-                let data: Value = resp.json().unwrap_or(json!({}));
-                if let Some(content) = data["content"].as_str() {
-                    json!({"content": [{"type": "text", "text": content}]})
-                } else if let Some(error) = data["error"].as_str() {
-                    json!({"content": [{"type": "text", "text": format!("Inference error: {}", error)}], "isError": true})
-                } else {
-                    json!({"content": [{"type": "text", "text": serde_json::to_string_pretty(&data).unwrap_or_default()}]})
+            match result {
+                Ok(resp) if resp.status().is_success() => {
+                    let data: Value = resp.json().unwrap_or(json!({}));
+                    if let Some(content) = data["content"].as_str() {
+                        json!({"content": [{"type": "text", "text": content}]})
+                    } else if let Some(error) = data["error"].as_str() {
+                        json!({"content": [{"type": "text", "text": format!("Inference error: {}", error)}], "isError": true})
+                    } else {
+                        json!({"content": [{"type": "text", "text": serde_json::to_string_pretty(&data).unwrap_or_default()}]})
+                    }
+                }
+                Ok(resp) => json!({"content": [{"type": "text", "text": format!("Daemon error: HTTP {}", resp.status())}], "isError": true}),
+                Err(e) => json!({"content": [{"type": "text", "text": format!("Cannot reach senseid daemon: {}", e)}], "isError": true}),
+            }
+        }
+
+        "embed" => {
+            let texts_str = args["texts"].as_str().unwrap_or("");
+            let texts: Vec<String> = texts_str.split(',').map(|s| s.trim().to_string()).collect();
+            let model = args["model"].as_str();
+
+            let body = json!({
+                "texts": texts,
+                "model": model,
+            });
+
+            let result = client.post(format!("{}/api/gateway/embed", daemon_url()))
+                .json(&body)
+                .send();
+
+            daemon_result(result)
+        }
+
+        "gateway_status" => {
+            let result = client.get(format!("{}/api/gateway/status", daemon_url())).send();
+            daemon_result(result)
+        }
+
+        "consensus" => {
+            let signal = args["signal"].as_str().unwrap_or("");
+            let context = args["context"].as_str();
+            let proposer = args["proposer_model"].as_str();
+            let challenger = args["challenger_model"].as_str();
+            let synthesizer = args["synthesizer_model"].as_str();
+
+            let body = json!({
+                "signal": signal,
+                "context": context,
+                "proposer_model": proposer,
+                "challenger_model": challenger,
+                "synthesizer_model": synthesizer,
+            });
+
+            // Use longer timeout for consensus (3 model calls)
+            let consensus_client = reqwest::blocking::Client::builder()
+                .timeout(std::time::Duration::from_secs(120))
+                .build()
+                .unwrap_or_else(|_| client.clone());
+
+            let result = consensus_client
+                .post(format!("{}/api/gateway/consensus", daemon_url()))
+                .json(&body)
+                .send();
+
+            match result {
+                Ok(resp) if resp.status().is_success() => {
+                    let data: Value = resp.json().unwrap_or(json!({}));
+                    let text = if let Some(conclusion) = data["conclusion"].as_str() {
+                        let confidence = data["confidence"].as_str().unwrap_or("unknown");
+                        let duration = data["total_duration_ms"].as_u64().unwrap_or(0);
+                        format!(
+                            "## Consensus (confidence: {})\n\n{}\n\n---\n\nDuration: {}ms | Models: {}",
+                            confidence,
+                            conclusion,
+                            duration,
+                            serde_json::to_string(&data["models_used"]).unwrap_or_default()
+                        )
+                    } else if let Some(error) = data["error"].as_str() {
+                        format!("Consensus error: {}", error)
+                    } else {
+                        serde_json::to_string_pretty(&data).unwrap_or_default()
+                    };
+                    json!({"content": [{"type": "text", "text": text}]})
+                }
+                Ok(resp) => json!({"content": [{"type": "text", "text": format!("Daemon error: HTTP {}", resp.status())}], "isError": true}),
+                Err(e) => json!({"content": [{"type": "text", "text": format!("Cannot reach senseid daemon: {}", e)}], "isError": true}),
+            }
+        }
+
+        "generate_image" => {
+            let prompt = match args["prompt"].as_str() {
+                Some(p) if !p.is_empty() => p.to_string(),
+                _ => return json!({"content": [{"type": "text", "text": "prompt is required"}], "isError": true}),
+            };
+
+            // Resolve relative output_path against CWD so the daemon only sees absolute paths.
+            let output_path = match args.get("output_path").and_then(|v| v.as_str()) {
+                Some(p) => {
+                    let path = std::path::PathBuf::from(p);
+                    if path.is_absolute() {
+                        Some(p.to_string())
+                    } else if cwd.is_empty() {
+                        return json!({
+                            "content": [{
+                                "type": "text",
+                                "text": "cannot resolve relative output_path: CWD is unavailable"
+                            }],
+                            "isError": true,
+                        });
+                    } else {
+                        Some(std::path::PathBuf::from(cwd).join(p).display().to_string())
+                    }
+                }
+                None => None,
+            };
+
+            let mut body = json!({ "prompt": prompt });
+            if let Some(p) = output_path { body["output_path"] = json!(p); }
+            for (key, name) in [
+                (args.get("model"),   "model"),
+                (args.get("router"),  "router"),
+                (args.get("size"),    "size"),
+                (args.get("quality"), "quality"),
+                (args.get("style"),   "style"),
+            ] {
+                if let Some(v) = key.and_then(|x| x.as_str()).filter(|s| !s.is_empty()) {
+                    body[name] = json!(v);
                 }
             }
-            Ok(resp) => json!({"content": [{"type": "text", "text": format!("Daemon error: HTTP {}", resp.status())}], "isError": true}),
-            Err(e) => json!({"content": [{"type": "text", "text": format!("Cannot reach senseid daemon: {}", e)}], "isError": true}),
-        };
-    }
-
-    if tool_name == "embed" {
-        let texts_str = args["texts"].as_str().unwrap_or("");
-        let texts: Vec<String> = texts_str.split(',').map(|s| s.trim().to_string()).collect();
-        let model = args["model"].as_str();
-
-        let body = json!({
-            "texts": texts,
-            "model": model,
-        });
-
-        let result = client.post(format!("{}/api/gateway/embed", daemon_url()))
-            .json(&body)
-            .send();
-
-        return daemon_result(result);
-    }
-
-    if tool_name == "gateway_status" {
-        let result = client.get(format!("{}/api/gateway/status", daemon_url())).send();
-        return daemon_result(result);
-    }
-
-    if tool_name == "consensus" {
-        let signal = args["signal"].as_str().unwrap_or("");
-        let context = args["context"].as_str();
-        let proposer = args["proposer_model"].as_str();
-        let challenger = args["challenger_model"].as_str();
-        let synthesizer = args["synthesizer_model"].as_str();
-
-        let body = json!({
-            "signal": signal,
-            "context": context,
-            "proposer_model": proposer,
-            "challenger_model": challenger,
-            "synthesizer_model": synthesizer,
-        });
-
-        // Use longer timeout for consensus (3 model calls)
-        let consensus_client = reqwest::blocking::Client::builder()
-            .timeout(std::time::Duration::from_secs(120))
-            .build()
-            .unwrap_or_else(|_| client.clone());
-
-        let result = consensus_client
-            .post(format!("{}/api/gateway/consensus", daemon_url()))
-            .json(&body)
-            .send();
-
-        return match result {
-            Ok(resp) if resp.status().is_success() => {
-                let data: Value = resp.json().unwrap_or(json!({}));
-                let text = if let Some(conclusion) = data["conclusion"].as_str() {
-                    let confidence = data["confidence"].as_str().unwrap_or("unknown");
-                    let duration = data["total_duration_ms"].as_u64().unwrap_or(0);
-                    format!(
-                        "## Consensus (confidence: {})\n\n{}\n\n---\n\nDuration: {}ms | Models: {}",
-                        confidence,
-                        conclusion,
-                        duration,
-                        serde_json::to_string(&data["models_used"]).unwrap_or_default()
-                    )
-                } else if let Some(error) = data["error"].as_str() {
-                    format!("Consensus error: {}", error)
-                } else {
-                    serde_json::to_string_pretty(&data).unwrap_or_default()
-                };
-                json!({"content": [{"type": "text", "text": text}]})
+            if let Some(n_str) = args["n"].as_str()
+                && let Ok(n) = n_str.parse::<u8>()
+            {
+                body["n"] = json!(n);
             }
-            Ok(resp) => json!({"content": [{"type": "text", "text": format!("Daemon error: HTTP {}", resp.status())}], "isError": true}),
-            Err(e) => json!({"content": [{"type": "text", "text": format!("Cannot reach senseid daemon: {}", e)}], "isError": true}),
-        };
-    }
 
-    if tool_name == "generate_image" {
-        let prompt = match args["prompt"].as_str() {
-            Some(p) if !p.is_empty() => p.to_string(),
-            _ => return json!({"content": [{"type": "text", "text": "prompt is required"}], "isError": true}),
-        };
+            // Use longer timeout for image generation (can take 15-30+ seconds with DALL-E 3 / high-res)
+            let image_client = reqwest::blocking::Client::builder()
+                .timeout(std::time::Duration::from_secs(120))
+                .build()
+                .unwrap_or_else(|_| client.clone());
 
-        // Resolve relative output_path against CWD so the daemon only sees absolute paths.
-        let output_path = match args.get("output_path").and_then(|v| v.as_str()) {
-            Some(p) => {
-                let path = std::path::PathBuf::from(p);
-                if path.is_absolute() {
-                    Some(p.to_string())
-                } else if cwd.is_empty() {
-                    return json!({
-                        "content": [{
-                            "type": "text",
-                            "text": "cannot resolve relative output_path: CWD is unavailable"
-                        }],
-                        "isError": true,
-                    });
-                } else {
-                    Some(std::path::PathBuf::from(cwd).join(p).display().to_string())
-                }
-            }
-            None => None,
-        };
-
-        let mut body = json!({ "prompt": prompt });
-        if let Some(p) = output_path { body["output_path"] = json!(p); }
-        for (key, name) in [
-            (args.get("model"),   "model"),
-            (args.get("router"),  "router"),
-            (args.get("size"),    "size"),
-            (args.get("quality"), "quality"),
-            (args.get("style"),   "style"),
-        ] {
-            if let Some(v) = key.and_then(|x| x.as_str()).filter(|s| !s.is_empty()) {
-                body[name] = json!(v);
-            }
-        }
-        if let Some(n_str) = args["n"].as_str()
-            && let Ok(n) = n_str.parse::<u8>()
-        {
-            body["n"] = json!(n);
+            let result = image_client.post(format!("{}/api/gateway/image/generate", daemon_url()))
+                .json(&body)
+                .send();
+            daemon_result(result)
         }
 
-        // Use longer timeout for image generation (can take 15-30+ seconds with DALL-E 3 / high-res)
-        let image_client = reqwest::blocking::Client::builder()
-            .timeout(std::time::Duration::from_secs(120))
-            .build()
-            .unwrap_or_else(|_| client.clone());
+        "log_event" => {
+            // The activity.events sink was retired (#68) — nothing consumed it, and
+            // the session analyzer derives its signals from the hook stream
+            // (activity.assistant_events) instead. Kept as a success no-op so the
+            // workflow skills that call log_event as a mandatory step don't error.
+            json!({"content": [{"type": "text", "text": "{\"ok\":true,\"noop\":\"events sink retired (#68)\"}"}]})
+        }
 
-        let result = image_client.post(format!("{}/api/gateway/image/generate", daemon_url()))
-            .json(&body)
-            .send();
-        return daemon_result(result);
+        "get_layered_context" => {
+            // Reached only when the library returned `None` — i.e. neither an
+            // explicit project_id nor a resolved project name is available.
+            json!({"content":[{"type":"text","text":"No project resolved. Pass project_id or run from a project directory."}], "isError": true})
+        }
+
+        // Unreachable: `daemon_request_for` returns `Some` for every other tool
+        // (unknown names route to the mcp proxy). Kept as an honest fallback
+        // rather than a silent success.
+        other => json!({
+            "content": [{"type": "text", "text": format!("tool '{}' has no handler", other)}],
+            "isError": true
+        }),
     }
+}
 
-    // ── Workflow state tools (direct endpoints, not mcp proxy) ─────────
-    if tool_name == "update_phase" {
-        let body = json!({
-            "active_phase": args["phase"].as_str(),
-            "active_task": args["task"].as_str(),
-            "active_issue": args["issue"].as_str().and_then(|s| s.parse::<i64>().ok()),
-            "active_plan": args["plan"].as_str(),
-            "last_checkpoint": args["checkpoint"].as_str(),
-            "project_path": cwd,
+/// The pin file path (`~/.sensei/active-project`) under the resolved sensei data
+/// dir. The lib owns the join + read/write; here we only supply the base dir.
+fn pin_path() -> std::path::PathBuf {
+    active_project_path(&sensei_bootstrap::config().sensei_dir())
+}
+
+/// `use_project`: resolve the named project (name or uuid) against the daemon,
+/// then WRITE the `{id,name}` pin to `~/.sensei/active-project` so every later
+/// tool call resolves to it regardless of cwd. The resolve + write logic lives
+/// in the lib (unit-tested); this only drives the daemon fetch and the file IO.
+fn handle_use_project(args: &Value, client: &reqwest::blocking::Client) -> Value {
+    let hint = args["project"].as_str().unwrap_or("");
+    if hint.is_empty() {
+        return json!({
+            "content": [{"type": "text", "text": "use_project requires a `project` name or UUID."}],
+            "isError": true
         });
-        let result = client.put(format!("{}/api/state/{}", daemon_url(), repo_id))
-            .json(&body)
-            .send();
-        return daemon_result(result);
     }
-    if tool_name == "get_workflow_state" {
-        let result = client.get(format!("{}/api/state/{}", daemon_url(), repo_id)).send();
-        return daemon_result(result);
-    }
-
-    if tool_name == "match_pattern" {
-        let desc = args["description"].as_str().unwrap_or("");
-        let result = client.get(format!("{}/api/patterns/{}/match", daemon_url(), repo_id))
-            .query(&[("description", desc)])
-            .send();
-        return daemon_result(result);
-    }
-
-    if tool_name == "get_pattern_for" {
-        let symbol = args["symbol"].as_str().unwrap_or("");
-        let result = client.get(format!("{}/api/patterns/{}/for/{}", daemon_url(), repo_id, symbol)).send();
-        return daemon_result(result);
-    }
-    if tool_name == "get_duplicates" {
-        let result = client.get(format!("{}/api/patterns/{}/duplicates", daemon_url(), repo_id)).send();
-        return daemon_result(result);
-    }
-    if tool_name == "get_project_conventions" {
-        let result = client.get(format!("{}/api/patterns/{}/conventions", daemon_url(), repo_id)).send();
-        return daemon_result(result);
-    }
-
-    if tool_name == "get_rules" {
-        // Resolve governance rules for the session's repo (its cwd abs_path).
-        let result = client.get(format!("{}/api/knowledge/rules", daemon_url()))
-            .query(&[("folder", cwd)])
-            .send();
-        return daemon_result(result);
-    }
-
-    if tool_name == "get_commands" {
-        // #83 T1 commands surface. `repo_id` here is the project name (see
-        // resolve_project). Optional category filter passes through. The
-        // daemon-side handler resolves the project name to its UUID, so a
-        // straight path segment is fine — no URL encoding needed for the
-        // sensible name shape (alphanumeric + hyphen).
-        let category = args["category"].as_str().unwrap_or("");
-        let mut req = client.get(format!("{}/api/projects/{}/commands", daemon_url(), repo_id));
-        if !category.is_empty() {
-            req = req.query(&[("category", category)]);
-        }
-        return daemon_result(req.send());
-    }
-
-    if tool_name == "log_event" {
-        // The activity.events sink was retired (#68) — nothing consumed it, and
-        // the session analyzer derives its signals from the hook stream
-        // (activity.assistant_events) instead. Kept as a success no-op so the
-        // workflow skills that call log_event as a mandatory step don't error.
-        return json!({"content": [{"type": "text", "text": "{\"ok\":true,\"noop\":\"events sink retired (#68)\"}"}]});
-    }
-
-    // ── Knowledge plane ─────────────────────────────────────────────────
-
-    if tool_name == "propose_memory" || tool_name == "save_memory" {
-        let scope = args["scope"].as_str().unwrap_or("");
-        let mtype = args["type"].as_str().unwrap_or("");
-        let title = args["title"].as_str().unwrap_or("");
-        let content = args["content"].as_str().unwrap_or("");
-        let scope_filter = args["scope_filter"].as_str();
-        let impact = args["impact"].as_str();
-        let triage_signal = args["triage_signal"].as_str();
-        let tags_csv = args["tags"].as_str().unwrap_or("");
-        let tags: Vec<String> = tags_csv.split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect();
-        let project_id_param = args["project_id"].as_str();
-
-        let mut body = serde_json::json!({
-            "scope": scope, "type": mtype, "title": title, "content": content,
-            "tags": tags,
+    let projects = get_projects(client);
+    let Some(pin) = resolve_active_project_in(&projects, hint) else {
+        return json!({
+            "content": [{"type": "text", "text": format!(
+                "Project '{hint}' not found. Use find_projects or list_projects to see available projects."
+            )}],
+            "isError": true
         });
-        if let Some(s) = scope_filter.filter(|s| !s.is_empty()) {
-            body["scope_filter"] = serde_json::json!(s);
-        }
-        if let Some(s) = impact.filter(|s| !s.is_empty()) {
-            body["impact"] = serde_json::json!(s);
-        }
-        if let Some(s) = triage_signal.filter(|s| !s.is_empty()) {
-            body["triage_signal"] = serde_json::json!(s);
-        }
-        // project_id: explicit param wins, else resolve from project hint / cwd.
-        if let Some(pid) = project_id_param.filter(|s| !s.is_empty()) {
-            body["project_id"] = serde_json::json!(pid);
-        } else if scope == "project" && !repo_id.is_empty() {
-            body["project_id"] = serde_json::json!(repo_id);
-        }
-
-        // Governance: scope the rule to one of this repo's namespaces and set its
-        // authority. gov_scope (general/user/organization/.../repository) is
-        // resolved by the daemon against the repo at `folder` (the session cwd).
-        if let Some(gs) = args["gov_scope"].as_str().filter(|s| !s.is_empty()) {
-            body["gov_scope"] = serde_json::json!(gs);
-            if !cwd.is_empty() { body["folder"] = serde_json::json!(cwd); }
-        }
-        if let Some(enf) = args["enforcement"].as_str().filter(|s| !s.is_empty()) {
-            body["enforcement"] = serde_json::json!(enf);
-        }
-
-        let path = if tool_name == "propose_memory" {
-            "/api/knowledge/proposals"
-        } else {
-            "/api/knowledge/memories"
-        };
-        let result = client.post(format!("{}{}", daemon_url(), path))
-            .json(&body).send();
-        return daemon_result(result);
+    };
+    let path = pin_path();
+    match write_active_project(&path, &pin) {
+        Ok(()) => json!({
+            "content": [{"type": "text", "text": format!(
+                "Pinned active project to '{}' ({}). Every tool will now resolve to it regardless of the working directory. Pass project=<other> on a tool to override for one call, or run use_project again to switch.",
+                pin.name, pin.id
+            )}]
+        }),
+        Err(e) => json!({
+            "content": [{"type": "text", "text": format!(
+                "Resolved project '{}' but could not write the pin file {}: {e}",
+                pin.name, path.display()
+            )}],
+            "isError": true
+        }),
     }
-
-    if tool_name == "promote_memory" {
-        let id = args["id"].as_str().unwrap_or("");
-        let mut body = serde_json::json!({});
-        if let Some(gs) = args["gov_scope"].as_str().filter(|s| !s.is_empty()) {
-            body["gov_scope"] = serde_json::json!(gs);
-            if !cwd.is_empty() { body["folder"] = serde_json::json!(cwd); }
-        }
-        if let Some(enf) = args["enforcement"].as_str().filter(|s| !s.is_empty()) {
-            body["enforcement"] = serde_json::json!(enf);
-        }
-        let result = client.post(format!("{}/api/knowledge/memories/{}/promote", daemon_url(), id))
-            .json(&body).send();
-        return daemon_result(result);
-    }
-
-    if tool_name == "accept_proposal" {
-        let id = args["id"].as_str().unwrap_or("");
-        let result = client.post(format!("{}/api/knowledge/proposals/{}/accept", daemon_url(), id))
-            .json(&serde_json::json!({})).send();
-        return daemon_result(result);
-    }
-
-    if tool_name == "reject_proposal" {
-        let id = args["id"].as_str().unwrap_or("");
-        let reason = args["reason"].as_str();
-        let body = if let Some(r) = reason.filter(|s| !s.is_empty()) {
-            serde_json::json!({ "reason": r })
-        } else {
-            serde_json::json!({})
-        };
-        let result = client.post(format!("{}/api/knowledge/proposals/{}/reject", daemon_url(), id))
-            .json(&body).send();
-        return daemon_result(result);
-    }
-
-    if tool_name == "record_outcome" {
-        let outcomes_str = args["outcomes"].as_str().unwrap_or("[]");
-        let outcomes: serde_json::Value = serde_json::from_str(outcomes_str)
-            .unwrap_or(serde_json::json!([]));
-        let body = serde_json::json!({ "outcomes": outcomes });
-        let result = client.post(format!("{}/api/knowledge/outcomes", daemon_url()))
-            .json(&body).send();
-        return daemon_result(result);
-    }
-
-    if tool_name == "get_layered_context" {
-        let explicit_pid = args["project_id"].as_str().unwrap_or("");
-        let pid = if !explicit_pid.is_empty() { explicit_pid.to_string() } else { repo_id.clone() };
-        if pid.is_empty() {
-            return json!({"content":[{"type":"text","text":"No project resolved. Pass project_id or run from a project directory."}], "isError": true});
-        }
-        let mut req = client.get(format!("{}/api/knowledge/context", daemon_url()))
-            .query(&[("project_id", pid.as_str())]);
-        if let Some(l) = args["limit"].as_str().filter(|s| !s.is_empty()) {
-            req = req.query(&[("limit", l)]);
-        }
-        if let Some(t) = args["tags"].as_str().filter(|s| !s.is_empty()) {
-            req = req.query(&[("tags", t)]);
-        }
-        let result = req.send();
-        return daemon_result(result);
-    }
-
-    // ── Standard tools (via daemon mcp proxy) ───────────────────────────
-    // Map tool names
-    let daemon_tool = map_daemon_tool(tool_name);
-
-    let result = client.post(format!("{}/api/mcp/call", daemon_url()))
-        .json(&json!({"tool": daemon_tool, "params": daemon_params}))
-        .send();
-
-    daemon_result(result)
 }
 
 /// Resolve a project name/library name to a project **name** by querying the daemon.
@@ -688,315 +409,4 @@ fn get_projects(client: &reqwest::blocking::Client) -> Vec<Value> {
         .ok()
         .and_then(|r| r.json::<Vec<Value>>().ok())
         .unwrap_or_default()
-}
-
-/// Pure function: resolve a project hint to a project **name** from a slice of
-/// `/api/projects` rows.  Matching order:
-///   1. Exact `id` (UUID) match
-///   2. Exact `name` match (case-insensitive)
-///   3. Partial `name` match (`contains`, case-insensitive)
-///
-/// Returns `None` when nothing matches.
-fn resolve_project_in(projects: &[Value], hint: &str) -> Option<String> {
-    let hint_lower = hint.to_lowercase();
-    let name_of = |p: &Value| p["name"].as_str().map(str::to_string);
-
-    // 1. Exact id match
-    if let Some(p) = projects.iter().find(|p| p["id"].as_str() == Some(hint))
-        && let Some(name) = name_of(p) {
-        return Some(name);
-    }
-
-    // 2. Exact name match (case-insensitive)
-    if let Some(p) = projects.iter().find(|p| {
-        p["name"].as_str().map(|n| n.to_lowercase()) == Some(hint_lower.clone())
-    }) && let Some(name) = name_of(p) {
-        return Some(name);
-    }
-
-    // 3. Partial name match
-    if let Some(p) = projects.iter().find(|p| {
-        p["name"].as_str().map(|n| n.to_lowercase().contains(&hint_lower)) == Some(true)
-    }) && let Some(name) = name_of(p) {
-        return Some(name);
-    }
-
-    None
-}
-
-/// Pure function: resolve a project name from `cwd` by matching against each
-/// project's `folders[].abs_path`.  Picks the project whose folder has the
-/// longest `abs_path` that is a prefix of `cwd`.  Returns "" if no match.
-fn resolve_from_cwd_in(projects: &[Value], cwd: &str) -> String {
-    let mut best_name = String::new();
-    let mut best_len = 0usize;
-
-    for p in projects {
-        if let Some(folders) = p["folders"].as_array() {
-            for folder in folders {
-                if let Some(abs_path) = folder["abs_path"].as_str()
-                    && cwd.starts_with(abs_path) && abs_path.len() > best_len {
-                    best_len = abs_path.len();
-                    best_name = p["name"].as_str().unwrap_or("").to_string();
-                }
-            }
-        }
-    }
-
-    best_name
-}
-
-fn tool(name: &str, description: &str, required: &[(&str, &str, &str)], optional: &[(&str, &str, &str)]) -> Value {
-    let mut properties = serde_json::Map::new();
-    let mut req_names = Vec::new();
-
-    for (pname, ptype, pdesc) in required {
-        properties.insert(pname.to_string(), json!({"type": ptype, "description": pdesc}));
-        req_names.push(pname.to_string());
-    }
-    for (pname, ptype, pdesc) in optional {
-        properties.insert(pname.to_string(), json!({"type": ptype, "description": pdesc}));
-    }
-
-    json!({
-        "name": name,
-        "description": description,
-        "inputSchema": {
-            "type": "object",
-            "properties": properties,
-            "required": req_names,
-        }
-    })
-}
-
-/// Pure: build the params object forwarded to the daemon's `/api/mcp/call`.
-/// Forwards every caller arg, injects the resolved `repoId`, derives the search
-/// term (`query` → else `name` → else `pattern`) and mirrors it to both `query`
-/// and `q` (different daemon handlers read different keys), and renames
-/// `pattern` → `tag` (the daemon's tag-filter key).
-fn build_daemon_params(args: &Value, repo_id: &str) -> Value {
-    let query = args["query"].as_str()
-        .or(args["name"].as_str())
-        .or(args["pattern"].as_str())
-        .unwrap_or("");
-
-    let mut daemon_params = args.clone();
-    if let Some(obj) = daemon_params.as_object_mut() {
-        obj.insert("repoId".into(), json!(repo_id));
-        obj.insert("query".into(), json!(query));
-        if let Some(pattern) = obj.remove("pattern") {
-            obj.insert("tag".into(), pattern);
-        }
-        obj.insert("q".into(), json!(query));
-    }
-    daemon_params
-}
-
-/// Pure: map an MCP tool name to the daemon's internal tool name. Most pass
-/// through unchanged; `get_patterns` is the daemon's `get_file_tags`.
-fn map_daemon_tool(tool_name: &str) -> &str {
-    match tool_name {
-        "get_patterns" => "get_file_tags",
-        other => other,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    fn sample() -> Vec<serde_json::Value> {
-        vec![json!({
-            "id": "11111111-1111-1111-1111-111111111111",
-            "name": "sensei",
-            "folders": [
-                {"abs_path": "/Users/x/dev/sensei", "name": "sensei"},
-                {"abs_path": "/Users/x/dev/sensei/crates/senseid", "name": "senseid"}
-            ]
-        })]
-    }
-
-    #[test]
-    fn resolve_project_matches_by_name_not_empty() {
-        assert_eq!(resolve_project_in(&sample(), "sensei"), Some("sensei".into()));
-        assert_eq!(resolve_project_in(&sample(), "SENSEI"), Some("sensei".into()));
-        assert_eq!(resolve_project_in(&sample(), "sens"), Some("sensei".into())); // partial
-        assert_eq!(
-            resolve_project_in(&sample(), "11111111-1111-1111-1111-111111111111"),
-            Some("sensei".into())
-        ); // by id
-        assert_eq!(resolve_project_in(&sample(), "nope"), None);
-    }
-
-    #[test]
-    fn resolve_from_cwd_matches_longest_folder_prefix() {
-        // deeper path → senseid folder wins, but both belong to same project "sensei"
-        assert_eq!(
-            resolve_from_cwd_in(&sample(), "/Users/x/dev/sensei/crates/senseid/src"),
-            "sensei".to_string()
-        );
-        assert_eq!(resolve_from_cwd_in(&sample(), "/tmp/other"), "".to_string());
-    }
-
-    #[test]
-    fn resolve_project_exact_name_wins_over_partial() {
-        let projects = vec![
-            json!({ "id": "a", "name": "sensei-web", "folders": [] }),
-            json!({ "id": "b", "name": "sensei",     "folders": [] }),
-        ];
-        // Exact "sensei" must return "sensei", not the partial-matching "sensei-web".
-        assert_eq!(resolve_project_in(&projects, "sensei"), Some("sensei".into()));
-    }
-
-    #[test]
-    fn resolve_from_cwd_no_folders_is_empty() {
-        let projects = vec![json!({ "id": "a", "name": "x" })]; // no folders key
-        assert_eq!(resolve_from_cwd_in(&projects, "/anywhere"), "".to_string());
-    }
-
-    // ── Tool catalog contract ────────────────────────────────────────────
-
-    /// Every tool the daemon's mcp_call_tool / direct endpoints dispatch on.
-    /// Keep in sync with handle_list_tools — a missing entry means the tool is
-    /// advertised but untested, an extra entry means it's tested but unadvertised.
-    const EXPECTED_TOOLS: &[&str] = &[
-        "search", "get_callers", "get_callees", "get_project_summary",
-        "get_lib_docs", "search_lib_docs", "get_communities", "get_patterns",
-        "list_projects", "create_session", "update_session", "add_library",
-        "update_phase", "get_workflow_state", "match_pattern", "get_pattern_for",
-        "get_duplicates", "get_project_conventions", "get_rules", "get_commands", "infer", "embed",
-        "gateway_status", "consensus", "generate_image", "log_event",
-        "propose_memory", "save_memory", "promote_memory", "accept_proposal",
-        "reject_proposal", "record_outcome", "get_layered_context",
-    ];
-
-    fn tools() -> Vec<Value> {
-        handle_list_tools()["tools"].as_array().unwrap().clone()
-    }
-    fn tool_named<'a>(ts: &'a [Value], name: &str) -> &'a Value {
-        ts.iter().find(|t| t["name"] == name)
-            .unwrap_or_else(|| panic!("tool '{name}' not in catalog"))
-    }
-
-    #[test]
-    fn catalog_exposes_exactly_the_expected_tools() {
-        let ts = tools();
-        let mut names: Vec<&str> = ts.iter().filter_map(|t| t["name"].as_str()).collect();
-        for expected in EXPECTED_TOOLS {
-            assert!(names.contains(expected), "catalog missing tool: {expected}");
-        }
-        // No duplicates, and nothing advertised that isn't in the expected set.
-        names.sort();
-        let mut deduped = names.clone();
-        deduped.dedup();
-        assert_eq!(deduped.len(), names.len(), "duplicate tool names in catalog");
-        for name in &names {
-            assert!(EXPECTED_TOOLS.contains(name), "undeclared tool advertised: {name}");
-        }
-    }
-
-    #[test]
-    fn every_tool_has_a_well_formed_schema() {
-        for t in tools() {
-            let name = t["name"].as_str().unwrap_or("");
-            assert!(!name.is_empty(), "a tool is missing its name");
-            assert!(
-                t["description"].as_str().map(|d| d.len() > 10).unwrap_or(false),
-                "{name}: description missing or too short"
-            );
-            assert_eq!(t["inputSchema"]["type"], "object", "{name}: schema not an object");
-            assert!(t["inputSchema"]["properties"].is_object(), "{name}: no properties map");
-            let required = t["inputSchema"]["required"].as_array()
-                .unwrap_or_else(|| panic!("{name}: required is not an array"));
-            // Every required param must also be declared in properties.
-            for r in required {
-                let rn = r.as_str().unwrap();
-                assert!(
-                    t["inputSchema"]["properties"][rn].is_object(),
-                    "{name}: required param '{rn}' absent from properties"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn lib_docs_tools_declare_their_documented_params() {
-        let ts = tools();
-        let gld = tool_named(&ts, "get_lib_docs");
-        assert_eq!(gld["inputSchema"]["required"], json!(["name"]), "get_lib_docs requires name");
-        assert!(
-            gld["inputSchema"]["properties"]["component"].is_object(),
-            "get_lib_docs must offer an optional 'component'"
-        );
-        let sld = tool_named(&ts, "search_lib_docs");
-        assert_eq!(sld["inputSchema"]["required"], json!(["query"]), "search_lib_docs requires query");
-    }
-
-    #[test]
-    fn update_session_requires_session_id_and_outcome() {
-        let ts = tools();
-        let req = tool_named(&ts, "update_session")["inputSchema"]["required"].clone();
-        assert_eq!(req, json!(["sessionId", "outcome"]));
-    }
-
-    #[test]
-    fn tool_helper_lists_only_required_in_required_array() {
-        let t = tool("demo", "a demo tool description", &[("a", "string", "the a")], &[("b", "string", "the b")]);
-        assert_eq!(t["name"], "demo");
-        assert_eq!(t["inputSchema"]["properties"]["a"]["type"], "string");
-        assert_eq!(t["inputSchema"]["properties"]["b"]["type"], "string");
-        assert_eq!(t["inputSchema"]["required"], json!(["a"]), "optional must not be required");
-    }
-
-    #[test]
-    fn initialize_reports_protocol_and_server_info() {
-        let init = handle_initialize();
-        assert_eq!(init["protocolVersion"], "2024-11-05");
-        assert_eq!(init["serverInfo"]["name"], "sensei");
-        assert!(init["capabilities"]["tools"].is_object());
-    }
-
-    // ── Daemon param building ────────────────────────────────────────────
-
-    #[test]
-    fn build_daemon_params_injects_repo_id_and_mirrors_query() {
-        let p = build_daemon_params(&json!({ "query": "foo" }), "my-repo");
-        assert_eq!(p["repoId"], "my-repo");
-        assert_eq!(p["query"], "foo");
-        assert_eq!(p["q"], "foo", "daemon search handlers read 'q'");
-    }
-
-    #[test]
-    fn build_daemon_params_derives_query_from_name_then_pattern() {
-        // name fills query when query is absent
-        assert_eq!(build_daemon_params(&json!({ "name": "Foo" }), "r")["query"], "Foo");
-        // explicit query wins over name
-        assert_eq!(build_daemon_params(&json!({ "query": "q", "name": "n" }), "r")["query"], "q");
-        // pattern is the last fallback
-        assert_eq!(build_daemon_params(&json!({ "pattern": "hook" }), "r")["query"], "hook");
-    }
-
-    #[test]
-    fn build_daemon_params_renames_pattern_to_tag() {
-        let p = build_daemon_params(&json!({ "pattern": "hook" }), "r");
-        assert_eq!(p["tag"], "hook", "pattern becomes the daemon 'tag' key");
-        assert!(p.get("pattern").is_none(), "raw 'pattern' must be removed");
-    }
-
-    #[test]
-    fn build_daemon_params_preserves_other_args_and_defaults_query_empty() {
-        let p = build_daemon_params(&json!({ "task": "build X", "outcome": "completed" }), "r");
-        assert_eq!(p["task"], "build X");
-        assert_eq!(p["outcome"], "completed");
-        assert_eq!(p["query"], "", "no query/name/pattern → empty search term");
-        assert_eq!(p["q"], "");
-    }
-
-    #[test]
-    fn map_daemon_tool_aliases_get_patterns_and_passes_through() {
-        assert_eq!(map_daemon_tool("get_patterns"), "get_file_tags");
-        assert_eq!(map_daemon_tool("search"), "search");
-        assert_eq!(map_daemon_tool("get_lib_docs"), "get_lib_docs");
-    }
 }

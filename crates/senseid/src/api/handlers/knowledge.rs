@@ -88,7 +88,12 @@ pub(crate) async fn get_memory(
 
 #[derive(Deserialize)]
 pub(crate) struct ContextQuery {
-    pub project_id: String,
+    /// Project UUID (the historical contract).
+    pub project_id: Option<String>,
+    /// Project name OR UUID — the shape the sensei MCP proxy sends, since
+    /// `resolve_project` yields a name. Resolved daemon-side to the UUID via the
+    /// shared `resolve_project_uuid`, mirroring `get_project_commands`.
+    pub project:    Option<String>,
     pub limit:      Option<i64>,
     pub tags:       Option<String>,
 }
@@ -97,8 +102,15 @@ pub(crate) async fn get_context(
     State(state): State<AppState>,
     Query(q): Query<ContextQuery>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let pid = uuid::Uuid::parse_str(&q.project_id)
-        .map_err(|_| err(StatusCode::BAD_REQUEST, "bad project_id"))?;
+    // Accept EITHER `project_id` (uuid) OR `project` (name or uuid). Both go
+    // through the shared resolver so a name resolves to the real UUID and a raw
+    // UUID passes straight through — additive, the uuid contract is unchanged.
+    let ident = q.project_id.as_deref()
+        .or(q.project.as_deref())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| err(StatusCode::BAD_REQUEST, "project_id or project required"))?;
+    let pid = crate::api::util::resolve_project_uuid(&state, ident).await
+        .ok_or_else(|| err(StatusCode::BAD_REQUEST, "bad project_id"))?;
     let tags: Option<Vec<String>> = q.tags.map(|s|
         s.split(',').filter(|t| !t.trim().is_empty()).map(|t| t.trim().to_string()).collect()
     );
@@ -116,17 +128,40 @@ pub(crate) async fn get_context(
 #[derive(Deserialize)]
 pub(crate) struct RulesQuery {
     /// Absolute path of the repo whose governing rules to resolve.
-    pub folder: String,
+    pub folder: Option<String>,
+    /// Project name OR UUID — the shape the sensei MCP proxy knows (it resolves
+    /// the caller to a project, not to the repo's abs_path). Resolved daemon-side
+    /// to the project's root repo abs_path, so a caller that knows the project
+    /// but not the folder still gets the right ruleset.
+    pub project: Option<String>,
 }
 
 /// Resolve the rules governing a repo: gather its namespace memberships + the
 /// always-on general/user scopes, ordered by enforcement then scope level,
 /// deduped, with the mandatory (non-overridable) ones flagged.
+///
+/// Accepts EITHER `folder=<abs_path>` (the historical contract) OR
+/// `project=<name|uuid>` → resolved to the project's root repo abs_path.
 pub(crate) async fn get_rules(
     State(state): State<AppState>,
     Query(q): Query<RulesQuery>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let folder = state.pg.get_repo_by_path(&q.folder).await
+    let folder_path = match q.folder.as_deref().filter(|s| !s.is_empty()) {
+        Some(folder) => folder.to_string(),
+        None => {
+            let project = q.project.as_deref().filter(|s| !s.is_empty())
+                .ok_or_else(|| err(StatusCode::BAD_REQUEST, "folder or project required"))?;
+            let pid = crate::api::util::resolve_project_uuid(&state, project).await
+                .ok_or_else(|| err(StatusCode::NOT_FOUND, "unknown project"))?;
+            // Root repo abs_path. get_project_repos returns each root's abs_path
+            // under `path`; the first (name-ordered) root governs.
+            let repos = state.pg.get_project_repos(&pid).await
+                .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+            repos.first().and_then(|r| r["path"].as_str()).map(str::to_string)
+                .ok_or_else(|| err(StatusCode::NOT_FOUND, "project has no indexed repo"))?
+        }
+    };
+    let folder = state.pg.get_repo_by_path(&folder_path).await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
         .ok_or_else(|| err(StatusCode::NOT_FOUND, "folder not indexed"))?;
     let folder_id = crate::api::util::json_uuid(&folder["id"])
@@ -135,7 +170,7 @@ pub(crate) async fn get_rules(
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
     let ruleset = crate::governance::structure_ruleset(raw);
     Ok(Json(serde_json::json!({
-        "folder": q.folder,
+        "folder": folder_path,
         "total": ruleset.total,
         "mandatory_count": ruleset.mandatory_count,
         "rules": ruleset.rules,
