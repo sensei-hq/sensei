@@ -1672,7 +1672,7 @@ port mismatch hive 7755 vs config 8787 (🟢), etc. Chunk order: {R1,R2}→R3→
    surface "which of these is your company?" → user tags each (feeds the existing company/client hierarchy). SMART
    DEFAULT (proceed unless Jerry says otherwise): most-repos-org and/or email-domain-match ⇒ suggested `company`,
    rest ⇒ `client`, always overridable. → build as post-consolidation chunk (discovery pass + small setup UI).
-   OPEN (minor, non-blocking): smart-default vs start-unclassified — proceeding with smart-default.
+   ✅ SMART DEFAULT CONFIRMED (Jerry 2026-07-13 "I like the smart suggestion"). Full org+role model now LOCKED.
 ⭐ ROLE MODEL ✅ LOCKED (Jerry 2026-07-13 — lead power CONFIRMED "endorse-as-canonical / set-enforcement makes
    perfect sense"): roles are org/client-AGNOSTIC
    (company/client is a dojo/project hierarchy tag, NOT baked into the role). Rename member_role `client_lead`→`lead`;
