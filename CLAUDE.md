@@ -10,7 +10,7 @@
 | ├ `cli`       |                   | sensei CLI (binary: sensei)                   |
 | ├ `mcp`       |                   | MCP server                                    |
 | ├ `bootstrap` |                   | Installer / prereq checker                    |
-| ├ `hive-mind` |                   | Federated shared-brain service                |
+| ├ `dojo-mind` |                   | Federated shared-brain service (binary: sensei-dojo) |
 | └ `logger`    |                   | Structured logging crate                      |
 | `website/`    | SvelteKit         | Marketing website                             |
 | `docs/`       | Markdown          | Design docs, mockups, DDL, backlog            |

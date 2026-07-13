@@ -1,22 +1,22 @@
-//! `sensei-hive provision` — bootstrap a Dōjō tenant + membership + API key.
+//! `sensei-dojo provision` — bootstrap a Dōjō tenant + membership + API key.
 //!
 //! The multi-tenant artifact routes (`/v1/t/{tenant_key}/…`) authenticate a
 //! daemon through the API-key plane in [`crate::auth`]. Standing up a new tenant
 //! Dōjō therefore needs three things wired together: the tenant row (the
 //! isolation boundary), a membership (the user's enrolment record the
-//! Supabase-JWT plane resolves against), and an API key whose hive role maps to
+//! Supabase-JWT plane resolves against), and an API key whose member role maps to
 //! the desired dojo authority. This is the bootstrap the admin console will
 //! eventually own; until then the CLI mints them directly against the embedded
 //! PG.
 //!
 //! Everything here REUSES the shipped store + keygen helpers (DRY): tenant
-//! resolve/create ([`HiveStore::resolve_tenant`] / [`HiveStore::create_tenant`]),
-//! membership create ([`HiveStore::create_membership`]), and
+//! resolve/create ([`DojoStore::resolve_tenant`] / [`DojoStore::create_tenant`]),
+//! membership create ([`DojoStore::create_membership`]), and
 //! [`crate::keygen::generate_key`] for the key — so the token hashes and
 //! verifies through the exact same sha256 path the dojo API-key plane
 //! ([`crate::auth::authenticate_dojo`]) checks.
 
-use crate::store::HiveStore;
+use crate::store::DojoStore;
 use uuid::Uuid;
 
 /// A provisioned tenant + membership + API key. The `token` plaintext is shown
@@ -27,22 +27,22 @@ pub struct Provisioned {
     pub tenant_key: String,
     pub tenant_id: Uuid,
     pub membership_id: Uuid,
-    /// The hive API-key role the token was minted with (maps to the requested
+    /// The API-key member role the token was minted with (maps to the requested
     /// dojo role's [`crate::auth::DojoAccess`]).
-    pub hive_role: &'static str,
+    pub member_role: &'static str,
     /// Plaintext bearer token — shown once; the daemon presents it as
     /// `Authorization: Bearer <token>` on the tenant's dojo routes.
     pub token: String,
 }
 
-/// Map a requested dojo role onto the hive API-key role whose
+/// Map a requested dojo role onto the API-key member role whose
 /// [`crate::auth::DojoAccess`] matches — so a key minted here carries the right
-/// authority on the tenant's dojo routes (see `auth::hive_role_to_access`):
+/// authority on the tenant's dojo routes (see `auth::member_role_to_access`):
 ///
-/// * `maintainer` / `admin` → hive `admin` → `DojoAccess::Maintainer` (triage).
-/// * `contributor`          → hive `publisher` → `DojoAccess::Contributor`.
+/// * `maintainer` / `admin` → member `admin` → `DojoAccess::Maintainer` (triage).
+/// * `contributor`          → member `publisher` → `DojoAccess::Contributor`.
 ///
-/// Returns `(dojo_role, hive_role)` on success, or an error naming the accepted
+/// Returns `(dojo_role, member_role)` on success, or an error naming the accepted
 /// roles. The `dojo_role` is echoed back (validated) for the membership row.
 pub fn roles_for(dojo_role: &str) -> Result<(&'static str, &'static str), String> {
     match dojo_role {
@@ -73,14 +73,14 @@ pub fn default_kind(scope: &str) -> &'static str {
     }
 }
 
-/// Provision a tenant + membership + API key against the hive's embedded PG.
+/// Provision a tenant + membership + API key against the service's embedded PG.
 ///
 /// Idempotent on the tenant — an existing `tenant_key` is reused (never
 /// duplicated), and the requested `scope` is (re)applied. Always creates a
 /// fresh membership + API key. Returns the tenant key/id, the membership id, and
 /// the plaintext token (shown once).
 pub async fn provision(
-    store: &HiveStore,
+    store: &DojoStore,
     origin: &str,
     org: &str,
     dojo: Option<&str>,
@@ -94,7 +94,7 @@ pub async fn provision(
     if !matches!(scope, "private" | "global") {
         return Err(format!("invalid scope '{scope}' (private|global)"));
     }
-    let (dojo_role, hive_role) = roles_for(role)?;
+    let (dojo_role, member_role) = roles_for(role)?;
 
     let key = tenant_key(origin, org, dojo);
     let name = dojo.unwrap_or(org).to_string();
@@ -126,16 +126,16 @@ pub async fn provision(
         .await?;
 
     // API key: minted through the SAME keygen path the daemon's API-key plane
-    // verifies (sha256 hash stored; plaintext shown once). The hive role gives
+    // verifies (sha256 hash stored; plaintext shown once). The member role gives
     // it the mapped DojoAccess on the tenant's dojo routes.
     let label = format!("provision:{key}:{user}");
-    let token = crate::keygen::generate_key(store, user, hive_role, Some(&label)).await?;
+    let token = crate::keygen::generate_key(store, user, member_role, Some(&label)).await?;
 
     Ok(Provisioned {
         tenant_key: key,
         tenant_id,
         membership_id,
-        hive_role,
+        member_role,
         token,
     })
 }
@@ -145,7 +145,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn roles_for_maps_dojo_role_to_hive_role() {
+    fn roles_for_maps_dojo_role_to_member_role() {
         assert_eq!(roles_for("contributor").unwrap(), ("contributor", "publisher"));
         assert_eq!(roles_for("maintainer").unwrap(), ("maintainer", "admin"));
         assert_eq!(roles_for("admin").unwrap(), ("admin", "admin"));

@@ -187,7 +187,7 @@ pub struct ShareBatchItem {
     pub memory_type: String,
 }
 
-/// Snapshot needed to publish a memory to a hive (+ namespace identity + origin/scope_key for gating).
+/// Snapshot needed to publish a memory to a dojo (+ namespace identity + origin/scope_key for gating).
 #[derive(Debug, Clone)]
 pub struct MemoryPushPayload {
     pub title:       String,
@@ -10295,8 +10295,8 @@ mod tests {
     async fn knowledge_source_crud_roundtrip() {
         let Ok(pg) = PgStore::connect_test().await else { return; };
         let id = pg.create_knowledge_source(&NewKnowledgeSource {
-            kind: "hive_mind".into(), name: "Org Hive".into(), url: "https://hive.example".into(),
-            namespace_id: None, credential_ref: "hive-test".into(), direction: "both".into(),
+            kind: "hive_mind".into(), name: "Org Dōjō".into(), url: "https://dojo.example".into(),
+            namespace_id: None, credential_ref: "dojo-test".into(), direction: "both".into(),
         }).await.unwrap();
 
         let all = pg.list_knowledge_sources().await.unwrap();
@@ -10320,9 +10320,9 @@ mod tests {
         let mid = uuid::Uuid::new_v4();
         pg.create_dojo_membership(&NewDojoMembership {
             id: mid,
-            registry_url: "http://localhost:8787".into(),
+            registry_url: "http://localhost:7755".into(),
             tenant_key: "github/acme".into(),
-            dojo_url: "http://localhost:8787/github/acme".into(),
+            dojo_url: "http://localhost:7755/github/acme".into(),
             kind: "client".into(),
             role: "contributor".into(),
             authenticated_via: "device_code".into(),
@@ -10445,8 +10445,8 @@ mod tests {
         // A destination membership + the outbox dedup ledger.
         let mid = uuid::Uuid::new_v4();
         pg.create_dojo_membership(&NewDojoMembership {
-            id: mid, registry_url: "http://localhost:8787".into(), tenant_key: "github/acme".into(),
-            dojo_url: "http://localhost:8787/github/acme".into(), kind: "client".into(),
+            id: mid, registry_url: "http://localhost:7755".into(), tenant_key: "github/acme".into(),
+            dojo_url: "http://localhost:7755/github/acme".into(), kind: "client".into(),
             role: "contributor".into(), authenticated_via: "device_code".into(),
             attribution_default: "dereferenced".into(),
             credential_ref: format!("dojo-{}", uuid::Uuid::new_v4()), sync_status: "healthy".into(),
@@ -10476,8 +10476,8 @@ mod tests {
         // A source membership (inbox rows cascade with it on delete).
         let mid = uuid::Uuid::new_v4();
         pg.create_dojo_membership(&NewDojoMembership {
-            id: mid, registry_url: "http://localhost:8787".into(), tenant_key: "github/acme".into(),
-            dojo_url: "http://localhost:8787/github/acme".into(), kind: "community".into(),
+            id: mid, registry_url: "http://localhost:7755".into(), tenant_key: "github/acme".into(),
+            dojo_url: "http://localhost:7755/github/acme".into(), kind: "community".into(),
             role: "contributor".into(), authenticated_via: "device_code".into(),
             attribution_default: "anonymous".into(),
             credential_ref: format!("dojo-{}", uuid::Uuid::new_v4()), sync_status: "healthy".into(),

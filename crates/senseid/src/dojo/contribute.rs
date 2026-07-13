@@ -25,7 +25,7 @@
 //! The publish + outbox I/O are behind traits ([`ArtifactPublisher`], [`Outbox`])
 //! so the contribution logic — including the confidentiality enforcement — is
 //! unit-tested with mocks and needs neither a live Dōjō service nor a database.
-//! The live HTTP round-trip against a running `sensei-hive` is DEFERRED to the
+//! The live HTTP round-trip against a running `sensei-dojo` is DEFERRED to the
 //! integration step (the production seams are [`LivePublisher`] + [`PgOutbox`]).
 
 use std::collections::HashMap;
@@ -73,7 +73,7 @@ pub trait ArtifactPublisher {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutboxState {
     /// Planned, not yet attempted — the cadence scheduler STAGES a batch here
-    /// ([`stage_contribution`]); the outbox→hive publish stays the manual C6 step.
+    /// ([`stage_contribution`]); the outbox→dojo publish stays the manual C6 step.
     Pending,
     /// Confidentiality gate refused it (residual identifier risk).
     Held,
@@ -314,7 +314,7 @@ pub enum ItemResult {
     /// Published — the Dōjō assigned `seq` / `remote_id`.
     Published { seq: i64, remote_id: String },
     /// Staged into the durable outbox as `pending` by the cadence scheduler
-    /// ([`stage_contribution`]) — prepared, not yet published. The outbox→hive
+    /// ([`stage_contribution`]) — prepared, not yet published. The outbox→dojo
     /// send stays the explicit manual C6 step.
     Staged,
     /// Held: the confidentiality gate refused it (residual identifier risk).
@@ -601,7 +601,7 @@ async fn publish_one<P: ArtifactPublisher, O: Outbox>(
 /// durable outbox as `pending` — it NEVER publishes / egresses to any Dōjō.
 ///
 /// This is what the contribute *cadence scheduler* runs: it PREPARES an approved
-/// batch into the local outbox; the outbox→hive send stays the explicit manual
+/// batch into the local outbox; the outbox→dojo send stays the explicit manual
 /// C6 step ([`run_contribution`]). A held item is recorded `held` (never staged),
 /// and an item already `sent` by an earlier manual publish is skipped — so
 /// re-staging within a cadence window is idempotent (also guarded by the outbox's
@@ -861,9 +861,9 @@ mod tests {
     fn membership(kind: &str, tenant: &str) -> DojoMembership {
         DojoMembership {
             id: Uuid::new_v4(),
-            registry_url: "http://localhost:8787".into(),
+            registry_url: "http://localhost:7755".into(),
             tenant_key: tenant.into(),
-            dojo_url: format!("http://localhost:8787/{tenant}"),
+            dojo_url: format!("http://localhost:7755/{tenant}"),
             kind: kind.into(),
             role: "contributor".into(),
             authenticated_via: "device_code".into(),

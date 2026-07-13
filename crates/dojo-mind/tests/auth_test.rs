@@ -1,4 +1,4 @@
-use hive_mind::auth::{role_satisfies, Role};
+use dojo_mind::auth::{role_satisfies, Role};
 
 #[test]
 fn role_floor_ordering() {

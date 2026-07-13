@@ -1,4 +1,4 @@
-//! Integration tests for `sensei-hive provision` — the tenant/membership/key
+//! Integration tests for `sensei-dojo provision` — the tenant/membership/key
 //! bootstrap. Proves a provisioned API key authenticates through the REAL dojo
 //! auth path (`authenticate_dojo`) with the mapped authority, that the tenant
 //! upsert is idempotent, that a membership is created, and that `--scope` is
@@ -7,20 +7,20 @@
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
-use hive_mind::api::{build_router, SharedState};
-use hive_mind::db::HiveDb;
-use hive_mind::provision::provision;
-use hive_mind::store::HiveStore;
+use dojo_mind::api::{build_router, SharedState};
+use dojo_mind::db::DojoDb;
+use dojo_mind::provision::provision;
+use dojo_mind::store::DojoStore;
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
 use sqlx_postgres::PgPool;
 use std::sync::Arc;
 use tower::ServiceExt; // oneshot
 
-async fn boot() -> (Router, HiveStore, PgPool) {
-    let db = HiveDb::bootstrap_temp().await.unwrap();
+async fn boot() -> (Router, DojoStore, PgPool) {
+    let db = DojoDb::bootstrap_temp().await.unwrap();
     let pool = db.pool().clone();
-    let store = HiveStore::new(pool.clone());
+    let store = DojoStore::new(pool.clone());
     Box::leak(Box::new(db)); // keep the embedded PG alive for the test
     let app = build_router(Arc::new(SharedState { store: store.clone() }));
     (app, store, pool)
@@ -55,7 +55,7 @@ fn artifact_body(sig: &str, title: &str) -> String {
 }
 
 /// The provisioned key must resolve through the store's API-key path with the
-/// mapped hive role — `maintainer` → hive `admin`.
+/// mapped member role — `maintainer` → member `admin`.
 #[tokio::test]
 async fn provisioned_maintainer_key_verifies_via_auth_path() {
     let (_app, store, _pool) = boot().await;
@@ -63,7 +63,7 @@ async fn provisioned_maintainer_key_verifies_via_auth_path() {
         .await
         .unwrap();
     assert_eq!(p.tenant_key, "github/acme");
-    assert_eq!(p.hive_role, "admin", "maintainer maps to the hive admin role");
+    assert_eq!(p.member_role, "admin", "maintainer maps to the admin member role");
 
     let caller = store.find_member_by_key(&p.token).await.unwrap().unwrap();
     assert_eq!(caller.role, "admin", "the key verifies via the shipped auth path");

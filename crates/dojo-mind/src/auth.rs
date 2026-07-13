@@ -13,7 +13,7 @@
 //!   [`authenticate_dojo`].
 
 use crate::api::AppState;
-use crate::store::HiveStore;
+use crate::store::DojoStore;
 use axum::{
     extract::{Request, State},
     http::{HeaderMap, StatusCode},
@@ -174,14 +174,14 @@ pub enum DojoAccess {
     Contributor = 1,
     /// Triage authority: list/decide/promote the queue (`maintainer+`). Maps
     /// from the `maintainer`/`admin` dojo membership roles and the `admin`
-    /// hive API-key role.
+    /// API-key member role.
     Maintainer = 2,
 }
 
 /// Which plane authenticated a dojo caller.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DojoAuthVia {
-    /// A hive API key (daemon / federation traffic).
+    /// A service API key (daemon / federation traffic).
     ApiKey,
     /// A Supabase JWT resolved to a tenant membership (console traffic).
     Supabase,
@@ -192,7 +192,7 @@ pub enum DojoAuthVia {
 pub struct DojoCaller {
     /// The tenant the caller is acting within (resolved from the path).
     pub tenant_id: Uuid,
-    /// Stable subject id — the hive member id (API-key plane) or the Supabase
+    /// Stable subject id — the member id (API-key plane) or the Supabase
     /// `sub` (JWT plane). Recorded as the artifact's `contributed_by`.
     pub subject: String,
     /// Human-facing label (member name or JWT email/sub), for audit.
@@ -213,10 +213,10 @@ pub enum DojoAuthError {
     Internal(String),
 }
 
-/// Map a hive API-key role onto dojo access: `member` pulls; `publisher`
+/// Map an API-key member role onto dojo access: `member` pulls; `publisher`
 /// contributes; `admin` additionally maintains (triage). An unparseable role
 /// falls back to the least-privilege `Member`.
-fn hive_role_to_access(role: &str) -> DojoAccess {
+fn member_role_to_access(role: &str) -> DojoAccess {
     match Role::parse(role) {
         Some(Role::Admin) => DojoAccess::Maintainer,
         Some(Role::Publisher) => DojoAccess::Contributor,
@@ -236,7 +236,7 @@ fn dojo_role_to_access(role: &str) -> DojoAccess {
     }
 }
 
-/// Dual-auth for the dojo routes: accept EITHER a valid hive API key OR a valid
+/// Dual-auth for the dojo routes: accept EITHER a valid service API key OR a valid
 /// Supabase JWT bound to a membership in `tenant_id`.
 ///
 /// Order: API-key first (federation traffic), then Supabase JWT. A JWT that
@@ -244,7 +244,7 @@ fn dojo_role_to_access(role: &str) -> DojoAccess {
 /// is authenticated but not a member here). Any other missing/invalid
 /// credential is `Unauthenticated`.
 pub async fn authenticate_dojo(
-    store: &HiveStore,
+    store: &DojoStore,
     jwt: &JwtConfig,
     headers: &HeaderMap,
     tenant_id: Uuid,
@@ -261,7 +261,7 @@ pub async fn authenticate_dojo(
             tenant_id,
             subject: c.member_id.to_string(),
             display: c.name,
-            access: hive_role_to_access(&c.role),
+            access: member_role_to_access(&c.role),
             via: DojoAuthVia::ApiKey,
         });
     }

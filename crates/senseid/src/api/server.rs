@@ -294,14 +294,14 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
         });
     }
 
-    // Federation: poll registered hive-mind sources for applicable rule deltas.
+    // Federation: poll registered dojo-mind sources for applicable rule deltas.
     crate::federation::run_pull_loop(state.pg.clone(), 300);
 
     // Dōjō upstream contribute cadence (R1): the upstream twin of the pull loop
     // above. On the user's configured cadence (PAUSED by default) it PREPARES an
     // approved memory-share batch into the durable outbox as `pending`, running
     // the same strict anonymise + confidentiality gate as the manual publish.
-    // STAGE-ONLY — it never publishes / egresses; the outbox→hive send stays the
+    // STAGE-ONLY — it never publishes / egresses; the outbox→dojo send stays the
     // explicit manual C6 step. No-op until the user sets a daily/weekly cadence.
     crate::tasks::contribute_scheduler::spawn(
         Arc::new(state.pg.clone()),
