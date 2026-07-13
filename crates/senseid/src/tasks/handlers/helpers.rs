@@ -22,16 +22,25 @@ pub(crate) fn file_mtime_ms(path: &std::path::Path) -> Option<i64> {
         .map(|d| d.as_millis() as i64)
 }
 
+/// SHA-256 hex of a file's bytes — the authoritative content-change signal
+/// recorded in `scan_state`. This is the ONLY read the change-detection does,
+/// and it runs only for files the cheap mtime gate flagged as candidates (an
+/// unchanged file is never hashed). Returns `None` if the file can't be read.
+pub(crate) fn hash_file(path: &std::path::Path) -> Option<String> {
+    use sha2::{Digest, Sha256};
+    let bytes = std::fs::read(path).ok()?;
+    let mut hasher = Sha256::new();
+    hasher.update(&bytes);
+    Some(format!("{:x}", hasher.finalize()))
+}
+
 /// Incremental-index fingerprint: `(mtime_ms, sha256_hex)`. The mtime gates
 /// re-indexing cheaply; the content hash is the authoritative change signal
 /// recorded in `scan_state`. Returns `None` if the file can't be read.
 pub(crate) fn file_fingerprint(path: &std::path::Path) -> Option<(i64, String)> {
-    use sha2::{Digest, Sha256};
     let mtime = file_mtime_ms(path)?;
-    let bytes = std::fs::read(path).ok()?;
-    let mut hasher = Sha256::new();
-    hasher.update(&bytes);
-    Some((mtime, format!("{:x}", hasher.finalize())))
+    let hash = hash_file(path)?;
+    Some((mtime, hash))
 }
 
 /// Content sniff: read the head of a file and decide whether it is binary or

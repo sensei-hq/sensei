@@ -321,6 +321,16 @@ impl TaskQueue {
         result
     }
 
+    /// True if a task of `kind` is currently pending, blocked, or running.
+    /// Used by the reconcile scheduler as an overlap guard so it never stacks a
+    /// second `ScanRoot` batch while a scan/reconcile is still in flight.
+    pub async fn has_pending_kind(&self, kind: super::TaskKind) -> bool {
+        let state = self.inner.lock().await;
+        state.pending.iter().any(|t| t.kind == kind)
+            || state.blocked.iter().any(|t| t.kind == kind)
+            || state.running.values().any(|t| t.kind == kind)
+    }
+
     /// Get queue status summary.
     pub async fn status(&self) -> QueueStatus {
         let state = self.inner.lock().await;

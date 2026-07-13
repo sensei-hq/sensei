@@ -2555,15 +2555,25 @@ impl PgStore {
         Ok(())
     }
 
-    /// All scan-state fingerprints for a folder as `(file_path, mtime)`. Loaded
-    /// once per scan so the indexer can diff the working tree against the last
-    /// index in memory (skip unchanged files, re-index changed, drop removed)
-    /// instead of N per-file queries.
-    pub async fn list_scan_state(&self, folder_id: &uuid::Uuid) -> Result<Vec<(String, i64)>, String> {
-        let rows: Vec<(String, i64)> = sqlx_core::query_as::query_as(
-            "SELECT file_path, mtime FROM sensei.scan_state WHERE folder_id = $1"
+    /// All scan-state fingerprints for a folder as `(file_path, mtime,
+    /// content_hash)`. Loaded once per scan so the indexer can run the two-tier
+    /// change-detection (cheap mtime gate → content-hash gate) entirely in
+    /// memory instead of N per-file queries. The `content_hash` lets a re-scan
+    /// short-circuit a *touched-but-identical* file (mtime drifted, bytes same)
+    /// without reindexing it. See [`crate::tasks::handlers::scan_logic::plan_reindex`].
+    pub async fn list_scan_state_full(&self, folder_id: &uuid::Uuid) -> Result<Vec<(String, i64, String)>, String> {
+        let rows: Vec<(String, i64, String)> = sqlx_core::query_as::query_as(
+            "SELECT file_path, mtime, content_hash FROM sensei.scan_state WHERE folder_id = $1"
         ).bind(folder_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(rows)
+    }
+
+    /// All scan-state fingerprints for a folder as `(file_path, mtime)`. A thin
+    /// projection over [`Self::list_scan_state_full`] for callers that only need
+    /// the mtime (removed-file diff, tests).
+    pub async fn list_scan_state(&self, folder_id: &uuid::Uuid) -> Result<Vec<(String, i64)>, String> {
+        Ok(self.list_scan_state_full(folder_id).await?
+            .into_iter().map(|(p, m, _)| (p, m)).collect())
     }
 
     /// Drop a single file's scan-state row (used when a file no longer exists on
