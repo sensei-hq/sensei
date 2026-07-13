@@ -185,6 +185,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/assistants/detect", get(config::assistant_detect))
         .route("/api/assistants/families", get(config::assistant_detect_families))
         .route("/api/assistants/configure", post(config::assistant_configure))
+        .route("/api/assistants/upgrade", post(config::assistant_upgrade))
         .route("/api/assistants/remove", post(config::assistant_remove))
         .route("/api/assistants/health", get(config::assistants_health))
         .route("/api/assistants/resolve", post(config::assistants_resolve))
