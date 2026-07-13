@@ -86,13 +86,21 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
         ctx.queue.enqueue(process_task).await;
     }
 
-    // 4.5 Reconcile: prune roots the scan no longer discovers (self-healing).
-    //     The scan is additive — without this, a root that lost its `.git`, was
-    //     emptied, or moved lingers forever as a phantom project.
+    // 4.5 Reconcile: self-heal the index the scan can't fix additively.
+    //     First re-absorb any `standalone` root mis-scoped inside a git repo
+    //     (Bug 3) — it becomes a `kind=folder` of the repo's project, so a
+    //     later `reconcile_roots` no longer sees it as a stale root. Then prune
+    //     roots the scan no longer discovers (a root that lost its `.git`, was
+    //     emptied, or moved lingers forever as a phantom project otherwise).
+    let reabsorbed = ctx.pg().heal_nested_standalone_roots().await
+        .unwrap_or_else(|e| { tracing::warn!(error = %e, "scan_root: heal_nested_standalone_roots failed"); 0 });
     let live: std::collections::HashSet<std::path::PathBuf> =
         classified.iter().map(|f| f.path.clone()).collect();
     let (removed, marked) = reconcile_roots(ctx.pg(), &root_id, &live).await;
     let orphaned = ctx.pg().mark_orphaned_projects().await.unwrap_or_else(|e| { tracing::warn!(error = %e, "scan_root: mark_orphaned_projects failed"); 0 });
+    if reabsorbed > 0 {
+        tracing::info!("scan_root reconcile: re-absorbed {reabsorbed} nested standalone root(s) into their enclosing repo's project");
+    }
     if removed > 0 || marked > 0 {
         emit(StateEvent::activity(ActivityEvent::new(
             ActivityLevel::Info,
@@ -175,6 +183,45 @@ async fn reconcile_roots(
         }
     }
     (removed, marked)
+}
+
+/// Prune indexed nodes whose file no longer exists on disk (Bug 2 safety net).
+/// Compares the folder's indexed file paths (`sensei.nodes`, module nodes
+/// excluded) against `live_paths` — the repo-relative paths present on disk now
+/// — and drops nodes for any indexed path not in the live set. This catches
+/// orphans the incremental `scan_state` diff and the fs-watcher missed (e.g. a
+/// moved sub-crate whose files vanished but whose struct nodes lingered). For
+/// each vanished file it un-resolves inbound edges (preserving `target_name` for
+/// re-resolution), deletes the nodes (cascading their edges) and clears the
+/// scan-state row. Non-fatal — every DB error is logged and skipped. Returns the
+/// number of files pruned.
+pub async fn prune_vanished(
+    pg: &crate::db::pg_store::PgStore,
+    folder_id: &uuid::Uuid,
+    live_paths: &std::collections::HashSet<String>,
+) -> u64 {
+    let indexed = pg.list_indexed_files(folder_id).await.unwrap_or_else(|e| {
+        tracing::warn!(folder_id = %folder_id, error = %e, "prune_vanished: list_indexed_files failed");
+        Vec::new()
+    });
+    let mut pruned = 0u64;
+    for path in indexed {
+        if live_paths.contains(&path) {
+            continue;
+        }
+        if let Err(e) = pg.unresolve_edges_to_file(folder_id, &path).await {
+            tracing::warn!(folder_id = %folder_id, file = %path, error = %e, "prune_vanished: unresolve_edges_to_file failed");
+        }
+        if let Err(e) = pg.delete_nodes_by_file(folder_id, &path).await {
+            tracing::warn!(folder_id = %folder_id, file = %path, error = %e, "prune_vanished: delete_nodes_by_file failed");
+            continue;
+        }
+        if let Err(e) = pg.delete_scan_state_file(folder_id, &path).await {
+            tracing::warn!(folder_id = %folder_id, file = %path, error = %e, "prune_vanished: delete_scan_state_file failed");
+        }
+        pruned += 1;
+    }
+    pruned
 }
 
 // ── Branch Switch ─────────────────────────────────────────────────────────
@@ -412,6 +459,34 @@ mod tests {
             ctx.pg().get_repo_by_path(&root.join("data-only").to_string_lossy()).await.unwrap().is_none(),
             "data-only folder should not be promoted to a project root"
         );
+    }
+
+    #[tokio::test]
+    async fn prune_vanished_drops_orphan_nodes_and_keeps_live() {
+        let ctx = make_ctx().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let repo_path = tmp.path().to_string_lossy().to_string();
+        let root_id = ctx.pg().add_watch_root(&repo_path, "pv", &serde_json::json!([])).await.unwrap();
+        let fid = ctx.pg().upsert_repo(&root_id, "pv-repo", &repo_path).await.unwrap();
+
+        // Two indexed files: a.rs (still on disk) and a moved-away b.rs (orphan),
+        // plus a module node (abs dir path) that must never be pruned.
+        ctx.pg().upsert_node(&fid, "file", "a.rs", "a.rs", None, None, None, None).await.unwrap();
+        ctx.pg().upsert_node(&fid, "struct", "Gone", "crates/hive-mind/src/config.rs", None, None, None, None).await.unwrap();
+        ctx.pg().upsert_node(&fid, "module", "src", &format!("{repo_path}/src"), None, None, None, None).await.unwrap();
+        ctx.pg().upsert_scan_state(&fid, "crates/hive-mind/src/config.rs", 1, "h").await.unwrap();
+
+        // Live working-tree set: only a.rs survives.
+        let live: std::collections::HashSet<String> = ["a.rs".to_string()].into_iter().collect();
+        let pruned = prune_vanished(ctx.pg(), &fid, &live).await;
+        assert_eq!(pruned, 1, "the one vanished file's nodes should be pruned");
+
+        let files = ctx.pg().list_indexed_files(&fid).await.unwrap();
+        assert!(files.contains(&"a.rs".to_string()), "live file's nodes survive");
+        assert!(!files.iter().any(|p| p.contains("hive-mind")), "vanished file's nodes are gone");
+        // The vanished file's scan-state row was cleared too.
+        let ss = ctx.pg().list_scan_state(&fid).await.unwrap();
+        assert!(ss.iter().all(|(p, _)| !p.contains("hive-mind")), "scan_state for the vanished file cleared");
     }
 
     #[tokio::test]
