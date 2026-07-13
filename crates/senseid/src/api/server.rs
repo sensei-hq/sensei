@@ -297,6 +297,17 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
     // Federation: poll registered hive-mind sources for applicable rule deltas.
     crate::federation::run_pull_loop(state.pg.clone(), 300);
 
+    // Dōjō upstream contribute cadence (R1): the upstream twin of the pull loop
+    // above. On the user's configured cadence (PAUSED by default) it PREPARES an
+    // approved memory-share batch into the durable outbox as `pending`, running
+    // the same strict anonymise + confidentiality gate as the manual publish.
+    // STAGE-ONLY — it never publishes / egresses; the outbox→hive send stays the
+    // explicit manual C6 step. No-op until the user sets a daily/weekly cadence.
+    crate::tasks::contribute_scheduler::spawn(
+        Arc::new(state.pg.clone()),
+        state.gateway.clone(),
+    );
+
     // Capture watchdog: hourly sweep over configured ACP adapters. Auto-resolves
     // config-side failures (reinstall), trips a per-adapter breaker on give-up,
     // and notifies the user (the only signal once an adapter is suspended).
