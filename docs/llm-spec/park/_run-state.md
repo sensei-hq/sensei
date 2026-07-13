@@ -1757,8 +1757,11 @@ port mismatch hive 7755 vs config 8787 (🟢), etc. Chunk order: {R1,R2}→R3→
    (1) watcher survives restarts + periodic reconcile-scan safety net; (2) prune orphaned nodes on file/dir
    delete/move; (3) a folder that MOVES within a repo stays attributed to that repo's project (no new standalone);
    (4) reconcile self-heals the live drift (re-attach dojo-mind 81694788→sensei ff1ccea2 + prune hive orphans).
-   🔨 IN PROGRESS — delegated to subagent ae6ed6e4 (TDD, develop, no commit). Live cleanup happens when the fixed
-   reconcile runs post-install. Verify live after install: dojo-mind under sensei, phantom 81694788 gone, Hive* pruned.
+   ✅ SHIPPED `867a6502` (develop, agent ae6ed6e4) — verified by me: cargo build clean (gateway over https now),
+   clippy 0, 12 new/touched tests green incl. db-gated prune_vanished/heal_nested_standalone/list_indexed_files
+   (ran vs sensei_test). New: is_inside_git_repo() fs-walk, prune_vanished(), reconcile_scheduler (boot+hourly),
+   heal_nested_standalone_roots() reusing merge_projects. No DDL. ⏳ LIVE-VERIFY PENDING: install-service + restart →
+   boot reconcile self-heals → confirm dojo-mind folder under sensei ff1ccea2, phantom 81694788 gone, Hive* pruned.
 
 ── 🐛 CI FAILURE (Jerry flagged 2026-07-13): GitHub Actions release.yml failing on the gateway dep. ROOT CAUSE =
    NOT a private-repo/rev problem. sensei-hq/gateway is PUBLIC + rev 01d0ab2 (=HEAD of main) resolves anonymously
@@ -1767,12 +1770,14 @@ port mismatch hive 7755 vs config 8787 (🟢), etc. Chunk order: {R1,R2}→R3→
    endpoint ALWAYS needs key auth — which CI runners don't have (GITHUB_TOKEN is scoped to sensei only). "revision
    not found" was a downstream symptom of the failed clone. FIX (no secret, default-and-proceed): swap ssh:// →
    https:// in Cargo.toml (both gateway + gateway-embedded) + Cargo.lock source lines. Anonymous public clone works
-   in CI, in `cross` Docker, and locally. ⏳ HELD until the capture-cluster subagent finishes (it's building senseid
-   against gateway — changing the source URL mid-run would force a re-fetch + Cargo.lock rewrite under it). Apply +
-   `cargo build -p senseid` to refresh lock + commit on develop right after.
+   in CI, in `cross` Docker, and locally. ✅ SHIPPED `d5bdf9b1` (develop) — VERIFIED locally: cargo compiled
+   `gateway v0.2.23 (https://github.com/sensei-hq/gateway.git?rev=01d0ab2)` (anonymous public fetch = exactly what CI
+   does). NOTE: release.yml only runs on tag push (make bump), so no per-commit CI — the fix takes effect at the NEXT
+   milestone bump (develop→main merge carries it to the tagged commit). Nothing more to do until then; the next
+   release will be the end-to-end proof.
 
-   NEXT 🟢: (a) apply the CI gateway https fix (after subagent). (b) land the capture-cluster fix + install + verify
-   the live self-heal. (c) resume Dōjō chunks (R2 share-review, member-role enum) — Dōjō is NOT deferred (see
+   NEXT 🟢: (a) install-service + restart → verify capture self-heal live (dojo-mind under sensei, phantom gone,
+   Hive* pruned). (b) resume Dōjō chunks (R2 share-review, member-role enum) — Dōjō is NOT deferred (see
    LOCAL-FIRST=RELAY-ONLY correction above). Consolidation was cleanup = shipped.
 Assets: _dojo-build-plan.md (refreshed) + 4 console specs + dojo-developer-flow.md; ~/Developer/kavach/supabase model.
 
