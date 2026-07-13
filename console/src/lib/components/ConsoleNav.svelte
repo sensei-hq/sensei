@@ -1,17 +1,29 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
 
-	// Left nav (mockup DojoNav): grouped destinations with a kanji glyph. In R9
-	// only Overview + Triage are wired; the rest render as "soon" (non-interactive)
-	// per the mockup's DOJO_BUILT gating. `active` is the current section id.
+	// Left nav (mockup DojoNav): grouped destinations with a kanji glyph. Overview
+	// + Triage (R9) and the admin console screens (R10: Members, Identities,
+	// Policies, Health, Audit) are wired; the rest render as "soon"
+	// (non-interactive) per the mockup's DOJO_BUILT gating. `active` is the current
+	// section id.
 	let { active, tenantKey }: { active: string; tenantKey: string } = $props();
 
-	// `to` marks a built (linked) destination in R9; absent → a "soon" placeholder.
+	// A wired destination's route id (`to`); absent → a "soon" placeholder. Each id
+	// maps to its console sub-route below.
+	type RouteId =
+		| 'overview'
+		| 'triage'
+		| 'members'
+		| 'identities'
+		| 'policies'
+		| 'health'
+		| 'audit';
+
 	interface NavItem {
 		id: string;
 		kanji: string;
 		label: string;
-		to?: 'overview' | 'triage';
+		to?: RouteId;
 		badge?: number;
 	}
 	interface NavGroup {
@@ -19,8 +31,8 @@
 		items: NavItem[];
 	}
 
-	// Only Overview + Triage are wired in R9; the rest stay "soon". The href is
-	// built inline in the template with resolve().
+	// Overview + Triage (R9) and the admin screens (R10) are wired; the rest stay
+	// "soon". The href for a wired item comes from hrefFor(to).
 	const groups = $derived<NavGroup[]>([
 		{
 			group: 'Govern',
@@ -33,19 +45,42 @@
 		{
 			group: 'Org',
 			items: [
-				{ id: 'members', kanji: '任', label: 'Members & roles' },
-				{ id: 'scopes', kanji: '規', label: 'Scopes & policies' },
+				{ id: 'members', kanji: '任', label: 'Members & roles', to: 'members' },
+				{ id: 'identities', kanji: '鍵', label: 'Identities', to: 'identities' },
+				{ id: 'policies', kanji: '規', label: 'Policies', to: 'policies' },
+				{ id: 'scopes', kanji: '層', label: 'Scopes' },
 				{ id: 'clients', kanji: '守', label: 'Clients' }
 			]
 		},
 		{
 			group: 'Trust',
 			items: [
-				{ id: 'monitor', kanji: '観', label: 'Monitor' },
-				{ id: 'audit', kanji: '録', label: 'Audit trail' }
+				{ id: 'health', kanji: '観', label: 'Health', to: 'health' },
+				{ id: 'audit', kanji: '録', label: 'Audit trail', to: 'audit' }
 			]
 		}
 	]);
+
+	// Route path for a wired destination. Overview is the console index; every
+	// other wired id is a `/console/{id}` sub-route.
+	function hrefFor(to: RouteId): string {
+		switch (to) {
+			case 'overview':
+				return resolve('/(console)/console');
+			case 'triage':
+				return resolve('/(console)/console/triage');
+			case 'members':
+				return resolve('/(console)/console/members');
+			case 'identities':
+				return resolve('/(console)/console/identities');
+			case 'policies':
+				return resolve('/(console)/console/policies');
+			case 'health':
+				return resolve('/(console)/console/health');
+			case 'audit':
+				return resolve('/(console)/console/audit');
+		}
+	}
 </script>
 
 <aside
@@ -65,7 +100,7 @@
 					{@const on = active === it.id}
 					{#if it.to}
 						<a
-							href={resolve(it.to === 'triage' ? '/(console)/console/triage' : '/(console)/console')}
+							href={hrefFor(it.to)}
 							aria-current={on ? 'page' : undefined}
 							class="grid w-full items-center gap-2 rounded-lg no-underline {on
 								? 'bg-paper border-paper-edge text-ink border'
