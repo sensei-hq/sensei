@@ -1667,3 +1667,8 @@ C ✅ SHIPPED `6405447f` (2026-07-13): find_projects(under) + use_project pin (~
   ⏳ BUMP v0.2.39→0.2.40 + merge→main + install-service (release) so find/pin is RUNNING. Then Jerry:
   `claude plugin update sensei` → LIVE-VERIFY: cd rokkit → find_projects → use_project sensei → tools resolve sensei.
   Remaining P0: D (upgrade hardening + assistant upgrade() + version worker), E (dedup 2efd4ecf), F (3-repo live gate).
+
+⭐⭐✅ MILESTONE A+B+C SHIPPED & RELEASED (2026-07-13): → v0.2.40 MERGED→main `54995776`, subtrees synced.
+  ⏳ install-service (release, b5axd2z4i) running so find/pin is live. Then: curl /api/projects?under=/Users/Jerry/
+  Developer/sensei-hq (verify find_projects daemon-side); Jerry `claude plugin update sensei` → through-tools live-verify.
+  NEXT P0: D upgrade-hardening (assistant upgrade() + sensei-upgrade CLI + version-change worker) → E dedup → F 3-repo gate.
