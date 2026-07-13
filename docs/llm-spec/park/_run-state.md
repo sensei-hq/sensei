@@ -1961,11 +1961,20 @@ port mismatch hive 7755 vs config 8787 (🟢), etc. Chunk order: {R1,R2}→R3→
    limit) — a follow-up glance advisable but check+build are green.
    ⛔→✅ SESSION USAGE LIMIT (was hit ~2:40pm Chicago) — RESET, resumed after 3:16pm. sensei-mcp resilience shipped
    post-reset (`89de7c59`).
-   🔨 IN PROGRESS: R9 — Maintainer console screens (subagent a0f16d29) in the R6 console/ app: DojoOverview + DojoTriage
-   (GET /v1/t/{tenant}/triage + POST …/promote) + DojoCandidate (POST …/{sig}/decide), over dojo-mind triage backend.
-   UI 🟢 (svelte-check + build); LIVE triage/decide vs running dojo service + auth = Jerry (🔴). NEXT after R9: R10/R11
-   (admin + client-lead console screens over R7/R8) → then R3 (infer+confirm bind + setup org-tagging; needs the small
-   dojo.memberships org-field DDL). R4 dropped (organic community). Reliability + MCP tracks complete.
+   ✅ R9 SHIPPED `edc34dd9` (subagent a0f16d29) — Maintainer console (overview + triage queue + candidate detail) in
+   console/, bound to real dojo-mind triage shapes (TriageRow/PromoteOutcome/decide body). VERIFIED: svelte-check 0,
+   bun run build ok, console suite 39/39. Also FIXED a pre-existing R6 test failure (DojoOrgs.spec getByText(name)
+   false-failed on the "Personal" name↔kind-chip collision → getAllByText≥1) — R6 had shipped red because I ran
+   check+build but not `bun run test` on it; LESSON: run `bun run test` too on console chunks.
+   ⚑⚑ CONSOLE-TRACK WIRING GAP (blocks the console being FUNCTIONAL — key follow-up before/with R11): (1) R6's /orgs
+   enter() does NOT persist the selected org → no session tenant_key. R9 threaded a placeholder `?tenant=<origin>`
+   query param (rip out when wired). (2) the kavach/supabase session `access_token` is NOT surfaced to the load funcs →
+   console API calls go UNAUTHENTICATED (401) + degrade to an error banner. Both are CODE wiring (persist org on session
+   + read session token → API client) that makes the console functional the moment Jerry logs in — buildable without a
+   live login; the live magic-link + running dojo service is Jerry's verify. Until then R9/R10/R11 are static shells.
+   🟢 NEXT: R10/R11 (admin + client-lead console screens over R7/R8 — same placeholder-wired pattern) OR the console
+   wiring (tenant+token, the linchpin) → then R3 (infer+confirm bind + setup org-tagging; small dojo.memberships DDL).
+   R4 dropped. Reliability + MCP tracks complete.
    ✅ sensei-mcp RESILIENCE SHIPPED `89de7c59` (2026-07-13) — ⚠️ INVESTIGATION FLIPPED THE FIX. The proposed "add
    reconnect logic + re-fetch the tool list" was based on a WRONG premise. Reading crates/mcp: `handle_list_tools`
    returns a fully STATIC list (hardcoded json!, NOT daemon-fetched), and tool CALLS are per-call reqwest to :7744.
