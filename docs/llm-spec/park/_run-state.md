@@ -1625,10 +1625,11 @@ ACTIVE BUILD QUEUE (default-and-proceed order, highest value first):
    resolve_project_uuid 0→2 + pack_embed_batches/cap_embed_input now indexed. CAPTURE UNFROZEN. search/graph now
    see current code.
    ✅ RELEASED v0.2.43: merge develop→main `1c43f4f8` + bump (tag v0.2.43, tap d73e533 / marketplace f5c0eee).
-   ⏳ install-service bf1k7k5h4 running → daemon 0.2.42→0.2.43 so D2 fires a FULL crash-free rescan (all watch roots:
-   /Users/Jerry/Developer + dbd-rs + rokkit + Work) → refreshes the WHOLE stale graph. ON DONE: /health=0.2.43 +
-   daemon stays up (no GGML_ASSERT growth) + node counts climb + daemon.last_version commits 0.2.43 ONLY after the
-   rescan drains. Release = Atlas/logs/icon/get_rules(v0.2.42) + embed-fix. NEXT after verify: F-contribute (no-DDL).
+   ✅ install bf1k7k5h4 VERIFIED: /health=0.2.43; FULL D2 rescan (all watch roots) running CRASH-FREE — GGML_ASSERT
+   still 106 (zero new aborts on the exact op that used to abort); sensei 6598→9340→13888, total→568884 climbing;
+   daemon.last_version STILL 0.2.42 = D2 crash-recovery working (commits 0.2.43 only after the big rescan drains).
+   Release = Atlas/logs/icon/get_rules(v0.2.42) + embed-fix. Rescan still draining in bg (heavy; refreshes all repos).
+   NEXT TICK: confirm rescan drained (last_version→0.2.43) → then F-contribute (no-DDL). C/D/F-TDD-gate = DDL-coord.
    [detail:] ── P0 embed-crash fix `c9ef8b61`:
    Real root cause (sharper than hypothesis): per-BATCH token overflow — embed_nodes packed 64 texts into ONE
    Payload::Embed; gateway-embedded LlamaCppAdapter sums ALL seqs into a SINGLE ctx.encode() bounded by n_ubatch=512
