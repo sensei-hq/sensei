@@ -1682,17 +1682,28 @@ port mismatch hive 7755 vs config 8787 (🟢), etc. Chunk order: {R1,R2}→R3→
    advisory→mandatory + set focus + tiebreak "what's canon here"** (the lead-only power vs admin; a person may hold
    both). Fallback if too much for v1: 3 roles (admin absorbs canon, drop lead) — but KEEP lead recommended (canon is
    the Dōjō's whole point). → member_role enum change = DDL chunk, do AFTER the hive→dojo consolidation lands.
-── ⭐ NEW (Jerry 2026-07-13): SENSEI WEBSITE UPDATES → END OF QUEUE (build after Dōjō). Mockups replace screenshots
-   with FLOWS + screen-agnostic content + add DŌJŌ content. ⏳ REVIEW/ANALYZE agent aae53ef1 → surfacing suggestions/
-   enhancements from the mockups (→ docs/analysis/2026-07-13-website-redesign-review.md) so Jerry can add his own,
-   BEFORE the build. Don't `bun run build` against a live website dev server [[feedback_no_build_against_live_dev]].
-── ⭐ PHASE 2/3 RESEARCH (Jerry 2026-07-13, "on the side", NOT a build): embed/reuse ZED's assistant (in-app agentic
-   coding) into sensei + the vision: sensei as agentic-execution CONTROL PLANE (planner mapping phases/features/spec
-   + progress+decision capture via mcp/daemon — the autonomous-run loop is a working prototype) AND a RELAY COMPANION
-   mobile app (remote track/interact for multi-day runs; human-in-the-loop response from mobile; push notifs desktop+
-   mobile; sensei/dojo as middleman relaying user↔LLM). ⏳ research agent a6b8955f → docs/analysis/2026-07-13-zed-embed
-   -and-relay-control-plane-research.md (Zed ACP/crate/license options; reuse gateway+Zed-adapter+daemon/MCP+transcript
-   capture; control-plane+relay arch; phasing). Informs a future phase; nothing to build now.
+── ⭐ SENSEI WEBSITE UPDATES → END OF QUEUE (build after Dōjō). ✅ REVIEW DONE `43d6d44d` →
+   docs/analysis/2026-07-13-website-redesign-review.md. Redesign = the PRODUCT page /sensei (hub already matches):
+   screenshots→FLOWS (Surfaces) + hero→HeroBrief + NEW "For teams · 結 Dōjō" section. ⚠️ KEY: mockup copy CONTRADICTS
+   the product — do NOT build verbatim: (a) "0 external requests/nothing leaves your machine" collides with the
+   networked opt-in Dōjō (reframe "what leaves/stays"); (b) the P0/P1/P2 "higher rung wins" ladder is NOT real
+   (mandatory-vs-advisory + scope + mute/pin + thresholds); (c) don't claim the unbuilt console/auto-discovery.
+   SAFE to feature: loop + 6 artifacts + one-project-one-Dōjō + fail-closed client dereference. 8 open Qs in §7 for
+   Jerry. Don't `bun run build` against a live website dev server [[feedback_no_build_against_live_dev]].
+── ⭐ PHASE 2/3 RESEARCH ✅ DONE `3bd40a96` → docs/analysis/2026-07-13-zed-embed-and-relay-control-plane-research.md.
+   VERDICT: SPEAK ACP, don't embed Zed — Zed's agent crates are GPL (would infect sensei), but the Agent Client
+   Protocol + `agent-client-protocol` crate are APACHE-2.0 (reusable). 2a = sensei as ACP CLIENT (host Claude
+   Code/Gemini/Codex etc. for fast in-app agentic coding, phase-2); 2b = sensei as ACP AGENT on its gateway (phase-3
+   core). Control plane: the vacation-run (cron + _run-state.md + gate agents) is ALREADY a working prototype →
+   promote _run-state.md into a daemon-managed run object over the existing scheduler/task-queue/agent-runtime. Relay:
+   the DŌJŌ service is a READY-MADE middleman (multi-tenant, dual-auth, publish/pull + inbox + a notifications table)
+   → "pending Q→push→mobile answer→resume" = same shape as artifact→inbox-pull, keeps the daemon OUTBOUND-ONLY
+   (retires tailscale/termius). Has ~70% substrate (mcp_probe.rs = exact ACP stdio JSON-RPC transport; 13-provider
+   gateway; session/decision capture + 40-tool MCP; scheduler/queue/agent-runtime; dōjō relay; notify-rust desktop
+   push not-yet-app-wired; Tauri+SSE). NET-NEW: ACP integration; control-plane run object + `sensei`-scope park/
+   decision table; mobile PWA; push infra (APNs/FCM); interactive HITL channel. LOAD-BEARING open decisions for Jerry:
+   relay-through-dōjō vs expose-daemon; where a multi-day run EXECUTES (laptop-through-dōjō vs hosted runner + key
+   custody); PWA vs native; ACP pre-1.0 risk. Informs phase 2/3; nothing to build now.
 ⏳ HIVE→DOJO CONSOLIDATION BUILDING (agent ab63f054, Jerry directive — one name `dojo`). Phase 1 CODE: merge
    hive-protocol→dojo-protocol (delete crate), rename hive-mind→dojo-mind + binary sensei-hive→**sensei-dojo**, port
    8787→7755, global hive→dojo (≈123 files/142 refs). Phase 2 DDL (source-first): fold hive schema→dojo schema + hive
