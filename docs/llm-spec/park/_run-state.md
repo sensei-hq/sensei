@@ -1672,3 +1672,10 @@ C ✅ SHIPPED `6405447f` (2026-07-13): find_projects(under) + use_project pin (~
   ⏳ install-service (release, b5axd2z4i) running so find/pin is live. Then: curl /api/projects?under=/Users/Jerry/
   Developer/sensei-hq (verify find_projects daemon-side); Jerry `claude plugin update sensei` → through-tools live-verify.
   NEXT P0: D upgrade-hardening (assistant upgrade() + sensei-upgrade CLI + version-change worker) → E dedup → F 3-repo gate.
+
+✅ find_projects VERIFIED LIVE (2026-07-13, daemon 0.2.40): /api/projects?under=/Users/Jerry/Developer/sensei-hq
+  → 5 (corpus,minilm-bench,products,sensei,sponsor) from 297 total; under=.../sensei-hq/sensei → 1 (boundary-safe).
+  A+B+C daemon-side PROVEN LIVE (name-resolution + find_projects). Pin (use_project) round-trip awaits MCP reconnect.
+⏳ D1 BUILDING: assistant upgrade() — add upgrade() to the Assistant trait (ClaudeCodeAssistant → `claude plugin
+  update sensei`, mirror install+verify) + POST /api/assistants/upgrade (fan out detected) + `sensei upgrade` CLI.
+  Then D2 version-change worker, D3 Makefile pkill+reminder. Then E dedup, F 3-repo gate.
