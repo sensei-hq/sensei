@@ -1,7 +1,8 @@
 use axum::{
+    body::Body,
     extract::{Path, Query, State},
-    http::StatusCode,
-    response::Json,
+    http::{header, StatusCode},
+    response::{IntoResponse, Json, Response},
 };
 use serde::Deserialize;
 use crate::api::state::AppState;
@@ -67,6 +68,66 @@ pub(crate) async fn get_project_ftr(
     let data = state.pg.get_project_ftr(&uuid).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(data))
+}
+
+/// GET /api/projects/{id}/icon — serve a project's inferred image icon.
+///
+/// The project-icon pipeline can store `projects.icon = {kind:"image",
+/// value:"<repo-relative path>"}` when a repo logo is detected. This streams
+/// those bytes so the app can render `<img src=".../icon">` (it falls back to
+/// the kanji glyph on any 404). A kanji-kind or absent icon → 404 by design.
+///
+/// Security: the stored `value` is a repo-relative path, so this is a
+/// file-serving endpoint. Path safety is enforced in two layers by
+/// `analysis::project_icon`: a pure lexical check (rejects `..`, absolute
+/// paths, non-image extensions) and an on-disk canonicalize-inside-root
+/// assertion (defeats symlink-out). Anything escaping the repo root → 404.
+pub(crate) async fn get_project_icon(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    match serve_project_icon(&state, &id).await {
+        Some((content_type, bytes)) => Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, content_type)
+            // A repo logo is effectively immutable between re-scans; a short
+            // private cache keeps the Projects list snappy without pinning a
+            // stale asset across a re-scan that changes the icon.
+            .header(header::CACHE_CONTROL, "private, max-age=300")
+            .body(Body::from(bytes))
+            .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response()),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+/// Resolve + read a project's image icon, or `None` (→ 404) when the icon is
+/// not an image, the path is unsafe, or the file is missing. The repo-relative
+/// `value` belongs to one of the project's repos, so each repo root is tried in
+/// turn; the disk work runs in `spawn_blocking`.
+async fn serve_project_icon(state: &AppState, id: &str) -> Option<(&'static str, Vec<u8>)> {
+    use crate::analysis::project_icon::{icon_content_type, serve_icon_from_roots};
+
+    let uuid = crate::api::util::resolve_project_uuid(state, id).await?;
+    let project = state.pg.get_project(&uuid).await.ok().flatten()?;
+    let icon = &project["icon"];
+    if icon.get("kind").and_then(|v| v.as_str()) != Some("image") {
+        return None;
+    }
+    let rel = icon.get("value").and_then(|v| v.as_str())?.to_string();
+    // Fail fast on a non-image extension before hitting the DB for repo roots.
+    let ext = std::path::Path::new(&rel).extension().and_then(|e| e.to_str())?;
+    icon_content_type(ext)?;
+
+    let roots: Vec<String> = state.pg.list_root_folders_by_project(&uuid).await.ok()?
+        .iter()
+        .filter_map(|r| r.get("abs_path").and_then(|v| v.as_str()).map(String::from))
+        .collect();
+    if roots.is_empty() {
+        return None;
+    }
+    tokio::task::spawn_blocking(move || serve_icon_from_roots(&roots, &rel))
+        .await
+        .ok()?
 }
 
 /// GET /api/projects/{id}/overview — the Project window · Overview pane

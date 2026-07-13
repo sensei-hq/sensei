@@ -1,5 +1,6 @@
 import type {
   ServerProject, ProjectSummary, GraphData, GraphNode, GraphEdge,
+  GraphSymbolNode, GraphCallEdge,
   SolutionGraphResponse, SolutionAnalysis, InferredRole,
   IndexQueueStatus, DirtyStatus, IndexError,
   FunctionDetail, TypeDetail, CommunityInfo, DocDrift,
@@ -13,7 +14,7 @@ import type {
   ProjectMcpToolStat, ToolSignal, ProjectService, ToolInsight, ToolsHealth,
   SessionReplayResponse, McpServerRow, McpServerToolsManifest,
   ObservatoryToday, ObservatoryFtr, ProjectOverview,
-  InsightsBoard,
+  InsightsBoard, LogRow,
 } from './types.js';
 import type {
   MemoryListResponse, MemoryDetail, ContextResponse,
@@ -24,9 +25,14 @@ export type ApiError = { status: number; message: string } | { status: 0; messag
 
 export type ApiResult<T> = { ok: true; data: T } | { ok: false; error: ApiError };
 
+/** The daemon's origin for a given port. The single source of truth for the
+ *  loopback base URL, shared by `senseiApi` and any non-fetch consumer (e.g.
+ *  an `<img src>` that streams bytes from the daemon, like a project icon). */
+export const apiBase = (port: number): string => `http://127.0.0.1:${port}`;
+
 /** Create a typed API client for the sensei Rust daemon. */
 export function senseiApi(port: number) {
-  const base = `http://127.0.0.1:${port}`;
+  const base = apiBase(port);
 
   // Legacy fallback-returning helpers — kept for callers that pre-date
   // the Result-based `tryGet`/`tryPost` etc. New code should use the
@@ -533,7 +539,7 @@ export function senseiApi(port: number) {
     },
 
     getGraphNodes: (repoId: string) =>
-      get<{ nodes: GraphNode[]; edges: GraphEdge[] }>(
+      get<{ nodes: GraphSymbolNode[]; edges: GraphCallEdge[] }>(
         `/api/graph/nodes?repoId=${enc(repoId)}`, { nodes: [], edges: [] },
       ),
 
@@ -611,6 +617,24 @@ export function senseiApi(port: number) {
 
     getMetrics: (project: string) =>
       get<Record<string, unknown>>(`/api/metrics/${encodeURIComponent(project)}`, {}),
+
+    // ── Observatory · Logs (activity logs) ──────────────────────────────
+    // Structured daemon/cli/mcp/app log rows for the Logs screen. All filters
+    // are optional server query params: exact `level` / `source` / `module`
+    // match, `since` (relative `15m|1h|24h|7d`, RFC-3339, or `all`), and a row
+    // `limit` (clamped daemon-side to 1000). Newest-first. Fallback is the
+    // empty array so a daemon hiccup renders the quiet state, never a broken
+    // screen. An unparseable `since` is a 400 daemon-side → empty via fallback.
+    getLogs: (q: { level?: string; source?: string; module?: string; since?: string; limit?: number } = {}) => {
+      const p = new URLSearchParams();
+      if (q.level) p.set('level', q.level);
+      if (q.source) p.set('source', q.source);
+      if (q.module) p.set('module', q.module);
+      if (q.since) p.set('since', q.since);
+      if (q.limit !== undefined) p.set('limit', String(q.limit));
+      const qs = p.toString() ? `?${p.toString()}` : '';
+      return get<LogRow[]>(`/api/logs${qs}`, []);
+    },
 
     // ── Scan ─────────────────────────────────────────────────────────────
     /** Add a root to the DB immediately (synchronous). Does not start scanning. */

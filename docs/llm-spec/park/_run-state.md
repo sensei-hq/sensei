@@ -1566,9 +1566,67 @@ DEFAULTS CHOSEN (reversible; flagged for Jerry to change later):
     repoints there); leave (health)/logs diagnostics at /logs untouched. Reversible.
   • project-icon images → keep gated AND build the asset-serve daemon route as its own queue item so images render.
 ACTIVE BUILD QUEUE (default-and-proceed order, highest value first):
-  A. ⏳ BUILDING — #5 Atlas / code-graph visualization (flagship; backend 100% shipped+unused:
-     getSolutionGraph/getCommunities/getCallFlow). Build the graph-viz screen/component to spec.
-  B. #2-UI observatory-logs screen (route (observatory)/activity-logs → GET /api/logs; filters level/source/since).
+  A. ✅ SHIPPED `ff8299af` (2026-07-13) — #5 Atlas code-graph screen (observatory)/atlas/, nav 図 "Atlas" (Review
+     group). d3-force 2-level (79 communities default / top-200 symbols by call-degree), zoom/pan, kind color+legend,
+     focus+neighbour highlight, inspector, scope select. Consumes GET /api/graph/nodes (6598n/9584e) + communities
+     (+/info) + call-flow. check 0/0 (924); test:unit 1095 (+36). Svelte MCP autofixed. Visual-verify=e2e follow-up.
+     ⚠️ BACKEND DATA-GAP FILED: GET /api/projects/{id}/graph (solution_graph) returns EMPTY for sensei — repo↔project
+     membership unpopulated in DB → Atlas falls back to /api/graph/nodes (roll-up counts only from solution_graph).
+     Also deferred (endpoint gaps): inter-community edges (communities/info has no per-node membership); docs/doc-drift
+     overlay + 4-level drill. → these = daemon follow-ups (populate project↔node membership; per-node community id).
+  B. ✅ SHIPPED `b5685e69` (2026-07-13) — Observatory·Logs at (observatory)/activity-logs/; nav 診 repointed /logs→
+     /activity-logs ((health)/logs untouched). GET /api/logs server-filtered (level/source/module/since/limit) +
+     client text search; level→role tokens; capped-warning. check 0/0 (933); test:unit 1125 (+30). visual=e2e.
+     Deferred (need other surfaces): task strip (/api/scheduler/tasks), SSE Follow, inclusive-below level filter.
+     NOTE: source(running_on) null in all live rows until writers populate.
+  C+D ⏸️ DEFERRED — DDL-COORDINATED (not autonomous-safe blind). Surveyed 2026-07-13:
+     • C traceability fix/dismiss: spec (observatory-/project-traceability.md) needs states open/fixed/resolved_auto/
+       dismissed + signature-suppression, but inference.drift_items.status = enum drift_status{current,drifted,broken}
+       only → needs a DRIFT_STATUS ENUM EXPANSION (or resolution model) on a SHIPPED table. DDL won't be live until
+       `make bump` republishes the bundle (daemon reads database@vVERSION, not repo) → can't build+verify in one tick.
+     • D impact-regression: needs a NEW impact_regressions table (DDL) + writer. Same released-bundle constraint.
+     → Do C+D in a DELIBERATE DDL pass (DDL-source-first → dbd apply → bump+install → verify), or flag to Jerry
+       (schema change to shipped inference.drift_items). Skipped per "don't do risky DDL blind" + conservative pacing.
+  E. ✅ SHIPPED `c8054297` (2026-07-13) — project-icon asset-serve: GET /api/projects/{id}/icon (secure file-serve;
+     resolve_icon_path pure-rejects ../abs/non-image, read_icon_bytes canonicalize+starts_with root defeats
+     symlink-out) + un-gated infer_icon logo tier (process.rs:521, was &[] "IMAGE ICONS GATED") + UI ProjectGlyph
+     <img>→kanji fallback (DRY: ProjectCard+ProjectRow). NO DDL. clippy 0; senseid project_icon 27; app check 0/0
+     (936); test:unit 1131 (+). LIVE: 299 projects (291 empty/8 kanji/0 image) → 404 correct today; images serve
+     after redeploy+rescan writes logos. (app UI not live until a full `make install` rebuilds the .app.)
+
+── AUTOPILOT PROGRESS (post-P0, 2026-07-13): A Atlas `ff8299af` + B logs `b5685e69` + E icon `c8054297` shipped to
+   develop (NOT merged/bumped — batch the UI sweep into ONE milestone later; app UI needs install-app to go live).
+   3 large subagents run back-to-back (~577K tok) → PACING to heartbeat cadence (one per idle tick), not back-to-back.
+── NEXT (autonomous-safe, no-DDL; pick highest-value per tick):
+   • ✅ get_rules SCOPE HYGIENE SHIPPED `3089ffd0` (2026-07-13). Root cause: resolve_rules_raw admitted every
+     namespace_id-NULL memory as an always-on `general` rule for ALL folders; L2 conventions are project_id-set +
+     namespace_id-NULL (governance reads only namespace_id, not the legacy project_id/scope) → leaked cross-project.
+     Fix (query-side, NO DDL, no data correction — rows correctly stored, only mis-surfaced): general catch-all
+     narrowed to (namespace_id NULL AND project_id NULL); project-tied branch resolves a project's principle ONLY for
+     its own repo, labeled `project`; resolve_global_rules likewise. Live sim sensei 9→1. +1 regression test;
+     governance 8/8 + knowledge_api green. Follow-up flagged: attach project namespace at generation (scan-time).
+   • ✅ search recall = NON-ISSUE (investigated 2026-07-13, no fix needed). search is keyword ILIKE over
+     sensei.nodes name+signature (query.rs:218/244) — CORRECT. `resolve_project_uuid` returned empty only because
+     it's NOT INDEXED (count 0; siblings resolve_project/_from_cwd/_in ARE) = STALE INDEX (added v0.2.40 post-scan).
+     Same stale-index root explains Atlas solution_graph empty + icon images un-written. → RESOLVED by D2 rescan-on-
+     version-change, which fires on the next bump+install. No code change.
+   • NEXT no-DDL after milestone: F-contribute lane (wire C6 scheduling). [F-benchmarks/F-TDD-gate + C/D = DDL-coord.]
+
+── ⏳ MILESTONE IN PROGRESS (2026-07-13, unattended — Jerry AFK = ideal, no active-work MCP disruption): merging
+   develop→main + `make bump v=patch` (→v0.2.42) + `make install-service` (release; NOT install-app — Actions builds
+   the release .app; local app UI updates at a later full install). Ships Atlas/logs/icon/get_rules LIVE (daemon side)
+   + D2 rescan re-indexes (fixes search-recall/solution_graph/icon-images). ON DONE: curl /health=0.2.42 + get_rules
+   (sensei)→1 rule (scope-fix live) + resolve_project_uuid now indexed (rescan worked).
+
+── ⭐ MILESTONE DUE: develop has accumulated since v0.2.41 → Atlas `ff8299af`, logs `b5685e69`, icon `c8054297`,
+   get_rules `3089ffd0` (+run-state). Merge develop→main + `make ship`/full `make install` (service+app) to make them
+   LIVE (app UI needs install-app; get_rules/icon-serve need install-service) — HEAVY (release+Tauri build ~15-20m,
+   pkills MCP, publishes). Batch a couple more no-DDL chunks then ONE milestone, or trigger when Jerry's around.
+   • tooling follow-up: search recall gaps (signature-substring match misses some real symbols) — query.rs.
+   • F-contribute lane: wire scheduling for the already-built C6 contribute path (no DDL). [F-benchmarks/F-TDD-gate
+     need DDL → defer w/ C+D.]
+── DDL-COORDINATED (deferred, need bump+install to verify): C traceability states, D impact_regressions table,
+   F-TDD-gate (function_shapes/tdd_proposals tables). Do in a deliberate DDL pass or flag to Jerry.
   C. #6 traceability fix/dismiss (daemon action endpoints over drift_items + UI drawer).
   D. #8 impact-regression surface: impact_regressions DDL + writer (record on negative verdict) + alert screen.
   E. project-icon ASSET-SERVE daemon route (serve repo logos) → then un-gate the image tier.
@@ -1694,6 +1752,22 @@ D2 ✅ SHIPPED `2f6f1de9` (2026-07-13): version-change rescan worker — boot ho
   idempotent. Wired server.rs:188 BEFORE analyzer_scheduler::spawn. 2 tests; clippy 0; senseid 1382+2 green.
 ⭐ WORKSTREAM D COMPLETE (D1 d6b3ae30 + D2 2f6f1de9 + D3 ccef0324). NOT yet installed live (develop-only; installs
   at the A–F milestone merge+bump).
+
+⭐⭐⭐ P0 TOOLING-VERIFICATION TRACK A–F COMPLETE + SHIPPED v0.2.41 (2026-07-13).
+  Merged develop→main `67027a89`, bump `6a2c26f1` (tag v0.2.41; subtrees synced tap 4a7ccf7 / marketplace 47d0e76
+  → plugin now advertises 0.2.41). Commits: D1 d6b3ae30, D2 2f6f1de9, D3 ccef0324, plugin-ref+--upgrade 7d618c82,
+  E e706484a, bloat-fix 81fac7be. ✅ `make install-service` (release) DONE + VERIFIED LIVE (bik0e3td5, exit 0):
+  • /health = 0.2.41 (daemon is the new binary; D/E/bloat LIVE).
+  • UPGRADE PIPELINE PROVEN LIVE: install → mcp-refresh-note → `✓ ran 'sensei upgrade' — assistant plugins
+    refreshed` → assistant upgrade() → `claude plugin update sensei@sensei-marketplace` SUCCEEDED (D1+D3+plugin-ref
+    fix end-to-end, live). Reminder printed with the correct qualified ref.
+  • BLOAT FIX LIVE: /api/projects?under=sensei = 831 chars (was 71,756 — 86×), 1 project, 1 folder kind=git only.
+  • D2 WORKER FIRED: sensei.config daemon.last_version = 0.2.41 (detected 0.2.40→0.2.41 on boot, persisted).
+  • This session's sensei MCP pkilled (disconnected) as designed; curl proof suffices (same endpoints the proxy hits).
+  FOLLOW-UPS filed (defects 2–4, non-blocking, for autopilot): search recall gaps; get_rules mis-scoped
+  prompt-fragment "rules" (incl. an unrelated fiction project bleeding in); patterns/memories sparse.
+  ⭐ P0 TRACK DONE. NEXT: RESUME AUTOPILOT — original queue (UI sweep: Atlas/logs/traceability/impact/icon-asset;
+  Dōjō consoles+supabase; protocol consolidation) + the 3 tooling follow-ups. Next heartbeat pulls the next chunk.
 
 ⭐⭐ F ✅ LIVE-VERIFIED THROUGH THE REAL MCP TOOLS (2026-07-13, MCP reconnected by Jerry → plugin 0.2.40).
 DOGFOODED, not simulated. The folder→project→tools CYCLE WORKS end-to-end (Jerry's core ask):

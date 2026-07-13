@@ -6,8 +6,11 @@
   // lines. Presentational only.
   import type { EnrichedProject } from './buckets.js';
   import { projectStatus, projectIcon, lastSessionLabel } from './buckets.js';
+  import { apiBase } from '$lib/api.js';
+  import { appState } from '$lib/appstate.svelte.js';
   import ProjPill from './ProjPill.svelte';
   import ProjectDot from './ProjectDot.svelte';
+  import ProjectGlyph from './ProjectGlyph.svelte';
 
   let {
     p,
@@ -20,7 +23,8 @@
   } = $props();
 
   const status = $derived(projectStatus(p));
-  const icon = $derived(projectIcon(p));
+  // Image icons resolve to the daemon's serve route; kanji icons stay glyphs.
+  const icon = $derived(projectIcon(p, apiBase(appState.port)));
   const ftrPct = $derived(Math.round(p.ftr14d * 100));
 </script>
 
@@ -35,11 +39,7 @@
   class:opacity-60={status === 'archived'}
 >
   <!-- col 1 — icon -->
-  {#if icon.kind === 'image'}
-    <img src={icon.src} alt="" class="w-[18px] h-[18px] object-contain rounded-sm shrink-0" />
-  {:else}
-    <span class="kanji text-accent text-[18px] leading-none shrink-0">{icon.glyph}</span>
-  {/if}
+  <ProjectGlyph {icon} />
 
   <!-- col 2 — name block -->
   <div class="min-w-0">
