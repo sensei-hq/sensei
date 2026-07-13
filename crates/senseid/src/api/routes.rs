@@ -1034,4 +1034,63 @@ mod tests {
                 .any(|m| m["title"].as_str() == Some(mem_title.as_str())),
             "project=name and project_id=uuid must resolve to the SAME project → same seeded memory");
     }
+
+    // ── find_projects: folder-scoped project discovery crosses the seam ──────
+    //
+    // The MCP `find_projects` tool shapes `GET /api/projects?under=<path>`. This
+    // proves the shape reaches the daemon (never 404/400) AND that the daemon's
+    // path-boundary filter genuinely scopes: a project with a folder under the
+    // path is present; the same project is absent for a sibling path that only
+    // shares the textual prefix. Goes RED on any drift in the route/query key.
+    #[tokio::test]
+    async fn mcp_proxy_find_projects_scopes_by_under() {
+        use sensei_mcp::daemon_request_for;
+        let (app, state) = test_app().await;
+
+        let short = uuid::Uuid::new_v4().simple().to_string()[..8].to_string();
+        let base = format!("/_test/fp-{short}");
+        let under = format!("{base}/repo");
+
+        // Seed: a project with ONE folder under `base`.
+        let pid = state.pg.ensure_test_project(&format!("fp-{short}")).await.unwrap();
+        let name = state.pg.get_project(&pid).await.unwrap().unwrap()["name"]
+            .as_str().unwrap().to_string();
+        let root = state.pg.add_watch_root(&base, &format!("fp-{short}"), &serde_json::json!([]))
+            .await.unwrap();
+        state.pg.upsert_folder(&root, "git", &name, "repo", &under, None, Some(&pid))
+            .await.unwrap();
+
+        // Shape guard: no `under` arg → default to the call cwd.
+        let dflt = daemon_request_for("find_projects", &serde_json::json!({}), &base, None).unwrap();
+        assert_eq!(dflt.path, "/api/projects");
+        assert!(dflt.query.iter().any(|(k, v)| k == "under" && v == &base),
+            "find_projects with no `under` arg must default to the call cwd");
+
+        let names = |b: &serde_json::Value| -> Vec<String> {
+            b.as_array()
+                .map(|a| a.iter().filter_map(|p| p["name"].as_str().map(str::to_string)).collect())
+                .unwrap_or_default()
+        };
+
+        // Under `base` → the seeded project appears.
+        let req = daemon_request_for(
+            "find_projects", &serde_json::json!({ "under": base.clone() }), "/irrelevant/cwd", None,
+        ).unwrap();
+        let (status, body) = send_shaped(&app, &req).await;
+        assert_eq!(status, StatusCode::OK,
+            "find_projects must reach GET /api/projects?under=<path>; body={body}");
+        assert!(names(&body).contains(&name),
+            "a project with a folder under `{base}` must be in the scoped list");
+
+        // Under a sibling that only shares the textual prefix → project is gone.
+        let sib = daemon_request_for(
+            "find_projects", &serde_json::json!({ "under": format!("{base}-other") }), "/x", None,
+        ).unwrap();
+        let (st_sib, body_sib) = send_shaped(&app, &sib).await;
+        assert_eq!(st_sib, StatusCode::OK);
+        assert!(!names(&body_sib).contains(&name),
+            "sibling `{base}-other` must NOT include the project (path boundary)");
+
+        state.pg.delete_project(&pid).await.unwrap();
+    }
 }
