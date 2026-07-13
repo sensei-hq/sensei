@@ -1,0 +1,20 @@
+# Dependencies
+node_modules
+
+# Build output
+.output
+.vercel
+.netlify
+.wrangler
+/build
+/.svelte-kit
+
+# Env — never commit real secrets; keep the example only
+.env
+.env.*
+!.env.example
+
+# Vite temp files
+vite.config.js.timestamp-*
+vite.config.ts.timestamp-*
+*.last-run.json
