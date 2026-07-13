@@ -1667,3 +1667,58 @@ C ✅ SHIPPED `6405447f` (2026-07-13): find_projects(under) + use_project pin (~
   ⏳ BUMP v0.2.39→0.2.40 + merge→main + install-service (release) so find/pin is RUNNING. Then Jerry:
   `claude plugin update sensei` → LIVE-VERIFY: cd rokkit → find_projects → use_project sensei → tools resolve sensei.
   Remaining P0: D (upgrade hardening + assistant upgrade() + version worker), E (dedup 2efd4ecf), F (3-repo live gate).
+
+⭐⭐✅ MILESTONE A+B+C SHIPPED & RELEASED (2026-07-13): → v0.2.40 MERGED→main `54995776`, subtrees synced.
+  ⏳ install-service (release, b5axd2z4i) running so find/pin is live. Then: curl /api/projects?under=/Users/Jerry/
+  Developer/sensei-hq (verify find_projects daemon-side); Jerry `claude plugin update sensei` → through-tools live-verify.
+  NEXT P0: D upgrade-hardening (assistant upgrade() + sensei-upgrade CLI + version-change worker) → E dedup → F 3-repo gate.
+
+✅ find_projects VERIFIED LIVE (2026-07-13, daemon 0.2.40): /api/projects?under=/Users/Jerry/Developer/sensei-hq
+  → 5 (corpus,minilm-bench,products,sensei,sponsor) from 297 total; under=.../sensei-hq/sensei → 1 (boundary-safe).
+  A+B+C daemon-side PROVEN LIVE (name-resolution + find_projects). Pin (use_project) round-trip awaits MCP reconnect.
+D1 ✅ SHIPPED `d6b3ae30` (2026-07-13): Assistant::upgrade() trait method (defaulted no-op Ok; only ClaudeCodeAssistant
+  overrides → `claude plugin update sensei` via plugin_update_args() argv seam, reuses find_claude_binary +
+  verify_plugin_installed gate) + assistants::upgrade(ids) fan-out (reuses configure target selection) +
+  POST /api/assistants/upgrade → Vec<AdapterResolveReport> + `sensei upgrade [--acp]` CLI. 8 tests (default/argv/verify/
+  version-readback/fan-out/handler/CLI-parse×2); real `claude plugin update` never executed (tests target file-based
+  cursor id). clippy 0; sensei-cli 4 + senseid assistants:: 116 green. No DDL.
+D3 ✅ SHIPPED `ccef0324` (2026-07-13): Makefile — install-service + install-debug now run shared `mcp-refresh-note`
+  (pkill -x sensei-mcp so next session/reconnect execs fresh binary; best-effort `sensei upgrade` [daemon up from
+  restart; freshly-overlaid release sensei has the subcommand]; always PRINT `claude plugin update sensei` reminder
+  since in-session MCP needs CLIENT reconnect). + `make ship v=patch` = bump+install (release) so daemon/binaries
+  never left stale behind a bump. Validated `make -n` (parses; note runs after restart before app build). No code/DDL.
+D2 ✅ SHIPPED `2f6f1de9` (2026-07-13): version-change rescan worker — boot hook maybe_rescan_on_version_change
+  (tasks/version_rescan.rs) compares running binary vs stored daemon.last_version (sensei.config, no DDL); on change
+  enqueues one ScanRoot per watch root (same task scan_folder uses) + clears analyzer.last_full_refresh watermark so
+  the scheduler's first tick re-analyzes every project; persists version LAST (crash-safe re-trigger); non-fatal +
+  idempotent. Wired server.rs:188 BEFORE analyzer_scheduler::spawn. 2 tests; clippy 0; senseid 1382+2 green.
+⭐ WORKSTREAM D COMPLETE (D1 d6b3ae30 + D2 2f6f1de9 + D3 ccef0324). NOT yet installed live (develop-only; installs
+  at the A–F milestone merge+bump).
+
+⭐⭐ F ✅ LIVE-VERIFIED THROUGH THE REAL MCP TOOLS (2026-07-13, MCP reconnected by Jerry → plugin 0.2.40).
+DOGFOODED, not simulated. The folder→project→tools CYCLE WORKS end-to-end (Jerry's core ask):
+  • find_projects(under=/…/dbd-rs) → 1 project boundary-safe; use_project sensei → pinned to REAL ff1ccea2
+    (not the phantom); every subsequent tool resolved off the pin with NO project= arg.
+  • get_project_summary ✅ genuine (3395 fns / 664 types / stack rust+sveltekit+tauri+pg+…).
+  • get_layered_context ✅ genuine (pin-scoped memory). get_rules ✅ (folder resolved, 8 rules).
+  • search ✅ genuine+rich (search PgStore → PgStore type + 14 users). get_duplicates ✅ compact (0@0.92, 247 folders).
+DEFECTS dogfooding surfaced (Jerry: "if not helping, figure out why + improve") — filed to fix:
+  1. ⛔ PAYLOAD BLOAT → tools UNUSABLE on big repos: find_projects (71–116K chars for sensei/rokkit),
+     get_project_conventions (60K) EXCEED the MCP token cap. They dump the full nested folders[] / raw arrays.
+     (get_project_summary + get_duplicates are compact = the right model.) ← HIGHEST; fixing now (agent).
+  2. search recall gaps: signature-substring match → some real symbols (resolve_project_uuid) return empty;
+     get_or_create_project_by_name empty = E not yet rescanned into running daemon (expected until install).
+  3. get_rules QUALITY: raw prompt fragments as "rules", incl. an UNRELATED fiction project's line
+     ("nigel/death/essence system") mis-scoped into sensei — rule-derivation signal quality.
+  4. get_patterns empty for "route"; get_layered_context only 1 memory — patterns/memories sparse (known).
+⏳ BLOAT FIX BUILDING: compact find_projects (?under compacts to root folders only) + cap get_project_conventions.
+Defects 2–4 = documented follow-ups. This is the PROOF the P0 track's purpose is met: MCP tools return genuine
+folder-scoped results. Remaining: bloat fix → merge A–F→main + make ship (D/E/bloat live) → resume autopilot.
+
+E ✅ PRUNE ALREADY HEALED (verified live 2026-07-13): duplicate empty `2efd4ecf` is GONE (0 rows); ff1ccea2 is the
+  sole "sensei" (247 folders); ZERO duplicate project names in the DB; no unique index on projects.name (dups CAN
+  recur); create_project (pg_store.rs:4577) = bare INSERT no dedup; 297 projects / 44 zero-folder (NOT dup-names —
+  likely legit Zed corpus). ⏳ E GUARD BUILDING (a36787d8): trace scan-time project mint + add creation guard and/or
+  deterministic reconcile-heal for name-duplicate 0-folder phantoms + regression tests (NO unique(name) index —
+  same-name-different-path repos are legit; NO mass-delete of 0-folder projects). Then F 3-repo live gate.
+  NOTE: sensei MCP tools STILL disconnected (ToolSearch finds none) — through-tools pin verify awaits Jerry reconnect.

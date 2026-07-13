@@ -19,6 +19,27 @@ pub(crate) trait Assistant {
     fn configure(&self, mcp_cmd: &str) -> Result<AssistantConfigureOk, String>;
     fn remove(&self) -> bool;
 
+    /// Refresh this assistant's sensei integration after a sensei binary
+    /// upgrade. Returns the same result shape as `configure()`.
+    ///
+    /// Default = a no-op that reports success with an explanatory note. The
+    /// file-based MCP assistants (Cursor, Zed, VS Code, …) wire sensei through
+    /// their own config file and re-read it whenever they restart, so a fresh
+    /// sensei binary needs no per-assistant action here. Only
+    /// [`ClaudeCodeAssistant`](super::claude_code) overrides this — its plugin
+    /// is a copied-out install that must be advanced with
+    /// `claude plugin update sensei`, otherwise a new sensei binary leaves the
+    /// old plugin/MCP behind.
+    fn upgrade(&self) -> Result<AssistantConfigureOk, String> {
+        Ok(AssistantConfigureOk {
+            plugin: false,
+            warnings: vec![format!(
+                "no upgrade action for {} — its sensei MCP config is re-read when the assistant restarts",
+                self.id()
+            )],
+        })
+    }
+
     /// Pure, filesystem-only health probes for this adapter. Default = one
     /// check derived from `is_configured()`. Override for richer adapters.
     fn config_health(&self) -> Vec<AdapterCheck> {
@@ -118,6 +139,21 @@ mod tests {
     fn default_config_health_reflects_is_configured() {
         assert_eq!(StubAssistant { configured: true, ..Default::default() }.config_health()[0].status, CheckStatus::Ok);
         assert_eq!(StubAssistant { configured: false, ..Default::default() }.config_health()[0].status, CheckStatus::Fail);
+    }
+
+    #[test]
+    fn default_upgrade_is_noop_ok_with_note() {
+        // A non-Claude assistant (StubAssistant doesn't override upgrade) gets
+        // the trait default: Ok, no plugin action, and a note explaining why.
+        // This is the shape the fan-out surfaces for every file-based MCP
+        // assistant after a sensei upgrade.
+        let ok = StubAssistant::default().upgrade().expect("default upgrade is Ok");
+        assert!(!ok.plugin, "default upgrade must not claim a plugin action");
+        assert!(
+            ok.warnings.iter().any(|w| w.contains("no upgrade action") && w.contains("stub")),
+            "default upgrade note should name the assistant; got {:?}",
+            ok.warnings
+        );
     }
 
     #[test]

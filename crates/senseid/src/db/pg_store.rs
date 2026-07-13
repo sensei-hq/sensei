@@ -694,12 +694,33 @@ impl PgStore {
     /// /api/projects responses with folder membership so the Projects setup
     /// page can render per-folder details.
     pub async fn list_folders_by_project(&self, project_id: &uuid::Uuid) -> Result<Vec<serde_json::Value>, String> {
+        self.query_folders_by_project(project_id, false).await
+    }
+
+    /// Repo-root folders only (`kind IN ('git','standalone')`) for a project —
+    /// the compact folder set the folder-scoped `find_projects` view (`GET
+    /// /api/projects?under=…`) needs. Drops the hundreds of nested
+    /// `kind:'folder'` descendant rows that pushed that response past the MCP
+    /// client's token cap (~72K chars for sensei). The repo roots are kept so
+    /// the MCP proxy's `resolve_from_cwd_in` longest-prefix cwd→project match
+    /// still resolves any deep working directory (a deep cwd still
+    /// `starts_with` the repo root).
+    pub async fn list_root_folders_by_project(&self, project_id: &uuid::Uuid) -> Result<Vec<serde_json::Value>, String> {
+        self.query_folders_by_project(project_id, true).await
+    }
+
+    /// Shared folder query for [`list_folders_by_project`] (full tree) and
+    /// [`list_root_folders_by_project`] (repo roots only). `roots_only` gates
+    /// out the `kind:'folder'` descendants at the SQL level so the compact
+    /// path never materializes them.
+    async fn query_folders_by_project(&self, project_id: &uuid::Uuid, roots_only: bool) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(uuid::Uuid, String, String, String, String, Option<String>)> = sqlx_core::query_as::query_as(
             "SELECT id, kind::text, name, path, abs_path, role::text
              FROM sensei.folders
              WHERE project_id = $1
+               AND ($2 = false OR kind::text IN ('git','standalone'))
              ORDER BY path"
-        ).bind(project_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        ).bind(project_id).bind(roots_only).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(|(id, kind, name, path, abs, role)| {
             serde_json::json!({
                 "id": id, "kind": kind, "name": name,
@@ -4582,6 +4603,56 @@ impl PgStore {
         Ok(row.0)
     }
 
+    /// Race-safe get-or-create of a project by name — the scan-time assignment
+    /// path ([`crate::tasks::handlers::process_git_folder`]) calls this instead
+    /// of a bare SELECT-then-INSERT. That earlier pattern raced across the
+    /// concurrent scan workers: two folders resolving to the same project name
+    /// both saw "no such project" and both called [`Self::create_project`],
+    /// minting a second same-name row — the 0-folder "phantom" project that then
+    /// made name resolution ambiguous.
+    ///
+    /// A transaction-scoped advisory lock keyed on the name serializes only
+    /// concurrent creators of the SAME name (distinct names hash to distinct
+    /// keys and never contend), closing the select-then-insert window WITHOUT a
+    /// `UNIQUE(name)` constraint — which would be wrong, since two DIFFERENT
+    /// repos may legitimately share a name (a project's identity is its folder
+    /// path, not its name).
+    ///
+    /// When the name already has rows, the folder-bearing one is preferred, so a
+    /// pre-existing phantom is never adopted over the real project (the phantom
+    /// is pruned separately by [`Self::heal_duplicate_name_projects`]). Returns
+    /// `(id, created)`; `created` is true only when a new row was minted, letting
+    /// the caller emit its `project_add` event exactly once.
+    pub async fn get_or_create_project_by_name(&self, name: &str) -> Result<(uuid::Uuid, bool), String> {
+        let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
+        // Serialize concurrent creators of this exact name. The lock is
+        // transaction-scoped (auto-released on commit/rollback); hashtext maps
+        // the name into the advisory key space.
+        sqlx_core::query::query("SELECT pg_advisory_xact_lock(hashtext($1)::int8)")
+            .bind(name)
+            .execute(&mut *tx).await.map_err(|e| e.to_string())?;
+
+        // Prefer the folder-bearing row so a not-yet-healed phantom is never
+        // adopted over the real project; `id` is the stable tiebreak.
+        let existing: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
+            "SELECT p.id FROM sensei.projects p
+              WHERE p.name = $1
+              ORDER BY (SELECT count(*) FROM sensei.folders f WHERE f.project_id = p.id) DESC, p.id
+              LIMIT 1",
+        ).bind(name).fetch_optional(&mut *tx).await.map_err(|e| e.to_string())?;
+
+        if let Some((id,)) = existing {
+            tx.commit().await.map_err(|e| e.to_string())?;
+            return Ok((id, false));
+        }
+
+        let (id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.projects(name) VALUES($1) RETURNING id",
+        ).bind(name).fetch_one(&mut *tx).await.map_err(|e| e.to_string())?;
+        tx.commit().await.map_err(|e| e.to_string())?;
+        Ok((id, true))
+    }
+
     /// Update a project's derived identity props (from README frontmatter or
     /// best-guess). Only overwrites description/client when provided; replaces
     /// stack only when a non-empty stack is given; unions tags.
@@ -5002,6 +5073,54 @@ impl PgStore {
 
         tx.commit().await.map_err(|e| e.to_string())?;
         Ok(())
+    }
+
+    /// Deterministic self-heal for name-duplicate phantom projects: when a name
+    /// is shared by EXACTLY ONE folder-bearing project (the survivor) and one or
+    /// more 0-folder `discovery` projects (phantoms — an earlier
+    /// select-then-insert race minted them; now prevented by
+    /// [`Self::get_or_create_project_by_name`]), each phantom is merged into the
+    /// survivor via [`Self::merge_projects`] (folders/sessions/memories
+    /// reassigned, derived rows CASCADE-trimmed — no FK row is left orphaned).
+    /// Idempotent: once the phantoms are gone the candidate query returns
+    /// nothing, so a re-run is a no-op.
+    ///
+    /// Deliberately conservative — a name shared by TWO folder-bearing projects
+    /// (two different repos at different paths that happen to share a name) is
+    /// LEFT ALONE: those are legitimately distinct projects (identity = path,
+    /// not name) and must never be merged. All-empty same-name groups are also
+    /// left untouched for [`Self::mark_orphaned_projects`] to tag. Returns the
+    /// number of phantoms merged away.
+    pub async fn heal_duplicate_name_projects(&self) -> Result<u64, String> {
+        // (phantom_id, survivor_id) pairs — one per phantom. The `= 1` guard
+        // ensures the survivor is the single folder-bearing project for that
+        // name (unambiguous), so a two-folder-bearing collision is excluded.
+        let pairs: Vec<(uuid::Uuid, uuid::Uuid)> = sqlx_core::query_as::query_as(
+            "SELECT empty.id, keep.id
+               FROM sensei.projects empty
+               JOIN sensei.projects keep
+                 ON keep.name = empty.name AND keep.id <> empty.id
+              WHERE empty.maturity = 'discovery'
+                AND NOT EXISTS (SELECT 1 FROM sensei.folders f WHERE f.project_id = empty.id)
+                AND EXISTS     (SELECT 1 FROM sensei.folders f WHERE f.project_id = keep.id)
+                AND (SELECT count(*) FROM sensei.projects k
+                       WHERE k.name = empty.name
+                         AND EXISTS (SELECT 1 FROM sensei.folders f WHERE f.project_id = k.id)) = 1",
+        ).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+
+        let mut healed = 0u64;
+        for (phantom, survivor) in pairs {
+            match self.merge_projects(&phantom, &survivor).await {
+                Ok(()) => {
+                    healed += 1;
+                    tracing::info!(phantom = %phantom, survivor = %survivor,
+                        "heal_duplicate_name_projects: merged 0-folder phantom into folder-bearing survivor");
+                }
+                Err(e) => tracing::warn!(phantom = %phantom, survivor = %survivor, error = %e,
+                    "heal_duplicate_name_projects: merge failed"),
+            }
+        }
+        Ok(healed)
     }
 
     pub async fn get_project_libraries(&self, project_id: &uuid::Uuid) -> Result<Vec<serde_json::Value>, String> {
@@ -9696,6 +9815,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn list_root_folders_excludes_nested_folder_descendants() {
+        // find_projects (`?under=`) must return the COMPACT folder set — repo
+        // roots only. The hundreds of nested `kind:'folder'` descendants are the
+        // MCP token-cap bloat; list_root_folders_by_project drops them while
+        // list_folders_by_project (app path) keeps the whole tree.
+        let s = pg_store().await;
+        let short = uuid::Uuid::new_v4().simple().to_string()[..8].to_string();
+        let base = format!("/tmp/_test-rootf-{short}");
+        let root = s.add_watch_root(&base, &format!("rootf-{short}"), &serde_json::json!([]))
+            .await.unwrap();
+        let p = s.ensure_test_project(&format!("rootf-{short}")).await.unwrap();
+
+        // One git repo root …
+        s.upsert_folder(&root, "git", "repo", "repo", &format!("{base}/repo"), None, Some(&p))
+            .await.unwrap();
+        // … plus one standalone root …
+        s.upsert_folder(&root, "standalone", "lib", "lib", &format!("{base}/lib"), None, Some(&p))
+            .await.unwrap();
+        // … plus many nested `kind:'folder'` descendants (the bloat).
+        for i in 0..30 {
+            s.upsert_folder(
+                &root, "folder", &format!("d{i}"), &format!("repo/src/d{i}"),
+                &format!("{base}/repo/src/d{i}"), None, Some(&p),
+            ).await.unwrap();
+        }
+
+        let all = s.list_folders_by_project(&p).await.unwrap();
+        assert_eq!(all.len(), 32, "full list keeps roots + all descendants");
+
+        let roots = s.list_root_folders_by_project(&p).await.unwrap();
+        assert_eq!(roots.len(), 2, "root list is repo roots only");
+        assert!(
+            roots.iter().all(|f| matches!(f["kind"].as_str(), Some("git") | Some("standalone"))),
+            "root list must contain no `kind:'folder'` descendants",
+        );
+        // The repo root's abs_path (what cwd→project resolution needs) survives.
+        assert!(roots.iter().any(|f| f["abs_path"] == format!("{base}/repo")));
+
+        s.delete_project(&p).await.unwrap();
+    }
+
+    #[tokio::test]
     async fn project_update() {
         let s = pg_store().await;
         let id = s.create_project("_test:proj:update", None, None).await.unwrap();
@@ -9815,6 +9976,142 @@ mod tests {
         let s = pg_store().await;
         let fake = uuid::Uuid::new_v4();
         assert!(s.get_project(&fake).await.unwrap().is_none());
+    }
+
+    // ── Name-duplicate phantom-project guard (creation + heal) ─────────
+
+    /// Guard A: the scan-time creation path is get-or-adopt, not
+    /// select-then-insert — a repeat call for the same name ADOPTS the existing
+    /// row instead of minting a second (the mechanism that produced the 0-folder
+    /// phantom).
+    #[tokio::test]
+    async fn get_or_create_project_by_name_is_idempotent() {
+        let Ok(s) = PgStore::connect_test().await else { return; };
+        let name = format!("_test:dupname:{}", uuid::Uuid::new_v4());
+
+        let (id1, created1) = s.get_or_create_project_by_name(&name).await.unwrap();
+        assert!(created1, "first call should mint the project");
+        let (id2, created2) = s.get_or_create_project_by_name(&name).await.unwrap();
+        assert!(!created2, "second call should adopt, not create");
+        assert_eq!(id1, id2, "same name must resolve to the same project id");
+
+        let (count,): (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*) FROM sensei.projects WHERE name = $1"
+        ).bind(&name).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(count, 1, "exactly one project row for the name");
+
+        s.delete_project(&id1).await.ok();
+    }
+
+    /// Guard A: when a folder-bearing project of the name already exists, the
+    /// creation path adopts THAT one (not a fresh row) — no second "sensei".
+    #[tokio::test]
+    async fn get_or_create_adopts_folder_bearing_project_no_duplicate() {
+        let Ok(s) = PgStore::connect_test().await else { return; };
+        let name = format!("_test:dupname:{}", uuid::Uuid::new_v4());
+
+        let keep = s.create_project(&name, None, None).await.unwrap();
+        let fid = create_test_folder(&s, &format!("dupname-{}", uuid::Uuid::new_v4())).await;
+        sqlx_core::query::query("UPDATE sensei.folders SET project_id = $1 WHERE id = $2")
+            .bind(keep).bind(fid).execute(s.pool()).await.unwrap();
+
+        let (resolved, created) = s.get_or_create_project_by_name(&name).await.unwrap();
+        assert!(!created, "should adopt the existing folder-bearing project");
+        assert_eq!(resolved, keep, "must resolve to the folder-bearing project");
+
+        let (count,): (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*) FROM sensei.projects WHERE name = $1"
+        ).bind(&name).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(count, 1, "exactly one project row for the name");
+
+        sqlx_core::query::query("DELETE FROM sensei.folders WHERE id = $1").bind(fid).execute(s.pool()).await.ok();
+        s.delete_project(&keep).await.ok();
+    }
+
+    /// Guard B: a 0-folder discovery phantom sharing its name with a
+    /// folder-bearing project is pruned (merged into the survivor); its FK rows
+    /// (here a session) are reassigned, never orphaned; a re-run is a no-op.
+    #[tokio::test]
+    async fn heal_duplicate_name_projects_prunes_empty_dupe_idempotently() {
+        let Ok(s) = PgStore::connect_test().await else { return; };
+        let name = format!("_test:dupheal:{}", uuid::Uuid::new_v4());
+
+        // Survivor: folder-bearing project.
+        let keep = s.create_project(&name, None, None).await.unwrap();
+        let fid = create_test_folder(&s, &format!("dupheal-{}", uuid::Uuid::new_v4())).await;
+        sqlx_core::query::query("UPDATE sensei.folders SET project_id = $1 WHERE id = $2")
+            .bind(keep).bind(fid).execute(s.pool()).await.unwrap();
+
+        // Phantom: second same-name project, 0 folders, maturity=discovery (default),
+        // carrying a session so we can prove the heal reassigns FK rows.
+        let phantom = s.create_project(&name, None, None).await.unwrap();
+        let (sess,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO activity.sessions(folder_id, project_id, task) VALUES($1, $2, $3) RETURNING id"
+        ).bind(fid).bind(phantom).bind("_test:dupheal-session").fetch_one(s.pool()).await.unwrap();
+
+        s.heal_duplicate_name_projects().await.unwrap();
+
+        // Phantom gone, survivor stays.
+        let (phantom_exists,): (bool,) = sqlx_core::query_as::query_as(
+            "SELECT EXISTS(SELECT 1 FROM sensei.projects WHERE id = $1)"
+        ).bind(phantom).fetch_one(s.pool()).await.unwrap();
+        assert!(!phantom_exists, "empty phantom should be pruned");
+        assert!(s.get_project(&keep).await.unwrap().is_some(), "folder-bearing survivor must remain");
+
+        // Survivor still owns its folder; the phantom's session followed it.
+        let (folder_project,): (Option<uuid::Uuid>,) = sqlx_core::query_as::query_as(
+            "SELECT project_id FROM sensei.folders WHERE id = $1"
+        ).bind(fid).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(folder_project, Some(keep), "survivor keeps its folder");
+        let (sess_project,): (Option<uuid::Uuid>,) = sqlx_core::query_as::query_as(
+            "SELECT project_id FROM activity.sessions WHERE id = $1"
+        ).bind(sess).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(sess_project, Some(keep), "phantom's session must be reassigned to the survivor, not orphaned");
+
+        // Idempotent: after the heal exactly one project remains for the name and
+        // a re-run leaves it untouched.
+        s.heal_duplicate_name_projects().await.unwrap();
+        let (count,): (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*) FROM sensei.projects WHERE name = $1"
+        ).bind(&name).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(count, 1, "exactly one project remains for the name; re-run is a no-op");
+
+        sqlx_core::query::query("DELETE FROM activity.sessions WHERE id = $1").bind(sess).execute(s.pool()).await.ok();
+        sqlx_core::query::query("DELETE FROM sensei.folders WHERE id = $1").bind(fid).execute(s.pool()).await.ok();
+        s.delete_project(&keep).await.ok();
+    }
+
+    /// Guard B negative: two DIFFERENT repos (different paths) that share a name
+    /// are BOTH folder-bearing — legitimately distinct projects (identity =
+    /// path, not name) — and must NOT be merged.
+    #[tokio::test]
+    async fn heal_leaves_two_folder_bearing_same_name_projects() {
+        let Ok(s) = PgStore::connect_test().await else { return; };
+        let name = format!("_test:dupneg:{}", uuid::Uuid::new_v4());
+
+        let a = s.create_project(&name, None, None).await.unwrap();
+        let fa = create_test_folder(&s, &format!("dupneg-a-{}", uuid::Uuid::new_v4())).await;
+        sqlx_core::query::query("UPDATE sensei.folders SET project_id = $1 WHERE id = $2")
+            .bind(a).bind(fa).execute(s.pool()).await.unwrap();
+
+        let b = s.create_project(&name, None, None).await.unwrap();
+        let fb = create_test_folder(&s, &format!("dupneg-b-{}", uuid::Uuid::new_v4())).await;
+        sqlx_core::query::query("UPDATE sensei.folders SET project_id = $1 WHERE id = $2")
+            .bind(b).bind(fb).execute(s.pool()).await.unwrap();
+
+        s.heal_duplicate_name_projects().await.unwrap();
+
+        assert!(s.get_project(&a).await.unwrap().is_some(), "first folder-bearing project must survive");
+        assert!(s.get_project(&b).await.unwrap().is_some(), "second folder-bearing project must survive");
+        let (count,): (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*) FROM sensei.projects WHERE name = $1"
+        ).bind(&name).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(count, 2, "two folder-bearing same-name projects must both survive");
+
+        for (p, f) in [(a, fa), (b, fb)] {
+            sqlx_core::query::query("DELETE FROM sensei.folders WHERE id = $1").bind(f).execute(s.pool()).await.ok();
+            s.delete_project(&p).await.ok();
+        }
     }
 
     // ── Index Errors tests ───────────────────────────────────────────
