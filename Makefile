@@ -266,9 +266,11 @@ mcp-refresh-note:
 	  && echo "  ✓ ran 'sensei upgrade' — assistant plugins refreshed" || true
 	@echo ""
 	@echo "  ⚠  Refresh the sensei MCP/plugin so clients run this binary:"
-	@echo "       claude plugin update sensei"
-	@echo "     (a running Claude Code session must reconnect its sensei MCP —"
-	@echo "      an in-session stdio subprocess cannot be self-healed by install)"
+	@echo "       claude plugin update sensei@sensei-marketplace"
+	@echo "     (the marketplace qualifier is REQUIRED — a bare 'sensei' is 'not found'.)"
+	@echo "     Only needed when the MCP tool surface or plugin hooks change; daemon-only"
+	@echo "     upgrades are live immediately (the MCP is a thin proxy to :7744). A running"
+	@echo "     Claude Code session applies it on restart (or an /mcp reconnect)."
 	@echo ""
 
 # ── Desktop app dev / e2e ─────────────────────────────────────────────────────

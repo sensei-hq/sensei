@@ -122,12 +122,16 @@ fn plugin_recorded_version(manifest_path: &Path) -> Option<String> {
     first.get("version").and_then(|p| p.as_str()).map(String::from)
 }
 
-/// argv for `claude plugin update sensei`. Extracted so the exact invocation
-/// can be asserted in a unit test without executing it — running the real
-/// `claude plugin update` would mutate the installed plugin. Mirrors the
-/// inline install args (`plugin install sensei …`) in `configure()`.
+/// argv for `claude plugin update sensei@sensei-marketplace`. The plugin MUST
+/// be referenced with its marketplace qualifier — a bare `sensei` is rejected
+/// by Claude Code with "Plugin not found" (verified live: `claude plugin update
+/// sensei` fails, `…sensei@sensei-marketplace` succeeds). This matches the
+/// `sensei@sensei-marketplace` key used everywhere else in this file
+/// (enabledPlugins, installed manifest). Extracted so the exact invocation can
+/// be asserted in a unit test without executing it — running the real `claude
+/// plugin update` would mutate the installed plugin.
 fn plugin_update_args() -> [&'static str; 3] {
-    ["plugin", "update", "sensei"]
+    ["plugin", "update", "sensei@sensei-marketplace"]
 }
 
 /// Path to Claude Code's `installed_plugins.json` (under the user's home).
@@ -494,7 +498,7 @@ impl Assistant for ClaudeCodeAssistant {
             .args(plugin_update_args())
             .output()
             .map_err(|e| format!("plugin update: spawn failed: {}", e))?;
-        log_subprocess("claude plugin update sensei", &update_out);
+        log_subprocess("claude plugin update sensei@sensei-marketplace", &update_out);
         if !update_out.status.success() {
             return Err(format!("plugin update: {}", combined_output(&update_out)));
         }
@@ -516,7 +520,7 @@ impl Assistant for ClaudeCodeAssistant {
         // Diagnostic breadcrumb: log which version the update landed so an
         // operator can confirm it advanced. Presence (above) is the gate.
         if let Some(v) = plugin_recorded_version(&manifest) {
-            info!(version = %v, "claude plugin update sensei: manifest records sensei@{}", v);
+            info!(version = %v, "claude plugin update sensei@sensei-marketplace: manifest records sensei@{}", v);
         }
 
         Ok(AssistantConfigureOk { plugin: true, warnings: Vec::new() })
@@ -1119,17 +1123,21 @@ mod tests {
     }
     // ── upgrade: command construction + version readback ─────────────────────
     //
-    // The real `claude plugin update sensei` is a side effect (mutates the
-    // installed plugin), so it is NOT executed here. The testable parts mirror
-    // the install path: the exact argv, and the installed_plugins.json readback
-    // that gates/annotates success.
+    // The real `claude plugin update sensei@sensei-marketplace` is a side effect
+    // (mutates the installed plugin), so it is NOT executed here. The testable
+    // parts mirror the install path: the exact argv, and the
+    // installed_plugins.json readback that gates/annotates success.
 
     #[test]
-    fn plugin_update_args_are_update_sensei() {
-        // Lock the exact invocation. A silent reshuffle here (e.g. dropping the
-        // plugin name, or reordering) would send `claude` a different command
-        // and the upgrade would no-op or error without an obvious cause.
-        assert_eq!(plugin_update_args(), ["plugin", "update", "sensei"]);
+    fn plugin_update_args_target_marketplace_qualified_plugin() {
+        // Lock the exact invocation. The marketplace qualifier is REQUIRED — a
+        // bare `sensei` is rejected by Claude Code with "Plugin not found"
+        // (verified live), so dropping the `@sensei-marketplace` suffix would
+        // make every automatic upgrade silently fail.
+        assert_eq!(
+            plugin_update_args(),
+            ["plugin", "update", "sensei@sensei-marketplace"]
+        );
     }
 
     #[test]
