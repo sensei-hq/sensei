@@ -1959,8 +1959,13 @@ port mismatch hive 7755 vs config 8787 (🟢), etc. Chunk order: {R1,R2}→R3→
    rokkit/uno, .env.example (:54321 supabase, :7755 dojo). LIVE magic-link auth vs R5 supabase+Inbucket = Jerry (🔴).
    35 source files; node_modules/.svelte-kit gitignored. NOTE: @kavach pins/wiring are as-committed (report lost to
    limit) — a follow-up glance advisable but check+build are green.
-   ⛔ SESSION USAGE LIMIT HIT (resets ~2:40pm America/Chicago) — CANNOT spawn subagents until reset. So the next chunk
-   waits.
+   ⛔→✅ SESSION USAGE LIMIT (was hit ~2:40pm Chicago) — RESET, resumed after 3:16pm. sensei-mcp resilience shipped
+   post-reset (`89de7c59`).
+   🔨 IN PROGRESS: R9 — Maintainer console screens (subagent a0f16d29) in the R6 console/ app: DojoOverview + DojoTriage
+   (GET /v1/t/{tenant}/triage + POST …/promote) + DojoCandidate (POST …/{sig}/decide), over dojo-mind triage backend.
+   UI 🟢 (svelte-check + build); LIVE triage/decide vs running dojo service + auth = Jerry (🔴). NEXT after R9: R10/R11
+   (admin + client-lead console screens over R7/R8) → then R3 (infer+confirm bind + setup org-tagging; needs the small
+   dojo.memberships org-field DDL). R4 dropped (organic community). Reliability + MCP tracks complete.
    ✅ sensei-mcp RESILIENCE SHIPPED `89de7c59` (2026-07-13) — ⚠️ INVESTIGATION FLIPPED THE FIX. The proposed "add
    reconnect logic + re-fetch the tool list" was based on a WRONG premise. Reading crates/mcp: `handle_list_tools`
    returns a fully STATIC list (hardcoded json!, NOT daemon-fetched), and tool CALLS are per-call reqwest to :7744.
