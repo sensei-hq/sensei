@@ -1674,12 +1674,13 @@ Everything cleanly buildable + no-DDL + end-to-end-verifiable is DONE this run. 
        shell `trap ... EXIT INT TERM` to `make test-app-e2e` that pkills the e2e daemon + `brew services start sensei`
        on ANY exit (redundant with globalTeardown on success, the fix on interrupt). No more "fake data loss" if a
        run is killed. (A separate-port redesign is still the cleaner long-term option — left to Jerry.)
-       (ii) SUITE FLAKINESS on v0.2.43 = ⏳ FILED (NOT done — touches install path) — the observatory e2e suite is heavily red run-to-run (boot-flow fails 4/4 even
-       with my specs ABSENT). Mechanism: `make test-app-e2e` runs `db-backup` of the 502MB prod DB → Spotlight
-       indexing → 94% CPU → the cold health-bootstrap gate (wizard-state.svelte.ts:333 `setupComplete` reconciles only
-       inside a `$effect` gated on healthState.isOk CHANGING) balloons 3s→50-100s → nav timeouts cascade. Fix: skip/
-       shrink the db-backup for e2e, or make the health-gate not depend on the isOk transition. On a settled machine
-       all pass in ~3s. My 2 specs use navigateToScreen (120s budget) which absorbs this.
+       (ii) SUITE FLAKINESS on v0.2.43 = 🟡 PARTIALLY FIXED. Spotlight portion FIXED `da82f4ba`: db-backup now
+       `.metadata_never_index`-marks database/backup (2.6G of dumps) so mds stops indexing new dumps → no 94% CPU
+       spike (helps every install too). RESIDUAL (filed, NOT done — app boot logic, riskier): the cold health-
+       bootstrap gate itself (wizard-state.svelte.ts:333 `setupComplete` reconciles only inside a `$effect` gated on
+       healthState.isOk CHANGING) is timing-sensitive under any load; boot-flow fails 4/4 in pristine runs. Real fix
+       = make the gate not depend on the isOk transition (an app change to boot logic — leave to Jerry). My 2 specs
+       use navigateToScreen (120s budget) which absorbs it regardless.
   • LOW-VALUE REFINE (G): rank4 impact-copy, per-session memory-load correlation, P2c behavioral classifier.
 IDLE-TICK POLICY: each heartbeat still runs the DISK GUARD + checks whether anything unblocked (Jerry steer / a
 DDL pass authorized / Docker), else NO-OP. Do NOT spawn a shipped-schema DDL change unattended. If Jerry wants a
