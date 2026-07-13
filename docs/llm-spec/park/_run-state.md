@@ -1878,7 +1878,13 @@ port mismatch hive 7755 vs config 8787 (🟢), etc. Chunk order: {R1,R2}→R3→
   reconcile + persist the FSEvents cursor (restart-gap) + watch .git/HEAD. P2: continuous invariant self-audit
   (generalize prune_vanished_folders/heal_nested) + `sensei index doctor` + a chaos test injecting watcher drops.
   → OFFERED to build P0 as the next reliability chunk (argued it earns priority over more console screens).
-   NEXT after CI: R6 console (greenfield SvelteKit, @kavach on npm) OR the P0 indexing-hardening chunk (my rec).
+   🔨 P0 INDEXING-HARDENING IN PROGRESS (subagent ab76b535) — Jerry asked "how to make rock solid" → building it.
+   scan_state ALREADY has mtime (bigint) → fast-path needs NO DDL. Scope: (1) mtime fast-path in process_git_folder
+   change-detection (stat mtime vs stored; skip hashing unchanged files; dir-mtime subtree skip) → no-op scan becomes
+   stats-only; (2) reconcile_scheduler runs FREQUENT (default ~120-300s not hourly) + ALWAYS on boot (cheap pass not
+   watermark-gated) ⇒ worst-case staleness ~seconds, watcher no longer load-bearing. Verify cargo test -p senseid.
+   P1 follow-ups queued: watcher watchdog (kill silent freeze) + FSEvents cursor persist + .git/HEAD watch. P2: invariant
+   self-audit + `sensei index doctor` + chaos test. THEN R6 console.
 
 ★★ JERRY DECISIONS 2026-07-13 (UNBLOCK R3/R4/CI) — asked+answered:
  • R3 BIND = INFER + CONFIRM (was blocked). Match project git-remote owner (GitHub/GitLab org) vs the user's joined
