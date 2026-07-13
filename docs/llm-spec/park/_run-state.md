@@ -1612,11 +1612,19 @@ ACTIVE BUILD QUEUE (default-and-proceed order, highest value first):
      version-change, which fires on the next bump+install. No code change.
    • NEXT no-DDL after milestone: F-contribute lane (wire C6 scheduling). [F-benchmarks/F-TDD-gate + C/D = DDL-coord.]
 
-── ⏳ MILESTONE IN PROGRESS (2026-07-13, unattended — Jerry AFK = ideal, no active-work MCP disruption): merging
-   develop→main + `make bump v=patch` (→v0.2.42) + `make install-service` (release; NOT install-app — Actions builds
-   the release .app; local app UI updates at a later full install). Ships Atlas/logs/icon/get_rules LIVE (daemon side)
-   + D2 rescan re-indexes (fixes search-recall/solution_graph/icon-images). ON DONE: curl /health=0.2.42 + get_rules
-   (sensei)→1 rule (scope-fix live) + resolve_project_uuid now indexed (rescan worked).
+── ✅ MILESTONE v0.2.42 SHIPPED + VERIFIED LIVE (2026-07-13, unattended). develop→main `cf0d45ed`, bump `12df213a`
+   (tag v0.2.42; tap 13ba455 / marketplace 0d06505). install-service (bfe95rm5i, exit 0). VERIFIED:
+   • /health = 0.2.42; upgrade pipeline ran again (`✓ sensei upgrade` → claude plugin update sensei@sensei-marketplace).
+   • ✅✅ get_rules SCOPE FIX LIVE: GET /api/knowledge/rules?project=sensei → total 1 (was 9); the 1 = sensei's OWN
+     principle; the unrelated fiction-project rule is GONE. Cross-project bleed fixed on the running daemon.
+   • D2 fired: daemon.last_version=0.2.42 → ScanRoot rescan ENQUEUED (async, draining; 562K nodes).
+   ⚠️ VERIFY NEXT TICK: does the D2 rescan actually RE-INDEX resolve_project_uuid (count still 0 right after boot,
+     rescan in progress)? If it STAYS 0 after the scan drains → D2's ScanRoot is CONTENT-HASH INCREMENTAL, so a
+     binary/parser-only change (same content) is SKIPPED and D2 doesn't re-parse → real follow-up: D2 should FORCE a
+     full re-parse on version change (bypass content-hash diff), not just enqueue incremental ScanRoot. (util.rs DID
+     change in v0.2.40 so the diff SHOULD catch it — confirm.)
+   app UI (Atlas/logs/icon) live in the release .app via Actions; local .app updates at a future full install.
+   NEXT: verify rescan re-index (above) → F-contribute lane (no-DDL). C/D/F-TDD-gate = DDL-coordinated.
 
 ── ⭐ MILESTONE DUE: develop has accumulated since v0.2.41 → Atlas `ff8299af`, logs `b5685e69`, icon `c8054297`,
    get_rules `3089ffd0` (+run-state). Merge develop→main + `make ship`/full `make install` (service+app) to make them
