@@ -296,6 +296,55 @@ pub fn configure(
     result
 }
 
+/// Refresh assistant integrations after a sensei binary upgrade. Mirrors
+/// `configure()`'s target selection: an empty `assistant_ids` slice targets
+/// every *detected* assistant; a non-empty slice targets exactly those ids
+/// (regardless of detection). Each target's [`Assistant::upgrade`] runs and
+/// its outcome is mapped to an [`AdapterResolveReport`] — the same per-adapter
+/// result shape `/api/assistants/resolve` returns — so callers get a
+/// per-assistant array.
+///
+/// For Claude Code this runs `claude plugin update sensei` (fixing the class
+/// of bug where a new sensei binary leaves a stale plugin/MCP behind); every
+/// file-based MCP assistant reports a no-op action (its config re-reads on the
+/// assistant's own restart).
+pub fn upgrade(assistant_ids: &[String]) -> Vec<AdapterResolveReport> {
+    let assistants = all_assistants();
+    let targets: Vec<&Box<dyn Assistant>> = if assistant_ids.is_empty() {
+        assistants.iter().filter(|a| a.detect()).collect()
+    } else {
+        assistants.iter().filter(|a| assistant_ids.contains(&a.id().to_string())).collect()
+    };
+
+    targets
+        .iter()
+        .map(|asst| match asst.upgrade() {
+            Ok(ok) => {
+                let mut actions = Vec::new();
+                if ok.plugin {
+                    actions.push(format!("upgraded {} plugin", asst.id()));
+                }
+                // A no-op assistant carries its explanatory note in warnings;
+                // surface it as an action line (same convention `resolve()`
+                // uses — informational lines land in `actions`).
+                actions.extend(ok.warnings);
+                AdapterResolveReport {
+                    adapter_id: asst.id().to_string(),
+                    ok: true,
+                    actions,
+                    errors: vec![],
+                }
+            }
+            Err(e) => AdapterResolveReport {
+                adapter_id: asst.id().to_string(),
+                ok: false,
+                actions: vec![],
+                errors: vec![e],
+            },
+        })
+        .collect()
+}
+
 /// Broadcast one StateEvent per part. No-op when `tx` is `None` (CLI path)
 /// or when the broadcast channel currently has no subscribers — `send`
 /// returns Err in that case and we ignore it; SSE events are best-effort.
@@ -884,6 +933,51 @@ mod tests {
             assert!(ids.contains(&expected), "missing assistant: {}", expected);
         }
         assert_eq!(ids.len(), 8, "unexpected number of assistants");
+    }
+
+    // ── upgrade() fan-out ──────────────────────────────────────────────
+    //
+    // The fan-out is exercised against a *file-based* assistant id (cursor),
+    // whose upgrade() is the trait default no-op — so no `claude plugin update`
+    // side effect fires. Targeting claude-code here would run the real update
+    // and mutate the installed plugin, so these tests never do that (same
+    // constraint noted for configure/remove at the bottom of this module).
+
+    #[test]
+    fn upgrade_noop_assistant_returns_ok_report_with_note() {
+        let reports = upgrade(&["cursor".to_string()]);
+        assert_eq!(reports.len(), 1, "one target selected → one report");
+        let r = &reports[0];
+        assert_eq!(r.adapter_id, "cursor");
+        assert!(r.ok, "a file-based assistant upgrade is a successful no-op");
+        assert!(r.errors.is_empty());
+        assert!(
+            r.actions.iter().any(|a| a.contains("no upgrade action")),
+            "no-op note should surface as an action; got {:?}", r.actions
+        );
+    }
+
+    #[test]
+    fn upgrade_unknown_id_yields_empty_report_array() {
+        // A non-empty id list that matches nothing selects nothing — no
+        // accidental fallback to "all detected" (which would run the real
+        // claude update).
+        let reports = upgrade(&["does-not-exist".to_string()]);
+        assert!(reports.is_empty());
+    }
+
+    #[test]
+    fn upgrade_report_serialises_as_per_assistant_array() {
+        // Pin the endpoint's wire shape: an array of {adapter_id, ok, actions,
+        // errors}. This is what POST /api/assistants/upgrade hands the CLI/app.
+        let reports = upgrade(&["cursor".to_string()]);
+        let json = serde_json::to_value(&reports).unwrap();
+        let arr = json.as_array().expect("upgrade reports serialise to an array");
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0]["adapter_id"], "cursor");
+        assert_eq!(arr[0]["ok"], true);
+        assert!(arr[0]["actions"].is_array());
+        assert!(arr[0]["errors"].is_array());
     }
 
     // ── Edge cases ─────────────────────────────────────────────────────

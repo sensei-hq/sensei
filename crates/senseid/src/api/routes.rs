@@ -185,6 +185,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/assistants/detect", get(config::assistant_detect))
         .route("/api/assistants/families", get(config::assistant_detect_families))
         .route("/api/assistants/configure", post(config::assistant_configure))
+        .route("/api/assistants/upgrade", post(config::assistant_upgrade))
         .route("/api/assistants/remove", post(config::assistant_remove))
         .route("/api/assistants/health", get(config::assistants_health))
         .route("/api/assistants/resolve", post(config::assistants_resolve))
@@ -1090,6 +1091,84 @@ mod tests {
         assert_eq!(st_sib, StatusCode::OK);
         assert!(!names(&body_sib).contains(&name),
             "sibling `{base}-other` must NOT include the project (path boundary)");
+
+        state.pg.delete_project(&pid).await.unwrap();
+    }
+
+    // ── find_projects returns COMPACT folders (no `kind:'folder'` bloat) ─────
+    //
+    // The `?under=` call is the MCP find_projects discovery path. Its response
+    // carried each project's FULL nested folder tree (hundreds of
+    // `kind:'folder'` descendants) → ~72K chars for sensei, over the MCP client
+    // token cap. The scoped call must now return ONLY repo-root folders
+    // (git/standalone) while keeping the scalar summary fields; the un-`under`
+    // app path is unchanged (full tree). Goes RED if the compact trim regresses.
+    #[tokio::test]
+    async fn find_projects_under_returns_compact_folders() {
+        use sensei_mcp::daemon_request_for;
+        let (app, state) = test_app().await;
+
+        let short = uuid::Uuid::new_v4().simple().to_string()[..8].to_string();
+        let base = format!("/_test/fpc-{short}");
+        let name = format!("fpc-{short}");
+        let pid = state.pg.ensure_test_project(&name).await.unwrap();
+        let pname = state.pg.get_project(&pid).await.unwrap().unwrap()["name"]
+            .as_str().unwrap().to_string();
+        let root = state.pg.add_watch_root(&base, &name, &serde_json::json!([]))
+            .await.unwrap();
+
+        // One git repo root + many nested `kind:'folder'` descendants.
+        state.pg.upsert_folder(&root, "git", &pname, "repo", &format!("{base}/repo"), None, Some(&pid))
+            .await.unwrap();
+        for i in 0..40 {
+            state.pg.upsert_folder(
+                &root, "folder", &format!("d{i}"), &format!("repo/src/d{i}"),
+                &format!("{base}/repo/src/d{i}"), None, Some(&pid),
+            ).await.unwrap();
+        }
+
+        // Scoped (find_projects) → compact folders.
+        let req = daemon_request_for(
+            "find_projects", &serde_json::json!({ "under": base.clone() }), "/x", None,
+        ).unwrap();
+        let (status, body) = send_shaped(&app, &req).await;
+        assert_eq!(status, StatusCode::OK);
+        let proj = body.as_array().unwrap().iter()
+            .find(|p| p["name"].as_str() == Some(&pname))
+            .expect("seeded project must be in the scoped list");
+
+        let folders = proj["folders"].as_array().unwrap();
+        assert_eq!(folders.len(), 1, "scoped response must carry ONLY the repo root, not the 40 descendants");
+        assert!(
+            folders.iter().all(|f| matches!(f["kind"].as_str(), Some("git") | Some("standalone"))),
+            "no `kind:'folder'` rows may leak into the scoped response",
+        );
+        // Scalar summary fields still present.
+        for k in ["id", "name", "maturity", "repos_count", "libs_count", "sessions7d"] {
+            assert!(!proj[k].is_null(), "compact row must still carry `{k}`");
+        }
+        // Rough size guard: even a many-folder project's compact row stays small.
+        let row_bytes = serde_json::to_vec(proj).unwrap().len();
+        assert!(row_bytes < 4096, "compact project row should be small; was {row_bytes} bytes");
+
+        // Un-`under` (the app path: GET /api/projects, no query) → full tree
+        // unchanged. Exercise the real handler branch and assert the seeded
+        // project still carries all 41 folders including `kind:'folder'` rows.
+        let resp = app.clone().oneshot(
+            Request::builder().uri("/api/projects").body(Body::empty()).unwrap()
+        ).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let all: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let app_proj = all.as_array().unwrap().iter()
+            .find(|p| p["name"].as_str() == Some(&pname))
+            .expect("un-scoped list must include the seeded project");
+        let app_folders = app_proj["folders"].as_array().unwrap();
+        assert_eq!(app_folders.len(), 41, "un-scoped (app) folder set keeps roots + descendants");
+        assert!(
+            app_folders.iter().any(|f| f["kind"].as_str() == Some("folder")),
+            "app path must still expose the nested `kind:'folder'` descendants",
+        );
 
         state.pg.delete_project(&pid).await.unwrap();
     }
