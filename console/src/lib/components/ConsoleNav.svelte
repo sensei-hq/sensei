@@ -17,7 +17,9 @@
 		| 'identities'
 		| 'policies'
 		| 'health'
-		| 'audit';
+		| 'audit'
+		| 'engagements'
+		| 'incidents';
 
 	interface NavItem {
 		id: string;
@@ -48,8 +50,14 @@
 				{ id: 'members', kanji: '任', label: 'Members & roles', to: 'members' },
 				{ id: 'identities', kanji: '鍵', label: 'Identities', to: 'identities' },
 				{ id: 'policies', kanji: '規', label: 'Policies', to: 'policies' },
-				{ id: 'scopes', kanji: '層', label: 'Scopes' },
-				{ id: 'clients', kanji: '守', label: 'Clients' }
+				{ id: 'scopes', kanji: '層', label: 'Scopes' }
+			]
+		},
+		{
+			group: 'Clients',
+			items: [
+				{ id: 'engagements', kanji: '客', label: 'Engagements', to: 'engagements' },
+				{ id: 'incidents', kanji: '警', label: 'Incidents', to: 'incidents' }
 			]
 		},
 		{
@@ -79,6 +87,10 @@
 				return resolve('/(console)/console/health');
 			case 'audit':
 				return resolve('/(console)/console/audit');
+			case 'engagements':
+				return resolve('/(console)/console/engagements');
+			case 'incidents':
+				return resolve('/(console)/console/incidents');
 		}
 	}
 </script>
