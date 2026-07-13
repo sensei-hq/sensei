@@ -221,6 +221,15 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
         Arc::new(state.pg.clone()),
     );
 
+    // Index integrity self-audit (P2): a conservative (daily, watermark-gated)
+    // sweep that GENERALIZES the point-fix self-heals into one continuous
+    // invariant checker + repairer — orphan nodes, ghost folders, nested
+    // standalone roots, duplicate-name phantoms. It stats every indexed
+    // file/folder (heavier than the reconcile), so it runs on its own
+    // `audit.last_run` cadence, NOT every reconcile tick. Read-only twin behind
+    // `GET /api/index/doctor` / `sensei index doctor`.
+    crate::tasks::index_audit::spawn(Arc::new(state.pg.clone()));
+
     // Log retention (#74): periodically prune `public.logs` older than the
     // configured window (default 30d, daily). First tick prunes on startup.
     crate::tasks::log_pruner::spawn(Arc::new(state.pg.clone()));

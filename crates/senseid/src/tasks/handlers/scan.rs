@@ -209,11 +209,31 @@ async fn reconcile_roots(
 /// treated as present and kept (never delete on uncertainty). Root folders are
 /// never pruned here. Non-fatal — every DB error is logged and skipped.
 /// Idempotent. Returns the number of ghost folder rows pruned.
+///
+/// Orchestration only: it delegates detection to [`detect_vanished_folders`] and
+/// deletion to [`apply_folder_prune`], so the read-only index integrity audit can
+/// reuse the exact same ghost-folder detection without mutating anything.
 async fn prune_vanished_folders(
     pg: &crate::db::pg_store::PgStore,
     root_id: &uuid::Uuid,
 ) -> u64 {
-    let recorded = pg.list_folders_by_root(root_id).await.unwrap_or_else(|e| { tracing::warn!(error = %e, root_id = %root_id, "prune_vanished_folders: list_folders_by_root failed, skipping"); Vec::new() });
+    apply_folder_prune(pg, &detect_vanished_folders(pg, root_id).await).await
+}
+
+/// Detect (WITHOUT mutating) the ghost folder subtrees under one watch root: a
+/// non-root `kind='folder'` row whose directory is *confirmed* gone on disk, and
+/// which sits under a confirmed-PRESENT project root (the unmounted-volume guard —
+/// see [`prune_vanished_folders`]). Returns `(folder_id, abs_path)` per ghost.
+///
+/// This is the detection half shared by [`prune_vanished_folders`] (which deletes
+/// what this finds) and [`crate::tasks::index_audit`] (which reports it read-only
+/// in `sensei index doctor`, and repairs via [`apply_folder_prune`]). Keeping one
+/// detector means both paths agree on exactly what a "ghost folder" is.
+pub(crate) async fn detect_vanished_folders(
+    pg: &crate::db::pg_store::PgStore,
+    root_id: &uuid::Uuid,
+) -> Vec<(uuid::Uuid, String)> {
+    let recorded = pg.list_folders_by_root(root_id).await.unwrap_or_else(|e| { tracing::warn!(error = %e, root_id = %root_id, "detect_vanished_folders: list_folders_by_root failed, skipping"); Vec::new() });
 
     // Present project roots — a subfolder is eligible only when the root it lives
     // under is confirmed on disk (guards against an unmounted volume / moved repo).
@@ -223,10 +243,10 @@ async fn prune_vanished_folders(
         .filter(|abs| dir_present(std::path::Path::new(abs)))
         .collect();
     if present_roots.is_empty() {
-        return 0; // no confirmed-present root under this watch root — prune nothing
+        return Vec::new(); // no confirmed-present root under this watch root — nothing eligible
     }
 
-    let mut pruned = 0u64;
+    let mut ghosts = Vec::new();
     for r in &recorded {
         // Only non-root subfolders; roots are owned by reconcile_roots.
         if r["kind"].as_str() != Some("folder") {
@@ -243,7 +263,23 @@ async fn prune_vanished_folders(
             continue;
         }
         let Some(id) = crate::api::util::json_uuid(&r["id"]) else { continue };
-        match pg.delete_folder_tree(&id).await {
+        ghosts.push((id, abs.to_string()));
+    }
+    ghosts
+}
+
+/// Delete each detected ghost folder subtree via
+/// [`crate::db::pg_store::PgStore::delete_folder_tree`], cascading its nodes,
+/// edges, scan_state and descendant folder rows. Non-fatal — a failed delete is
+/// logged and skipped. Idempotent. Returns the number pruned. The apply half of
+/// [`detect_vanished_folders`], shared by the scan reconcile and the audit.
+pub(crate) async fn apply_folder_prune(
+    pg: &crate::db::pg_store::PgStore,
+    ghosts: &[(uuid::Uuid, String)],
+) -> u64 {
+    let mut pruned = 0u64;
+    for (id, abs) in ghosts {
+        match pg.delete_folder_tree(id).await {
             Ok(()) => { pruned += 1; tracing::info!("prune_vanished_folders: pruned ghost folder subtree {abs} (dir gone)"); }
             Err(e) => tracing::warn!(error = %e, path = %abs, "prune_vanished_folders: delete_folder_tree failed"),
         }
@@ -253,8 +289,9 @@ async fn prune_vanished_folders(
 
 /// True unless the path is *confirmed* absent (`try_exists() == Ok(false)`). An
 /// errored check (permission, symlink loop) is treated as present so reconcile
-/// never deletes a live index on uncertainty (fail-safe).
-fn dir_present(p: &std::path::Path) -> bool {
+/// never deletes a live index on uncertainty (fail-safe). Works for both files
+/// and directories — the index audit reuses it to test a node's file existence.
+pub(crate) fn dir_present(p: &std::path::Path) -> bool {
     !matches!(p.try_exists(), Ok(false))
 }
 
