@@ -1931,8 +1931,9 @@ port mismatch hive 7755 vs config 8787 (🟢), etc. Chunk order: {R1,R2}→R3→
    report) + GET /api/watcher/status (watcher health) supersede manual DB spelunking. [[reference_scan_reconcile_ops]]
    ✅✅✅ MERGE MILESTONE DONE (Jerry approved) — develop→main MERGED + v0.3.0 RELEASED. Merge `72bc648a`: only 1
    trivial conflict (senseid Cargo.toml transitional hive-protocol line → took develop; hive-* dirs gone, dojo-* in,
-   0 stale hive refs, compiled clean pre-commit). `make bump v=0.3.0` `5743ee50` → tag pushed, subtrees synced, CI
-   building (run 29272868309, watch bfhg6d2w9). main now = the full dojo-world (consolidation + capture cluster +
+   0 stale hive refs, compiled clean pre-commit). `make bump v=0.3.0` `5743ee50` → tag pushed, subtrees synced,
+   ✅ v0.3.0 CI 7/7 GREEN (run 29272868309): all 5 artifacts published, tap @0.3.0 with real SHAs. main now = the
+   full dojo-world (consolidation + capture cluster +
    reliability P0-P2 + R2/R5/R7/R8 + CI fixes). develop==main content now (both at the same code; develop VERSION
    still 0.2.43-era, main 0.3.0 — next develop work continues from here).
    ⚑ FLAGS: (1) LOCAL DAEMON: 🔨 REBUILDING v0.3.0 (install bfz7tm28s, Jerry asked) → will report 0.3.0 + use v0.3.0
