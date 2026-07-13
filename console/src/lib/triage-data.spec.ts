@@ -71,10 +71,11 @@ describe('listTriage', () => {
 	it('throws a TriageApiError carrying the API error message on non-2xx', async () => {
 		const { fn } = fakeFetch(403, { error: 'maintainer role required' });
 		await expect(listTriage('t/x', { fetch: fn })).rejects.toMatchObject({
-			name: 'TriageApiError',
+			name: 'DojoApiError',
 			status: 403,
 			message: 'maintainer role required'
 		});
+		await expect(listTriage('t/x', { fetch: fn })).rejects.toBeInstanceOf(TriageApiError);
 	});
 });
 
