@@ -1760,8 +1760,19 @@ port mismatch hive 7755 vs config 8787 (🟢), etc. Chunk order: {R1,R2}→R3→
    ✅ SHIPPED `867a6502` (develop, agent ae6ed6e4) — verified by me: cargo build clean (gateway over https now),
    clippy 0, 12 new/touched tests green incl. db-gated prune_vanished/heal_nested_standalone/list_indexed_files
    (ran vs sensei_test). New: is_inside_git_repo() fs-walk, prune_vanished(), reconcile_scheduler (boot+hourly),
-   heal_nested_standalone_roots() reusing merge_projects. No DDL. ⏳ LIVE-VERIFY PENDING: install-service + restart →
-   boot reconcile self-heals → confirm dojo-mind folder under sensei ff1ccea2, phantom 81694788 gone, Hive* pruned.
+   heal_nested_standalone_roots() reusing merge_projects. No DDL.
+   ── LIVE-VERIFY (release install `bkk4zzuih` @ 08:17 → boot reconcile ran, reconcile.last_run set): PARTIAL PASS +
+   1 GAP FOUND. ✅ phantom project 81694788 REMOVED; ✅ crates/dojo-mind reattached kind=folder under sensei ff1ccea2
+   AND its code re-indexed (DojoConfig/DojoDb/DojoStore class nodes now on the repo-root git folder — the normal
+   node→repo-root attribution; my first "dojo-mind 0 nodes" alarm was a query artifact, not real). ❌ GAP: the OLD
+   crates/hive-mind DIR (moved→dojo-mind) is gone from disk but its DB subtree survived — 3 ghost folder rows
+   (638696c0 hive-mind, ed42fa27 …/src, a8900cb3 …/src/collective) + 137 orphan nodes. ROOT CAUSE: prune_vanished
+   scopes to ONE folder_id's (repo-root) file set; nodes under a VANISHED SUBFOLDER row are out of scope + the scanner
+   never descends into a gone dir, so no path reconciles them. reconcile_roots=roots only; heal=standalone only. →
+   🔨 FOLLOW-UP FIX delegated to subagent a0cd31ad: PgStore::prune_vanished_folders(root) — drop folder rows whose
+   dir vanished (cascade subtree via delete_folder_tree), wired into reconcile, SAFE (skip absent/unmounted roots),
+   TDD. Post-install the reconcile self-heals the 137 hive-mind orphans. NOTE: 11247 folder rows total — the sweep may
+   clear other moved/deleted-dir ghosts too (good). LESSON: unit-green ≠ live-converged — always live-verify.
 
 ── 🐛 CI FAILURE (Jerry flagged 2026-07-13): GitHub Actions release.yml failing on the gateway dep. ROOT CAUSE =
    NOT a private-repo/rev problem. sensei-hq/gateway is PUBLIC + rev 01d0ab2 (=HEAD of main) resolves anonymously
