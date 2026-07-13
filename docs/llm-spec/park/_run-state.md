@@ -1612,11 +1612,31 @@ ACTIVE BUILD QUEUE (default-and-proceed order, highest value first):
      version-change, which fires on the next bump+install. No code change.
    • NEXT no-DDL after milestone: F-contribute lane (wire C6 scheduling). [F-benchmarks/F-TDD-gate + C/D = DDL-coord.]
 
-── ⏳ MILESTONE IN PROGRESS (2026-07-13, unattended — Jerry AFK = ideal, no active-work MCP disruption): merging
-   develop→main + `make bump v=patch` (→v0.2.42) + `make install-service` (release; NOT install-app — Actions builds
-   the release .app; local app UI updates at a later full install). Ships Atlas/logs/icon/get_rules LIVE (daemon side)
-   + D2 rescan re-indexes (fixes search-recall/solution_graph/icon-images). ON DONE: curl /health=0.2.42 + get_rules
-   (sensei)→1 rule (scope-fix live) + resolve_project_uuid now indexed (rescan worked).
+── ✅ MILESTONE v0.2.42 SHIPPED + VERIFIED LIVE (2026-07-13, unattended). develop→main `cf0d45ed`, bump `12df213a`
+   (tag v0.2.42; tap 13ba455 / marketplace 0d06505). install-service (bfe95rm5i, exit 0). VERIFIED:
+   • /health = 0.2.42; upgrade pipeline ran again (`✓ sensei upgrade` → claude plugin update sensei@sensei-marketplace).
+   • ✅✅ get_rules SCOPE FIX LIVE: GET /api/knowledge/rules?project=sensei → total 1 (was 9); the 1 = sensei's OWN
+     principle; the unrelated fiction-project rule is GONE. Cross-project bleed fixed on the running daemon.
+   • D2 fired: daemon.last_version=0.2.42 → ScanRoot rescan ENQUEUED (async, draining; 562K nodes).
+   app UI (Atlas/logs/icon) live in the release .app via Actions; local .app updates at a future full install.
+
+── ✅✅ P0 FIX SHIPPED `c9ef8b61` + VERIFIED LIVE (2026-07-13). Targeted `sensei scan` of the sensei repo:
+   daemon PID UNCHANGED (no crash), GGML_ASSERT stayed 106 (zero new aborts), sensei nodes 6598→9340 (+2742),
+   resolve_project_uuid 0→2 + pack_embed_batches/cap_embed_input now indexed. CAPTURE UNFROZEN. search/graph now
+   see current code. NEXT milestone bump+install → clean FULL D2 rescan (all watch roots, crash-free) refreshes the
+   whole graph.  [Prior line:] ── ✅ P0 FIX SHIPPED `c9ef8b61` (2026-07-13, develop):
+   Real root cause (sharper than hypothesis): per-BATCH token overflow — embed_nodes packed 64 texts into ONE
+   Payload::Embed; gateway-embedded LlamaCppAdapter sums ALL seqs into a SINGLE ctx.encode() bounded by n_ubatch=512
+   (BERT encoder, no ubatch split) → 64 code texts ≫512 tok → GGML_ASSERT abort. Char cap was wrong unit AND wrong
+   level (per-input, not per-batch). FIX (senseid): cap_embed_input (token-safe per-input) + est_tokens + greedy
+   pack_embed_batches (≤384 tok & ≤64 seq/batch) + compile-time asserts; embed_nodes iterates packed batches. Found
+   +fixed a 2ND abort vector (corrections.rs aggregate_corrections embedded 64 uncapped prompts). D2 crash-recovery:
+   last_version now committed only AFTER the rescan drains (spawn_version_commit_watcher) → aborted scan re-triggers.
+   29 tests, clippy 0, no DDL. GH-issue flagged (NOT edited): sensei-hq/gateway LlamaCppAdapter should split encodes
+   ≤n_ubatch / guard the abort. VERIFY ON INSTALL: daemon 0.2.42 (no bump) → `sensei scan <sensei repo>` → daemon
+   does NOT crash + sensei node count grows past 6598 + resolve_project_uuid indexes. (D2 won't auto-fire — same
+   version; targeted scan tests the embed path directly. D2 crash-recovery is unit-proven.) Release via next milestone.
+   (Was: FIX BUILDING a2d911f2.) — [[project_executor_hang]] embed cap was insufficient for n_ubatch.
 
 ── ⭐ MILESTONE DUE: develop has accumulated since v0.2.41 → Atlas `ff8299af`, logs `b5685e69`, icon `c8054297`,
    get_rules `3089ffd0` (+run-state). Merge develop→main + `make ship`/full `make install` (service+app) to make them

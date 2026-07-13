@@ -5,10 +5,38 @@
 use super::super::executor::TaskContext;
 use super::super::Task;
 
-/// Texts embedded per gateway call.
-const EMBED_BATCH: usize = 64;
 /// Expected embedding width — matches the `vector(384)` column on sensei.nodes.
 const EMBED_DIM: usize = 384;
+/// The embed chain's micro-batch token limit. gateway-embedded builds the
+/// `embed` model with `n_ctx = n_batch = n_ubatch = 512` (`LlamaCppConfig::embed`
+/// in gateway-embedded `adapters/llama_cpp.rs`). Its BERT-class encoder
+/// processes a whole batch in ONE `encode()` with no ubatch splitting, so
+/// llama.cpp asserts `n_ubatch >= (SUM of tokens over EVERY sequence in the
+/// batch)`. Violating it calls `abort()` (a `GGML_ASSERT`) which is UNCATCHABLE
+/// and kills the daemon mid-scan — so each batch's *total* token count must be
+/// kept under this, conservatively, BEFORE the call. A char cap on a single
+/// input can't help: the encoder sees the batch total, not the longest input.
+const EMBED_UBATCH_TOKENS: usize = 512;
+/// Conservative per-batch token budget, held well under `EMBED_UBATCH_TOKENS`
+/// to absorb tokenizer variance and the per-sequence BOS token the model
+/// prepends. `pack_embed_batches` never lets a batch's estimated tokens exceed
+/// this, so the encoder's `n_ubatch >= total_tokens` assert always holds.
+const EMBED_BATCH_TOKEN_BUDGET: usize = 384;
+/// Max sequences per batch — the embed model's `n_seq_max`. The token budget
+/// usually binds first, but a flood of tiny texts must still not exceed it.
+const EMBED_MAX_SEQS: usize = 64;
+/// Hard character cap for a single embed input. Guarantees one text alone can
+/// never approach n_ubatch: the wordpiece embed model emits at most one token
+/// per character, so ≤ 256 chars ⇒ ≤ 257 tokens (with BOS) < 512. The head
+/// (kind + name + signature start) carries the semantic signal.
+const EMBED_MAX_CHARS: usize = 256;
+
+// Machine-check the abort-prevention invariants at compile time, or a batch
+// could trip the GGML abort: the full-batch budget must stay under the
+// encoder's n_ubatch, and a lone maximal input (EMBED_MAX_CHARS chars + 1 BOS
+// token) must fit within that budget so it always packs into some batch.
+const _: () = assert!(EMBED_BATCH_TOKEN_BUDGET < EMBED_UBATCH_TOKENS);
+const _: () = assert!(EMBED_MAX_CHARS < EMBED_BATCH_TOKEN_BUDGET);
 /// Per-batch wall-clock cap for the embedding call. Embedding is best-effort and
 /// backfillable, so a slow/stalled backend (e.g. Ollama not responding) must
 /// never hang a worker — that would starve resolve_libs and block the folder
@@ -35,23 +63,71 @@ fn embed_text(kind: &str, name: &str, signature: Option<&str>, file_path: &str) 
         s.push_str(file_path);
         s.push(']');
     }
-    // Cap length so a long signature/name can't exceed the embedding model's
-    // context window. all-minilm holds ~256 tokens; dense content (e.g. a const
-    // whose "signature" is a large inline JSON/data array) can tokenise at well
-    // under one char per token, so even 480 chars overflowed ("input length
-    // exceeds the context length"). 256 chars keeps the head (kind + name +
-    // signature start — the signal) inside the window for such dense inputs;
-    // the per-text fallback in `embed_nodes` covers any residual. Truncate on a
-    // char boundary.
-    const MAX: usize = 256;
-    if s.len() > MAX {
-        let mut end = MAX;
+    cap_embed_input(s)
+}
+
+/// Truncate a single embed input to a token-safe length on a char boundary
+/// (`EMBED_MAX_CHARS`). Pure. Keeps a lone input's token count well under the
+/// encoder's n_ubatch (see `EMBED_MAX_CHARS`) — but note this alone does NOT
+/// prevent the daemon-killing abort: the encoder asserts on the *batch* total,
+/// so `pack_embed_batches` bounds the per-batch sum as well.
+///
+/// `s.len()` is a BYTE count; comparing it to a char cap only ever truncates
+/// *earlier* for multi-byte text (fewer chars ⇒ fewer tokens), so it stays safe.
+pub(crate) fn cap_embed_input(mut s: String) -> String {
+    if s.len() > EMBED_MAX_CHARS {
+        let mut end = EMBED_MAX_CHARS;
         while !s.is_char_boundary(end) {
             end -= 1;
         }
         s.truncate(end);
     }
     s
+}
+
+/// Conservative upper bound on the tokens one capped embed input produces, used
+/// only to *pack* batches — never to reject. The wordpiece embed model emits
+/// ≤ 1 token per character and prepends a single BOS, so `chars + 1` can never
+/// under-count the real length (an under-count is what would abort the daemon).
+fn est_tokens(text: &str) -> usize {
+    text.chars().count() + 1
+}
+
+/// Group `texts` (each already `cap_embed_input`-bounded by `embed_text`) into
+/// batches whose combined conservative token estimate stays within
+/// `EMBED_BATCH_TOKEN_BUDGET` and whose length stays within `EMBED_MAX_SEQS`,
+/// returning in-order index groups into `texts`.
+///
+/// This is the load-bearing guard against the GGML abort: the embed chain's
+/// BERT encoder processes a whole batch in a single `encode()` bounded by
+/// n_ubatch, so the *sum* of tokens over every sequence — not any one input —
+/// must stay under it. A fixed 64-count batch of ordinary code-symbol texts
+/// sums to thousands of tokens and aborts. Because each input is pre-capped to
+/// ≤ `EMBED_MAX_CHARS`, a lone text (est ≤ 257) always fits a batch, so no node
+/// is ever dropped. Pure — unit-tested below. Shared with the corrections-embed
+/// path (`corrections::embed_items`) so both bound the encoder identically.
+pub(crate) fn pack_embed_batches(texts: &[String]) -> Vec<Vec<usize>> {
+    let mut batches: Vec<Vec<usize>> = Vec::new();
+    let mut current: Vec<usize> = Vec::new();
+    let mut current_tokens = 0usize;
+    for (i, text) in texts.iter().enumerate() {
+        let t = est_tokens(text);
+        // Close the current batch before adding this text would breach the
+        // token budget or the sequence cap. Never split off the very first
+        // element (a lone capped text is always within budget).
+        let would_overflow = !current.is_empty()
+            && (current_tokens + t > EMBED_BATCH_TOKEN_BUDGET || current.len() >= EMBED_MAX_SEQS);
+        if would_overflow {
+            batches.push(std::mem::take(&mut current));
+            current_tokens = 0;
+        }
+        current.push(i);
+        current_tokens += t;
+    }
+    if !current.is_empty() {
+        batches.push(current);
+    }
+    batches
 }
 
 /// Outcome of embedding one batch of texts.
@@ -129,21 +205,28 @@ pub async fn embed_nodes(ctx: &TaskContext, task: &Task) -> Result<u32, String> 
         return Ok(0);
     }
 
+    // Build the capped embed text for every pending node once, then pack them
+    // into token-bounded batches. Batching by a fixed count (the old 64) let a
+    // batch's summed tokens exceed the encoder's n_ubatch and abort the whole
+    // daemon; `pack_embed_batches` guarantees each encode stays under it.
+    let texts: Vec<String> = nodes
+        .iter()
+        .map(|(_, kind, name, sig, fp)| embed_text(kind, name, sig.as_deref(), fp))
+        .collect();
+    let batches = pack_embed_batches(&texts);
+
     let mut embedded = 0u32;
     let mut consecutive_failures = 0u32;
-    for chunk in nodes.chunks(EMBED_BATCH) {
-        let texts: Vec<String> = chunk
-            .iter()
-            .map(|(_, kind, name, sig, fp)| embed_text(kind, name, sig.as_deref(), fp))
-            .collect();
+    for batch in &batches {
+        let batch_texts: Vec<String> = batch.iter().map(|&i| texts[i].clone()).collect();
 
         // Embedding is best-effort and backfillable: a stalled or erroring
         // backend must never fail the task or freeze the worker.
-        match embed_batch(ctx, texts.clone()).await {
-            BatchOutcome::Ok(vectors) if vectors.len() == chunk.len() => {
+        match embed_batch(ctx, batch_texts.clone()).await {
+            BatchOutcome::Ok(vectors) if vectors.len() == batch.len() => {
                 consecutive_failures = 0;
-                for ((id, ..), vector) in chunk.iter().zip(vectors.iter()) {
-                    store_embedding(ctx, id, vector, &mut embedded).await?;
+                for (&i, vector) in batch.iter().zip(vectors.iter()) {
+                    store_embedding(ctx, &nodes[i].0, vector, &mut embedded).await?;
                 }
             }
             // A count mismatch or a backend error (typically one text exceeding
@@ -155,15 +238,16 @@ pub async fn embed_nodes(ctx: &TaskContext, task: &Task) -> Result<u32, String> 
                     tracing::debug!("embed_nodes: {} — batch failed, retrying per-text: {e}", task.folder_name());
                 }
                 let mut any_ok = false;
-                for ((id, kind, name, _, _), text) in chunk.iter().zip(texts) {
+                for (&i, text) in batch.iter().zip(batch_texts) {
                     match embed_batch(ctx, vec![text]).await {
                         BatchOutcome::Ok(mut v) => {
                             if let Some(vector) = v.pop() {
-                                store_embedding(ctx, id, &vector, &mut embedded).await?;
+                                store_embedding(ctx, &nodes[i].0, &vector, &mut embedded).await?;
                                 any_ok = true;
                             }
                         }
                         BatchOutcome::Failed(e) => {
+                            let (_, kind, name, ..) = &nodes[i];
                             tracing::debug!("embed_nodes: skip {kind} {name} — {e}");
                         }
                         BatchOutcome::TimedOut => {
@@ -215,5 +299,94 @@ mod tests {
         let huge = "x".repeat(5000);
         let t = embed_text("function", "f", Some(&huge), "a.rs");
         assert!(t.len() <= 256, "embed text should be capped, got {}", t.len());
+    }
+
+    #[test]
+    fn cap_embed_input_leaves_short_text_unchanged() {
+        assert_eq!(cap_embed_input("function get_user".into()), "function get_user");
+    }
+
+    #[test]
+    fn cap_embed_input_truncates_overlong_ascii_under_ubatch() {
+        // A 1-char-per-token worst case (ASCII): capped chars ⇒ capped tokens.
+        let huge = "x".repeat(5000);
+        let capped = cap_embed_input(huge);
+        assert!(capped.len() <= EMBED_MAX_CHARS, "byte length capped");
+        assert!(
+            est_tokens(&capped) < EMBED_UBATCH_TOKENS,
+            "a single input must stay under n_ubatch even worst-case: est {} vs {}",
+            est_tokens(&capped),
+            EMBED_UBATCH_TOKENS,
+        );
+    }
+
+    #[test]
+    fn cap_embed_input_worst_case_multibyte_under_ubatch() {
+        // All multi-byte codepoints: byte-based cap truncates even earlier, so
+        // the char (⇒ token upper-bound) count is well under n_ubatch.
+        let emoji = "🚀".repeat(5000); // 4 bytes each
+        let capped = cap_embed_input(emoji);
+        assert!(capped.len() <= EMBED_MAX_CHARS);
+        assert!(
+            est_tokens(&capped) < EMBED_UBATCH_TOKENS,
+            "multibyte worst case must stay under n_ubatch: est {}",
+            est_tokens(&capped),
+        );
+    }
+
+    /// Every batch a packer produces must be safe to hand to the encoder: its
+    /// summed conservative token estimate must not exceed n_ubatch (the abort
+    /// threshold), it must respect the sequence cap, and — flattened, in order —
+    /// it must cover every input exactly once.
+    fn assert_batches_safe(texts: &[String], batches: &[Vec<usize>]) {
+        let mut flat: Vec<usize> = Vec::new();
+        for b in batches {
+            assert!(!b.is_empty(), "no empty batches");
+            assert!(b.len() <= EMBED_MAX_SEQS, "batch exceeds seq cap: {}", b.len());
+            let sum: usize = b.iter().map(|&i| est_tokens(&texts[i])).sum();
+            assert!(
+                sum <= EMBED_BATCH_TOKEN_BUDGET,
+                "batch est {sum} exceeds budget {EMBED_BATCH_TOKEN_BUDGET}",
+            );
+            assert!(sum < EMBED_UBATCH_TOKENS, "batch est {sum} would abort the encoder");
+            flat.extend(b.iter().copied());
+        }
+        assert_eq!(flat, (0..texts.len()).collect::<Vec<_>>(), "batches cover all inputs in order");
+    }
+
+    #[test]
+    fn pack_empty_yields_no_batches() {
+        assert!(pack_embed_batches(&[]).is_empty());
+    }
+
+    #[test]
+    fn pack_worst_case_max_length_texts_never_exceed_ubatch() {
+        // Many maximal (capped) inputs — the exact shape that used to abort as a
+        // fixed 64-count batch. Every produced batch must stay under n_ubatch.
+        let texts: Vec<String> = (0..200).map(|_| "x".repeat(EMBED_MAX_CHARS)).collect();
+        let batches = pack_embed_batches(&texts);
+        assert_batches_safe(&texts, &batches);
+        // At ~257 est tokens each and a 384 budget, each batch holds exactly one.
+        assert!(batches.iter().all(|b| b.len() == 1), "max-length texts pack one per batch");
+    }
+
+    #[test]
+    fn pack_small_texts_group_together_up_to_seq_cap() {
+        let texts: Vec<String> = (0..150).map(|_| "fn a".to_string()).collect();
+        let batches = pack_embed_batches(&texts);
+        assert_batches_safe(&texts, &batches);
+        // est_tokens("fn a") = 5; the 64-seq cap binds before the token budget
+        // (64*5 = 320 ≤ 384), so full batches are exactly EMBED_MAX_SEQS.
+        assert_eq!(batches[0].len(), EMBED_MAX_SEQS, "small texts fill to the seq cap");
+    }
+
+    #[test]
+    fn pack_mixed_lengths_stay_safe() {
+        let mut texts: Vec<String> = Vec::new();
+        for i in 0..300 {
+            texts.push(if i % 7 == 0 { "x".repeat(EMBED_MAX_CHARS) } else { "kind name".to_string() });
+        }
+        let batches = pack_embed_batches(&texts);
+        assert_batches_safe(&texts, &batches);
     }
 }
