@@ -1695,6 +1695,26 @@ D2 ✅ SHIPPED `2f6f1de9` (2026-07-13): version-change rescan worker — boot ho
 ⭐ WORKSTREAM D COMPLETE (D1 d6b3ae30 + D2 2f6f1de9 + D3 ccef0324). NOT yet installed live (develop-only; installs
   at the A–F milestone merge+bump).
 
+⭐⭐ F ✅ LIVE-VERIFIED THROUGH THE REAL MCP TOOLS (2026-07-13, MCP reconnected by Jerry → plugin 0.2.40).
+DOGFOODED, not simulated. The folder→project→tools CYCLE WORKS end-to-end (Jerry's core ask):
+  • find_projects(under=/…/dbd-rs) → 1 project boundary-safe; use_project sensei → pinned to REAL ff1ccea2
+    (not the phantom); every subsequent tool resolved off the pin with NO project= arg.
+  • get_project_summary ✅ genuine (3395 fns / 664 types / stack rust+sveltekit+tauri+pg+…).
+  • get_layered_context ✅ genuine (pin-scoped memory). get_rules ✅ (folder resolved, 8 rules).
+  • search ✅ genuine+rich (search PgStore → PgStore type + 14 users). get_duplicates ✅ compact (0@0.92, 247 folders).
+DEFECTS dogfooding surfaced (Jerry: "if not helping, figure out why + improve") — filed to fix:
+  1. ⛔ PAYLOAD BLOAT → tools UNUSABLE on big repos: find_projects (71–116K chars for sensei/rokkit),
+     get_project_conventions (60K) EXCEED the MCP token cap. They dump the full nested folders[] / raw arrays.
+     (get_project_summary + get_duplicates are compact = the right model.) ← HIGHEST; fixing now (agent).
+  2. search recall gaps: signature-substring match → some real symbols (resolve_project_uuid) return empty;
+     get_or_create_project_by_name empty = E not yet rescanned into running daemon (expected until install).
+  3. get_rules QUALITY: raw prompt fragments as "rules", incl. an UNRELATED fiction project's line
+     ("nigel/death/essence system") mis-scoped into sensei — rule-derivation signal quality.
+  4. get_patterns empty for "route"; get_layered_context only 1 memory — patterns/memories sparse (known).
+⏳ BLOAT FIX BUILDING: compact find_projects (?under compacts to root folders only) + cap get_project_conventions.
+Defects 2–4 = documented follow-ups. This is the PROOF the P0 track's purpose is met: MCP tools return genuine
+folder-scoped results. Remaining: bloat fix → merge A–F→main + make ship (D/E/bloat live) → resume autopilot.
+
 E ✅ PRUNE ALREADY HEALED (verified live 2026-07-13): duplicate empty `2efd4ecf` is GONE (0 rows); ff1ccea2 is the
   sole "sensei" (247 folders); ZERO duplicate project names in the DB; no unique index on projects.name (dups CAN
   recur); create_project (pg_store.rs:4577) = bare INSERT no dedup; 297 projects / 44 zero-folder (NOT dup-names —
