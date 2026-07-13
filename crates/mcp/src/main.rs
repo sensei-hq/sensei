@@ -2,8 +2,9 @@ use serde_json::{json, Value};
 use std::io::{BufRead, Write};
 
 use sensei_mcp::{
-    daemon_request_for, handle_initialize, handle_list_tools, resolve_from_cwd_in,
-    resolve_project_in, DaemonRequest, HttpMethod,
+    active_project_path, daemon_request_for, handle_initialize, handle_list_tools,
+    read_active_project, resolve_active_project_in, resolve_default_project,
+    resolve_from_cwd_in, resolve_project_in, write_active_project, DaemonRequest, HttpMethod,
 };
 
 fn daemon_url() -> String {
@@ -104,12 +105,23 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
     let tool_name = params["name"].as_str().unwrap_or("");
     let args = params.get("arguments").cloned().unwrap_or(json!({}));
 
-    // Resolve project: explicit "project" param → or detect from CWD. `repo_id`
-    // is the resolved project NAME (or "" when nothing resolved).
+    // `use_project` pins the named project; its `project` arg is the pin TARGET,
+    // not a scoping hint, so handle it before the generic resolution below.
+    if tool_name == "use_project" {
+        return handle_use_project(&args, client);
+    }
+
+    // Resolve the project for scoping. `repo_id` is the resolved project NAME
+    // (or "" when nothing resolved). Precedence: explicit `project=` arg →
+    // pin file (`~/.sensei/active-project`, persists across cwd changes) → cwd
+    // resolution → none. An explicit-but-unresolvable arg errors (it never
+    // silently falls through to the pin/cwd).
     let project_hint = args["project"].as_str().unwrap_or("");
-    let repo_id = if !project_hint.is_empty() {
+    let explicit = if project_hint.is_empty() {
+        None
+    } else {
         match resolve_project(project_hint, client) {
-            Some(id) => id,
+            Some(name) => Some(name),
             None => return json!({
                 "content": [{"type": "text", "text": format!(
                     "Project '{}' not found. Use the list_projects tool to see available projects.",
@@ -118,9 +130,15 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
                 "isError": true
             }),
         }
-    } else {
-        resolve_project_from_cwd(cwd, client)
     };
+    // Only read the pin + resolve cwd when there's no explicit arg (explicit wins).
+    let (pin, cwd_name) = if explicit.is_some() {
+        (None, String::new())
+    } else {
+        (read_active_project(&pin_path()), resolve_project_from_cwd(cwd, client))
+    };
+    let repo_id = resolve_default_project(explicit.as_deref(), pin.as_ref(), &cwd_name)
+        .unwrap_or_default();
     let resolved = (!repo_id.is_empty()).then_some(repo_id.as_str());
 
     // The library shapes every straightforward daemon call (knowledge / project
@@ -320,6 +338,51 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
         // rather than a silent success.
         other => json!({
             "content": [{"type": "text", "text": format!("tool '{}' has no handler", other)}],
+            "isError": true
+        }),
+    }
+}
+
+/// The pin file path (`~/.sensei/active-project`) under the resolved sensei data
+/// dir. The lib owns the join + read/write; here we only supply the base dir.
+fn pin_path() -> std::path::PathBuf {
+    active_project_path(&sensei_bootstrap::config().sensei_dir())
+}
+
+/// `use_project`: resolve the named project (name or uuid) against the daemon,
+/// then WRITE the `{id,name}` pin to `~/.sensei/active-project` so every later
+/// tool call resolves to it regardless of cwd. The resolve + write logic lives
+/// in the lib (unit-tested); this only drives the daemon fetch and the file IO.
+fn handle_use_project(args: &Value, client: &reqwest::blocking::Client) -> Value {
+    let hint = args["project"].as_str().unwrap_or("");
+    if hint.is_empty() {
+        return json!({
+            "content": [{"type": "text", "text": "use_project requires a `project` name or UUID."}],
+            "isError": true
+        });
+    }
+    let projects = get_projects(client);
+    let Some(pin) = resolve_active_project_in(&projects, hint) else {
+        return json!({
+            "content": [{"type": "text", "text": format!(
+                "Project '{hint}' not found. Use find_projects or list_projects to see available projects."
+            )}],
+            "isError": true
+        });
+    };
+    let path = pin_path();
+    match write_active_project(&path, &pin) {
+        Ok(()) => json!({
+            "content": [{"type": "text", "text": format!(
+                "Pinned active project to '{}' ({}). Every tool will now resolve to it regardless of the working directory. Pass project=<other> on a tool to override for one call, or run use_project again to switch.",
+                pin.name, pin.id
+            )}]
+        }),
+        Err(e) => json!({
+            "content": [{"type": "text", "text": format!(
+                "Resolved project '{}' but could not write the pin file {}: {e}",
+                pin.name, path.display()
+            )}],
             "isError": true
         }),
     }
