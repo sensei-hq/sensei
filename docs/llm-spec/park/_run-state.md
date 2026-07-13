@@ -1832,9 +1832,17 @@ port mismatch hive 7755 vs config 8787 (🟢), etc. Chunk order: {R1,R2}→R3→
    (env() only), localhost only. VERIFIED LIVE: `supabase start` booted the stack, Studio :54323 (307) + Mailpit :54324
    (200) reachable, all 4 role users seeded in auth.users, config re-validates with NO deprecation warning, stopped
    clean. NEXT for the console track = R6 (SvelteKit console app + auth plane — was 🔴; now unblocked by R5).
-   ⚑ STALE-PLAN (fix before R7/R8): `_dojo-build-plan.md` R7/R8 cite `crates/hive-mind/` + `cargo test -p hive-mind`
-   → now `crates/dojo-mind/` + `-p dojo-mind`. QUEUE: [R3 awaits Jerry design] → R4 seed catalogue → R6 console →
-   R7+R8 console backends. Next heartbeat advances R4 (or surveys R6).
+   ── QUEUE SURVEY (2026-07-13, next-chunk triage): R3 BLOCKED (Jerry org-classification). R4 ALSO BLOCKED (build plan
+   l.250 open-Q "seed catalogue SOURCE — who curates, what format" = Jerry's; also polish-tier). R6 console = greenfield
+   SvelteKit app, needs published @kavach/* (adapter-supabase IS on npm @1.0.0-next.37), scaffold 🟢 but live-auth
+   Jerry's. → CLEANEST buildable = R7/R8 console BACKENDS on dojo-mind: all console DDL ALREADY EXISTS
+   (database/ddl/table/dojo/{roles,identities,policies,engagements,incidents,audit_events,events}.ddl present), test
+   harness exists (crates/dojo-mind/tests/*, synthetic-JWT via jwt_test/auth_test), dual-auth build_router_with_jwt +
+   DojoAccess role-floor exist → pure endpoint+handler+store work, NO DDL, no Docker/Supabase, no design openness.
+   🔨 IN PROGRESS: R7 (ADMIN console backend) → subagent a8f8cdc7 (members/identities/policies/health/audit, admin
+   role-floor, synthetic-JWT tests, -p dojo-mind). Told it the hive-mind→dojo-mind path correction. R8 (client-lead)
+   next. Verify: cargo test -p dojo-mind (new 403 role-floor + done-gate curls + keep ~16 existing green). NO commit
+   until I verify. AFTER R7/R8: R6 console (greenfield, deps available) or record clean-backlog state for Jerry.
    Dōjō is NOT deferred (LOCAL-FIRST=RELAY-ONLY). Consolidation was cleanup = shipped.
 Assets: _dojo-build-plan.md (refreshed) + 4 console specs + dojo-developer-flow.md; ~/Developer/kavach/supabase model.
 
