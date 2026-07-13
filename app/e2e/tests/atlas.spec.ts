@@ -16,7 +16,10 @@
  */
 
 import { test, expect } from '../fixtures';
-import { navigateTo, waitForDom, DAEMON_URL, installErrorTrap, readErrors, type ErrBuf } from '../helpers';
+import {
+  navigateTo, navigateToScreen, waitForDom, DAEMON_URL,
+  installErrorTrap, readErrors, type ErrBuf,
+} from '../helpers';
 
 const REPO = 'sensei'; // the atlas loader's default scope
 
@@ -48,26 +51,21 @@ function expectNoRuntimeErrors(errs: ErrBuf, where: string): void {
 
 test.describe('Observatory · Atlas (/atlas)', () => {
   test.beforeEach(async ({ tauriPage }) => {
+    // Headroom for the retry-navigate budget: the cold health-bootstrap +
+    // setup-reconcile for the FIRST gated screen can take ~50s on a loaded box.
+    test.setTimeout(180_000);
     await seedSetupComplete(tauriPage);
     await navigateTo(tauriPage, '/logs'); // reset the SPA to a setup-exempt route
     await installErrorTrap(tauriPage);
   });
 
-  // Restore the cold setup state our seed forced, so it can't leak into any
-  // cold-start-dependent spec that runs later in the (shared-daemon) suite.
-  test.afterEach(async ({ tauriPage }) => {
-    await fetch(`${DAEMON_URL}/api/config/setup_complete`, { method: 'DELETE' }).catch(() => {});
-    await tauriPage
-      .evaluate(`try { localStorage.removeItem('sensei:setup-complete'); } catch (e) { /* shim */ }`)
-      .catch(() => {});
-  });
-
   test('mounts and renders chrome + graph/empty affordance without a runtime throw', async ({ tauriPage }) => {
-    await navigateTo(tauriPage, '/atlas');
+    // Retry-navigate: absorbs cold health-bootstrap + setup reconciliation so
+    // the first atlas nav (right after assistants-configure clears setup) lands.
+    await navigateToScreen(tauriPage, '/atlas', '[data-screen="atlas"]');
 
     // Screen mounted — the loader completed the four graph reads (incl. the
     // detectCommunities POST) against the real daemon without throwing.
-    await tauriPage.waitForSelector('[data-screen="atlas"]', 20_000);
     // Loader produced a repoId (default scope) — proves the payload assembled.
     expect(await tauriPage.getAttribute('[data-screen="atlas"]', 'data-atlas-repo')).toBe(REPO);
 
@@ -98,8 +96,7 @@ test.describe('Observatory · Atlas (/atlas)', () => {
   });
 
   test('toggling granularity (communities ↔ symbols) does not throw', async ({ tauriPage }) => {
-    await navigateTo(tauriPage, '/atlas');
-    await tauriPage.waitForSelector('[data-screen="atlas"]', 20_000);
+    await navigateToScreen(tauriPage, '/atlas', '[data-screen="atlas"]');
 
     // Opening state: communities is the default for an unindexed / large scope.
     const opensOn = await tauriPage.getAttribute('[data-atlas-level="communities"]', 'aria-pressed');

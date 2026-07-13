@@ -14,7 +14,10 @@
  */
 
 import { test, expect } from '../fixtures';
-import { navigateTo, waitForDom, DAEMON_URL, installErrorTrap, readErrors, type ErrBuf } from '../helpers';
+import {
+  navigateTo, navigateToScreen, waitForDom, DAEMON_URL,
+  installErrorTrap, readErrors, type ErrBuf,
+} from '../helpers';
 
 // Unique run token → our injected rows are the ONLY rows with this source, so
 // navigating with `?source=<RUN>` yields exactly the three we control.
@@ -78,25 +81,19 @@ test.describe('Observatory · Logs (/activity-logs)', () => {
   });
 
   test.beforeEach(async ({ tauriPage }) => {
+    // Headroom for the retry-navigate budget: the cold health-bootstrap +
+    // setup-reconcile for the FIRST gated screen can take ~50s on a loaded box.
+    test.setTimeout(180_000);
     await seedSetupComplete(tauriPage);
     await navigateTo(tauriPage, '/logs'); // reset the SPA to a setup-exempt route
     await installErrorTrap(tauriPage);
   });
 
-  // Restore the cold setup state our seed forced, so it can't leak into any
-  // cold-start-dependent spec that runs later in the (shared-daemon) suite.
-  test.afterEach(async ({ tauriPage }) => {
-    await fetch(`${DAEMON_URL}/api/config/setup_complete`, { method: 'DELETE' }).catch(() => {});
-    await tauriPage
-      .evaluate(`try { localStorage.removeItem('sensei:setup-complete'); } catch (e) { /* shim */ }`)
-      .catch(() => {});
-  });
-
   test('renders injected rows with per-level severity styling', async ({ tauriPage }) => {
-    await navigateTo(tauriPage, `/activity-logs?source=${RUN}`);
-
-    // Screen mounted (loader completed against the real daemon).
-    await tauriPage.waitForSelector('[data-screen="activity-logs"]', 15_000);
+    // Retry-navigate: the first gated nav of the suite bears the cold
+    // health-bootstrap + setup reconciliation (see navigateToScreen).
+    await navigateToScreen(tauriPage, `/activity-logs?source=${RUN}`, '[data-screen="activity-logs"]');
+    // Screen mounted → loader completed against the real daemon; rows follow.
     await tauriPage.waitForSelector('[data-component="log-row"]', 15_000);
 
     const levels = (await tauriPage.evaluate(`
@@ -125,7 +122,7 @@ test.describe('Observatory · Logs (/activity-logs)', () => {
   });
 
   test('changing the level filter refetches (URL updates + list narrows)', async ({ tauriPage }) => {
-    await navigateTo(tauriPage, `/activity-logs?source=${RUN}`);
+    await navigateToScreen(tauriPage, `/activity-logs?source=${RUN}`, '[data-screen="activity-logs"]');
     await tauriPage.waitForSelector('[data-component="log-row"]', 15_000);
 
     const before = (await tauriPage.evaluate(
