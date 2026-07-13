@@ -15,6 +15,7 @@ pub mod log_pruner;
 pub mod activity_pruner;
 pub mod processors;
 pub mod resume;
+pub mod version_rescan;
 pub mod verdict_classifier;
 pub mod mcp_discovery;
 pub mod mcp_probe;
