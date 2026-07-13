@@ -1929,12 +1929,20 @@ port mismatch hive 7755 vs config 8787 (🟢), etc. Chunk order: {R1,R2}→R3→
    "index is invariant-clean, 5/5 roots present" (P2 ✓); sensei nodes 16326 (healthy, no drift, no regression). The
    silent-5h-freeze failure mode is CLOSED. NEW DIAGNOSTICS for future drift debugging: `sensei index doctor` (drift
    report) + GET /api/watcher/status (watcher health) supersede manual DB spelunking. [[reference_scan_reconcile_ops]]
-   ⚑ MERGE MILESTONE (flag for Jerry): develop is now FAR ahead of main (main=v0.2.45 hive-world CI-patches only;
-   develop = dojo consolidation + capture cluster + reliability P0-P2 + R2/R5/R7/R8 + CI fix). A develop→main merge +
-   bump (v0.3.0?) is a big outward release that also publishes the whole dojo-world — hold until Jerry says (or the
-   Dōjō console track R6/R9-11 completes). NOT auto-merged.
+   ✅✅✅ MERGE MILESTONE DONE (Jerry approved) — develop→main MERGED + v0.3.0 RELEASED. Merge `72bc648a`: only 1
+   trivial conflict (senseid Cargo.toml transitional hive-protocol line → took develop; hive-* dirs gone, dojo-* in,
+   0 stale hive refs, compiled clean pre-commit). `make bump v=0.3.0` `5743ee50` → tag pushed, subtrees synced, CI
+   building (run 29272868309, watch bfhg6d2w9). main now = the full dojo-world (consolidation + capture cluster +
+   reliability P0-P2 + R2/R5/R7/R8 + CI fixes). develop==main content now (both at the same code; develop VERSION
+   still 0.2.43-era, main 0.3.0 — next develop work continues from here).
+   ⚑ FLAGS: (1) DEPENDABOT on main: 1 HIGH + 6 medium + 2 low open alerts (surfaced now the full dep tree is scanned)
+   — worth a `cargo audit`/triage pass, the HIGH especially. (2) LOCAL DAEMON runs the develop build I installed
+   @12:53 = v0.3.0's CODE (identical); reporting v0.2.43 internally. A reinstall to sync the version string/DDL bundle
+   is OPTIONAL (nothing broken; skipped the 30-min rebuild since code is identical). (3) dojo-mind NOT in the `make
+   bump` crate-version list → stays 0.2.17 while others = 0.3.0 (cosmetic; dojo-mind isn't in release artifacts; tiny
+   Makefile follow-up to add it).
    🟢 NEXT: R6 console (greenfield SvelteKit console/ app + @kavach auth plane; scaffold+static render 🟢, live magic-
-   link auth = Jerry). Reliability track complete — capture is now rock-solid.
+   link auth = Jerry). Reliability track complete — capture is now rock-solid. develop continues from the merged base.
    ★ DESIGN DOC OF RECORD: docs/analysis/2026-07-13-index-reliability-rock-solid.md (a8b09407) — full architecture,
    root-cause, per-tier done-gates. ★ JERRY CONFIRMED (2026-07-13): build the FULL "resilient watcher/scanner" as
    outlined — so the RELIABILITY TRACK is now the PRIORITY: P0 (in progress) → P1 → P2 as sequential chunks, AHEAD of
