@@ -10,9 +10,11 @@ describe('DojoOrgs', () => {
 		const { getByText, getAllByText } = render(DojoOrgs);
 
 		expect(getByText('Your organizations')).toBeTruthy();
-		// Every org name renders.
+		// Every org name renders. Use getAllByText (>=1): an org named after its own
+		// kind (e.g. "Personal") also matches the kind chip, so getByText's
+		// exactly-one contract would false-fail on that legitimate collision.
 		for (const org of orgs) {
-			expect(getByText(org.name)).toBeTruthy();
+			expect(getAllByText(org.name).length).toBeGreaterThan(0);
 		}
 		// One Enter button per org.
 		expect(getAllByText('Enter').length).toBe(orgs.length);
