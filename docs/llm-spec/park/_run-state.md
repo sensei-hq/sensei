@@ -1953,8 +1953,14 @@ port mismatch hive 7755 vs config 8787 (🟢), etc. Chunk order: {R1,R2}→R3→
      ── ✅ DE-FLAKED a pre-existing test `a74c57da`: prune_activity_prunes_orphan_events_by_ts asserted the GLOBAL
        prune count (races with sibling prune_activity on shared test DB) → dropped it; the per-row (unique-csid) check
        is deterministic. senseid db suite now clean under parallelism. (Same race-class as the P2 heal fix.)
-   🔨 IN PROGRESS: R6 console (greenfield SvelteKit console/ app + @kavach auth plane; scaffold+static render 🟢, live
-   magic-link auth = Jerry) — subagent aac1c0e8.
+   ✅ R6 SHIPPED `dab33d71` (subagent aac1c0e8 — hit the SESSION USAGE LIMIT on its report, but the WORK was done +
+   VERIFIED by me: svelte-check 517 files 0 err/warn, `bun run build` succeeds 2144 modules). New SvelteKit app at
+   console/: kavach auth plane, signin(magic-link)+orgs(org-picker) routes, (console) guarded group, hooks.server.ts,
+   rokkit/uno, .env.example (:54321 supabase, :7755 dojo). LIVE magic-link auth vs R5 supabase+Inbucket = Jerry (🔴).
+   35 source files; node_modules/.svelte-kit gitignored. NOTE: @kavach pins/wiring are as-committed (report lost to
+   limit) — a follow-up glance advisable but check+build are green.
+   ⛔ SESSION USAGE LIMIT HIT (resets ~2:40pm America/Chicago) — CANNOT spawn subagents until reset. So the next chunk
+   waits.
    🟢 QUEUED (Jerry approved 2026-07-13): **sensei-mcp AUTO-RECONNECT** — next reliability chunk AFTER R6. Make the
    crates/mcp stdio proxy resilient to the daemon restarting: retry-with-backoff reconnect to :7744 + re-fetch the tool
    list when the daemon bounces, so a daemon-only upgrade is truly live-immediately (no pkill nudge, no manual /mcp).
