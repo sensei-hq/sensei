@@ -9,12 +9,22 @@
 	let { data, children } = $props();
 
 	// Map the current path to the active nav section id. Admin sub-routes
-	// (members / identities / policies / health / audit) each light their own
-	// entry; everything else falls back to Overview (the console index).
+	// (members / identities / policies / health / audit) and the client-lead
+	// sub-routes (engagements incl. its [id] audit child, incidents) each light
+	// their own entry; everything else falls back to Overview (the console index).
 	const active = $derived.by(() => {
 		const path = $page.url.pathname;
 		const section = path.replace(/^\/console\/?/, '').split('/')[0];
-		const known = ['triage', 'members', 'identities', 'policies', 'health', 'audit'];
+		const known = [
+			'triage',
+			'members',
+			'identities',
+			'policies',
+			'health',
+			'audit',
+			'engagements',
+			'incidents'
+		];
 		return known.includes(section) ? section : 'overview';
 	});
 </script>
