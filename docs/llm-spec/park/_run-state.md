@@ -1662,11 +1662,19 @@ port mismatch hive 7755 vs config 8787 (🟢), etc. Chunk order: {R1,R2}→R3→
    deferred — R1 already does this); (5) console↔service auth = **SvelteKit BFF** (server routes proxy to sensei-dojo,
    Supabase session server-side). (4) deploy = localhost-first, config-driven (I proceed this way). STILL OPEN:
    (6) seed-catalogue = ✅ DECIDED (Jerry 2026-07-13): AUTO-DISCOVERY from the git-remote OWNER, not a static seed.
-   Extract owner from each indexed repo's remote → resolve org-vs-user via GitHub API GET /users/{owner} (cached) →
-   ORG owner ⇒ candidate Dōjō (e.g. sensei-hq dojo), USER owner ⇒ no dojo (personal); group projects by org owner.
-   Seeds the COMPANY level of the existing company/client hierarchy (= G9 auto-discovery). Guardrail: org is the
-   auto-propose DEFAULT, keep manual grouping (dojo ≠ raw org 1:1). → build as a post-consolidation chunk.
-⭐ ROLE MODEL DECIDED (Jerry 2026-07-13, pending his final confirm on the lead power): roles are org/client-AGNOSTIC
+   MULTI-FORGE via a per-forge remote parser (LanguageAdapter/manifest-adapter pattern): GitHub {owner} (org-vs-user
+   via GET /users/{owner}), GitLab top-level {group}, Bitbucket {workspace}, Azure {org}, self-hosted=first path seg.
+   Yields {host, owner, owner_kind}; personal namespace ⇒ no dojo. A dojo is created per non-personal org; group
+   projects by remote owner.
+   ⭐ COMPANY vs CLIENT = USER-CLASSIFIED, and it's PER-USER/RELATIVE (not a global org property): SenecaGlobal devs
+   see example-corp=company + example-client=client; Green Street's own devs see example-client=company. So store the
+   company|client|personal tag on the user's MEMBERSHIP/context, NOT on the shared org record. Flow: discover orgs →
+   surface "which of these is your company?" → user tags each (feeds the existing company/client hierarchy). SMART
+   DEFAULT (proceed unless Jerry says otherwise): most-repos-org and/or email-domain-match ⇒ suggested `company`,
+   rest ⇒ `client`, always overridable. → build as post-consolidation chunk (discovery pass + small setup UI).
+   OPEN (minor, non-blocking): smart-default vs start-unclassified — proceeding with smart-default.
+⭐ ROLE MODEL ✅ LOCKED (Jerry 2026-07-13 — lead power CONFIRMED "endorse-as-canonical / set-enforcement makes
+   perfect sense"): roles are org/client-AGNOSTIC
    (company/client is a dojo/project hierarchy tag, NOT baked into the role). Rename member_role `client_lead`→`lead`;
    4 roles governing DIFFERENT objects: admin=platform/membership (invite/remove, roles, settings, billing, delete);
    maintainer=knowledge pool (review/approve/reject/curate — the promotion/decide gates); contributor=own
