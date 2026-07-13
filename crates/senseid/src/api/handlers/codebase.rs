@@ -313,6 +313,14 @@ const NAMING_KINDS: &[&str] = &[
     "type", "const", "enum", "enum_variant", "field", "property",
 ];
 
+/// Cap on the number of `directories` / `patterns` rows returned by the
+/// conventions summary. The directory list is otherwise one row per source
+/// directory (unbounded — ~1k for sensei), which pushed the response past the
+/// MCP client's token cap (~60K chars). We keep the top-N by weight (files /
+/// instance_count) and expose the true total alongside so the trim is visible,
+/// not silent.
+const MAX_CONVENTION_ROWS: usize = 25;
+
 /// Classify an identifier into a canonical naming style. Leading/trailing
 /// underscores are ignored (e.g. `_unused`, `__init__`) so they don't mask the
 /// underlying style. Returns one of: `snake_case`, `SCREAMING_SNAKE_CASE`,
@@ -476,16 +484,28 @@ fn derive_conventions(
 
     let mut dirs: Vec<(String, u32)> = dir_files.into_iter().collect();
     dirs.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    let directories_total = dirs.len();
     let directories: Vec<serde_json::Value> = dirs
         .into_iter()
+        .take(MAX_CONVENTION_ROWS)
         .map(|(path, files)| serde_json::json!({"path": path, "files": files}))
         .collect();
 
     let languages: serde_json::Map<String, serde_json::Value> =
         lang_files.into_iter().map(|(k, v)| (k, serde_json::json!(v))).collect();
 
-    let pattern_summary: Vec<serde_json::Value> = patterns
-        .iter()
+    // Top-N patterns by instance_count so the summary stays bounded; the true
+    // count rides along in `patterns_total` so the trim is never silent.
+    let patterns_total = patterns.len();
+    let mut ranked: Vec<&serde_json::Value> = patterns.iter().collect();
+    ranked.sort_by(|a, b| {
+        let ac = a.get("instance_count").and_then(|v| v.as_i64()).unwrap_or(0);
+        let bc = b.get("instance_count").and_then(|v| v.as_i64()).unwrap_or(0);
+        bc.cmp(&ac)
+    });
+    let pattern_summary: Vec<serde_json::Value> = ranked
+        .into_iter()
+        .take(MAX_CONVENTION_ROWS)
         .map(|p| {
             serde_json::json!({
                 "name": p.get("name").cloned().unwrap_or(serde_json::Value::Null),
@@ -501,9 +521,11 @@ fn derive_conventions(
         "structure": {
             "file_count": file_count,
             "directories": directories,
+            "directories_total": directories_total,
             "languages": languages,
         },
         "patterns": pattern_summary,
+        "patterns_total": patterns_total,
     })
 }
 
@@ -636,6 +658,57 @@ mod tests {
         // callers can still bucket them ("go" isn't in the adapter set — it
         // has a fallback; "elixir" would pass through as "elixir").
         assert_eq!(language_for_ext("elixir"), "elixir");
+    }
+
+    #[test]
+    fn derive_conventions_caps_directories_and_reports_total() {
+        // A project with far more than MAX_CONVENTION_ROWS directories must not
+        // dump every one (that's the ~60K bloat) — cap the list but surface the
+        // true total so the trim is visible, not silent. Highest-file-count dirs
+        // survive the cap.
+        let n = MAX_CONVENTION_ROWS + 40;
+        let mut nodes = Vec::new();
+        for i in 0..n {
+            // Deeper index → more files, so the ranking is deterministic.
+            let files = i + 1;
+            for f in 0..files {
+                nodes.push(json!({
+                    "kind": "file",
+                    "name": format!("f{f}.rs"),
+                    "file_path": format!("src/dir{i:04}/f{f}.rs"),
+                }));
+            }
+        }
+        let conv = derive_conventions(&nodes, &[]);
+        let dirs = conv["structure"]["directories"].as_array().unwrap();
+        assert_eq!(dirs.len(), MAX_CONVENTION_ROWS, "directories must be capped");
+        assert_eq!(
+            conv["structure"]["directories_total"].as_u64().unwrap(),
+            n as u64,
+            "directories_total must report the true (uncapped) count",
+        );
+        // The densest directory (highest file count) must survive the cap.
+        let top = &dirs[0];
+        assert_eq!(top["path"], format!("src/dir{:04}", n - 1));
+        // Still genuine: capped list is non-empty and well-formed.
+        assert!(dirs.iter().all(|d| d["path"].is_string() && d["files"].is_number()));
+    }
+
+    #[test]
+    fn derive_conventions_caps_patterns_by_instance_count() {
+        let n = MAX_CONVENTION_ROWS + 10;
+        let patterns: Vec<serde_json::Value> = (0..n)
+            .map(|i| json!({
+                "name": format!("P{i}"), "family": "structural",
+                "lifecycle": "rule", "instance_count": i,
+            }))
+            .collect();
+        let conv = derive_conventions(&[], &patterns);
+        let ps = conv["patterns"].as_array().unwrap();
+        assert_eq!(ps.len(), MAX_CONVENTION_ROWS, "patterns must be capped");
+        assert_eq!(conv["patterns_total"].as_u64().unwrap(), n as u64);
+        // Highest instance_count kept first.
+        assert_eq!(ps[0]["name"], format!("P{}", n - 1));
     }
 
     #[test]

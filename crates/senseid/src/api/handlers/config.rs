@@ -101,6 +101,24 @@ pub(crate) async fn assistant_configure(
 }
 
 #[derive(Deserialize)]
+pub(crate) struct AssistantUpgradeBody {
+    #[serde(default)]
+    acps: Vec<String>,
+}
+
+/// POST /api/assistants/upgrade — refresh each assistant's sensei integration
+/// after a sensei binary upgrade. Empty `acps` = every detected assistant;
+/// otherwise exactly the named ids. Mirrors `assistant_configure`'s fan-out but
+/// returns a per-assistant result array (one [`AdapterResolveReport`] each):
+/// Claude Code runs `claude plugin update sensei` (and re-verifies the
+/// manifest); file-based MCP assistants report a no-op action.
+pub(crate) async fn assistant_upgrade(
+    Json(body): Json<AssistantUpgradeBody>,
+) -> Json<Vec<crate::assistants::AdapterResolveReport>> {
+    Json(crate::assistants::upgrade(&body.acps))
+}
+
+#[derive(Deserialize)]
 pub(crate) struct AssistantRemoveBody {
     #[serde(default)]
     acps: Vec<String>,

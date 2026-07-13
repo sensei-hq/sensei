@@ -179,6 +179,18 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
         Arc::new(state.pg.clone()),
     );
 
+    // Version-change rebuild (D2): if this binary differs from the one that
+    // last scanned the DB, re-scan all indexed roots (rebuilds the code graph
+    // under the new binary) and clear the analyzer full-refresh watermark so
+    // the scheduler re-analyzes every project. Runs BEFORE the scheduler spawns
+    // so the cleared watermark is observed on its first (immediate) tick.
+    // Non-fatal: internal failures are logged, never propagated.
+    crate::tasks::version_rescan::maybe_rescan_on_version_change(
+        &state.pg,
+        &task_queue,
+        env!("CARGO_PKG_VERSION"),
+    ).await;
+
     // Periodically enrich/analyze projects whose sessions changed (#67). First
     // tick fires immediately, so a freshly-started daemon backfills enrichment.
     crate::tasks::analyzer_scheduler::spawn(

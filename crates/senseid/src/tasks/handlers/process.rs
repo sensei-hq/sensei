@@ -74,31 +74,28 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
     };
     let project_name: &str = &project_name_owned;
 
-    // Find or create the project by its resolved name (get-or-create — idempotent).
-    let project_id = match ctx.pg().get_project_by_name(project_name).await {
-        Ok(Some(proj)) => {
-            // Project exists — use it
-            proj["id"].as_str().unwrap_or("").to_string()
-        }
-        _ => {
-            // Create new project
-            let id = ctx.pg().create_project(project_name, None, None).await
-                .map(|id| id.to_string())
-                .unwrap_or_else(|e| { tracing::error!(project = %project_name, error = %e, "create_project failed; using fallback id"); format!("p-{}", project_name) });
-
-            // Emit: project add
-            emit(crate::api::events::StateEvent::project_add(crate::api::events::ScanProject {
-                id: id.clone(),
-                name: project_name.to_string(),
-                status: crate::api::events::ProjectStatus::Indexing,
-                folders: vec![],
-                auto_detected: true,
-                confidence: crate::api::events::Confidence::High,
-            }));
-
-            id
+    // Find or create the project by its resolved name. Race-safe get-or-adopt
+    // (advisory-locked per name) so concurrent scan workers resolving the same
+    // name can't each mint a row — the select-then-insert race that produced the
+    // 0-folder phantom project. `created` gates the one-time project_add event.
+    let (project_id, created) = match ctx.pg().get_or_create_project_by_name(project_name).await {
+        Ok((id, created)) => (id.to_string(), created),
+        Err(e) => {
+            tracing::error!(project = %project_name, error = %e, "get_or_create_project_by_name failed; using fallback id");
+            (format!("p-{}", project_name), false)
         }
     };
+    if created {
+        // Emit: project add (only when a new project row was actually minted).
+        emit(crate::api::events::StateEvent::project_add(crate::api::events::ScanProject {
+            id: project_id.clone(),
+            name: project_name.to_string(),
+            status: crate::api::events::ProjectStatus::Indexing,
+            folders: vec![],
+            auto_detected: true,
+            confidence: crate::api::events::Confidence::High,
+        }));
+    }
 
     // A quasi-repo (non-git project root) is tagged so the UI can surface it as
     // provisional — the user can discard it or promote it (git init → re-scanned
@@ -401,7 +398,12 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
         tracing::warn!(path = %task.path, error = %e, "reconcile_repo_identity failed");
     }
 
-    // Self-healing reconcile: re-tag orphaned discovery projects (no delete).
+    // Self-healing reconcile: first deterministically prune any name-duplicate
+    // phantom (a 0-folder discovery dupe of a folder-bearing project — merged
+    // into the survivor), then re-tag the genuinely orphaned discovery projects.
+    if let Err(e) = ctx.pg().heal_duplicate_name_projects().await {
+        tracing::warn!(error = %e, "heal_duplicate_name_projects failed");
+    }
     if let Err(e) = ctx.pg().mark_orphaned_projects().await {
         tracing::warn!(error = %e, "mark_orphaned_projects failed");
     }
