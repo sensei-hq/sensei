@@ -1,8 +1,8 @@
 //! Axum router + handlers for the `/v1` federation API.
 
 use crate::auth::{
-    authenticate_dojo, require, role_satisfies, AuthCaller, DojoAccess, DojoAuthError, JwtConfig,
-    Role,
+    authenticate_dojo, require, role_satisfies, AuthCaller, DojoAccess, DojoAuthError, DojoCaller,
+    JwtConfig, Role,
 };
 use crate::collective::promote::{DecideOutcome, DecideStatus};
 use crate::store::DojoStore;
@@ -10,14 +10,20 @@ use axum::{
     extract::{Extension, Query, State},
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
-    routing::{delete, get, post},
+    routing::{delete, get, patch, post},
     Json, Router,
 };
 use dojo_protocol::PublishedArtifact;
 use dojo_protocol::PublishedRule;
 use serde::Deserialize;
+use serde_json::{json, Value};
 use std::sync::Arc;
 use uuid::Uuid;
+
+/// A member/dojo role literal accepted for a membership (`dojo.member_role`).
+fn is_member_role(role: &str) -> bool {
+    matches!(role, "contributor" | "maintainer" | "client_lead" | "admin")
+}
 
 pub struct SharedState {
     pub store: DojoStore,
@@ -26,6 +32,15 @@ pub type AppState = Arc<SharedState>;
 
 fn err(code: StatusCode, msg: &str) -> (StatusCode, Json<serde_json::Value>) {
     (code, Json(serde_json::json!({ "error": msg })))
+}
+/// Map a store error string onto a 500 (never silent — the message is surfaced).
+fn ise(e: String) -> (StatusCode, Json<serde_json::Value>) {
+    err(StatusCode::INTERNAL_SERVER_ERROR, &e)
+}
+/// The audit actor id for a dojo caller — the uuid `subject` (member id on the
+/// API-key plane, Supabase `sub` on the JWT plane). `None` if it isn't a uuid.
+fn actor_of(caller: &DojoCaller) -> Option<Uuid> {
+    Uuid::parse_str(&caller.subject).ok()
 }
 fn require_role(
     caller: &AuthCaller,
@@ -286,6 +301,45 @@ async fn pull_artifacts(
 
 // ── Maintainer triage routes (service-side; serve the C12 console) ───────────
 
+/// The lowercase role name a `DojoAccess` floor corresponds to (for a 403 body).
+fn access_label(a: DojoAccess) -> &'static str {
+    match a {
+        DojoAccess::Member => "member",
+        DojoAccess::Contributor => "contributor",
+        DojoAccess::Maintainer => "maintainer",
+        DojoAccess::Admin => "admin",
+    }
+}
+
+/// Resolve the path tenant then dual-authenticate a caller, enforcing a role
+/// `floor`. Reuses tenant resolution + dual auth (`authenticate_dojo`); a caller
+/// below the floor → 403. The shared primitive behind both the maintainer triage
+/// routes and the admin console.
+async fn resolve_tenant_access(
+    state: &AppState,
+    jwt: &JwtConfig,
+    headers: &HeaderMap,
+    tenant_key: &str,
+    floor: DojoAccess,
+) -> Result<(Uuid, DojoCaller), (StatusCode, Json<serde_json::Value>)> {
+    let tenant_id = state
+        .store
+        .resolve_tenant(tenant_key)
+        .await
+        .map_err(ise)?
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "no such tenant"))?;
+    let caller = authenticate_dojo(&state.store, jwt, headers, tenant_id)
+        .await
+        .map_err(dojo_auth_status)?;
+    if caller.access < floor {
+        return Err(err(
+            StatusCode::FORBIDDEN,
+            &format!("{} role required", access_label(floor)),
+        ));
+    }
+    Ok((tenant_id, caller))
+}
+
 /// Resolve the path tenant then dual-authenticate a maintainer (`maintainer+`).
 /// Reuses C3's tenant resolution + dual auth; a non-maintainer → 403.
 async fn resolve_maintainer(
@@ -293,20 +347,19 @@ async fn resolve_maintainer(
     jwt: &JwtConfig,
     headers: &HeaderMap,
     tenant_key: &str,
-) -> Result<(Uuid, crate::auth::DojoCaller), (StatusCode, Json<serde_json::Value>)> {
-    let tenant_id = state
-        .store
-        .resolve_tenant(tenant_key)
-        .await
-        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
-        .ok_or_else(|| err(StatusCode::NOT_FOUND, "no such tenant"))?;
-    let caller = authenticate_dojo(&state.store, jwt, headers, tenant_id)
-        .await
-        .map_err(dojo_auth_status)?;
-    if caller.access < DojoAccess::Maintainer {
-        return Err(err(StatusCode::FORBIDDEN, "maintainer role required"));
-    }
-    Ok((tenant_id, caller))
+) -> Result<(Uuid, DojoCaller), (StatusCode, Json<serde_json::Value>)> {
+    resolve_tenant_access(state, jwt, headers, tenant_key, DojoAccess::Maintainer).await
+}
+
+/// Resolve the path tenant then dual-authenticate an admin (`admin`). The floor
+/// for every admin-console route; a non-admin → 403.
+async fn resolve_admin(
+    state: &AppState,
+    jwt: &JwtConfig,
+    headers: &HeaderMap,
+    tenant_key: &str,
+) -> Result<(Uuid, DojoCaller), (StatusCode, Json<serde_json::Value>)> {
+    resolve_tenant_access(state, jwt, headers, tenant_key, DojoAccess::Admin).await
 }
 
 /// `GET /v1/t/{tenant_key}/triage` — list the tenant's open triage rows
@@ -415,6 +468,478 @@ async fn decide_triage(
     }
 }
 
+// ── Admin console routes (dual-auth; ADMIN floor) ────────────────────────────
+//
+// Every handler resolves the path tenant + dual-authenticates behind
+// `resolve_admin` (floor = `DojoAccess::Admin`), so a non-admin is 403 and the
+// work is strictly tenant-scoped. Mutations stamp a `dojo.audit_events` row
+// (non-repudiation) via `record_audit_event`; that write is surfaced (not
+// swallowed) so a missing audit entry can never hide an admin action.
+
+// ── members (provision + re-role) ────────────────────────────────────────────
+
+/// `GET /v1/t/{tenant_key}/members` — the tenant's memberships (admin).
+async fn list_members(
+    State(state): State<AppState>,
+    Extension(jwt): Extension<Arc<JwtConfig>>,
+    axum::extract::Path(tenant_key): axum::extract::Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let (tenant_id, _c) = resolve_admin(&state, &jwt, &headers, &tenant_key).await?;
+    let members = state.store.list_memberships(&tenant_id).await.map_err(ise)?;
+    Ok(Json(json!({ "members": members })))
+}
+
+#[derive(Deserialize)]
+struct NewMembership {
+    user_id: String,
+    kind: String,
+    authenticated_via: String,
+    #[serde(default)]
+    git_provider_role: Option<String>,
+    #[serde(default)]
+    role: Option<String>,
+}
+
+/// `POST /v1/t/{tenant_key}/members` — provision a membership (admin). The role
+/// derives from the git-provider role by default (`dojo.roles` map), unless an
+/// explicit `role` override is given; with neither, it falls back to the
+/// least-privilege `contributor` (done-gate: a `write` git role lands as
+/// `contributor`). Stamps a `member_added` audit event.
+async fn add_membership(
+    State(state): State<AppState>,
+    Extension(jwt): Extension<Arc<JwtConfig>>,
+    axum::extract::Path(tenant_key): axum::extract::Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<NewMembership>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let (tenant_id, caller) = resolve_admin(&state, &jwt, &headers, &tenant_key).await?;
+    let user_id =
+        Uuid::parse_str(&body.user_id).map_err(|_| err(StatusCode::BAD_REQUEST, "bad user_id"))?;
+    // Explicit admin override wins; else derive from the git role; else default.
+    let role = match &body.role {
+        Some(r) => r.clone(),
+        None => match &body.git_provider_role {
+            Some(g) => state
+                .store
+                .derive_role_for_git_role(&tenant_id, g)
+                .await
+                .map_err(ise)?
+                .unwrap_or_else(|| "contributor".to_string()),
+            None => "contributor".to_string(),
+        },
+    };
+    if !is_member_role(&role) {
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "role must be contributor|maintainer|client_lead|admin",
+        ));
+    }
+    let id = state
+        .store
+        .create_membership(&tenant_id, &user_id, &body.kind, &body.authenticated_via, &role)
+        .await
+        .map_err(ise)?;
+    state
+        .store
+        .record_audit_event(
+            &tenant_id,
+            actor_of(&caller).as_ref(),
+            "member_added",
+            Some(&user_id.to_string()),
+            json!({ "role": role, "git_provider_role": body.git_provider_role }),
+        )
+        .await
+        .map_err(ise)?;
+    Ok(Json(json!({ "id": id.to_string(), "role": role })))
+}
+
+#[derive(Deserialize)]
+struct SetRole {
+    role: String,
+}
+
+/// `PATCH /v1/t/{tenant_key}/members/{user_id}/role` — admin role override.
+/// Stamps a `role_changed` audit event.
+async fn set_member_role(
+    State(state): State<AppState>,
+    Extension(jwt): Extension<Arc<JwtConfig>>,
+    axum::extract::Path((tenant_key, user_id)): axum::extract::Path<(String, String)>,
+    headers: HeaderMap,
+    Json(body): Json<SetRole>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let (tenant_id, caller) = resolve_admin(&state, &jwt, &headers, &tenant_key).await?;
+    let uid =
+        Uuid::parse_str(&user_id).map_err(|_| err(StatusCode::BAD_REQUEST, "bad user_id"))?;
+    if !is_member_role(&body.role) {
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "role must be contributor|maintainer|client_lead|admin",
+        ));
+    }
+    let changed = state
+        .store
+        .set_membership_role(&tenant_id, &uid, &body.role)
+        .await
+        .map_err(ise)?;
+    if !changed {
+        return Err(err(StatusCode::NOT_FOUND, "no such member"));
+    }
+    state
+        .store
+        .record_audit_event(
+            &tenant_id,
+            actor_of(&caller).as_ref(),
+            "role_changed",
+            Some(&user_id),
+            json!({ "role": body.role }),
+        )
+        .await
+        .map_err(ise)?;
+    Ok(Json(json!({ "user_id": user_id, "role": body.role })))
+}
+
+// ── identities (SSO / GitHub / device-code config) ───────────────────────────
+
+/// `GET /v1/t/{tenant_key}/identities` — the tenant's identity mappings (admin).
+async fn list_identities(
+    State(state): State<AppState>,
+    Extension(jwt): Extension<Arc<JwtConfig>>,
+    axum::extract::Path(tenant_key): axum::extract::Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let (tenant_id, _c) = resolve_admin(&state, &jwt, &headers, &tenant_key).await?;
+    let identities = state.store.list_identities(&tenant_id).await.map_err(ise)?;
+    Ok(Json(json!({ "identities": identities })))
+}
+
+#[derive(Deserialize)]
+struct NewIdentity {
+    user_id: String,
+    provider: String,
+    subject: String,
+    #[serde(default)]
+    email: Option<String>,
+    #[serde(default)]
+    display_name: Option<String>,
+}
+
+fn is_auth_method(p: &str) -> bool {
+    matches!(p, "sso" | "github_oauth" | "device_code")
+}
+
+/// `POST /v1/t/{tenant_key}/identities` — wire an identity provider (admin).
+async fn create_identity(
+    State(state): State<AppState>,
+    Extension(jwt): Extension<Arc<JwtConfig>>,
+    axum::extract::Path(tenant_key): axum::extract::Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<NewIdentity>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let (tenant_id, caller) = resolve_admin(&state, &jwt, &headers, &tenant_key).await?;
+    let uid =
+        Uuid::parse_str(&body.user_id).map_err(|_| err(StatusCode::BAD_REQUEST, "bad user_id"))?;
+    if !is_auth_method(&body.provider) {
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "provider must be sso|github_oauth|device_code",
+        ));
+    }
+    let id = state
+        .store
+        .create_identity(
+            &tenant_id,
+            &uid,
+            &body.provider,
+            &body.subject,
+            body.email.as_deref(),
+            body.display_name.as_deref(),
+        )
+        .await
+        .map_err(ise)?;
+    state
+        .store
+        .record_audit_event(
+            &tenant_id,
+            actor_of(&caller).as_ref(),
+            "identity_added",
+            Some(&body.subject),
+            json!({ "provider": body.provider }),
+        )
+        .await
+        .map_err(ise)?;
+    Ok(Json(json!({ "id": id.to_string() })))
+}
+
+#[derive(Deserialize)]
+struct UpdateIdentity {
+    #[serde(default)]
+    email: Option<String>,
+    #[serde(default)]
+    display_name: Option<String>,
+}
+
+/// `PATCH /v1/t/{tenant_key}/identities/{id}` — update an identity's email /
+/// display name (admin). A `null`/absent field is left unchanged.
+async fn update_identity(
+    State(state): State<AppState>,
+    Extension(jwt): Extension<Arc<JwtConfig>>,
+    axum::extract::Path((tenant_key, id)): axum::extract::Path<(String, String)>,
+    headers: HeaderMap,
+    Json(body): Json<UpdateIdentity>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let (tenant_id, caller) = resolve_admin(&state, &jwt, &headers, &tenant_key).await?;
+    let iid = Uuid::parse_str(&id).map_err(|_| err(StatusCode::BAD_REQUEST, "bad identity id"))?;
+    let changed = state
+        .store
+        .update_identity(&tenant_id, &iid, body.email.as_deref(), body.display_name.as_deref())
+        .await
+        .map_err(ise)?;
+    if !changed {
+        return Err(err(StatusCode::NOT_FOUND, "no such identity"));
+    }
+    state
+        .store
+        .record_audit_event(
+            &tenant_id,
+            actor_of(&caller).as_ref(),
+            "identity_updated",
+            Some(&id),
+            json!({}),
+        )
+        .await
+        .map_err(ise)?;
+    Ok(Json(json!({ "id": id })))
+}
+
+/// `DELETE /v1/t/{tenant_key}/identities/{id}` — remove an identity (admin).
+async fn delete_identity(
+    State(state): State<AppState>,
+    Extension(jwt): Extension<Arc<JwtConfig>>,
+    axum::extract::Path((tenant_key, id)): axum::extract::Path<(String, String)>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let (tenant_id, caller) = resolve_admin(&state, &jwt, &headers, &tenant_key).await?;
+    let iid = Uuid::parse_str(&id).map_err(|_| err(StatusCode::BAD_REQUEST, "bad identity id"))?;
+    let removed = state.store.delete_identity(&tenant_id, &iid).await.map_err(ise)?;
+    if !removed {
+        return Err(err(StatusCode::NOT_FOUND, "no such identity"));
+    }
+    state
+        .store
+        .record_audit_event(
+            &tenant_id,
+            actor_of(&caller).as_ref(),
+            "identity_deleted",
+            Some(&id),
+            json!({}),
+        )
+        .await
+        .map_err(ise)?;
+    Ok(Json(json!({ "deleted": true })))
+}
+
+// ── policies (attribution / confidentiality / retention grid) ────────────────
+
+/// `GET /v1/t/{tenant_key}/policies` — the tenant's policy grid (admin).
+async fn list_policies(
+    State(state): State<AppState>,
+    Extension(jwt): Extension<Arc<JwtConfig>>,
+    axum::extract::Path(tenant_key): axum::extract::Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let (tenant_id, _c) = resolve_admin(&state, &jwt, &headers, &tenant_key).await?;
+    let policies = state.store.list_policies(&tenant_id).await.map_err(ise)?;
+    Ok(Json(json!({ "policies": policies })))
+}
+
+fn is_attribution_mode(m: &str) -> bool {
+    matches!(m, "named" | "anonymous" | "dereferenced")
+}
+
+#[derive(Deserialize)]
+struct UpsertPolicy {
+    scope_key: String,
+    #[serde(default)]
+    attribution_default: Option<String>,
+    #[serde(default)]
+    confidentiality: Option<Value>,
+    #[serde(default)]
+    retention_days: Option<i32>,
+}
+
+/// `POST /v1/t/{tenant_key}/policies` — create or edit-by-scope a policy
+/// (admin). Upserts on `(tenant_id, scope_key)` so an edit takes effect on the
+/// next batch. Stamps a `policy_edited` audit event.
+async fn create_policy(
+    State(state): State<AppState>,
+    Extension(jwt): Extension<Arc<JwtConfig>>,
+    axum::extract::Path(tenant_key): axum::extract::Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<UpsertPolicy>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let (tenant_id, caller) = resolve_admin(&state, &jwt, &headers, &tenant_key).await?;
+    let attribution = body.attribution_default.as_deref().unwrap_or("named");
+    if !is_attribution_mode(attribution) {
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "attribution_default must be named|anonymous|dereferenced",
+        ));
+    }
+    let confidentiality = body.confidentiality.unwrap_or_else(|| json!({}));
+    let id = state
+        .store
+        .upsert_policy(
+            &tenant_id,
+            &body.scope_key,
+            attribution,
+            confidentiality,
+            body.retention_days,
+        )
+        .await
+        .map_err(ise)?;
+    state
+        .store
+        .record_audit_event(
+            &tenant_id,
+            actor_of(&caller).as_ref(),
+            "policy_edited",
+            Some(&body.scope_key),
+            json!({ "attribution_default": attribution, "retention_days": body.retention_days }),
+        )
+        .await
+        .map_err(ise)?;
+    Ok(Json(json!({ "id": id.to_string(), "scope_key": body.scope_key })))
+}
+
+#[derive(Deserialize)]
+struct PatchPolicy {
+    #[serde(default)]
+    attribution_default: Option<String>,
+    #[serde(default)]
+    confidentiality: Option<Value>,
+    #[serde(default)]
+    retention_days: Option<i32>,
+}
+
+/// `PATCH /v1/t/{tenant_key}/policies/{id}` — update a policy by id (admin). An
+/// absent field is left unchanged. Stamps a `policy_edited` audit event.
+async fn update_policy(
+    State(state): State<AppState>,
+    Extension(jwt): Extension<Arc<JwtConfig>>,
+    axum::extract::Path((tenant_key, id)): axum::extract::Path<(String, String)>,
+    headers: HeaderMap,
+    Json(body): Json<PatchPolicy>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let (tenant_id, caller) = resolve_admin(&state, &jwt, &headers, &tenant_key).await?;
+    let pid = Uuid::parse_str(&id).map_err(|_| err(StatusCode::BAD_REQUEST, "bad policy id"))?;
+    if let Some(a) = &body.attribution_default
+        && !is_attribution_mode(a)
+    {
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "attribution_default must be named|anonymous|dereferenced",
+        ));
+    }
+    let changed = state
+        .store
+        .update_policy(
+            &tenant_id,
+            &pid,
+            body.attribution_default.as_deref(),
+            body.confidentiality,
+            body.retention_days,
+        )
+        .await
+        .map_err(ise)?;
+    if !changed {
+        return Err(err(StatusCode::NOT_FOUND, "no such policy"));
+    }
+    state
+        .store
+        .record_audit_event(
+            &tenant_id,
+            actor_of(&caller).as_ref(),
+            "policy_edited",
+            Some(&id),
+            json!({}),
+        )
+        .await
+        .map_err(ise)?;
+    Ok(Json(json!({ "id": id })))
+}
+
+/// `DELETE /v1/t/{tenant_key}/policies/{id}` — remove a policy (admin).
+async fn delete_policy(
+    State(state): State<AppState>,
+    Extension(jwt): Extension<Arc<JwtConfig>>,
+    axum::extract::Path((tenant_key, id)): axum::extract::Path<(String, String)>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let (tenant_id, caller) = resolve_admin(&state, &jwt, &headers, &tenant_key).await?;
+    let pid = Uuid::parse_str(&id).map_err(|_| err(StatusCode::BAD_REQUEST, "bad policy id"))?;
+    let removed = state.store.delete_policy(&tenant_id, &pid).await.map_err(ise)?;
+    if !removed {
+        return Err(err(StatusCode::NOT_FOUND, "no such policy"));
+    }
+    state
+        .store
+        .record_audit_event(
+            &tenant_id,
+            actor_of(&caller).as_ref(),
+            "policy_deleted",
+            Some(&id),
+            json!({}),
+        )
+        .await
+        .map_err(ise)?;
+    Ok(Json(json!({ "deleted": true })))
+}
+
+// ── health (rollups from dojo.events) ────────────────────────────────────────
+
+/// `GET /v1/t/{tenant_key}/health` — the admin health strip: connection count,
+/// queue depth, publish rate (1h), error rate (1h). Read-only (no audit).
+async fn admin_health(
+    State(state): State<AppState>,
+    Extension(jwt): Extension<Arc<JwtConfig>>,
+    axum::extract::Path(tenant_key): axum::extract::Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let (tenant_id, _c) = resolve_admin(&state, &jwt, &headers, &tenant_key).await?;
+    let (connections, queue_depth, publish_rate_1h, error_rate_1h) =
+        state.store.health_rollup(&tenant_id).await.map_err(ise)?;
+    Ok(Json(json!({
+        "connections": connections,
+        "queue_depth": queue_depth,
+        "publish_rate_1h": publish_rate_1h,
+        "error_rate_1h": error_rate_1h,
+    })))
+}
+
+// ── audit (list dojo.audit_events) ───────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct AuditQuery {
+    #[serde(default)]
+    limit: Option<i64>,
+}
+
+/// `GET /v1/t/{tenant_key}/audit` — the admin audit log (`dojo.audit_events`),
+/// most recent first. Read-only (no audit).
+async fn list_audit(
+    State(state): State<AppState>,
+    Extension(jwt): Extension<Arc<JwtConfig>>,
+    axum::extract::Path(tenant_key): axum::extract::Path<String>,
+    Query(q): Query<AuditQuery>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let (tenant_id, _c) = resolve_admin(&state, &jwt, &headers, &tenant_key).await?;
+    let limit = q.limit.unwrap_or(200).clamp(1, 1000);
+    let events = state.store.list_audit_events(&tenant_id, limit).await.map_err(ise)?;
+    Ok(Json(json!({ "events": events })))
+}
+
 /// Build the router with the default (Supabase local-dev) JWT config. Existing
 /// callers keep this exact signature; the dojo routes get a default verifier.
 pub fn build_router(state: AppState) -> Router {
@@ -444,6 +969,33 @@ pub fn build_router_with_jwt(state: AppState, jwt: JwtConfig) -> Router {
             "/v1/t/{tenant_key}/triage/{signature}/decide",
             post(decide_triage),
         )
+        // Admin console (ADMIN floor; every handler behind `resolve_admin`).
+        .route(
+            "/v1/t/{tenant_key}/members",
+            get(list_members).post(add_membership),
+        )
+        .route(
+            "/v1/t/{tenant_key}/members/{user_id}/role",
+            patch(set_member_role),
+        )
+        .route(
+            "/v1/t/{tenant_key}/identities",
+            get(list_identities).post(create_identity),
+        )
+        .route(
+            "/v1/t/{tenant_key}/identities/{id}",
+            patch(update_identity).delete(delete_identity),
+        )
+        .route(
+            "/v1/t/{tenant_key}/policies",
+            get(list_policies).post(create_policy),
+        )
+        .route(
+            "/v1/t/{tenant_key}/policies/{id}",
+            patch(update_policy).delete(delete_policy),
+        )
+        .route("/v1/t/{tenant_key}/health", get(admin_health))
+        .route("/v1/t/{tenant_key}/audit", get(list_audit))
         .layer(Extension(Arc::new(jwt)));
     Router::new()
         .route("/v1/health", get(health))
