@@ -102,6 +102,10 @@ install: install-service install-app
 #   pg_restore -d sensei -c $$(ls -t database/backup/backup-*.dump | head -1)
 db-backup: db-backup-rotate
 	@mkdir -p database/backup
+	@# Keep Spotlight from indexing the multi-hundred-MB .dump files. Without
+	@# this, every backup write triggers mds indexing → CPU spike (observed at
+	@# 94%, which starved the e2e health-bootstrap gate and made the suite flaky).
+	@touch database/backup/.metadata_never_index
 	@if psql -d sensei -c "SELECT 1" >/dev/null 2>&1; then \
 	  ts=$$(date +%Y%m%d-%H%M%S); \
 	  out="database/backup/backup-$${ts}.dump"; \
