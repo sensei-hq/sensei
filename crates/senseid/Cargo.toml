@@ -100,3 +100,7 @@ tempfile = "3"
 tokio-test = "0.4"
 tower = { version = "0.5", features = ["util"] }
 hive-mind = { path = "../hive-mind" }
+# Contract test only — cross the MCP↔daemon seam by shaping requests with the
+# real proxy code and issuing them against the in-process router. senseid has no
+# runtime dependency on mcp, so this stays acyclic.
+sensei-mcp = { path = "../mcp" }

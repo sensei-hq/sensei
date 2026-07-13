@@ -816,4 +816,222 @@ mod tests {
         assert_eq!(st_folder, StatusCode::OK, "explicit folder=<abs_path> must keep working");
         assert_eq!(rules_by_folder["folder"], abs_path);
     }
+
+    // ── MCP↔daemon CONTRACT (anti-drift, table-driven) ───────────────────
+    //
+    // Generalizes the single seam test above into a table over the knowledge /
+    // project MCP tools. For EACH tool we:
+    //   1. shape the request with the REAL proxy code — `sensei_mcp::
+    //      daemon_request_for(tool, args, cwd, Some(<seeded project name>))` —
+    //      exactly what the sensei MCP binary sends;
+    //   2. issue that shaped request against the in-process daemon router;
+    //   3. assert HTTP 200 (never 400/404) AND that the SEEDED project's data
+    //      genuinely comes back (name → the right project uuid / folders).
+    //
+    // This fails the suite on ANY future drift: a renamed daemon path, a changed
+    // query key, a dropped tool, or a proxy that stops matching the daemon. The
+    // per-crate unit suites stay green in isolation — only this crossing catches
+    // the disagreement (the original context/rules bug class).
+
+    /// Percent-encode a query value (space, `&`, `:`, … → %XX). Path segments are
+    /// left raw: a `:` in a non-leading path segment is a valid pchar and axum's
+    /// matchit captures the segment verbatim.
+    fn qenc(s: &str) -> String {
+        let mut out = String::with_capacity(s.len());
+        for b in s.bytes() {
+            match b {
+                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => out.push(b as char),
+                _ => out.push_str(&format!("%{b:02X}")),
+            }
+        }
+        out
+    }
+
+    /// Issue a lib-shaped [`sensei_mcp::DaemonRequest`] against the in-process
+    /// router — the same translation the binary's `send_daemon_request` does,
+    /// minus the network. Returns `(status, raw daemon JSON)`.
+    async fn send_shaped(app: &Router, req: &sensei_mcp::DaemonRequest) -> (StatusCode, serde_json::Value) {
+        let mut uri = req.path.clone();
+        if !req.query.is_empty() {
+            let qs: Vec<String> = req.query.iter()
+                .map(|(k, v)| format!("{}={}", qenc(k), qenc(v)))
+                .collect();
+            uri.push('?');
+            uri.push_str(&qs.join("&"));
+        }
+        let method = match req.method {
+            sensei_mcp::HttpMethod::Get => "GET",
+            sensei_mcp::HttpMethod::Post => "POST",
+            sensei_mcp::HttpMethod::Put => "PUT",
+            sensei_mcp::HttpMethod::Delete => "DELETE",
+        };
+        let mut builder = Request::builder().method(method).uri(&uri);
+        let body = match &req.body {
+            Some(b) => {
+                builder = builder.header("content-type", "application/json");
+                Body::from(b.to_string())
+            }
+            None => Body::empty(),
+        };
+        let request = builder.body(body).unwrap();
+        let resp = app.clone().oneshot(request).await.unwrap();
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::json!(null));
+        (status, json)
+    }
+
+    #[tokio::test]
+    async fn mcp_proxy_knowledge_and_project_tools_contract() {
+        use sensei_mcp::daemon_request_for;
+        let (app, state) = test_app().await;
+
+        // Unique suffix so parallel test runs on the shared DB never collide.
+        let uniq = uuid::Uuid::new_v4().simple().to_string();
+        let short = uniq[..8].to_string();
+
+        // Seed: a project + ONE git-repo folder whose NAME equals the project
+        // name (so both the project-scoped resolvers AND the folder-name
+        // resolvers — get_file_tags — land on it) + a project memory + a global
+        // rule + code nodes + a tagged file + a discoverable command.
+        let pid = state.pg.ensure_test_project(&format!("contract-{short}")).await.unwrap();
+        let name = state.pg.get_project(&pid).await.unwrap().unwrap()["name"]
+            .as_str().unwrap().to_string();                    // "_test:contract-XXXX"
+        let abs_path = format!("/_test/contract-{short}/repo");
+        let root_id = state.pg.add_watch_root(&abs_path, &format!("contract-{short}"), &serde_json::json!([]))
+            .await.unwrap();
+        // Folder name == project name: get_file_tags looks up folders.name.
+        let folder_id = state.pg
+            .upsert_folder(&root_id, "git", &name, "repo", &abs_path, None, Some(&pid))
+            .await.unwrap();
+
+        let mem_title = format!("_test:contract-mem-{short}");
+        state.pg.create_memory(Some(&pid), "project", None, "convention", &mem_title, "seam memory", None, None)
+            .await.unwrap();
+        let rule_title = format!("_test:contract-rule-{short}");
+        state.pg.create_memory(None, "global", None, "convention", &rule_title, "seam rule", None, None)
+            .await.unwrap();
+
+        let fn_name = format!("contract_fn_{short}");
+        state.pg.upsert_node(&folder_id, "function", &fn_name, "src/lib.rs",
+            None, Some(&format!("fn {fn_name}()")), Some(1), Some(5)).await.unwrap();
+        let struct_name = format!("ContractType{short}");
+        state.pg.upsert_node(&folder_id, "struct", &struct_name, "src/lib.rs",
+            None, Some(&format!("struct {struct_name}")), Some(7), Some(9)).await.unwrap();
+
+        // A tagged `file` node so get_patterns (→ get_file_tags) resolves a hit.
+        let file_path = "src/widget.rs".to_string();
+        let file_id = state.pg.upsert_node(&folder_id, "file", "widget.rs", &file_path,
+            None, None, None, None).await.unwrap();
+        let tag = "route";
+        sqlx_core::query::query("UPDATE sensei.nodes SET tags = $2 WHERE id = $1")
+            .bind(file_id).bind(vec![tag.to_string()])
+            .execute(state.pg.pool()).await.unwrap();
+
+        // A discoverable command so get_commands resolves a hit.
+        state.pg.replace_folder_commands(&folder_id, "npm", Some("package.json"),
+            &[("test".to_string(), "cargo test".to_string(), Some("test"))]).await.unwrap();
+
+        // cwd is only consulted by the rules FALLBACK (no project) + governance;
+        // here a project always resolves, so its value is inert.
+        let cwd = "/tmp/contract-cwd";
+
+        // ── Direct Chunk-A guards: the request SHAPE the proxy produces ──────
+        // These go RED on the exact original bug (name sent as project_id /
+        // cwd sent as folder) regardless of daemon tolerance.
+        let ctx_req = daemon_request_for("get_layered_context", &serde_json::json!({}), cwd, Some(&name)).unwrap();
+        assert!(ctx_req.query.iter().any(|(k, v)| k == "project" && v == &name),
+            "context proxy must send ?project=<name>");
+        assert!(!ctx_req.query.iter().any(|(k, _)| k == "project_id"),
+            "context proxy must NOT send the name as project_id (the Chunk-A bug shape)");
+        let rules_req = daemon_request_for("get_rules", &serde_json::json!({}), cwd, Some(&name)).unwrap();
+        assert!(rules_req.query.iter().any(|(k, v)| k == "project" && v == &name),
+            "rules proxy must send ?project=<name>, not folder=<cwd> (the Chunk-A bug shape)");
+
+        // ── The contract table ──────────────────────────────────────────────
+        // Each entry: (tool, caller args, discriminating check on the daemon
+        // body proving the SEEDED project resolved). The check returns Err with
+        // a reason so a failure names the offending tool.
+        type Check = Box<dyn Fn(&serde_json::Value) -> Result<(), String>>;
+        let arr_has = |v: &serde_json::Value, key: &str, field: &str, want: &str| -> bool {
+            v[key].as_array().map(|a| a.iter().any(|e| e[field].as_str() == Some(want))).unwrap_or(false)
+        };
+        let cases: Vec<(&str, serde_json::Value, Check)> = vec![
+            ("get_layered_context", serde_json::json!({}), Box::new({
+                let t = mem_title.clone();
+                move |b| if arr_has(b, "memories", "title", &t) { Ok(()) }
+                         else { Err(format!("seeded project memory '{t}' absent from context")) }
+            })),
+            ("get_rules", serde_json::json!({}), Box::new({
+                let ap = abs_path.clone();
+                move |b| if b["folder"].as_str() == Some(&ap) && b["total"].as_i64().unwrap_or(0) >= 1 { Ok(()) }
+                         else { Err(format!("rules folder={:?} total={:?} (want folder={ap}, total>=1)", b["folder"], b["total"])) }
+            })),
+            ("search", serde_json::json!({ "query": fn_name.clone() }), Box::new({
+                let f = fn_name.clone();
+                move |b| if arr_has(b, "functions", "name", &f) { Ok(()) }
+                         else { Err(format!("search missing seeded function '{f}'")) }
+            })),
+            ("get_project_summary", serde_json::json!({}), Box::new({
+                let n = name.clone();
+                move |b| if b["project"]["name"].as_str() == Some(&n) && b["functions"].as_i64().unwrap_or(0) >= 1 { Ok(()) }
+                         else { Err(format!("summary project={:?} functions={:?}", b["project"]["name"], b["functions"])) }
+            })),
+            ("get_project_conventions", serde_json::json!({}), Box::new(move |b| {
+                if arr_has(b, "naming", "kind", "function") { Ok(()) }
+                else { Err(format!("conventions missing function naming; got {}", b["naming"])) }
+            })),
+            ("get_patterns", serde_json::json!({ "pattern": tag }), Box::new({
+                let fp = file_path.clone();
+                move |b| if arr_has(b, "files", "file_path", &fp) { Ok(()) }
+                         else { Err(format!("get_patterns missing tagged file '{fp}'; got {b}")) }
+            })),
+            ("get_duplicates", serde_json::json!({}), Box::new(move |b| {
+                // No code embeddings are seeded in-process, so the cosine
+                // self-join yields 0 rows — but the seam MUST resolve PROJECT
+                // scope (name → folders), which is what drift would break.
+                // NOTE (gap): actual duplicate detection needs embeddings and is
+                // exercised by the daemon's own embedding tests, not here.
+                if b["scope"].as_str() == Some("project") && b["folder_count"].as_i64().unwrap_or(0) >= 1 { Ok(()) }
+                else { Err(format!("duplicates scope={:?} folder_count={:?} (want project scope over >=1 folder)", b["scope"], b["folder_count"])) }
+            })),
+            ("get_commands", serde_json::json!({}), Box::new(move |b| {
+                if arr_has(b, "commands", "raw_name", "test") { Ok(()) }
+                else { Err(format!("get_commands missing seeded 'test' command; got {}", b["commands"])) }
+            })),
+        ];
+
+        for (tool, args, check) in &cases {
+            let req = daemon_request_for(tool, args, cwd, Some(&name))
+                .unwrap_or_else(|| panic!("daemon_request_for returned None for '{tool}' (project resolved) — the proxy stopped shaping a daemon request"));
+            let (status, body) = send_shaped(&app, &req).await;
+            assert_eq!(status, StatusCode::OK,
+                "{tool}: expected HTTP 200, got {status} — proxy request shape ({} {}) drifted from the daemon.\nbody={body}",
+                match req.method { sensei_mcp::HttpMethod::Get => "GET", sensei_mcp::HttpMethod::Post => "POST", sensei_mcp::HttpMethod::Put => "PUT", sensei_mcp::HttpMethod::Delete => "DELETE" },
+                req.path);
+            // The /api/mcp/call proxy answers 200 even for an unrecognized tool,
+            // carrying {"error":"Unknown tool: …"} — treat that as drift too.
+            if req.path == "/api/mcp/call" {
+                assert!(body.get("error").and_then(|e| e.as_str()).is_none(),
+                    "{tool}: daemon mcp proxy returned an error (tool-name drift?): {}", body["error"]);
+            }
+            check(&body).unwrap_or_else(|e| panic!("{tool}: request crossed the seam but did NOT genuinely resolve the seeded project: {e}"));
+        }
+
+        // ── Chunk-A bug class, at the DATA level: project=name ≡ project_id=uuid ──
+        // Resolve context by the explicit UUID and assert it lands on the SAME
+        // project → the same seeded memory. Proves name and uuid are interchangeable.
+        let by_uuid = daemon_request_for(
+            "get_layered_context",
+            &serde_json::json!({ "project_id": pid.to_string() }),
+            cwd, Some(&name),
+        ).unwrap();
+        assert!(by_uuid.query.iter().any(|(k, v)| k == "project_id" && v == &pid.to_string()),
+            "explicit uuid must ride on ?project_id=");
+        let (st_uuid, body_uuid) = send_shaped(&app, &by_uuid).await;
+        assert_eq!(st_uuid, StatusCode::OK, "context by explicit uuid must keep working");
+        assert!(body_uuid["memories"].as_array().unwrap().iter()
+                .any(|m| m["title"].as_str() == Some(mem_title.as_str())),
+            "project=name and project_id=uuid must resolve to the SAME project → same seeded memory");
+    }
 }
