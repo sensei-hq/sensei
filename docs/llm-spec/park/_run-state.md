@@ -1566,12 +1566,14 @@ DEFAULTS CHOSEN (reversible; flagged for Jerry to change later):
     repoints there); leave (health)/logs diagnostics at /logs untouched. Reversible.
   • project-icon images → keep gated AND build the asset-serve daemon route as its own queue item so images render.
 ACTIVE BUILD QUEUE (default-and-proceed order, highest value first):
-  A. ⏳ BUILDING (agent a5354f81, resumed 2026-07-13 post-P0) — #5 Atlas / code-graph visualization (flagship;
-     backend shipped: GET /api/projects/{id}/graph=observatory::solution_graph; /api/graph/communities(+/info);
-     /api/graph/call-flow=codebase.rs). Spec docs/llm-spec/screen/solution-architecture.md; d3-force ALREADY a dep
-     (d3-force/zoom/selection/scale); NEW (observatory) route + sidebar wiring; svelte MCP mandatory; cap render
-     (3395 fns → top-N by degree, "showing N of M"). Core = solution-graph render+zoom+community color; call-flow
-     overlay if time. ON DONE: bun check 0/0 + test:unit → commit → visual-verify=e2e follow-up. Then queue B (logs).
+  A. ✅ SHIPPED `ff8299af` (2026-07-13) — #5 Atlas code-graph screen (observatory)/atlas/, nav 図 "Atlas" (Review
+     group). d3-force 2-level (79 communities default / top-200 symbols by call-degree), zoom/pan, kind color+legend,
+     focus+neighbour highlight, inspector, scope select. Consumes GET /api/graph/nodes (6598n/9584e) + communities
+     (+/info) + call-flow. check 0/0 (924); test:unit 1095 (+36). Svelte MCP autofixed. Visual-verify=e2e follow-up.
+     ⚠️ BACKEND DATA-GAP FILED: GET /api/projects/{id}/graph (solution_graph) returns EMPTY for sensei — repo↔project
+     membership unpopulated in DB → Atlas falls back to /api/graph/nodes (roll-up counts only from solution_graph).
+     Also deferred (endpoint gaps): inter-community edges (communities/info has no per-node membership); docs/doc-drift
+     overlay + 4-level drill. → these = daemon follow-ups (populate project↔node membership; per-node community id).
   B. #2-UI observatory-logs screen (route (observatory)/activity-logs → GET /api/logs; filters level/source/since).
   C. #6 traceability fix/dismiss (daemon action endpoints over drift_items + UI drawer).
   D. #8 impact-regression surface: impact_regressions DDL + writer (record on negative verdict) + alert screen.
