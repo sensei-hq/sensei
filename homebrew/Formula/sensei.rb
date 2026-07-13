@@ -12,7 +12,7 @@
 class Sensei < Formula
   desc "AI development intelligence — CLI, daemon, and MCP server"
   homepage "https://github.com/sensei-hq/sensei"
-  version "0.2.41"
+  version "0.2.42"
 
   # Release archives built by GitHub Actions (release-daemon.yml).
   # Each tarball contains a single directory named after the artifact
