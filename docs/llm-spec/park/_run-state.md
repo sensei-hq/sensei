@@ -1605,8 +1605,18 @@ ACTIVE BUILD QUEUE (default-and-proceed order, highest value first):
      narrowed to (namespace_id NULL AND project_id NULL); project-tied branch resolves a project's principle ONLY for
      its own repo, labeled `project`; resolve_global_rules likewise. Live sim sensei 9→1. +1 regression test;
      governance 8/8 + knowledge_api green. Follow-up flagged: attach project namespace at generation (scan-time).
-   • NEXT no-DDL: search recall gaps (signature-substring misses real symbols → query.rs) ; F-contribute lane (wire
-     C6 scheduling). [F-benchmarks/F-TDD-gate + C/D remain DDL-coordinated.]
+   • ✅ search recall = NON-ISSUE (investigated 2026-07-13, no fix needed). search is keyword ILIKE over
+     sensei.nodes name+signature (query.rs:218/244) — CORRECT. `resolve_project_uuid` returned empty only because
+     it's NOT INDEXED (count 0; siblings resolve_project/_from_cwd/_in ARE) = STALE INDEX (added v0.2.40 post-scan).
+     Same stale-index root explains Atlas solution_graph empty + icon images un-written. → RESOLVED by D2 rescan-on-
+     version-change, which fires on the next bump+install. No code change.
+   • NEXT no-DDL after milestone: F-contribute lane (wire C6 scheduling). [F-benchmarks/F-TDD-gate + C/D = DDL-coord.]
+
+── ⏳ MILESTONE IN PROGRESS (2026-07-13, unattended — Jerry AFK = ideal, no active-work MCP disruption): merging
+   develop→main + `make bump v=patch` (→v0.2.42) + `make install-service` (release; NOT install-app — Actions builds
+   the release .app; local app UI updates at a later full install). Ships Atlas/logs/icon/get_rules LIVE (daemon side)
+   + D2 rescan re-indexes (fixes search-recall/solution_graph/icon-images). ON DONE: curl /health=0.2.42 + get_rules
+   (sensei)→1 rule (scope-fix live) + resolve_project_uuid now indexed (rescan worked).
 
 ── ⭐ MILESTONE DUE: develop has accumulated since v0.2.41 → Atlas `ff8299af`, logs `b5685e69`, icon `c8054297`,
    get_rules `3089ffd0` (+run-state). Merge develop→main + `make ship`/full `make install` (service+app) to make them
