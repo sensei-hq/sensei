@@ -1,5 +1,6 @@
 import type {
   ServerProject, ProjectSummary, GraphData, GraphNode, GraphEdge,
+  GraphSymbolNode, GraphCallEdge,
   SolutionGraphResponse, SolutionAnalysis, InferredRole,
   IndexQueueStatus, DirtyStatus, IndexError,
   FunctionDetail, TypeDetail, CommunityInfo, DocDrift,
@@ -533,7 +534,7 @@ export function senseiApi(port: number) {
     },
 
     getGraphNodes: (repoId: string) =>
-      get<{ nodes: GraphNode[]; edges: GraphEdge[] }>(
+      get<{ nodes: GraphSymbolNode[]; edges: GraphCallEdge[] }>(
         `/api/graph/nodes?repoId=${enc(repoId)}`, { nodes: [], edges: [] },
       ),
 
