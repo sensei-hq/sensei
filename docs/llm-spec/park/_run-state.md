@@ -1977,7 +1977,7 @@ port mismatch hive 7755 vs config 8787 (🟢), etc. Chunk order: {R1,R2}→R3→
    a (console)/+layout.server.ts that reads it → replaces R9's ?tenant= placeholder; (2) surface
    locals.session.access_token → data → triage-data.ts Authorization: Bearer. Makes R9/R10/R11 functional-on-login
    (live login + running dojo service still Jerry). Verify check+build+TEST (0/green).
-   🟢 NEXT after wiring: R10/R11 (admin + client-lead console screens over R7/R8) → then R3 (infer+confirm bind + setup
+   🔨 IN PROGRESS: R10 — Admin console screens (subagent a7b582eb): members/identities/policies/health/audit over R7 backend, using the tenant+token wiring. Then R11 (client-lead over R8) → then R3 (infer+confirm bind + setup
    org-tagging; small dojo.memberships DDL). R4 dropped. Reliability + MCP tracks complete.
    ✅ sensei-mcp RESILIENCE SHIPPED `89de7c59` (2026-07-13) — ⚠️ INVESTIGATION FLIPPED THE FIX. The proposed "add
    reconnect logic + re-fetch the tool list" was based on a WRONG premise. Reading crates/mcp: `handle_list_tools`
