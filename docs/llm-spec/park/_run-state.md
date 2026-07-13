@@ -1623,8 +1623,13 @@ ACTIVE BUILD QUEUE (default-and-proceed order, highest value first):
 ── ✅✅ P0 FIX SHIPPED `c9ef8b61` + VERIFIED LIVE (2026-07-13). Targeted `sensei scan` of the sensei repo:
    daemon PID UNCHANGED (no crash), GGML_ASSERT stayed 106 (zero new aborts), sensei nodes 6598→9340 (+2742),
    resolve_project_uuid 0→2 + pack_embed_batches/cap_embed_input now indexed. CAPTURE UNFROZEN. search/graph now
-   see current code. NEXT milestone bump+install → clean FULL D2 rescan (all watch roots, crash-free) refreshes the
-   whole graph.  [Prior line:] ── ✅ P0 FIX SHIPPED `c9ef8b61` (2026-07-13, develop):
+   see current code.
+   ✅ RELEASED v0.2.43: merge develop→main `1c43f4f8` + bump (tag v0.2.43, tap d73e533 / marketplace f5c0eee).
+   ⏳ install-service bf1k7k5h4 running → daemon 0.2.42→0.2.43 so D2 fires a FULL crash-free rescan (all watch roots:
+   /Users/Jerry/Developer + dbd-rs + rokkit + Work) → refreshes the WHOLE stale graph. ON DONE: /health=0.2.43 +
+   daemon stays up (no GGML_ASSERT growth) + node counts climb + daemon.last_version commits 0.2.43 ONLY after the
+   rescan drains. Release = Atlas/logs/icon/get_rules(v0.2.42) + embed-fix. NEXT after verify: F-contribute (no-DDL).
+   [detail:] ── P0 embed-crash fix `c9ef8b61`:
    Real root cause (sharper than hypothesis): per-BATCH token overflow — embed_nodes packed 64 texts into ONE
    Payload::Embed; gateway-embedded LlamaCppAdapter sums ALL seqs into a SINGLE ctx.encode() bounded by n_ubatch=512
    (BERT encoder, no ubatch split) → 64 code texts ≫512 tok → GGML_ASSERT abort. Char cap was wrong unit AND wrong
