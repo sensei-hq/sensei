@@ -9379,8 +9379,11 @@ mod tests {
         s.insert_hook_event(&orphan_csid, "claude", "PostToolUse", Some("Read"), None, old_ts, None,
             &serde_json::json!({})).await.unwrap();
 
-        let counts = s.prune_activity(30).await.unwrap();
-        assert!(counts.assistant_events >= 1, "orphan event older than cutoff must be pruned");
+        // prune_activity's returned count is GLOBAL across the shared test DB — a
+        // sibling db-gated test may prune this row concurrently, so don't assert on
+        // the count. The per-row check below deterministically proves our orphan
+        // (unique csid) was pruned.
+        s.prune_activity(30).await.unwrap();
 
         let orphaned: (i64,) = sqlx_core::query_as::query_as(
             "SELECT COUNT(*) FROM activity.assistant_events WHERE session_id = $1"
