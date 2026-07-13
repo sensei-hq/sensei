@@ -1661,7 +1661,19 @@ port mismatch hive 7755 vs config 8787 (🟢), etc. Chunk order: {R1,R2}→R3→
    + supabase/); (2) port = **7755** (fix config's 8787); (3) cadence = **stage-then-human ALWAYS** (auto-publish
    deferred — R1 already does this); (5) console↔service auth = **SvelteKit BFF** (server routes proxy to sensei-dojo,
    Supabase session server-side). (4) deploy = localhost-first, config-driven (I proceed this way). STILL OPEN:
-   (6) seed-catalogue source/format — deferred (gates G8 only, not the rename or the 🟢 chunks).
+   (6) seed-catalogue = ✅ DECIDED (Jerry 2026-07-13): AUTO-DISCOVERY from the git-remote OWNER, not a static seed.
+   Extract owner from each indexed repo's remote → resolve org-vs-user via GitHub API GET /users/{owner} (cached) →
+   ORG owner ⇒ candidate Dōjō (e.g. sensei-hq dojo), USER owner ⇒ no dojo (personal); group projects by org owner.
+   Seeds the COMPANY level of the existing company/client hierarchy (= G9 auto-discovery). Guardrail: org is the
+   auto-propose DEFAULT, keep manual grouping (dojo ≠ raw org 1:1). → build as a post-consolidation chunk.
+⭐ ROLE MODEL DECIDED (Jerry 2026-07-13, pending his final confirm on the lead power): roles are org/client-AGNOSTIC
+   (company/client is a dojo/project hierarchy tag, NOT baked into the role). Rename member_role `client_lead`→`lead`;
+   4 roles governing DIFFERENT objects: admin=platform/membership (invite/remove, roles, settings, billing, delete);
+   maintainer=knowledge pool (review/approve/reject/curate — the promotion/decide gates); contributor=own
+   contributions (share+consume); **lead=knowledge CANON+direction: ENDORSE-AS-CANONICAL + raise dojo enforcement
+   advisory→mandatory + set focus + tiebreak "what's canon here"** (the lead-only power vs admin; a person may hold
+   both). Fallback if too much for v1: 3 roles (admin absorbs canon, drop lead) — but KEEP lead recommended (canon is
+   the Dōjō's whole point). → member_role enum change = DDL chunk, do AFTER the hive→dojo consolidation lands.
 ⏳ HIVE→DOJO CONSOLIDATION BUILDING (agent ab63f054, Jerry directive — one name `dojo`). Phase 1 CODE: merge
    hive-protocol→dojo-protocol (delete crate), rename hive-mind→dojo-mind + binary sensei-hive→**sensei-dojo**, port
    8787→7755, global hive→dojo (≈123 files/142 refs). Phase 2 DDL (source-first): fold hive schema→dojo schema + hive
