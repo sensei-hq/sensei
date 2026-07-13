@@ -507,22 +507,23 @@ pub async fn reconcile_repo_identity(ctx: &TaskContext, repo_abs_path: &str) -> 
         }
 
         // Deterministic project-icon inference — fills the generic 場 fallback
-        // so the project card shows something recognisable (kanji-from-stack /
-        // letter initial). Never overrides an author choice; only upgrades a
-        // prior machine icon; non-fatal. [[pipeline/project-icon]].
+        // so the project card shows something recognisable (repo logo /
+        // kanji-from-stack / letter initial). Never overrides an author choice;
+        // only upgrades a prior machine icon; non-fatal. [[pipeline/project-icon]].
         //
-        // IMAGE ICONS GATED: we deliberately pass NO asset paths yet. The app
-        // renders <img src={icon.value}> and the daemon has no asset-serve
-        // route, so a repo-relative logo path 404s in the Tauri webview — a
-        // broken image is worse than a kanji. Re-enable the image tier by
-        // passing the scanned `icon.path` here once the asset-cache/serve step
-        // lands (the pure chooser + its tests already cover the image tier).
+        // The logo tier is LIVE: the scanned repo-relative asset path
+        // (`icon.path`, from `scan_icons` above) is passed through so a detected
+        // logo wins as `{kind:"image", value:<rel path>}`. The daemon serves the
+        // bytes at `GET /api/projects/{id}/icon` (path-safety in
+        // `analysis::project_icon::read_icon_bytes`), and the app renders it with
+        // a kanji fallback on image error.
         use crate::analysis::project_icon::{infer_icon, IconDecision};
+        let logo_paths: Vec<String> = icon.path.iter().cloned().collect();
         let existing_icon = project.as_ref()
             .map(|p| p["icon"].clone())
             .unwrap_or(serde_json::Value::Null);
         if let IconDecision::Set(inferred) =
-            infer_icon(&project_name, &id_stack, &existing_icon, &[])
+            infer_icon(&project_name, &id_stack, &existing_icon, &logo_paths)
             && let Err(e) = ctx.pg()
                 .set_project_icon(&pid, &serde_json::to_value(&inferred).unwrap_or(serde_json::Value::Null))
                 .await
