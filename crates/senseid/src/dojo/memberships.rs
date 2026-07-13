@@ -62,8 +62,8 @@ pub const AUTH_METHODS: [&str; 3] = ["sso", "github_oauth", "device_code"];
 pub const SYNC_STATUSES: [&str; 4] = ["healthy", "stale", "error", "authenticating"];
 
 /// Derive the full membership URL from the registry base + tenant discovery
-/// path, e.g. `("http://localhost:8787", "github/sensei-hq")` →
-/// `"http://localhost:8787/github/sensei-hq"`. Pure.
+/// path, e.g. `("http://localhost:7755", "github/sensei-hq")` →
+/// `"http://localhost:7755/github/sensei-hq"`. Pure.
 pub fn derive_dojo_url(registry_url: &str, tenant_key: &str) -> String {
     format!(
         "{}/{}",
@@ -275,16 +275,16 @@ mod tests {
 
     #[test]
     fn derive_dojo_url_joins_registry_and_tenant_without_double_slash() {
-        assert_eq!(derive_dojo_url("http://localhost:8787", "github/sensei-hq"), "http://localhost:8787/github/sensei-hq");
-        assert_eq!(derive_dojo_url("http://localhost:8787/", "/github/sensei-hq"), "http://localhost:8787/github/sensei-hq");
+        assert_eq!(derive_dojo_url("http://localhost:7755", "github/sensei-hq"), "http://localhost:7755/github/sensei-hq");
+        assert_eq!(derive_dojo_url("http://localhost:7755/", "/github/sensei-hq"), "http://localhost:7755/github/sensei-hq");
     }
 
     #[test]
     fn new_connection_validates_every_enum_field() {
         let id = uuid::Uuid::new_v4();
         let ok = NewConnection::validated(
-            id, "http://localhost:8787".into(), "github/acme".into(),
-            "http://localhost:8787/github/acme".into(),
+            id, "http://localhost:7755".into(), "github/acme".into(),
+            "http://localhost:7755/github/acme".into(),
             "client", "contributor", "device_code", "dereferenced", "authenticating",
         );
         assert!(ok.is_ok());

@@ -40,7 +40,7 @@ preserves the payload. A published artifact distributes downstream to every
 membership whose scope matches this artifact''s scope tag.';
 
 comment on column dojo.artifacts.seq
-     is 'Monotonic federation pull cursor, advanced on every write (the service sets seq = nextval on publish; a bigserial-style default alone would only fire on insert). A puller resumes gap-free from the last seq it saw — mirrors hive.shared_rules.seq.';
+     is 'Monotonic federation pull cursor, advanced on every write (the service sets seq = nextval on publish; a bigserial-style default alone would only fire on insert). A puller resumes gap-free from the last seq it saw — mirrors dojo.shared_rules.seq.';
 comment on column dojo.artifacts.engagement_id
      is 'Set when the artifact came from client work under an engagement; such artifacts must have dereferenced=true.';
 comment on column dojo.artifacts.kind

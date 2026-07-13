@@ -1,10 +1,10 @@
-set search_path to hive, sensei, extensions;
+set search_path to dojo, sensei, extensions;
 
-create sequence if not exists hive.shared_rules_seq;
+create sequence if not exists dojo.shared_rules_seq;
 
-create table if not exists hive.shared_rules (
+create table if not exists dojo.shared_rules (
   id            uuid        primary key default gen_random_uuid()
-, seq           bigint      not null default nextval('hive.shared_rules_seq')
+, seq           bigint      not null default nextval('dojo.shared_rules_seq')
 , namespace_id  uuid        not null references sensei.namespaces(id)
 , content_hash  text        not null
 , rule_type     text        not null
@@ -21,10 +21,10 @@ create table if not exists hive.shared_rules (
 , constraint shared_rules_ns_content unique (namespace_id, content_hash)
 );
 
-create index if not exists shared_rules_seq_idx on hive.shared_rules(seq);
+create index if not exists shared_rules_seq_idx on dojo.shared_rules(seq);
 
-comment on table hive.shared_rules is
-'Published-rule registry for the hive-mind. A flattened snapshot of a promoted
+comment on table dojo.shared_rules is
+'Published-rule registry for the dojo-mind. A flattened snapshot of a promoted
 rule (no memory graph). seq is a monotonic cursor advanced on every insert,
 republish, and tombstone (the store sets seq = nextval on every write — bigserial
 alone would only fire on insert). Self-contained: no FK to projects/folders/sessions.';

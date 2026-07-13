@@ -1,12 +1,12 @@
-//! Federation: push promoted rules to a hive-mind and poll-pull applicable rules
-//! back as memories(origin='federated'). The ACP never talks to a hive; senseid
+//! Federation: push promoted rules to a dojo-mind and poll-pull applicable rules
+//! back as memories(origin='federated'). The ACP never talks to a dojo; senseid
 //! owns all outbound calls (spec §4).
 
 use crate::db::pg_store::{InsertMemory, KnowledgeSource, MemoryPushPayload, PgStore};
-use hive_protocol::{content_hash, PublishedRule, PullResponse};
+use dojo_protocol::{content_hash, PublishedRule, PullResponse};
 
 /// HTTP client for all federation calls. Bounded connect + total timeouts so a
-/// hung/unreachable hive can never wedge the (sequential) pull loop or pile up
+/// hung/unreachable dojo can never wedge the (sequential) pull loop or pile up
 /// push tasks — same liveness discipline as the daemon's other outbound clients.
 pub fn http_client() -> reqwest::Client {
     reqwest::Client::builder()
@@ -17,7 +17,7 @@ pub fn http_client() -> reqwest::Client {
 }
 
 /// Build the wire payload for a memory being published. `published_by`/`published_at`
-/// are stamped server-side by the hive (the hive overrides them from the API key's
+/// are stamped server-side by the dojo (the dojo overrides them from the API key's
 /// member + now()), so we send harmless best-effort placeholders.
 pub fn build_published_rule(p: &MemoryPushPayload, origin_repo: Option<&str>) -> PublishedRule {
     PublishedRule {
@@ -31,8 +31,8 @@ pub fn build_published_rule(p: &MemoryPushPayload, origin_repo: Option<&str>) ->
         impact: p.impact.clone(),
         enforcement: p.enforcement.clone(),
         origin_repo: origin_repo.map(|s| s.to_string()),
-        published_by: "senseid".to_string(),       // hive overrides from the API key's member
-        published_at: "1970-01-01T00:00:00Z".to_string(), // hive overrides with now()
+        published_by: "senseid".to_string(),       // dojo overrides from the API key's member
+        published_at: "1970-01-01T00:00:00Z".to_string(), // dojo overrides with now()
     }
 }
 
@@ -81,8 +81,8 @@ async fn push_one(
     let key = crate::gateway_keys::get_key(&src.credential_ref).map_err(|e| e.to_string())?;
     let resp = client.post(format!("{}/v1/rules", src.url.trim_end_matches('/')))
         .bearer_auth(key).json(pr).send().await.map_err(|e| e.to_string())?;
-    if !resp.status().is_success() { return Err(format!("hive returned {}", resp.status())); }
-    let pubresp: hive_protocol::PublishResponse = resp.json().await.map_err(|e| e.to_string())?;
+    if !resp.status().is_success() { return Err(format!("dojo returned {}", resp.status())); }
+    let pubresp: dojo_protocol::PublishResponse = resp.json().await.map_err(|e| e.to_string())?;
     let remote_id = uuid::Uuid::parse_str(&pubresp.id).map_err(|e| e.to_string())?;
     pg.upsert_federated_memory(&src.id, &remote_id, &pr.content_hash, Some(&memory_id), pubresp.seq).await?;
     Ok(())
@@ -101,7 +101,7 @@ pub async fn pull_source(pg: &PgStore, client: &reqwest::Client, src: &Knowledge
     let key = crate::gateway_keys::get_key(&src.credential_ref).map_err(|e| e.to_string())?;
     let resp = client.get(format!("{}/v1/rules?since={}", src.url.trim_end_matches('/'), src.last_seq))
         .bearer_auth(key).send().await.map_err(|e| e.to_string())?;
-    if !resp.status().is_success() { return Err(format!("hive returned {}", resp.status())); }
+    if !resp.status().is_success() { return Err(format!("dojo returned {}", resp.status())); }
     let page: PullResponse = resp.json().await.map_err(|e| e.to_string())?;
     let mut stats = PullStats { new_cursor: page.cursor, ..Default::default() };
 
@@ -136,7 +136,7 @@ enum RuleOutcome {
 async fn apply_pulled_rule(
     pg: &PgStore,
     src: &KnowledgeSource,
-    pulled: &hive_protocol::PulledRule,
+    pulled: &dojo_protocol::PulledRule,
 ) -> Result<RuleOutcome, String> {
     let remote_id = uuid::Uuid::parse_str(&pulled.id).map_err(|e| e.to_string())?;
     let existing = pg.find_federated_memory(&src.id, &remote_id).await?;
@@ -234,8 +234,8 @@ mod tests {
             scope_key: "organization".into(), slug: "sensei-hq".into(), name: "Sensei HQ".into(),
         };
         let pr = build_published_rule(&p, Some("sensei/daemon"));
-        // content_hash normalizes (trim+lowercase) — matches hive-protocol.
-        assert_eq!(pr.content_hash, hive_protocol::content_hash("Always use TDD"));
+        // content_hash normalizes (trim+lowercase) — matches dojo-protocol.
+        assert_eq!(pr.content_hash, dojo_protocol::content_hash("Always use TDD"));
         assert_eq!(pr.scope_key, "organization");
         assert_eq!(pr.namespace_slug, "sensei-hq");
         assert_eq!(pr.namespace_name, "Sensei HQ");
@@ -245,7 +245,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn e2e_daemon_pulls_a_rule_published_on_the_hive() {
+    async fn e2e_daemon_pulls_a_rule_published_on_the_dojo() {
         use crate::db::pg_store::{NewKnowledgeSource, PgStore};
         let Ok(pg) = PgStore::connect_test().await else { return; }; // skip if no test DB
 
@@ -259,50 +259,50 @@ mod tests {
              ON CONFLICT (key) DO UPDATE SET shareable = EXCLUDED.shareable")
             .execute(pg.pool()).await.unwrap();
 
-        // 1. Start an in-process sensei-hive on an ephemeral port (embedded PG cached).
+        // 1. Start an in-process sensei-dojo on an ephemeral port (embedded PG cached).
         // Skip (don't fail) when the embedded Postgres can't start — same idiom
         // as the no-test-DB skip above. That's an environmental prerequisite
         // (e.g. exhausted SysV SHMMNI from many embedded-PG runs), not a product
         // fault; this test verifies federation pull, not PG infra availability.
-        let Ok(db) = hive_mind::db::HiveDb::bootstrap_temp().await else {
-            eprintln!("skipping e2e_daemon_pulls_a_rule_published_on_the_hive: embedded hive PG unavailable");
+        let Ok(db) = dojo_mind::db::DojoDb::bootstrap_temp().await else {
+            eprintln!("skipping e2e_daemon_pulls_a_rule_published_on_the_dojo: embedded dojo PG unavailable");
             return;
         };
-        let store = hive_mind::store::HiveStore::new(db.pool().clone());
+        let store = dojo_mind::store::DojoStore::new(db.pool().clone());
         let member = store.create_member("e2e", None, "publisher").await.unwrap();
         let key = store.issue_key(&member, None).await.unwrap().plaintext;
-        // Hold `db` for the rest of the test (the spawned hive server uses a clone
+        // Hold `db` for the rest of the test (the spawned dojo server uses a clone
         // of its pool) and let it drop at function end, which tears the embedded
         // postmaster down. The previous `Box::leak` kept it alive forever, orphaning
         // one postgres process + one SysV shm segment per run — eventually exhausting
         // SHMMNI and breaking this very test. `_db` keeps the binding live to scope end.
         let _db = db;
-        let app = hive_mind::api::build_router(std::sync::Arc::new(
-            hive_mind::api::SharedState { store }));
+        let app = dojo_mind::api::build_router(std::sync::Arc::new(
+            dojo_mind::api::SharedState { store }));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap(); });
         tokio::time::sleep(std::time::Duration::from_millis(150)).await;
-        let hive_url = format!("http://{addr}");
+        let dojo_url = format!("http://{addr}");
 
-        // 2. Publish a rule on the hive (unique content so reruns don't collide).
+        // 2. Publish a rule on the dojo (unique content so reruns don't collide).
         let client = reqwest::Client::new();
         let content = format!("e2e federated rule {}", uuid::Uuid::new_v4());
         let body = serde_json::json!({
-            "content_hash": hive_protocol::content_hash(&content),
+            "content_hash": dojo_protocol::content_hash(&content),
             "scope_key": "organization", "namespace_slug": "e2e-org", "namespace_name": "E2E Org",
             "rule_type": "convention", "title": "E2E", "content": content,
             "impact": null, "enforcement": "mandatory", "origin_repo": null,
             "published_by": "x", "published_at": "1970-01-01T00:00:00Z"
         });
-        let r = client.post(format!("{hive_url}/v1/rules")).bearer_auth(&key).json(&body).send().await.unwrap();
+        let r = client.post(format!("{dojo_url}/v1/rules")).bearer_auth(&key).json(&body).send().await.unwrap();
         assert!(r.status().is_success(), "publish failed: {}", r.status());
 
         // 3. Register the source on the daemon (key in the Keychain, row in PG).
-        let cref = format!("hive-e2e-{}", uuid::Uuid::new_v4());
+        let cref = format!("dojo-e2e-{}", uuid::Uuid::new_v4());
         crate::gateway_keys::set_key(&cref, &key).unwrap();
         let src_id = pg.create_knowledge_source(&NewKnowledgeSource {
-            kind: "hive_mind".into(), name: "E2E".into(), url: hive_url,
+            kind: "hive_mind".into(), name: "E2E".into(), url: dojo_url,
             namespace_id: None, credential_ref: cref.clone(), direction: "pull".into(),
         }).await.unwrap();
         let src = pg.get_knowledge_source(&src_id).await.unwrap().unwrap();

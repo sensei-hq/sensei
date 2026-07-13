@@ -1,11 +1,11 @@
-//! `HiveStore` — the data layer for the hive: publish/pull of shared rules,
-//! plus member/api-key/audit management.
+//! `DojoStore` — the data layer for the Dōjō service: publish/pull of shared
+//! rules, plus member/api-key/audit management.
 
 use dojo_protocol::{
     ArtifactPayload, ArtifactPullResponse, ArtifactScope, ArtifactStatus, Attribution,
     PublishArtifactResponse, PublishedArtifact, PulledArtifact,
 };
-use hive_protocol::{PublishResponse, PublishedRule, PullResponse, PulledRule};
+use dojo_protocol::{PublishResponse, PublishedRule, PullResponse, PulledRule};
 use rand::RngCore;
 use sha2::{Digest, Sha256};
 use sqlx_postgres::PgPool;
@@ -17,7 +17,7 @@ use uuid::Uuid;
 /// seq order equals commit order, so the monotonic pull cursor is gap-free: a
 /// puller that has advanced past seq N has necessarily already seen every
 /// committed row with seq < N (no row can commit out of seq order and be skipped).
-const SHARED_RULES_SEQ_LOCK: i64 = 0x6869_7665_5f73_6571; // ascii "hive_seq"
+const SHARED_RULES_SEQ_LOCK: i64 = 0x7275_6c65_5f73_6571; // ascii "rule_seq"
 
 /// Advisory-lock key that serializes `dojo.artifacts.seq` assignment, the
 /// artifact analogue of `SHARED_RULES_SEQ_LOCK`. A distinct key so artifact
@@ -57,14 +57,14 @@ fn random_key() -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// Data access over the hive Postgres pool.
+/// Data access over the Dōjō service Postgres pool.
 #[derive(Clone)]
-pub struct HiveStore {
+pub struct DojoStore {
     pool: PgPool,
 }
 
-impl HiveStore {
-    /// Build a store over an existing pool (cloned from `HiveDb::pool()`).
+impl DojoStore {
+    /// Build a store over an existing pool (cloned from `DojoDb::pool()`).
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
@@ -108,13 +108,13 @@ impl HiveStore {
         .map_err(|e| e.to_string())?;
 
         let (id, version, seq): (Uuid, i32, i64) = sqlx_core::query_as::query_as(
-            "INSERT INTO hive.shared_rules
+            "INSERT INTO dojo.shared_rules
                (namespace_id, content_hash, rule_type, title, content, impact,
                 enforcement, status, version, origin_repo, published_by, published_at,
                 seq, updated_at)
              VALUES
                ($1, $2, $3, $4, $5, $6, $7::sensei.enforcement, 'active', 1, $8, $9, now(),
-                nextval('hive.shared_rules_seq'), now())
+                nextval('dojo.shared_rules_seq'), now())
              ON CONFLICT(namespace_id, content_hash) DO UPDATE SET
                rule_type = EXCLUDED.rule_type,
                title = EXCLUDED.title,
@@ -125,8 +125,8 @@ impl HiveStore {
                published_by = EXCLUDED.published_by,
                published_at = now(),
                status = 'active',
-               version = hive.shared_rules.version + 1,
-               seq = nextval('hive.shared_rules_seq'),
+               version = dojo.shared_rules.version + 1,
+               seq = nextval('dojo.shared_rules_seq'),
                updated_at = now()
              RETURNING id, version, seq",
         )
@@ -153,7 +153,7 @@ impl HiveStore {
     }
 
     /// Pull all rule deltas with `seq > since`, ordered by `seq`. Each row is a
-    /// full snapshot plus hive identity (id/seq/status/version). The returned
+    /// full snapshot plus Dōjō identity (id/seq/status/version). The returned
     /// cursor is the max `seq` seen (or `since` if the page is empty), to persist
     /// for the next pull.
     pub async fn pull_since(&self, since: i64) -> Result<PullResponse, String> {
@@ -182,7 +182,7 @@ impl HiveStore {
                     r.enforcement::text,
                     r.origin_repo, r.published_by,
                     to_char(r.published_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')
-             FROM hive.shared_rules r
+             FROM dojo.shared_rules r
              JOIN sensei.namespaces n ON n.id = r.namespace_id
              WHERE r.seq > $1
              ORDER BY r.seq",
@@ -252,9 +252,9 @@ impl HiveStore {
             .await
             .map_err(|e| e.to_string())?;
         let res = sqlx_core::query::query(
-            "UPDATE hive.shared_rules
+            "UPDATE dojo.shared_rules
              SET status = 'tombstoned',
-                 seq = nextval('hive.shared_rules_seq'),
+                 seq = nextval('dojo.shared_rules_seq'),
                  updated_at = now()
              WHERE id = $1 AND status <> 'tombstoned'",
         )
@@ -274,7 +274,7 @@ impl HiveStore {
         role: &str,
     ) -> Result<Uuid, String> {
         let (id,): (Uuid,) = sqlx_core::query_as::query_as(
-            "INSERT INTO hive.members(name, email, role) VALUES($1, $2, $3) RETURNING id",
+            "INSERT INTO dojo.members(name, email, role) VALUES($1, $2, $3) RETURNING id",
         )
         .bind(name)
         .bind(email)
@@ -295,7 +295,7 @@ impl HiveStore {
         let plaintext = random_key();
         let key_hash = hash_key(&plaintext);
         let (id,): (Uuid,) = sqlx_core::query_as::query_as(
-            "INSERT INTO hive.api_keys(member_id, key_hash, label) VALUES($1, $2, $3) RETURNING id",
+            "INSERT INTO dojo.api_keys(member_id, key_hash, label) VALUES($1, $2, $3) RETURNING id",
         )
         .bind(member_id)
         .bind(&key_hash)
@@ -319,8 +319,8 @@ impl HiveStore {
         let presented_hash = hash_key(presented);
         let row: Option<(Uuid, Uuid, String, String, String)> = sqlx_core::query_as::query_as(
             "SELECT k.id, m.id, m.name, m.role, k.key_hash
-             FROM hive.api_keys k
-             JOIN hive.members m ON m.id = k.member_id
+             FROM dojo.api_keys k
+             JOIN dojo.members m ON m.id = k.member_id
              WHERE k.key_hash = $1 AND k.revoked_at IS NULL AND m.disabled_at IS NULL
              LIMIT 1",
         )
@@ -338,7 +338,7 @@ impl HiveStore {
             return Ok(None);
         }
         sqlx_core::query::query(
-            "UPDATE hive.api_keys SET last_used_at = now() WHERE id = $1",
+            "UPDATE dojo.api_keys SET last_used_at = now() WHERE id = $1",
         )
         .bind(key_id)
         .execute(&self.pool)
@@ -351,7 +351,7 @@ impl HiveStore {
     pub async fn revoke_key(&self, key_id: &str) -> Result<bool, String> {
         let uuid = Uuid::parse_str(key_id).map_err(|e| e.to_string())?;
         let res =
-            sqlx_core::query::query("UPDATE hive.api_keys SET revoked_at = now() WHERE id = $1")
+            sqlx_core::query::query("UPDATE dojo.api_keys SET revoked_at = now() WHERE id = $1")
                 .bind(uuid)
                 .execute(&self.pool)
                 .await
@@ -368,7 +368,7 @@ impl HiveStore {
         detail: serde_json::Value,
     ) -> Result<(), String> {
         sqlx_core::query::query(
-            "INSERT INTO hive.audit_log(member_id, action, target, detail)
+            "INSERT INTO dojo.audit_log(member_id, action, target, detail)
              VALUES($1, $2, $3, $4)",
         )
         .bind(member_id)

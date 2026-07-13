@@ -1,13 +1,13 @@
-//! Verifies the service boots with BOTH governance scopes in its embedded PG:
-//! the `dojo` scope is deployed alongside the (unchanged) `hive` scope, the
-//! `dojo.artifacts.seq` cursor is present, and the global-dojo tenant is seeded
+//! Verifies the service boots the unified `dojo` scope in its embedded PG: BOTH
+//! the artifact tables (with the `dojo.artifacts.seq` cursor) AND the
+//! governance-federation tables land, and the global-dojo tenant is seeded
 //! idempotently.
 
-use hive_mind::db::HiveDb;
+use dojo_mind::db::DojoDb;
 
 #[tokio::test]
-async fn bootstrap_deploys_dojo_scope_alongside_hive_and_seeds_global_dojo() {
-    let db = HiveDb::bootstrap_temp().await.expect("bootstrap embedded hive+dojo");
+async fn bootstrap_deploys_unified_dojo_scope_and_seeds_global_dojo() {
+    let db = DojoDb::bootstrap_temp().await.expect("bootstrap embedded dojo");
     let pool = db.pool();
 
     // dojo.* tables landed.
@@ -53,12 +53,13 @@ async fn bootstrap_deploys_dojo_scope_alongside_hive_and_seeds_global_dojo() {
     .unwrap();
     assert_eq!(globals, 1, "the global-dojo tenant must be seeded exactly once");
 
-    // Additive proof: the hive scope is still fully present.
-    let (hive_ok,): (bool,) = sqlx_core::query_as::query_as(
-        "SELECT to_regclass('hive.shared_rules') IS NOT NULL",
+    // The governance-federation tables (shared_rules/members/api_keys/audit_log)
+    // land in the same unified `dojo` scope.
+    let (rules_ok,): (bool,) = sqlx_core::query_as::query_as(
+        "SELECT to_regclass('dojo.shared_rules') IS NOT NULL",
     )
     .fetch_one(pool)
     .await
     .unwrap();
-    assert!(hive_ok, "the hive scope must remain deployed alongside dojo");
+    assert!(rules_ok, "the governance-federation tables must deploy in the dojo scope");
 }

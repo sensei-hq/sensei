@@ -1,11 +1,11 @@
 //! Restart-persistence: a NON-temporary embedded cluster must reopen across
-//! `HiveDb` lifecycles. Before the pinned superuser password, the second
+//! `DojoDb` lifecycles. Before the pinned superuser password, the second
 //! bootstrap over the same data dir failed with "password authentication
 //! failed" because `Settings::default()` randomised the password per process.
 
 use std::path::PathBuf;
 
-use hive_mind::db::HiveDb;
+use dojo_mind::db::DojoDb;
 
 fn workspace_database_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../database")
@@ -17,7 +17,7 @@ fn unique_data_dir() -> PathBuf {
     use std::sync::atomic::{AtomicU64, Ordering};
     static SEQ: AtomicU64 = AtomicU64::new(0);
     let n = SEQ.fetch_add(1, Ordering::Relaxed);
-    std::env::temp_dir().join(format!("sensei-hive-persist-{}-{n}", std::process::id()))
+    std::env::temp_dir().join(format!("sensei-dojo-persist-{}-{n}", std::process::id()))
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -28,7 +28,7 @@ async fn a_persisted_cluster_reopens_after_the_db_is_dropped() {
     // First boot: fresh initdb (with the pinned password), deploy, then insert
     // a row so we can prove the data survives — not just that connect works.
     {
-        let db = HiveDb::bootstrap(data_dir.clone(), db_dir.clone())
+        let db = DojoDb::bootstrap(data_dir.clone(), db_dir.clone())
             .await
             .expect("first bootstrap should initialise the cluster");
         sqlx_core::query::query(
@@ -44,7 +44,7 @@ async fn a_persisted_cluster_reopens_after_the_db_is_dropped() {
     // Second boot over the SAME data dir: this is the regression — it must
     // REOPEN (pinned password matches what initdb baked in), and the earlier
     // row must still be there.
-    let db2 = HiveDb::bootstrap(data_dir.clone(), db_dir.clone())
+    let db2 = DojoDb::bootstrap(data_dir.clone(), db_dir.clone())
         .await
         .expect("second bootstrap must reopen the persisted cluster (pinned password)");
     let (n,): (i64,) = sqlx_core::query_as::query_as(
