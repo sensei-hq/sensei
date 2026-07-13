@@ -44,12 +44,31 @@ const DEFAULT_INTERVAL_SECS: u64 = 300;
 /// `sensei.config` key holding the last reconcile-scan run (epoch millis).
 const LAST_RUN_KEY: &str = "reconcile.last_run";
 
+/// `sensei.config` key for the watcher-stall threshold (seconds). A live watch
+/// thread that has delivered NO fs event for longer than this is *suspected*
+/// stalled — the watchdog then forces a reconcile + re-establishes the stream.
+/// Configurable so a large idle tree can widen it if the periodic restart is
+/// unwanted.
+const WATCHER_STALL_KEY: &str = "watcher.stall_secs";
+/// 30 minutes. The 2026-07-13 incident froze silently for ~5h; catching within
+/// one stall window + one reconcile tick (~35 min worst case) is the point.
+/// Floored at 60s so a pathological config can't force a restart storm.
+const DEFAULT_WATCHER_STALL_SECS: i64 = 1800;
+
 /// Resolve the tick interval (seconds) from config, falling back to the default
 /// for missing / unparseable / zero values.
 fn parse_interval(cfg: Option<String>) -> u64 {
     cfg.and_then(|v| v.trim().parse::<u64>().ok())
         .filter(|n| *n > 0)
         .unwrap_or(DEFAULT_INTERVAL_SECS)
+}
+
+/// Resolve the watcher-stall threshold (seconds) from config, flooring at 60s
+/// and falling back to the default for missing / unparseable / too-small values.
+fn parse_stall_secs(cfg: Option<String>) -> i64 {
+    cfg.and_then(|v| v.trim().parse::<i64>().ok())
+        .filter(|n| *n >= 60)
+        .unwrap_or(DEFAULT_WATCHER_STALL_SECS)
 }
 
 /// True when a reconcile is "due": never run, or the interval has elapsed since
@@ -120,9 +139,98 @@ async fn reconcile_tick(queue: &TaskQueue, pg: &PgStore, now_ms: i64) -> u32 {
     enqueued
 }
 
+/// Watcher liveness watchdog (P1): make a stalled/dead/degraded fs-watcher LOUD
+/// and self-correcting instead of silently frozen (the 2026-07-13 incident).
+///
+/// Reads the lock-free [`WatcherHealth`] snapshot off the `RootWatcher` singleton
+/// (no await under the mutex) and decides via the pure
+/// [`crate::watcher::root_watcher::watcher_is_stalled`]. On trouble it:
+/// 1. WARNs (definitive dead/errored stream) or INFOs (quiet/idle stream) —
+///    once per episode, gated by the `healthy` flag so it never spams;
+/// 2. marks the watcher unhealthy so `/api/watcher/status` shows it;
+/// 3. forces a reconcile (reusing [`enqueue_reconcile_scans`], overlap-guarded —
+///    a no-op if this tick's [`reconcile_tick`] already enqueued one);
+/// 4. re-establishes the FSEvents stream via `RootWatcher::start()`, which resets
+///    the stall clock so an idle repo restarts at most once per stall window.
+///
+/// Non-fatal: every failure path is logged, never propagated.
+async fn watcher_watchdog(queue: &Arc<TaskQueue>, pg: &PgStore, now_ms: i64, stall_ms: i64) {
+    use crate::watcher::root_watcher::{self, RootWatcher};
+    let w_mutex = RootWatcher::instance(queue.clone());
+
+    // Snapshot health + roots WITHOUT holding the std mutex across an await.
+    let (health, roots_registered) = match w_mutex.lock() {
+        Ok(w) => (w.health(), w.roots().len()),
+        Err(_) => {
+            tracing::warn!("watcher_watchdog: RootWatcher mutex poisoned; skipping health check");
+            return;
+        }
+    };
+
+    // No roots registered ⇒ nothing to watch, nothing to police.
+    if roots_registered == 0 {
+        return;
+    }
+
+    let alive = health.thread_alive();
+    let stream_ok = health.stream_healthy();
+    let last = health.last_event_at_ms();
+    let definitive = !alive || !stream_ok;
+    let stalled = root_watcher::watcher_is_stalled(last, now_ms, stall_ms, alive);
+
+    if !definitive && !stalled {
+        // Healthy: clear any prior degraded verdict, once.
+        if !health.healthy() {
+            health.set_healthy(true);
+            tracing::info!("watcher_watchdog: watcher recovered — events flowing again");
+        }
+        return;
+    }
+
+    // Log once per episode (the healthy→degraded transition). A definitive
+    // failure (dead thread / errored callback) is a WARN; a merely-quiet stream
+    // (idle and silently-dead are indistinguishable) is a softer INFO because the
+    // corrective restart is harmless when the tree is simply idle.
+    if health.healthy() {
+        if definitive {
+            tracing::warn!(
+                thread_alive = alive, stream_healthy = stream_ok,
+                last_event_at_ms = last, stall_ms,
+                "watcher_watchdog: watch thread dead/degraded — forcing reconcile + restart",
+            );
+        } else {
+            tracing::info!(
+                last_event_at_ms = last, stall_ms,
+                "watcher_watchdog: no fs events past the stall window — forcing reconcile + re-establishing stream",
+            );
+        }
+    }
+    health.set_healthy(false);
+
+    // Force a reconcile so drift converges now (overlap-guarded, cheap no-op).
+    // Usually a no-op because this tick's reconcile_tick already enqueued one.
+    if !queue.has_pending_kind(TaskKind::ScanRoot).await {
+        let n = enqueue_reconcile_scans(queue, pg).await;
+        if n > 0 {
+            tracing::info!(roots = n, "watcher_watchdog: forced reconcile enqueued");
+        }
+    }
+
+    // Re-establish the stream. start() tears down the old thread and spawns a
+    // fresh one; on_thread_start resets the stall clock + healthy flag.
+    match w_mutex.lock() {
+        Ok(mut w) => match w.start() {
+            Ok(()) => tracing::info!("watcher_watchdog: watcher restarted"),
+            Err(e) => tracing::warn!(error = %e, "watcher_watchdog: watcher restart failed"),
+        },
+        Err(_) => tracing::warn!("watcher_watchdog: RootWatcher mutex poisoned; cannot restart"),
+    }
+}
+
 async fn run(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
     let secs = parse_interval(pg.get_config("reconcile.interval_secs").await.ok().flatten());
-    tracing::info!(interval_secs = secs, "reconcile_scheduler: started (boot + frequent watcher safety net)");
+    let stall_ms = parse_stall_secs(pg.get_config(WATCHER_STALL_KEY).await.ok().flatten()) * 1000;
+    tracing::info!(interval_secs = secs, watcher_stall_ms = stall_ms, "reconcile_scheduler: started (boot + frequent watcher safety net + liveness watchdog)");
     let mut ticker = tokio::time::interval(Duration::from_secs(secs));
     let mut first = true;
     loop {
@@ -143,6 +251,9 @@ async fn run(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
         }
 
         reconcile_tick(&queue, &pg, now_ms).await;
+        // Watchdog rides the same cadence: check watcher liveness right after the
+        // reconcile so a stall is caught within ~one tick of the stall window.
+        watcher_watchdog(&queue, &pg, now_ms, stall_ms).await;
     }
 }
 
@@ -164,6 +275,16 @@ mod tests {
     #[test]
     fn default_interval_is_frequent_not_hourly() {
         assert_eq!(DEFAULT_INTERVAL_SECS, 300);
+    }
+
+    #[test]
+    fn parse_stall_secs_falls_back_and_floors() {
+        assert_eq!(parse_stall_secs(None), DEFAULT_WATCHER_STALL_SECS);
+        assert_eq!(parse_stall_secs(Some("nope".into())), DEFAULT_WATCHER_STALL_SECS);
+        // Below the 60s floor → default (guards a restart storm).
+        assert_eq!(parse_stall_secs(Some("5".into())), DEFAULT_WATCHER_STALL_SECS);
+        assert_eq!(parse_stall_secs(Some("60".into())), 60);
+        assert_eq!(parse_stall_secs(Some("  900 ".into())), 900);
     }
 
     #[test]
