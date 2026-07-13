@@ -45,12 +45,25 @@ pub(crate) async fn list_solutions(
     // Enrich each project with its folder membership so the Projects setup
     // page (and any future project detail view) can render folder names,
     // paths, and roles without an extra round trip per project.
+    //
+    // Folder-scope matters here: the `?under=` call is the MCP `find_projects`
+    // discovery path, which only needs the repo-root folders — attaching the
+    // hundreds of nested `kind:'folder'` descendants blew the response past the
+    // MCP client's token cap (~72K chars for sensei). So when `under` is set we
+    // send only the compact repo roots (still enough for cwd→project
+    // resolution). The un-scoped app path (`GET /api/projects`, no `under`)
+    // keeps the full folder tree — unchanged.
+    let compact = under.is_some();
     let mut enriched = Vec::with_capacity(projects.len());
     for mut project in projects {
         let project_id = project["id"].as_str()
             .and_then(|s| uuid::Uuid::parse_str(s).ok());
         if let Some(pid) = project_id {
-            let folders = state.pg.list_folders_by_project(&pid).await.unwrap_or_default();
+            let folders = if compact {
+                state.pg.list_root_folders_by_project(&pid).await.unwrap_or_default()
+            } else {
+                state.pg.list_folders_by_project(&pid).await.unwrap_or_default()
+            };
             project["folders"] = serde_json::Value::Array(folders);
         } else {
             project["folders"] = serde_json::Value::Array(vec![]);

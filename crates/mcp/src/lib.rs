@@ -757,6 +757,39 @@ mod tests {
         assert_eq!(resolve_from_cwd_in(&projects, "/anywhere"), "".to_string());
     }
 
+    #[test]
+    fn resolve_from_cwd_with_root_folders_only() {
+        // The daemon now sends only repo-root folders (kind git|standalone) on
+        // the `?under=` find_projects path — the nested `kind:'folder'`
+        // descendants (e.g. `.../crates/senseid`) are dropped to stay under the
+        // MCP client's token cap. cwd→project resolution must still work off the
+        // repo root alone: a deep cwd `starts_with` the root, so longest-prefix
+        // still lands the project.
+        let projects = vec![json!({
+            "id": "11111111-1111-1111-1111-111111111111",
+            "name": "sensei",
+            // Only the repo root — NO descendant folder rows.
+            "folders": [
+                {"abs_path": "/Users/x/dev/sensei", "kind": "git", "name": "sensei"}
+            ]
+        })];
+        assert_eq!(
+            resolve_from_cwd_in(&projects, "/Users/x/dev/sensei/crates/senseid/src/api"),
+            "sensei".to_string(),
+            "a deep cwd must still resolve to the project via its repo-root folder alone",
+        );
+        assert_eq!(
+            resolve_from_cwd_in(&projects, "/Users/x/dev/sensei"),
+            "sensei".to_string(),
+            "the repo root itself must resolve",
+        );
+        assert_eq!(
+            resolve_from_cwd_in(&projects, "/Users/x/dev/other"),
+            "".to_string(),
+            "a cwd outside the root must not resolve",
+        );
+    }
+
     // ── MCP↔daemon seam: the knowledge params the proxy sends ─────────────
     // These pin the request SHAPE that the (fixed) daemon accepts. They go RED
     // on the original bug, which sent the project NAME as `project_id` (context)

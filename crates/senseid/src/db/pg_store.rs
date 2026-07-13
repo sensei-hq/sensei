@@ -694,12 +694,33 @@ impl PgStore {
     /// /api/projects responses with folder membership so the Projects setup
     /// page can render per-folder details.
     pub async fn list_folders_by_project(&self, project_id: &uuid::Uuid) -> Result<Vec<serde_json::Value>, String> {
+        self.query_folders_by_project(project_id, false).await
+    }
+
+    /// Repo-root folders only (`kind IN ('git','standalone')`) for a project —
+    /// the compact folder set the folder-scoped `find_projects` view (`GET
+    /// /api/projects?under=…`) needs. Drops the hundreds of nested
+    /// `kind:'folder'` descendant rows that pushed that response past the MCP
+    /// client's token cap (~72K chars for sensei). The repo roots are kept so
+    /// the MCP proxy's `resolve_from_cwd_in` longest-prefix cwd→project match
+    /// still resolves any deep working directory (a deep cwd still
+    /// `starts_with` the repo root).
+    pub async fn list_root_folders_by_project(&self, project_id: &uuid::Uuid) -> Result<Vec<serde_json::Value>, String> {
+        self.query_folders_by_project(project_id, true).await
+    }
+
+    /// Shared folder query for [`list_folders_by_project`] (full tree) and
+    /// [`list_root_folders_by_project`] (repo roots only). `roots_only` gates
+    /// out the `kind:'folder'` descendants at the SQL level so the compact
+    /// path never materializes them.
+    async fn query_folders_by_project(&self, project_id: &uuid::Uuid, roots_only: bool) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(uuid::Uuid, String, String, String, String, Option<String>)> = sqlx_core::query_as::query_as(
             "SELECT id, kind::text, name, path, abs_path, role::text
              FROM sensei.folders
              WHERE project_id = $1
+               AND ($2 = false OR kind::text IN ('git','standalone'))
              ORDER BY path"
-        ).bind(project_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        ).bind(project_id).bind(roots_only).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(|(id, kind, name, path, abs, role)| {
             serde_json::json!({
                 "id": id, "kind": kind, "name": name,
@@ -9791,6 +9812,48 @@ mod tests {
             "list_projects() must stay unfiltered");
 
         for id in [a, b, c, d] { s.delete_project(&id).await.unwrap(); }
+    }
+
+    #[tokio::test]
+    async fn list_root_folders_excludes_nested_folder_descendants() {
+        // find_projects (`?under=`) must return the COMPACT folder set — repo
+        // roots only. The hundreds of nested `kind:'folder'` descendants are the
+        // MCP token-cap bloat; list_root_folders_by_project drops them while
+        // list_folders_by_project (app path) keeps the whole tree.
+        let s = pg_store().await;
+        let short = uuid::Uuid::new_v4().simple().to_string()[..8].to_string();
+        let base = format!("/tmp/_test-rootf-{short}");
+        let root = s.add_watch_root(&base, &format!("rootf-{short}"), &serde_json::json!([]))
+            .await.unwrap();
+        let p = s.ensure_test_project(&format!("rootf-{short}")).await.unwrap();
+
+        // One git repo root …
+        s.upsert_folder(&root, "git", "repo", "repo", &format!("{base}/repo"), None, Some(&p))
+            .await.unwrap();
+        // … plus one standalone root …
+        s.upsert_folder(&root, "standalone", "lib", "lib", &format!("{base}/lib"), None, Some(&p))
+            .await.unwrap();
+        // … plus many nested `kind:'folder'` descendants (the bloat).
+        for i in 0..30 {
+            s.upsert_folder(
+                &root, "folder", &format!("d{i}"), &format!("repo/src/d{i}"),
+                &format!("{base}/repo/src/d{i}"), None, Some(&p),
+            ).await.unwrap();
+        }
+
+        let all = s.list_folders_by_project(&p).await.unwrap();
+        assert_eq!(all.len(), 32, "full list keeps roots + all descendants");
+
+        let roots = s.list_root_folders_by_project(&p).await.unwrap();
+        assert_eq!(roots.len(), 2, "root list is repo roots only");
+        assert!(
+            roots.iter().all(|f| matches!(f["kind"].as_str(), Some("git") | Some("standalone"))),
+            "root list must contain no `kind:'folder'` descendants",
+        );
+        // The repo root's abs_path (what cwd→project resolution needs) survives.
+        assert!(roots.iter().any(|f| f["abs_path"] == format!("{base}/repo")));
+
+        s.delete_project(&p).await.unwrap();
     }
 
     #[tokio::test]
