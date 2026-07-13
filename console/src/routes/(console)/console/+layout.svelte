@@ -8,9 +8,14 @@
 	// current path so Overview / Triage / Candidate all light the right entry.
 	let { data, children } = $props();
 
+	// Map the current path to the active nav section id. Admin sub-routes
+	// (members / identities / policies / health / audit) each light their own
+	// entry; everything else falls back to Overview (the console index).
 	const active = $derived.by(() => {
 		const path = $page.url.pathname;
-		return path.startsWith('/console/triage') ? 'triage' : 'overview';
+		const section = path.replace(/^\/console\/?/, '').split('/')[0];
+		const known = ['triage', 'members', 'identities', 'policies', 'health', 'audit'];
+		return known.includes(section) ? section : 'overview';
 	});
 </script>
 
