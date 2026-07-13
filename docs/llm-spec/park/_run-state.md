@@ -1978,11 +1978,23 @@ port mismatch hive 7755 vs config 8787 (🟢), etc. Chunk order: {R1,R2}→R3→
    locals.session.access_token → data → triage-data.ts Authorization: Bearer. Makes R9/R10/R11 functional-on-login
    (live login + running dojo service still Jerry). Verify check+build+TEST (0/green).
    ✅ R10 SHIPPED `da3f4d63` (subagent a7b582eb) — admin console (members/identities/policies/health/audit) over R7. VERIFIED check 0, 80 tests, build ok. DRY: shared lib/dojo-api.ts core (triage-data.ts refactored to it, R9 importers untouched).
-   🔨 IN PROGRESS: R11 — Client-lead console (subagent acd047bb, LAST console screen): engagements+incidents CRUD +
-   dereferenced-artifacts audit (non_dereferenced==0 gate) + compliance export (source-ref-free) over R8, on dojo-api.ts
-   + the tenant/token wiring. Verify check+build+test. 🟢 THEN R3 (infer+confirm bind + setup org-tagging) — needs the
-   small dojo.memberships org-field DDL; ⚠️ FLAG before the schema change (DDL-source-first, shipped dojo scope). R4
-   dropped. After R11+R3: console track UI complete; remaining = Jerry live-verify (magic-link + running dojo service).
+   ✅ R11 SHIPPED `980dc917` (subagent acd047bb) — client-lead console (engagements/incidents CRUD + dereferenced
+   audit w/ non_dereferenced==0 red-fail + export-disable, source-ref-free compliance export w/ 409 blocked-state).
+   VERIFIED check 585 files 0/0, 120 tests, build ok. DRY on dojo-api.ts + reused admin-view helpers.
+   ✅✅✅ CONSOLE UI TRACK COMPLETE (R6 scaffold+auth → wiring → R9 maintainer → R10 admin → R11 client-lead). All
+   build/check/test-green; LIVE (magic-link login + running dojo-mind service) = Jerry's verify.
+   ── ⛔ BUILDABLE-NO-DECISION BACKLOG NOW THIN — remaining work is Jerry-input-gated (per heartbeat step 6, idling on
+   spawns until steer):
+     • R3 (project→dōjō auto-bind): needs a SHIPPED-SCHEMA DDL on dojo.memberships to hold the git-org match. PROPOSAL
+       to flag: add `org_slugs text[]` (the git-remote owner slugs a membership covers, e.g. {sensei-hq,acme}); infer
+       at project-detect: remote-owner ∈ org_slugs → suggest that membership's dojo_id (confirm via About InappBind);
+       + setup org-tagging (company/client). ⚠️ AWAITING Jerry's nod on the DDL before building (DDL-source-first).
+     • Website updates (Jerry queued at end; review done docs/analysis/2026-07-13-website-redesign-review.md): partly a
+       PRODUCT-POSITIONING call (local-first-vs-Dōjō headline) Jerry wanted to steer.
+     • DDL-coordinated daemon items (traceability drift-enum, impact_regressions, benchmarks, TDD-gate) — all need
+       shipped-schema DDL → deliberate Jerry-reachable pass.
+     • Also worth a nod: another develop→main merge + bump (console track R6-R11 + mcp-resilience + gateway-repin +
+       dependabot fixes accumulated since v0.3.0) — a v0.3.1/v0.4.0 milestone whenever Jerry wants.
    ✅ sensei-mcp RESILIENCE SHIPPED `89de7c59` (2026-07-13) — ⚠️ INVESTIGATION FLIPPED THE FIX. The proposed "add
    reconnect logic + re-fetch the tool list" was based on a WRONG premise. Reading crates/mcp: `handle_list_tools`
    returns a fully STATIC list (hardcoded json!, NOT daemon-fetched), and tool CALLS are per-call reqwest to :7744.
