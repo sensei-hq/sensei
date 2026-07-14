@@ -2064,6 +2064,20 @@ port mismatch hive 7755 vs config 8787 (🟢), etc. Chunk order: {R1,R2}→R3→
        endpoint) needs scheduler instrumentation (only index_audit/reconcile persist last_run) — moderate, deferred.
      develop is well ahead of main (v0.3.2 @ ac0c0e4b); these fixes merge at the next milestone. Live daemon still the
      DEBUG build (R3+fixes not yet in the running binary until make install or brew upgrade to v0.3.2).
+     ── ALSO SHIPPED this stretch: **#96 fully e2e** — daemon GET /api/tasks/scheduled `2905ce4f` + Background-tasks
+       panel on the Logs screen `7acef463` (run-health fields em-dashed until a per-worker heartbeat lands). VALIDATED
+       (not built — already done): #90 Replay verdicts (20,080 classified used/partial/ignored; Replay UI consumes via
+       #84 T2 Slice C), Slot 2, insights/today. So the daemon+most Observatory/Instruments screens are DONE + correct;
+       the filed 2026-07-07 bugs were mostly stale.
+   ✅✅ RELEASED v0.3.3 (2026-07-14, Jerry chose "release first"). Merged develop→main + `make bump v=patch` → bump
+     `df76e90e`, tag v0.3.3 pushed, tap `66745ea` + marketplace `7dad4b0` synced, back-merged→develop. Payload = this
+     stretch's 8 commits (#97/#98/#99/#100pt1/#96×2 + park/run-state docs) — code-only, NO new DDL since v0.3.2. FIRST
+     release on the **Node24 + SHA-pinned** workflow (the CI hardening merged to main), so it builds without Node 20
+     warnings. CI run 29333010881 watched. main==develop==df76e90e.
+   ▶️ NEXT (Jerry to steer, post-release): an EPIC — #85 Project window (per-screen Tauri window, UI-heavy) / #91 Dōjō
+     console (R6-R11 shipped; what remains?) / OR the deferred hard items: #101 scan double-index (risky, ~2× corpus,
+     needs careful rescan) / #96 run-health per-worker instrumentation (moderate, verifiable). The clean filed backlog
+     is EXHAUSTED — every daemon surface validates as built+correct; remaining work is epics or the two hard/moderate items.
 
    ⏸️⏸️ PAUSED 2026-07-13 for Jerry's OS update + system RESTART. Safe state: on develop @767e3c48, 0 pending, no
    running subagents/builds, NOTHING pushed. JERRY DECIDED (before pause): (1) cut v0.3.1 NOW, (2) then R3 auto-bind
