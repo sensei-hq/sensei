@@ -136,5 +136,5 @@ flowchart LR
 
 ## Read next
 
-- [`open-issues.md`](open-issues.md) — how far the implementation is from these objectives, ranked, with the plan.
+- [`open-issues.md`](../plan/README.md) — how far the implementation is from these objectives, ranked, with the plan.
 - [`../architecture/README.md`](../architecture/README.md) — the layers that deliver them.
