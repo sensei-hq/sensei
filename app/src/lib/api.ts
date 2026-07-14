@@ -15,7 +15,7 @@ import type {
   ProjectMcpToolStat, ToolSignal, ProjectService, ToolInsight, ToolsHealth,
   SessionReplayResponse, McpServerRow, McpServerToolsManifest,
   ObservatoryToday, ObservatoryFtr, ProjectOverview,
-  InsightsBoard, LogRow,
+  InsightsBoard, LogRow, ScheduledTask,
 } from './types.js';
 import type {
   MemoryListResponse, MemoryDetail, ContextResponse,
@@ -636,6 +636,11 @@ export function senseiApi(port: number) {
       const qs = p.toString() ? `?${p.toString()}` : '';
       return get<LogRow[]>(`/api/logs${qs}`, []);
     },
+
+    // Background-worker registry + last-run times (#96). Fallback empty so a
+    // daemon hiccup renders the empty state, never a broken panel.
+    getScheduledTasks: () =>
+      get<{ tasks: ScheduledTask[] }>('/api/tasks/scheduled', { tasks: [] }),
 
     // ── Scan ─────────────────────────────────────────────────────────────
     /** Add a root to the DB immediately (synchronous). Does not start scanning. */
