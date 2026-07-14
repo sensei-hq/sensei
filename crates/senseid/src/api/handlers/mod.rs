@@ -25,4 +25,5 @@ pub(crate) mod share_review;
 pub(crate) mod upgrades;
 pub(crate) mod corrections;
 pub(crate) mod verdicts;
+pub(crate) mod scheduled_tasks;
 pub(crate) mod mcp_servers;
