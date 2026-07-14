@@ -128,6 +128,25 @@ flowchart LR
 
 ---
 
+## Relay — supervising long runs from anywhere
+
+**Make multi-agent, away-from-keyboard work legible and controllable, without
+leaking code.** A cross-cutting capability: a **coordinator** (in the daemon), a
+**zero-knowledge relay**, and a **mobile companion** — plus a modular **planner**.
+Visual: [`../journeys/relay.md`](../journeys/relay.md), mockup
+[`../mockups/Sensei/Sensei Relay.html`](../mockups/Sensei/Sensei%20Relay.html).
+
+| # | Objective | Met when |
+|---|---|---|
+| R1 | Plan a long run **modularly** | a project has one active plan = **phases → features · checkpoints · gates** |
+| R2 | Runs are **non-blocking** (auto mode) | development proceeds without waiting; the human is pulled in only at a gate or a stall |
+| R3 | Status is legible **remotely** | project-level *done · doing · next* on the phone; a stalled track **nudges** |
+| R4 | Human-in-the-loop is **minimal + exact** | a gate shows the **exact command** to approve, or a **decision as 3–4 options + a free reply** |
+| R5 | **Zero-knowledge** by construction | agents run on the user's hardware; the coordinator publishes only *filtered status* through the relay — never code or transcripts |
+| R6 | **Secure pairing + permissions** | an encrypted pairing round-trip; explicit, revocable permissions bound what the relay can do |
+| R7 | **Multi-agent, multi-machine** | Claude Code · Codex · OpenCode · Aider across machines, grouped by machine |
+| R8 | Team relay routes to **on-call** (Dōjō) | org gates fan into one shared queue; each decision carries attribution and lands in the Dōjō record |
+
 ## Cross-cutting (apply to every objective)
 
 - **Insight copy from the model** (theme 6) — user-facing strings route through `insight-copy`.
