@@ -71,19 +71,22 @@ See [`requirements/objectives.md#relay`](requirements/objectives.md#relay--super
 
 ---
 
-## Mockup gaps (design — for Jerry)
+## Mockup gaps — ✅ RESOLVED 2026-07-14
 
-From the 2026-07-14 mockup-gap analysis. Coverage is strong; the actionable gaps:
+The 2026-07-14 mockup-gap pass is closed. Details in [`spec/MOCKUP-INDEX.md`](spec/MOCKUP-INDEX.md).
 
-1. **Fix 2 stale component refs in specs** — `bootstrap-{green,probing}.md` `SplashHealthcheck`→`Splash`; `project-about.md` `ProjAboutLite`→`ProjAboutPane` (broken pointers a builder will chase).
-2. **Resolve the duplicate splash files** — pick `bootstrap-splash.jsx` or `splash-healthcheck.jsx` as canonical; retire the other.
-3. **Draw the 3 solution-track screens** — `solution-architecture` (merged graph, start from `project-atlas.jsx`), `solution-dashboard` (aggregate strip), `solution-sessions` (filter). All `_none yet_`.
-4. **Add Relay screen specs** (see Relay section) — 14 mockups, 0 specs.
-5. **Split the Dōjō console per-role** — admin (OIDC/SAML stand-up, incident) + lead (engagement, near-leak containment) steps have no visible screen; 3 specs share one `dojo-console.jsx`.
-6. **Decide the marketplace/extensions surface** — `extensions-browser.jsx`, `skill-editor.jsx`, `agent-persona-editors.jsx` are drawn but specless; spec them or fold under Preferences.
-7. **Spec the benchmark runner UI** — `benchmark.jsx` has a full dashboard+notebook; only `pipeline/benchmarks.md` exists.
-8. **Prune superseded orphans** — `upgrades.jsx`, `sharing-review.jsx` (superseded by `dojo-inapp.jsx`); stop loading `discarded/*` from the artboards that still `<script src>` them.
-9. **Add empty/loading/error states** to the thin project-window panes + solution track (use `observatory-insights`/`observatory-today` as the template).
+| Gap | Resolution |
+|---|---|
+| Stale spec component refs | fixed (`Splash`, `ProjAboutPane`) |
+| Duplicate splash | `splash-healthcheck.jsx` retired to `discarded/` |
+| 3 solution-track screens | drawn (`solution-track.jsx`) + specs wired |
+| Relay specs | 13 written (`relay-*.md`) |
+| Dōjō console per-role | split into admin/maintainer/lead + **developer**; all specced |
+| Extensions/skill editors | `extensions-browser`/`skill-editor` retired; `agent-editor`/`persona-editor` specced |
+| Benchmark runner | specced (`benchmark-runner.md`) |
+| Prune orphans + `lib/` reorg | done (folders: shared/setup/observatory/project/dojo/relay/data/discarded) |
+| Empty/loading/error states | `ScreenState` helper added; screens take a `state` prop |
+| _also_ | in-app Dōjō flows → Observatory ⑦; ecosystem architecture board (⑧); `project-atlas` specced |
 
 ---
 
