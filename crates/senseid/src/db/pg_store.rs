@@ -214,6 +214,17 @@ pub struct MemoryPushPayload {
 /// (C5) — both the org/owner and the repo name are source identifiers to strip.
 /// Host-like segments (containing a dot) are skipped. Pure — unit-tested.
 fn repo_tokens_from_remote(url: &str) -> Vec<String> {
+    let segments = remote_path_segments(url);
+    segments.iter().rev().take(2).map(|s| s.to_string()).collect()
+}
+
+/// Filtered path segments of a git remote URL (scheme/host/user stripped), in
+/// path order — `git@github.com:acme/acme-api.git` and
+/// `https://github.com/acme/acme-api` both → `["acme", "acme-api"]`. Host-like
+/// segments (containing a dot or `@`) are dropped so scheme/host never survive.
+/// Shared by [`repo_tokens_from_remote`] (owner+repo token set for the C5
+/// dereference) and [`remote_owner_slug`] (positional owner). Pure.
+fn remote_path_segments(url: &str) -> Vec<String> {
     let trimmed = url.trim().trim_end_matches(".git");
     // Drop the scheme (`https://`, `ssh://`, …) if present.
     let after_scheme = trimmed.rsplit("://").next().unwrap_or(trimmed);
@@ -222,13 +233,20 @@ fn repo_tokens_from_remote(url: &str) -> Vec<String> {
         Some((head, tail)) if head.contains('@') || head.contains('.') => tail,
         _ => after_scheme,
     };
-    // Keep only path segments; a host-like segment (with a dot or `@`) is dropped
-    // so scheme/host never survive — the last two remaining are owner + repo.
-    let segments: Vec<&str> = path
-        .split('/')
+    path.split('/')
         .filter(|s| !s.is_empty() && !s.contains('.') && !s.contains('@'))
-        .collect();
-    segments.iter().rev().take(2).map(|s| s.to_string()).collect()
+        .map(|s| s.to_string())
+        .collect()
+}
+
+/// The git-org owner slug of a remote — the path segment before the repo,
+/// lowercased. `git@github.com:Sensei-HQ/sensei.git` and
+/// `https://github.com/Sensei-HQ/sensei` both → `Some("sensei-hq")`; a URL with
+/// no owner segment → `None`. Feeds [`PgStore::project_org_owners`] →
+/// `dojo::routing::infer_binding` for the R3 auto-bind suggestion. Pure.
+pub(crate) fn remote_owner_slug(url: &str) -> Option<String> {
+    let segments = remote_path_segments(url);
+    (segments.len() >= 2).then(|| segments[segments.len() - 2].to_ascii_lowercase())
 }
 
 #[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
@@ -7397,6 +7415,30 @@ impl PgStore {
         Ok(rows)
     }
 
+    /// The distinct git-remote owner slugs across a project's folders (lowercased,
+    /// first-seen order) — e.g. a project whose repos are `github.com/sensei-hq/*`
+    /// yields `["sensei-hq"]`. Feeds `dojo::routing::infer_binding` for the R3
+    /// auto-bind suggestion. Reads `sensei.folders.remote_urls`; DB-only.
+    pub async fn project_org_owners(&self, project_id: &uuid::Uuid) -> Result<Vec<String>, String> {
+        let folders: Vec<(serde_json::Value,)> = sqlx_core::query_as::query_as(
+            "SELECT remote_urls FROM sensei.folders WHERE project_id = $1")
+            .bind(project_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        let mut owners: Vec<String> = Vec::new();
+        for (remotes,) in folders {
+            if let Some(arr) = remotes.as_array() {
+                for r in arr {
+                    if let Some(url) = r.get("url").and_then(serde_json::Value::as_str)
+                        && let Some(owner) = remote_owner_slug(url)
+                        && !owners.contains(&owner)
+                    {
+                        owners.push(owner);
+                    }
+                }
+            }
+        }
+        Ok(owners)
+    }
+
     /// Gather every KNOWN sensitive identifier for a project into a
     /// [`crate::dojo::attribution::ProjectIdentifiers`] — the deterministic
     /// client-work dereference (C5) needs these to strip source references before
@@ -8083,6 +8125,58 @@ mod tests {
         );
         // Host-like and empty segments are skipped.
         assert!(repo_tokens_from_remote("https://example.com").is_empty());
+    }
+
+    #[test]
+    fn remote_owner_slug_extracts_lowercased_owner() {
+        // ssh + https, mixed case → the owner (segment before the repo), lowercased.
+        assert_eq!(remote_owner_slug("git@github.com:Sensei-HQ/sensei.git").as_deref(), Some("sensei-hq"));
+        assert_eq!(remote_owner_slug("https://github.com/Sensei-HQ/sensei").as_deref(), Some("sensei-hq"));
+        assert_eq!(remote_owner_slug("https://gitlab.com/acme/api.git").as_deref(), Some("acme"));
+        // No owner segment / unparseable → None.
+        assert_eq!(remote_owner_slug("https://example.com"), None);
+        assert_eq!(remote_owner_slug(""), None);
+    }
+
+    #[tokio::test]
+    async fn suggest_binding_infers_from_git_owner_then_stops_once_bound() {
+        let Ok(s) = PgStore::connect_test().await else { return; };
+        let suffix = format!("suggestbind_{}", uuid::Uuid::new_v4());
+        let (pid, fid) = create_test_project_and_folder(&s, &suffix).await;
+        // The project's repo is owned by "Acme" (mixed case in the remote).
+        sqlx_core::query::query("UPDATE sensei.folders SET remote_urls = $2 WHERE id = $1")
+            .bind(fid)
+            .bind(serde_json::json!([{ "name": "origin", "url": "git@github.com:Acme/widget.git" }]))
+            .execute(s.pool()).await.unwrap();
+        assert_eq!(s.project_org_owners(&pid).await.unwrap(), vec!["acme".to_string()], "owner parsed + lowercased");
+
+        // No membership connected yet → no suggestion.
+        assert!(crate::dojo::memberships::suggest_binding(&s, &pid).await.unwrap().is_none());
+
+        // Connect a client membership covering "acme".
+        let mid = uuid::Uuid::new_v4();
+        s.create_dojo_membership(&NewDojoMembership {
+            id: mid, registry_url: "http://localhost:7755".into(), tenant_key: "github/acme".into(),
+            dojo_url: "http://localhost:7755/github/acme".into(), kind: "client".into(),
+            org_slugs: vec!["acme".into()],
+            role: "contributor".into(), authenticated_via: "device_code".into(),
+            attribution_default: "dereferenced".into(),
+            credential_ref: format!("dojo-{}", uuid::Uuid::new_v4()), sync_status: "healthy".into(),
+        }).await.unwrap();
+
+        // Now it suggests that membership, explaining which owner matched.
+        let sug = crate::dojo::memberships::suggest_binding(&s, &pid).await.unwrap().expect("a suggestion");
+        assert_eq!(sug.membership_id, mid);
+        assert_eq!(sug.kind, "client");
+        assert_eq!(sug.matched_slug, "acme");
+        assert_eq!(sug.tenant_key, "github/acme");
+
+        // Once the project is bound, the chip no longer applies.
+        assert!(s.bind_project_to_dojo(&pid, Some(&mid)).await.unwrap());
+        assert!(crate::dojo::memberships::suggest_binding(&s, &pid).await.unwrap().is_none());
+
+        s.bind_project_to_dojo(&pid, None).await.unwrap();
+        s.delete_dojo_membership(&mid).await.unwrap();
     }
 
     #[tokio::test]

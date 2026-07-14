@@ -35,6 +35,65 @@
 
 use crate::dojo::memberships::MembershipKind;
 
+/// Membership-kind precedence, highest first: a project that could bind to more
+/// than one membership prefers `client` over `employer` over `community` over
+/// `personal` (client work is the most confidentiality-sensitive, so it wins).
+/// Shared by [`client_precedence_route`] (destination routing) and
+/// [`infer_binding`] (auto-bind suggestion) so both agree on precedence.
+pub const KIND_PRECEDENCE: [MembershipKind; 4] = [
+    MembershipKind::Client,
+    MembershipKind::Employer,
+    MembershipKind::Community,
+    MembershipKind::Personal,
+];
+
+/// A membership considered for infer-at-detect auto-bind: its id, kind, and the
+/// git-remote owner slugs it covers (`dojo.memberships.org_slugs`, lowercased).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BindCandidate {
+    pub membership_id: uuid::Uuid,
+    pub kind: MembershipKind,
+    pub org_slugs: Vec<String>,
+}
+
+/// A SUGGESTED project→membership binding inferred from the project's git-remote
+/// owner. Confirm-inferred: the app surfaces it as a chip the user accepts; it is
+/// never auto-committed and never routes or publishes anything.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InferredBinding {
+    pub membership_id: uuid::Uuid,
+    pub kind: MembershipKind,
+    /// The project's git-remote owner slug that matched the membership.
+    pub matched_slug: String,
+}
+
+/// Infer which membership a project should bind to from its git-remote owner
+/// slug(s). A membership is a candidate when any `project_owner` is in its
+/// `org_slugs`; among candidates the highest-[`KIND_PRECEDENCE`] kind wins
+/// (`client` over `employer` …), ties broken by candidate order. Returns the
+/// matched owner slug so the About chip can explain the suggestion. `None` when
+/// no membership covers the project's owner. Pure — matching is case-insensitive
+/// (both sides are lowercased; owners come from `remote_owner_slug`).
+pub fn infer_binding(project_owners: &[String], candidates: &[BindCandidate]) -> Option<InferredBinding> {
+    let owners: Vec<String> = project_owners.iter().map(|o| o.trim().to_ascii_lowercase()).collect();
+    for kind in KIND_PRECEDENCE {
+        for c in candidates.iter().filter(|c| c.kind == kind) {
+            if let Some(matched) = c
+                .org_slugs
+                .iter()
+                .find(|slug| owners.iter().any(|o| o == &slug.to_ascii_lowercase()))
+            {
+                return Some(InferredBinding {
+                    membership_id: c.membership_id,
+                    kind: c.kind,
+                    matched_slug: matched.clone(),
+                });
+            }
+        }
+    }
+    None
+}
+
 /// A membership the contribution could plausibly route to — the project's
 /// binding plus any org/community memberships considered for auto-routing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -290,5 +349,71 @@ mod tests {
             let d = client_precedence_route(&[client, employer], &contribution);
             assert!(!(d.has_client_target() && d.has_employer_target()));
         }
+    }
+
+    // ── infer_binding (R3 auto-bind suggestion) ──────────────────────────────
+
+    fn cand(kind: MembershipKind, slugs: &[&str]) -> BindCandidate {
+        BindCandidate {
+            membership_id: uuid::Uuid::new_v4(),
+            kind,
+            org_slugs: slugs.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn infer_binding_matches_owner_to_membership_org() {
+        let c = cand(MembershipKind::Employer, &["sensei-hq", "acme"]);
+        let got = infer_binding(&["sensei-hq".into()], std::slice::from_ref(&c)).expect("a match");
+        assert_eq!(got.membership_id, c.membership_id);
+        assert_eq!(got.kind, MembershipKind::Employer);
+        assert_eq!(got.matched_slug, "sensei-hq");
+    }
+
+    #[test]
+    fn infer_binding_is_case_insensitive_on_both_sides() {
+        let c = cand(MembershipKind::Community, &["Sensei-HQ"]);
+        let got = infer_binding(&["SENSEI-hq".into()], std::slice::from_ref(&c)).expect("case-insensitive match");
+        assert_eq!(got.membership_id, c.membership_id);
+    }
+
+    #[test]
+    fn infer_binding_prefers_client_over_employer_when_both_cover_the_owner() {
+        // A project whose owner is covered by BOTH a client and an employer
+        // membership suggests the client binding (client-precedence) — the
+        // confidentiality-safe default the user then confirms.
+        let employer = cand(MembershipKind::Employer, &["acme"]);
+        let client = cand(MembershipKind::Client, &["acme"]);
+        let got = infer_binding(&["acme".into()], &[employer.clone(), client.clone()]).expect("a match");
+        assert_eq!(got.membership_id, client.membership_id, "client wins over employer");
+        assert_eq!(got.kind, MembershipKind::Client);
+    }
+
+    #[test]
+    fn infer_binding_returns_none_when_no_membership_covers_the_owner() {
+        let c = cand(MembershipKind::Employer, &["acme"]);
+        assert!(infer_binding(&["unrelated-org".into()], std::slice::from_ref(&c)).is_none());
+        // No owners at all (e.g. a non-git project) → no suggestion.
+        assert!(infer_binding(&[], std::slice::from_ref(&c)).is_none());
+        // No candidates (no dōjō connected) → no suggestion.
+        assert!(infer_binding(&["acme".into()], &[]).is_none());
+    }
+
+    #[test]
+    fn infer_binding_falls_back_through_precedence_to_personal() {
+        // Only a personal membership covers the owner → suggest it.
+        let personal = cand(MembershipKind::Personal, &["me"]);
+        let got = infer_binding(&["me".into()], std::slice::from_ref(&personal)).expect("a match");
+        assert_eq!(got.kind, MembershipKind::Personal);
+    }
+
+    #[test]
+    fn infer_binding_matches_any_of_multiple_project_owners() {
+        // A monorepo/project can expose several remote owners; a membership
+        // covering any one of them is a candidate.
+        let c = cand(MembershipKind::Employer, &["acme-labs"]);
+        let got = infer_binding(&["personal-fork".into(), "acme-labs".into()], std::slice::from_ref(&c))
+            .expect("second owner matches");
+        assert_eq!(got.matched_slug, "acme-labs");
     }
 }
