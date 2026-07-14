@@ -34,7 +34,11 @@ const MODE_META = {
              blurb: "Nothing leaves the machine. You can still receive upgrades." }
 };
 
-function ObsCollectiveSettings() {
+function ObsCollectiveSettings({ state = "ready" } = {}) {
+  if (state !== "ready") return <window.ScreenState state={state} kanji="群"
+    emptyTitle="Sharing not set up yet"
+    emptyHint="Choose what leaves your machine and how often. Connect a source to configure sharing mode, cadence and per-category filters."
+    errorHint="Couldn't load your sharing settings. Try again." onRetry={() => {}} />;
   const U = window.UPGRADES;
   const [mode, setMode] = ciSt(U.sharingMode);
   const [cadence, setCadence] = ciSt(U.cadence);

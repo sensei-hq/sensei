@@ -2,7 +2,7 @@
 
 **Segment:** Dōjō (SaaS) — console
 **Route:** `dojo.sensei-hq.org/{origin}/{org}/console/lead`
-**Source mockup:** [`lib/dojo/dojo-console.jsx`](../../mockups/Sensei/lib/dojo/dojo-console.jsx)
+**Source mockup:** [`lib/dojo/dojo-lead.jsx`](../../mockups/Sensei/lib/dojo/dojo-lead.jsx) → `DojoLeadConsole` (panels: Clients · Audit)
 
 ## Purpose
 

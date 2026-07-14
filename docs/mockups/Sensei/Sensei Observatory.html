@@ -54,6 +54,7 @@
   <script src="lib/data/project-data.js"></script>
   <script type="text/babel" src="lib/shared/design-canvas.jsx"></script>
   <script type="text/babel" src="lib/shared/primitives.jsx"></script>
+  <script type="text/babel" src="lib/shared/screen-states.jsx"></script>
   <script type="text/babel" src="lib/setup/wiz-inference.jsx"></script>
   <script type="text/babel" src="lib/setup/wiz-assignments.jsx"></script>
   <script type="text/babel" src="lib/shared/brand-logos.jsx"></script>
@@ -85,12 +86,13 @@
   <script type="text/babel" src="lib/setup/inference-settings.jsx"></script>
   <script type="text/babel" src="lib/observatory/benchmark.jsx"></script>
   <script type="text/babel" src="lib/observatory/sharing-review.jsx"></script>
+  <script type="text/babel" src="lib/observatory/share-hub.jsx"></script>
   <script type="text/babel" src="lib/observatory/traceability.jsx"></script>
   <script type="text/babel" src="lib/observatory/impact.jsx"></script>
   <script type="text/babel" src="lib/observatory/consolidation.jsx"></script>
   <script type="text/babel" src="lib/observatory/collective-settings.jsx"></script>
   <script src="lib/data/dojo-data.js"></script>
-  <script type="text/babel" src="lib/dojo/dojo-console.jsx"></script>
+  <script type="text/babel" src="lib/dojo/dojo-shared.jsx"></script>
   <script type="text/babel" src="lib/dojo/dojo-inapp.jsx"></script>
   <script type="text/babel" src="lib/shared/navigation.jsx"></script>
   <script type="text/babel" src="lib/setup/bootstrap-splash.jsx"></script>
@@ -227,6 +229,27 @@
               </DCArtboard>
               <DCArtboard id="sol-sessions-empty" label="Sessions · filtered empty state" width={1280} height={860}>
                 <div className="artboard-shell"><SolutionWindow initial="sessions" initialFilter="shared" forceEmpty={true}/></div>
+              </DCArtboard>
+              <DCArtboard id="sol-loading" label="Dashboard · loading" width={1280} height={860}>
+                <div className="artboard-shell"><SolutionWindow initial="dashboard" state="loading"/></div>
+              </DCArtboard>
+              <DCArtboard id="sol-empty" label="Dashboard · empty (no data yet)" width={1280} height={860}>
+                <div className="artboard-shell"><SolutionWindow initial="dashboard" state="empty"/></div>
+              </DCArtboard>
+              <DCArtboard id="sol-error" label="Dashboard · error + retry" width={1280} height={860}>
+                <div className="artboard-shell"><SolutionWindow initial="dashboard" state="error"/></div>
+              </DCArtboard>
+            </DCSection>
+
+            {/* ═════════ FLOW 6 · UNIFIED SHARE + UPGRADES ═════════ */}
+            <DCSection id="observatory-sharehub"
+                       title="⑥ Observatory · Share & upgrades (unified)"
+                       subtitle="One surface per direction instead of separate global and Dōjō screens — the channel is an attribute of the item, not its own screen. Share review carries a scope selector (Global collective · Your Dōjō · Both) with distinct per-scope framing so the public/anonymized vs org-internal/attributed trust boundary stays explicit. Upgrades inbox carries a source filter + provenance badges: network gifts show adoption stats, Dōjō gifts show who approved them.">
+              <DCArtboard id="share-global" label="★ Share review · scope: Global collective" width={1280} height={860}>
+                <div className="artboard-shell"><ObsShareReviewHub/></div>
+              </DCArtboard>
+              <DCArtboard id="upgrades-unified" label="★ Upgrades inbox · network + Dōjō, provenance badges" width={1280} height={860}>
+                <div className="artboard-shell"><ObsUpgradesInbox/></div>
               </DCArtboard>
             </DCSection>
         </DesignCanvas>

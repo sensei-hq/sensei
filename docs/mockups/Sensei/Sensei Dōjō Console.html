@@ -31,7 +31,10 @@
   <script type="text/babel" src="lib/shared/design-canvas.jsx"></script>
   <script type="text/babel" src="lib/shared/primitives.jsx"></script>
   <script src="lib/data/dojo-data.js"></script>
-  <script type="text/babel" src="lib/dojo/dojo-console.jsx"></script>
+  <script type="text/babel" src="lib/dojo/dojo-shared.jsx"></script>
+  <script type="text/babel" src="lib/dojo/dojo-admin.jsx"></script>
+  <script type="text/babel" src="lib/dojo/dojo-maintainer.jsx"></script>
+  <script type="text/babel" src="lib/dojo/dojo-lead.jsx"></script>
   <script type="text/babel" src="lib/dojo/dojo-saas.jsx"></script>
   <script type="text/babel" src="lib/dojo/dojo-inapp.jsx"></script>
 
@@ -53,31 +56,16 @@
           </DCSection>
 
           <DCSection id="dojo-console"
-                     title="Dōjō · Console"
-                     subtitle="The company-hosted governance site — first design pass. A browser app (not the desktop Observatory). Each frame is the full console; click the nav to move between sections, and click a triage row to open a candidate.">
-            <DCArtboard id="overview" label="★ Overview · the org's shared mind" width={W} height={H}>
-              <DojoConsole initial="overview"/>
+                     title="Dōjō · Console — per role"
+                     subtitle="The company-hosted governance site, split by who's using it. One console per role, each showing only the panels that role owns. Click the nav within a console to move between its panels; in the Maintainer console, click a triage row to open a candidate.">
+            <DCArtboard id="admin" label="★ Admin console · Overview · Monitor · Members · Scopes" width={W} height={H}>
+              <DojoAdminConsole initial="overview"/>
             </DCArtboard>
-            <DCArtboard id="triage" label="Triage queue · grouped by scope" width={W} height={H}>
-              <DojoConsole initial="triage"/>
+            <DCArtboard id="maintainer" label="★ Maintainer console · Triage → Candidate · Knowledge" width={W} height={H}>
+              <DojoMaintainerConsole initial="triage"/>
             </DCArtboard>
-            <DCArtboard id="candidate" label="★ Candidate · evaluate → decide" width={W} height={H}>
-              <DojoConsole initial="triage" initialCandidate="c2"/>
-            </DCArtboard>
-            <DCArtboard id="members" label="Members & roles · derived from git" width={W} height={H}>
-              <DojoConsole initial="members"/>
-            </DCArtboard>
-            <DCArtboard id="scopes" label="★ Scopes & policies · precedence ladder" width={W} height={H}>
-              <DojoConsole initial="scopes"/>
-            </DCArtboard>
-            <DCArtboard id="clients" label="★ Clients · dereferencing oversight" width={W} height={H}>
-              <DojoConsole initial="clients"/>
-            </DCArtboard>
-            <DCArtboard id="monitor" label="★ Monitor · hive-mind health" width={W} height={H}>
-              <DojoConsole initial="monitor"/>
-            </DCArtboard>
-            <DCArtboard id="audit" label="★ Audit trail · ledger + incident path" width={W} height={H}>
-              <DojoConsole initial="audit"/>
+            <DCArtboard id="lead" label="★ Lead console · Clients · Audit" width={W} height={H}>
+              <DojoLeadConsole initial="clients"/>
             </DCArtboard>
           </DCSection>
 

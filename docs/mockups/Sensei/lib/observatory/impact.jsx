@@ -15,7 +15,11 @@ const VERDICT_META = {
 // ═══════════════════════════════════════════════════════════════════════
 // SCREEN A · Change Impact Report (full list + detail)
 // ═══════════════════════════════════════════════════════════════════════
-function ObsImpact() {
+function ObsImpact({ state = "ready" } = {}) {
+  if (state !== "ready") return <window.ScreenState state={state} kanji="果"
+    emptyTitle="No impact to measure yet"
+    emptyHint="Accept a recommendation and sensei measures before/after — the verdict lands here once there's enough session data."
+    errorHint="Couldn't load impact reports. Try again." onRetry={() => {}} />;
   const reports = window.UPGRADES.impactReports;
   const [openId, setOpen] = ciS(reports[0].id);
   const r = reports.find(x => x.id === openId) || reports[0];
