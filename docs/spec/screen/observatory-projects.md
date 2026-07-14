@@ -2,7 +2,7 @@
 
 **Segment:** 03 · Observatory — daily use
 **Route:** `/projects`
-**Source mockup:** [`lib/navigation.jsx`](../../mockups/Sensei/lib/navigation.jsx) → `ProjectsIndexA` (grid + filter + search) and `ProjectCard` (row-1 pills + row-2 description + stat grid)
+**Source mockup:** [`lib/shared/navigation.jsx`](../../mockups/Sensei/lib/shared/navigation.jsx) → `ProjectsIndexA` (grid + filter + search) and `ProjectCard` (row-1 pills + row-2 description + stat grid)
 **App file:** `app/src/routes/(observatory)/projects/+page.svelte`
 **Card mockup last changed:** 2026-07-07 (single-row header with pills + description row + repos/libs/last-session strip)
 

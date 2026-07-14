@@ -2,7 +2,7 @@
 
 **Segment:** 03 · Observatory — daily use
 **Route:** `/dojo/sharing` (sharing prefs) — this screen is the collective-intel controls
-**Source mockup:** [`lib/collective-settings.jsx`](../../mockups/Sensei/lib/collective-settings.jsx) → `ObsCollectiveSettings`
+**Source mockup:** [`lib/observatory/collective-settings.jsx`](../../mockups/Sensei/lib/observatory/collective-settings.jsx) → `ObsCollectiveSettings`
 **App file:** `app/src/routes/(observatory)/dojo/sharing/+page.svelte`
 
 ## Purpose

@@ -2,7 +2,7 @@
 
 **Segment:** 03 · Observatory — daily use
 **Route:** `/dojo/connections`
-**Source mockup:** [`lib/dojo-inapp.jsx`](../../mockups/Sensei/lib/dojo-inapp.jsx) → `InappConnection`
+**Source mockup:** [`lib/dojo/dojo-inapp.jsx`](../../mockups/Sensei/lib/dojo/dojo-inapp.jsx) → `InappConnection`
 **App file:** `app/src/routes/(observatory)/dojo/connections/+page.svelte`
 
 ## Purpose

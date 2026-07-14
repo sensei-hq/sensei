@@ -2,7 +2,7 @@
 
 **Segment:** 04 · The project window
 **Route:** `/project/[id]/memories`
-**Source mockup:** [`lib/project-lite-panes.jsx`](../../mockups/Sensei/lib/project-lite-panes.jsx) → `ProjMemoriesLite`
+**Source mockup:** [`lib/project/project-lite-panes.jsx`](../../mockups/Sensei/lib/project/project-lite-panes.jsx) → `ProjMemoriesLite`
 **App file:** `app/src/routes/project/[id]/memories/+page.svelte`
 
 ## Purpose

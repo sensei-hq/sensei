@@ -2,7 +2,7 @@
 
 **Segment:** 02 · First run & Preferences (Inference pane)
 **Route:** `/preferences/inference`
-**Source mockup:** [`lib/inference-settings.jsx`](../../mockups/Sensei/lib/inference-settings.jsx)
+**Source mockup:** [`lib/setup/inference-settings.jsx`](../../mockups/Sensei/lib/setup/inference-settings.jsx)
 **App file:** `app/src/routes/preferences/inference/+page.svelte`
 
 ## Purpose

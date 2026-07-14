@@ -2,7 +2,7 @@
 
 **Segment:** 02 · First run & Preferences
 **Route:** `/preferences` with sub-panes
-**Source mockup:** [`lib/setup-wizard.jsx`](../../mockups/Sensei/lib/setup-wizard.jsx) → `SetupWizard` with `mode="preferences"` (wizard rehab lives here)
+**Source mockup:** [`lib/setup/setup-wizard.jsx`](../../mockups/Sensei/lib/setup/setup-wizard.jsx) → `SetupWizard` with `mode="preferences"` (wizard rehab lives here)
 **App file:** `app/src/routes/preferences/+page.svelte`
 
 ## Purpose

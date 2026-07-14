@@ -86,5 +86,5 @@ The L2 per-tool layer is buildable today (endpoints exist); only the L1 grid is 
   `/refresh` — `crates/senseid/src/api/handlers/mcp_servers.rs`.
 - `/api/observatory/tool-signals` + `/tool-insights` (param-free, all-MCP) —
   `observatory.rs:618/636`; derive logic in `tool_signals.rs`.
-- Mockup: `docs/mockups/Sensei/lib/instruments-simple.jsx` → `instruments.jsx` `InstrumentsHealth`
+- Mockup: `docs/mockups/Sensei/lib/observatory/instruments-simple.jsx` → `instruments.jsx` `InstrumentsHealth`
   (H1 kanji 健). Data fixture `mcp-signals-data.js` (`note` field).

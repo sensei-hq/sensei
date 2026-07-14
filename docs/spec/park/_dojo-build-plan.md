@@ -207,7 +207,7 @@ R5 → R6 → {R9, R10, R11} → R4 / R12 / R14 / R15 (polish) → R13 (deferred
 
 ### R2 — Share-review desktop screen (C11)
 - **Read first:** `docs/spec/screen/observatory-share-review.md`, mockup
-  `docs/mockups/Sensei/lib/dojo-inapp.jsx` `InappShare`(l.220)+`InappTravel`(l.300),
+  `docs/mockups/Sensei/lib/dojo/dojo-inapp.jsx` `InappShare`(l.220)+`InappTravel`(l.300),
   `MOCKUP-INDEX.md` (`/share-review` → `InappShare`), existing sibling
   `(observatory)/upgrades/+page.svelte` + its `dojo-upgrades-state.svelte.ts` as the state/API
   pattern, `api/handlers/share_review.rs`.

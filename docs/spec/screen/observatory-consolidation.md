@@ -2,7 +2,7 @@
 
 **Segment:** 03 · Observatory — daily use
 **Route:** `/consolidation`
-**Source mockup:** [`lib/consolidation.jsx`](../../mockups/Sensei/lib/consolidation.jsx) → `ObsConsolidation`
+**Source mockup:** [`lib/observatory/consolidation.jsx`](../../mockups/Sensei/lib/observatory/consolidation.jsx) → `ObsConsolidation`
 **App file:** `app/src/routes/(observatory)/consolidation/+page.svelte`
 
 ## Purpose

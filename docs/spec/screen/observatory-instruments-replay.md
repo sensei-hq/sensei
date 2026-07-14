@@ -2,7 +2,7 @@
 
 **Segment:** 03 · Observatory — daily use
 **Route:** `/instruments/replay`
-**Source mockup:** [`lib/instruments-simple.jsx`](../../mockups/Sensei/lib/instruments-simple.jsx) → `InstrumentsReplaySimple` → delegates to `InstrumentsReplay` in `lib/instruments.jsx`
+**Source mockup:** [`lib/observatory/instruments-simple.jsx`](../../mockups/Sensei/lib/observatory/instruments-simple.jsx) → `InstrumentsReplaySimple` → delegates to `InstrumentsReplay` in `lib/observatory/instruments.jsx`
 **App file:** `app/src/routes/(observatory)/instruments/+page.svelte` (Replay tab)
 
 ## Purpose

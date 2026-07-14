@@ -2,7 +2,7 @@
 
 **Segment:** 04 · The project window
 **Route:** `/project/[id]/libraries`
-**Source mockup:** [`lib/libraries.jsx`](../../mockups/Sensei/lib/libraries.jsx) → project variant
+**Source mockup:** [`lib/observatory/libraries.jsx`](../../mockups/Sensei/lib/observatory/libraries.jsx) → project variant
 **App file:** `app/src/routes/project/[id]/libraries/+page.svelte`
 
 ## Purpose

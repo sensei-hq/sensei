@@ -2,7 +2,7 @@
 
 **Segment:** 04 · The project window
 **Route:** `/project/[id]/instruments`
-**Source mockup:** [`lib/instruments-simple.jsx`](../../mockups/Sensei/lib/instruments-simple.jsx) → project variant of the three-tab shell
+**Source mockup:** [`lib/observatory/instruments-simple.jsx`](../../mockups/Sensei/lib/observatory/instruments-simple.jsx) → project variant of the three-tab shell
 **App file:** `app/src/routes/project/[id]/instruments/+page.svelte`
 
 ## Purpose

@@ -2,7 +2,7 @@
 
 **Segment:** 04 · The project window
 **Route:** `/project/[id]/sessions`
-**Source mockup:** [`lib/project-pages.jsx`](../../mockups/Sensei/lib/project-pages.jsx) → sessions pane; shares primitives with [`lib/sessions-zen.jsx`](../../mockups/Sensei/lib/sessions-zen.jsx)
+**Source mockup:** [`lib/project/project-pages.jsx`](../../mockups/Sensei/lib/project/project-pages.jsx) → sessions pane; shares primitives with [`lib/observatory/sessions-zen.jsx`](../../mockups/Sensei/lib/observatory/sessions-zen.jsx)
 **App file:** `app/src/routes/project/[id]/sessions/+page.svelte`
 
 ## Purpose

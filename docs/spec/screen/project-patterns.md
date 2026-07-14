@@ -2,7 +2,7 @@
 
 **Segment:** 04 · The project window
 **Route:** `/project/[id]/patterns`
-**Source mockup:** [`lib/project-pages.jsx`](../../mockups/Sensei/lib/project-pages.jsx) → patterns pane
+**Source mockup:** [`lib/project/project-pages.jsx`](../../mockups/Sensei/lib/project/project-pages.jsx) → patterns pane
 **App file:** `app/src/routes/project/[id]/patterns/+page.svelte`
 
 ## Purpose

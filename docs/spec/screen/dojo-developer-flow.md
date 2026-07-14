@@ -2,7 +2,7 @@
 
 **Segment:** Dōjō (SaaS)
 **Route:** in-app (embedded in the Observatory) — not a separate route
-**Source mockup:** [`lib/dojo-inapp.jsx`](../../mockups/Sensei/lib/dojo-inapp.jsx)
+**Source mockup:** [`lib/dojo/dojo-inapp.jsx`](../../mockups/Sensei/lib/dojo/dojo-inapp.jsx)
 **Source design:** [`Sensei Dōjō Journey Map.html`](../../mockups/Sensei/Sensei%20D%C5%8Djo%20Journey%20Map.html)
 
 ## Purpose

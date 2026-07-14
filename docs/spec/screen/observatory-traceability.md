@@ -2,7 +2,7 @@
 
 **Segment:** 03 · Observatory — daily use
 **Route:** `/traceability`
-**Source mockup:** [`lib/traceability.jsx`](../../mockups/Sensei/lib/traceability.jsx) → `ObsTraceability`
+**Source mockup:** [`lib/observatory/traceability.jsx`](../../mockups/Sensei/lib/observatory/traceability.jsx) → `ObsTraceability`
 **App file:** `app/src/routes/(observatory)/traceability/+page.svelte`
 
 ## Purpose

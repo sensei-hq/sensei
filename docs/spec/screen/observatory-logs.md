@@ -2,7 +2,7 @@
 
 **Segment:** 03 · Observatory — daily use
 **Route:** `/logs`
-**Source mockup:** [`lib/project-logs.jsx`](../../mockups/Sensei/lib/project-logs.jsx) → `ObsLogs`
+**Source mockup:** [`lib/project/project-logs.jsx`](../../mockups/Sensei/lib/project/project-logs.jsx) → `ObsLogs`
 **App file:** `app/src/routes/(observatory)/logs/+page.svelte`
 
 ## Purpose

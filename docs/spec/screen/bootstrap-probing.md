@@ -2,7 +2,7 @@
 
 **Segment:** 01 · Bootstrap
 **Route:** initial splash window (before Observatory main)
-**Source mockup:** [`lib/bootstrap-splash.jsx`](../../mockups/Sensei/lib/bootstrap-splash.jsx) → `Splash` (state = `probing`)
+**Source mockup:** [`lib/setup/bootstrap-splash.jsx`](../../mockups/Sensei/lib/setup/bootstrap-splash.jsx) → `Splash` (state = `probing`)
 **App file:** `app/src/routes/bootstrap/+page.svelte` (or the Tauri splash surface)
 
 ## Purpose

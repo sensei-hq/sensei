@@ -2,7 +2,7 @@
 
 **Segment:** 04 · The project window
 **Route:** `/project/[id]/overview`
-**Source mockup:** [`lib/project-lite-panes.jsx`](../../mockups/Sensei/lib/project-lite-panes.jsx) → `ProjOverviewLite` (the lite variant is the wire target)
+**Source mockup:** [`lib/project/project-lite-panes.jsx`](../../mockups/Sensei/lib/project/project-lite-panes.jsx) → `ProjOverviewLite` (the lite variant is the wire target)
 **App file:** `app/src/routes/project/[id]/overview/+page.svelte`
 
 ## Purpose

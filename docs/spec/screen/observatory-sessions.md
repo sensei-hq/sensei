@@ -2,7 +2,7 @@
 
 **Segment:** 03 · Observatory — daily use
 **Route:** `/sessions`
-**Source mockup:** [`lib/sessions-zen.jsx`](../../mockups/Sensei/lib/sessions-zen.jsx) → `SessionsDigestZen` (full chart chip group: `trend / stream / constellation / bands`, default `trend`; mini-cycler adds `pulse`)
+**Source mockup:** [`lib/observatory/sessions-zen.jsx`](../../mockups/Sensei/lib/observatory/sessions-zen.jsx) → `SessionsDigestZen` (full chart chip group: `trend / stream / constellation / bands`, default `trend`; mini-cycler adds `pulse`)
 **App file:** `app/src/routes/(observatory)/sessions/+page.svelte`
 
 ## Purpose

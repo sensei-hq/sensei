@@ -4,7 +4,7 @@
 variants of most screens (older/newer, simple/detailed, discarded); picking
 the wrong file wastes work.
 
-The authoritative shell is [`../mockups/Sensei/lib/observatory.jsx`](lib/observatory.jsx) — its
+The authoritative shell is [`../mockups/Sensei/lib/observatory/observatory.jsx`](lib/observatory/observatory.jsx) — its
 `section === "…"` switch maps a route id to the component that renders it.
 This table is built from that switch (2026-07-07 — rebuilt after the sidebar-
 consistency + Health-tab refactors). If a section is added/removed in
@@ -14,25 +14,25 @@ consistency + Health-tab refactors). If a section is added/removed in
 
 | App route | Observatory `section` id | Component | Source file |
 |---|---|---|---|
-| `/` (Today) | `home` | `ObsHome` | `../mockups/Sensei/lib/observatory-today.jsx` |
-| `/projects` | `projects` | (inline in `observatory.jsx`; card = `ProjectCard` in `navigation.jsx`) | `../mockups/Sensei/lib/observatory.jsx` + `../mockups/Sensei/lib/navigation.jsx` |
-| `/project/[id]/…` | `project` | `ProjectPageSidebar` | `../mockups/Sensei/lib/project-pages.jsx` |
-| `/sessions` | `sessions` | `SessionsDigestZen` | `../mockups/Sensei/lib/sessions-zen.jsx` |
-| `/logs` | `logs` | `ObsLogs` | `../mockups/Sensei/lib/project-logs.jsx` |
-| `/libraries` | `libraries` | `LibrariesVariantA` | `../mockups/Sensei/lib/libraries.jsx` |
-| `/insights` | `insights` | `LearningsTriage` (Triage variant) | `../mockups/Sensei/lib/learnings-v2.jsx` |
-| `/memories` | `memories` | `LearningsAnatomyV2` | `../mockups/Sensei/lib/learnings-anatomy-v2.jsx` |
-| `/upgrades` | `upgrades` | `InappDownstream` | `../mockups/Sensei/lib/dojo-inapp.jsx` |
-| `/share-review` | `share-review` | `InappShare` | `../mockups/Sensei/lib/dojo-inapp.jsx` |
-| `/consolidation` | `consolidation` | `ObsConsolidation` | `../mockups/Sensei/lib/consolidation.jsx` |
-| `/traceability` | `traceability` | `ObsTraceability` | `../mockups/Sensei/lib/traceability.jsx` |
-| `/impact` | `impact` | `ObsImpact` | `../mockups/Sensei/lib/impact.jsx` |
-| `/impact` (alert) | `impact-alert` | `ObsNegativeAlert` | `../mockups/Sensei/lib/impact.jsx` |
-| `/dojo/connections` | `dojo-connections` | `InappConnection` | `../mockups/Sensei/lib/dojo-inapp.jsx` |
-| `/dojo/sharing` | `dojo-sharing` | `ObsCollectiveSettings` | `../mockups/Sensei/lib/collective-settings.jsx` |
-| `/instruments` (Playground) | `instruments-playground` | **`InstrumentsPlaygroundSimple`** | **`../mockups/Sensei/lib/instruments-simple.jsx`** |
-| `/instruments/replay` | `instruments-replay` | **`InstrumentsReplaySimple`** → delegates to `InstrumentsReplay` | **`../mockups/Sensei/lib/instruments-simple.jsx`** + `../mockups/Sensei/lib/instruments.jsx` |
-| `/instruments/health` | `instruments-health` | **`InstrumentsHealthSimple`** → delegates to `InstrumentsHealth` | **`../mockups/Sensei/lib/instruments-simple.jsx`** + `../mockups/Sensei/lib/instruments.jsx` |
+| `/` (Today) | `home` | `ObsHome` | `../mockups/Sensei/lib/observatory/observatory-today.jsx` |
+| `/projects` | `projects` | (inline in `observatory.jsx`; card = `ProjectCard` in `navigation.jsx`) | `../mockups/Sensei/lib/observatory/observatory.jsx` + `../mockups/Sensei/lib/shared/navigation.jsx` |
+| `/project/[id]/…` | `project` | `ProjectPageSidebar` | `../mockups/Sensei/lib/project/project-pages.jsx` |
+| `/sessions` | `sessions` | `SessionsDigestZen` | `../mockups/Sensei/lib/observatory/sessions-zen.jsx` |
+| `/logs` | `logs` | `ObsLogs` | `../mockups/Sensei/lib/project/project-logs.jsx` |
+| `/libraries` | `libraries` | `LibrariesVariantA` | `../mockups/Sensei/lib/observatory/libraries.jsx` |
+| `/insights` | `insights` | `LearningsTriage` (Triage variant) | `../mockups/Sensei/lib/observatory/learnings-v2.jsx` |
+| `/memories` | `memories` | `LearningsAnatomyV2` | `../mockups/Sensei/lib/observatory/learnings-anatomy-v2.jsx` |
+| `/upgrades` | `upgrades` | `InappDownstream` | `../mockups/Sensei/lib/dojo/dojo-inapp.jsx` |
+| `/share-review` | `share-review` | `InappShare` | `../mockups/Sensei/lib/dojo/dojo-inapp.jsx` |
+| `/consolidation` | `consolidation` | `ObsConsolidation` | `../mockups/Sensei/lib/observatory/consolidation.jsx` |
+| `/traceability` | `traceability` | `ObsTraceability` | `../mockups/Sensei/lib/observatory/traceability.jsx` |
+| `/impact` | `impact` | `ObsImpact` | `../mockups/Sensei/lib/observatory/impact.jsx` |
+| `/impact` (alert) | `impact-alert` | `ObsNegativeAlert` | `../mockups/Sensei/lib/observatory/impact.jsx` |
+| `/dojo/connections` | `dojo-connections` | `InappConnection` | `../mockups/Sensei/lib/dojo/dojo-inapp.jsx` |
+| `/dojo/sharing` | `dojo-sharing` | `ObsCollectiveSettings` | `../mockups/Sensei/lib/observatory/collective-settings.jsx` |
+| `/instruments` (Playground) | `instruments-playground` | **`InstrumentsPlaygroundSimple`** | **`../mockups/Sensei/lib/observatory/instruments-simple.jsx`** |
+| `/instruments/replay` | `instruments-replay` | **`InstrumentsReplaySimple`** → delegates to `InstrumentsReplay` | **`../mockups/Sensei/lib/observatory/instruments-simple.jsx`** + `../mockups/Sensei/lib/observatory/instruments.jsx` |
+| `/instruments/health` | `instruments-health` | **`InstrumentsHealthSimple`** → delegates to `InstrumentsHealth` | **`../mockups/Sensei/lib/observatory/instruments-simple.jsx`** + `../mockups/Sensei/lib/observatory/instruments.jsx` |
 
 ## Active vs discarded — which file is current
 
@@ -47,13 +47,13 @@ The pairs that cause confusion (⚠️ two files can define the same component n
 
 | Screen | ✅ Current file | ❌ Old / discarded |
 |---|---|---|
-| Bootstrap splash | `lib/bootstrap-splash.jsx` (`Splash`, `SplashOnDesktop`) | `lib/splash-healthcheck.jsx` (`Splash`) · `lib/discarded/bootstrap.jsx` · `lib/discarded/bootstrap-simple.jsx` |
-| Insights / Learnings | `lib/learnings-v2.jsx` + `lib/learnings-anatomy-v2.jsx` | `lib/discarded/learnings.jsx` |
-| Sessions | `lib/sessions-zen.jsx` | `lib/discarded/sessions.jsx` |
-| Project window | `lib/project-pages.jsx` → `ProjectPageSidebar` | same file → `ProjectPageTopTabs` (old variant) |
-| Wizard steps | `lib/wiz-assignments.jsx` · `lib/wiz-inference.jsx` | `lib/discarded/wiz-assignments-tabs.jsx` · `lib/discarded/wiz-inference-ladder.jsx` |
+| Bootstrap splash | `lib/setup/bootstrap-splash.jsx` (`Splash`, `SplashOnDesktop`) | `lib/discarded/splash-healthcheck.jsx` (`Splash`) · `lib/discarded/bootstrap.jsx` · `lib/discarded/bootstrap-simple.jsx` |
+| Insights / Learnings | `lib/observatory/learnings-v2.jsx` + `lib/observatory/learnings-anatomy-v2.jsx` | `lib/discarded/learnings.jsx` |
+| Sessions | `lib/observatory/sessions-zen.jsx` | `lib/discarded/sessions.jsx` |
+| Project window | `lib/project/project-pages.jsx` → `ProjectPageSidebar` | same file → `ProjectPageTopTabs` (old variant) |
+| Wizard steps | `lib/setup/wiz-assignments.jsx` · `lib/setup/wiz-inference.jsx` | `lib/discarded/wiz-assignments-tabs.jsx` · `lib/discarded/wiz-inference-ladder.jsx` |
 | Direction studies | none (direction landed) | `lib/discarded/direction-{enso,ma,shoji,merged}.jsx` |
-| Assistant chips | none (experiment) | `lib/assistant-tick-options.jsx` |
+| Assistant chips | none (experiment) | `lib/discarded/assistant-tick-options.jsx` |
 
 ## Screens outside the Observatory switch
 
@@ -62,16 +62,16 @@ screens live elsewhere:
 
 | Screen spec | Component | Source file |
 |---|---|---|
-| `bootstrap-green` / `bootstrap-probing` | `Splash` (state prop) | `lib/bootstrap-splash.jsx` |
-| `first-run-scan` | `WizScan` | `lib/setup-wizard.jsx` |
-| `preferences` | `SetupWizard` | `lib/setup-wizard.jsx` |
-| `settings-inference` | `InferenceSettings` | `lib/inference-settings.jsx` |
-| `project-overview` / `project-memories` / `project-about` | `ProjOverviewLite` / `ProjMemoriesLite` / `ProjAboutPane` | `lib/project-lite-panes.jsx` |
-| `project-patterns` / `project-sessions` | (`ProjectPageSidebar` tabs) | `lib/project-pages.jsx` |
-| `dojo-{admin,lead,maintainer}-console` | (panels) | `lib/dojo-console.jsx` |
-| `dojo-developer-flow` | `Inapp*` | `lib/dojo-inapp.jsx` |
-| `insights-reasoning` | (MOE section) | `lib/mcp-replay-insights.jsx` |
-| **Relay** (14 screens, new) | `Relay*` | `lib/relay.jsx` · `lib/relay-planner.jsx` · `lib/relay-desktop.jsx` |
+| `bootstrap-green` / `bootstrap-probing` | `Splash` (state prop) | `lib/setup/bootstrap-splash.jsx` |
+| `first-run-scan` | `WizScan` | `lib/setup/setup-wizard.jsx` |
+| `preferences` | `SetupWizard` | `lib/setup/setup-wizard.jsx` |
+| `settings-inference` | `InferenceSettings` | `lib/setup/inference-settings.jsx` |
+| `project-overview` / `project-memories` / `project-about` | `ProjOverviewLite` / `ProjMemoriesLite` / `ProjAboutPane` | `lib/project/project-lite-panes.jsx` |
+| `project-patterns` / `project-sessions` | (`ProjectPageSidebar` tabs) | `lib/project/project-pages.jsx` |
+| `dojo-{admin,lead,maintainer}-console` | (panels) | `lib/dojo/dojo-console.jsx` |
+| `dojo-developer-flow` | `Inapp*` | `lib/dojo/dojo-inapp.jsx` |
+| `insights-reasoning` | (MOE section) | `lib/observatory/mcp-replay-insights.jsx` |
+| **Relay** (14 screens, new) | `Relay*` | `lib/relay/relay.jsx` · `lib/relay/relay-planner.jsx` · `lib/relay/relay-desktop.jsx` |
 
 ## Sub-nav placement (2026-07-07 refactor)
 
@@ -95,31 +95,34 @@ Instruments pattern: `groupKeyOf(section) !== "instruments"` gate lives in
 
 | Data source | Location | Notes |
 |---|---|---|
-| Signals + Health | `../mockups/Sensei/lib/mcp-signals-data.js` → `window.MCP_SIGNALS` | Health opens at **MCP-level** (see `mcpMeta`). Per-tool detail is `toolUsage` (Sensei tools) + `thirdPartyUsage` (non-Sensei). |
-| Today | `../mockups/Sensei/lib/observatory-today.jsx` → `window.OBS_DATA` | Early / mature variants on `dataMaturity`. |
-| Projects | `../mockups/Sensei/lib/project-data.js` → `window.PROJECTS_INDEX` | Card supports `p.vision` for the description row. |
-| Sessions | `../mockups/Sensei/lib/sessions-zen.jsx` → `window.SESSIONS` | Synthesized history for prior-week windows. |
+| Signals + Health | `../mockups/Sensei/lib/data/mcp-signals-data.js` → `window.MCP_SIGNALS` | Health opens at **MCP-level** (see `mcpMeta`). Per-tool detail is `toolUsage` (Sensei tools) + `thirdPartyUsage` (non-Sensei). |
+| Today | `../mockups/Sensei/lib/observatory/observatory-today.jsx` → `window.OBS_DATA` | Early / mature variants on `dataMaturity`. |
+| Projects | `../mockups/Sensei/lib/data/project-data.js` → `window.PROJECTS_INDEX` | Card supports `p.vision` for the description row. |
+| Sessions | `../mockups/Sensei/lib/observatory/sessions-zen.jsx` → `window.SESSIONS` | Synthesized history for prior-week windows. |
 
 ## Deprecated / discarded — DO NOT use as a target
 
-Everything under `lib/discarded/` is off. Plus two top-level files that are older
-experiments (NOT yet moved to `discarded/`). Verified 2026-07-14 against what the
-artboards render:
+Everything under `lib/discarded/` is off. `lib/` was reorganized into folders on
+2026-07-14 (`shared/ setup/ observatory/ project/ dojo/ relay/ data/ discarded/`);
+each artboard now imports only what it renders. Superseded files:
 
 | Deprecated file | Superseded by |
 |---|---|
-| `lib/discarded/learnings.jsx` | `lib/learnings-v2.jsx` + `lib/learnings-anatomy-v2.jsx` |
-| `lib/discarded/sessions.jsx` | `lib/sessions-zen.jsx` |
-| `lib/discarded/bootstrap.jsx` · `lib/discarded/bootstrap-simple.jsx` | `lib/bootstrap-splash.jsx` |
+| `lib/discarded/learnings.jsx` | `lib/observatory/learnings-v2.jsx` + `lib/observatory/learnings-anatomy-v2.jsx` |
+| `lib/discarded/sessions.jsx` | `lib/observatory/sessions-zen.jsx` |
+| `lib/discarded/bootstrap.jsx` · `lib/discarded/bootstrap-simple.jsx` | `lib/setup/bootstrap-splash.jsx` |
 | `lib/discarded/direction-{enso,ma,shoji,merged}.jsx` | direction has landed; see `hq/site.jsx` |
-| `lib/discarded/wiz-assignments-tabs.jsx` · `lib/discarded/wiz-inference-ladder.jsx` | `lib/wiz-assignments.jsx` · `lib/wiz-inference.jsx` |
-| **`lib/splash-healthcheck.jsx`** (top-level, older splash) | `lib/bootstrap-splash.jsx` — retire or move to `discarded/` |
-| **`lib/assistant-tick-options.jsx`** (top-level, experiment) | not wired; experiment only |
-| `lib/instruments.jsx` (three-tab shell) | `lib/instruments-simple.jsx` — but the `-simple` wrappers delegate INTO `instruments.jsx` for Replay/Health, so it's **not dead**; keep both |
+| `lib/discarded/wiz-assignments-tabs.jsx` · `lib/discarded/wiz-inference-ladder.jsx` | `lib/setup/wiz-assignments.jsx` · `lib/setup/wiz-inference.jsx` |
+| `lib/discarded/splash-healthcheck.jsx` (`SplashHealthCheck`) | `lib/setup/bootstrap-splash.jsx` (`Splash`) |
+| `lib/discarded/assistant-tick-options.jsx` | experiment only; not wired |
+| `lib/discarded/extensions-browser.jsx` · `lib/discarded/skill-editor.jsx` | dead (rendered nowhere) |
+| `lib/observatory/instruments.jsx` (three-tab shell) | `lib/observatory/instruments-simple.jsx` — but the `-simple` wrappers delegate INTO `instruments.jsx` for Replay/Health, so it's **not dead**; keep both |
 
-**Unresolved (needs a designer call):** `lib/upgrades.jsx` and `lib/sharing-review.jsx`
-are top-level but the specs render `lib/dojo-inapp.jsx` (`InappDownstream` / `InappShare`)
-instead — likely superseded, confirm before pruning.
+**Global vs per-Dōjō — NOT a duplicate.** `lib/observatory/upgrades.jsx`
+(`ObsUpgrades`) and `lib/observatory/sharing-review.jsx` (`ObsSharingReview`) are
+the **global Collective** upgrades / share screens. `lib/dojo/dojo-inapp.jsx`
+(`InappDownstream` / `InappShare`) is the **per-Dōjō** version the observatory
+routes wire today. Both are kept — they are different scopes.
 
 ## Working rules
 

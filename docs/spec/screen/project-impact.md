@@ -2,7 +2,7 @@
 
 **Segment:** 04 · The project window
 **Route:** `/project/[id]/impact`
-**Source mockup:** [`lib/impact.jsx`](../../mockups/Sensei/lib/impact.jsx) → project variant
+**Source mockup:** [`lib/observatory/impact.jsx`](../../mockups/Sensei/lib/observatory/impact.jsx) → project variant
 **App file:** `app/src/routes/project/[id]/impact/+page.svelte`
 
 ## Purpose

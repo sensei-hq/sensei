@@ -2,7 +2,7 @@
 
 **Segment:** 04 · The project window
 **Route:** `/project/[id]/traceability`
-**Source mockup:** [`lib/traceability.jsx`](../../mockups/Sensei/lib/traceability.jsx) → `ObsTraceability` component with a project-scope prop (no distinct project variant in the mockup — the same primitive filters by project id)
+**Source mockup:** [`lib/observatory/traceability.jsx`](../../mockups/Sensei/lib/observatory/traceability.jsx) → `ObsTraceability` component with a project-scope prop (no distinct project variant in the mockup — the same primitive filters by project id)
 **App file:** `app/src/routes/project/[id]/traceability/+page.svelte`
 
 ## Purpose

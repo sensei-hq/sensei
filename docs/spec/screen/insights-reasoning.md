@@ -2,7 +2,7 @@
 
 **Segment:** 03 · Observatory — daily use
 **Route:** `/insights/{id}/reasoning` (drawer / secondary route on the Insights screen)
-**Source mockup:** derived from [`lib/mcp-replay-insights.jsx`](../../mockups/Sensei/lib/mcp-replay-insights.jsx) MOE section
+**Source mockup:** derived from [`lib/observatory/mcp-replay-insights.jsx`](../../mockups/Sensei/lib/observatory/mcp-replay-insights.jsx) MOE section
 **App file:** `app/src/routes/(observatory)/insights/[id]/reasoning/+page.svelte`
 
 ## Purpose
