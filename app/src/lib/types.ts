@@ -1472,3 +1472,18 @@ export interface LogRow {
   data: Record<string, unknown> | null;
   error: Record<string, unknown> | null;
 }
+
+/** One background worker from `GET /api/tasks/scheduled` (#96). Health fields
+ *  (last_ok/last_error/next_run_at/interval_secs/avg_ms) are null until the
+ *  daemon records run outcomes — render them as "—", not "healthy". */
+export interface ScheduledTask {
+  name: string;
+  description: string;
+  /** RFC-3339, or null when the worker persists no last-run watermark. */
+  last_run_at: string | null;
+  last_ok: boolean | null;
+  last_error: string | null;
+  next_run_at: string | null;
+  interval_secs: number | null;
+  avg_ms: number | null;
+}
