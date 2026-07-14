@@ -139,6 +139,8 @@ pub fn create_router(state: AppState) -> Router {
         // Task queue (new)
         .route("/api/tasks/status", get(workspace::task_status))
         .route("/api/tasks/progress", get(workspace::task_progress_sse))
+        // Background-task visibility (#96): scheduler registry + last-run times
+        .route("/api/tasks/scheduled", get(crate::api::handlers::scheduled_tasks::scheduled))
         // Graph
         .route("/api/graph/nodes", get(codebase::graph_nodes))
         .route("/api/graph/functions", get(codebase::search_functions))
