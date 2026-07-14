@@ -26,5 +26,17 @@
         <Eyebrow>Settings</Eyebrow>
     </div>
 
-    <List {items} {fields} value={activeHref} collapsible={false} />
+    <!-- rokkit List default item padding-block (density-spacing-xs, 4px) renders
+         rows almost flush. The mockup sidebars use py-2 (8px) rows — match that
+         by bumping the leaf/group vertical padding on THIS List only via the
+         documented `class` lever (UnoCSS arbitrary variants land on the root
+         <nav data-list>, scoping the change to the settings rail; the
+         observatory rail, menus, and selects keep their default density). -->
+    <List
+        {items}
+        {fields}
+        value={activeHref}
+        collapsible={false}
+        class="[&_[data-list-item]]:py-2 [&_[data-list-group]]:py-2"
+    />
 </aside>
