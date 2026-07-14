@@ -34,6 +34,45 @@ consistency + Health-tab refactors). If a section is added/removed in
 | `/instruments/replay` | `instruments-replay` | **`InstrumentsReplaySimple`** → delegates to `InstrumentsReplay` | **`../mockups/Sensei/lib/instruments-simple.jsx`** + `../mockups/Sensei/lib/instruments.jsx` |
 | `/instruments/health` | `instruments-health` | **`InstrumentsHealthSimple`** → delegates to `InstrumentsHealth` | **`../mockups/Sensei/lib/instruments-simple.jsx`** + `../mockups/Sensei/lib/instruments.jsx` |
 
+## Active vs discarded — which file is current
+
+The artboards `<script src>`-load **almost every** file (incl. `discarded/*`), so
+imports don't tell you what's live. The real signal is **which component an
+artboard renders**:
+
+- **Active** = rendered by `Sensei Observatory.html`.
+- **Old** = rendered only in `Sensei Experiments.html`, or anything under `discarded/`.
+
+The pairs that cause confusion (⚠️ two files can define the same component name):
+
+| Screen | ✅ Current file | ❌ Old / discarded |
+|---|---|---|
+| Bootstrap splash | `lib/bootstrap-splash.jsx` (`Splash`, `SplashOnDesktop`) | `lib/splash-healthcheck.jsx` (`Splash`) · `lib/discarded/bootstrap.jsx` · `lib/discarded/bootstrap-simple.jsx` |
+| Insights / Learnings | `lib/learnings-v2.jsx` + `lib/learnings-anatomy-v2.jsx` | `lib/discarded/learnings.jsx` |
+| Sessions | `lib/sessions-zen.jsx` | `lib/discarded/sessions.jsx` |
+| Project window | `lib/project-pages.jsx` → `ProjectPageSidebar` | same file → `ProjectPageTopTabs` (old variant) |
+| Wizard steps | `lib/wiz-assignments.jsx` · `lib/wiz-inference.jsx` | `lib/discarded/wiz-assignments-tabs.jsx` · `lib/discarded/wiz-inference-ladder.jsx` |
+| Direction studies | none (direction landed) | `lib/discarded/direction-{enso,ma,shoji,merged}.jsx` |
+| Assistant chips | none (experiment) | `lib/assistant-tick-options.jsx` |
+
+## Screens outside the Observatory switch
+
+The table above (`observatory.jsx` switch) covers the Observatory rail. These
+screens live elsewhere:
+
+| Screen spec | Component | Source file |
+|---|---|---|
+| `bootstrap-green` / `bootstrap-probing` | `Splash` (state prop) | `lib/bootstrap-splash.jsx` |
+| `first-run-scan` | `WizScan` | `lib/setup-wizard.jsx` |
+| `preferences` | `SetupWizard` | `lib/setup-wizard.jsx` |
+| `settings-inference` | `InferenceSettings` | `lib/inference-settings.jsx` |
+| `project-overview` / `project-memories` / `project-about` | `ProjOverviewLite` / `ProjMemoriesLite` / `ProjAboutPane` | `lib/project-lite-panes.jsx` |
+| `project-patterns` / `project-sessions` | (`ProjectPageSidebar` tabs) | `lib/project-pages.jsx` |
+| `dojo-{admin,lead,maintainer}-console` | (panels) | `lib/dojo-console.jsx` |
+| `dojo-developer-flow` | `Inapp*` | `lib/dojo-inapp.jsx` |
+| `insights-reasoning` | (MOE section) | `lib/mcp-replay-insights.jsx` |
+| **Relay** (14 screens, new) | `Relay*` | `lib/relay.jsx` · `lib/relay-planner.jsx` · `lib/relay-desktop.jsx` |
+
 ## Sub-nav placement (2026-07-07 refactor)
 
 Two placement rules — the Instruments group is the exception:
@@ -63,17 +102,24 @@ Instruments pattern: `groupKeyOf(section) !== "instruments"` gate lives in
 
 ## Deprecated / discarded — DO NOT use as a target
 
-Anything in `../mockups/Sensei/lib/discarded/` is off. These `../mockups/Sensei/lib/*.jsx` files are older
-variants superseded by the "-simple" or `-v2` files above:
+Everything under `lib/discarded/` is off. Plus two top-level files that are older
+experiments (NOT yet moved to `discarded/`). Verified 2026-07-14 against what the
+artboards render:
 
 | Deprecated file | Superseded by |
 |---|---|
-| `../mockups/Sensei/lib/instruments.jsx` (three-tab shell) | `../mockups/Sensei/lib/instruments-simple.jsx` (three independent sidebar destinations; the `-simple` wrappers delegate INTO `instruments.jsx` for the actual Replay / Health rendering, so the file isn't dead — it's just no longer the wire target) |
-| `../mockups/Sensei/lib/learnings.jsx` | `../mockups/Sensei/lib/learnings-v2.jsx` + `../mockups/Sensei/lib/learnings-anatomy-v2.jsx` |
-| `../mockups/Sensei/lib/sessions.jsx` | `../mockups/Sensei/lib/sessions-zen.jsx` |
-| `../mockups/Sensei/lib/bootstrap.jsx` | `../mockups/Sensei/lib/bootstrap-simple.jsx` + `../mockups/Sensei/lib/bootstrap-splash.jsx` |
-| `../mockups/Sensei/lib/direction-*.jsx` | direction has landed; see `hq/site.jsx` |
-| `../mockups/Sensei/lib/wiz-*.jsx` | wizard rehab shipped; `../mockups/Sensei/lib/setup-wizard.jsx` is current |
+| `lib/discarded/learnings.jsx` | `lib/learnings-v2.jsx` + `lib/learnings-anatomy-v2.jsx` |
+| `lib/discarded/sessions.jsx` | `lib/sessions-zen.jsx` |
+| `lib/discarded/bootstrap.jsx` · `lib/discarded/bootstrap-simple.jsx` | `lib/bootstrap-splash.jsx` |
+| `lib/discarded/direction-{enso,ma,shoji,merged}.jsx` | direction has landed; see `hq/site.jsx` |
+| `lib/discarded/wiz-assignments-tabs.jsx` · `lib/discarded/wiz-inference-ladder.jsx` | `lib/wiz-assignments.jsx` · `lib/wiz-inference.jsx` |
+| **`lib/splash-healthcheck.jsx`** (top-level, older splash) | `lib/bootstrap-splash.jsx` — retire or move to `discarded/` |
+| **`lib/assistant-tick-options.jsx`** (top-level, experiment) | not wired; experiment only |
+| `lib/instruments.jsx` (three-tab shell) | `lib/instruments-simple.jsx` — but the `-simple` wrappers delegate INTO `instruments.jsx` for Replay/Health, so it's **not dead**; keep both |
+
+**Unresolved (needs a designer call):** `lib/upgrades.jsx` and `lib/sharing-review.jsx`
+are top-level but the specs render `lib/dojo-inapp.jsx` (`InappDownstream` / `InappShare`)
+instead — likely superseded, confirm before pruning.
 
 ## Working rules
 
