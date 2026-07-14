@@ -4,6 +4,37 @@
 > indexing modes (full / incremental / watcher), and the gaps. Drives the
 > one-task-one-owner refactor for #101 (double-index) + #29 / #62.
 
+## ✅ #101 RESOLVED (2026-07-14)
+
+Forensics (`activity.task_executions`) proved #101 was **stale residue, not a
+live double-scan**: subfolder-owned `process_git_folder`/`process_file` for
+`crates/senseid`, `docs`, `app`, `database/ddl/*` all last ran 2026-07-13 07:27
+and never since; current scans only process the git-root + real git subtrees.
+`classify_folders` already excludes members (it was the pre-fix scan that left
+the duplicate nodes, never pruned). So the feared `process_git_folder` refactor +
+risky live rescan were **not** needed. Resolution, all on `develop`:
+
+1. **Recurrence locked (TDD, `d90c30d4`)** — classification guards for scan-AT
+   and scan-ABOVE a repo (member never promoted), + an enqueue/trigger test
+   (`scan_root` emits one `ProcessGitFolder` for the repo, none for the member)
+   using a new `#[cfg(test)] TaskQueue::snapshot()` exposing the enqueue graph.
+2. **Self-healing dedup (`246c91ca` + `0e5ad275`)** —
+   `PgStore::dedup_structural_folder_nodes(root_id)` wired into `scan_root` §4.5
+   reconcile. Twin-guarded: prunes a `folder`-kind node only when the canonical
+   root owner holds the same `(kind)` + name/path suffix — never loses a unique.
+   Runs every scan ⇒ cleans residue and blocks future accumulation.
+3. **Live residue cleaned + verified** — one-time twin-guarded prune removed
+   **52,628** of 52,688 folder-kind nodes (60→54 inert twinless survivors: stale
+   modules + dead-source symbols). `extract_deps` 2→1; sensei functions
+   6,211→3,256; the `cluster` git/folder mirror collapsed to git-only. No live
+   symbol lost. Full senseid suite 1474 passed / 0 failed.
+
+Remaining (minor, non-blocking): ~54 twinless dead-source nodes + stale
+`scan_state` on structural folders are inert (a deleted-file node/scan_state
+sweep is a separate follow-up, not #101).
+
+---
+
 ## 1. The task system (26 kinds)
 
 `TaskKind` (`tasks/mod.rs:33`), dispatched in `tasks/executor.rs:84`. Grouped:
