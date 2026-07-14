@@ -76,4 +76,4 @@ Each links to its detailed design. The order is data-up (foundation first).
 ## Read next
 
 - Foundation: [`data.md`](data.md) → [`daemon.md`](daemon.md).
-- Where the gaps are: [`../requirements/open-issues.md`](../requirements/open-issues.md).
+- Where the gaps are: [`../requirements/open-issues.md`](../plan/README.md).

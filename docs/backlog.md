@@ -12,7 +12,7 @@ Work is tracked as **GitHub issues** in [`sensei-hq/sensei`](https://github.com/
 
 ## 1. Top priority — Governance plane
 
-**Concept:** [concepts/governance.md](./concepts/governance.md) · **Epic:** [#28](https://github.com/sensei-hq/sensei/issues/28) · **Builds on:** [knowledge plane spec](./superpowers/specs/2026-05-27-knowledge-plane-design.md)
+**Concept:** [concepts/governance.md](architecture/concepts/governance.md) · **Epic:** [#28](https://github.com/sensei-hq/sensei/issues/28) · **Builds on:** [knowledge plane spec](./superpowers/specs/2026-05-27-knowledge-plane-design.md)
 
 Layered scope×enforcement rule model, `scopes`+`namespaces` (level-based set membership), global `~/.sensei/rules.md`, README-frontmatter identity, two-tier resolution via the `consolidation` inference role, promotion, and the slim hive-mind federation service. Ships top-to-bottom:
 

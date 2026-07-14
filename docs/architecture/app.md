@@ -46,11 +46,11 @@ libraries, impact, traceability, about, instruments), `(config)/setup/*`
 The gaps are *upstream* — thin/empty data (memory promotion, doc-drift noise,
 insight-copy not wired on some screens), not missing UI. Not-built surfaces:
 Solution segment, Bootstrap splash, consolidation, insights-reasoning drawer
-(Phase 3). See [`../requirements/open-issues.md`](../requirements/open-issues.md).
+(Phase 3). See [`../requirements/open-issues.md`](../plan/README.md).
 
 ## Source detail
 
 Sidecar lifecycle + 3-layer state rationale in
 [`reference/01-app.md`](reference/01-app.md); UI rules in
-[`reference/frontend-svelte-guidelines.md`](reference/frontend-svelte-guidelines.md)
+[`frontend-svelte-guidelines.md`](frontend-svelte-guidelines.md)
 (kept as the enforced house style).
