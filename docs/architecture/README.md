@@ -13,6 +13,8 @@ it says so.
 
 ## The system at a glance
 
+> Visual artboard: [`lib/shared/ecosystem-arch.jsx`](../mockups/Sensei/lib/shared/ecosystem-arch.jsx) → `EcosystemArchitecture` (the whole system with trust boundaries; Observatory section ⑧).
+
 ```mermaid
 flowchart TD
     subgraph client["User's machine (personal sensei — fully local)"]
