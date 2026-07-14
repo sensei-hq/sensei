@@ -865,6 +865,7 @@ mod tests {
             tenant_key: tenant.into(),
             dojo_url: format!("http://localhost:7755/{tenant}"),
             kind: kind.into(),
+            org_slugs: vec![],
             role: "contributor".into(),
             authenticated_via: "device_code".into(),
             attribution_default: "named".into(),

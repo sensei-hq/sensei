@@ -7,6 +7,7 @@ create table if not exists dojo.memberships (
 , dojo_url             text                  not null
 , role                 dojo.member_role      not null default 'contributor'
 , kind                 dojo.membership_kind  not null
+, org_slugs            text[]                not null default '{}'
 , authenticated_via    dojo.auth_method      not null
 , attribution_default  dojo.attribution_mode not null default 'named'
 , sync_status          dojo.sync_status      not null default 'authenticating'
@@ -35,6 +36,8 @@ comment on column dojo.memberships.role
      is 'contributor | maintainer | client_lead | admin — usually git-derived (see dojo.roles), admin-overridable.';
 comment on column dojo.memberships.kind
      is 'employer | client | community | personal — drives routing precedence and attribution.';
+comment on column dojo.memberships.org_slugs
+     is 'Git-remote owner slugs this membership covers (e.g. {sensei-hq,acme}), lowercased. A project whose repo owner is in this set is a candidate to auto-bind here (confirm-inferred in the app About panel). Set once at first-join/setup and overridable; feeds infer_binding with kind-precedence (client > employer > community > personal).';
 comment on column dojo.memberships.authenticated_via
      is 'How this membership was paired: sso, github_oauth, or device_code.';
 comment on column dojo.memberships.attribution_default

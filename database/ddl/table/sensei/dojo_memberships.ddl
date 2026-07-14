@@ -25,6 +25,7 @@ create table if not exists dojo_memberships (
 , tenant_key           text        not null      -- <origin>/<org>[/<dojo>] discovery path of the tenant Dōjō
 , dojo_url             text        not null      -- full membership URL (registry_url + tenant path)
 , kind                 text        not null      -- employer | client | community | personal (drives routing precedence)
+, org_slugs            text[]      not null default '{}'   -- git-remote owner slugs this membership covers (lowercased); mirrors dojo.memberships.org_slugs
 , role                 text        not null default 'contributor'   -- contributor | maintainer | client_lead | admin
 , authenticated_via    text        not null default 'device_code'   -- sso | github_oauth | device_code
 , attribution_default  text        not null default 'named'         -- named | anonymous | dereferenced
@@ -51,6 +52,8 @@ comment on column dojo_memberships.id
      is 'The service membership id (dojo.memberships.id), assigned by the Dōjō console at pairing. sensei.projects.dojo_id references this value.';
 comment on column dojo_memberships.kind
      is 'employer | client | community | personal — drives client-precedence routing (see dojo/routing.rs). client-bound work routes to the client Dōjō and is dereferenced; employer is excluded.';
+comment on column dojo_memberships.org_slugs
+     is 'Git-remote owner slugs this membership covers (lowercased), mirrored from dojo.memberships.org_slugs. dojo/routing.rs::infer_binding matches a project''s repo owner against this set to SUGGEST a binding (confirm-inferred in the About panel) — it never auto-commits.';
 comment on column dojo_memberships.credential_ref
      is 'Keychain entry id for the per-membership device token (Bearer auth). The token is never stored in Postgres.';
 comment on column dojo_memberships.sync_status
