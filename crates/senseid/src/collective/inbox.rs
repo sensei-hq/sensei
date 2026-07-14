@@ -447,6 +447,7 @@ mod tests {
             tenant_key: "github/acme".into(),
             dojo_url: "http://localhost:7755/github/acme".into(),
             kind: "community".into(),
+            org_slugs: vec![],
             role: "contributor".into(),
             authenticated_via: "device_code".into(),
             attribution_default: "anonymous".into(),

@@ -61,6 +61,27 @@ pub const AUTH_METHODS: [&str; 3] = ["sso", "github_oauth", "device_code"];
 /// Allowed `sync_status` values — mirrors `dojo.sync_status` (sync_status.ddl).
 pub const SYNC_STATUSES: [&str; 4] = ["healthy", "stale", "error", "authenticating"];
 
+/// Normalise a set of git-remote owner slugs for storage/matching: lowercase,
+/// trim, drop empties, and dedupe while preserving first-seen order. Pure — the
+/// single source of truth for org-slug canonicalisation (both the connect body
+/// and the org-tagging edit route through this, and `infer_binding` matches
+/// against lowercased owners, so the two sides always agree). See
+/// [`crate::dojo::routing::infer_binding`].
+pub fn normalize_org_slugs<I, S>(slugs: I) -> Vec<String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut out: Vec<String> = Vec::new();
+    for s in slugs {
+        let norm = s.as_ref().trim().to_ascii_lowercase();
+        if !norm.is_empty() && !out.contains(&norm) {
+            out.push(norm);
+        }
+    }
+    out
+}
+
 /// Derive the full membership URL from the registry base + tenant discovery
 /// path, e.g. `("http://localhost:7755", "github/sensei-hq")` →
 /// `"http://localhost:7755/github/sensei-hq"`. Pure.
@@ -83,6 +104,9 @@ pub struct NewConnection {
     pub tenant_key: String,
     pub dojo_url: String,
     pub kind: MembershipKind,
+    /// Git-remote owner slugs this membership covers (normalised lowercase),
+    /// e.g. `["sensei-hq", "acme"]`. Feeds infer-at-detect auto-bind.
+    pub org_slugs: Vec<String>,
     pub role: String,
     pub authenticated_via: String,
     pub attribution_default: AttributionMode,
@@ -93,6 +117,7 @@ impl NewConnection {
     /// Validate raw string fields (from an API body) into a typed connection.
     /// `registry_url`/`tenant_key`/`dojo_url` are trusted trimmed strings; the
     /// caller enforces URL-scheme security (see `api::util::require_secure_url`).
+    /// `org_slugs` is normalised via [`normalize_org_slugs`].
     #[allow(clippy::too_many_arguments)]
     pub fn validated(
         membership_id: uuid::Uuid,
@@ -100,6 +125,7 @@ impl NewConnection {
         tenant_key: String,
         dojo_url: String,
         kind: &str,
+        org_slugs: &[String],
         role: &str,
         authenticated_via: &str,
         attribution_default: &str,
@@ -121,6 +147,7 @@ impl NewConnection {
             tenant_key,
             dojo_url,
             kind,
+            org_slugs: normalize_org_slugs(org_slugs),
             role: role.to_string(),
             authenticated_via: authenticated_via.to_string(),
             attribution_default,
@@ -153,6 +180,7 @@ pub async fn register(pg: &PgStore, conn: NewConnection, token: &str) -> Result<
         tenant_key: conn.tenant_key,
         dojo_url: conn.dojo_url,
         kind: conn.kind.as_db_str().to_string(),
+        org_slugs: conn.org_slugs,
         role: conn.role,
         authenticated_via: conn.authenticated_via,
         attribution_default: conn.attribution_default.as_db_str().to_string(),
@@ -180,6 +208,13 @@ pub async fn bind_project(
     membership_id: &uuid::Uuid,
 ) -> Result<bool, String> {
     pg.bind_project_to_dojo(project_id, Some(membership_id)).await
+}
+
+/// Replace the git-remote owner slugs a membership covers (the org-tagging
+/// edit). Slugs are normalised via [`normalize_org_slugs`] before storage so
+/// they match `infer_binding`'s lowercased owners. Returns `false` if unknown.
+pub async fn set_orgs(pg: &PgStore, membership_id: &uuid::Uuid, org_slugs: &[String]) -> Result<bool, String> {
+    pg.set_dojo_membership_orgs(membership_id, &normalize_org_slugs(org_slugs)).await
 }
 
 /// Update a connection's sync status (validated). Returns `false` if unknown.
@@ -210,6 +245,9 @@ pub struct ConnectionView {
     pub tenant_key: String,
     pub dojo_url: String,
     pub kind: String,
+    /// Git-remote owner slugs this membership covers — surfaced so the
+    /// connections pane can display and edit the org-tagging.
+    pub org_slugs: Vec<String>,
     pub role: String,
     pub authenticated_via: String,
     pub attribution_default: String,
@@ -228,6 +266,7 @@ impl ConnectionView {
             tenant_key: row.tenant_key,
             dojo_url: row.dojo_url,
             kind: row.kind,
+            org_slugs: row.org_slugs,
             role: row.role,
             authenticated_via: row.authenticated_via,
             attribution_default: row.attribution_default,
@@ -280,30 +319,40 @@ mod tests {
     }
 
     #[test]
+    fn normalize_org_slugs_lowercases_trims_dedupes_and_drops_empties() {
+        assert_eq!(
+            normalize_org_slugs(["Sensei-HQ", " acme ", "acme", "", "  ", "ACME"]),
+            vec!["sensei-hq".to_string(), "acme".to_string()],
+        );
+        assert!(normalize_org_slugs(Vec::<String>::new()).is_empty());
+    }
+
+    #[test]
     fn new_connection_validates_every_enum_field() {
         let id = uuid::Uuid::new_v4();
         let ok = NewConnection::validated(
             id, "http://localhost:7755".into(), "github/acme".into(),
             "http://localhost:7755/github/acme".into(),
-            "client", "contributor", "device_code", "dereferenced", "authenticating",
+            "client", &["Acme".into(), "acme".into()], "contributor", "device_code", "dereferenced", "authenticating",
         );
         assert!(ok.is_ok());
         let c = ok.unwrap();
         assert_eq!(c.kind, MembershipKind::Client);
         assert_eq!(c.attribution_default, AttributionMode::Dereferenced);
+        assert_eq!(c.org_slugs, vec!["acme".to_string()], "org_slugs normalised (lowercased + deduped)");
 
         // Each bad enum field is rejected with a field-named error.
-        let bad_kind = NewConnection::validated(id, "u".into(), "t".into(), "d".into(), "boss", "contributor", "device_code", "named", "healthy");
+        let bad_kind = NewConnection::validated(id, "u".into(), "t".into(), "d".into(), "boss", &[], "contributor", "device_code", "named", "healthy");
         assert!(bad_kind.unwrap_err().contains("kind"));
-        let bad_role = NewConnection::validated(id, "u".into(), "t".into(), "d".into(), "client", "overlord", "device_code", "named", "healthy");
+        let bad_role = NewConnection::validated(id, "u".into(), "t".into(), "d".into(), "client", &[], "overlord", "device_code", "named", "healthy");
         assert!(bad_role.unwrap_err().contains("role"));
-        let bad_auth = NewConnection::validated(id, "u".into(), "t".into(), "d".into(), "client", "contributor", "carrier_pigeon", "named", "healthy");
+        let bad_auth = NewConnection::validated(id, "u".into(), "t".into(), "d".into(), "client", &[], "contributor", "carrier_pigeon", "named", "healthy");
         assert!(bad_auth.unwrap_err().contains("authenticated_via"));
-        let bad_attr = NewConnection::validated(id, "u".into(), "t".into(), "d".into(), "client", "contributor", "device_code", "public", "healthy");
+        let bad_attr = NewConnection::validated(id, "u".into(), "t".into(), "d".into(), "client", &[], "contributor", "device_code", "public", "healthy");
         assert!(bad_attr.unwrap_err().contains("attribution_default"));
-        let bad_sync = NewConnection::validated(id, "u".into(), "t".into(), "d".into(), "client", "contributor", "device_code", "named", "vibing");
+        let bad_sync = NewConnection::validated(id, "u".into(), "t".into(), "d".into(), "client", &[], "contributor", "device_code", "named", "vibing");
         assert!(bad_sync.unwrap_err().contains("sync_status"));
-        let empty_tenant = NewConnection::validated(id, "u".into(), "  ".into(), "d".into(), "client", "contributor", "device_code", "named", "healthy");
+        let empty_tenant = NewConnection::validated(id, "u".into(), "  ".into(), "d".into(), "client", &[], "contributor", "device_code", "named", "healthy");
         assert!(empty_tenant.unwrap_err().contains("tenant_key"));
     }
 }
