@@ -5255,6 +5255,45 @@ impl PgStore {
         Ok(healed)
     }
 
+    /// Enforce one-node-one-owner: a `folder`-kind (structural) subfolder must
+    /// not carry a code node that the project's canonical ROOT owner
+    /// (git/standalone/subtree) already holds. Deletes each such duplicate —
+    /// TWIN-GUARDED: matched by identical `(name, kind)` AND the root node's
+    /// repo-relative `file_path` ending in the structural node's subfolder-
+    /// relative `file_path` (`right(...)` suffix, no LIKE wildcard hazard). A
+    /// symbol held UNIQUELY under a structural folder is therefore never removed
+    /// — only proven duplicates are. This self-heals the pre-fix double-index
+    /// residue (#101: members promoted to second index owners on 2026-07-13)
+    /// and, run every scan, prevents any future accumulation. Scoped to
+    /// `root_id`. Edges cascade with the deleted nodes. Returns rows pruned.
+    pub async fn dedup_structural_folder_nodes(&self, root_id: &uuid::Uuid) -> Result<u64, String> {
+        let res = sqlx_core::query::query(
+            "DELETE FROM sensei.nodes s
+               USING sensei.folders sf
+              WHERE s.folder_id = sf.id
+                AND sf.kind = 'folder'::sensei.folder_kind
+                AND sf.root_id = $1
+                AND EXISTS (
+                  SELECT 1
+                    FROM sensei.nodes g
+                    JOIN sensei.folders gf ON gf.id = g.folder_id
+                   WHERE gf.project_id = sf.project_id
+                     AND gf.kind IN ('git'::sensei.folder_kind,
+                                     'standalone'::sensei.folder_kind,
+                                     'subtree'::sensei.folder_kind)
+                     AND g.name = s.name
+                     AND g.kind = s.kind
+                     AND (g.file_path = s.file_path
+                          OR right(g.file_path, char_length(s.file_path) + 1)
+                             = ('/' || s.file_path)))",
+        )
+        .bind(root_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("dedup_structural_folder_nodes: {e}"))?;
+        Ok(res.rows_affected())
+    }
+
     /// Candidate rows for [`Self::heal_nested_standalone_roots`]: each mis-scoped
     /// `standalone` root paired with the DEEPEST enclosing git repo it sits inside
     /// (DISTINCT ON + length DESC picks the closest repo, never a grandparent).
