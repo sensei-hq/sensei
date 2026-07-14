@@ -9,7 +9,7 @@
 - MCP: `crates/mcp/src/tools/search.rs`
 - Hook interception: `marketplace/plugins/sensei/hooks/pre_tool_use.rs`
 
-**Companion design doc:** [`docs/archive/ideas/31-semantic-search-layer.md`](../../archive/ideas/31-semantic-search-layer.md).
+**Companion design doc:** `docs/archive/ideas/31-semantic-search-layer.md`.
 
 ## Purpose
 

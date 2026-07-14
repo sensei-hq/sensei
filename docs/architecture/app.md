@@ -48,9 +48,28 @@ insight-copy not wired on some screens), not missing UI. Not-built surfaces:
 Solution segment, Bootstrap splash, consolidation, insights-reasoning drawer
 (Phase 3). See [`../requirements/open-issues.md`](../plan/README.md).
 
-## Source detail
+## Design rationale
 
-Sidecar lifecycle + 3-layer state rationale in
-[`reference/01-app.md`](reference/01-app.md); UI rules in
-[`frontend-svelte-guidelines.md`](frontend-svelte-guidelines.md)
-(kept as the enforced house style).
+- **Sidecar owns the daemon lifecycle.** On launch the shell probes `GET /health`;
+  if unreachable it runs bootstrap then starts services, polling up to 30s at
+  500ms. On a daemon crash mid-use the app **falls back to the health screen and
+  restarts the daemon** — never an error modal. The daemon does *not*
+  self-daemonize (the sidecar owns start/stop/health/restart).
+- **IPC vs HTTP boundary:** Tauri `invoke` is used **only during bootstrap**
+  (daemon not up yet → in-process `sensei-bootstrap` crate); after bootstrap all
+  data flows over daemon HTTP `/api/*`. The health screen is the transition point.
+- **Bootstrap is a parallel gate system** — all prerequisite checks run
+  concurrently with **isolated per-component resolvers**, so one failed prereq
+  doesn't block the others.
+- **Why the 3-layer state split:** components render only, `*.svelte.ts` owns all
+  derivations + explicit transitions (no side effects), API functions are pure.
+  SSE always flows through an `EventManager<T>` (owns subscription, parses,
+  auto-reconnects ~3s) — never a raw `EventSource` in a component. Progress events
+  are throttled (~300ms flush) and the flush must **skip any key already in a
+  terminal state**, or a stale 99% overwrites `completed`.
+- **`PlatformProvider` trait** fronts Homebrew (mac) / winget·apt (Win/Linux);
+  only `MacOSProvider` is implemented — the trait exists so mac code never
+  hardcodes `brew`.
+
+UI rules (24 named tokens, state layers, mockup fidelity, voice) are the enforced
+house style: [`frontend-svelte-guidelines.md`](frontend-svelte-guidelines.md).

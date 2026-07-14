@@ -33,7 +33,21 @@ flowchart LR
   assumption; the daemon's `get_commands` is the eventual source of truth.
 - Flag naming stays consistent with sibling commands (UX theme 2).
 
-## Source detail
+## Design rationale
 
-Command list + config-merge + hook-script design in
-[`reference/05-cli.md`](reference/05-cli.md).
+- **Two-layer config merge:** project overrides global at key level, nested
+  objects merge recursively, **lists replace (not append)**, project wins on
+  conflict (`~/.sensei/config.yaml` global; `<repo>/.sensei/config.yaml` project).
+- **`.sensei/state.yaml` is a cache, not the source of truth** — a fast read for
+  hooks (bash, no MCP); recreated from the daemon if missing; if the daemon is
+  down, commands run degraded from it. The daemon's `get_commands` is the eventual
+  authority.
+- **The pre-commit drift hook is teammate-safe:** the installed hook exits 0 if
+  `sensei` isn't on PATH, so it never breaks a contributor without sensei; with
+  sensei, `drift --fail-on-drift` blocks the commit on drift.
+- **Issue/diagnostic export is path-anonymized** — replaces `/Users/<name>/` → `~/`
+  and includes **no** code/file/project data, only system diagnostics + sensei's
+  own logs.
+- **UX invariants:** every prompt handles Ctrl+C without orphaned state; all
+  commands idempotent; `init` completes in ≤3 prompts; typical commands respond
+  <2s.

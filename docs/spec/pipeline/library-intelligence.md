@@ -19,7 +19,7 @@
 - Skill generation: `crates/senseid/src/libraries/skills.rs` (proposed)
 - Drift watch: reuses [[pipeline/traceability]]
 
-**Companion design doc:** [`docs/archive/ideas/09-library-intelligence.md`](../../archive/ideas/09-library-intelligence.md). Also see the operational memory
+**Companion design doc:** `docs/archive/ideas/09-library-intelligence.md`. Also see the operational memory
 (memory: project_mcp_libdocs_rokkit).
 
 ## Purpose

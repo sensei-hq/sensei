@@ -101,10 +101,4 @@ nodes. This is enforced at scan-classification + a self-healing reconcile
 
 Orphaned tables (`inference.insights`/`insight_batches` — no writer, superseded
 by `insight_copy`) and empty-by-design dojo tables (external-blocked). See
-[`../requirements/open-issues.md`](../plan/README.md) G7.
-
-## Source detail
-
-Deeper rationale (model relationships, indexing) currently in
-[`reference/02-daemon.md`](reference/02-daemon.md) §Metadata model — folds into
-this doc as the restructure completes.
+[the plan](../plan/README.md) G7.

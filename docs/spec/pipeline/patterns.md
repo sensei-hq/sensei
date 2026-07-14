@@ -11,7 +11,7 @@
 - MCP: `crates/mcp/src/tools/get_patterns.rs`, `match_pattern.rs`,
   `get_pattern_options.rs`, `get_project_conventions.rs`
 
-**Companion design doc:** [`docs/archive/ideas/17-pattern-knowledge.md`](../../archive/ideas/17-pattern-knowledge.md) (2026-04-17)
+**Companion design doc:** `docs/archive/ideas/17-pattern-knowledge.md` (2026-04-17)
 
 ## Purpose
 

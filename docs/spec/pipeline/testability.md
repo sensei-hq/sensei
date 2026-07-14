@@ -5,7 +5,7 @@
 - TDD guardrails (workflow enforcement): `crates/senseid/src/workflow/tdd_gate.rs`
 - Test-approval surface: MCP `propose_tests` / `approve_tests`
 
-**Companion design doc:** [`docs/archive/ideas/18-testability-tdd.md`](../../archive/ideas/18-testability-tdd.md).
+**Companion design doc:** `docs/archive/ideas/18-testability-tdd.md`.
 
 ## Purpose
 

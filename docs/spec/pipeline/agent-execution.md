@@ -7,7 +7,7 @@
 - Reporting: `crates/senseid/src/agents/report.rs`
 - MCP dispatch: `crates/mcp/src/tools/agent_run.rs`
 
-**Companion design doc:** [`docs/archive/ideas/21-custom-agents.md`](../../archive/ideas/21-custom-agents.md).
+**Companion design doc:** `docs/archive/ideas/21-custom-agents.md`.
 
 ## Purpose
 

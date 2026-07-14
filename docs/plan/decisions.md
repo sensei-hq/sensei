@@ -3,10 +3,10 @@
 > When a doc is superseded and archived, the *ideas* worth keeping land here so
 > nothing useful is lost and nothing already-rejected gets re-proposed. This is
 > the memory of **why the shape is the shape**. Additive — append, don't rewrite
-> history. Pairs with [`requirements/open-issues.md`](README.md)
+> history. Pairs with [the plan](README.md)
 > (what's left to build) and [`backlog.md`](../backlog.md) (the issue index).
 
-## Adopted — concepts carried forward (from `archive/ideas/`, `design/`)
+## Adopted — concepts carried forward (salvaged before archival)
 
 | Concept | Where it lives now |
 |---|---|
@@ -14,7 +14,7 @@
 | **Value before setup** — projects first, not a wizard | vision theme 1; realised as first-run-scan + Preferences |
 | The **module lifecycles** (the loops inside the daily app) | objectives O5 |
 | **FTR** as the single north-star | vision.md |
-| **Adapter-IR** + language-adapter split; task hierarchy + barriers; compression L0–L3 | [architecture/daemon.md](../architecture/daemon.md) (+ `architecture/reference/`) |
+| **Adapter-IR** + language-adapter split; task hierarchy + barriers; compression L0–L3 | [architecture/daemon.md](../architecture/daemon.md) |
 | **Single binary, single DB, port 7744** | architecture/data.md + daemon.md |
 | The **retrospective-loop** framing (capture→graph→analyze→learn→deliver→measure) | vision.md core loop |
 | Dōjō **priority-ladders / specificity-wins / pull-never-push / preview-always** | [architecture/dojo.md](../architecture/dojo.md), objectives DJ* |

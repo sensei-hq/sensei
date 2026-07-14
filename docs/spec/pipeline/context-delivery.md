@@ -7,7 +7,7 @@
 - Session dedup: `crates/senseid/src/context/dedup.rs`
 - MCP: `crates/mcp/src/tools/context_pack.rs`
 
-**Companion design doc:** [`docs/archive/ideas/14-context-delivery.md`](../../archive/ideas/14-context-delivery.md).
+**Companion design doc:** `docs/archive/ideas/14-context-delivery.md`.
 
 ## Purpose
 

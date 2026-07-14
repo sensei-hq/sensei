@@ -5,7 +5,7 @@
 - Corpus registry: `benchmarks/registry.yaml` (in-repo)
 - Comparison matrix: `benchmarks/competitors.yaml`
 
-**Companion design doc:** [`docs/archive/ideas/19-benchmarking-credibility.md`](../../archive/ideas/19-benchmarking-credibility.md).
+**Companion design doc:** `docs/archive/ideas/19-benchmarking-credibility.md`.
 
 ## Purpose
 

@@ -12,7 +12,7 @@ Work is tracked as **GitHub issues** in [`sensei-hq/sensei`](https://github.com/
 
 ## 1. Top priority — Governance plane
 
-**Concept:** [concepts/governance.md](architecture/concepts/governance.md) · **Epic:** [#28](https://github.com/sensei-hq/sensei/issues/28) · **Builds on:** [knowledge plane spec](./superpowers/specs/2026-05-27-knowledge-plane-design.md)
+**Concept:** [concepts/governance.md](architecture/concepts/governance.md) · **Epic:** [#28](https://github.com/sensei-hq/sensei/issues/28) · **Builds on:** the knowledge-plane spec
 
 Layered scope×enforcement rule model, `scopes`+`namespaces` (level-based set membership), global `~/.sensei/rules.md`, README-frontmatter identity, two-tier resolution via the `consolidation` inference role, promotion, and the slim hive-mind federation service. Ships top-to-bottom:
 
@@ -46,6 +46,7 @@ Layered scope×enforcement rule model, `scopes`+`namespaces` (level-based set me
 |-------|---------|
 | [#36](https://github.com/sensei-hq/sensei/issues/36) | Stage regressions (2026-05-27 smoke) — **may be partly fixed by the wizard rehab; triage and close verified items** |
 | [#37](https://github.com/sensei-hq/sensei/issues/37) | Build out placeholder + deferred stages (Projects/Libraries/Instruments; Inference/Assignments need gateway design) |
+| _(file issue)_ | **Wizard → Preferences arch change** (operationalises the adopted "value before setup"). Split the 11-stage wizard into a thin 5-stage first-run (Welcome/Assistants/Roots/Scan/Done) + a persistent, editable **Preferences/Settings** surface reachable from the observatory rail (moved stages: Preferences, Projects, Libraries, Instruments, Inference, Assignments). Slices A–E, no new backend. Verify current wizard stage count first (may be partly done). Plan salvaged from `plans/2026-07-04-wizard-to-preferences.md`. |
 
 ## 4. Observatory
 
@@ -71,6 +72,7 @@ Layered scope×enforcement rule model, `scopes`+`namespaces` (level-based set me
 | _(file issue)_ | Surface stale / orphaned / unused projects & folders for cleanup. Scan reconcile already tags dead-but-ambiguous folders `stale` and empty projects `orphaned` (never auto-deletes). Needs: list endpoints + a gated purge action + a housekeeping UI (Observatory Configure or Projects setup). Last `~/Developer` rescan: 6 stale folders, 44 orphaned projects. |
 | [#39](https://github.com/sensei-hq/sensei/issues/39) | Richer diagnostic logging + debug mode — per-module (bootstrap/session/scan/wizard) diagnostic **sessions + traces** (the `project-logs.jsx` mockup: `{module, system_info, outcome, traces[{action_type, cmd, exit, out/err, fix_*}]}`), a log viewer, and an anonymized GitHub-issue export. **DEFERRED** (larger new-schema + cross-cutting capture effort): today only flat `public.logs` exists (the `#74` TTL prunes it). Needs a `diagnostic_sessions`+`diagnostic_traces` model + ingest instrumentation across the modules. |
 | [#42](https://github.com/sensei-hq/sensei/issues/42) | E2E: configure Tauri-mode local E2E |
+| _(file issue)_ | **Per-language calls-edges adapters.** #57 shipped Rust calls-edges + a language-agnostic call-site extraction contract; Python/Svelte/TS/etc. adapters still need to adopt it to populate `get_callers`/`get_callees`/`call_flow` for those languages. Low priority. Salvaged from `superpowers/specs/2026-06-12-calls-edges-design.md`. |
 
 ## 6. Design / mockup gaps (features)
 
@@ -109,3 +111,4 @@ Layered scope×enforcement rule model, `scopes`+`namespaces` (level-based set me
 | ✅ FIXED | **Screens gallery used kanji `先` instead of the logo SVG.** `MockSidebar.svelte:17` (shared by all `Mock*` gallery components) hardcoded `<span class="kanji">先</span>` as the brand mark. Replaced with the sensei logo icon (`i-brand:sensei text-sensei`) + center-aligned `.logo`, matching the real page header at `routes/sensei/+page.svelte:120`. Verified via dev-server screenshot. |
 | ⚠️ 1 known error (upstream) | **`svelte-check` baseline cleanup.** `bun run check` had 20 pre-existing errors; **19 fixed** (`app.d.ts`: `__APP_VERSION__` global + `ButtonProps.rel` augmentation + `@types/rokkit__states` shim via `typeRoots`; added `@types/node`; `HTMLElement` casts in `dark-mode.spec.ts`). **1 remaining is upstream rokkit** ([jerrythomas/rokkit#139](https://github.com/jerrythomas/rokkit/issues/139)): `@rokkit/ui`'s `CommandPalette.svelte` ships as plain JS → implicit-any TS7016 with no clean consumer-side fix. **Accepted exception** (user-signed-off) until #139 ships; then remove the `@types/rokkit__states` shim + `typeRoots` too (both only needed for the same upstream gap). |
 | _(file issue)_ | **On-page SEO gaps** (from SEO checklist audit): (a) canonical tag missing — add `<link rel="canonical" href="…">`; (b) OpenGraph tags missing — `og:title`, `og:description`, `og:image`; (c) Twitter Card tags missing — `twitter:card`, `twitter:title`, `twitter:description`, `twitter:image`; (d) not yet indexed by Google — submit sitemap to Google Search Console and request indexing for key pages. Likely all belong in the root `+layout.svelte`/`app.html` `<svelte:head>` so every route inherits them, plus a generated `sitemap.xml`. |
+| _(file issue)_ | **Website redesign — screenshots→flows + a Dōjō section.** Kill the `Mock*` screenshot components (~811 LOC stale liability); port `<Surfaces/>` + `HeroBrief`; add a "For teams · 結 Dōjō" section + a "Teams" nav + audience-split CTA. **Must-do coherence fix:** reconcile the "0 external requests / local-first" promise with the opt-in networked Dōjō. **Grounding caveats:** trim Dōjō copy to shipped reality (console/auto-discovery/cadence-scheduler NOT shipped; "nothing leaks" overstated). Salvaged from `analysis/2026-07-13-website-redesign-review.md`. |

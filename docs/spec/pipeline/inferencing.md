@@ -8,7 +8,7 @@
 - Budget / circuit breaker: `gateway/src/budget.rs`, `gateway/src/breaker.rs`
 - Sensei-side status: `crates/senseid/src/api/handlers/gateway.rs::gateway_status`
 
-**Companion design doc:** [`docs/archive/ideas/28-inference-gateway.md`](../../archive/ideas/28-inference-gateway.md) + [`docs/archive/ideas/20-local-inference.md`](../../archive/ideas/20-local-inference.md).
+**Companion design doc:** `docs/archive/ideas/28-inference-gateway.md` + `docs/archive/ideas/20-local-inference.md`.
 
 ## Purpose
 
