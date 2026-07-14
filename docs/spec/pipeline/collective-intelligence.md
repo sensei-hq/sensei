@@ -6,7 +6,7 @@
 - Community promotion: `crates/senseid/src/collective/promote.rs`
 - Inbox: `crates/senseid/src/collective/inbox.rs`
 
-**Companion design doc:** [`docs/archive/ideas/29-telemetry.md`](../../archive/ideas/29-telemetry.md).
+**Companion design doc:** `docs/archive/ideas/29-telemetry.md`.
 
 ## Purpose
 

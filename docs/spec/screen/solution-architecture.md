@@ -3,7 +3,7 @@
 **Segment:** 04 · Project window — solution variant
 **Route:** `/solution/[id]/architecture`
 **Source mockup:** _none yet — greenfield merged-graph view; needs a mockup before build. Closest primitive is the community view in the observatory graph._
-**Source design:** [`docs/archive/ideas/24-desktop-observatory.md`](../../archive/ideas/24-desktop-observatory.md)
+**Source design:** `docs/archive/ideas/24-desktop-observatory.md`
 **App file:** `app/src/routes/solution/[id]/architecture/+page.svelte`
 
 ## Purpose

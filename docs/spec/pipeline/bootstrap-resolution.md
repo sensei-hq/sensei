@@ -9,7 +9,7 @@
 - Tauri sidecar (app-only mode): `app/src-tauri/src/bootstrap_sidecar.rs`
 - API: `crates/senseid/src/api/handlers/bootstrap.rs`
 
-**Companion design doc:** [`docs/archive/ideas/26-bootstrap-and-dependencies.md`](../../archive/ideas/26-bootstrap-and-dependencies.md).
+**Companion design doc:** `docs/archive/ideas/26-bootstrap-and-dependencies.md`.
 
 ## Purpose
 
