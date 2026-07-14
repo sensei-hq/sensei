@@ -71,6 +71,8 @@ screens live elsewhere:
 | `dojo-admin-console` | `DojoAdminConsole` (Overview · Monitor · Members · Scopes) | `lib/dojo/dojo-admin.jsx` |
 | `dojo-maintainer-console` | `DojoMaintainerConsole` (Triage · Candidate · Knowledge) | `lib/dojo/dojo-maintainer.jsx` |
 | `dojo-lead-console` | `DojoLeadConsole` (Clients · Audit) | `lib/dojo/dojo-lead.jsx` |
+| `dojo-developer-console` | `DojoDeveloperConsole` (My teams · My contributions · For me) | `lib/dojo/dojo-developer.jsx` |
+| Ecosystem architecture board | `EcosystemArchitecture` | `lib/shared/ecosystem-arch.jsx` (Observatory section ⑧) |
 | `dojo-developer-flow` | `Inapp*` | `lib/dojo/dojo-inapp.jsx` |
 | `insights-reasoning` | (MOE section) | `lib/observatory/mcp-replay-insights.jsx` |
 | **Relay** (13 screens, specced `relay-*.md`) | `Relay*` (skip `RelayArchitecture` — concept diagram) | `lib/relay/relay.jsx` · `lib/relay/relay-planner.jsx` · `lib/relay/relay-desktop.jsx` |
@@ -83,6 +85,12 @@ screens live elsewhere:
 > Dōjō **SaaS website** surface, not a desktop-app screen — no `spec/screen/`.
 > `lib/observatory/perspective-split.jsx` is a **WIP exploration** (collective vs
 > Dōjō); not specced yet.
+>
+> **Dōjō touchpoints (Observatory ⑦):** the in-app Dōjō flows (`lib/dojo/dojo-inapp.jsx`
+> — `InappConnection` / `InappShare` / `InappDownstream`) are wired into the
+> **Observatory** as a section, not the console. The specs `observatory-dojo-connections`,
+> `observatory-share-review`, `observatory-upgrades` cover them and correctly point
+> at `dojo-inapp.jsx`.
 
 ## Sub-nav placement (2026-07-07 refactor)
 

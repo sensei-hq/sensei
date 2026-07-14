@@ -35,8 +35,8 @@
   <script type="text/babel" src="lib/dojo/dojo-admin.jsx"></script>
   <script type="text/babel" src="lib/dojo/dojo-maintainer.jsx"></script>
   <script type="text/babel" src="lib/dojo/dojo-lead.jsx"></script>
+  <script type="text/babel" src="lib/dojo/dojo-developer.jsx"></script>
   <script type="text/babel" src="lib/dojo/dojo-saas.jsx"></script>
-  <script type="text/babel" src="lib/dojo/dojo-inapp.jsx"></script>
 
   <script type="text/babel" data-presets="env,react">
     const W = 1340, H = 940;
@@ -67,33 +67,11 @@
             <DCArtboard id="lead" label="★ Lead console · Clients · Audit" width={W} height={H}>
               <DojoLeadConsole initial="clients"/>
             </DCArtboard>
+            <DCArtboard id="developer" label="★ Developer console · My teams · Contributions · For me" width={W} height={H}>
+              <DojoDeveloperConsole initial="teams"/>
+            </DCArtboard>
           </DCSection>
 
-          <DCSection id="dojo-inapp"
-                     title="Dōjō · In-app touchpoints"
-                     subtitle="Where the Observatory (desktop) meets the company Dōjō — the six moments that close the org-boundary gaps in the audit. Mocks for review, in connect-first order; wired into the live app in a later pass.">
-            <DCArtboard id="ia-join" label="① Bootstrap · join your org" width={1340} height={900}>
-              <InappJoin/>
-            </DCArtboard>
-            <DCArtboard id="ia-connect" label="② Preferences · Connection" width={1340} height={900}>
-              <InappConnection/>
-            </DCArtboard>
-            <DCArtboard id="ia-bind" label="③ Project · About — bind to org" width={1340} height={900}>
-              <InappBind/>
-            </DCArtboard>
-            <DCArtboard id="ia-share" label="④ Project · ready to share → Dōjō" width={1340} height={900}>
-              <InappShare/>
-            </DCArtboard>
-            <DCArtboard id="ia-travel" label="⑤ Contributions · watch it travel" width={1340} height={900}>
-              <InappTravel/>
-            </DCArtboard>
-            <DCArtboard id="ia-collective" label="⑥ Collective · global ↔ company" width={1340} height={900}>
-              <InappCollective/>
-            </DCArtboard>
-            <DCArtboard id="ia-downstream" label="⑦ Upgrades · from your Dōjō" width={1340} height={900}>
-              <InappDownstream/>
-            </DCArtboard>
-          </DCSection>
         </DesignCanvas>
       );
     }

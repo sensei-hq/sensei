@@ -55,6 +55,7 @@
   <script type="text/babel" src="lib/shared/design-canvas.jsx"></script>
   <script type="text/babel" src="lib/shared/primitives.jsx"></script>
   <script type="text/babel" src="lib/shared/screen-states.jsx"></script>
+  <script type="text/babel" src="lib/shared/ecosystem-arch.jsx"></script>
   <script type="text/babel" src="lib/setup/wiz-inference.jsx"></script>
   <script type="text/babel" src="lib/setup/wiz-assignments.jsx"></script>
   <script type="text/babel" src="lib/shared/brand-logos.jsx"></script>
@@ -250,6 +251,42 @@
               </DCArtboard>
               <DCArtboard id="upgrades-unified" label="★ Upgrades inbox · network + Dōjō, provenance badges" width={1280} height={860}>
                 <div className="artboard-shell"><ObsUpgradesInbox/></div>
+              </DCArtboard>
+            </DCSection>
+
+            {/* ═════════ FLOW 7 · DŌJŌ IN-APP TOUCHPOINTS ═════════ */}
+            <DCSection id="observatory-dojo-touchpoints"
+                       title="⑦ Observatory · Dōjō touchpoints"
+                       subtitle="The Dōjō isn't a separate app — it's extra flows wired into the Observatory. The six moments where the desktop app meets a company Dōjō: join on first run, connect in Preferences, bind a project, share upstream, watch it travel, toggle global ↔ company, and receive approved practice downstream.">
+              <DCArtboard id="ia-join" label="① Bootstrap · join your org" width={1340} height={900}>
+                <div className="artboard-shell"><InappJoin/></div>
+              </DCArtboard>
+              <DCArtboard id="ia-connect" label="② Preferences · Connection" width={1340} height={900}>
+                <div className="artboard-shell"><InappConnection/></div>
+              </DCArtboard>
+              <DCArtboard id="ia-bind" label="③ Project · About — bind to org" width={1340} height={900}>
+                <div className="artboard-shell"><InappBind/></div>
+              </DCArtboard>
+              <DCArtboard id="ia-share" label="④ Project · ready to share → Dōjō" width={1340} height={900}>
+                <div className="artboard-shell"><InappShare/></div>
+              </DCArtboard>
+              <DCArtboard id="ia-travel" label="⑤ Contributions · watch it travel" width={1340} height={900}>
+                <div className="artboard-shell"><InappTravel/></div>
+              </DCArtboard>
+              <DCArtboard id="ia-collective" label="⑥ Collective · global ↔ company" width={1340} height={900}>
+                <div className="artboard-shell"><InappCollective/></div>
+              </DCArtboard>
+              <DCArtboard id="ia-downstream" label="⑦ Upgrades · from your Dōjō" width={1340} height={900}>
+                <div className="artboard-shell"><InappDownstream/></div>
+              </DCArtboard>
+            </DCSection>
+
+            {/* ═════════ FLOW 8 · ECOSYSTEM ARCHITECTURE ═════════ */}
+            <DCSection id="observatory-ecosystem"
+                       title="⑧ Ecosystem · architecture"
+                       subtitle="Every component of the Sensei ecosystem and how they connect — the local-first desktop app on the developer's machine, the inference gateway to external Ollama and BYOK models, the self-hosted or SaaS Dōjō, and the mobile/pad Relay companion.">
+              <DCArtboard id="eco-arch" label="★ The Sensei ecosystem · end to end" width={1600} height={980}>
+                <EcosystemArchitecture/>
               </DCArtboard>
             </DCSection>
         </DesignCanvas>
