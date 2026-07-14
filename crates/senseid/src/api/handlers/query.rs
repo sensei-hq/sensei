@@ -198,13 +198,9 @@ pub(crate) async fn query_docs(state: &AppState, q: &str, repo_id: &str) -> serd
 }
 
 pub(crate) async fn query_communities(state: &AppState, repo_id: &str) -> serde_json::Value {
-    // Communities are stored per-folder; iterate over all scoped folders.
+    // Communities are stored per-folder; aggregate across all scoped folders.
     let ids = resolve_scope_ids(state, repo_id).await;
-    let mut communities = Vec::new();
-    for fid in ids {
-        let mut c = state.pg.list_communities(&fid).await.unwrap_or_default();
-        communities.append(&mut c);
-    }
+    let communities = state.pg.list_communities_scoped(&ids).await.unwrap_or_default();
     serde_json::json!({
         "type": "communities",
         "results": communities,

@@ -1886,6 +1886,20 @@ impl PgStore {
         }).collect())
     }
 
+    /// Communities across ALL folders of a project scope (one query). Communities
+    /// are stored per-folder and the repo root usually owns them, so a caller must
+    /// aggregate over every scope folder — a single-folder lookup (a leaf) misses
+    /// them (the #G5a `get_communities` bug).
+    pub async fn list_communities_scoped(&self, folder_ids: &[uuid::Uuid]) -> Result<Vec<serde_json::Value>, String> {
+        if folder_ids.is_empty() { return Ok(vec![]); }
+        let rows: Vec<(uuid::Uuid, String, i32)> = sqlx_core::query_as::query_as(
+            "SELECT id, label, node_count FROM inference.communities WHERE folder_id = ANY($1) ORDER BY node_count DESC"
+        ).bind(folder_ids).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id, label, count)| {
+            serde_json::json!({ "id": id, "label": label, "node_count": count })
+        }).collect())
+    }
+
     // ── Reasoning Traces (inference) ─────────────────────────────────
 
     pub async fn insert_reasoning_trace(
