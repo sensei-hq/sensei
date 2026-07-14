@@ -90,8 +90,43 @@ Every discarded error is logged (`tracing::warn!`), never swallowed with `.ok()`
 — a hard rule after a `node_kind` drop hid behind `.ok()`. A codebase-wide
 silent-error audit is a standing follow-up (open-issues D).
 
-## Source detail
+## Design rationale (why the internals are shaped this way)
 
-Deeper internals (crate structure, adapter IR, compression L0–L3, context
-manager) currently in [`reference/02-daemon.md`](reference/02-daemon.md) — folds
-into this doc + [data.md](data.md) as the restructure completes.
+- **Adapters fail safely.** A crash in one language/doc adapter must never abort
+  the pipeline for other files — wrap, log, skip (a broken Python adapter must
+  not abort a TypeScript repo). Pairs with *no silent errors*.
+- **Adapter-IR = three node types**, `Option<>` everywhere, complexity computed
+  *during* parse (AST in memory); per-file parse is worker-parallel, **edge/parent
+  resolution is a separate batch phase**.
+- **`ResolveEdges` and `BuildConnections` are separate phases on purpose:** edge
+  resolution (refs→edges) runs after all file-tasks settle; connection-building
+  (doc↔code traceability, cross-repo links, drift) runs only after edges resolve.
+  Barriers inherit parent priority; **watcher file-tasks outrank bulk-scan** so
+  real-time edits jump the queue.
+- **Folder-discovery depth:** git repos at any depth; plain folders only to depth
+  2; gitignored + dot-dirs never enter `folders`; a git repo's sub-dirs aren't
+  added unless they're a subtree.
+- **Compression tiers:** L0/L1 deterministic, L2 optional inference, **L3 never
+  stored**; token budgets are flat regardless of project age. The context manager's
+  `context_pack(task, max_tokens)` ranks by DiffFirstBFS → TraceabilityBoost →
+  Semantic → BM25 → RelevanceLearning (this is *spec* — see [mcp](mcp.md) G4).
+- **FTR classification is 2-phase:** regex correction-keyword heuristics first,
+  local-model second; rolling 14-day window.
+- **Recommendation lifecycle:** signal → threshold → consensus panel (persisted to
+  `reasoning_traces`) → verdict tracking (`baseline_ftr` at act-time vs rolling
+  `current_ftr`). **Drift algorithm:** `git diff <lastIndexed>..HEAD` × the
+  traceability matrix → flag docs whose covered files changed (non-git fallback
+  compares mtime/size vs `scan_state`).
+
+## Gateway internals
+
+Model selection is **3-tier** (exact `adapter+model` → named chain → capability),
+each candidate passing 4 gates (router-enabled+key → supports-capability →
+breaker-not-open → within-budget) with a `SkipReason` recorded in the execution
+trace. The **circuit breaker** is per-`{adapter}:{model}`, in-memory (restart =
+all Closed). The **budget rule is "never block, always degrade"** — at a limit,
+drop external providers → local-only → Noop only if nothing local. Config
+**hot-reloads** (`Arc<RwLock<GatewayConfig>>`, no restart); persistence is via a
+`GatewayStore` trait the daemon implements on Postgres (`gateway.inference_calls`
++ `gateway.execution_traces`). Consensus (MOE) is a *caller* of the gateway, not
+part of the routing engine.
