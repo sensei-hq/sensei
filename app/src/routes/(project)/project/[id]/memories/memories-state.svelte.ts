@@ -25,7 +25,7 @@ export interface GeneralisedChipView {
 
 /**
  * A rung on the scope-widening ladder. `governed` rungs enter a maintainer
- * triage queue (see docs/llm-spec/pipeline/memory promotion ladder:
+ * triage queue (see docs/spec/pipeline/memory promotion ladder:
  * project → user → org → collective), so the UI must surface the approval note
  * and a confirm step before promoting — nothing widens beyond the user's own
  * scope silently. `scope` is the `gov_scope` value handed to `promoteMemory`.
@@ -39,7 +39,7 @@ export interface ScopeRung {
 /**
  * project → user is the user's own scope (no governance). Anything wider enters
  * the collective's triage queue. Mirrors the promotion ladder in
- * docs/llm-spec/pipeline/memory.md.
+ * docs/spec/pipeline/memory.md.
  */
 export const SCOPE_LADDER: readonly ScopeRung[] = [
     { scope: 'user', label: 'widen to user', governed: false },

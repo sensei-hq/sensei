@@ -10,7 +10,7 @@
 //!    `senseid/src/governance.rs` (trim + lowercase).
 //! 2. The **artifact** contract — the six artifact primitives that ride the
 //!    contribute → triage → approve → distribute loop (see
-//!    `docs/llm-spec/pipeline/dojo-lifecycle.md`): the pure wire types the
+//!    `docs/spec/pipeline/dojo-lifecycle.md`): the pure wire types the
 //!    daemon (C6 publish) and consumers (C7 pull) exchange with a Dōjō server.
 //!    Serializes to/from the `dojo.artifacts` DDL shape: a `kind` enum, a jsonb
 //!    `payload` keyed by kind, plus scope / signature / attribution /

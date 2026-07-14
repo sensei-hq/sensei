@@ -4,7 +4,7 @@
   // captured-session list. All derivations live in ./sessions-digest.ts; this
   // component is pure wiring + layout.
   //
-  // Spec:   docs/llm-spec/screen/observatory-sessions.md
+  // Spec:   docs/spec/screen/observatory-sessions.md
   // Mockup: docs/mockups/Sensei/lib/sessions-zen.jsx → SessionsDigestZen
   import { untrack } from 'svelte';
   import { goto } from '$app/navigation';

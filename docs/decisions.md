@@ -36,13 +36,13 @@
 | Idea | Why deferred | Revisit when |
 |---|---|---|
 | **User-facing learnings** ("you tend to give sparse instructions for schema changes…") | The pair-both-ways signal needs the loop closed first | after Phase 1 (FTR loop closes) |
-| **Assistant proactive clarification** ("I need the migration policy before I can answer") | v2 behaviour; needs the signal + a prompting contract | [pipeline/clarification-prompting](llm-spec/pipeline/clarification-prompting.md) — post-Phase 2 |
+| **Assistant proactive clarification** ("I need the migration policy before I can answer") | v2 behaviour; needs the signal + a prompting contract | [pipeline/clarification-prompting](spec/pipeline/clarification-prompting.md) — post-Phase 2 |
 | **Benchmarks** (runner + corpus) | No runner/TaskKind yet; not on the FTR path | when model-effectiveness needs a controlled corpus |
 | **Testability** (test-runner adapter → `test_pass_rate`) | No test-runner integration; quality signal optional | when a quality dimension is prioritised |
 | **Diagnostic sessions/traces + issue export** (#39) | Larger new-schema + cross-cutting capture effort; only flat `public.logs` today | when support/debug UX is prioritised |
 | **Image-gen as seed** (#77) · **embedded in CI release binaries** (#78) | Need `model_capability=image` / cross-platform native llama.cpp sign-off | gateway/seed hardening pass |
 | **Dōjō live activation** | External-blocked (needs a remote server + SaaS-infra decision) | Phase 4 |
-| **`llm-spec/` → `spec/` directory rename** | High-churn: touches the run-state/cron driver + gate agents + memory pointers | a dedicated careful pass (kept as `llm-spec/` meanwhile) |
+| ~~`llm-spec/` → `spec/` rename~~ **DONE 2026-07-14** | was high-churn (run-state/cron driver + gate agents + memory) | completed: dir renamed + all referrers fixed (docs, `.claude/agents`, code comments) |
 
 ## How to use this
 

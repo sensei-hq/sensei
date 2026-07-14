@@ -25,7 +25,7 @@
 //! store + gateway and is graceful — it never errors, returning `Some(copy)`
 //! only when the model produced valid copy that was cached.
 //!
-//! Spec: `docs/llm-spec/pipeline/insight-copy.md`.
+//! Spec: `docs/spec/pipeline/insight-copy.md`.
 
 use crate::db::pg_store::PgStore;
 use std::sync::atomic::{AtomicU64, Ordering};

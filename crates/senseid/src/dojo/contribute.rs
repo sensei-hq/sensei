@@ -3,7 +3,7 @@
 //! non-negotiable step and a durable outbox so a federation drop replays without
 //! double-sending.
 //!
-//! The loop (`docs/llm-spec/pipeline/dojo-lifecycle.md` → Contribute):
+//! The loop (`docs/spec/pipeline/dojo-lifecycle.md` → Contribute):
 //!
 //! 1. Load the approved batch's member memories.
 //! 2. Route via [`crate::dojo::routing::client_precedence_route`] (C4) to the

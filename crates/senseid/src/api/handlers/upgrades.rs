@@ -1,7 +1,7 @@
 //! `/api/upgrades` — the daemon's DOWNSTREAM inbox (C7): approved Dōjō / Collective
 //! artifacts pulled back for the user to review and Apply.
 //!
-//! Shape per `docs/llm-spec/screen/observatory-upgrades.md`:
+//! Shape per `docs/spec/screen/observatory-upgrades.md`:
 //! - `GET  /api/upgrades[?include_muted=1]` — the inbox across memberships
 //!   (`{ artifacts: [...], unread_count: N }`); pinned float to the top, muted are
 //!   hidden unless `include_muted`.
