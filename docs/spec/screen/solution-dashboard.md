@@ -2,7 +2,7 @@
 
 **Segment:** 04 · Project window — solution variant
 **Route:** `/solution/[id]/dashboard`
-**Source mockup:** _none yet — solution track has no dedicated mockup. Reuse the `ProjOverviewLite` primitive from `lib/project/project-lite-panes.jsx` for the card shape; the aggregate strip is greenfield._
+**Source mockup:** [`lib/observatory/solution-track.jsx`](../../mockups/Sensei/lib/observatory/solution-track.jsx) → `SolutionDashboard` (aggregate strip + per-repo cards)
 **Source design:** `docs/archive/ideas/24-desktop-observatory.md` (Solution scope model)
 **App file:** `app/src/routes/solution/[id]/dashboard/+page.svelte`
 

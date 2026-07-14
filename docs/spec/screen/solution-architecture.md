@@ -2,7 +2,7 @@
 
 **Segment:** 04 · Project window — solution variant
 **Route:** `/solution/[id]/architecture`
-**Source mockup:** _none yet — greenfield merged-graph view; needs a mockup before build. Closest primitive is the community view in the observatory graph._
+**Source mockup:** [`lib/observatory/solution-track.jsx`](../../mockups/Sensei/lib/observatory/solution-track.jsx) → `SolutionArchitecture` (merged cross-repo graph)
 **Source design:** `docs/archive/ideas/24-desktop-observatory.md`
 **App file:** `app/src/routes/solution/[id]/architecture/+page.svelte`
 
