@@ -53,3 +53,45 @@ pub(crate) async fn resolve_project_uuid(
     let row = state.pg.get_project_by_name(id).await.ok().flatten()?;
     json_uuid(&row["id"])
 }
+
+#[cfg(test)]
+mod tests {
+    /// #100 guard: a `{id}` on an `/api/projects/{id}/*` route is name-or-uuid
+    /// (AI callers pass a project name), so it MUST resolve via
+    /// [`resolve_project_uuid`] — never `Uuid::parse_str` directly, which 400s
+    /// on a name and returns a silent empty. This scans handler source for the
+    /// `let project_id = …Uuid::parse_str` smell so the 2026-07-07 fix can't
+    /// regress. (Non-project uuids — chain/memory/session ids — are unaffected;
+    /// the pattern keys on the `project_id` binding specifically.)
+    #[test]
+    fn no_handler_parses_a_project_id_raw() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/src/api/handlers");
+        let mut offenders = Vec::new();
+        for entry in std::fs::read_dir(dir).expect("handlers dir readable") {
+            let path = entry.unwrap().path();
+            if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+                continue;
+            }
+            let src = std::fs::read_to_string(&path).unwrap();
+            for (i, line) in src.lines().enumerate() {
+                let l = line.trim_start();
+                if l.starts_with("let project_id")
+                    && l.contains("Uuid::parse_str")
+                {
+                    offenders.push(format!(
+                        "{}:{}: {}",
+                        path.file_name().unwrap().to_string_lossy(),
+                        i + 1,
+                        l.trim()
+                    ));
+                }
+            }
+        }
+        assert!(
+            offenders.is_empty(),
+            "project ids on /api/projects/{{id}}/* must resolve via \
+             resolve_project_uuid (name-or-uuid), not raw Uuid::parse_str:\n{}",
+            offenders.join("\n")
+        );
+    }
+}
