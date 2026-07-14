@@ -4845,6 +4845,28 @@ impl PgStore {
         Ok(res.rows_affected())
     }
 
+    /// Self-healing reconcile: DELETE `discovery` projects that hold nothing — no
+    /// folders, no sessions, no learned artifacts (recommendations / memories).
+    /// These are phantom rows left when a promoted crate/subfolder was later
+    /// reconciled away (pre-#101 residue: names like `logger`, `senseid`,
+    /// `gateway-embedded`). `mark_orphaned_projects` only tags them; this removes
+    /// the provably-empty ones so they never reach the UI. A project mid-scan has
+    /// its git/standalone folder already, so it never matches. Returns rows deleted.
+    pub async fn prune_empty_projects(&self) -> Result<u64, String> {
+        let res = sqlx_core::query::query(
+            "DELETE FROM sensei.projects p
+              WHERE p.maturity = 'discovery'
+                AND NOT EXISTS (SELECT 1 FROM sensei.folders f        WHERE f.project_id = p.id)
+                AND NOT EXISTS (SELECT 1 FROM activity.sessions s     WHERE s.project_id = p.id)
+                AND NOT EXISTS (SELECT 1 FROM inference.recommendations r WHERE r.project_id = p.id)
+                AND NOT EXISTS (SELECT 1 FROM sensei.memories m       WHERE m.project_id = p.id)",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(res.rows_affected())
+    }
+
     pub async fn get_project(&self, id: &uuid::Uuid) -> Result<Option<serde_json::Value>, String> {
         #[allow(clippy::type_complexity)]
         let row: Option<(uuid::Uuid, String, Option<String>, Option<String>, String, Option<String>, serde_json::Value, serde_json::Value, serde_json::Value, Vec<String>, chrono::DateTime<chrono::Utc>)> =

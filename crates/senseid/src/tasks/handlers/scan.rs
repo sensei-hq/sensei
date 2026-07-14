@@ -110,16 +110,19 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     let deduped = ctx.pg().dedup_structural_folder_nodes(&root_id).await
         .unwrap_or_else(|e| { tracing::warn!(error = %e, "scan_root: dedup_structural_folder_nodes failed"); 0 });
     let orphaned = ctx.pg().mark_orphaned_projects().await.unwrap_or_else(|e| { tracing::warn!(error = %e, "scan_root: mark_orphaned_projects failed"); 0 });
+    // Delete the provably-empty phantom projects (no folder / session / artifact)
+    // — pre-#101 residue that would otherwise inflate the project count.
+    let pruned_projects = ctx.pg().prune_empty_projects().await.unwrap_or_else(|e| { tracing::warn!(error = %e, "scan_root: prune_empty_projects failed"); 0 });
     if reabsorbed > 0 {
         tracing::info!("scan_root reconcile: re-absorbed {reabsorbed} nested standalone root(s) into their enclosing repo's project");
     }
-    if removed > 0 || marked > 0 || ghosts > 0 || deduped > 0 {
+    if removed > 0 || marked > 0 || ghosts > 0 || deduped > 0 || pruned_projects > 0 {
         emit(StateEvent::activity(ActivityEvent::new(
             ActivityLevel::Info,
-            &format!("reconcile · {removed} stale roots removed · {ghosts} ghost folders pruned · {deduped} duplicate nodes deduped · {marked} flagged stale · {orphaned} projects re-tagged"),
+            &format!("reconcile · {removed} stale roots removed · {ghosts} ghost folders pruned · {deduped} duplicate nodes deduped · {pruned_projects} empty projects purged · {marked} flagged stale · {orphaned} projects re-tagged"),
             start.elapsed().as_secs_f64(),
         )));
-        tracing::info!("scan_root reconcile: removed={removed} ghost_folders={ghosts} deduped_nodes={deduped} marked={marked} orphaned_retagged={orphaned}");
+        tracing::info!("scan_root reconcile: removed={removed} ghost_folders={ghosts} deduped_nodes={deduped} empty_projects_purged={pruned_projects} marked={marked} orphaned_retagged={orphaned}");
     }
 
     // 5. Register watcher
@@ -527,6 +530,30 @@ mod tests {
         // The old single-folder path only ever saw one folder — the bug.
         let one = ctx.pg().list_communities(&sub_fid).await.unwrap();
         assert_eq!(one.len(), 1, "single-folder lookup sees only its own (the pre-fix behaviour)");
+    }
+
+    #[tokio::test]
+    async fn prune_empty_projects_deletes_phantoms_keeps_populated() {
+        // Phantom project-count fix: a `discovery` project with no folder / session
+        // / artifact is deleted; a project with a folder + nodes is kept.
+        let ctx = make_ctx().await;
+        let phantom = ctx.pg().create_project("phantom-crate", None, None).await.unwrap();
+
+        let tmp = tempfile::tempdir().unwrap();
+        let root_id = ctx.pg().add_watch_root(&tmp.path().to_string_lossy(), "pp", &serde_json::json!([])).await.unwrap();
+        let live = ctx.pg().create_project("live-repo", None, None).await.unwrap();
+        let repo_fid = ctx.pg().upsert_repo_kind(&root_id, "git", "live", &tmp.path().join("live").to_string_lossy()).await.unwrap();
+        ctx.pg().set_folder_project(&repo_fid, &live, "root", None).await.unwrap();
+        ctx.pg().upsert_node(&repo_fid, "function", "f", "live/lib.rs", None, None, None, None).await.unwrap();
+
+        let pruned = ctx.pg().prune_empty_projects().await.unwrap();
+        assert!(pruned >= 1, "at least the empty phantom is pruned");
+        let (ph_alive,): (i64,) = sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.projects WHERE id=$1")
+            .bind(phantom).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(ph_alive, 0, "empty phantom project deleted");
+        let (live_alive,): (i64,) = sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.projects WHERE id=$1")
+            .bind(live).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(live_alive, 1, "populated project kept");
     }
 
     #[tokio::test]
