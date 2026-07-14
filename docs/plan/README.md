@@ -54,8 +54,8 @@ Traceability runs fresh but flags **4,420 of 4,425** items `broken` — the sign
 **Approach:** build real hybrid semantic search over existing embeddings + a `context_pack` MCP tool with a grep fallback ("never worse than grep").
 
 ### G5 — Two MCP tools silently empty *(objectives O5, context delivery)*
-`get_communities` hides **158 real communities** — the MCP dispatch path is the bug: `mcp.rs::get_communities` calls `resolve_folder_id` (= `resolve_scope_ids(...).next()`, a single lowest-UUID leaf), while `query.rs::query_communities` **already aggregates correctly** across scope folders. Fix = point the MCP path at the aggregating query. `get_patterns` returns empty because the framework-tagger never populated `file_tags` (45,871 rows, all tag-arrays empty).
-**Approach:** (a) aggregate community query across all scope folders — cheap, high-value; (b) run/repair the framework-pattern tagger.
+- **G5a ✅ FIXED 2026-07-14 (`46a58a79`).** `get_communities` was the MCP dispatch path using `resolve_folder_id` (a single lowest-UUID leaf). New `PgStore::list_communities_scoped` aggregates across all scope folders; both callers repointed. **Live: 0 → 337 communities** on the sensei project (verified via the MCP surface).
+- **G5b (open, Phase 1).** `get_patterns` returns empty: `sensei.file_tags` is a **view** and there is **no framework-tagger** populating its source (45,898 rows, 0 tagged). This is a *build* (detect hook/route/middleware/component during scan), not a trigger.
 
 ### G6 — Corpus starved *(all FTR-downstream)*
 Session corpus shrank **216 → 25** (a reset); local daemon is **v0.3.1** while source is **v0.3.4** (newer endpoints + the #101 self-heal aren't live locally).
