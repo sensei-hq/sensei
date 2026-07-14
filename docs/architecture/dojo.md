@@ -12,8 +12,8 @@ Two pieces plus the in-app surface:
 | Piece | Where | Role |
 |---|---|---|
 | **dojo-mind service** | `crates/dojo-mind` (binary `sensei-dojo`) | the federation server — memberships, contribute/triage/distribute, anonymization, its own DB (`dojo.*` schema) |
-| **console** | `console/` (SvelteKit web app) | maintainer · admin · **lead** consoles (SSO-gated) |
-| **in-app developer surface** | [app](app.md) `(observatory)/dojo/*` | discover · connect · bind · share · watch · receive |
+| **console** | `console/` (SvelteKit web app) | **developer** · maintainer · admin · **lead** consoles (SSO-gated) |
+| **in-app developer flows** | in the **[Observatory](app.md)** (`(observatory)/dojo/*`) | discover · connect · bind · share · watch · receive — these are Observatory flows, not a separate app |
 
 ```mermaid
 flowchart TD
@@ -27,13 +27,19 @@ flowchart TD
     D <-->|pull, never push · preview always| SVC
 ```
 
-## The four roles
+## The roles
 
-Authority inside a Dōjō (`dojo.member_role`): **contributor** (pull +
-contribute) · **maintainer** (triage/approve/distribute on owned scopes) ·
-**lead** (guards confidentiality on **client engagements** — audit, incidents;
-*renamed from `client_lead`*) · **admin** (runs the server, identity,
-provisioning, policies). Roles derive from the git-provider role, admin-overridable.
+**Every user logs into the Dōjō SaaS.** The team/org benefit is the primary
+value, but a developer is often in **multiple** teams — so *developer* is a
+first-class role with its own console view (my teams, my contributions, what I've
+received), on top of the in-app Observatory flows.
+
+Authority inside a Dōjō (`dojo.member_role`): **contributor** / *developer* (pull +
+contribute; in-app flows + a personal console view) · **maintainer** (triage /
+approve / distribute on owned scopes) · **lead** (guards confidentiality on
+**client engagements** — audit, incidents; *renamed from `client_lead`*) ·
+**admin** (runs the server, identity, provisioning, policies). Roles derive from
+the git-provider role, admin-overridable.
 
 > **Naming:** the *role* is `lead`; the *engagement* it guards is still a
 > **client engagement**. "The lead guards client-engagement confidentiality" is
@@ -73,6 +79,17 @@ the flow is **paused by default** (`contribute_scheduler` no-ops until opt-in)
 and needs a **remote Dōjō server** that isn't running — so all `dojo.*` tables
 are 0 locally. Live activation is **Phase 4** (open-issues), gated on the
 SaaS-infra decision; it does not block Phases 1–3.
+
+## Deployment — in-house or SaaS
+
+The Dōjō is one unit: the **service** (`dojo-mind` / `sensei-dojo`) + its **web
+console**. It ships two ways:
+
+- **SaaS** — sensei-hosted; an org signs up and connects identity.
+- **In-house** — the org runs the same service + console on its own infra (data
+  never leaves the company).
+
+Same code, same console, same auth — only where it runs differs.
 
 ## Auth
 
