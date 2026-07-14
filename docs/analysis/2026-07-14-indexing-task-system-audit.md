@@ -138,6 +138,55 @@ only; `ProcessFile` is the sole indexer; delete/add/modify = one enqueue-by-path
   assert exactly one ProcessFile + a converged graph; then a watcher event → same. Robust +
   auto-recoverable: kill mid-scan → reconcile boot-run converges to the same state.
 
+## 7. Refactor plan — decision (B) + TDD strategy
+
+**DECISION (Jerry, 2026-07-14): one repo = one project = one owner.** Crates and
+packages are structural **members with a kind/role** (`library`/`tool`/`website`),
+NOT separate index owners. The folder hierarchy is structural; the repo (git-root)
+owns and indexes every file exactly once. Genuine nested **git subtrees** (their own
+`.git`) remain separate repos/owners — a subtree ≠ a workspace member.
+
+Candidate bug sites (to confirm via the failing test, not by eye):
+- `process.rs:416` enqueues `ProcessGitFolder` per detected "subtree" — if workspace
+  members (no own `.git`) are caught by that subtree detection, each self-indexes
+  (member-relative paths, owner=member) while the git-root also indexes them.
+- The git-root `build_walker` (process.rs:196) may not exclude member/subtree dirs,
+  so it indexes them too → the second owner.
+- `process.rs:589` (member role classification) is CORRECT already — structural
+  `upsert_subfolder` + `update_folder_role`, no re-index. Keep it.
+
+### TDD strategy — lock the ENQUEUE GRAPH + TRIGGERS so #101 can't recur
+
+Tests assert *what gets enqueued* (task kind + folder_path/owner per trigger), not
+just the final DB — a future change that re-promotes a member fails a test.
+
+1. **Reproduction/regression (monorepo fixture).** Build a temp git repo with
+   `Cargo.toml [workspace] members=["crates/*"]` + `crates/a/src/lib.rs` (a real fn).
+   Run the scan (scan_root → process_git_folder) against a test TaskQueue. Assert the
+   enqueue graph:
+   - exactly ONE `ProcessGitFolder` (the repo root) — none for `crates/a`;
+   - `crates/a` becomes a `folder`-kind row WITH a role, NO member-owned `ProcessFile`;
+   - every `ProcessFile.folder_path` == repo root; every code node's `folder_id` == the
+     repo-root folder; `crates/a/src/lib.rs` indexed exactly once (repo-relative path).
+   This FAILS today (reproduces #101) → pins the exact site → PASSES post-fix → guards recurrence.
+2. **Subtree-vs-member distinction.** A nested dir WITH its own `.git` → its own
+   repo + `ProcessGitFolder` (kept). A workspace member WITHOUT `.git` → structural only.
+3. **Trigger tests (one-owner per entry):**
+   - `scan_root`: enqueues one `ProcessGitFolder` per real root (repo/standalone/subtree), none per member.
+   - watcher `process_batch`: a change under `crates/a` → one `ProcessFile` owned by the repo (not the member).
+   - `reconcile_tick`: re-scan of the monorepo enqueues no member-owned indexing.
+   - incremental `process_git_folder` resume: `scan_state` diff → one `ProcessFile` per changed file, one owner.
+4. **DB-invariant guard (post-scan):** no `folder`-kind row carries code nodes (module nodes only);
+   exactly one `scan_state` row per physical file.
+
+### Fix → verify sequence
+Write tests 1–4 (red) → gate the member promotion so only genuine `.git` subtrees become
+owners; ensure the git-root walk owns member files once → tests green → then a **supervised
+live rescan** of `~/Developer/sensei-hq/sensei`: assert `extract_deps`→1 node, sensei fn
+count ≈ halves, zero `folder`-kind code nodes, one `scan_state` per file; then edit one file
+(add/modify/delete) → one `ProcessFile` + converged graph; then a watcher event → same; then
+kill mid-scan → reconcile boot converges identically (robust/auto-recoverable/consistent).
+
 ## Related
 - #101 (double-index), #29 (subfolders auto-promoted), #62 (multi-folder repo misclassified).
 - [[reference_scan_reconcile_ops]] · [[project_stale_folder_reconcile]] · [[project_incremental_indexing]].
