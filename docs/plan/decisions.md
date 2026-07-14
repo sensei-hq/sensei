@@ -19,6 +19,20 @@
 | The **retrospective-loop** framing (capture→graph→analyze→learn→deliver→measure) | vision.md core loop |
 | Dōjō **priority-ladders / specificity-wins / pull-never-push / preview-always** | [architecture/dojo.md](../architecture/dojo.md), objectives DJ* |
 
+## Adopted — decisions with rejected alternatives (ADRs)
+
+The *why*, so a rejected shape isn't re-proposed. Salvaged from the old `design/decisions/` ADRs + `ideas/`.
+
+| Decision | Rejected alternatives (why) |
+|---|---|
+| **One repo = one project = one owner** (#101) | promoting every walked subfolder/crate to a project — double-indexes and gives folders their own code nodes. Crates/packages are **structural members with a role**; only a genuine nested `.git` subtree is a separate owner. Enforced at classification + self-healed by `dedup_structural_folder_nodes`. |
+| **Postgres + pgvector as the single store** (:7744) | SQLite+Kuzu (no cross-store txns, N+1 on JSON-array joins, Kuzu unmaintained/embedded-C++ risk, no vectors); FalkorDB/Chroma/MemPalace (need a server process — wrong for a zero-server desktop); in-memory queue (lost task state on restart). Postgres unifies relational + graph + vectors + a durable queue with concurrent app/MCP/CLI connections. |
+| **Code is a graph → relational tables + recursive CTEs** | a flat vector index or regex extraction — destroys the call/import/type graph; cosine surfaces files that *mention* similar words but can't answer "who calls X". Recursive CTEs cover 90%+ (1–2 hop); Apache **AGE** can layer on the *same* tables later with no migration. |
+| **Adapter-IR = three node types** (`IRDoc`/`IRModule`/`IRClass`), all `Option<>` | one unified symbol type — structure differs per kind. `Option` everywhere so missing frontmatter/annotations degrade gracefully; per-file parse is worker-parallel, edge/parent resolution is a separate batch phase. |
+| **Preferences merge INTO memory** | a separate `inference.preferences` table — memories are part of the graph, not a silo. The table was killed. |
+| **Agent-agnostic MCP surface** | per-assistant tool variants — per-assistant differences live in a coordinator *adapter*, never in the tool contracts. The AI only ever reaches the daemon via MCP. |
+| **Vertical feature slices** (daemon→MCP→command in one issue, innermost-first, fully tested before the next layer) | per-layer issues + stubs — they cause rework cycles (D18). |
+
 ## Discarded — considered and rejected (do not re-propose)
 
 | Idea | Why rejected | Superseded by |
@@ -42,6 +56,12 @@
 | **Diagnostic sessions/traces + issue export** (#39) | Larger new-schema + cross-cutting capture effort; only flat `public.logs` today | when support/debug UX is prioritised |
 | **Image-gen as seed** (#77) · **embedded in CI release binaries** (#78) | Need `model_capability=image` / cross-platform native llama.cpp sign-off | gateway/seed hardening pass |
 | **Dōjō live activation** | External-blocked (needs a remote server + SaaS-infra decision) | Phase 4 |
+| **ACP integration + control-plane / relay** | adopt Apache-2.0 **ACP**; do NOT embed Zed's GPL agent crate. Multi-day runs + a mobile PWA relayed *through the Dōjō* (daemon stays outbound-only) | strategic; 7 open decisions in the Zed-research analysis |
+| **Response cache** (semantic cache of notable LLM outputs — TTL/pin/secret-scrub, ≤3 session-start hints) | distinct from the memory pipeline; never built | when prompt/response reuse becomes a cost lever |
+| **Telemetry transactional-outbox** (durable event write-buffer + backoff/eviction + queue-depth health) | accepted direct-write today | when "no events lost during downtime" is prioritised |
+| **Data-source connectors** (Confluence/Jira/Notion/Figma as graph-node producers — "the graph doesn't care whether a node came from git or Confluence") | repo-only today | when Solution scope needs non-repo members |
+| **Cursor as 2nd coordinator** + generic capture fallback ladder (MCP/file-watch/poll/OTLP for tools without hooks) | Zed shipped first; Cursor = largest user base | when a 2nd coordinator is prioritised |
+| **Capability Registry** (per-ACP data-availability Real/Workaround/Unavailable + `discard_when` upstream-issue + workaround lifecycle) | keeps workaround code inert until upstream lands, then auto-cleaned | when cross-ACP graceful degradation is built |
 | ~~`llm-spec/` → `spec/` rename~~ **DONE 2026-07-14** | was high-churn (run-state/cron driver + gate agents + memory) | completed: dir renamed + all referrers fixed (docs, `.claude/agents`, code comments) |
 
 ## How to use this
