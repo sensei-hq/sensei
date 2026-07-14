@@ -472,30 +472,39 @@ mod tests {
         let repo_fid = ctx.pg().upsert_repo_kind(&root_id, "git", "repo", &repo.to_string_lossy()).await.unwrap();
         ctx.pg().set_folder_project(&repo_fid, &pid, "root", None).await.unwrap();
 
-        // The canonical git-root copy, stored repo-relative.
+        // The canonical git-root copies, stored repo-relative: a code symbol AND
+        // a `file` node (whose `name` IS the repo-relative path).
         let root_twin = ctx.pg().upsert_node(&repo_fid, "function", "run_task", "crates/member/src/lib.rs", None, None, None, None).await.unwrap();
+        let root_file = ctx.pg().upsert_node(&repo_fid, "file", "crates/member/src/lib.rs", "crates/member/src/lib.rs", None, None, None, None).await.unwrap();
 
         // A structural member subfolder carrying residue (subfolder-relative paths).
         let member = repo.join("crates/member");
         std::fs::create_dir_all(&member).unwrap();
         let member_fid = ctx.pg().upsert_subfolder(&root_id, "member", "crates/member", &member.to_string_lossy(), Some(&repo_fid), Some(&pid)).await.unwrap();
-        // A duplicate of the git-root symbol → must be pruned (path-suffix twin).
+        // A duplicate of the git-root symbol → pruned (name equal, path-suffix twin).
         let dup = ctx.pg().upsert_node(&member_fid, "function", "run_task", "src/lib.rs", None, None, None, None).await.unwrap();
-        // A symbol the root does NOT hold → must be KEPT (never lose a unique).
+        // A duplicate `file` node → pruned via NAME path-suffix ("src/lib.rs" ⊂
+        // "crates/member/src/lib.rs"), the case a name-EQUAL rule would miss.
+        let dup_file = ctx.pg().upsert_node(&member_fid, "file", "src/lib.rs", "src/lib.rs", None, None, None, None).await.unwrap();
+        // A symbol the root does NOT hold → KEPT (never lose a unique).
         let unique = ctx.pg().upsert_node(&member_fid, "function", "orphan_only", "src/gone.rs", None, None, None, None).await.unwrap();
+        // A `file` node the root does NOT hold → KEPT (guard protects unique files too).
+        let unique_file = ctx.pg().upsert_node(&member_fid, "file", "src/gone.rs", "src/gone.rs", None, None, None, None).await.unwrap();
 
         let pruned = ctx.pg().dedup_structural_folder_nodes(&root_id).await.unwrap();
-        assert_eq!(pruned, 1, "exactly the one root-twin duplicate is pruned");
+        assert_eq!(pruned, 2, "the two root-twin duplicates (symbol + file) are pruned");
 
-        let (dup_alive,): (i64,) = sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.nodes WHERE id=$1")
-            .bind(dup).fetch_one(ctx.pg().pool()).await.unwrap();
-        assert_eq!(dup_alive, 0, "the root-twin duplicate under the structural folder is pruned");
-        let (unique_alive,): (i64,) = sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.nodes WHERE id=$1")
-            .bind(unique).fetch_one(ctx.pg().pool()).await.unwrap();
-        assert_eq!(unique_alive, 1, "a symbol held uniquely under the structural folder is preserved");
-        let (root_alive,): (i64,) = sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.nodes WHERE id=$1")
-            .bind(root_twin).fetch_one(ctx.pg().pool()).await.unwrap();
-        assert_eq!(root_alive, 1, "the canonical git-root copy is untouched");
+        for (id, msg) in [(dup, "symbol duplicate pruned"), (dup_file, "file-node duplicate pruned")] {
+            let (alive,): (i64,) = sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.nodes WHERE id=$1")
+                .bind(id).fetch_one(ctx.pg().pool()).await.unwrap();
+            assert_eq!(alive, 0, "{msg}");
+        }
+        for (id, msg) in [(unique, "unique symbol preserved"), (unique_file, "unique file preserved"),
+                          (root_twin, "canonical git-root symbol untouched"), (root_file, "canonical git-root file untouched")] {
+            let (alive,): (i64,) = sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.nodes WHERE id=$1")
+                .bind(id).fetch_one(ctx.pg().pool()).await.unwrap();
+            assert_eq!(alive, 1, "{msg}");
+        }
     }
 
     #[tokio::test]

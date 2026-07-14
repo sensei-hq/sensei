@@ -5256,16 +5256,20 @@ impl PgStore {
     }
 
     /// Enforce one-node-one-owner: a `folder`-kind (structural) subfolder must
-    /// not carry a code node that the project's canonical ROOT owner
+    /// not carry a node that the project's canonical ROOT owner
     /// (git/standalone/subtree) already holds. Deletes each such duplicate —
-    /// TWIN-GUARDED: matched by identical `(name, kind)` AND the root node's
-    /// repo-relative `file_path` ending in the structural node's subfolder-
-    /// relative `file_path` (`right(...)` suffix, no LIKE wildcard hazard). A
-    /// symbol held UNIQUELY under a structural folder is therefore never removed
-    /// — only proven duplicates are. This self-heals the pre-fix double-index
-    /// residue (#101: members promoted to second index owners on 2026-07-13)
-    /// and, run every scan, prevents any future accumulation. Scoped to
-    /// `root_id`. Edges cascade with the deleted nodes. Returns rows pruned.
+    /// TWIN-GUARDED by identical `kind` AND a path-suffix match on BOTH
+    /// `file_path` and `name`: the root node's repo-relative value must end in
+    /// the structural node's subfolder-relative value (`right(...)` suffix, no
+    /// LIKE wildcard hazard). For code symbols the `name` suffix collapses to an
+    /// exact match (symbol names have no `/`, so the `'/' ||` separator can't
+    /// spuriously match); for `file`/`module` nodes (where `name` is itself a
+    /// path) the suffix catches the differing subfolder prefix. A node held
+    /// UNIQUELY under a structural folder is therefore never removed — only
+    /// proven duplicates are. Self-heals the pre-fix double-index residue (#101:
+    /// members promoted to second index owners on 2026-07-13) and, run every
+    /// scan, prevents future accumulation. Scoped to `root_id`. Edges cascade
+    /// with the deleted nodes. Returns rows pruned.
     pub async fn dedup_structural_folder_nodes(&self, root_id: &uuid::Uuid) -> Result<u64, String> {
         let res = sqlx_core::query::query(
             "DELETE FROM sensei.nodes s
@@ -5281,8 +5285,10 @@ impl PgStore {
                      AND gf.kind IN ('git'::sensei.folder_kind,
                                      'standalone'::sensei.folder_kind,
                                      'subtree'::sensei.folder_kind)
-                     AND g.name = s.name
                      AND g.kind = s.kind
+                     AND (g.name = s.name
+                          OR right(g.name, char_length(s.name) + 1)
+                             = ('/' || s.name))
                      AND (g.file_path = s.file_path
                           OR right(g.file_path, char_length(s.file_path) + 1)
                              = ('/' || s.file_path)))",
