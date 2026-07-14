@@ -158,7 +158,7 @@ Insights strip:
 |---|---|---|---|
 | `warn` | 警 | `calls >= 50 && error_rate >= 0.05` | [[pipeline/insight-copy]] (fallback: `{short}: {rate}% failure rate`) |
 | `opportunity` | 芽 | `calls >= 10 && error_rate >= 0.05` (not high-traffic) | insight-copy (fallback: `{short}: room to improve`) |
-| `unused` | 眠 | `calls == 0` OR `days_since_last_use >= 14`; collapsed to one summary when >1 | insight-copy (fallback: `{n} tools dormant`) |
+| `unused` | 眠 | `calls == 0` OR `days_since_last_use >= 30` (a month — 14 flagged weekly tools as noise, #98); collapsed to one summary when >1 | insight-copy (fallback: `{n} tools dormant`) |
 | `win` | 勝 | `calls >= 50 && error_rate <= 0.02`; collapsed to one summary when >1 | insight-copy (fallback: `{n} workhorse tools`) |
 
 Per-tool table (drill):
