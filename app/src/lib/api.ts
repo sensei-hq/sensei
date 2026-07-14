@@ -9,7 +9,7 @@ import type {
   ProjectSession, CallFlowModule, CallFlowCall,
   ProjectListItem,
   KnowledgeSource, NewKnowledgeSourceBody, SyncStats,
-  DojoMembership, ConnectDojoBody, DojoUpgradesResponse, CollectivePreferences,
+  DojoMembership, ConnectDojoBody, DojoBindingSuggestion, DojoUpgradesResponse, CollectivePreferences,
   ShareReviewResponse, PublishBatchOutcome,
   McpToolManifest, SessionToolTimeline, MemoryShareBatch, ImpactVerdictEntry,
   ProjectMcpToolStat, ToolSignal, ProjectService, ToolInsight, ToolsHealth,
@@ -1008,6 +1008,29 @@ export function senseiApi(port: number) {
     // bind) surface as `{ ok: false, error }` for the connect form to show.
     connectDojo: (body: ConnectDojoBody) =>
       tryPost<{ id: string }>('/api/dojo/memberships', body),
+
+    // Replace the git-remote owner slugs a membership covers (org-tagging) —
+    // drives the R3 infer-at-detect auto-bind. `tryPut` so a 404 (unknown
+    // membership) surfaces to the form.
+    setMembershipOrgs: (membershipId: string, orgSlugs: string[]) =>
+      tryPut(`/api/dojo/memberships/${enc(membershipId)}/orgs`, { org_slugs: orgSlugs }),
+
+    // R3 infer-at-detect: the inferred (confirm-inferred) project→Dōjō binding
+    // for the About-panel chip. `{ suggestion: null }` when already bound / no
+    // git owner / no covering membership. Read-only — suggests, never binds.
+    getDojoSuggestion: (projectId: string) =>
+      get<{ suggestion: DojoBindingSuggestion | null }>(
+        `/api/projects/${enc(projectId)}/dojo-suggestion`,
+        { suggestion: null },
+      ),
+
+    // Confirm a project→Dōjō binding (the user accepting the inferred chip, or
+    // an explicit bind). Fails closed server-side if the membership is unknown.
+    bindProjectDojo: (projectId: string, membershipId: string) =>
+      tryPost<{ ok: boolean; dojo_id: string }>(
+        `/api/projects/${enc(projectId)}/dojo-binding`,
+        { membership_id: membershipId },
+      ),
 
     // ── Dōjō downstream inbox (Observatory · Upgrades · C7) ──────────────
     // The daemon's inbox of approved Dōjō / Collective artifacts pulled back

@@ -4977,10 +4977,10 @@ impl PgStore {
         let rows: Vec<(
             uuid::Uuid, String, Option<String>, Option<String>, String, Vec<String>,
             chrono::DateTime<chrono::Utc>, Option<serde_json::Value>, Option<serde_json::Value>,
-            Option<String>, i64, i64, Option<chrono::DateTime<chrono::Utc>>, i64,
+            Option<String>, Option<uuid::Uuid>, i64, i64, Option<chrono::DateTime<chrono::Utc>>, i64,
         )> = sqlx_core::query_as::query_as(
                 "SELECT p.id, p.name, p.description, p.client, p.maturity::text, p.tags, p.modified_at,
-                        p.icon, p.stack, p.goal,
+                        p.icon, p.stack, p.goal, p.dojo_id,
                         (SELECT count(*) FROM sensei.folders f
                           WHERE f.project_id = p.id AND f.kind::text IN ('git','standalone'))::bigint AS repos_count,
                         (SELECT count(*) FROM sensei.project_libraries pl
@@ -4998,11 +4998,12 @@ impl PgStore {
             ).bind(under).fetch_all(&self.pool).await
             .map_err(|e| { tracing::error!(error = %e, "list_projects failed"); e.to_string() })?;
 
-        Ok(rows.into_iter().map(|(id, name, desc, client, maturity, tags, modified, icon, stack, vision, repos_count, libs_count, last_session_at, sessions7d)| {
+        Ok(rows.into_iter().map(|(id, name, desc, client, maturity, tags, modified, icon, stack, vision, dojo_id, repos_count, libs_count, last_session_at, sessions7d)| {
             serde_json::json!({
                 "id": id, "name": name, "description": desc, "client": client,
                 "maturity": maturity, "tags": tags, "modified_at": modified.to_rfc3339(),
                 "icon": icon, "stack": stack, "vision": vision,
+                "dojo_id": dojo_id,
                 "repos_count": repos_count, "libs_count": libs_count,
                 "last_session_at": last_session_at.map(|t| t.to_rfc3339()),
                 "sessions7d": sessions7d,
