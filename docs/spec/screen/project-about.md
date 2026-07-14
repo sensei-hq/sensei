@@ -2,7 +2,7 @@
 
 **Segment:** 04 · The project window
 **Route:** `/project/[id]/about`
-**Source mockup:** [`lib/project-lite-panes.jsx`](../../mockups/Sensei/lib/project-lite-panes.jsx) → `ProjAboutLite`
+**Source mockup:** [`lib/project-lite-panes.jsx`](../../mockups/Sensei/lib/project-lite-panes.jsx) → `ProjAboutPane`
 **App file:** `app/src/routes/project/[id]/about/+page.svelte`
 
 ## Purpose
