@@ -38,7 +38,7 @@ position) then this file (what's left).
 - Auth infra FIRST: Supabase (assume localhost URL) + kavach (`~/Developer/kavach`, has supabase/ dir — EDIT if needed). Localhost Dōjō registry URL.
 - Pipelines: [ ] pipeline/collective-intelligence [ ] pipeline/dojo-lifecycle [ ] pipeline/governance
 - Observatory Dōjō: [ ] observatory-collective [ ] observatory-dojo-connections [ ] observatory-dojo-sharing [ ] observatory-share-review
-- Dōjō consoles (SaaS): [ ] dojo-developer-flow [ ] dojo-client-lead-console [ ] dojo-maintainer-console [ ] dojo-admin-console
+- Dōjō consoles (SaaS): [ ] dojo-developer-flow [ ] dojo-lead-console [ ] dojo-maintainer-console [ ] dojo-admin-console
 
 ## Notes
 - Some screens/pipelines may already be partially live (memory notes: analyzer/ftr/scheduler shipped; libraries/traceability/impact partial). ASSESS each at pickup (grep + curl) before building — don't rebuild what exists; wire/finish it.

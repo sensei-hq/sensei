@@ -17,9 +17,9 @@ create table if not exists dojo.engagements (
 create index if not exists engagements_tenant_idx on dojo.engagements(tenant_id);
 
 comment on table dojo.engagements is
-'A registered client engagement, owned by a client-lead. Binds client work to
+'A registered client engagement, owned by a lead. Binds client work to
 projects so it routes correctly and is dereferenced. Every artifact shared under
-an engagement must carry dereferenced=true — the client-lead cannot per-item
+an engagement must carry dereferenced=true — the lead cannot per-item
 override the universal strip; they audit that it held.';
 
 comment on column dojo.engagements.client

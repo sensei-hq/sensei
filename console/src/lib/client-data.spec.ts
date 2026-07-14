@@ -80,13 +80,13 @@ describe('listEngagements', () => {
 	});
 
 	it('throws a ClientApiError carrying the API error message on a 403', async () => {
-		const { fn } = fakeFetch(403, { error: 'client-lead role required' });
+		const { fn } = fakeFetch(403, { error: 'lead role required' });
 		await expect(listEngagements('t/x', { fetch: fn })).rejects.toMatchObject({
 			name: 'DojoApiError',
 			status: 403,
-			message: 'client-lead role required'
+			message: 'lead role required'
 		});
-		const again = fakeFetch(403, { error: 'client-lead role required' });
+		const again = fakeFetch(403, { error: 'lead role required' });
 		await expect(listEngagements('t/x', { fetch: again.fn })).rejects.toBeInstanceOf(ClientApiError);
 	});
 });

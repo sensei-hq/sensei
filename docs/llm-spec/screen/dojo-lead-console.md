@@ -1,7 +1,7 @@
 # 守 · Dōjō · Client / engagement lead console
 
 **Segment:** Dōjō (SaaS) — console
-**Route:** `dojo.sensei-hq.org/{origin}/{org}/console/client-lead`
+**Route:** `dojo.sensei-hq.org/{origin}/{org}/console/lead`
 **Source mockup:** [`lib/dojo-console.jsx`](../../mockups/Sensei/lib/dojo-console.jsx)
 
 ## Purpose
@@ -29,7 +29,7 @@ Kanji is 守 — *guard*.
   `dereferenced: true` filter), `dojo.audit_events`,
   `dojo.incidents`.
 - Universal strip is enforced at [[pipeline/dojo-lifecycle]]
-  attribution step — client-lead cannot per-item override,
+  attribution step — the lead cannot per-item override,
   matching the journey map's design.
 - Incidents log rows with severity + resolution.
 
@@ -72,7 +72,7 @@ curl -s https://dojo.sensei-hq.org/{org}/api/audit/artifacts?engagement={x} \
 
 - **A client-work artifact appears in the audit without strip
   info.** Enforcement broken.
-- **Client-lead can override the strip.** Journey map violated.
+- **The lead can override the strip.** Journey map violated.
 - **Incident open past SLA without an alert.**
 - **Audit export includes columns not covered by the strip.**
   Export leaks source references.

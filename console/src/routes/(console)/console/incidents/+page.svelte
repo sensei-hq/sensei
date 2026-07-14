@@ -26,7 +26,7 @@
 
 	// Incidents (spec: incident handling 警 · contain a near-leak fast). Lists the
 	// tenant's confidentiality incidents (data.incidents, worst-severity first) and
-	// lets a client-lead open (POST …/incidents), update severity / status / owner
+	// lets a lead open (POST …/incidents), update severity / status / owner
 	// (PATCH), resolve (PATCH resolved: true), or delete (DELETE) one. The open
 	// count (`resolved_at is null`) is the done-gate. All mutations are gated by the
 	// backend LEAD floor; a 403 surfaces in the banner rather than crashing.

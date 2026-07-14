@@ -1126,9 +1126,9 @@ impl DojoStore {
             .collect())
     }
 
-    // ── Client-lead console (tenant-scoped; the LEAD floor is enforced at the
+    // ── Lead console (tenant-scoped; the LEAD floor is enforced at the
     //    handler via `DojoAccess::Lead`). Every method is scoped by `tenant_id`
-    //    so one tenant's client-lead never reads or mutates another's rows. The
+    //    so one tenant's lead never reads or mutates another's rows. The
     //    compliance export is provably source-ref-free: its SQL selects ONLY the
     //    dereferenced/covered subset and never names a source-reference column
     //    (`contributed_by` / `attribution` / `signature` / `approved_by`). ──────
@@ -1496,7 +1496,7 @@ impl DojoStore {
         Ok(res.rows_affected() > 0)
     }
 
-    /// The artifact audit view (client-lead console): every artifact shared under
+    /// The artifact audit view (lead console): every artifact shared under
     /// the tenant — optionally scoped to one engagement — carrying its `strip
     /// status` (`dereferenced`) plus the `attribution` so the console can render
     /// what was stripped. When `dereferenced_only` is set, only stripped rows are

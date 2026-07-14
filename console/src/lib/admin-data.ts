@@ -37,7 +37,7 @@ export const AdminApiError = DojoApiError;
 // ── wire types (mirror the Rust store row shapes) ────────────────────────────
 
 /** A Dōjō role — `dojo.member_role` (api.rs `is_member_role`). */
-export type MemberRole = 'contributor' | 'maintainer' | 'client_lead' | 'admin';
+export type MemberRole = 'contributor' | 'maintainer' | 'lead' | 'admin';
 
 /** One membership row — `store.list_memberships` (store.rs:658). */
 export interface Membership {

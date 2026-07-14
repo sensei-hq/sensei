@@ -22,7 +22,7 @@ use uuid::Uuid;
 
 /// A member/dojo role literal accepted for a membership (`dojo.member_role`).
 fn is_member_role(role: &str) -> bool {
-    matches!(role, "contributor" | "maintainer" | "client_lead" | "admin")
+    matches!(role, "contributor" | "maintainer" | "lead" | "admin")
 }
 
 pub struct SharedState {
@@ -306,7 +306,7 @@ fn access_label(a: DojoAccess) -> &'static str {
     match a {
         DojoAccess::Member => "member",
         DojoAccess::Contributor => "contributor",
-        DojoAccess::Lead => "client-lead",
+        DojoAccess::Lead => "lead",
         DojoAccess::Maintainer => "maintainer",
         DojoAccess::Admin => "admin",
     }
@@ -363,8 +363,8 @@ async fn resolve_admin(
     resolve_tenant_access(state, jwt, headers, tenant_key, DojoAccess::Admin).await
 }
 
-/// Resolve the path tenant then dual-authenticate a client-lead (`client_lead`,
-/// i.e. `Lead+`). The floor for every client-lead-console route; a plain
+/// Resolve the path tenant then dual-authenticate a lead (`lead`,
+/// i.e. `Lead+`). The floor for every lead-console route; a plain
 /// contributor (or an API-key caller, which never carries `Lead`) → 403.
 /// `Maintainer`/`Admin` sit above `Lead` and so also pass (linear floor).
 async fn resolve_lead(
@@ -546,7 +546,7 @@ async fn add_membership(
     if !is_member_role(&role) {
         return Err(err(
             StatusCode::BAD_REQUEST,
-            "role must be contributor|maintainer|client_lead|admin",
+            "role must be contributor|maintainer|lead|admin",
         ));
     }
     let id = state
@@ -588,7 +588,7 @@ async fn set_member_role(
     if !is_member_role(&body.role) {
         return Err(err(
             StatusCode::BAD_REQUEST,
-            "role must be contributor|maintainer|client_lead|admin",
+            "role must be contributor|maintainer|lead|admin",
         ));
     }
     let changed = state
@@ -954,7 +954,7 @@ async fn list_audit(
     Ok(Json(json!({ "events": events })))
 }
 
-// ── Client-lead console routes (dual-auth; LEAD floor) ───────────────────────
+// ── Lead console routes (dual-auth; LEAD floor) ──────────────────────────────
 //
 // Every handler resolves the path tenant + dual-authenticates behind
 // `resolve_lead` (floor = `DojoAccess::Lead`), so a plain contributor (and any
@@ -962,7 +962,7 @@ async fn list_audit(
 // tenant-scoped. Mutations stamp a `dojo.audit_events` row (the same
 // non-repudiation trail the admin console writes) via `record_audit_event`,
 // surfaced (not swallowed) so a missing audit entry can never hide a
-// client-lead action. Reads (list / audit view / export) add no audit rows.
+// lead action. Reads (list / audit view / export) add no audit rows.
 
 fn is_engagement_status(s: &str) -> bool {
     matches!(s, "active" | "ended")
@@ -989,7 +989,7 @@ fn parse_opt_uuid(
 
 // ── engagements (CRUD + project bind) ────────────────────────────────────────
 
-/// `GET /v1/t/{tenant_key}/engagements` — the tenant's engagements (client-lead).
+/// `GET /v1/t/{tenant_key}/engagements` — the tenant's engagements (lead).
 async fn list_engagements(
     State(state): State<AppState>,
     Extension(jwt): Extension<Arc<JwtConfig>>,
@@ -1407,7 +1407,7 @@ struct AuditArtifactsQuery {
 /// one engagement), each carrying its `dereferenced` strip status + `attribution`
 /// (strip verification). Returns a BARE JSON ARRAY so the console can compute the
 /// done-gate directly (`non_dereferenced == count(dereferenced == false)`);
-/// `dereferenced=true` filters to only stripped rows. Client-lead+.
+/// `dereferenced=true` filters to only stripped rows. Lead+.
 async fn audit_artifacts(
     State(state): State<AppState>,
     Extension(jwt): Extension<Arc<JwtConfig>>,
@@ -1490,7 +1490,7 @@ fn compliance_csv(rows: &[Value]) -> String {
 /// broken strip must never be certified. On success emits ONLY the source-ref-
 /// free subset ([`COMPLIANCE_COLUMNS`]) as CSV (default) or JSON — provably no
 /// source reference leaks (the store never selects a source column).
-/// Client-lead+.
+/// Lead+.
 async fn compliance_export(
     State(state): State<AppState>,
     Extension(jwt): Extension<Arc<JwtConfig>>,
@@ -1596,7 +1596,7 @@ pub fn build_router_with_jwt(state: AppState, jwt: JwtConfig) -> Router {
         )
         .route("/v1/t/{tenant_key}/health", get(admin_health))
         .route("/v1/t/{tenant_key}/audit", get(list_audit))
-        // Client-lead console (LEAD floor; every handler behind `resolve_lead`).
+        // Lead console (LEAD floor; every handler behind `resolve_lead`).
         .route(
             "/v1/t/{tenant_key}/engagements",
             get(list_engagements).post(create_engagement),
