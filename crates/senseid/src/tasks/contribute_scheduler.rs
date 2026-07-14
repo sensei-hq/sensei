@@ -247,6 +247,7 @@ mod tests {
         pg.create_dojo_membership(&NewDojoMembership {
             id: mid, registry_url: "http://localhost:7755".into(), tenant_key: "github/acme-corp".into(),
             dojo_url: "http://localhost:7755/github/acme-corp".into(), kind: "employer".into(),
+            org_slugs: vec![],
             role: "contributor".into(), authenticated_via: "device_code".into(),
             attribution_default: "named".into(),
             credential_ref: format!("dojo-{}", uuid::Uuid::new_v4()), sync_status: "healthy".into(),

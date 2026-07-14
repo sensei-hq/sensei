@@ -9,7 +9,11 @@
 //! authenticates to the Dōjō service with a Keychain-backed Bearer token — never
 //! Supabase (dual-plane auth: humans use Supabase in the web console only).
 
-use axum::{extract::State, http::StatusCode, response::Json};
+use axum::{
+    extract::{Path, State},
+    http::StatusCode,
+    response::Json,
+};
 use serde::Deserialize;
 
 use crate::api::state::AppState;
@@ -44,6 +48,10 @@ pub(crate) struct NewMembershipBody {
     pub tenant_key: String,
     /// employer | client | community | personal.
     pub kind: String,
+    /// Git-remote owner slugs this membership covers (e.g. `["sensei-hq"]`) —
+    /// the org-tagging that drives infer-at-detect auto-bind. Normalised
+    /// (lowercased/deduped) server-side. Optional; defaults to none.
+    pub org_slugs: Option<Vec<String>>,
     /// contributor | maintainer | client_lead | admin (default contributor).
     pub role: Option<String>,
     /// sso | github_oauth | device_code (default device_code).
@@ -86,6 +94,7 @@ pub(crate) async fn create_membership(
         tenant_key,
         dojo_url,
         &b.kind,
+        b.org_slugs.as_deref().unwrap_or(&[]),
         b.role.as_deref().unwrap_or("contributor"),
         b.authenticated_via.as_deref().unwrap_or("device_code"),
         b.attribution_default.as_deref().unwrap_or("named"),
@@ -104,4 +113,29 @@ pub(crate) async fn create_membership(
     }
 
     Ok(Json(serde_json::json!({ "id": id.to_string() })))
+}
+
+/// Body for PUT /api/dojo/memberships/{id}/orgs — the org-tagging edit.
+#[derive(Deserialize)]
+pub(crate) struct SetOrgsBody {
+    /// The git-remote owner slugs this membership covers. Replaces the existing
+    /// set; normalised (lowercased/deduped) server-side.
+    pub org_slugs: Vec<String>,
+}
+
+/// PUT /api/dojo/memberships/{id}/orgs — replace the org slugs a membership
+/// covers (drives infer-at-detect auto-bind). Idempotent; 404 if unknown.
+pub(crate) async fn set_membership_orgs(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(b): Json<SetOrgsBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let membership_id = uuid::Uuid::parse_str(id.trim())
+        .map_err(|_| err(StatusCode::BAD_REQUEST, "bad membership id"))?;
+    let updated = memberships::set_orgs(&state.pg, &membership_id, &b.org_slugs).await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+    if !updated {
+        return Err(err(StatusCode::NOT_FOUND, "membership not found"));
+    }
+    Ok(Json(serde_json::json!({ "ok": true })))
 }

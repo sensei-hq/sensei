@@ -261,6 +261,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/preferences/collective",            get(preferences::get_collective).put(preferences::put_collective))
         // Dōjō connections (memberships)
         .route("/api/dojo/memberships",                  get(dojo::list_memberships).post(dojo::create_membership))
+        .route("/api/dojo/memberships/{id}/orgs",        put(dojo::set_membership_orgs))
         // Dōjō upstream share review (C6)
         .route("/api/share-review/next-batch",           get(share_review::next_batch))
         .route("/api/share-review/{batch}/publish",      post(share_review::publish_batch))

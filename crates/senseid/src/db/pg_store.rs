@@ -125,6 +125,9 @@ pub struct NewDojoMembership {
     pub tenant_key:          String,
     pub dojo_url:            String,
     pub kind:                String, // employer | client | community | personal
+    /// Git-remote owner slugs this membership covers (lowercased) — feeds
+    /// infer-at-detect auto-bind. Empty for memberships with no org coverage.
+    pub org_slugs:           Vec<String>,
     pub role:                String,
     pub authenticated_via:   String,
     pub attribution_default: String,
@@ -141,6 +144,9 @@ pub struct DojoMembership {
     pub tenant_key:          String,
     pub dojo_url:            String,
     pub kind:                String,
+    /// Git-remote owner slugs this membership covers (lowercased). Drives
+    /// infer-at-detect auto-bind (see `dojo/routing.rs::infer_binding`).
+    pub org_slugs:           Vec<String>,
     pub role:                String,
     pub authenticated_via:   String,
     pub attribution_default: String,
@@ -7306,45 +7312,55 @@ impl PgStore {
     pub async fn create_dojo_membership(&self, m: &NewDojoMembership) -> Result<uuid::Uuid, String> {
         let (id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.dojo_memberships
-                (id, registry_url, tenant_key, dojo_url, kind, role,
+                (id, registry_url, tenant_key, dojo_url, kind, org_slugs, role,
                  authenticated_via, attribution_default, credential_ref, sync_status)
-             VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id")
+             VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id")
             .bind(m.id).bind(&m.registry_url).bind(&m.tenant_key).bind(&m.dojo_url)
-            .bind(&m.kind).bind(&m.role).bind(&m.authenticated_via)
+            .bind(&m.kind).bind(&m.org_slugs).bind(&m.role).bind(&m.authenticated_via)
             .bind(&m.attribution_default).bind(&m.credential_ref).bind(&m.sync_status)
             .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(id)
     }
 
     fn map_dojo_row(
-        row: (uuid::Uuid, String, String, String, String, String, String, String, String, String, i64, Option<String>, bool),
+        row: (uuid::Uuid, String, String, String, String, Vec<String>, String, String, String, String, String, i64, Option<String>, bool),
     ) -> DojoMembership {
-        let (id, registry_url, tenant_key, dojo_url, kind, role, authenticated_via,
+        let (id, registry_url, tenant_key, dojo_url, kind, org_slugs, role, authenticated_via,
              attribution_default, credential_ref, sync_status, last_seq, last_heartbeat_at, enabled) = row;
         DojoMembership {
-            id, registry_url, tenant_key, dojo_url, kind, role, authenticated_via,
+            id, registry_url, tenant_key, dojo_url, kind, org_slugs, role, authenticated_via,
             attribution_default, credential_ref, sync_status, last_seq, last_heartbeat_at, enabled,
         }
     }
 
     const DOJO_SELECT: &'static str =
-        "SELECT id, registry_url, tenant_key, dojo_url, kind, role, authenticated_via,
+        "SELECT id, registry_url, tenant_key, dojo_url, kind, org_slugs, role, authenticated_via,
                 attribution_default, credential_ref, sync_status, last_seq,
                 last_heartbeat_at::text, enabled
            FROM sensei.dojo_memberships";
 
     pub async fn list_dojo_memberships(&self) -> Result<Vec<DojoMembership>, String> {
-        let rows: Vec<(uuid::Uuid, String, String, String, String, String, String, String, String, String, i64, Option<String>, bool)> =
+        let rows: Vec<(uuid::Uuid, String, String, String, String, Vec<String>, String, String, String, String, String, i64, Option<String>, bool)> =
             sqlx_core::query_as::query_as(&format!("{} ORDER BY created_at", Self::DOJO_SELECT))
             .fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(Self::map_dojo_row).collect())
     }
 
     pub async fn get_dojo_membership(&self, id: &uuid::Uuid) -> Result<Option<DojoMembership>, String> {
-        let row: Option<(uuid::Uuid, String, String, String, String, String, String, String, String, String, i64, Option<String>, bool)> =
+        let row: Option<(uuid::Uuid, String, String, String, String, Vec<String>, String, String, String, String, String, i64, Option<String>, bool)> =
             sqlx_core::query_as::query_as(&format!("{} WHERE id = $1", Self::DOJO_SELECT))
             .bind(id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(row.map(Self::map_dojo_row))
+    }
+
+    /// Replace a membership's `org_slugs` (the git-remote owners it covers) —
+    /// the org-tagging edit. Slugs are stored as given; callers normalise
+    /// (lowercase/trim/dedup) upstream. Returns `false` if the id is unknown.
+    pub async fn set_dojo_membership_orgs(&self, id: &uuid::Uuid, org_slugs: &[String]) -> Result<bool, String> {
+        let res = sqlx_core::query::query(
+            "UPDATE sensei.dojo_memberships SET org_slugs = $2, updated_at = now() WHERE id = $1")
+            .bind(id).bind(org_slugs).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(res.rows_affected() > 0)
     }
 
     /// Update a connection's sync status. Returns `false` if unknown.
@@ -10554,6 +10570,7 @@ mod tests {
             tenant_key: "github/acme".into(),
             dojo_url: "http://localhost:7755/github/acme".into(),
             kind: "client".into(),
+            org_slugs: vec!["acme".into(), "acme-labs".into()],
             role: "contributor".into(),
             authenticated_via: "device_code".into(),
             attribution_default: "dereferenced".into(),
@@ -10561,13 +10578,22 @@ mod tests {
             sync_status: "authenticating".into(),
         }).await.unwrap();
 
-        // Present in the list with sane defaults.
+        // Present in the list with sane defaults + the org_slugs roundtrip.
         let all = pg.list_dojo_memberships().await.unwrap();
         let row = all.iter().find(|m| m.id == mid).expect("membership listed");
         assert_eq!(row.kind, "client");
+        assert_eq!(row.org_slugs, vec!["acme".to_string(), "acme-labs".to_string()]);
         assert_eq!(row.last_seq, 0);
         assert!(row.enabled);
         assert!(row.last_heartbeat_at.is_none());
+
+        // org-tagging edit: replace the covered org slugs.
+        assert!(pg.set_dojo_membership_orgs(&mid, &["acme".into(), "acme-corp".into()]).await.unwrap());
+        assert_eq!(
+            pg.get_dojo_membership(&mid).await.unwrap().unwrap().org_slugs,
+            vec!["acme".to_string(), "acme-corp".to_string()]
+        );
+        assert!(!pg.set_dojo_membership_orgs(&uuid::Uuid::new_v4(), &[]).await.unwrap(), "unknown id → false");
 
         // sync-status update.
         assert!(pg.set_dojo_sync_status(&mid, "healthy").await.unwrap());
@@ -10677,6 +10703,7 @@ mod tests {
         pg.create_dojo_membership(&NewDojoMembership {
             id: mid, registry_url: "http://localhost:7755".into(), tenant_key: "github/acme".into(),
             dojo_url: "http://localhost:7755/github/acme".into(), kind: "client".into(),
+            org_slugs: vec![],
             role: "contributor".into(), authenticated_via: "device_code".into(),
             attribution_default: "dereferenced".into(),
             credential_ref: format!("dojo-{}", uuid::Uuid::new_v4()), sync_status: "healthy".into(),
@@ -10708,6 +10735,7 @@ mod tests {
         pg.create_dojo_membership(&NewDojoMembership {
             id: mid, registry_url: "http://localhost:7755".into(), tenant_key: "github/acme".into(),
             dojo_url: "http://localhost:7755/github/acme".into(), kind: "community".into(),
+            org_slugs: vec![],
             role: "contributor".into(), authenticated_via: "device_code".into(),
             attribution_default: "anonymous".into(),
             credential_ref: format!("dojo-{}", uuid::Uuid::new_v4()), sync_status: "healthy".into(),
