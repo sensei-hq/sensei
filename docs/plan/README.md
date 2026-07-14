@@ -88,20 +88,23 @@ activation** to the SaaS-infra decision.
 
 ## The plan — workstreams
 
-Sequenced; the current lead is **docs restructure (E)** per the standing
-decision, with the cheap foundation fixes (G5a, G6-install) folded in.
+Sequenced. **E (docs) is ✅ done**; the next lead is **D** (get the floor current)
+then **A + B** (close the loop + de-noise).
 
 | WS | Theme | Gaps | Effort | Deps |
 |---|---|---|---|---|
-| **E** | Docs + Dōjō restructure *(in progress)* | docs | M | — |
+| **E** | Docs restructure | docs | M | ✅ done |
+| **D** | Foundation + corpus | G6, silent-error audit | S–M | — |
 | **A** | Close the FTR loop | G1, G2 | M | daemon current |
-| **B** | Raise signal quality | G3, G5, G7-orphans | S–M | — |
+| **B** | Raise signal quality | G3, G5, G7-orphans, G9/G10 | S–M | — |
 | **C** | Semantic search + context-pack | G4 | L | embeddings (present) |
-| **D** | Foundation + corpus | G6, sibling scan bugs #29/#62/#63, silent-error audit | S–M | — |
-| **F** | Net-new surfaces | G8 | L | A/B (data first) |
+| **F** | Net-new surfaces | G8 | L | A/B (data first) + design track |
+| **G** | Relay | R1–R8 | L | P1 proven + relay specs |
 
-**Recommended order after E:** D (get the floor current) → A + B (close loop +
-de-noise, make shipped screens truthful) → C (the differentiator) → F.
+**Recommended order:** D (floor current) → A + B (close loop + de-noise, make
+shipped screens truthful) → C (the differentiator) → F / G (net-new + relay,
+gated on the design track). Dōjō live (Phase 4) + Relay (Phase 5) are strategic
+tracks that run parallel once their prerequisites land.
 
 ## Implementation phases
 
@@ -110,25 +113,28 @@ criterion** (how we know it's done), and folds in the cheap fixes it unblocks.
 
 ```mermaid
 flowchart LR
-    P0["Phase 0<br/>Foundation &amp; docs"] --> P1["Phase 1<br/>Close the loop"]
-    P1 --> P2["Phase 2<br/>The differentiator"]
+    P0["Phase 0<br/>Foundation &amp; docs<br/>(docs ✅ · daemon/corpus)"] --> P1["Phase 1<br/>Close the loop"]
+    P1 --> P2["Phase 2<br/>Differentiator"]
     P2 --> P3["Phase 3<br/>Net-new surfaces"]
-    P4["Phase 4 · when infra ready<br/>Dōjō live activation"] -.-> P1
-    P4 -.-> P3
+    P4["Phase 4 · infra-gated<br/>Dōjō live"] -.-> P1
+    P5["Phase 5<br/>Relay"] -.-> P4
+    P1 -.-> P5
+    DES["Design track (parallel · Jerry)<br/>mockup gaps · relay + solution specs"] -.-> P3
+    DES -.-> P5
 ```
 
-### Phase 0 — Foundation &amp; docs *(current)*
+### Phase 0 — Foundation &amp; docs
 **Theme:** a clean map + a current, trustworthy floor to build on.
-- Docs restructure (WS E) — requirements/architecture/spec + Dōjō home + `client-lead → lead`.
-- Daemon to current (G6): `make install-service`; re-synthesize the 216-session history (G6, via the #75 backfill path).
-- Cheap correctness folded in: `get_communities` scoping (G5a), sibling scan bugs (#29/#62/#63) if quick.
-**Exit:** docs navigable from a rewritten README; local daemon = source version; corpus no longer starved.
+- ✅ **Docs restructure (WS E) — DONE.** Six-folder canonical set (requirements · journeys · mockups · architecture · spec · plan); `llm-spec → spec`; `client-lead → lead`; `archive/` deleted (git = backstop); the Relay vision added.
+- ✅ **Backlog cleaned** — shipped issues closed (incl. #101), 12 open.
+- **Remaining:** daemon to current (G6, `make install-service`); re-synthesize the 216-session history (via the #75 backfill path); the two cheap MCP fixes — `get_communities` scoping (G5a) + the framework-pattern tagger (G5b).
+**Exit:** local daemon = source version; corpus no longer starved; the two silent-empty MCP bugs fixed.
 
 ### Phase 1 — Close the FTR loop *(highest value)*
 **Theme:** the loop generates *and* validates; the shipped screens become truthful.
 - WS A: recommendation acceptance → `acted_at` → `MeasureVerdicts` (G1); memory promotion ladder (G2).
-- WS B: doc-drift threshold (G3); framework-pattern tagger (G5b); retire orphaned `inference.insights` (G7).
-**Exit:** at least one recommendation shows a measured FTR delta; Memories surface shows real promoted memories; drift `broken` count reflects real drift.
+- WS B: doc-drift threshold (G3); retire orphaned `inference.insights` (G7).
+**Exit:** at least one recommendation shows a measured FTR delta; Memories shows real promoted memories; drift `broken` count reflects real drift.
 
 ### Phase 2 — The differentiator
 **Theme:** concept-level context, not just literal.
@@ -137,13 +143,26 @@ flowchart LR
 
 ### Phase 3 — Net-new surfaces
 **Theme:** breadth, now that the data behind each surface is real.
-- WS F: Solution segment (3 screens), Bootstrap splash, consolidation screen, insights-reasoning drawer, first-run polish (G8).
+- WS F: Solution segment (3 screens), Bootstrap splash, consolidation screen, insights-reasoning drawer, first-run polish (G8). **Needs the design track** (solution + bootstrap mockups).
 **Exit:** the not-built cluster is closed; every new surface renders real data.
 
 ### Phase 4 — Dōjō live activation *(external-blocked)*
 **Theme:** extend the loop across a team, exactly.
 - Stand up a Dōjō server (localhost first), exercise memberships → contribute → triage → distribute end-to-end; wire the console.
-**Exit:** a finding travels dev → maintainer → downstream with anonymization + preview, on real infra. Gated on the SaaS-infra decision — parallel to Phases 1–3, not blocking them.
+**Exit:** a finding travels dev → maintainer → downstream with anonymization + preview, on real infra. Gated on the SaaS-infra decision — parallel to Phases 1–3, not blocking them. **Team relay (R8) rides on this.**
+
+### Phase 5 — Relay *(new surface — WS G)*
+**Theme:** supervise long, multi-agent runs from anywhere, without leaking code (objectives R1–R8; [architecture/relay](../architecture/relay.md)).
+- **Specs first** — `docs/spec/screen/relay-*.md` (14 mockups, 0 specced) via the design track.
+- **Coordinator** — supervise the agent CLIs + run the active plan in auto mode + publish filtered status + raise gates (grows the daemon; new Observatory rail item).
+- **Zero-knowledge relay** — encrypted pairing + scoped/revocable permissions; filtered status only; daemon outbound-only; adopt Apache-2.0 **ACP** (not Zed's GPL crate).
+- **Planner** — the plans→phases→features/checkpoints/gates model + plan authoring (app).
+- **Mobile companion** — the phone surfaces. Team relay (R8) folds into Phase 4.
+**Exit:** a long run is planned modularly, runs in auto mode, and is watched + gated from the phone; zero code leaves the machine.
+**Sequencing:** strategic ("near future"); after the core loop (P1) proves value; can run parallel to P2/P3 once specced.
+
+### Design track *(parallel · Jerry-owned)*
+The [mockup gaps](../backlog.md#mockup-gaps-design--for-jerry) — stale component refs, the 3 solution screens, relay specs, Dōjō per-role split, prune superseded orphans, empty/loading/error states. Unblocks Phases 3 + 5.
 
 ## How this doc stays honest
 
