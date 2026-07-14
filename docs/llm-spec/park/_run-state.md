@@ -2024,14 +2024,16 @@ port mismatch hive 7755 vs config 8787 (🟢), etc. Chunk order: {R1,R2}→R3→
      the real e2e daemon incl. Keychain register path + connect-form org input; About-mount skipped = cold e2e DB has no
      scanned git project, by design). Merged develop→main + `make bump v=patch` → bump `ac0c0e4b`, tag v0.3.2 pushed,
      tap `7250004` + marketplace `ff5ccde` synced, back-merged→develop. **CI Release workflow in_progress (run
-     29300662157)**. ⚠️⚠️ CI v0.3.2 FAILED — **NOT code**: GitHub ACTIONS BILLING block ("job was not started because
-     recent account payments have failed or your spending limit needs to be increased"). The release job failed in 2s,
-     no code ran (v0.3.1 built fine at 00:28Z; the account hit its Actions spend cap before v0.3.2 at 02:16Z). The
-     v0.3.2 COMMIT + TAG are pushed + correct; only the release-artifact build + homebrew-tap SHA256 update didn't run.
-     ▶️ JERRY ACTION: fix Billing & plans, then `gh run rerun 29300662157` (or re-push the tag) to build v0.3.2 artifacts
-     + update tap SHAs — until then `brew upgrade sensei` to 0.3.2 will SHA-mismatch (bump's tap-push set the version but
-     Actions sets the SHA256s). v0.3.2 lands org_slugs in the released DDL bundle so fresh installs + regular e2e get
-     the column without SENSEI_DDL_DIR. main==develop==ac0c0e4b. R3 commits: 05de8f64 (data) · 13c769bf (inference) ·
+     29300662157)**. ⚠️⚠️ CI v0.3.2 partial-FAILED — **NOT code**: GitHub ACTIONS BILLING block ("job was not started
+     because recent account payments have failed or your spending limit needs to be increased"). ALL BUILD JOBS PASSED
+     — build-app ✅ 14m21s + build-daemon ✅ ×4 platforms (macos arm64/x86_64, linux arm64/x86_64) 10-18m each (so R3
+     compiles+builds cross-platform); only the final `release` publish job was billing-blocked (failed 2s, not started)
+     → `update-tap` skipped. v0.3.2 COMMIT + TAG pushed + correct; the built binaries just weren't published to a GH
+     Release + tap SHA256s not updated. ▶️ JERRY ACTION: Settings → Billing and plans → fix payment / raise Actions
+     spending limit, then `gh run rerun 29300662157 --failed` (reruns just release + update-tap; builds already passed).
+     Until then `brew upgrade sensei` to 0.3.2 SHA-mismatches (bump's tap-push set the version; Actions sets SHA256s).
+     v0.3.2 lands org_slugs in the released DDL bundle so fresh installs + regular e2e get the column without
+     SENSEI_DDL_DIR. main==develop==ac0c0e4b. R3 commits: 05de8f64 (data) · 13c769bf (inference) ·
      b3f7be48 (frontend+dojo_id) · 5a933335 (e2e). setup company/client org-tagging = the connect-form kind picker +
      org_slugs input (no separate wizard).
    ── R3 FOLLOW-UPS (non-blocking): (1) live brew `sensei` service is now a DEBUG develop build (e2e's install-debug
