@@ -17,7 +17,7 @@
 //! Signal vocabulary matches the mockup's `SignalCard variant`:
 //! - `warn`        — high traffic + noticeable error rate. Users hit it.
 //! - `opportunity` — moderate traffic + noticeable error rate. Room to grow.
-//! - `unused`      — no activity in the last two weeks.
+//! - `unused`      — no activity in the last month (`unused_days`).
 //! - `win`         — high traffic + clean. A workhorse.
 
 use crate::analysis::insight_copy::{FallbackCopy, InsightKind};
@@ -93,7 +93,9 @@ pub struct SignalThresholds {
     pub clean_error_rate: f64,
     /// Error rate at or above this raises a `warn` / `opportunity`.
     pub high_error_rate: f64,
-    /// Days since `last_used_at` before we call a tool `unused`.
+    /// Days since `last_used_at` before we call a tool `unused`. 30 (a month) —
+    /// 14 flagged weekly-cadence tools (e.g. `get_rules`, used per session) as
+    /// dormant noise (#98); a full month idle is a truer "is this still needed?".
     pub unused_days: i64,
 }
 
@@ -104,7 +106,7 @@ impl Default for SignalThresholds {
             moderate_traffic_calls: 10,
             clean_error_rate:       0.02,
             high_error_rate:        0.05,
-            unused_days:            14,
+            unused_days:            30,
         }
     }
 }
