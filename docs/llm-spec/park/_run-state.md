@@ -2020,10 +2020,21 @@ port mismatch hive 7755 vs config 8787 (🟢), etc. Chunk order: {R1,R2}→R3→
      lacks it). ⚠️ app-e2e-build's install-debug overlays a DEBUG senseid into the brew prefix → after e2e the live
      brew service is a debug develop build (recover with a real `make install` later). Inferred→confirm click-flow is
      unit-tested only (throwaway e2e DB has no scanned git projects to match org_slugs).
-   ▶️ THEN (R3 milestone): if e2e green → merge develop→main + `make bump v=patch` → **v0.3.2** (lands org_slugs in the
-     released DDL bundle so fresh installs + regular e2e get the column without SENSEI_DDL_DIR). develop R3 commits:
-     05de8f64, 13c769bf, b3f7be48 (+ d948ae2c run-state). R3 = infer+confirm bind DONE; setup company/client org-tagging
-     folded into the connect-form kind picker + org_slugs input.
+   ✅✅ R3 SHIPPED + RELEASED v0.3.2 (2026-07-13). e2e GREEN (2 passed/1 skipped: org_slugs POST→GET round-trip through
+     the real e2e daemon incl. Keychain register path + connect-form org input; About-mount skipped = cold e2e DB has no
+     scanned git project, by design). Merged develop→main + `make bump v=patch` → bump `ac0c0e4b`, tag v0.3.2 pushed,
+     tap `7250004` + marketplace `ff5ccde` synced, back-merged→develop. **CI Release workflow in_progress (run
+     29300662157)** — watching. v0.3.2 lands org_slugs in the released DDL bundle so fresh installs + regular e2e get
+     the column without SENSEI_DDL_DIR. main==develop==ac0c0e4b. R3 commits: 05de8f64 (data) · 13c769bf (inference) ·
+     b3f7be48 (frontend+dojo_id) · 5a933335 (e2e). setup company/client org-tagging = the connect-form kind picker +
+     org_slugs input (no separate wizard).
+   ── R3 FOLLOW-UPS (non-blocking): (1) live brew `sensei` service is now a DEBUG develop build (e2e's install-debug
+     overlay) reporting 0.3.1 — do a real `make install` for a clean v0.3.2 release binary when convenient (data + DB
+     unaffected, org_slugs live). (2) inferred→confirm CHIP click-flow is unit-tested only (needs a scanned git project
+     whose owner ∈ a membership's org_slugs to e2e — cold e2e DB has none); could seed one in a cold-e2e variant later.
+     (3) residual dbd reconcile SET-DEFAULT churn is a separate harmless dbd-core gap [[reference_dbd_reconcile_incremental]].
+     (4) inline org-slugs EDIT for existing memberships was deferred (connect-time input + display shipped; PUT …/orgs
+     endpoint exists + e2e-verified, just no inline editor UI).
 
    ⏸️⏸️ PAUSED 2026-07-13 for Jerry's OS update + system RESTART. Safe state: on develop @767e3c48, 0 pending, no
    running subagents/builds, NOTHING pushed. JERRY DECIDED (before pause): (1) cut v0.3.1 NOW, (2) then R3 auto-bind
