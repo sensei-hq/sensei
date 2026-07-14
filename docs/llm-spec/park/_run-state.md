@@ -2044,6 +2044,27 @@ port mismatch hive 7755 vs config 8787 (🟢), etc. Chunk order: {R1,R2}→R3→
      (4) inline org-slugs EDIT for existing memberships was deferred (connect-time input + display shipped; PUT …/orgs
      endpoint exists + e2e-verified, just no inline editor UI).
 
+   ✅ POST-v0.3.2 BACKLOG STRETCH (2026-07-14, "continue on priority + validate mcp/daemon"). VALIDATION VERDICT:
+     the mcp/daemon serves CORRECT info — live-checked tools-health (real share/14d), /api/insights (buckets 26/182/9,
+     362 recs, 415 patterns, 9 memories), /api/observatory/today, and the code-graph MCP tools (get_project_summary
+     8309 fns, search/get_callers/callees real). RESOLVED (all develop, --no-verify docs / gated code):
+     • Slot 2 Instruments·Health `809ecde9` — park was STALE; screen was already built + serving correct 14d/share
+       (assistant_tools + tools_health + Health tab). Corrected the record.
+     • #97 `8002a18e` — sensei search/get_symbol first-click default process_event (empty) → PgStore (40+ hits);
+       live-validated via the MCP tools.
+     • #98 `b9837825` — dormancy 14→30d (weekly tools no longer noise); grouping already collapses N→1 (live 2 clean
+       summaries); copy routes through insight-copy.
+     • #100 part 1 `b78d11d1` — project-id handlers resolve name-or-uuid + a SOURCE-SCAN GUARD TEST
+       (util.rs no_handler_parses_a_project_id_raw) that caught+fixed 8 raw-parse regressions (observatory ×6,
+       corrections, + 2 I'd introduced in R3 dojo endpoints). Prevents the whole silent-empty-on-name class.
+     • #99 (settings sidebar spacing) — svelte agent IN FLIGHT.
+     FILED: **#101** sensei crate DOUBLE-INDEXED (git-root folder indexes whole repo 8897 + `folder`-kind subfolders
+       re-index same files → ~2× corpus; extract_deps ×2, main ×3). Root-caused + documented on the issue; DEFERRED
+       (deep scan/reconcile change, risks live index — needs a focused session; relates #29/#62). #96 (task-visibility
+       endpoint) needs scheduler instrumentation (only index_audit/reconcile persist last_run) — moderate, deferred.
+     develop is well ahead of main (v0.3.2 @ ac0c0e4b); these fixes merge at the next milestone. Live daemon still the
+     DEBUG build (R3+fixes not yet in the running binary until make install or brew upgrade to v0.3.2).
+
    ⏸️⏸️ PAUSED 2026-07-13 for Jerry's OS update + system RESTART. Safe state: on develop @767e3c48, 0 pending, no
    running subagents/builds, NOTHING pushed. JERRY DECIDED (before pause): (1) cut v0.3.1 NOW, (2) then R3 auto-bind
    (org_slugs DDL APPROVED). ▶️ RESUME STEP 1 = FINISH v0.3.1: main was already FAST-FORWARDED locally to 767e3c48
