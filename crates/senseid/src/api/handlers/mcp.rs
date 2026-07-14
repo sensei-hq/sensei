@@ -65,11 +65,10 @@ pub(crate) async fn mcp_call_tool(
             serde_json::json!({"files": files})
         }
         "get_communities" => {
-            let communities = if let Some(fid) = resolve_folder_id(&state, repo_id).await {
-                state.pg.list_communities(&fid).await.unwrap_or_else(|e| { tracing::warn!(error = %e, repo_id, "mcp get_communities: list_communities failed"); Vec::new() })
-            } else {
-                vec![]
-            };
+            // Communities are stored per-folder; aggregate across ALL scope folders
+            // (#G5a — the single-folder resolve_folder_id missed the repo root's).
+            let ids = resolve_scope_ids(&state, repo_id).await;
+            let communities = state.pg.list_communities_scoped(&ids).await.unwrap_or_else(|e| { tracing::warn!(error = %e, repo_id, "mcp get_communities: list_communities_scoped failed"); Vec::new() });
             serde_json::json!({"communities": communities})
         }
         "get_doc_drift" => {
