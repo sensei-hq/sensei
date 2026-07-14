@@ -2,7 +2,7 @@
 
 **Segment:** 04 · Project window — solution variant
 **Route:** `/solution/[id]/sessions`
-**Source mockup:** _none yet — reuse `SessionsDigestZen` from `lib/observatory/sessions-zen.jsx` with the solution filter._
+**Source mockup:** [`lib/observatory/solution-track.jsx`](../../mockups/Sensei/lib/observatory/solution-track.jsx) → `SolutionSessions` (solution-scoped session digest)
 **App file:** `app/src/routes/solution/[id]/sessions/+page.svelte`
 
 ## Purpose
