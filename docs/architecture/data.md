@@ -73,6 +73,30 @@ subfolders (`kind='folder'`) are members with a role/kind and own **no** code
 nodes. This is enforced at scan-classification + a self-healing reconcile
 (`dedup_structural_folder_nodes`); see [daemon](daemon.md#scan--the-code-graph).
 
+## Invariants (why the shape is the shape)
+
+- **Config vs content is separated deliberately.** User *intent*
+  (`folders_to_watch`, exclusions) is config and survives a data wipe; discovered
+  FS state (`folders`) is content, fully re-derivable by a re-scan. They live in
+  separate tables so a content wipe never destroys config — this prevents a whole
+  class of "lost my setup" bugs.
+- **`hook_events` PK is `bigserial`, not `uuid` — on purpose.** It's an
+  append-only, high-write stream; a sequential bigserial avoids the random B-tree
+  page splits a uuid PK causes, at 8 vs 16 bytes.
+- **Bridge-table scoping uses *partial* unique indexes, not composite PKs.**
+  `project_id IS NULL` = global, `= X` = scoped, no row = inactive. Postgres
+  treats each NULL as distinct, so a composite PK can't enforce "one global row" —
+  a partial unique index can. A `*_resolved` view tags each row a `scope` and
+  sorts project rows above global. One pattern, reused across
+  libraries/extensions/instruments.
+- **The metadata model has four categories:** *Orientation* (`projects`+`folders`),
+  *Symbol graph* (`nodes` — 16 kinds, `embedding vector(384)` with an **HNSW**
+  index; `library_pages.embedding` is `vector(768)`; `parent_id` self-references
+  for containment), *Relationships* (`edges` — 11 kinds, `edge_confidence` ∈
+  extracted/inferred/ambiguous), *Fingerprints* (`scan_state` — content_hash +
+  mtime). **Semantic search is a single SQL query** (pgvector cosine + relational
+  filters) — no separate vector store, no volatile cache outside Postgres.
+
 ## Where the gaps are
 
 Orphaned tables (`inference.insights`/`insight_batches` — no writer, superseded

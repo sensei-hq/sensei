@@ -69,6 +69,14 @@ Session corpus shrank **216 → 25** (a reset); local daemon is **v0.3.1** while
 Solution segment (3 screens), Bootstrap splash (2), consolidation screen, insights-reasoning drawer, first-run polish.
 **Approach:** build after the loop closes; each is only as good as the data behind it.
 
+### G9 — Capture + index-reliability residuals *(objective F2, foundation)*
+The watcher isn't fully incremental or crash-safe. It enqueues only `ResolveEdges`, **not** `BuildConnections`/`EmbedNodes`/`DetectCommunities` — so cross-folder edges, embeddings, and communities go stale between full scans (#101 audit gap #2). It also doesn't persist the FSEvents cursor (a daemon restart drops the gap), handle FSEvents overflow/`Rescan`, or watch `.git/HEAD`+refs (a branch switch/rebase can miss a reconcile). Plus ~54 twinless residue nodes from the pre-#101 era want a deleted-node/`scan_state` sweep. (The P0 mtime fast-path + boot/frequent reconcile, the watcher-liveness watchdog, and `sensei index doctor` all shipped — this is the remainder.)
+**Approach:** extend the watcher barrier chain to the full post-processing set; persist the cursor; watch `.git/HEAD`; overflow→force reconcile; add the residue sweep. WS D.
+
+### G10 — Command-governance overlay *(Dōjō-gated)*
+The command surface shipped (`get_commands`, `project_commands`, per-adapter `parse_commands`). Unbuilt: `dojo_preferences` (capability→preferred-tool bias in `get_commands`, user-scope until a Dōjō exists) and `dojo_policies` + skill/agent hooks (a `dojo/db-schema-migration-review` skill, a `dojo-security-reviewer` agent consuming policy definitions).
+**Approach:** user-scope preference bias now; policy enforcement folds into the external-blocked Dōjō track.
+
 ## External-blocked (do not count as missing local work)
 
 `collective-intelligence` and `dojo-lifecycle` are substantially **built**

@@ -55,9 +55,31 @@ Tool discovery differs by assistant (Claude Code `~/.claude/mcp.json` + project
 modelled as a `ToolDiscovery` trait with per-assistant impls feeding one unified
 inventory (`assistant_tools` / `mcp_servers`).
 
-## Source detail
+## Design rationale (integration constraints)
 
-Multi-coordinator adapter rationale in [`reference/04-mcp.md`](reference/04-mcp.md);
-the intended context contract in
-[`../spec/pipeline/context-delivery.md`](../spec/pipeline/context-delivery.md)
-and [`semantic-search.md`](../spec/pipeline/semantic-search.md).
+- **REPO_PATH resolves in 3 steps** (transparent to the assistant — it never
+  passes a project id): env `REPO_PATH` set at registration → process cwd → the
+  first project in the registry (single-project fallback).
+- **Error contract:** every tool distinguishes "no matches" (empty array) from
+  "not indexed" (actionable message, e.g. "Run `sensei init`") from
+  daemon-unreachable (a fix hint) — **never a silent empty**.
+- **OTLP lives in the daemon, not the per-session MCP server** — because Claude
+  Code starts one MCP server *per session*; N concurrent sessions would each try
+  to bind the OTLP port, only the first wins and the rest crash before the MCP
+  handshake, losing all tools. So the daemon owns OTLP; MCP servers
+  `POST /otlp/register` on startup and the daemon time-window-correlates.
+- **The MCP server stays coordinator-agnostic** (speaks standard MCP); a
+  `CoordinatorAdapter` absorbs the four per-assistant concerns — where to register
+  (config file), how to capture events (hooks/OTLP/poll/extension), where to
+  install skills, and the project-context file (CLAUDE.md vs AGENTS.md vs
+  `.cursorrules` — different name *and* content). Adding a coordinator = a new
+  adapter only, no tool changes; the generic fallback is git-diff polling +
+  `.sensei/context.md`.
+- **Capability Registry** (design, deferred): features declare required data +
+  source + `discard_when` (upstream issue) + a workaround that stays inert until
+  upstream lands, then is cleaned; the UI degrades with "est." badges. See
+  [decisions](../plan/decisions.md).
+
+Intended contracts: [`../spec/pipeline/context-delivery.md`](../spec/pipeline/context-delivery.md),
+[`../spec/pipeline/semantic-search.md`](../spec/pipeline/semantic-search.md),
+[`../spec/pipeline/mcp-surface.md`](../spec/pipeline/mcp-surface.md).
