@@ -921,6 +921,42 @@ mod tests {
     }
 
     #[test]
+    fn classify_does_not_promote_member_when_git_repo_is_a_child_of_scan_root() {
+        // #101 regression (the LIVE shape): scan rooted ABOVE the repo (e.g.
+        // ~/Developer), the git repo is a child (~/Developer/repo/.git), and a
+        // workspace member (crates/mycrate) sits inside it. `find_git_folders`
+        // DOES discover the child repo, so the member must be excluded as content
+        // of that repo — never promoted to its own Standalone root (which is what
+        // produced the 2026-07-13 double-owner residue). Genuine sibling repos and
+        // standalone projects OUTSIDE the git repo are still discovered.
+        let tmp = tempfile::tempdir().unwrap();
+        let scan_root = tmp.path();
+        let repo = scan_root.join("repo");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::create_dir_all(repo.join("crates/mycrate/src")).unwrap();
+        std::fs::write(repo.join("crates/mycrate/Cargo.toml"), "[package]\nname=\"mycrate\"").unwrap();
+        std::fs::write(repo.join("crates/mycrate/src/lib.rs"), "pub fn a() {}").unwrap();
+        // A real standalone project OUTSIDE the repo — must still be discovered.
+        // Manifest sits directly in `loose/` (has_indexable_code checks direct files).
+        std::fs::create_dir_all(scan_root.join("loose")).unwrap();
+        std::fs::write(scan_root.join("loose/go.mod"), "module loose").unwrap();
+
+        let gits = find_git_folders(scan_root, 3);
+        assert!(gits.iter().any(|g| g == &repo), "the child git repo is discovered");
+        let dirs = all_directories(scan_root, 3);
+        let classified = classify_folders(scan_root, &gits, &dirs, has_indexable_code);
+
+        // The member inside the git repo is NOT a project root of any kind.
+        assert!(
+            !classified.iter().any(|f| f.path == repo.join("crates/mycrate")),
+            "a workspace member inside a git repo must not be classified as a root; got {classified:?}",
+        );
+        // The enclosing repo IS a Git root; the outside loose project IS Standalone.
+        assert!(classified.iter().any(|f| f.path == repo && f.kind == FolderKind::Git));
+        assert!(classified.iter().any(|f| f.path == scan_root.join("loose") && f.kind == FolderKind::Standalone));
+    }
+
+    #[test]
     fn has_indexable_code_distinguishes_projects_from_junk() {
         let tmp = tempfile::tempdir().unwrap();
         let manifest = tmp.path().join("m");
