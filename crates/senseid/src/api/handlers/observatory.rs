@@ -134,8 +134,10 @@ pub(crate) async fn update_solution(
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     use crate::db::pg_store::{ProjectPatch, PROJECT_MATURITIES};
 
-    let project_id = uuid::Uuid::parse_str(&id)
-        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    // Name-or-uuid: resolve so `PUT /api/projects/sensei` works, not only a uuid
+    // (#100). 404 when no such project.
+    let project_id = resolve_project_uuid(&state, &id).await
+        .ok_or(StatusCode::NOT_FOUND)?;
 
     // Validate the only enum-backed field (maturity) up front → 400, not 500.
     // client/goal/preferred_acp are free text; icon/stack/links are jsonb.
@@ -171,8 +173,8 @@ pub(crate) async fn delete_solution(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let project_id = uuid::Uuid::parse_str(&id)
-        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    let project_id = resolve_project_uuid(&state, &id).await
+        .ok_or(StatusCode::NOT_FOUND)?;
     state.pg.delete_project(&project_id).await
         .map(|_| Json(serde_json::json!({"ok": true})))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
@@ -246,8 +248,8 @@ pub(crate) async fn add_solution_repo(
     Path(id): Path<String>,
     Json(body): Json<CreateProjectRepo>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let project_id = uuid::Uuid::parse_str(&id)
-        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    let project_id = resolve_project_uuid(&state, &id).await
+        .ok_or(StatusCode::NOT_FOUND)?;
 
     // Look up the folder by name (old string repo_id)
     let folder = state.pg.get_repo_by_name(&body.repo_id).await
@@ -305,8 +307,8 @@ pub(crate) async fn analyze_solution(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let project_id = uuid::Uuid::parse_str(&id)
-        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    let project_id = resolve_project_uuid(&state, &id).await
+        .ok_or(StatusCode::NOT_FOUND)?;
     let project = state.pg.get_project(&project_id).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
@@ -421,8 +423,8 @@ pub(crate) async fn solution_graph(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let project_id = uuid::Uuid::parse_str(&id)
-        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    let project_id = resolve_project_uuid(&state, &id).await
+        .ok_or(StatusCode::NOT_FOUND)?;
     let project = state.pg.get_project(&project_id).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
@@ -523,8 +525,8 @@ pub(crate) async fn solution_roles(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let project_id = uuid::Uuid::parse_str(&id)
-        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    let project_id = resolve_project_uuid(&state, &id).await
+        .ok_or(StatusCode::NOT_FOUND)?;
     // Verify project exists
     state.pg.get_project(&project_id).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
