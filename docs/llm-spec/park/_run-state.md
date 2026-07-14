@@ -1983,6 +1983,14 @@ port mismatch hive 7755 vs config 8787 (🟢), etc. Chunk order: {R1,R2}→R3→
    VERIFIED check 585 files 0/0, 120 tests, build ok. DRY on dojo-api.ts + reused admin-view helpers.
    ✅✅✅ CONSOLE UI TRACK COMPLETE (R6 scaffold+auth → wiring → R9 maintainer → R10 admin → R11 client-lead). All
    build/check/test-green; LIVE (magic-link login + running dojo-mind service) = Jerry's verify.
+   ⏸️⏸️ PAUSED 2026-07-13 for Jerry's OS update + system RESTART. Safe state: on develop @767e3c48, 0 pending, no
+   running subagents/builds, NOTHING pushed. JERRY DECIDED (before pause): (1) cut v0.3.1 NOW, (2) then R3 auto-bind
+   (org_slugs DDL APPROVED). ▶️ RESUME STEP 1 = FINISH v0.3.1: main was already FAST-FORWARDED locally to 767e3c48
+   (== develop; origin/main still v0.3.0/5743ee50, UNPUSHED). So resume = `git checkout main && make bump v=patch`
+   → v0.3.1 (push+tag+subtrees), then back-merge main→develop, watch CI. ▶️ RESUME STEP 2 = R3: add
+   `dojo.memberships.org_slugs text[]` (DDL-source-first) + infer-at-detect (git owner ∈ org_slugs → suggest dojo_id)
+   + About InappBind confirm chip + setup company/client org-tagging. After restart the brew daemon auto-relaunches
+   (launchd); a manual `sensei scan` may be wanted to reconcile post-reboot; MCP tools reload on the session's /mcp.
    ── ⛔ BUILDABLE-NO-DECISION BACKLOG NOW THIN — remaining work is Jerry-input-gated (per heartbeat step 6, idling on
    spawns until steer):
      • R3 (project→dōjō auto-bind): needs a SHIPPED-SCHEMA DDL on dojo.memberships to hold the git-org match. PROPOSAL
