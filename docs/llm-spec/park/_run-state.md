@@ -2007,10 +2007,23 @@ port mismatch hive 7755 vs config 8787 (🟢), etc. Chunk order: {R1,R2}→R3→
      /api/projects/{id}/dojo-suggestion + POST /api/projects/{id}/dojo-binding fail-closed). kind already encodes
      employer/client so org_slugs was the only new field. All unit+DB+integration tests green; clippy 0. Plan doc:
      docs/plans/2026-07-13-r3-auto-bind.md.
-   ▶️ NEXT (R3 Commit 3 = frontend, remaining): About-panel InappBind confirm chip (fetch dojo-suggestion → Confirm
-     posts dojo-binding / Dismiss) + org-tagging UI (org_slugs input in the connect/connections flow) + Playwright
-     e2e. Svelte MCP / svelte-file-editor MANDATORY; rokkit named tokens. Mockup: docs/mockups/Sensei/lib/dojo-inapp.jsx
-     InappBind. develop (2 R3 commits) NOT yet merged to main — merge+bump at the R3 milestone (after frontend).
+   • ✅ R3 FRONTEND SHIPPED on develop **`b3f7be48`** (built via svelte-file-editor + Svelte MCP; svelte-check
+     949/0/0, unit 1197 pass). About panel (project/[id]/about) Bindings section: confirmed|inferred|empty over
+     GET dojo-suggestion + membership list; inferred row = "matched org · <slug>" + Confirm → POST dojo-binding →
+     client-side swap to confirmed; logic in about-binding-state.svelte.ts (reuses kindPill, DRY). Connections pane:
+     "Org slugs" input in connect form (parseOrgSlugs normalizes) + "orgs · <slug>" chips on cards. api.ts/types.ts
+     wired. **Also: list_projects_under now serializes projects.dojo_id** (confirmed-chip primary signal) + Project.dojo_id.
+     Reconcile fix write-up saved [[reference_dbd_reconcile_incremental]].
+   ▶️ IN FLIGHT: R3 Playwright e2e (app/e2e/tests/dojo-binding.spec.ts) — org_slugs POST→GET round-trip + PUT /orgs
+     + connect-form org input + About Bindings mount. Running via `SENSEI_DDL_DIR=$(pwd)/database make app-e2e-build
+     + reset-e2e-db + bun run test:e2e dojo-binding` (SENSEI_DDL_DIR so sensei_e2e gets org_slugs — v0.3.1 bundle
+     lacks it). ⚠️ app-e2e-build's install-debug overlays a DEBUG senseid into the brew prefix → after e2e the live
+     brew service is a debug develop build (recover with a real `make install` later). Inferred→confirm click-flow is
+     unit-tested only (throwaway e2e DB has no scanned git projects to match org_slugs).
+   ▶️ THEN (R3 milestone): if e2e green → merge develop→main + `make bump v=patch` → **v0.3.2** (lands org_slugs in the
+     released DDL bundle so fresh installs + regular e2e get the column without SENSEI_DDL_DIR). develop R3 commits:
+     05de8f64, 13c769bf, b3f7be48 (+ d948ae2c run-state). R3 = infer+confirm bind DONE; setup company/client org-tagging
+     folded into the connect-form kind picker + org_slugs input.
 
    ⏸️⏸️ PAUSED 2026-07-13 for Jerry's OS update + system RESTART. Safe state: on develop @767e3c48, 0 pending, no
    running subagents/builds, NOTHING pushed. JERRY DECIDED (before pause): (1) cut v0.3.1 NOW, (2) then R3 auto-bind
