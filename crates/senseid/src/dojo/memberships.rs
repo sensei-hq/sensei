@@ -228,6 +228,63 @@ pub async fn set_sync_status(pg: &PgStore, membership_id: &uuid::Uuid, status: &
     pg.set_dojo_sync_status(membership_id, status).await
 }
 
+/// A SUGGESTED project→Dōjō binding for the About-panel confirm chip (the
+/// enriched form of [`crate::dojo::routing::InferredBinding`] with the display
+/// fields the chip needs). Confirm-inferred: surfaced for the user to accept;
+/// binding is only written when they confirm (`POST …/dojo-binding`).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct BindingSuggestion {
+    pub membership_id: uuid::Uuid,
+    /// employer | client | community | personal.
+    pub kind: String,
+    /// The project's git-remote owner slug that matched the membership.
+    pub matched_slug: String,
+    pub tenant_key: String,
+    pub dojo_url: String,
+}
+
+/// Infer a project→Dōjō binding from the project's git-remote owner(s), for the
+/// About-panel confirm chip. Returns `None` when the project is already bound
+/// (no suggestion needed), has no git owner, or no connected membership covers
+/// its owner. Pure inference lives in [`crate::dojo::routing::infer_binding`];
+/// this only gathers the inputs and enriches the result for display — it never
+/// writes the binding (that is the user-confirmed [`bind_project`]).
+pub async fn suggest_binding(pg: &PgStore, project_id: &uuid::Uuid) -> Result<Option<BindingSuggestion>, String> {
+    use crate::dojo::routing::{infer_binding, BindCandidate};
+
+    // Already bound → the chip doesn't apply.
+    if pg.project_bound_membership(project_id).await?.is_some() {
+        return Ok(None);
+    }
+    let owners = pg.project_org_owners(project_id).await?;
+    if owners.is_empty() {
+        return Ok(None);
+    }
+    let rows = pg.list_dojo_memberships().await?;
+    let candidates: Vec<BindCandidate> = rows
+        .iter()
+        .filter_map(|r| {
+            MembershipKind::from_db_str(&r.kind).map(|kind| BindCandidate {
+                membership_id: r.id,
+                kind,
+                org_slugs: r.org_slugs.clone(),
+            })
+        })
+        .collect();
+
+    Ok(infer_binding(&owners, &candidates).map(|b| {
+        // Enrich with display fields from the matched membership row.
+        let row = rows.iter().find(|r| r.id == b.membership_id);
+        BindingSuggestion {
+            membership_id: b.membership_id,
+            kind: b.kind.as_db_str().to_string(),
+            matched_slug: b.matched_slug,
+            tenant_key: row.map(|r| r.tenant_key.clone()).unwrap_or_default(),
+            dojo_url: row.map(|r| r.dojo_url.clone()).unwrap_or_default(),
+        }
+    }))
+}
+
 /// A local project bound to a membership — for the connections pane's
 /// "bound projects" strip.
 #[derive(Debug, Clone, serde::Serialize)]

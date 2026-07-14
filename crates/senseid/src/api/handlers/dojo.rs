@@ -139,3 +139,52 @@ pub(crate) async fn set_membership_orgs(
     }
     Ok(Json(serde_json::json!({ "ok": true })))
 }
+
+/// GET /api/projects/{id}/dojo-suggestion — the inferred (confirm-inferred)
+/// project→Dōjō binding for the About-panel chip, or `{ "suggestion": null }`
+/// when the project is already bound / has no matching membership. Read-only:
+/// suggests, never binds.
+pub(crate) async fn project_binding_suggestion(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let project_id = uuid::Uuid::parse_str(id.trim())
+        .map_err(|_| err(StatusCode::BAD_REQUEST, "bad project id"))?;
+    let suggestion = memberships::suggest_binding(&state.pg, &project_id).await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+    Ok(Json(serde_json::json!({ "suggestion": suggestion })))
+}
+
+/// Body for POST /api/projects/{id}/dojo-binding — confirm a binding.
+#[derive(Deserialize)]
+pub(crate) struct BindProjectBody {
+    /// The membership to bind this project to (`projects.dojo_id`).
+    pub membership_id: String,
+}
+
+/// POST /api/projects/{id}/dojo-binding — bind a project to a Dōjō membership
+/// (the user confirming the inferred suggestion, or an explicit bind). Fails
+/// closed if the membership is unknown — a project must never point at a
+/// membership the daemon does not hold. 404 if the project is unknown.
+pub(crate) async fn bind_project_to_membership(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(b): Json<BindProjectBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let project_id = uuid::Uuid::parse_str(id.trim())
+        .map_err(|_| err(StatusCode::BAD_REQUEST, "bad project id"))?;
+    let membership_id = uuid::Uuid::parse_str(b.membership_id.trim())
+        .map_err(|_| err(StatusCode::BAD_REQUEST, "bad membership_id"))?;
+    if state.pg.get_dojo_membership(&membership_id).await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
+        .is_none()
+    {
+        return Err(err(StatusCode::NOT_FOUND, "unknown membership"));
+    }
+    if !memberships::bind_project(&state.pg, &project_id, &membership_id).await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
+    {
+        return Err(err(StatusCode::NOT_FOUND, "project not found"));
+    }
+    Ok(Json(serde_json::json!({ "ok": true, "dojo_id": membership_id.to_string() })))
+}
