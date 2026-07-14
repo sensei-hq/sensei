@@ -2,7 +2,7 @@
 
 ## Overview
 
-The gateway is a standalone Rust crate (`crates/gateway/`) that routes LLM inference requests across providers with fallback, cost tracking, and circuit breaking. It is a port of the Strategos gateway concepts into idiomatic Rust. See [ideas/05-gateway](../ideas/05-gateway.md) for the motivation and scope.
+The gateway is a standalone Rust crate (`crates/gateway/`) that routes LLM inference requests across providers with fallback, cost tracking, and circuit breaking. It is a port of the Strategos gateway concepts into idiomatic Rust. See [ideas/05-gateway](../../archive/ideas/05-gateway.md) for the motivation and scope.
 
 The gateway has no sensei-specific dependencies. Sensei consumes it as a library; other applications can too.
 

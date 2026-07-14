@@ -33,6 +33,6 @@ flowchart LR
 ## Source detail
 
 Landing structure + static-build design in
-[`../design/08-website.md`](../design/08-website.md); build/release + homebrew
-delivery in [`../design/10-build-and-release.md`](../design/10-build-and-release.md)
-and [`09-homebrew.md`](../design/09-homebrew.md).
+[`reference/08-website.md`](reference/08-website.md); build/release + homebrew
+delivery in [`reference/10-build-and-release.md`](reference/10-build-and-release.md)
+and [`09-homebrew.md`](reference/09-homebrew.md).

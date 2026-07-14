@@ -93,5 +93,5 @@ silent-error audit is a standing follow-up (open-issues D).
 ## Source detail
 
 Deeper internals (crate structure, adapter IR, compression L0–L3, context
-manager) currently in [`../design/02-daemon.md`](../design/02-daemon.md) — folds
+manager) currently in [`reference/02-daemon.md`](reference/02-daemon.md) — folds
 into this doc + [data.md](data.md) as the restructure completes.
