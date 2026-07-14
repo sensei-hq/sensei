@@ -1,8 +1,19 @@
-# Sensei — Architecture & Design
+# Architecture — reference (per-component design detail)
+
+> **Position:** this is the deep, per-component engineering rationale, folded
+> under [`architecture/`](../README.md) (formerly `docs/design/`). The layer
+> overviews in `architecture/*.md` are the entry points; come here for depth.
+> Some docs predate the current architecture — **known stale spots:** the
+> gateway is now a sibling repo (`sensei-hq/gateway`, not `crates/gateway/`);
+> there is no dev/prod split or port 7745 (single mode, :7744). See
+> [`../../decisions.md`](../../decisions.md) for what changed and why. The old
+> product-narrative "what" now lives in [`../../archive/ideas/`](../../archive/ideas/).
 
 ## How to read this folder
 
-`docs/design/` describes **how** Sensei is built. For **what** it does and why, see [`docs/ideas/`](../ideas/). Each design doc references the relevant ideas doc so you can trace the "how" back to the "what". User-facing behavior is never re-explained here — if a design doc needs to reference a feature, it links to the ideas doc and moves on.
+Each doc describes **how** a component is built and traces back to the
+[requirements](../../requirements/README.md). User-facing behaviour is not
+re-explained — it links and moves on.
 
 ---
 
@@ -120,15 +131,15 @@ Sensei has three tiers, with two cross-cutting concerns:
 
 | # | Component | Binary / Package | Port | Purpose | Design Doc | Ideas Ref |
 |---|-----------|-----------------|------|---------|------------|-----------|
-| 1 | **App** | `app/` (Tauri + SvelteKit) | — | Desktop observatory: dashboards, setup wizard, configuration, session viewer | [01-app](./01-app.md) | [ideas/02](../ideas/02-setup.md), [ideas/03](../ideas/03-observatory.md) |
-| 2 | **Daemon** | `senseid` (`crates/senseid`) | :7744 (release) / :7745 (dev) | Core engine: indexer, graph store, events, analytics, HTTP API | [02-daemon](./02-daemon.md) | [ideas/04](../ideas/04-project.md) |
-| 3 | **Gateway** | `sensei-gateway` (`crates/gateway`) | — (library) | Inference routing: provider fallback chains, model assignments, budget tracking | [03-gateway](./03-gateway.md) | [ideas/05](../ideas/05-gateway.md) |
-| 4 | **MCP** | `sensei-mcp` (`crates/mcp`) | — (stdio) | MCP server: translates MCP tool calls to daemon HTTP; the AI assistant's interface | [04-mcp](./04-mcp.md) | [ideas/04](../ideas/04-project.md) |
-| 5 | **CLI** | `sensei` (`crates/cli`) | — | Command-line interface for manual operations, diagnostics, database management | [05-cli](./05-cli.md) | [ideas/01](../ideas/01-bootstrap.md) |
+| 1 | **App** | `app/` (Tauri + SvelteKit) | — | Desktop observatory: dashboards, setup wizard, configuration, session viewer | [01-app](./01-app.md) | [ideas/02](../../archive/ideas/02-setup.md), [ideas/03](../../archive/ideas/03-observatory.md) |
+| 2 | **Daemon** | `senseid` (`crates/senseid`) | :7744 (release) / :7745 (dev) | Core engine: indexer, graph store, events, analytics, HTTP API | [02-daemon](./02-daemon.md) | [ideas/04](../../archive/ideas/04-project.md) |
+| 3 | **Gateway** | `sensei-gateway` (`crates/gateway`) | — (library) | Inference routing: provider fallback chains, model assignments, budget tracking | [03-gateway](./03-gateway.md) | [ideas/05](../../archive/ideas/05-gateway.md) |
+| 4 | **MCP** | `sensei-mcp` (`crates/mcp`) | — (stdio) | MCP server: translates MCP tool calls to daemon HTTP; the AI assistant's interface | [04-mcp](./04-mcp.md) | [ideas/04](../../archive/ideas/04-project.md) |
+| 5 | **CLI** | `sensei` (`crates/cli`) | — | Command-line interface for manual operations, diagnostics, database management | [05-cli](./05-cli.md) | [ideas/01](../../archive/ideas/01-bootstrap.md) |
 | 6 | **Marketplace** | `marketplace/` (git subtree) | — | Claude Code plugins: skills, commands, hooks, plugin configs, catalog | [06-marketplace](./06-marketplace.md) | — |
-| 7 | **Logging** | `sensei-logger` (`crates/logger`) | — (library) | Structured logging crate shared across all binaries | [07-logging](./07-logging.md) | [ideas/06](../ideas/06-logging.md) |
+| 7 | **Logging** | `sensei-logger` (`crates/logger`) | — (library) | Structured logging crate shared across all binaries | [07-logging](./07-logging.md) | [ideas/06](../../archive/ideas/06-logging.md) |
 | 8 | **Website** | `website/` (SvelteKit) | — | Marketing site: philosophy, downloads, benchmarks | [08-website](./08-website.md) | — |
-| 9 | **Homebrew** | `homebrew/` (git subtree) | — | Homebrew tap formula for CLI + daemon distribution | [09-homebrew](./09-homebrew.md) | [ideas/01](../ideas/01-bootstrap.md) |
+| 9 | **Homebrew** | `homebrew/` (git subtree) | — | Homebrew tap formula for CLI + daemon distribution | [09-homebrew](./09-homebrew.md) | [ideas/01](../../archive/ideas/01-bootstrap.md) |
 | 10 | **Build** | `Makefile`, `Cargo.toml` workspace | — | Build orchestration: `make crates-dev`, `make bump`, `make test` | [10-build](./10-build-and-release.md) | — |
 
 ---
@@ -220,7 +231,7 @@ Gaps identified during design doc writing.
 |-----|--------|-------------|--------|
 | G1 | Observatory | No daemon API endpoints designed for observatory screens (metrics, teachings, memory) | Observatory UI |
 | G2 | Setup | Inference + Assignments wizard steps blocked on gateway integration | Setup completion |
-| G3 | Memory | Memory consolidation described in [ideas/03](../ideas/03-observatory.md) but daemon implementation not designed | Observatory coaching |
+| G3 | Memory | Memory consolidation described in [ideas/03](../../archive/ideas/03-observatory.md) but daemon implementation not designed | Observatory coaching |
 | G4 | MCP | Multi-coordinator adapter implementations not designed beyond Claude Code | Cursor/Zed support |
 | G5 | App | Desktop app distribution mechanism undefined (macOS DMG? Cask only?) | Release process |
 | G6 | Website | Architecture diagram needs update from old D3 version (referenced deprecated tech) | Website accuracy |

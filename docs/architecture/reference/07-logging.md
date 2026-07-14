@@ -1,6 +1,6 @@
 # Logging — Structured Tracing & Diagnostics
 
-**See also:** [ideas/06](../ideas/06-logging.md)
+**See also:** [ideas/06](../../archive/ideas/06-logging.md)
 
 ## Overview
 

@@ -82,5 +82,5 @@ by `insight_copy`) and empty-by-design dojo tables (external-blocked). See
 ## Source detail
 
 Deeper rationale (model relationships, indexing) currently in
-[`../design/02-daemon.md`](../design/02-daemon.md) §Metadata model — folds into
+[`reference/02-daemon.md`](reference/02-daemon.md) §Metadata model — folds into
 this doc as the restructure completes.

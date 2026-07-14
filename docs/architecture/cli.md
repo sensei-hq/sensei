@@ -36,4 +36,4 @@ flowchart LR
 ## Source detail
 
 Command list + config-merge + hook-script design in
-[`../design/05-cli.md`](../design/05-cli.md).
+[`reference/05-cli.md`](reference/05-cli.md).

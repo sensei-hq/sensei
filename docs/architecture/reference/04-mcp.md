@@ -2,7 +2,7 @@
 
 ## Overview
 
-The MCP server is a Rust binary (`crates/mcp/`) that exposes daemon capabilities as MCP tools over stdio transport. The AI coordinator (Claude Code, Cursor, etc.) never calls the daemon directly -- it only sees MCP tools. See [ideas/04-project](../ideas/04-project.md) for the project intelligence vision this server enables.
+The MCP server is a Rust binary (`crates/mcp/`) that exposes daemon capabilities as MCP tools over stdio transport. The AI coordinator (Claude Code, Cursor, etc.) never calls the daemon directly -- it only sees MCP tools. See [ideas/04-project](../../archive/ideas/04-project.md) for the project intelligence vision this server enables.
 
 The binary speaks the standard MCP protocol. Tool calls arrive as JSON-RPC over stdin; responses go to stdout. Internally, each tool translates to an HTTP request to the running daemon (`senseid`).
 

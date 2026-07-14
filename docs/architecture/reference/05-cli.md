@@ -2,7 +2,7 @@
 
 ## Overview
 
-`sensei` is a Rust binary (`crates/cli/`) for manual operations and benchmarking. It is optional -- the daemon and MCP server handle all automated workflows. The CLI is for developers who want direct control over initialization, status checks, library caching, and hook management. See [ideas/02-setup](../ideas/02-setup.md) for the setup flow this CLI implements.
+`sensei` is a Rust binary (`crates/cli/`) for manual operations and benchmarking. It is optional -- the daemon and MCP server handle all automated workflows. The CLI is for developers who want direct control over initialization, status checks, library caching, and hook management. See [ideas/02-setup](../../archive/ideas/02-setup.md) for the setup flow this CLI implements.
 
 ## Commands
 
