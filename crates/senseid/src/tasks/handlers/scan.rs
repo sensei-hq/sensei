@@ -446,6 +446,35 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn scan_root_enqueues_no_processgitfolder_for_a_workspace_member() {
+        // #101 regression at the ENQUEUE/TRIGGER layer: a monorepo (git repo with
+        // a workspace member crate) must enqueue exactly ONE ProcessGitFolder —
+        // the repo — and NONE for the member. The member is structural; the repo
+        // owns and indexes its files. This is the guard against re-promoting a
+        // member to a second index owner (the 2026-07-13 double-owner residue).
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("mono/.git")).unwrap();
+        std::fs::write(root.join("mono/Cargo.toml"), "[workspace]\nmembers=[\"crates/*\"]").unwrap();
+        std::fs::create_dir_all(root.join("mono/crates/mycrate/src")).unwrap();
+        std::fs::write(root.join("mono/crates/mycrate/Cargo.toml"), "[package]\nname=\"mycrate\"").unwrap();
+        std::fs::write(root.join("mono/crates/mycrate/src/lib.rs"), "pub fn a() {}").unwrap();
+
+        let ctx = make_ctx().await;
+        let task = Task::new(TaskKind::ScanRoot, "", &root.to_string_lossy());
+        scan_root(&ctx, &task).await.unwrap();
+
+        let pgf: Vec<String> = ctx.queue.snapshot().await.into_iter()
+            .filter(|(k, _, _)| *k == TaskKind::ProcessGitFolder)
+            .map(|(_, _, path)| path)
+            .collect();
+        assert_eq!(pgf.len(), 1, "exactly one ProcessGitFolder (the repo), got {pgf:?}");
+        assert!(pgf[0].ends_with("/mono"), "the ProcessGitFolder targets the repo root, got {pgf:?}");
+        let member = root.join("mono/crates/mycrate").to_string_lossy().to_string();
+        assert!(!pgf.iter().any(|p| p == &member), "no ProcessGitFolder for a workspace member, got {pgf:?}");
+    }
+
+    #[tokio::test]
     async fn scan_reconciles_stale_roots() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();

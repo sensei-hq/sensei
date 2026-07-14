@@ -331,6 +331,24 @@ impl TaskQueue {
             || state.running.values().any(|t| t.kind == kind)
     }
 
+    /// Test-only: a snapshot of every task the queue has seen (pending + blocked
+    /// + running + completed) as `(kind, folder_path, path)`. Lets a test assert
+    /// the enqueue GRAPH — which kinds were enqueued for which owner
+    /// (`folder_path`) — so the #101 one-task-one-owner invariant is locked at
+    /// the enqueue layer, not just the final DB. A member must never appear as
+    /// the `folder_path` (owner) of a `ProcessFile`, nor get its own
+    /// `ProcessGitFolder`.
+    #[cfg(test)]
+    pub async fn snapshot(&self) -> Vec<(super::TaskKind, String, String)> {
+        let s = self.inner.lock().await;
+        s.pending.iter()
+            .chain(s.blocked.iter())
+            .chain(s.running.values())
+            .chain(s.completed.iter())
+            .map(|t| (t.kind.clone(), t.folder_path.clone(), t.path.clone()))
+            .collect()
+    }
+
     /// Get queue status summary.
     pub async fn status(&self) -> QueueStatus {
         let state = self.inner.lock().await;
