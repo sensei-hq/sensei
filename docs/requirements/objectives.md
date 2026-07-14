@@ -3,7 +3,7 @@
 > The **WHAT**, broken down. Each objective states the outcome and how we know
 > it's met — never the implementation. Architecture
 > ([`../architecture/`](../architecture/README.md)) maps each to a layer; the
-> per-screen/per-pipeline contracts live in [`../llm-spec/`](../llm-spec/README.md).
+> per-screen/per-pipeline contracts live in [`../spec/`](../spec/README.md).
 > Traces back to [`vision.md`](vision.md).
 
 Objectives are grouped by the four personal segments plus the cross-cutting

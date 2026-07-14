@@ -1,7 +1,7 @@
 //! Deterministic client-work DEREFERENCE — the confidentiality SAFETY NET.
 //!
 //! This is the hardest-stakes code in the Dōjō layer: client identifiers must
-//! NEVER leave the machine. The rule (`docs/llm-spec/pipeline/dojo-lifecycle.md`
+//! NEVER leave the machine. The rule (`docs/spec/pipeline/dojo-lifecycle.md`
 //! → Attribution): "Client work | **Source-dereferenced** | Source reference
 //! (repo, identifiers, pointer). Learning + cause + context travel." The wrong
 //! gate: "A client-project memory got published with its source repo identifiers

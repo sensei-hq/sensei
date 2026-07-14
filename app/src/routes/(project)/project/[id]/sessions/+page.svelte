@@ -7,7 +7,7 @@
   // screen only swaps in a project-scoped fetcher and a single-project totals
   // line. Nothing here is a parallel copy of the observatory primitives.
   //
-  // Spec:   docs/llm-spec/screen/project-sessions.md
+  // Spec:   docs/spec/screen/project-sessions.md
   // Mockup: docs/mockups/Sensei/lib/project-pages.jsx → sessions pane
   import { untrack } from 'svelte';
   import { goto } from '$app/navigation';

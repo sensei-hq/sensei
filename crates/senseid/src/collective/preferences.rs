@@ -2,7 +2,7 @@
 //! toward whom, and how often" settings.
 //!
 //! Backs the Preferences → Sharing screen
-//! (`docs/llm-spec/screen/observatory-collective.md`, kanji 群) and gates the
+//! (`docs/spec/screen/observatory-collective.md`, kanji 群) and gates the
 //! Dōjō contribute loop (C6): destination + cadence + per-category filters + the
 //! default attribution mode applied when an insight leaves the machine.
 //!

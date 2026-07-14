@@ -1,11 +1,11 @@
 ---
 name: spec-doc-reviewer
 description: |
-  Review an llm-spec doc for completeness and consistency BEFORE any implementation begins. Use proactively whenever you're about to start coding against a spec at `docs/llm-spec/**/*.md`, or whenever you finish drafting a spec and want an independent check that it's usable.
+  Review an spec doc for completeness and consistency BEFORE any implementation begins. Use proactively whenever you're about to start coding against a spec at `docs/spec/**/*.md`, or whenever you finish drafting a spec and want an independent check that it's usable.
 
   <example>
   Context: About to implement a screen against its spec doc.
-  user: "Implement docs/llm-spec/screen/observatory-today.md."
+  user: "Implement docs/spec/screen/observatory-today.md."
   assistant: "Before I code, I'll launch the spec-doc-reviewer agent to check the spec is complete, its done-gates are testable, and it agrees with the mockup."
   <commentary>
   The spec is the source of truth for what "done" means. Reviewing it first prevents building to a stale or incomplete brief.
@@ -14,7 +14,7 @@ description: |
 
   <example>
   Context: Just drafted a spec doc.
-  user: "I wrote docs/llm-spec/pipeline/analyzer.md — can you sanity-check it?"
+  user: "I wrote docs/spec/pipeline/analyzer.md — can you sanity-check it?"
   assistant: "I'll use the spec-doc-reviewer agent to check the five required sections are non-trivial and the invariants match the current DDL."
   <commentary>
   Independent review catches missing invariants and vague done-gates the author missed.
@@ -29,7 +29,7 @@ color: blue
 
 ## Purpose
 
-Read one llm-spec doc from `docs/llm-spec/`, verify it's usable as a
+Read one spec doc from `docs/spec/`, verify it's usable as a
 build brief, and return a punch list of what to fix before coding
 begins.
 
@@ -42,7 +42,7 @@ message.
 You get **one target doc** (path). Read:
 
 1. The target doc.
-2. `docs/llm-spec/README.md` for the five-section template and the
+2. `docs/spec/README.md` for the five-section template and the
    themes.
 3. The source mockup referenced in the doc's front-matter
    (`Source mockup:` line) — verify it exists.
@@ -79,7 +79,7 @@ Return a PASS or FAIL for each item. FAIL entries must include a fix.
    observable failure. "Bug in filtering" fails; "Chip counts don't
    sum to All" passes.
 
-6. **Themes honoured.** From `docs/llm-spec/README.md`: value before
+6. **Themes honoured.** From `docs/spec/README.md`: value before
    setup · one decision one default · discoverability of depth · trust
    through proof · Dōjō = org boundary. If the spec violates one,
    call it out with the specific line.

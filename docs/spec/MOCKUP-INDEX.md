@@ -87,7 +87,7 @@ variants superseded by the "-simple" or `-v2` files above:
 3. **When in doubt, verify against the observatory switch**, not the file
    name.
 4. **Never target a file in `discarded/`.**
-5. **Related spec docs live under `docs/llm-spec/`.** Every screen has a
+5. **Related spec docs live under `docs/spec/`.** Every screen has a
    spec that names its source file in the front-matter.
 
 ## Design conventions

@@ -6,7 +6,7 @@
 //!
 //! This is the confidentiality-critical decision (it decides where potentially
 //! sensitive work goes), so it is a pure function with no I/O and is heavily
-//! unit-tested. The lifecycle rules it encodes (`docs/llm-spec/pipeline/
+//! unit-tested. The lifecycle rules it encodes (`docs/spec/pipeline/
 //! dojo-lifecycle.md`):
 //!
 //! - "Rule: **client takes precedence.** A project bound to a client membership

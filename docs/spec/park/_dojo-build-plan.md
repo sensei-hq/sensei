@@ -192,8 +192,8 @@ R5 → R6 → {R9, R10, R11} → R4 / R12 / R14 / R15 (polish) → R13 (deferred
 ## FIRST 3 BUILDABLE CHUNKS (🟢 — hand to a build subagent; no Docker, no auth)
 
 ### R1 — Upstream contribute cadence scheduler
-- **Read first:** `docs/llm-spec/pipeline/collective-intelligence.md` (done/wrong gates),
-  `docs/llm-spec/screen/observatory-collective.md` (cadence chip), `dojo/contribute.rs`
+- **Read first:** `docs/spec/pipeline/collective-intelligence.md` (done/wrong gates),
+  `docs/spec/screen/observatory-collective.md` (cadence chip), `dojo/contribute.rs`
   (`contribute_batch` l.557, `preview_batch` l.615, `load_batch` l.393), `collective/preferences.rs`
   (destination/cadence/mode enums), `api/server.rs:206-214` + `tasks/analyzer_scheduler.rs`
   (watermark/tick pattern to mirror), `db/pg_store.rs:5579` (batch creation) — confirm who
@@ -206,7 +206,7 @@ R5 → R6 → {R9, R10, R11} → R4 / R12 / R14 / R15 (polish) → R13 (deferred
   `dojo_outbox` as `sent`/`held`; `make test-fast` green; zero-errors-policy.
 
 ### R2 — Share-review desktop screen (C11)
-- **Read first:** `docs/llm-spec/screen/observatory-share-review.md`, mockup
+- **Read first:** `docs/spec/screen/observatory-share-review.md`, mockup
   `docs/mockups/Sensei/lib/dojo-inapp.jsx` `InappShare`(l.220)+`InappTravel`(l.300),
   `MOCKUP-INDEX.md` (`/share-review` → `InappShare`), existing sibling
   `(observatory)/upgrades/+page.svelte` + its `dojo-upgrades-state.svelte.ts` as the state/API
@@ -220,7 +220,7 @@ R5 → R6 → {R9, R10, R11} → R4 / R12 / R14 / R15 (polish) → R13 (deferred
 
 ### R7 — Admin + lead console BACKEND endpoints on hive-mind
 *(Do R7 & R8 together — same service, same test harness; both 🟢, synthetic-JWT testable.)*
-- **Read first:** `docs/llm-spec/screen/dojo-admin-console.md` + `dojo-lead-console.md` (done
+- **Read first:** `docs/spec/screen/dojo-admin-console.md` + `dojo-lead-console.md` (done
   gates + curls), `crates/hive-mind/src/api.rs` (route + dual-auth pattern, `authenticate_dojo`),
   `store.rs` (dojo CRUD helpers to extend), `tests/dojo_promote_test.rs` + `dojo_artifacts_test.rs`
   (synthetic-JWT harness to copy), DDL `dojo.{roles,identities,policies,engagements,incidents,audit_events,events}`.

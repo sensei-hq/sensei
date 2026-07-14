@@ -4,7 +4,7 @@
 //! same stack keep hitting X; here's what worked." This module owns the
 //! **anonymisation** that lets a local insight travel to the global collective
 //! without carrying anything project-specific
-//! (`docs/llm-spec/pipeline/collective-intelligence.md`).
+//! (`docs/spec/pipeline/collective-intelligence.md`).
 //!
 //! Global-dojo anonymisation is **stricter than a client-Dōjō dereference**:
 //! - the deterministic [`crate::dojo::attribution`] strip runs FIRST (the

@@ -14,7 +14,7 @@ Read in this order — each layer answers a narrower question:
 2. **[`architecture/`](architecture/README.md)** — the **HOW**, per layer
    (data · daemon · cli · app · mcp · marketplace · dojo · website). Refers back
    to requirements.
-3. **[`llm-spec/`](llm-spec/README.md)** — the **buildable contract**: per-screen
+3. **[`spec/`](spec/README.md)** — the **buildable contract**: per-screen
    and per-pipeline specs with a five-section "done" definition. The
    source-of-truth for implementation.
 
@@ -31,7 +31,7 @@ Supporting:
 ```mermaid
 flowchart LR
     R["requirements/<br/>what &amp; why"] --> A["architecture/<br/>how — layers"]
-    R --> S["llm-spec/<br/>buildable specs"]
+    R --> S["spec/<br/>buildable specs"]
     A --> S
     M["mockups/"] -.-> R
     M -.-> S
