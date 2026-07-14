@@ -95,6 +95,48 @@ decision, with the cheap foundation fixes (G5a, G6-install) folded in.
 **Recommended order after E:** D (get the floor current) → A + B (close loop +
 de-noise, make shipped screens truthful) → C (the differentiator) → F.
 
+## Implementation phases
+
+Workstreams sequenced into phases. Each phase has a **theme**, an **exit
+criterion** (how we know it's done), and folds in the cheap fixes it unblocks.
+
+```mermaid
+flowchart LR
+    P0["Phase 0<br/>Foundation &amp; docs"] --> P1["Phase 1<br/>Close the loop"]
+    P1 --> P2["Phase 2<br/>The differentiator"]
+    P2 --> P3["Phase 3<br/>Net-new surfaces"]
+    P4["Phase 4 · when infra ready<br/>Dōjō live activation"] -.-> P1
+    P4 -.-> P3
+```
+
+### Phase 0 — Foundation &amp; docs *(current)*
+**Theme:** a clean map + a current, trustworthy floor to build on.
+- Docs restructure (WS E) — requirements/architecture/spec + Dōjō home + `client-lead → lead`.
+- Daemon to current (G6): `make install-service`; re-synthesize the 216-session history (G6, via the #75 backfill path).
+- Cheap correctness folded in: `get_communities` scoping (G5a), sibling scan bugs (#29/#62/#63) if quick.
+**Exit:** docs navigable from a rewritten README; local daemon = source version; corpus no longer starved.
+
+### Phase 1 — Close the FTR loop *(highest value)*
+**Theme:** the loop generates *and* validates; the shipped screens become truthful.
+- WS A: recommendation acceptance → `acted_at` → `MeasureVerdicts` (G1); memory promotion ladder (G2).
+- WS B: doc-drift threshold (G3); framework-pattern tagger (G5b); retire orphaned `inference.insights` (G7).
+**Exit:** at least one recommendation shows a measured FTR delta; Memories surface shows real promoted memories; drift `broken` count reflects real drift.
+
+### Phase 2 — The differentiator
+**Theme:** concept-level context, not just literal.
+- WS C: hybrid semantic search over the 157k embeddings + a `context_pack` MCP tool with grep fallback (G4).
+**Exit:** `search` returns concept matches an assistant can act on; `context_pack` never worse than grep, with a confidence signal.
+
+### Phase 3 — Net-new surfaces
+**Theme:** breadth, now that the data behind each surface is real.
+- WS F: Solution segment (3 screens), Bootstrap splash, consolidation screen, insights-reasoning drawer, first-run polish (G8).
+**Exit:** the not-built cluster is closed; every new surface renders real data.
+
+### Phase 4 — Dōjō live activation *(external-blocked)*
+**Theme:** extend the loop across a team, exactly.
+- Stand up a Dōjō server (localhost first), exercise memberships → contribute → triage → distribute end-to-end; wire the console.
+**Exit:** a finding travels dev → maintainer → downstream with anonymization + preview, on real infra. Gated on the SaaS-infra decision — parallel to Phases 1–3, not blocking them.
+
 ## How this doc stays honest
 
 Update a gap's status inline when a workstream lands (e.g. `G5a ✅ fixed
