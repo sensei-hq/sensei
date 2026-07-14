@@ -42,5 +42,5 @@ flowchart LR
 ## Source detail
 
 Phase-command chains, hook wiring, and skill-budget design in
-[`../design/06-marketplace.md`](../design/06-marketplace.md); the plugin
+[`reference/06-marketplace.md`](reference/06-marketplace.md); the plugin
 architecture + mindsets in [`concepts/`](concepts/).

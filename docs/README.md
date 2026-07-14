@@ -1,32 +1,56 @@
-# Sensei Documentation
+# Sensei documentation
 
-Observe. Learn. Improve.
+> **Observe. Learn. Improve.** Sensei is the retrospective loop for a pair
+> (you + your AI assistant) that otherwise never gets one. North-star: **FTR**
+> — first-turn resolution.
 
-## Structure
+## Start here
 
-| Directory | Purpose |
-|-----------|---------|
-| `ideas/` | What Sensei does -- user perspective. Start here. |
-| `design/` | How it's built -- engineering perspective. References ideas/. |
-| `mockups/` | Visual reference -- HTML mockups and design system. |
-| `archive/` | Old documentation -- retained for historical context. |
-| `backlog.md` | Active implementation backlog. |
+Read in this order — each layer answers a narrower question:
 
-## Reading order
+1. **[`requirements/`](requirements/README.md)** — the **WHAT &amp; WHY**.
+   [vision](requirements/vision.md) → [objectives](requirements/objectives.md) →
+   [open-issues](requirements/open-issues.md) (the living gap-analysis → plan).
+2. **[`architecture/`](architecture/README.md)** — the **HOW**, per layer
+   (data · daemon · cli · app · mcp · marketplace · dojo · website). Refers back
+   to requirements.
+3. **[`llm-spec/`](llm-spec/README.md)** — the **buildable contract**: per-screen
+   and per-pipeline specs with a five-section "done" definition. The
+   source-of-truth for implementation.
 
-1. `ideas/README.md` -- product overview, module map, status
-2. `ideas/01-bootstrap.md` through `ideas/06-logging.md` -- what the user experiences
-3. `design/README.md` -- architecture, principles, component map
-4. `design/01-app.md` through `design/10-build-and-release.md` -- how each component is built
+Supporting:
+
+| Path | Purpose |
+|---|---|
+| [`decisions.md`](decisions.md) | Decision log — adopted · **discarded** (don't re-propose) · **deferred** (revisit-when) |
+| [`mockups/`](mockups/) | Visual source of truth — HTML mockups, journey maps, design system |
+| [`backlog.md`](backlog.md) | GitHub-issue index (the tracked work) |
+| [`analysis/`](analysis/) · [`plans/`](plans/) · [`blueprints/`](blueprints/) | Dated working docs (research, plans) |
+| [`archive/`](archive/) | Superseded docs kept for history (incl. the old `ideas/` product narrative) |
+
+```mermaid
+flowchart LR
+    R["requirements/<br/>what &amp; why"] --> A["architecture/<br/>how — layers"]
+    R --> S["llm-spec/<br/>buildable specs"]
+    A --> S
+    M["mockups/"] -.-> R
+    M -.-> S
+    R --> O["open-issues.md<br/>impl vs vision → plan"]
+    A -.-> RF["architecture/reference/<br/>+ concepts/ (folded-in detail)"]
+```
 
 ## Monorepo structure
 
 | Directory | Language | Purpose |
-|-----------|----------|---------|
-| `app/` | SvelteKit + Tauri | Desktop observatory |
-| `crates/` | Rust | All Rust crates (senseid, cli, mcp, bootstrap, gateway) |
+|---|---|---|
+| `app/` | SvelteKit + Tauri | Desktop app (observatory + project window) |
+| `crates/` | Rust | `senseid` · `cli` · `mcp` · `bootstrap` · `dojo-mind` · `logger` |
+| `console/` | SvelteKit | Dōjō SaaS console (maintainer · admin · lead) |
 | `website/` | SvelteKit | Marketing site |
-| `database/` | SQL | DDL definitions |
-| `homebrew/` | Ruby | Homebrew tap (subtree) |
-| `marketplace/` | Markdown | Skills and plugins (subtree) |
+| `database/` | SQL (dbd) | DDL definitions — one DB `sensei`, port 7744 |
+| `homebrew/` | Ruby | Homebrew tap (subtree → `sensei-hq/homebrew-tap`) |
+| `marketplace/` | Markdown | Skills · commands · plugins · agents (subtree → `sensei-hq/marketplace`) |
 | `docs/` | Markdown | This documentation |
+
+> **Sibling repo:** the LLM router is `sensei-hq/gateway`, consumed as the
+> `gateway-embedded` git dependency (formerly the in-tree `crates/gateway/`).

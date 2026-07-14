@@ -51,6 +51,6 @@ Solution segment, Bootstrap splash, consolidation, insights-reasoning drawer
 ## Source detail
 
 Sidecar lifecycle + 3-layer state rationale in
-[`../design/01-app.md`](../design/01-app.md); UI rules in
-[`../design/frontend-svelte-guidelines.md`](../design/frontend-svelte-guidelines.md)
+[`reference/01-app.md`](reference/01-app.md); UI rules in
+[`reference/frontend-svelte-guidelines.md`](reference/frontend-svelte-guidelines.md)
 (kept as the enforced house style).

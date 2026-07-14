@@ -6,7 +6,7 @@ Rust HTTP server. The core engine of Sensei. Owns the code graph, session store,
 
 Port 7744, database `sensei`, data directory `~/.sensei/`. There is no dev/prod split — one binary, one DB. For local DDL iteration, set `SENSEI_DDL_DIR=/abs/path` to override the schema source at runtime.
 
-See [ideas/03-observatory](../ideas/03-observatory.md) and [ideas/04-project](../ideas/04-project.md) for the "what." This document covers the "how."
+See [ideas/03-observatory](../../archive/ideas/03-observatory.md) and [ideas/04-project](../../archive/ideas/04-project.md) for the "what." This document covers the "how."
 
 ---
 

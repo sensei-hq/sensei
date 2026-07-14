@@ -8,7 +8,7 @@ Every screen connects to one of three quality signals: FTR (first-time-right rat
 
 The app contains zero business logic. All data comes from the daemon HTTP API (`senseid` on port 7744 release / 7745 dev). The app renders, navigates, and dispatches user intent -- nothing more.
 
-See [ideas/01-bootstrap](../ideas/01-bootstrap.md), [ideas/02-setup](../ideas/02-setup.md), [ideas/03-observatory](../ideas/03-observatory.md), [ideas/04-project](../ideas/04-project.md), [ideas/05-gateway](../ideas/05-gateway.md), [ideas/06-logging](../ideas/06-logging.md) for the "what."
+See [ideas/01-bootstrap](../../archive/ideas/01-bootstrap.md), [ideas/02-setup](../../archive/ideas/02-setup.md), [ideas/03-observatory](../../archive/ideas/03-observatory.md), [ideas/04-project](../../archive/ideas/04-project.md), [ideas/05-gateway](../../archive/ideas/05-gateway.md), [ideas/06-logging](../../archive/ideas/06-logging.md) for the "what."
 
 ---
 
