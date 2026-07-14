@@ -45,7 +45,7 @@ every file to the **git-root owner**; structural members are recorded but own no
 code nodes. Language adapters parse files into an **adapter IR** → nodes/edges.
 The **one repo = one project = one owner** invariant is the backbone; it is
 enforced at classification and by a self-healing `dedup_structural_folder_nodes`
-reconcile (see [`../requirements/open-issues.md`](../requirements/open-issues.md)
+reconcile (see [`../requirements/open-issues.md`](../plan/README.md)
 history: #101).
 
 ## The pipelines (the learning half of the loop)

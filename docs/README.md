@@ -10,7 +10,7 @@ Read in this order — each layer answers a narrower question:
 
 1. **[`requirements/`](requirements/README.md)** — the **WHAT &amp; WHY**.
    [vision](requirements/vision.md) → [objectives](requirements/objectives.md) →
-   [open-issues](requirements/open-issues.md) (the living gap-analysis → plan).
+   [open-issues](plan/README.md) (the living gap-analysis → plan).
 2. **[`architecture/`](architecture/README.md)** — the **HOW**, per layer
    (data · daemon · cli · app · mcp · marketplace · dojo · website). Refers back
    to requirements.
@@ -22,7 +22,7 @@ Supporting:
 
 | Path | Purpose |
 |---|---|
-| [`decisions.md`](decisions.md) | Decision log — adopted · **discarded** (don't re-propose) · **deferred** (revisit-when) |
+| [`decisions.md`](plan/decisions.md) | Decision log — adopted · **discarded** (don't re-propose) · **deferred** (revisit-when) |
 | [`mockups/`](mockups/) | Visual source of truth — HTML mockups, journey maps, design system |
 | [`backlog.md`](backlog.md) | GitHub-issue index (the tracked work) |
 | [`analysis/`](analysis/) · [`plans/`](plans/) · [`blueprints/`](blueprints/) | Dated working docs (research, plans) |

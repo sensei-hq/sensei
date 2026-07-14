@@ -3,21 +3,21 @@
 > When a doc is superseded and archived, the *ideas* worth keeping land here so
 > nothing useful is lost and nothing already-rejected gets re-proposed. This is
 > the memory of **why the shape is the shape**. Additive — append, don't rewrite
-> history. Pairs with [`requirements/open-issues.md`](requirements/open-issues.md)
-> (what's left to build) and [`backlog.md`](backlog.md) (the issue index).
+> history. Pairs with [`requirements/open-issues.md`](README.md)
+> (what's left to build) and [`backlog.md`](../backlog.md) (the issue index).
 
 ## Adopted — concepts carried forward (from `archive/ideas/`, `design/`)
 
 | Concept | Where it lives now |
 |---|---|
-| The **four-segment journey** (Bootstrap · First-run+Prefs · Observatory · Project) | [requirements/vision.md](requirements/vision.md), [objectives.md](requirements/objectives.md) |
+| The **four-segment journey** (Bootstrap · First-run+Prefs · Observatory · Project) | [requirements/vision.md](../requirements/vision.md), [objectives.md](../requirements/objectives.md) |
 | **Value before setup** — projects first, not a wizard | vision theme 1; realised as first-run-scan + Preferences |
 | The **module lifecycles** (the loops inside the daily app) | objectives O5 |
 | **FTR** as the single north-star | vision.md |
-| **Adapter-IR** + language-adapter split; task hierarchy + barriers; compression L0–L3 | [architecture/daemon.md](architecture/daemon.md) (+ `architecture/reference/`) |
+| **Adapter-IR** + language-adapter split; task hierarchy + barriers; compression L0–L3 | [architecture/daemon.md](../architecture/daemon.md) (+ `architecture/reference/`) |
 | **Single binary, single DB, port 7744** | architecture/data.md + daemon.md |
 | The **retrospective-loop** framing (capture→graph→analyze→learn→deliver→measure) | vision.md core loop |
-| Dōjō **priority-ladders / specificity-wins / pull-never-push / preview-always** | [architecture/dojo.md](architecture/dojo.md), objectives DJ* |
+| Dōjō **priority-ladders / specificity-wins / pull-never-push / preview-always** | [architecture/dojo.md](../architecture/dojo.md), objectives DJ* |
 
 ## Discarded — considered and rejected (do not re-propose)
 
@@ -36,7 +36,7 @@
 | Idea | Why deferred | Revisit when |
 |---|---|---|
 | **User-facing learnings** ("you tend to give sparse instructions for schema changes…") | The pair-both-ways signal needs the loop closed first | after Phase 1 (FTR loop closes) |
-| **Assistant proactive clarification** ("I need the migration policy before I can answer") | v2 behaviour; needs the signal + a prompting contract | [pipeline/clarification-prompting](spec/pipeline/clarification-prompting.md) — post-Phase 2 |
+| **Assistant proactive clarification** ("I need the migration policy before I can answer") | v2 behaviour; needs the signal + a prompting contract | [pipeline/clarification-prompting](../spec/pipeline/clarification-prompting.md) — post-Phase 2 |
 | **Benchmarks** (runner + corpus) | No runner/TaskKind yet; not on the FTR path | when model-effectiveness needs a controlled corpus |
 | **Testability** (test-runner adapter → `test_pass_rate`) | No test-runner integration; quality signal optional | when a quality dimension is prioritised |
 | **Diagnostic sessions/traces + issue export** (#39) | Larger new-schema + cross-cutting capture effort; only flat `public.logs` today | when support/debug UX is prioritised |
@@ -50,4 +50,4 @@
   next assistant) won't waste a cycle re-proposing it.
 - Parking an idea? Add a **Deferred** row with an explicit *revisit-when* trigger.
 - Promoting a deferred idea to active work? Move it into
-  [open-issues.md](requirements/open-issues.md) and note the date here.
+  [open-issues.md](README.md) and note the date here.

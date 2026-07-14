@@ -87,7 +87,7 @@ All eight also receive the sensei MCP tools via the `mcp__plugin_sensei_sensei__
 
 ### Autonomy
 
-Agents are read-heavy and run autonomously in the same working directory (no worktree needed). Once invoked, an agent works through its procedure without further prompting and returns a summary to the main conversation, with the full findings available on request. The desktop **Agent editor** ([Extensions tab](../../archive/ideas/04-project.md#extensions)) also exposes an autonomy level — fully autonomous, checkpoint-based (approval at checkpoints), or manual — and lets you test an agent against historical session replays before enabling it.
+Agents are read-heavy and run autonomously in the same working directory (no worktree needed). Once invoked, an agent works through its procedure without further prompting and returns a summary to the main conversation, with the full findings available on request. The desktop **Agent editor** (Extensions tab) also exposes an autonomy level — fully autonomous, checkpoint-based (approval at checkpoints), or manual — and lets you test an agent against historical session replays before enabling it.
 
 ## How agents integrate with Sensei
 

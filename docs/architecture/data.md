@@ -77,7 +77,7 @@ nodes. This is enforced at scan-classification + a self-healing reconcile
 
 Orphaned tables (`inference.insights`/`insight_batches` — no writer, superseded
 by `insight_copy`) and empty-by-design dojo tables (external-blocked). See
-[`../requirements/open-issues.md`](../requirements/open-issues.md) G7.
+[`../requirements/open-issues.md`](../plan/README.md) G7.
 
 ## Source detail
 

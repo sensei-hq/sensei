@@ -13,7 +13,7 @@
 2. [`objectives.md`](objectives.md) — the WHAT broken down per segment
    (Bootstrap · First-run &amp; Preferences · Observatory · Project window) plus
    the cross-cutting **Dōjō** layer, each with a measurable "met when."
-3. [`open-issues.md`](open-issues.md) — the living gap analysis: where the
+3. [`open-issues.md`](../plan/README.md) — the living gap analysis: where the
    implementation stands against the vision, the ranked gaps, and the specced
    plan to close them (workstreams).
 

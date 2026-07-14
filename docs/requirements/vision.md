@@ -118,5 +118,5 @@ one, we call it out.
 ## Read next
 
 - [`objectives.md`](objectives.md) — the WHAT, broken down per segment + the Dōjō layer, with measurable outcomes.
-- [`open-issues.md`](open-issues.md) — where the implementation stands against this vision, the ranked gaps, and the specced plan to close them.
+- [`open-issues.md`](../plan/README.md) — where the implementation stands against this vision, the ranked gaps, and the specced plan to close them.
 - [`../architecture/README.md`](../architecture/README.md) — how the layers realise this.

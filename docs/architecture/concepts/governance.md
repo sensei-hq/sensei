@@ -2,7 +2,7 @@
 
 How Sensei decides **which rules apply** to a coding session, **whose authority** they carry, and how a learning in one repo becomes shared knowledge across a team, client, or organization.
 
-The [knowledge plane](../superpowers/specs/2026-05-27-knowledge-plane-design.md) captures *emergent* learnings — memories the assistant proposes, that gain or lose strength as they're applied or violated. The **governance plane** is the layer above it: *scoped, authored-or-promoted, enforceable* guidance that resolves into the context every session starts with. Governance is the concrete shape of the knowledge plane's deferred "Phase 1" — promotion ladder, remote sharing, constitution tier, RBAC.
+The knowledge plane captures *emergent* learnings — memories the assistant proposes, that gain or lose strength as they're applied or violated. The **governance plane** is the layer above it: *scoped, authored-or-promoted, enforceable* guidance that resolves into the context every session starts with. Governance is the concrete shape of the knowledge plane's deferred "Phase 1" — promotion ladder, remote sharing, constitution tier, RBAC.
 
 > One line: **the knowledge plane learns; the governance plane governs.** Promotion is the bridge — a battle-tested memory becomes a candidate rule at a higher scope.
 
@@ -267,4 +267,4 @@ Fewer corrections, fewer rediscovered constraints, fewer repeated mistakes — e
 
 ---
 
-*Related: [mindsets](./mindsets.md) · [personas](./personas.md) · [agents](./agents.md) · [knowledge plane spec](../superpowers/specs/2026-05-27-knowledge-plane-design.md). Implementation is tracked in [`docs/backlog.md`](../backlog.md) under "Governance plane."*
+*Related: [mindsets](./mindsets.md) · [personas](./personas.md) · [agents](./agents.md). Implementation is tracked in [`docs/backlog.md`](../../backlog.md) under "Governance plane."*
