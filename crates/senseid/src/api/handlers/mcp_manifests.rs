@@ -86,11 +86,11 @@ pub fn manifests() -> Vec<McpToolManifest> {
             kind: McpToolKind::Query,
             summary: "Search functions and types by name across a project.",
             inputs: vec![
-                McpToolInput { key: "query", kind: McpInputKind::Text, required: true, label: "Query", placeholder: Some("process_event"), default: None, options: None },
+                McpToolInput { key: "query", kind: McpInputKind::Text, required: true, label: "Query", placeholder: Some("PgStore"), default: None, options: None },
                 McpToolInput { key: "repoId", kind: McpInputKind::Text, required: true, label: "Project", placeholder: Some("sensei"), default: None, options: None },
             ],
             example: McpToolExample {
-                response: "functions: [process_event, process_batch, ...]\ntypes: [ProcessResult]",
+                response: "types: [PgStore]\nfunctions: [get_tools_health, get_project_summary, ...]",
             },
         },
         McpToolManifest {
@@ -100,11 +100,11 @@ pub fn manifests() -> Vec<McpToolManifest> {
             kind: McpToolKind::Query,
             summary: "Get details for a function or type by name.",
             inputs: vec![
-                McpToolInput { key: "name", kind: McpInputKind::Text, required: true, label: "Symbol", placeholder: Some("process_event"), default: None, options: None },
+                McpToolInput { key: "name", kind: McpInputKind::Text, required: true, label: "Symbol", placeholder: Some("PgStore"), default: None, options: None },
                 McpToolInput { key: "repoId", kind: McpInputKind::Text, required: true, label: "Project", placeholder: Some("sensei"), default: None, options: None },
             ],
             example: McpToolExample {
-                response: "process_event · crates/senseid/src/tasks/handlers/process.rs:41\n  arity 3, returns Result<()>",
+                response: "PgStore · crates/senseid/src/db/pg_store.rs\n  struct — the daemon's Postgres access layer",
             },
         },
         McpToolManifest {
@@ -415,7 +415,7 @@ mod tests {
         assert!(v["inputs"][0].get("default").is_none());
         assert!(v["inputs"][0].get("options").is_none());
         // Fields that were `Some` should serialise.
-        assert_eq!(v["inputs"][0]["placeholder"], "process_event");
+        assert_eq!(v["inputs"][0]["placeholder"], "PgStore");
     }
 
     #[test]
