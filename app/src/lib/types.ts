@@ -296,6 +296,9 @@ export interface ProjectListItem {
   /** Project "purpose" text — sourced from `sensei.projects.goal` and
    *  exposed by the list endpoint as `vision`. Null when absent. */
   vision?: string | null;
+  /** The Dōjō membership this project is bound to (`projects.dojo_id`), or null
+   *  when unbound. Drives the About-panel binding chip's confirmed state. */
+  dojo_id?: string | null;
   /** COUNT of the project's repo-root folders (not nested subfolders). */
   repos_count?: number;
   /** COUNT of the project's linked libraries. */
@@ -881,12 +884,28 @@ export interface DojoMembership {
   authenticated_via: string;
   /** named | anonymous | dereferenced. */
   attribution_default: string;
+  /** Git-remote owner slugs this membership covers (lowercased) — the
+   *  org-tagging that drives infer-at-detect auto-bind. */
+  org_slugs: string[];
   /** healthy | stale | error | authenticating. */
   sync_status: string;
   last_seq: number;
   last_heartbeat_at: string | null;
   enabled: boolean;
   bound_projects: DojoBoundProject[];
+}
+
+/** The inferred (confirm-inferred) project→Dōjō binding surfaced in the project
+ *  About panel — `GET /api/projects/{id}/dojo-suggestion`. The user confirms it
+ *  (`POST …/dojo-binding`); it is never auto-committed. */
+export interface DojoBindingSuggestion {
+  membership_id: string;
+  /** employer | client | community | personal. */
+  kind: string;
+  /** The project's git-remote owner slug that matched the membership. */
+  matched_slug: string;
+  tenant_key: string;
+  dojo_url: string;
 }
 
 /** Body for `POST /api/dojo/memberships` — register a connection. `credential`
@@ -898,6 +917,9 @@ export interface ConnectDojoBody {
   registry_url?: string;
   tenant_key: string;
   kind: string;
+  /** Git-remote owner slugs this membership covers (org-tagging). Normalised
+   *  (lowercased/deduped) server-side. */
+  org_slugs?: string[];
   role?: string;
   authenticated_via?: string;
   attribution_default?: string;

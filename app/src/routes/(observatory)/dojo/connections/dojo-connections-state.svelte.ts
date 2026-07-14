@@ -39,7 +39,9 @@ export interface KindPill {
 }
 
 /** The connect form's field values, decoupled from the reactive class so the
- *  validation + body-building are pure and unit-testable. */
+ *  validation + body-building are pure and unit-testable. `orgSlugs` is the raw
+ *  string the user types (comma/space separated); it is normalised on the way
+ *  into the body. */
 export interface ConnectDraft {
   membershipId: string;
   tenantKey: string;
@@ -47,6 +49,7 @@ export interface ConnectDraft {
   kind: MembershipKind;
   deviceToken: string;
   projectId: string;
+  orgSlugs: string;
 }
 
 /** Kind options for the connect form's select, in precedence-story order. */
@@ -152,10 +155,28 @@ export function validateConnect(d: ConnectDraft): string | null {
   return validateRegistryUrl(d.registryUrl);
 }
 
+/** Pure: normalise the raw org-slugs text the user types into the git-remote
+ *  owner slugs a membership covers. Splits on commas/whitespace, trims,
+ *  lowercases, drops empties, and dedupes (preserving first-seen order). This
+ *  mirrors the daemon's own normalisation so the suggested chips and the wire
+ *  agree; an empty input yields an empty list. */
+export function parseOrgSlugs(raw: string): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const token of raw.split(/[\s,]+/)) {
+    const slug = token.trim().toLowerCase();
+    if (!slug || seen.has(slug)) continue;
+    seen.add(slug);
+    out.push(slug);
+  }
+  return out;
+}
+
 /** Pure: build the `POST /api/dojo/memberships` body from a draft. Trims and
  *  drops the optional url/project when blank so the daemon applies its defaults;
  *  role / authenticated_via / attribution_default are left to the daemon
- *  (contributor · device_code · named). The device token is write-only. */
+ *  (contributor · device_code · named). The device token is write-only.
+ *  `org_slugs` is included only when at least one slug is parsed. */
 export function toConnectBody(d: ConnectDraft): ConnectDojoBody {
   const body: ConnectDojoBody = {
     membership_id: d.membershipId.trim(),
@@ -167,6 +188,8 @@ export function toConnectBody(d: ConnectDraft): ConnectDojoBody {
   if (registry) body.registry_url = registry;
   const project = d.projectId.trim();
   if (project) body.project_id = project;
+  const orgSlugs = parseOrgSlugs(d.orgSlugs);
+  if (orgSlugs.length > 0) body.org_slugs = orgSlugs;
   return body;
 }
 
@@ -187,6 +210,8 @@ export class ConnectForm {
   kind = $state<MembershipKind>('employer');
   deviceToken = $state('');
   projectId = $state('');
+  /** Raw org-slugs text (comma/space separated) — parsed on submit. */
+  orgSlugs = $state('');
   submitting = $state(false);
   error = $state<string | null>(null);
 
@@ -198,7 +223,13 @@ export class ConnectForm {
       kind: this.kind,
       deviceToken: this.deviceToken,
       projectId: this.projectId,
+      orgSlugs: this.orgSlugs,
     };
+  }
+
+  /** The normalised git-remote owner slugs from the raw input. */
+  get parsedOrgSlugs(): string[] {
+    return parseOrgSlugs(this.orgSlugs);
   }
 
   get validationError(): string | null {
@@ -216,6 +247,7 @@ export class ConnectForm {
     this.kind = 'employer';
     this.deviceToken = '';
     this.projectId = '';
+    this.orgSlugs = '';
     this.error = null;
   }
 

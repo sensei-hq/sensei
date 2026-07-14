@@ -6,6 +6,7 @@ import {
   boundProjectsSummary,
   connectionsHeadline,
   kindPill,
+  parseOrgSlugs,
   syncChip,
   syncTone,
   toConnectBody,
@@ -25,6 +26,7 @@ const membership = (over: Partial<DojoMembership> = {}): DojoMembership => ({
   role: 'contributor',
   authenticated_via: 'device_code',
   attribution_default: 'named',
+  org_slugs: [],
   sync_status: 'healthy',
   last_seq: 0,
   last_heartbeat_at: null,
@@ -40,6 +42,7 @@ const draft = (over: Partial<ConnectDraft> = {}): ConnectDraft => ({
   kind: 'employer',
   deviceToken: 'tok_123',
   projectId: '',
+  orgSlugs: '',
   ...over,
 });
 
@@ -170,6 +173,26 @@ describe('validateConnect', () => {
     ));
 });
 
+describe('parseOrgSlugs', () => {
+  it('empty input yields an empty list', () => expect(parseOrgSlugs('')).toEqual([]));
+  it('whitespace-only input yields an empty list', () =>
+    expect(parseOrgSlugs('   ')).toEqual([]));
+  it('splits on commas', () =>
+    expect(parseOrgSlugs('sensei-hq,acme')).toEqual(['sensei-hq', 'acme']));
+  it('splits on whitespace', () =>
+    expect(parseOrgSlugs('sensei-hq acme')).toEqual(['sensei-hq', 'acme']));
+  it('splits on mixed commas and whitespace, dropping empties', () =>
+    expect(parseOrgSlugs(' sensei-hq ,  acme,, globex ')).toEqual([
+      'sensei-hq',
+      'acme',
+      'globex',
+    ]));
+  it('lowercases every slug', () =>
+    expect(parseOrgSlugs('Sensei-HQ, ACME')).toEqual(['sensei-hq', 'acme']));
+  it('dedupes, preserving first-seen order (case-insensitively)', () =>
+    expect(parseOrgSlugs('acme, Acme, sensei-hq, acme')).toEqual(['acme', 'sensei-hq']));
+});
+
 describe('toConnectBody', () => {
   it('builds a trimmed body and omits blank optionals', () => {
     expect(toConnectBody(draft({ membershipId: ` ${VALID_UUID} `, tenantKey: ' github/acme ' }))).toEqual({
@@ -192,6 +215,19 @@ describe('toConnectBody', () => {
       registry_url: 'https://dojo.acme.internal',
       project_id: 'proj-9',
     });
+  });
+  it('includes normalised org_slugs when provided', () => {
+    expect(toConnectBody(draft({ orgSlugs: 'Sensei-HQ, acme, acme' }))).toEqual({
+      membership_id: VALID_UUID,
+      tenant_key: 'github/acme',
+      kind: 'employer',
+      credential: 'tok_123',
+      org_slugs: ['sensei-hq', 'acme'],
+    });
+  });
+  it('omits org_slugs when the input parses to nothing', () => {
+    const body = toConnectBody(draft({ orgSlugs: '  ,  ' }));
+    expect(body.org_slugs).toBeUndefined();
   });
 });
 
@@ -227,6 +263,12 @@ describe('ConnectForm', () => {
     expect(connectDojo).not.toHaveBeenCalled();
   });
 
+  it('parsedOrgSlugs normalises the raw input from the form field', () => {
+    const form = new ConnectForm();
+    form.orgSlugs = 'Sensei-HQ, acme  acme';
+    expect(form.parsedOrgSlugs).toEqual(['sensei-hq', 'acme']);
+  });
+
   it('submit() posts the built body, resets and closes on success', async () => {
     const connectDojo = vi.fn().mockResolvedValue({ ok: true, data: { id: VALID_UUID } });
     const form = new ConnectForm();
@@ -235,6 +277,7 @@ describe('ConnectForm', () => {
     form.tenantKey = 'github/acme';
     form.deviceToken = 'tok_123';
     form.kind = 'client';
+    form.orgSlugs = 'acme, globex';
 
     const ok = await form.submit(mockApi({ connectDojo }));
     expect(ok).toBe(true);
@@ -243,9 +286,11 @@ describe('ConnectForm', () => {
       tenant_key: 'github/acme',
       kind: 'client',
       credential: 'tok_123',
+      org_slugs: ['acme', 'globex'],
     });
     expect(form.membershipId).toBe('');
     expect(form.deviceToken).toBe('');
+    expect(form.orgSlugs).toBe('');
     expect(form.open).toBe(false);
     expect(form.error).toBeNull();
   });

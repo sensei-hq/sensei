@@ -62,6 +62,14 @@
       <span>role · {c.role}</span>
       <span>attribution · {c.attribution_default}</span>
       <span data-bound-count>{boundProjectsSummary(c.bound_projects)}</span>
+      {#if c.org_slugs.length > 0}
+        <span class="flex flex-wrap items-center gap-1.5" data-testid="membership-orgs">
+          orgs ·
+          {#each c.org_slugs as slug (slug)}
+            {@render chip(slug, 'bg-paper-mute', 'text-ink-mute')}
+          {/each}
+        </span>
+      {/if}
     </div>
 
     {#if c.bound_projects.length > 0}
@@ -135,6 +143,19 @@
               <option value={opt.value}>{opt.label}</option>
             {/each}
           </select>
+        </label>
+        <label class="flex flex-col gap-1">
+          {@render field('Org slugs (optional)')}
+          <input
+            class={inputClass}
+            type="text"
+            data-testid="connect-org-slugs"
+            placeholder="sensei-hq, acme"
+            bind:value={form.orgSlugs}
+          />
+          <span class="text-xs text-ink-mute leading-normal">
+            git remote owners this dōjō covers — used to suggest bindings.
+          </span>
         </label>
         <label class="flex flex-col gap-1">
           {@render field('Device token')}
