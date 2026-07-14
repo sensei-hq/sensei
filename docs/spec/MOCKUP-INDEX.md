@@ -71,7 +71,16 @@ screens live elsewhere:
 | `dojo-{admin,lead,maintainer}-console` | (panels) | `lib/dojo/dojo-console.jsx` |
 | `dojo-developer-flow` | `Inapp*` | `lib/dojo/dojo-inapp.jsx` |
 | `insights-reasoning` | (MOE section) | `lib/observatory/mcp-replay-insights.jsx` |
-| **Relay** (14 screens, new) | `Relay*` | `lib/relay/relay.jsx` · `lib/relay/relay-planner.jsx` · `lib/relay/relay-desktop.jsx` |
+| **Relay** (13 screens, specced `relay-*.md`) | `Relay*` (skip `RelayArchitecture` — concept diagram) | `lib/relay/relay.jsx` · `lib/relay/relay-planner.jsx` · `lib/relay/relay-desktop.jsx` |
+| `project-atlas` (code graph) | `ProjectAtlasWindow` | `lib/project/project-atlas.jsx` |
+| `agent-editor` / `persona-editor` | `AgentEditor` / `PersonaEditor` | `lib/observatory/agent-persona-editors.jsx` |
+| `benchmark-runner` | `BenchmarkRunnerDashboard` / `…Notebook` | `lib/observatory/benchmark.jsx` |
+| `solution-{architecture,dashboard,sessions}` | `Solution*` | `lib/observatory/solution-track.jsx` |
+
+> **Not app screens:** `lib/dojo/dojo-saas.jsx` (`DojoOrgs`, `DojoSignIn`) is the
+> Dōjō **SaaS website** surface, not a desktop-app screen — no `spec/screen/`.
+> `lib/observatory/perspective-split.jsx` is a **WIP exploration** (collective vs
+> Dōjō); not specced yet.
 
 ## Sub-nav placement (2026-07-07 refactor)
 
