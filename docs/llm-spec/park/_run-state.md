@@ -1983,6 +1983,35 @@ port mismatch hive 7755 vs config 8787 (🟢), etc. Chunk order: {R1,R2}→R3→
    VERIFIED check 585 files 0/0, 120 tests, build ok. DRY on dojo-api.ts + reused admin-view helpers.
    ✅✅✅ CONSOLE UI TRACK COMPLETE (R6 scaffold+auth → wiring → R9 maintainer → R10 admin → R11 client-lead). All
    build/check/test-green; LIVE (magic-link login + running dojo-mind service) = Jerry's verify.
+   ▶️✅ RESUMED 2026-07-13 (post-restart). Progress this session:
+   • ✅ v0.3.1 RELEASED — `git checkout main` (ff'd to develop @91904d62) → `make bump v=patch` → bump `229af97e`,
+     tag v0.3.1 pushed, dbd-cache-clear, tap `8a328e5` + marketplace `017a985` synced; back-merged main→develop;
+     **CI Release workflow GREEN (18m29s, run 29296004172)**. VERSION=0.3.1. main==develop==229af97e (pushed).
+   • ✅ dbd RECONCILE BUG FIXED + LIVE MIGRATED (Jerry chose "fix reconcile, then run it" over targeted ALTER).
+     Root cause (dbd-core): a table-level composite `primary key (a,b)` is emitted BOTH as a table constraint AND
+     as is_pk on each member column; `reconcile::canonicalize` lifted each is_pk into its OWN single-col PK →
+     spurious `ADD CONSTRAINT … PRIMARY KEY(a)`/`(b)` on EVERY composite-PK table (9 of them) → Postgres "multiple
+     primary keys" → reconcile could not complete. FIX: only synthesize a PK from a column flag when no table-level
+     PK exists. Committed in **~/Developer/dbd-rs develop `4eb7081`** (dbd-core 583 tests green) + `cargo install`d
+     the CLI (PATH dbd). Then ran `dbd reconcile --scope default` on LIVE sensei: **48 altered, 49 re-applied, 0
+     pruned** — added org_slugs + harmless SET DEFAULT normalizations; NON-destructive (no --prune/--allow-destructive);
+     daemon stayed healthy (uptime uninterrupted), data intact (301 projects, 568k nodes). org_slugs now LIVE.
+     ⚠️ Residual (separate, harmless, NOT mine): reconcile SET-DEFAULT churn never converges (introspected
+     `'{}'::text[]`/`::jsonb` ≠ DDL `'{}'`) — a dbd-core default-canonicalization gap; idempotent, non-blocking.
+     Two orphan tables (inference.hyperedge_members, gateway.inference_assignments) left (no --prune).
+   • ✅ R3 BACKEND SHIPPED on develop (2 commits): **`05de8f64`** (data + org-tagging: org_slugs text[] on
+     dojo.memberships + sensei.dojo_memberships mirror; pg_store store/read/set; normalize_org_slugs; NewConnection/
+     ConnectionView/NewMembershipBody carry org_slugs; PUT /api/dojo/memberships/{id}/orgs) + **`13c769bf`**
+     (inference: pure infer_binding w/ KIND_PRECEDENCE client>employer>community>personal + matched_slug; shared
+     remote_path_segments/remote_owner_slug refactor; project_org_owners; suggest_binding→BindingSuggestion; GET
+     /api/projects/{id}/dojo-suggestion + POST /api/projects/{id}/dojo-binding fail-closed). kind already encodes
+     employer/client so org_slugs was the only new field. All unit+DB+integration tests green; clippy 0. Plan doc:
+     docs/plans/2026-07-13-r3-auto-bind.md.
+   ▶️ NEXT (R3 Commit 3 = frontend, remaining): About-panel InappBind confirm chip (fetch dojo-suggestion → Confirm
+     posts dojo-binding / Dismiss) + org-tagging UI (org_slugs input in the connect/connections flow) + Playwright
+     e2e. Svelte MCP / svelte-file-editor MANDATORY; rokkit named tokens. Mockup: docs/mockups/Sensei/lib/dojo-inapp.jsx
+     InappBind. develop (2 R3 commits) NOT yet merged to main — merge+bump at the R3 milestone (after frontend).
+
    ⏸️⏸️ PAUSED 2026-07-13 for Jerry's OS update + system RESTART. Safe state: on develop @767e3c48, 0 pending, no
    running subagents/builds, NOTHING pushed. JERRY DECIDED (before pause): (1) cut v0.3.1 NOW, (2) then R3 auto-bind
    (org_slugs DDL APPROVED). ▶️ RESUME STEP 1 = FINISH v0.3.1: main was already FAST-FORWARDED locally to 767e3c48
