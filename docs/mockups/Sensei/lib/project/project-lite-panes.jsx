@@ -201,7 +201,11 @@ function ProjOverviewLite({ project, openAction }) {
 // ───────────────────────────────────────────────────────────
 //  MEMORIES · what sensei has learned working here
 // ───────────────────────────────────────────────────────────
-function ProjMemoriesLite({ project }) {
+function ProjMemoriesLite({ project, state = "ready" }) {
+  if (state !== "ready") return <window.ScreenState state={state} kanji="覚"
+    emptyTitle="No memories here yet"
+    emptyHint="As sensei watches sessions in this project, what it learns — conventions, guards, patterns — collects here."
+    errorHint="Couldn't load this project's memories. Try again." onRetry={() => {}} />;
   const memories = [
     { kanji: "覚", title: "Auth handlers always return ApiError, never throw",
       kind: "rule", places: 12, source: "extracted from s-2891 · s-2889",
@@ -406,7 +410,11 @@ function ProjInstrumentsLite({ project }) {
 // ───────────────────────────────────────────────────────────
 //  IMPACT · did sensei's advice work here?
 // ───────────────────────────────────────────────────────────
-function ProjImpactLite({ project }) {
+function ProjImpactLite({ project, state = "ready" }) {
+  if (state !== "ready") return <window.ScreenState state={state} kanji="果"
+    emptyTitle="No impact measured yet"
+    emptyHint="Once you act on sensei's advice here, before/after results show up so you can see whether it worked."
+    errorHint="Couldn't load impact for this project. Try again." onRetry={() => {}} />;
   const verdicts = [
     { kanji: "果", title: "Wrote the auth-test persona (s-2891 retro).",
       acceptedAt: "12d ago",

@@ -2,7 +2,7 @@
 
 **Segment:** Dōjō (SaaS) — console
 **Route:** `dojo.sensei-hq.org/{origin}/{org}/console/admin` OR self-hosted equivalent
-**Source mockup:** [`lib/dojo/dojo-console.jsx`](../../mockups/Sensei/lib/dojo/dojo-console.jsx)
+**Source mockup:** [`lib/dojo/dojo-admin.jsx`](../../mockups/Sensei/lib/dojo/dojo-admin.jsx) → `DojoAdminConsole` (panels: Overview · Monitor · Members · Scopes)
 
 ## Purpose
 

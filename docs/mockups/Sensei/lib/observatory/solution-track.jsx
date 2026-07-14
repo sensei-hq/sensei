@@ -180,7 +180,12 @@ function MiniStrip({ data, warn }) {
   );
 }
 
-function SolutionDashboard() {
+function SolutionDashboard({ state = "ready" } = {}) {
+  if (state !== "ready") return <window.ScreenState state={state} kanji="束"
+    emptyTitle="No solution data yet"
+    emptyHint="Add projects to this engagement and run a few sessions — the aggregate first-try-right and per-project rollup fill in here."
+    errorHint="Couldn't reach the solution rollup. Check your connection and try again."
+    onRetry={() => {}} />;
   const Strip = window.ObsFtrStrip;
   return (
     <div style={{ height: "100%", overflow: "auto", background: "var(--paper)" }}>
@@ -275,7 +280,12 @@ function SolutionDashboard() {
 // ═══════════════════════════════════════════════════════════════════
 //  ② ARCHITECTURE — the merged code graph across every repo
 // ═══════════════════════════════════════════════════════════════════
-function SolutionArchitecture({ filter, setFilter }) {
+function SolutionArchitecture({ filter, setFilter, state = "ready" }) {
+  if (state !== "ready") return <window.ScreenState state={state} kanji="図"
+    emptyTitle="No repos linked yet"
+    emptyHint="Bind this solution's projects to their repos and the merged code graph appears here."
+    errorHint="Couldn't build the merged graph. Try again."
+    onRetry={() => {}} />;
   const [selected, setSelected] = solS(null);
   const Graph = window.AtlasGraph;
   const focus = filter === "all" ? null : filter;
@@ -340,7 +350,12 @@ function SolutionArchitecture({ filter, setFilter }) {
 // ═══════════════════════════════════════════════════════════════════
 //  ③ SESSIONS — every session in the solution, filterable by project
 // ═══════════════════════════════════════════════════════════════════
-function SolutionSessions({ filter, setFilter, forceEmpty }) {
+function SolutionSessions({ filter, setFilter, forceEmpty, state = "ready" }) {
+  if (state === "loading" || state === "error") return <window.ScreenState state={state} kanji="刻"
+    emptyTitle="No sessions yet"
+    emptyHint="Sessions across every project in this solution land here."
+    errorHint="Couldn't load the session stream. Try again."
+    onRetry={() => {}} />;
   const rows = forceEmpty ? [] : (filter === "all" ? SOL.sessions : SOL.sessions.filter(s => s.project === filter));
   const chips = [{ id: "all", label: "All", kanji: "全" }, ...SOL.projects.map(p => ({ id: p.id, label: p.name, kanji: p.kanji }))];
 
@@ -425,7 +440,7 @@ function SolutionSessions({ filter, setFilter, forceEmpty }) {
 // ═══════════════════════════════════════════════════════════════════
 //  The window — segmented nav ties the three together
 // ═══════════════════════════════════════════════════════════════════
-function SolutionWindow({ initial = "dashboard", initialFilter = "all", forceEmpty = false }) {
+function SolutionWindow({ initial = "dashboard", initialFilter = "all", forceEmpty = false, state = "ready" }) {
   const [view, setView] = solS(initial);
   const [filter, setFilter] = solS(initialFilter);
   const viewLabel = (SOL_NAV.find(n => n.id === view) || {}).label.toLowerCase();
@@ -436,9 +451,9 @@ function SolutionWindow({ initial = "dashboard", initialFilter = "all", forceEmp
       <div style={{ flex: 1, display: "grid", gridTemplateColumns: "230px 1fr", minHeight: 0 }}>
         <SolRail view={view} setView={setView} filter={filter} setFilter={setFilter}/>
         <main style={{ minHeight: 0, overflow: "hidden" }}>
-          {view === "dashboard"    && <SolutionDashboard/>}
-          {view === "architecture" && <SolutionArchitecture filter={filter} setFilter={setFilter}/>}
-          {view === "sessions"     && <SolutionSessions filter={filter} setFilter={setFilter} forceEmpty={forceEmpty}/>}
+          {view === "dashboard"    && <SolutionDashboard state={state}/>}
+          {view === "architecture" && <SolutionArchitecture filter={filter} setFilter={setFilter} state={state}/>}
+          {view === "sessions"     && <SolutionSessions filter={filter} setFilter={setFilter} forceEmpty={forceEmpty} state={state}/>}
         </main>
       </div>
     </div>

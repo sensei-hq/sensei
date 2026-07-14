@@ -7,7 +7,11 @@
 
 const { useState: cnS } = React;
 
-function ObsConsolidation() {
+function ObsConsolidation({ state = "ready" } = {}) {
+  if (state !== "ready") return <window.ScreenState state={state} kanji="統"
+    emptyTitle="Nothing to consolidate"
+    emptyHint="When memories start to overlap, sensei proposes merges here. Keep working — candidates form as evidence accumulates."
+    errorHint="Couldn't load consolidation candidates. Try again." onRetry={() => {}} />;
   const items = window.UPGRADES.consolidations;
   const [openId, setOpen] = cnS(items[0].id);
   const [decisions, setDecisions] = cnS({});  // id → "merged" | "kept"

@@ -2,7 +2,7 @@
 
 **Segment:** Dōjō (SaaS) — console (not the desktop app)
 **Route:** `dojo.sensei-hq.org/{origin}/{org}/console/maintainer` (SaaS) OR the self-hosted equivalent
-**Source mockup:** [`lib/dojo/dojo-console.jsx`](../../mockups/Sensei/lib/dojo/dojo-console.jsx)
+**Source mockup:** [`lib/dojo/dojo-maintainer.jsx`](../../mockups/Sensei/lib/dojo/dojo-maintainer.jsx) → `DojoMaintainerConsole` (panels: Triage · Candidate · Knowledge)
 **Source design:** [`Sensei Dōjō Journey Map.html`](../../mockups/Sensei/Sensei%20D%C5%8Djo%20Journey%20Map.html)
 
 ## Purpose

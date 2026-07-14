@@ -264,7 +264,11 @@ function LibRow({ item, onClick, active }) {
 // A library is a library. No split between detected and imported.
 // Tiny chip on the row hints at origin, but doesn't segment.
 // ═════════════════════════════════════════════════════════════
-function LibrariesVariantA({ embedded = false } = {}) {
+function LibrariesVariantA({ embedded = false, state = "ready" } = {}) {
+  if (state !== "ready") return <window.ScreenState state={state} kanji="庫"
+    emptyTitle="No libraries watched yet"
+    emptyHint="Sensei wraps each dependency your projects import as its own instrument. Run a session that uses one and it'll show up here with its docs-health."
+    errorHint="Couldn't load your libraries. Try again." onRetry={() => {}} />;
   const D = window.LIBRARIES_DATA;
   const all = D.groups.flatMap(g => g.items.map(i => ({ ...i, kind: g.id })));
   const [kind, setKind] = lS("all");      // all | code | service

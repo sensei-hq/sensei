@@ -254,7 +254,11 @@ Object.assign(window, {
 //  Overview · Sessions · Memories · Traceability · Libraries ·
 //  Instruments · Patterns · Impact · Logs · Settings)
 // ═══════════════════════════════════════════════════════════
-function ProjectPageSidebar({ initialSection = "overview", embedded = false, onBack, onSwitchProject, projectId } = {}) {
+function ProjectPageSidebar({ initialSection = "overview", embedded = false, onBack, onSwitchProject, projectId, state = "ready" } = {}) {
+  if (state !== "ready") return <window.ScreenState state={state} kanji="雲"
+    emptyTitle="This project has no data yet"
+    emptyHint="Point sensei at this project and run a session — its overview, sessions, memories and impact fill in here."
+    errorHint="Couldn't open this project window. Try again." onRetry={() => {}} />;
   const project = window.PROJECT_DATA.projects[projectId || window.PROJECT_DATA.active]
                   || window.PROJECT_DATA.projects[window.PROJECT_DATA.active];
   const [sec, setSec] = ppS(initialSection);

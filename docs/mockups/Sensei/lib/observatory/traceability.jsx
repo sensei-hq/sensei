@@ -6,7 +6,11 @@
 
 const { useState: dtS } = React;
 
-function ObsTraceability() {
+function ObsTraceability({ state = "ready" } = {}) {
+  if (state !== "ready") return <window.ScreenState state={state} kanji="巫"
+    emptyTitle="Nothing to trace yet"
+    emptyHint="Once sensei indexes a project's docs and links them to code, drift and broken references surface here."
+    errorHint="Couldn't load traceability. Try again." onRetry={() => {}} />;
   const T = window.UPGRADES.trace;
   const [project, setProject] = dtS(T.projectRollup[0].id);
   const [openDocId, setOpenDocId] = dtS(T.docs.find(d => d.project === T.projectRollup[0].id)?.id);

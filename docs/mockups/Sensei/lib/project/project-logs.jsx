@@ -457,7 +457,11 @@ function PLogIssueModal({ session, project, onClose }) {
 // ── Main Logs section ────────────────────────────────────────────────
 // scope: "project" (default) — sessions for one project, scoped subtitle
 // scope: "collective"        — every session sensei has run, project tags shown
-function ProjLogs({ project, scope = "project" }) {
+function ProjLogs({ project, scope = "project", state = "ready" }) {
+  if (state !== "ready") return <window.ScreenState state={state} kanji="録"
+    emptyTitle="No sessions logged yet"
+    emptyHint="Every session sensei watches is recorded here, step by step. Run one and it'll appear."
+    errorHint="Couldn't load session logs. Try again." onRetry={() => {}} />;
   const collective = scope === "collective";
   const [selectedId, setSelectedId] = plS(PLOG_SESSIONS[0].id);
   const [expandedTraceId, setExpandedTraceId] = plS(null);

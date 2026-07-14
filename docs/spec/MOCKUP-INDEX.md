@@ -68,7 +68,9 @@ screens live elsewhere:
 | `settings-inference` | `InferenceSettings` | `lib/setup/inference-settings.jsx` |
 | `project-overview` / `project-memories` / `project-about` | `ProjOverviewLite` / `ProjMemoriesLite` / `ProjAboutPane` | `lib/project/project-lite-panes.jsx` |
 | `project-patterns` / `project-sessions` | (`ProjectPageSidebar` tabs) | `lib/project/project-pages.jsx` |
-| `dojo-{admin,lead,maintainer}-console` | (panels) | `lib/dojo/dojo-console.jsx` |
+| `dojo-admin-console` | `DojoAdminConsole` (Overview · Monitor · Members · Scopes) | `lib/dojo/dojo-admin.jsx` |
+| `dojo-maintainer-console` | `DojoMaintainerConsole` (Triage · Candidate · Knowledge) | `lib/dojo/dojo-maintainer.jsx` |
+| `dojo-lead-console` | `DojoLeadConsole` (Clients · Audit) | `lib/dojo/dojo-lead.jsx` |
 | `dojo-developer-flow` | `Inapp*` | `lib/dojo/dojo-inapp.jsx` |
 | `insights-reasoning` | (MOE section) | `lib/observatory/mcp-replay-insights.jsx` |
 | **Relay** (13 screens, specced `relay-*.md`) | `Relay*` (skip `RelayArchitecture` — concept diagram) | `lib/relay/relay.jsx` · `lib/relay/relay-planner.jsx` · `lib/relay/relay-desktop.jsx` |
@@ -125,6 +127,7 @@ each artboard now imports only what it renders. Superseded files:
 | `lib/discarded/splash-healthcheck.jsx` (`SplashHealthCheck`) | `lib/setup/bootstrap-splash.jsx` (`Splash`) |
 | `lib/discarded/assistant-tick-options.jsx` | experiment only; not wired |
 | `lib/discarded/extensions-browser.jsx` · `lib/discarded/skill-editor.jsx` | dead (rendered nowhere) |
+| `lib/discarded/dojo-console.jsx` (one console, all roles) | split into `lib/dojo/dojo-admin.jsx` · `dojo-maintainer.jsx` · `dojo-lead.jsx` (+ shared frame `lib/dojo/dojo-shared.jsx`) |
 | `lib/observatory/instruments.jsx` (three-tab shell) | `lib/observatory/instruments-simple.jsx` — but the `-simple` wrappers delegate INTO `instruments.jsx` for Replay/Health, so it's **not dead**; keep both |
 
 **Global vs per-Dōjō — NOT a duplicate.** `lib/observatory/upgrades.jsx`
@@ -132,6 +135,22 @@ each artboard now imports only what it renders. Superseded files:
 the **global Collective** upgrades / share screens. `lib/dojo/dojo-inapp.jsx`
 (`InappDownstream` / `InappShare`) is the **per-Dōjō** version the observatory
 routes wire today. Both are kept — they are different scopes.
+
+## Screen states (empty · loading · error)
+
+Screens take a `state` prop and early-return a scaffold from
+[`lib/shared/screen-states.jsx`](../mockups/Sensei/lib/shared/screen-states.jsx)
+(`ScreenState`): **loading** (spinner + skeleton), **empty** (kanji + what's
+missing + how to get data), **error** (message + Retry). The happy path renders
+when `state="ready"`. Usage: `<ObsTraceability state="loading" />`.
+
+Screens with all three states today: solution-track (+ demo artboards
+`sol-loading`/`sol-empty`/`sol-error`), Libraries, Traceability, Impact,
+Consolidation, Collective-settings, Logs, the project panes (Memories/Impact),
+and the project window. Per-state *artboards* exist for solution-track only so far;
+the rest expose the states via the prop. `screen-states.jsx` is loaded on
+Observatory / Components / Experiments / _capture — add the script line if you
+mount these screens on another page.
 
 ## Working rules
 
