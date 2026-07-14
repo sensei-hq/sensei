@@ -31,24 +31,27 @@ flowchart TD
             direction LR
             CAP[capture] --> GRAPH[code+activity graph]
             GRAPH --> ANALYZE[analyzer] --> LEARN[memories·patterns·recs]
-            GW[["gateway<br/>(embedded LLM)"]]
+            GW[["gateway<br/>routes inference + actions"]]
             ANALYZE -.-> GW
             LEARN -.-> GW
         end
         D --> DATA[("data<br/>Postgres :7744 · sensei DB")]
-        GW -.-> OLLAMA["ollama / embedded gguf"]
+        GW --> EMB["embedded ollama<br/>in-process gguf"]
+        GW --> EXT["external ollama<br/>local server"]
+        GW --> BYOK["BYOK cloud models<br/>Anthropic · OpenAI · Google · …"]
         AGENTS["agent CLIs<br/>Claude Code · Codex · OpenCode · Aider"] --> COORD["coordinator<br/>supervises · runs the plan"]
         D -.->|supervises| COORD
     end
 
-    subgraph saas["Dōjō (opt-in SaaS — org boundary)"]
-        CONSOLE["console<br/>maintainer · admin · lead web app"]
-        DOJOSVC["dojo-mind service<br/>sensei-dojo"]
-        CONSOLE --> DOJOSVC
+    subgraph saas["Dōjō — deploy in-house OR SaaS (org boundary)"]
+        CONSOLE["console (web)<br/>developer · maintainer · admin · lead"]
+        DOJOSVC["dojo service<br/>dojo-mind · sensei-dojo"]
+        DDB[("dojo DB")]
+        CONSOLE --> DOJOSVC --> DDB
     end
 
-    subgraph relayplane["Relay (away from keyboard)"]
-        PHONE["mobile companion<br/>dashboard · approve · respond · plan"]
+    subgraph relayplane["Relay — mobile / pad app (away from keyboard)"]
+        PHONE["companion app<br/>dashboard · approve · respond · plan"]
     end
 
     D <-->|pull, never push · preview always| DOJOSVC
@@ -57,6 +60,15 @@ flowchart TD
     RELAY -.->|team gates → on-call| DOJOSVC
     WEB["website<br/>marketing + docs"]
 ```
+
+**Ecosystem components.** On the developer's machine: the **desktop app**, **cli**,
+**mcp**, and **daemon** (+ its **Postgres DB**), plus the **coordinator** that
+supervises agent CLIs. The **gateway** routes inference + actions to **embedded
+ollama**, an **external ollama**, or **BYOK cloud models** (Anthropic · OpenAI ·
+Google · …). The coordinator publishes filtered status through the **zero-knowledge
+relay** to the **mobile / pad Relay app**. The **Dōjō** (service + web console)
+runs **in-house or as SaaS**; the daemon reaches it pull-only, preview-always. The
+**website** is the public front door.
 
 ## The layers
 

@@ -5,8 +5,10 @@
 > Traces to [objectives DJ1–DJ5](../requirements/objectives.md#dōjō--the-cross-cutting-team-layer);
 > the layer design is [architecture/dojo](../architecture/dojo.md).
 
-The Dōjō is a **cross-cutting layer**, not a fifth segment: an in-app developer
-surface plus an external SaaS **console** for maintainers/admins/leads.
+The Dōjō is a **cross-cutting layer**, not a fifth segment: the developer's flows
+live **in the Observatory**, plus a web **console**. Every user logs in
+(developer · maintainer · admin · lead); the developer's is both in-app *and* a
+personal console view. Deploys **in-house or as SaaS**.
 
 **Membership contexts** — one developer, many orgs: *Employer · Client orgs ·
 Communities · Personal.* The org boundary is the **membership**; client-precedence

@@ -60,8 +60,11 @@ expose why it moved?**
 
 **Extend the same retrospective loop across a team without leaking client work.**
 The Dōjō is not a linear "segment 5" — it threads through the Observatory and the
-project window (in-app developer surface) and adds an external SaaS **console**
-for maintainers/admins/leads. Its core principles (from the journey map):
+project window (the developer's flows live **in the Observatory**) and adds a web
+**console**. **Every user logs into the Dōjō** — developer · maintainer · admin ·
+lead; the team benefit is primary, but a developer in multiple teams gets a
+developer console view too. The Dōjō (service + console) deploys **in-house or as
+SaaS**. Its core principles (from the journey map):
 **identity is the discovery · pull never push · never blind, always preview ·
 one universal strip · specificity wins conflicts.**
 
