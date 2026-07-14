@@ -508,6 +508,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn list_communities_scoped_aggregates_across_folders() {
+        // #G5a regression: `get_communities` must aggregate across ALL scope
+        // folders, not one lowest-UUID leaf. Communities live per-folder (the repo
+        // root usually owns them), so a single-folder lookup missed them.
+        let ctx = make_ctx().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let root_id = ctx.pg().add_watch_root(&root.to_string_lossy(), "comm", &serde_json::json!([])).await.unwrap();
+        let repo_fid = ctx.pg().upsert_repo_kind(&root_id, "git", "repo", &root.join("repo").to_string_lossy()).await.unwrap();
+        let sub_fid = ctx.pg().upsert_subfolder(&root_id, "sub", "repo/sub", &root.join("repo/sub").to_string_lossy(), Some(&repo_fid), None).await.unwrap();
+        ctx.pg().upsert_community(&repo_fid, 1, "auth cluster", 42).await.unwrap();
+        ctx.pg().upsert_community(&sub_fid, 2, "util cluster", 7).await.unwrap();
+
+        // Aggregated across both folders → both communities.
+        let all = ctx.pg().list_communities_scoped(&[repo_fid, sub_fid]).await.unwrap();
+        assert_eq!(all.len(), 2, "aggregates communities from every scope folder");
+        // The old single-folder path only ever saw one folder — the bug.
+        let one = ctx.pg().list_communities(&sub_fid).await.unwrap();
+        assert_eq!(one.len(), 1, "single-folder lookup sees only its own (the pre-fix behaviour)");
+    }
+
+    #[tokio::test]
     async fn scan_root_enqueues_no_processgitfolder_for_a_workspace_member() {
         // #101 regression at the ENQUEUE/TRIGGER layer: a monorepo (git repo with
         // a workspace member crate) must enqueue exactly ONE ProcessGitFolder —
