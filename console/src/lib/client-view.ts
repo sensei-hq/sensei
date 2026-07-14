@@ -1,4 +1,4 @@
-// Pure presentation helpers for the client-lead console screens (R11).
+// Pure presentation helpers for the lead console screens (R11).
 //
 // Side-effect-free (data in => display value out) so they unit-test without a DOM
 // or a live backend, and so the screens stay declarative. Colour is a token

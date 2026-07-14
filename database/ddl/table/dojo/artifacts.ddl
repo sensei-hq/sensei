@@ -54,7 +54,7 @@ comment on column dojo.artifacts.signature
 comment on column dojo.artifacts.attribution
      is 'Credit metadata: {author, org, dereferenced, anonymous_id}. Governed by the contributing membership''s attribution rules.';
 comment on column dojo.artifacts.dereferenced
-     is 'True when the source reference was stripped (mandatory for client work). The client-lead audit filters on this.';
+     is 'True when the source reference was stripped (mandatory for client work). The lead audit filters on this.';
 comment on column dojo.artifacts.contributed_by
      is 'user_id of the contributor (or null when anonymised).';
 comment on column dojo.artifacts.approved_by

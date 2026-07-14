@@ -1,7 +1,7 @@
-//! Integration tests for R8 — the tenant-scoped Dōjō CLIENT-LEAD console backend:
+//! Integration tests for R8 — the tenant-scoped Dōjō LEAD console backend:
 //! `/v1/t/{tenant_key}/{engagements,incidents,audit/artifacts,compliance/export}`.
 //!
-//! Covers the done-gates from `docs/llm-spec/screen/dojo-client-lead-console.md`:
+//! Covers the done-gates from `docs/llm-spec/screen/dojo-lead-console.md`:
 //! engagements CRUD + project bind; incident CRUD with the open-count gate
 //! (`resolved_at is null`); the artifact audit view with the **`non_dereferenced
 //! == 0`** done-gate (and the `dereferenced=true` filter); and the compliance
@@ -9,7 +9,7 @@
 //! chip), and, on success, provably **leaking no source references** (the export
 //! never carries `attribution` / `signature` / `contributed_by`). Also the LEAD
 //! role-floor: a plain contributor JWT and an API-key caller (which never carries
-//! `Lead`) are 403; a `client_lead` JWT — and, by the linear floor, a maintainer
+//! `Lead`) are 403; a `lead` JWT — and, by the linear floor, a maintainer
 //! / admin JWT — are allowed.
 //!
 //! Embedded PG + synthetic JWTs — no Docker, no running Supabase (mirrors the
@@ -80,7 +80,7 @@ async fn send(app: &Router, req: Request<Body>) -> (StatusCode, Value) {
     (status, body)
 }
 
-/// One flexible request helper for every verb the client-lead routes use.
+/// One flexible request helper for every verb the lead routes use.
 async fn call(
     app: &Router,
     method: &str,
@@ -125,7 +125,7 @@ async fn get_raw(app: &Router, path: &str, bearer: &str) -> (StatusCode, String,
 
 const KEY: &str = "github%2Facme"; // url-encoded tenant discovery key
 
-/// Stand up the `github/acme` tenant with one JWT-authenticated `client_lead`
+/// Stand up the `github/acme` tenant with one JWT-authenticated `lead`
 /// membership. Returns `(tenant_id, lead_user_id, lead_bearer_token)`.
 async fn lead_tenant(store: &DojoStore) -> (Uuid, Uuid, String) {
     let t = store
@@ -134,7 +134,7 @@ async fn lead_tenant(store: &DojoStore) -> (Uuid, Uuid, String) {
         .unwrap();
     let lead_user = Uuid::new_v4();
     store
-        .create_membership(&t, &lead_user, "employer", "sso", "client_lead")
+        .create_membership(&t, &lead_user, "employer", "sso", "lead")
         .await
         .unwrap();
     (t, lead_user, sign_jwt(&lead_user.to_string()))
@@ -586,10 +586,10 @@ async fn compliance_export_leaks_no_source_refs() {
     assert_eq!(page["rows"][0]["dereferenced"], true);
 }
 
-// ── role floor: only client-lead+ reaches the console ────────────────────────
+// ── role floor: only lead+ reaches the console ───────────────────────────────
 
 #[tokio::test]
-async fn non_client_lead_rejected_and_lead_admin_allowed() {
+async fn non_lead_rejected_and_lead_admin_allowed() {
     let (app, store, _pool) = boot().await;
     let (t, _lead_user, lead) = lead_tenant(&store).await;
 
@@ -600,7 +600,7 @@ async fn non_client_lead_rejected_and_lead_admin_allowed() {
     let contributor = member_jwt(&store, &t, "contributor").await;
     let member_key = key_for(&store, "Pull", "member").await;
 
-    // At/above the floor: client_lead (exact), and — by the linear floor —
+    // At/above the floor: lead (exact), and — by the linear floor —
     // maintainer and admin also pass (documented consequence: `Lead < Maintainer
     // < Admin`, so higher-trust roles inherit read access to this console).
     let maintainer = member_jwt(&store, &t, "maintainer").await;
@@ -630,7 +630,7 @@ async fn non_client_lead_rejected_and_lead_admin_allowed() {
         assert_eq!(s, StatusCode::FORBIDDEN, "below-floor POST engagements must be 403");
     }
 
-    // client_lead + maintainer + admin all reach the console (reads succeed).
+    // lead + maintainer + admin all reach the console (reads succeed).
     for bearer in [&lead, &maintainer, &admin] {
         let (s, _) = call(&app, "GET", &format!("/v1/t/{KEY}/engagements"), Some(bearer), None).await;
         assert_eq!(s, StatusCode::OK, "at/above-floor caller reaches the console");
@@ -638,7 +638,7 @@ async fn non_client_lead_rejected_and_lead_admin_allowed() {
 }
 
 #[tokio::test]
-async fn client_lead_unknown_tenant_404_and_no_credential_401() {
+async fn lead_unknown_tenant_404_and_no_credential_401() {
     let (app, store, _pool) = boot().await;
     let (_t, _lead_user, lead) = lead_tenant(&store).await;
 

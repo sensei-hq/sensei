@@ -15,7 +15,7 @@ import {
 //
 // The engagement record is pulled from list_engagements (there's no single-GET on
 // the backend) and matched by id — degrades to null + a surfaced error so the
-// screen renders under SSR/prerender and without a live client-lead JWT.
+// screen renders under SSR/prerender and without a live lead JWT.
 export const load: PageLoad = async ({ parent, params, fetch }) => {
 	const { tenantKey, accessToken } = await parent();
 	const engagementId = params.id;

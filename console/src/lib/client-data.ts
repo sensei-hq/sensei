@@ -1,6 +1,6 @@
-// Client-lead console API client + types (R11) over the R8 dojo-mind backend.
+// Lead console API client + types (R11) over the R8 dojo-mind backend.
 //
-// Binds to the real client-lead endpoints (crates/dojo-mind/src/api.rs :990-1541),
+// Binds to the real lead endpoints (crates/dojo-mind/src/api.rs :990-1541),
 // all behind the LEAD role-floor (`resolve_lead` → 403 for a non-lead):
 //   GET    …/engagements                    → { engagements: Engagement[] }
 //   POST   …/engagements                    → { id }
@@ -23,12 +23,12 @@
 //
 // Kept in a plain module (base URL read once, fetch injectable) so it imports
 // cleanly under SSR/prerender and unit tests without a live backend; the screens
-// render off an injected/empty fixture until Jerry wires a real client-lead session.
+// render off an injected/empty fixture until Jerry wires a real lead session.
 
 import { DojoApiError, authHeaders, dojoApiUrl, encodeTenant, parseJson } from './dojo-api';
 import type { DojoCallOpts } from './dojo-api';
 
-// Re-export the shared error under the client name so client-lead screens
+// Re-export the shared error under the client name so lead screens
 // `instanceof` against a local symbol without reaching into the shared module.
 export { DojoApiError, dojoApiUrl };
 export const ClientApiError = DojoApiError;
@@ -175,7 +175,7 @@ export type ExportFormat = 'csv' | 'json';
 
 // ── client ───────────────────────────────────────────────────────────────────
 
-/** Build the `/v1/t/{tenant}/…` URL for a client-lead sub-path, tenant-encoded. */
+/** Build the `/v1/t/{tenant}/…` URL for a lead sub-path, tenant-encoded. */
 function clientUrl(tenantKey: string, path: string): string {
 	return `${dojoApiUrl}/v1/t/${encodeTenant(tenantKey)}${path}`;
 }
@@ -205,7 +205,7 @@ async function sendJson<T>(
 
 // engagements ─────────────────────────────────────────────────────────────────
 
-/** `GET …/engagements` — the tenant's engagements (client-lead). */
+/** `GET …/engagements` — the tenant's engagements (lead). */
 export async function listEngagements(
 	tenantKey: string,
 	opts: DojoCallOpts = {}
@@ -217,7 +217,7 @@ export async function listEngagements(
 	return data.engagements ?? [];
 }
 
-/** `POST …/engagements` — register a client engagement (client-lead). */
+/** `POST …/engagements` — register a client engagement (lead). */
 export async function createEngagement(
 	tenantKey: string,
 	body: NewEngagementBody,
@@ -291,7 +291,7 @@ export async function listIncidents(
 	return { incidents: data.incidents ?? [], open_count: data.open_count ?? 0 };
 }
 
-/** `POST …/incidents` — open a confidentiality incident (client-lead). */
+/** `POST …/incidents` — open a confidentiality incident (lead). */
 export async function createIncident(
 	tenantKey: string,
 	body: NewIncidentBody,
@@ -315,7 +315,7 @@ export async function updateIncident(
 	);
 }
 
-/** `DELETE …/incidents/{id}` — delete an incident (client-lead). */
+/** `DELETE …/incidents/{id}` — delete an incident (lead). */
 export async function deleteIncident(
 	tenantKey: string,
 	id: string,

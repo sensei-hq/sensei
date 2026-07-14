@@ -22,7 +22,7 @@
 
 	// Engagements (spec: define engagement · mockup DojoClients "Engagements"
 	// registry, dojo-console.jsx l.807). Lists the tenant's client engagements
-	// (data.engagements from list_engagements) and lets a client-lead register
+	// (data.engagements from list_engagements) and lets a lead register
 	// (POST …/engagements), edit / close (PATCH), bind a project (POST …/bind), or
 	// delete (DELETE) one. Confidentiality is enforced universally at the pipeline
 	// strip — engagements are routing only, never a per-client posture. All

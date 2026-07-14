@@ -20,7 +20,7 @@ describe('roleLabel / roleToneClass', () => {
 	it('maps the known Dōjō roles to labels', () => {
 		expect(roleLabel('admin')).toBe('Org admin');
 		expect(roleLabel('maintainer')).toBe('Maintainer');
-		expect(roleLabel('client_lead')).toBe('Client lead');
+		expect(roleLabel('lead')).toBe('Lead');
 		expect(roleLabel('contributor')).toBe('Contributor');
 	});
 

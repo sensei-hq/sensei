@@ -226,7 +226,7 @@ only, **todo** = not started.
 | Developer | [screen/dojo-developer-flow.md](screen/dojo-developer-flow.md) | **draft** | Journey narrative wiring across in-app screens |
 | Maintainer | [screen/dojo-maintainer-console.md](screen/dojo-maintainer-console.md) | **draft** | Queue / evaluate / decide / distribute / measure |
 | Org admin | [screen/dojo-admin-console.md](screen/dojo-admin-console.md) | **draft** | Stand up / identity / members / policies / monitor |
-| Client / engagement lead | [screen/dojo-client-lead-console.md](screen/dojo-client-lead-console.md) | **draft** | Engagement + universal strip + audit trail |
+| Client / engagement lead | [screen/dojo-lead-console.md](screen/dojo-lead-console.md) | **draft** | Engagement + universal strip + audit trail |
 
 ### Pipeline specs — the data behind the screens
 

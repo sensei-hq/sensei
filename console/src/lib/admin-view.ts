@@ -10,7 +10,7 @@
 const ROLE_LABELS: Record<string, string> = {
 	admin: 'Org admin',
 	maintainer: 'Maintainer',
-	client_lead: 'Client lead',
+	lead: 'Lead',
 	contributor: 'Contributor'
 };
 
@@ -27,7 +27,7 @@ export function roleToneClass(role: string): string {
 		case 'maintainer':
 			return 'text-ink';
 		case 'contributor':
-		case 'client_lead':
+		case 'lead':
 			return 'text-ink-soft';
 		default:
 			return 'text-ink-faint';
@@ -38,7 +38,7 @@ export function roleToneClass(role: string): string {
 export const MEMBER_ROLES: readonly string[] = [
 	'contributor',
 	'maintainer',
-	'client_lead',
+	'lead',
 	'admin'
 ] as const;
 

@@ -116,7 +116,7 @@ describe('setMemberRole', () => {
 	});
 
 	it('surfaces the API 400 for an invalid role', async () => {
-		const { fn } = fakeFetch(400, { error: 'role must be contributor|maintainer|client_lead|admin' });
+		const { fn } = fakeFetch(400, { error: 'role must be contributor|maintainer|lead|admin' });
 		await expect(setMemberRole('t/x', 'u1', 'wizard', { fetch: fn })).rejects.toBeInstanceOf(
 			AdminApiError
 		);

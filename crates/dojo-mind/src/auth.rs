@@ -164,7 +164,7 @@ pub fn verify_supabase_jwt(
 
 /// Authority a caller carries on a tenant's dojo routes. `Member` may pull;
 /// `Contributor` may additionally publish; `Lead` may additionally run the
-/// client-lead console (engagements / audit / incidents / compliance export);
+/// lead console (engagements / audit / incidents / compliance export);
 /// `Maintainer` may additionally triage (list the queue, decide, run the
 /// promotion sweep); `Admin` may additionally run the admin console (members /
 /// identities / policies / health / audit).
@@ -175,15 +175,15 @@ pub enum DojoAccess {
     Member = 0,
     /// Read-write: publish + pull (`contributor+`).
     Contributor = 1,
-    /// Client-confidentiality authority: run the client-lead console —
+    /// Client-confidentiality authority: run the lead console —
     /// register/bind engagements, audit the universal dereference strip, handle
-    /// incidents, and export compliance evidence (`client_lead`). Sits ABOVE
+    /// incidents, and export compliance evidence (`lead`). Sits ABOVE
     /// `Contributor` (a plain contributor cannot register engagements or export
     /// compliance data — the console's role-floor 403) and deliberately BELOW
-    /// `Maintainer` (a client-lead is NOT a triage role — it never gains
+    /// `Maintainer` (a lead is NOT a triage role — it never gains
     /// queue/decide/promote authority; see `dojo_role_to_access` + the
     /// `dojo.member_role` DDL comment). Reachable only via the Supabase-JWT plane
-    /// with the `client_lead` dojo membership role — the console is human / SSO
+    /// with the `lead` dojo membership role — the console is human / SSO
     /// traffic (the API-key plane never mints it, mirroring `Admin`).
     Lead = 2,
     /// Triage authority: list/decide/promote the queue (`maintainer+`). Maps
@@ -252,9 +252,9 @@ fn member_role_to_access(role: &str) -> DojoAccess {
 
 /// Map a `dojo.member_role` string (JWT plane) onto dojo access: `admin` runs
 /// the admin console (`Admin`); `maintainer` triages (`Maintainer`);
-/// `client_lead` runs the client-lead console (`Lead`); `contributor`
+/// `lead` runs the lead console (`Lead`); `contributor`
 /// contributes; anything unrecognised falls back to least-privilege `Member`.
-/// (`client_lead` guards client confidentiality — it is a dedicated console
+/// (`lead` guards client confidentiality — it is a dedicated console
 /// role, NOT a triage role: `Lead` sits below `Maintainer` so it never inherits
 /// queue/promote authority.) Only this JWT plane can grant `Lead`/`Admin`, so
 /// both consoles are gated to a human with the matching dojo membership role.
@@ -262,7 +262,7 @@ fn dojo_role_to_access(role: &str) -> DojoAccess {
     match role {
         "admin" => DojoAccess::Admin,
         "maintainer" => DojoAccess::Maintainer,
-        "client_lead" => DojoAccess::Lead,
+        "lead" => DojoAccess::Lead,
         "contributor" => DojoAccess::Contributor,
         _ => DojoAccess::Member,
     }

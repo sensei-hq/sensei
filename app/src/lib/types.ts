@@ -878,7 +878,7 @@ export interface DojoMembership {
   dojo_url: string;
   /** employer | client | community | personal. */
   kind: string;
-  /** contributor | maintainer | client_lead | admin. */
+  /** contributor | maintainer | lead | admin. */
   role: string;
   /** sso | github_oauth | device_code. */
   authenticated_via: string;

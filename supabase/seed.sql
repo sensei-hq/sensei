@@ -3,11 +3,11 @@
 -- These are throwaway local credentials — no real secrets, never used in production.
 -- Sign in via magic link (Inbucket catches the email at http://127.0.0.1:54324) or
 -- with the password below. `app_metadata.role` is the claim the dōjō service reads
--- (verify_supabase_jwt → dojo_role_to_access) to gate the admin / client-lead consoles.
+-- (verify_supabase_jwt → dojo_role_to_access) to gate the admin / lead consoles.
 --
 -- Password for every seeded user: sensei-local
 --
--- Roles cover the console personas: admin, maintainer, contributor, lead (client-lead).
+-- Roles cover the console personas: admin, maintainer, contributor, lead.
 
 DO $$
 DECLARE

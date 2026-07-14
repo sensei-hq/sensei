@@ -3,7 +3,7 @@ import { DojoApiError, listEngagements, type Engagement } from '$lib/client-data
 
 // Engagements: the tenant's client engagements (list_engagements, LEAD floor).
 // Degrades to an empty list + a surfaced error so the screen renders under
-// SSR/prerender and without a live dojo service / client-lead JWT (Jerry's
+// SSR/prerender and without a live dojo service / lead JWT (Jerry's
 // live-verify step); a 403 from a non-lead surfaces the same way (the error
 // banner) rather than crashing.
 export const load: PageLoad = async ({ parent, fetch }) => {

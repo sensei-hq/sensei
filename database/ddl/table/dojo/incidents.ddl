@@ -24,7 +24,7 @@ create index if not exists incidents_open_idx on dojo.incidents(tenant_id) where
 
 comment on table dojo.incidents is
 'A confidentiality incident (a near-leak on client work) tracked by the
-client-lead. Open incidents are rows where resolved_at is null. Carries
+lead. Open incidents are rows where resolved_at is null. Carries
 severity, owner, and an SLA for alerting.';
 
 comment on column dojo.incidents.engagement_id

@@ -10,7 +10,7 @@
 The **entire Docker-free spine is built and tested** — DDL, both wire-protocol crates, the
 multi-tenant dual-auth Dōjō service (hive-mind), the daemon-side contribute/anonymise/inbox loop,
 the maintainer triage/promotion engine, and 3 of 4 desktop screens. What remains is the **SaaS
-console web app + its auth plane (in-repo Supabase + kavach)**, the **admin/client-lead console
+console web app + its auth plane (in-repo Supabase + kavach)**, the **admin/lead console
 BACKEND endpoints** (only the maintainer surface exists on the service), the **share-review
 desktop screen**, and an **upstream contribute cadence scheduler**. This is now mostly
 *new-frontend + a few backend endpoint additions*, not foundational construction.
@@ -94,10 +94,10 @@ with `enable_confirmations=false`; `seed.sql` test users with `app_metadata.role
 
 | # | Gap | Evidence |
 |---|---|---|
-| G1 | **SaaS console web app** — sign-in + org-picker + maintainer/admin/client-lead consoles | no `console/`/`saas/` dir anywhere; `website/` is marketing-only; no `@kavach`/`PUBLIC_SUPABASE_URL`/`PUBLIC_DOJO_API_URL` in-repo |
+| G1 | **SaaS console web app** — sign-in + org-picker + maintainer/admin/lead consoles | no `console/`/`saas/` dir anywhere; `website/` is marketing-only; no `@kavach`/`PUBLIC_SUPABASE_URL`/`PUBLIC_DOJO_API_URL` in-repo |
 | G2 | **In-repo `supabase/`** (config.toml, seed.sql, migrations) | none in repo; no `supabase`/`inbucket` make targets (`make hive` is the only Dōjō target) |
 | G3 | **Admin console BACKEND endpoints** on hive-mind — members list/role-set, identities/SSO config, policies CRUD, health rollups, audit-events list | tables exist (`dojo.{roles,identities,policies,audit_events}`) but `api.rs` mounts none; provisioning is CLI-only (`sensei-hive provision`) |
-| G4 | **Client-lead console BACKEND endpoints** — engagements CRUD, dereferenced-artifact audit view, incidents CRUD, compliance export | tables exist (`dojo.{engagements,incidents,audit_events}`) but no HTTP surface |
+| G4 | **Lead console BACKEND endpoints** — engagements CRUD, dereferenced-artifact audit view, incidents CRUD, compliance export | tables exist (`dojo.{engagements,incidents,audit_events}`) but no HTTP surface |
 | G5 | **Share-review desktop screen (C11)** | daemon API exists (`api/handlers/share_review.rs`) but no `(observatory)/share-review/` route |
 | G6 | **Upstream contribute cadence scheduler** — auto-prepare/publish on daily/weekly cadence per prefs | only manual `POST …/publish`; only `run_pull_loop` (downstream) is spawned. `observatory-collective.md` done-gate wants cadence to auto-fire |
 | G7 | **Auto-bind at project detect** + project-About binding chip | `bind_project` is user-explicit via connect handler (`dojo.rs:100`); lifecycle spec wants git-remote heuristic auto-bind (InappBind mockup) |
@@ -111,7 +111,7 @@ with `enable_confirmations=false`; `seed.sql` test users with `app_metadata.role
 ## AUTH ARCHITECTURE (adopted) = DUAL-PLANE — unchanged, now partly built
 - **Humans → Supabase via kavach**, ONLY in the NEW SaaS console app. Providers: magic-link (primary
   local, Supabase Inbucket:54324) + GitHub OAuth (PARKED — needs a real OAuth app). `@kavach/sentry`
-  gates `/console/{maintainer,admin,client-lead}`.
+  gates `/console/{maintainer,admin,lead}`.
 - **Dōjō service (hive-mind) accepts BOTH** — already built: Supabase JWT (verify→sub=user→
   membership+role) for console traffic; API-key/device-token for daemon/federation traffic; tenant
   from `<origin>/<org>/<dojo>` path.
@@ -164,17 +164,17 @@ Jerry's eye; NEVER touch `.env`/real credentials).
   `health` (connections/queue-depth/publish-rate/error-rate rollups from `dojo.events`), `audit`
   (audit_events list). Dual-auth, admin-role floor. *Verify:* synthetic-JWT integration tests (no
   Supabase), role-floor 403s, done-gate curls from `dojo-admin-console.md`.
-- **R8 🟢 Client-lead console BACKEND endpoints on hive-mind (G4).** `engagements` (CRUD + project
+- **R8 🟢 Lead console BACKEND endpoints on hive-mind (G4).** `engagements` (CRUD + project
   bind), `artifacts` audit view (`dereferenced=true` filter), `incidents` (CRUD + severity/SLA),
   compliance export (CSV/PDF-ready, strip-covered columns only). *Verify:* the
-  `non_dereferenced == 0` curl gate from `dojo-client-lead-console.md`; export leaks no source refs.
+  `non_dereferenced == 0` curl gate from `dojo-lead-console.md`; export leaks no source refs.
 
 ### Track C — SaaS console screens (frontend over Track S; each behind kavach/sentry)
 - **R9 🔴 Maintainer console** (queue/candidate/evaluate/decide/distribute/measure) over the EXISTING
   triage endpoints. Mockup `dojo-console.jsx` `DojoOverview`(l.191)/`DojoTriage`(l.373)/
   `DojoCandidate`(l.451). UI is 🟢; the auth gate makes the runnable path 🔴.
 - **R10 🔴 Admin console** (members/roles/identities/policies/monitor/audit) over R7. `DojoMembers`(l.649).
-- **R11 🔴 Client-lead console** (engagements/audit/incidents/dereference-verify/compliance export)
+- **R11 🔴 Lead console** (engagements/audit/incidents/dereference-verify/compliance export)
   over R8. `DojoClients`(l.709).
 
 ### Track H — hardening / parked
@@ -218,17 +218,17 @@ R5 → R6 → {R9, R10, R11} → R4 / R12 / R14 / R15 (polish) → R13 (deferred
 - **Verify:** `svelte-check` 0; Playwright e2e (injected next-batch → renders items + org-policy bar →
   Publish → batch history "travels"); zero-errors-policy.
 
-### R7 — Admin + client-lead console BACKEND endpoints on hive-mind
+### R7 — Admin + lead console BACKEND endpoints on hive-mind
 *(Do R7 & R8 together — same service, same test harness; both 🟢, synthetic-JWT testable.)*
-- **Read first:** `docs/llm-spec/screen/dojo-admin-console.md` + `dojo-client-lead-console.md` (done
+- **Read first:** `docs/llm-spec/screen/dojo-admin-console.md` + `dojo-lead-console.md` (done
   gates + curls), `crates/hive-mind/src/api.rs` (route + dual-auth pattern, `authenticate_dojo`),
   `store.rs` (dojo CRUD helpers to extend), `tests/dojo_promote_test.rs` + `dojo_artifacts_test.rs`
   (synthetic-JWT harness to copy), DDL `dojo.{roles,identities,policies,engagements,incidents,audit_events,events}`.
 - **Create:** new handlers + store methods for members list/role-set, identities, policies CRUD,
   health rollups, audit list (admin); engagements/incidents CRUD, dereferenced-artifact audit view,
-  compliance export (client-lead). Admin-role floor via `DojoAccess`.
+  compliance export (lead). Admin-role floor via `DojoAccess`.
 - **Verify:** `cargo test -p hive-mind` new tests (role-floor 403s; `approve` needs
-  `distribution_scope`; client-lead audit `non_dereferenced == 0`); embedded PG only, no Docker;
+  `distribution_scope`; lead audit `non_dereferenced == 0`); embedded PG only, no Docker;
   keep all 16 existing hive tests green; zero-errors-policy.
 
 *(R5 in-repo `supabase/` scaffold is the 🟢 on-ramp to Track S — config files only, safe to add any

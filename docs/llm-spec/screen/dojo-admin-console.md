@@ -79,4 +79,4 @@ curl -s https://dojo.sensei-hq.org/{org}/api/health \
 ## Related
 
 - [[pipeline/dojo-lifecycle]] — role provisioning + policies
-- [[screen/dojo-maintainer-console]] · [[screen/dojo-client-lead-console]]
+- [[screen/dojo-maintainer-console]] · [[screen/dojo-lead-console]]

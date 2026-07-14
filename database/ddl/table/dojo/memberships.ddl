@@ -33,7 +33,7 @@ global-dojo tenant.';
 comment on column dojo.memberships.user_id
      is 'The member (Supabase auth subject). See dojo.identities. Not a local FK — identity is owned by Supabase.';
 comment on column dojo.memberships.role
-     is 'contributor | maintainer | client_lead | admin — usually git-derived (see dojo.roles), admin-overridable.';
+     is 'contributor | maintainer | lead | admin — usually git-derived (see dojo.roles), admin-overridable.';
 comment on column dojo.memberships.kind
      is 'employer | client | community | personal — drives routing precedence and attribution.';
 comment on column dojo.memberships.org_slugs

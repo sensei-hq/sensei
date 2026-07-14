@@ -1653,7 +1653,7 @@ implied — the WHOLE Docker-free spine is built+tested: dojo schema (C1), dojo-
 service (`sensei-hive` binary, runnable, embedded PG no-Docker, dual auth API-key+Supabase-JWT synthetic-testable,
 full triage/promotion engine k-anon≥3 auto-approve 0.80), daemon routes (memberships/preferences/share-review/
 upgrades) + strict anonymise/fail-closed-dereference + durable outbox + 300s downstream pull, 3 of 4 desktop screens.
-MISSING (G1-G11): SaaS console web app + in-repo supabase/ + kavach wiring (🔴), admin/client-lead console BACKEND
+MISSING (G1-G11): SaaS console web app + in-repo supabase/ + kavach wiring (🔴), admin/lead console BACKEND
 endpoints (🟢), share-review desktop screen (🟢), UPSTREAM contribute cadence scheduler (🟢, publish is manual-only),
 port mismatch hive 7755 vs config 8787 (🟢), etc. Chunk order: {R1,R2}→R3→{R7,R8}→R5→R6🔴→{R9,R10,R11}🔴→polish.
 ✅ R1 SHIPPED `3e11c2bb` (contribute-cadence scheduler — stage-only, honors paused default, reuses strict anonymise;
@@ -1850,12 +1850,12 @@ port mismatch hive 7755 vs config 8787 (🟢), etc. Chunk order: {R1,R2}→R3→
    ('approved','published','distributed'), error_rate counts 'error'; confirm the promote loop actually emits those
    (today it emits 'approved', not 'distributed'/'error'). (2) roles→git-role mapping CRUD not exposed as endpoints
    (out of R7 scope; small follow-up if the console UI needs to edit mappings).
-   ✅ R8 SHIPPED `310c3477` (agent a73bbd38) — client-lead console backend on dojo-mind. Added DojoAccess::Lead (code
+   ✅ R8 SHIPPED `310c3477` (agent a73bbd38) — lead console backend on dojo-mind. Added DojoAccess::Lead (code
    enum, between Contributor & Maintainer; JWT-only; NO DDL — dojo.member_role already has client_lead). Endpoints
    engagements CRUD+bind / incidents CRUD+open_count / audit artifacts (dereferenced filter) / compliance export.
    Export is source-ref-free BY CONSTRUCTION (SELECT lists only covered cols, 409s if any non-dereferenced). VERIFIED
    by me: clippy -D warnings 0, cargo test -p dojo-mind 74 pass (7 new incl. non_dereferenced==0 + no-source-leak +
-   role-floor 403). ⚑ JERRY-FLAGS: (1) LINEAR floor ⇒ maintainer/admin inherit the client-lead console (pinned by
+   role-floor 403). ⚑ JERRY-FLAGS: (1) LINEAR floor ⇒ maintainer/admin inherit the lead console (pinned by
    test); strict role isolation would need a role-SET model (bigger, not invented). (2) 🐛 dbd materializes enums in
    ALPHABETICAL order, NOT DDL declaration order → `ORDER BY severity DESC` gave [medium,low,high,critical]; the
    incident_severity.ddl comment claiming declaration-order is FALSE-as-deployed. R8 worked around with a CASE rank;
@@ -1978,10 +1978,10 @@ port mismatch hive 7755 vs config 8787 (🟢), etc. Chunk order: {R1,R2}→R3→
    locals.session.access_token → data → triage-data.ts Authorization: Bearer. Makes R9/R10/R11 functional-on-login
    (live login + running dojo service still Jerry). Verify check+build+TEST (0/green).
    ✅ R10 SHIPPED `da3f4d63` (subagent a7b582eb) — admin console (members/identities/policies/health/audit) over R7. VERIFIED check 0, 80 tests, build ok. DRY: shared lib/dojo-api.ts core (triage-data.ts refactored to it, R9 importers untouched).
-   ✅ R11 SHIPPED `980dc917` (subagent acd047bb) — client-lead console (engagements/incidents CRUD + dereferenced
+   ✅ R11 SHIPPED `980dc917` (subagent acd047bb) — lead console (engagements/incidents CRUD + dereferenced
    audit w/ non_dereferenced==0 red-fail + export-disable, source-ref-free compliance export w/ 409 blocked-state).
    VERIFIED check 585 files 0/0, 120 tests, build ok. DRY on dojo-api.ts + reused admin-view helpers.
-   ✅✅✅ CONSOLE UI TRACK COMPLETE (R6 scaffold+auth → wiring → R9 maintainer → R10 admin → R11 client-lead). All
+   ✅✅✅ CONSOLE UI TRACK COMPLETE (R6 scaffold+auth → wiring → R9 maintainer → R10 admin → R11 lead). All
    build/check/test-green; LIVE (magic-link login + running dojo-mind service) = Jerry's verify.
    ▶️✅ RESUMED 2026-07-13 (post-restart). Progress this session:
    • ✅ v0.3.1 RELEASED — `git checkout main` (ff'd to develop @91904d62) → `make bump v=patch` → bump `229af97e`,
@@ -2215,7 +2215,7 @@ TRUE-BLOCKED (only these genuinely wait on Jerry/Docker): Instruments·Health re
 3. "Verifiable backlog exhausted → idle" = premature stop (already reversed).
 ── DŌJŌ GAPS NOW UNBLOCKED (specced + mockup'd, wrongly parked) — ADD TO QUEUE:
    • Dōjō SaaS CONSOLE web app (new folder, SvelteKit + kavach/@kavach/sentry): mockups dojo-saas.jsx +
-     dojo-console.jsx; specs screen/dojo-maintainer-console.md, dojo-admin-console.md, dojo-client-lead-console.md,
+     dojo-console.jsx; specs screen/dojo-maintainer-console.md, dojo-admin-console.md, dojo-lead-console.md,
      dojo-developer-flow.md. (C2 scaffold + C12/C13/C14 console screens.)
    • supabase/ config folder in-repo (config.toml + migrations/seed + kavach wiring) — model on ~/Developer/kavach/supabase.
    • Then run `supabase start` + the console locally and VERIFY the login/dual-plane auth (was PARKED as un-runnable).

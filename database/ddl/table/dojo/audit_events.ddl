@@ -17,14 +17,14 @@ create index if not exists audit_events_engagement_idx on dojo.audit_events(enga
 
 comment on table dojo.audit_events is
 'Append-only compliance / non-repudiation audit, stamped by the auth middleware
-on every admin and client-lead action. Serves the admin console audit log and
-the client-lead compliance export (filterable by engagement). Distinct from
+on every admin and lead action. Serves the admin console audit log and
+the lead compliance export (filterable by engagement). Distinct from
 dojo.events (operational loop log): this one is the confidentiality/governance
 trail and its columns are a subset covered by the universal strip so exports
 never leak source references.';
 
 comment on column dojo.audit_events.actor_id
-     is 'user_id of the admin/client-lead who performed the action.';
+     is 'user_id of the admin/lead who performed the action.';
 comment on column dojo.audit_events.engagement_id
      is 'The engagement in scope, for engagement-filtered compliance exports.';
 comment on column dojo.audit_events.action

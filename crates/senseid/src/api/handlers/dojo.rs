@@ -52,7 +52,7 @@ pub(crate) struct NewMembershipBody {
     /// the org-tagging that drives infer-at-detect auto-bind. Normalised
     /// (lowercased/deduped) server-side. Optional; defaults to none.
     pub org_slugs: Option<Vec<String>>,
-    /// contributor | maintainer | client_lead | admin (default contributor).
+    /// contributor | maintainer | lead | admin (default contributor).
     pub role: Option<String>,
     /// sso | github_oauth | device_code (default device_code).
     pub authenticated_via: Option<String>,

@@ -20,7 +20,7 @@ create index if not exists notifications_unread_idx on dojo.notifications(user_i
 comment on table dojo.notifications is
 'Per-member console notifications about Dōjō activity — e.g. "3 new items in
 your queue" (maintainer), "your contribution was approved" (contributor),
-"queue depth high" / "incident open past SLA" (admin/client-lead). read_at gates
+"queue depth high" / "incident open past SLA" (admin/lead). read_at gates
 the unread badge. (Daemon-side "new upgrade arrived" toasts are a separate
 sensei-side concern handled when downstream artifacts land — C7.)';
 

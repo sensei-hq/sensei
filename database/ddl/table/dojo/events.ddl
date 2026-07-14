@@ -18,7 +18,7 @@ comment on table dojo.events is
 and attribution actions. Serves the maintainer console audit trail and the Today
 downstream lane. Row count for a maintainer equals the number of actions they
 performed. (dojo.audit_events is the separate compliance/non-repudiation log for
-admin + client-lead consoles.)';
+admin + lead consoles.)';
 
 comment on column dojo.events.actor_id
      is 'user_id of the actor (maintainer/system) that produced the event.';
