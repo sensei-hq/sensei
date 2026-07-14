@@ -33,7 +33,12 @@ pub enum FolderKind {
 pub fn find_git_folders(root: &Path, max_depth: u32) -> Vec<PathBuf> {
     let mut result = Vec::new();
     walk_for_git(root, 0, max_depth, &mut result);
+    // Resolve symlinks to the real repo path and dedup, so a repo reachable via
+    // two paths (e.g. a symlink `sensei-hq/gateway` → `strategos/gateway`) is a
+    // single folder, not two projects.
+    result = result.into_iter().map(|p| std::fs::canonicalize(&p).unwrap_or(p)).collect();
     result.sort();
+    result.dedup();
     result
 }
 
@@ -744,6 +749,21 @@ mod tests {
         assert!(names.contains(&"fldr_2"));
         assert!(names.contains(&"fldr_3"));
         assert!(names.contains(&"standalone"));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn find_git_folders_dedupes_symlinked_repo() {
+        // A repo reachable via two paths (a real dir + a symlink to it) must be
+        // ONE folder, not two — else it double-counts as two projects (the
+        // sensei-hq/gateway → strategos/gateway case).
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("strategos/gateway/.git")).unwrap();
+        std::os::unix::fs::symlink(root.join("strategos/gateway"), root.join("sensei-hq_gateway")).unwrap();
+        let gits = find_git_folders(root, 3);
+        assert_eq!(gits.len(), 1, "symlinked repo counted once, got {gits:?}");
+        assert!(gits[0].ends_with("strategos/gateway"), "canonicalized to the real path, got {gits:?}");
     }
 
     #[test]
