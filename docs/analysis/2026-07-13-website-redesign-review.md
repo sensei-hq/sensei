@@ -167,7 +167,7 @@ section next to "0 external requests" reads as a contradiction unless the framin
 Grounded against the specs (`observatory-collective.md`, `pipeline/collective-intelligence.md`,
 `pipeline/dojo-lifecycle.md`, the four console specs, `park/_dojo-build-plan.md`). **Build status
 is the load-bearing caveat: the Docker-free spine is built + tested, but the SaaS console app,
-admin/client-lead backend endpoints, share-review desktop screen, auto-discovery, and the cadence
+admin/lead backend endpoints, share-review desktop screen, auto-discovery, and the cadence
 scheduler are NOT shipped.** The website should market the *shape* of Dōjō, not imply the whole
 console/SaaS exists today.
 
@@ -176,12 +176,12 @@ console/SaaS exists today.
 | Loop: Contribute→Accumulate→Triage→Approve→Distribute, distributed back to matching scopes | Matches the pipeline (cluster-by-signature, score, human triage, named approval, downstream inbox pull every 300s) | ✅ Accurate — safe to ship |
 | Six artifacts (principles/patterns/prompts/guards/skills/agents) round-trip | Stored in `dojo.artifacts`, upstream/downstream shapes identical | ✅ Accurate |
 | One dev → many orgs; one project → exactly one Dōjō; findings route only where they belong | Implemented: `projects.dojo_id`, `client_precedence_route()` (pure fn, 58 tests, called live) | ✅ Accurate |
-| Client work is source-dereferenced automatically; the lesson travels, the source doesn't | Fail-closed dereference (`attribution.rs`, 20+ adversarial tests); client-lead cannot override | ✅ Accurate — and a great trust point to lead with |
+| Client work is source-dereferenced automatically; the lesson travels, the source doesn't | Fail-closed dereference (`attribution.rs`, 20+ adversarial tests); the lead cannot override | ✅ Accurate — and a great trust point to lead with |
 | Global Collective is anonymized (source stripped, stack descriptor, stable anon id, k-anonymity ≥3) | Grounded; **stricter** than employer/client scope | ✅ Accurate — but note k-anon is **global-only** |
 | **"…with nothing leaking"** (section lead) | Overstated. Source refs are stripped for *client* work and generalized for *global*; but **employer-scoped** work is named-to-you and org-internal, and *does* reference internal specifics inside the org. "Nothing leaks" ≠ "nothing is shared." | ⚠ **Revise** — say "source stays home; the lesson travels" and "client source is stripped automatically," not a blanket "nothing leaks." |
 | **"Ranked by priority, not hierarchy … the higher rung wins"** (P0/P1/P2 ladders) | Not found in the Dōjō conflict model. Governance uses **mandatory vs advisory** enforcement + scope-matching + consumer mute/pin, and contribution **thresholds** (e.g., memory `strength ≥ 0.7`), not a P0/P1/P2 "rung" tiering. | ⚠ **Reframe** to the real model (mandatory rules win; more-specific scope refines; you keep mute/pin), or drop the ladder metaphor. Don't invent a tier system. |
 | Collective **vs** Dōjō as two distinct systems | Spec unifies them: "there is no separate 'Collective' concept — it's the `global-dojo` Dōjō at scope `global`." | ◑ The user-facing distinction (public commons vs private governed) is still useful, but "vs" slightly over-separates. Consider "One model, two scopes: the public commons, and your private Dōjō." |
-| (Implied by a console-heavy pitch) admin/maintainer/client-lead consoles exist | Only the **maintainer** surface has backend endpoints; **admin + client-lead consoles are not built** (no `console/` app, no Supabase scaffold) | ⚠ Do **not** show working console screenshots or "sign in to your admin console" CTAs yet. |
+| (Implied by a console-heavy pitch) admin/maintainer/lead consoles exist | Only the **maintainer** surface has backend endpoints; **admin + lead consoles are not built** (no `console/` app, no Supabase scaffold) | ⚠ Do **not** show working console screenshots or "sign in to your admin console" CTAs yet. |
 | (If added) "auto-discovers/joins your org's Dōjō" | Auto-discovery `.well-known/dojo` probe is **parked**; auth is manual (device-code/GitHub) | ⚠ Avoid "automatic join" language. |
 | (If added) "shares on a daily/weekly schedule automatically" | Cadence toggles exist in UI, but the **scheduler is not wired** — publish is manual today | ⚠ Say "you choose when to share" / "scheduled batches (coming)"; don't imply auto-fire now. |
 
@@ -264,7 +264,7 @@ opt-in."
    `/sensei/dojo` page now with the section as a teaser? (Affects nav + SEO + how much Dōjō detail
    the homepage carries.)
 2. **How hard do we sell Dōjō before the console/SaaS ships?** The spine is built but the
-   admin/client-lead consoles and SaaS auth plane are not (§5). Market it as "available now,"
+   admin/lead consoles and SaaS auth plane are not (§5). Market it as "available now,"
    "early access / waitlist," or "coming"? This gates the CTA wording and whether we collect emails.
 3. **The Collective-vs-Dōjō framing:** spec says they're one system (global = the public Dōjō).
    Keep the "vs" table (clear for users) or reframe as "two scopes of one model"? Your call on

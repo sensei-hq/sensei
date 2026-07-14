@@ -9,7 +9,7 @@
 	let { data, children } = $props();
 
 	// Map the current path to the active nav section id. Admin sub-routes
-	// (members / identities / policies / health / audit) and the client-lead
+	// (members / identities / policies / health / audit) and the lead
 	// sub-routes (engagements incl. its [id] audit child, incidents) each light
 	// their own entry; everything else falls back to Overview (the console index).
 	const active = $derived.by(() => {

@@ -26,7 +26,7 @@ create table if not exists dojo_memberships (
 , dojo_url             text        not null      -- full membership URL (registry_url + tenant path)
 , kind                 text        not null      -- employer | client | community | personal (drives routing precedence)
 , org_slugs            text[]      not null default '{}'   -- git-remote owner slugs this membership covers (lowercased); mirrors dojo.memberships.org_slugs
-, role                 text        not null default 'contributor'   -- contributor | maintainer | client_lead | admin
+, role                 text        not null default 'contributor'   -- contributor | maintainer | lead | admin
 , authenticated_via    text        not null default 'device_code'   -- sso | github_oauth | device_code
 , attribution_default  text        not null default 'named'         -- named | anonymous | dereferenced
 , credential_ref       text        not null      -- Keychain entry id; the device token lives in the OS keychain, never in PG

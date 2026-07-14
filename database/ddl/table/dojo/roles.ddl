@@ -23,6 +23,6 @@ admins may override.';
 comment on column dojo.roles.tenant_id
      is 'Null for a global default mapping; set for a tenant-specific override.';
 comment on column dojo.roles.role
-     is 'The Dōjō role this maps to: contributor, maintainer, client_lead, or admin.';
+     is 'The Dōjō role this maps to: contributor, maintainer, lead, or admin.';
 comment on column dojo.roles.git_provider_role
      is 'The upstream git role that maps here (e.g. "write" -> contributor, "admin" -> admin). Null for a plain role definition row.';

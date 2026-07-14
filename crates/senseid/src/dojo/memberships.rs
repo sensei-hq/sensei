@@ -55,7 +55,7 @@ impl MembershipKind {
 }
 
 /// Allowed `role` values — mirrors `dojo.member_role` (member_role.ddl).
-pub const MEMBER_ROLES: [&str; 4] = ["contributor", "maintainer", "client_lead", "admin"];
+pub const MEMBER_ROLES: [&str; 4] = ["contributor", "maintainer", "lead", "admin"];
 /// Allowed `authenticated_via` values — mirrors `dojo.auth_method` (auth_method.ddl).
 pub const AUTH_METHODS: [&str; 3] = ["sso", "github_oauth", "device_code"];
 /// Allowed `sync_status` values — mirrors `dojo.sync_status` (sync_status.ddl).
