@@ -95,6 +95,33 @@ the daily app"*): **Security &amp; guards · Architecture · Testing · Style &a
 conventions · Memory · Traceability · Impact · Libraries · Insights.** Each
 observes, forms a finding, and offers one action.
 
+## The relay — long runs, supervised from anywhere
+
+Multi-agent workflows are becoming the norm: several assistants (Claude Code ·
+Codex · OpenCode · Aider) running long, mostly-autonomous jobs across your
+machines. **Sensei Relay** is the phone companion to the Observatory that makes
+that legible and controllable when you're away from the keyboard. Visual source:
+[`../mockups/Sensei/Sensei Relay.html`](../mockups/Sensei/Sensei%20Relay.html).
+
+- **Agents run on your own hardware.** A **coordinator** (the daemon) supervises
+  the agent CLIs and publishes only a *filtered status* through a **zero-knowledge
+  relay** to your phone — never the code, never the raw transcript.
+- **Plan long runs modularly.** Each project carries one active plan; a plan has
+  **phases**, each phase holds **features, checkpoints, and gates**. Development
+  runs **non-blocking in auto mode**.
+- **Watch, don't babysit.** Project-level progress is *done · doing · next*;
+  you're **nudged only when a track stalls** or hits a **gate** that needs you.
+- **Human-in-the-loop, minimal.** A gate surfaces the exact command to
+  **approve**, or a **decision as 3–4 options plus a free reply** — the way sensei
+  asks. Encrypted pairing + explicit, revocable permissions bound what the relay
+  can do.
+- **Team relay (Dōjō).** For an org, human-in-the-loop moments fan into **one
+  shared on-call queue**; each decision carries attribution and lands in the Dōjō
+  record.
+
+The relay extends the north-star: a run you can't supervise can't be corrected —
+the relay keeps the pair (and the fleet) legible and steerable at a distance.
+
 ## The six non-negotiable themes
 
 Every requirement and design decision honours these. If something pushes against

@@ -14,6 +14,9 @@
 - [`dojo.md`](dojo.md) — the team journey: the four Dōjō roles
   (developer · maintainer · admin · lead) and the contribute→distribute
   lifecycle, with the confidentiality principles.
+- [`relay.md`](relay.md) — the relay journey: pair → author a modular plan →
+  run in auto mode → watch (done·doing·next) → nudge/gate → approve/decide, over
+  a zero-knowledge relay to your phone.
 
 ## Visual sources of truth (mockups)
 

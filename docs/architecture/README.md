@@ -37,6 +37,8 @@ flowchart TD
         end
         D --> DATA[("data<br/>Postgres :7744 · sensei DB")]
         GW -.-> OLLAMA["ollama / embedded gguf"]
+        AGENTS["agent CLIs<br/>Claude Code · Codex · OpenCode · Aider"] --> COORD["coordinator<br/>supervises · runs the plan"]
+        D -.->|supervises| COORD
     end
 
     subgraph saas["Dōjō (opt-in SaaS — org boundary)"]
@@ -45,7 +47,14 @@ flowchart TD
         CONSOLE --> DOJOSVC
     end
 
+    subgraph relayplane["Relay (away from keyboard)"]
+        PHONE["mobile companion<br/>dashboard · approve · respond · plan"]
+    end
+
     D <-->|pull, never push · preview always| DOJOSVC
+    COORD -->|filtered status only · zero-knowledge| RELAY[[relay]] --> PHONE
+    PHONE -->|approve · decide · nudge| RELAY
+    RELAY -.->|team gates → on-call| DOJOSVC
     WEB["website<br/>marketing + docs"]
 ```
 
@@ -62,6 +71,7 @@ Each links to its detailed design. The order is data-up (foundation first).
 | **mcp** | [`mcp.md`](mcp.md) | context server — the tools an assistant calls mid-task | the core loop's *deliver* step |
 | **marketplace** | [`marketplace.md`](marketplace.md) | skills · commands · plugins · agents (hooks, phase chains, mindsets) | capture + delivery into the assistant |
 | **dojo** | [`dojo.md`](dojo.md) | the SaaS console + `dojo-mind` service — memberships, contribute/triage/distribute, anonymization | DJ1–DJ5, theme 5 |
+| **relay** | [`relay.md`](relay.md) | coordinator (supervise agent CLIs + run the plan) · zero-knowledge relay · mobile companion · the modular planner | R1–R8 |
 | **website** | [`website.md`](website.md) | marketing site + docs surface | adoption |
 
 ## Cross-cutting concerns
