@@ -2,7 +2,7 @@
 
 **Segment:** 03 · Observatory — daily use
 **Route:** `/memories`
-**Source mockup:** [`lib/learnings-anatomy-v2.jsx`](../../mockups/Sensei/lib/learnings-anatomy-v2.jsx) → `LearningsAnatomyV2`
+**Source mockup:** [`lib/observatory/learnings-anatomy-v2.jsx`](../../mockups/Sensei/lib/observatory/learnings-anatomy-v2.jsx) → `LearningsAnatomyV2`
 **App file:** `app/src/routes/(observatory)/memories/+page.svelte`
 **Framing:** the human curation surface for [[pipeline/memory]] — the primary consumer is the LLM at session start.
 

@@ -2,7 +2,7 @@
 
 **Segment:** 03 · Observatory — daily use
 **Route:** `/insights`
-**Source mockup:** [`lib/learnings-v2.jsx`](../../mockups/Sensei/lib/learnings-v2.jsx) → `LearningsTriage` (Option A — the wire target)
+**Source mockup:** [`lib/observatory/learnings-v2.jsx`](../../mockups/Sensei/lib/observatory/learnings-v2.jsx) → `LearningsTriage` (Option A — the wire target)
 **App file:** `app/src/routes/(observatory)/insights/+page.svelte`
 
 ## Purpose

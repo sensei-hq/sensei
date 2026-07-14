@@ -2,7 +2,7 @@
 
 **Segment:** 03 · Observatory — daily use
 **Route:** `/impact` (default view) · `/impact` with `?alert=1` for the regression state
-**Source mockup:** [`lib/impact.jsx`](../../mockups/Sensei/lib/impact.jsx) → `ObsImpact` (default) + `ObsNegativeAlert` (regression state)
+**Source mockup:** [`lib/observatory/impact.jsx`](../../mockups/Sensei/lib/observatory/impact.jsx) → `ObsImpact` (default) + `ObsNegativeAlert` (regression state)
 **App file:** `app/src/routes/(observatory)/impact/+page.svelte`
 
 ## Purpose

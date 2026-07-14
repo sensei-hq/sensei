@@ -2,7 +2,7 @@
 
 **Segment:** 02 · First run & Preferences
 **Route:** `/projects` (with the first-entry banner)
-**Source mockup:** [`lib/observatory-today.jsx`](../../mockups/Sensei/lib/observatory-today.jsx) + [`lib/navigation.jsx`](../../mockups/Sensei/lib/navigation.jsx) → shared with the daily Projects screen
+**Source mockup:** [`lib/observatory/observatory-today.jsx`](../../mockups/Sensei/lib/observatory/observatory-today.jsx) + [`lib/shared/navigation.jsx`](../../mockups/Sensei/lib/shared/navigation.jsx) → shared with the daily Projects screen
 **App file:** `app/src/routes/(observatory)/projects/+page.svelte`
 
 ## Purpose

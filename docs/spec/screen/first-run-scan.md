@@ -2,7 +2,7 @@
 
 **Segment:** 02 · First run & Preferences
 **Route:** `/first-run/scan` (or the same route the Observatory shows before any root is added)
-**Source mockup:** [`lib/setup-wizard.jsx`](../../mockups/Sensei/lib/setup-wizard.jsx) → `WizScan` with `context="first-run"`
+**Source mockup:** [`lib/setup/setup-wizard.jsx`](../../mockups/Sensei/lib/setup/setup-wizard.jsx) → `WizScan` with `context="first-run"`
 **App file:** `app/src/routes/first-run/scan/+page.svelte`
 
 ## Purpose
