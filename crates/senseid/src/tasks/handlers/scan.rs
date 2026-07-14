@@ -103,17 +103,23 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     // else removes a non-root `kind='folder'` row whose dir vanished — it lingers
     // dragging its whole subtree of nodes/edges/scan_state.
     let ghosts = prune_vanished_folders(ctx.pg(), &root_id).await;
+    // Enforce one-node-one-owner: prune any code node a structural (folder-kind)
+    // subfolder still holds a duplicate of under the project's canonical root
+    // owner. Twin-guarded (never removes a uniquely-held symbol); self-heals the
+    // pre-fix #101 double-index residue and blocks future accumulation.
+    let deduped = ctx.pg().dedup_structural_folder_nodes(&root_id).await
+        .unwrap_or_else(|e| { tracing::warn!(error = %e, "scan_root: dedup_structural_folder_nodes failed"); 0 });
     let orphaned = ctx.pg().mark_orphaned_projects().await.unwrap_or_else(|e| { tracing::warn!(error = %e, "scan_root: mark_orphaned_projects failed"); 0 });
     if reabsorbed > 0 {
         tracing::info!("scan_root reconcile: re-absorbed {reabsorbed} nested standalone root(s) into their enclosing repo's project");
     }
-    if removed > 0 || marked > 0 || ghosts > 0 {
+    if removed > 0 || marked > 0 || ghosts > 0 || deduped > 0 {
         emit(StateEvent::activity(ActivityEvent::new(
             ActivityLevel::Info,
-            &format!("reconcile · {removed} stale roots removed · {ghosts} ghost folders pruned · {marked} flagged stale · {orphaned} projects re-tagged"),
+            &format!("reconcile · {removed} stale roots removed · {ghosts} ghost folders pruned · {deduped} duplicate nodes deduped · {marked} flagged stale · {orphaned} projects re-tagged"),
             start.elapsed().as_secs_f64(),
         )));
-        tracing::info!("scan_root reconcile: removed={removed} ghost_folders={ghosts} marked={marked} orphaned_retagged={orphaned}");
+        tracing::info!("scan_root reconcile: removed={removed} ghost_folders={ghosts} deduped_nodes={deduped} marked={marked} orphaned_retagged={orphaned}");
     }
 
     // 5. Register watcher
@@ -443,6 +449,53 @@ mod tests {
 
         let status = ctx.queue.status().await;
         assert_eq!(status.pending, 2, "only git folders should be enqueued");
+    }
+
+    #[tokio::test]
+    async fn dedup_structural_folder_nodes_removes_root_twins_keeps_uniques() {
+        // #101 self-heal: a structural (folder-kind) subfolder must not carry a
+        // code node the project's ROOT owner already holds. Twin-guarded: prune
+        // only a duplicate the root owns (name+kind+path-suffix), NEVER a symbol
+        // held uniquely under the subfolder. This is the reconcile that cleans
+        // the pre-fix double-index residue without any risk of data loss.
+        let ctx = make_ctx().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let root_str = root.to_string_lossy().to_string();
+
+        let repo = root.join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        let root_id = ctx.pg().add_watch_root(&root_str, "dedup", &serde_json::json!([])).await.unwrap();
+        // Both the repo root and its member share ONE project (as in prod, where
+        // ProcessGitFolder attributes them) — the twin-guard scopes by project.
+        let pid = ctx.pg().create_project("dedup-proj", None, None).await.unwrap();
+        let repo_fid = ctx.pg().upsert_repo_kind(&root_id, "git", "repo", &repo.to_string_lossy()).await.unwrap();
+        ctx.pg().set_folder_project(&repo_fid, &pid, "root", None).await.unwrap();
+
+        // The canonical git-root copy, stored repo-relative.
+        let root_twin = ctx.pg().upsert_node(&repo_fid, "function", "run_task", "crates/member/src/lib.rs", None, None, None, None).await.unwrap();
+
+        // A structural member subfolder carrying residue (subfolder-relative paths).
+        let member = repo.join("crates/member");
+        std::fs::create_dir_all(&member).unwrap();
+        let member_fid = ctx.pg().upsert_subfolder(&root_id, "member", "crates/member", &member.to_string_lossy(), Some(&repo_fid), Some(&pid)).await.unwrap();
+        // A duplicate of the git-root symbol → must be pruned (path-suffix twin).
+        let dup = ctx.pg().upsert_node(&member_fid, "function", "run_task", "src/lib.rs", None, None, None, None).await.unwrap();
+        // A symbol the root does NOT hold → must be KEPT (never lose a unique).
+        let unique = ctx.pg().upsert_node(&member_fid, "function", "orphan_only", "src/gone.rs", None, None, None, None).await.unwrap();
+
+        let pruned = ctx.pg().dedup_structural_folder_nodes(&root_id).await.unwrap();
+        assert_eq!(pruned, 1, "exactly the one root-twin duplicate is pruned");
+
+        let (dup_alive,): (i64,) = sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.nodes WHERE id=$1")
+            .bind(dup).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(dup_alive, 0, "the root-twin duplicate under the structural folder is pruned");
+        let (unique_alive,): (i64,) = sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.nodes WHERE id=$1")
+            .bind(unique).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(unique_alive, 1, "a symbol held uniquely under the structural folder is preserved");
+        let (root_alive,): (i64,) = sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.nodes WHERE id=$1")
+            .bind(root_twin).fetch_one(ctx.pg().pool()).await.unwrap();
+        assert_eq!(root_alive, 1, "the canonical git-root copy is untouched");
     }
 
     #[tokio::test]
