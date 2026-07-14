@@ -3,7 +3,7 @@
 // per-project rows into a rollup, groups them by project (broken-first), and
 // maps the drift status discriminator to named-token chip classes + copy.
 //
-// The full traceability spec (docs/llm-spec/screen/observatory-traceability.md)
+// The full traceability spec (docs/spec/screen/observatory-traceability.md)
 // also wants a per-row confidence chip and an expected-vs-actual diff. The wire
 // `DriftItem` carries neither today (`confidence` is absent and both signatures
 // come back null), so those are deliberately NOT synthesized here — see the

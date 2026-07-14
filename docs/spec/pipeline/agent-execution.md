@@ -82,7 +82,7 @@ local):
 
 | Agent | Purpose |
 |---|---|
-| `spec-doc-reviewer` | Reviews an llm-spec doc for completeness |
+| `spec-doc-reviewer` | Reviews an spec doc for completeness |
 | `done-gate-verifier` | Executes the done gate against the daemon |
 | `wrong-gate-hunter` | Actively probes for anti-patterns |
 

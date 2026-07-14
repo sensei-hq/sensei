@@ -1,11 +1,11 @@
 ---
 name: wrong-gate-hunter
 description: |
-  Actively probe for the "Wrong gate" anti-patterns listed in an llm-spec doc. Where done-gate-verifier asks "is the good state present?", this agent asks "is the bad state absent?" Use proactively AFTER implementing a spec, in parallel with done-gate-verifier.
+  Actively probe for the "Wrong gate" anti-patterns listed in an spec doc. Where done-gate-verifier asks "is the good state present?", this agent asks "is the bad state absent?" Use proactively AFTER implementing a spec, in parallel with done-gate-verifier.
 
   <example>
   Context: Spec claims done gates pass, but user wants a paranoid check.
-  user: "docs/llm-spec/screen/observatory-instruments-health.md — hunt for the wrong-gate list."
+  user: "docs/spec/screen/observatory-instruments-health.md — hunt for the wrong-gate list."
   assistant: "I'll launch the wrong-gate-hunter agent to actively probe each anti-pattern in the spec's Wrong gate section and report any that are tripping."
   <commentary>
   Done gates being green does not mean wrong gates are absent — a screen can render correctly and still exhibit the specific defects the spec warned against.
@@ -15,7 +15,7 @@ description: |
   <example>
   Context: A screen was working last week but a recent change might have broken it.
   user: "Health tab feels off. Which of the wrong-gate items is happening?"
-  assistant: "I'll run the wrong-gate-hunter agent for docs/llm-spec/screen/observatory-instruments-health.md to pinpoint which anti-pattern is active."
+  assistant: "I'll run the wrong-gate-hunter agent for docs/spec/screen/observatory-instruments-health.md to pinpoint which anti-pattern is active."
   <commentary>
   A quick, targeted probe against the spec's known failure modes is faster than an open-ended debug session.
   </commentary>
@@ -29,7 +29,7 @@ color: red
 
 ## Purpose
 
-Read the "Wrong gate" section of one llm-spec doc and actively probe
+Read the "Wrong gate" section of one spec doc and actively probe
 each anti-pattern against the running system. Return a matrix of
 "tripping / clean / not-verifiable-here" per item, with the evidence
 that supports each verdict.

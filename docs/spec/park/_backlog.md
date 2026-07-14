@@ -1,4 +1,4 @@
-# Master backlog — full llm-spec build (Jerry: "hit everything, incl. Dōjō")
+# Master backlog — full spec build (Jerry: "hit everything, incl. Dōjō")
 
 Ordered work queue for the autonomous run. Process top-down in phase order; each item runs the
 gated loop (spec-doc-reviewer → implement → done-gate + wrong-gate → persona → commit); merge+bump

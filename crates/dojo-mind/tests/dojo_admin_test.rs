@@ -1,7 +1,7 @@
 //! Integration tests for R7 — the tenant-scoped Dōjō ADMIN console backend:
 //! `/v1/t/{tenant_key}/{members,identities,policies,health,audit}`.
 //!
-//! Covers the done-gates from `docs/llm-spec/screen/dojo-admin-console.md`:
+//! Covers the done-gates from `docs/spec/screen/dojo-admin-console.md`:
 //! member provisioning derives the git role (a GitHub `write` role lands as
 //! `contributor`); identity + policy CRUD; the health strip rollups computed
 //! from `dojo.events` (+ triage queue); and non-repudiation — every admin

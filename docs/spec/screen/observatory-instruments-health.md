@@ -39,7 +39,7 @@ the sub-tab strip (`Playground / Replay / Health`) renders **inside
 each screen**, between the screen's hero and its body — not at the
 top of the observatory main container. The parent passes `subNav`
 as a JSX prop; this screen renders it under its own `InstrHero`.
-See `docs/llm-spec/MOCKUP-INDEX.md` §"Sub-nav placement".
+See `docs/spec/MOCKUP-INDEX.md` §"Sub-nav placement".
 
 ## Data invariants
 

@@ -83,4 +83,4 @@ The single highest-leverage change: make a *no-op* reconcile near-free so it can
 2. 🔨 **P0 in progress** (subagent, develop) — mtime fast-path + frequent/always-on-boot reconcile. No DDL.
 3. ⏳ P1, then P2 — sequential reliability chunks after P0 verifies.
 
-Ordered after R8 (shipped `310c3477`) and the CI patch release (v0.2.44) per Jerry's direction. Progress tracked in `docs/llm-spec/park/_run-state.md`.
+Ordered after R8 (shipped `310c3477`) and the CI patch release (v0.2.44) per Jerry's direction. Progress tracked in `docs/spec/park/_run-state.md`.

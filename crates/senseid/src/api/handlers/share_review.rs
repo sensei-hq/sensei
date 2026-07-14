@@ -3,7 +3,7 @@
 //! Before an approved memory-share batch fires upstream, the user sees exactly
 //! what is about to leave — the redacted (dereferenced) text per item and which
 //! items are held for residual identifier risk — so they can hold/edit before
-//! publish (`docs/llm-spec/screen/observatory-share-review.md`).
+//! publish (`docs/spec/screen/observatory-share-review.md`).
 //!
 //! - `GET  /api/share-review/next-batch` — the next approved-but-unsent batch
 //!   with its per-item dereference PREVIEW (no publish).

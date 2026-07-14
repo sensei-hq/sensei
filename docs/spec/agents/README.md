@@ -104,7 +104,7 @@ When running the spec queue autonomously (e.g. during vacation), the
 loop per doc is:
 
 ```
-for doc in $(next-N-todo docs/llm-spec/):
+for doc in $(next-N-todo docs/spec/):
     invoke  spec-doc-reviewer(doc)     -> gate 1
     IF gate1 == not-ready: park + notify + continue
     implement doc

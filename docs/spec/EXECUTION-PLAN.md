@@ -15,7 +15,7 @@
    commit`. See [`agents/README.md`](agents/README.md).
 2. **3-try-then-park.** If a gate fails, try three root-cause
    attempts. If still failing, park at
-   `docs/llm-spec/park/{doc}.md` with the gate output + best
+   `docs/spec/park/{doc}.md` with the gate output + best
    guess + explicit `AWAITS: Jerry` line. Continue to next doc.
 3. **Real data.** Point sensei at `~/Developer` + `~/Work`. No
    dummy corpus. Wipe seed roots if any remain; run against live.
@@ -273,7 +273,7 @@ Park a doc when:
   commit + push per doc.
 - **Every 6 hours:** run the wrong-gate-hunter over the last 3
   merged specs to catch regressions.
-- **Nightly:** persist the run's state to `docs/llm-spec/park/`
+- **Nightly:** persist the run's state to `docs/spec/park/`
   as a summary note so a phone-session pickup sees the delta.
 
 ## When Jerry gets back

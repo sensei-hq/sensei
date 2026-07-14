@@ -10,7 +10,7 @@ queue empties, PULL the next work — never stop and declare done. Policies:
 2. **DEFAULT-AND-PROCEED on design forks.** Pick the best REVERSIBLE option, record the choice
    here, keep moving. PARK only when a decision is irreversible / external / destructive / truly
    un-defaultable. Do NOT stop and ask on ordinary design forks.
-0. **FULL SCOPE (Jerry 2026-07-08):** hit EVERYTHING specced in `docs/llm-spec/` (all screen/ +
+0. **FULL SCOPE (Jerry 2026-07-08):** hit EVERYTHING specced in `docs/spec/` (all screen/ +
    pipeline/ docs) INCLUDING the Dōjō SaaS segment. "Complete as much as you can over the 5 days."
    Never stop while backlog remains. **Dōjō auth:** use Supabase (can't deploy → assume a
    localhost Supabase URL) + **kavach** (`~/Developer/kavach`) — EDIT kavach if needed for
@@ -20,7 +20,7 @@ queue empties, PULL the next work — never stop and declare done. Policies:
    follow-ups across the 5 shipped screens = make them fully real: wire insight-copy (copy via
    gemma4, not raw DB text), define the memory promotion/merge statuses + wire readyToShare/toMerge,
    build the missing recommendation/pattern generators, the per-screen followup items → (c) overflow
-   7/8 (Memories, Project Sessions+Memories) → (d) new llm-spec screens. Work the followup notes in
+   7/8 (Memories, Project Sessions+Memories) → (d) new spec screens. Work the followup notes in
    park/ as a live work queue.
 4. **MERGE + BUMP AT MILESTONES.** After a clean segment (all gates green, tests pass), merge
    develop→main and `make bump` so it's a real release. (Was: develop-only. NOW: release at milestones.)
@@ -32,7 +32,7 @@ queue empties, PULL the next work — never stop and declare done. Policies:
 
 
 **Purpose:** durable, cross-session checkpoint of the autonomous run driven by
-`docs/llm-spec/EXECUTION-PLAN.md`. Any pickup (scheduled wakeup, phone session,
+`docs/spec/EXECUTION-PLAN.md`. Any pickup (scheduled wakeup, phone session,
 cold restart after a usage limit) reads THIS file first, then the plan, and
 resumes from the current slot/gate. Updated after every gate step.
 
@@ -77,7 +77,7 @@ resumes from the current slot/gate. Updated after every gate step.
 
 ## RUN COMPLETE — 2026-07-08 (queue slots 1–6 done)
 
-Vacation run (docs/llm-spec/EXECUTION-PLAN.md) target queue finished. All work on `develop`,
+Vacation run (docs/spec/EXECUTION-PLAN.md) target queue finished. All work on `develop`,
 each screen through the full gated loop (spec-doc-reviewer → implement → done-gate-verifier +
 wrong-gate-hunter → sensei-persona-reviewer → commit). NOT merged to main (Jerry does that).
 
@@ -1060,7 +1060,7 @@ default-and-proceed on internal forks; PARK external/irreversible (real Supabase
 sensei). assume-localhost for the dojo registry per Jerry.
 ═══════════════════════════════════════════════════════════════════════════════════════════════════
 
-── DŌJŌ SCOPING DONE (2026-07-08) → plan at docs/llm-spec/park/_dojo-build-plan.md ──
+── DŌJŌ SCOPING DONE (2026-07-08) → plan at docs/spec/park/_dojo-build-plan.md ──
 FINDING: federation SUBSTRATE fully shipped (hive-mind + daemon federation + hive-protocol + DDL);
 Dōjō SaaS layer ~entirely ABSENT (no dojo.* schema, no user/org identity, no multi-tenant, no consoles).
 kavach @adapter-supabase is REAL/production-ready. AUTH = DUAL-PLANE (humans→Supabase/kavach in a NEW
@@ -1346,7 +1346,7 @@ REAL remaining gaps (verified live, grep — code-graph empty for this project =
      (:2503) is ORPHANED (only caller = a unit test). `accept_recommendation` (:1543) just flips rec
      status='accepted' + enqueues MeasureVerdicts; never advances the pattern nor makes a rule. Rec ALREADY
      carries source pattern id in `based_on.patterns[0]` (generate.rs:265) → NO schema change needed.
-     `sensei.rules`/`promoted_patterns` DO NOT EXIST (aspirational in llm-spec); governance rules resolve
+     `sensei.rules`/`promoted_patterns` DO NOT EXIST (aspirational in spec); governance rules resolve
      straight from `sensei.memories` (resolve_rules_raw :5906, enforcement DESC/level/strength). The
      rule-candidates branch (generate.rs:151-163) ALREADY makes a convention memory linked to the pattern
      (source_id=pattern.id) but persisted `enforcement: None` (generate.rs:316) = stays soft.
@@ -1418,7 +1418,7 @@ REAL remaining gaps (verified live, grep — code-graph empty for this project =
   fragment overlap; DEPENDS on per-session correlation). Both refine an already-shipped v1.
 
 ⏳ REPRIORITIZATION SWEEP IN FLIGHT (agent): after 4 milestones, a broad completeness re-survey of ALL
-  docs/llm-spec/ screens+pipelines vs current impl → fresh prioritized list of the highest-value REMAINING
+  docs/spec/ screens+pipelines vs current impl → fresh prioritized list of the highest-value REMAINING
   gaps, so the rest of the vacation run hits the biggest wins (not a possibly-stale queue). Known-open before
   sweep: item 3 memory promote/merge statuses; impact_regressions; structural/GoF patterns; rank4 (deprioritized);
   memory-feedback follow-ups above. Slot 2 Instruments·Health + Dōjō consoles C12-14 remain BLOCKED (Jerry/Docker).
@@ -2227,7 +2227,7 @@ TRUE-BLOCKED (only these genuinely wait on Jerry/Docker): Instruments·Health re
 ═══════════════════════════════════════════════════════════════════════════════
 ▶️ ACTIVE TRACK = TOOLING VERIFICATION (2026-07-12, Jerry redirect) — SUPERSEDES the UI sweep queue.
 "verify the tooling works as expected, THEN continue with the original plan." UI sweep (Atlas etc.) PAUSED;
-Atlas WIP stashed. Plan + findings: docs/llm-spec/park/_tooling-verification-plan.md.
+Atlas WIP stashed. Plan + findings: docs/spec/park/_tooling-verification-plan.md.
 KEY DIAGNOSIS (dogfooded live): daemon was v0.2.29 (10 stale) → now release v0.2.39 installed. Data OK (558K nodes,
 sensei→ff1ccea2 3395 fns). Bugs: (A) get_layered_context sends project_id=NAME → daemon 400 (wants UUID);
 (B) get_rules sends folder=mcp-process-cwd (wrong folder); (C) MCP proxy is a LONG-LIVED stdio subprocess owned by
@@ -2241,7 +2241,7 @@ CHUNK 3: dedup empty project. ALWAYS make install (release) after bump.
 
 ═══════════════════════════════════════════════════════════════════════════════
 ⭐⭐⭐ MASTER PRIORITY REORDER (2026-07-12, Jerry) — P0 TOOLING TRACK BEFORE ALL REMAINING WORK.
-Full spec: docs/llm-spec/park/_tooling-verification-plan.md. Sequence A→F, then resume autopilot:
+Full spec: docs/spec/park/_tooling-verification-plan.md. Sequence A→F, then resume autopilot:
   A resolution correctness + first MCP↔daemon integration test  ⏳ BUILDING (aa37a598)
   B anti-drift CONTRACT test coverage (every MCP tool vs daemon, table-driven — so the seam can't drift)
   C folder→project workflow: find_projects(under=path) + use_project pin (~/.sensei/active-project)

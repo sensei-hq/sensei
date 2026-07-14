@@ -84,6 +84,6 @@ localhost Supabase + localhost Dōjō registry for local bring-up.
 
 Federation design + terminology history (the older *hive-mind* / `sensei-hive`
 naming → Dōjō / `sensei-dojo`) in [`concepts/governance.md`](concepts/governance.md);
-lifecycle + role contracts in [`../llm-spec/pipeline/dojo-lifecycle.md`](../llm-spec/pipeline/dojo-lifecycle.md),
-[`collective-intelligence.md`](../llm-spec/pipeline/collective-intelligence.md),
-and the `../llm-spec/screen/dojo-*` console specs.
+lifecycle + role contracts in [`../spec/pipeline/dojo-lifecycle.md`](../spec/pipeline/dojo-lifecycle.md),
+[`collective-intelligence.md`](../spec/pipeline/collective-intelligence.md),
+and the `../spec/screen/dojo-*` console specs.

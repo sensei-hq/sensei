@@ -31,7 +31,7 @@ flowchart LR
 | **UI** | 25 shipped · 2 partial · 10 not-built · 4 Dōjō-web. Observatory + project window essentially complete. |
 | **Daemon** | capture/analyzer/FTR/patterns/signals/insight-copy/libraries/icons all **producing fresh**. Loop-closing + promotion + drift-quality are the holes. |
 | **MCP** | core loop ~80% real; 2 silent-empty bugs; semantic search unbuilt. |
-| **Docs** | llm-spec is the real SoT but README points elsewhere; Dōjō scattered; being restructured (this folder). |
+| **Docs** | spec is the real SoT but README points elsewhere; Dōjō scattered; being restructured (this folder). |
 
 ## Ranked gaps
 

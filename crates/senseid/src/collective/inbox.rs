@@ -1,7 +1,7 @@
 //! Downstream inbox / distribution (C7) — pull APPROVED Dōjō artifacts back, hold
 //! them as `pending` upgrades, and land the ones the user Applies.
 //!
-//! The loop (`docs/llm-spec/pipeline/dojo-lifecycle.md` → Distribute, and
+//! The loop (`docs/spec/pipeline/dojo-lifecycle.md` → Distribute, and
 //! `screen/observatory-upgrades.md`):
 //!
 //! 1. **Pull** — for each Dōjō membership, `GET .../artifacts?since={cursor}`

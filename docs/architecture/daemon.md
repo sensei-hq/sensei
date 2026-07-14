@@ -54,15 +54,15 @@ Driven by the analyzer scheduler (per-project `AnalyzeProject` + global passes):
 
 | Pipeline | Produces | Spec |
 |---|---|---|
-| capture | `sessions`, `assistant_events`, `tool_calls` | [pipeline/capture](../llm-spec/pipeline/capture.md) |
-| analyzer (L0 enrich) | enriched sessions | [pipeline/analyzer](../llm-spec/pipeline/analyzer.md) |
-| FTR | `ftr_daily`, `project_ftr_metrics` | [pipeline/ftr](../llm-spec/pipeline/ftr.md) |
-| signals (L1) | behavioural signals (churn, correction-prone, rule-candidates) | [pipeline/signals](../llm-spec/pipeline/signals.md) |
-| patterns | `detected_patterns` | [pipeline/patterns](../llm-spec/pipeline/patterns.md) |
-| inferencing (L2) | `recommendations` + consolidation `reasoning_traces` | [pipeline/inferencing](../llm-spec/pipeline/inferencing.md) |
-| memory | promoted `memories` | [pipeline/memory](../llm-spec/pipeline/memory.md) |
-| insight-copy | mentor-voice strings (`insight_copy`) | [pipeline/insight-copy](../llm-spec/pipeline/insight-copy.md) |
-| traceability | doc-drift | [pipeline/traceability](../llm-spec/pipeline/traceability.md) |
+| capture | `sessions`, `assistant_events`, `tool_calls` | [pipeline/capture](../spec/pipeline/capture.md) |
+| analyzer (L0 enrich) | enriched sessions | [pipeline/analyzer](../spec/pipeline/analyzer.md) |
+| FTR | `ftr_daily`, `project_ftr_metrics` | [pipeline/ftr](../spec/pipeline/ftr.md) |
+| signals (L1) | behavioural signals (churn, correction-prone, rule-candidates) | [pipeline/signals](../spec/pipeline/signals.md) |
+| patterns | `detected_patterns` | [pipeline/patterns](../spec/pipeline/patterns.md) |
+| inferencing (L2) | `recommendations` + consolidation `reasoning_traces` | [pipeline/inferencing](../spec/pipeline/inferencing.md) |
+| memory | promoted `memories` | [pipeline/memory](../spec/pipeline/memory.md) |
+| insight-copy | mentor-voice strings (`insight_copy`) | [pipeline/insight-copy](../spec/pipeline/insight-copy.md) |
+| traceability | doc-drift | [pipeline/traceability](../spec/pipeline/traceability.md) |
 
 **The loop's open link:** recommendations generate but are never acted on →
 `MeasureVerdicts` has no input → no FTR delta. Memory promotion barely fires.

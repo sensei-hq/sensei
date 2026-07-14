@@ -25,7 +25,7 @@ fn err(status: StatusCode, msg: &str) -> (StatusCode, Json<serde_json::Value>) {
 
 /// GET /api/dojo/memberships — list the daemon's Dōjō connections with each
 /// one's bound projects and sync-status. Returns a top-level array (the shape
-/// `docs/llm-spec/pipeline/dojo-lifecycle.md` documents: `jq '.[] | ...'`).
+/// `docs/spec/pipeline/dojo-lifecycle.md` documents: `jq '.[] | ...'`).
 pub(crate) async fn list_memberships(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {

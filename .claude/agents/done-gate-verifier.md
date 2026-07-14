@@ -1,11 +1,11 @@
 ---
 name: done-gate-verifier
 description: |
-  Execute the "Done gate" section of an llm-spec doc against the running daemon + app and return an evidence-backed pass/fail per gate. Use proactively AFTER implementing a spec, before declaring the work complete.
+  Execute the "Done gate" section of an spec doc against the running daemon + app and return an evidence-backed pass/fail per gate. Use proactively AFTER implementing a spec, before declaring the work complete.
 
   <example>
   Context: Finished implementing the Projects screen.
-  user: "I'm done with docs/llm-spec/screen/observatory-projects.md. Ship it?"
+  user: "I'm done with docs/spec/screen/observatory-projects.md. Ship it?"
   assistant: "Before you ship, I'll launch the done-gate-verifier agent to run each done-gate check against the live daemon and report evidence."
   <commentary>
   Self-assessment is unreliable — an independent agent that runs the gates against the actual runtime is the proof.
@@ -29,7 +29,7 @@ color: green
 
 ## Purpose
 
-Read the "Done gate" section of one llm-spec doc, execute each check
+Read the "Done gate" section of one spec doc, execute each check
 against the running system (daemon on `http://localhost:7744`, app if
 required), and report pass/fail per gate with the evidence that
 justifies the verdict.

@@ -2,7 +2,7 @@
 
 > **Status:** phase-2/3 exploration (Jerry, 2026-07-13, "on the side"). READ-ONLY research.
 > No code, nothing to build now. Informs a future phase.
-> Anchored in `docs/llm-spec/park/_run-state.md` (PHASE 2/3 RESEARCH note).
+> Anchored in `docs/spec/park/_run-state.md` (PHASE 2/3 RESEARCH note).
 
 ## The question
 
@@ -178,7 +178,7 @@ the memory/decision tables. A planner would *drive* these, not invent them.
 | Task queue + executor | `crates/senseid/src/tasks/{queue.rs,executor.rs,mod.rs}` | `TaskKind` enum: AnalyzeProject, GenerateRecommendations, MeasureVerdicts, ClassifyPendingVerdicts… |
 | Agent runtime + reporting | `crates/senseid/src/agents/runtime.rs`, `report.rs`; `crates/mcp/src/tools/agent_run.rs`; `sensei.agent_runs` table | dispatch focused specialist agents (isolation: in-place / worktree), reports persisted |
 | Contribute scheduler | `crates/senseid/src/tasks/contribute_scheduler.rs` | daily/weekly cadence, mirrors analyzer scheduler |
-| The live "vacation run" | `docs/llm-spec/EXECUTION-PLAN.md`, `docs/llm-spec/park/_run-state.md` | cron `30218bd9` (`13,43 * * * *`, every 30m) reads `_run-state.md`, no-ops if a subagent is in flight, else advances the next chunk; gate loop `spec-doc-reviewer → implement → done-gate-verifier + wrong-gate-hunter → sensei-persona-reviewer → commit`; **3-try-then-park** with `AWAITS: Jerry` |
+| The live "vacation run" | `docs/spec/EXECUTION-PLAN.md`, `docs/spec/park/_run-state.md` | cron `30218bd9` (`13,43 * * * *`, every 30m) reads `_run-state.md`, no-ops if a subagent is in flight, else advances the next chunk; gate loop `spec-doc-reviewer → implement → done-gate-verifier + wrong-gate-hunter → sensei-persona-reviewer → commit`; **3-try-then-park** with `AWAITS: Jerry` |
 
 **Reuse insight:** the control plane is **not greenfield.** The vacation run is a hand-driven
 prototype of exactly it: a plan (`EXECUTION-PLAN.md`), durable state (`_run-state.md`), a loop

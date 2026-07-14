@@ -59,5 +59,5 @@ inventory (`assistant_tools` / `mcp_servers`).
 
 Multi-coordinator adapter rationale in [`reference/04-mcp.md`](reference/04-mcp.md);
 the intended context contract in
-[`../llm-spec/pipeline/context-delivery.md`](../llm-spec/pipeline/context-delivery.md)
-and [`semantic-search.md`](../llm-spec/pipeline/semantic-search.md).
+[`../spec/pipeline/context-delivery.md`](../spec/pipeline/context-delivery.md)
+and [`semantic-search.md`](../spec/pipeline/semantic-search.md).

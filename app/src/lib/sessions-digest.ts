@@ -9,8 +9,8 @@
 // screen — promoted out of (observatory)/sessions/ once a second consumer
 // appeared (frontend-svelte-guidelines §DRY).
 //
-// Screens: docs/llm-spec/screen/observatory-sessions.md
-//          docs/llm-spec/screen/project-sessions.md
+// Screens: docs/spec/screen/observatory-sessions.md
+//          docs/spec/screen/project-sessions.md
 // Mockup:  docs/mockups/Sensei/lib/sessions-zen.jsx → SessionsDigestZen
 import type { SessionRow } from '$lib/types.js';
 

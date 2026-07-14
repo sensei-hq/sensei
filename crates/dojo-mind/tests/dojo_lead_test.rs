@@ -1,7 +1,7 @@
 //! Integration tests for R8 — the tenant-scoped Dōjō LEAD console backend:
 //! `/v1/t/{tenant_key}/{engagements,incidents,audit/artifacts,compliance/export}`.
 //!
-//! Covers the done-gates from `docs/llm-spec/screen/dojo-lead-console.md`:
+//! Covers the done-gates from `docs/spec/screen/dojo-lead-console.md`:
 //! engagements CRUD + project bind; incident CRUD with the open-count gate
 //! (`resolved_at is null`); the artifact audit view with the **`non_dereferenced
 //! == 0`** done-gate (and the `dereferenced=true` filter); and the compliance
