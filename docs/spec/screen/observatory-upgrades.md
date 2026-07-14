@@ -2,7 +2,7 @@
 
 **Segment:** 03 · Observatory — daily use
 **Route:** `/upgrades`
-**Source mockup:** [`lib/dojo-inapp.jsx`](../../mockups/Sensei/lib/dojo-inapp.jsx) → `InappDownstream`
+**Source mockup:** [`lib/dojo/dojo-inapp.jsx`](../../mockups/Sensei/lib/dojo/dojo-inapp.jsx) → `InappDownstream`
 **App file:** `app/src/routes/(observatory)/upgrades/+page.svelte`
 
 ## Purpose

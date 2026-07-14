@@ -2,7 +2,7 @@
 
 **Segment:** 03 · Observatory — daily use
 **Route:** `/` (root)
-**Source mockup:** [`lib/observatory-today.jsx`](../../mockups/Sensei/lib/observatory-today.jsx) → `ObsHome` (default) with early/mature switch on `data.dataMaturity`
+**Source mockup:** [`lib/observatory/observatory-today.jsx`](../../mockups/Sensei/lib/observatory/observatory-today.jsx) → `ObsHome` (default) with early/mature switch on `data.dataMaturity`
 **App file:** `app/src/routes/(observatory)/+page.svelte`
 
 ## Purpose

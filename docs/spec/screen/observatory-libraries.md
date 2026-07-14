@@ -2,7 +2,7 @@
 
 **Segment:** 03 · Observatory — daily use
 **Route:** `/libraries`
-**Source mockup:** [`lib/libraries.jsx`](../../mockups/Sensei/lib/libraries.jsx) → `LibrariesVariantA`
+**Source mockup:** [`lib/observatory/libraries.jsx`](../../mockups/Sensei/lib/observatory/libraries.jsx) → `LibrariesVariantA`
 **App file:** `app/src/routes/(observatory)/libraries/+page.svelte`
 
 ## Purpose

@@ -3,7 +3,7 @@
 **Segment:** 03 · Observatory — daily use
 **Route:** `/dojo/sharing/{membership_id}` — per-membership override view
 (the `/dojo/sharing` root is owned by [[screen/observatory-collective]] for global controls; this screen is the drill-in for one membership's overrides)
-**Source mockup:** [`lib/collective-settings.jsx`](../../mockups/Sensei/lib/collective-settings.jsx) → `ObsCollectiveSettings` in per-membership scope (the same primitive with the membership picker set to a specific row)
+**Source mockup:** [`lib/observatory/collective-settings.jsx`](../../mockups/Sensei/lib/observatory/collective-settings.jsx) → `ObsCollectiveSettings` in per-membership scope (the same primitive with the membership picker set to a specific row)
 **App file:** `app/src/routes/(observatory)/dojo/sharing/[membership_id]/+page.svelte`
 
 ## Purpose

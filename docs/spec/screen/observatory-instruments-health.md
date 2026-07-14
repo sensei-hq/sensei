@@ -2,7 +2,7 @@
 
 **Segment:** 03 · Observatory — daily use
 **Route:** `/instruments/health`
-**Source mockup:** [`lib/instruments-simple.jsx`](../../mockups/Sensei/lib/instruments-simple.jsx) → `InstrumentsHealthSimple` → delegates to `InstrumentsHealth` in `lib/instruments.jsx`
+**Source mockup:** [`lib/observatory/instruments-simple.jsx`](../../mockups/Sensei/lib/observatory/instruments-simple.jsx) → `InstrumentsHealthSimple` → delegates to `InstrumentsHealth` in `lib/observatory/instruments.jsx`
 **Data:** `GET /api/instruments/tools-health` (L1 grid) · `GET /api/observatory/tool-signals` + `tool-insights` (L2 per-tool)
 **App file:** `app/src/routes/(observatory)/instruments/+page.svelte` (Health tab)
 **Daemon files:** `crates/senseid/src/api/handlers/tool_signals.rs`, `crates/senseid/src/api/handlers/observatory.rs::tool_signals`

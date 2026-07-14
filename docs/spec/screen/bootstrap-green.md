@@ -2,7 +2,7 @@
 
 **Segment:** 01 · Bootstrap
 **Route:** initial splash window, terminal state
-**Source mockup:** [`lib/bootstrap-splash.jsx`](../../mockups/Sensei/lib/bootstrap-splash.jsx) → `Splash` (state = `green`)
+**Source mockup:** [`lib/setup/bootstrap-splash.jsx`](../../mockups/Sensei/lib/setup/bootstrap-splash.jsx) → `Splash` (state = `green`)
 **App file:** `app/src/routes/bootstrap/+page.svelte`
 
 ## Purpose
