@@ -33,12 +33,7 @@ pub enum FolderKind {
 pub fn find_git_folders(root: &Path, max_depth: u32) -> Vec<PathBuf> {
     let mut result = Vec::new();
     walk_for_git(root, 0, max_depth, &mut result);
-    // Resolve symlinks to the real repo path and dedup, so a repo reachable via
-    // two paths (e.g. a symlink `sensei-hq/gateway` → `strategos/gateway`) is a
-    // single folder, not two projects.
-    result = result.into_iter().map(|p| std::fs::canonicalize(&p).unwrap_or(p)).collect();
     result.sort();
-    result.dedup();
     result
 }
 
@@ -51,6 +46,10 @@ fn walk_for_git(dir: &Path, depth: u32, max_depth: u32, out: &mut Vec<PathBuf>) 
     for entry in entries.flatten() {
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
+        // Skip symlinks: a symlinked repo (e.g. `sensei-hq/gateway` →
+        // `strategos/gateway`) is already reached via its real path, so following
+        // the link would classify the same repo twice → two projects.
+        if entry.file_type().map(|t| t.is_symlink()).unwrap_or(false) { continue; }
         if !path.is_dir() || name.starts_with('.') { continue; }
         if IGNORED_DIRS.contains(&name.as_str()) { continue; }
 
