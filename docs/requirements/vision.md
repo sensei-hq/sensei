@@ -1,0 +1,122 @@
+# Vision
+
+> **What sensei is for.** The *why* and the *what* — not the *how*.
+> Architecture ([`../architecture/`](../architecture/README.md)) says how we build
+> toward this; the detailed build specs live in [`../llm-spec/`](../llm-spec/README.md).
+
+## One paragraph
+
+Sensei is a **helpful observer and mentor of how a developer works with AI
+coding assistants** — mentoring that surfaces as insights land. It captures the
+sessions (hook events, tool calls, prompts, outcomes), builds a code + activity
+graph over the developer's real repos, and turns the resulting signal into
+things a human can act on: **memories** that stick, **patterns** worth reusing,
+**guards** worth adopting, and a clear picture of **when the pairing worked and
+when it didn't**. It is not a productivity dashboard — it is a **retrospective
+loop for a pair (you + your assistant) that otherwise never gets one**. The
+Observatory shows *today's one thing*; the project window shows *what this
+project learned*; the Dōjō (SaaS) extends the same loop across a team without
+leaking client work.
+
+## North-star metric — FTR
+
+**First-turn resolution: the fraction of sessions where the assistant's first
+attempt landed without a correction.** Every screen, pipeline, and layer is
+judged by one question: *does it make FTR go up, or expose the reason it went
+down?* A feature that does neither is not a priority.
+
+## The pair goes both ways
+
+Sensei is not "watching the assistant make mistakes." It watches a **pair** —
+human + assistant — and notices patterns from both sides. Sometimes the
+correction was the assistant's fault; sometimes the human gave underspecified
+instructions, incomplete context, or wrong assumptions. Both are learning
+signal. The ultimate aim is human and LLM working in sync — **mutual
+improvement, not one-sided teaching.**
+
+## The core loop
+
+Everything sensei does is one loop. Each layer exists to keep this turning:
+
+```mermaid
+flowchart LR
+    A[capture<br/>sessions · tool calls · prompts · outcomes] --> B[graph<br/>code + activity over real repos]
+    B --> C[analyze<br/>enrich · signals · patterns · FTR]
+    C --> D[learn<br/>memories · patterns · guards · recommendations]
+    D --> E[deliver context<br/>MCP → the assistant, first try]
+    E --> F{{FTR ↑?}}
+    F -->|measure verdict| C
+    E -.->|the next session| A
+```
+
+The loop is only as trustworthy as its weakest link: a wrong graph poisons
+analysis; unreliable capture starves it; low-quality signal makes the surfaces
+noise; and if the learning never gets **delivered back** to the assistant or
+its FTR impact never **measured**, the loop generates but never closes.
+
+## The journey — four segments + a cross-cutting Dōjō
+
+Source of truth for the visuals: [`../mockups/Sensei/Sensei Journey Map.html`](../mockups/Sensei/Sensei%20Journey%20Map.html)
+and [`../mockups/Sensei/Sensei Dōjō Journey Map.html`](../mockups/Sensei/Sensei%20D%C5%8Djo%20Journey%20Map.html).
+
+```mermaid
+flowchart TD
+    subgraph S1["01 · Bootstrap 支"]
+        direction LR
+        b1[verify what's there] --> b2[bring toolchain up green]
+    end
+    subgraph S2["02 · First run &amp; Preferences 名"]
+        direction LR
+        f1[point at real folders] --> f2[projects appear] --> f3[tune the defaults]
+    end
+    subgraph S3["03 · Observatory — daily use 家"]
+        direction LR
+        o1[today's one thing] --> o2[act on it] --> o3[stay in control of what leaves]
+    end
+    subgraph S4["04 · The project window 雲"]
+        direction LR
+        p1[work inside one project] --> p2[trust what it learned] --> p3[before any of it travels]
+    end
+    S1 --> S2 --> S3 --> S4
+    D[["Dōjō — cross-cutting SaaS layer<br/>(threads through Observatory + Project,<br/>never a linear 5th segment)"]]
+    S3 -.-> D
+    S4 -.-> D
+```
+
+**Value before setup** is literal: the first thing the user does is see *their
+own projects*, not a wizard. The old nine-stage wizard is gone — tuning lives in
+Preferences, reachable but never blocking.
+
+### The loops inside the daily app
+
+The Observatory and project window are not flat screens — each domain is a small
+retrospective loop of its own (mockup: *"Module lifecycles — the loops inside
+the daily app"*): **Security &amp; guards · Architecture · Testing · Style &amp;
+conventions · Memory · Traceability · Impact · Libraries · Insights.** Each
+observes, forms a finding, and offers one action.
+
+## The six non-negotiable themes
+
+Every requirement and design decision honours these. If something pushes against
+one, we call it out.
+
+| # | Theme | What it means |
+|---|---|---|
+| 1 | **Value before setup** | First interaction shows the user their own projects — not a wizard. |
+| 2 | **One decision, one default** | The same verb set everywhere — **Apply · Review · Dismiss** — recommended one highlighted, others one keystroke away. |
+| 3 | **Discoverability of depth** | Nothing important hidden behind a one-liner; Preferences is searchable; the sidebar clusters with a Focus mode. |
+| 4 | **Trust through proof** | No claim without a receipt — confidence scores, regression notes, before/after FTR. The user verifies; they don't take our word. |
+| 5 | **Org boundary is the Dōjō membership** | Anything that should stay inside a company or a client engagement travels through a Dōjō membership, not the global Collective. Personal sensei works perfectly with no Dōjō; when one exists, the boundary is exact. |
+| 6 | **Insight copy comes from the model** | Every human-readable insight string routes through [`insight-copy`](../llm-spec/pipeline/insight-copy.md) (embedded gemma first, static template as fallback). Actions and route labels stay deterministic. |
+
+## What sensei is *not*
+
+- Not a productivity/vanity dashboard (lines, commits, streaks).
+- Not a code reviewer or linter — it learns *how the pair works*, not just the code.
+- Not a cloud service by default — personal sensei is fully local; the Dōjō is opt-in and the org boundary is exact.
+
+## Read next
+
+- [`objectives.md`](objectives.md) — the WHAT, broken down per segment + the Dōjō layer, with measurable outcomes.
+- [`open-issues.md`](open-issues.md) — where the implementation stands against this vision, the ranked gaps, and the specced plan to close them.
+- [`../architecture/README.md`](../architecture/README.md) — how the layers realise this.
