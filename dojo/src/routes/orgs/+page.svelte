@@ -4,6 +4,11 @@
 	import DojoOrgs from '$lib/components/DojoOrgs.svelte';
 	import type { DojoOrg } from '$lib/dojo-data';
 	import { TENANT_COOKIE, tenantKeyOf } from '$lib/tenant';
+	import type { PageData } from './$types';
+
+	// user + orgs are loaded server-side from the real Supabase session +
+	// `dojo.memberships` (see +page.server.ts).
+	let { data }: { data: PageData } = $props();
 
 	function enter(org: DojoOrg) {
 		// The per-org console lands on the guarded group. Persist the selected
@@ -21,4 +26,4 @@
 	<title>Your organizations · Dōjō</title>
 </svelte:head>
 
-<DojoOrgs onEnter={enter} />
+<DojoOrgs user={data.user} orgs={data.orgs} onEnter={enter} />
