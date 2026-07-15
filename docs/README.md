@@ -40,7 +40,7 @@ GitHub-issue index — start there for tracked work).
 |---|---|---|
 | `app/` | SvelteKit + Tauri | Desktop app (observatory + project window) |
 | `crates/` | Rust | `senseid` · `cli` · `mcp` · `bootstrap` · `dojo-mind` · `logger` |
-| `console/` | SvelteKit | Dōjō SaaS console (maintainer · admin · lead) |
+| `dojo/` | SvelteKit | Dōjō web app — developer · maintainer · admin · lead consoles (SSO-gated) |
 | `website/` | SvelteKit | Marketing site |
 | `database/` | SQL (dbd) | DDL definitions — one DB `sensei`, port 7744 |
 | `homebrew/` | Ruby | Homebrew tap (subtree → `sensei-hq/homebrew-tap`) |

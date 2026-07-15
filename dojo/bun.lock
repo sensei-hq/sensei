@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "sensei-console",
+      "name": "sensei-dojo-web",
       "dependencies": {
         "@kavach/adapter-supabase": "1.0.0-next.37",
         "@kavach/logger": "1.0.0-next.37",
