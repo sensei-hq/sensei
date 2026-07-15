@@ -5553,26 +5553,51 @@ impl PgStore {
     /// cleared), scoped to one watch root. Runs in the scan reconcile. Returns
     /// file nodes whose tags changed.
     pub async fn tag_file_nodes_by_framework_kind(&self, root_id: &uuid::Uuid) -> Result<u64, String> {
+        // Tag each `file` node with the framework roles it plays, so `get_patterns`
+        // / `get_file_tags` answer "which files are components / hooks / routes /
+        // middleware". Two signals, merged into `tags` and recomputed each scan
+        // (self-correcting — adds AND removes):
+        //   • symbol-kind — the `hook`/`component` node-kinds the classifier emits
+        //     for symbols the file contains.
+        //   • file-role (path convention, per-framework) — a whole file that *is* a
+        //     route or middleware. `route`/`middleware` aren't node kinds, they are
+        //     file-level roles, so a path convention is the right per-adapter
+        //     detector: SvelteKit `+page`/`+layout`/`+server`/`+error` + Next
+        //     `page`/`route` → `route`; SvelteKit `hooks.{server,client}` + Next
+        //     `middleware` → `middleware`.
+        // A CTE computes the desired tag set once per file; only rows whose set
+        // actually changes are written (idempotent, accurate `rows_affected`).
         let res = sqlx_core::query::query(
-            "UPDATE sensei.nodes filenode
-                SET tags = COALESCE((
-                      SELECT array_agg(DISTINCT s.kind::text ORDER BY s.kind::text)
-                        FROM sensei.nodes s
-                       WHERE s.folder_id = filenode.folder_id
-                         AND s.file_path = filenode.file_path
-                         AND s.kind IN ('hook','component')
-                    ), '{}')
-               FROM sensei.folders f
-              WHERE filenode.folder_id = f.id
-                AND f.root_id = $1
-                AND filenode.kind = 'file'
-                AND filenode.tags IS DISTINCT FROM COALESCE((
-                      SELECT array_agg(DISTINCT s.kind::text ORDER BY s.kind::text)
-                        FROM sensei.nodes s
-                       WHERE s.folder_id = filenode.folder_id
-                         AND s.file_path = filenode.file_path
-                         AND s.kind IN ('hook','component')
-                    ), '{}')",
+            r"WITH desired AS (
+                SELECT fn.id,
+                       COALESCE((
+                         SELECT array_agg(DISTINCT tag ORDER BY tag) FROM (
+                           SELECT s.kind::text AS tag
+                             FROM sensei.nodes s
+                            WHERE s.folder_id = fn.folder_id
+                              AND s.file_path = fn.file_path
+                              AND s.kind IN ('hook','component')
+                           UNION ALL
+                           SELECT 'route'
+                            WHERE fn.file_path ~ '(^|/)\+(page|layout|server|error)\.'
+                               OR fn.file_path ~ '(^|/)(page|route)\.(tsx?|jsx?)$'
+                           UNION ALL
+                           SELECT 'middleware'
+                            WHERE fn.file_path ~ '(^|/)hooks\.(server|client)\.(tsx?|jsx?)$'
+                               OR fn.file_path ~ '(^|/)hooks\.(tsx?|jsx?)$'
+                               OR fn.file_path ~ '(^|/)middleware\.(tsx?|jsx?)$'
+                         ) src
+                       ), '{}') AS tags
+                  FROM sensei.nodes fn
+                  JOIN sensei.folders f ON f.id = fn.folder_id
+                 WHERE f.root_id = $1
+                   AND fn.kind = 'file'
+              )
+              UPDATE sensei.nodes n
+                 SET tags = d.tags
+                FROM desired d
+               WHERE n.id = d.id
+                 AND n.tags IS DISTINCT FROM d.tags",
         )
         .bind(root_id)
         .execute(&self.pool)
@@ -8553,6 +8578,13 @@ mod tests {
         let util = s.upsert_node(&fid, "file", "util.rs", "src/util.rs", None, None, None, None).await.unwrap();
         s.upsert_node(&fid, "function", "helper", "src/util.rs", None, None, None, None).await.unwrap();
 
+        // File-role by path convention (no symbols needed): SvelteKit routes +
+        // middleware, and a Next-style middleware file.
+        let page = s.upsert_node(&fid, "file", "+page.svelte", "src/routes/blog/+page.svelte", None, None, None, None).await.unwrap();
+        let endpoint = s.upsert_node(&fid, "file", "+server.ts", "src/routes/api/+server.ts", None, None, None, None).await.unwrap();
+        let hooks = s.upsert_node(&fid, "file", "hooks.server.ts", "src/hooks.server.ts", None, None, None, None).await.unwrap();
+        let mw = s.upsert_node(&fid, "file", "middleware.ts", "middleware.ts", None, None, None, None).await.unwrap();
+
         let changed = s.tag_file_nodes_by_framework_kind(&root_id).await.unwrap();
         assert!(changed >= 1, "at least the component/hook file is tagged");
 
@@ -8562,6 +8594,18 @@ mod tests {
         let (util_tags,): (Vec<String>,) = sqlx_core::query_as::query_as("SELECT tags FROM sensei.nodes WHERE id=$1")
             .bind(util).fetch_one(s.pool()).await.unwrap();
         assert!(util_tags.is_empty(), "a file with no framework symbols stays untagged");
+
+        // File-role tags come from the path convention alone.
+        let pool_ref = s.pool();
+        let tags_of = |id: uuid::Uuid| async move {
+            let (t,): (Vec<String>,) = sqlx_core::query_as::query_as("SELECT tags FROM sensei.nodes WHERE id=$1")
+                .bind(id).fetch_one(pool_ref).await.unwrap();
+            t
+        };
+        assert_eq!(tags_of(page).await, vec!["route".to_string()], "+page.svelte → route");
+        assert_eq!(tags_of(endpoint).await, vec!["route".to_string()], "+server.ts → route");
+        assert_eq!(tags_of(hooks).await, vec!["middleware".to_string()], "hooks.server.ts → middleware");
+        assert_eq!(tags_of(mw).await, vec!["middleware".to_string()], "middleware.ts → middleware");
 
         // Idempotent: a second run changes nothing.
         assert_eq!(s.tag_file_nodes_by_framework_kind(&root_id).await.unwrap(), 0, "no-op on re-run");
