@@ -219,10 +219,14 @@ async fn watcher_watchdog(queue: &Arc<TaskQueue>, pg: &PgStore, now_ms: i64, sta
     // Re-establish the stream. start() tears down the old thread and spawns a
     // fresh one; on_thread_start resets the stall clock + healthy flag.
     match w_mutex.lock() {
-        Ok(mut w) => match w.start() {
-            Ok(()) => tracing::info!("watcher_watchdog: watcher restarted"),
-            Err(e) => tracing::warn!(error = %e, "watcher_watchdog: watcher restart failed"),
-        },
+        Ok(mut w) => {
+            // Ensure the store survives a restart even if boot wiring was skipped.
+            w.set_store(pg.clone());
+            match w.start() {
+                Ok(()) => tracing::info!("watcher_watchdog: watcher restarted"),
+                Err(e) => tracing::warn!(error = %e, "watcher_watchdog: watcher restart failed"),
+            }
+        }
         Err(_) => tracing::warn!("watcher_watchdog: RootWatcher mutex poisoned; cannot restart"),
     }
 }

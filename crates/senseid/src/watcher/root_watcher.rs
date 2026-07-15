@@ -10,6 +10,7 @@ use std::collections::{HashMap, HashSet};
 use notify::{Watcher, RecursiveMode, Event, EventKind};
 use crate::tasks::{Task, TaskKind};
 use crate::tasks::queue::TaskQueue;
+use crate::db::pg_store::PgStore;
 use crate::languages;
 
 const DEBOUNCE_MS: u64 = 500;
@@ -198,6 +199,11 @@ static INSTANCE: OnceLock<Mutex<RootWatcher>> = OnceLock::new();
 pub struct RootWatcher {
     roots: HashMap<PathBuf, WatchedRoot>,
     queue: Arc<TaskQueue>,
+    /// Set at daemon boot (`set_store`). `process_batch` uses it to resolve each
+    /// changed file to its owning indexed repo so incremental tasks target the
+    /// right folder_path. `None` before boot wiring (e.g. in isolated tests) — the
+    /// watch loop then can't resolve and logs a warning instead of enqueueing.
+    store: Option<PgStore>,
     status: WatcherStatus,
     stop_flag: Arc<std::sync::atomic::AtomicBool>,
     thread: Option<std::thread::JoinHandle<()>>,
@@ -216,11 +222,20 @@ impl RootWatcher {
         Self {
             roots: HashMap::new(),
             queue,
+            store: None,
             status: WatcherStatus::Stopped("no roots".into()),
             stop_flag: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             thread: None,
             health: Arc::new(WatcherHealth::new()),
         }
+    }
+
+    /// Give the watcher a DB handle so the watch loop can resolve each changed
+    /// file to its owning repo. Called once at boot (where `AppState.pg` exists);
+    /// persists in the singleton across start/stop restarts. `PgStore` is cheaply
+    /// cloneable (Arc'd pool).
+    pub fn set_store(&mut self, store: PgStore) {
+        self.store = Some(store);
     }
 
     pub fn register(&mut self, root: PathBuf, exclusions: Vec<String>) {
@@ -264,6 +279,7 @@ impl RootWatcher {
             .collect();
         let queue = self.queue.clone();
         let health = self.health.clone();
+        let store = self.store.clone();
 
         let rt = tokio::runtime::Handle::try_current()
             .map_err(|_| "RootWatcher requires tokio runtime".to_string())?;
@@ -301,17 +317,6 @@ impl RootWatcher {
 
             let mut pending: HashMap<PathBuf, ChangeKind> = HashMap::new();
             let mut last_event = std::time::Instant::now();
-
-            // Build projects list (root name → root path) for batch processing
-            let projects: Vec<(String, String)> = roots.iter()
-                .map(|r| {
-                    let name = r.file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("unknown")
-                        .to_string();
-                    (name, r.to_string_lossy().to_string())
-                })
-                .collect();
 
             loop {
                 if stop.load(std::sync::atomic::Ordering::Acquire) {
@@ -373,9 +378,9 @@ impl RootWatcher {
                         if !pending.is_empty() && last_event.elapsed() >= Duration::from_millis(DEBOUNCE_MS) {
                             let batch: HashMap<PathBuf, ChangeKind> = std::mem::take(&mut pending);
                             let q = queue.clone();
-                            let p = projects.clone();
+                            let s = store.clone();
                             rt.spawn(async move {
-                                RootWatcher::process_batch(batch, &q, &p).await;
+                                RootWatcher::process_batch(batch, &q, s.as_ref()).await;
                             });
                         }
                     }
@@ -445,20 +450,52 @@ impl RootWatcher {
         s.ends_with(".git/HEAD") || s.ends_with(".git\\HEAD")
     }
 
+    /// Group a debounced batch of changes by their OWNING INDEXED REPO (resolved
+    /// from each path via `PgStore::repo_root_for_path`) and enqueue the
+    /// incremental tasks — `ProcessFile`/`DeleteFile`/`DeleteFolder` targeting the
+    /// repo root's abs_path (the folder_path the handlers resolve by), plus the
+    /// post-processing barrier `ResolveEdges` + `EmbedNodes` so a live edit shows
+    /// up in the graph AND semantic search without waiting for a full scan.
+    ///
+    /// Two invariants from the design:
+    ///  - a change in `~/Dev/kavach/src/x.ts` resolves to the kavach repo (not the
+    ///    watch root that happens to be `~/Dev`), so `folder_path` is a real repo
+    ///    abs_path — the previous code passed the watch-root NAME, so every task
+    ///    silently no-op'd;
+    ///  - exclusions are applied BEFORE enqueueing (a change under an excluded
+    ///    prefix costs nothing).
+    ///
+    /// A path under no indexed repo (a brand-new repo not yet scanned) is skipped
+    /// — a full `ScanRoot` indexes it first. `store` is `None` only before boot
+    /// wiring (isolated tests); the batch is then dropped with a warning.
     pub(crate) async fn process_batch(
         changes: HashMap<PathBuf, ChangeKind>,
         queue: &TaskQueue,
-        projects: &[(String, String)],
+        store: Option<&PgStore>,
     ) {
+        let Some(store) = store else {
+            tracing::warn!(count = changes.len(), "process_batch: no PgStore — cannot resolve owning repos; batch dropped");
+            return;
+        };
+        // Exclusions checked BEFORE enqueue (config `scan_exclusions` prefixes).
+        let exclusions = store.get_scan_exclusions().await;
+
         let mut repo_changes: HashMap<String, Vec<(PathBuf, ChangeKind)>> = HashMap::new();
         for (path, kind) in changes {
-            let path_str = path.to_string_lossy().to_string();
-            if let Some((repo_id, _)) = projects.iter().find(|(_, rp)| path_str.starts_with(rp.as_str())) {
-                repo_changes.entry(repo_id.clone()).or_default().push((path, kind));
+            if crate::tasks::handlers::scan_logic::is_excluded(&path, &exclusions) {
+                continue;
+            }
+            match store.repo_root_for_path(&path.to_string_lossy()).await {
+                Ok(Some((repo_path, _project))) => {
+                    repo_changes.entry(repo_path).or_default().push((path, kind));
+                }
+                // Not under any indexed repo yet — a full scan must index it first.
+                Ok(None) => {}
+                Err(e) => tracing::warn!(error = %e, path = %path.display(), "process_batch: repo_root_for_path failed"),
             }
         }
 
-        for (repo_id, changes) in repo_changes {
+        for (repo_path, changes) in repo_changes {
             let mut file_task_ids = Vec::new();
 
             let mut deleted_dirs: HashSet<PathBuf> = HashSet::new();
@@ -471,7 +508,7 @@ impl RootWatcher {
             }
 
             for dir in &deleted_dirs {
-                queue.enqueue(Task::new(TaskKind::DeleteFolder, &repo_id, &dir.to_string_lossy())).await;
+                queue.enqueue(Task::new(TaskKind::DeleteFolder, &repo_path, &dir.to_string_lossy())).await;
             }
 
             for (path, kind) in &changes {
@@ -479,21 +516,20 @@ impl RootWatcher {
                     && deleted_dirs.contains(parent) { continue; }
 
                 let abs_path = path.to_string_lossy().to_string();
-                let repo_path = projects.iter().find(|(rid, _)| *rid == repo_id).map(|(_, p)| p.as_str()).unwrap_or("");
                 match kind {
                     ChangeKind::Delete => {
-                        let id = queue.enqueue(Task::new(TaskKind::DeleteFile, &repo_id, &abs_path)).await;
+                        let id = queue.enqueue(Task::new(TaskKind::DeleteFile, &repo_path, &abs_path)).await;
                         file_task_ids.push(id);
                     }
                     ChangeKind::Create | ChangeKind::Modify => {
                         let rel_dir = path.parent()
-                            .and_then(|p| p.strip_prefix(repo_path).ok())
+                            .and_then(|p| p.strip_prefix(&repo_path).ok())
                             .map(|p| p.to_string_lossy().replace('\\', "/"))
                             .unwrap_or_default();
                         let mod_name = if rel_dir.is_empty() { "(root)".to_string() } else { rel_dir };
-                        let mod_id = format!("mod:{}:{}", repo_id, mod_name);
+                        let mod_id = format!("mod:{}:{}", repo_path, mod_name);
 
-                        let task = Task::new(TaskKind::ProcessFile, &repo_id, &abs_path)
+                        let task = Task::new(TaskKind::ProcessFile, &repo_path, &abs_path)
                             .with_module(&mod_id);
                         let id = queue.enqueue(task).await;
                         file_task_ids.push(id);
@@ -517,8 +553,17 @@ impl RootWatcher {
             }
 
             if !file_task_ids.is_empty() {
+                // Post-processing barrier for the changed repo, blocked on the
+                // file tasks: resolve edges + embed the new/changed nodes so the
+                // edit is reflected in the code graph AND the hybrid semantic
+                // search immediately. (Community detection stays periodic — the
+                // analyzer scheduler runs it; per-edit clustering is wasteful.)
                 queue.enqueue(
-                    Task::new(TaskKind::ResolveEdges, &repo_id, "")
+                    Task::new(TaskKind::ResolveEdges, &repo_path, "")
+                        .blocked_by(file_task_ids.clone())
+                ).await;
+                queue.enqueue(
+                    Task::new(TaskKind::EmbedNodes, &repo_path, "")
                         .blocked_by(file_task_ids)
                 ).await;
             }
@@ -877,44 +922,78 @@ mod tests {
 
     // ── process_batch ─────────────────────────────────────────────────
 
-    #[tokio::test]
-    async fn process_batch_enqueues_file_tasks() {
-        let queue = Arc::new(TaskQueue::new());
-        let projects = vec![("repo-a".to_string(), "/projects/repo-a".to_string())];
-        let mut changes = HashMap::new();
-        changes.insert(PathBuf::from("/projects/repo-a/src/lib.rs"), ChangeKind::Modify);
-        RootWatcher::process_batch(changes, &queue, &projects).await;
-        let status = queue.status().await;
-        assert_eq!(status.pending + status.blocked, 2);
+    /// Seed a `git` repo folder in the DB so `repo_root_for_path` resolves a
+    /// change under it. Returns `(pg, repo_abs_path, root_id)`.
+    async fn seed_watch_repo() -> (PgStore, String, uuid::Uuid) {
+        let pg = PgStore::connect_test().await.unwrap();
+        let uniq = uuid::Uuid::new_v4();
+        let root = format!("/_test/watch/{uniq}");
+        let repo = format!("{root}/repo");
+        let root_id = pg.add_watch_root(&root, "wt", &serde_json::json!([])).await.unwrap();
+        pg.upsert_repo_kind(&root_id, "git", "repo", &repo).await.unwrap();
+        (pg, repo, root_id)
+    }
+
+    async fn cleanup_watch_repo(pg: &PgStore, root_id: &uuid::Uuid) {
+        let pool = pg.pool();
+        sqlx_core::query::query("DELETE FROM sensei.folders WHERE root_id=$1").bind(root_id).execute(pool).await.ok();
+        sqlx_core::query::query("DELETE FROM sensei.folders_to_watch WHERE id=$1").bind(root_id).execute(pool).await.ok();
     }
 
     #[tokio::test]
-    async fn process_batch_delete_enqueues_delete_task() {
-        let dir = tempfile::tempdir().unwrap();
-        let repo_path = dir.path().to_string_lossy().to_string();
-        let projects = vec![("repo".to_string(), repo_path.clone())];
-        let src = dir.path().join("src");
+    async fn process_batch_resolves_owning_repo_and_adds_postprocessing() {
+        // A change under the repo resolves to the repo abs_path (NOT a watch-root
+        // name) and enqueues ProcessFile + ResolveEdges + EmbedNodes.
+        let (pg, repo, root_id) = seed_watch_repo().await;
+        let queue = Arc::new(TaskQueue::new());
+        let mut changes = HashMap::new();
+        changes.insert(PathBuf::from(format!("{repo}/src/lib.rs")), ChangeKind::Modify);
+        RootWatcher::process_batch(changes, &queue, Some(&pg)).await;
+
+        let snap = queue.snapshot().await;
+        assert!(snap.iter().any(|(k, _, _)| *k == TaskKind::ProcessFile), "ProcessFile enqueued");
+        assert!(snap.iter().any(|(k, _, _)| *k == TaskKind::ResolveEdges), "ResolveEdges enqueued");
+        assert!(snap.iter().any(|(k, _, _)| *k == TaskKind::EmbedNodes), "EmbedNodes enqueued (search freshness)");
+        let pf = snap.iter().find(|(k, _, _)| *k == TaskKind::ProcessFile).unwrap();
+        assert_eq!(pf.1, repo, "ProcessFile folder_path is the resolved repo abs_path, not a name");
+        cleanup_watch_repo(&pg, &root_id).await;
+    }
+
+    #[tokio::test]
+    async fn process_batch_delete_targets_repo() {
+        // Seed the DB repo at a REAL tempdir so the DELETE branch's parent.exists()
+        // check passes → DeleteFile (not DeleteFolder), targeting the repo abs_path.
+        let pg = PgStore::connect_test().await.unwrap();
+        let dir = tempfile::tempdir().unwrap(); // unique watch root
+        let repo = dir.path().join("repo").to_string_lossy().to_string();
+        let root_id = pg.add_watch_root(&dir.path().to_string_lossy(), &format!("wt-{}", uuid::Uuid::new_v4()), &serde_json::json!([])).await.unwrap();
+        pg.upsert_repo_kind(&root_id, "git", "repo", &repo).await.unwrap();
+
+        let src = dir.path().join("repo").join("src");
         std::fs::create_dir_all(&src).unwrap();
-        let file = src.join("old.rs");
-        std::fs::write(&file, "fn main() {}").unwrap();
-        std::fs::remove_file(&file).unwrap();
+        let file = src.join("old.rs"); // parent (src) exists → DeleteFile branch
+        let queue = Arc::new(TaskQueue::new());
         let mut changes = HashMap::new();
         changes.insert(file, ChangeKind::Delete);
-        let queue = Arc::new(TaskQueue::new());
-        RootWatcher::process_batch(changes, &queue, &projects).await;
-        let status = queue.status().await;
-        assert_eq!(status.pending + status.blocked, 2);
+        RootWatcher::process_batch(changes, &queue, Some(&pg)).await;
+
+        let snap = queue.snapshot().await;
+        let df = snap.iter().find(|(k, _, _)| *k == TaskKind::DeleteFile);
+        assert!(df.is_some(), "DeleteFile enqueued");
+        assert_eq!(df.unwrap().1, repo, "DeleteFile folder_path is the repo abs_path");
+        cleanup_watch_repo(&pg, &root_id).await;
     }
 
     #[tokio::test]
-    async fn process_batch_ignores_files_outside_projects() {
+    async fn process_batch_skips_paths_under_no_indexed_repo() {
+        // A change under no indexed repo resolves to nothing → no tasks.
+        let pg = PgStore::connect_test().await.unwrap();
         let queue = Arc::new(TaskQueue::new());
-        let projects = vec![("repo".to_string(), "/projects/repo".to_string())];
         let mut changes = HashMap::new();
-        changes.insert(PathBuf::from("/other/file.rs"), ChangeKind::Modify);
-        RootWatcher::process_batch(changes, &queue, &projects).await;
+        changes.insert(PathBuf::from(format!("/_test/nonexistent/{}/file.rs", uuid::Uuid::new_v4())), ChangeKind::Modify);
+        RootWatcher::process_batch(changes, &queue, Some(&pg)).await;
         let status = queue.status().await;
-        assert_eq!(status.pending, 0);
+        assert_eq!(status.pending + status.blocked, 0);
     }
 
     // ── start/stop lifecycle ──────────────────────────────────────────
