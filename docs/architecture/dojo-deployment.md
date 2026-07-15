@@ -45,17 +45,19 @@ Then add the custom domain `dojo.sensei-hq.com` (Worker → Settings → Domains
 
 > **Supabase Auth redirect URLs** — in the Supabase dashboard (Authentication → URL Configuration) add `https://dojo.sensei-hq.com` to the allowed redirect/site URLs so magic-link sign-in returns to the deployed app.
 
-## 2. dojo-api → **not** a Worker (`dojo-api.sensei-hq.com`)
+## 2. dojo API → **in the Worker** (no separate host)
 
-`dojo-mind` (binary `sensei-dojo`) is a **Rust/axum** service — it can't run on Cloudflare Workers or Pages (those are JS/WASM). It needs a Rust-capable host. So `dojo-api.sensei-hq.com` is a **separate deploy**, not a route inside the web app.
+**Decision:** the `/v1` API lives *inside* the dojo Worker as SvelteKit server routes (`dojo/src/routes/v1/t/[origin]/[org]/…/+server.ts`) talking to Supabase directly — so the SaaS is **one deployable**, no Rust host. `dojo-mind`'s `/v1` surface is ~80% CRUD over `dojo.*` + a promotion sweep + JWT auth; none of it is Rust-specific.
 
-Options:
-- **Separate subdomain (recommended)** — host `sensei-dojo` on Fly.io / Railway / Render / a container, point `dojo-api.sensei-hq.com` at it. Clean separation; the web app calls it via `PUBLIC_DOJO_API_URL`.
-- **Proxy under the web app** — a SvelteKit `/api/*` route in the Worker could forward to dojo-mind (avoids CORS + a subdomain), but dojo-mind **still** needs a Rust host somewhere. Not worth it initially.
+- **Auth plane** — `lib/server/dojo-auth.ts` (`resolveTenantAccess`) ports dojo-mind's `resolve_tenant_access`: a Supabase JWT (`Authorization: Bearer` for the **desktop/API** plane, or the kavach session `access_token` for the **console**) → `sub` matched to `dojo.memberships.user_id` → role → access floor (`member<contributor<lead<maintainer<admin`). This is the **shared-auth** plane: the desktop app authenticates against the same Supabase project (PKCE/device flow) and calls authorized publish/subscribe endpoints with its JWT.
+- **Data** — `lib/server/dojo-supabase.ts` is a service-role client scoped to the `dojo` schema; routes enforce authz in code (RLS is a hardening follow-up).
+- **Pub/sub** (future) — Supabase Realtime for live push (new artifacts, triage, notifications) + the `seq`-cursor pull for offline catch-up; wrap an auth'd channel in kavach (upstream issue).
 
-Whichever host: give it the same Supabase (env `DATABASE_URL` or `SUPABASE_DB_URL` — dojo-mind reads either) and bind `SENSEI_DOJO_BIND=0.0.0.0:$PORT`. The `dojo.*` schema is already deployed (20 tables + scopes + global tenant).
+**Supabase prerequisites** (one-time, dashboard): Settings → API → **Exposed schemas**: add `dojo` (+ `sensei`); and set the Worker env `SUPABASE_SERVICE_ROLE_KEY` (private). Then `PUBLIC_DOJO_API_URL` is left **unset** — the console calls itself same-origin.
 
-> Until dojo-mind is hosted, the web app deploys fine but its data calls fail (it defaults `PUBLIC_DOJO_API_URL` to `http://127.0.0.1:7755`). The R9–R11 console screens are greenfield, so that's expected — deploy the web app now, stand up dojo-api when you wire live data.
+`dojo-mind` (the Rust binary) is kept for **local dev + the eventual cross-dojo federation endpoint** (a change-cursor pull between separate dojos), not as a hosted service for the console. `dojo-api.sensei-hq.com` is **not needed**.
+
+> Status: the `engagements` resource is ported as the reference pattern (`ccd08bc2`). Remaining console resources — incidents, members, identities, policies, triage — follow the same three-line shape (`resolveTenantAccess` floor → `dojoDb().from(table)` → JSON).
 
 ## 3. Supabase
 
