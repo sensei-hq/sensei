@@ -37,13 +37,14 @@ flowchart LR
 
 Each gap: the objective it violates, the FTR impact, and the approach.
 
-### G1 — The FTR loop never closes *(objectives O3, P1; north-star)*
-362 recommendations sit `pending`, **0 acted, 0 measured** (`measured_at` NULL). Generation, ranking, and consolidation all fire (28 reasoning traces), but nothing is ever accepted → `MeasureVerdicts` has no input. **The product's whole promise — prove an FTR delta — is unrealised.**
-**Approach:** wire recommendation acceptance (UI triage → `acted_at`) end-to-end so measurement runs; consider a lighter auto-measure signal for adopted memories. Highest value.
+### G1 — The FTR loop never closes *(objectives O3, P1; north-star)* — ✅ LOOP CLOSED 2026-07-15 (`26fe8d9b`)
+Was: 362 recs `pending`, 0 acted/measured. The accept path (`accept_recommendation` → `acted_at`, app UI `api.ts` + insights-board, the Impact page), `MeasureVerdicts` (FTR-delta → verdict, 3-day window), and the **negative** feedback (regression → challenge source memory) all already existed — but nothing closed the **positive** half: a proven rec never reinforced its source memory, so the loop's learning output was dead.
+**Fixed:** `reinforce_source_memory_for_rec` — on a **positive** verdict, record an `applied` memory_outcome (mirror of the negative challenge). The existing `memory_outcome_apply` trigger then bumps `reinforced_count`/`strength` and promotes the memory (this is the G1→G2 bridge).
+**Verified live end-to-end:** accepted a real rec (→`acted_at`); and a controlled temp scenario ran through `MeasureVerdicts` → verdict **positive** (current_ftr 1.0 vs baseline 0.2) → source memory reinforced → **battle_tested** (strength 3.6→4.1, reinforced_count 0→1), then cleaned up. *Real-data verdicts* mature naturally (the accepted rec needs its 3-day / ≥3-session window).
 
-### G2 — Memory promotion is dead *(objectives O5, P2, theme 4)*
-9 memories, **all `active`**, none `reinforced`/`battle_tested`/`challenged`. The promotion ladder depends on corrections (legitimately sparse) + an LLM promotion step that almost never fires. "Adopted this week" and the Memories surfaces read empty.
-**Approach:** define + wire the promotion/merge statuses (readyToShare / toMerge / battle_tested) with an evidence threshold; this is the single biggest "tables exist, writer barely runs" gap.
+### G2 — Memory promotion is dead *(objectives O5, P2, theme 4)* — ✅ UNBLOCKED 2026-07-15 (via G1 `26fe8d9b`)
+Was: 9 memories all `active`, `reinforced_count=0`. **The promotion ladder was already fully implemented in the `memory_outcome_apply` DB trigger** (`applied` → reinforced_count++/strength+0.5 → `battle_tested` at strength≥4.0 & no violations; `violated` → challenged/archived; challenged→reinforced recovery). It was dead only because **nothing recorded a positive (`applied`) outcome** — only the negative side was wired.
+**Fixed:** the G1 positive-reinforcement bridge now records `applied` outcomes when a rec proves out, so memories promote automatically as their recommendations are validated. **Verified live:** a memory went `active → battle_tested` on one confirmed rec. *Residual:* the manual `/reinforce` + `/promote` HTTP endpoints and cross-scope promotion (`promote_memory`) already existed; a time/relevance-based lighter reinforcement signal (beyond rec-verdicts) remains an optional future enhancement.
 
 ### G3 — Doc-drift signal is noise *(objective P2, theme 4)* — ⚠️ MOSTLY FIXED 2026-07-14 (`0d8d4b98` + schema follow-up)
 Was: the drift scan flagged **~all** backtick doc mentions `broken` because the known-symbol set was (a) this-project only and (b) 7 kinds only — so real symbols of other kinds, every indexed **dependency** symbol (e.g. rokkit components), env vars, and DB schema identifiers all over-fired.
