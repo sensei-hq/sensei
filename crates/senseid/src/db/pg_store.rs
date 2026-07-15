@@ -2180,17 +2180,23 @@ impl PgStore {
 
         let scanned_docs = doc_rows.len();
 
-        // 2. Load the project's known code identifier names into a set once,
-        //    so the per-mention lookup is a HashSet::contains (cheap) rather
-        //    than a DB round-trip per mention.
+        // 2. Load known code identifier names into a set once, so the
+        //    per-mention lookup is a HashSet::contains (cheap) rather than a DB
+        //    round-trip per mention. Two deliberate widenings vs the original
+        //    (which over-fired ~all mentions as broken):
+        //    - ALL code-symbol kinds, not just 7 — the old whitelist predated
+        //      struct/enum/hook/component/extension, so real project symbols of
+        //      those kinds were wrongly flagged.
+        //    - GLOBAL, not per-project — a doc legitimately references its
+        //      indexed dependencies' symbols (e.g. a rokkit component). Those
+        //      resolve to a real node in another project, so their mention is
+        //      not drift. (Cross-project name collisions can mask a removed
+        //      same-named symbol — an accepted precision tradeoff to kill the
+        //      dependency-reference false positives.)
         let code_names: Vec<(String,)> = sqlx_core::query_as::query_as(
-            "SELECT DISTINCT n.name
-               FROM sensei.nodes n
-               JOIN sensei.folders f ON f.id = n.folder_id
-              WHERE f.project_id = $1
-                AND n.kind IN ('function', 'method', 'class', 'type', 'interface', 'const', 'module')"
+            "SELECT DISTINCT name FROM sensei.nodes
+              WHERE kind IN ('function','method','class','type','interface','const','module','struct','hook','component','enum','extension')"
         )
-        .bind(project_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| e.to_string())?;

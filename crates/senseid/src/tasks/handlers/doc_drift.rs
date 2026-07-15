@@ -70,11 +70,14 @@ mod tests {
         let ctx = make_ctx().await;
         let pg = ctx.pg();
 
-        // A doc that references `process_event` (snake_case ⇒ a real mention)
-        // which has no matching code node yet. The scan reads the file off disk
-        // via the folder's abs_path, so point abs_path at a temp dir.
+        // A doc that references a snake_case symbol (⇒ a real mention) with no
+        // matching code node yet. The name is globally unique because the drift
+        // scan now matches the symbol set GLOBALLY (a shared-DB collision would
+        // otherwise flip the expected broken count). The scan reads the file off
+        // disk via the folder's abs_path, so point abs_path at a temp dir.
+        let sym = format!("drift_probe_{}", uuid::Uuid::new_v4().simple());
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("README.md"), "The `process_event` helper is the entry point.").unwrap();
+        std::fs::write(dir.path().join("README.md"), format!("The `{sym}` helper is the entry point.")).unwrap();
         let abs = dir.path().to_string_lossy().to_string();
 
         let pid = pg.create_project(&format!("_test:drift-{}", uuid::Uuid::new_v4()), None, None).await.unwrap();
@@ -105,7 +108,7 @@ mod tests {
         assert_eq!(total.0, 1, "dedup — still a single row after re-scanning");
 
         // Add the matching code node ⇒ the mention now resolves in place.
-        pg.merge_function(&fid, "process_event", "src/events.rs", Some("fn process_event()"), Some(1), Some(9), None).await.unwrap();
+        pg.merge_function(&fid, &sym, "src/events.rs", Some("fn process_event()"), Some(1), Some(9), None).await.unwrap();
         assert_eq!(scan_doc_drift(&ctx, &task).await.unwrap(), 0, "nothing newly broken");
         assert_eq!(broken(pid).await, 0, "the previously-broken row is no longer open");
         let resolved: (i64,) = sqlx_core::query_as::query_as(
