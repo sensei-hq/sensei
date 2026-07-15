@@ -675,55 +675,21 @@ pub(crate) async fn promotion_candidates(
 pub(crate) async fn consolidate_rules(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    use gateway::types::capability::Capability;
-    use gateway::types::request::*;
-
-    let set = crate::governance::structure_ruleset(
-        state.pg.resolve_global_rules().await.map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?,
-    );
-    if set.total == 0 {
-        return Ok(Json(serde_json::json!({ "skipped": true, "reason": "no global rules to merge" })));
+    use crate::analysis::rule_consolidation::{consolidate_global_rules, ConsolidationOutcome};
+    // Shared with the scheduled `ConsolidateGovernance` task — identical pipeline.
+    match consolidate_global_rules(&state.pg, &state.gateway).await {
+        Ok(ConsolidationOutcome::Skipped(reason)) =>
+            Ok(Json(serde_json::json!({ "skipped": true, "reason": reason }))),
+        Ok(ConsolidationOutcome::Created { id, version, model, content }) =>
+            Ok(Json(serde_json::json!({
+                "id": id, "version": version, "status": "proposed", "model": model, "content": content,
+            }))),
+        // A model/gateway failure is a 502; anything else (DB) a 500.
+        Err(e) => {
+            let code = if e.contains("merge model") { StatusCode::BAD_GATEWAY } else { StatusCode::INTERNAL_SERVER_ERROR };
+            Err(err(code, &e))
+        }
     }
-    let hash = crate::governance::ruleset_source_hash(&set);
-    if state.pg.latest_ruleset_source_hash("global").await
-        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))? == Some(hash.clone())
-    {
-        return Ok(Json(serde_json::json!({ "skipped": true, "reason": "unchanged since last consolidation" })));
-    }
-
-    let prompt = crate::governance::build_merge_prompt(&set);
-    let request = InferenceRequest {
-        capability: Capability::TextChat,
-        model: None, router: None,
-        // Governance Tier-2 consolidation is heavy synthesis — pin the seed
-        // `reasoning` chain (embedded → ollama → cloud) rather than relying on
-        // non-deterministic capability resolution across the text chains (#76).
-        chain: Some("reasoning".into()),
-        payload: Payload::Chat {
-            messages: vec![Message::text(MessageRole::User, prompt)],
-            system: Some("You merge governance rules into a single clean markdown ruleset.".to_string()),
-            max_tokens: Some(1500),
-            temperature: None,
-            tools: Vec::new(),
-        },
-        budget: None,
-    };
-    let resp = state.gateway.execute(&request).await
-        .map_err(|e| err(StatusCode::BAD_GATEWAY, &format!("merge model call failed: {e}")))?;
-    let content = match (resp.success, resp.content) {
-        (true, Some(c)) if !c.trim().is_empty() => c,
-        _ => return Err(err(StatusCode::BAD_GATEWAY, "merge model returned no content")),
-    };
-
-    let version = state.pg.next_ruleset_version("global").await
-        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
-    let id = state.pg.insert_consolidated_ruleset(
-        "global", version, &content, &serde_json::json!([]), resp.model.as_deref(), &hash, "proposed",
-    ).await.map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
-
-    Ok(Json(serde_json::json!({
-        "id": id, "version": version, "status": "proposed", "model": resp.model, "content": content,
-    })))
 }
 
 /// Fetch the global consolidated ruleset — the approved one if present, else the
