@@ -235,6 +235,65 @@ pub(crate) async fn query_general(state: &AppState, q: &str, repo_id: &str) -> s
     })
 }
 
+/// `context_pack` — assemble a ready-to-use context bundle for `q`: the top
+/// hybrid (lexical + semantic) symbol hits, each with its actual code snippet
+/// read from disk, so an assistant gets concept-level retrieval in one call
+/// instead of a search followed by N file reads. The lexical half of the hybrid
+/// is an ILIKE over symbol names, so name-substring matches are always included
+/// (the grep floor for code navigation); raw file-content grep is out of scope
+/// (use ripgrep for that). Fail-open: an unreadable file yields an empty snippet,
+/// never an error.
+pub(crate) async fn context_pack(state: &AppState, q: &str, repo_id: &str) -> serde_json::Value {
+    let general = query_general(state, q, repo_id).await;
+    // Collect top-k ids in ranked order (functions first, then types).
+    let mut ordered_ids: Vec<uuid::Uuid> = Vec::new();
+    for key in ["functions", "types"] {
+        if let Some(arr) = general.get(key).and_then(|v| v.as_array()) {
+            for it in arr {
+                if ordered_ids.len() >= CONTEXT_PACK_K { break; }
+                if let Some(id) = it.get("id").and_then(|v| v.as_str()).and_then(|s| uuid::Uuid::parse_str(s).ok()) {
+                    ordered_ids.push(id);
+                }
+            }
+        }
+        if ordered_ids.len() >= CONTEXT_PACK_K { break; }
+    }
+
+    let locs = state.pg.node_locations(&ordered_ids).await.unwrap_or_default();
+    let items: Vec<serde_json::Value> = ordered_ids.iter().filter_map(|id| {
+        let (_, abs_path, file_path, ls, le, kind, name, sig) = locs.iter().find(|l| &l.0 == id)?;
+        let snippet = std::fs::read_to_string(std::path::Path::new(abs_path).join(file_path))
+            .ok()
+            .map(|c| extract_snippet(&c, *ls, *le, SNIPPET_MAX_LINES))
+            .unwrap_or_default();
+        Some(serde_json::json!({
+            "name": name, "kind": kind, "file": file_path,
+            "lines": format!("{ls}-{le}"), "signature": sig, "snippet": snippet,
+        }))
+    }).collect();
+
+    serde_json::json!({ "type": "context_pack", "query": q, "count": items.len(), "items": items })
+}
+
+/// Extract lines `[start, end]` (1-based, inclusive) from `content`, capped at
+/// `max_lines`. Out-of-range bounds clamp; an empty or past-EOF start yields "".
+pub(crate) fn extract_snippet(content: &str, start: i32, end: i32, max_lines: usize) -> String {
+    let lines: Vec<&str> = content.lines().collect();
+    let n = lines.len();
+    if n == 0 || start < 1 || (start as usize) > n {
+        return String::new();
+    }
+    let s = start as usize - 1; // 0-based first line
+    let want_end = end.max(start) as usize; // 1-based inclusive last line
+    let e = want_end.min(n).min(s + max_lines).max(s + 1);
+    lines[s..e.min(n)].join("\n")
+}
+
+/// Max symbols packed into a `context_pack` response — bounds token cost.
+const CONTEXT_PACK_K: usize = 8;
+/// Max lines per packed snippet — bounds a single large function's footprint.
+const SNIPPET_MAX_LINES: usize = 40;
+
 // ── Hybrid ranking (lexical + semantic fusion) ───────────────────────────────
 //
 // `/api/query`'s node searches are keyword-only (ILIKE over sensei.nodes). This
@@ -432,6 +491,23 @@ pub(crate) fn extract_search_term(q: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn extract_snippet_clamps_range_and_caps() {
+        let content = "l1\nl2\nl3\nl4\nl5";
+        // Inclusive 1-based range.
+        assert_eq!(extract_snippet(content, 2, 4, 40), "l2\nl3\nl4");
+        // end past EOF clamps to the last line.
+        assert_eq!(extract_snippet(content, 4, 99, 40), "l4\nl5");
+        // max_lines caps the span.
+        assert_eq!(extract_snippet(content, 1, 5, 2), "l1\nl2");
+        // start past EOF or invalid → empty.
+        assert_eq!(extract_snippet(content, 9, 9, 40), "");
+        assert_eq!(extract_snippet(content, 0, 3, 40), "");
+        assert_eq!(extract_snippet("", 1, 3, 40), "");
+        // A single-line symbol (start == end).
+        assert_eq!(extract_snippet(content, 3, 3, 40), "l3");
+    }
 
     /// Build a hit whose id doubles as its item, so ranking order is readable.
     fn hit(id: &str) -> Hit {
