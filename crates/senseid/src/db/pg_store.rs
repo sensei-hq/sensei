@@ -26,23 +26,6 @@ fn vector_literal(v: &[f32]) -> String {
     buf
 }
 
-/// Insert an exclusion prefix into `list`: trailing slash normalized, deduped,
-/// kept sorted. Empty paths are ignored. Pure so it can be unit-tested without
-/// touching the shared `config['scan_exclusions']` row.
-fn push_exclusion(list: &mut Vec<String>, path: &str) {
-    let p = path.trim_end_matches('/').to_string();
-    if !p.is_empty() && !list.contains(&p) {
-        list.push(p);
-        list.sort();
-    }
-}
-
-/// Remove an exclusion prefix from `list` (trailing slash tolerated).
-fn drop_exclusion(list: Vec<String>, path: &str) -> Vec<String> {
-    let p = path.trim_end_matches('/');
-    list.into_iter().filter(|e| e != p).collect()
-}
-
 /// Valid `projects.maturity` lifecycle values — mirrors the
 /// `sensei.project_maturity` enum in
 /// `database/ddl/enum/sensei/project_maturity.ddl`. Used to reject an unknown
@@ -322,35 +305,41 @@ impl PgStore {
         Ok(())
     }
 
-    // ── Scan exclusions ──────────────────────────────────────────────
-    // Absolute path prefixes the scan skips (and prunes). Stored as a JSON
-    // array in config['scan_exclusions'] — no DDL. A folder at or under an
-    // excluded prefix is never classified as a project and is pruned.
+    // ── Scan exclusions (per watch root) ──────────────────────────────
+    // Exclusions live in `folders_to_watch.excluded` — a jsonb array of relative
+    // folder names/paths per root (the DDL design). `~/Developer` with
+    // `excluded=["Code"]` excludes `~/Developer/Code`. An entry that is a bare
+    // name matches that segment anywhere under the root; the absolute-prefix form
+    // (root/entry) is precise. Adding an entry prunes the matching subtree;
+    // removing one triggers a re-scan (see `update_watch_root` handler).
 
-    pub async fn get_scan_exclusions(&self) -> Vec<String> {
-        match self.get_config("scan_exclusions").await {
-            Ok(Some(v)) => serde_json::from_str(&v).unwrap_or_default(),
-            _ => vec![],
-        }
+    /// The absolute-path exclusion prefixes for a watch root — each `excluded`
+    /// entry resolved against `root_path` (`root/entry`). Consumed by the scan
+    /// (to skip classification) and the watcher (to ignore events).
+    pub async fn root_exclusion_prefixes(&self, root_path: &str) -> Vec<String> {
+        let row: Option<(serde_json::Value,)> = sqlx_core::query_as::query_as(
+            "SELECT excluded FROM sensei.folders_to_watch WHERE path = $1"
+        ).bind(root_path).fetch_optional(&self.pool).await.ok().flatten();
+        let root = root_path.trim_end_matches('/');
+        row.and_then(|(v,)| v.as_array().cloned())
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|e| e.as_str().map(str::to_string))
+            .filter(|e| !e.is_empty())
+            .map(|e| format!("{root}/{}", e.trim_start_matches('/')))
+            .collect()
     }
 
-    pub async fn set_scan_exclusions(&self, paths: &[String]) -> Result<(), String> {
-        let json = serde_json::to_string(paths).map_err(|e| e.to_string())?;
-        self.set_config("scan_exclusions", &json).await
-    }
-
-    /// Add an exclusion prefix (idempotent, trailing slash normalized). Returns the full list.
-    pub async fn add_scan_exclusion(&self, path: &str) -> Result<Vec<String>, String> {
-        let mut ex = self.get_scan_exclusions().await;
-        push_exclusion(&mut ex, path);
-        self.set_scan_exclusions(&ex).await?;
-        Ok(ex)
-    }
-
-    pub async fn remove_scan_exclusion(&self, path: &str) -> Result<Vec<String>, String> {
-        let ex = drop_exclusion(self.get_scan_exclusions().await, path);
-        self.set_scan_exclusions(&ex).await?;
-        Ok(ex)
+    /// Watch root's path + its raw (relative) `excluded` list, by id — for the
+    /// update handler to diff old-vs-new and prune added / re-scan removed.
+    pub async fn get_watch_root(&self, id: &uuid::Uuid) -> Result<Option<(String, Vec<String>)>, String> {
+        let row: Option<(String, serde_json::Value)> = sqlx_core::query_as::query_as(
+            "SELECT path, excluded FROM sensei.folders_to_watch WHERE id = $1"
+        ).bind(id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.map(|(path, ex)| {
+            let list = ex.as_array().map(|a| a.iter().filter_map(|e| e.as_str().map(str::to_string)).collect()).unwrap_or_default();
+            (path, list)
+        }))
     }
 
     /// Delete every folder at or under `prefix` (cascade nodes/edges/scan_state).
@@ -2620,9 +2609,13 @@ impl PgStore {
     // ── Folders to Watch ───────────────────────────────────────────────
 
     pub async fn add_watch_root(&self, path: &str, name: &str, excluded: &serde_json::Value) -> Result<uuid::Uuid, String> {
+        // On conflict, PRESERVE the existing `excluded` — exclusions are managed
+        // by `update_watch_root` (the roots API), and a re-scan passes `[]`, which
+        // must never wipe the user's exclusions. `excluded` here is the seed for
+        // the first insert only.
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.folders_to_watch(path, name, excluded) VALUES($1, $2, $3)
-             ON CONFLICT(path) DO UPDATE SET name = EXCLUDED.name, excluded = EXCLUDED.excluded, modified_at = now()
+             ON CONFLICT(path) DO UPDATE SET name = EXCLUDED.name, modified_at = now()
              RETURNING id"
         ).bind(path).bind(name).bind(excluded)
             .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
@@ -8398,25 +8391,22 @@ mod tests {
         s.delete_config(&k2).await.unwrap();
     }
 
-    // ── Scan exclusions ──────────────────────────────────────────────
-    // The list-mutation logic is pure (no shared `scan_exclusions` row), so
-    // these run without racing other tests on the DB.
+    // ── Scan exclusions (per watch root) ──────────────────────────────
 
-    #[test]
-    fn push_exclusion_normalizes_dedupes_sorts() {
-        let mut list = vec![];
-        push_exclusion(&mut list, "/b/two");
-        push_exclusion(&mut list, "/a/one/");   // trailing slash normalized
-        push_exclusion(&mut list, "/b/two");    // duplicate ignored
-        push_exclusion(&mut list, "");          // empty ignored
-        assert_eq!(list, vec!["/a/one".to_string(), "/b/two".to_string()]);
-    }
-
-    #[test]
-    fn drop_exclusion_removes_with_slash_tolerance() {
-        let list = vec!["/a".to_string(), "/b".to_string()];
-        assert_eq!(drop_exclusion(list.clone(), "/a/"), vec!["/b".to_string()]);
-        assert_eq!(drop_exclusion(list, "/missing"), vec!["/a".to_string(), "/b".to_string()]);
+    #[tokio::test]
+    async fn root_exclusion_prefixes_resolves_relative_entries_against_root() {
+        let s = pg_store().await;
+        let uniq = uuid::Uuid::new_v4();
+        let root = format!("/_test/exroot/{uniq}");
+        let id = s.add_watch_root(&root, "ex", &serde_json::json!(["Code", "archive/old"])).await.unwrap();
+        let mut prefixes = s.root_exclusion_prefixes(&root).await;
+        prefixes.sort();
+        assert_eq!(prefixes, vec![format!("{root}/Code"), format!("{root}/archive/old")]);
+        // get_watch_root round-trips the raw relative list.
+        let (path, ex) = s.get_watch_root(&id).await.unwrap().unwrap();
+        assert_eq!(path, root);
+        assert!(ex.contains(&"Code".to_string()));
+        s.remove_watch_root(&id).await.ok();
     }
 
     #[tokio::test]
