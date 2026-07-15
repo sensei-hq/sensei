@@ -1,0 +1,29 @@
+{
+	// Committed so Cloudflare's `wrangler deploy` (Workers Static Assets) deploys
+	// the SvelteKit (adapter-cloudflare) output directly instead of running its
+	// interactive auto-config — which otherwise runs `wrangler types --check`
+	// and fails with "Types file not found at worker-configuration.d.ts".
+	//
+	// This is a WORKERS deploy (`wrangler deploy`), not a Pages deploy — the
+	// website holds the account's single Pages project, everything else is a
+	// Worker. The adapter is selected by svelte.config.js when WORKERS_CI (set by
+	// Cloudflare Workers Builds) is present. Mirrors kavach's sites/learn.
+	//
+	// nodejs_compat is required: dojo runs kavach SSR auth (hooks.server.ts +
+	// /auth/session + /data endpoints) in the Worker, not prerendered.
+	//
+	// `name` must match the Cloudflare project's Worker name.
+	"name": "dojo",
+	"compatibility_date": "2026-06-13",
+	"compatibility_flags": ["nodejs_compat"],
+	// Served at <name>.<subdomain>.workers.dev + a versioned preview URL per
+	// deploy. Set workers_dev:false to serve only from the custom domain.
+	"workers_dev": true,
+	"preview_urls": true,
+	"main": ".svelte-kit/cloudflare/_worker.js",
+	"assets": {
+		"binding": "ASSETS",
+		"directory": ".svelte-kit/cloudflare"
+	},
+	"observability": { "enabled": true }
+}
