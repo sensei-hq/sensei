@@ -37,6 +37,17 @@ pub fn find_git_folders(root: &Path, max_depth: u32) -> Vec<PathBuf> {
     result
 }
 
+/// True if `path` is at or under any excluded prefix. Prefixes are absolute
+/// dirs (e.g. `/Users/x/Developer/Code`); a folder is excluded when it equals a
+/// prefix or sits beneath it. Boundary-safe: `/a/Code` never matches `/a/Coder`.
+pub fn is_excluded(path: &Path, exclusions: &[String]) -> bool {
+    let p = path.to_string_lossy();
+    exclusions.iter().any(|ex| {
+        let ex = ex.trim_end_matches('/');
+        !ex.is_empty() && (p == ex || p.starts_with(&format!("{ex}/")))
+    })
+}
+
 fn walk_for_git(dir: &Path, depth: u32, max_depth: u32, out: &mut Vec<PathBuf>) {
     if depth > max_depth { return; }
     let entries = match std::fs::read_dir(dir) {
@@ -763,6 +774,21 @@ mod tests {
         let gits = find_git_folders(root, 3);
         assert_eq!(gits.len(), 1, "symlinked repo counted once, got {gits:?}");
         assert!(gits[0].ends_with("strategos/gateway"), "canonicalized to the real path, got {gits:?}");
+    }
+
+    #[test]
+    fn is_excluded_matches_prefix_and_self_but_not_siblings() {
+        let ex = vec!["/Users/x/Developer/Code".to_string(), "/tmp/junk/".to_string()];
+        // The prefix itself and anything under it are excluded.
+        assert!(is_excluded(Path::new("/Users/x/Developer/Code"), &ex));
+        assert!(is_excluded(Path::new("/Users/x/Developer/Code/archive/repo"), &ex));
+        // Trailing slash in the exclusion is normalized.
+        assert!(is_excluded(Path::new("/tmp/junk/repo"), &ex));
+        // Boundary-safe: a sibling that merely shares the prefix string is NOT excluded.
+        assert!(!is_excluded(Path::new("/Users/x/Developer/Coder"), &ex));
+        assert!(!is_excluded(Path::new("/Users/x/Developer/Other"), &ex));
+        // Empty exclusion list excludes nothing.
+        assert!(!is_excluded(Path::new("/anything"), &[]));
     }
 
     #[test]
