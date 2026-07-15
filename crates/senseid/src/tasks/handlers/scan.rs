@@ -124,6 +124,13 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     // Delete the provably-empty phantom projects (no folder / session / artifact)
     // — pre-#101 residue that would otherwise inflate the project count.
     let pruned_projects = ctx.pg().prune_empty_projects(60).await.unwrap_or_else(|e| { tracing::warn!(error = %e, "scan_root: prune_empty_projects failed"); 0 });
+    // Tag file nodes with the framework kinds of the symbols they contain
+    // (hook/component) so `get_patterns` / `get_file_tags` return real files.
+    let tagged = ctx.pg().tag_file_nodes_by_framework_kind(&root_id).await
+        .unwrap_or_else(|e| { tracing::warn!(error = %e, "scan_root: tag_file_nodes_by_framework_kind failed"); 0 });
+    if tagged > 0 {
+        tracing::info!("scan_root reconcile: framework-tagged {tagged} file node(s)");
+    }
     if reabsorbed > 0 {
         tracing::info!("scan_root reconcile: re-absorbed {reabsorbed} nested standalone root(s) into their enclosing repo's project");
     }
