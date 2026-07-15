@@ -1,0 +1,14 @@
+# Local `wrangler dev` env for the dojo Worker. Copy to `.dev.vars` (gitignored)
+# and fill in real values. In deployed environments these live as encrypted
+# Secrets in the Cloudflare dashboard (Settings → Variables and Secrets), NEVER
+# in git — this repo is public. `bun run dev` (Vite) reads `.env` instead.
+#
+# SvelteKit reads these from the Worker's platform.env:
+#   - kavach auth (client, $env/dynamic/public): PUBLIC_SUPABASE_URL + the
+#     publishable key. PUBLIC_-prefixed values are shipped to the browser.
+#   - server dojo API (dojo-supabase.ts, $env/dynamic/private): the service/secret
+#     key — bypasses RLS, server-only, never exposed to the client.
+
+PUBLIC_SUPABASE_URL=
+PUBLIC_SUPABASE_ANON_KEY=
+SUPABASE_SERVICE_ROLE_KEY=

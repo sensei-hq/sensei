@@ -16,6 +16,17 @@
 	"name": "dojo",
 	"compatibility_date": "2026-06-13",
 	"compatibility_flags": ["nodejs_compat"],
+	// Env is managed in the Cloudflare dashboard as encrypted SECRETS (PUBLIC_
+	// SUPABASE_URL, PUBLIC_SUPABASE_ANON_KEY publishable, and the service/secret
+	// key) — never in git, since this repo is PUBLIC. `wrangler deploy` never
+	// deletes Secrets, so they survive every deploy. (The earlier wipe hit
+	// plaintext dashboard *Variables*: a committed config is authoritative and
+	// deploy removes plaintext vars not listed here.) keep_vars:true is a safety
+	// net so any *future* plaintext Variable added in the dashboard also survives.
+	// At runtime SvelteKit reads all of these from platform.env via
+	// $env/dynamic/{public,private}. Local `wrangler dev`: gitignored .dev.vars
+	// (see .dev.vars.example); `bun run dev` (Vite) uses the gitignored .env.
+	"keep_vars": true,
 	// Served at <name>.<subdomain>.workers.dev + a versioned preview URL per
 	// deploy. Set workers_dev:false to serve only from the custom domain.
 	"workers_dev": true,
