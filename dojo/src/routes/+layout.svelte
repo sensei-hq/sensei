@@ -36,6 +36,6 @@
 	<title>Dōjō · sensei</title>
 	<meta name="description" content="Dōjō — your organization's shared mind" />
 </svelte:head>
-<svelte:body use:themable={{ theme: vibe, storageKey: 'sensei-console-theme' }} />
+<svelte:body use:themable={{ theme: vibe, storageKey: 'sensei-dojo-theme' }} />
 
 {@render children()}
