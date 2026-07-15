@@ -2200,7 +2200,29 @@ impl PgStore {
         .fetch_all(&self.pool)
         .await
         .map_err(|e| e.to_string())?;
-        let known: std::collections::HashSet<String> = code_names.into_iter().map(|(n,)| n).collect();
+        let mut known: std::collections::HashSet<String> = code_names.into_iter().map(|(n,)| n).collect();
+
+        // Also treat DB schema identifiers as known: docs legitimately reference
+        // table / column / view names and enum labels (`project_id`, `created_at`,
+        // `tool_usage_stats`, `assistant_family`), which are real identifiers, not
+        // drift — but they are never indexed as code-symbol nodes. Own-schemas
+        // only (skip pg_catalog / information_schema noise).
+        let schema_names: Vec<(String,)> = sqlx_core::query_as::query_as(
+            "SELECT table_name AS name FROM information_schema.tables
+              WHERE table_schema IN ('sensei','inference','activity','governance','staging')
+             UNION
+             SELECT column_name FROM information_schema.columns
+              WHERE table_schema IN ('sensei','inference','activity','governance','staging')
+             UNION
+             SELECT e.enumlabel
+               FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid
+               JOIN pg_namespace ns ON ns.oid = t.typnamespace
+              WHERE ns.nspname IN ('sensei','inference','activity','governance')"
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        known.extend(schema_names.into_iter().map(|(n,)| n));
 
         // 3. Fan the mentions out per doc, inserting `broken` drift rows for
         //    mentions that don't resolve. `ON CONFLICT DO NOTHING` on the
