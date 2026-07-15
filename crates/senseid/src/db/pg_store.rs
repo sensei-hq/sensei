@@ -3593,6 +3593,26 @@ impl PgStore {
         Ok(row)
     }
 
+    /// Resolve a filesystem path to its owning INDEXED REPO ROOT — the nearest
+    /// `git`/`standalone`/`subtree` ancestor folder — returning `(abs_path,
+    /// project_id)`. The file watcher uses this to enqueue incremental tasks
+    /// against the correct repo (a change in `~/Dev/kavach/src/x.ts` resolves to
+    /// the kavach repo root), exactly as the full scan shapes ProcessFile.
+    /// Structural subdirs (workspace_member / folder) are skipped so the one-owner
+    /// repo root wins. `None` when the path is under no indexed repo.
+    pub async fn repo_root_for_path(
+        &self, path: &str,
+    ) -> Result<Option<(String, Option<uuid::Uuid>)>, String> {
+        let row: Option<(String, Option<uuid::Uuid>)> = sqlx_core::query_as::query_as(
+            "SELECT abs_path, project_id FROM sensei.folders
+              WHERE kind IN ('git','standalone','subtree')
+                AND ($1 = abs_path OR $1 LIKE abs_path || '/%')
+              ORDER BY length(abs_path) DESC
+              LIMIT 1"
+        ).bind(path).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row)
+    }
+
     /// Find-or-create the `activity.sessions` row for an assistant
     /// `client_session_id`, attributing it to `folder_id`/`project_id`. Marks it
     /// completed when `is_end` (Stop / SessionEnd). Idempotent per
@@ -10209,6 +10229,31 @@ mod tests {
             .map(|(id, _)| id), Some(fid), "exact path resolves too");
         assert_eq!(s.find_folder_for_path("/_test/nonexistent-xyz/deep").await.unwrap(), None,
             "uncovered path resolves to nothing");
+    }
+
+    #[tokio::test]
+    async fn repo_root_for_path_resolves_nearest_git_ancestor_skipping_members() {
+        // The watcher resolver: a change under a repo → the repo ROOT (git/
+        // standalone), skipping structural workspace_member subdirs so the
+        // one-owner repo wins.
+        let s = pg_store().await;
+        let uniq = uuid::Uuid::new_v4();
+        let root = format!("/_test/reporoot/{uniq}");
+        let root_id = s.add_watch_root(&root, "rr", &serde_json::json!([])).await.unwrap();
+        let repo = format!("{root}/mono");
+        let repo_fid = s.upsert_repo_kind(&root_id, "git", "mono", &repo).await.unwrap();
+        // A workspace member subdir (not an index owner) — must be skipped.
+        let member = format!("{repo}/packages/chart");
+        s.upsert_subfolder(&root_id, "chart", "mono/packages/chart", &member, Some(&repo_fid), None).await.ok();
+
+        let got = s.repo_root_for_path(&format!("{member}/src/x.ts")).await.unwrap();
+        assert_eq!(got.map(|(p, _)| p), Some(repo.clone()), "deep file resolves to the git repo root, not the member subdir");
+        assert_eq!(s.repo_root_for_path(&repo).await.unwrap().map(|(p, _)| p), Some(repo), "exact repo path resolves too");
+        assert_eq!(s.repo_root_for_path(&format!("/_test/nope-{uniq}/x")).await.unwrap(), None, "path under no repo → None");
+
+        let pool = s.pool();
+        sqlx_core::query::query("DELETE FROM sensei.folders WHERE root_id=$1").bind(root_id).execute(pool).await.ok();
+        sqlx_core::query::query("DELETE FROM sensei.folders_to_watch WHERE id=$1").bind(root_id).execute(pool).await.ok();
     }
 
     #[tokio::test]
