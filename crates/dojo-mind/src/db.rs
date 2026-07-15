@@ -1,8 +1,11 @@
-//! Embedded-Postgres lifecycle + schema deploy for the Dōjō service.
+//! Data-layer lifecycle + schema deploy for the Dōjō service.
 //!
-//! `DojoDb::bootstrap` spins up an embedded PostgreSQL instance, creates the
-//! `dojo` database, deploys the unified `dojo` scope from the single
-//! `database/design.yaml` — BOTH the governance-federation tables
+//! `DojoDb::bootstrap` connects to the dojo Postgres — Supabase when
+//! `SUPABASE_DB_URL` is set (a local Supabase for a self-hosted dojo, or a hosted
+//! Supabase for SaaS), otherwise an embedded PostgreSQL for zero-config local dev
+//! (and tests, via `bootstrap_temp`). Either way it deploys the unified `dojo`
+//! scope from the single `database/design.yaml` — BOTH the governance-federation
+//! tables
 //! (shared_rules/members/api_keys/audit_log) AND the SaaS-layer artifact
 //! tables/enums/procedure, plus the shared governance closure (schemas, scope
 //! ladder, enforcement enum) and NO extensions — then seeds the scope ladder
@@ -45,9 +48,11 @@ pub enum DbError {
     Pool(String),
 }
 
-/// A running embedded Postgres with the dojo schema applied + scopes seeded.
+/// A connected dojo data layer with the schema applied + scopes seeded. `_pg` is
+/// `Some` only for the embedded fallback (it owns the process, dropped on
+/// shutdown); the Supabase path holds just the pool.
 pub struct DojoDb {
-    _pg: PostgreSQL, // owns the process; dropped on shutdown
+    _pg: Option<PostgreSQL>,
     pool: PgPool,
 }
 
@@ -57,14 +62,36 @@ impl DojoDb {
         &self.pool
     }
 
-    /// Boot an embedded Postgres at `data_dir`, deploy the `dojo` scope from the
-    /// `database/` tree at `database_dir`, and seed the scope ladder.
+    /// Connect the dojo data layer, deploy the `dojo` scope from the `database/`
+    /// tree at `database_dir`, and seed the scope ladder.
     ///
-    /// `temporary`: caller decides. Tests should set this to `true` (via
-    /// `bootstrap_temp`) so the crate's Drop wipes the data dir. Production
-    /// callers pass `false` to persist across daemon restarts.
-    pub async fn bootstrap(data_dir: PathBuf, database_dir: PathBuf) -> Result<Self, DbError> {
-        Self::bootstrap_with_settings(data_dir, database_dir, false).await
+    /// When `supabase_db_url` is `Some`, connect to that Postgres (Supabase —
+    /// local self-hosted or hosted SaaS). Otherwise boot an embedded Postgres at
+    /// `data_dir` (zero-config local dev), persisting across daemon restarts.
+    pub async fn bootstrap(
+        supabase_db_url: Option<String>,
+        data_dir: PathBuf,
+        database_dir: PathBuf,
+    ) -> Result<Self, DbError> {
+        match supabase_db_url {
+            Some(url) => Self::bootstrap_url(url, database_dir).await,
+            None => Self::bootstrap_with_settings(data_dir, database_dir, false).await,
+        }
+    }
+
+    /// Connect to an existing Postgres (Supabase) and deploy + seed the `dojo`
+    /// scope into it. No embedded process — Supabase owns the cluster; the `dojo`
+    /// and `sensei` schemas are created inside the URL's database.
+    async fn bootstrap_url(db_url: String, database_dir: PathBuf) -> Result<Self, DbError> {
+        deploy_dojo_schema(&db_url, &database_dir).await?;
+        let pool = PgPoolOptions::new()
+            .max_connections(10)
+            .connect(&db_url)
+            .await
+            .map_err(|e| DbError::Pool(e.to_string()))?;
+        seed_scopes(&pool, &database_dir).await?;
+        seed_global_dojo(&pool).await?;
+        Ok(Self { _pg: None, pool })
     }
 
     async fn bootstrap_with_settings(
@@ -111,7 +138,7 @@ impl DojoDb {
         // Idempotently seed the special-case global-dojo tenant (the procedure's
         // ON CONFLICT DO NOTHING makes re-running on every boot safe).
         seed_global_dojo(&pool).await?;
-        Ok(Self { _pg: pg, pool })
+        Ok(Self { _pg: Some(pg), pool })
     }
 
     /// Convenience for tests: boot into a unique temp data dir using the
