@@ -110,6 +110,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/projects/{id}/sessions",        get(project_detail::get_project_sessions))
         .route("/api/projects/{id}/project-deps",    get(project_detail::get_project_project_deps))
         .route("/api/projects/{id}/commands",        get(project_detail::get_project_commands))
+        // G10: user-scope capability→preferred-tool bias for get_commands.
+        .route("/api/preferences/commands",          get(project_detail::get_command_preferences).put(project_detail::set_command_preference))
         .route("/api/projects/{id}/library-version-conflicts", get(project_detail::get_project_library_version_conflicts))
         // Observatory chart data
         .route("/api/observatory/ftr-daily",             get(observatory::holistic_ftr_daily))
