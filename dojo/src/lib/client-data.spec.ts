@@ -37,8 +37,8 @@ function headersOf(init?: RequestInit): Record<string, string> {
 }
 
 describe('client-data reuses the shared dojo base url', () => {
-	it('points at the shared dojo service base url', () => {
-		expect(dojoApiUrl).toBe('http://127.0.0.1:7755');
+	it('defaults to same-origin (empty base)', () => {
+		expect(dojoApiUrl).toBe('');
 	});
 });
 
