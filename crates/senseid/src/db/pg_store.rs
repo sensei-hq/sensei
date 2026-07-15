@@ -2632,6 +2632,19 @@ impl PgStore {
         }).collect())
     }
 
+    /// The watch root that contains `path` — the exact root, or the nearest
+    /// ancestor root when `path` sits inside one. Lets `scan_root` reuse an
+    /// existing top-level root instead of registering a redundant sub-root (watch
+    /// roots stay top-level; a change resolves to its repo via
+    /// [`Self::repo_root_for_path`]). `None` when `path` is under no watch root.
+    pub async fn enclosing_watch_root(&self, path: &str) -> Result<Option<(uuid::Uuid, String)>, String> {
+        sqlx_core::query_as::query_as(
+            "SELECT id, path FROM sensei.folders_to_watch
+              WHERE $1 = path OR $1 LIKE path || '/%'
+              ORDER BY length(path) DESC LIMIT 1"
+        ).bind(path).fetch_optional(&self.pool).await.map_err(|e| e.to_string())
+    }
+
     pub async fn update_watch_status(&self, id: &uuid::Uuid, status: &str) -> Result<(), String> {
         sqlx_core::query::query("UPDATE sensei.folders_to_watch SET status = $2::sensei.watch_status, modified_at = now() WHERE id = $1")
             .bind(id).bind(status).execute(&self.pool).await.map_err(|e| e.to_string())?;

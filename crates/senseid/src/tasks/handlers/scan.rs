@@ -19,11 +19,34 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     let start = Instant::now();
     let emit = |evt: StateEvent| { let _ = ctx.app_state.event_tx.send(evt); };
 
-    // Per-root exclusions (`folders_to_watch.excluded`, relative entries resolved
-    // to absolute `root/entry` prefixes). Filter the discovered set so excluded
-    // subtrees are never classified as projects; the watcher gets the same list
-    // so it ignores changes there.
-    let exclusions = ctx.pg().root_exclusion_prefixes(&task.path).await;
+    // Resolve the EFFECTIVE watch root. Watch roots stay top-level: if this scan
+    // targets a path inside an existing watch root, index under that root instead
+    // of registering a redundant sub-root (a change still resolves to its own
+    // repo via repo_root_for_path). Only a path under no existing root becomes a
+    // new watch root.
+    let root_name = root.file_name().and_then(|n| n.to_str()).unwrap_or("root");
+    let (root_id, watch_root_path) = match ctx.pg().enclosing_watch_root(&task.path).await
+        .map_err(|e| format!("enclosing_watch_root: {e}"))?
+    {
+        Some((id, path)) => {
+            if path != task.path {
+                tracing::info!(scan = %task.path, watch_root = %path,
+                    "scan is inside an existing watch root — reusing it, not registering a new root");
+            }
+            (id, path)
+        }
+        None => {
+            let id = ctx.pg().add_watch_root(&task.path, root_name, &serde_json::json!([])).await
+                .map_err(|e| format!("Failed to register watch root: {}", e))?;
+            (id, task.path.clone())
+        }
+    };
+
+    // Per-root exclusions (`folders_to_watch.excluded` on the effective root,
+    // relative entries resolved to absolute `root/entry` prefixes). Filter the
+    // discovered set so excluded subtrees are never classified as projects; the
+    // watcher gets the same list so it ignores changes there.
+    let exclusions = ctx.pg().root_exclusion_prefixes(&watch_root_path).await;
 
     // 1. Find all git folders
     let git_folders: Vec<_> = scan_logic::find_git_folders(root, 3)
@@ -61,10 +84,7 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
         }
     }
 
-    // 3. Register watch root in DB
-    let root_name = root.file_name().and_then(|n| n.to_str()).unwrap_or("root");
-    let root_id = ctx.pg().add_watch_root(&task.path, root_name, &serde_json::json!([])).await
-        .map_err(|e| format!("Failed to register watch root: {}", e))?;
+    // 3. (watch root already resolved above as `root_id` — top-level only.)
 
     // 4. Register each project root with its kind and enqueue processing.
     //    ProcessGitFolder indexes any directory (a `.git` is not required), so a
@@ -605,6 +625,31 @@ mod tests {
             .collect();
         assert!(pgf.iter().any(|p| p.ends_with("/keep")), "kept repo enqueued, got {pgf:?}");
         assert!(!pgf.iter().any(|p| p.contains("/skipme")), "excluded repo NOT enqueued, got {pgf:?}");
+    }
+
+    #[tokio::test]
+    async fn scan_under_existing_root_reuses_it_not_a_new_root() {
+        // Watch roots stay top-level: scanning a sub-path of an existing root
+        // indexes under that root, never registering a redundant sub-root.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("sub/repo/.git")).unwrap();
+        std::fs::write(root.join("sub/repo/Cargo.toml"), "[package]\nname=\"r\"").unwrap();
+
+        let ctx = make_ctx().await;
+        let parent_id = ctx.pg().add_watch_root(&root.to_string_lossy(), "top", &serde_json::json!([])).await.unwrap();
+
+        // Scan the SUB-PATH — must reuse the top-level root, not create a new one.
+        let task = Task::new(TaskKind::ScanRoot, "", &root.join("sub").to_string_lossy());
+        scan_root(&ctx, &task).await.unwrap();
+
+        let enc = ctx.pg().enclosing_watch_root(&root.join("sub").to_string_lossy()).await.unwrap();
+        assert_eq!(enc.map(|(_, p)| p), Some(root.to_string_lossy().to_string()),
+            "no watch root registered at root/sub — the top-level root encloses it");
+
+        let pool = ctx.pg().pool();
+        sqlx_core::query::query("DELETE FROM sensei.folders WHERE root_id=$1").bind(parent_id).execute(pool).await.ok();
+        sqlx_core::query::query("DELETE FROM sensei.folders_to_watch WHERE id=$1").bind(parent_id).execute(pool).await.ok();
     }
 
     #[tokio::test]
