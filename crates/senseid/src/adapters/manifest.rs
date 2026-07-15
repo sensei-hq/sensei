@@ -252,6 +252,46 @@ pub mod command_category {
     }
 }
 
+/// Is a discovered command the user's **preferred** tool for its category
+/// (`sensei.dojo_preferences`, G10)? Matches the preference token against the
+/// command's `raw_name` (exact) or `command_line` (substring), case-insensitively
+/// — so a preference of `nextest` marks `cargo nextest` (raw_name) but also a
+/// script whose command line merely invokes it. A `None` category or no
+/// preference for it → `false`. Pure, so the bias is unit-testable without a DB.
+pub fn command_matches_preference(
+    category: Option<&str>,
+    raw_name: &str,
+    command_line: &str,
+    prefs: &std::collections::HashMap<String, String>,
+) -> bool {
+    let Some(cat) = category else { return false };
+    let Some(pref) = prefs.get(cat) else { return false };
+    let p = pref.trim().to_lowercase();
+    !p.is_empty() && (raw_name.to_lowercase() == p || command_line.to_lowercase().contains(&p))
+}
+
+#[cfg(test)]
+mod preference_tests {
+    use super::command_matches_preference;
+    use std::collections::HashMap;
+
+    #[test]
+    fn matches_by_raw_name_or_command_line_case_insensitively() {
+        let prefs: HashMap<String, String> =
+            [("test".to_string(), "nextest".to_string())].into_iter().collect();
+        // exact raw_name (case-insensitive) OR substring of the command line
+        assert!(command_matches_preference(Some("test"), "nextest", "cargo nextest run", &prefs));
+        assert!(command_matches_preference(Some("test"), "t", "cargo NEXTEST run", &prefs));
+        // a near-but-different name that isn't the tool → not preferred
+        assert!(!command_matches_preference(Some("test"), "NextTest", "", &prefs));
+        // a different test command (`cargo test`) → not preferred
+        assert!(!command_matches_preference(Some("test"), "test", "cargo test", &prefs));
+        // no preference for this category, or no category → not preferred
+        assert!(!command_matches_preference(Some("build"), "nextest", "cargo nextest", &prefs));
+        assert!(!command_matches_preference(None, "nextest", "cargo nextest", &prefs));
+    }
+}
+
 /// Identity metadata for a manifest.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ParsedManifest {

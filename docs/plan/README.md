@@ -83,6 +83,7 @@ Solution segment (3 screens), Bootstrap splash (2), consolidation screen, insigh
 ### G10 — Command-governance overlay *(Dōjō-gated)*
 The command surface shipped (`get_commands`, `project_commands`, per-adapter `parse_commands`). Unbuilt: `dojo_preferences` (capability→preferred-tool bias in `get_commands`, user-scope until a Dōjō exists) and `dojo_policies` + skill/agent hooks (a `dojo/db-schema-migration-review` skill, a `dojo-security-reviewer` agent consuming policy definitions).
 **Approach:** user-scope preference bias now; policy enforcement folds into the external-blocked Dōjō track.
+- **`dojo_preferences` ✅ BUILT 2026-07-15.** New `sensei.dojo_preferences(scope, capability, preferred)` table (PK `(scope, capability)`; `scope='user'` today, Dōjō org/team scopes later — same specificity ladder). `get_commands`/`get_project_commands` now mark each command `preferred: bool` (pure `manifest::command_matches_preference` — token vs `raw_name` exact / `command_line` substring, case-insensitive) and rank the preferred tool **first within its category**. New `GET`/`PUT /api/preferences/commands` setter. **Live: `PUT test→test:ci` → `get_commands(alert-platform, test)` marks `test:ci` preferred + first (of 4 test commands); the rest unmarked.** TDD (pure match + a DB rank test), full suite 1495 pass / clippy clean. *Remaining (Dōjō-gated):* `dojo_policies` + the skill/agent policy-enforcement hooks fold into the external-blocked Dōjō track.
 
 ## External-blocked (do not count as missing local work)
 

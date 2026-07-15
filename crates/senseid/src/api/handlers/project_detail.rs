@@ -57,6 +57,38 @@ pub(crate) async fn get_project_commands(
     Ok(Json(serde_json::json!({"commands": rows, "count": rows.len()})))
 }
 
+/// Body for `PUT /api/preferences/commands` — a capability→preferred-tool bias.
+#[derive(serde::Deserialize)]
+pub(crate) struct CommandPreferenceBody {
+    /// Canonical verb (test / build / lint / …).
+    capability: String,
+    /// Match token for the preferred command (e.g. `nextest`).
+    preferred: String,
+    note: Option<String>,
+}
+
+/// `PUT /api/preferences/commands` — set the user-scope capability→preferred-tool
+/// bias that `get_commands` uses to rank the preferred command first (G10).
+pub(crate) async fn set_command_preference(
+    State(state): State<AppState>,
+    Json(body): Json<CommandPreferenceBody>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let (cap, pref) = (body.capability.trim(), body.preferred.trim());
+    if cap.is_empty() || pref.is_empty() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    state.pg.upsert_command_preference("user", cap, pref, body.note.as_deref()).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(serde_json::json!({ "scope": "user", "capability": cap, "preferred": pref })))
+}
+
+/// `GET /api/preferences/commands` — the user-scope command preferences.
+pub(crate) async fn get_command_preferences(
+    State(state): State<AppState>,
+) -> Json<serde_json::Value> {
+    Json(serde_json::json!({ "scope": "user", "preferences": state.pg.command_preferences("user").await }))
+}
+
 pub(crate) async fn get_project_ftr(
     State(state): State<AppState>,
     Path(id): Path<String>,
