@@ -5435,6 +5435,45 @@ impl PgStore {
         Ok(res.rows_affected())
     }
 
+    /// Populate framework-pattern tags on file nodes so `get_patterns` /
+    /// `get_file_tags` return real files (they read `sensei.file_tags`, a view
+    /// over `nodes.tags` for `kind='file'` — previously always empty).
+    ///
+    /// The signal is the classifier's own node kinds: a file is tagged with the
+    /// framework kinds of the symbols it contains (`hook`, `component`). This
+    /// reuses the existing per-node classification — no separate tagger — and
+    /// recomputes the full set per file (so a file that loses its last hook is
+    /// cleared), scoped to one watch root. Runs in the scan reconcile. Returns
+    /// file nodes whose tags changed.
+    pub async fn tag_file_nodes_by_framework_kind(&self, root_id: &uuid::Uuid) -> Result<u64, String> {
+        let res = sqlx_core::query::query(
+            "UPDATE sensei.nodes filenode
+                SET tags = COALESCE((
+                      SELECT array_agg(DISTINCT s.kind::text ORDER BY s.kind::text)
+                        FROM sensei.nodes s
+                       WHERE s.folder_id = filenode.folder_id
+                         AND s.file_path = filenode.file_path
+                         AND s.kind IN ('hook','component')
+                    ), '{}')
+               FROM sensei.folders f
+              WHERE filenode.folder_id = f.id
+                AND f.root_id = $1
+                AND filenode.kind = 'file'
+                AND filenode.tags IS DISTINCT FROM COALESCE((
+                      SELECT array_agg(DISTINCT s.kind::text ORDER BY s.kind::text)
+                        FROM sensei.nodes s
+                       WHERE s.folder_id = filenode.folder_id
+                         AND s.file_path = filenode.file_path
+                         AND s.kind IN ('hook','component')
+                    ), '{}')",
+        )
+        .bind(root_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("tag_file_nodes_by_framework_kind: {e}"))?;
+        Ok(res.rows_affected())
+    }
+
     /// Candidate rows for [`Self::heal_nested_standalone_roots`]: each mis-scoped
     /// `standalone` root paired with the DEEPEST enclosing git repo it sits inside
     /// (DISTINCT ON + length DESC picks the closest repo, never a grandparent).
@@ -8329,6 +8368,44 @@ mod tests {
         assert_eq!(alive, 1, "grace protects a fresh empty project");
         // Direct cleanup (not a grace=0 global prune, which would hit sibling tests).
         sqlx_core::query::query("DELETE FROM sensei.projects WHERE id=$1").bind(fresh).execute(s.pool()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn tag_file_nodes_by_framework_kind_aggregates_symbol_kinds() {
+        // G5b: a file node gets tagged with the framework kinds of the symbols it
+        // contains, so `get_patterns`/`get_file_tags` return real files. A file
+        // with no framework symbols stays untagged; a stale tag is cleared.
+        let s = pg_store().await;
+        let uniq = uuid::Uuid::new_v4();
+        let root_id = s.add_watch_root(&format!("/_test/tag/{uniq}"), "tag_root", &serde_json::json!([])).await.unwrap();
+        let fid = s.upsert_repo_kind(&root_id, "git", "repo", &format!("/_test/tag/{uniq}/repo")).await.unwrap();
+
+        // A .svelte file that defines a component and uses a hook.
+        let widget = s.upsert_node(&fid, "file", "Widget.svelte", "src/Widget.svelte", None, None, None, None).await.unwrap();
+        s.upsert_node(&fid, "component", "Widget", "src/Widget.svelte", None, None, None, None).await.unwrap();
+        s.upsert_node(&fid, "hook", "effect", "src/Widget.svelte", None, None, None, None).await.unwrap();
+        // A plain file with only a function → no framework tag.
+        let util = s.upsert_node(&fid, "file", "util.rs", "src/util.rs", None, None, None, None).await.unwrap();
+        s.upsert_node(&fid, "function", "helper", "src/util.rs", None, None, None, None).await.unwrap();
+
+        let changed = s.tag_file_nodes_by_framework_kind(&root_id).await.unwrap();
+        assert!(changed >= 1, "at least the component/hook file is tagged");
+
+        let (widget_tags,): (Vec<String>,) = sqlx_core::query_as::query_as("SELECT tags FROM sensei.nodes WHERE id=$1")
+            .bind(widget).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(widget_tags, vec!["component".to_string(), "hook".to_string()], "file tagged with its symbol kinds (sorted)");
+        let (util_tags,): (Vec<String>,) = sqlx_core::query_as::query_as("SELECT tags FROM sensei.nodes WHERE id=$1")
+            .bind(util).fetch_one(s.pool()).await.unwrap();
+        assert!(util_tags.is_empty(), "a file with no framework symbols stays untagged");
+
+        // Idempotent: a second run changes nothing.
+        assert_eq!(s.tag_file_nodes_by_framework_kind(&root_id).await.unwrap(), 0, "no-op on re-run");
+
+        // cleanup
+        let pool = s.pool();
+        sqlx_core::query::query("DELETE FROM sensei.nodes WHERE folder_id=$1").bind(fid).execute(pool).await.ok();
+        sqlx_core::query::query("DELETE FROM sensei.folders WHERE root_id=$1").bind(root_id).execute(pool).await.ok();
+        sqlx_core::query::query("DELETE FROM sensei.folders_to_watch WHERE id=$1").bind(root_id).execute(pool).await.ok();
     }
 
     /// Create a unique test folder for FK tests. Uses suffix for isolation.
