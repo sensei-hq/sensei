@@ -484,6 +484,18 @@
     </div>
   </section>
 
+  <section class="sec">
+    <div class="sec-head">
+      <span class="num">04</span>
+      <h2>The ecosystem, end to end</h2>
+      <span class="kanji">系</span>
+    </div>
+    <p class="sec-intro">Where every component lives and how they connect — the local-first desktop app and its embedded gateway (fast by default on Gemma 4, your keys when you want them), the models it can reach, and the two-way knowledge exchange with a team/org Dōjō or the global collective.</p>
+    <div id="eco-mount-wrap" style="margin-top:28px;overflow:hidden;border:1px solid var(--paper-edge);border-radius:16px;background:var(--paper)">
+      <div id="eco-mount" style="transform-origin:top left"></div>
+    </div>
+  </section>
+
   <div class="foot">
     <div><b>Reading the audit.</b> §1 rolls up findings and themes; §2 walks every stage through goal · approach · friction · opportunities · gaps; §3 specifies the one module the gaps point to.</div>
     <div><b>Severity.</b> Critical blocks value or trust · Moderate erodes the experience · Polish is refinement · Strategic is a structural bet · Resolved shipped recently.</div>
@@ -906,6 +918,28 @@ buildScorecard();buildThemes();buildStages();buildModLC();buildLadders();buildMe
     if(d.type==='__deactivate_edit_mode') panel.style.display='none';
   });
   window.parent.postMessage({type:'__edit_mode_available'},'*');
+})();
+</script>
+
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js"></script>
+<script type="text/babel" src="lib/shared/ecosystem-arch.jsx"></script>
+<script type="text/babel">
+(function mountEco(){
+  const wrap = document.getElementById('eco-mount-wrap');
+  const mount = document.getElementById('eco-mount');
+  if (!wrap || !mount || !window.EcosystemArchitecture) { setTimeout(mountEco, 60); return; }
+  ReactDOM.createRoot(mount).render(React.createElement(window.EcosystemArchitecture));
+  const fit = () => {
+    const scale = Math.min(1, wrap.clientWidth / 1600);
+    mount.style.transform = 'scale(' + scale + ')';
+    const inner = mount.firstChild;
+    wrap.style.height = ((inner ? inner.offsetHeight : 1000) * scale) + 'px';
+  };
+  requestAnimationFrame(() => { fit(); setTimeout(fit, 300); });
+  new ResizeObserver(fit).observe(wrap);
+  window.addEventListener('resize', fit);
 })();
 </script>
 </body>

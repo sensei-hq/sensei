@@ -69,3 +69,28 @@ Then add the custom domain `dojo.sensei-hq.com` (Worker → Settings → Domains
 - Project **sensei-hq** (`lagwuqrtshjtlcuvjfnd`, us-east-1, Postgres 17), linked via `supabase link`.
 - `.env` (git-ignored) holds `SUPABASE_URL`, `SUPABASE_KEY`, `DATABASE_URL`.
 - Schema push: `dojo-mind` deploys the `dojo` scope on boot — `set -a; source .env; set +a; cargo run -p dojo-mind` (reads `DATABASE_URL`). Already done.
+
+## 4. PWA + push (Relay) — *planning-only, not yet built*
+
+Relay makes the dojo web app a surface you carry. The plan (see
+[dojo.md → Relay](dojo.md#relay--through-the-dōjō) for the full model):
+
+- **Installable PWA** — add a `dojo/static/manifest.webmanifest` + icons + a
+  service worker so the responsive site installs to the home screen (Android /
+  desktop auto-prompt; iOS via Share). No app-store distribution needed for the
+  *experience*.
+- **Two notification paths** (Realtime only works while the app is open):
+  - **Web Push** (Service Worker + Push API + **VAPID** keys) → Android / desktop,
+    even closed. iOS only for an *installed* PWA (16.4+), less reliable.
+  - **Thin [Capacitor](https://capacitorjs.com) wrapper** loading the same PWA +
+    native **APNs/FCM** — the reliable iOS push path. A config app, not a second
+    codebase. This is the map's "native app coexists for push + offline".
+- **Secrets** — VAPID keypair (web), APNs auth key + FCM server key (native) as
+  Worker/Supabase secrets, **never in git** (this repo is public).
+- **DB** — the Relay tables (`push_subscriptions`, `relay_sessions` + presence,
+  `relay_inbox`, `notification_prefs`) land in the `dojo` schema; push dispatch is
+  a server routine (Worker route or Supabase Edge Function) that reads a
+  subscription and sends. See the [Relay data model](dojo.md#relay--through-the-dōjō).
+
+> Status: **not started.** The `dojo/` SvelteKit app has no manifest / service
+> worker / push wiring yet — deferred until the Dōjō+Relay mockups settle.

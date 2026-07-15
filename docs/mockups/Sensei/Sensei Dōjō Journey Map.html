@@ -265,7 +265,7 @@
       <div>
         <div class="eyebrow">Sensei · Dōjō — journey map &amp; resolution ledger</div>
         <h1>Dōjō Journey Map</h1>
-        <div class="sub">The journeys through Dōjō, read in the audit's format — each moment through <strong>goal · approach · friction · opportunities · gaps</strong>, then the committed <strong>resolution</strong> that closes it. Two journeys: the developer's <strong>in-app</strong> path, and the company-hosted <strong>console</strong> where maintainers, admins and client leads govern. The closing ledger reconciles every resolution against what's <strong>now built</strong> in the Dōjō design.</div>
+        <div class="sub">The journeys through Dōjō, read in the audit's format — each moment through <strong>goal · approach · friction · opportunities · gaps</strong>, then the committed <strong>resolution</strong> that closes it. Four journeys: the developer's <strong>in-app</strong> path; the governing <strong>console</strong> roles (maintainer · admin · lead · developer); and <strong>Relay</strong> — the away-from-keyboard surface, now folded into the Dōjō on phone and console. A closing <strong>business model</strong> section sets the line — public and personal Dōjōs free, shared-private paid — and the ledger reconciles every resolution against what's <strong>now built</strong>.</div>
       </div>
     </div>
     <div class="meta">
@@ -293,9 +293,9 @@
       <span class="ck">決</span>
       <div>
         <div class="eyebrow">From ideation to build</div>
-        <h3>Every journey stage is now built — only infrastructure remains.</h3>
-        <p>When this map was first drawn, nothing was built; each stage held only an open gap and a proposed call. The design pass has since turned every one of those calls into a screen — triage, candidate review (now with a second-approver gate and a “who gets this” dry-run), scopes &amp; policies, members, clients, audit and the new admin Monitor on the console; join, connect, bind, share, travel and downstream in the app. The only stages still open are server stand-up and identity (SSO / SCIM) — infrastructure plumbing a design pass can't settle alone. The ledger in §5 tracks exactly which is which.</p>
-        <a class="jump" href="#status">Jump to the resolution ledger →</a>
+        <h3>Every journey stage is built — Relay, governance-authoring and personal Dōjōs now join them.</h3>
+        <p>The design pass turned every original call into a screen — triage, candidate review with a second-approver gate and a “who gets this” dry-run, scopes &amp; policies, members, clients, audit, admin Monitor; join, connect, bind, share, travel and downstream in the app. This revision adds more: <b>Relay in the Dōjō</b> (watch · approve · decide · nudge · chat, on phone and in the console, reaching a live session through the Dōjō — no pairing), a <b>Developer console</b> (your teams, contributions and what's distributed to you across every Dōjō), <b>Governance authoring</b> (define the stance, rules, skills, agents, commands and a project's memory per scope, so a new developer inherits it on join) — down to a <b>personal Dōjō</b> where an individual sets their own constitution for their own projects, across all their <b>linked emails</b>. What stays open is infrastructure (server stand-up, SSO / SCIM) — and the <b>business model</b>, newly set out in §5.</p>
+        <a class="jump" href="#business">Jump to the business model →</a>
       </div>
     </div>
   </section>
@@ -321,7 +321,7 @@
         <div class="arch-identity">
           <div class="anode accent">
             <div class="ah"><span class="ak">識</span><span class="an">GitHub</span><span class="atag">primary</span></div>
-            <div class="ad">Sign in with GitHub. Orgs and roles are derived from GitHub org membership and repo access — which also matches repos to orgs for binding. URL is always <b>github/&lt;org&gt;</b>.</div>
+            <div class="ad">Sign in with GitHub. Orgs and roles are derived from GitHub org membership and repo access — which also matches repos to orgs for binding. URL is always <b>github/&lt;org&gt;</b>. <b>One account can link several emails</b> (GitHub, work SSO, personal) — memberships aggregate across them, and a <b>personal Dōjō</b> (<b>personal/&lt;you&gt;</b>) follows the individual across every linked identity.</div>
           </div>
           <div class="anode">
             <div class="ah"><span class="ak">鍵</span><span class="an">Magic link</span><span class="atag">no-GitHub</span></div>
@@ -331,7 +331,9 @@
         <div class="arch-idnote">
           <span class="arch-pill">github/&lt;org&gt;</span>
           <span class="arch-pill">other/&lt;org&gt;</span>
+          <span class="arch-pill">personal/&lt;you&gt;</span>
           <span class="arch-pill">multi-org membership</span>
+          <span class="arch-pill">one account · many linked emails</span>
           <span class="arch-pill">discovery: GitHub org ↔ SaaS registry</span>
         </div>
       </div>
@@ -392,6 +394,7 @@
       <div class="arch-rail">
         <span class="arch-flow"><span class="fdir">↑</span> share · <b>anonymized findings up</b></span>
         <span class="arch-flow"><span class="fdir">↓</span> receive · <b>governed knowledge down</b></span>
+        <span class="arch-flow"><span class="fdir">⇅</span> relay · <b>live session, realtime</b></span>
       </div>
 
       <!-- dōjō -->
@@ -419,6 +422,12 @@
             </div>
           </div>
         </div>
+        <div class="arch-idnote">
+          <span class="arch-pill">公 public / OSS · free</span>
+          <span class="arch-pill">己 personal · free</span>
+          <span class="arch-pill">組 shared-private · paid</span>
+          <span class="arch-pill">realtime relay · daemon ↔ Dōjō ↔ phone/console</span>
+        </div>
       </div>
 
       <div class="arch-legend">
@@ -445,17 +454,74 @@
   <section class="sec">
     <div class="sec-head">
       <span class="num">04</span>
-      <h2>Console journey — the governing roles</h2>
+      <h2>Console &amp; Relay — roles and away-from-keyboard</h2>
       <span class="kanji">基</span>
     </div>
-    <p class="sec-intro">The company-hosted site, shared by three roles: maintainers govern what gets taught, admins run the server and its identity, and client / engagement leads guard confidentiality. Each role is its own track.</p>
+    <p class="sec-intro">The company-hosted site, shared by four roles: maintainers govern what gets taught, admins run the server and author the governance model, client / engagement leads guard confidentiality, and every developer gets a personal view across all their Dōjōs. Then <strong>Relay</strong> — the away-from-keyboard surface, folded into the Dōjō on phone and console. Each is its own track.</p>
     <div id="console"></div>
   </section>
 
-  <!-- ══ 5 · RESOLUTION LEDGER ══ -->
-  <section class="sec" id="status">
+  <!-- ══ 5 · BUSINESS MODEL ══ -->
+  <section class="sec" id="business">
     <div class="sec-head">
       <span class="num">05</span>
+      <h2>Business model</h2>
+      <span class="kanji">商</span>
+    </div>
+    <p class="sec-intro">The line is drawn by <strong>who the knowledge is for</strong>, not by features. A <strong>public / open-source</strong> Dōjō and your <strong>personal</strong> solo Dōjō are free forever — full governance, full Relay. Payment begins only when a Dōjō is <strong>private and shared</strong> by a team or org. The desktop app, the global Collective, and inference (bring-your-own-key) are always free — there are no tokens to mark up.</p>
+
+    <div class="callout">
+      <span class="ck">商</span>
+      <div>
+        <div class="eyebrow">The one line</div>
+        <h3>Free where public or personal. Paid where private and shared.</h3>
+        <p>Anyone can create a Dōjō for free — for an open-source project, a community, or just themselves. The moment a Dōjō becomes a <b>private, multi-member</b> space — a company or team coordinating knowledge it doesn't want to publish — it moves to a paid tier. You're paying for the coordination and governance layer over a group's private knowledge, plus the control and compliance a business needs (self-hosting, SSO, audit) — not for the product itself.</p>
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:26px 0 24px">
+      <div style="background:var(--paper);border:1px solid var(--paper-edge);border-radius:14px;padding:18px 18px 16px;display:flex;flex-direction:column;gap:8px">
+        <div style="display:flex;align-items:center;gap:8px"><span style="font-family:var(--font-kanji);font-size:20px;color:var(--ink-3)">公</span><span style="font-size:14px;font-weight:600">Public / OSS</span></div>
+        <div style="font-family:var(--font-display);font-size:26px;font-weight:300;letter-spacing:-.02em;line-height:1">Free<span style="font-size:13px;color:var(--ink-3)"> · forever</span></div>
+        <div style="font-size:11.5px;color:var(--ink-3);line-height:1.5">Open-source projects &amp; communities. Public, opt-in knowledge; unlimited members; <span style="font-family:var(--font-mono)">github/&lt;org&gt;</span>. Full governance authoring + <b>Relay for your own projects</b>.</div>
+      </div>
+      <div style="background:var(--paper);border:1px solid var(--paper-edge);border-radius:14px;padding:18px 18px 16px;display:flex;flex-direction:column;gap:8px">
+        <div style="display:flex;align-items:center;gap:8px"><span style="font-family:var(--font-kanji);font-size:20px;color:var(--ink-3)">己</span><span style="font-size:14px;font-weight:600">Personal</span></div>
+        <div style="font-family:var(--font-display);font-size:26px;font-weight:300;letter-spacing:-.02em;line-height:1">Free</div>
+        <div style="font-size:11.5px;color:var(--ink-3);line-height:1.5">Your own constitution &amp; rules for your own projects. Private to you, across every linked email; <span style="font-family:var(--font-mono)">personal/&lt;you&gt;</span>. Solo &amp; private is still free — <b>Relay included</b>.</div>
+      </div>
+      <div style="background:var(--paper);border:1px solid var(--accent);border-radius:14px;padding:18px 18px 16px;display:flex;flex-direction:column;gap:8px;box-shadow:0 1px 4px rgba(40,30,20,.08)">
+        <div style="display:flex;align-items:center;gap:8px"><span style="font-family:var(--font-kanji);font-size:20px;color:var(--accent)">組</span><span style="font-size:14px;font-weight:600">Team</span><span style="font-family:var(--font-mono);font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--accent);background:var(--accent-soft);border:1px solid oklch(0.58 0.15 35/.28);border-radius:20px;padding:2px 7px;margin-left:auto">paid</span></div>
+        <div style="font-family:var(--font-display);font-size:26px;font-weight:300;letter-spacing:-.02em;line-height:1">Per seat<span style="font-size:13px;color:var(--ink-3)"> / mo</span></div>
+        <div style="font-size:11.5px;color:var(--ink-3);line-height:1.5">Private shared Dōjō on the SaaS: private scopes, role consoles, governance authoring, <b>shared-team Relay</b> (inbox, presence, priority realtime), client engagements. Billed per <b>active contributor</b> — read-only is free.</div>
+      </div>
+      <div style="background:var(--ink);color:var(--paper);border-radius:14px;padding:18px 18px 16px;display:flex;flex-direction:column;gap:8px">
+        <div style="display:flex;align-items:center;gap:8px"><span style="font-family:var(--font-kanji);font-size:20px;color:oklch(0.72 0.13 40)">企</span><span style="font-size:14px;font-weight:600;color:var(--paper)">Enterprise</span><span style="font-family:var(--font-mono);font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:oklch(0.82 0.09 40);border:1px solid oklch(0.72 0.13 40/.4);border-radius:20px;padding:2px 7px;margin-left:auto">custom</span></div>
+        <div style="font-family:var(--font-display);font-size:26px;font-weight:300;letter-spacing:-.02em;line-height:1;color:var(--paper)">Contract</div>
+        <div style="font-size:11.5px;color:oklch(0.82 0.01 85);line-height:1.5">Self-hosted / VPC, SSO (OIDC / SAML) + SCIM, audit retention &amp; export, client confidentiality, air-gapped bundle, <b>self-hosted relay + SSO on mobile</b>, SLA &amp; support.</div>
+      </div>
+    </div>
+
+    <div style="display:flex;align-items:flex-start;gap:12px;background:var(--paper);border:1px solid var(--paper-edge);border-left:3px solid var(--accent);border-radius:12px;padding:16px 18px;margin:0 0 24px">
+      <span style="font-family:var(--font-kanji);font-size:22px;color:var(--accent);line-height:1;flex-shrink:0">携</span>
+      <div>
+        <div style="font-size:13px;font-weight:600;color:var(--ink);margin-bottom:4px">Relay is free for individuals — paid only where it's shared</div>
+        <p style="margin:0;font-size:12.5px;line-height:1.6;color:var(--ink-2)">The core loop — watch · approve · decide · nudge · chat on your own projects — is <b>free</b> on the personal / OSS tier (fair use: one active machine, standard realtime, native-app push). The paid tiers add the <b>coordination</b> around it, where the real infra cost lives: a shared team inbox &amp; queue, presence, higher concurrency, priority realtime and an approval-audit trail (Team); self-hosted relay, SSO on mobile and long-term approval-trail retention (Enterprise). Metering follows cost — concurrency and team size, not the individual — so Relay stays a hook, not a paywall.</p>
+      </div>
+    </div>
+
+    <div class="themes">
+      <div class="theme"><span class="tk">種</span><div><h3>Public seeds the network</h3><p>Free public &amp; personal Dōjōs are the top of the funnel: they grow the global Collective and get sensei into every developer's own workflow. Teams convert when private, shared knowledge becomes worth coordinating.</p></div></div>
+      <div class="theme"><span class="tk">蔵</span><div><h3>Pay for control, not tokens</h3><p>Inference is bring-your-own-key and runs locally — there's no token cost to resell. Revenue is the coordination layer: private scopes, governance, distribution, and the compliance surface (SSO, audit, self-host).</p></div></div>
+      <div class="theme"><span class="tk">信</span><div><h3>Confidentiality is the wedge</h3><p>Client anonymization, the immutable audit trail, and self-hosting are what regulated and agency businesses buy. The enterprise tier is priced on trust and control, which is exactly where a private hive-mind earns its keep.</p></div></div>
+      <div class="theme"><span class="tk">問</span><div><h3>Open pricing questions</h3><p>Still unsettled: the exact seat definition (active vs read-only), whether self-hosting is a license or a subscription, fair-use limits on free public Dōjōs, storage caps on personal Dōjōs, and non-profit / education pricing.</p></div></div>
+    </div>
+  </section>
+
+  <!-- ══ 6 · RESOLUTION LEDGER ══ -->
+  <section class="sec" id="status">
+    <div class="sec-head">
+      <span class="num">06</span>
       <h2>Resolutions &amp; status — implemented / not</h2>
       <span class="kanji">録</span>
     </div>
@@ -647,6 +713,14 @@ const CONSOLE = [
         gp:["Client-specific overrides; a precedence-rules editor?"],
         res:"Ship policy templates and confidentiality presets to curb sprawl, plus a precedence-rules editor that makes the priority ladder explicit and testable (simulate a candidate, see which rule wins). Client-specific overrides are allowed but only ever stricter than the org floor.",
         status:"done", statusNote:"Built as Scopes & policies with the precedence ladder (Console §scopes)." },
+      { k:"掟", name:"Author the governance model", m:56,
+        goal:"Define the shared mind itself — stance, rules, skills, agents, commands and a project's memory — so it's inherited, not re-explained to every newcomer.",
+        approach:"Author against a scope (org · team · project · stack · personal); everything cascades down the ladder, and a project also carries its own memory / learnings.",
+        fr:["Onboarding a new developer means re-teaching tribal knowledge by hand — the rules live in senior people's heads, not the tooling."],
+        op:["Author once per scope; a joiner inherits the composed bundle the moment they connect; preview the onboarding payload before it ships."],
+        gp:["Who may edit which scope's model, and how are governance changes versioned or rolled back?"],
+        res:"Governance is authored per scope in the console: a stance (autonomy · sharing · review · anonymization) plus rules / guards / principles, shared skills, agents and commands — and, for a project, its memory. Everything cascades org → team → project → stack, with a personal scope for solo work. A developer who joins inherits the composed set on connect; a 'what a new developer inherits' preview shows exactly what lands.",
+        status:"done", statusNote:"Built as the Governance authoring screen — scope ladder, stance dials, rules / skills / agents / commands + project memory, and the 'new developer inherits' bundle (Console §governance)." },
       { k:"観", name:"Monitor", m:48,
         goal:"Keep the hive-mind healthy.",
         approach:"A dashboard — contributions, approvals, adoption — plus an anonymization audit log.",
@@ -654,7 +728,15 @@ const CONSOLE = [
         op:["Leak-guard alerts; a full audit trail."],
         gp:["Which health signals actually matter most?"],
         res:"Three headline signals: contribution / approval throughput, adoption rate, and leak-guard alerts (near-leaks and anomalous outbound), over a full audit trail. Leak-guard alerts are shared straight into the client lead's incident view.",
-        status:"done", statusNote:"Built as the Monitor dashboard (Console §monitor) — throughput, adoption rate and leak-guard alerts over the audit trail, with alerts shared into the client lead's incident view." }
+        status:"done", statusNote:"Built as the Monitor dashboard (Console §monitor) — throughput, adoption rate and leak-guard alerts over the audit trail, with alerts shared into the client lead's incident view." },
+      { k:"円", name:"Plan & billing", m:50,
+        goal:"Choose the tier and see what a private, shared Dōjō costs — without paywalling the product.",
+        approach:"A plan chosen at creation (free public / personal · paid private team · enterprise) and a billing panel: current plan, seats billed per active contributor, Relay metering, and invoices.",
+        fr:["A pricing model bolted on late tends to gate core features and punish the free path that drives adoption."],
+        op:["Free where public or personal; charge only to coordinate a group's private knowledge; keep Relay free for individuals and meter its shared/team scale instead."],
+        gp:["Exact seat definition (active vs read-only), self-host as licence vs subscription, fair-use limits on free public Dōjōs, non-profit / education pricing — still open."],
+        res:"The line is who the knowledge is for: public / OSS and personal Dōjōs are free forever with full governance and individual Relay; a private, shared team Dōjō is paid per active contributor (read-only free); Enterprise is a contract for self-host, SSO / SCIM, audit and self-hosted relay. The app, the global Collective and BYOK inference are always free — no tokens to mark up. Relay is metered on shared-team coordination (inbox, presence, concurrency, approval audit), never on the individual loop.",
+        status:"partial", statusNote:"Screens built — plan choice in Create-a-Dōjō and the Plan & billing panel with tier compare + Relay metering (Console §billing); metering / payments backend and the open pricing questions remain." }
     ]},
   { k:"守", name:"Client / engagement lead", surf:"Console", meta:"console · guards confidentiality",
     note:"Register a client for routing, trust the one universal anonymization model, keep an audit trail as proof, and contain incidents — there are no per-client confidentiality settings to tune.",
@@ -706,6 +788,92 @@ const CONSOLE = [
         gp:["The notification and escalation path on an incident?"],
         res:"Leak-guard alert → auto-quarantine the lesson → retract downstream → post-incident review. The client lead and org admin are notified immediately; a severity tier decides whether the client is told, per the engagement's contract.",
         status:"done", statusNote:"Built into the Audit trail (Console §audit) — the alert→quarantine→retract→review path with immediate lead+admin notification and contract-driven severity tiers for telling the client." }
+    ]},
+  { k:"弟", name:"Developer", surf:"Console", meta:"console · the individual, across every Dōjō",
+    note:"Every user can sign in to the Dōjō — the benefit is for teams, but a developer belongs to many. A personal, read-mostly view: your memberships, what you've contributed and where it stands, and what's been approved for you, across all of them.",
+    flow:[
+      {lane:"app",k:"入",label:"Sign in"},
+      {lane:"dojo",k:"群",label:"My teams"},
+      {lane:"app",k:"共",label:"Contribute",cross:"up ↑"},
+      {lane:"dojo",k:"検",label:"Maintainer decides"},
+      {lane:"app",k:"贈",label:"For me",cross:"down ↓"},
+    ],
+    stages:[
+      { k:"群", name:"My teams", m:56,
+        goal:"See every Dōjō I belong to in one place, and what each one is teaching me.",
+        approach:"A memberships view — employer, clients, communities and my personal Dōjō — each with its role, what it follows, and its confidentiality posture.",
+        fr:["A developer across several orgs and clients has no single place to see them; each is a separate login and context."],
+        op:["One account, many linked emails; memberships aggregate across them; a project routes only to the membership it's bound to."],
+        gp:["How are two identities (work + personal email) proven to be the same person without leaking one org's presence to another?"],
+        res:"One login lists every membership — employer, client, community, personal — with its git-derived role and what it follows. Client memberships auto-dereference contributions. Identities link across several emails into one account, but memberships never cross: an org can't see that you also belong to another.",
+        status:"done", statusNote:"Built as the Developer console · My teams (Console §developer)." },
+      { k:"共", name:"My contributions", m:54,
+        goal:"Track what I've sent upstream and where each one stands.",
+        approach:"A list of my contributions per destination Dōjō, with status — approved / in triage / declined — and the outcome.",
+        fr:["After sharing, a contributor loses sight of it across several Dōjōs at once."],
+        op:["One cross-Dōjō contribution list, source-named, with per-destination status and credit on adoption."],
+        gp:["How much of a maintainer's deliberation should a contributor see across org boundaries?"],
+        res:"A single cross-Dōjō view of what I proposed, each tagged with its destination and status. I propose; a maintainer decides — nothing publishes without their named approval — and I see the outcome and reason, not the full internal deliberation.",
+        status:"done", statusNote:"Built as the Developer console · My contributions (Console §developer)." },
+      { k:"贈", name:"For me", m:56,
+        goal:"Receive the practice my teams approved, wherever I work.",
+        approach:"Approved teachings distributed to every scope I'm in, landing in my Observatory's Today / Upgrades, mutable and pinnable.",
+        fr:["Knowledge from four memberships plus the global Collective blurs into one undifferentiated stream."],
+        op:["Source-named, scope-badged delivery; mute or pin anything that doesn't fit my current work."],
+        gp:["Precedence when a personal rule contradicts a team or org teaching?"],
+        res:"A source-named, scope-badged 'for me' lane composed across every membership. Conflicts resolve by specificity — org › team › project › personal, more-specific winning — and my personal Dōjō's rules apply to my own projects without touching an employer's.",
+        status:"done", statusNote:"Built as the Developer console · For me (Console §developer)." }
+    ]},
+  { k:"携", name:"Relay", surf:"App + Console", meta:"phone & console · away-from-keyboard, through the Dōjō",
+    note:"Relay is no longer a separate app to pair. The daemon holds a live line to the Dōjō (Supabase realtime), so a phone or the console reaches a running session through it — no pairing, no install. Per-user across every Dōjō; the native app coexists for push and offline.",
+    flow:[
+      {lane:"app",k:"常",label:"Daemon holds session"},
+      {lane:"edge",k:"透",label:"Dōjō realtime",cross:"live · no pairing"},
+      {lane:"dojo",k:"場",label:"Projects / Inbox"},
+      {lane:"dojo",k:"認",label:"Approve · decide"},
+      {lane:"app",k:"話",label:"Chat steers session",cross:"↕ mid-flight"},
+    ],
+    stages:[
+      { k:"透", name:"Reach a live session", m:58,
+        goal:"Act on a running session from my phone without pairing a device or opening a port.",
+        approach:"The daemon keeps a persistent connection to the Dōjō service; the phone or console subscribes over Supabase realtime and picks the session up live.",
+        fr:["Direct phone↔daemon pairing means NAT traversal, its own encryption, and a separate app to install and keep signed in."],
+        op:["Relay through the Dōjō — the daemon is already connected for knowledge; reuse that line for realtime, so the phone just opens the web."],
+        gp:["What happens offline or when the daemon sleeps — does the request queue, and how are pushes delivered?"],
+        res:"Relay-through-Dōjō: the daemon holds a live line to the Dōjō (realtime), and any signed-in surface reaches the session through it — no pairing, no install. The native Relay app coexists for push notifications and true offline; the browser experience mirrors it.",
+        status:"done", statusNote:"Built as the mobile Relay screens + the console 'Relay · you' area, with a 'how it connects' realtime explainer (Console §m-connect, §r-projects)." },
+      { k:"場", name:"Watch progress", m:56,
+        goal:"See everything running for me, across every Dōjō, and what needs me.",
+        approach:"A per-user Projects home — active tracks with phase n-of-x and progress, a 'needs you' band for approvals / decisions / stalls on top.",
+        fr:["Work runs in several projects and Dōjōs at once; there is no single glance that says where I'm the blocker."],
+        op:["One cross-Dōjō home ranked by what's blocked on me, with source-Dōjō attribution on every card."],
+        gp:["How fresh is 'live' — sub-second, or best-effort — and what shows when a track's daemon is offline?"],
+        res:"A role-agnostic Projects home, per-user across all Dōjōs: a 'needs you' band (approvals, decisions, stalls) over the full active list, each card phase-and-progress with its source Dōjō. Identical on phone and in the console.",
+        status:"done", statusNote:"Built as Relay Projects — mobile home + console 'Relay · you · Projects' (Console §m-projects, §r-projects)." },
+      { k:"認", name:"Approve a gated action", m:60,
+        goal:"Approve or deny the exact thing sensei wants to run, with enough context to be sure.",
+        approach:"The command shown verbatim first, then risk chips, the why, and approve / deny / ask.",
+        fr:["Approving blind — a vague 'run this?' with no sight of the actual command or its blast radius."],
+        op:["Command-first, with reversibility and scope chips; 'reached you through your Dōjō' provenance."],
+        gp:["Should high-blast-radius commands need a second approver, mirroring the maintainer gate?"],
+        res:"The exact command leads, with writes-to-prod / reversible chips and a plain-language why; approve continues the held session, deny or ask routes back. Provenance is explicit — it reached you live through your Dōjō.",
+        status:"done", statusNote:"Built as Relay Approve — mobile + console inbox detail (Console §m-approve, §r-inbox)." },
+      { k:"決", name:"Answer a decision", m:56,
+        goal:"Unblock a track by choosing between options, the way sensei asks.",
+        approach:"A question with 3–4 options plus a free-text 'type your own', non-blocking so other tracks keep moving.",
+        fr:["A decision that blocks everything until I'm back at a keyboard."],
+        op:["Claude-style options + free reply, answerable from the phone; other tracks continue meanwhile."],
+        gp:["How are several queued decisions across Dōjōs ordered — impact, age, or the track that's most stalled?"],
+        res:"A decision is a short question with 3–4 options and a 'type your own' field, answered from phone or console; it's non-blocking, so the rest of the work keeps moving while it waits.",
+        status:"done", statusNote:"Built as Relay Decision — mobile + console inbox detail (Console §m-decision, §r-inbox)." },
+      { k:"話", name:"Chat back mid-session", m:52,
+        goal:"Steer a running session in words — ask a question or give the go-ahead.",
+        approach:"A thread with the live session; sensei explains where it paused, I reply, it continues.",
+        fr:["The only controls are approve / deny — no way to ask a clarifying question or nudge direction."],
+        op:["A conversational channel to the session, so I can steer rather than only gate."],
+        gp:["Does chat interrupt the run, or queue until the next safe checkpoint?"],
+        res:"A chat thread bound to the live session — sensei says why it paused, I can question or redirect, and it picks the work back up. Available on phone and console alike.",
+        status:"done", statusNote:"Built as Relay Chat — mobile + console (Console §m-chat, §r-chat)." }
     ]}
 ];
 
@@ -714,7 +882,10 @@ const THEMES=[
   {k:"引",h:"Pull, never push",p:"Discovery, downstream delivery and binding all wait to be chosen rather than interrupting — a persistent card, a distinct lane, an explicit confirm. Nothing lands silently."},
   {k:"見",h:"Never blind, always preview",p:"Every irreversible step shows its consequence first: the raw-vs-stripped redaction preview before a share, the dry-run 'who gets this' before publish, the conflict diff before approval."},
   {k:"盾",h:"One universal strip",p:"Client confidentiality isn't a per-client setting or a review gate — one model drops client, repo and source on every engagement while the lesson and its what·why·impact travel. What can't be anonymized simply doesn't leave."},
-  {k:"層",h:"Specificity wins conflicts",p:"From downstream precedence (org › team › global › personal) to the maintainer's priority ladder, the same rule resolves collisions: the more specific, higher-priority scope wins, both shown."}
+  {k:"層",h:"Specificity wins conflicts",p:"From downstream precedence (org › team › global › personal) to the maintainer's priority ladder, the same rule resolves collisions: the more specific, higher-priority scope wins, both shown."},
+  {k:"携",h:"Relay lives in the Dōjō",p:"The daemon's live line to the Dōjō carries away-from-keyboard work — watch, approve, decide, nudge, chat — to any phone or console over realtime, no pairing. Per-user across every Dōjō; the native app stays for push and offline."},
+  {k:"己",h:"Your own Dōjō, your own rules",p:"Governance scales all the way down to one person: a personal Dōjō defines your constitution and rules for your own projects, following you across every linked email — the same authoring model as an org, sized for one."},
+  {k:"商",h:"Free where public or personal",p:"Public and open-source Dōjōs, and your personal solo Dōjō, are free forever; a private, shared team Dōjō is where it's paid. You pay to coordinate a group's private knowledge — never to use sensei, never for tokens."}
 ];
 
 /* ───────── builders ───────── */

@@ -33,16 +33,16 @@ const DEV_FOLLOWS = {
 };
 
 /* ─── My teams ───────────────────────────────────────────── */
-function DojoDevTeams({ go }) {
+function DojoDevTeams({ go, mobile = false }) {
   const D = window.DOJO;
   const kindTone = { employer: "var(--ink-2)", client: "var(--accent)", community: "var(--success)", personal: "var(--ink-3)" };
   return (
     <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", background: "var(--paper)" }}>
-      <DojoHead kanji="群" eyebrow="You · memberships" title="Your teams & orgs"
+      <DojoHead mobile={mobile} kanji="群" eyebrow="You · memberships" title="Your teams & orgs"
         sub="One login, every Dōjō you belong to. A project routes only to the membership it's bound to — findings never cross into an unrelated hive-mind."
         right={<DojoChip tone="var(--ink-2)" soft="var(--paper-2)" border="var(--hairline)">{D.memberships.length} memberships</DojoChip>} />
-      <div style={{ flex: 1, overflow: "auto", padding: 28 }}>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 14 }}>
+      <div style={{ flex: 1, overflow: "auto", padding: mobile ? 16 : 28 }}>
+        <div style={{ display: "grid", gridTemplateColumns: mobile ? "1fr" : "repeat(2, 1fr)", gap: 14 }}>
           {D.memberships.map(m => (
             <div key={m.id} style={{ background: "var(--paper-2)", border: "var(--hairline)",
                   borderLeft: `3px solid ${kindTone[m.kind]}`, borderRadius: 12, padding: "16px 18px" }}>
@@ -171,15 +171,15 @@ function DojoDevDownstream() {
 }
 
 /* ─── the developer console ──────────────────────────────── */
-function DojoDeveloperConsole({ initial = "teams" }) {
+function DojoDeveloperConsole({ initial = "teams", mobile = false, relayStart = null }) {
   const [active, setActive] = ddS(initial);
   let screen;
   if (active === "contributions") screen = <DojoDevContributions />;
   else if (active === "downstream") screen = <DojoDevDownstream />;
-  else screen = <DojoDevTeams />;
+  else screen = <DojoDevTeams mobile={mobile} />;
   return (
     <DojoRoleShell label="Dōjō · Developer console" role={{ kanji: "弟", label: "Developer" }}
-      nav={DEV_NAV} active={active} setActive={setActive}>
+      nav={DEV_NAV} active={active} setActive={setActive} mobile={mobile} relayStart={relayStart}>
       {screen}
     </DojoRoleShell>
   );
