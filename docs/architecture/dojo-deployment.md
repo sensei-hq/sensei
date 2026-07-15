@@ -33,13 +33,18 @@ Not a Pages project — the account's one Pages slot is the marketing website; e
 | Deploy command | `npx wrangler deploy` *(uses the committed `wrangler.jsonc`)* |
 | Worker name | `dojo` *(must match `wrangler.jsonc` `name`)* |
 
-**Environment variables** (Worker → Settings → Variables, Production):
+**Environment variables** — set under **Worker → Settings → Variables and Secrets** (i.e. **runtime**), *not* the Build config's variables. kavach reads `PUBLIC_SUPABASE_URL`/`PUBLIC_SUPABASE_ANON_KEY` via `$env/dynamic/public` (`@kavach/vite`'s `auth-supabase` template), which resolves from `platform.env` at **runtime** — build-only variables are `undefined` when the Worker runs → `createClient` throws *"supabaseUrl is required"*. Redeploy after changing them.
 
-| Var | Value |
-|---|---|
-| `PUBLIC_SUPABASE_URL` | `https://lagwuqrtshjtlcuvjfnd.supabase.co` |
-| `PUBLIC_SUPABASE_ANON_KEY` | Supabase dashboard → Project Settings → API → **anon public** key |
-| `PUBLIC_DOJO_API_URL` | `https://dojo-api.sensei-hq.com` *(the dojo-mind service, below)* |
+Supabase's **new API keys** (publishable / secret) are drop-in replacements for the legacy anon / service_role keys and substitute directly into `createClient()` (both are opaque, not JWTs — see supabase discussion #29260):
+
+| Var | Kind | Value (Supabase → Settings → API Keys) |
+|---|---|---|
+| `PUBLIC_SUPABASE_URL` | Variable | `https://lagwuqrtshjtlcuvjfnd.supabase.co` |
+| `PUBLIC_SUPABASE_ANON_KEY` | Variable | **publishable** key `sb_publishable_…` (client-safe, RLS-gated) |
+| `SUPABASE_SERVICE_ROLE_KEY` *(or `SUPABASE_SECRET_KEY`)* | **Secret** | **secret** key `sb_secret_…` (server-only, bypasses RLS — the `/v1` routes) |
+| `PUBLIC_DOJO_API_URL` | — | leave **unset** — the `/v1` API is same-origin (in this Worker) |
+
+> Publishable vs secret are **two different keys**, not interchangeable — publishable for the browser (kavach), secret for the server routes. The var *names* keep the legacy `ANON`/`SERVICE_ROLE` wording; the *values* are the new keys.
 
 Then add the custom domain `dojo.sensei-hq.com` (Worker → Settings → Domains & Routes → Add custom domain).
 
