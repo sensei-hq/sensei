@@ -55,7 +55,6 @@
   <script type="text/babel" src="lib/shared/design-canvas.jsx"></script>
   <script type="text/babel" src="lib/shared/primitives.jsx"></script>
   <script type="text/babel" src="lib/shared/screen-states.jsx"></script>
-  <script type="text/babel" src="lib/shared/ecosystem-arch.jsx"></script>
   <script type="text/babel" src="lib/setup/wiz-inference.jsx"></script>
   <script type="text/babel" src="lib/setup/wiz-assignments.jsx"></script>
   <script type="text/babel" src="lib/shared/brand-logos.jsx"></script>
@@ -278,15 +277,6 @@
               </DCArtboard>
               <DCArtboard id="ia-downstream" label="⑦ Upgrades · from your Dōjō" width={1340} height={900}>
                 <div className="artboard-shell"><InappDownstream/></div>
-              </DCArtboard>
-            </DCSection>
-
-            {/* ═════════ FLOW 8 · ECOSYSTEM ARCHITECTURE ═════════ */}
-            <DCSection id="observatory-ecosystem"
-                       title="⑧ Ecosystem · architecture"
-                       subtitle="Every component of the Sensei ecosystem and how they connect — the local-first desktop app on the developer's machine, the inference gateway to external Ollama and BYOK models, the self-hosted or SaaS Dōjō, and the mobile/pad Relay companion.">
-              <DCArtboard id="eco-arch" label="★ The Sensei ecosystem · end to end" width={1600} height={980}>
-                <EcosystemArchitecture/>
               </DCArtboard>
             </DCSection>
         </DesignCanvas>

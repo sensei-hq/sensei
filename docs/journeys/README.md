@@ -11,12 +11,13 @@
 - [`sensei.md`](sensei.md) — the personal journey: the core retrospective loop,
   the four segments (Bootstrap → First-run → Observatory → Project window), and
   the module lifecycles inside the daily app.
-- [`dojo.md`](dojo.md) — the team journey: the four Dōjō roles
+- [`dojo.md`](dojo.md) — the team journey: the Dōjō roles
   (developer · maintainer · admin · lead) and the contribute→distribute
-  lifecycle, with the confidentiality principles.
-- [`relay.md`](relay.md) — the relay journey: pair → author a modular plan →
-  run in auto mode → watch (done·doing·next) → nudge/gate → approve/decide, over
-  a zero-knowledge relay to your phone.
+  lifecycle, plus **Relay** (folded in — reach a live session through the Dōjō),
+  the confidentiality principles, and the business model.
+- [`relay.md`](relay.md) — **folded into the Dōjō** (a pointer). Relay is no
+  longer a separate pair-once app; it reaches a live session *through* the Dōjō
+  over realtime. See [`dojo.md` → Relay](dojo.md#relay--away-from-keyboard-through-the-dōjō).
 
 ## Visual sources of truth (mockups)
 

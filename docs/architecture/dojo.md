@@ -12,7 +12,7 @@ Two pieces plus the in-app surface:
 | Piece | Where | Role |
 |---|---|---|
 | **dojo-mind service** | `crates/dojo-mind` (binary `sensei-dojo`) | the federation server — memberships, contribute/triage/distribute, anonymization, its own DB (`dojo.*` schema) |
-| **dojo web app** | `dojo/` (SvelteKit) | **developer** · maintainer · admin · **lead** consoles (SSO-gated) |
+| **dojo web app** | `dojo/` (SvelteKit) | a **responsive SaaS site** (installable PWA) — **developer** · maintainer · admin · **lead** consoles + **Relay** (phone & console), SSO-gated |
 | **in-app developer flows** | in the **[Observatory](app.md)** (`(observatory)/dojo/*`) | discover · connect · bind · share · watch · receive — these are Observatory flows, not a separate app |
 
 ```mermaid
@@ -20,11 +20,16 @@ flowchart TD
     subgraph client[Developer's machine]
         D[daemon] --> INAPP[in-app dojo surface]
     end
-    subgraph saas["Dōjō (opt-in SaaS)"]
-        CONSOLE[console<br/>maintainer·admin·lead] --> SVC[dojo-mind · sensei-dojo]
+    subgraph saas["Dōjō (responsive SaaS · or self-hosted)"]
+        CONSOLE[console + Relay<br/>developer·maintainer·admin·lead] --> SVC[dojo-mind · sensei-dojo]
         SVC --> DDB[(dojo.* DB)]
+        SVC --> RT[[Supabase realtime]]
     end
+    PHONE[phone / PWA<br/>+ thin native wrapper]
     D <-->|pull, never push · preview always| SVC
+    D <-->|relay: live session, realtime| RT
+    PHONE <-->|watch · approve · decide · chat| RT
+    RT -.->|push when away| PUSH[Web Push / APNs / FCM] -.-> PHONE
 ```
 
 ## The roles
@@ -70,6 +75,63 @@ leave) · specificity wins conflicts.
 The global **Collective** is the public, opt-in commons; the **Dōjō** is the
 private org/engagement lane. Anything that must stay inside a company or client
 goes through a Dōjō membership, never the Collective (theme 5).
+
+## Identity & discovery
+
+**GitHub is the spine.** Sign-in derives orgs + roles from GitHub org membership
+and the highest repo access; org URLs encode origin — `github/<org>`,
+`other/<org>` (magic-link, non-GitHub), `personal/<you>`. **One account links
+several emails** (GitHub, work SSO, personal); memberships aggregate but never
+cross — an org can't see you belong to another. A self-hosted Dōjō keeps its own
+URL but **registers on the SaaS registry** so it's discoverable by the same
+GitHub-org match. Trust is mutual: the server proves itself (org's TLS domain +
+its GitHub/IdP), and the app **pins** the org URL + issuer after first join so a
+later impostor at a different host can't hijack the membership.
+
+## Relay — through the Dōjō
+
+Relay (the away-from-keyboard surface: watch · approve · decide · nudge · chat)
+is **folded into the Dōjō**. There is **no device pairing and no separate relay
+transport** — the daemon already holds an outbound connection to the Dōjō for
+knowledge; that same line, over **Supabase realtime**, carries live session
+control. Any signed-in phone or console **subscribes** and reaches a running
+session. The daemon stays **outbound-only** (no inbound ports, no NAT traversal),
+and it remains **zero-knowledge**: only *filtered status* + gate prompts + replies
+cross — never code or transcripts.
+
+**Surfaces = one responsive PWA + a thin native wrapper.** The PWA is the whole
+app (installable, responsive). Two notification paths, because Realtime only
+works while the app is open:
+
+| Need | Mechanism | Works when |
+|---|---|---|
+| Live session (watch/approve/decide/chat *while looking*) | **Supabase Realtime** (WebSocket) | app/PWA **open** |
+| "sensei needs you" while the app is **closed** | **Push** | app **backgrounded/closed** |
+
+- **Web Push** (Push API + Service Worker + VAPID) covers Android/desktop
+  directly, even closed. iOS supports web push **only** for an installed PWA
+  (16.4+) and less reliably — so a **thin [Capacitor](https://capacitorjs.com)
+  wrapper** loads the *same* PWA and adds native **APNs/FCM** push (the map's
+  "native app coexists for push + offline"). It's a config app, not a second
+  codebase. *(Planning-only for now — no PWA manifest / service worker added to
+  `dojo/` yet.)*
+
+**Data model — the Relay additions (new `dojo.*` tables + daemon plumbing):**
+
+| Piece | What it holds |
+|---|---|
+| `push_subscriptions` | per user × device: platform (`web`/`ios`/`android`), Web-Push `{endpoint, p256dh, auth}` **or** native `{apns/fcm token}`, `enabled`, `last_seen`. RLS: user owns rows. |
+| **push dispatch** (service) | on a "needs you" event, look up the user's subscriptions and send via Web Push (VAPID) and/or APNs/FCM. VAPID + APNs/FCM creds are **secrets**, never in git. |
+| `relay_sessions` + presence | maps user ↔ daemon ↔ active session with heartbeat — answers "which daemon holds this / is it online" (drives the "needs you" band + offline states). |
+| `relay_inbox` | durable rows for approvals / decisions / chat / stalls (survive a closed app; a push deep-links to one). Realtime broadcasts inserts; push notifies. |
+| `notification_prefs` | per user: which events push (approvals/decisions/stalls), quiet hours, per-Dōjō mute. |
+| **daemon ↔ Dōjō channel** | today: findings up, governance down. Relay adds a **bidirectional** live channel — the daemon publishes session state (phase / gated-action / decision / chat); phone/console send back approve/deny/answer/chat, which the daemon consumes to continue the held session. A new realtime client in the daemon. |
+
+**Metering** follows cost (the [business model](../journeys/dojo.md#business-model--free-where-public-or-personal)):
+the individual loop is free; `push_subscriptions` / `relay_sessions` carry the
+per-tier limits (device count, concurrency) that the paid tiers meter. Wrapping
+Supabase realtime under **kavach** for a unified pub/sub is a candidate (raise
+upstream if pursued).
 
 ## Status — built, externally blocked
 

@@ -10,6 +10,7 @@ const MAINT_NAV = [
   { group: "Govern", items: [
     { id: "triage",    kanji: "門", label: "Triage", badge: 7 },
     { id: "knowledge", kanji: "蔵", label: "Knowledge" },
+    { id: "catalog",   kanji: "庫", label: "Catalog" },
   ]},
 ];
 
@@ -28,7 +29,7 @@ function rankCandidates(arr) {
 }
 
 /* ─── Triage queue ───────────────────────────────────────── */
-function DojoTriage({ go }) {
+function DojoTriage({ go, mobile = false }) {
   const D = window.DOJO;
   const groups = {};
   D.queue.forEach(c => { (groups[c.scope] ||= []).push(c); });
@@ -37,7 +38,7 @@ function DojoTriage({ go }) {
     .sort((a, b) => (IMPACT_RANK[a[1][0].impact] - IMPACT_RANK[b[1][0].impact]) || (ageHours(a[1][0].age) - ageHours(b[1][0].age)));
   return (
     <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", background: "var(--paper)" }}>
-      <DojoHead kanji="門" eyebrow="Govern · triage" title="What's waiting for review"
+      <DojoHead mobile={mobile} kanji="門" eyebrow="Govern · triage" title="What's waiting for review"
         sub="Your scopes by default, ranked by projected impact then age. Every scope has an owner — anything unowned routes to a fallback so nothing sits idle. Nothing publishes without a decision."
         right={<div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, fontFamily: "var(--font-mono)",
@@ -45,12 +46,12 @@ function DojoTriage({ go }) {
                         borderRadius: 20, padding: "3px 10px" }}>✓ My scopes</span>
           <DojoChip tone="var(--ink-2)" soft="var(--paper-2)" border="var(--hairline)">Sort · impact, then age ▾</DojoChip>
         </div>} />
-      <div style={{ flex: 1, overflow: "auto", padding: "8px 28px 28px" }}>
+      <div style={{ flex: 1, overflow: "auto", padding: mobile ? "8px 16px 16px" : "8px 28px 28px" }}>
         {ordered.map(([scope, items]) => {
           const owner = SCOPE_OWNERS[scope];
           return (
           <div key={scope} style={{ marginTop: 18 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+            <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, marginBottom: 8 }}>
               <span className="kanji" style={{ fontSize: 13, color: "var(--ink-3)" }}>{items[0].scopeKanji}</span>
               <span style={{ fontSize: 11, letterSpacing: ".12em", textTransform: "uppercase", color: "var(--ink-3)", fontWeight: 600 }}>{scope}</span>
               <span className="mono" style={{ fontSize: 11, color: "var(--ink-4)" }}>{items.length}</span>
@@ -68,7 +69,7 @@ function DojoTriage({ go }) {
             <div style={{ background: "var(--paper-2)", border: "var(--hairline)", borderRadius: 12, overflow: "hidden" }}>
               {items.map((c, i) => (
                 <button key={c.id} onClick={() => go("triage", c.id)} style={{
-                  display: "grid", gridTemplateColumns: "auto 1fr auto auto auto", gap: 14, alignItems: "center",
+                  display: "grid", gridTemplateColumns: mobile ? "auto 1fr auto" : "auto 1fr auto auto auto", gap: mobile ? 11 : 14, alignItems: "center",
                   width: "100%", textAlign: "left", padding: "13px 16px", cursor: "pointer", background: "transparent",
                   border: "none", borderBottom: i < items.length - 1 ? "1px solid var(--edge)" : "none",
                 }}>
@@ -81,13 +82,14 @@ function DojoTriage({ go }) {
                       <span className="mono" style={{ fontSize: 10, color: "var(--ink-4)" }}>
                         {c.origin === "client" ? "source dropped" : c.by} · {c.evidence} sessions · {c.age}
                       </span>
+                      {mobile && <span className="mono" style={{ fontSize: 10, color: "var(--ink-4)" }}>· conf {Math.round(c.confidence * 100)}%{c.conflicts > 0 ? ` · ${c.conflicts} conflict` : ""}</span>}
                     </div>
                   </div>
-                  <div style={{ display: "flex", gap: 10, alignItems: "center", minWidth: 96, justifyContent: "flex-end" }}>
+                  {!mobile && <div style={{ display: "flex", gap: 10, alignItems: "center", minWidth: 96, justifyContent: "flex-end" }}>
                     {c.conflicts > 0 && <DojoChip tone="oklch(0.52 0.13 60)" soft="var(--warning-soft)">{c.conflicts} conflict</DojoChip>}
                     {c.dups > 0 && <DojoChip>{c.dups} dup</DojoChip>}
-                  </div>
-                  <Confidence v={c.confidence} />
+                  </div>}
+                  {!mobile && <Confidence v={c.confidence} />}
                   <span style={{ fontSize: 13, color: "var(--ink-4)" }}>→</span>
                 </button>
               ))}
@@ -366,17 +368,18 @@ function DojoKnowledge() {
 }
 
 /* ─── the maintainer console ─────────────────────────────── */
-function DojoMaintainerConsole({ initial = "triage", initialCandidate = null }) {
+function DojoMaintainerConsole({ initial = "triage", initialCandidate = null, mobile = false, relayStart = null }) {
   const [section, setSection] = dmS(initial);
   const [candidate, setCandidate] = dmS(initialCandidate);
   const go = (sec, cand = null) => { setSection(sec); setCandidate(cand); };
   let screen;
-  if (section === "triage" && candidate) screen = <DojoCandidate id={candidate} go={go} />;
-  else if (section === "knowledge") screen = <DojoKnowledge />;
-  else screen = <DojoTriage go={go} />;
+  if (section === "triage" && candidate) screen = <DojoCandidate id={candidate} go={go} mobile={mobile} />;
+  else if (section === "knowledge") screen = <DojoKnowledge mobile={mobile} />;
+  else if (section === "catalog") screen = <DojoExtensions />;
+  else screen = <DojoTriage go={go} mobile={mobile} />;
   return (
     <DojoRoleShell label="Dōjō · Maintainer console" role={{ kanji: "先", label: "Maintainer" }}
-      nav={MAINT_NAV} active={candidate ? "triage" : section} setActive={(s) => go(s)}>
+      nav={MAINT_NAV} active={candidate ? "triage" : section} setActive={(s) => go(s)} mobile={mobile} relayStart={relayStart}>
       {screen}
     </DojoRoleShell>
   );
