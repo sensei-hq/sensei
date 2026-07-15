@@ -19,10 +19,11 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     let start = Instant::now();
     let emit = |evt: StateEvent| { let _ = ctx.app_state.event_tx.send(evt); };
 
-    // Excluded path prefixes (e.g. an archive dir the user never wants indexed).
-    // Filter the discovered set so excluded subtrees are never classified as
-    // projects; the watcher gets the same list so it ignores changes there.
-    let exclusions = ctx.pg().get_scan_exclusions().await;
+    // Per-root exclusions (`folders_to_watch.excluded`, relative entries resolved
+    // to absolute `root/entry` prefixes). Filter the discovered set so excluded
+    // subtrees are never classified as projects; the watcher gets the same list
+    // so it ignores changes there.
+    let exclusions = ctx.pg().root_exclusion_prefixes(&task.path).await;
 
     // 1. Find all git folders
     let git_folders: Vec<_> = scan_logic::find_git_folders(root, 3)
@@ -591,8 +592,9 @@ mod tests {
         std::fs::write(root.join("Archive/skipme/Cargo.toml"), "[package]\nname=\"skipme\"").unwrap();
 
         let ctx = make_ctx().await;
-        let excl = root.join("Archive").to_string_lossy().to_string();
-        ctx.pg().add_scan_exclusion(&excl).await.unwrap();
+        // Per-root exclusion: the watch root has excluded=["Archive"] (relative).
+        // scan_root reads it via root_exclusion_prefixes(task.path).
+        ctx.pg().add_watch_root(&root.to_string_lossy(), "wt", &serde_json::json!(["Archive"])).await.unwrap();
 
         let task = Task::new(TaskKind::ScanRoot, "", &root.to_string_lossy());
         scan_root(&ctx, &task).await.unwrap();
@@ -603,8 +605,6 @@ mod tests {
             .collect();
         assert!(pgf.iter().any(|p| p.ends_with("/keep")), "kept repo enqueued, got {pgf:?}");
         assert!(!pgf.iter().any(|p| p.contains("/skipme")), "excluded repo NOT enqueued, got {pgf:?}");
-
-        ctx.pg().remove_scan_exclusion(&excl).await.unwrap(); // clean the shared key
     }
 
     #[tokio::test]
