@@ -29,7 +29,12 @@ impl DojoConfig {
     /// placing a cluster there. With `SUPABASE_DB_URL` set, the data dir is unused
     /// so a missing `HOME` is not an error.
     pub fn from_env() -> Result<Self, String> {
-        let supabase_db_url = std::env::var("SUPABASE_DB_URL").ok().filter(|s| !s.is_empty());
+        // `SUPABASE_DB_URL` is the explicit name; fall back to the conventional
+        // `DATABASE_URL` (what Supabase's own env + most tooling use) so a stock
+        // `.env` works without duplication.
+        let supabase_db_url = std::env::var("SUPABASE_DB_URL").ok()
+            .or_else(|| std::env::var("DATABASE_URL").ok())
+            .filter(|s| !s.is_empty());
         let data_dir = match std::env::var("SENSEI_DOJO_DATA_DIR") {
             Ok(v) => PathBuf::from(v),
             Err(_) => match std::env::var("HOME") {
@@ -76,7 +81,8 @@ mod tests {
         let saved_home = std::env::var("HOME").ok();
         let saved_data = std::env::var("SENSEI_DOJO_DATA_DIR").ok();
         let saved_url = std::env::var("SUPABASE_DB_URL").ok();
-        unsafe { std::env::remove_var("SUPABASE_DB_URL"); }
+        let saved_dburl = std::env::var("DATABASE_URL").ok();
+        unsafe { std::env::remove_var("SUPABASE_DB_URL"); std::env::remove_var("DATABASE_URL"); }
 
         unsafe {
             // 1. HOME set, no override → data_dir under HOME.
@@ -109,10 +115,19 @@ mod tests {
         let cfg = DojoConfig::from_env().expect("SUPABASE_DB_URL set → ok even without HOME");
         assert_eq!(cfg.supabase_db_url.as_deref(), Some("postgresql://postgres:postgres@127.0.0.1:54322/postgres"));
 
+        // 5. DATABASE_URL is the fallback when SUPABASE_DB_URL is unset (stock .env).
+        unsafe { std::env::remove_var("SUPABASE_DB_URL"); std::env::set_var("DATABASE_URL", "postgresql://u:p@db.example.supabase.co:5432/postgres"); }
+        let cfg = DojoConfig::from_env().expect("DATABASE_URL fallback → ok");
+        assert_eq!(cfg.supabase_db_url.as_deref(), Some("postgresql://u:p@db.example.supabase.co:5432/postgres"));
+        // Explicit SUPABASE_DB_URL wins over DATABASE_URL.
+        unsafe { std::env::set_var("SUPABASE_DB_URL", "postgresql://explicit@host/db"); }
+        assert_eq!(DojoConfig::from_env().unwrap().supabase_db_url.as_deref(), Some("postgresql://explicit@host/db"));
+
         unsafe {
             match saved_home { Some(v) => std::env::set_var("HOME", v), None => std::env::remove_var("HOME") }
             match saved_data { Some(v) => std::env::set_var("SENSEI_DOJO_DATA_DIR", v), None => std::env::remove_var("SENSEI_DOJO_DATA_DIR") }
             match saved_url { Some(v) => std::env::set_var("SUPABASE_DB_URL", v), None => std::env::remove_var("SUPABASE_DB_URL") }
+            match saved_dburl { Some(v) => std::env::set_var("DATABASE_URL", v), None => std::env::remove_var("DATABASE_URL") }
         }
     }
 }
