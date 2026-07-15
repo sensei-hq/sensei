@@ -12,13 +12,14 @@
 
 import { env } from '$env/dynamic/public';
 
-// The dojo service base URL is deploy-specific (console/.env.example, default
-// :7755). Read it from the dynamic public env so a build doesn't require the var
-// to be present and it can differ per deployment without a rebuild; fall back to
-// the local-dev default when unset.
-const PUBLIC_DOJO_API_URL = env.PUBLIC_DOJO_API_URL ?? 'http://127.0.0.1:7755';
+// The `/v1` API now lives IN this app (SvelteKit Worker routes under
+// src/routes/v1/…), so by default the console calls itself SAME-ORIGIN — no
+// separate service. `PUBLIC_DOJO_API_URL` is optional: set it only to point at a
+// remote dojo (cross-dojo federation) or a still-separate dojo-mind in local dev.
+const PUBLIC_DOJO_API_URL = env.PUBLIC_DOJO_API_URL ?? '';
 
-/** The base URL of the dojo service, without a trailing slash. */
+/** Base URL for dojo calls, without a trailing slash. Empty = same-origin (the
+ *  in-Worker `/v1` routes). */
 export const dojoApiUrl = PUBLIC_DOJO_API_URL.replace(/\/$/, '');
 
 /** Thrown for a non-2xx response; carries the status + the API `error` message. */

@@ -23,9 +23,10 @@ function fakeFetch(status: number, body: unknown) {
 }
 
 describe('dojoApiUrl', () => {
-	it('falls back to the local-dev default when the env is unset', () => {
-		// The vitest stub supplies an empty env → the client uses the default base.
-		expect(dojoApiUrl).toBe('http://127.0.0.1:7755');
+	it('defaults to same-origin (empty base) when the env is unset', () => {
+		// The `/v1` API now lives in this app (Worker routes), so an unset
+		// PUBLIC_DOJO_API_URL means the console calls itself same-origin.
+		expect(dojoApiUrl).toBe('');
 	});
 });
 
