@@ -1,8 +1,15 @@
 <script lang="ts">
-	import { orgs, kindToneClass, type DojoOrg } from '$lib/dojo-data';
+	import { kindToneClass, type DojoOrg } from '$lib/dojo-data';
 	import DojoChip from './DojoChip.svelte';
 
-	let { onEnter }: { onEnter?: (org: DojoOrg) => void } = $props();
+	// user + orgs come from the page's server load (the signed-in Supabase user and
+	// their real `dojo.memberships` → tenants) — no longer hardcoded mock data.
+	type OrgUser = { name: string; handle: string; initials: string };
+	let {
+		user,
+		orgs,
+		onEnter
+	}: { user: OrgUser; orgs: DojoOrg[]; onEnter?: (org: DojoOrg) => void } = $props();
 </script>
 
 <div class="bg-paper flex h-screen w-full flex-col overflow-hidden">
@@ -18,9 +25,9 @@
 		<span
 			class="bg-accent-soft text-accent flex items-center justify-center rounded-full text-xs font-semibold"
 			style="width: 28px; height: 28px"
-			aria-hidden="true">KT</span
+			aria-hidden="true">{user.initials}</span
 		>
-		<span class="text-ink-soft text-sm">Keiko Tanaka</span>
+		<span class="text-ink-soft text-sm">{user.name}</span>
 		<button type="button" class="mono text-ink-mute text-xs" style="background: none; border: none; cursor: pointer"
 			>sign out</button
 		>
@@ -29,13 +36,20 @@
 	<div class="flex-1 overflow-auto" style="padding: 36px 0">
 		<div style="max-width: 820px; margin: 0 auto; padding: 0 32px">
 			<div class="text-ink-mute text-xs uppercase" style="letter-spacing: 0.2em; margin-bottom: 8px">
-				Signed in as keiko-t · via GitHub
+				Signed in as {user.handle}
 			</div>
 			<h1 class="display font-light" style="font-size: 32px; letter-spacing: -0.02em; margin: 0; line-height: 1.1">
 				Your organizations
 			</h1>
 			<p class="text-ink-soft text-sm" style="line-height: 1.55; margin: 8px 0 26px; max-width: 560px">
-				You belong to {orgs.length} Dōjōs. Roles come from your GitHub access; pick one to open its console.
+				{#if orgs.length === 0}
+					You don't belong to any Dōjōs yet. Join one with an invite code below, or ask an
+					administrator to add you.
+				{:else}
+					You belong to {orgs.length}
+					{orgs.length === 1 ? 'Dōjō' : 'Dōjōs'}. Your role in each comes from your membership; pick
+					one to open its console.
+				{/if}
 			</p>
 
 			<!-- org cards -->
