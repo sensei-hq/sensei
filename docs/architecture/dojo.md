@@ -12,7 +12,7 @@ Two pieces plus the in-app surface:
 | Piece | Where | Role |
 |---|---|---|
 | **dojo-mind service** | `crates/dojo-mind` (binary `sensei-dojo`) | the federation server — memberships, contribute/triage/distribute, anonymization, its own DB (`dojo.*` schema) |
-| **console** | `console/` (SvelteKit web app) | **developer** · maintainer · admin · **lead** consoles (SSO-gated) |
+| **dojo web app** | `dojo/` (SvelteKit) | **developer** · maintainer · admin · **lead** consoles (SSO-gated) |
 | **in-app developer flows** | in the **[Observatory](app.md)** (`(observatory)/dojo/*`) | discover · connect · bind · share · watch · receive — these are Observatory flows, not a separate app |
 
 ```mermaid

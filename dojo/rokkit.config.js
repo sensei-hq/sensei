@@ -69,5 +69,5 @@ export default {
 
 	icons: {},
 	switcher: 'manual',
-	storageKey: 'sensei-console-theme'
+	storageKey: 'sensei-dojo-theme'
 };

@@ -13,7 +13,7 @@
 		<script>
 			(function () {
 				try {
-					var t = JSON.parse(localStorage.getItem('sensei-console-theme') || '{}');
+					var t = JSON.parse(localStorage.getItem('sensei-dojo-theme') || '{}');
 					var b = document.body;
 					b.dataset.mode = t.mode || 'light';
 					if (t.style) b.dataset.style = t.style;
