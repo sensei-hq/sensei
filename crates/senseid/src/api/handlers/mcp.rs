@@ -30,15 +30,17 @@ pub(crate) async fn mcp_call_tool(
 
     let result = match tool {
         "search" => {
-            let ids = resolve_scope_ids(&state, repo_id).await;
-            let (fns, types) = if !ids.is_empty() {
-                let f = state.pg.search_functions_scoped(&ids, query).await.unwrap_or_else(|e| { tracing::warn!(error = %e, tool, query, "mcp search: search_functions_scoped failed"); Vec::new() });
-                let t = state.pg.search_types_scoped(&ids, query).await.unwrap_or_else(|e| { tracing::warn!(error = %e, tool, query, "mcp search: search_types_scoped failed"); Vec::new() });
-                (f, t)
-            } else {
-                (vec![], vec![])
-            };
-            serde_json::json!({"functions": fns, "types": types})
+            // Delegate to the hybrid query path (lexical ILIKE + semantic
+            // embedding NN, fused by RRF) so the MCP `search` tool ranks by BOTH
+            // keyword AND concept relevance — not substring only. Fail-open: with
+            // no query embedding it degrades to the lexical order. Previously this
+            // arm was lexical-only, so a concept query that didn't share a
+            // substring with any symbol name returned nothing (G4).
+            let general = super::query::query_general(&state, query, repo_id).await;
+            serde_json::json!({
+                "functions": general.get("functions").cloned().unwrap_or_else(|| serde_json::json!([])),
+                "types":     general.get("types").cloned().unwrap_or_else(|| serde_json::json!([])),
+            })
         }
         "get_symbol" => {
             let ids = resolve_scope_ids(&state, repo_id).await;
