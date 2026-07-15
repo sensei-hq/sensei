@@ -2164,12 +2164,38 @@ impl PgStore {
     /// The identifier extraction lives in `analysis::doc_drift` so it can
     /// be unit-tested without a Postgres round-trip; here we handle the
     /// per-project fanout and the persistence.
+    /// Node kinds treated as real code symbols for drift resolution and the
+    /// `symbol_names` history. One list so the drift `known` query and
+    /// `record_symbol_names` can never drift apart. (Bare enum labels; Postgres
+    /// coerces them against the `sensei.node_kind` column.)
+    const DRIFT_SYMBOL_KINDS: &'static str =
+        "'function','method','class','type','interface','const','module','struct','hook','component','enum','extension'";
+
+    /// Upsert the current code-symbol names into the global `symbol_names`
+    /// registry (monotonic — never prunes). The doc-drift scan reads this history
+    /// to tell a REMOVED symbol (real drift) from an identifier that was never a
+    /// symbol (prose/config — not drift). Returns the number of names recorded.
+    pub async fn record_symbol_names(&self) -> Result<u64, String> {
+        let sql = format!(
+            "INSERT INTO sensei.symbol_names (name)
+             SELECT DISTINCT name FROM sensei.nodes
+              WHERE kind IN ({kinds}) AND name <> ''
+             ON CONFLICT (name) DO UPDATE SET last_seen = now()",
+            kinds = Self::DRIFT_SYMBOL_KINDS
+        );
+        let res = sqlx_core::query::query(&sql)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(res.rows_affected())
+    }
+
     pub async fn scan_project_doc_drift(
         &self,
         project_id: &uuid::Uuid,
     ) -> Result<serde_json::Value, String> {
         use crate::analysis::doc_drift::{
-            extract_identifier_mentions, extract_mention_from_detail,
+            extract_identifier_mentions, extract_mention_from_detail, is_broken_drift,
         };
 
         // 1. Load every doc node in this project along with its folder id
@@ -2207,10 +2233,10 @@ impl PgStore {
         //      not drift. (Cross-project name collisions can mask a removed
         //      same-named symbol — an accepted precision tradeoff to kill the
         //      dependency-reference false positives.)
-        let code_names: Vec<(String,)> = sqlx_core::query_as::query_as(
-            "SELECT DISTINCT name FROM sensei.nodes
-              WHERE kind IN ('function','method','class','type','interface','const','module','struct','hook','component','enum','extension')"
-        )
+        let code_names: Vec<(String,)> = sqlx_core::query_as::query_as(&format!(
+            "SELECT DISTINCT name FROM sensei.nodes WHERE kind IN ({kinds})",
+            kinds = Self::DRIFT_SYMBOL_KINDS
+        ))
         .fetch_all(&self.pool)
         .await
         .map_err(|e| e.to_string())?;
@@ -2238,10 +2264,28 @@ impl PgStore {
         .map_err(|e| e.to_string())?;
         known.extend(schema_names.into_iter().map(|(n,)| n));
 
+        // 2b. Refresh the symbol-name history (monotonic upsert of the current
+        //     symbols) so a symbol removed since a prior scan stays "known to have
+        //     existed", then load the full history. The drift gate flags a mention
+        //     ONLY when it was a real symbol (in `ever_symbols`) and no longer
+        //     resolves (`known`) — so identifiers that were never symbols (enum
+        //     variants, serde camelCase fields, string-dispatched tool names) are
+        //     not drift. This is what removes the ~408 false positives.
+        if let Err(e) = self.record_symbol_names().await {
+            tracing::warn!(error = %e, "scan_project_doc_drift: record_symbol_names failed — history not refreshed this pass");
+        }
+        let ever_rows: Vec<(String,)> = sqlx_core::query_as::query_as(
+            "SELECT name FROM sensei.symbol_names"
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        let ever_symbols: std::collections::HashSet<String> =
+            ever_rows.into_iter().map(|(n,)| n).collect();
+
         // 3. Fan the mentions out per doc, inserting `broken` drift rows for
-        //    mentions that don't resolve. `ON CONFLICT DO NOTHING` on the
-        //    (doc_node_id, detail) uniqueness in application logic — we
-        //    check for an existing broken row via a subquery.
+        //    mentions that were a real symbol and no longer resolve. We check for
+        //    an existing broken row via a subquery to avoid duplicates.
         let mut new_broken: i64 = 0;
         for (doc_id, folder_id, abs_path, file_path) in &doc_rows {
             // Read the doc content off disk. Unreadable files (deleted,
@@ -2254,7 +2298,8 @@ impl PgStore {
             };
             let mentions = extract_identifier_mentions(&content);
             for mention in mentions {
-                if known.contains(&mention) {
+                // Flag only names that WERE a real symbol and no longer resolve.
+                if !is_broken_drift(&mention, &known, &ever_symbols) {
                     continue;
                 }
                 let detail = format!("Mentions `{mention}` which is not in the code.");
@@ -2310,8 +2355,11 @@ impl PgStore {
 
         let mut resolved: i64 = 0;
         for (drift_id, detail) in open_rows {
+            // Clear an open row once it's no longer drift: the code came back /
+            // the doc was fixed (now in `known`) OR the mention was never a real
+            // symbol (absent from history) — the false-positive backlog.
             if let Some(mention) = extract_mention_from_detail(&detail)
-                && known.contains(&mention)
+                && !is_broken_drift(&mention, &known, &ever_symbols)
             {
                 sqlx_core::query::query(
                     "UPDATE inference.drift_items
@@ -10305,6 +10353,43 @@ mod tests {
         let pool = s.pool();
         sqlx_core::query::query("DELETE FROM sensei.folders WHERE root_id=$1").bind(root_id).execute(pool).await.ok();
         sqlx_core::query::query("DELETE FROM sensei.folders_to_watch WHERE id=$1").bind(root_id).execute(pool).await.ok();
+    }
+
+    #[tokio::test]
+    async fn record_symbol_names_is_monotonic_history() {
+        // The symbol-history registry backing doc-drift: a current symbol is
+        // recorded, and a REMOVED symbol stays recorded (monotonic) so a later
+        // scan can still tell it was once real (→ its stale doc refs are drift).
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("symhist_{}", uuid::Uuid::new_v4())).await;
+        let uniq = format!("SymHist_{}", uuid::Uuid::new_v4().simple());
+
+        let nid = s
+            .upsert_node(&fid, "function", &uniq, "x.rs", None, None, Some(1), Some(2))
+            .await
+            .unwrap();
+        s.record_symbol_names().await.unwrap();
+        let present: Option<(String,)> =
+            sqlx_core::query_as::query_as("SELECT name FROM sensei.symbol_names WHERE name = $1")
+                .bind(&uniq)
+                .fetch_optional(s.pool())
+                .await
+                .unwrap();
+        assert!(present.is_some(), "a current symbol name is recorded");
+
+        // Remove the symbol and re-record — the name must persist.
+        sqlx_core::query::query("DELETE FROM sensei.nodes WHERE id = $1").bind(nid).execute(s.pool()).await.unwrap();
+        s.record_symbol_names().await.unwrap();
+        let still: Option<(String,)> =
+            sqlx_core::query_as::query_as("SELECT name FROM sensei.symbol_names WHERE name = $1")
+                .bind(&uniq)
+                .fetch_optional(s.pool())
+                .await
+                .unwrap();
+        assert!(still.is_some(), "a removed symbol stays in the registry (monotonic history)");
+
+        sqlx_core::query::query("DELETE FROM sensei.symbol_names WHERE name = $1").bind(&uniq).execute(s.pool()).await.ok();
+        sqlx_core::query::query("DELETE FROM sensei.folders WHERE id = $1").bind(fid).execute(s.pool()).await.ok();
     }
 
     #[tokio::test]
