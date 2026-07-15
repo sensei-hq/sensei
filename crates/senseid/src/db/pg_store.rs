@@ -7951,6 +7951,27 @@ impl PgStore {
         Ok(ids)
     }
 
+    /// Repo-root abs_paths (git / subtree / standalone folders) among the given
+    /// scope folder ids — the directories a content grep should walk. Distinct
+    /// and path-ordered for determinism. Structural (workspace_member / doc /
+    /// component / hook) folders are excluded so we walk repo roots, not subdirs.
+    pub async fn scope_repo_roots(&self, ids: &[uuid::Uuid]) -> Result<Vec<String>, String> {
+        if ids.is_empty() {
+            return Ok(vec![]);
+        }
+        let rows: Vec<(String,)> = sqlx_core::query_as::query_as(
+            "SELECT DISTINCT abs_path FROM sensei.folders
+             WHERE id = ANY($1)
+               AND kind IN ('git'::sensei.folder_kind, 'subtree'::sensei.folder_kind, 'standalone'::sensei.folder_kind)
+             ORDER BY abs_path",
+        )
+        .bind(ids)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(p,)| p).collect())
+    }
+
     // ── Project-scoped query variants (#60) ───────────────────────────
 
     /// Search functions across multiple folders (project-scoped variant).
@@ -10253,6 +10274,33 @@ mod tests {
         assert_eq!(got.map(|(p, _)| p), Some(repo.clone()), "deep file resolves to the git repo root, not the member subdir");
         assert_eq!(s.repo_root_for_path(&repo).await.unwrap().map(|(p, _)| p), Some(repo), "exact repo path resolves too");
         assert_eq!(s.repo_root_for_path(&format!("/_test/nope-{uniq}/x")).await.unwrap(), None, "path under no repo → None");
+
+        let pool = s.pool();
+        sqlx_core::query::query("DELETE FROM sensei.folders WHERE root_id=$1").bind(root_id).execute(pool).await.ok();
+        sqlx_core::query::query("DELETE FROM sensei.folders_to_watch WHERE id=$1").bind(root_id).execute(pool).await.ok();
+    }
+
+    #[tokio::test]
+    async fn scope_repo_roots_returns_repo_roots_not_structural_subfolders() {
+        // Content grep walks repo ROOTS (git/subtree/standalone), never the
+        // structural `folder` subdirs the index also tracks.
+        let s = pg_store().await;
+        let uniq = uuid::Uuid::new_v4();
+        let root = format!("/_test/scoperoots/{uniq}");
+        let root_id = s.add_watch_root(&root, "sr", &serde_json::json!([])).await.unwrap();
+        let repo = format!("{root}/app");
+        let repo_fid = s.upsert_repo_kind(&root_id, "git", "app", &repo).await.unwrap();
+        // A structural subfolder (kind='folder') under the repo — NOT a repo root.
+        let comp = format!("{repo}/src/lib");
+        let comp_fid = s
+            .upsert_subfolder(&root_id, "lib", "app/src/lib", &comp, Some(&repo_fid), None)
+            .await
+            .unwrap();
+
+        let roots = s.scope_repo_roots(&[repo_fid, comp_fid]).await.unwrap();
+        assert!(roots.contains(&repo), "the git repo root is returned");
+        assert!(!roots.contains(&comp), "a structural (kind='folder') subdir is not a repo root");
+        assert!(s.scope_repo_roots(&[]).await.unwrap().is_empty(), "empty scope → no roots");
 
         let pool = s.pool();
         sqlx_core::query::query("DELETE FROM sensei.folders WHERE root_id=$1").bind(root_id).execute(pool).await.ok();
