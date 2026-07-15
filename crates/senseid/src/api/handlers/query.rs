@@ -235,17 +235,20 @@ pub(crate) async fn query_general(state: &AppState, q: &str, repo_id: &str) -> s
     })
 }
 
-/// `context_pack` — assemble a ready-to-use context bundle for `q`: the top
-/// hybrid (lexical + semantic) symbol hits, each with its actual code snippet
-/// read from disk, so an assistant gets concept-level retrieval in one call
-/// instead of a search followed by N file reads. The lexical half of the hybrid
-/// is an ILIKE over symbol names, so name-substring matches are always included
-/// (the grep floor for code navigation); raw file-content grep is out of scope
-/// (use ripgrep for that). Fail-open: an unreadable file yields an empty snippet,
-/// never an error.
+/// `context_pack` — assemble a ready-to-use context bundle for `q`: relevant code
+/// with actual snippets read from disk, so an assistant gets concept-level
+/// retrieval in one call instead of a search followed by N file reads. Two recall
+/// arms: (1) the **symbol arm** — top hybrid (lexical ILIKE + semantic NN) hits
+/// over indexed `sensei.nodes`; (2) the **content-grep arm** — a bounded raw
+/// file-content grep over the scoped repo roots, which finds concepts that live
+/// only in file *content* (comments, string literals, config values, enum
+/// variants, string-dispatched tool names, serde-renamed fields) and are never
+/// indexed as a symbol. Each item is tagged `via: "symbol" | "grep"`. Fail-open:
+/// no repo roots / an empty grep / an unreadable file degrade to the symbol arm
+/// (or an empty snippet), never an error.
 pub(crate) async fn context_pack(state: &AppState, q: &str, repo_id: &str) -> serde_json::Value {
     let general = query_general(state, q, repo_id).await;
-    // Collect top-k ids in ranked order (functions first, then types).
+    // Collect top-k symbol ids in ranked order (functions first, then types).
     let mut ordered_ids: Vec<uuid::Uuid> = Vec::new();
     for key in ["functions", "types"] {
         if let Some(arr) = general.get(key).and_then(|v| v.as_array()) {
@@ -260,20 +263,89 @@ pub(crate) async fn context_pack(state: &AppState, q: &str, repo_id: &str) -> se
     }
 
     let locs = state.pg.node_locations(&ordered_ids).await.unwrap_or_default();
-    let items: Vec<serde_json::Value> = ordered_ids.iter().filter_map(|id| {
-        let (_, abs_path, file_path, ls, le, kind, name, sig) = locs.iter().find(|l| &l.0 == id)?;
+    let mut items: Vec<serde_json::Value> = Vec::new();
+    // Files already packed by the symbol arm — the grep arm skips them so a
+    // symbol and a comment in the same file don't produce two near-dupe entries.
+    let mut packed_files: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for id in &ordered_ids {
+        let Some((_, abs_path, file_path, ls, le, kind, name, sig)) = locs.iter().find(|l| &l.0 == id) else { continue };
         let snippet = std::fs::read_to_string(std::path::Path::new(abs_path).join(file_path))
             .ok()
             .map(|c| extract_snippet(&c, *ls, *le, SNIPPET_MAX_LINES))
             .unwrap_or_default();
-        Some(serde_json::json!({
+        packed_files.insert(file_path.clone());
+        items.push(serde_json::json!({
             "name": name, "kind": kind, "file": file_path,
-            "lines": format!("{ls}-{le}"), "signature": sig, "snippet": snippet,
-        }))
-    }).collect();
+            "lines": format!("{ls}-{le}"), "signature": sig, "snippet": snippet, "via": "symbol",
+        }));
+    }
+
+    // Content-grep arm: concepts that live only in file content.
+    items.extend(grep_context_items(state, repo_id, &extract_search_term(q), &packed_files).await);
 
     serde_json::json!({ "type": "context_pack", "query": q, "count": items.len(), "items": items })
 }
+
+/// The content-grep arm of `context_pack`: up to `CONTEXT_PACK_GREP_K` raw
+/// file-content matches over the scoped repo roots, each rendered as a small
+/// snippet centered on the match. Skips files already packed by the symbol arm
+/// and de-dupes by (file, line). Fail-open: no scope / no repo roots / empty
+/// grep → no items.
+async fn grep_context_items(
+    state: &AppState,
+    repo_id: &str,
+    term: &str,
+    packed_files: &std::collections::HashSet<String>,
+) -> Vec<serde_json::Value> {
+    let ids = resolve_scope_ids(state, repo_id).await;
+    if ids.is_empty() {
+        return vec![];
+    }
+    let roots = state.pg.scope_repo_roots(&ids).await.unwrap_or_default();
+    if roots.is_empty() {
+        return vec![];
+    }
+    let mut grep_roots: Vec<(std::path::PathBuf, Vec<String>)> = Vec::with_capacity(roots.len());
+    for r in &roots {
+        // Exclusions are keyed by watch-root path; a repo that is also a watch
+        // root contributes its excluded prefixes, otherwise this is empty.
+        let excl = state.pg.root_exclusion_prefixes(r).await;
+        grep_roots.push((std::path::PathBuf::from(r), excl));
+    }
+    let opts = GrepOpts { max_matches: CONTEXT_PACK_GREP_K, ..GrepOpts::default() };
+    let matches = content_grep(&grep_roots, term, &opts);
+
+    let mut out: Vec<serde_json::Value> = Vec::new();
+    let mut seen: std::collections::HashSet<(String, usize)> = std::collections::HashSet::new();
+    for m in matches {
+        if packed_files.contains(&m.rel_path) || !seen.insert((m.rel_path.clone(), m.line_no)) {
+            continue;
+        }
+        let snippet = std::fs::read_to_string(&m.abs_path)
+            .ok()
+            .map(|c| {
+                let start = m.line_no.saturating_sub(GREP_CONTEXT_LINES).max(1) as i32;
+                let end = (m.line_no + GREP_CONTEXT_LINES) as i32;
+                extract_snippet(&c, start, end, GREP_SNIPPET_MAX_LINES)
+            })
+            .unwrap_or_default();
+        out.push(serde_json::json!({
+            "file": m.rel_path,
+            "lines": m.line_no.to_string(),
+            "match": m.line,
+            "snippet": snippet,
+            "via": "grep",
+        }));
+    }
+    out
+}
+
+/// Max content-grep hits packed into a `context_pack` response.
+const CONTEXT_PACK_GREP_K: usize = 6;
+/// Lines of context on each side of a grep match in its packed snippet.
+const GREP_CONTEXT_LINES: usize = 3;
+/// Hard cap on a grep snippet's line span.
+const GREP_SNIPPET_MAX_LINES: usize = 12;
 
 /// Extract lines `[start, end]` (1-based, inclusive) from `content`, capped at
 /// `max_lines`. Out-of-range bounds clamp; an empty or past-EOF start yields "".
@@ -293,6 +365,125 @@ pub(crate) fn extract_snippet(content: &str, start: i32, end: i32, max_lines: us
 const CONTEXT_PACK_K: usize = 8;
 /// Max lines per packed snippet — bounds a single large function's footprint.
 const SNIPPET_MAX_LINES: usize = 40;
+
+// ── Content grep (raw file-content recall floor) ─────────────────────────────
+//
+// The symbol arms (lexical ILIKE + semantic NN) only surface things indexed as
+// `sensei.nodes`. Concepts that live in *file content* — comments, string
+// literals, config values, Rust enum variants, string-dispatched MCP tool
+// names, serde-renamed API fields — aren't retrievable that way (the G3/G4b
+// recall gap). This is a bounded, in-process content grep using ripgrep's
+// `ignore` walker (so `.gitignore`/hidden files are skipped) as the missing
+// floor. Fail-open and hard-bounded so it can never stall a query.
+
+/// A single content-grep match.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct GrepMatch {
+    /// Absolute path to the file (for reading a snippet).
+    pub abs_path: std::path::PathBuf,
+    /// Path relative to the repo root (for display + dedup vs symbol hits).
+    pub rel_path: String,
+    /// 1-based line number of the match.
+    pub line_no: usize,
+    /// The matching line, trimmed and length-capped.
+    pub line: String,
+}
+
+/// Hard bounds so a grep over a large tree can never run away.
+pub(crate) struct GrepOpts {
+    /// Total matches across all roots.
+    pub max_matches: usize,
+    /// Matches kept from a single file (stops one file dominating).
+    pub max_per_file: usize,
+    /// Files inspected before the walk gives up (bounds worst-case work).
+    pub max_files: usize,
+    /// Skip files larger than this many bytes (binaries, minified bundles).
+    pub max_file_bytes: u64,
+    /// Truncate a returned line to this many characters.
+    pub max_line_len: usize,
+}
+
+impl Default for GrepOpts {
+    fn default() -> Self {
+        Self { max_matches: 12, max_per_file: 2, max_files: 5000, max_file_bytes: 512 * 1024, max_line_len: 240 }
+    }
+}
+
+/// Case-insensitive substring content grep over `roots` — each an
+/// `(abs_root, excluded_relative_prefixes)` pair — using the `ignore` walker.
+/// Deterministic (roots in order, then walk order, then ascending line). Fail-
+/// open: unreadable / non-UTF8 / oversized files are skipped silently. A
+/// sensei-excluded prefix prunes the whole subtree (dirs and files).
+pub(crate) fn content_grep(
+    roots: &[(std::path::PathBuf, Vec<String>)],
+    term: &str,
+    opts: &GrepOpts,
+) -> Vec<GrepMatch> {
+    let needle = term.trim().to_lowercase();
+    if needle.is_empty() {
+        return vec![];
+    }
+    let mut out: Vec<GrepMatch> = Vec::new();
+    let mut files_seen = 0usize;
+    for (root, excluded) in roots {
+        if out.len() >= opts.max_matches || files_seen >= opts.max_files {
+            break;
+        }
+        let excluded_owned = excluded.clone();
+        let root_owned = root.clone();
+        let walker = ignore::WalkBuilder::new(root)
+            .hidden(true)
+            .git_ignore(true)
+            .git_global(false)
+            .parents(false)
+            .filter_entry(move |dent| {
+                // Prune anything under a sensei-excluded prefix (dir or file).
+                let Ok(rel) = dent.path().strip_prefix(&root_owned) else { return true };
+                let rel_str = rel.to_string_lossy().replace('\\', "/");
+                !excluded_owned
+                    .iter()
+                    .any(|p| rel_str == *p || rel_str.starts_with(&format!("{p}/")))
+            })
+            .build();
+        for dent in walker {
+            if out.len() >= opts.max_matches || files_seen >= opts.max_files {
+                break;
+            }
+            let Ok(dent) = dent else { continue };
+            if !dent.file_type().map(|t| t.is_file()).unwrap_or(false) {
+                continue;
+            }
+            files_seen += 1;
+            // Missing metadata or oversized → skip (conservative).
+            if dent.metadata().map(|m| m.len() > opts.max_file_bytes).unwrap_or(true) {
+                continue;
+            }
+            let path = dent.path();
+            let Ok(content) = std::fs::read_to_string(path) else { continue };
+            let rel_str = path
+                .strip_prefix(root)
+                .map(|r| r.to_string_lossy().replace('\\', "/"))
+                .unwrap_or_else(|_| path.to_string_lossy().into_owned());
+            let mut per_file = 0usize;
+            for (i, line) in content.lines().enumerate() {
+                if per_file >= opts.max_per_file || out.len() >= opts.max_matches {
+                    break;
+                }
+                if line.to_lowercase().contains(&needle) {
+                    let capped: String = line.trim().chars().take(opts.max_line_len).collect();
+                    out.push(GrepMatch {
+                        abs_path: path.to_path_buf(),
+                        rel_path: rel_str.clone(),
+                        line_no: i + 1,
+                        line: capped,
+                    });
+                    per_file += 1;
+                }
+            }
+        }
+    }
+    out
+}
 
 // ── Hybrid ranking (lexical + semantic fusion) ───────────────────────────────
 //
@@ -507,6 +698,38 @@ mod tests {
         assert_eq!(extract_snippet("", 1, 3, 40), "");
         // A single-line symbol (start == end).
         assert_eq!(extract_snippet(content, 3, 3, 40), "l3");
+    }
+
+    #[test]
+    fn content_grep_is_case_insensitive_bounded_and_excludes() {
+        use std::fs;
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        // Match lives only in a comment + a string literal — never a symbol name.
+        fs::write(root.join("a.rs"), "// TextEmbed capability\nfn foo() {}\nlet x = \"TextEmbed\";\n").unwrap();
+        fs::write(root.join("b.txt"), "nothing relevant here\n").unwrap();
+        fs::create_dir_all(root.join("vendor")).unwrap();
+        fs::write(root.join("vendor/c.rs"), "TextEmbed inside an excluded subtree\n").unwrap();
+
+        let roots = vec![(root.to_path_buf(), vec!["vendor".to_string()])];
+        let opts = GrepOpts { max_matches: 10, max_per_file: 1, max_files: 100, max_file_bytes: 1 << 20, max_line_len: 240 };
+
+        // Case-insensitive query; per-file cap 1 keeps only a.rs's first hit;
+        // the `vendor/` subtree is pruned; b.txt doesn't match.
+        let hits = content_grep(&roots, "textembed", &opts);
+        assert_eq!(hits.len(), 1, "one match: a.rs line 1 (per-file cap 1, vendor excluded, b.txt no match)");
+        assert_eq!(hits[0].rel_path, "a.rs");
+        assert_eq!(hits[0].line_no, 1);
+        assert!(hits[0].line.contains("TextEmbed"), "returns the matching line text");
+
+        // Raising the per-file cap surfaces the second in-file match (the string).
+        let opts2 = GrepOpts { max_per_file: 5, ..opts };
+        let more = content_grep(&roots, "textembed", &opts2);
+        assert_eq!(more.len(), 2, "both a.rs matches with a higher per-file cap; vendor still excluded");
+        assert_eq!(more[1].line_no, 3);
+
+        // Empty / whitespace term → no matches (never greps for nothing).
+        assert!(content_grep(&roots, "   ", &opts2).is_empty());
     }
 
     /// Build a hit whose id doubles as its item, so ranking order is readable.
