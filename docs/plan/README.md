@@ -56,7 +56,7 @@ Was: the drift scan flagged **~all** backtick doc mentions `broken` because the 
 
 ### G5 — Two MCP tools silently empty *(objectives O5, context delivery)*
 - **G5a ✅ FIXED 2026-07-14 (`46a58a79`).** `get_communities` was the MCP dispatch path using `resolve_folder_id` (a single lowest-UUID leaf). New `PgStore::list_communities_scoped` aggregates across all scope folders; both callers repointed. **Live: 0 → 337 communities** on the sensei project (verified via the MCP surface).
-- **G5b (open, Phase 1).** `get_patterns` returns empty: `sensei.file_tags` is a **view** and there is **no framework-tagger** populating its source (45,898 rows, 0 tagged). This is a *build* (detect hook/route/middleware/component during scan), not a trigger.
+- **G5b ✅ FIXED 2026-07-14 (`d4e41988`).** `get_patterns` (→ `get_file_tags`) returned empty: `sensei.file_tags` is a **view** over `nodes.tags` for file nodes, and nothing populated those tags (0 tagged). New `PgStore::tag_file_nodes_by_framework_kind` tags each file node with the framework kinds of the symbols it contains — reusing the classifier's existing `hook`/`component` node-kinds (no separate detector) — recomputed per file, run in the scan reconcile. **Live: 1207 `component` + 533 `hook` files tagged; `get_file_tags(sensei, component)` now returns real files** (e.g. `app/src/lib/components/*.svelte`). *Residual:* `route`/`middleware` aren't node kinds yet — they need per-adapter detection (follow-up); `hook`+`component` are what the classifier produces today.
 
 ### G6 — Corpus starved *(all FTR-downstream)*
 Session corpus shrank **216 → 25** (a reset); local daemon is **v0.3.1** while source is **v0.3.4** (newer endpoints + the #101 self-heal aren't live locally).
