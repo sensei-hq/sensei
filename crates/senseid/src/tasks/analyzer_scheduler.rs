@@ -86,6 +86,9 @@ async fn enqueue_global_passes(queue: &TaskQueue) {
     queue.enqueue(Task::new(TaskKind::MeasureVerdicts, "", "")).await;
     queue.enqueue(Task::new(TaskKind::ClassifyPendingVerdicts, "", "")).await;
     queue.enqueue(Task::new(TaskKind::AggregateToolInsights, "", "")).await;
+    // Governance Tier-2: merge the global ruleset when it changed (source-hash
+    // guarded, so an unchanged tick is a cheap no-op — no model call).
+    queue.enqueue(Task::new(TaskKind::ConsolidateGovernance, "", "")).await;
 }
 
 /// Resolve the tick interval from a config value, falling back to the default
@@ -316,6 +319,10 @@ mod tests {
         assert!(
             ci < ai,
             "ClassifyPendingVerdicts must be enqueued before AggregateToolInsights, got {kinds:?}",
+        );
+        assert!(
+            kinds.contains(&TaskKind::ConsolidateGovernance),
+            "governance Tier-2 consolidation must ride the global-passes tick, got {kinds:?}",
         );
     }
 

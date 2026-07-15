@@ -81,6 +81,12 @@ pub enum TaskKind {
     /// `AggregateToolInsights` so the same tick's aggregate reads the fresh
     /// verdicts. Reuses the idempotent `verdict_classifier::classify_session`.
     ClassifyPendingVerdicts,
+    /// Global: governance Tier-2 consolidation — merge the always-on global rules
+    /// into one `proposed` consolidated ruleset via the model, skipped when the
+    /// Tier-1 input is unchanged (source-hash guard). Enqueued once per scheduler
+    /// tick alongside the other global passes; the manual path is
+    /// `POST /api/knowledge/rules/consolidate`.
+    ConsolidateGovernance,
 }
 
 impl std::fmt::Display for TaskKind {
@@ -112,6 +118,7 @@ impl std::fmt::Display for TaskKind {
             Self::AggregateCorrections => write!(f, "aggregate_corrections"),
             Self::AggregateToolInsights => write!(f, "aggregate_tool_insights"),
             Self::ClassifyPendingVerdicts => write!(f, "classify_pending_verdicts"),
+            Self::ConsolidateGovernance => write!(f, "consolidate_governance"),
         }
     }
 }
@@ -165,6 +172,9 @@ impl TaskKind {
             // a couple of DB round-trips + string classification — a batch that
             // scales with the backlog, so it shares the generous batch budget.
             | TaskKind::ClassifyPendingVerdicts
+            // Tier-2 consolidation is one model (reasoning-chain) call; a cold
+            // embedded model can take minutes, so it shares the batch budget.
+            | TaskKind::ConsolidateGovernance
             | TaskKind::AggregateCorrections => Duration::from_secs(600),
         }
     }
@@ -341,6 +351,7 @@ mod tests {
             TaskKind::BackfillTranscripts,
             TaskKind::BackfillTranscriptFile, TaskKind::AggregateCorrections,
             TaskKind::AggregateToolInsights, TaskKind::ClassifyPendingVerdicts,
+            TaskKind::ConsolidateGovernance,
         ] {
             assert!(k.watchdog_timeout().as_secs() > 0, "{k} must have a positive cap");
         }

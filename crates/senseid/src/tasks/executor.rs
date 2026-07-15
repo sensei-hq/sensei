@@ -107,6 +107,7 @@ async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
             TaskKind::AggregateCorrections => handlers::aggregate_corrections(ctx, task).await,
             TaskKind::AggregateToolInsights => handlers::aggregate_tool_insights(ctx, task).await,
             TaskKind::ClassifyPendingVerdicts => handlers::classify_pending_verdicts(ctx, task).await,
+            TaskKind::ConsolidateGovernance => handlers::consolidate_governance(ctx, task).await,
             TaskKind::BackfillTranscripts => crate::transcript::run_backfill(ctx, task).await,
             TaskKind::BackfillTranscriptFile => crate::transcript::run_backfill_file(ctx, task).await,
         }
