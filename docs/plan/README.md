@@ -45,9 +45,10 @@ Each gap: the objective it violates, the FTR impact, and the approach.
 9 memories, **all `active`**, none `reinforced`/`battle_tested`/`challenged`. The promotion ladder depends on corrections (legitimately sparse) + an LLM promotion step that almost never fires. "Adopted this week" and the Memories surfaces read empty.
 **Approach:** define + wire the promotion/merge statuses (readyToShare / toMerge / battle_tested) with an evidence threshold; this is the single biggest "tables exist, writer barely runs" gap.
 
-### G3 — Doc-drift signal is noise *(objective P2, theme 4)*
-Traceability runs fresh but flags **4,420 of 4,425** items `broken` — the signature comparison over-fires. Any drift/impact surface shows noise.
-**Approach:** fix the matching/threshold so `broken` means broken; re-baseline.
+### G3 — Doc-drift signal is noise *(objective P2, theme 4)* — ⚠️ MOSTLY FIXED 2026-07-14 (`0d8d4b98` + schema follow-up)
+Was: the drift scan flagged **~all** backtick doc mentions `broken` because the known-symbol set was (a) this-project only and (b) 7 kinds only — so real symbols of other kinds, every indexed **dependency** symbol (e.g. rokkit components), env vars, and DB schema identifiers all over-fired.
+**Fixed:** match the known-symbol set **globally** across **all** code-symbol kinds; drop SCREAMING_SNAKE env-var tokens; union in **DB schema identifiers** (table/column/view/enum-label). **Live: sensei drift 594 → 408 broken** (deps + DB-schema + env-var false positives gone).
+**Remaining (residual, deeper fix):** ~408 are identifiers that exist but are **not indexed as code-symbol nodes** — MCP tool-name strings (string-dispatched), Rust enum variants, serde-renamed camelCase API fields. Fully closing needs either indexing those symbol classes during scan **or** a symbol-history drift model (flag only *previously-indexed, now-missing* symbols). Scoped follow-up; not a threshold tweak.
 
 ### G4 — Semantic search + context-pack unbuilt *(the differentiator; objective O-core)*
 `search` is plain substring (`ILIKE`) despite **157k embedded nodes**; the `context_pack` / `hybrid.rs` / grep-fallback layer the spec sells **doesn't exist on disk**. The assistant gets literal code-graph context first-try, not concept-level retrieval.
