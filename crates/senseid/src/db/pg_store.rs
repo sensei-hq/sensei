@@ -1008,6 +1008,31 @@ impl PgStore {
         Ok(rows)
     }
 
+    /// Resolve nodes to their on-disk locations for snippet extraction, keyed by
+    /// id. Returns `(id, abs_path, file_path, line_start, line_end, kind, name,
+    /// signature)` — the repo's `abs_path` joined with the node `file_path` is the
+    /// file to read, and the line range bounds the snippet. Missing line info
+    /// falls back to line 1 (a one-line snippet). Used by `context_pack`.
+    #[allow(clippy::type_complexity)]
+    pub async fn node_locations(
+        &self, ids: &[uuid::Uuid],
+    ) -> Result<Vec<(uuid::Uuid, String, String, i32, i32, String, String, Option<String>)>, String> {
+        if ids.is_empty() { return Ok(Vec::new()); }
+        sqlx_core::query_as::query_as(
+            "SELECT n.id, f.abs_path, n.file_path,
+                    COALESCE(n.line_start, 1),
+                    COALESCE(n.line_end, n.line_start, 1),
+                    n.kind::text, n.name, n.signature
+               FROM sensei.nodes n
+               JOIN sensei.folders f ON f.id = n.folder_id
+              WHERE n.id = ANY($1::uuid[])",
+        )
+        .bind(ids)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())
+    }
+
     /// Find near-duplicate function/method pairs within a folder by cosine
     /// similarity on their code embeddings (HNSW `<=>` cosine distance). Each
     /// pair is returned once (`a.id < b.id`) at or above `min_similarity`,

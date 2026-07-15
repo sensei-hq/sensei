@@ -280,6 +280,11 @@ pub fn handle_list_tools() -> Value {
             ], &[
                 ("project", "string", "Project or library name to search in (e.g. 'rokkit', 'kavach'). Defaults to current project."),
             ]),
+            tool("context_pack", "Assemble a ready-to-use context bundle for a task or concept: the most relevant symbols (ranked by keyword AND meaning) with their actual code snippets, in one call. Prefer this over `search` when you want the code, not just where it lives.", &[
+                ("query", "string", "The task or concept to gather context for (natural language works — it's matched semantically)"),
+            ], &[
+                ("project", "string", "Project name. Defaults to current project."),
+            ]),
             tool("get_callers", "Find all functions that call a given function. Use this to understand who depends on a function.", &[
                 ("name", "string", "Function name to find callers of"),
             ], &[
@@ -823,7 +828,7 @@ mod tests {
     /// Keep in sync with handle_list_tools — a missing entry means the tool is
     /// advertised but untested, an extra entry means it's tested but unadvertised.
     const EXPECTED_TOOLS: &[&str] = &[
-        "search", "get_callers", "get_callees", "get_project_summary",
+        "search", "context_pack", "get_callers", "get_callees", "get_project_summary",
         "get_lib_docs", "search_lib_docs", "get_communities", "get_patterns",
         "list_projects", "find_projects", "use_project", "create_session", "update_session", "add_library",
         "update_phase", "get_workflow_state", "match_pattern", "get_pattern_for",

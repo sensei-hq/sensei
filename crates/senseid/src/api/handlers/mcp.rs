@@ -42,6 +42,11 @@ pub(crate) async fn mcp_call_tool(
                 "types":     general.get("types").cloned().unwrap_or_else(|| serde_json::json!([])),
             })
         }
+        "context_pack" => {
+            // Concept-level retrieval in one call: top hybrid hits + their code
+            // snippets, so an assistant doesn't need a search then N file reads.
+            super::query::context_pack(&state, query, repo_id).await
+        }
         "get_symbol" => {
             let ids = resolve_scope_ids(&state, repo_id).await;
             let fns = if !ids.is_empty() {
