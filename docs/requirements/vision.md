@@ -95,32 +95,41 @@ the daily app"*): **Security &amp; guards · Architecture · Testing · Style &a
 conventions · Memory · Traceability · Impact · Libraries · Insights.** Each
 observes, forms a finding, and offers one action.
 
-## The relay — long runs, supervised from anywhere
+## The relay — long runs, supervised from anywhere, through the Dōjō
 
 Multi-agent workflows are becoming the norm: several assistants (Claude Code ·
 Codex · OpenCode · Aider) running long, mostly-autonomous jobs across your
-machines. **Sensei Relay** is the phone companion to the Observatory that makes
-that legible and controllable when you're away from the keyboard. Visual source:
-[`../mockups/Sensei/Sensei Relay.html`](../mockups/Sensei/Sensei%20Relay.html).
+machines. **Relay** makes that legible and controllable when you're away from the
+keyboard — now **folded into the Dōjō**, reachable on phone and console. Visual
+source: [`../mockups/Sensei/Sensei Dōjō Journey Map.html`](../mockups/Sensei/Sensei%20D%C5%8Djo%20Journey%20Map.html).
 
-- **Agents run on your own hardware.** A **coordinator** (the daemon) supervises
-  the agent CLIs and publishes only a *filtered status* through a **zero-knowledge
-  relay** to your phone — never the code, never the raw transcript.
-- **Plan long runs modularly.** Each project carries one active plan; a plan has
-  **phases**, each phase holds **features, checkpoints, and gates**. Development
-  runs **non-blocking in auto mode**.
-- **Watch, don't babysit.** Project-level progress is *done · doing · next*;
-  you're **nudged only when a track stalls** or hits a **gate** that needs you.
-- **Human-in-the-loop, minimal.** A gate surfaces the exact command to
-  **approve**, or a **decision as 3–4 options plus a free reply** — the way sensei
-  asks. Encrypted pairing + explicit, revocable permissions bound what the relay
-  can do.
-- **Team relay (Dōjō).** For an org, human-in-the-loop moments fan into **one
-  shared on-call queue**; each decision carries attribution and lands in the Dōjō
-  record.
+- **Agents run on your own hardware.** The daemon supervises the agent CLIs and
+  publishes only a *filtered status* — never the code, never the raw transcript.
+- **Reach a live session through the Dōjō — no pairing.** The daemon already holds
+  an outbound line to the Dōjō; that same line, over **realtime**, carries live
+  session control. Any signed-in phone or console **subscribes** and picks the
+  session up — no pairing, no install, no open ports. A responsive **PWA** is the
+  surface; a thin native wrapper adds push + offline.
+- **Watch, don't babysit.** A cross-Dōjō Projects home ranked by *what's blocked
+  on me*; you're pulled in only at a **gate** (approve the exact command), a
+  **decision** (3–4 options + a free reply), or to **chat** the run back on course.
+- **Free for individuals, paid where shared.** The individual loop is free; the
+  shared-team coordination around it (on-call inbox, presence, attributed
+  decisions) is the paid tier.
 
-The relay extends the north-star: a run you can't supervise can't be corrected —
-the relay keeps the pair (and the fleet) legible and steerable at a distance.
+Relay extends the north-star: a run you can't supervise can't be corrected — it
+keeps the pair (and the fleet) legible and steerable at a distance. Detail:
+[journeys/dojo → Relay](../journeys/dojo.md#relay--away-from-keyboard-through-the-dōjō).
+
+## The business model — free where public or personal
+
+The line is drawn by **who the knowledge is for**, not by features. A **public /
+open-source** Dōjō and your **personal** solo Dōjō are **free forever** — full
+governance, full Relay. Payment begins only when a Dōjō is **private and shared**
+by a team or org: you pay to *coordinate a group's private knowledge* and for the
+control a business needs (self-hosting, SSO, audit) — never to use sensei, never
+for tokens (inference is BYO-key and local). Tiers + open pricing questions:
+[journeys/dojo → Business model](../journeys/dojo.md#business-model--free-where-public-or-personal).
 
 ## The six non-negotiable themes
 

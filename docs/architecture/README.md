@@ -52,14 +52,14 @@ flowchart TD
         CONSOLE --> DOJOSVC --> DDB
     end
 
-    subgraph relayplane["Relay — mobile / pad app (away from keyboard)"]
-        PHONE["companion app<br/>dashboard · approve · respond · plan"]
+    subgraph relayplane["Relay — phone / PWA (away from keyboard · through the Dōjō)"]
+        PHONE["responsive PWA + thin native wrapper<br/>watch · approve · decide · chat"]
     end
 
     D <-->|pull, never push · preview always| DOJOSVC
-    COORD -->|filtered status only · zero-knowledge| RELAY[[relay]] --> PHONE
-    PHONE -->|approve · decide · nudge| RELAY
-    RELAY -.->|team gates → on-call| DOJOSVC
+    D <-->|relay: filtered status · realtime · zero-knowledge| DOJOSVC
+    PHONE <-->|subscribe · approve · decide · chat| DOJOSVC
+    DOJOSVC -.->|push when away| PHONE
     WEB["website<br/>marketing + docs"]
 ```
 
@@ -67,10 +67,12 @@ flowchart TD
 **mcp**, and **daemon** (+ its **Postgres DB**), plus the **coordinator** that
 supervises agent CLIs. The **gateway** routes inference + actions to **embedded
 ollama**, an **external ollama**, or **BYOK cloud models** (Anthropic · OpenAI ·
-Google · …). The coordinator publishes filtered status through the **zero-knowledge
-relay** to the **mobile / pad Relay app**. The **Dōjō** (service + web console)
-runs **in-house or as SaaS**; the daemon reaches it pull-only, preview-always. The
-**website** is the public front door.
+Google · …). The **Dōjō** (service + web console) runs **in-house or as SaaS** as a
+**responsive PWA**; the daemon reaches it pull-only + preview-always for knowledge,
+and **reuses that same outbound line for Relay** — publishing filtered status over
+**realtime** (zero-knowledge) so a phone / PWA reaches a live session *through* the
+Dōjō, no pairing (native wrapper + Web Push for when you're away). The **website**
+is the public front door.
 
 ## The layers
 
@@ -85,7 +87,7 @@ Each links to its detailed design. The order is data-up (foundation first).
 | **mcp** | [`mcp.md`](mcp.md) | context server — the tools an assistant calls mid-task | the core loop's *deliver* step |
 | **marketplace** | [`marketplace.md`](marketplace.md) | skills · commands · plugins · agents (hooks, phase chains, mindsets) | capture + delivery into the assistant |
 | **dojo** | [`dojo.md`](dojo.md) | the SaaS console + `dojo-mind` service — memberships, contribute/triage/distribute, anonymization | DJ1–DJ5, theme 5 |
-| **relay** | [`relay.md`](relay.md) | coordinator (supervise agent CLIs + run the plan) · zero-knowledge relay · mobile companion · the modular planner | R1–R8 |
+| **relay** | [`relay.md`](relay.md) → folded into [`dojo.md`](dojo.md#relay--through-the-dōjō) | the daemon coordinator + the away-from-keyboard surface *through the Dōjō* (realtime · PWA + push · relay data model) | R1–R8 |
 | **website** | [`website.md`](website.md) | marketing site + docs surface | adoption |
 
 ## Cross-cutting concerns

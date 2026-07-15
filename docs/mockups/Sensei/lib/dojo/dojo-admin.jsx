@@ -11,15 +11,17 @@ const ADMIN_NAV = [
     { id: "overview", kanji: "全", label: "Overview" },
     { id: "monitor",  kanji: "観", label: "Monitor" },
   ]},
-  { group: "Org", items: [
+  { group: "Org · manage", manage: true, items: [
+    { id: "governance", kanji: "掟", label: "Governance" },
     { id: "members", kanji: "任", label: "Members & roles" },
     { id: "scopes",  kanji: "規", label: "Scopes & policies" },
+    { id: "billing", kanji: "円", label: "Plan & billing" },
   ]},
 ];
-const ADMIN_SECTIONS = ["overview", "monitor", "members", "scopes"];
+const ADMIN_SECTIONS = ["overview", "monitor", "members", "scopes", "governance", "billing"];
 
 /* ─── Overview ───────────────────────────────────────────── */
-function DojoOverview({ go }) {
+function DojoOverview({ go, mobile = false }) {
   const D = window.DOJO, m = D.metrics;
   const published = [
     { kanji: "守", title: "Never log refresh tokens", scope: "Company", adoption: 0.92, delta: 6, status: "active" },
@@ -42,14 +44,14 @@ function DojoOverview({ go }) {
   );
   return (
     <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", background: "var(--paper)" }}>
-      <DojoHead kanji="全" eyebrow="Acme Corp · Dōjō" title="The shared mind, governed."
+      <DojoHead mobile={mobile} kanji="全" eyebrow="Acme Corp · Dōjō" title="The shared mind, governed."
         sub="What your org has learned — triaged, approved, and routed to the scopes that need it."
         right={<div style={{ textAlign: "right", fontSize: 11, color: "var(--ink-3)", fontFamily: "var(--font-mono)", lineHeight: 1.7 }}>
           <div>{D.org.scopes} scopes · {D.org.repos} repos</div>
           <div style={{ color: "var(--success)" }}>{m.incidents} confidentiality incidents</div>
         </div>} />
-      <div style={{ flex: 1, overflow: "auto", padding: 28 }}>
-        <div style={{ display: "flex", gap: 14 }}>
+      <div style={{ flex: 1, overflow: "auto", padding: mobile ? 16 : 28 }}>
+        <div style={{ display: "flex", flexDirection: mobile ? "column" : "row", gap: 14 }}>
           <Metric kanji="門" label="Pending triage" value={m.pendingTriage} sub="across 4 scopes · oldest 3d">
             <span className="mono" style={{ fontSize: 11, color: "var(--accent)" }}>maintainers →</span>
           </Metric>
@@ -61,7 +63,7 @@ function DojoOverview({ go }) {
             <Sparkline data={m.ftrSpark} width={92} height={30} color="var(--success)" />
           </Metric>
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 18, marginTop: 18 }}>
+        <div style={{ display: "grid", gridTemplateColumns: mobile ? "1fr" : "1.4fr 1fr", gap: 18, marginTop: 18 }}>
           <div style={{ background: "var(--paper-2)", border: "var(--hairline)", borderRadius: 12, overflow: "hidden" }}>
             <div style={{ display: "flex", alignItems: "center", padding: "13px 16px", borderBottom: "var(--hairline)" }}>
               <span style={{ fontSize: 11, letterSpacing: ".14em", textTransform: "uppercase", color: "var(--ink-3)" }}>Top of the triage queue</span>
@@ -120,7 +122,7 @@ function DojoOverview({ go }) {
             <span style={{ fontSize: 11, letterSpacing: ".14em", textTransform: "uppercase", color: "var(--ink-3)", fontWeight: 600 }}>Published · adoption &amp; health</span>
             <span className="mono" style={{ fontSize: 11, color: "var(--ink-4)", marginLeft: 10 }}>the Impact loop, scoped to the org</span>
           </div>
-          <div style={{ background: "var(--paper-2)", border: "var(--hairline)", borderRadius: 12, overflow: "hidden" }}>
+          <div style={{ background: "var(--paper-2)", border: "var(--hairline)", borderRadius: 12, overflow: "hidden", overflowX: mobile ? "auto" : "hidden" }}>
             {published.map((p, i) => {
               const neg = p.delta < 0;
               return (
@@ -429,17 +431,19 @@ function DojoScopes() {
 }
 
 /* ─── the admin console ──────────────────────────────────── */
-function DojoAdminConsole({ initial = "overview" }) {
+function DojoAdminConsole({ initial = "overview", mobile = false, relayStart = null }) {
   const [active, setActive] = daS(initial);
   const go = (s) => { if (ADMIN_SECTIONS.includes(s)) setActive(s); };
   let screen;
   if (active === "monitor") screen = <DojoMonitor go={go} />;
   else if (active === "members") screen = <DojoMembers />;
   else if (active === "scopes") screen = <DojoScopes />;
-  else screen = <DojoOverview go={go} />;
+  else if (active === "governance") screen = <DojoGovernance />;
+  else if (active === "billing") screen = <DojoBilling />;
+  else screen = <DojoOverview go={go} mobile={mobile} />;
   return (
     <DojoRoleShell label="Dōjō · Admin console" role={{ kanji: "長", label: "Org admin" }}
-      nav={ADMIN_NAV} active={active} setActive={setActive}>
+      nav={ADMIN_NAV} active={active} setActive={setActive} mobile={mobile} relayStart={relayStart}>
       {screen}
     </DojoRoleShell>
   );

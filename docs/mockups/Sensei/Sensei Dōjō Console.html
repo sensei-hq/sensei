@@ -17,12 +17,47 @@
     })();
   </script>
   <style>
-    html, body { margin: 0; padding: 0; height: 100%; background: #f0eee9; font-family: 'Inter', system-ui, sans-serif; }
+    html, body { margin: 0; padding: 0; height: 100%; background: var(--paper, #f0eee9); font-family: 'Inter', system-ui, sans-serif; }
     #root { height: 100vh; }
+    /* dark-mode tweak control */
+    #theme-tweak {
+      position: fixed; top: 14px; right: 14px; z-index: 9999;
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 8px 13px; border-radius: 999px; cursor: pointer;
+      background: var(--paper-2); color: var(--ink-2);
+      border: 1px solid var(--paper-edge);
+      font: 500 12.5px 'Inter', system-ui, sans-serif;
+      box-shadow: 0 1px 3px rgba(0,0,0,.08);
+    }
+    #theme-tweak .kanji { font-size: 13px; color: var(--accent); }
   </style>
 </head>
 <body>
+  <button id="theme-tweak" type="button" aria-pressed="false">
+    <span class="kanji">夜</span><span id="theme-tweak-label">Dark mode</span>
+  </button>
   <div id="root"></div>
+
+  <script>
+    (function(){
+      const KEY = 'sensei-dojo-theme';
+      const btn = document.getElementById('theme-tweak');
+      const label = document.getElementById('theme-tweak-label');
+      function apply(dark){
+        document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+        btn.setAttribute('aria-pressed', String(dark));
+        btn.querySelector('.kanji').textContent = dark ? '昼' : '夜';
+        label.textContent = dark ? 'Light mode' : 'Dark mode';
+      }
+      let dark = localStorage.getItem(KEY) === 'dark';
+      apply(dark);
+      btn.addEventListener('click', function(){
+        dark = !dark;
+        localStorage.setItem(KEY, dark ? 'dark' : 'light');
+        apply(dark);
+      });
+    })();
+  </script>
 
   <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
   <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
@@ -31,11 +66,16 @@
   <script type="text/babel" src="lib/shared/design-canvas.jsx"></script>
   <script type="text/babel" src="lib/shared/primitives.jsx"></script>
   <script src="lib/data/dojo-data.js"></script>
+  <script src="lib/data/extensions-data.js"></script>
   <script type="text/babel" src="lib/dojo/dojo-shared.jsx"></script>
   <script type="text/babel" src="lib/dojo/dojo-admin.jsx"></script>
+  <script type="text/babel" src="lib/dojo/dojo-governance.jsx"></script>
+  <script type="text/babel" src="lib/dojo/dojo-billing.jsx"></script>
   <script type="text/babel" src="lib/dojo/dojo-maintainer.jsx"></script>
+  <script type="text/babel" src="lib/dojo/dojo-extensions.jsx"></script>
   <script type="text/babel" src="lib/dojo/dojo-lead.jsx"></script>
   <script type="text/babel" src="lib/dojo/dojo-developer.jsx"></script>
+  <script type="text/babel" src="lib/dojo/dojo-relay.jsx"></script>
   <script type="text/babel" src="lib/dojo/dojo-saas.jsx"></script>
 
   <script type="text/babel" data-presets="env,react">
@@ -46,12 +86,18 @@
         <DesignCanvas initialZoom={0.5}>
           <DCSection id="dojo-saas"
                      title="Dōjō · SaaS entry"
-                     subtitle="Now that Dōjō has a hosted SaaS (dojo.sensei-hq.com) alongside optional self-hosted servers, two screens precede the console: a welcome-back / sign-in page with insight into the org's shared mind, and the multi-org picker. GitHub is the primary login; the same sign-in works for self-hosted Dōjōs.">
+                     subtitle="Now that Dōjō has a hosted SaaS (dojo.sensei-hq.com) alongside optional self-hosted servers, the pre-console moments: a welcome-back / sign-in page, the multi-org picker for returning members, and — for a brand-new user who belongs to nothing yet — the empty state and the create-a-Dōjō flow (name it, choose hosting, decide who joins). GitHub is the primary login; the same sign-in works for self-hosted Dōjōs.">
             <DCArtboard id="saas-signin" label="★ Welcome back · sign in" width={W} height={H}>
               <DojoSignIn/>
             </DCArtboard>
             <DCArtboard id="saas-orgs" label="★ Your organizations · multi-membership" width={W} height={H}>
               <DojoOrgs/>
+            </DCArtboard>
+            <DCArtboard id="saas-empty" label="★ First time · no Dōjōs yet" width={W} height={H}>
+              <DojoOrgsEmpty/>
+            </DCArtboard>
+            <DCArtboard id="saas-create" label="★ Create a Dōjō · name · hosting · who joins" width={W} height={H}>
+              <DojoCreate/>
             </DCArtboard>
           </DCSection>
 
@@ -61,14 +107,83 @@
             <DCArtboard id="admin" label="★ Admin console · Overview · Monitor · Members · Scopes" width={W} height={H}>
               <DojoAdminConsole initial="overview"/>
             </DCArtboard>
+            <DCArtboard id="governance" label="★ Governance · define rules · skills · agents · memory per scope" width={W} height={H}>
+              <DojoAdminConsole initial="governance"/>
+            </DCArtboard>
+            <DCArtboard id="billing" label="★ Plan & billing · free public/personal · paid team · Relay tiering" width={W} height={H}>
+              <DojoAdminConsole initial="billing"/>
+            </DCArtboard>
             <DCArtboard id="maintainer" label="★ Maintainer console · Triage → Candidate · Knowledge" width={W} height={H}>
               <DojoMaintainerConsole initial="triage"/>
+            </DCArtboard>
+            <DCArtboard id="catalog" label="★ Extensions catalog · team-shared skills · agents · commands" width={W} height={H}>
+              <DojoMaintainerConsole initial="catalog"/>
             </DCArtboard>
             <DCArtboard id="lead" label="★ Lead console · Clients · Audit" width={W} height={H}>
               <DojoLeadConsole initial="clients"/>
             </DCArtboard>
             <DCArtboard id="developer" label="★ Developer console · My teams · Contributions · For me" width={W} height={H}>
               <DojoDeveloperConsole initial="teams"/>
+            </DCArtboard>
+          </DCSection>
+
+          <DCSection id="dojo-relay-desktop"
+                     title="Dōjō · Relay in the console"
+                     subtitle="Relay isn't mobile-only. Every role's console now carries a “Relay · you” group at the top of the rail — Projects · Inbox · Chat — the same features as the phone, laid out wide. Per-user across all your Dōjōs; the daemon's live line to the Dōjō service (Supabase realtime) is what makes it current. Same information architecture as the mobile tabs, so the two stay consistent.">
+            <DCArtboard id="r-projects" label="★ Relay · Projects — active work across all your Dōjōs" width={W} height={H}>
+              <DojoDeveloperConsole relayStart="projects"/>
+            </DCArtboard>
+            <DCArtboard id="r-inbox" label="★ Relay · Inbox — two-pane: queue + approve/decide" width={W} height={H}>
+              <DojoDeveloperConsole relayStart="inbox"/>
+            </DCArtboard>
+            <DCArtboard id="r-watch" label="Relay · Watch progress — phases + activity" width={W} height={H}>
+              <DojoDeveloperConsole relayStart="watch"/>
+            </DCArtboard>
+            <DCArtboard id="r-chat" label="Relay · Chat with a running session" width={W} height={H}>
+              <DojoAdminConsole relayStart="chat"/>
+            </DCArtboard>
+          </DCSection>
+
+          <DCSection id="dojo-mobile"
+                     title="Dōjō · Mobile — Relay, folded in"
+                     subtitle="The Dōjō is responsive, so it opens on a phone — and that's where Relay now lives. The local daemon holds a live connection to the Dōjō service (Supabase realtime), so your phone reaches a running session through the Dōjō: no device pairing, no separate install (the native app coexists for push + offline). Home is role-agnostic and per-user — every project running for you, across every Dōjō. The five away-from-keyboard moments: watch progress, approve a gated command, answer a decision, nudge a stalled track, and chat back mid-session.">
+            <DCArtboard id="m-projects" label="★ Home · active projects across all your Dōjōs" width={390} height={844}>
+              <DojoMobileProjects/>
+            </DCArtboard>
+            <DCArtboard id="m-inbox" label="Inbox · decisions + approvals + nudges" width={390} height={844}>
+              <DojoMobileInbox/>
+            </DCArtboard>
+            <DCArtboard id="m-project" label="★ Watch progress · phases + activity + log" width={390} height={844}>
+              <DojoMobileProject/>
+            </DCArtboard>
+            <DCArtboard id="m-approve" label="★ Approve a gated action · the exact command" width={390} height={844}>
+              <DojoMobileApprove/>
+            </DCArtboard>
+            <DCArtboard id="m-decision" label="Decision · 3–4 options + type your own" width={390} height={844}>
+              <DojoMobileDecision/>
+            </DCArtboard>
+            <DCArtboard id="m-chat" label="Chat back to sensei · mid-session" width={390} height={844}>
+              <DojoMobileChat/>
+            </DCArtboard>
+            <DCArtboard id="m-more" label="More · consoles + switch Dōjō on mobile" width={390} height={844}>
+              <DojoMobileMore/>
+            </DCArtboard>
+            <DCArtboard id="m-connect" label="★ How Relay works now · through your Dōjō (realtime)" width={390} height={844}>
+              <DojoMobileConnect/>
+            </DCArtboard>
+          </DCSection>
+
+          <DCSection id="dojo-mobile-consoles"
+                     title="Dōjō · Consoles on a phone"
+                     subtitle="Everything responsive — the governance consoles adapt to a phone too, not just the Relay surfaces. The dense side-rail collapses to a bottom tab bar; the top bar condenses to org + role + a live pill. Same panels, reachable on the go.">
+            <DCArtboard id="mc-admin" label="Admin console · mobile" width={390} height={844}>
+              <DojoAdminConsole initial="overview" mobile/>
+            </DCArtboard>
+            <DCArtboard id="mc-maintainer" label="Maintainer console · mobile" width={390} height={844}>
+              <DojoMaintainerConsole initial="triage" mobile/>
+            </DCArtboard>
+            <DCArtboard id="mc-developer" label="Developer console · mobile" width={390} height={844}>
+              <DojoDeveloperConsole initial="teams" mobile/>
             </DCArtboard>
           </DCSection>
 
