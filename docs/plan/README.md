@@ -30,7 +30,7 @@ flowchart LR
 |---|---|
 | **UI** | 25 shipped · 2 partial · 10 not-built · 4 Dōjō-web. Observatory + project window essentially complete. |
 | **Daemon** | capture/analyzer/FTR/patterns/signals/insight-copy/libraries/icons all **producing fresh**. Loop-closing + promotion + drift-quality are the holes. |
-| **MCP** | core loop ~80% real; 2 silent-empty bugs; semantic search unbuilt. |
+| **MCP** | core loop real; G5a/G5b silent-empty bugs FIXED; hybrid semantic `search` + `context_pack` DONE (G4). *(2026-07-15)* |
 | **Docs** | spec is the real SoT but README points elsewhere; Dōjō scattered; being restructured (this folder). |
 
 ## Ranked gaps
