@@ -19,8 +19,16 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     let start = Instant::now();
     let emit = |evt: StateEvent| { let _ = ctx.app_state.event_tx.send(evt); };
 
+    // Excluded path prefixes (e.g. an archive dir the user never wants indexed).
+    // Filter the discovered set so excluded subtrees are never classified as
+    // projects; the watcher gets the same list so it ignores changes there.
+    let exclusions = ctx.pg().get_scan_exclusions().await;
+
     // 1. Find all git folders
-    let git_folders = scan_logic::find_git_folders(root, 3);
+    let git_folders: Vec<_> = scan_logic::find_git_folders(root, 3)
+        .into_iter()
+        .filter(|p| !scan_logic::is_excluded(p, &exclusions))
+        .collect();
 
     // Emit discover activity per git folder
     for gf in &git_folders {
@@ -33,7 +41,10 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
 
     // 2. Classify into project roots: git repos + quasi-repos (non-git project
     //    roots that contain indexable code). Subfolders are never promoted.
-    let all_dirs = scan_logic::all_directories(root, 3);
+    let all_dirs: Vec<_> = scan_logic::all_directories(root, 3)
+        .into_iter()
+        .filter(|p| !scan_logic::is_excluded(p, &exclusions))
+        .collect();
     let classified = scan_logic::classify_folders(
         root, &git_folders, &all_dirs, scan_logic::has_indexable_code,
     );
@@ -129,7 +140,7 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     {
         let watcher = crate::watcher::root_watcher::RootWatcher::instance(ctx.queue.clone());
         match watcher.lock() {
-            Ok(mut w) => w.register(std::path::PathBuf::from(&task.path), vec![]),
+            Ok(mut w) => w.register(std::path::PathBuf::from(&task.path), exclusions.clone()),
             Err(e) => tracing::warn!(error = %e, path = %task.path, "scan_root: RootWatcher lock poisoned, watch root not registered"),
         }
     }
@@ -538,6 +549,9 @@ mod tests {
         // / artifact is deleted; a project with a folder + nodes is kept.
         let ctx = make_ctx().await;
         let phantom = ctx.pg().create_project("phantom-crate", None, None).await.unwrap();
+        // Age it past the mid-population grace window so the prune can see it.
+        sqlx_core::query::query("UPDATE sensei.projects SET modified_at = now() - interval '2 minutes' WHERE id=$1")
+            .bind(phantom).execute(ctx.pg().pool()).await.unwrap();
 
         let tmp = tempfile::tempdir().unwrap();
         let root_id = ctx.pg().add_watch_root(&tmp.path().to_string_lossy(), "pp", &serde_json::json!([])).await.unwrap();
@@ -554,6 +568,35 @@ mod tests {
         let (live_alive,): (i64,) = sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.projects WHERE id=$1")
             .bind(live).fetch_one(ctx.pg().pool()).await.unwrap();
         assert_eq!(live_alive, 1, "populated project kept");
+    }
+
+    #[tokio::test]
+    async fn scan_root_skips_excluded_subtree() {
+        // Exclusion path: a git repo under an excluded prefix is never
+        // classified as a project → no ProcessGitFolder enqueued for it, while a
+        // repo outside the prefix is still processed.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("keep/.git")).unwrap();
+        std::fs::write(root.join("keep/Cargo.toml"), "[package]\nname=\"keep\"").unwrap();
+        std::fs::create_dir_all(root.join("Archive/skipme/.git")).unwrap();
+        std::fs::write(root.join("Archive/skipme/Cargo.toml"), "[package]\nname=\"skipme\"").unwrap();
+
+        let ctx = make_ctx().await;
+        let excl = root.join("Archive").to_string_lossy().to_string();
+        ctx.pg().add_scan_exclusion(&excl).await.unwrap();
+
+        let task = Task::new(TaskKind::ScanRoot, "", &root.to_string_lossy());
+        scan_root(&ctx, &task).await.unwrap();
+
+        let pgf: Vec<String> = ctx.queue.snapshot().await.into_iter()
+            .filter(|(k, _, _)| *k == TaskKind::ProcessGitFolder)
+            .map(|(_, _, path)| path)
+            .collect();
+        assert!(pgf.iter().any(|p| p.ends_with("/keep")), "kept repo enqueued, got {pgf:?}");
+        assert!(!pgf.iter().any(|p| p.contains("/skipme")), "excluded repo NOT enqueued, got {pgf:?}");
+
+        ctx.pg().remove_scan_exclusion(&excl).await.unwrap(); // clean the shared key
     }
 
     #[tokio::test]

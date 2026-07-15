@@ -134,19 +134,53 @@ pub(crate) async fn exclude_project(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
+/// Persistent scan-exclusion path prefixes. A folder at or under an excluded
+/// prefix is never classified as a project and is pruned. Stored in
+/// `config['scan_exclusions']`.
 pub(crate) async fn list_exclusions(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
 ) -> Json<serde_json::Value> {
-    // Exclusions are now handled by the watcher layer; no persistent exclusions table.
-    Json(serde_json::json!({ "exclusions": [] }))
+    Json(serde_json::json!({ "exclusions": state.pg.get_scan_exclusions().await }))
 }
 
-pub(crate) async fn remove_exclusion(
-    State(_state): State<AppState>,
-    Path(_path): Path<String>,
+#[derive(Deserialize)]
+pub(crate) struct ExclusionBody {
+    pub path: String,
+}
+
+/// Add an exclusion prefix, prune the excluded subtree immediately, and drop any
+/// projects left empty. Future scans skip the prefix.
+pub(crate) async fn add_exclusion(
+    State(state): State<AppState>,
+    Json(body): Json<ExclusionBody>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    // Exclusions are now handled by the watcher layer; no persistent exclusions table.
-    Ok(Json(serde_json::json!({"ok": true})))
+    let path = expand_tilde(body.path.trim());
+    if path.is_empty() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let exclusions = state.pg.add_scan_exclusion(&path).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let pruned_folders = state.pg.prune_under_prefix(&path).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let pruned_projects = state.pg.prune_empty_projects().await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "exclusions": exclusions,
+        "prunedFolders": pruned_folders,
+        "prunedProjects": pruned_projects,
+    })))
+}
+
+/// Remove an exclusion prefix. Does not re-scan; the next scan re-discovers it.
+pub(crate) async fn remove_exclusion(
+    State(state): State<AppState>,
+    Json(body): Json<ExclusionBody>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let path = expand_tilde(body.path.trim());
+    let exclusions = state.pg.remove_scan_exclusion(&path).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(serde_json::json!({"ok": true, "exclusions": exclusions})))
 }
 
 // ── Project Tags ────────────────────────────────────────────────────────────

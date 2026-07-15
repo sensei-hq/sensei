@@ -66,9 +66,12 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/repos/{repo_id}/tags/{tag}", delete(workspace::remove_project_tag))
         .route("/api/repos/{repo_id}/summary", get(observatory::project_summary))
         .route("/api/repos/{repo_id}/exclude", post(workspace::exclude_project))
-        // Exclusions
-        .route("/api/exclusions", get(workspace::list_exclusions))
-        .route("/api/exclusions/{path}", delete(workspace::remove_exclusion))
+        // Exclusions — persistent scan-exclusion path prefixes (config-backed).
+        // Body-based because an exclusion is an absolute path (slashes don't fit
+        // a single URL segment). POST adds + prunes the subtree; DELETE removes.
+        .route("/api/exclusions", get(workspace::list_exclusions)
+            .post(workspace::add_exclusion)
+            .delete(workspace::remove_exclusion))
         // Projects (groups of 1+ repos)
         .route("/api/projects", get(observatory::list_solutions).post(observatory::create_solution))
         .route("/api/projects/merge", post(observatory::merge_projects))
