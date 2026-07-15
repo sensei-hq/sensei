@@ -4912,20 +4912,26 @@ impl PgStore {
     /// reconciled away (pre-#101 residue: names like `logger`, `senseid`,
     /// `gateway-embedded`). `mark_orphaned_projects` only tags them; this removes
     /// the provably-empty ones so they never reach the UI. A project mid-scan has
-    /// its git/standalone folder already, so it never matches. The 1-minute grace
-    /// on `modified_at` protects a project just created but whose folder is still
-    /// being attached in a concurrent step (a real mid-population window, not only
-    /// a test artifact); phantoms are old, so they still prune. Returns rows deleted.
-    pub async fn prune_empty_projects(&self) -> Result<u64, String> {
+    /// its git/standalone folder already, so it never matches.
+    ///
+    /// `grace_secs` guards `modified_at`: scan reconcile passes 60 so a project
+    /// just created but whose folder is still being attached in a concurrent step
+    /// isn't deleted mid-population (also fixes a shared-test-DB FK race). A
+    /// *deliberate* caller — the exclusion handler, which already deleted the
+    /// subtree's folders — passes 0: those projects are provably orphaned, not
+    /// in-flight, and a boot re-scan may have freshly bumped their `modified_at`.
+    /// Returns rows deleted.
+    pub async fn prune_empty_projects(&self, grace_secs: i32) -> Result<u64, String> {
         let res = sqlx_core::query::query(
             "DELETE FROM sensei.projects p
               WHERE p.maturity = 'discovery'
-                AND p.modified_at < now() - interval '1 minute'
+                AND p.modified_at < now() - make_interval(secs => $1)
                 AND NOT EXISTS (SELECT 1 FROM sensei.folders f        WHERE f.project_id = p.id)
                 AND NOT EXISTS (SELECT 1 FROM activity.sessions s     WHERE s.project_id = p.id)
                 AND NOT EXISTS (SELECT 1 FROM inference.recommendations r WHERE r.project_id = p.id)
                 AND NOT EXISTS (SELECT 1 FROM sensei.memories m       WHERE m.project_id = p.id)",
         )
+        .bind(grace_secs)
         .execute(&self.pool)
         .await
         .map_err(|e| e.to_string())?;
@@ -8279,6 +8285,22 @@ mod tests {
         }
         // cleanup
         s.prune_under_prefix(&root_path).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn prune_empty_projects_grace_protects_fresh() {
+        // A just-created empty `discovery` project must survive a grace>0 prune —
+        // its folder may still be attaching in a concurrent step. (The grace=0
+        // path is deliberate/global and unsafe to exercise in the shared test DB,
+        // so it's covered by the exclusion handler in production, not here.)
+        let s = pg_store().await;
+        let fresh = s.create_project(&format!("_test:grace-{}", uuid::Uuid::new_v4()), None, None).await.unwrap();
+        s.prune_empty_projects(60).await.unwrap();
+        let (alive,): (i64,) = sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.projects WHERE id=$1")
+            .bind(fresh).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(alive, 1, "grace protects a fresh empty project");
+        // Direct cleanup (not a grace=0 global prune, which would hit sibling tests).
+        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id=$1").bind(fresh).execute(s.pool()).await.unwrap();
     }
 
     /// Create a unique test folder for FK tests. Uses suffix for isolation.
