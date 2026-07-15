@@ -3283,6 +3283,14 @@ impl PgStore {
             {
                 tracing::warn!(error = %e, rec = %rec_id, "measure_pending_verdicts: challenge source memory failed");
             }
+            // Positive mirror: an FTR improvement vindicates the source memory —
+            // reinforce it (bumps reinforced_count/strength, drives the promotion
+            // ladder). Same once-per-rec transition signal; non-fatal.
+            if verdict == crate::verdicts::Verdict::Positive
+                && let Err(e) = self.reinforce_source_memory_for_rec(&rec_id, &based_on).await
+            {
+                tracing::warn!(error = %e, rec = %rec_id, "measure_pending_verdicts: reinforce source memory failed");
+            }
 
             match trace_id {
                 Some(id) => {
@@ -6436,6 +6444,46 @@ impl PgStore {
         Ok(skipped.is_empty())
     }
 
+    /// Learning-loop feedback (positive side): an accepted rec whose FTR IMPROVED
+    /// after acceptance vindicates the memory that spawned it. Reinforce that
+    /// source memory through the same `memory_outcome` pipeline the challenge path
+    /// uses — recording an `applied` outcome fires the `memory_outcome_apply`
+    /// trigger, which bumps `reinforced_count`, raises `strength`, and drives the
+    /// promotion ladder (active → reinforced → battle_tested). This is the bridge
+    /// that lets a proven recommendation promote its memory (closes G1→G2). Fires
+    /// at most once per rec (idempotency marker). Mirror of
+    /// [`Self::challenge_source_memory_for_rec`].
+    pub async fn reinforce_source_memory_for_rec(
+        &self, rec_id: &uuid::Uuid, based_on_json: &str,
+    ) -> Result<bool, String> {
+        // A missing/empty/non-uuid `patterns[0]` → manual rec / no provenance → no-op.
+        let Some(pattern_id) = Self::based_on_first_pattern(based_on_json) else {
+            return Ok(false);
+        };
+        let Some(memory_id) = self.memory_id_by_source(&pattern_id).await? else {
+            return Ok(false); // the rec's pattern never spawned a memory
+        };
+        let marker = format!("rec:{rec_id} confirmed");
+        // Idempotency guard: skip if this rec already reinforced this memory.
+        let already: (bool,) = sqlx_core::query_as::query_as(
+            "SELECT EXISTS(SELECT 1 FROM sensei.memory_outcomes
+                            WHERE memory_id = $1 AND outcome = 'applied' AND context = $2)"
+        ).bind(memory_id).bind(&marker).fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        if already.0 {
+            return Ok(false);
+        }
+        // The memory_outcome_apply trigger applies strength += 0.5 (capped 5.0),
+        // reinforced_count += 1, and promotes to battle_tested at strength >= 4.0
+        // with violated_count = 0.
+        let skipped = self.record_outcomes_batch(&[OutcomeRow {
+            memory_id,
+            session_id: None,
+            outcome: "applied".to_string(),
+            context: Some(marker),
+        }]).await?;
+        Ok(skipped.is_empty())
+    }
+
     /// Promote a proven memory to a higher (broader) scope: copy it as a
     /// `proposed` memory on `target_namespace_id` with `origin='promoted'` and
     /// `source_id` pointing back at the original. The copy lands in the triage
@@ -9210,6 +9258,38 @@ mod tests {
         assert_eq!(violated_count(&s, &mem_id).await, 1, "still exactly one violation");
         let m2 = s.get_memory(&mem_id).await.unwrap().unwrap();
         assert!((m2["strength"].as_f64().unwrap() - 2.3).abs() < 1e-6, "strength did not drop again");
+
+        cleanup_regressed_fixture(&s, &proj_id).await;
+    }
+
+    #[tokio::test]
+    async fn reinforce_source_memory_for_rec_bumps_promotes_and_is_idempotent() {
+        // The G1→G2 bridge: a positive verdict reinforces the source memory via an
+        // `applied` outcome, and the memory_outcome_apply trigger promotes it up
+        // the ladder. Seed strength 3.6 (active) → one applied → 4.1 (≥4.0, no
+        // violations) → battle_tested. Second call for the same rec is a no-op.
+        let s = pg_store().await;
+        let suffix = format!("reinforce_{}", uuid::Uuid::new_v4());
+        let (proj_id, _fid, pat_id, mem_id) = seed_pattern_and_sourced_memory(&s, &suffix, 2.6).await;
+        let based_on = serde_json::json!({ "patterns": [pat_id] }).to_string();
+        let rec_id = uuid::Uuid::new_v4();
+
+        let (before,): (i64,) = sqlx_core::query_as::query_as("SELECT reinforced_count::bigint FROM sensei.memories WHERE id=$1")
+            .bind(mem_id).fetch_one(s.pool()).await.unwrap();
+
+        assert!(s.reinforce_source_memory_for_rec(&rec_id, &based_on).await.unwrap(), "first reinforce records an applied outcome");
+        let (strength, status, count): (f64, String, i64) = sqlx_core::query_as::query_as(
+            "SELECT strength::float8, status::text, reinforced_count::bigint FROM sensei.memories WHERE id=$1"
+        ).bind(mem_id).fetch_one(s.pool()).await.unwrap();
+        assert!((strength - 4.1).abs() < 1e-6, "strength 3.6→4.1, got {strength}");
+        assert_eq!(status, "battle_tested", "promoted once strength >= 4.0 with no violations");
+        assert_eq!(count, before + 1, "reinforced_count bumped once");
+
+        // Same rec again → no-op (idempotency marker), count unchanged.
+        assert!(!s.reinforce_source_memory_for_rec(&rec_id, &based_on).await.unwrap(), "second reinforce for same rec is a no-op");
+        let (count2,): (i64,) = sqlx_core::query_as::query_as("SELECT reinforced_count::bigint FROM sensei.memories WHERE id=$1")
+            .bind(mem_id).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(count2, before + 1, "reinforced_count unchanged on idempotent re-run");
 
         cleanup_regressed_fixture(&s, &proj_id).await;
     }
