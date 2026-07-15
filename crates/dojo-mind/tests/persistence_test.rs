@@ -28,7 +28,7 @@ async fn a_persisted_cluster_reopens_after_the_db_is_dropped() {
     // First boot: fresh initdb (with the pinned password), deploy, then insert
     // a row so we can prove the data survives — not just that connect works.
     {
-        let db = DojoDb::bootstrap(data_dir.clone(), db_dir.clone())
+        let db = DojoDb::bootstrap(None, data_dir.clone(), db_dir.clone())
             .await
             .expect("first bootstrap should initialise the cluster");
         sqlx_core::query::query(
@@ -44,7 +44,7 @@ async fn a_persisted_cluster_reopens_after_the_db_is_dropped() {
     // Second boot over the SAME data dir: this is the regression — it must
     // REOPEN (pinned password matches what initdb baked in), and the earlier
     // row must still be there.
-    let db2 = DojoDb::bootstrap(data_dir.clone(), db_dir.clone())
+    let db2 = DojoDb::bootstrap(None, data_dir.clone(), db_dir.clone())
         .await
         .expect("second bootstrap must reopen the persisted cluster (pinned password)");
     let (n,): (i64,) = sqlx_core::query_as::query_as(

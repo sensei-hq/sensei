@@ -45,7 +45,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into())).init();
     let cli = Cli::parse();
     let cfg = DojoConfig::from_env().map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
-    let db = DojoDb::bootstrap(cfg.data_dir.clone(), cfg.database_dir.clone()).await?;
+    let db = DojoDb::bootstrap(cfg.supabase_db_url.clone(), cfg.data_dir.clone(), cfg.database_dir.clone()).await?;
     let store = DojoStore::new(db.pool().clone());
     match cli.cmd.unwrap_or(Cmd::Serve) {
         Cmd::Keygen { name, role, label } => {
