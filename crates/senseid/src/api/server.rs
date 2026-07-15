@@ -383,6 +383,9 @@ async fn spawn_root_watchers(state: &Arc<SharedState>, queue: Arc<TaskQueue>) {
         let watcher = crate::watcher::root_watcher::RootWatcher::instance(queue);
         match watcher.lock() {
             Ok(mut w) => {
+                // Give the watcher a DB handle so its loop can resolve each changed
+                // file to its owning repo (else incremental tasks can't be shaped).
+                w.set_store(state.pg.clone());
                 for (_, root) in &live {
                     w.register(std::path::PathBuf::from(root), vec![]);
                     tracing::info!("Root watcher: registered {}", root);
