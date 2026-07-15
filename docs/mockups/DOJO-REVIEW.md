@@ -1,10 +1,13 @@
 # Dōjō + Relay mockup review — issues & corrections for the designer
 
-> Scope: the 11 `lib/dojo/*.jsx` screens, reviewed after Relay was folded into the
-> Dōjō and the surface became a **responsive SaaS site**. Judged against the
-> **Dōjō journey map** (`Sensei Dōjō Journey Map.html`) and the design-system
-> conventions (`docs/mockups/Sensei/CLAUDE.md`). Each item is an issue + a
+> Scope: the 11 `Sensei/lib/dojo/*.jsx` screens, reviewed after Relay was folded
+> into the Dōjō and the surface became a **responsive SaaS site**. Judged against
+> the **Dōjō journey map** (`Sensei/Sensei Dōjō Journey Map.html`) and the
+> design-system conventions (`Sensei/CLAUDE.md`). Each item is an issue + a
 > concrete fix. Work the priority order in §6.
+>
+> *(Kept at `docs/mockups/` — outside `Sensei/` — so it survives replacing the
+> whole `Sensei/` mockup folder.)*
 
 ---
 
