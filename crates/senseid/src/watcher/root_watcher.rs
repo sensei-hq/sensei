@@ -417,7 +417,17 @@ impl RootWatcher {
         if EXCLUDE_DIRS.iter().any(|d| path_str.contains(&format!("/{}/", d))) {
             return false;
         }
-        if exclusions.iter().any(|d| path_str.contains(&format!("/{}/", d))) {
+        // Two exclusion forms: an absolute path (starts with `/`) is a subtree
+        // prefix; a bare name matches any path segment.
+        let excluded = exclusions.iter().any(|d| {
+            if d.starts_with('/') {
+                let d = d.trim_end_matches('/');
+                path_str == d || path_str.starts_with(&format!("{d}/"))
+            } else {
+                path_str.contains(&format!("/{}/", d))
+            }
+        });
+        if excluded {
             return false;
         }
 
@@ -682,6 +692,16 @@ mod tests {
     #[test]
     fn should_not_watch_custom_exclusion() {
         assert!(!RootWatcher::should_watch_path(&PathBuf::from("/project/vendor/lib.rs"), &["vendor".into()]));
+    }
+
+    #[test]
+    fn should_not_watch_absolute_prefix_exclusion() {
+        // An absolute-path exclusion (starts with `/`) is a subtree prefix, not a
+        // path segment — a file under it is ignored, a sibling sharing the prefix
+        // string is not.
+        let ex = vec!["/Users/x/Developer/Code".to_string()];
+        assert!(!RootWatcher::should_watch_path(&PathBuf::from("/Users/x/Developer/Code/repo/lib.rs"), &ex));
+        assert!(RootWatcher::should_watch_path(&PathBuf::from("/Users/x/Developer/Coder/lib.rs"), &ex));
     }
 
     // ── is_branch_switch ──────────────────────────────────────────────

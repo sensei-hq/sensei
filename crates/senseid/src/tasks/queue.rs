@@ -331,8 +331,8 @@ impl TaskQueue {
             || state.running.values().any(|t| t.kind == kind)
     }
 
-    /// Test-only: a snapshot of every task the queue has seen (pending + blocked
-    /// + running + completed) as `(kind, folder_path, path)`. Lets a test assert
+    /// Test-only: a snapshot of every task the queue has seen (pending, blocked,
+    /// running, completed) as `(kind, folder_path, path)`. Lets a test assert
     /// the enqueue GRAPH — which kinds were enqueued for which owner
     /// (`folder_path`) — so the #101 one-task-one-owner invariant is locked at
     /// the enqueue layer, not just the final DB. A member must never appear as

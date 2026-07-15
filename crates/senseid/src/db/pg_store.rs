@@ -26,6 +26,23 @@ fn vector_literal(v: &[f32]) -> String {
     buf
 }
 
+/// Insert an exclusion prefix into `list`: trailing slash normalized, deduped,
+/// kept sorted. Empty paths are ignored. Pure so it can be unit-tested without
+/// touching the shared `config['scan_exclusions']` row.
+fn push_exclusion(list: &mut Vec<String>, path: &str) {
+    let p = path.trim_end_matches('/').to_string();
+    if !p.is_empty() && !list.contains(&p) {
+        list.push(p);
+        list.sort();
+    }
+}
+
+/// Remove an exclusion prefix from `list` (trailing slash tolerated).
+fn drop_exclusion(list: Vec<String>, path: &str) -> Vec<String> {
+    let p = path.trim_end_matches('/');
+    list.into_iter().filter(|e| e != p).collect()
+}
+
 /// Valid `projects.maturity` lifecycle values — mirrors the
 /// `sensei.project_maturity` enum in
 /// `database/ddl/enum/sensei/project_maturity.ddl`. Used to reject an unknown
@@ -303,6 +320,50 @@ impl PgStore {
             .await
             .map_err(|e| e.to_string())?;
         Ok(())
+    }
+
+    // ── Scan exclusions ──────────────────────────────────────────────
+    // Absolute path prefixes the scan skips (and prunes). Stored as a JSON
+    // array in config['scan_exclusions'] — no DDL. A folder at or under an
+    // excluded prefix is never classified as a project and is pruned.
+
+    pub async fn get_scan_exclusions(&self) -> Vec<String> {
+        match self.get_config("scan_exclusions").await {
+            Ok(Some(v)) => serde_json::from_str(&v).unwrap_or_default(),
+            _ => vec![],
+        }
+    }
+
+    pub async fn set_scan_exclusions(&self, paths: &[String]) -> Result<(), String> {
+        let json = serde_json::to_string(paths).map_err(|e| e.to_string())?;
+        self.set_config("scan_exclusions", &json).await
+    }
+
+    /// Add an exclusion prefix (idempotent, trailing slash normalized). Returns the full list.
+    pub async fn add_scan_exclusion(&self, path: &str) -> Result<Vec<String>, String> {
+        let mut ex = self.get_scan_exclusions().await;
+        push_exclusion(&mut ex, path);
+        self.set_scan_exclusions(&ex).await?;
+        Ok(ex)
+    }
+
+    pub async fn remove_scan_exclusion(&self, path: &str) -> Result<Vec<String>, String> {
+        let ex = drop_exclusion(self.get_scan_exclusions().await, path);
+        self.set_scan_exclusions(&ex).await?;
+        Ok(ex)
+    }
+
+    /// Delete every folder at or under `prefix` (cascade nodes/edges/scan_state).
+    /// Used when an exclusion is added; the emptied projects are then removed by
+    /// [`Self::prune_empty_projects`]. `starts_with` is exact-prefix (no LIKE
+    /// wildcard hazard). Returns folders deleted.
+    pub async fn prune_under_prefix(&self, prefix: &str) -> Result<u64, String> {
+        let p = prefix.trim_end_matches('/');
+        let res = sqlx_core::query::query(
+            "DELETE FROM sensei.folders f
+              WHERE f.abs_path = $1 OR starts_with(f.abs_path, $1 || '/')",
+        ).bind(p).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(res.rows_affected())
     }
 
     pub async fn delete_config(&self, key: &str) -> Result<(), String> {
@@ -4851,11 +4912,15 @@ impl PgStore {
     /// reconciled away (pre-#101 residue: names like `logger`, `senseid`,
     /// `gateway-embedded`). `mark_orphaned_projects` only tags them; this removes
     /// the provably-empty ones so they never reach the UI. A project mid-scan has
-    /// its git/standalone folder already, so it never matches. Returns rows deleted.
+    /// its git/standalone folder already, so it never matches. The 1-minute grace
+    /// on `modified_at` protects a project just created but whose folder is still
+    /// being attached in a concurrent step (a real mid-population window, not only
+    /// a test artifact); phantoms are old, so they still prune. Returns rows deleted.
     pub async fn prune_empty_projects(&self) -> Result<u64, String> {
         let res = sqlx_core::query::query(
             "DELETE FROM sensei.projects p
               WHERE p.maturity = 'discovery'
+                AND p.modified_at < now() - interval '1 minute'
                 AND NOT EXISTS (SELECT 1 FROM sensei.folders f        WHERE f.project_id = p.id)
                 AND NOT EXISTS (SELECT 1 FROM activity.sessions s     WHERE s.project_id = p.id)
                 AND NOT EXISTS (SELECT 1 FROM inference.recommendations r WHERE r.project_id = p.id)
@@ -8165,6 +8230,55 @@ mod tests {
         assert_eq!(all[&k2], "2");
         s.delete_config(&k1).await.unwrap();
         s.delete_config(&k2).await.unwrap();
+    }
+
+    // ── Scan exclusions ──────────────────────────────────────────────
+    // The list-mutation logic is pure (no shared `scan_exclusions` row), so
+    // these run without racing other tests on the DB.
+
+    #[test]
+    fn push_exclusion_normalizes_dedupes_sorts() {
+        let mut list = vec![];
+        push_exclusion(&mut list, "/b/two");
+        push_exclusion(&mut list, "/a/one/");   // trailing slash normalized
+        push_exclusion(&mut list, "/b/two");    // duplicate ignored
+        push_exclusion(&mut list, "");          // empty ignored
+        assert_eq!(list, vec!["/a/one".to_string(), "/b/two".to_string()]);
+    }
+
+    #[test]
+    fn drop_exclusion_removes_with_slash_tolerance() {
+        let list = vec!["/a".to_string(), "/b".to_string()];
+        assert_eq!(drop_exclusion(list.clone(), "/a/"), vec!["/b".to_string()]);
+        assert_eq!(drop_exclusion(list, "/missing"), vec!["/a".to_string(), "/b".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn prune_under_prefix_deletes_subtree_keeps_siblings() {
+        // Exclusion prune: every folder at or under the prefix is deleted; a
+        // sibling that only shares the prefix string is kept (boundary-safe).
+        let s = pg_store().await;
+        let uniq = uuid::Uuid::new_v4();
+        let root_path = format!("/_test/prune_prefix/{uniq}");
+        let root_id = s.add_watch_root(&root_path, "prune_prefix_root", &serde_json::json!([])).await.unwrap();
+
+        let code = format!("{root_path}/Code");
+        let inside = format!("{code}/archive/repo");
+        let sibling = format!("{root_path}/Coder"); // shares the "Code" prefix string
+        let code_fid = s.upsert_repo_kind(&root_id, "git", "Code", &code).await.unwrap();
+        s.upsert_repo_kind(&root_id, "git", "repo", &inside).await.unwrap();
+        let sib_fid = s.upsert_repo_kind(&root_id, "git", "Coder", &sibling).await.unwrap();
+
+        let deleted = s.prune_under_prefix(&code).await.unwrap();
+        assert_eq!(deleted, 2, "the prefix folder and its descendant are deleted");
+
+        for (fid, alive, msg) in [(code_fid, 0, "prefix folder deleted"), (sib_fid, 1, "sibling kept")] {
+            let (n,): (i64,) = sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.folders WHERE id=$1")
+                .bind(fid).fetch_one(s.pool()).await.unwrap();
+            assert_eq!(n, alive, "{msg}");
+        }
+        // cleanup
+        s.prune_under_prefix(&root_path).await.unwrap();
     }
 
     /// Create a unique test folder for FK tests. Uses suffix for isolation.
