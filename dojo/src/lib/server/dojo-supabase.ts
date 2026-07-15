@@ -31,9 +31,14 @@ let client: ReturnType<typeof buildClient> | null = null;
 export function dojoDb(): ReturnType<typeof buildClient> {
 	if (client) return client;
 	const url = pub.PUBLIC_SUPABASE_URL;
-	const key = priv.SUPABASE_SERVICE_ROLE_KEY;
+	// The server key: Supabase's new **secret** key (`sb_secret_…`) or the legacy
+	// service_role key — both bypass RLS and drop into createClient the same way.
+	// Accept either env name (SUPABASE_SECRET_KEY is the new convention).
+	const key = priv.SUPABASE_SERVICE_ROLE_KEY || priv.SUPABASE_SECRET_KEY;
 	if (!url || !key) {
-		throw new Error('dojo API: PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set');
+		throw new Error(
+			'dojo API: PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY (or SUPABASE_SECRET_KEY) must be set'
+		);
 	}
 	client = buildClient(url, key);
 	return client;
