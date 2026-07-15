@@ -151,6 +151,25 @@ pub fn extract_mention_from_detail(detail: &str) -> Option<String> {
     if name.is_empty() { None } else { Some(name.to_string()) }
 }
 
+/// Decide whether a doc mention is *broken drift*: it names something that WAS a
+/// real code symbol (present in the ever-seen `symbol_names` registry) but no
+/// longer RESOLVES — it isn't a current symbol or a DB schema identifier
+/// (`known`). A mention that was never a symbol (a Rust enum variant, a
+/// serde-renamed camelCase field, a string-dispatched MCP tool name) is prose or
+/// config, not a broken code reference, so it is NOT drift — the previous
+/// "not in the graph ⇒ drift" rule over-fired ~408 such false positives.
+///
+/// Used for BOTH the insert gate (flag a new mention only when this is true) and
+/// resolution (clear an open row once this is false — the doc got fixed, the code
+/// came back, OR the mention was never a real symbol).
+pub fn is_broken_drift(
+    mention: &str,
+    known: &HashSet<String>,
+    ever_symbols: &HashSet<String>,
+) -> bool {
+    !known.contains(mention) && ever_symbols.contains(mention)
+}
+
 fn is_stopword(token: &str) -> bool {
     matches!(
         token,
@@ -277,6 +296,27 @@ Back to prose: `still_counted`.";
         // e.g. `Foo::bar` or `foo.bar`.
         let content = "See `Foo::bar` and `foo.bar` and `foo bar` — none should count.";
         assert!(extract_identifier_mentions(content).is_empty());
+    }
+
+    #[test]
+    fn is_broken_drift_flags_only_previously_indexed_now_missing() {
+        // known = things that resolve NOW (a current symbol + a DB schema name).
+        let known: HashSet<String> =
+            ["current_fn".to_string(), "project_id".to_string()].into_iter().collect();
+        // ever = every name that was ever a real symbol (history).
+        let ever: HashSet<String> =
+            ["current_fn".to_string(), "removed_fn".to_string()].into_iter().collect();
+
+        // Was a symbol (in history), now gone (doesn't resolve) → real drift.
+        assert!(is_broken_drift("removed_fn", &known, &ever));
+        // A current symbol resolves → not drift.
+        assert!(!is_broken_drift("current_fn", &known, &ever));
+        // Never a symbol (enum variant / camelCase field / tool string): absent
+        // from history → NOT drift. This is the false-positive class we killed.
+        assert!(!is_broken_drift("battle_tested", &known, &ever));
+        // Resolves via a DB schema identifier (in `known`, never a code symbol) →
+        // not drift.
+        assert!(!is_broken_drift("project_id", &known, &ever));
     }
 
     #[test]

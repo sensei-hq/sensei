@@ -66,15 +66,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn flags_broken_dedups_then_resolves_when_code_added() {
+    async fn flags_broken_only_after_a_real_symbol_is_removed_then_resolves() {
+        // Symbol-history semantics: a doc mention is drift ONLY when it names
+        // something that WAS a real symbol and is now gone — not merely "absent
+        // from the graph" (that over-fired on enum variants / camelCase fields /
+        // tool strings). So: resolvable → not drift; removed → drift; re-added →
+        // resolved. The scan reads the doc off disk via the folder abs_path.
         let ctx = make_ctx().await;
         let pg = ctx.pg();
 
-        // A doc that references a snake_case symbol (⇒ a real mention) with no
-        // matching code node yet. The name is globally unique because the drift
-        // scan now matches the symbol set GLOBALLY (a shared-DB collision would
-        // otherwise flip the expected broken count). The scan reads the file off
-        // disk via the folder's abs_path, so point abs_path at a temp dir.
         let sym = format!("drift_probe_{}", uuid::Uuid::new_v4().simple());
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("README.md"), format!("The `{sym}` helper is the entry point.")).unwrap();
@@ -87,8 +87,6 @@ mod tests {
         pg.merge_doc(&fid, "README", "README.md").await.unwrap();
 
         let task = Task::new(TaskKind::ScanDocDrift, "", &pid.to_string());
-        assert_eq!(scan_doc_drift(&ctx, &task).await.unwrap(), 1, "one unresolved mention ⇒ one broken row");
-
         let broken = |pid| async move {
             let n: (i64,) = sqlx_core::query_as::query_as(
                 "SELECT count(*) FROM inference.drift_items di
@@ -97,17 +95,29 @@ mod tests {
             ).bind(pid).fetch_one(pg.pool()).await.unwrap();
             n.0
         };
-        assert_eq!(broken(pid).await, 1, "exactly one broken drift row for the unresolved mention");
 
-        // Idempotent: a second scan with no change adds no duplicate row.
+        // 1. The symbol EXISTS as code ⇒ the mention resolves ⇒ not drift. This
+        //    scan also records `sym` into the symbol-name history.
+        pg.merge_function(&fid, &sym, "src/events.rs", Some("fn process_event()"), Some(1), Some(9), None).await.unwrap();
+        assert_eq!(scan_doc_drift(&ctx, &task).await.unwrap(), 0, "a resolvable mention is not drift");
+        assert_eq!(broken(pid).await, 0);
+
+        // 2. Remove the symbol ⇒ the doc now references something that WAS real
+        //    and is gone ⇒ one broken row.
+        sqlx_core::query::query("DELETE FROM sensei.nodes WHERE folder_id = $1 AND kind = 'function' AND name = $2")
+            .bind(fid).bind(&sym).execute(pg.pool()).await.unwrap();
+        assert_eq!(scan_doc_drift(&ctx, &task).await.unwrap(), 1, "removed-symbol mention ⇒ one broken row");
+        assert_eq!(broken(pid).await, 1);
+
+        // 3. Idempotent: re-scan adds no duplicate.
         assert_eq!(scan_doc_drift(&ctx, &task).await.unwrap(), 0, "no new broken on re-scan");
         let total: (i64,) = sqlx_core::query_as::query_as(
             "SELECT count(*) FROM inference.drift_items di
                JOIN sensei.folders f ON f.id = di.folder_id WHERE f.project_id = $1"
         ).bind(pid).fetch_one(pg.pool()).await.unwrap();
-        assert_eq!(total.0, 1, "dedup — still a single row after re-scanning");
+        assert_eq!(total.0, 1, "dedup — still a single row");
 
-        // Add the matching code node ⇒ the mention now resolves in place.
+        // 4. Add the code back ⇒ the mention resolves in place.
         pg.merge_function(&fid, &sym, "src/events.rs", Some("fn process_event()"), Some(1), Some(9), None).await.unwrap();
         assert_eq!(scan_doc_drift(&ctx, &task).await.unwrap(), 0, "nothing newly broken");
         assert_eq!(broken(pid).await, 0, "the previously-broken row is no longer open");
@@ -116,12 +126,13 @@ mod tests {
                JOIN sensei.folders f ON f.id = di.folder_id
               WHERE f.project_id = $1 AND di.status = 'current' AND di.resolved_at IS NOT NULL"
         ).bind(pid).fetch_one(pg.pool()).await.unwrap();
-        assert_eq!(resolved.0, 1, "the drift row resolved once the code node exists");
+        assert_eq!(resolved.0, 1, "the drift row resolved once the code node exists again");
 
         // cleanup — drift_items FK doc/code nodes, so delete them before nodes.
         let pool = pg.pool();
         sqlx_core::query::query("DELETE FROM inference.drift_items WHERE folder_id = $1").bind(fid).execute(pool).await.ok();
         sqlx_core::query::query("DELETE FROM sensei.nodes WHERE folder_id = $1").bind(fid).execute(pool).await.ok();
+        sqlx_core::query::query("DELETE FROM sensei.symbol_names WHERE name = $1").bind(&sym).execute(pool).await.ok();
         sqlx_core::query::query("DELETE FROM sensei.folders WHERE root_id = $1").bind(root).execute(pool).await.ok();
         sqlx_core::query::query("DELETE FROM sensei.folders_to_watch WHERE id = $1").bind(root).execute(pool).await.ok();
         sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1").bind(pid).execute(pool).await.ok();
