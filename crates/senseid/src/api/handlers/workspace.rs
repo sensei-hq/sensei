@@ -134,56 +134,9 @@ pub(crate) async fn exclude_project(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
-/// Persistent scan-exclusion path prefixes. A folder at or under an excluded
-/// prefix is never classified as a project and is pruned. Stored in
-/// `config['scan_exclusions']`.
-pub(crate) async fn list_exclusions(
-    State(state): State<AppState>,
-) -> Json<serde_json::Value> {
-    Json(serde_json::json!({ "exclusions": state.pg.get_scan_exclusions().await }))
-}
-
-#[derive(Deserialize)]
-pub(crate) struct ExclusionBody {
-    pub path: String,
-}
-
-/// Add an exclusion prefix, prune the excluded subtree immediately, and drop any
-/// projects left empty. Future scans skip the prefix.
-pub(crate) async fn add_exclusion(
-    State(state): State<AppState>,
-    Json(body): Json<ExclusionBody>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    let path = expand_tilde(body.path.trim());
-    if path.is_empty() {
-        return Err(StatusCode::BAD_REQUEST);
-    }
-    let exclusions = state.pg.add_scan_exclusion(&path).await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let pruned_folders = state.pg.prune_under_prefix(&path).await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    // grace 0: the subtree's folders were just deleted, so any now-empty project
-    // is provably orphaned by this exclusion — not a mid-population race.
-    let pruned_projects = state.pg.prune_empty_projects(0).await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(serde_json::json!({
-        "ok": true,
-        "exclusions": exclusions,
-        "prunedFolders": pruned_folders,
-        "prunedProjects": pruned_projects,
-    })))
-}
-
-/// Remove an exclusion prefix. Does not re-scan; the next scan re-discovers it.
-pub(crate) async fn remove_exclusion(
-    State(state): State<AppState>,
-    Json(body): Json<ExclusionBody>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    let path = expand_tilde(body.path.trim());
-    let exclusions = state.pg.remove_scan_exclusion(&path).await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(serde_json::json!({"ok": true, "exclusions": exclusions})))
-}
+// Exclusions are per watch root (`folders_to_watch.excluded`) — managed via
+// `update_watch_root` (PUT /api/scan/roots/{id}), which prunes added subtrees
+// and re-scans removed ones. There is no standalone exclusions endpoint.
 
 // ── Project Tags ────────────────────────────────────────────────────────────
 
@@ -392,6 +345,15 @@ pub(crate) async fn update_watch_root(
     Json(body): Json<UpdateRootBody>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let uuid = uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    // Snapshot the root's path + current exclusions so we can diff (added prune,
+    // removed re-scan) per the DDL semantics.
+    let Some((root_path, old_excluded)) = state.pg.get_watch_root(&uuid).await
+        .map_err(|e| { tracing::error!(error = %e, %uuid, "update_watch_root: get_watch_root failed"); StatusCode::INTERNAL_SERVER_ERROR })?
+    else {
+        return Err(StatusCode::NOT_FOUND);
+    };
+
     let excluded_json = body.excluded.as_ref().map(|list| {
         serde_json::Value::Array(list.iter().map(|s| serde_json::Value::String(s.clone())).collect())
     });
@@ -403,31 +365,35 @@ pub(crate) async fn update_watch_root(
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
 
-    // Push new exclusions into the live watcher for this root so the change
-    // takes effect immediately, not on next daemon restart. Best-effort —
-    // the DB is authoritative.
-    if let Some(list) = body.excluded.as_ref() {
-        let path = state.pg
-            .list_watch_roots().await.unwrap_or_default()
-            .into_iter()
-            .find(|r| crate::api::util::json_uuid(&r["id"]).as_ref() == Some(&uuid))
-            .and_then(|r| r["path"].as_str().map(String::from));
-        if let Some(path) = path {
-            let queue = state.task_queue.clone();
-            let w_mutex = crate::watcher::root_watcher::RootWatcher::instance(queue);
-            match w_mutex.lock() {
-                Ok(mut w) => {
-                    w.register(std::path::PathBuf::from(&path), list.clone());
-                    let _ = w.start();
-                }
-                Err(e) => {
-                    tracing::warn!(error = %e, %uuid, "update_watch_root: RootWatcher mutex poisoned; DB updated, live state stale");
-                }
-            }
+    let mut pruned_folders: u64 = 0;
+    if let Some(new_list) = body.excluded.as_ref() {
+        let abs = |entry: &str| format!("{}/{}", root_path.trim_end_matches('/'), entry.trim_start_matches('/'));
+        // Added entries → delete the matching subtree (folders + children).
+        for entry in new_list.iter().filter(|e| !old_excluded.contains(*e)) {
+            pruned_folders += state.pg.prune_under_prefix(&abs(entry)).await.unwrap_or_else(|e| {
+                tracing::warn!(error = %e, entry, "update_watch_root: prune excluded subtree failed"); 0
+            });
+        }
+        if pruned_folders > 0 {
+            let _ = state.pg.prune_empty_projects(0).await;
+        }
+        // Removed entries → re-scan the root so the un-excluded subtree re-indexes.
+        if old_excluded.iter().any(|e| !new_list.contains(e)) {
+            let task = crate::tasks::Task::new(crate::tasks::TaskKind::ScanRoot, "", &root_path);
+            state.task_queue.enqueue(task).await;
+        }
+
+        // Push the resolved absolute prefixes into the live watcher so the change
+        // takes effect immediately, not on next daemon restart.
+        let prefixes = state.pg.root_exclusion_prefixes(&root_path).await;
+        let w_mutex = crate::watcher::root_watcher::RootWatcher::instance(state.task_queue.clone());
+        match w_mutex.lock() {
+            Ok(mut w) => { w.register(std::path::PathBuf::from(&root_path), prefixes); let _ = w.start(); }
+            Err(e) => tracing::warn!(error = %e, %uuid, "update_watch_root: RootWatcher mutex poisoned; DB updated, live state stale"),
         }
     }
 
-    Ok(Json(serde_json::json!({ "ok": true, "id": uuid })))
+    Ok(Json(serde_json::json!({ "ok": true, "id": uuid, "prunedFolders": pruned_folders })))
 }
 
 /// Delete a watch root by ID.

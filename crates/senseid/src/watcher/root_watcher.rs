@@ -477,14 +477,11 @@ impl RootWatcher {
             tracing::warn!(count = changes.len(), "process_batch: no PgStore — cannot resolve owning repos; batch dropped");
             return;
         };
-        // Exclusions checked BEFORE enqueue (config `scan_exclusions` prefixes).
-        let exclusions = store.get_scan_exclusions().await;
-
+        // Exclusions are enforced at the event level by `should_watch_path` (each
+        // root's `folders_to_watch.excluded`, resolved to absolute prefixes at
+        // register), so excluded paths never reach this batch.
         let mut repo_changes: HashMap<String, Vec<(PathBuf, ChangeKind)>> = HashMap::new();
         for (path, kind) in changes {
-            if crate::tasks::handlers::scan_logic::is_excluded(&path, &exclusions) {
-                continue;
-            }
             match store.repo_root_for_path(&path.to_string_lossy()).await {
                 Ok(Some((repo_path, _project))) => {
                     repo_changes.entry(repo_path).or_default().push((path, kind));
