@@ -4054,7 +4054,9 @@ impl PgStore {
                 ).bind(project_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?
             };
 
-        Ok(rows.into_iter().map(|(id, folder_id, folder_name, raw_name, command_line, category, ecosystem, source_file, discovered_at)| {
+        // G10 command bias: mark the user's preferred tool per capability.
+        let prefs = self.command_preferences("user").await;
+        let mut out = rows.into_iter().map(|(id, folder_id, folder_name, raw_name, command_line, category, ecosystem, source_file, discovered_at)| {
             serde_json::json!({
                 "id":            id,
                 "folder_id":     folder_id,
@@ -4065,8 +4067,59 @@ impl PgStore {
                 "ecosystem":     ecosystem,
                 "source_file":   source_file,
                 "discovered_at": discovered_at.to_rfc3339(),
+                "preferred":     crate::adapters::manifest::command_matches_preference(
+                                     category.as_deref(), &raw_name, &command_line, &prefs),
             })
-        }).collect())
+        }).collect::<Vec<_>>();
+
+        // G10: rank the preferred tool first within each category (stable), so a
+        // caller that takes "the test command" gets the biased one. NULL category
+        // sorts last (matching the SQL `NULLS LAST`).
+        out.sort_by(|a, b| {
+            let key = |v: &serde_json::Value| {
+                let c = v["category"].as_str();
+                (c.is_none(), c.unwrap_or("").to_string())
+            };
+            key(a).cmp(&key(b))
+                .then_with(|| b["preferred"].as_bool().unwrap_or(false)
+                              .cmp(&a["preferred"].as_bool().unwrap_or(false)))
+                .then_with(|| a["raw_name"].as_str().unwrap_or("")
+                              .cmp(b["raw_name"].as_str().unwrap_or("")))
+        });
+        Ok(out)
+    }
+
+    /// User/dojo capability→preferred-tool preferences for a scope, as a
+    /// capability→token map. Backs the `get_commands` bias (G10). Fail-open: an
+    /// error yields an empty map (no bias) rather than failing the command read.
+    pub async fn command_preferences(&self, scope: &str) -> std::collections::HashMap<String, String> {
+        let rows: Vec<(String, String)> = sqlx_core::query_as::query_as(
+            "SELECT capability, preferred FROM sensei.dojo_preferences WHERE scope = $1",
+        )
+        .bind(scope)
+        .fetch_all(&self.pool)
+        .await
+        .unwrap_or_default();
+        rows.into_iter().collect()
+    }
+
+    /// Upsert a capability→preferred-tool bias for a scope (`user` today; a Dōjō
+    /// can later set org/team scopes that override it). One row per (scope,
+    /// capability).
+    pub async fn upsert_command_preference(
+        &self, scope: &str, capability: &str, preferred: &str, note: Option<&str>,
+    ) -> Result<(), String> {
+        sqlx_core::query::query(
+            "INSERT INTO sensei.dojo_preferences (scope, capability, preferred, note, updated_at)
+             VALUES ($1, $2, $3, $4, now())
+             ON CONFLICT (scope, capability) DO UPDATE
+               SET preferred = EXCLUDED.preferred, note = EXCLUDED.note, updated_at = now()",
+        )
+        .bind(scope).bind(capability).bind(preferred).bind(note)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("upsert_command_preference: {e}"))?;
+        Ok(())
     }
 
     // ── #84 Track 2 Slice C — Replay tab session timeline ─────────────────
@@ -10434,6 +10487,44 @@ mod tests {
 
         sqlx_core::query::query("DELETE FROM sensei.symbol_names WHERE name = $1").bind(&uniq).execute(s.pool()).await.ok();
         sqlx_core::query::query("DELETE FROM sensei.folders WHERE id = $1").bind(fid).execute(s.pool()).await.ok();
+    }
+
+    #[tokio::test]
+    async fn get_project_commands_marks_and_ranks_the_preferred_tool() {
+        // G10: when several commands share a category, the user's dojo_preference
+        // marks one preferred and ranks it first.
+        let s = pg_store().await;
+        let pid = s.create_project(&format!("_test:g10-{}", uuid::Uuid::new_v4()), None, None).await.unwrap();
+        let fid = create_test_folder(&s, &format!("g10_{}", uuid::Uuid::new_v4())).await;
+        s.set_folder_project(&fid, &pid, "primary", None).await.unwrap();
+        // Two `test` commands; alphabetical order is jest, then vitest.
+        sqlx_core::query::query(
+            "INSERT INTO sensei.project_commands (folder_id, raw_name, command_line, category, ecosystem)
+             VALUES ($1, 'jest', 'jest', 'test', 'npm'), ($1, 'vitest', 'vitest run', 'test', 'npm')",
+        ).bind(fid).execute(s.pool()).await.unwrap();
+        // Clean slate for the shared preference row.
+        sqlx_core::query::query("DELETE FROM sensei.dojo_preferences WHERE scope='user' AND capability='test'")
+            .execute(s.pool()).await.ok();
+
+        // No preference → alphabetical, nothing marked preferred.
+        let before = s.get_project_commands(&pid, Some("test")).await.unwrap();
+        assert_eq!(before.len(), 2);
+        assert_eq!(before[0]["raw_name"], "jest");
+        assert!(before.iter().all(|c| c["preferred"] == serde_json::json!(false)), "no preference → none preferred");
+
+        // Prefer vitest → it is marked and ranked first (ahead of the alphabetically-first jest).
+        s.upsert_command_preference("user", "test", "vitest", None).await.unwrap();
+        let after = s.get_project_commands(&pid, Some("test")).await.unwrap();
+        assert_eq!(after[0]["raw_name"], "vitest", "preferred ranked first");
+        assert_eq!(after[0]["preferred"], serde_json::json!(true));
+        assert_eq!(after[1]["raw_name"], "jest");
+        assert_eq!(after[1]["preferred"], serde_json::json!(false), "the non-preferred sibling isn't marked");
+
+        let pool = s.pool();
+        sqlx_core::query::query("DELETE FROM sensei.project_commands WHERE folder_id=$1").bind(fid).execute(pool).await.ok();
+        sqlx_core::query::query("DELETE FROM sensei.dojo_preferences WHERE scope='user' AND capability='test'").execute(pool).await.ok();
+        sqlx_core::query::query("DELETE FROM sensei.folders WHERE id=$1").bind(fid).execute(pool).await.ok();
+        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id=$1").bind(pid).execute(pool).await.ok();
     }
 
     #[tokio::test]
