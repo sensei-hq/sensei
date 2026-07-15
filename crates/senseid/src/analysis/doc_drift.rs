@@ -125,6 +125,15 @@ fn is_candidate_identifier(raw: &str) -> bool {
     if !(has_underscore || has_case_transition || had_call_marker) {
         return false;
     }
+    // SCREAMING_SNAKE_CASE is the env-var / config-key convention
+    // (`CLOUDFLARE_API_TOKEN`, `CF_PAGES`, `BASE_PATH`) — a doc mentioning one
+    // references configuration, not a project code symbol, so its absence from
+    // the graph is not drift. (A removed SCREAMING const is the rare recall
+    // tradeoff; such consts that still exist resolve via the known-symbol set.)
+    let is_screaming_snake = has_underscore && !token.bytes().any(|b| b.is_ascii_lowercase());
+    if is_screaming_snake {
+        return false;
+    }
     true
 }
 
@@ -168,6 +177,18 @@ mod tests {
         assert_eq!(
             extract_identifier_mentions(content),
             vec!["process_event".to_string(), "EventHandler".to_string()],
+        );
+    }
+
+    #[test]
+    fn rejects_screaming_snake_env_var_convention() {
+        // SCREAMING_SNAKE tokens are env vars / config keys, not code symbols —
+        // a doc mentioning `CLOUDFLARE_API_TOKEN` or `CF_PAGES` isn't drift.
+        // A snake_case symbol alongside them still passes.
+        let content = "Set `CLOUDFLARE_API_TOKEN` and `CF_PAGES`, then call `process_event`.";
+        assert_eq!(
+            extract_identifier_mentions(content),
+            vec!["process_event".to_string()],
         );
     }
 
