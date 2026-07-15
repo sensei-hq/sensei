@@ -162,7 +162,9 @@ pub(crate) async fn add_exclusion(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let pruned_folders = state.pg.prune_under_prefix(&path).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let pruned_projects = state.pg.prune_empty_projects().await
+    // grace 0: the subtree's folders were just deleted, so any now-empty project
+    // is provably orphaned by this exclusion — not a mid-population race.
+    let pruned_projects = state.pg.prune_empty_projects(0).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(serde_json::json!({
         "ok": true,

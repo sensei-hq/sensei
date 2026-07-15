@@ -123,7 +123,7 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     let orphaned = ctx.pg().mark_orphaned_projects().await.unwrap_or_else(|e| { tracing::warn!(error = %e, "scan_root: mark_orphaned_projects failed"); 0 });
     // Delete the provably-empty phantom projects (no folder / session / artifact)
     // — pre-#101 residue that would otherwise inflate the project count.
-    let pruned_projects = ctx.pg().prune_empty_projects().await.unwrap_or_else(|e| { tracing::warn!(error = %e, "scan_root: prune_empty_projects failed"); 0 });
+    let pruned_projects = ctx.pg().prune_empty_projects(60).await.unwrap_or_else(|e| { tracing::warn!(error = %e, "scan_root: prune_empty_projects failed"); 0 });
     if reabsorbed > 0 {
         tracing::info!("scan_root reconcile: re-absorbed {reabsorbed} nested standalone root(s) into their enclosing repo's project");
     }
@@ -560,8 +560,9 @@ mod tests {
         ctx.pg().set_folder_project(&repo_fid, &live, "root", None).await.unwrap();
         ctx.pg().upsert_node(&repo_fid, "function", "f", "live/lib.rs", None, None, None, None).await.unwrap();
 
-        let pruned = ctx.pg().prune_empty_projects().await.unwrap();
-        assert!(pruned >= 1, "at least the empty phantom is pruned");
+        // Global `rows_affected` is racy in the shared test DB (a concurrent
+        // scan's reconcile prunes too), so assert on our specific rows below.
+        ctx.pg().prune_empty_projects(60).await.unwrap();
         let (ph_alive,): (i64,) = sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.projects WHERE id=$1")
             .bind(phantom).fetch_one(ctx.pg().pool()).await.unwrap();
         assert_eq!(ph_alive, 0, "empty phantom project deleted");
