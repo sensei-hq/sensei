@@ -17,6 +17,7 @@ create table if not exists dojo.relay_sessions (
 , completed_at   timestamptz
 , created_at     timestamptz           not null default now()
 , updated_at     timestamptz           not null default now()
+, constraint relay_sessions_tenant_run_unique unique (tenant_id, run_id)
 );
 
 create index if not exists relay_sessions_tenant_idx on dojo.relay_sessions(tenant_id);
