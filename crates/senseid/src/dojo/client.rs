@@ -253,7 +253,6 @@ impl DojoClient {
     }
 
     /// Publish the filtered status snapshot for a run (`POST relay/session`).
-    #[allow(dead_code)] // wired by P1 (round-trip) + P3 (run engine)
     pub async fn publish_session_update(
         &self,
         update: &RelaySessionUpdate,
@@ -263,7 +262,6 @@ impl DojoClient {
 
     /// Upsert the run's outline segments (`POST relay/segments`). The Worker maps
     /// `run_id` → the cloud session and upserts each segment by (session, seq).
-    #[allow(dead_code)] // wired by P2 (segment feed)
     pub async fn upsert_segments(
         &self,
         run_id: &str,
