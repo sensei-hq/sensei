@@ -20,7 +20,7 @@ const DEV_NAV = [
 
 const DEV_ROLE_BY_KIND = {
   employer:  "Contributor",
-  client:    "Contributor · dereferenced",
+  client:    "Contributor · anonymized",
   community: "Member",
   personal:  "Owner",
 };
@@ -68,7 +68,7 @@ function DojoDevTeams({ go, mobile = false }) {
                       background: "var(--paper-2)", border: "var(--hairline)", borderRadius: 12 }}>
           <span className="kanji" style={{ fontSize: 15, color: "var(--accent)" }}>客</span>
           <span style={{ fontSize: 12.5, color: "var(--ink-2)", lineHeight: 1.5, flex: 1 }}>
-            On <b style={{ fontWeight: 600, color: "var(--ink)" }}>client</b> memberships your contributions are automatically source-dereferenced — the lesson travels, the client and repo never do.
+            On <b style={{ fontWeight: 600, color: "var(--ink)" }}>client</b> memberships your contributions are automatically anonymized — the lesson travels, the client and repo never do.
           </span>
         </div>
       </div>
@@ -81,13 +81,13 @@ function DojoDevContributions() {
   const mine = [
     { k: "紋", title: "Adapter wraps a third-party SDK behind a trait", dest: "Acme Corp", scope: "Stack · Rust", status: "approved", when: "2d", note: "published · +7pp FTR" },
     { k: "直", title: "`let` → `$state(...)` in Svelte 5 components", dest: "Rust Guild", scope: "Stack · Svelte", status: "pending", when: "6h", note: "in triage · owner Sven K." },
-    { k: "盾", title: "Verify webhook signature before parsing", dest: "Globex", scope: "Client · dereferenced", status: "approved", when: "1d", note: "source dropped · shared safely", client: true },
+    { k: "盾", title: "Verify webhook signature before parsing", dest: "Globex", scope: "Client · anonymized", status: "approved", when: "1d", note: "source dropped · shared safely", client: true },
     { k: "問", title: "Persona: integration-test author for auth", dest: "Acme Corp", scope: "Stack · React", status: "declined", when: "3d", note: "merged into an existing persona" },
   ];
   const statusMeta = {
     approved: { tone: "var(--success)", soft: "var(--success-soft)", label: "approved" },
     pending:  { tone: "var(--accent)",  soft: "var(--accent-soft)",  label: "in triage" },
-    declined: { tone: "var(--ink-3)",   soft: "var(--paper-3)",      label: "declined" },
+    declined: { tone: "var(--danger)",  soft: "var(--danger-soft)", label: "declined" },
   };
   return (
     <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", background: "var(--paper)" }}>
@@ -160,7 +160,7 @@ function DojoDevDownstream() {
                 : <DojoChip tone="var(--accent)" soft="var(--accent-soft)">new</DojoChip>}
               <div style={{ display: "flex", gap: 7 }}>
                 <button className="mono" style={{ fontSize: 11, color: "var(--ink-3)", background: "none", border: "var(--hairline)", borderRadius: 6, padding: "5px 9px", cursor: "pointer" }}>mute</button>
-                <button className="mono" style={{ fontSize: 11, color: "var(--accent)", background: "none", border: "1px solid oklch(0.58 0.15 35/.3)", borderRadius: 6, padding: "5px 9px", cursor: "pointer" }}>pin</button>
+                <button className="mono" style={{ fontSize: 11, color: "var(--accent)", background: "none", border: "1px solid var(--accent-edge)", borderRadius: 6, padding: "5px 9px", cursor: "pointer" }}>pin</button>
               </div>
             </div>
           ))}

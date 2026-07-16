@@ -13,7 +13,7 @@ const LEAD_NAV = [
 ];
 const LEAD_SECTIONS = ["clients", "audit"];
 
-/* ─── Clients · dereferencing oversight ──────────────────── */
+/* ─── Clients · anonymization oversight ──────────────────── */
 function DojoClients({ go }) {
   const engagements = [
     { kanji: "客", name: "Globex", lessons: 86, scopes: "lumen-auth · billing" },
@@ -22,7 +22,7 @@ function DojoClients({ go }) {
   const kept = [
     { k: "標", t: "Standards, patterns & anti-patterns", d: "the reusable rule itself" },
     { k: "憶", t: "The memory — what · why · impact", d: "the reasoning that makes it teachable" },
-    { k: "例", t: "Examples, anonymized", d: "illustrative code with every identifier stripped" },
+    { k: "例", t: "Examples, anonymized", d: "illustrative code with every identifier dropped" },
   ];
   const dropped = [
     { k: "客", t: "Client & engagement name" },
@@ -77,14 +77,14 @@ function DojoClients({ go }) {
                   <div key={x.t} style={{ display: "grid", gridTemplateColumns: "auto 1fr auto", gap: 11, alignItems: "center" }}>
                     <span className="kanji" style={{ fontSize: 16, color: "var(--ink-4)", width: 18, textAlign: "center" }}>{x.k}</span>
                     <span style={{ fontSize: 13.5, color: "var(--ink-2)", textDecoration: "line-through", textDecorationColor: "var(--ink-4)" }}>{x.t}</span>
-                    <span className="mono" style={{ fontSize: 10, color: "var(--ink-4)" }}>stripped</span>
+                    <span className="mono" style={{ fontSize: 10, color: "var(--ink-4)" }}>dropped</span>
                   </div>
                 ))}
               </div>
             </div>
           </div>
         </Panel>
-        <div style={{ display: "grid", gridTemplateColumns: "1.25fr 1fr", gap: 18, alignItems: "start" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))", gap: 18, alignItems: "start" }}>
           <Panel title="Examples are kept — anonymized" note="raw → what actually leaves">
             <div style={{ border: "var(--hairline)", borderRadius: 8, overflow: "hidden" }}>
               <div style={{ display: "flex", gap: 9, padding: "9px 13px", borderBottom: "1px solid var(--edge)", fontFamily: "var(--font-mono)", fontSize: 11.5, background: "var(--paper)" }}>
@@ -134,15 +134,17 @@ function DojoClients({ go }) {
 
 /* ─── Audit trail · confidentiality ledger ───────────────── */
 function DojoAudit() {
-  const log = [
-    { t: "09:42", ev: "Dereference", tone: "accent", lesson: "Validate webhook signature before parsing", client: "Globex", actor: "system", hash: "a3f9c1" },
+  const allLog = [
+    { t: "09:42", ev: "Anonymize", tone: "accent", lesson: "Validate webhook signature before parsing", client: "Globex", actor: "system", hash: "a3f9c1" },
     { t: "09:40", ev: "Outbound", tone: "ink", lesson: "Idempotency key on money-moving mutations", client: "Globex", actor: "Keiko T.", hash: "b1c7e0" },
     { t: "08:55", ev: "Exception cleared", tone: "success", lesson: "Retry budget for a billing webhook", client: "Globex", actor: "Mei L.", hash: "77d24b" },
     { t: "Yest · 18:03", ev: "Quarantine", tone: "warn", lesson: "Cache key shape for a multi-tenant lookup", client: "Initech", actor: "leak-guard", hash: "0e4a8f" },
-    { t: "Yest · 11:20", ev: "Dereference", tone: "accent", lesson: "Exponential backoff schedule", client: "Initech", actor: "system", hash: "5fb831" },
+    { t: "Yest · 11:20", ev: "Anonymize", tone: "accent", lesson: "Exponential backoff schedule", client: "Initech", actor: "system", hash: "5fb831" },
     { t: "Mon · 16:47", ev: "Outbound", tone: "ink", lesson: "Persona: integration-test author for auth", client: "—", actor: "Sven K.", hash: "c920a6" },
   ];
-  const evTone = { accent: "var(--accent)", ink: "var(--ink-2)", success: "var(--success)", warn: "oklch(0.52 0.13 60)" };
+  const [evFilter, setEvFilter] = dlS("all");
+  const log = evFilter === "all" ? allLog : allLog.filter(e => e.ev === evFilter);
+  const evTone = { accent: "var(--accent)", ink: "var(--ink-2)", success: "var(--success)", warn: "var(--warning)" };
   const evSoft = { accent: "var(--accent-soft)", ink: "var(--paper-3)", success: "var(--success-soft)", warn: "var(--warning-soft)" };
   const steps = [
     { k: "警", name: "Alert", note: "leak-guard fires" },
@@ -151,21 +153,11 @@ function DojoAudit() {
     { k: "省", name: "Review", note: "post-incident" },
   ];
   const access = [{ name: "Globex", on: true }, { name: "Initech", on: false }];
-  const Panel = ({ title, note, right, children }) => (
-    <div style={{ background: "var(--paper-2)", border: "var(--hairline)", borderRadius: 12, overflow: "hidden" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "13px 16px", borderBottom: "var(--hairline)" }}>
-        <span style={{ fontSize: 11, letterSpacing: ".14em", textTransform: "uppercase", color: "var(--ink-3)", fontWeight: 600 }}>{title}</span>
-        {note && <span className="mono" style={{ fontSize: 10.5, color: "var(--ink-4)" }}>{note}</span>}
-        <span style={{ flex: 1 }} />
-        {right}
-      </div>
-      <div style={{ padding: 16 }}>{children}</div>
-    </div>
-  );
+  const Panel = window.DojoPanel;
   return (
     <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", background: "var(--paper)" }}>
       <DojoHead kanji="録" eyebrow="Trust · audit" title="Confidentiality audit trail"
-        sub="An immutable record of every dereference, outbound lesson, and decision — per client. The proof that confidentiality held."
+        sub="An immutable record of every anonymize, outbound lesson, and decision — per client. The proof that confidentiality held."
         right={<div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <DojoChip tone="var(--ink-2)" soft="var(--paper-2)" border="var(--hairline)">Filter · all clients ▾</DojoChip>
           <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 7, background: "var(--ink)", color: "var(--paper)", fontSize: 12.5, cursor: "pointer" }}>Export report</span>
@@ -190,7 +182,7 @@ function DojoAudit() {
             <span>The client lead and org admin are notified immediately; a severity tier decides whether the client is told, per the engagement's contract.</span>
           </div>
         </Panel>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 14 }}>
           <Panel title="Retention" note="per engagement">
             <div style={{ fontSize: 12.5, color: "var(--ink-2)", lineHeight: 1.55 }}>Follows each engagement's contract, plus any statutory minimum.</div>
             <div style={{ display: "flex", gap: 18, marginTop: 11 }}>
@@ -216,13 +208,25 @@ function DojoAudit() {
           </Panel>
         </div>
         <Panel title="Ledger" note="immutable · hash-chained" right={<span className="mono" style={{ fontSize: 10.5, color: "var(--ink-4)" }}>144 entries · 7d</span>}>
-          <div style={{ display: "grid", gridTemplateColumns: "92px 130px 1fr 96px 96px 78px", gap: 12, padding: "0 4px 9px",
+          <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginBottom: 12 }}>
+            {["all", ...Array.from(new Set(allLog.map(e => e.ev)))].map(ev => {
+              const on = evFilter === ev;
+              return (
+                <button key={ev} onClick={() => setEvFilter(ev)} style={{ cursor: "pointer", fontFamily: "inherit",
+                  border: on ? "1px solid var(--ink)" : "var(--hairline)", borderRadius: 999, padding: "4px 11px", fontSize: 11.5,
+                  background: on ? "var(--ink)" : "transparent", color: on ? "var(--paper)" : "var(--ink-2)" }}>{ev === "all" ? "All events" : ev}</button>
+              );
+            })}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "92px 130px minmax(220px,1fr) 96px 96px 78px", gap: 12, padding: "0 4px 9px", minWidth: 760,
                         fontSize: 10, letterSpacing: ".1em", textTransform: "uppercase", color: "var(--ink-4)", fontWeight: 600 }}>
             <span>Time</span><span>Event</span><span>Lesson</span><span>Client</span><span>Actor</span><span>Hash</span>
           </div>
-          <div style={{ display: "flex", flexDirection: "column" }}>
-            {log.map((e, i) => (
-              <div key={i} style={{ display: "grid", gridTemplateColumns: "92px 130px 1fr 96px 96px 78px", gap: 12, alignItems: "center",
+          <div style={{ display: "flex", flexDirection: "column", overflowX: "auto" }}>
+            {log.length === 0
+              ? <div style={{ padding: "18px 4px", fontSize: 12.5, color: "var(--ink-4)", fontStyle: "italic" }}>No {evFilter} events in this window.</div>
+              : log.map((e, i) => (
+              <div key={i} style={{ display: "grid", gridTemplateColumns: "92px 130px minmax(220px,1fr) 96px 96px 78px", gap: 12, alignItems: "center", minWidth: 760,
                             padding: "10px 4px", borderTop: "1px solid var(--edge)" }}>
                 <span className="mono" style={{ fontSize: 11, color: "var(--ink-4)" }}>{e.t}</span>
                 <span><DojoChip tone={evTone[e.tone]} soft={evSoft[e.tone]}>{e.ev}</DojoChip></span>

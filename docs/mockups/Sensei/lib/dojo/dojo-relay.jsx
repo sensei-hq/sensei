@@ -25,18 +25,8 @@ const flagMeta = {
   stall:   { tone: "var(--warning)", soft: "var(--warning-soft)", label: "stalled" },
   done:    { tone: "var(--ink-3)",   soft: "var(--paper-3)",      label: "done" },
 };
-const kindTone = { Employer: "var(--ink-2)", Client: "var(--accent)", Community: "var(--success)", Personal: "var(--ink-3)" };
-const kindKanji = { Employer: "社", Client: "客", Community: "群", Personal: "己" };
-function DojoTag({ p }) {
-  const tone = kindTone[p.kind] || "var(--ink-3)";
-  return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10.5, color: tone,
-      background: `color-mix(in oklch, ${tone} 12%, transparent)`, border: `1px solid color-mix(in oklch, ${tone} 28%, transparent)`,
-      borderRadius: 999, padding: "2px 8px", whiteSpace: "nowrap" }}>
-      <span className="kanji" style={{ fontSize: 11 }}>{kindKanji[p.kind] || "結"}</span>{p.dojo}
-    </span>
-  );
-}
+const kindTone = window.DOJO_KIND_TONE;
+const DojoTag = (props) => React.createElement(window.DojoKindTag, props);
 const MB_PROJECTS = [
   { id: "auth",   kanji: "鍵", name: "lumen-auth",     dojo: "Acme Corp", kind: "Employer", phase: 2, of: 4, pct: 47, now: "refresh-token store", flag: "approve", note: "approve migration" },
   { id: "bill",   kanji: "円", name: "billing-svc",    dojo: "Acme Corp", kind: "Employer", phase: 3, of: 5, pct: 61, now: "webhook retry tests", flag: "doing",   note: "running" },
@@ -50,14 +40,7 @@ const INBOX = [
 ];
 
 /* ═══ small shared pieces ════════════════════════════════════ */
-function Live() {
-  return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10.5, color: "var(--success)",
-                  background: "var(--success-soft)", border: "1px solid var(--success-edge)", borderRadius: 999, padding: "3px 9px" }}>
-      <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--success)" }} />live
-    </span>
-  );
-}
+const Live = (props) => React.createElement(window.DojoLive, props);
 function Bar({ pct, tone }) {
   return (
     <div style={{ height: 6, borderRadius: 3, background: "var(--paper-3)", overflow: "hidden" }}>
@@ -187,6 +170,7 @@ function RelayInboxBody({ wide = false }) {
 
 /* ═══ 3 · APPROVE body ═══════════════════════════════════════ */
 function RelayApproveBody({ wide = false }) {
+  const [done, setDone] = mbS(false);
   return (
     <div style={{ maxWidth: wide ? 640 : "none", margin: wide ? "0 auto" : 0, padding: wide ? "28px" : "18px 16px" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 14 }}>
@@ -215,13 +199,21 @@ function RelayApproveBody({ wide = false }) {
           Reached you through your Dōjō — the daemon is holding the session open in real time.
         </div>
       </div>
+      {done ? (
+        <div style={{ display: "flex", alignItems: "center", gap: 11, background: "var(--success-soft)", border: "1px solid var(--success-edge)", borderRadius: 11, padding: "14px 16px" }}>
+          <span className="kanji" style={{ fontSize: 17, color: "var(--success)" }}>済</span>
+          <div><div style={{ fontSize: 13.5, color: "var(--ink)", fontWeight: 600 }}>Approved · session resumed</div>
+            <div style={{ fontSize: 11.5, color: "var(--ink-3)", marginTop: 2 }}>sensei is running the migration now — you'll be pinged if anything else needs you.</div></div>
+        </div>
+      ) : (
       <div style={{ display: "flex", flexDirection: wide ? "row" : "column", gap: 9 }}>
-        <button style={{ flex: 1, padding: "13px", borderRadius: 11, border: "none", cursor: "pointer", background: "var(--ink)", color: "var(--paper)", fontSize: 14, fontWeight: 600, fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+        <button onClick={() => setDone(true)} style={{ flex: 1, padding: "13px", borderRadius: 11, border: "none", cursor: "pointer", background: "var(--ink)", color: "var(--paper)", fontSize: 14, fontWeight: 600, fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
           <span className="kanji" style={{ fontSize: 14, color: "var(--accent)" }}>許</span> Approve &amp; continue
         </button>
         <button style={{ flex: wide ? "0 0 auto" : 1, padding: "13px 18px", borderRadius: 11, border: "var(--hairline)", cursor: "pointer", background: "var(--paper)", color: "var(--ink-2)", fontSize: 13.5, fontFamily: "inherit" }}>Deny</button>
         <button style={{ flex: wide ? "0 0 auto" : 1, padding: "13px 18px", borderRadius: 11, border: "var(--hairline)", cursor: "pointer", background: "var(--paper)", color: "var(--ink-2)", fontSize: 13.5, fontFamily: "inherit" }}>Ask a question</button>
       </div>
+      )}
     </div>
   );
 }
@@ -229,6 +221,7 @@ function RelayApproveBody({ wide = false }) {
 /* ═══ 4 · DECISION body ══════════════════════════════════════ */
 function RelayDecisionBody({ wide = false }) {
   const [choice, setChoice] = mbS(2);
+  const [sent, setSent] = mbS(false);
   const opts = [["Stateless JWT", "simplest"], ["Server sessions", "revocable"], ["Hybrid — JWT + refresh store", "recommended"]];
   return (
     <div style={{ maxWidth: wide ? 640 : "none", margin: wide ? "0 auto" : 0, padding: wide ? "28px" : "18px 16px" }}>
@@ -253,16 +246,27 @@ function RelayDecisionBody({ wide = false }) {
         <span style={{ flex: 1, height: 1, background: "var(--edge)" }} /><span className="mono" style={{ fontSize: 10, color: "var(--ink-4)" }}>OR</span><span style={{ flex: 1, height: 1, background: "var(--edge)" }} />
       </div>
       <div style={{ background: "var(--paper)", border: "var(--hairline)", borderRadius: 13, padding: "13px 14px", fontSize: 13.5, color: "var(--ink-3)", minHeight: 46 }}>Type your own answer…</div>
-      <button style={{ width: "100%", marginTop: 16, padding: "14px", borderRadius: 11, border: "none", cursor: "pointer", background: "var(--accent)", color: "#fff", fontSize: 15, fontWeight: 600, fontFamily: "inherit" }}>Send answer</button>
+      <div style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 12, fontSize: 11.5, color: "var(--ink-3)" }}>
+        <span className="kanji" style={{ fontSize: 12, color: "var(--accent)" }}>透</span> Reached you through your Dōjō · other tracks keep moving
+      </div>
+      {sent ? (
+        <div style={{ display: "flex", alignItems: "center", gap: 11, marginTop: 16, background: "var(--success-soft)", border: "1px solid var(--success-edge)", borderRadius: 11, padding: "13px 15px" }}>
+          <span className="kanji" style={{ fontSize: 16, color: "var(--success)" }}>済</span>
+          <div style={{ fontSize: 13, color: "var(--ink)" }}><b style={{ fontWeight: 600 }}>Answer sent</b> — sensei is continuing the track.</div>
+        </div>
+      ) : (
+        <button onClick={() => setSent(true)} style={{ width: "100%", marginTop: 16, padding: "14px", borderRadius: 11, border: "none", cursor: "pointer", background: "var(--accent)", color: "var(--paper)", fontSize: 15, fontWeight: 600, fontFamily: "inherit" }}>Send answer</button>
+      )}
     </div>
   );
 }
 
 /* ═══ 5 · STALL / nudge body ═════════════════════════════════ */
 function RelayStallBody({ wide = false }) {
+  const [nudged, setNudged] = mbS(false);
   return (
     <div style={{ maxWidth: wide ? 640 : "none", margin: wide ? "0 auto" : 0, padding: wide ? "28px" : "18px 16px" }}>
-      <div style={{ background: "var(--warning-soft)", border: "1px solid color-mix(in oklch, var(--warning) 32%, transparent)", borderRadius: 13, padding: "16px" }}>
+      <div style={{ background: "var(--warning-soft)", border: "1px solid var(--warning-edge)", borderRadius: 13, padding: "16px" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <span className="kanji" style={{ fontSize: 20, color: "var(--warning)" }}>静</span>
           <div><div style={{ fontSize: 15, fontWeight: 600, color: "var(--ink)" }}>This track has gone quiet</div>
@@ -270,11 +274,19 @@ function RelayStallBody({ wide = false }) {
         </div>
         <div style={{ fontSize: 12.5, color: "var(--ink-3)", marginTop: 12 }}>sensei will retry on its own in ~8m. You can nudge it now.</div>
       </div>
+      {nudged ? (
+        <div style={{ display: "flex", alignItems: "center", gap: 11, marginTop: 16, background: "var(--success-soft)", border: "1px solid var(--success-edge)", borderRadius: 11, padding: "14px 16px" }}>
+          <span className="kanji" style={{ fontSize: 17, color: "var(--success)" }}>済</span>
+          <div><div style={{ fontSize: 13.5, color: "var(--ink)", fontWeight: 600 }}>Nudged · track resumed</div>
+            <div style={{ fontSize: 11.5, color: "var(--ink-3)", marginTop: 2 }}>sensei picked the work back up — you'll be pinged if it stalls again.</div></div>
+        </div>
+      ) : (
       <div style={{ display: "flex", flexDirection: wide ? "row" : "column", gap: 9, marginTop: 16 }}>
-        <button style={{ flex: 1, padding: "13px", borderRadius: 11, border: "none", cursor: "pointer", background: "var(--ink)", color: "var(--paper)", fontSize: 14, fontWeight: 600, fontFamily: "inherit" }}>Nudge to continue</button>
+        <button onClick={() => setNudged(true)} style={{ flex: 1, padding: "13px", borderRadius: 11, border: "none", cursor: "pointer", background: "var(--ink)", color: "var(--paper)", fontSize: 14, fontWeight: 600, fontFamily: "inherit" }}>Nudge to continue</button>
         <button style={{ flex: 1, padding: "13px", borderRadius: 11, border: "var(--hairline)", cursor: "pointer", background: "var(--paper)", color: "var(--ink-2)", fontSize: 13.5, fontFamily: "inherit" }}>Pause track</button>
         <button style={{ flex: wide ? "0 0 auto" : 1, padding: "13px 18px", borderRadius: 11, border: "var(--hairline)", cursor: "pointer", background: "var(--paper)", color: "var(--ink-2)", fontSize: 13.5, fontFamily: "inherit" }}>View logs</button>
       </div>
+      )}
     </div>
   );
 }
@@ -403,12 +415,62 @@ function RelayChatBody({ wide = false }) {
   );
 }
 
+/* ═══ SESSION LOG body (adaptive) ════════════════════════════ */
+function RelayLogsBody({ wide = false }) {
+  const rows = [
+    { t: "14:08", k: "書", tone: "var(--ink-3)", txt: "Wrote store.ts · 42 lines" },
+    { t: "14:05", k: "試", tone: "var(--success)", txt: "12 tests pass · 0 fail" },
+    { t: "14:04", k: "認", tone: "var(--accent)", txt: "Paused for approval · prod migration" },
+    { t: "14:01", k: "案", tone: "var(--ink-3)", txt: "Planned refresh-token store schema" },
+    { t: "13:58", k: "讀", tone: "var(--ink-3)", txt: "Read token_families migration history" },
+    { t: "13:55", k: "始", tone: "var(--ink-3)", txt: "Started phase 2 · session hardening" },
+  ];
+  return (
+    <div style={{ height: "100%", overflow: "auto", padding: wide ? 28 : 16 }}>
+      <div className="mono" style={{ fontSize: 11, color: "var(--ink-4)", marginBottom: 12 }}>lumen-auth · Acme Corp · newest first</div>
+      <div style={{ background: "var(--paper-2)", border: "var(--hairline)", borderRadius: 13, overflow: "hidden", maxWidth: wide ? 720 : "none" }}>
+        {rows.map((e, i) => (
+          <div key={i} style={{ display: "grid", gridTemplateColumns: "52px auto 1fr", gap: 12, alignItems: "center", padding: "12px 15px", borderBottom: i < rows.length - 1 ? "1px solid var(--edge)" : "none" }}>
+            <span className="mono" style={{ fontSize: 11, color: "var(--ink-4)" }}>{e.t}</span>
+            <span className="kanji" style={{ fontSize: 15, color: e.tone, width: 18, textAlign: "center" }}>{e.k}</span>
+            <span style={{ fontSize: 13, color: "var(--ink)" }}>{e.txt}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const RELAY_CONN = {
+  offline: { k: "絶", title: "Connection lost", sub: "Can't reach this session right now.", body: "The daemon on your machine isn't answering through the Dōjō. Your place is saved — actions resume the moment it reconnects.", cta: "Retry now", tone: "var(--warning)" },
+  ended:   { k: "了", title: "Session ended", sub: "This track has finished.", body: "sensei closed the session — nothing more needs you here. The outcome and every step are in the log.", cta: "View session log", tone: "var(--ink-3)" },
+  asleep:  { k: "眠", title: "Daemon asleep", sub: "Your machine is idle.", body: "The daemon is sleeping to save power. Wake it to resume now, or it picks up on its own when you're back at the keyboard.", cta: "Wake daemon", tone: "var(--ink-3)" },
+};
+function RelayConnState({ kind = "offline", wide = false }) {
+  const s = RELAY_CONN[kind] || RELAY_CONN.offline;
+  const off = kind !== "ended";
+  return (
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, textAlign: "center", padding: wide ? "48px" : "32px 22px" }}>
+      <span className="kanji" style={{ fontSize: 52, color: s.tone, lineHeight: 1 }}>{s.k}</span>
+      <div className="display" style={{ fontSize: 21, fontWeight: 400, letterSpacing: "-0.01em", color: "var(--ink)" }}>{s.title}</div>
+      <div style={{ fontSize: 13.5, color: "var(--ink-2)" }}>{s.sub}</div>
+      <p style={{ fontSize: 13, color: "var(--ink-3)", lineHeight: 1.6, margin: "2px 0 4px", maxWidth: 360 }}>{s.body}</p>
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 10.5, color: off ? "var(--warning)" : "var(--ink-3)",
+        background: off ? "var(--warning-soft)" : "var(--paper-3)", border: off ? "1px solid var(--warning-edge)" : "var(--hairline)", borderRadius: 999, padding: "3px 10px" }}>
+        <span style={{ width: 6, height: 6, borderRadius: "50%", background: off ? "var(--warning)" : "var(--ink-4)" }} />{off ? "offline · through your Dōjō" : "session closed"}
+      </span>
+      <button style={{ marginTop: 8, padding: "11px 18px", borderRadius: 10, border: "none", cursor: "pointer", background: "var(--ink)", color: "var(--paper)", fontSize: 13.5, fontWeight: 500, fontFamily: "inherit" }}>{s.cta}</button>
+    </div>
+  );
+}
+
 /* ═══ DESKTOP dispatcher — headered wide area ════════════════ */
 const RELAY_META = {
   projects: { kanji: "場", eyebrow: "Relay · you", title: "Active projects", sub: "Everything running for you, across every Dōjō. Approvals, decisions and stalled tracks rise to the top — pushed live through your Dōjō." },
   inbox:    { kanji: "決", eyebrow: "Relay · you", title: "Inbox", sub: "Decisions, approvals and nudges waiting on you — across every Dōjō. Answer when you can; other tracks keep moving." },
   watch:    { kanji: "観", eyebrow: "Relay · you", title: "Watch progress", sub: "Phases, what's done · doing · next, and the live activity feed for a running track." },
   chat:     { kanji: "話", eyebrow: "Relay · you", title: "Chat with sensei", sub: "Talk to a running session mid-flight — ask a question, steer a decision, or give the go-ahead." },
+  logs:     { kanji: "録", eyebrow: "Relay · you", title: "Session log", sub: "Every step sensei took on this track — timestamped, from first action to now." },
 };
 function RelayArea({ view = "projects", wide = true, onOpen }) {
   const m = RELAY_META[view] || RELAY_META.projects;
@@ -416,6 +478,7 @@ function RelayArea({ view = "projects", wide = true, onOpen }) {
   const body = view === "inbox" ? <RelayInboxBody wide={wide} />
     : view === "watch" ? <RelayWatchBody wide={wide} />
     : view === "chat" ? <RelayChatBody wide={wide} />
+    : view === "logs" ? <RelayLogsBody wide={wide} />
     : <RelayProjectsBody wide={wide} onOpen={onOpen} />;
   // chat & inbox manage their own scroll; projects/watch scroll inside body
   const flush = view === "chat" || view === "inbox";
@@ -464,20 +527,7 @@ const MOBILE_TABS = [
   { id: "more", kanji: "⋯", label: "More" },
 ];
 function MTabs({ active }) {
-  return (
-    <div style={{ flexShrink: 0, display: "grid", gridTemplateColumns: "repeat(4,1fr)", borderTop: "var(--hairline)", background: "var(--paper)" }}>
-      {MOBILE_TABS.map(t => {
-        const on = active === t.id;
-        return (
-          <div key={t.id} style={{ position: "relative", display: "flex", flexDirection: "column", alignItems: "center", gap: 3, padding: "8px 4px 6px", color: on ? "var(--ink)" : "var(--ink-3)" }}>
-            <span className="kanji" style={{ fontSize: 17, color: on ? "var(--accent)" : "var(--ink-3)" }}>{t.kanji}</span>
-            <span style={{ fontSize: 10, fontWeight: on ? 600 : 400 }}>{t.label}</span>
-            {t.badge != null && <span className="mono" style={{ position: "absolute", top: 4, left: "calc(50% + 6px)", fontSize: 9, fontWeight: 600, color: "var(--paper)", background: "var(--accent)", borderRadius: 10, padding: "0 5px", lineHeight: "14px" }}>{t.badge}</span>}
-          </div>
-        );
-      })}
-    </div>
-  );
+  return <window.DojoTabBar tabs={MOBILE_TABS} active={active} />;
 }
 
 function DojoMobileProjects() {
@@ -566,9 +616,17 @@ function DojoMobileConnect() {
   );
 }
 
+function DojoMobileLogs() {
+  return <MobileFrame label="Mobile · Session log"><MHead title="Session log" sub="lumen-auth · Acme Corp" back /><div style={{ flex: 1, minHeight: 0 }}><RelayLogsBody wide={false} /></div></MobileFrame>;
+}
+
+function DojoMobileConn({ kind = "offline" }) {
+  return <MobileFrame label={"Mobile · Relay " + kind}><MHead title="Relay" sub="lumen-auth · Acme Corp" back /><div style={{ flex: 1, minHeight: 0 }}><RelayConnState kind={kind} /></div></MobileFrame>;
+}
+
 Object.assign(window, {
-  RelayArea, RELAY_META,
+  RelayArea, RELAY_META, RelayLogsBody, RelayConnState,
   RelayProjectsBody, RelayInboxBody, RelayWatchBody, RelayChatBody, RelayApproveBody, RelayDecisionBody, RelayStallBody,
-  MobileFrame, DojoMobileProjects, DojoMobileProject, DojoMobileApprove,
+  MobileFrame, DojoMobileProjects, DojoMobileProject, DojoMobileApprove, DojoMobileLogs, DojoMobileConn,
   DojoMobileDecision, DojoMobileInbox, DojoMobileChat, DojoMobileMore, DojoMobileConnect,
 });
