@@ -432,8 +432,12 @@ flowchart LR
 4. **Security + vulnerability assessment** — `sensei-security-reviewer` + `semgrep`
    over the phase diff; **resolve findings before merge** (D15). No known vulnerability
    ships.
-5. **Deliver** — commit → `make bump` → merge `develop`→`main` → back to `develop`;
-   record `Pn ✅ <date> <commit>`.
+5. **Deliver** — commit to `develop` per chunk; record `Pn ✅ <date> <commit>`.
+   **`main` merge + `make bump` are a deliberate release milestone, NOT per-phase**
+   (approach A, 2026-07-16): `develop` carries parked WIP (mockups/docs kept off
+   `main`), so we publish a *batch* to `main` when it's ready — not mechanically each
+   phase. Per-phase discipline stays: commits + reviewer gate + security gate + green
+   tests on `develop`.
 
 ## 10. Decisions (resolved 2026-07-16)
 
