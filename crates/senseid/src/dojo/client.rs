@@ -97,6 +97,20 @@ fn encode_path_segment(s: &str) -> String {
     out
 }
 
+/// Encode a `tenant_key` ("origin/org") as a MULTI-segment URL path: each
+/// `/`-separated segment is percent-encoded individually, then rejoined with `/`.
+/// The Worker's relay routes are `/v1/t/[origin]/[org]/relay/…` — TWO path segments —
+/// so the `/` in the discovery path is a real separator here, NOT an encoded byte.
+/// (Contrast [`encode_path_segment`] / [`DojoClient::artifacts_url`], which target the
+/// dojo-mind artifacts mount that takes the whole tenant_key as ONE encoded segment.)
+fn encode_tenant_path(tenant_key: &str) -> String {
+    tenant_key
+        .split('/')
+        .map(encode_path_segment)
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
 impl DojoClient {
     /// Build a client for a membership, pointing at its registry + tenant path.
     pub fn for_membership(m: &DojoMembership) -> Self {
@@ -224,7 +238,7 @@ impl DojoClient {
         format!(
             "{}/v1/t/{}/relay/{}",
             self.registry_url,
-            encode_path_segment(&self.tenant_key),
+            encode_tenant_path(&self.tenant_key),
             suffix
         )
     }
@@ -511,11 +525,14 @@ mod tests {
     }
 
     #[test]
-    fn relay_url_encodes_tenant_as_single_segment() {
+    fn relay_url_encodes_tenant_as_path_segments() {
+        // The Worker relay routes are /v1/t/[origin]/[org]/relay/… — the tenant_key's
+        // '/' is a real path separator (two segments), NOT an encoded %2F. (Regression
+        // guard: the daemon previously sent github%2Facme → the Worker 404'd.)
         let c = DojoClient::for_membership(&membership("http://localhost:7755/github/acme", "dojo-x"));
         assert_eq!(
             c.relay_url("inbox"),
-            "http://localhost:7755/v1/t/github%2Facme/relay/inbox"
+            "http://localhost:7755/v1/t/github/acme/relay/inbox"
         );
     }
 
@@ -550,7 +567,7 @@ mod tests {
             })
         }
 
-        let app = Router::new().route("/v1/t/{tenant}/relay/inbox", get(inbox));
+        let app = Router::new().route("/v1/t/{origin}/{org}/relay/inbox", get(inbox));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap(); });
@@ -600,9 +617,9 @@ mod tests {
         }
 
         let app = Router::new()
-            .route("/v1/t/{tenant}/relay/session", post(session))
-            .route("/v1/t/{tenant}/relay/segments", post(segments))
-            .route("/v1/t/{tenant}/relay/inbox", post(inbox));
+            .route("/v1/t/{origin}/{org}/relay/session", post(session))
+            .route("/v1/t/{origin}/{org}/relay/segments", post(segments))
+            .route("/v1/t/{origin}/{org}/relay/inbox", post(inbox));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap(); });
@@ -717,7 +734,7 @@ mod tests {
             })
         }
 
-        let app = Router::new().route("/v1/t/{tenant}/relay/inbox", get(inbox));
+        let app = Router::new().route("/v1/t/{origin}/{org}/relay/inbox", get(inbox));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap(); });
@@ -770,7 +787,7 @@ mod tests {
             })
         }
 
-        let app = Router::new().route("/v1/t/{tenant}/relay/inbox", get(inbox));
+        let app = Router::new().route("/v1/t/{origin}/{org}/relay/inbox", get(inbox));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap(); });
