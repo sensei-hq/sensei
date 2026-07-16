@@ -87,6 +87,7 @@ curl -s -o /dev/null -X POST "$WORKER/v1/t/personal/jerry/relay/segments" -H "$A
 curl -s -o /dev/null "$WORKER/v1/t/personal/jerry/relay/segments?run_id=$Z" -H "$AUTH_JWT" || true
 curl -s -o /dev/null -X POST "$WORKER/v1/t/personal/jerry/relay/review" -H "$AUTH_JWT" -H "$CT" -d "{\"run_id\":\"$Z\",\"reviews\":[]}" || true
 curl -s -o /dev/null -X POST "$WORKER/v1/t/personal/jerry/relay/reply" -H "$AUTH_JWT" -H "$CT" -d "{\"inbox_id\":\"$Z\",\"reply\":{}}" || true
+curl -s -o /dev/null "$WORKER/v1/t/personal/jerry/relay/gates" -H "$AUTH_JWT" || true
 sleep 0.6
 
 echo "== 1. daemon POST session =="
@@ -123,6 +124,12 @@ P1=$(req GET "$WORKER/v1/t/personal/jerry/relay/inbox?since=0" "$AUTH_DEV")
 echo "   $P1"
 echo "$P1" | jq -e '.items[] | select(.id=="'"$INBOX_ID"'" and .status=="pending")' >/dev/null || fail "gate not pending ($P1)"
 CURSOR=$(echo "$P1" | jq -r '.cursor')
+
+echo "== 3b. phone GET relay/gates (JWT — expect the pending gate, run_id resolved) =="
+G=$(req GET "$WORKER/v1/t/personal/jerry/relay/gates" "$AUTH_JWT")
+echo "   $G"
+echo "$G" | jq -e '.gates[] | select(.id=="'"$INBOX_ID"'" and .run_id=="'"$RUN"'" and .kind=="approval")' >/dev/null \
+  || fail "pending gate not surfaced on the phone plane ($G)"
 
 echo "== 4. phone POST reply (JWT) =="
 R=$(req POST "$WORKER/v1/t/personal/jerry/relay/reply" "$AUTH_JWT" \

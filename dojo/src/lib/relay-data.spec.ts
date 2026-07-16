@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { listRuns, getSegments, submitReview, replyToGate, DojoApiError } from './relay-data';
+import { listRuns, getSegments, submitReview, replyToGate, listGates, DojoApiError } from './relay-data';
 
 function jsonResponse(body: unknown, status = 200): Response {
 	return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -69,6 +69,38 @@ describe('relay-data', () => {
 		expect(n).toBe(2);
 		expect(sent.run_id).toBe('run-1');
 		expect(sent.reviews).toHaveLength(2);
+	});
+
+	it('listGates hits relay/gates with the bearer token and returns pending gates', async () => {
+		const calls: { url: string; init?: RequestInit }[] = [];
+		const fetch = vi.fn(async (url: string, init?: RequestInit) => {
+			calls.push({ url, init });
+			return jsonResponse({
+				gates: [
+					{
+						id: 'g1',
+						seq: 7,
+						run_id: 'run-1',
+						run_title: 'Round-trip',
+						segment_id: null,
+						kind: 'approval',
+						payload: { prompt: 'run cargo test?' },
+						created_at: 't'
+					}
+				]
+			});
+		}) as unknown as typeof globalThis.fetch;
+		const gates = await listGates('personal/jerry', { accessToken: 'JWT', fetch });
+		expect(gates).toHaveLength(1);
+		expect(gates[0].id).toBe('g1');
+		expect(gates[0].run_id).toBe('run-1');
+		expect(calls[0].url).toContain('/v1/t/personal/jerry/relay/gates');
+		expect((calls[0].init?.headers as Record<string, string>).Authorization).toBe('Bearer JWT');
+	});
+
+	it('listGates returns [] when the body has no gates', async () => {
+		const fetch = vi.fn(async () => jsonResponse({})) as unknown as typeof globalThis.fetch;
+		expect(await listGates('personal/jerry', { fetch })).toEqual([]);
 	});
 
 	it('replyToGate posts inbox_id + reply', async () => {
