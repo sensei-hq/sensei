@@ -9,7 +9,7 @@
 /* ─── attribution / type vocab ──────────────────────────── */
 const DOJO_ORIGIN = {
   employer:  { label: "Employer",     tone: "var(--ink-2)",   soft: "var(--paper-3)" },
-  client:    { label: "Dereferenced", tone: "var(--accent)",  soft: "var(--accent-soft)" },
+  client:    { label: "Anonymized", tone: "var(--accent)",  soft: "var(--accent-soft)" },
   community: { label: "Community",    tone: "var(--success)", soft: "var(--success-soft)" },
   oss:       { label: "Open source",  tone: "var(--ink-2)",   soft: "var(--paper-3)" },
 };
@@ -130,7 +130,7 @@ function DojoTopBar({ org, role }) {
       </div>
       {role && (
         <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, fontFamily: "var(--font-mono)",
-          color: "var(--accent)", background: "var(--accent-soft)", border: "1px solid oklch(0.58 0.15 35/.28)",
+          color: "var(--accent)", background: "var(--accent-soft)", border: "1px solid var(--accent-edge)",
           borderRadius: 20, padding: "3px 11px" }}>{role.kanji} {role.label}</span>
       )}
       <div style={{ flex: 1 }} />
@@ -195,9 +195,9 @@ function DojoRoleNav({ nav, active, setActive }) {
           </React.Fragment>
         );
       })()}
-      <button style={{ display: "grid", gridTemplateColumns: "auto 1fr", alignItems: "center", gap: 9,
+      <button onClick={() => setActive && setActive("identity")} style={{ display: "grid", gridTemplateColumns: "auto 1fr", alignItems: "center", gap: 9,
         width: "100%", textAlign: "left", padding: "8px 9px", background: "transparent",
-        color: "var(--ink-3)", fontSize: 13, cursor: "default", borderTop: "var(--hairline)", paddingTop: 12, opacity: 0.6 }}>
+        color: "var(--ink-2)", fontSize: 13, cursor: "pointer", borderTop: "var(--hairline)", paddingTop: 12 }}>
         <span className="kanji" style={{ fontSize: 13, width: 15, textAlign: "center", color: "var(--ink-3)" }}>調</span>
         <span>Settings · SSO</span>
       </button>
@@ -217,25 +217,25 @@ function DojoMobileBar({ role, live = true }) {
         <div style={{ fontSize: 14, color: "var(--ink)", fontWeight: 600, lineHeight: 1.1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{org.name}</div>
         {role && <div className="mono" style={{ fontSize: 10, color: "var(--ink-4)", marginTop: 1 }}>{role.label}</div>}
       </div>
-      {live && (
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10.5, color: "var(--success)",
-                      background: "var(--success-soft)", border: "1px solid var(--success-edge)", borderRadius: 999, padding: "3px 9px" }}>
-          <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--success)" }} />live
-        </span>
-      )}
+      {live && <DojoLive />}
       <Avatar name="Rin Saito" size={28} />
     </div>
   );
 }
 function DojoMobileTabs({ nav, active, setActive }) {
   const items = [].concat(...nav.map(g => g.items)).slice(0, 5);
+  return <DojoTabBar tabs={items} active={active} onNav={setActive} />;
+}
+
+/* Canonical bottom tab bar — one recipe for the console + relay mobile shells. */
+function DojoTabBar({ tabs, active, onNav }) {
   return (
-    <div style={{ flexShrink: 0, display: "grid", gridTemplateColumns: `repeat(${items.length}, 1fr)`,
+    <div style={{ flexShrink: 0, display: "grid", gridTemplateColumns: `repeat(${tabs.length}, 1fr)`,
                   borderTop: "var(--hairline)", background: "var(--paper)" }}>
-      {items.map(it => {
+      {tabs.map(it => {
         const on = active === it.id;
         return (
-          <button key={it.id} onClick={() => setActive(it.id)} style={{
+          <button key={it.id} onClick={() => onNav && onNav(it.id)} style={{
             display: "flex", flexDirection: "column", alignItems: "center", gap: 3, padding: "9px 4px 11px",
             background: "transparent", border: "none", cursor: "pointer",
             color: on ? "var(--ink)" : "var(--ink-3)", position: "relative",
@@ -250,6 +250,21 @@ function DojoMobileTabs({ nav, active, setActive }) {
           </button>
         );
       })}
+    </div>
+  );
+}
+
+/* Canonical hairline panel — one recipe for the section cards across
+   lead · admin · identity (replaces three local Panel/IdPanel copies). */
+function DojoPanel({ title, note, right, align = "center", children }) {
+  return (
+    <div style={{ background: "var(--paper-2)", border: "var(--hairline)", borderRadius: 12, overflow: "hidden" }}>
+      <div style={{ display: "flex", alignItems: align === "baseline" ? "baseline" : "center", gap: 10, padding: "13px 16px", borderBottom: "var(--hairline)" }}>
+        <span style={{ fontSize: 11, letterSpacing: ".14em", textTransform: "uppercase", color: "var(--ink-3)", fontWeight: 600 }}>{title}</span>
+        {note && <span className="mono" style={{ fontSize: 10.5, color: "var(--ink-4)" }}>{note}</span>}
+        <span style={{ flex: 1 }} />{right}
+      </div>
+      <div style={{ padding: 16 }}>{children}</div>
     </div>
   );
 }
@@ -299,7 +314,50 @@ function DojoRoleShell({ label, role, nav, active, setActive, children, mobile =
   );
 }
 
+function DojoLive({ label = "live" }) {
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10.5, color: "var(--success)",
+                  background: "var(--success-soft)", border: "1px solid var(--success-edge)", borderRadius: 999, padding: "3px 9px" }}>
+      <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--success)" }} />{label}
+    </span>
+  );
+}
+
+// Canonical button — one recipe for the five that drifted across screens.
+// variant: primary (ink) · ghost (hairline) · danger. size sm|md.
+function DojoBtn({ variant = "primary", size = "md", kanji, children, onClick, style }) {
+  const cls = size === "sm" ? "text-sm" : "text-base";
+  const pad = size === "sm" ? "6px 12px" : "10px 16px";
+  const base = { display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 7, borderRadius: "var(--radius)",
+    padding: pad, fontWeight: 500, cursor: "pointer", fontFamily: "inherit", border: "none" };
+  const skin = variant === "ghost"
+    ? { background: "var(--paper)", color: "var(--ink)", border: "var(--hairline)" }
+    : variant === "danger"
+      ? { background: "var(--danger)", color: "var(--paper)" }
+      : { background: "var(--ink)", color: "var(--paper)" };
+  const kc = variant === "ghost" ? "var(--accent)" : variant === "danger" ? "var(--paper)" : "var(--accent)";
+  return (
+    <button onClick={onClick} className={cls} style={{ ...base, ...skin, ...style }}>
+      {kanji && <span className="kanji" style={{ color: kc }}>{kanji}</span>}{children}
+    </button>
+  );
+}
+
+/* Per-kind membership tag — kanji + Dōjō name, tinted by kind (the one map). */
+const DOJO_KIND_TONE = { Employer: "var(--ink-2)", Client: "var(--accent)", Community: "var(--success)", Personal: "var(--ink-3)" };
+const DOJO_KIND_KANJI = { Employer: "社", Client: "客", Community: "群", Personal: "己" };
+function DojoKindTag({ p }) {
+  const tone = DOJO_KIND_TONE[p.kind] || "var(--ink-3)";
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10.5, color: tone,
+      background: `color-mix(in oklch, ${tone} 12%, transparent)`, border: `1px solid color-mix(in oklch, ${tone} 28%, transparent)`,
+      borderRadius: 999, padding: "2px 8px", whiteSpace: "nowrap" }}>
+      <span className="kanji" style={{ fontSize: 11 }}>{DOJO_KIND_KANJI[p.kind] || "結"}</span>{p.dojo}
+    </span>
+  );
+}
+
 Object.assign(window, {
-  DOJO_ORIGIN, DOJO_TYPE, DojoChip, OriginChip, Confidence, DojoHead,
-  DojoTopBar, DojoRoleNav, DojoRoleShell, DojoMobileBar, DojoMobileTabs,
+  DOJO_ORIGIN, DOJO_TYPE, DOJO_KIND_TONE, DOJO_KIND_KANJI, DojoChip, OriginChip, Confidence, DojoHead, DojoLive, DojoBtn, DojoKindTag,
+  DojoTopBar, DojoRoleNav, DojoRoleShell, DojoMobileBar, DojoMobileTabs, DojoTabBar, DojoPanel,
 });

@@ -171,6 +171,28 @@ function DojoForTeams() {
           </div>
         </div>
 
+        {/* governance-as-onboarding + confidentiality */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))' }} className="gap-3 mb-8">
+          <div style={{ background: 'var(--paper)', border: 'var(--hairline)', borderRadius: 14 }} className="p-5">
+            <span className="kanji" style={{ fontSize: 26, color: 'var(--accent)' }}>迎</span>
+            <div style={{ fontSize: 16, fontWeight: 600, color: 'var(--ink)' }} className="mt-3 mb-1">Onboarding is inheritance</div>
+            <p style={{ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.65 }} className="m-0">
+              The Dōjō holds your governance model — rules, skills, agents, commands and each project's memory,
+              authored once per scope. A developer who joins a project inherits the composed set the moment they
+              connect. Day one feels like month three.
+            </p>
+          </div>
+          <div style={{ background: 'var(--paper)', border: 'var(--hairline)', borderRadius: 14 }} className="p-5">
+            <span className="kanji" style={{ fontSize: 26, color: 'var(--accent)' }}>盾</span>
+            <div style={{ fontSize: 16, fontWeight: 600, color: 'var(--ink)' }} className="mt-3 mb-1">Client work never leaks</div>
+            <p style={{ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.65 }} className="m-0">
+              Lessons from client engagements are anonymized before anything leaves — the rule and its why travel;
+              client, repo and identifiers are dropped. If a lesson can't stand without them, it doesn't leave.
+              Every anonymization lands in an immutable audit trail.
+            </p>
+          </div>
+        </div>
+
         {/* collective vs dojo */}
         <div style={sub} className="mb-3" >The global Collective vs. your Dōjō</div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', border: 'var(--hairline)', borderRadius: 14, overflow: 'hidden' }}>
@@ -661,8 +683,12 @@ function FaqA() {
       a: "Sensei is a Tauri app — small binary, low memory. The observer is event-driven; it only does work when a session happens." },
     { q: "Can I export my memories?",
       a: "Yes. Settings → Export gives you a JSON dump of every pattern, memory, and adopted teaching. Import is also supported." },
+    { q: "Can I act on a session while away from my keyboard?",
+      a: "Yes — Relay. Your daemon holds a live line to your Dōjō, so from a phone or any browser you can watch progress, approve the exact command, answer a decision, or chat back to a running session. No pairing, no separate app. Free on your own projects." },
+    { q: "Which models does sensei use?",
+      a: "Its own gateway ships with embedded Ollama — Gemma 4 by default, fast and local, no keys needed. Point it at a bigger Ollama host or bring your own API keys for Claude, GPT-4o and others. There are no tokens to mark up." },
     { q: "What's the long-term plan?",
-      a: "Sensei stays local-first and free. We may add an optional paid tier later for cross-machine sync, but the core promise — quiet, local, observant — never changes." }
+      a: "The core promise — quiet, local, observant — never changes, and the app stays free. Teams and orgs pay for a private, shared Dōjō (per active contributor); public, open-source and personal Dōjōs are free forever." }
   ];
   return (
     <section id="faq" style={{

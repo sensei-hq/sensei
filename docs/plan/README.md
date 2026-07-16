@@ -112,8 +112,11 @@ then **A + B** (close the loop + de-noise).
 
 **Recommended order:** D (floor current) → A + B (close loop + de-noise, make
 shipped screens truthful) → C (the differentiator) → F / G (net-new + relay,
-gated on the design track). Dōjō live (Phase 4) + Relay (Phase 5) are strategic
-tracks that run parallel once their prerequisites land.
+gated on the design track). **Dōjō live (Phase 4) + Relay (Phase 5) are being
+accelerated** (2026-07-16 decision) — the marketing site already presents them, so
+they **ship rather than get gated**; the load-bearing prerequisite to pull Phase 4
+forward is the SaaS-infra decision (see [external-blocked](#external-blocked-do-not-count-as-missing-local-work)).
+Until each lands, the site stays honest (unbuilt ≠ shipped).
 
 ## Implementation phases
 
@@ -153,6 +156,7 @@ flowchart LR
 ### Phase 3 — Net-new surfaces
 **Theme:** breadth, now that the data behind each surface is real.
 - WS F: Solution segment (3 screens), Bootstrap splash, consolidation screen, insights-reasoning drawer, first-run polish (G8). **Needs the design track** (solution + bootstrap mockups).
+- **Local export/import** — Settings → Export a JSON dump of every memory / pattern / guard; Import to restore. Was advertised on the marketing site before it existed; **claim dropped 2026-07-16**, feature parked here (C3 from the site↔product audit, [DOJO-REVIEW §C](../mockups/DOJO-REVIEW.md)).
 **Exit:** the not-built cluster is closed; every new surface renders real data.
 
 ### Phase 4 — Dōjō live activation *(external-blocked)*

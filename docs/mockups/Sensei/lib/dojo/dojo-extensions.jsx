@@ -23,7 +23,6 @@ function DojoExtensions() {
     ...e,
     status: e.source === "you" || e.source === "local" ? "proposed" : "approved",
     teams: (e.pinnedTo || []).length + (e.scope === "global" ? 3 : 0),
-    approver: ["Keiko T.", "Marco D.", "Sven K."][i % 3],
   })), [E.extensions]);
 
   const filtered = withStatus.filter(e => (tab === "proposed" ? e.status === "proposed" : e.status === "approved") && (kind === "all" || e.kind === kind));
@@ -46,7 +45,7 @@ function DojoExtensions() {
         </div>} />
 
       {/* tabs + kind filter */}
-      <div style={{ flexShrink: 0, borderBottom: "var(--hairline)", padding: "12px 28px", display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+      <div style={{ flexShrink: 0, borderBottom: "var(--hairline)", padding: "12px 28px", display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap", rowGap: 10 }}>
         <div style={{ display: "inline-flex", background: "var(--paper-3)", borderRadius: 8, padding: 3, gap: 2 }}>
           {[{ id: "approved", label: "Team catalog" }, { id: "proposed", label: `Proposed · ${proposedCount}` }].map(t => {
             const on = tab === t.id;
@@ -110,12 +109,12 @@ function DojoExtensions() {
                     {proposed ? (
                       <span style={{ fontSize: 11.5, color: "var(--ink-3)" }}>Published by <b style={{ fontWeight: 600, color: "var(--ink-2)" }}>{e.author}</b> · awaiting curation</span>
                     ) : (
-                      <span style={{ fontSize: 11.5, color: "var(--ink-3)" }}>Adopted in <b style={{ fontWeight: 600, color: "var(--ink-2)" }}>{e.teams}</b> {e.teams === 1 ? "project" : "projects"} · approved by {e.approver}</span>
+                      <span style={{ fontSize: 11.5, color: "var(--ink-3)" }}>Adopted in <b style={{ fontWeight: 600, color: "var(--ink-2)" }}>{e.teams}</b> {e.teams === 1 ? "project" : "projects"} · in the team catalog</span>
                     )}
                     <span style={{ flex: 1 }} />
                     {proposed
-                      ? <button style={{ fontSize: 12, background: "var(--ink)", color: "var(--paper)", border: "none", borderRadius: 7, padding: "6px 13px", cursor: "pointer", fontFamily: "inherit", display: "inline-flex", alignItems: "center", gap: 6 }}><span className="kanji" style={{ fontSize: 12, color: "var(--accent)" }}>決</span> Review</button>
-                      : <button style={{ fontSize: 12, background: "var(--paper)", color: "var(--ink-2)", border: "var(--hairline)", borderRadius: 7, padding: "6px 13px", cursor: "pointer", fontFamily: "inherit" }}>Scope ▾</button>}
+                      ? <DojoBtn size="sm" kanji="決">Review</DojoBtn>
+                      : <DojoBtn size="sm" variant="ghost">Scope ▾</DojoBtn>}
                   </div>
                 </div>
               );

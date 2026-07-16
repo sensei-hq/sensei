@@ -31,7 +31,7 @@ function BillRelayRow({ label, free, tone }) {
   );
 }
 
-function DojoBilling() {
+function DojoBilling({ past = false }) {
   const seatsActive = 34, seatsReadonly = 14, perSeat = 12;
   const monthly = seatsActive * perSeat;
   const invoices = [
@@ -46,8 +46,18 @@ function DojoBilling() {
         right={<DojoChip tone="var(--accent)" soft="var(--accent-soft)">Team · private</DojoChip>} />
 
       <div style={{ flex: 1, overflow: "auto", padding: 28 }}>
+        {past && (
+          <div style={{ display: "flex", alignItems: "center", gap: 12, background: "var(--danger-soft)", border: "1px solid var(--danger-edge)", borderRadius: 12, padding: "14px 16px", marginBottom: 20 }}>
+            <span className="kanji" style={{ fontSize: 18, color: "var(--danger)" }}>滞</span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13.5, color: "var(--ink)", fontWeight: 600 }}>Payment past due · $408 unpaid</div>
+              <div style={{ fontSize: 12, color: "var(--ink-2)", marginTop: 2, lineHeight: 1.5 }}>The Jul 1 charge failed. Private scopes stay active for <b style={{ fontWeight: 600 }}>14 days</b> — update your payment method to avoid interruption. Public &amp; personal Dōjōs are unaffected.</div>
+            </div>
+            <DojoBtn variant="danger" size="sm" style={{ flexShrink: 0 }}>Update payment</DojoBtn>
+          </div>
+        )}
         {/* current plan + seats */}
-        <div style={{ display: "grid", gridTemplateColumns: "1.3fr 1fr 1fr", gap: 14, marginBottom: 24 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 14, marginBottom: 24 }}>
           <div style={{ background: "var(--paper-2)", border: "1px solid var(--accent)", borderRadius: 12, padding: "16px 18px" }}>
             <div style={{ fontSize: 11, letterSpacing: ".12em", textTransform: "uppercase", color: "var(--ink-3)", fontWeight: 600, marginBottom: 6 }}>Current plan</div>
             <div className="display" style={{ fontSize: 26, fontWeight: 300, color: "var(--ink)", letterSpacing: "-0.01em" }}>Team · private</div>
@@ -57,6 +67,7 @@ function DojoBilling() {
             <div style={{ fontSize: 11, letterSpacing: ".12em", textTransform: "uppercase", color: "var(--ink-3)", fontWeight: 600, marginBottom: 6 }}>Billable seats</div>
             <div className="display" style={{ fontSize: 34, fontWeight: 300, color: "var(--ink)", lineHeight: 1 }}>{seatsActive}</div>
             <div style={{ fontSize: 12, color: "var(--ink-3)", marginTop: 7 }}>active contributors · <span style={{ color: "var(--success)" }}>{seatsReadonly} read-only free</span></div>
+            <div style={{ fontSize: 10.5, color: "var(--ink-4)", marginTop: 6, lineHeight: 1.4 }}>Active = contributed or had a lesson attributed this period.</div>
           </div>
           <div style={{ background: "var(--paper-2)", border: "var(--hairline)", borderRadius: 12, padding: "16px 18px" }}>
             <div style={{ fontSize: 11, letterSpacing: ".12em", textTransform: "uppercase", color: "var(--ink-3)", fontWeight: 600, marginBottom: 6 }}>This month</div>
@@ -67,14 +78,14 @@ function DojoBilling() {
 
         {/* tier compare */}
         <div style={{ fontSize: 11, letterSpacing: ".14em", textTransform: "uppercase", color: "var(--ink-3)", fontWeight: 600, marginBottom: 12 }}>Tiers</div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 14, marginBottom: 26 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))", gap: 14, marginBottom: 26 }}>
           {BILL_TIERS.map(t => (
             <div key={t.id} style={{ background: t.dark ? "var(--ink)" : "var(--paper-2)", color: t.dark ? "var(--paper)" : "var(--ink)",
                   border: t.current ? "1px solid var(--accent)" : "var(--hairline)", borderRadius: 12, padding: "16px 18px", display: "flex", flexDirection: "column", gap: 10 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <span className="kanji" style={{ fontSize: 20, color: t.dark ? "var(--accent)" : t.current ? "var(--accent)" : "var(--ink-3)" }}>{t.kanji}</span>
                 <span style={{ fontSize: 14, fontWeight: 600, color: t.dark ? "var(--paper)" : "var(--ink)" }}>{t.name}</span>
-                {t.current && <span className="mono" style={{ fontSize: 9, letterSpacing: ".06em", textTransform: "uppercase", color: "var(--accent)", background: "var(--accent-soft)", border: "1px solid oklch(0.58 0.15 35/.28)", borderRadius: 20, padding: "2px 7px", marginLeft: "auto" }}>current</span>}
+                {t.current && <span className="mono" style={{ fontSize: 9, letterSpacing: ".06em", textTransform: "uppercase", color: "var(--accent)", background: "var(--accent-soft)", border: "1px solid var(--accent-edge)", borderRadius: 20, padding: "2px 7px", marginLeft: "auto" }}>current</span>}
               </div>
               <div>
                 <span className="display" style={{ fontSize: 22, fontWeight: 300, color: t.dark ? "var(--paper)" : "var(--ink)", letterSpacing: "-0.01em" }}>{t.price}</span>
@@ -119,6 +130,50 @@ function DojoBilling() {
           <span style={{ fontSize: 12.5, color: "var(--ink-2)", lineHeight: 1.55 }}>
             <b style={{ fontWeight: 600, color: "var(--ink)" }}>Always free:</b> the desktop app, the global Collective, public &amp; personal Dōjōs, bring-your-own-key inference, and read-only membership. You pay only to coordinate a group's private knowledge — never for tokens.
           </span>
+        </div>
+
+        {/* seat roster + live Relay meters */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 14, marginBottom: 24 }}>
+          <div style={{ background: "var(--paper-2)", border: "var(--hairline)", borderRadius: 12, overflow: "hidden" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "13px 16px", borderBottom: "var(--hairline)" }}>
+              <span style={{ fontSize: 11, letterSpacing: ".14em", textTransform: "uppercase", color: "var(--ink-3)", fontWeight: 600 }}>Billable seats</span>
+              <span className="mono" style={{ fontSize: 10.5, color: "var(--ink-4)" }}>who's counted</span>
+              <span style={{ flex: 1 }} />
+              <span className="mono" style={{ fontSize: 10.5, color: "var(--ink-4)" }}>{seatsActive} active · {seatsReadonly} free</span>
+            </div>
+            <div>
+              {[{ n: "Keiko T.", r: "shared 4 · attributed 11", on: true }, { n: "Marco D.", r: "shared 2 · attributed 6", on: true }, { n: "Sven K.", r: "read-only this period", on: false }, { n: "Mei L.", r: "shared 1 · attributed 3", on: true }].map((m, i, a) => (
+                <div key={m.n} style={{ display: "grid", gridTemplateColumns: "auto 1fr auto", gap: 12, alignItems: "center", padding: "11px 16px", borderBottom: i < a.length - 1 ? "1px solid var(--edge)" : "none" }}>
+                  <Avatar name={m.n} size={22} />
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 13, color: "var(--ink)" }}>{m.n}</div>
+                    <div className="mono" style={{ fontSize: 10.5, color: "var(--ink-4)", marginTop: 1 }}>{m.r}</div>
+                  </div>
+                  {m.on ? <DojoChip tone="var(--accent)" soft="var(--accent-soft)">billable</DojoChip> : <DojoChip tone="var(--success)" soft="var(--success-soft)">free</DojoChip>}
+                </div>
+              ))}
+              <div style={{ padding: "10px 16px", fontSize: 11, color: "var(--ink-4)" }}>…30 more billable</div>
+            </div>
+          </div>
+          <div style={{ background: "var(--paper-2)", border: "var(--hairline)", borderRadius: 12, overflow: "hidden" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "13px 16px", borderBottom: "var(--hairline)" }}>
+              <span className="kanji" style={{ fontSize: 14, color: "var(--accent)" }}>携</span>
+              <span style={{ fontSize: 11, letterSpacing: ".14em", textTransform: "uppercase", color: "var(--ink-3)", fontWeight: 600 }}>Relay · live this month</span>
+            </div>
+            <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 14 }}>
+              {[{ l: "Concurrent tracks · peak", v: "9", cap: "of 25", pct: 36 }, { l: "Shared inbox actions", v: "412", cap: "unlimited", pct: 60 }, { l: "Presence sessions", v: "28", cap: "of 40", pct: 70 }].map(x => (
+                <div key={x.l}>
+                  <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 6 }}>
+                    <span style={{ fontSize: 12, color: "var(--ink-2)" }}>{x.l}</span>
+                    <span className="mono" style={{ fontSize: 11, color: "var(--ink-3)" }}>{x.v} <span style={{ color: "var(--ink-4)" }}>{x.cap}</span></span>
+                  </div>
+                  <div style={{ height: 5, borderRadius: 3, background: "var(--paper-3)", overflow: "hidden" }}>
+                    <div style={{ width: x.pct + "%", height: "100%", background: "var(--accent)", borderRadius: 3 }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
 
         {/* invoices */}

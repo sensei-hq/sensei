@@ -40,7 +40,7 @@ function GhMark({ size = 18, color = "currentColor" }) {
 }
 
 /* ─── 1 · Welcome back / sign-in ─────────────────────────── */
-function DojoSignIn() {
+function DojoSignIn({ mobile = false }) {
   const D = window.DOJO, m = D.metrics;
   const [selfHost, setSelfHost] = saasS(false);
 
@@ -71,13 +71,13 @@ function DojoSignIn() {
 
   return (
     <div className="sensei" data-screen-label="SaaS · welcome back / sign-in" style={{
-      width: "100%", height: "100%", display: "flex", overflow: "hidden", background: "var(--paper)",
+      width: "100%", height: "100%", display: "flex", flexDirection: mobile ? "column" : "row", overflow: mobile ? "auto" : "hidden", background: "var(--paper)",
     }}>
       {/* ── left · welcome back + insight into the Dōjō ── */}
       <div style={{
-        width: "57%", flexShrink: 0, padding: "44px 52px", display: "flex", flexDirection: "column",
+        width: mobile ? "100%" : "57%", flexShrink: 0, padding: mobile ? "28px 22px" : "44px 52px", display: "flex", flexDirection: "column",
         background: "linear-gradient(160deg, var(--accent-soft) 0%, var(--paper-2) 60%)",
-        borderRight: "var(--hairline)", overflow: "auto",
+        borderRight: mobile ? "none" : "var(--hairline)", borderBottom: mobile ? "var(--hairline)" : "none", overflow: "auto",
       }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <span className="kanji" style={{ fontSize: 26, color: "var(--accent)", lineHeight: 1 }}>結</span>
@@ -95,10 +95,10 @@ function DojoSignIn() {
           </p>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginTop: 34 }}>
+        <div style={{ display: "grid", gridTemplateColumns: mobile ? "1fr" : "1fr 1fr 1fr", gap: 12, marginTop: mobile ? 22 : 34 }}>
           <Insight kanji="共" value={m.contribWeek} label="lessons shared this week"><Spark data={m.contribSpark} /></Insight>
           <Insight kanji="決" value={m.approvedWeek} label="approved & distributed" />
-          <Insight kanji="盾" value={m.dereferenced} label="anonymized from client work · 0 incidents" />
+          <Insight kanji="盾" value={m.anonymized} label="anonymized from client work · 0 incidents" />
         </div>
 
         {/* latest approved teaching — a glimpse of substance, not just numbers */}
@@ -262,7 +262,7 @@ function DojoOrgs({ onEnter, onCreate }) {
                     </DojoChip>
                   </div>
                 </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 22 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 22, flexWrap: "wrap", justifyContent: "flex-end" }}>
                   <div style={{ textAlign: "right" }}>
                     <div style={{ fontSize: 13, color: "var(--ink)" }}>{o.role}</div>
                     <div className="mono" style={{ fontSize: 10, color: "var(--ink-4)", marginTop: 2 }}>{o.from}</div>
@@ -382,27 +382,31 @@ function DojoOrgsEmpty({ onCreate, onJoin }) {
             A Dōjō is where a team’s sessions consolidate — one shared mind that remembers what everyone has learned. Start one, or step into one that exists.
           </p>
 
-          {/* two paths */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, margin: "40px 0 0", textAlign: "left" }}>
+          {/* two paths — stacked row cards */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 14, margin: "40px 0 0", textAlign: "left" }}>
             {paths.map(p => (
               <div key={p.id} style={{
-                display: "flex", flexDirection: "column",
+                display: "flex", alignItems: "center", gap: 20, flexWrap: "wrap",
                 background: "var(--paper-2)", border: p.primary ? "1px solid var(--accent)" : "var(--hairline)",
-                borderRadius: 14, padding: "22px 22px 20px",
+                borderRadius: 14, padding: "20px 22px",
               }}>
-                <span className="kanji" style={{ fontSize: 30, color: p.primary ? "var(--accent)" : "var(--ink-3)", lineHeight: 1 }}>{p.kanji}</span>
-                <div className="display" style={{ fontSize: 20, fontWeight: 400, letterSpacing: "-0.01em", margin: "16px 0 4px" }}>{p.title}</div>
-                <div style={{ fontSize: 13, color: "var(--ink-2)", fontWeight: 500 }}>{p.lead}</div>
-                <p style={{ fontSize: 12.5, color: "var(--ink-3)", lineHeight: 1.55, margin: "10px 0 20px", flex: 1 }}>{p.body}</p>
+                <span className="kanji" style={{ fontSize: 32, color: p.primary ? "var(--accent)" : "var(--ink-3)", lineHeight: 1, flexShrink: 0 }}>{p.kanji}</span>
+                <div style={{ flex: 1, minWidth: 240 }}>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
+                    <span className="display" style={{ fontSize: 20, fontWeight: 400, letterSpacing: "-0.01em" }}>{p.title}</span>
+                    <span style={{ fontSize: 13, color: "var(--ink-2)", fontWeight: 500 }}>{p.lead}</span>
+                  </div>
+                  <p style={{ fontSize: 12.5, color: "var(--ink-3)", lineHeight: 1.55, margin: "6px 0 0", maxWidth: 460 }}>{p.body}</p>
+                </div>
                 {p.id === "create" ? (
-                  <button onClick={onCreate} style={saasBtnPrimary}>
+                  <button onClick={onCreate} style={{ ...saasBtnPrimary, width: "auto", flexShrink: 0 }}>
                     <span className="kanji" style={{ fontSize: 14, color: "var(--paper)" }}>開</span> {p.cta}
                   </button>
                 ) : !showJoin ? (
-                  <button onClick={() => setShowJoin(true)} style={saasBtnGhost}>{p.cta}</button>
+                  <button onClick={() => setShowJoin(true)} style={{ ...saasBtnGhost, width: "auto", flexShrink: 0 }}>{p.cta}</button>
                 ) : (
-                  <div style={{ display: "flex", gap: 8 }}>
-                    <input style={{ ...saasField, flex: 1 }} placeholder="invite code" defaultValue="" />
+                  <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+                    <input style={{ ...saasField, width: 150 }} placeholder="invite code" defaultValue="" />
                     <button onClick={onJoin} style={{ ...saasBtnGhost, width: "auto", padding: "12px 16px", whiteSpace: "nowrap" }}>Join</button>
                   </div>
                 )}

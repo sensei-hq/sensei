@@ -9,6 +9,7 @@ const { useState: dmS } = React;
 const MAINT_NAV = [
   { group: "Govern", items: [
     { id: "triage",    kanji: "門", label: "Triage", badge: 7 },
+    { id: "approvals", kanji: "承", label: "Approvals", badge: 2 },
     { id: "knowledge", kanji: "蔵", label: "Knowledge" },
     { id: "catalog",   kanji: "庫", label: "Catalog" },
   ]},
@@ -42,7 +43,7 @@ function DojoTriage({ go, mobile = false }) {
         sub="Your scopes by default, ranked by projected impact then age. Every scope has an owner — anything unowned routes to a fallback so nothing sits idle. Nothing publishes without a decision."
         right={<div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, fontFamily: "var(--font-mono)",
-                        color: "var(--accent)", background: "var(--accent-soft)", border: "1px solid oklch(0.58 0.15 35/.28)",
+                        color: "var(--accent)", background: "var(--accent-soft)", border: "1px solid var(--accent-edge)",
                         borderRadius: 20, padding: "3px 10px" }}>✓ My scopes</span>
           <DojoChip tone="var(--ink-2)" soft="var(--paper-2)" border="var(--hairline)">Sort · impact, then age ▾</DojoChip>
         </div>} />
@@ -86,7 +87,7 @@ function DojoTriage({ go, mobile = false }) {
                     </div>
                   </div>
                   {!mobile && <div style={{ display: "flex", gap: 10, alignItems: "center", minWidth: 96, justifyContent: "flex-end" }}>
-                    {c.conflicts > 0 && <DojoChip tone="oklch(0.52 0.13 60)" soft="var(--warning-soft)">{c.conflicts} conflict</DojoChip>}
+                    {c.conflicts > 0 && <DojoChip tone="var(--warning)" soft="var(--warning-soft)">{c.conflicts} conflict</DojoChip>}
                     {c.dups > 0 && <DojoChip>{c.dups} dup</DojoChip>}
                   </div>}
                   {!mobile && <Confidence v={c.confidence} />}
@@ -103,13 +104,19 @@ function DojoTriage({ go, mobile = false }) {
 }
 
 /* ─── Candidate detail · evaluate → decide ──────────────────── */
-function DojoCandidate({ id, go }) {
+function DojoCandidate({ id, go, mobile = false }) {
+  const [revising, setRevising] = dmS(false);
+  const [revision, setRevision] = dmS(null); // { title, learning } once saved
+  const [showRecipients, setShowRecipients] = dmS(false);
+  const revTitleRef = React.useRef(null);
+  const revLearnRef = React.useRef(null);
   const D = window.DOJO;
   const c = D.queue.find(x => x.id === id) || D.queue[0];
   const o = DOJO_ORIGIN[c.origin] || DOJO_ORIGIN.employer;
   const REACH = { "Company": { repos: 134, devs: 48 }, "Team · Payments": { repos: 6, devs: 14 },
     "Client · Globex": { repos: 3, devs: 7 }, "Stack · React": { repos: 22, devs: 19 }, "Stack · Postgres": { repos: 17, devs: 12 } };
-  const r = REACH[c.scope] || { repos: 4, devs: 8 };
+  const r = REACH[c.scope] || null;
+  const secondApprover = SCOPE_OWNERS[c.scope] || SCOPE_FALLBACK;
   const Block = ({ kanji, label, children }) => (
     <div style={{ marginBottom: 18 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 6 }}>
@@ -126,16 +133,38 @@ function DojoCandidate({ id, go }) {
         <span style={{ fontSize: 11, color: "var(--ink-4)" }}>/</span>
         <span className="mono" style={{ fontSize: 11, color: "var(--ink-3)" }}>{c.scope}</span>
       </div>
-      <div style={{ flex: 1, display: "grid", gridTemplateColumns: "1fr 332px", minHeight: 0 }}>
+      <div style={{ flex: 1, display: "grid", gridTemplateColumns: mobile ? "1fr" : "1fr 332px", minHeight: 0 }}>
         <div style={{ overflow: "auto", padding: "24px 28px 32px" }}>
+          {revising && (
+            <div style={{ background: "var(--paper-2)", border: "1px solid var(--accent)", borderRadius: 12, padding: "16px 18px", marginBottom: 18 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                <span className="kanji" style={{ fontSize: 15, color: "var(--accent)" }}>筆</span>
+                <span style={{ fontSize: 11, letterSpacing: ".12em", textTransform: "uppercase", color: "var(--accent)", fontWeight: 700 }}>Revise before publishing</span>
+                <span style={{ flex: 1 }} />
+                <span className="mono" style={{ fontSize: 10.5, color: "var(--ink-4)" }}>edits are recorded in the audit trail</span>
+              </div>
+              <div style={{ fontSize: 10, letterSpacing: ".1em", textTransform: "uppercase", color: "var(--ink-4)", fontWeight: 600, marginBottom: 6 }}>Title</div>
+              <div ref={revTitleRef} contentEditable suppressContentEditableWarning style={{ fontSize: 14, color: "var(--ink)", background: "var(--paper)", border: "var(--hairline)", borderRadius: 8, padding: "10px 12px", marginBottom: 12, outline: "none" }}>{revision ? revision.title : c.title}</div>
+              <div style={{ fontSize: 10, letterSpacing: ".1em", textTransform: "uppercase", color: "var(--ink-4)", fontWeight: 600, marginBottom: 6 }}>The learning</div>
+              <div ref={revLearnRef} contentEditable suppressContentEditableWarning style={{ fontSize: 13, color: "var(--ink)", lineHeight: 1.6, background: "var(--paper)", border: "var(--hairline)", borderRadius: 8, padding: "10px 12px", minHeight: 70, outline: "none" }}>{revision ? revision.learning : c.learning}</div>
+              <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+                <button onClick={() => { setRevision({ title: (revTitleRef.current?.textContent || c.title).trim(), learning: (revLearnRef.current?.textContent || c.learning).trim() }); setRevising(false); }} style={{ padding: "9px 16px", borderRadius: 8, border: "none", cursor: "pointer", background: "var(--ink)", color: "var(--paper)", fontSize: 13, fontWeight: 500, fontFamily: "inherit", display: "inline-flex", alignItems: "center", gap: 7 }}><span className="kanji" style={{ fontSize: 13, color: "var(--accent)" }}>筆</span> Save revision</button>
+                <button onClick={() => setRevising(false)} style={{ padding: "9px 16px", borderRadius: 8, border: "var(--hairline)", cursor: "pointer", background: "var(--paper)", color: "var(--ink-2)", fontSize: 13, fontFamily: "inherit" }}>Cancel</button>
+              </div>
+            </div>
+          )}
           <div style={{ display: "flex", gap: 9, marginBottom: 12, flexWrap: "wrap" }}>
             <DojoChip>{DOJO_TYPE[c.type]}</DojoChip>
             <DojoChip tone="var(--ink-2)">{c.scopeKanji} {c.scope}</DojoChip>
             <OriginChip origin={c.origin} />
             <DojoChip tone={c.impact === "high" ? "var(--accent)" : "var(--ink-3)"}>{c.impact} impact</DojoChip>
           </div>
-          <h1 className="display" style={{ fontSize: 27, fontWeight: 300, letterSpacing: "-0.015em", lineHeight: 1.18, margin: "0 0 20px", color: "var(--ink)" }}>{c.title}</h1>
-          <Block kanji="芽" label="The learning">{c.learning}</Block>
+          <h1 className="display" style={{ fontSize: 27, fontWeight: 300, letterSpacing: "-0.015em", lineHeight: 1.18, margin: "0 0 8px", color: "var(--ink)" }}>{revision ? revision.title : c.title}</h1>
+          {revision && <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 14 }}>
+            <DojoChip tone="var(--accent)" soft="var(--accent-soft)">筆 revised · recorded in audit trail</DojoChip>
+            <button className="mono" onClick={() => setRevision(null)} style={{ fontSize: 10.5, color: "var(--ink-3)", background: "none", border: "none", cursor: "pointer" }}>revert</button>
+          </div>}
+          <Block kanji="芽" label="The learning">{revision ? revision.learning : c.learning}</Block>
           <Block kanji="因" label="The cause">{c.cause}</Block>
           <Block kanji="周" label="The context — where it applies">{c.context}</Block>
           <div style={{ background: "var(--paper-2)", border: "var(--hairline)", borderRadius: 10, padding: "13px 16px", marginBottom: 16 }}>
@@ -147,16 +176,16 @@ function DojoCandidate({ id, go }) {
             </div>
           </div>
           {c.origin === "client" && (
-            <div style={{ background: "var(--accent-soft)", border: "1px solid oklch(0.58 0.15 35/.25)", borderRadius: 10, padding: "13px 16px", marginBottom: 16 }}>
+            <div style={{ background: "var(--accent-soft)", border: "1px solid var(--accent-edge)", borderRadius: 10, padding: "13px 16px", marginBottom: 16 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
                 <span className="kanji" style={{ fontSize: 14, color: "var(--accent)" }}>盾</span>
-                <span style={{ fontSize: 11, letterSpacing: ".12em", textTransform: "uppercase", color: "var(--accent)", fontWeight: 600 }}>Source dereferenced automatically</span>
+                <span style={{ fontSize: 11, letterSpacing: ".12em", textTransform: "uppercase", color: "var(--accent)", fontWeight: 600 }}>Source anonymized automatically</span>
               </div>
               <div style={{ fontSize: 12.5, color: "var(--ink-2)", lineHeight: 1.55 }}>
                 The lesson, its cause and context are kept; the source reference was dropped before it reached you — so this can be published anywhere safely.
               </div>
               <div style={{ display: "flex", gap: 6, marginTop: 9, flexWrap: "wrap" }}>
-                {c.dereferenced.map(d => <DojoChip key={d} tone="var(--ink-3)" soft="var(--paper)">dropped · {d}</DojoChip>)}
+                {c.anonymized.map(d => <DojoChip key={d} tone="var(--ink-3)" soft="var(--paper)">dropped · {d}</DojoChip>)}
               </div>
             </div>
           )}
@@ -165,12 +194,12 @@ function DojoCandidate({ id, go }) {
               {c.conflicts > 0 && (
                 <div style={{ background: "var(--warning-soft)", borderRadius: 10, padding: "13px 15px" }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 9 }}>
-                    <span className="kanji" style={{ fontSize: 13, color: "oklch(0.52 0.13 60)" }}>衝</span>
-                    <span style={{ fontSize: 11, letterSpacing: ".12em", textTransform: "uppercase", color: "oklch(0.52 0.13 60)", fontWeight: 600 }}>Conflicts with a published rule</span>
+                    <span className="kanji" style={{ fontSize: 13, color: "var(--warning)" }}>衝</span>
+                    <span style={{ fontSize: 11, letterSpacing: ".12em", textTransform: "uppercase", color: "var(--warning)", fontWeight: 600 }}>Conflicts with a published rule</span>
                   </div>
                   <div style={{ background: "var(--paper)", border: "var(--hairline)", borderRadius: 8, overflow: "hidden" }}>
                     <div style={{ display: "flex", gap: 9, padding: "8px 12px", borderBottom: "1px solid var(--edge)", fontFamily: "var(--font-mono)", fontSize: 11.5 }}>
-                      <span style={{ width: 10, flexShrink: 0, color: "oklch(0.52 0.13 60)", fontWeight: 700 }}>−</span>
+                      <span style={{ width: 10, flexShrink: 0, color: "var(--warning)", fontWeight: 700 }}>−</span>
                       <span style={{ color: "var(--ink-2)" }}><span style={{ color: "var(--ink-4)" }}>Company</span> · “Retry freely on transient errors”</span>
                     </div>
                     <div style={{ display: "flex", gap: 9, padding: "8px 12px", fontFamily: "var(--font-mono)", fontSize: 11.5 }}>
@@ -181,7 +210,7 @@ function DojoCandidate({ id, go }) {
                   <div style={{ fontSize: 12, color: "var(--ink-2)", lineHeight: 1.5, marginTop: 9 }}>The more specific scope wins — approving lets <b style={{ fontWeight: 600 }}>{c.scope}</b> supersede the Company rule on money-moving paths, leaving it intact everywhere else.</div>
                   <div style={{ display: "flex", gap: 8, marginTop: 11 }}>
                     <button style={{ padding: "6px 12px", borderRadius: 7, border: "var(--hairline)", background: "var(--paper)", color: "var(--ink-2)", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>View rule</button>
-                    <button style={{ padding: "6px 12px", borderRadius: 7, border: "1px solid oklch(0.52 0.13 60/.4)", background: "var(--paper)", color: "oklch(0.5 0.13 60)", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>Supersede on approve</button>
+                    <button style={{ padding: "6px 12px", borderRadius: 7, border: "1px solid var(--danger-edge)", background: "var(--paper)", color: "var(--danger)", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>Supersede on approve</button>
                   </div>
                 </div>
               )}
@@ -205,7 +234,7 @@ function DojoCandidate({ id, go }) {
                     <span style={{ color: "var(--ink-3)" }}>Auto-dedupe · </span>≥&nbsp;0.90 merges automatically; <b style={{ fontWeight: 600 }}>0.75–0.90 is flagged here</b> for you to confirm.
                   </div>
                   <div style={{ display: "flex", gap: 8, marginTop: 11 }}>
-                    <button style={{ padding: "6px 12px", borderRadius: 7, border: "1px solid oklch(0.58 0.15 35/.4)", background: "var(--accent-soft)", color: "var(--accent)", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>Merge into canonical</button>
+                    <button style={{ padding: "6px 12px", borderRadius: 7, border: "1px solid var(--accent-edge)", background: "var(--accent-soft)", color: "var(--accent)", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>Merge into canonical</button>
                     <button style={{ padding: "6px 12px", borderRadius: 7, border: "var(--hairline)", background: "var(--paper)", color: "var(--ink-2)", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>Keep separate</button>
                   </div>
                 </div>
@@ -214,7 +243,7 @@ function DojoCandidate({ id, go }) {
             </div>
           )}
         </div>
-        <div style={{ borderLeft: "var(--hairline)", background: "var(--paper-2)", overflow: "auto", padding: "22px 20px", display: "flex", flexDirection: "column", gap: 18 }}>
+        <div style={{ borderLeft: mobile ? "none" : "var(--hairline)", borderTop: mobile ? "var(--hairline)" : "none", background: "var(--paper-2)", overflow: "auto", padding: "22px 20px", display: "flex", flexDirection: "column", gap: 18 }}>
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
             <EnsoRing progress={c.confidence} size={104} stroke={8} color="var(--accent)" label={Math.round(c.confidence * 100)} />
             <span style={{ fontSize: 11, letterSpacing: ".12em", textTransform: "uppercase", color: "var(--ink-3)" }}>Confidence</span>
@@ -222,7 +251,7 @@ function DojoCandidate({ id, go }) {
           <div>
             <div style={{ fontSize: 10.5, letterSpacing: ".14em", textTransform: "uppercase", color: "var(--ink-4)", fontWeight: 600, marginBottom: 6 }}>Attribution</div>
             <div style={{ fontSize: 12.5, color: "var(--ink-2)", lineHeight: 1.5 }}>
-              {c.origin === "client" ? "Source-dereferenced — no contributor or client identity attached." : <>Named to <b style={{ color: "var(--ink)", fontWeight: 600 }}>{c.by}</b>, {c.origin === "community" ? "from the community" : "org-internal"}.</>}
+              {c.origin === "client" ? "Source-anonymized — no contributor or client identity attached." : <>Named to <b style={{ color: "var(--ink)", fontWeight: 600 }}>{c.by}</b>, {c.origin === "community" ? "from the community" : "org-internal"}.</>}
             </div>
           </div>
           <div>
@@ -242,23 +271,35 @@ function DojoCandidate({ id, go }) {
                 <span className="kanji" style={{ fontSize: 12, color: "var(--ink-3)" }}>誰</span>
                 <span style={{ fontSize: 10, letterSpacing: ".1em", textTransform: "uppercase", color: "var(--ink-3)", fontWeight: 600 }}>Who gets this</span>
                 <span style={{ flex: 1 }} />
-                <span className="mono" style={{ fontSize: 11, color: "var(--ink-2)" }}>{r.repos} repos · {r.devs} devs</span>
+                <span className="mono" style={{ fontSize: 11, color: "var(--ink-2)" }}>{r ? `${r.repos} repos · ${r.devs} devs` : "scope not sized yet"}</span>
               </div>
-              <button className="mono" style={{ marginTop: 6, fontSize: 11, color: "var(--accent)", background: "none", border: "none", cursor: "pointer", padding: 0 }}>Preview recipients →</button>
+              <button className="mono" onClick={() => setShowRecipients(v => !v)} style={{ marginTop: 6, fontSize: 11, color: "var(--accent)", background: "none", border: "none", cursor: "pointer", padding: 0 }}>{showRecipients ? "Hide recipients ↑" : "Preview recipients →"}</button>
+              {showRecipients && (
+                <div style={{ marginTop: 8, borderTop: "1px solid var(--edge)", paddingTop: 8 }}>
+                  {["ledger-core · 6 devs", "payments-api · 4 devs", "checkout-web · 4 devs"].map(x => (
+                    <div key={x} style={{ display: "flex", alignItems: "center", gap: 7, padding: "4px 0", fontSize: 11.5, color: "var(--ink-2)" }}>
+                      <span className="kanji" style={{ fontSize: 11, color: "var(--ink-4)" }}>庫</span><span className="mono">{x}</span>
+                    </div>
+                  ))}
+                  <div style={{ fontSize: 10.5, color: "var(--ink-4)", marginTop: 4 }}>Dry-run — who receives this on publish, per the binding above.</div>
+                </div>
+              )}
             </div>
             <div style={{ fontSize: 10.5, color: "var(--ink-4)", marginTop: 7, lineHeight: 1.45 }}>Inherits the contribution's binding. Narrowing is free; broadening beyond it asks you to confirm.</div>
           </div>
-          <div style={{ borderTop: "var(--hairline)", paddingTop: 16, marginTop: "auto", display: "flex", flexDirection: "column", gap: 8 }}>
+          <div style={{ borderTop: "var(--hairline)", paddingTop: 16, marginTop: "auto", display: "flex", flexDirection: "column", gap: 8,
+                position: mobile ? "sticky" : "static", bottom: mobile ? 0 : "auto", background: mobile ? "var(--paper-2)" : "transparent",
+                paddingBottom: mobile ? 8 : 0, marginLeft: mobile ? -20 : 0, marginRight: mobile ? -20 : 0, paddingLeft: mobile ? 20 : 0, paddingRight: mobile ? 20 : 0, boxShadow: mobile ? "0 -6px 16px color-mix(in oklch, var(--ink) 8%, transparent)" : "none" }}>
             {c.impact === "high" && (
-              <div style={{ background: "var(--accent-soft)", border: "1px solid oklch(0.58 0.15 35/.25)", borderRadius: 8, padding: "10px 11px" }}>
+              <div style={{ background: "var(--accent-soft)", border: "1px solid var(--accent-edge)", borderRadius: 8, padding: "10px 11px" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 5 }}>
                   <span className="kanji" style={{ fontSize: 13, color: "var(--accent)" }}>検</span>
                   <span style={{ fontSize: 10, letterSpacing: ".1em", textTransform: "uppercase", color: "var(--accent)", fontWeight: 600 }}>Second approval required</span>
                 </div>
                 <div style={{ fontSize: 11.5, color: "var(--ink-2)", lineHeight: 1.45 }}>High-impact items need a second maintainer. Threshold set per scope in Scopes &amp; policies.</div>
                 <button style={{ width: "100%", marginTop: 8, display: "flex", alignItems: "center", gap: 8, background: "var(--paper)", border: "var(--hairline)", borderRadius: 7, padding: "7px 10px", cursor: "pointer", textAlign: "left" }}>
-                  <Avatar name="Sven K." size={18} />
-                  <span style={{ fontSize: 12, color: "var(--ink-2)", flex: 1 }}>Sven K. · suggested approver</span>
+                  <Avatar name={secondApprover} size={18} />
+                  <span style={{ fontSize: 12, color: "var(--ink-2)", flex: 1 }}>{secondApprover} · suggested approver</span>
                   <span style={{ fontSize: 9, color: "var(--ink-3)" }}>▾</span>
                 </button>
               </div>
@@ -269,7 +310,7 @@ function DojoCandidate({ id, go }) {
               <span className="kanji" style={{ fontSize: 13, color: "var(--accent)" }}>決</span> {c.impact === "high" ? "Approve & request 2nd" : "Approve & publish"}
             </button>
             <div style={{ display: "flex", gap: 8 }}>
-              <button style={{ flex: 1, padding: "9px", borderRadius: 8, border: "var(--hairline)", cursor: "pointer", background: "var(--paper)", color: "var(--ink-2)", fontSize: 12.5, fontFamily: "inherit" }}>Revise</button>
+              <button onClick={() => setRevising(true)} style={{ flex: 1, padding: "9px", borderRadius: 8, border: "var(--hairline)", cursor: "pointer", background: "var(--paper)", color: "var(--ink-2)", fontSize: 12.5, fontFamily: "inherit" }}>Revise</button>
               <button style={{ flex: 1, padding: "9px", borderRadius: 8, border: "var(--hairline)", cursor: "pointer", background: "var(--paper)", color: "var(--ink-2)", fontSize: 12.5, fontFamily: "inherit" }}>Decline</button>
             </div>
             <div style={{ fontSize: 10.5, color: "var(--ink-4)", marginTop: 2, textAlign: "center" }}>{c.impact === "high" ? "Two named approvals, with notes, land in the audit trail." : "A named decision, with a note, lands in the audit trail."}</div>
@@ -367,6 +408,51 @@ function DojoKnowledge() {
   );
 }
 
+/* ─── Approvals · awaiting my second approval ────────────── */
+function DojoApprovals({ go }) {
+  const D = window.DOJO;
+  const items = (D.queue || []).filter(c => c.impact === "high").slice(0, 3);
+  const fallback = items.length ? items : (D.queue || []).slice(0, 2);
+  const rows = fallback.map((c) => ({ ...c, first: SCOPE_OWNERS[c.scope] || SCOPE_FALLBACK, when: c.age || "—" }));
+  return (
+    <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", background: "var(--paper)" }}>
+      <DojoHead kanji="承" eyebrow="Govern · second approval" title="Awaiting your approval"
+        sub="High-impact teachings a first maintainer approved and routed to you for a second sign-off. Two named approvals — with notes — land in the audit trail before anything publishes."
+        right={<DojoChip tone="var(--accent)" soft="var(--accent-soft)">{rows.length} waiting</DojoChip>} />
+      <div style={{ flex: 1, overflow: "auto", padding: 28 }}>
+        {rows.length === 0 ? (
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, padding: "60px 0", color: "var(--ink-3)" }}>
+            <span className="kanji" style={{ fontSize: 44, color: "var(--ink-4)" }}>空</span>
+            <div style={{ fontSize: 14, color: "var(--ink-2)" }}>Nothing awaiting your second approval.</div>
+          </div>
+        ) : (
+          <div style={{ background: "var(--paper-2)", border: "var(--hairline)", borderRadius: 12, overflow: "hidden", maxWidth: 900 }}>
+            {rows.map((c, i) => (
+              <div key={c.id} style={{ display: "grid", gridTemplateColumns: "auto 1fr auto", gap: 16, alignItems: "center", padding: "15px 18px", borderBottom: i < rows.length - 1 ? "1px solid var(--edge)" : "none" }}>
+                <span className="kanji" style={{ fontSize: 18, color: "var(--accent)", width: 22, textAlign: "center" }}>{c.kanji}</span>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 14, color: "var(--ink)" }}>{c.title}</div>
+                  <div style={{ display: "flex", gap: 8, marginTop: 5, alignItems: "center", flexWrap: "wrap" }}>
+                    <DojoChip tone="var(--accent)" soft="var(--accent-soft)">high impact</DojoChip>
+                    <span className="mono" style={{ fontSize: 10.5, color: "var(--ink-4)" }}>{c.scopeKanji} {c.scope}</span>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, color: "var(--ink-3)" }}>
+                      <Avatar name={c.first} size={16} /> 1st · {c.first} · {c.when}
+                    </span>
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <DojoBtn size="sm" variant="ghost" onClick={() => go && go("triage", c.id)}>Review</DojoBtn>
+                  <DojoBtn size="sm" kanji="承">Approve</DojoBtn>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ─── the maintainer console ─────────────────────────────── */
 function DojoMaintainerConsole({ initial = "triage", initialCandidate = null, mobile = false, relayStart = null }) {
   const [section, setSection] = dmS(initial);
@@ -375,6 +461,7 @@ function DojoMaintainerConsole({ initial = "triage", initialCandidate = null, mo
   let screen;
   if (section === "triage" && candidate) screen = <DojoCandidate id={candidate} go={go} mobile={mobile} />;
   else if (section === "knowledge") screen = <DojoKnowledge mobile={mobile} />;
+  else if (section === "approvals") screen = <DojoApprovals go={go} />;
   else if (section === "catalog") screen = <DojoExtensions />;
   else screen = <DojoTriage go={go} mobile={mobile} />;
   return (

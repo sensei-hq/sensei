@@ -64,7 +64,7 @@ function InappJoin({ onContinue }) {
             {[["社", "Acme Corp", "via SSO domain", "keiko@acme.com", true], ["客", "Globex", "via invite link", "engagement workspace", false]].map(([k, n, sig, detail, primary]) => (
               <div key={n} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", borderRadius: 10,
                             background: primary ? "var(--accent-soft)" : "var(--paper)",
-                            border: primary ? "1px solid oklch(0.58 0.15 35/.3)" : "var(--hairline)" }}>
+                            border: primary ? "1px solid var(--accent-edge)" : "var(--hairline)" }}>
                 <span className="kanji" style={{ fontSize: 20, color: "var(--accent)", width: 24, textAlign: "center" }}>{k}</span>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 13.5, color: "var(--ink)", display: "flex", alignItems: "center", gap: 8 }}>{n}<DojoChip>{sig}</DojoChip></div>
@@ -194,16 +194,16 @@ function InappBind() {
               <div style={{ fontSize: 14, color: "var(--ink)" }}>Client · Globex</div>
               <div className="mono" style={{ fontSize: 11, color: "var(--ink-3)", marginTop: 2 }}>path · /integrations/globex-sdk</div>
             </div>
-            <DojoChip tone="oklch(0.52 0.13 60)" soft="var(--warning-soft)">inferred</DojoChip>
+            <DojoChip tone="var(--warning)" soft="var(--warning-soft)">inferred</DojoChip>
             <button style={{ ...btnPrimary, padding: "7px 13px", fontSize: 12 }}>Confirm</button>
           </div>
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "16px 0", padding: "13px 16px",
-                      background: "var(--accent-soft)", border: "1px solid oklch(0.58 0.15 35/.25)", borderRadius: 10 }}>
+                      background: "var(--accent-soft)", border: "1px solid var(--accent-edge)", borderRadius: 10 }}>
           <span className="kanji" style={{ fontSize: 16, color: "var(--accent)" }}>盾</span>
           <div style={{ fontSize: 12.5, color: "var(--ink)", lineHeight: 1.55 }}>
-            Findings route by the path they came from. Anything shared upstream from a client binding is <b style={{ fontWeight: 600 }}>dereferenced</b> — the lesson travels, the source is dropped.
+            Findings route by the path they came from. Anything shared upstream from a client binding is <b style={{ fontWeight: 600 }}>anonymized</b> — the lesson travels, the source is dropped.
           </div>
         </div>
 
@@ -219,16 +219,17 @@ function InappBind() {
 /* ─── 4 · Project — ready to share lane ──────────────────── */
 function InappShare({ embedded }) {
   const items = [
-    { k: "守", title: "Validate webhook signatures before parsing", type: "Guard", origin: "client", scope: "Client · Acme", attrib: "dereferenced", on: true, conf: 0.91 },
+    { k: "守", title: "Validate webhook signatures before parsing", type: "Guard", origin: "client", scope: "Client · Acme", attrib: "anonymized", on: true, conf: 0.91 },
     { k: "問", title: "Integration-test persona for auth flows", type: "Prompt", origin: "employer", scope: "Stack · React", attrib: "Aiko N.", on: true, conf: 0.84 },
-    { k: "紋", title: "Refresh-token rotation on device re-pair", type: "Pattern", origin: "client", scope: "Client · Acme", attrib: "dereferenced", on: false, conf: 0.78 },
+    { k: "紋", title: "Refresh-token rotation on device re-pair", type: "Pattern", origin: "client", scope: "Client · Acme", attrib: "anonymized", on: false, conf: 0.78 },
   ];
   const forming = { k: "芽", title: "Local fix for the staging seed script", reason: "too project-specific · hasn't generalised", conf: 0.41 };
+  const shareCount = items.filter(i => i.on).length;
   return (
     <InappFrame label="Project · ready to share" title="Sensei  先生  ·  lumen-auth · memories" embedded={embedded}>
       <IaHead kanji="共" eyebrow="lumen-auth · memories" title="Ready to share"
-        sub="Lessons generalised cleanly enough to leave this project. Pick a scope; attribution and dereferencing are applied automatically by origin."
-        right={<button style={btnPrimary}><span className="kanji" style={{ fontSize: 13, color: "var(--accent)" }}>共</span> Share 2 to Dōjō</button>} />
+        sub="Lessons generalised cleanly enough to leave this project. Pick a scope; attribution and anonymization are applied automatically by origin."
+        right={<button style={btnPrimary}><span className="kanji" style={{ fontSize: 13, color: "var(--accent)" }}>共</span> Share {shareCount} to Dōjō</button>} />
       <div style={{ flex: 1, overflow: "auto", padding: 32 }}>
         {/* policy bar — Resolution (Share): org policy is the floor */}
         <div style={{ display: "flex", alignItems: "center", gap: 10, background: "var(--paper-2)", border: "var(--hairline)",
@@ -236,7 +237,7 @@ function InappShare({ embedded }) {
           <span className="kanji" style={{ fontSize: 14, color: "var(--ink-3)" }}>規</span>
           <span style={{ fontSize: 12, color: "var(--ink-2)" }}>Org floor</span>
           <DojoChip tone="var(--success)" soft="var(--success-soft)">always share · test personas</DojoChip>
-          <DojoChip tone="oklch(0.52 0.13 60)" soft="var(--warning-soft)">never share · infra notes</DojoChip>
+          <DojoChip tone="var(--warning)" soft="var(--warning-soft)">never share · infra notes</DojoChip>
           <span style={{ flex: 1 }} />
           <button className="mono" style={{ fontSize: 11, color: "var(--accent)", background: "none", border: "none", cursor: "pointer" }}>edit policy</button>
         </div>
@@ -259,7 +260,7 @@ function InappShare({ embedded }) {
                 <div style={{ fontSize: 13.5, color: "var(--ink)" }}>{it.title}</div>
                 <div style={{ display: "flex", gap: 7, marginTop: 4, alignItems: "center", flexWrap: "wrap" }}>
                   <DojoChip>{it.type}</DojoChip><OriginChip origin={it.origin} />
-                  <span className="mono" style={{ fontSize: 10, color: "var(--ink-4)" }}>{it.attrib === "dereferenced" ? "source dropped" : it.attrib}</span>
+                  <span className="mono" style={{ fontSize: 10, color: "var(--ink-4)" }}>{it.attrib === "anonymized" ? "source dropped" : it.attrib}</span>
                   <DojoChip tone="var(--success)" soft="var(--success-soft)">generalised · {Math.round(it.conf * 100)}%</DojoChip>
                   {it.origin === "client" && <button className="mono" style={{ fontSize: 10, color: "var(--accent)", background: "none", border: "none", cursor: "pointer", padding: 0 }}>preview redaction →</button>}
                 </div>
@@ -287,7 +288,7 @@ function InappShare({ embedded }) {
           </div>
         </div>
         <div style={{ fontSize: 11.5, color: "var(--ink-3)", marginTop: 16, lineHeight: 1.5 }}>
-          You'll see the redacted preview — raw vs stripped — before anything leaves. Shared items enter the org's triage queue; a maintainer approves before distribution, and you can recall a share until it's approved.
+          You'll see the redacted preview — raw vs dropped — before anything leaves. Shared items enter the org's triage queue; a maintainer approves before distribution, and you can recall a share until it's approved.re until it's approved.
         </div>
       </div>
     </InappFrame>
@@ -323,8 +324,8 @@ function InappTravel() {
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 11 }}>
           {contribs.map((c, idx) => {
-            const decTone = c.outcome === "approved" ? "var(--success)" : c.outcome === "declined" ? "oklch(0.52 0.13 60)" : "var(--accent)";
-            const decSoft = c.outcome === "approved" ? "var(--success-soft)" : c.outcome === "declined" ? "var(--warning-soft)" : "var(--accent-soft)";
+            const decTone = c.outcome === "approved" ? "var(--success)" : c.outcome === "declined" ? "var(--danger)" : "var(--accent)";
+            const decSoft = c.outcome === "approved" ? "var(--success-soft)" : c.outcome === "declined" ? "var(--danger-soft)" : "var(--accent-soft)";
             return (
             <div key={idx} style={{ background: "var(--paper-2)", border: "var(--hairline)", borderRadius: 12, padding: "16px 18px" }}>
               <div style={{ display: "grid", gridTemplateColumns: "auto 1fr auto", gap: 14, alignItems: "start" }}>
@@ -357,7 +358,12 @@ function InappTravel() {
               </div>
               <div style={{ display: "flex", alignItems: "flex-start", gap: 8, paddingTop: 11, borderTop: "1px solid var(--edge)" }}>
                 <span className="kanji" style={{ fontSize: 13, color: decTone }}>{c.outcome === "declined" ? "返" : c.outcome === "approved" ? "果" : "待"}</span>
-                <span style={{ fontSize: 12.5, color: "var(--ink-2)", lineHeight: 1.5 }}>{c.note}</span>
+                <span style={{ fontSize: 12.5, color: "var(--ink-2)", lineHeight: 1.5, flex: 1 }}>{c.note}</span>
+                {!c.outcome && (
+                  <button style={{ flexShrink: 0, fontSize: 11.5, color: "var(--ink-2)", background: "var(--paper)", border: "var(--hairline)", borderRadius: 7, padding: "6px 12px", cursor: "pointer", fontFamily: "inherit", display: "inline-flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" }}>
+                    <span className="kanji" style={{ fontSize: 12, color: "var(--accent)" }}>戻</span> Recall
+                  </button>
+                )}
               </div>
             </div>
             );
@@ -425,7 +431,7 @@ function InappCollective() {
           </div>
           {isDojo && (
             <div style={{ fontSize: 11.5, color: "var(--ink-3)", marginTop: 14, lineHeight: 1.5 }}>
-              Client-bound projects are dereferenced automatically before anything leaves. Separate cadence and filters from the public Collective.
+              Client-bound projects are anonymized automatically before anything leaves. Separate cadence and filters from the public Collective.
             </div>
           )}
         </div>
@@ -472,7 +478,7 @@ function InappDownstream({ embedded }) {
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 11, marginBottom: 28 }}>
           {dojo.map((u, i) => (
-            <div key={i} style={{ background: "var(--paper-2)", border: "1px solid oklch(0.58 0.15 35/.22)", borderRadius: 12, padding: "16px 18px",
+            <div key={i} style={{ background: "var(--paper-2)", border: "1px solid var(--accent-edge)", borderRadius: 12, padding: "16px 18px",
                           display: "grid", gridTemplateColumns: "auto 1fr auto", gap: 14, alignItems: "center" }}>
               <span className="kanji" style={{ fontSize: 20, color: "var(--accent)" }}>{u.k}</span>
               <div>
@@ -519,6 +525,88 @@ function InappDownstream({ embedded }) {
   );
 }
 
+/* ─── 4b · Redaction preview — raw vs dropped, before it leaves ── */
+// The headline contributor promise made operational: never a blind send. For a
+// client-origin finding, show exactly what travels (the lesson + what·why·impact
+// + anonymized example) and exactly what is dropped (client · repo · identifiers
+// · source), line by line, before the share is confirmed.
+function InappRedact({ embedded }) {
+  const dropped = [
+    { k: "客", label: "Client & engagement", raw: "Acme Corp · billing-integration", tone: "var(--accent)" },
+    { k: "庫", label: "Repo & paths", raw: "github.com/acme/lumen-auth · /webhooks/billing.ts", tone: "var(--accent)" },
+    { k: "名", label: "Identifiers", raw: "ACME_WEBHOOK_SECRET · tenant_id=acme_prod", tone: "var(--accent)" },
+    { k: "源", label: "Source reference", raw: "session s-2891 · commit 4f9c1a", tone: "var(--accent)" },
+  ];
+  const kept = [
+    { k: "守", label: "The rule", v: "Validate the webhook HMAC signature before parsing the body." },
+    { k: "憶", label: "What · why · impact", v: "Parsing before verifying let a forged payload reach the handler — a spoofed event mutated state. Verify first; reject on mismatch." },
+    { k: "例", label: "Example · anonymized", v: "verify_signature(header, secret) → parse(body)  ·  identifiers dropped" },
+  ];
+  return (
+    <InappFrame label="Project · redaction preview (raw vs dropped)" title="Sensei  先生  ·  lumen-auth" embedded={embedded}>
+      <IaHead kanji="盾" eyebrow="Ready to share · client-origin" title="Here's exactly what leaves — and what doesn't"
+        sub="This finding came from client work, so it's anonymized before anything leaves your machine. Review what's dropped below; nothing is sent until you confirm."
+        right={<span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--accent)", background: "var(--accent-soft)", border: "1px solid var(--accent-edge)", borderRadius: 20, padding: "3px 10px" }}>盾 anonymized</span>} />
+
+      <div style={{ flex: 1, overflow: "auto", padding: "22px 32px 8px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 18, alignItems: "start" }}>
+          {/* kept */}
+          <div style={{ background: "var(--paper-2)", border: "1px solid var(--success-edge)", borderRadius: 12, overflow: "hidden" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 16px", borderBottom: "var(--hairline)" }}>
+              <span style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--success)" }} />
+              <span style={{ fontSize: 11, letterSpacing: ".12em", textTransform: "uppercase", color: "var(--success)", fontWeight: 700 }}>Travels upstream</span>
+            </div>
+            <div style={{ padding: "6px 16px 14px" }}>
+              {kept.map((x, i) => (
+                <div key={i} style={{ padding: "11px 0", borderBottom: i < kept.length - 1 ? "1px solid var(--edge)" : "none" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                    <span className="kanji" style={{ fontSize: 14, color: "var(--success)" }}>{x.k}</span>
+                    <span style={{ fontSize: 10.5, letterSpacing: ".1em", textTransform: "uppercase", color: "var(--ink-3)", fontWeight: 600 }}>{x.label}</span>
+                  </div>
+                  <div style={{ fontSize: 13, color: "var(--ink)", lineHeight: 1.55 }}>{x.v}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+          {/* dropped */}
+          <div style={{ background: "var(--paper-2)", border: "var(--hairline)", borderRadius: 12, overflow: "hidden" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 16px", borderBottom: "var(--hairline)" }}>
+              <span style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--ink-4)" }} />
+              <span style={{ fontSize: 11, letterSpacing: ".12em", textTransform: "uppercase", color: "var(--ink-3)", fontWeight: 700 }}>Dropped — never leaves</span>
+            </div>
+            <div style={{ padding: "6px 16px 14px" }}>
+              {dropped.map((x, i) => (
+                <div key={i} style={{ padding: "11px 0", borderBottom: i < dropped.length - 1 ? "1px solid var(--edge)" : "none" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                    <span className="kanji" style={{ fontSize: 14, color: "var(--ink-4)" }}>{x.k}</span>
+                    <span style={{ fontSize: 10.5, letterSpacing: ".1em", textTransform: "uppercase", color: "var(--ink-3)", fontWeight: 600 }}>{x.label}</span>
+                    <span style={{ flex: 1 }} />
+                    <span className="mono" style={{ fontSize: 9.5, color: "var(--ink-4)", textTransform: "uppercase", letterSpacing: ".06em" }}>dropped</span>
+                  </div>
+                  <div className="mono" style={{ fontSize: 11.5, color: "var(--ink-3)", lineHeight: 1.5, textDecoration: "line-through", textDecorationColor: "var(--ink-4)", wordBreak: "break-all" }}>{x.raw}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 9, marginTop: 16, background: "var(--paper-2)", border: "var(--hairline)", borderLeft: "3px solid var(--accent)", borderRadius: 10, padding: "13px 16px" }}>
+          <span className="kanji" style={{ fontSize: 15, color: "var(--accent)" }}>盾</span>
+          <span style={{ fontSize: 12.5, color: "var(--ink-2)", lineHeight: 1.55 }}>
+            If a lesson can't stand without identifying context, it's <b style={{ fontWeight: 600, color: "var(--ink)" }}>dropped automatically</b> rather than weakened — never sent half-anonymized.
+          </span>
+        </div>
+      </div>
+
+      <div style={{ flexShrink: 0, borderTop: "var(--hairline)", padding: "14px 32px", display: "flex", alignItems: "center", gap: 12 }}>
+        <span style={{ fontSize: 12, color: "var(--ink-3)" }}>Destination · <b style={{ fontWeight: 600, color: "var(--ink-2)" }}>Acme Corp Dōjō</b> · triage queue</span>
+        <span style={{ flex: 1 }} />
+        <button style={btnGhost}>Cancel</button>
+        <button style={btnPrimary}><span className="kanji" style={{ fontSize: 13, color: "var(--accent)" }}>送</span> Confirm &amp; share anonymized</button>
+      </div>
+    </InappFrame>
+  );
+}
+
 Object.assign(window, {
-  InappJoin, InappConnection, InappBind, InappShare, InappTravel, InappCollective, InappDownstream,
+  InappJoin, InappConnection, InappBind, InappShare, InappRedact, InappTravel, InappCollective, InappDownstream,
 });

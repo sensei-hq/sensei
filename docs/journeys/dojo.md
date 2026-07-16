@@ -3,7 +3,10 @@
 > The team's shared brain — and the surface for supervising it from anywhere.
 > Distilled from [`../mockups/Sensei/Sensei Dōjō Journey Map.html`](../mockups/Sensei/Sensei%20D%C5%8Djo%20Journey%20Map.html).
 > Traces to [objectives DJ1–DJ5](../requirements/objectives.md#dōjō--the-cross-cutting-team-layer);
-> the layer design is [architecture/dojo](../architecture/dojo.md).
+> the layer design is [architecture/dojo](../architecture/dojo.md). The org lead's
+> end-to-end path — Keiko, standing up the company Dōjō — is in
+> [`../mockups/Sensei/Sensei End-to-End Journey.html`](../mockups/Sensei/Sensei%20End-to-End%20Journey.html)
+> (see [journeys → the whole loop](README.md#the-whole-loop--machine--dōjō--beyond)).
 
 The Dōjō is the **one shared tier** between the local, private device and the
 global Collective — a **responsive SaaS site** (with optional self-hosting) that
