@@ -17,6 +17,7 @@
 		const section = path.replace(/^\/console\/?/, '').split('/')[0];
 		const known = [
 			'triage',
+			'relay',
 			'members',
 			'identities',
 			'policies',
