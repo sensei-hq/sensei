@@ -9,6 +9,7 @@
 //! Keychain-backed Bearer token — never Supabase).
 
 use crate::db::pg_store::DojoMembership;
+use dojo_protocol::relay::{RelayInboxItem, RelayInboxPull, RelaySegment, RelaySessionUpdate};
 use dojo_protocol::{ArtifactPullResponse, PublishArtifactResponse, PublishedArtifact};
 
 /// A resolved endpoint for talking to one Dōjō membership: the registry base +
@@ -202,6 +203,99 @@ impl DojoClient {
             .await
             .map_err(|e| DojoClientError::Decode(e.to_string()))
     }
+
+    // -- Relay (P0/P1) --------------------------------------------------------
+    // The bidirectional live channel over the SAME outbound seam: the daemon
+    // PUBLISHES filtered status + outline + gates to the Worker `/v1/relay/*`
+    // (poll-first, device-token) and POLLS answered inbox rows back. The Worker
+    // (SvelteKit + cloud Supabase) is the server — no Rust API server here; the
+    // daemon stays a credential-BEARING outbound client. Types are the shared
+    // `dojo_protocol::relay` wire contract. Nothing published here carries code
+    // or diffs — the caller supplies already-filtered logical status (D10).
+
+    /// The relay endpoint for this membership's tenant:
+    /// `{registry_url}/v1/t/{url-encoded tenant_key}/relay/{suffix}` — the same
+    /// mount shape as [`Self::artifacts_url`].
+    fn relay_url(&self, suffix: &str) -> String {
+        format!(
+            "{}/v1/t/{}/relay/{}",
+            self.registry_url,
+            encode_path_segment(&self.tenant_key),
+            suffix
+        )
+    }
+
+    /// Shared POST discipline for the fire-and-check relay publishes (status,
+    /// segments, inbox): bearer + JSON body, status-only result. Mirrors
+    /// [`Self::publish_artifact`]'s error mapping (transport → `Network`, non-2xx
+    /// → `Status`); no response body is decoded.
+    async fn relay_post<T: serde::Serialize + ?Sized>(
+        &self,
+        suffix: &str,
+        body: &T,
+    ) -> Result<(), DojoClientError> {
+        let token = self.bearer_async().await?;
+        let resp = self
+            .http
+            .post(self.relay_url(suffix))
+            .bearer_auth(token)
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| DojoClientError::Network(e.to_string()))?;
+        let status = resp.status();
+        if !status.is_success() {
+            return Err(DojoClientError::Status(status.as_u16()));
+        }
+        Ok(())
+    }
+
+    /// Publish the filtered status snapshot for a run (`POST relay/session`).
+    #[allow(dead_code)] // wired by P1 (round-trip) + P3 (run engine)
+    pub async fn publish_session_update(
+        &self,
+        update: &RelaySessionUpdate,
+    ) -> Result<(), DojoClientError> {
+        self.relay_post("session", update).await
+    }
+
+    /// Upsert the run's outline segments (`POST relay/segments`).
+    #[allow(dead_code)] // wired by P2 (segment feed)
+    pub async fn upsert_segments(&self, segments: &[RelaySegment]) -> Result<(), DojoClientError> {
+        self.relay_post("segments", segments).await
+    }
+
+    /// Raise an inbox row — a gate / decision / chat / nudge / stall
+    /// (`POST relay/inbox`). Fire-and-forget; the reply arrives via
+    /// [`Self::poll_inbox`].
+    #[allow(dead_code)] // wired by P1 (round-trip) + P2/P3
+    pub async fn raise_inbox_item(&self, item: &RelayInboxItem) -> Result<(), DojoClientError> {
+        self.relay_post("inbox", item).await
+    }
+
+    /// Poll inbox rows since a cursor (`GET relay/inbox?since={cursor}`) — the
+    /// answered replies the daemon consumes to continue held runs, plus the new
+    /// cursor to persist. Mirrors [`Self::pull_artifacts`] exactly (poll-first;
+    /// realtime is a later phone-side add).
+    #[allow(dead_code)] // wired by P1 (round-trip) + P3 (run engine)
+    pub async fn poll_inbox(&self, since: i64) -> Result<RelayInboxPull, DojoClientError> {
+        let token = self.bearer_async().await?;
+        let resp = self
+            .http
+            .get(self.relay_url("inbox"))
+            .query(&[("since", since.to_string())])
+            .bearer_auth(token)
+            .send()
+            .await
+            .map_err(|e| DojoClientError::Network(e.to_string()))?;
+        let status = resp.status();
+        if !status.is_success() {
+            return Err(DojoClientError::Status(status.as_u16()));
+        }
+        resp.json::<RelayInboxPull>()
+            .await
+            .map_err(|e| DojoClientError::Decode(e.to_string()))
+    }
 }
 
 #[cfg(test)]
@@ -330,6 +424,168 @@ mod tests {
         crate::gateway_keys::set_key(&cref, "device-token-abc").unwrap();
         let c = DojoClient::for_membership(&membership("http://localhost:7755/github/acme", &cref));
         assert_eq!(c.bearer().unwrap(), "device-token-abc");
+        crate::gateway_keys::delete_key(&cref).unwrap();
+    }
+
+    #[test]
+    fn relay_url_encodes_tenant_as_single_segment() {
+        let c = DojoClient::for_membership(&membership("http://localhost:7755/github/acme", "dojo-x"));
+        assert_eq!(
+            c.relay_url("inbox"),
+            "http://localhost:7755/v1/t/github%2Facme/relay/inbox"
+        );
+    }
+
+    #[tokio::test]
+    #[cfg_attr(not(target_os = "macos"), ignore)]
+    async fn poll_inbox_forwards_since_and_parses_response() {
+        use axum::{extract::Query, routing::get, Json, Router};
+        use dojo_protocol::relay::{
+            RelayInboxItem, RelayInboxKind, RelayInboxPull, RelayInboxStatus, RelayMessageDirection,
+        };
+        use std::collections::HashMap;
+
+        // A fake Worker /v1/relay/inbox: echoes `since` into the cursor and returns
+        // one answered approval. Echoing `since` proves the client forwarded the
+        // cursor; a bad path/query would 404 and fail the parse.
+        async fn inbox(Query(q): Query<HashMap<String, String>>) -> Json<RelayInboxPull> {
+            let since: i64 = q.get("since").and_then(|s| s.parse().ok()).unwrap_or(-1);
+            Json(RelayInboxPull {
+                items: vec![RelayInboxItem {
+                    id: Some("inbox-1".into()),
+                    run_id: "run-1".into(),
+                    segment_id: None,
+                    kind: RelayInboxKind::Approval,
+                    direction: RelayMessageDirection::AgentToHuman,
+                    status: RelayInboxStatus::Answered,
+                    payload: serde_json::json!({"prompt": "run cargo test?"}),
+                    reply: Some(serde_json::json!({"verdict": "approve"})),
+                    created_at: None,
+                    answered_at: None,
+                }],
+                cursor: since,
+            })
+        }
+
+        let app = Router::new().route("/v1/t/{tenant}/relay/inbox", get(inbox));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap(); });
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        let cref = format!("dojo-relay-poll-{}", uuid::Uuid::new_v4());
+        crate::gateway_keys::set_key(&cref, "device-token-relay").unwrap();
+        let mut m = membership("http://localhost:7755/github/acme", &cref);
+        m.registry_url = format!("http://{addr}");
+        let c = DojoClient::for_membership(&m);
+
+        let resp = c.poll_inbox(5).await.expect("poll succeeds");
+        assert_eq!(resp.cursor, 5, "the client forwarded since=5 (echoed as the cursor)");
+        assert_eq!(resp.items.len(), 1);
+        assert_eq!(resp.items[0].kind, RelayInboxKind::Approval);
+        assert_eq!(resp.items[0].status, RelayInboxStatus::Answered);
+        assert_eq!(resp.items[0].reply.as_ref().unwrap()["verdict"], "approve");
+
+        crate::gateway_keys::delete_key(&cref).unwrap();
+    }
+
+    #[tokio::test]
+    #[cfg_attr(not(target_os = "macos"), ignore)]
+    async fn relay_publishes_serialize_and_succeed() {
+        use axum::{routing::post, Json, Router};
+        use dojo_protocol::relay::{
+            GateSeverity, RelayInboxItem, RelayInboxKind, RelayMessageDirection, RelayRunStatus,
+            RelaySegment, RelaySessionUpdate, SegmentState,
+        };
+
+        // Handlers use the typed `Json<T>` extractor: if the client serialized the
+        // wrong wire shape, extraction 422s → the client sees Status(422) and the
+        // test fails. So a green run proves the daemon↔Worker contract holds.
+        async fn session(Json(_): Json<RelaySessionUpdate>) -> axum::http::StatusCode {
+            axum::http::StatusCode::OK
+        }
+        async fn segments(Json(s): Json<Vec<RelaySegment>>) -> axum::http::StatusCode {
+            assert_eq!(s.len(), 2);
+            axum::http::StatusCode::OK
+        }
+        async fn inbox(Json(_): Json<RelayInboxItem>) -> axum::http::StatusCode {
+            axum::http::StatusCode::OK
+        }
+
+        let app = Router::new()
+            .route("/v1/t/{tenant}/relay/session", post(session))
+            .route("/v1/t/{tenant}/relay/segments", post(segments))
+            .route("/v1/t/{tenant}/relay/inbox", post(inbox));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap(); });
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        let cref = format!("dojo-relay-pub-{}", uuid::Uuid::new_v4());
+        crate::gateway_keys::set_key(&cref, "device-token-relay").unwrap();
+        let mut m = membership("http://localhost:7755/github/acme", &cref);
+        m.registry_url = format!("http://{addr}");
+        let c = DojoClient::for_membership(&m);
+
+        let update = RelaySessionUpdate {
+            run_id: "run-1".into(),
+            status: RelayRunStatus::Running,
+            title: "Relay engine".into(),
+            goal: None,
+            progress_done: 1,
+            progress_total: 5,
+            current_phase: Some("P1".into()),
+            current_feature: None,
+            last_event_at: None,
+            paused_until: None,
+            pause_reason: None,
+        };
+        c.publish_session_update(&update).await.expect("session publish ok");
+
+        let segs = vec![
+            RelaySegment {
+                id: None,
+                parent_id: None,
+                seq: 0,
+                title: "Phase 1".into(),
+                summary: Some("vertical slice".into()),
+                detail: None,
+                state: SegmentState::Active,
+                is_gate: false,
+                gate_severity: None,
+                response_verdict: None,
+                response_note: None,
+            },
+            RelaySegment {
+                id: None,
+                parent_id: None,
+                seq: 1,
+                title: "Gate".into(),
+                summary: None,
+                detail: None,
+                state: SegmentState::Blocked,
+                is_gate: true,
+                gate_severity: Some(GateSeverity::Blocking),
+                response_verdict: None,
+                response_note: None,
+            },
+        ];
+        c.upsert_segments(&segs).await.expect("segments publish ok");
+
+        let item = RelayInboxItem {
+            id: None,
+            run_id: "run-1".into(),
+            segment_id: None,
+            kind: RelayInboxKind::Approval,
+            direction: RelayMessageDirection::AgentToHuman,
+            status: dojo_protocol::relay::RelayInboxStatus::Pending,
+            payload: serde_json::json!({"prompt": "approve?"}),
+            reply: None,
+            created_at: None,
+            answered_at: None,
+        };
+        c.raise_inbox_item(&item).await.expect("inbox publish ok");
+
         crate::gateway_keys::delete_key(&cref).unwrap();
     }
 }
