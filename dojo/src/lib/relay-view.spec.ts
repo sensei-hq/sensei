@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { statusBadge, progressWidth } from './relay-view';
-import type { RelayRunStatus } from './relay-data';
+import { statusBadge, segmentStateBadge, progressWidth } from './relay-view';
+import type { RelayRunStatus, SegmentState } from './relay-data';
 
 describe('relay-view', () => {
 	describe('statusBadge', () => {
@@ -33,6 +33,45 @@ describe('relay-view', () => {
 
 		it('falls back to a muted "Unknown" for an unrecognized status', () => {
 			expect(statusBadge('bogus' as RelayRunStatus)).toEqual({
+				label: 'Unknown',
+				toneClass: 'text-ink-mute'
+			});
+		});
+	});
+
+	describe('segmentStateBadge', () => {
+		it('maps every segment state to a plain-language label + tone class', () => {
+			const cases: Record<SegmentState, { label: string; toneClass: string }> = {
+				pending: { label: 'Queued', toneClass: 'text-ink-mute' },
+				active: { label: 'In progress', toneClass: 'text-success' },
+				done: { label: 'Done', toneClass: 'text-ink-mute' },
+				skipped: { label: 'Skipped', toneClass: 'text-ink-faint' },
+				failed: { label: 'Failed', toneClass: 'text-danger' },
+				blocked: { label: 'Needs you', toneClass: 'text-accent' },
+				needs_review: { label: 'Needs you', toneClass: 'text-accent' }
+			};
+			for (const [state, expected] of Object.entries(cases)) {
+				expect(segmentStateBadge(state as SegmentState)).toEqual(expected);
+			}
+		});
+
+		it('rises needs_review and blocked as accent-toned "Needs you" (they gate on you)', () => {
+			expect(segmentStateBadge('needs_review')).toEqual({ label: 'Needs you', toneClass: 'text-accent' });
+			expect(segmentStateBadge('blocked')).toEqual({ label: 'Needs you', toneClass: 'text-accent' });
+		});
+
+		it('reads active as the live "In progress" success tone', () => {
+			expect(segmentStateBadge('active').label).toBe('In progress');
+			expect(segmentStateBadge('active').toneClass).toBe('text-success');
+		});
+
+		it('tones failed danger and skipped faint', () => {
+			expect(segmentStateBadge('failed').toneClass).toBe('text-danger');
+			expect(segmentStateBadge('skipped').toneClass).toBe('text-ink-faint');
+		});
+
+		it('falls back to a muted "Unknown" for an unrecognized state', () => {
+			expect(segmentStateBadge('bogus' as SegmentState)).toEqual({
 				label: 'Unknown',
 				toneClass: 'text-ink-mute'
 			});
