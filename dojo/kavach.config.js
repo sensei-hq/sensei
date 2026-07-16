@@ -36,6 +36,10 @@ export default {
 	rules: [
 		{ path: '/', public: true },
 		{ path: '/signin', public: true },
+		// The machine/token API (/v1/*) self-authenticates in-handler (device-token
+		// or Supabase-JWT plane, see dojo-auth.ts) — it must bypass kavach's web
+		// session guard, or every daemon/API call 303-redirects to /signin.
+		{ path: '/v1', public: true },
 		{ path: '/orgs', roles: '*' },
 		{ path: '/console', roles: '*' }
 	]
