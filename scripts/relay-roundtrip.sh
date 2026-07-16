@@ -85,6 +85,7 @@ curl -s -o /dev/null -X POST "$WORKER/v1/t/personal/jerry/relay/inbox" -H "$AUTH
 curl -s -o /dev/null "$WORKER/v1/t/personal/jerry/relay/inbox?since=999999999" -H "$AUTH_DEV" || true
 curl -s -o /dev/null -X POST "$WORKER/v1/t/personal/jerry/relay/segments" -H "$AUTH_DEV" -H "$CT" -d "{\"run_id\":\"$Z\",\"segments\":[]}" || true
 curl -s -o /dev/null "$WORKER/v1/t/personal/jerry/relay/segments?run_id=$Z" -H "$AUTH_JWT" || true
+curl -s -o /dev/null -X POST "$WORKER/v1/t/personal/jerry/relay/review" -H "$AUTH_JWT" -H "$CT" -d "{\"run_id\":\"$Z\",\"reviews\":[]}" || true
 curl -s -o /dev/null -X POST "$WORKER/v1/t/personal/jerry/relay/reply" -H "$AUTH_JWT" -H "$CT" -d "{\"inbox_id\":\"$Z\",\"reply\":{}}" || true
 sleep 0.6
 
@@ -102,6 +103,15 @@ echo "== 1c. phone GET segments =="
 GS=$(req GET "$WORKER/v1/t/personal/jerry/relay/segments?run_id=$RUN" "$AUTH_JWT")
 echo "   $GS"
 echo "$GS" | jq -e '.segments | length==2 and .[0].title=="Phase 1" and .[1].is_gate==true and .[1].gate_severity=="blocking"' >/dev/null || fail "segments read ($GS)"
+
+echo "== 1d. phone POST review (batch verdicts) =="
+RV=$(req POST "$WORKER/v1/t/personal/jerry/relay/review" "$AUTH_JWT" \
+  "{\"run_id\":\"$RUN\",\"reviews\":[{\"seq\":0,\"verdict\":\"approve\"},{\"seq\":1,\"verdict\":\"request_changes\",\"note\":\"add a test\"}]}")
+echo "   $RV"; echo "$RV" | jq -e '.submitted==2' >/dev/null || fail "review submit ($RV)"
+
+echo "== 1e. phone GET segments (verdicts applied) =="
+GS2=$(req GET "$WORKER/v1/t/personal/jerry/relay/segments?run_id=$RUN" "$AUTH_JWT")
+echo "$GS2" | jq -e '.segments[] | select(.seq==0 and .response_verdict=="approve" and .submitted_at!=null)' >/dev/null || fail "verdict not applied ($GS2)"
 
 echo "== 2. daemon POST inbox (raise gate) =="
 I=$(req POST "$WORKER/v1/t/personal/jerry/relay/inbox" "$AUTH_DEV" \
