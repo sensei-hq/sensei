@@ -172,6 +172,14 @@ flowchart LR
 
 ### Phase 5 — Relay *(new surface — WS G)*
 **Theme:** supervise long, multi-agent runs from anywhere, without leaking code (objectives R1–R8; [architecture/relay](../architecture/relay.md)).
+- **The Relay engine — end-goal design + phased build-up (P0–P6):**
+  [`relay-engine.md`](relay-engine.md). The daemon-owned autonomous run engine + its
+  zero-knowledge phone/console surface — rides the existing `dojo/client.rs` → Worker
+  `/v1` device-token transport (poll-first), robustly rebuilds the 5-day vacation run
+  (limit-safe pause/resume, crash recovery, *progress over asking*, hybrid
+  local-model routing), and normalizes multiple assistants behind one contract. Beta =
+  single-user personal Dōjō (P0–P2); **team relay (P6) folds into Phase 4.** The
+  R1–R8 objectives below are the full team vision it builds toward.
 - **Specs first** — `docs/spec/screen/relay-*.md` (14 mockups, 0 specced) via the design track.
 - **Coordinator** — supervise the agent CLIs + run the active plan in auto mode + publish filtered status + raise gates (grows the daemon; new Observatory rail item).
 - **Zero-knowledge relay** — encrypted pairing + scoped/revocable permissions; filtered status only; daemon outbound-only; adopt Apache-2.0 **ACP** (not Zed's GPL crate).
