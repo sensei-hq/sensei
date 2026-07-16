@@ -88,6 +88,7 @@ curl -s -o /dev/null "$WORKER/v1/t/personal/jerry/relay/segments?run_id=$Z" -H "
 curl -s -o /dev/null -X POST "$WORKER/v1/t/personal/jerry/relay/review" -H "$AUTH_JWT" -H "$CT" -d "{\"run_id\":\"$Z\",\"reviews\":[]}" || true
 curl -s -o /dev/null -X POST "$WORKER/v1/t/personal/jerry/relay/reply" -H "$AUTH_JWT" -H "$CT" -d "{\"inbox_id\":\"$Z\",\"reply\":{}}" || true
 curl -s -o /dev/null "$WORKER/v1/t/personal/jerry/relay/gates" -H "$AUTH_JWT" || true
+curl -s -o /dev/null -X POST "$WORKER/v1/t/personal/jerry/relay/nudge" -H "$AUTH_JWT" -H "$CT" -d "{\"run_id\":\"$Z\",\"text\":\"x\"}" || true
 sleep 0.6
 
 echo "== 1. daemon POST session =="
@@ -130,6 +131,15 @@ G=$(req GET "$WORKER/v1/t/personal/jerry/relay/gates" "$AUTH_JWT")
 echo "   $G"
 echo "$G" | jq -e '.gates[] | select(.id=="'"$INBOX_ID"'" and .run_id=="'"$RUN"'" and .kind=="approval")' >/dev/null \
   || fail "pending gate not surfaced on the phone plane ($G)"
+
+echo "== 3c. phone POST relay/nudge (JWT — human_to_agent steer, new inbox row) =="
+N=$(req POST "$WORKER/v1/t/personal/jerry/relay/nudge" "$AUTH_JWT" \
+  "{\"run_id\":\"$RUN\",\"text\":\"  focus on the API first  \"}")
+echo "   $N"; NUDGE_ID=$(echo "$N" | jq -r '.id // empty'); [ -n "$NUDGE_ID" ] || fail "nudge ($N)"
+# The daemon poll (device plane) must see the human_to_agent nudge with trimmed text.
+PN=$(req GET "$WORKER/v1/t/personal/jerry/relay/inbox?since=$CURSOR" "$AUTH_DEV")
+echo "$PN" | jq -e '.items[] | select(.id=="'"$NUDGE_ID"'" and .direction=="human_to_agent" and .kind=="nudge" and .payload.text=="focus on the API first")' >/dev/null \
+  || fail "nudge not visible to the daemon poll / not trimmed ($PN)"
 
 echo "== 4. phone POST reply (JWT) =="
 R=$(req POST "$WORKER/v1/t/personal/jerry/relay/reply" "$AUTH_JWT" \

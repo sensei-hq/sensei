@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { listRuns, getSegments, submitReview, replyToGate, listGates, DojoApiError } from './relay-data';
+import { listRuns, getSegments, submitReview, replyToGate, listGates, sendNudge, DojoApiError } from './relay-data';
 
 function jsonResponse(body: unknown, status = 200): Response {
 	return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -111,6 +111,22 @@ describe('relay-data', () => {
 		}) as unknown as typeof globalThis.fetch;
 		await replyToGate('personal/jerry', 'i1', { verdict: 'approve' }, { fetch });
 		expect(sent.inbox_id).toBe('i1');
+	});
+
+	it('sendNudge posts run_id + text + kind (defaults to nudge) and returns id/seq', async () => {
+		let sent: { run_id?: string; text?: string; kind?: string } = {};
+		const fetch = vi.fn(async (_url: string, init?: RequestInit) => {
+			sent = JSON.parse(String(init?.body));
+			return jsonResponse({ id: 'n1', seq: 12 });
+		}) as unknown as typeof globalThis.fetch;
+		const out = await sendNudge('personal/jerry', 'run-1', 'focus on the API first', {
+			accessToken: 'JWT',
+			fetch
+		});
+		expect(out).toEqual({ id: 'n1', seq: 12 });
+		expect(sent.run_id).toBe('run-1');
+		expect(sent.text).toBe('focus on the API first');
+		expect(sent.kind).toBe('nudge'); // server-side trim of whitespace is covered by the harness
 	});
 
 	it('throws DojoApiError on a non-2xx', async () => {
