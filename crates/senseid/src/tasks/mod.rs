@@ -87,6 +87,12 @@ pub enum TaskKind {
     /// tick alongside the other global passes; the manual path is
     /// `POST /api/knowledge/rules/consolidate`.
     ConsolidateGovernance,
+    /// Global: **eagerly** pre-generate the mentor-voice insight copy for pending
+    /// recommendations (via [`crate::analysis::insight_copy::generate_and_cache`])
+    /// so the Insights / Today board reads cached copy on the FIRST view — no
+    /// fallback→warm text transition, no inference on the wire. Idempotent
+    /// (cached recs skipped) and bounded per tick; enqueued each analyzer tick.
+    WarmInsightCopy,
 }
 
 impl std::fmt::Display for TaskKind {
@@ -119,6 +125,7 @@ impl std::fmt::Display for TaskKind {
             Self::AggregateToolInsights => write!(f, "aggregate_tool_insights"),
             Self::ClassifyPendingVerdicts => write!(f, "classify_pending_verdicts"),
             Self::ConsolidateGovernance => write!(f, "consolidate_governance"),
+            Self::WarmInsightCopy => write!(f, "warm_insight_copy"),
         }
     }
 }
@@ -175,6 +182,9 @@ impl TaskKind {
             // Tier-2 consolidation is one model (reasoning-chain) call; a cold
             // embedded model can take minutes, so it shares the batch budget.
             | TaskKind::ConsolidateGovernance
+            // Eager insight-copy warming is up to WARM_CAP sequential model calls
+            // (a cold embedded model is slow first); the breaker caps a down model.
+            | TaskKind::WarmInsightCopy
             | TaskKind::AggregateCorrections => Duration::from_secs(600),
         }
     }
@@ -351,7 +361,7 @@ mod tests {
             TaskKind::BackfillTranscripts,
             TaskKind::BackfillTranscriptFile, TaskKind::AggregateCorrections,
             TaskKind::AggregateToolInsights, TaskKind::ClassifyPendingVerdicts,
-            TaskKind::ConsolidateGovernance,
+            TaskKind::ConsolidateGovernance, TaskKind::WarmInsightCopy,
         ] {
             assert!(k.watchdog_timeout().as_secs() > 0, "{k} must have a positive cap");
         }
