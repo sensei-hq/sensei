@@ -65,6 +65,8 @@
   --success-edge: oklch(0.620 0.080 160 / 0.30);
   --accent-edge:  oklch(0.580 0.150 35 / 0.28);
   --warning-edge: oklch(0.720 0.120 75 / 0.30);
+  --on-primary-soft: oklch(0.975 0.008 85 / 0.78);
+  --on-primary-mute: oklch(0.975 0.008 85 / 0.62);
 
   /* Legacy aliases — keep older JSX functional */
   --sumi:        var(--ink);
@@ -131,6 +133,8 @@
   --shadow:    0 1px 3px oklch(0.22 0.012 50 / 0.06),
                0 8px 24px oklch(0.22 0.012 50 / 0.06);
   --shadow-lg: 0 24px 60px oklch(0.22 0.012 50 / 0.18);
+  --shadow-up: 0 -6px 16px oklch(0.22 0.012 50 / 0.08);
+  --scrim: oklch(0.22 0.012 50 / 0.28);
 
   /* Motion */
   --ease:      cubic-bezier(0.2, 0.6, 0.2, 1);
@@ -173,9 +177,13 @@
   --success-edge: oklch(0.720 0.090 160 / 0.34);
   --accent-edge:  oklch(0.700 0.150 35 / 0.34);
   --warning-edge: oklch(0.780 0.120 75 / 0.34);
+  --on-primary-soft: oklch(0.170 0.010 50 / 0.82);
+  --on-primary-mute: oklch(0.170 0.010 50 / 0.66);
 
   --hairline: 1px solid var(--edge);
   --ink-line: 1px solid oklch(0.94 0.008 85 / 0.12);
+  --shadow-up: 0 -6px 16px oklch(0 0 0 / 0.35);
+  --scrim: oklch(0 0 0 / 0.5);
 }
 
 /* ═══════════════════════════════════════════════════════════════════
