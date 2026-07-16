@@ -59,6 +59,22 @@ export interface SegmentReview {
 	note?: string;
 }
 
+/** A pending gate the agent is waiting on the human for — the "needs you" card. */
+export interface RelayGate {
+	/** relay_inbox id — pass to replyToGate. */
+	id: string;
+	seq: number;
+	/** The run this gate belongs to (resolved from the session; deep-link target). */
+	run_id: string | null;
+	run_title: string | null;
+	segment_id: string | null;
+	/** relay_inbox_kind — approval / decision / chat / nudge / stall. */
+	kind: string;
+	/** Stripped prompt + rokkit form schema (options/fields) — never code or diffs. */
+	payload: Record<string, unknown>;
+	created_at: string;
+}
+
 function base(tenantKey: string): string {
 	return `${dojoApiUrl}/v1/t/${encodeTenant(tenantKey)}/relay`;
 }
@@ -79,6 +95,14 @@ export async function getSegments(tenantKey: string, runId: string, opts: DojoCa
 	});
 	const { segments } = await parseJson<{ segments: RelaySegment[] }>(res);
 	return segments ?? [];
+}
+
+/** Pending gates awaiting the human across the tenant's runs (oldest first). */
+export async function listGates(tenantKey: string, opts: DojoCallOpts = {}): Promise<RelayGate[]> {
+	const f = opts.fetch ?? fetch;
+	const res = await f(`${base(tenantKey)}/gates`, { headers: authHeaders(opts.accessToken) });
+	const { gates } = await parseJson<{ gates: RelayGate[] }>(res);
+	return gates ?? [];
 }
 
 /** Submit the PR-review batch (per-segment verdicts). Returns the count applied. */
