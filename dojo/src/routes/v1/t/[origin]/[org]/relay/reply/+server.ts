@@ -22,11 +22,13 @@ export const POST: RequestHandler = async ({ params, request, locals }) => {
 			})
 			.eq('id', inboxId)
 			.eq('tenant_id', tenantId)
-			.eq('status', 'pending') // only a pending gate can be answered (idempotent)
 			.select('id, seq')
 			.maybeSingle();
+		// Idempotent: re-answering an already-answered gate is a no-harm overwrite
+		// (last-write-wins) — safe under network retries and phone double-taps. The
+		// seq trigger re-advances on each write so the daemon poll always re-surfaces it.
 		if (error) return apiError(500, error.message);
-		if (!data) return apiError(404, 'no pending inbox row for id');
+		if (!data) return apiError(404, 'no inbox row for id');
 		return Response.json({ id: data.id, seq: data.seq });
 	} catch (e) {
 		if (e instanceof Response) return e;

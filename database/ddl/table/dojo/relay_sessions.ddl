@@ -11,7 +11,11 @@ create table if not exists dojo.relay_sessions (
 , status         dojo.relay_run_status not null default 'running'
 , progress_done  integer               not null default 0
 , progress_total integer               not null default 0
+, current_phase  text
+, current_feature text
 , last_event_at  timestamptz
+, paused_until   timestamptz
+, pause_reason   text
 , heartbeat_at   timestamptz
 , started_at     timestamptz           not null default now()
 , completed_at   timestamptz
