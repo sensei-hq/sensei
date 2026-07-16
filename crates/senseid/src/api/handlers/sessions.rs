@@ -271,6 +271,16 @@ pub(crate) async fn ingest_hook_event(
         tracing::warn!(error = %e, event_type, assistant_family, "ingest_hook_event: insert failed");
     }
 
+    // Relay segment-publish (A2): a TodoWrite carries the run's todo outline —
+    // project it into the relay and push to enrolled dojos. Fire-and-forget so
+    // the publish (a DB read + bounded HTTP posts) never blocks the hook.
+    if tool_name == Some("TodoWrite") && !session_id.is_empty() {
+        let task = crate::tasks::Task::new(
+            crate::tasks::TaskKind::PublishRelaySegments, "", session_id,
+        );
+        state.task_queue.enqueue(task).await;
+    }
+
     // Derive/maintain the activity.sessions row from the hook stream (#31).
     // A session is one assistant session_id, attributed to the indexed folder
     // its cwd resolves to; Stop/SessionEnd marks it completed. Best-effort —

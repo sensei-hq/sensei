@@ -93,6 +93,11 @@ pub enum TaskKind {
     /// fallback→warm text transition, no inference on the wire. Idempotent
     /// (cached recs skipped) and bounded per tick; enqueued each analyzer tick.
     WarmInsightCopy,
+    /// Relay segment-publish (A2): project a session's latest `TodoWrite` into
+    /// the relay outline and push it to every enrolled Dōjō. The assistant
+    /// `session_id` is carried in `task.path` (and used directly as the relay
+    /// `run_id`). Enqueued by `ingest_hook_event` on each `TodoWrite`.
+    PublishRelaySegments,
 }
 
 impl std::fmt::Display for TaskKind {
@@ -126,6 +131,7 @@ impl std::fmt::Display for TaskKind {
             Self::ClassifyPendingVerdicts => write!(f, "classify_pending_verdicts"),
             Self::ConsolidateGovernance => write!(f, "consolidate_governance"),
             Self::WarmInsightCopy => write!(f, "warm_insight_copy"),
+            Self::PublishRelaySegments => write!(f, "publish_relay_segments"),
         }
     }
 }
@@ -153,6 +159,9 @@ impl TaskKind {
             | TaskKind::BackfillTranscripts
             | TaskKind::BackfillTranscriptFile
             | TaskKind::MeasureVerdicts
+            // Relay segment-publish: one DB read + a couple of bounded HTTP
+            // posts per enrolled dojo — light and network-bounded already.
+            | TaskKind::PublishRelaySegments
             // Tool-insights snapshot: a couple of small aggregations + one
             // multi-row insert — well under a minute in practice, but keep
             // the same 3-minute budget as the other analyzer touch-ups so a
@@ -362,6 +371,7 @@ mod tests {
             TaskKind::BackfillTranscriptFile, TaskKind::AggregateCorrections,
             TaskKind::AggregateToolInsights, TaskKind::ClassifyPendingVerdicts,
             TaskKind::ConsolidateGovernance, TaskKind::WarmInsightCopy,
+            TaskKind::PublishRelaySegments,
         ] {
             assert!(k.watchdog_timeout().as_secs() > 0, "{k} must have a positive cap");
         }
