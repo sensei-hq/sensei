@@ -319,8 +319,9 @@ pub struct RelayInboxItem {
     pub direction: RelayMessageDirection,
     #[serde(default = "default_pending")]
     pub status: RelayInboxStatus,
-    /// Stripped prompt + rokkit form schema. No code, no diffs.
-    #[serde(default)]
+    /// Stripped prompt + rokkit form schema. No code, no diffs. Defaults to an
+    /// empty object (matching the DDL `jsonb not null default '{}'`) — never null.
+    #[serde(default = "empty_object")]
     pub payload: serde_json::Value,
     /// The human's response (verdict / chosen option / free text).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -333,6 +334,10 @@ pub struct RelayInboxItem {
 
 fn default_pending() -> RelayInboxStatus {
     RelayInboxStatus::Pending
+}
+
+fn empty_object() -> serde_json::Value {
+    serde_json::json!({})
 }
 
 /// The phone's answer to an inbox row — `POST /v1/relay/reply`. The daemon polls
@@ -519,6 +524,9 @@ mod tests {
         let parsed: RelayInboxItem = serde_json::from_value(minimal).unwrap();
         assert_eq!(parsed.status, RelayInboxStatus::Pending);
         assert_eq!(parsed.kind, RelayInboxKind::Chat);
+        // payload defaults to an empty object (matching the DDL not-null default),
+        // NOT null — so it never violates `jsonb not null` on the Worker insert.
+        assert_eq!(parsed.payload, json!({}), "payload defaults to {{}}, not null");
     }
 
     #[test]

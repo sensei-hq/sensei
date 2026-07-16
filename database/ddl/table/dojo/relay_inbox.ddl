@@ -1,7 +1,10 @@
 set search_path to dojo, extensions;
 
+create sequence if not exists dojo.relay_inbox_seq;
+
 create table if not exists dojo.relay_inbox (
   id            uuid                         primary key default gen_random_uuid()
+, seq           bigint                       not null default nextval('dojo.relay_inbox_seq')
 , session_id    uuid                         not null references dojo.relay_sessions(id) on delete cascade
 , segment_id    uuid                         references dojo.relay_segments(id) on delete cascade
 , tenant_id     uuid                         not null references dojo.tenants(id)
@@ -16,6 +19,7 @@ create table if not exists dojo.relay_inbox (
 , answered_at   timestamptz
 );
 
+create index if not exists relay_inbox_seq_idx on dojo.relay_inbox(seq);
 create index if not exists relay_inbox_session_idx on dojo.relay_inbox(session_id, created_at desc);
 create index if not exists relay_inbox_user_pending_idx on dojo.relay_inbox(user_id) where status = 'pending';
 create index if not exists relay_inbox_segment_idx on dojo.relay_inbox(segment_id) where segment_id is not null;
@@ -29,6 +33,10 @@ which the daemon consumes over /v1 to continue the held run. segment_id links a 
 to its outline segment. Distinct from dojo.notifications (passive read-later badges):
 this is a two-way gate with a reply channel.';
 
+comment on column dojo.relay_inbox.seq
+     is 'Monotonic poll cursor, advanced on every write — the Worker sets seq =
+nextval on insert AND on the pending→answered update (a default alone only fires on
+insert). poll_inbox resumes gap-free from the last seq it saw; mirrors dojo.artifacts.seq.';
 comment on column dojo.relay_inbox.payload
      is 'Stripped prompt + rokkit form schema (options/fields). No code, no diffs.';
 comment on column dojo.relay_inbox.reply
