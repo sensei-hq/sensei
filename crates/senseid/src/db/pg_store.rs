@@ -3801,6 +3801,24 @@ impl PgStore {
         ).bind(client_session_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())
     }
 
+    /// The most recent `TodoWrite` event for a session: its `(payload, cwd)`.
+    /// `None` when the session has no `TodoWrite` yet. Feeds the relay
+    /// segment-publish path (P2) — `payload` holds the todo list
+    /// (`payload.tool_input.todos`, projected by [`crate::dojo::relay_project`]);
+    /// `cwd` names the working folder for the run title. Reads the jsonb column
+    /// straight into `serde_json::Value` (same pattern as
+    /// [`Self::get_hook_events_for_session`]).
+    pub async fn latest_todowrite(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<(serde_json::Value, Option<String>)>, String> {
+        let row: Option<(serde_json::Value, Option<String>)> = sqlx_core::query_as::query_as(
+            "SELECT payload, cwd FROM activity.assistant_events
+             WHERE session_id = $1 AND tool_name = 'TodoWrite' ORDER BY ts DESC LIMIT 1"
+        ).bind(session_id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row)
+    }
+
     /// Upsert a batch of tool-call verdicts (#90). Idempotent: repeated calls
     /// with a new heuristic just refresh the row (`ON CONFLICT (event_id) DO
     /// UPDATE`). Returns the number of rows written.

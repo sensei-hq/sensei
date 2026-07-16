@@ -13,11 +13,7 @@
 //! one-liners, so no summarization is applied here; the gemma4 rollup is for the
 //! richer tool-activity→phase projection (a later enrichment), not per-todo.
 
-// The pure projection API is consumed by the segment-publish path (P2 next chunk:
-// read the latest TodoWrite for an active run → todos_to_segments → upsert_segments).
-#![allow(dead_code)]
-
-use dojo_protocol::relay::{RelaySegment, SegmentState};
+use dojo_protocol::relay::{RelayRunStatus, RelaySegment, RelaySessionUpdate, SegmentState};
 use serde::Deserialize;
 
 /// One `TodoWrite` entry (Claude Code): `content` + `status`
@@ -78,6 +74,51 @@ pub fn todos_to_segments(todos: &[Todo]) -> Vec<RelaySegment> {
         .collect()
 }
 
+/// Derive a run title from the assistant's working directory: the folder's
+/// basename (trailing '/' trimmed, last path segment). Falls back to
+/// `"Coding session"` when the cwd is absent/empty — the phone always shows a
+/// human label, never a raw path or a blank.
+pub fn title_from_cwd(cwd: Option<&str>) -> String {
+    cwd.map(|c| c.trim_end_matches('/'))
+        .filter(|c| !c.is_empty())
+        .and_then(|c| c.rsplit('/').next())
+        .filter(|seg| !seg.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| "Coding session".to_string())
+}
+
+/// Build the filtered status snapshot for a run from its outline segments —
+/// the run-detail header (P2 uses the assistant `session_id` as `run_id`; there
+/// is no `activity.runs` table yet). Status is always `Running` (the segment
+/// feed only fires while the run is live); progress is derived from segment
+/// state (`total` = count, `done` = count of `Done`); `current_feature` is the
+/// title of the first `Active` segment, if any. All other optional fields are
+/// `None` — the todo outline carries no phase/goal/timing.
+pub fn session_update(run_id: &str, title: &str, segments: &[RelaySegment]) -> RelaySessionUpdate {
+    let progress_total = segments.len() as i32;
+    let progress_done = segments
+        .iter()
+        .filter(|s| s.state == SegmentState::Done)
+        .count() as i32;
+    let current_feature = segments
+        .iter()
+        .find(|s| s.state == SegmentState::Active)
+        .map(|s| s.title.clone());
+    RelaySessionUpdate {
+        run_id: run_id.to_string(),
+        status: RelayRunStatus::Running,
+        title: title.to_string(),
+        goal: None,
+        progress_done,
+        progress_total,
+        current_phase: None,
+        current_feature,
+        last_event_at: None,
+        paused_until: None,
+        pause_reason: None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -133,5 +174,59 @@ mod tests {
         let segs = todos_to_segments(&todos);
         assert_eq!(segs[0].title, "x");
         assert!(segs[0].detail.is_none() && segs[0].summary.is_none());
+    }
+
+    #[test]
+    fn title_from_cwd_takes_basename() {
+        assert_eq!(title_from_cwd(Some("/Users/jerry/Developer/sensei-hq/sensei")), "sensei");
+        assert_eq!(title_from_cwd(Some("/Users/jerry/Developer/sensei-hq/sensei/")), "sensei");
+        assert_eq!(title_from_cwd(Some("bare")), "bare");
+    }
+
+    #[test]
+    fn title_from_cwd_falls_back_when_missing_or_empty() {
+        assert_eq!(title_from_cwd(None), "Coding session");
+        assert_eq!(title_from_cwd(Some("")), "Coding session");
+        assert_eq!(title_from_cwd(Some("/")), "Coding session");
+    }
+
+    #[test]
+    fn session_update_counts_progress_and_picks_active_feature() {
+        let segs = todos_to_segments(&[
+            Todo { content: "done a".into(), status: "completed".into() },
+            Todo { content: "done b".into(), status: "completed".into() },
+            Todo { content: "doing it".into(), status: "in_progress".into() },
+            Todo { content: "todo".into(), status: "pending".into() },
+        ]);
+        let u = session_update("sess-1", "sensei", &segs);
+        assert_eq!(u.run_id, "sess-1");
+        assert_eq!(u.title, "sensei");
+        assert_eq!(u.status, RelayRunStatus::Running);
+        assert_eq!(u.progress_total, 4);
+        assert_eq!(u.progress_done, 2);
+        assert_eq!(u.current_feature.as_deref(), Some("doing it"));
+        // The todo outline carries no phase/goal/timing.
+        assert!(u.goal.is_none() && u.current_phase.is_none());
+        assert!(u.last_event_at.is_none() && u.paused_until.is_none() && u.pause_reason.is_none());
+    }
+
+    #[test]
+    fn session_update_empty_segments_is_zero_progress_no_feature() {
+        let u = session_update("sess-2", "proj", &[]);
+        assert_eq!(u.progress_total, 0);
+        assert_eq!(u.progress_done, 0);
+        assert!(u.current_feature.is_none());
+    }
+
+    #[test]
+    fn session_update_no_active_segment_yields_no_feature() {
+        let segs = todos_to_segments(&[
+            Todo { content: "a".into(), status: "completed".into() },
+            Todo { content: "b".into(), status: "pending".into() },
+        ]);
+        let u = session_update("sess-3", "proj", &segs);
+        assert_eq!(u.progress_total, 2);
+        assert_eq!(u.progress_done, 1);
+        assert!(u.current_feature.is_none(), "no in_progress todo ⇒ no current_feature");
     }
 }
