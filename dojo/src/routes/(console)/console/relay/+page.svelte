@@ -1,14 +1,19 @@
 <script lang="ts">
+	import { invalidateAll } from '$app/navigation';
 	import ConsoleHead from '$lib/components/ConsoleHead.svelte';
 	import DojoChip from '$lib/components/DojoChip.svelte';
+	import RelayGateCard from '$lib/components/RelayGateCard.svelte';
 	import { relativeAge } from '$lib/triage-view';
 	import { progressWidth, statusBadge } from '$lib/relay-view';
 
 	// Relay run list (mockup dojo-relay.jsx "Active"/RelayProjectsBody): every
 	// supervised run the caller can see in this tenant, one card each. The card is a
-	// link into the run detail route (a later chunk). Presentational only — the load
-	// (+page.ts → relay-data.listRuns) does the fetching and degrades to an empty
-	// list + surfaced error so the shell still renders. Mirrors triage/+page.svelte.
+	// link into the run detail route. Above it, a "Needs you" band (mockup "requires
+	// you" / RelayProjectsBody.needs) surfaces the pending gates the agent is waiting
+	// on, one RelayGateCard each. Presentational only — the load (+page.ts → listRuns
+	// + listGates) does the fetching and degrades to empty lists + a surfaced error so
+	// the shell still renders; the cards' replies invalidateAll to refresh. Mirrors
+	// triage/+page.svelte.
 	let { data } = $props();
 
 	// Format an ISO instant as a short local time for the "paused until" line.
@@ -42,6 +47,29 @@
 					>Live relay is unavailable. <span class="mono text-ink-mute text-xs">{data.error}</span
 					></span
 				>
+			</div>
+		{/if}
+
+		{#if data.gates.length > 0}
+			<div style="margin-top: 18px">
+				<div class="flex items-center gap-2" style="margin-bottom: 12px">
+					<span class="kanji text-accent" style="font-size: 13px">要</span>
+					<span
+						class="text-ink-mute text-xs font-semibold"
+						style="letter-spacing: 0.14em; text-transform: uppercase">Needs you</span
+					>
+					<span class="mono text-accent text-xs">{data.gates.length}</span>
+				</div>
+				<div class="flex flex-col gap-3">
+					{#each data.gates as gate (gate.id)}
+						<RelayGateCard
+							{gate}
+							tenantKey={data.tenantKey}
+							accessToken={data.accessToken}
+							onReplied={() => invalidateAll()}
+						/>
+					{/each}
+				</div>
 			</div>
 		{/if}
 
