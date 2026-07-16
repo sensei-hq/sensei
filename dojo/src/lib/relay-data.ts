@@ -122,6 +122,26 @@ export async function submitReview(
 	return submitted;
 }
 
+/**
+ * Send an unsolicited nudge/chat TO the agent for a run (direction human_to_agent).
+ * A NEW inbox row — distinct from replyToGate (which answers an existing gate). The
+ * daemon consumes it to steer/unstick the held run. Returns the created row id + seq.
+ */
+export async function sendNudge(
+	tenantKey: string,
+	runId: string,
+	text: string,
+	opts: DojoCallOpts & { kind?: 'nudge' | 'chat' } = {}
+): Promise<{ id: string; seq: number }> {
+	const f = opts.fetch ?? fetch;
+	const res = await f(`${base(tenantKey)}/nudge`, {
+		method: 'POST',
+		headers: { 'content-type': 'application/json', ...authHeaders(opts.accessToken) },
+		body: JSON.stringify({ run_id: runId, text, kind: opts.kind ?? 'nudge' })
+	});
+	return parseJson<{ id: string; seq: number }>(res);
+}
+
 /** Answer a gate (approve/deny/decision/chat). The daemon consumes the reply. */
 export async function replyToGate(
 	tenantKey: string,
