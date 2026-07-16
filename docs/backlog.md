@@ -61,16 +61,21 @@ Work is tracked as **GitHub issues** in [`sensei-hq/sensei`](https://github.com/
 
 ---
 
-## Relay (new vision — R1–R8)
+## Relay engine (P0–P6) — see [`plan/relay-engine.md`](plan/relay-engine.md)
 
-See [`requirements/objectives.md#relay`](requirements/objectives.md#relay--supervising-long-runs-from-anywhere) · [`architecture/relay.md`](architecture/relay.md) · [`journeys/relay.md`](journeys/relay.md). File issues as scoped:
+The consolidated design + phased build-up. **Supersedes the old R1–R8 pairing
+framing** — the "encrypted pairing transport" is dropped; Relay rides the daemon's
+existing Dōjō line (poll-first → realtime). Traces:
+[`architecture/relay.md`](architecture/relay.md) · [`journeys/relay.md`](journeys/relay.md).
+Building autonomously via `/loop` on `develop`.
 
-- **Relay screen specs** — `docs/spec/screen/relay-*.md` for the 14 mockups (currently 0 specced). Star screens: Dashboard, TaskDetail, Decisions, Coordinator, DojoRelayGates.
-- **Coordinator** — supervise agent CLIs (Claude Code · Codex · OpenCode · Aider), run the active plan in auto mode, publish filtered status, raise gates. New Observatory rail item.
-- **Zero-knowledge relay transport** — encrypted pairing round-trip + scoped/revocable permissions; filtered status only; daemon outbound-only; adopt Apache-2.0 **ACP** (not Zed's GPL agent crate).
-- **Planner data model** — plans → phases → features · checkpoints · gates; plan authoring marks gate steps.
-- **Mobile companion app** — the phone surfaces.
-- **Team relay (Dōjō)** — gates fan into a shared on-call queue with attribution.
+- **P0 — contract + schema** *(in progress)* — `dojo.*` relay tables + enums (cloud, ✅ `e4bf9ca9`); daemon-local `activity.runs`/`run_events` + run-state enums (✅ validated); RLS **deferred to P1** (Worker uses service-role, single-user beta); filtered-status/segment/gate contract types; seed the personal membership + device token. **Hard-block: cloud Supabase connection + device-token issuance** (needs a secret from Jerry).
+- **P1** — vertical slice: one gate round-trip (daemon → `/v1/relay` → phone → daemon); + RLS.
+- **P2** — real hook triggers + segment feed + PR-review send + running/paused/stuck badge.
+- **P3** — daemon-owned run engine (tick · limit pause/auto-resume · watchdog/crashed · progress-over-asking · depth bar · `plan-depth-reviewer` agent).
+- **P4** — push + realtime swap + offline.
+- **P5** — multi-assistant adapters (ACP + fallback ladder).
+- **P6** — team relay (folds into the Dōjō `/v1` port above).
 
 ---
 
