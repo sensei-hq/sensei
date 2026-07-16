@@ -349,6 +349,16 @@ pub struct RelayReply {
     pub reply: serde_json::Value,
 }
 
+/// The Worker's ack for a raised inbox row — the response body of
+/// `POST relay/inbox`. `id` is the server-assigned `dojo.relay_inbox.id`
+/// (the handle the daemon awaits a reply against); `seq` is the row's monotonic
+/// sequence (the cursor from which `poll_inbox` should scan for the answer).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RelayInboxAck {
+    pub id: String,
+    pub seq: i64,
+}
+
 /// Response to the daemon's inbox poll — the answered/pending rows since a cursor
 /// plus the new cursor to persist. Mirrors the artifact contract's pull shape.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -571,6 +581,18 @@ mod tests {
         let js = serde_json::to_string(&r).unwrap();
         let back: RelayReply = serde_json::from_str(&js).unwrap();
         assert_eq!(back, r);
+    }
+
+    #[test]
+    fn inbox_ack_round_trips() {
+        // The Worker's `POST relay/inbox` ack: `{id, seq}`.
+        let ack = RelayInboxAck { id: "inbox-7".into(), seq: 42 };
+        let js = serde_json::to_string(&ack).unwrap();
+        let back: RelayInboxAck = serde_json::from_str(&js).unwrap();
+        assert_eq!(back, ack);
+        let v: serde_json::Value = serde_json::from_str(&js).unwrap();
+        assert_eq!(v["id"], json!("inbox-7"));
+        assert_eq!(v["seq"], json!(42));
     }
 
     #[test]
