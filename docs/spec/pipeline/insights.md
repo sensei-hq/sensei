@@ -117,13 +117,18 @@ vs FTR-when-absent per memory/pattern/tool — feeds rec ranking + landing-card 
 1. **The board is derived live — keep it.** 4 SQL reads + pure bucketing: cheap
    and deterministic. A materialised `insights` table would duplicate the sources
    and add write-path coupling for no gain.
-2. **Copy generation is *lazy* — the papercut to fix.** First view of a new
-   learning shows the fallback template, then the mentor copy appears on the *next*
-   load (the "text transitions from one to another" observation). **Decision:**
-   generate copy **eagerly** at analysis time — when the analyzer creates/updates a
-   rec/memory/pattern/correction, warm its `insight_copy` entry — so the wire path
-   never shows a transition and never risks inference on the critical path. The
-   cache stays; only its *fill timing* moves from read-time to write-time.
+2. **Copy generation was *lazy* — ✅ FIXED 2026-07-15 (eager warm).** First view of
+   a new learning used to show the fallback template, then the mentor copy appeared
+   on the *next* load (the "text transitions" papercut). Now a global
+   **`TaskKind::WarmInsightCopy`** task, enqueued each analyzer tick alongside the
+   other global passes, **pre-generates** the copy for pending recommendations
+   (`insights::rec_copy_inputs` → `insight_copy::generate_and_cache`) so the board
+   reads cached copy on the *first* view. Idempotent (a rec whose copy is cached is
+   skipped, doesn't spend the cap), bounded (`WARM_CAP=20` model calls/tick, so it
+   converges over ticks), breaker-guarded (a down/busy model returns fast). The
+   cache stays; its *fill timing* moved from read-time to analyzer-time.
+   *Coverage:* recommendations (the primary, most-visible source) today; memories /
+   patterns / corrections still warm lazily via `copy_or_warm`.
 3. **Naming:** `sensei.insight_copy` holds generated *prose*, not a duplicate.
    Rename → **`insight_text`**. Reserve `insights` / `derived_insights` for a
    *future* materialised, anonymised, shareable snapshot (see 5).
