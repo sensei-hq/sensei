@@ -1,294 +1,192 @@
-# 今 · Pipeline · Insights (recommendations)
+# 察 · Pipeline · Insights (the learnings generator)
 
-**Owner files:**
-- Generation: `crates/senseid/src/tasks/handlers/generate.rs` — produces recommendation candidates
-- Ranking: `crates/senseid/src/tasks/handlers/rank.rs` (or the `rank` step in `analyze_project`)
-- Triage decisions: `crates/senseid/src/api/handlers/insights.rs`
-- Impact follow-up: `crates/senseid/src/tasks/handlers/measure_verdicts.rs` (see [[pipeline/impact]])
+> **What an "insight" is, how it's derived, and where it lives.** The generator
+> behind the [[screen/observatory-insights]] board (bucketing rules live here) and
+> the [[screen/observatory-today]] "one thing". The user-facing wording is the
+> separate [[pipeline/insight-copy]] layer.
+>
+> **Owner files:** aggregator `crates/senseid/src/api/handlers/observatory.rs::get_insights`
+> · pure bucketing `crates/senseid/src/insights.rs` · rec generation
+> `tasks/handlers/generate.rs` + `rank.rs` (analyzer tick) · impact follow-up
+> `tasks/handlers/measure_verdicts.rs` ([[pipeline/impact]]).
 
 ## Purpose
 
-Insights turns *"the pipeline saw a pattern of corrections"* into
-*"here's the one thing you can do about it right now."* Every
-recommendation is a bundle:
+An insight is the **human-facing output of the retrospective loop** — the moment
+the graph + signals turn into something a person can act on. The promise
+([[requirements/vision]]) is *"what needs me, what's working, and what's quiet, in
+that order"* — not a knowledge base to browse. Every insight is judged by the
+north star: does surfacing it move **FTR**, or expose why FTR moved? Kanji 今 — *now*.
 
-- **Title** — the thing to do, model-generated.
-- **Why** — the causal chain, model-generated with evidence.
-- **Impact** — projected FTR movement, computed.
-- **Action verb** — one of the universal three: **Apply · Review ·
-  Dismiss**, with one highlighted as recommended.
-- **Scope** — where it applies (project / user / org / stack).
-- **Evidence** — session ids and corrections that produced it.
+## What an insight *is* (the core model)
 
-The user's decision on each recommendation writes back into the
-pipeline: `Apply` schedules a [[pipeline/impact]] measurement to
-verify FTR moved; `Dismiss` records the "no" so we don't
-re-propose the same thing; `Review` parks it in the Soon column.
+**An insight is not a first-class stored entity.** It is a **triage presentation
+of an already-stored *learning entity*.** The analyzer derives four learning
+types from captured activity, each stored in its own table; the Insights surface
+is a **server-side aggregator** that gathers the *current* learnings, assigns each
+to a triage column, and overlays mentor-voice copy. There is deliberately **no
+`insights` table** — materialising one would duplicate the sources it's derived
+from. (See *History* below for the abandoned `inference.insights` that tried.)
 
-Kanji is 今 — *now*.
+| Source | Table | Role on the board |
+|---|---|---|
+| **Recommendation** *(primary)* | `inference.recommendations` | the actionable "here's the one thing to do" |
+| **Memory** | `sensei.memories` | the *statement* form of a learning [[pipeline/memory]] |
+| **Pattern** | `inference.detected_patterns` | recurring shape, pre-rule |
+| **Correction** | `inference.corrections` | clustered mistakes to act on |
 
-## Data invariants
+```mermaid
+flowchart LR
+    A[capture] --> AN[analyzer tick]
+    AN --> R[(recommendations)]
+    AN --> M[(memories)]
+    AN --> P[(detected_patterns)]
+    AN --> C[(corrections)]
+    R & M & P & C --> AGG["GET /api/insights<br/>aggregate + bucket + overlay copy"]
+    AGG --> BOARD[Insights board<br/>Now · Soon · Settled]
+    AGG -.->|kind + facts_hash| IC[(sensei.insight_copy<br/>cached mentor prose)]
+```
 
-- `inference.recommendations` — one row per candidate:
-  - `id` uuid
-  - `title`, `why`, `impact_projection`, `action_hint` text
-  - `impact_level` enum `high | medium | low`
-  - `scope` jsonb (`{ project_id?, user_id?, org_id?, stack? }`)
-  - `evidence` jsonb (`{ sessions: [...], corrections: [...] }`)
-  - `state` enum `proposed | reviewed | applied | dismissed | measured`
-  - `default_acp` text (the assistant family / adapter the
-    Apply verb sends this to)
-  - `strength` numeric 0..1 (ranking signal)
-  - `created_at`, `state_changed_at` timestamptz
-  - `signature` text (dedup key — same shape from the same
-    project doesn't re-fire until state != dismissed AND
-    materially different evidence)
-- Bucketing at read time:
-  - **Now** = `state = proposed AND impact_level = high`
-  - **Soon** = `state IN (proposed, reviewed) AND impact_level = medium`
-  - **Settled** — recommendations don't live in Settled;
-    battle-tested memories do (see [[screen/observatory-insights]]).
-- Every recommendation's `title` + `why` + `impact_projection`
-  goes through [[pipeline/insight-copy]] with kinds
-  `rec_title` / `rec_why` / `rec_impact`. Static fallback strings.
+## Derivation — bucketing rules (the generator)
 
-## Generation
+`GET /api/insights?project=<name|uuid>?` pulls the four sources and buckets each
+into **Now / Soon / Settled** by **pure rules** (`crate::insights`, unit-tested
+without a DB — the UI trusts the server label and never re-buckets):
 
-`generate.rs` runs per project on the analyzer tick (see
-[[pipeline/analyzer]]). Two related lists: **sources** are the
-signals that seed a candidate; **types** are the shape of the
-resulting `inference.recommendations.type` value. The mapping:
+- **Recommendations** (`status='pending'`) by `urgency`: `high`→Now, `medium`→Soon, `low`→Settled.
+- **Memories** by `status` + `violated_count`: violated (not archived) → **Now**; `proposed`→Soon; in-force (`active`/`reinforced`/`battle_tested`)→Settled (strength desc); `archived`/`rejected`/`challenged` excluded.
+- **Patterns** by `lifecycle`: `suggested`→Soon, `rule`→Settled; `gap` excluded.
+- **Corrections**: top-3 by count → **Now**.
 
-| Source (this doc) | Produces type (see [[pipeline/analyzer]]) |
-|---|---|
-| Correction clusters | `create_persona` OR `extract_helper` (which depends on cluster shape) |
-| Pattern effectiveness deltas | `promote_pattern` |
-| Persona / skill gaps | `create_persona` OR `enable_skill` |
-| Library-tier detections | `wrap_library` OR `enable_skill` |
-| Drift blockers | `fix_drift` |
-| (auto) Memory age without evidence | `audit_stale_memory` |
+Now = the day's decisions · Soon = read-once, revisit · Settled = the "how we work
+here" shelf. The tri-column layout *is* the sort — no tabs, no sort control; each
+card carries **one** highlighted default verb (Apply · Review · Dismiss).
 
-Sources of candidates, ordered:
+## The wording layer — [[pipeline/insight-copy]]
 
-1. **Correction clusters** — the dominant path. Signatures with
-   count >= threshold across >= 2 sessions become a recommendation
-   ("N sessions corrected this same shape — consider adopting
-   pattern X"). Same signal that feeds the memory pipeline; the
-   difference is memories are the *statement*, recommendations are
-   the *action*.
-2. **Pattern effectiveness deltas** — when a promoted pattern's
-   observed FTR delta crosses `PATTERN_EFFECTIVE_MIN`, the
-   pipeline recommends promoting it further (project → user, etc.).
-3. **Persona / skill gaps** — when a project has recurring
-   correction signature X and no persona/skill mentions X, a
-   recommendation surfaces "add persona Y".
-4. **Library-tier detections** — when repeated calls target a
-   library that has no wrapper, recommend wrapping it (feeds
-   [[pipeline/libraries]]).
-5. **Drift blockers** — when doc-drift crosses a threshold on a
-   file referenced by many sessions, recommend fixing.
+Each card's **title + detail** is mentor-voice prose owned by the model (*"the
+model owns the sentence, the code owns the action"*). Generated per
+`(kind, facts_hash)` — `facts_hash = sha256(kind + canonical_json(facts))`, where
+`facts` are only the *discriminating* prose columns (title/why/impact), never
+code-owned display state (urgency/status/score) — and persisted in
+**`sensei.insight_copy`**. The wire path (`copy_or_warm`) reads the cache and, on a
+miss, returns a deterministic **fallback template** immediately while a background
+task warms the model copy for next load; inference never runs on a request's
+critical path.
 
-Each candidate is scored by:
+> **Two senses of "insight" in the code** — (1) the **board** (this aggregator);
+> (2) **`InsightKind`** + `insight_copy` — the *copy* vocabulary (tool cards,
+> memory prompts, hero koan, drift…). Neither is a stored insight *entity*: the
+> substance is the source learning, the copy is its wording.
 
-- `impact_projection` — expected FTR movement, computed from
-  historical pattern effectiveness at this scope.
-- `evidence.sessions` count — the more sessions supporting the
-  cluster, the stronger.
-- `recency` — recent evidence outweighs stale.
-- `deduplication` — signatures already applied or dismissed are
-  suppressed until materially different evidence arrives.
+## Data model — what is and isn't persisted
 
-## Actions
+| Thing | Persisted? | Where |
+|---|---|---|
+| Learning entities (rec/memory/pattern/correction) | **yes** — source of truth | their own tables |
+| The mentor **copy** (title/detail) | **yes** (a cache) | `sensei.insight_copy` keyed `(kind, facts_hash)` |
+| The Insights **board** (Now/Soon/Settled) | **no** — derived live | `/api/insights` (4 reads + pure bucketing) |
+| A standalone "insight" row | **no** — deliberately none | — |
 
-`POST /api/insights/recommendations/{id}/apply`
+## Recommendations — the primary source
 
-- `state → applied`
-- Emits a "send to {default_acp}" instruction (see the mockup —
-  the mechanism varies by assistant family; for Claude Code, it's
-  a plugin skill invocation).
-- **Schedules a `MeasureVerdicts` follow-up** at
-  `apply_time + measurement_window` (default 7 days) so the
-  before/after FTR is measured. See [[pipeline/impact]].
-- Records the applied recommendation in `sensei.applied_recommendations`
-  for the Impact screen.
+Recommendations turn *"the pipeline saw a pattern of corrections"* into *"here's
+the one thing to do."* Generated per project on the analyzer tick (`generate.rs`,
+[[pipeline/analyzer]]) from, in order: **correction clusters** (dominant path —
+signatures ≥ threshold across ≥ 2 sessions), **pattern-effectiveness deltas**,
+**persona / skill gaps**, **library-tier detections**, **drift blockers**. Scored
+by projected FTR movement × evidence-session count × recency, deduped by
+`signature` (a dismissed/applied signature is suppressed until materially
+different evidence fires).
 
-`POST /api/insights/recommendations/{id}/review`
+**Actions** (each card carries its own `project_id`):
+- **Apply** → `POST /api/projects/{project_id}/recommendations/{rec_id}/accept` — snapshots baseline + **schedules `MeasureVerdicts`** (`now + measurement_window`, default 7d) so before/after FTR is measured ([[pipeline/impact]]).
+- **Dismiss** → `POST /api/projects/{project_id}/recommendations/{rec_id}/reject` — records the "no"; the signature is suppressed.
+- **Review** → navigate to the detail (no write); parks it in Soon.
 
-- `state → reviewed`
-- Parks the recommendation in the Soon column. No impact
-  measurement scheduled.
-- Reviewed recommendations decay to `state = dismissed`
-  automatically after `REVIEW_DECAY_DAYS` (default 14) unless
-  reinforced by new evidence.
+On a verdict: `positive` → reinforce the underlying memory / promote the pattern
+(the [[pipeline/governance]] G1 loop); `negative` → regression alert +
+revision-candidate analysis; `insufficient_data` → re-schedule (capped).
+High-stakes recs may carry an [[pipeline/inferencing]] `consensus` reasoning trace
+(`sensei.reasoning_traces`) surfaced in the reasoning drawer.
+**Effectiveness correlation** (`sensei.effectiveness_correlations`) — FTR-when-applied
+vs FTR-when-absent per memory/pattern/tool — feeds rec ranking + landing-card hints.
 
-`POST /api/insights/recommendations/{id}/dismiss`
+## Design decisions & open questions
 
-- `state → dismissed`
-- Records dismissal reason (optional text).
-- The signature is suppressed until materially different evidence
-  fires (new correction cluster in a different module, etc.).
+1. **The board is derived live — keep it.** 4 SQL reads + pure bucketing: cheap
+   and deterministic. A materialised `insights` table would duplicate the sources
+   and add write-path coupling for no gain.
+2. **Copy generation is *lazy* — the papercut to fix.** First view of a new
+   learning shows the fallback template, then the mentor copy appears on the *next*
+   load (the "text transitions from one to another" observation). **Decision:**
+   generate copy **eagerly** at analysis time — when the analyzer creates/updates a
+   rec/memory/pattern/correction, warm its `insight_copy` entry — so the wire path
+   never shows a transition and never risks inference on the critical path. The
+   cache stays; only its *fill timing* moves from read-time to write-time.
+3. **Naming:** `sensei.insight_copy` holds generated *prose*, not a duplicate.
+   Rename → **`insight_text`**. Reserve `insights` / `derived_insights` for a
+   *future* materialised, anonymised, shareable snapshot (see 5).
+4. **History (why the orphans exist).** `inference.insights` + `insight_batches`
+   were an *earlier* materialised-insight design — the adding commit (`11396a0b`)
+   says verbatim *"insights + insight_batches: collective-intelligence sharing
+   references"* (pipeline *insight → recommendation → action → measurement*). They
+   **never got a writer** and were **dropped from the DDL** (`5275f1ea`, "drop 4
+   dead inference tables"). The empty husks survive only in the live DB
+   (`CREATE IF NOT EXISTS`, never `DROP`) — queued for a surgical drop.
+5. **Sharing / anonymisation (Dōjō — future, external-blocked).** When an insight
+   is shared upstream, the **mentor copy is the safe form**: it summarises
+   *structured facts*, not raw transcript, so it carries no client/repo/source
+   identifiers. A shared insight is therefore a **new `dojo`-scope, anonymised
+   snapshot** ([[pipeline/collective-intelligence]] — client-strip, dereference),
+   **distinct** from the local live board. That is where a materialised
+   `derived_insights` table would legitimately live.
+
+## Divergences to reconcile (spec vs code — found 2026-07-15)
+
+The previous version of this doc described an unbuilt recommendation model. The
+**code is authoritative**; fix the doc/impl gaps:
+
+- Recs are bucketed by **`status='pending'` + `urgency` (high/medium/low)**, *not*
+  a `proposed→reviewed→applied→dismissed→measured` state machine.
+- Actions are **`accept`/`reject` under `/api/projects/{id}/recommendations/{rec_id}`**,
+  *not* `/api/insights/recommendations/{id}/apply|review|dismiss`.
+- The assembler is **`observatory::get_insights`**; there is **no
+  `api/handlers/insights.rs`**. Pure bucketing is `crate::insights`.
+- The board aggregates **four** sources; "insights = recommendations" is the old
+  conflation — recommendations are the *primary* source, not the whole.
 
 ## Signals produced
 
 | Signal | Consumer |
 |---|---|
-| Now-column rows | [[screen/observatory-insights]] |
-| Soon-column rows | [[screen/observatory-insights]] |
-| Today hero koan | [[screen/observatory-today]] (top-1 by strength) |
-| Project overview hero | [[screen/project-overview]] (top-1 for the project scope) |
-| Applied → MeasureVerdicts | [[pipeline/impact]] |
-| Dismissed signature | suppression table used by `generate.rs` on next tick |
+| Now / Soon / Settled rows | [[screen/observatory-insights]] |
+| Top-1 hero | [[screen/observatory-today]] · [[screen/project-overview]] |
+| Applied → `MeasureVerdicts` | [[pipeline/impact]] |
+| Dismissed signature | suppression set read by `generate.rs` next tick |
+| Cached mentor copy | `insight_copy` per `(kind, facts_hash)` |
 
 ## Done gate
 
-- On Jerry's live data, the generator produces a stable set of
-  candidates per project across ticks — same evidence → same
-  candidate id.
-- Every `proposed` recommendation with `impact_level = high` shows
-  up in the Now column at the correct scope.
-- `Apply` on a recommendation triggers a `MeasureVerdicts`
-  follow-up scheduled at `now + measurement_window`.
-- Reviewed recommendations decay to `dismissed` after
-  `REVIEW_DECAY_DAYS` without new evidence.
-- Dismissed signatures don't re-fire on the next tick.
-- Every recommendation's user-visible strings come through
-  insight-copy when the model is available.
-- No recommendation is duplicated across scopes (project + user)
-  for the same signature — dedup by signature honors the scope
-  hierarchy.
-- Every apply is attributable to a user in the log
-  (`state_changed_by`).
-
-Optional check:
-```
-curl -s http://localhost:7744/api/insights | jq '{
-  now: .counts.now,
-  soon: .counts.soon,
-  proposed_high: [.memories, .recommendations, .patterns, .corrections | length] | add
-}'
-
-# After an apply, is MeasureVerdicts scheduled?
-psql -A -t -c "select count(*) from sensei.task_queue
-                where kind = 'MeasureVerdicts'
-                  and created_at > now() - interval '5 minutes'" -d sensei
-```
+- `/api/insights` renders three columns on live data; every card lands in the correct column (a `high` rec never appears in Soon; a Settled memory never has `violated_count > 0`).
+- One `facts_hash` serves both the board and the per-project rec endpoint (one warm, two screens).
+- Accept on a rec schedules `MeasureVerdicts`; the verdict lands in [[screen/observatory-impact]].
+- Once decision (2) lands: a freshly-derived learning shows mentor wording on **first** view (no fallback→warm flip).
+- Empty-column copy is the mockup voice ("nothing urgent." / "nothing brewing." / "nothing yet."), never "no data" / "loading".
 
 ## Wrong gate
 
-- **A signature reappears in Now the tick after dismissal.**
-  Dismissal suppression table not consulted.
-- **Applied recommendation never triggers `MeasureVerdicts`.**
-  Follow-up scheduling regressed (a recurring bug — see
-  [[pipeline/analyzer]] wrong-gate).
-- **Every recommendation title reads identically** ("Consider
-  adopting pattern X"). Insight-copy cache-key collision, OR
-  fallback template used even when the model was available.
-- **Reviewed recommendations sit in Soon forever.** Decay task
-  isn't running.
-- **A high-impact recommendation isn't in Now.** Bucketing rule
-  divergence between generator and reader.
-- **Apply verb sends to a specific assistant but the user's
-  active assistant is different.** `default_acp` should
-  respect the user's active-assistant setting when known.
-- **Same recommendation exists at project AND user scope for
-  the same signature.** Scope hierarchy dedup missing (tighter
-  scope should win, matching [[pipeline/memory]] rules).
-- **`impact_projection` says "+15% FTR" but the follow-up
-  measurement never lands within the measurement window.**
-  Measurement path broken; the number becomes noise.
-
-## Effectiveness correlation
-
-Not every rec is created equal. Some tools / patterns / memories
-predict FTR movement more than others. The pipeline runs
-effectiveness correlation on the enriched session corpus:
-
-- For each promoted memory, for each pattern, for each tool: FTR
-  when applied vs FTR when absent. Delta persisted in
-  `sensei.effectiveness_correlations` (keyed by
-  `(subject_type, subject_id)` — memory/pattern/tool).
-- Feeds:
-  - Rec ranking (recommendations whose subject has high
-    effectiveness bubble up).
-  - Insights hint on landing cards ("this pattern lifted FTR
-    +18% in similar sessions").
-  - Model-effectiveness view ((memory: project_standalone_completion_plan)
-    already shipped a per-model version).
-
-## Change-impact tracking
-
-Every accepted recommendation is a change — sensei measures its
-impact over a bounded window. See [[pipeline/impact]] for the
-verdict machinery; the pipeline hooks it up:
-
-- On accept, snapshot baseline (`ftr_14d`, `sessions_7d`,
-  `corrections_7d`) into `sensei.applied_recommendations`.
-- Schedule `MeasureVerdicts` for `now + measurement_window`.
-- On verdict landing:
-  - `positive` → reinforce underlying memory / promote pattern.
-  - `negative` → open a regression alert (see
-    [[pipeline/impact]] regression alerts).
-  - `insufficient_data` → re-schedule with a longer window; cap
-    on retries.
-
-## MOE reasoning integration
-
-For high-stakes recommendations (a memory that might contradict
-existing state, a pattern promotion, a negative-verdict
-analysis), the generator calls
-[[pipeline/inferencing]] `consensus` chain and stores the
-reasoning trace:
-
-- `sensei.reasoning_traces` — one row per MOE run (see
-  [[screen/insights-reasoning]]).
-- The user can open the reasoning drawer from the rec card to
-  see the propose/challenge/synthesize debate + disagreements.
-- Confidence label from MOE feeds the rec's presentation —
-  `low` confidence recs render with a "sensei is uncertain
-  about this — the reasoning is worth checking" note.
-
-## Playground + Replay integration
-
-Two related surfaces that feed effectiveness signals:
-
-- **Playground** ([[screen/observatory-instruments-playground]])
-  — user-triggered tool executions. Attributed to the user (not
-  the assistant) so they don't corrupt behavioural signals; but
-  DO count for "which tools does the developer find useful?"
-  effectiveness. Feeds hint copy: "the Playground got 12 hits
-  on `search_lib_docs` this week — consider surfacing it
-  in the assistant's default context".
-- **Replay** ([[screen/observatory-instruments-replay]]) — the
-  audit trail. Not a data producer but the consumer of
-  effectiveness data: each tool call row in a replay carries
-  its effectiveness chip ("used", "partial", "ignored") from
-  [[pipeline/signals]] verdict classifier.
-
-## Negative-impact detection
-
-When a verdict returns `negative`, the pipeline runs a follow-up
-analysis:
-
-1. Cluster subsequent corrections by signature.
-2. Compare against the rec's expected effect.
-3. Via MOE reasoning, propose a revision candidate:
-   - "keep, but adjust scope"
-   - "roll back the memory"
-   - "the correlation was spurious; different variable at play"
-4. Presents the analysis on
-   [[screen/observatory-impact]] regression detail.
-
-The user acts on the revision (Revert / Keep / Investigate).
+- **A learning appears in two columns** — server bucketing rules aren't mutually exclusive.
+- **Counts read 0-0-0 while cards render** — count query and content query diverged.
+- **Every Now card reads the same wording** — insight-copy regression ([[pipeline/insight-copy]] wrong-gate).
+- **Applied rec never triggers `MeasureVerdicts`** — the impact chain regressed (recurring; see [[pipeline/analyzer]]).
+- **A dismissed signature re-fires next tick** — suppression set not consulted.
+- **A shared insight leaks client/repo/source** — the anonymised snapshot (decision 5) wasn't applied; raw facts crossed the boundary.
 
 ## Related
 
-- [[pipeline/analyzer]] — schedules `generate` per project tick
-- [[pipeline/memory]] — parallel state machine for the *statement*
-  version of the same evidence
-- [[pipeline/impact]] — where `Apply` decisions get their verdict
-- [[pipeline/insight-copy]] — user-visible strings
-- [[pipeline/signals]] — correction signature source
-- [[screen/observatory-insights]] — the triage surface
-- [[screen/observatory-today]] — the top-1 landing surface
-- [[screen/project-overview]] — the top-1 project-scope surface
-- [[screen/observatory-impact]] — where applied recs' verdicts land
+- [[screen/observatory-insights]] — the board surface (Now/Soon/Settled)
+- [[screen/observatory-today]] — the "one thing" over the Now column
+- [[pipeline/insight-copy]] — the mentor-voice wording layer (`insight_copy` → `insight_text`)
+- [[pipeline/memory]] · [[pipeline/analyzer]] · [[pipeline/impact]] · [[pipeline/signals]] — the sources + measurement
+- [[pipeline/collective-intelligence]] — the future shared/anonymised insight snapshot (Dōjō)
