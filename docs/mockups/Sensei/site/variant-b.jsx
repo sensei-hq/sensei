@@ -31,6 +31,7 @@ function VariantB() {
       <HowItWorksB/>
       <Surfaces/>
       <DojoForTeams/>
+      <RelayB/>
       <PhilosophyB/>
       <PrivacyB/>
       <PricingB/>
@@ -421,6 +422,38 @@ function GalleryB() {
   );
 }
 
+function RelayB() {
+  const acts = [
+    { k: "認", t: "Approve the exact command", d: "The command shown verbatim, with its blast radius — approve, deny, or ask." },
+    { k: "決", t: "Answer a decision", d: "A short question, three or four options, or type your own. Other tracks keep moving." },
+    { k: "場", t: "Watch progress", d: "Every track running for you — phase n of x, what's done, doing, next." },
+    { k: "話", t: "Chat back mid-session", d: "Ask why it paused, steer the direction, and it picks the work back up." },
+  ];
+  return (
+    <section id="relay" style={{ borderTop: 'var(--hairline)', background: 'var(--paper-2)' }} className="py-9 px-7">
+      <div style={{ maxWidth: 1100 }} className="mx-auto">
+        <div style={{ fontSize: 11, letterSpacing: '0.22em', color: 'var(--ink-3)', textTransform: 'uppercase' }} className="mb-4">Relay · away from keyboard</div>
+        <h2 className="display mt-0 mb-4" style={{ fontSize: 40, fontWeight: 300, letterSpacing: '-0.02em', lineHeight: 1.1 }}>
+          Work continues while you're away.<br/>You stay the one who decides.
+        </h2>
+        <p style={{ fontSize: 16, color: 'var(--ink-2)', lineHeight: 1.65, maxWidth: 640 }} className="mt-0 mb-7">
+          Your machine holds a live line to your Dōjō — so from a phone or any browser you can reach a running
+          session. No pairing, no separate app to install. Free on your own projects.
+        </p>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))', gap: 14 }}>
+          {acts.map(a => (
+            <div key={a.t} style={{ background: 'var(--paper)', border: 'var(--hairline)', borderRadius: 'var(--radius-lg)' }} className="p-5">
+              <span className="kanji" style={{ fontSize: 24, color: 'var(--accent)' }}>{a.k}</span>
+              <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--ink)' }} className="mt-3 mb-1">{a.t}</div>
+              <p style={{ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.6 }} className="m-0">{a.d}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function PhilosophyB() {
   return (
     <section id="philosophy" style={{
@@ -558,18 +591,34 @@ function PricingB() {
  fontSize: 56, fontWeight: 300, letterSpacing: '-0.025em',
                        lineHeight: 1.05
 }}>
-          Free.<br/>
-          Pay what feels right.
+          Free where it's yours.<br/>
+          Paid where it's shared.
         </h2>
         <p style={{
  fontSize: 17, color: 'var(--ink-2)',
                      fontFamily: 'var(--font-display)', fontWeight: 300,
                      lineHeight: 1.65
 }} className="m-0" >
-          Sensei is free to download and use forever. If it earns a place
-          in your daily practice, you can support development below — but
-          there's no nag, no trial, no upgrade prompt. Ever.
+          The desktop app, your personal Dōjō, and public open-source Dōjōs are
+          free forever — no nag, no trial, no upgrade prompt. Teams pay only to
+          coordinate a group's private knowledge.
         </p>
+        <div className="mt-7" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14, textAlign: 'left' }}>
+          {[
+            { k: '無', name: 'Free', price: 'Forever', line: 'The app · your personal Dōjō · public & open-source Dōjōs · Relay on your own projects · bring-your-own-key inference.' },
+            { k: '組', name: 'Team', price: 'Per active contributor', line: 'A private, shared Dōjō — governance, curation, shared Relay inbox & presence. Read-only members are free.' },
+            { k: '企', name: 'Enterprise', price: 'Contract', line: 'Self-hosted or VPC · SSO & SCIM · audit retention & export · client confidentiality · SLA.' },
+          ].map(t => (
+            <div key={t.name} style={{ background: 'var(--paper)', border: 'var(--hairline)', borderRadius: 'var(--radius-lg)' }} className="p-5">
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
+                <span className="kanji" style={{ fontSize: 20, color: 'var(--accent)' }}>{t.k}</span>
+                <span className="display" style={{ fontSize: 20, fontWeight: 400 }}>{t.name}</span>
+                <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', marginLeft: 'auto' }}>{t.price}</span>
+              </div>
+              <p style={{ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.6 }} className="mt-3 mb-0">{t.line}</p>
+            </div>
+          ))}
+        </div>
         <div className="mt-7" >
           <DownloadCTAB size="lg"/>
         </div>
@@ -588,8 +637,12 @@ function FaqB() {
       a: "Sensei is a Tauri app — small binary, low memory. The observer is event-driven; it only does work when a session happens." },
     { q: "Can I export my memories?",
       a: "Yes. Settings → Export gives you a JSON dump of every pattern, memory, and adopted teaching. Import is also supported." },
+    { q: "Can I act on a session while away from my keyboard?",
+      a: "Yes — Relay. Your daemon holds a live line to your Dōjō, so from a phone or any browser you can watch progress, approve the exact command, answer a decision, or chat back to a running session. No pairing, no separate app. Free on your own projects." },
+    { q: "Which models does sensei use?",
+      a: "Its own gateway ships with embedded Ollama — Gemma 4 by default, fast and local, no keys needed. Point it at a bigger Ollama host or bring your own API keys for Claude, GPT-4o and others. There are no tokens to mark up." },
     { q: "What's the long-term plan?",
-      a: "Sensei stays local-first and free. We may add an optional paid tier later for cross-machine sync, but the core promise — quiet, local, observant — never changes." }
+      a: "The core promise — quiet, local, observant — never changes, and the app stays free. Teams and orgs pay for a private, shared Dōjō (per active contributor); public, open-source and personal Dōjōs are free forever." }
   ];
   return (
     <section id="faq" className="py-9 px-7" >

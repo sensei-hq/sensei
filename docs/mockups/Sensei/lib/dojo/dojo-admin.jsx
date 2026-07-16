@@ -14,11 +14,12 @@ const ADMIN_NAV = [
   { group: "Org · manage", manage: true, items: [
     { id: "governance", kanji: "掟", label: "Governance" },
     { id: "members", kanji: "任", label: "Members & roles" },
+    { id: "identity", kanji: "鍵", label: "Identity & SSO" },
     { id: "scopes",  kanji: "規", label: "Scopes & policies" },
     { id: "billing", kanji: "円", label: "Plan & billing" },
   ]},
 ];
-const ADMIN_SECTIONS = ["overview", "monitor", "members", "scopes", "governance", "billing"];
+const ADMIN_SECTIONS = ["overview", "monitor", "members", "scopes", "governance", "billing", "identity"];
 
 /* ─── Overview ───────────────────────────────────────────── */
 function DojoOverview({ go, mobile = false }) {
@@ -92,7 +93,7 @@ function DojoOverview({ go, mobile = false }) {
                 <span style={{ fontSize: 11, letterSpacing: ".14em", textTransform: "uppercase", color: "var(--ink-3)" }}>Confidentiality</span>
               </div>
               <div style={{ fontSize: 13, color: "var(--ink)", lineHeight: 1.55 }}>
-                <b style={{ fontWeight: 600 }}>{m.dereferenced}</b> client lessons auto-dereferenced this week ·
+                <b style={{ fontWeight: 600 }}>{m.anonymized}</b> client lessons auto-anonymized this week ·
                 <span style={{ color: "var(--success)" }}> 0 incidents</span>. Sources dropped automatically; only flagged exceptions reach a lead.
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--edge)" }}>
@@ -129,7 +130,7 @@ function DojoOverview({ go, mobile = false }) {
               <div key={p.title} style={{ display: "grid", gridTemplateColumns: "auto 1fr 150px 92px 168px", gap: 14, alignItems: "center",
                             padding: "13px 16px", borderBottom: i < published.length - 1 ? "1px solid var(--edge)" : "none",
                             background: neg ? "var(--warning-soft)" : "transparent" }}>
-                <span className="kanji" style={{ fontSize: 17, color: neg ? "oklch(0.52 0.13 60)" : "var(--accent)", width: 20, textAlign: "center" }}>{p.kanji}</span>
+                <span className="kanji" style={{ fontSize: 17, color: neg ? "var(--warning)" : "var(--accent)", width: 20, textAlign: "center" }}>{p.kanji}</span>
                 <div style={{ minWidth: 0 }}>
                   <div style={{ fontSize: 13, color: "var(--ink)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.title}</div>
                   <div className="mono" style={{ fontSize: 10, color: "var(--ink-4)", marginTop: 3 }}>{p.scope}</div>
@@ -140,13 +141,13 @@ function DojoOverview({ go, mobile = false }) {
                   </div>
                   <span className="mono" style={{ fontSize: 11, color: "var(--ink-3)" }}>{Math.round(p.adoption * 100)}%</span>
                 </div>
-                <span className="mono" style={{ fontSize: 12, color: neg ? "oklch(0.52 0.13 60)" : "var(--success)", textAlign: "right" }}>
+                <span className="mono" style={{ fontSize: 12, color: neg ? "var(--warning)" : "var(--success)", textAlign: "right" }}>
                   {neg ? "" : "+"}{p.delta}pp FTR
                 </span>
                 <div style={{ display: "flex", justifyContent: "flex-end" }}>
                   {neg
                     ? <button style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 7,
-                              border: "1px solid oklch(0.52 0.13 60/.4)", background: "var(--paper)", color: "oklch(0.5 0.13 60)", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
+                              border: "1px solid var(--danger-edge)", background: "var(--paper)", color: "var(--danger)", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
                         <span className="kanji" style={{ fontSize: 12 }}>退</span> Retract downstream
                       </button>
                     : <DojoChip tone="var(--success)" soft="var(--success-soft)">active</DojoChip>}
@@ -155,7 +156,7 @@ function DojoOverview({ go, mobile = false }) {
               );
             })}
             <div style={{ display: "flex", alignItems: "center", gap: 7, padding: "10px 16px", borderTop: "1px solid var(--edge)", fontSize: 11.5, color: "var(--ink-3)", lineHeight: 1.45 }}>
-              <span className="kanji" style={{ fontSize: 12, color: "oklch(0.52 0.13 60)" }}>退</span>
+              <span className="kanji" style={{ fontSize: 12, color: "var(--warning)" }}>退</span>
               <span>Lifecycle <b style={{ fontWeight: 600, color: "var(--ink-2)" }}>active → deprecated → retracted</b>. Negative impact is flagged automatically; one-click retract pulls a teaching back and notifies adopters.</span>
             </div>
           </div>
@@ -172,12 +173,12 @@ function DojoMonitor({ go }) {
   const weeks = m.contribSpark.map((c, i) => ({ c, a: Math.max(0, Math.round(c * (0.62 + i * 0.025))) }));
   const maxBar = Math.max(...weeks.map(w => w.c));
   const approvalRate = Math.round((m.approvedWeek / m.contribWeek) * 100);
-  const sevTone = { high: "oklch(0.55 0.17 25)", med: "oklch(0.52 0.13 60)", low: "var(--ink-3)" };
-  const sevSoft = { high: "oklch(0.93 0.04 25)", med: "var(--warning-soft)", low: "var(--paper-3)" };
+  const sevTone = { high: "var(--danger)", med: "var(--warning)", low: "var(--ink-3)" };
+  const sevSoft = { high: "var(--danger-soft)", med: "var(--warning-soft)", low: "var(--paper-3)" };
   const alerts = [
     { sev: "high", k: "警", title: "Anomalous outbound volume — Initech scope", state: "quarantined", client: "Initech", when: "2h",
       note: "14 lessons queued outbound in 5 min; auto-quarantined and held pending a lead review." },
-    { sev: "med", k: "盾", title: "Named entity survived dereference — Globex", state: "exception", client: "Globex", when: "5h",
+    { sev: "med", k: "盾", title: "Named entity survived anonymize — Globex", state: "exception", client: "Globex", when: "5h",
       note: "A tenant-id naming scheme cleared the classifier; routed to the client lead's exception queue." },
     { sev: "low", k: "盾", title: "Rare-context lesson flagged — Globex", state: "exception", client: "Globex", when: "1d",
       note: "Low k-anonymity; held for confirmation rather than weakened." },
@@ -216,7 +217,7 @@ function DojoMonitor({ go }) {
             <Sparkline data={m.ftrSpark} width={96} height={32} color="var(--success)" />
           </Signal>
           <Signal kanji="盾" label="Leak-guard · 7d" value={alerts.length}
-            sub={`${m.incidents} confidentiality incidents · ${m.dereferenced} sources dropped`}>
+            sub={`${m.incidents} confidentiality incidents · ${m.anonymized} sources dropped`}>
             <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
               <div style={{ display: "flex", gap: 4 }}>
                 {alerts.map((a, i) => <span key={i} style={{ width: 9, height: 9, borderRadius: "50%", background: sevTone[a.sev] }} />)}
@@ -225,7 +226,7 @@ function DojoMonitor({ go }) {
             </div>
           </Signal>
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "1.35fr 1fr", gap: 18, marginTop: 18 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))", gap: 18, marginTop: 18 }}>
           <div style={{ background: "var(--paper-2)", border: "var(--hairline)", borderRadius: 12, overflow: "hidden" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "13px 16px", borderBottom: "var(--hairline)" }}>
               <span style={{ fontSize: 11, letterSpacing: ".14em", textTransform: "uppercase", color: "var(--ink-3)", fontWeight: 600 }}>Contributions vs. approvals</span>
@@ -267,7 +268,7 @@ function DojoMonitor({ go }) {
                     <div style={{ fontSize: 11.5, color: "var(--ink-2)", lineHeight: 1.45, marginTop: 3 }}>{a.note}</div>
                     <div style={{ display: "flex", gap: 7, marginTop: 7, alignItems: "center" }}>
                       <DojoChip tone={sevTone[a.sev]} soft={sevSoft[a.sev]}>{a.sev} severity</DojoChip>
-                      <DojoChip tone={a.state === "quarantined" ? "oklch(0.52 0.13 60)" : "var(--ink-3)"} soft={a.state === "quarantined" ? "var(--warning-soft)" : "var(--paper-3)"}>{a.state}</DojoChip>
+                      <DojoChip tone={a.state === "quarantined" ? "var(--warning)" : "var(--ink-3)"} soft={a.state === "quarantined" ? "var(--warning-soft)" : "var(--paper-3)"}>{a.state}</DojoChip>
                       <DojoChip tone="var(--accent)" soft="var(--accent-soft)">客 {a.client}</DojoChip>
                     </div>
                   </div>
@@ -350,7 +351,7 @@ function DojoScopes() {
     { k: "客", name: "Client · Globex", lvl: 1, client: true, preset: "Anonymized", share: "opt-in" },
   ];
   const ladder = [
-    { k: "守", name: "Client anonymization", note: "strip client · repo · source before anything else applies", locked: true },
+    { k: "守", name: "Client anonymization", note: "drop client · repo · source before anything else applies", locked: true },
     { k: "庫", name: "Repo", note: "narrowest code scope" },
     { k: "件", name: "Project", note: "" },
     { k: "組", name: "Team", note: "" },
@@ -360,13 +361,7 @@ function DojoScopes() {
     { k: "己", name: "Personal", note: "your own memory" },
   ];
   const Panel = ({ title, note, children }) => (
-    <div style={{ background: "var(--paper-2)", border: "var(--hairline)", borderRadius: 12, overflow: "hidden" }}>
-      <div style={{ display: "flex", alignItems: "baseline", gap: 10, padding: "13px 16px", borderBottom: "var(--hairline)" }}>
-        <span style={{ fontSize: 11, letterSpacing: ".14em", textTransform: "uppercase", color: "var(--ink-3)", fontWeight: 600 }}>{title}</span>
-        {note && <span className="mono" style={{ fontSize: 10.5, color: "var(--ink-4)" }}>{note}</span>}
-      </div>
-      <div style={{ padding: 14 }}>{children}</div>
-    </div>
+    <window.DojoPanel title={title} note={note} align="baseline">{children}</window.DojoPanel>
   );
   return (
     <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", background: "var(--paper)" }}>
@@ -375,7 +370,7 @@ function DojoScopes() {
         right={<div style={{ display: "flex", gap: 8 }}>
           <DojoChip tone="var(--ink-2)" soft="var(--paper-2)" border="var(--hairline)">Apply template ▾</DojoChip>
         </div>} />
-      <div style={{ flex: 1, overflow: "auto", padding: 28, display: "grid", gridTemplateColumns: "minmax(0,1fr) 392px", gap: 22, alignItems: "start" }}>
+      <div style={{ flex: 1, overflow: "auto", padding: 28, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))", gap: 22, alignItems: "start" }}>
         <div style={{ display: "flex", flexDirection: "column", gap: 22, minWidth: 0 }}>
           <Panel title="Scope hierarchy" note="company → team → project → repo · stack">
             <div style={{ display: "flex", flexDirection: "column" }}>
@@ -398,7 +393,7 @@ function DojoScopes() {
                 <DojoChip tone="var(--ink-2)">bound · Repo ledger-core ▾</DojoChip>
                 <DojoChip tone="var(--accent)" soft="var(--accent-soft)">origin · Client Globex ▾</DojoChip>
               </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 11, background: "var(--paper)", border: "1px solid oklch(0.58 0.15 35/.25)", borderRadius: 9, padding: "11px 14px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 11, background: "var(--paper)", border: "1px solid var(--accent-edge)", borderRadius: 9, padding: "11px 14px" }}>
                 <span className="kanji" style={{ fontSize: 16, color: "var(--accent)" }}>守</span>
                 <div style={{ fontSize: 12.5, color: "var(--ink)", lineHeight: 1.5 }}>
                   <b style={{ fontWeight: 600 }}>Client anonymization wins.</b> The lesson is anonymized — client, repo and source dropped — before any repo or team rule applies, then routes by its binding.
@@ -413,7 +408,7 @@ function DojoScopes() {
               <div key={r.name} style={{ display: "grid", gridTemplateColumns: "auto auto 1fr auto", gap: 10, alignItems: "center",
                             padding: "9px 11px", borderRadius: 8,
                             background: r.locked ? "var(--accent-soft)" : "var(--paper)",
-                            border: r.locked ? "1px solid oklch(0.58 0.15 35/.28)" : "var(--hairline)" }}>
+                            border: r.locked ? "1px solid var(--accent-edge)" : "var(--hairline)" }}>
                 <span className="mono" style={{ fontSize: 11, color: "var(--ink-4)", width: 12 }}>{i + 1}</span>
                 <span style={{ fontSize: 13, color: "var(--ink-4)", opacity: r.locked ? 0.4 : 1, cursor: r.locked ? "default" : "grab", letterSpacing: "-2px" }}>⠿</span>
                 <div style={{ minWidth: 0, display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
@@ -440,6 +435,7 @@ function DojoAdminConsole({ initial = "overview", mobile = false, relayStart = n
   else if (active === "scopes") screen = <DojoScopes />;
   else if (active === "governance") screen = <DojoGovernance />;
   else if (active === "billing") screen = <DojoBilling />;
+  else if (active === "identity") screen = <DojoIdentity />;
   else screen = <DojoOverview go={go} mobile={mobile} />;
   return (
     <DojoRoleShell label="Dōjō · Admin console" role={{ kanji: "長", label: "Org admin" }}
