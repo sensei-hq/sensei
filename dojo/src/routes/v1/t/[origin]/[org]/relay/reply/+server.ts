@@ -22,6 +22,10 @@ export const POST: RequestHandler = async ({ params, request, locals }) => {
 			})
 			.eq('id', inboxId)
 			.eq('tenant_id', tenantId)
+			// A reply answers an agent-raised gate only — never a human_to_agent
+			// nudge/chat row (those aren't awaiting a human answer). Scoped by tenant
+			// too, so this can't touch another tenant's rows.
+			.eq('direction', 'agent_to_human')
 			.select('id, seq')
 			.maybeSingle();
 		// Idempotent: re-answering an already-answered gate is a no-harm overwrite
