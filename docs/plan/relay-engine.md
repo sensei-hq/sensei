@@ -94,6 +94,7 @@ phone-side swap; the daemon never talks to Supabase directly.
 | D12 | **Quality gates never degrade** — reviewer/gate agents are pinned to the **strong model** (Opus), exempt from local-first + degrade-on-limit; under a limit the **review step waits**, it never downgrades. |
 | D13 | **Goal-anchored** — the plan's objective travels with the run; the depth bar and every reviewer gate check **alignment to the goal + drift**, not just local correctness. |
 | D14 | **Done = backlog empty; no self-imposed caps.** The run continues until every planned item is terminal (shipped / hard-blocked / advisory-flagged). Soft targets ("~8 features", "if time allows") are **guidance, never stop conditions** — the agent may not declare "done" while runnable open items remain. *(This is what stopped the 5-day run at 8.)* |
+| D15 | **Security gate every phase.** A security + vulnerability assessment (`sensei-security-reviewer` + `semgrep` over the phase diff) with findings **resolved before merge** — injection, authz, secret exposure, SSRF, unsafe deserialization; prefer secure-by-default libraries. **No known vulnerability ships.** |
 
 ---
 
@@ -419,6 +420,20 @@ flowchart LR
 | **P6** | Team relay | real join flow **replaces** the P0 seed; shared inbox/presence; per-seat metering; attributed team decisions | a teammate supervises + approves a shared run — folds into [Dōjō Phase 4](README.md#phase-4--dōjō-live-activation) |
 
 ---
+
+### Per-phase cadence (every phase, no exceptions)
+
+1. **TDD** — tests first, then implement.
+2. **Verify** — run it: `dbd inspect` (schema), `cargo build` + tests, the app suite,
+   Playwright e2e (Tauri; the Dōjō against a local Supabase). No "done" without a
+   green run.
+3. **Reviewer gate** — a strong-model review (`sensei-*-reviewer` / code-reviewer);
+   fix findings. Gates never degrade (D12).
+4. **Security + vulnerability assessment** — `sensei-security-reviewer` + `semgrep`
+   over the phase diff; **resolve findings before merge** (D15). No known vulnerability
+   ships.
+5. **Deliver** — commit → `make bump` → merge `develop`→`main` → back to `develop`;
+   record `Pn ✅ <date> <commit>`.
 
 ## 10. Decisions (resolved 2026-07-16)
 
