@@ -121,6 +121,13 @@ rendered remotely:
 | enum `run_status` | `running · paused · blocked · crashed · done · failed` — **`crashed`** = unexpected death (distinct from `failed` = terminal work verdict) |
 | enum `gate_severity` | `blocking` (hard-block, halts) · `advisory` (async review, never halts) |
 
+**Schema spans two databases** (from `database/design.yaml`): the `dojo.*` relay
+tables live in the **cloud Supabase** (`dojo` scope) while run-state (`runs`/
+`run_events`) is **daemon-local** (`activity`/`sensei`, `default` scope). **No
+cross-DB FK** — `relay_sessions.run_id` is a plain uuid mirroring the local run
+(cf. `sensei.projects.dojo_id`); the daemon holds the authoritative `run_status` and
+*mirrors* status/progress to the cloud for display.
+
 All DDL is full-file (no `alters`), applied with `dbd`; RLS = user owns their
 `relay_*` rows; the daemon writes via `/v1` (service-role behind the Worker).
 
