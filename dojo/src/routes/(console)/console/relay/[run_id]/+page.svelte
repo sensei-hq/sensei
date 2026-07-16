@@ -2,8 +2,15 @@
 	import { invalidateAll } from '$app/navigation';
 	import ConsoleHead from '$lib/components/ConsoleHead.svelte';
 	import DojoChip from '$lib/components/DojoChip.svelte';
-	import { submitReview, DojoApiError, type RelaySegment, type SegmentReview } from '$lib/relay-data';
-	import { statusBadge, segmentStateBadge } from '$lib/relay-view';
+	import RelayStatusBadge from '$lib/components/RelayStatusBadge.svelte';
+	import {
+		submitReview,
+		sendNudge,
+		DojoApiError,
+		type RelaySegment,
+		type SegmentReview
+	} from '$lib/relay-data';
+	import { segmentStateBadge } from '$lib/relay-view';
 
 	// Relay run detail (mockup relay-planner.jsx RelayPlan + dojo-relay.jsx WatchPhases):
 	// a run's segment outline as a Phase → Step tree, with a PR-review-style verdict
@@ -26,7 +33,34 @@
 	let sending = $state(false);
 	let sendError = $state<string | null>(null);
 
-	const runBadge = $derived(data.run ? statusBadge(data.run.status) : null);
+	// "Nudge the run" composer — an unsolicited steer sent TO the held run
+	// (sendNudge → a new relay_inbox row, distinct from the PR-review batch). Same
+	// mutation shape as submitReview: busy flag, DojoApiError-aware catch → inline
+	// non-fatal error, plus a transient success line that clears on the next send.
+	let nudgeText = $state('');
+	let nudging = $state(false);
+	let nudgeError = $state<string | null>(null);
+	let nudgeSent = $state(false);
+	const canNudge = $derived(nudgeText.trim().length > 0);
+
+	async function nudge() {
+		if (!canNudge || nudging) return;
+		nudging = true;
+		nudgeError = null;
+		nudgeSent = false;
+		try {
+			await sendNudge(data.tenantKey, data.runId, nudgeText.trim(), {
+				fetch,
+				accessToken: data.accessToken
+			});
+			nudgeText = '';
+			nudgeSent = true;
+		} catch (e) {
+			nudgeError = e instanceof DojoApiError ? e.message : 'could not send the nudge';
+		} finally {
+			nudging = false;
+		}
+	}
 
 	// Phase → Step tree from the flat, seq-ordered segment list. Top-level segments
 	// (parent_id === null) are phases; the rest hang under their parent, keeping the
@@ -123,8 +157,8 @@
 	>
 		{#snippet right()}
 			<div class="flex items-center gap-3">
-				{#if data.run && runBadge}
-					<DojoChip toneClass={runBadge.toneClass}>{runBadge.label}</DojoChip>
+				{#if data.run}
+					<RelayStatusBadge status={data.run.status} />
 					<span class="mono text-ink-mute text-xs">{done}/{total}</span>
 				{/if}
 				<button
@@ -300,6 +334,62 @@
 						{/each}
 					</div>
 				{/each}
+			</div>
+		{/if}
+
+		{#if data.run && !data.error}
+			<!-- Nudge the run — an unsolicited steer sent to the held run. -->
+			<div
+				class="bg-paper-soft border-paper-edge rounded-xl border"
+				style="padding: 15px 18px; margin-top: 18px"
+			>
+				<div class="flex items-center gap-2">
+					<span class="kanji text-accent" style="font-size: 13px">促</span>
+					<span
+						class="text-ink-mute text-xs font-semibold"
+						style="letter-spacing: 0.14em; text-transform: uppercase">Nudge the run</span
+					>
+				</div>
+				<div class="text-ink-mute text-xs" style="margin-top: 4px; line-height: 1.5">
+					Steer it mid-flight — sensei picks the note up on its next check.
+				</div>
+
+				<textarea
+					aria-label="Nudge the run"
+					bind:value={nudgeText}
+					placeholder="Steer the run — e.g. 'focus on the API first'"
+					rows="2"
+					disabled={nudging}
+					class="bg-paper border-paper-edge text-ink w-full rounded-lg border text-sm"
+					style="padding: 8px 11px; margin-top: 10px; resize: vertical; font-family: inherit; line-height: 1.5"
+				></textarea>
+
+				{#if nudgeError}
+					<div class="text-danger text-xs" style="margin-top: 8px">
+						Nudge not sent. <span class="mono text-ink-mute">{nudgeError}</span>
+					</div>
+				{/if}
+
+				<div class="flex items-center gap-3" style="margin-top: 10px">
+					<button
+						type="button"
+						onclick={nudge}
+						disabled={nudging || !canNudge}
+						class="bg-ink text-on-primary inline-flex items-center gap-2 rounded-lg text-xs font-medium"
+						style="padding: 8px 13px; border: none"
+						style:opacity={nudging || !canNudge ? 0.5 : 1}
+						style:cursor={nudging || !canNudge ? 'not-allowed' : 'pointer'}
+					>
+						<span class="kanji" style="font-size: 12px">送</span>
+						{nudging ? 'Sending…' : 'Send'}
+					</button>
+					{#if nudgeSent}
+						<span class="text-success inline-flex items-center gap-1 text-xs">
+							<span class="kanji text-success" style="font-size: 11px">済</span>
+							Nudge sent
+						</span>
+					{/if}
+				</div>
 			</div>
 		{/if}
 	</div>

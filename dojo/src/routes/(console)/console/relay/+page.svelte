@@ -1,10 +1,10 @@
 <script lang="ts">
 	import { invalidateAll } from '$app/navigation';
 	import ConsoleHead from '$lib/components/ConsoleHead.svelte';
-	import DojoChip from '$lib/components/DojoChip.svelte';
 	import RelayGateCard from '$lib/components/RelayGateCard.svelte';
+	import RelayStatusBadge from '$lib/components/RelayStatusBadge.svelte';
 	import { relativeAge } from '$lib/triage-view';
-	import { progressWidth, statusBadge } from '$lib/relay-view';
+	import { progressWidth } from '$lib/relay-view';
 
 	// Relay run list (mockup dojo-relay.jsx "Active"/RelayProjectsBody): every
 	// supervised run the caller can see in this tenant, one card each. The card is a
@@ -87,7 +87,6 @@
 		{#if data.runs.length > 0}
 			<div class="flex flex-col gap-3" style="margin-top: 18px">
 				{#each data.runs as run (run.id)}
-					{@const badge = statusBadge(run.status)}
 					<a
 						href="/console/relay/{run.run_id}"
 						class="bg-paper-soft border-paper-edge block rounded-xl border no-underline"
@@ -103,7 +102,7 @@
 									<div class="text-ink truncate text-sm font-medium" style="flex: 1; min-width: 0">
 										{run.title}
 									</div>
-									<DojoChip toneClass={badge.toneClass}>{badge.label}</DojoChip>
+									<RelayStatusBadge status={run.status} />
 								</div>
 								{#if run.goal}
 									<div class="text-ink-mute truncate text-xs" style="margin-top: 3px">{run.goal}</div>
