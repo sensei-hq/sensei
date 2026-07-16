@@ -1,0 +1,80 @@
+// GET/POST /v1/t/{origin}/{org}/relay/segments — the run's outline
+// (Execution → Segment → Item). POST = the daemon publishing the outline
+// (device-token plane, upsert by session+seq); GET = the phone reading it
+// (Supabase-JWT plane). The per-segment review verdicts are phone-owned and NOT
+// touched by the daemon publish. See docs/plan/relay-engine.md §6.
+import type { RequestHandler } from './$types';
+import { dojoDb } from '$lib/server/dojo-supabase';
+import { resolveApiKeyAccess, resolveTenantAccess, apiError, ACCESS } from '$lib/server/dojo-auth';
+
+const COLS =
+	'id, session_id, parent_id, seq, title, summary, detail, state, is_gate, gate_severity, response_verdict, response_note, submitted_at';
+
+const str = (v: unknown): string | null => (typeof v === 'string' ? v : null);
+
+// Daemon → publish the run's outline. Upserts each segment by (session_id, seq);
+// only daemon-owned fields are written, so a re-publish never clobbers the phone's
+// per-segment review verdict/note (those columns are absent from the payload).
+export const POST: RequestHandler = async ({ params, request }) => {
+	try {
+		const caller = await resolveApiKeyAccess(params.origin, params.org, request, ACCESS.contributor);
+		const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+		const runId = str(body.run_id);
+		const segments = Array.isArray(body.segments) ? (body.segments as Record<string, unknown>[]) : null;
+		if (!runId || !segments) return apiError(400, 'run_id and segments are required');
+		const db = dojoDb();
+		const { data: sess, error: sErr } = await db
+			.from('relay_sessions')
+			.select('id')
+			.eq('tenant_id', caller.tenantId)
+			.eq('run_id', runId)
+			.maybeSingle();
+		if (sErr) return apiError(500, sErr.message);
+		if (!sess) return apiError(404, 'no relay session for run_id (POST relay/session first)');
+		const rows = segments.map((s) => ({
+			session_id: sess.id,
+			seq: typeof s.seq === 'number' ? s.seq : 0,
+			parent_id: str(s.parent_id),
+			title: str(s.title) ?? '',
+			summary: str(s.summary),
+			detail: str(s.detail),
+			state: str(s.state) ?? 'pending',
+			is_gate: s.is_gate === true,
+			gate_severity: str(s.gate_severity),
+			updated_at: new Date().toISOString()
+		}));
+		const { error } = await db.from('relay_segments').upsert(rows, { onConflict: 'session_id,seq' });
+		if (error) return apiError(500, error.message);
+		return Response.json({ upserted: rows.length });
+	} catch (e) {
+		if (e instanceof Response) return e;
+		throw e;
+	}
+};
+
+// Phone → read a run's outline, ordered by seq.
+export const GET: RequestHandler = async ({ params, request, locals, url }) => {
+	try {
+		const { tenantId } = await resolveTenantAccess(params.origin, params.org, request, locals, ACCESS.member);
+		const runId = url.searchParams.get('run_id');
+		if (!runId) return apiError(400, 'run_id query param is required');
+		const db = dojoDb();
+		const { data: sess } = await db
+			.from('relay_sessions')
+			.select('id')
+			.eq('tenant_id', tenantId)
+			.eq('run_id', runId)
+			.maybeSingle();
+		if (!sess) return Response.json({ segments: [] });
+		const { data, error } = await db
+			.from('relay_segments')
+			.select(COLS)
+			.eq('session_id', sess.id)
+			.order('seq', { ascending: true });
+		if (error) return apiError(500, error.message);
+		return Response.json({ segments: data ?? [] });
+	} catch (e) {
+		if (e instanceof Response) return e;
+		throw e;
+	}
+};
