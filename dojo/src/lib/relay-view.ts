@@ -6,7 +6,7 @@
 // functions are side-effect-free (data in → display value out) so they unit test
 // without a DOM or a live backend and the screen stays declarative.
 
-import type { RelayRunStatus } from './relay-data';
+import type { RelayRunStatus, SegmentState } from './relay-data';
 
 // ── run status → friendly label + tone class ─────────────────────────────────
 
@@ -35,6 +35,29 @@ const FALLBACK_BADGE: StatusBadge = { label: 'Unknown', toneClass: 'text-ink-mut
 /** Friendly label + tone class for a run status (defaults to a muted "Unknown"). */
 export function statusBadge(status: RelayRunStatus): StatusBadge {
 	return STATUS_BADGES[status] ?? FALLBACK_BADGE;
+}
+
+// ── segment state → friendly label + tone class ─────────────────────────────
+
+// The outline (relay.jsx / relay-planner.jsx) reads in the same plain vocabulary
+// as the run status: a done step is "Done", the running one is "In progress", a
+// step still ahead is "Queued". needs_review + blocked both rise as "Needs you"
+// in the accent tone (they gate on the maintainer); failed reads danger; skipped
+// stays muted (deliberately passed over). Same shape as statusBadge so the markup
+// stays declarative and the mapping is unit-tested in one place.
+const SEGMENT_STATE_BADGES: Record<SegmentState, StatusBadge> = {
+	pending: { label: 'Queued', toneClass: 'text-ink-mute' },
+	active: { label: 'In progress', toneClass: 'text-success' },
+	done: { label: 'Done', toneClass: 'text-ink-mute' },
+	skipped: { label: 'Skipped', toneClass: 'text-ink-faint' },
+	failed: { label: 'Failed', toneClass: 'text-danger' },
+	blocked: { label: 'Needs you', toneClass: 'text-accent' },
+	needs_review: { label: 'Needs you', toneClass: 'text-accent' }
+};
+
+/** Friendly label + tone class for a segment state (defaults to a muted "Unknown"). */
+export function segmentStateBadge(state: SegmentState): StatusBadge {
+	return SEGMENT_STATE_BADGES[state] ?? FALLBACK_BADGE;
 }
 
 // ── progress (done / total → clamped CSS percentage) ─────────────────────────
