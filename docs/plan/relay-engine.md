@@ -419,6 +419,15 @@ This is where an **orchestrator** legitimately re-enters — one control surface
 (start·pause·gate·nudge·observe) each adapter satisfies differently, all normalized
 to §6's `Execution → Segment` view. It still **never builds the agent runtime** (D7).
 
+**Sequencing — deferred post-stable (decided 2026-07-16).** This orchestrator
+*wrapper* — a normalization layer over *multiple* assistants that fires **separate
+planning and implementation cycles** so any backend (Claude, ACP, fallback) is driven
+uniformly — is a **larger lift, and lands with P5 only after a stable version covers
+all planned single-assistant features** (P0–P4). We don't pay the multi-assistant
+abstraction cost until the single-assistant product is proven. The beta and the
+autonomous engine (P3) ride **Claude Code directly**: hooks for gating a live session
+(§5) + a simple headless spawn for the tick — no wrapper.
+
 ---
 
 ## 8. Change surface (implementation spec)
@@ -495,6 +504,10 @@ flowchart LR
   `plan-depth-reviewer` agent *enforces* it.
 - **Assumption budget** — **unbounded async** advisory flags with a per-phase digest.
 - **Vocabulary** — **Segment** (UI-labeled phase/stage/section).
+- **Orchestrator wrapper — deferred post-stable** — multi-assistant support via an
+  orchestrator that fires separate plan/impl cycles is the right end-state (§7 / P5),
+  but a larger lift; it waits until a stable version covers all planned features. Beta
+  + P3 stay **Claude-first** (hooks + simple headless), no wrapper.
 
 **Greenlight-ready** — no open blockers; P0 can start once committed.
 
