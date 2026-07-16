@@ -23,6 +23,10 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+/// The **relay** wire contract — filtered status + segment/gate/reply shapes the
+/// daemon publishes to the Dōjō Worker `/v1/relay/*` (relay-engine.md §4/§6).
+pub mod relay;
+
 // ---------------------------------------------------------------------------
 // Rules wire contract + shared hashing discipline.
 //
