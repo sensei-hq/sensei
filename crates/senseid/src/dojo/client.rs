@@ -9,7 +9,9 @@
 //! Keychain-backed Bearer token — never Supabase).
 
 use crate::db::pg_store::DojoMembership;
-use dojo_protocol::relay::{RelayInboxItem, RelayInboxPull, RelaySegment, RelaySessionUpdate};
+use dojo_protocol::relay::{
+    RelayInboxItem, RelayInboxPull, RelaySegment, RelaySegmentsPublish, RelaySessionUpdate,
+};
 use dojo_protocol::{ArtifactPullResponse, PublishArtifactResponse, PublishedArtifact};
 
 /// A resolved endpoint for talking to one Dōjō membership: the registry base +
@@ -259,10 +261,19 @@ impl DojoClient {
         self.relay_post("session", update).await
     }
 
-    /// Upsert the run's outline segments (`POST relay/segments`).
+    /// Upsert the run's outline segments (`POST relay/segments`). The Worker maps
+    /// `run_id` → the cloud session and upserts each segment by (session, seq).
     #[allow(dead_code)] // wired by P2 (segment feed)
-    pub async fn upsert_segments(&self, segments: &[RelaySegment]) -> Result<(), DojoClientError> {
-        self.relay_post("segments", segments).await
+    pub async fn upsert_segments(
+        &self,
+        run_id: &str,
+        segments: &[RelaySegment],
+    ) -> Result<(), DojoClientError> {
+        let publish = RelaySegmentsPublish {
+            run_id: run_id.to_string(),
+            segments: segments.to_vec(),
+        };
+        self.relay_post("segments", &publish).await
     }
 
     /// Raise an inbox row — a gate / decision / chat / nudge / stall
@@ -495,7 +506,7 @@ mod tests {
         use axum::{routing::post, Json, Router};
         use dojo_protocol::relay::{
             GateSeverity, RelayInboxItem, RelayInboxKind, RelayMessageDirection, RelayRunStatus,
-            RelaySegment, RelaySessionUpdate, SegmentState,
+            RelaySegment, RelaySegmentsPublish, RelaySessionUpdate, SegmentState,
         };
 
         // Handlers use the typed `Json<T>` extractor: if the client serialized the
@@ -504,8 +515,9 @@ mod tests {
         async fn session(Json(_): Json<RelaySessionUpdate>) -> axum::http::StatusCode {
             axum::http::StatusCode::OK
         }
-        async fn segments(Json(s): Json<Vec<RelaySegment>>) -> axum::http::StatusCode {
-            assert_eq!(s.len(), 2);
+        async fn segments(Json(s): Json<RelaySegmentsPublish>) -> axum::http::StatusCode {
+            assert_eq!(s.segments.len(), 2);
+            assert_eq!(s.run_id, "run-1");
             axum::http::StatusCode::OK
         }
         async fn inbox(Json(_): Json<RelayInboxItem>) -> axum::http::StatusCode {
@@ -570,7 +582,7 @@ mod tests {
                 response_note: None,
             },
         ];
-        c.upsert_segments(&segs).await.expect("segments publish ok");
+        c.upsert_segments("run-1", &segs).await.expect("segments publish ok");
 
         let item = RelayInboxItem {
             id: None,

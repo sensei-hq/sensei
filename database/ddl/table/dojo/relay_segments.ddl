@@ -16,6 +16,7 @@ create table if not exists dojo.relay_segments (
 , submitted_at     timestamptz
 , created_at       timestamptz        not null default now()
 , updated_at       timestamptz        not null default now()
+, constraint relay_segments_session_seq_unique unique (session_id, seq)
 );
 
 create index if not exists relay_segments_session_idx on dojo.relay_segments(session_id, seq);

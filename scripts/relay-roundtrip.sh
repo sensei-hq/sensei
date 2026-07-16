@@ -71,7 +71,7 @@ req() { # METHOD URL AUTH [BODY]
   for _ in 1 2 3 4 5; do
     if [ -n "$b" ]; then r=$(curl -s -X "$m" "$u" -H "$a" -H "$CT" -d "$b")
     else r=$(curl -s -X "$m" "$u" -H "$a"); fi
-    case "$r" in ""|*"is required"*|*"Internal Error"*) sleep 0.4 ;; *) printf '%s' "$r"; return 0 ;; esac
+    case "$r" in ""|*required*|*"Internal Error"*) sleep 0.4 ;; *) printf '%s' "$r"; return 0 ;; esac
   done
   printf '%s' "$r"
 }
@@ -83,6 +83,8 @@ Z="00000000-0000-0000-0000-000000000000"
 curl -s -o /dev/null -X POST "$WORKER/v1/t/personal/jerry/relay/session" -H "$AUTH_DEV" -H "$CT" -d "{\"run_id\":\"$Z\"}" || true
 curl -s -o /dev/null -X POST "$WORKER/v1/t/personal/jerry/relay/inbox" -H "$AUTH_DEV" -H "$CT" -d "{\"run_id\":\"$Z\",\"kind\":\"approval\"}" || true
 curl -s -o /dev/null "$WORKER/v1/t/personal/jerry/relay/inbox?since=999999999" -H "$AUTH_DEV" || true
+curl -s -o /dev/null -X POST "$WORKER/v1/t/personal/jerry/relay/segments" -H "$AUTH_DEV" -H "$CT" -d "{\"run_id\":\"$Z\",\"segments\":[]}" || true
+curl -s -o /dev/null "$WORKER/v1/t/personal/jerry/relay/segments?run_id=$Z" -H "$AUTH_JWT" || true
 curl -s -o /dev/null -X POST "$WORKER/v1/t/personal/jerry/relay/reply" -H "$AUTH_JWT" -H "$CT" -d "{\"inbox_id\":\"$Z\",\"reply\":{}}" || true
 sleep 0.6
 
@@ -90,6 +92,16 @@ echo "== 1. daemon POST session =="
 S=$(req POST "$WORKER/v1/t/personal/jerry/relay/session" "$AUTH_DEV" \
   "{\"run_id\":\"$RUN\",\"title\":\"Round-trip\",\"status\":\"running\",\"progress_done\":0,\"progress_total\":1,\"current_phase\":\"P1\"}")
 echo "   $S"; echo "$S" | jq -e '.id' >/dev/null || fail "session ($S)"
+
+echo "== 1b. daemon POST segments (outline) =="
+SEG=$(req POST "$WORKER/v1/t/personal/jerry/relay/segments" "$AUTH_DEV" \
+  "{\"run_id\":\"$RUN\",\"segments\":[{\"seq\":0,\"title\":\"Phase 1\",\"summary\":\"vertical slice\",\"state\":\"active\",\"is_gate\":false},{\"seq\":1,\"title\":\"Gate\",\"state\":\"blocked\",\"is_gate\":true,\"gate_severity\":\"blocking\"}]}")
+echo "   $SEG"; echo "$SEG" | jq -e '.upserted==2' >/dev/null || fail "segments publish ($SEG)"
+
+echo "== 1c. phone GET segments =="
+GS=$(req GET "$WORKER/v1/t/personal/jerry/relay/segments?run_id=$RUN" "$AUTH_JWT")
+echo "   $GS"
+echo "$GS" | jq -e '.segments | length==2 and .[0].title=="Phase 1" and .[1].is_gate==true and .[1].gate_severity=="blocking"' >/dev/null || fail "segments read ($GS)"
 
 echo "== 2. daemon POST inbox (raise gate) =="
 I=$(req POST "$WORKER/v1/t/personal/jerry/relay/inbox" "$AUTH_DEV" \

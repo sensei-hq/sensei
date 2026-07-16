@@ -357,6 +357,16 @@ pub struct RelayInboxPull {
     pub cursor: i64,
 }
 
+/// The daemon's outline publish for a run — `POST relay/segments`. Carries the
+/// run's segments as a batch; the Worker maps `run_id` → the cloud session (like
+/// the inbox publish) and upserts each segment by (session, seq). Re-publishing an
+/// updated outline is idempotent.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RelaySegmentsPublish {
+    pub run_id: String,
+    pub segments: Vec<RelaySegment>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -561,5 +571,29 @@ mod tests {
         let js = serde_json::to_string(&r).unwrap();
         let back: RelayReply = serde_json::from_str(&js).unwrap();
         assert_eq!(back, r);
+    }
+
+    #[test]
+    fn segments_publish_round_trips() {
+        let p = RelaySegmentsPublish {
+            run_id: "11111111-1111-1111-1111-111111111111".into(),
+            segments: vec![RelaySegment {
+                id: None,
+                parent_id: None,
+                seq: 0,
+                title: "Auth".into(),
+                summary: Some("wire join flow".into()),
+                detail: None,
+                state: SegmentState::Active,
+                is_gate: false,
+                gate_severity: None,
+                response_verdict: None,
+                response_note: None,
+            }],
+        };
+        let js = serde_json::to_string(&p).unwrap();
+        let back: RelaySegmentsPublish = serde_json::from_str(&js).unwrap();
+        assert_eq!(back, p);
+        assert_eq!(back.segments.len(), 1);
     }
 }
