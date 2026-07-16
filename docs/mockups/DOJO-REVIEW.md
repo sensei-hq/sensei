@@ -96,3 +96,51 @@ The journey map's trust themes are asserted in labels but the screens don't deli
 ---
 
 *Source: three parallel screen reviews (SaaS+Relay+In-app · Governance+Admin+Maintainer · Lead+Developer+Billing+Extensions), 2026-07-15. Per-screen detail beyond this synthesis is available on request.*
+
+---
+
+# Round 2 — re-review of the updated mockups (2026-07-15)
+
+**Verdict:** the designer resolved most of the **product-critical** backlog (§2 theme promises, §3 missing screens, §4 trust bugs) — strong, high-value progress — but the **priority-#1 systemic pass (S1 tokens / S4 type / S2 raw colors / S5 responsive) was essentially skipped.** Dark mode is still broken. Net clearly better, but **not yet build-ready** — one more focused pass is needed, and it's mostly mechanical.
+
+## ✅ Resolved (the load-bearing gaps)
+- **Redaction preview built** — `InappRedact` (raw *Travels upstream* vs *Dropped — never leaves*, sticky "Confirm & share anonymized"). The #1 missing screen. ✔
+- **Create-a-Dōjō → visibility → plan funnel** — `DojoCreate` (hosting + who-joins + visibility→plan, live plan summary). The "single biggest gap". ✔
+- **SSO/SCIM identity screen** — new `dojo-identity.jsx` (IdP presets · SCIM last-sync · git-access→role map · test-connection · read-only auto-provision cap). ✔
+- **Relay** — first-class **offline / session-ended / daemon-asleep** states (`RELAY_CONN`), post-action acks (Approve→"session resumed", Decision→"answer sent"), **inbox detail now follows selection**, and a **logs screen**. ✔
+- **Recall flow** — `InappTravel` status stepper (Queued→Triaged→Decided) + Recall on in-flight + decline reason + adopt credit. ✔
+- **Shared primitive kit** — `dojo-shared` now hoists `DojoBtn` (with a `danger` variant), `DojoChip`, `DojoHead`, shell, mobile bar. The two missing tokens **`--accent-edge` + `--warning-edge` now exist**. ✔ (S6, S2-half)
+- **Billing** — "active contributor" **defined** in-product + **seat roster** + **live Relay meters** (concurrency/inbox/presence) + **past-due/dunning** (danger family, correct) + wired into admin nav. ✔
+- **Maintainer** — the fake `4 repos · 8 devs` reach bug is **gone** (→ "scope not sized yet"); **Revise editor** + **second-approver Approvals queue** (with empty state). ✔
+- **Governance** — inherited rules **shown in-context** (greyed + "↑ scope"); the onboarding **double-count bug fixed** (Set dedup); stance-dial help lines. ✔
+- **Admin** — a live **"which rule wins" verdict** panel; lifecycle vocabulary reconciled (active→deprecated→retracted); governance/billing/identity **dead routes wired**. ✔
+- **Extensions** — fabricated round-robin approver **removed** (real `e.author` provenance) + empty state. ✔
+- **Terminology** — largely converged on **"anonymize"** (saas, inapp, developer).
+
+## ⚠️ Still open — the systemic pass (highest leverage, mostly skipped)
+- **S1 · ~0% design-system adoption (unchanged).** Every screen — *including the new shared kit, `dojo-identity`, and `InappRedact`* — is hand-rolled inline `style` over the **deprecated numbered tokens** (`--paper-2/-3`, `--ink-2/-3/-4`, `--edge`, `--hairline`); no `zs-*` / semantic utilities. This is why dark mode stays broken. **Do this pass.**
+- **S4 · off-scale type pervasive** (`9 / 10.5 / 11.5 / 12.5 / 13.5 / 14.5 / 26 / 34 / 42`) — now also baked into the shared primitives, so it propagates everywhere.
+- **S2 · raw color literals persist** — amber `oklch(0.52 0.13 60)` in **admin (7×)**, **maintainer (6×)**, **inapp** (bind/share/travel/downstream); `color-mix` in **relay** (`DojoTag`, needs-you cards) + **billing** (enterprise dark tier); `rgba()` in **extensions**. The tokens exist now — use them.
+- **S3 · danger-vs-warning still mis-routed** — **Retract** (admin), **Decline / Supersede** (maintainer), **declined** (inapp = amber, developer = grey) should all be `danger` (the variant exists, unused).
+- **S5 · responsive half-done + inconsistent.** Fixed: saas sign-in, relay (fully), maintainer **Candidate** (sticky mobile action bar — the worst prior bug, resolved), `DojoDevTeams`, admin Overview. **Still fixed-grid (won't stack):** saas **orgs/create**, admin **Monitor/Scopes**, **governance**, lead **6-col audit ledger**, **billing tiers**, developer **contributions**, extensions **toolbar** — and the **new** `dojo-identity`, `InappRedact`, `DojoOrgsEmpty` shipped **without** the responsive contract.
+
+## 🆕 New issues / regressions (introduced this round)
+- **`site/tokens.css` NOT synced** — `--accent-edge` / `--warning-edge` were added to `lib/tokens.css` (4 refs) but **not `site/tokens.css` (0 refs)**. Any screen served from `site/` that uses them gets an **undefined var** → **live breakage**. Sync the two files.
+- **Fabricated provenance reappeared** (the §4 anti-pattern, on *new* screens) — `DojoApprovals` round-robins first-approver names/times; Candidate hardcodes **"Sven K."** as suggested approver (should derive from `SCOPE_OWNERS`).
+- **Flagship affordances are unwired stubs** — Revise **"Save revision"** discards edits; **"Preview recipients"**, **"Preview onboarding"**, and the **stance-dial consequence preview** have no action. The "never-blind / what-happens-next" promise is labeled but not operational.
+- **`dojo-identity` has no nav route** — the shell's "Settings · SSO" item is disabled (`opacity 0.6`), so the otherwise-complete screen is unreachable (echoes the old `DojoBilling` dead-route bug).
+- **Governance new-logic gaps** — overridden inherited rules are **filtered out, not marked** (a dev can't see a local rule shadows an inherited one; the ask was "overrides *marked*"); inheritance **ignores Stack scopes** (only walks `parent`).
+- **Terminology residue** — lead still says **"strip" / "dereference"**; inapp keeps **"dereferencing"** (line ~231) and three synonyms coexist in one file (*anonymized / source dropped / stripped*).
+- **Trust residue** — `InappShare` "Share 2 to Dōjō" count still hardcoded (won't track selection).
+- **Primitive duplication residue** — `IdPanel` is a 3rd local `Panel`; relay keeps its own `MOBILE_TABS`/`Live` alongside the shared ones; per-kind `color-mix` maps re-appear in relay instead of `DojoChip`/`OriginChip`.
+
+## Priority for the next (final) pass — before build
+1. **Sync `site/tokens.css`** with the new edge tokens (live-breakage fix — do first).
+2. **S1/S4/S2 migration** — semantic tokens + `zs-*` + scale type; delete every inline `oklch`/`rgba`/`color-mix`. Unblocks dark mode; highest leverage.
+3. **S3** — route Retract / Decline / Supersede / declined to `danger`.
+4. **Wire the stubs** — Revise-save, Preview-recipients, Preview-onboarding, stance consequence.
+5. **De-fabricate provenance** — real approver data on Approvals + Candidate.
+6. **Finish S5** — Monitor, Scopes, governance, lead ledger, billing tiers, developer contributions, extensions toolbar, + the 3 new screens; route `dojo-identity` into the nav.
+7. **Terminology** — retire "strip"/"dereference" from lead + inapp; mark (don't hide) governance overrides; include Stack in inheritance.
+
+*Source: three parallel re-reviews against this doc, 2026-07-15 (round 2).*
