@@ -10,9 +10,11 @@
 
 use crate::db::pg_store::DojoMembership;
 use dojo_protocol::relay::{
-    RelayInboxItem, RelayInboxPull, RelaySegment, RelaySegmentsPublish, RelaySessionUpdate,
+    RelayInboxAck, RelayInboxItem, RelayInboxPull, RelayInboxStatus, RelaySegment,
+    RelaySegmentsPublish, RelaySessionUpdate,
 };
 use dojo_protocol::{ArtifactPullResponse, PublishArtifactResponse, PublishedArtifact};
+use std::time::Duration;
 
 /// A resolved endpoint for talking to one Dōjō membership: the registry base +
 /// tenant path plus the bounded HTTP client. The auth token is fetched on demand
@@ -275,11 +277,32 @@ impl DojoClient {
     }
 
     /// Raise an inbox row — a gate / decision / chat / nudge / stall
-    /// (`POST relay/inbox`). Fire-and-forget; the reply arrives via
-    /// [`Self::poll_inbox`].
-    #[allow(dead_code)] // wired by P1 (round-trip) + P2/P3
-    pub async fn raise_inbox_item(&self, item: &RelayInboxItem) -> Result<(), DojoClientError> {
-        self.relay_post("inbox", item).await
+    /// (`POST relay/inbox`) — and return the Worker's [`RelayInboxAck`]
+    /// (`{id, seq}`): the server-assigned inbox id to await a reply against, and
+    /// the sequence to poll from. Unlike the fire-and-check publishes this
+    /// decodes the response body (mirroring [`Self::publish_artifact`]'s error
+    /// discipline: transport → `Network`, non-2xx → `Status`, undecodable 2xx →
+    /// `Decode`). The reply arrives via [`Self::await_reply`] / [`Self::poll_inbox`].
+    pub async fn raise_inbox_item(
+        &self,
+        item: &RelayInboxItem,
+    ) -> Result<RelayInboxAck, DojoClientError> {
+        let token = self.bearer_async().await?;
+        let resp = self
+            .http
+            .post(self.relay_url("inbox"))
+            .bearer_auth(token)
+            .json(item)
+            .send()
+            .await
+            .map_err(|e| DojoClientError::Network(e.to_string()))?;
+        let status = resp.status();
+        if !status.is_success() {
+            return Err(DojoClientError::Status(status.as_u16()));
+        }
+        resp.json::<RelayInboxAck>()
+            .await
+            .map_err(|e| DojoClientError::Decode(e.to_string()))
     }
 
     /// Poll inbox rows since a cursor (`GET relay/inbox?since={cursor}`) — the
@@ -304,6 +327,57 @@ impl DojoClient {
         resp.json::<RelayInboxPull>()
             .await
             .map_err(|e| DojoClientError::Decode(e.to_string()))
+    }
+
+    /// Block (bounded) until a raised inbox row is answered, then return its
+    /// `reply`. Polls [`Self::poll_inbox`] every ~1.5s from `since`, scanning for
+    /// the row whose `id == inbox_id` AND `status == Answered`. Returns
+    /// `Ok(Some(reply))` on the answer, `Ok(None)` on timeout (the hook-gate leg
+    /// treats a timeout as fail-open → allow). A transient poll error does NOT
+    /// abort the wait — it is swallowed and retried until the deadline, so a
+    /// single blip can't collapse the gate to a spurious timeout; only the
+    /// bearer/`Keychain`/`Join` faults (which will never recover mid-loop) and
+    /// the deadline end it.
+    ///
+    /// The whole wait is bounded by `timeout` (the caller passes < Claude's 60s
+    /// hook cap). Uses [`tokio::time`] only — never wall-clock `Instant`.
+    pub async fn await_reply(
+        &self,
+        inbox_id: &str,
+        since: i64,
+        timeout: Duration,
+    ) -> Result<Option<serde_json::Value>, DojoClientError> {
+        const POLL_EVERY: Duration = Duration::from_millis(1500);
+        let deadline = tokio::time::Instant::now() + timeout;
+
+        loop {
+            match self.poll_inbox(since).await {
+                Ok(pull) => {
+                    if let Some(reply) = pull.items.iter().find_map(|it| {
+                        let matches = it.id.as_deref() == Some(inbox_id)
+                            && it.status == RelayInboxStatus::Answered;
+                        matches.then(|| it.reply.clone()).flatten()
+                    }) {
+                        return Ok(Some(reply));
+                    }
+                }
+                // A bearer/keychain fault won't recover mid-loop → surface it so
+                // the caller fails open immediately rather than spinning to the
+                // deadline. Transient network/status blips are retried.
+                Err(e @ (DojoClientError::Keychain(_) | DojoClientError::Join(_))) => {
+                    return Err(e);
+                }
+                Err(e) => {
+                    tracing::warn!(inbox_id, error = %e, "await_reply: poll failed, retrying");
+                }
+            }
+
+            // Stop if the next poll would land past the deadline.
+            if tokio::time::Instant::now() + POLL_EVERY >= deadline {
+                return Ok(None);
+            }
+            tokio::time::sleep(POLL_EVERY).await;
+        }
     }
 }
 
@@ -518,8 +592,11 @@ mod tests {
             assert_eq!(s.run_id, "run-1");
             axum::http::StatusCode::OK
         }
-        async fn inbox(Json(_): Json<RelayInboxItem>) -> axum::http::StatusCode {
-            axum::http::StatusCode::OK
+        // The Worker's `POST relay/inbox` returns the ack `{id, seq}` — decoded
+        // by `raise_inbox_item`. Typed `Json<RelayInboxItem>` extraction 422s on
+        // a wrong wire shape, so a green run also proves the raise serializes.
+        async fn inbox(Json(_): Json<RelayInboxItem>) -> Json<dojo_protocol::relay::RelayInboxAck> {
+            Json(dojo_protocol::relay::RelayInboxAck { id: "inbox-42".into(), seq: 7 })
         }
 
         let app = Router::new()
@@ -594,7 +671,123 @@ mod tests {
             created_at: None,
             answered_at: None,
         };
-        c.raise_inbox_item(&item).await.expect("inbox publish ok");
+        let ack = c.raise_inbox_item(&item).await.expect("inbox publish ok");
+        assert_eq!(ack.id, "inbox-42", "raise decodes the Worker ack id");
+        assert_eq!(ack.seq, 7, "raise decodes the Worker ack seq");
+
+        crate::gateway_keys::delete_key(&cref).unwrap();
+    }
+
+    #[tokio::test]
+    #[cfg_attr(not(target_os = "macos"), ignore)]
+    async fn await_reply_returns_reply_once_answered() {
+        use axum::{extract::Query, routing::get, Json, Router};
+        use dojo_protocol::relay::{
+            RelayInboxItem, RelayInboxKind, RelayInboxPull, RelayInboxStatus, RelayMessageDirection,
+        };
+        use std::collections::HashMap;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        // A fake Worker inbox that flips the row from Pending → Answered on the
+        // SECOND poll: first call returns the still-pending gate (no reply yet),
+        // second returns it answered with a deny verdict. Proves await_reply
+        // keeps polling until the row is Answered and then returns its reply.
+        static CALLS: AtomicUsize = AtomicUsize::new(0);
+        async fn inbox(Query(_q): Query<HashMap<String, String>>) -> Json<RelayInboxPull> {
+            let n = CALLS.fetch_add(1, Ordering::SeqCst);
+            let (status, reply) = if n == 0 {
+                (RelayInboxStatus::Pending, None)
+            } else {
+                (RelayInboxStatus::Answered, Some(serde_json::json!({"verdict": "deny"})))
+            };
+            Json(RelayInboxPull {
+                items: vec![RelayInboxItem {
+                    id: Some("gate-1".into()),
+                    run_id: "run-1".into(),
+                    segment_id: None,
+                    kind: RelayInboxKind::Approval,
+                    direction: RelayMessageDirection::AgentToHuman,
+                    status,
+                    payload: serde_json::json!({"prompt": "Approve Bash?"}),
+                    reply,
+                    created_at: None,
+                    answered_at: None,
+                }],
+                cursor: 1,
+            })
+        }
+
+        let app = Router::new().route("/v1/t/{tenant}/relay/inbox", get(inbox));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap(); });
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        let cref = format!("dojo-await-{}", uuid::Uuid::new_v4());
+        crate::gateway_keys::set_key(&cref, "device-token-await").unwrap();
+        let mut m = membership("http://localhost:7755/github/acme", &cref);
+        m.registry_url = format!("http://{addr}");
+        let c = DojoClient::for_membership(&m);
+
+        // Generous timeout — the row answers on the 2nd poll (~1.5s later).
+        let reply = c
+            .await_reply("gate-1", 0, std::time::Duration::from_secs(10))
+            .await
+            .expect("await_reply ok");
+        assert_eq!(reply, Some(serde_json::json!({"verdict": "deny"})));
+        assert!(CALLS.load(Ordering::SeqCst) >= 2, "polled past the pending row");
+
+        crate::gateway_keys::delete_key(&cref).unwrap();
+    }
+
+    #[tokio::test]
+    #[cfg_attr(not(target_os = "macos"), ignore)]
+    async fn await_reply_returns_none_on_timeout() {
+        use axum::{extract::Query, routing::get, Json, Router};
+        use dojo_protocol::relay::{
+            RelayInboxItem, RelayInboxKind, RelayInboxPull, RelayInboxStatus, RelayMessageDirection,
+        };
+        use std::collections::HashMap;
+
+        // A fake Worker that NEVER answers the gate — the row stays Pending. With
+        // a sub-poll-interval timeout, await_reply must give up and return None
+        // (the fail-open → allow path).
+        async fn inbox(Query(_q): Query<HashMap<String, String>>) -> Json<RelayInboxPull> {
+            Json(RelayInboxPull {
+                items: vec![RelayInboxItem {
+                    id: Some("gate-1".into()),
+                    run_id: "run-1".into(),
+                    segment_id: None,
+                    kind: RelayInboxKind::Approval,
+                    direction: RelayMessageDirection::AgentToHuman,
+                    status: RelayInboxStatus::Pending,
+                    payload: serde_json::json!({"prompt": "Approve Bash?"}),
+                    reply: None,
+                    created_at: None,
+                    answered_at: None,
+                }],
+                cursor: 1,
+            })
+        }
+
+        let app = Router::new().route("/v1/t/{tenant}/relay/inbox", get(inbox));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap(); });
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        let cref = format!("dojo-await-to-{}", uuid::Uuid::new_v4());
+        crate::gateway_keys::set_key(&cref, "device-token-await").unwrap();
+        let mut m = membership("http://localhost:7755/github/acme", &cref);
+        m.registry_url = format!("http://{addr}");
+        let c = DojoClient::for_membership(&m);
+
+        // 1s timeout < the 1.5s poll interval ⇒ one poll then deadline → None.
+        let reply = c
+            .await_reply("gate-1", 0, std::time::Duration::from_secs(1))
+            .await
+            .expect("await_reply ok");
+        assert_eq!(reply, None, "unanswered gate times out to None (fail-open)");
 
         crate::gateway_keys::delete_key(&cref).unwrap();
     }
