@@ -304,6 +304,131 @@ pub(crate) async fn ingest_hook_event(
     StatusCode::OK
 }
 
+// ── Hook gate (relay-engine feature B) ───────────────────────────────────────
+
+/// Build a Claude Code `PreToolUse` hook decision body. `decision` is `"allow"`
+/// or `"deny"`; `reason` is the human-facing explanation the hook surfaces.
+fn gate_decision(decision: &str, reason: &str) -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": decision,
+            "permissionDecisionReason": reason,
+        }
+    }))
+}
+
+/// `POST /hook/gate` — the daemon↔agent control leg (relay-engine feature B).
+///
+/// A Claude `PreToolUse` hook POSTs the tool-call payload here; the daemon
+/// decides whether the tool may proceed. When the tool is in the
+/// `SENSEI_RELAY_GATE_TOOLS` allow-list AND a Dōjō is enrolled, it raises a
+/// blocking relay gate to the phone, waits (bounded ~50s) for the human's
+/// answer, and returns allow/deny. Everything else — gating off, non-uuid
+/// session, no dojo, any raise/poll error, timeout — is **fail-open → allow**.
+///
+/// ALWAYS returns 200 with an allow/deny body; NEVER a 5xx. Fail-open error
+/// paths `tracing::warn!` (never swallowed). Only an explicit human `deny`
+/// reply blocks. The payload raised to the phone carries only the tool NAME —
+/// no tool args, code, or diffs (zero-knowledge, D10).
+pub(crate) async fn hook_gate(
+    State(state): State<AppState>,
+    Json(payload): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+    use crate::dojo::gate::{decision_from_reply, gated_tools_from_env, should_gate};
+
+    let session_id = payload["session_id"].as_str().unwrap_or("");
+    let tool_name = payload["tool_name"].as_str().unwrap_or("");
+    let cwd = payload["cwd"].as_str();
+
+    // Gating is OFF by default: only gate a tool named in SENSEI_RELAY_GATE_TOOLS.
+    let gate_env = std::env::var("SENSEI_RELAY_GATE_TOOLS").ok();
+    let gated = gated_tools_from_env(gate_env.as_deref());
+    if !should_gate(tool_name, &gated) {
+        return gate_decision("allow", "not gated");
+    }
+
+    // Fail-open: a non-uuid session (non-Claude harness) would 500 the Worker
+    // (relay run_id is uuid NOT NULL), so never gate it.
+    if uuid::Uuid::parse_str(session_id).is_err() {
+        tracing::warn!(session_id, tool_name, "hook_gate: non-uuid session — allowing (fail-open)");
+        return gate_decision("allow", "gate unavailable — allowed");
+    }
+
+    // Fail-open: no enrolled Dōjō ⇒ nowhere to raise the gate ⇒ allow.
+    let memberships = match state.pg.list_dojo_memberships().await {
+        Ok(ms) => ms.into_iter().filter(|m| m.enabled).collect::<Vec<_>>(),
+        Err(e) => {
+            tracing::warn!(error = %e, "hook_gate: list_dojo_memberships failed — allowing (fail-open)");
+            return gate_decision("allow", "gate unavailable — allowed");
+        }
+    };
+    let Some(membership) = memberships.into_iter().next() else {
+        return gate_decision("allow", "no dojo enrolled");
+    };
+    // FIRST enabled membership only (personal beta = one). Gating across
+    // multiple memberships (which phone answers, quorum, races) is a tracked
+    // follow-up — see relay-engine.md feature B.
+    let client = crate::dojo::client::DojoClient::for_membership(&membership);
+
+    // Ensure the cloud session exists so the phone can render the gate in
+    // context (Running status; no segments — the gate carries its own prompt).
+    let update = crate::dojo::relay_project::session_update(
+        session_id,
+        &crate::dojo::relay_project::title_from_cwd(cwd),
+        &[],
+    );
+    if let Err(e) = client.publish_session_update(&update).await {
+        tracing::warn!(session_id, error = %e, "hook_gate: session update failed — allowing (fail-open)");
+        return gate_decision("allow", "gate unavailable — allowed");
+    }
+
+    // Raise the gate. Zero-knowledge: the payload names the tool only — never
+    // its args/code/diffs.
+    let item = dojo_protocol::relay::RelayInboxItem {
+        id: None,
+        run_id: session_id.to_string(),
+        segment_id: None,
+        kind: dojo_protocol::relay::RelayInboxKind::Approval,
+        direction: dojo_protocol::relay::RelayMessageDirection::AgentToHuman,
+        status: dojo_protocol::relay::RelayInboxStatus::Pending,
+        payload: serde_json::json!({
+            "prompt": format!("Approve {tool_name}?"),
+            "tool": tool_name,
+        }),
+        reply: None,
+        created_at: None,
+        answered_at: None,
+    };
+    let ack = match client.raise_inbox_item(&item).await {
+        Ok(ack) => ack,
+        Err(e) => {
+            tracing::warn!(session_id, tool_name, error = %e, "hook_gate: raise failed — allowing (fail-open)");
+            return gate_decision("allow", "gate unavailable — allowed");
+        }
+    };
+
+    // Block (bounded < Claude's 60s hook cap) for the human's answer.
+    match client
+        .await_reply(&ack.id, ack.seq, std::time::Duration::from_secs(50))
+        .await
+    {
+        Ok(reply) => {
+            let decision = decision_from_reply(reply.as_ref());
+            let reason = match (decision, reply.is_some()) {
+                ("deny", _) => "declined from your phone",
+                (_, true) => "approved from your phone",
+                (_, false) => "gate timed out — allowed",
+            };
+            gate_decision(decision, reason)
+        }
+        Err(e) => {
+            tracing::warn!(session_id, tool_name, error = %e, "hook_gate: await_reply failed — allowing (fail-open)");
+            gate_decision("allow", "gate unavailable — allowed")
+        }
+    }
+}
+
 // ── Workflow State ──────────────────────────────────────────────────────────
 
 pub(crate) async fn get_workflow_state(

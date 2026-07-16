@@ -221,6 +221,11 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/patterns/{project}/conventions", get(codebase::project_conventions_handler))
         // Hook event ingestion (from sensei-hook.ts)
         .route("/hook/event", post(sessions::ingest_hook_event))
+        // Hook gate (relay-engine feature B): a PreToolUse hook asks whether a
+        // tool may proceed; the daemon raises a phone gate and blocks for the
+        // answer. Fail-open (allow) unless a human explicitly denies. Gating is
+        // OFF unless SENSEI_RELAY_GATE_TOOLS names the tool.
+        .route("/hook/gate", post(sessions::hook_gate))
         // Structured logging: POST ingests (CLI, MCP, app); GET reads for the
         // Observatory · Logs screen.
         .route("/api/logs", post(logs::ingest_log).get(logs::get_logs))

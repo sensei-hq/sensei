@@ -18,6 +18,7 @@
 pub mod attribution;
 pub mod client;
 pub mod contribute;
+pub mod gate;
 pub mod memberships;
 pub mod relay_project;
 pub mod routing;
