@@ -195,6 +195,50 @@ run-state — it survives laptop/session death (the vacation run's fatal flaw).
 - **Delivery events** — commit/push per feature surface as status; **never merge
   `main` autonomously** (a hard-block gate).
 
+### Control channel — how a reply reaches the agent
+
+There is **no shared channel into a running assistant**, and Claude has no loop that
+polls a file on its own (no `interrupt.md` it reads on a timer — it has no timer). The
+**only bridge is hooks**: Claude Code runs a shell command at lifecycle points
+(SessionStart · UserPromptSubmit · PreToolUse · PostToolUse · PreCompact · Stop). The
+sensei plugin already registers these (today fire-and-forget telemetry → daemon
+`:7744`). Two hook properties make them a control channel, not just telemetry:
+
+1. **PreToolUse blocks.** Claude spawns the hook *before* a tool call and **waits for
+   it to exit**; the hook's output decides allow / deny / ask.
+2. **SessionStart & UserPromptSubmit inject.** Their stdout is added to Claude's
+   context on the next turn.
+
+So a gate needs **nothing pushed into Claude** — Claude is already parked inside a
+hook it spawned:
+
+```
+Claude ─PreToolUse hook (local)─▶ daemon :7744 ─▶ Worker ─▶ relay_inbox (Supabase)
+   ▲                                                                    │
+   └─ allow/deny ── daemon poll sees "answered" ◀── reply ◀── phone ────┘
+```
+
+A queued **nudge** rides the same rails inverted: daemon stores it → the next
+UserPromptSubmit/PreToolUse hook injects it. Cadence = "next tool call / next prompt",
+not wall-clock. (This is the accurate form of the `interrupt.md` idea — the *hook*
+does the reading, at hook-fire points.)
+
+**Two ownership modes — the ceiling is why P3 exists:**
+
+| | **Watch/gate a live session (P2)** | **Own the process (P3, coordinator)** |
+|---|---|---|
+| Who starts the agent | user, at the terminal | **sensei**, headless (`claude -p` / Agent SDK / ACP) |
+| Bridge | blocking **PreToolUse hook** | sensei owns **stdin/stdout + permission callback** |
+| Gate hold | bounded by hook **timeout** (~60s) | **indefinite** — hold until you reply |
+| Nudge/inject | next hook fire only | any time |
+| Survives agent exit | **no** (no hook fires when idle) | **yes** — sensei relaunches |
+| Non-Claude assistants | no (no hooks) | **yes** — ACP host + adapters (§7) |
+
+P2 controls a session **best-effort** through the hook; P3 controls an **owned**
+process fully through the pipes. The relay round-trip proven so far is the
+daemon↔phone leg — the daemon↔agent leg is exactly the blocking hook (task **B** in
+§8/§9) and the coordinator (P3).
+
 ### Autonomous execution — progress over asking
 
 | Class | When | Behavior | Relay |
