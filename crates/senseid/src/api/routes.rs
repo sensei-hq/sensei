@@ -32,6 +32,7 @@ use crate::api::handlers::preferences;
 use crate::api::handlers::share_review;
 use crate::api::handlers::upgrades;
 use crate::api::handlers::corrections;
+use crate::api::handlers::runs;
 
 pub fn create_router(state: AppState) -> Router {
     Router::new()
@@ -212,6 +213,9 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/sessions/{id}", get(sessions::get_session).put(sessions::update_session_handler))
         .route("/api/sessions/{id}/tool-timeline", get(sessions::get_session_tool_timeline))
         .route("/api/sessions/{id}/replay", get(sessions::get_session_replay))
+        // Relay runs (P3.2): daemon-owned autonomous-run observability
+        .route("/api/runs", get(runs::list_runs))
+        .route("/api/runs/{id}", get(runs::get_run))
         // Patterns
         .route("/api/patterns/{project}/detect", post(codebase::detect_patterns))
         .route("/api/patterns/{project}", get(codebase::list_patterns))

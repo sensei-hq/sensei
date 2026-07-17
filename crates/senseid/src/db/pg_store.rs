@@ -670,15 +670,18 @@ impl PgStore {
         row.map(Self::map_run_row).transpose()
     }
 
-    /// Runs that still need the scheduler's attention — `running`, `paused`, or
-    /// `stalled` (uses the partial `runs_active_idx`). Newest-started first.
+    /// Runs that still need the scheduler's attention — `running`, `paused`,
+    /// `stalled`, or `blocked` (uses the partial `runs_active_idx`).
+    /// Newest-started first. `blocked` is included so a run waiting on a gate is
+    /// still ticked (heartbeat) and shown in `GET /api/runs` — otherwise it
+    /// drops out of the active set and looks crashed.
     pub async fn list_active_runs(&self) -> Result<Vec<Run>, String> {
         let rows: Vec<(
             uuid::Uuid, Option<uuid::Uuid>, String, Option<String>, String, Option<String>,
             Option<String>, Option<String>, Option<String>, Option<uuid::Uuid>,
             i32, String, Option<String>, Option<String>, String, String,
         )> = sqlx_core::query_as::query_as(&format!(
-            "{} WHERE status IN ('running', 'paused', 'stalled') ORDER BY started_at DESC",
+            "{} WHERE status IN ('running', 'paused', 'stalled', 'blocked') ORDER BY started_at DESC",
             Self::RUN_SELECT
         ))
             .fetch_all(&self.pool)
@@ -816,6 +819,31 @@ impl PgStore {
                 Ok(RunEvent { id, run_id, kind, phase, feature, detail, created_at })
             })
             .collect()
+    }
+
+    /// Flip every `paused` run whose `paused_until` has elapsed back to
+    /// `running`, clearing the pause fields. The `<=` comparison runs SQL-side
+    /// (`paused_until <= now()`) so we never parse RFC-3339 back into Rust just
+    /// to compare clocks. Returns the ids of the runs that were resumed, so the
+    /// scheduler can log a `Resumed` cadence event + kick an `AdvanceRun` tick
+    /// for each. A run with `paused_until IS NULL` (an indefinite/manual pause)
+    /// is never auto-resumed.
+    pub async fn resume_due_runs(&self) -> Result<Vec<uuid::Uuid>, String> {
+        let rows: Vec<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
+            "UPDATE activity.runs
+                SET status       = 'running'::sensei.run_status,
+                    paused_until = NULL,
+                    pause_reason = NULL,
+                    updated_at   = now()
+              WHERE status = 'paused'::sensei.run_status
+                AND paused_until IS NOT NULL
+                AND paused_until <= now()
+             RETURNING id"
+        )
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id,)| id).collect())
     }
 
     // ── PG Function Wrappers ───────────────────────────────────────────
@@ -12589,17 +12617,22 @@ mod run_tests {
 
     #[tokio::test]
     async fn status_pause_progress_heartbeat_complete() {
+        // Holds the shared resume lock: this test asserts a run STAYS paused, but
+        // the global resume_due_runs (scheduler tests) would resume any paused run
+        // whose paused_until has elapsed — so serialize against those callers.
+        let _guard = crate::runs::resume_test_lock().lock().await;
         let Ok(pg) = PgStore::connect_test().await else { return; };
         let id = pg.create_run(&NewRun::default()).await.unwrap();
 
-        // Pause with resume time + reason.
+        // Pause with a FAR-FUTURE resume time + reason (never "due", so the
+        // global resume sweep can't flip it mid-assertion).
         pg.update_run_status(
             &id, RelayRunStatus::Paused,
-            Some("2026-07-17T11:29:00Z"), Some("weekly cap"),
+            Some("2999-07-17T11:29:00Z"), Some("weekly cap"),
         ).await.unwrap();
         let run = pg.get_run(&id).await.unwrap().unwrap();
         assert_eq!(run.status, RelayRunStatus::Paused);
-        assert!(run.paused_until.as_deref().unwrap().contains("2026-07-17"));
+        assert!(run.paused_until.as_deref().unwrap().contains("2999-07-17"));
         assert_eq!(run.pause_reason.as_deref(), Some("weekly cap"));
 
         // Resume clears the pause fields.
@@ -12636,6 +12669,12 @@ mod run_tests {
         let active = pg.create_run(&NewRun::default()).await.unwrap(); // running
         let paused = pg.create_run(&NewRun::default()).await.unwrap();
         pg.update_run_status(&paused, RelayRunStatus::Paused, None, None).await.unwrap();
+        // A blocked run (waiting on a gate) must stay in the active set so the
+        // scheduler keeps heartbeating it and GET /api/runs keeps showing it —
+        // otherwise once P3.3 sets status='blocked' the run drops out and looks
+        // crashed. (The advance_run handler has a Blocked-heartbeat branch.)
+        let blocked = pg.create_run(&NewRun::default()).await.unwrap();
+        pg.update_run_status(&blocked, RelayRunStatus::Blocked, None, None).await.unwrap();
         let terminal = pg.create_run(&NewRun::default()).await.unwrap();
         pg.complete_run(&terminal, RelayRunStatus::Done).await.unwrap();
 
@@ -12643,9 +12682,10 @@ mod run_tests {
             pg.list_active_runs().await.unwrap().into_iter().map(|r| r.id).collect();
         assert!(ids.contains(&active), "running run is active");
         assert!(ids.contains(&paused), "paused run is active");
+        assert!(ids.contains(&blocked), "blocked run is active");
         assert!(!ids.contains(&terminal), "done run is excluded");
 
-        for id in [active, paused, terminal] { delete_run(&pg, &id).await; }
+        for id in [active, paused, blocked, terminal] { delete_run(&pg, &id).await; }
     }
 
     #[tokio::test]
@@ -12678,5 +12718,52 @@ mod run_tests {
 
         delete_run(&pg, &id).await; // cascades run_events
         assert!(pg.list_run_events(&id, 10).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn resume_due_runs_flips_only_elapsed_pauses() {
+        // resume_due_runs is a global UPDATE; serialize with the scheduler test
+        // that also creates due-paused runs (see runs::resume_test_lock).
+        let _guard = crate::runs::resume_test_lock().lock().await;
+        let Ok(pg) = PgStore::connect_test().await else { return; };
+        // Clear any stray due pauses so our set assertions are exact.
+        pg.resume_due_runs().await.unwrap();
+
+        // Due: paused with paused_until in the past → should resume.
+        let due = pg.create_run(&NewRun::default()).await.unwrap();
+        pg.update_run_status(
+            &due, RelayRunStatus::Paused,
+            Some("2000-01-01T00:00:00Z"), Some("elapsed cap"),
+        ).await.unwrap();
+
+        // Not-yet-due: paused with paused_until far in the future.
+        let future = pg.create_run(&NewRun::default()).await.unwrap();
+        pg.update_run_status(
+            &future, RelayRunStatus::Paused,
+            Some("2999-01-01T00:00:00Z"), Some("weekly cap"),
+        ).await.unwrap();
+
+        // Indefinite: paused with NULL paused_until (manual pause) → never auto-resumes.
+        let indefinite = pg.create_run(&NewRun::default()).await.unwrap();
+        pg.update_run_status(&indefinite, RelayRunStatus::Paused, None, None).await.unwrap();
+
+        let resumed: std::collections::HashSet<uuid::Uuid> =
+            pg.resume_due_runs().await.unwrap().into_iter().collect();
+        assert!(resumed.contains(&due), "elapsed pause resumes");
+        assert!(!resumed.contains(&future), "future pause stays paused");
+        assert!(!resumed.contains(&indefinite), "indefinite pause stays paused");
+
+        // The due run is now running with its pause fields cleared.
+        let run = pg.get_run(&due).await.unwrap().unwrap();
+        assert_eq!(run.status, RelayRunStatus::Running);
+        assert!(run.paused_until.is_none(), "paused_until cleared on resume");
+        assert!(run.pause_reason.is_none(), "pause_reason cleared on resume");
+        // The future run is untouched.
+        assert_eq!(pg.get_run(&future).await.unwrap().unwrap().status, RelayRunStatus::Paused);
+
+        // Idempotent: a second call resumes nothing (nothing left due).
+        assert!(pg.resume_due_runs().await.unwrap().into_iter().all(|id| id != due));
+
+        for id in [due, future, indefinite] { delete_run(&pg, &id).await; }
     }
 }

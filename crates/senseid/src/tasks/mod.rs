@@ -11,6 +11,7 @@ pub mod handlers;
 pub mod progress;
 pub mod progress_emitter;
 pub mod analyzer_scheduler;
+pub mod advance_run_scheduler;
 pub mod contribute_scheduler;
 pub mod log_pruner;
 pub mod activity_pruner;
@@ -98,6 +99,11 @@ pub enum TaskKind {
     /// `session_id` is carried in `task.path` (and used directly as the relay
     /// `run_id`). Enqueued by `ingest_hook_event` on each `TodoWrite`.
     PublishRelaySegments,
+    /// Relay-engine (P3.2): advance one autonomous run by a tick — the run id is
+    /// carried in `task.path`. Enqueued each scheduler tick per active run (and
+    /// per just-resumed run). P3.2 only heartbeats + logs a housekeeping event;
+    /// the agent spawn/drive plugs in at the `// P3.3 SEAM` in the handler.
+    AdvanceRun,
 }
 
 impl std::fmt::Display for TaskKind {
@@ -132,6 +138,7 @@ impl std::fmt::Display for TaskKind {
             Self::ConsolidateGovernance => write!(f, "consolidate_governance"),
             Self::WarmInsightCopy => write!(f, "warm_insight_copy"),
             Self::PublishRelaySegments => write!(f, "publish_relay_segments"),
+            Self::AdvanceRun => write!(f, "advance_run"),
         }
     }
 }
@@ -162,6 +169,10 @@ impl TaskKind {
             // Relay segment-publish: one DB read + a couple of bounded HTTP
             // posts per enrolled dojo — light and network-bounded already.
             | TaskKind::PublishRelaySegments
+            // AdvanceRun tick (P3.2): a single run read + a heartbeat + one event
+            // append — trivially fast. (The agent drive that P3.3 adds will keep
+            // its own budget/timeouts; the tick itself stays light.)
+            | TaskKind::AdvanceRun
             // Tool-insights snapshot: a couple of small aggregations + one
             // multi-row insert — well under a minute in practice, but keep
             // the same 3-minute budget as the other analyzer touch-ups so a
@@ -344,6 +355,8 @@ mod tests {
         assert_eq!(TaskKind::MeasureVerdicts.to_string(), "measure_verdicts");
         assert_eq!(TaskKind::ScanDocDrift.to_string(), "scan_doc_drift");
         assert_eq!(TaskKind::ClassifyPendingVerdicts.to_string(), "classify_pending_verdicts");
+        assert_eq!(TaskKind::AdvanceRun.to_string(), "advance_run");
+        assert_eq!(TaskKind::PublishRelaySegments.to_string(), "publish_relay_segments");
     }
 
     #[test]
@@ -371,7 +384,7 @@ mod tests {
             TaskKind::BackfillTranscriptFile, TaskKind::AggregateCorrections,
             TaskKind::AggregateToolInsights, TaskKind::ClassifyPendingVerdicts,
             TaskKind::ConsolidateGovernance, TaskKind::WarmInsightCopy,
-            TaskKind::PublishRelaySegments,
+            TaskKind::PublishRelaySegments, TaskKind::AdvanceRun,
         ] {
             assert!(k.watchdog_timeout().as_secs() > 0, "{k} must have a positive cap");
         }

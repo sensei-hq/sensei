@@ -27,3 +27,4 @@ pub(crate) mod corrections;
 pub(crate) mod verdicts;
 pub(crate) mod scheduled_tasks;
 pub(crate) mod mcp_servers;
+pub(crate) mod runs;
