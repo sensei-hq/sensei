@@ -335,17 +335,30 @@ pub(crate) async fn hook_gate(
     State(state): State<AppState>,
     Json(payload): Json<serde_json::Value>,
 ) -> Json<serde_json::Value> {
-    use crate::dojo::gate::{decision_from_reply, gated_tools_from_env, should_gate};
+    use crate::dojo::gate::{classify_hard_block, decision_from_reply, gated_tools_from_env, should_gate};
 
     let session_id = payload["session_id"].as_str().unwrap_or("");
     let tool_name = payload["tool_name"].as_str().unwrap_or("");
     let cwd = payload["cwd"].as_str();
+    // The PreToolUse event carries the tool's input alongside its name. Parse
+    // defensively — a missing/malformed `tool_input` defaults to `{}`, which the
+    // classifier treats as progress (no danger inferable ⇒ don't over-block).
+    let tool_input = payload.get("tool_input").cloned().unwrap_or_else(|| serde_json::json!({}));
 
-    // Gating is OFF by default: only gate a tool named in SENSEI_RELAY_GATE_TOOLS.
+    // Two ways a call gates (relay-engine.md §5, P3.5):
+    //  1. static allow-list — a tool named in SENSEI_RELAY_GATE_TOOLS, OR
+    //  2. hard-block — a genuinely dangerous action (deploy / main-branch /
+    //     destructive / credentials / money), even with NO allow-list set.
+    // Everything else PROGRESSES (progress-over-asking). The hard-block only
+    // RAISES a gate for a human to approve/deny — it never auto-denies.
     let gate_env = std::env::var("SENSEI_RELAY_GATE_TOOLS").ok();
     let gated = gated_tools_from_env(gate_env.as_deref());
-    if !should_gate(tool_name, &gated) {
+    let hard_block = classify_hard_block(tool_name, &tool_input);
+    if !should_gate(tool_name, &gated) && hard_block.is_none() {
         return gate_decision("allow", "not gated");
+    }
+    if let Some(hb) = &hard_block {
+        tracing::info!(session_id, tool_name, category = hb.category, "hook_gate: hard-block classified — raising gate");
     }
 
     // Fail-open: a non-uuid session (non-Claude harness) would 500 the Worker
@@ -383,8 +396,21 @@ pub(crate) async fn hook_gate(
         return gate_decision("allow", "gate unavailable — allowed");
     }
 
-    // Raise the gate. Zero-knowledge: the payload names the tool only — never
-    // its args/code/diffs.
+    // Raise the gate. Zero-knowledge: the payload names the tool and — for a
+    // hard-block — the matched danger CATEGORY + REASON only. Never its
+    // args/code/diffs (the reason is a fixed daemon-owned phrase, not command text).
+    let gate_payload = match &hard_block {
+        Some(hb) => serde_json::json!({
+            "prompt": format!("Hard-block: {}. Approve {tool_name}?", hb.reason),
+            "tool": tool_name,
+            "category": hb.category,
+            "reason": hb.reason,
+        }),
+        None => serde_json::json!({
+            "prompt": format!("Approve {tool_name}?"),
+            "tool": tool_name,
+        }),
+    };
     let item = dojo_protocol::relay::RelayInboxItem {
         id: None,
         run_id: session_id.to_string(),
@@ -392,10 +418,7 @@ pub(crate) async fn hook_gate(
         kind: dojo_protocol::relay::RelayInboxKind::Approval,
         direction: dojo_protocol::relay::RelayMessageDirection::AgentToHuman,
         status: dojo_protocol::relay::RelayInboxStatus::Pending,
-        payload: serde_json::json!({
-            "prompt": format!("Approve {tool_name}?"),
-            "tool": tool_name,
-        }),
+        payload: gate_payload,
         reply: None,
         created_at: None,
         answered_at: None,
