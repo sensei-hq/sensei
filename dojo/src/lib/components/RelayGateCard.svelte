@@ -69,7 +69,7 @@
 </script>
 
 <div
-	class="bg-accent-soft border-accent-edge rounded-xl border"
+	class="bg-paper-soft border-accent-edge rounded-xl border"
 	style="padding: 15px 18px"
 >
 	<div class="flex items-start gap-3">
