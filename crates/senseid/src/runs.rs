@@ -172,6 +172,17 @@ pub struct RunEvent {
     pub created_at: String,
 }
 
+/// Serializes the DB-gated tests that call the *global* [`crate::db::pg_store::
+/// PgStore::resume_due_runs`] UPDATE (the pg_store CRUD test + the AdvanceRun
+/// scheduler test) so parallel test threads don't steal each other's due-paused
+/// runs. Production has a single scheduler calling it, so there is no such race
+/// there — this is purely a test-isolation guard.
+#[cfg(test)]
+pub(crate) fn resume_test_lock() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

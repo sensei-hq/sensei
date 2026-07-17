@@ -20,7 +20,7 @@ create table if not exists runs (
 );
 
 create index if not exists runs_project_idx on runs(project_id, started_at desc);
-create index if not exists runs_active_idx on runs(status) where status in ('running', 'paused', 'stalled');
+create index if not exists runs_active_idx on runs(status) where status in ('running', 'paused', 'stalled', 'blocked');
 
 comment on table runs is
 'A daemon-owned autonomous run of a multi-phase plan — the relay engine''s executor.
