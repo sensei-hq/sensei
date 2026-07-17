@@ -8,6 +8,20 @@
 
 	let { children } = $props();
 
+	// The console ports the desktop app's Zen/Sumi vocabulary (see rokkit.config.js
+	// + app.css), so the effective theme must be `zen-sumi`, not rokkit. The shared
+	// `vibe` singleton defaults to style `rokkit` and its allowed styles are
+	// ['rokkit','minimal','material'] — its `style` setter silently rejects any
+	// value not in `allowedStyles`. The `themable` action's effect unconditionally
+	// writes `vibe.style` onto <body>/<html>, so without this it would overwrite the
+	// `data-style="zen-sumi"` set in app.html back to rokkit. Register zen-sumi as
+	// an allowed style and select it before `themable` attaches on mount. The app is
+	// light-mode only, so pin mode/density to match app.html too.
+	vibe.allowedStyles = ['zen-sumi'];
+	vibe.style = 'zen-sumi';
+	vibe.mode = 'light';
+	vibe.density = 'comfortable';
+
 	// Mirror sites/demo/src/routes/(app)/+layout@.svelte: hydrate a browser-side
 	// kavach instance from the generated $kavach/auth module and expose it via
 	// context so descendant auth components (e.g. @kavach/ui AuthProvider) can
