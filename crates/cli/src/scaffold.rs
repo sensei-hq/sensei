@@ -8,6 +8,9 @@
 //! exercised only by its own tests.
 #![allow(dead_code)]
 
+use std::fs;
+use std::path::Path;
+
 /// One entry in the canonical layout: a directory or a file with contents.
 pub enum Entry {
     Dir(String),
@@ -108,6 +111,40 @@ fn features_md(project: &str, date: &str) -> String {
     )
 }
 
+/// What a scaffold run did — created vs already-present vs failed, in layout order.
+#[derive(Default)]
+pub struct ScaffoldReport {
+    pub created: Vec<String>,
+    pub skipped: Vec<String>,
+    pub failed: Vec<(String, String)>,
+}
+
+/// Write `layout` under `base`, idempotently: existing paths are skipped, never
+/// overwritten. Returns the per-path report.
+pub fn materialize(base: &Path, layout: &Layout) -> ScaffoldReport {
+    let mut report = ScaffoldReport::default();
+    for entry in &layout.entries {
+        let rel = entry.path().to_string();
+        let target = base.join(&rel);
+        if target.exists() {
+            report.skipped.push(rel);
+            continue;
+        }
+        let result = match entry {
+            Entry::Dir(_) => fs::create_dir_all(&target),
+            Entry::File { contents, .. } => match target.parent() {
+                Some(parent) => fs::create_dir_all(parent).and_then(|_| fs::write(&target, contents)),
+                None => fs::write(&target, contents),
+            },
+        };
+        match result {
+            Ok(()) => report.created.push(rel),
+            Err(e) => report.failed.push((rel, e.to_string())),
+        }
+    }
+    report
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -161,5 +198,68 @@ mod tests {
             .expect("vision.md present");
         assert!(vision.contains("acme"), "vision names the project");
         assert!(vision.contains("2026-07-17"), "vision carries the date");
+    }
+
+    #[test]
+    fn materialize_creates_every_entry_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        let layout = canonical_layout("demo", "2026-07-17");
+        let report = materialize(tmp.path(), &layout);
+
+        assert_eq!(report.created.len(), layout.entries.len(), "all created");
+        assert!(report.skipped.is_empty(), "nothing skipped on a clean dir");
+        assert!(tmp.path().join("docs/vision.md").is_file());
+        assert!(tmp.path().join("docs/features").is_dir());
+        assert!(tmp.path().join("docs/features/README.md").is_file());
+        assert!(tmp.path().join("docs/decisions.md").is_file());
+    }
+
+    #[test]
+    fn materialize_is_idempotent_and_never_overwrites() {
+        let tmp = tempfile::tempdir().unwrap();
+        let layout = canonical_layout("demo", "2026-07-17");
+        materialize(tmp.path(), &layout);
+
+        // Hand-edit a file, then re-run: it must be skipped, not clobbered.
+        let vision = tmp.path().join("docs/vision.md");
+        fs::write(&vision, "EDITED").unwrap();
+
+        let second = materialize(tmp.path(), &layout);
+        assert!(second.created.is_empty(), "second run creates nothing");
+        assert_eq!(second.skipped.len(), layout.entries.len(), "all skipped");
+        assert_eq!(fs::read_to_string(&vision).unwrap(), "EDITED", "not overwritten");
+    }
+
+    #[test]
+    fn materialize_records_failures_instead_of_swallowing() {
+        // A read-only base dir → writes inside it fail; failures must be recorded,
+        // not silently dropped (house "no silent errors" rule). Tests run as a
+        // normal user; root would ignore the perms.
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path();
+
+        let ro = {
+            let mut p = fs::metadata(base).unwrap().permissions();
+            p.set_readonly(true);
+            p
+        };
+        fs::set_permissions(base, ro).unwrap();
+
+        let layout = canonical_layout("demo", "2026-07-17");
+        let report = materialize(base, &layout);
+
+        // Restore write perms BEFORE asserting so tempdir cleanup always succeeds.
+        // The world-writable concern of `set_readonly(false)` is moot: this is a
+        // throwaway tempdir deleted immediately after the test.
+        #[allow(clippy::permissions_set_readonly_false)]
+        let rw = {
+            let mut p = fs::metadata(base).unwrap().permissions();
+            p.set_readonly(false);
+            p
+        };
+        fs::set_permissions(base, rw).unwrap();
+
+        assert!(!report.failed.is_empty(), "failures recorded, not swallowed");
+        assert!(report.created.is_empty(), "nothing created under a read-only base");
     }
 }
