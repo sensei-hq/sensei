@@ -1094,6 +1094,25 @@ impl PgStore {
         Ok(rows.into_iter().map(|(p,)| p).collect())
     }
 
+    /// Resolve a project's canonical working-directory path — the `abs_path` of
+    /// its shallowest repo-root folder (`kind IN ('git','standalone')`). Used by
+    /// the relay run driver (P3.3b) to pick the cwd it spawns the agent in.
+    ///
+    /// Shortest `abs_path` wins so a monorepo project resolves to the repo root
+    /// rather than a nested sub-package. `None` when the project has no
+    /// repo-root folder (e.g. a project deleted out from under a run). The
+    /// caller must still confirm the path exists on disk before spawning.
+    pub async fn project_root_path(&self, project_id: &uuid::Uuid) -> Result<Option<String>, String> {
+        let row: Option<(String,)> = sqlx_core::query_as::query_as(
+            "SELECT abs_path
+             FROM sensei.folders
+             WHERE project_id = $1 AND kind::text IN ('git','standalone')
+             ORDER BY length(abs_path), abs_path
+             LIMIT 1"
+        ).bind(project_id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.map(|(p,)| p))
+    }
+
     /// Mark a folder as indexed with detected libs.
     pub async fn mark_folder_indexed(&self, folder_id: &uuid::Uuid, libs: &[String]) -> Result<(), String> {
         let props = serde_json::json!({"indexed_at": chrono::Utc::now().to_rfc3339(), "libs": libs});
