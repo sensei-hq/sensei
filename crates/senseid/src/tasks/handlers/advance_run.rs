@@ -25,6 +25,20 @@
 //! `paused` run whose `paused_until` has elapsed back to `running` (SQL-side)
 //! before enqueueing this tick, so by the time a run reaches this handler a due
 //! pause is already cleared. A still-`paused` run is a no-op tick.
+//!
+//! **Stall/crash recovery is NOT handled here either** (P3.6): the watchdog
+//! ([`crate::tasks::watchdog_scheduler`]) exclusively owns `stalled` runs. This
+//! handler treats a `stalled` run as a no-op and — critically — does **not**
+//! heartbeat it, because a fresh heartbeat would mask the staleness the watchdog
+//! escalates on (stalled → bounded recover → crashed). A clean drive step resets
+//! the watchdog's bounded-recovery counter via `reset_run_recovery`.
+//!
+//! **P3.6 interaction — `stalled` runs are NOT touched here.** Stall detection
+//! and bounded auto-recovery are owned exclusively by the watchdog
+//! ([`crate::tasks::watchdog_scheduler`]), which measures staleness against
+//! `heartbeat_at`. If this handler kept heartbeating a `stalled` run its
+//! heartbeat would never go stale and the watchdog could never escalate it — so
+//! a `stalled` run is a deliberate no-op tick here (see the status match below).
 
 use super::super::executor::TaskContext;
 use super::super::Task;
@@ -183,11 +197,18 @@ pub async fn advance_run(ctx: &TaskContext, task: &Task) -> Result<u32, String> 
         // running before this handler ever sees it, so a run that reaches here
         // still paused is not due yet — a no-op tick. The handler never resumes.
         RelayRunStatus::Paused => Ok(0),
+        // Stalled: the watchdog (P3.6) EXCLUSIVELY owns stalled runs. This tick
+        // is a deliberate no-op — critically, we must NOT heartbeat a stalled
+        // run here, because a fresh heartbeat would make it look alive and mask
+        // the staleness the watchdog escalates on (stalled → bounded recover →
+        // crashed). The watchdog's own recover_run refreshes the heartbeat when
+        // it flips a run back to running.
+        RelayRunStatus::Stalled => Ok(0),
         // Blocked: waiting on a hard-block gate (a human reply). No autonomous
         // progress until the gate clears, so the tick is a no-op — but we still
         // want a live heartbeat so a blocked run isn't mistaken for a crash.
         // Fall through to the heartbeat path.
-        RelayRunStatus::Running | RelayRunStatus::Stalled | RelayRunStatus::Blocked => {
+        RelayRunStatus::Running | RelayRunStatus::Blocked => {
             // Liveness: keep the heartbeat fresh so stall detection sees an
             // advancing (or at least alive) run.
             ctx.pg()
@@ -211,10 +232,12 @@ pub async fn advance_run(ctx: &TaskContext, task: &Task) -> Result<u32, String> 
 
             // P3.3b: OFF-by-default agent drive. Parse env → cfg at the handler
             // boundary, then hand the pure-ish drive logic the cfg + run so the
-            // core is testable without touching process-global env. Blocked runs
-            // still only heartbeat — no autonomous progress past a hard gate.
+            // core is testable without touching process-global env. Only a
+            // Running run drives — a Blocked run still only heartbeats (no
+            // autonomous progress past a hard gate), and Stalled never reaches
+            // this arm (the watchdog owns it).
             let cfg = DriveConfig::from_env();
-            if cfg.enabled && run.status != RelayRunStatus::Blocked {
+            if cfg.enabled && run.status == RelayRunStatus::Running {
                 drive_run(ctx, &cfg, &run).await?;
             }
 
@@ -395,6 +418,13 @@ async fn apply_outcome(
             // complete_run(Done) here — a real completion signal arrives with
             // the plan loop (P3.5/P3.7); a single-shot 0-exit only means "this
             // step is done", not "the whole plan is done".
+            // Real progress resets the watchdog's bounded-recovery counter
+            // (P3.6) so a long run that recovered from an earlier stall doesn't
+            // carry those attempts forward and prematurely escalate to crashed.
+            ctx.pg()
+                .reset_run_recovery(run_id)
+                .await
+                .map_err(|e| format!("reset_run_recovery failed: {e}"))?;
             append(
                 ctx,
                 run_id,
@@ -593,6 +623,31 @@ mod tests {
         let task = Task::new(TaskKind::AdvanceRun, "", &id.to_string());
         assert_eq!(advance_run(&ctx, &task).await.unwrap(), 0, "a done run is a no-op tick");
         assert!(pg.list_run_events(&id, 10).await.unwrap().is_empty());
+
+        pg_delete_run(pg, &id).await;
+    }
+
+    #[tokio::test]
+    async fn stalled_run_is_noop_watchdog_owns_it() {
+        // A stalled run must be a NO-OP here: the watchdog (P3.6) exclusively
+        // owns stalled runs. Critically, advance_run must NOT heartbeat a stalled
+        // run — a fresh heartbeat would mask the staleness the watchdog escalates
+        // on. So: returns 0, no new event, heartbeat unchanged.
+        let Some(ctx) = make_ctx().await else { return; };
+        let pg = ctx.pg();
+        let id = pg.create_run(&NewRun::default()).await.unwrap();
+        pg.update_run_status(&id, RelayRunStatus::Stalled, None, None).await.unwrap();
+
+        let task = Task::new(TaskKind::AdvanceRun, "", &id.to_string());
+        assert_eq!(advance_run(&ctx, &task).await.unwrap(), 0, "a stalled run is a no-op tick");
+
+        // No heartbeat stamped (would mask staleness) and no event appended.
+        let run = pg.get_run(&id).await.unwrap().unwrap();
+        assert!(run.heartbeat_at.is_none(), "a stalled run must NOT be heartbeated by advance_run");
+        assert!(
+            pg.list_run_events(&id, 10).await.unwrap().is_empty(),
+            "no event for a stalled no-op tick"
+        );
 
         pg_delete_run(pg, &id).await;
     }

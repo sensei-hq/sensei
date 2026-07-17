@@ -218,6 +218,17 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
         Arc::new(state.pg.clone()),
     );
 
+    // Relay-engine (P3.6): the run watchdog. Every 60s it sweeps running/stalled
+    // runs — a stale-heartbeat running run is marked stalled, a stalled run is
+    // bounded-auto-recovered (back to running + AdvanceRun tick), and one past
+    // the recovery cap escalates to crashed. Degrade-never-stop: a hung/dead run
+    // is recovered or surfaced, never left silently wedged. Tolerates a
+    // not-yet-deployed runs table (warn, never fatal).
+    crate::tasks::watchdog_scheduler::spawn(
+        task_queue.clone(),
+        Arc::new(state.pg.clone()),
+    );
+
     // Watcher safety net: frequently (boot + every reconcile.interval_secs,
     // default 300s) re-scan every watch root so the index converges even when
     // the fs-watcher misses events (daemon restarts / stale FSEvents gaps).

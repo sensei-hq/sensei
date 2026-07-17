@@ -15,6 +15,7 @@ create table if not exists runs (
 , started_at      timestamptz not null default now()
 , completed_at    timestamptz
 , heartbeat_at    timestamptz
+, recovery_attempts integer   not null default 0
 , created_at      timestamptz not null default now()
 , updated_at      timestamptz not null default now()
 );
@@ -41,3 +42,5 @@ comment on column runs.dojo_session_id
      is 'The cloud dojo.relay_sessions(id) mirroring this run. Plain uuid — no cross-DB FK.';
 comment on column runs.max_concurrency
      is 'Active sub-agent cap; graduated response throttles this to 1 under rate-limit pressure.';
+comment on column runs.recovery_attempts
+     is 'Bounded auto-recovery counter — incremented on each watchdog recovery; reset to 0 on real progress (a clean drive step); at the cap the run escalates to crashed.';
