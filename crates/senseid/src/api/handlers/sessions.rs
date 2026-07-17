@@ -335,7 +335,10 @@ pub(crate) async fn hook_gate(
     State(state): State<AppState>,
     Json(payload): Json<serde_json::Value>,
 ) -> Json<serde_json::Value> {
-    use crate::dojo::gate::{classify_hard_block, decision_from_reply, gated_tools_from_env, should_gate};
+    use crate::dojo::gate::{
+        classify_hard_block, decision_from_reply, gated_tools_from_env, needs_semantic_review,
+        parse_semantic_verdict, semantic_system_prompt, semantic_user_message, should_gate,
+    };
 
     let session_id = payload["session_id"].as_str().unwrap_or("");
     let tool_name = payload["tool_name"].as_str().unwrap_or("");
@@ -353,7 +356,82 @@ pub(crate) async fn hook_gate(
     // RAISES a gate for a human to approve/deny — it never auto-denies.
     let gate_env = std::env::var("SENSEI_RELAY_GATE_TOOLS").ok();
     let gated = gated_tools_from_env(gate_env.as_deref());
-    let hard_block = classify_hard_block(tool_name, &tool_input);
+    let mut hard_block = classify_hard_block(tool_name, &tool_input);
+
+    // gemma4 semantic backstop (pre-drive hardening). The deterministic classifier
+    // above is a literal-matching FLOOR; a determined obfuscation can evade it.
+    // ORDER MATTERS: only when the deterministic verdict is `None` AND the command
+    // carries an obfuscation/indirection marker do we ask gemma4 for a second
+    // opinion — so the benign 99% keeps the byte-for-byte fast path (no model call).
+    // FAIL-OPEN: timeout, gateway error, !success, or an unparseable/`dangerous:false`
+    // answer all keep the deterministic verdict (progress). Only a parsed
+    // `dangerous:true` becomes an effective hard-block. A gemma4 outage must never
+    // start blocking everything and never stop the run.
+    if hard_block.is_none()
+        && let Some(cmd) = needs_semantic_review(tool_name, &tool_input)
+    {
+        use gateway::types::capability::Capability;
+        use gateway::types::request::{InferenceRequest, Message, MessageRole, Payload};
+        let request = InferenceRequest {
+            capability: Capability::TextChat,
+            model: None,
+            router: None,
+            chain: Some("reasoning".into()),
+            payload: Payload::Chat {
+                messages: vec![Message::text(MessageRole::User, semantic_user_message(&cmd))],
+                system: Some(semantic_system_prompt().to_string()),
+                max_tokens: Some(200),
+                temperature: None,
+                tools: Vec::new(),
+            },
+            budget: None,
+        };
+        // Bound the call so a cold / wedged embedded inference can't hang the
+        // PreToolUse gate. Timeout → fail-open (keep the deterministic verdict).
+        let fut = state.gateway.execute(&request);
+        match tokio::time::timeout(std::time::Duration::from_secs(8), fut).await {
+            Ok(Ok(resp)) if resp.success => {
+                match resp.content.as_deref().and_then(parse_semantic_verdict) {
+                    Some(hb) => {
+                        // A semantic backstop raised a gate. Zero-knowledge: log the
+                        // tool + category only — NEVER the command text.
+                        tracing::info!(
+                            session_id,
+                            tool_name,
+                            category = hb.category,
+                            "hook_gate: semantic backstop raised a gate"
+                        );
+                        hard_block = Some(hb);
+                    }
+                    None => {
+                        // dangerous:false / unparseable → defer to progress.
+                        tracing::warn!(
+                            session_id,
+                            tool_name,
+                            "hook_gate: semantic backstop returned no block — progressing (fail-open)"
+                        );
+                    }
+                }
+            }
+            Ok(Ok(_)) => tracing::warn!(
+                session_id,
+                tool_name,
+                "hook_gate: semantic backstop response not successful — progressing (fail-open)"
+            ),
+            Ok(Err(e)) => tracing::warn!(
+                session_id,
+                tool_name,
+                error = %e,
+                "hook_gate: semantic backstop gateway error — progressing (fail-open)"
+            ),
+            Err(_) => tracing::warn!(
+                session_id,
+                tool_name,
+                "hook_gate: semantic backstop timed out — progressing (fail-open)"
+            ),
+        }
+    }
+
     if !should_gate(tool_name, &gated) && hard_block.is_none() {
         return gate_decision("allow", "not gated");
     }
