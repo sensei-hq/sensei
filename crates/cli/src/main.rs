@@ -87,6 +87,13 @@ enum Commands {
         path: String,
     },
 
+    /// Scaffold the canonical Sensei doc structure into a project
+    Scaffold {
+        /// Target directory (default: current directory)
+        #[arg(long)]
+        path: Option<String>,
+    },
+
     /// Inspect the code index (read-only diagnostics)
     Index {
         #[command(subcommand)]
@@ -168,6 +175,7 @@ fn main() -> ExitCode {
         Some(Commands::Restart { port }) => restart_daemon(port.unwrap_or_else(|| cfg().daemon_port)),
         Some(Commands::Status) => daemon_cmd("status", None),
         Some(Commands::Scan { path }) => scan(&path),
+        Some(Commands::Scaffold { path }) => scaffold_cmd(path.as_deref()),
         Some(Commands::Index { cmd }) => match cmd {
             IndexCommands::Doctor => index_doctor(),
         },
@@ -983,6 +991,42 @@ fn scan(path: &str) {
     }
 }
 
+/// `sensei scaffold` — materialize the canonical doc structure into `path`
+/// (default: current directory). Prints a `[created]`/`[exists]` report per
+/// path and exits non-zero if anything failed (no silent errors).
+fn scaffold_cmd(path: Option<&str>) {
+    let target = match path {
+        Some(p) => PathBuf::from(p),
+        None => match std::env::current_dir() {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("Error: cannot determine current directory: {e}");
+                std::process::exit(1);
+            }
+        },
+    };
+    println!("=== sensei scaffold ===\n{}\n", target.display());
+    let report = scaffold::run(&target);
+    for p in &report.created {
+        println!("  [created] {p}");
+    }
+    for p in &report.skipped {
+        println!("  [exists]  {p}");
+    }
+    for (p, err) in &report.failed {
+        eprintln!("  [failed]  {p} — {err}");
+    }
+    println!(
+        "\n{} created, {} already present, {} failed.",
+        report.created.len(),
+        report.skipped.len(),
+        report.failed.len()
+    );
+    if !report.failed.is_empty() {
+        std::process::exit(1);
+    }
+}
+
 /// `sensei index doctor` — GET the daemon's read-only index integrity report and
 /// print per-class drift counts + a few samples. Read-only: the daemon's periodic
 /// audit owns repair.
@@ -1155,5 +1199,19 @@ mod tests {
         );
         assert_eq!(join_strs(&serde_json::json!([])), "");
         assert_eq!(join_strs(&serde_json::json!("not an array")), "");
+    }
+
+    #[test]
+    fn scaffold_subcommand_parses_with_and_without_path() {
+        let bare = Cli::parse_from(["sensei", "scaffold"]);
+        match bare.command {
+            Some(Commands::Scaffold { path }) => assert!(path.is_none()),
+            _ => panic!("expected Scaffold command"),
+        }
+        let with = Cli::parse_from(["sensei", "scaffold", "--path", "/tmp/x"]);
+        match with.command {
+            Some(Commands::Scaffold { path }) => assert_eq!(path.as_deref(), Some("/tmp/x")),
+            _ => panic!("expected Scaffold command"),
+        }
     }
 }
