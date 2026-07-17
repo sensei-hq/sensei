@@ -24,7 +24,9 @@ plan and want it run-ready.
    "it works" / "implement X". At least one criterion executable or visible.
 2. **Inputs / outputs / dependencies defined** — what it consumes, produces, and
    needs to exist first. No dependence on an unbuilt/unnamed thing.
-3. **No `TBD`** — no `TBD`/`???`/`FIXME`/"decide later"/placeholder counts.
+3. **No unresolved `TBD`** — no `TBD`/`???`/"decide later"/placeholder counts
+   that nothing in the plan resolves (a TDD red-phase stub with a named
+   implementation step is not a TBD).
 4. **Ambiguities pre-answered** — every open fork ("A or B") resolved to one
    choice before the run.
 5. **Explicit scope** — states what it does AND what it deliberately does not.
