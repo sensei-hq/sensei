@@ -10,6 +10,7 @@ use sensei_bootstrap::{
 };
 
 mod doctor;
+mod scaffold;
 
 fn cfg() -> &'static SenseiConfig {
     sensei_bootstrap::config()
