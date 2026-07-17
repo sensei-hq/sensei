@@ -56,15 +56,34 @@ export const GET: RequestHandler = async ({ params, request, url }) => {
 	try {
 		const caller = await resolveApiKeyAccess(params.origin, params.org, request, ACCESS.contributor);
 		const since = Number(url.searchParams.get('since') ?? '0') || 0;
-		const { data, error } = await dojoDb()
+		const db = dojoDb();
+		const { data, error } = await db
 			.from('relay_inbox')
 			.select(COLS)
 			.eq('tenant_id', caller.tenantId)
 			.gt('seq', since)
 			.order('seq', { ascending: true });
 		if (error) return apiError(500, error.message);
-		const items = data ?? [];
-		const cursor = items.reduce((m, r) => Math.max(m, Number(r.seq)), since);
+		const rows = data ?? [];
+		// The wire contract (dojo_protocol::relay::RelayInboxItem, decoded by the
+		// daemon's poll_inbox) is keyed by run_id — NOT the DB's session_id. Resolve
+		// it so the daemon can decode the response (run_id is a required field); the
+		// raw session_id never crosses the wire. Mirrors the phone-plane gates route.
+		const sessionIds = [...new Set(rows.map((r) => r.session_id as string))];
+		const runById = new Map<string, string>();
+		if (sessionIds.length) {
+			const { data: sess, error: sErr } = await db
+				.from('relay_sessions')
+				.select('id, run_id')
+				.in('id', sessionIds);
+			if (sErr) return apiError(500, sErr.message);
+			for (const s of sess ?? []) runById.set(s.id as string, s.run_id as string);
+		}
+		const items = rows.map(({ session_id, ...rest }) => ({
+			...rest,
+			run_id: runById.get(session_id as string) ?? (session_id as string)
+		}));
+		const cursor = rows.reduce((m, r) => Math.max(m, Number(r.seq)), since);
 		return Response.json({ items, cursor });
 	} catch (e) {
 		if (e instanceof Response) return e;

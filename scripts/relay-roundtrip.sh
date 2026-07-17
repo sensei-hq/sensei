@@ -149,7 +149,7 @@ echo "   $R"; echo "$R" | jq -e '.id' >/dev/null || fail "reply ($R)"
 echo "== 5. daemon GET inbox?since=$CURSOR (expect answer re-surfaced) =="
 P2=$(req GET "$WORKER/v1/t/personal/jerry/relay/inbox?since=$CURSOR" "$AUTH_DEV")
 echo "   $P2"
-echo "$P2" | jq -e '.items[] | select(.id=="'"$INBOX_ID"'" and .status=="answered" and .reply.verdict=="approve")' >/dev/null \
-  || fail "answer NOT re-surfaced past cursor $CURSOR ($P2)"
+echo "$P2" | jq -e '.items[] | select(.id=="'"$INBOX_ID"'" and .status=="answered" and .reply.verdict=="approve" and .run_id=="'"$RUN"'")' >/dev/null \
+  || fail "answer NOT re-surfaced past cursor $CURSOR, or run_id missing ($P2)"
 
 echo "ROUND-TRIP OK ✓ — gate raised, answered from the phone plane, re-surfaced to the daemon poll via the seq trigger."
