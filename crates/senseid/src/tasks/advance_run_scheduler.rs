@@ -40,7 +40,9 @@ const INTERVAL_SECS: u64 = 15;
 /// up duplicate ticks for the same run in the unbounded `VecDeque`. Kept as a
 /// tiny helper so the "what an active run enqueues" contract is unit-testable
 /// against a real queue without driving the scheduler's infinite `run` loop.
-async fn enqueue_advance(queue: &TaskQueue, run_id: &uuid::Uuid) {
+/// `pub(crate)` so the watchdog scheduler (P3.6) reuses the exact same de-duped
+/// enqueue when it recovers a stalled run (DRY — one enqueue contract).
+pub(crate) async fn enqueue_advance(queue: &TaskQueue, run_id: &uuid::Uuid) {
     let path = run_id.to_string();
     if queue.has_pending_kind_path(TaskKind::AdvanceRun, &path).await {
         return;

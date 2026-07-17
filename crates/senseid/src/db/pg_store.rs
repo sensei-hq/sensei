@@ -846,6 +846,68 @@ impl PgStore {
         Ok(rows.into_iter().map(|(id,)| id).collect())
     }
 
+    // ── Watchdog (P3.6) ────────────────────────────────────────────────
+
+    /// The runs the watchdog can act on — `running` or `stalled` — with just the
+    /// fields it needs to assess liveness: `(id, status text, heartbeat_at,
+    /// started_at, recovery_attempts)`. Deliberately a lightweight query (NOT
+    /// [`Self::RUN_SELECT`]/[`Self::map_run_row`]) so adding the watchdog never
+    /// perturbs the `Run` row surface. Timestamps come back as RFC-3339 via the
+    /// same `to_json(col)#>>'{}'` idiom as `RUN_SELECT`; `heartbeat_at` is
+    /// `Option` (a run may not have heartbeated yet, so the caller falls back to
+    /// `started_at`).
+    pub async fn list_recoverable_runs(
+        &self,
+    ) -> Result<Vec<(uuid::Uuid, String, Option<String>, String, i32)>, String> {
+        let rows: Vec<(uuid::Uuid, String, Option<String>, String, i32)> =
+            sqlx_core::query_as::query_as(
+                "SELECT id, status::text,
+                        to_json(heartbeat_at)#>>'{}',
+                        to_json(started_at)#>>'{}',
+                        recovery_attempts
+                   FROM activity.runs
+                  WHERE status IN ('running', 'stalled')",
+            )
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(rows)
+    }
+
+    /// Bounded auto-recovery: flip a `stalled` run back to `running`, record the
+    /// new attempt count, and refresh the heartbeat so the recovered run isn't
+    /// immediately re-flagged stale on the next watchdog tick.
+    pub async fn recover_run(&self, id: &uuid::Uuid, next_attempt: i32) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE activity.runs
+                SET status            = 'running'::sensei.run_status,
+                    recovery_attempts = $2,
+                    heartbeat_at      = now(),
+                    updated_at        = now()
+              WHERE id = $1",
+        )
+        .bind(id)
+        .bind(next_attempt)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Reset the bounded-recovery counter to 0 on real progress (a clean drive
+    /// step) so a long overnight run that recovered earlier doesn't prematurely
+    /// give up later.
+    pub async fn reset_run_recovery(&self, id: &uuid::Uuid) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE activity.runs SET recovery_attempts = 0, updated_at = now() WHERE id = $1",
+        )
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     // ── PG Function Wrappers ───────────────────────────────────────────
 
     /// BM25-style keyword ranking: matches nodes by name/signature/docstring.
