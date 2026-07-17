@@ -58,6 +58,10 @@ Read:
    check the plan's claims against the real codebase (a "reuse the X module"
    feature is a gap if X doesn't exist).
 
+If the plan carries post-implementation / "shipped" notes (it already ran),
+still review it as if pre-flight, and add one line noting the gate is being run
+after the fact.
+
 ## The depth bar — checked per feature
 
 Decompose the plan into its features/chunks (phases, numbered items, checklist
@@ -73,16 +77,23 @@ all six criteria. A feature passes the bar only if all six pass.
    what does it produce, and what must exist first? A feature that depends on an
    unbuilt/unnamed thing, or whose inputs are unstated, fails.
 
-3. **No `TBD`.** No `TBD`, `???`, `FIXME`, `TODO`, "decide later", "figure out",
-   or placeholder counts ("N things", "some cases"). If the author meant to fill
-   a value in, an unattended run can't fill it for them.
+3. **No unresolved `TBD`.** No `TBD`, `???`, `FIXME`, "decide later", "figure
+   out", or placeholder counts ("N things", "some cases") that nothing in the
+   plan resolves. A placeholder is a gap only if it's left unanswered — a **TDD
+   red-phase stub** (`// stub — implemented in Step N`, an intentionally-failing
+   test) with a named implementation step in the same feature is NOT a TBD; it's
+   the plan's own resolution. Judge by "can the run fill this in from the plan?",
+   not by the presence of the word.
 
 4. **Ambiguities pre-answered.** Any open question, "either/or", or "we could
    go A or B" must be resolved to a single choice before the run. An unresolved
    fork is a stall waiting to happen.
 
-5. **Explicit scope.** The feature states what it does AND what it deliberately
-   does NOT do. Missing scope boundaries invite drift and endless expansion.
+5. **Explicit scope.** The plan states what's built AND what's deliberately NOT
+   built. A **plan-level** scope boundary (one "out of scope" section) satisfies
+   this for every feature it covers — a feature needn't restate it. Only fail a
+   feature when its own boundary is genuinely unclear AND it's individually prone
+   to expansion. Missing scope anywhere invites drift.
 
 6. **Goal-aligned (D13).** The feature advances the run's stated objective. A
    feature that's locally well-specified but drifts from the goal (scope creep,
@@ -120,8 +131,13 @@ all six criteria. A feature passes the bar only if all six pass.
     - explicit-scope · pass/fail · {…}
     - goal-aligned · pass/fail · {name the drift if any}
 
+    (A criterion may be `pass` with a caveat — write `pass*` and add a one-line
+    footnote. A caveat is a non-blocking note, not a fail.)
+
     ## Must fix before the run
     - **{feature} · {criterion}** · {what's wrong} · {concrete fix}
+    (Write "None." here when the plan is clean — an empty must-fix list is the
+    expected shape of a ready-to-run verdict.)
 
     ## Plan-level notes
     - goal-stated-and-singular · pass/fail · {…}
@@ -131,11 +147,15 @@ all six criteria. A feature passes the bar only if all six pass.
     ## Recommendations (non-blocking)
     - {item} · {why it would raise the plan's depth}
 
+A **gappy feature** = a feature with ≥1 failed criterion that lands on the
+must-fix list. A `pass*`-with-caveat and a non-blocking Recommendation do NOT
+make a feature gappy — they don't count toward the thresholds.
+
 Verdict rules:
-- **ready-to-run** — every feature passes all six; goal is singular; no
-  must-fix items. Safe to run unattended.
-- **needs-depth** — 1–3 features have a fixable gap. Fix the must-fix list, then
-  it's run-ready.
+- **ready-to-run** — every feature passes all six (caveats allowed); goal is
+  singular; the must-fix list is empty. Safe to run unattended.
+- **needs-depth** — 1–3 gappy features. Fix the must-fix list, then it's
+  run-ready.
 - **not-ready** — 4+ gappy features, OR no stated goal, OR any feature with
   unresolved ambiguity on an irreversible step. Do not start an unattended run.
 
