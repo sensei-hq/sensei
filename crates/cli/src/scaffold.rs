@@ -2,11 +2,6 @@
 //!
 //! Split into a pure `canonical_layout` (the spec) and an IO `materialize`
 //! (writes it), so the structure is unit-testable without touching disk.
-//!
-//! Not yet wired to a CLI subcommand — `materialize` (IO) and the `Commands`
-//! variant land in follow-up tasks. Until then this module's public API is
-//! exercised only by its own tests.
-#![allow(dead_code)]
 
 use std::fs;
 use std::path::Path;
@@ -143,6 +138,18 @@ pub fn materialize(base: &Path, layout: &Layout) -> ScaffoldReport {
         }
     }
     report
+}
+
+/// Scaffold the canonical structure into `target`. Derives the project name from
+/// the directory name and stamps today's date (via the crate's `format_date`).
+pub fn run(target: &Path) -> ScaffoldReport {
+    let name = target
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("project");
+    let date = crate::format_date();
+    let layout = canonical_layout(name, &date);
+    materialize(target, &layout)
 }
 
 #[cfg(test)]
