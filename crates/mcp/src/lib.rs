@@ -196,6 +196,29 @@ pub fn daemon_request_for(
             Some(DaemonRequest::post_json("/api/knowledge/outcomes", json!({ "outcomes": outcomes })))
         }
 
+        // ── Relay run-control (P3.8) → the daemon's /api/runs endpoints ─────
+        // `start_run` POSTs a new run; `project` defaults to the resolved repo
+        // (name), matching every other tool's cwd→project convention. The daemon
+        // resolves the project name/uuid and creates the run.
+        "start_run" => {
+            let goal = args["goal"].as_str().unwrap_or("");
+            // Caller-supplied project wins; else the cwd-resolved repo name.
+            let project = args["project"].as_str().filter(|s| !s.is_empty()).unwrap_or(repo_id);
+            let mut body = json!({ "goal": goal });
+            if !project.is_empty() {
+                body["project"] = json!(project);
+            }
+            if let Some(plan) = args["plan_ref"].as_str().filter(|s| !s.is_empty()) {
+                body["plan_ref"] = json!(plan);
+            }
+            Some(DaemonRequest::post_json("/api/runs", body))
+        }
+        // `run_status` lists active runs, or one run + its events with a run_id.
+        "run_status" => match args["run_id"].as_str().filter(|s| !s.is_empty()) {
+            Some(id) => Some(DaemonRequest::get(format!("/api/runs/{id}"))),
+            None => Some(DaemonRequest::get("/api/runs")),
+        },
+
         // ── Everything else → the daemon mcp proxy ──────────────────────────
         _ => {
             let params = build_daemon_params(args, repo_id);
@@ -472,6 +495,23 @@ pub fn handle_list_tools() -> Value {
                     ("limit",      "string", "Max memories to return (default 200, cap 500)"),
                     ("tags",       "string", "Comma-separated tag filter"),
                 ]),
+            // ── Relay run-control (P3.8) ─────────────────────────────────────
+            tool("start_run",
+                "Start a daemon-owned autonomous run against a goal (the relay engine). The daemon \
+                 tracks it durably (survives restarts), pauses/auto-resumes on provider limits, and \
+                 recovers from stalls — watch it with `run_status`. Note: whether it actually drives an \
+                 agent depends on the daemon's OFF-by-default drive switch; creating the run is always safe.",
+                &[("goal", "string", "What the run should accomplish — the objective it's anchored to")],
+                &[
+                    ("project",  "string", "Project name or UUID the run works in. Defaults to the current project."),
+                    ("plan_ref", "string", "Path/ref of the committed plan doc the run executes (e.g. docs/plan/x.md)"),
+                ]),
+            tool("run_status",
+                "Show daemon-owned autonomous runs. Without a run_id: lists the active runs \
+                 (running / paused / stalled / blocked). With a run_id: returns that run plus its recent \
+                 cadence events (the filtered feed — phase/feature/gate/commit markers, no code).",
+                &[],
+                &[("run_id", "string", "A specific run's UUID. Omit to list all active runs.")]),
         ]
     })
 }
@@ -836,6 +876,7 @@ mod tests {
         "gateway_status", "consensus", "generate_image", "log_event",
         "propose_memory", "save_memory", "promote_memory", "accept_proposal",
         "reject_proposal", "record_outcome", "get_layered_context",
+        "start_run", "run_status",
     ];
 
     fn tools() -> Vec<Value> {
@@ -1037,6 +1078,56 @@ mod tests {
         assert!(req.query.is_empty(), "no category → no query");
         let filtered = daemon_request_for("get_commands", &json!({ "category": "test" }), "/cwd", Some("sensei")).unwrap();
         assert_eq!(q(&filtered, "category"), Some("test"));
+    }
+
+    #[test]
+    fn start_run_posts_goal_with_resolved_project_and_optional_plan() {
+        // project defaults to the resolved repo name (cwd→project convention).
+        let req = daemon_request_for(
+            "start_run",
+            &json!({ "goal": "ship the relay engine" }),
+            "/cwd",
+            Some("sensei"),
+        ).unwrap();
+        assert_eq!(req.method, HttpMethod::Post);
+        assert_eq!(req.path, "/api/runs");
+        let body = req.body.clone().unwrap();
+        assert_eq!(body["goal"], "ship the relay engine");
+        assert_eq!(body["project"], "sensei", "unset project defaults to the resolved repo");
+        assert!(body.get("plan_ref").is_none(), "no plan_ref key when omitted");
+
+        // An explicit project + plan_ref override / are forwarded.
+        let full = daemon_request_for(
+            "start_run",
+            &json!({ "goal": "g", "project": "other", "plan_ref": "docs/plan/x.md" }),
+            "/cwd",
+            Some("sensei"),
+        ).unwrap();
+        let fb = full.body.unwrap();
+        assert_eq!(fb["project"], "other", "explicit project wins over the resolved repo");
+        assert_eq!(fb["plan_ref"], "docs/plan/x.md");
+
+        // No project resolvable and none given → no project key (daemon makes a
+        // project-less run rather than a 400).
+        let noproj = daemon_request_for("start_run", &json!({ "goal": "g" }), "/cwd", None).unwrap();
+        assert!(noproj.body.unwrap().get("project").is_none(), "no project anywhere → omit the key");
+    }
+
+    #[test]
+    fn run_status_lists_all_or_one_by_id() {
+        // No run_id → list active runs.
+        let list = daemon_request_for("run_status", &json!({}), "/cwd", Some("sensei")).unwrap();
+        assert_eq!(list.method, HttpMethod::Get);
+        assert_eq!(list.path, "/api/runs");
+        // A run_id → that run + its events.
+        let one = daemon_request_for(
+            "run_status",
+            &json!({ "run_id": "44444444-0000-0000-0000-000000000004" }),
+            "/cwd",
+            Some("sensei"),
+        ).unwrap();
+        assert_eq!(one.path, "/api/runs/44444444-0000-0000-0000-000000000004");
+        assert!(one.body.is_none(), "a status read is a plain GET");
     }
 
     #[test]

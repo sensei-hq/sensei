@@ -7,9 +7,12 @@
 //! - `GET /api/runs/{id}`  → `{ run: Run, events: [RunEvent] }` — one run plus
 //!   its latest cadence events; `404` for a well-formed id with no row, `400`
 //!   for a non-UUID id (mirrors `sessions::get_session`).
+//! - `POST /api/runs`      → `{ run: Run }` (201) — create a daemon-owned run
+//!   (P3.8 run-control; the MCP `start_run` tool + the desktop app kick runs off
+//!   here). The scheduler picks it up on the next tick.
 //!
-//! These read the same durable state the scheduler/handler write, so the
-//! console/phone can render a run's status + cadence without touching the queue.
+//! The reads render the same durable state the scheduler/handler write, so the
+//! console/phone can show a run's status + cadence without touching the queue.
 
 use axum::{
     extract::{Path, State},
@@ -18,6 +21,7 @@ use axum::{
 };
 
 use crate::api::state::AppState;
+use crate::runs::NewRun;
 
 /// Cap on the cadence events returned for a single run — the recent tail is what
 /// the timeline renders; older events page in later if we need them.
@@ -63,6 +67,63 @@ pub(crate) async fn get_run(
     Ok(Json(serde_json::json!({ "run": run, "events": events })))
 }
 
+/// POST /api/runs — create a daemon-owned run (P3.8 run-control; the MCP
+/// `start_run` tool and the desktop app kick runs off here). Body:
+/// `{ "goal": string (required, non-empty), "project"?: name-or-uuid,
+///    "plan_ref"?: string, "max_concurrency"?: int }`.
+///
+/// - An empty/absent `goal` is a 400 — a run with nothing to drive is a no-op.
+/// - `project` resolves name-OR-uuid → id ([`crate::api::util::resolve_project_uuid`]);
+///   absent means no project (the drive Flags "no cwd" rather than spawning
+///   loose), while a **given-but-unresolvable** project is a 400 so the caller's
+///   intent is never silently dropped.
+///
+/// Returns `{ run: Run }` with `201 Created`. The scheduler advances it on the
+/// next tick; whether it actually drives an agent still depends on the
+/// OFF-by-default `SENSEI_RUN_DRIVE`.
+pub(crate) async fn create_run(
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<(StatusCode, Json<serde_json::Value>), StatusCode> {
+    let goal = body["goal"].as_str().map(str::trim).unwrap_or("");
+    if goal.is_empty() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let project_id = match body["project"].as_str().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(p) => match crate::api::util::resolve_project_uuid(&state, p).await {
+            Some(id) => Some(id),
+            None => return Err(StatusCode::BAD_REQUEST),
+        },
+        None => None,
+    };
+    let plan_ref = body["plan_ref"].as_str().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
+    let max_concurrency = body["max_concurrency"].as_i64().map(|n| n as i32);
+
+    let new = NewRun {
+        project_id,
+        plan_ref,
+        goal: Some(goal.to_string()),
+        dojo_session_id: None,
+        max_concurrency,
+    };
+    let id = match state.pg.create_run(&new).await {
+        Ok(id) => id,
+        Err(e) => {
+            tracing::error!(error = %e, "create_run failed");
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
+    match state.pg.get_run(&id).await {
+        Ok(Some(run)) => Ok((StatusCode::CREATED, Json(serde_json::json!({ "run": run })))),
+        // Created then vanished between INSERT and read-back — shouldn't happen.
+        Ok(None) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+        Err(e) => {
+            tracing::error!(error = %e, "create_run read-back failed");
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -102,6 +163,46 @@ mod tests {
         let missing = uuid::Uuid::new_v4().to_string();
         let err = get_run(State(state), Path(missing)).await.unwrap_err();
         assert_eq!(err, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn create_run_empty_goal_is_400() {
+        let Some(state) = make_state().await else { return; };
+        // No DB row created — the guard rejects before any insert.
+        let err = create_run(State(state), Json(serde_json::json!({ "goal": "   " })))
+            .await.unwrap_err();
+        assert_eq!(err, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn create_run_unresolvable_project_is_400() {
+        let Some(state) = make_state().await else { return; };
+        // A given project that resolves to nothing is a 400 (intent not dropped).
+        let err = create_run(
+            State(state),
+            Json(serde_json::json!({ "goal": "do a thing", "project": "no-such-project-xyzzy" })),
+        )
+        .await.unwrap_err();
+        assert_eq!(err, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn create_run_happy_path_returns_201_and_running_run() {
+        let Some(state) = make_state().await else { return; };
+        let (status, Json(body)) = create_run(
+            State(state.clone()),
+            Json(serde_json::json!({ "goal": "ship the thing", "plan_ref": "docs/plan/x.md" })),
+        )
+        .await.unwrap();
+        assert_eq!(status, StatusCode::CREATED);
+        assert_eq!(body["run"]["goal"], serde_json::json!("ship the thing"));
+        assert_eq!(body["run"]["plan_ref"], serde_json::json!("docs/plan/x.md"));
+        assert_eq!(body["run"]["status"], serde_json::json!("running"));
+        // No project given → project_id is null (drive will Flag "no cwd").
+        assert!(body["run"]["project_id"].is_null());
+
+        let id = uuid::Uuid::parse_str(body["run"]["id"].as_str().unwrap()).unwrap();
+        del(&state, &id).await;
     }
 
     #[tokio::test]
