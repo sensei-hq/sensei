@@ -30,6 +30,7 @@ pub mod corrections;
 pub mod verdicts;
 pub mod ranking;
 pub mod model_insight;
+pub mod runs;
 mod classifiers;
 mod adapters;
 mod analysis;
