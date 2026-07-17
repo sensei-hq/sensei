@@ -243,29 +243,67 @@ impl DojoClient {
         )
     }
 
-    /// Shared POST discipline for the fire-and-check relay publishes (status,
-    /// segments, inbox): bearer + JSON body, status-only result. Mirrors
-    /// [`Self::publish_artifact`]'s error mapping (transport → `Network`, non-2xx
-    /// → `Status`); no response body is decoded.
+    /// Bounded-retry JSON POST for the relay publishes, returning the successful
+    /// response. Retries a transient failure — a transport error or ANY non-2xx —
+    /// up to a few attempts with a short backoff. Publishes are safe to retry:
+    /// session/segments are idempotent upserts; a raise whose request body was
+    /// dropped (a 4xx) created no row, and a rare post-success blip at worst dups a
+    /// gate the human simply answers once. Mirrors the P1 harness `req` retry against
+    /// the vite dev Worker (which drops bodies on cold routes); a precompiled prod
+    /// Worker succeeds on the first attempt. Keychain/token faults are NOT retried —
+    /// `bearer_async` surfaces them before the loop.
+    async fn post_retry<T: serde::Serialize + ?Sized>(
+        &self,
+        suffix: &str,
+        body: &T,
+        idempotent: bool,
+    ) -> Result<reqwest::Response, DojoClientError> {
+        const ATTEMPTS: usize = 4;
+        const BACKOFF: Duration = Duration::from_millis(400);
+        let token = self.bearer_async().await?;
+        let url = self.relay_url(suffix);
+        let mut last: Option<DojoClientError> = None;
+        for attempt in 0..ATTEMPTS {
+            if attempt > 0 {
+                tokio::time::sleep(BACKOFF).await;
+            }
+            match self.http.post(&url).bearer_auth(&token).json(body).send().await {
+                Ok(resp) if resp.status().is_success() => return Ok(resp),
+                Ok(resp) => {
+                    let code = resp.status().as_u16();
+                    last = Some(DojoClientError::Status(code));
+                    // A non-idempotent POST (raise_inbox_item) is retried ONLY when the
+                    // failure is provably before any row is created: 400 (the Worker
+                    // validates run_id/kind first — a dropped request body) or 404 (cold
+                    // route). A 5xx may have inserted before failing, so retrying would
+                    // DUPLICATE the gate → bail. Idempotent publishes (session/segments
+                    // upserts) retry any non-2xx.
+                    if !idempotent && code != 400 && code != 404 {
+                        break;
+                    }
+                }
+                Err(e) => {
+                    last = Some(DojoClientError::Network(e.to_string()));
+                    // A transport error on a non-idempotent POST is ambiguous (the row
+                    // may already exist) → don't retry, to avoid a duplicate gate.
+                    if !idempotent {
+                        break;
+                    }
+                }
+            }
+            tracing::warn!(url = %url, attempt = attempt + 1, idempotent, "relay POST failed — retrying (transient)");
+        }
+        Err(last.unwrap_or_else(|| DojoClientError::Network("relay POST: no attempts".into())))
+    }
+
+    /// Fire-and-check relay publish (status / segments): bearer + JSON body, status-
+    /// only result, bounded retry. See [`Self::post_retry`].
     async fn relay_post<T: serde::Serialize + ?Sized>(
         &self,
         suffix: &str,
         body: &T,
     ) -> Result<(), DojoClientError> {
-        let token = self.bearer_async().await?;
-        let resp = self
-            .http
-            .post(self.relay_url(suffix))
-            .bearer_auth(token)
-            .json(body)
-            .send()
-            .await
-            .map_err(|e| DojoClientError::Network(e.to_string()))?;
-        let status = resp.status();
-        if !status.is_success() {
-            return Err(DojoClientError::Status(status.as_u16()));
-        }
-        Ok(())
+        self.post_retry(suffix, body, true).await.map(|_| ())
     }
 
     /// Publish the filtered status snapshot for a run (`POST relay/session`).
@@ -301,19 +339,9 @@ impl DojoClient {
         &self,
         item: &RelayInboxItem,
     ) -> Result<RelayInboxAck, DojoClientError> {
-        let token = self.bearer_async().await?;
-        let resp = self
-            .http
-            .post(self.relay_url("inbox"))
-            .bearer_auth(token)
-            .json(item)
-            .send()
-            .await
-            .map_err(|e| DojoClientError::Network(e.to_string()))?;
-        let status = resp.status();
-        if !status.is_success() {
-            return Err(DojoClientError::Status(status.as_u16()));
-        }
+        // Non-idempotent: retry only on provably-pre-insert failures (see post_retry)
+        // so a dropped response can't duplicate the gate.
+        let resp = self.post_retry("inbox", item, false).await?;
         resp.json::<RelayInboxAck>()
             .await
             .map_err(|e| DojoClientError::Decode(e.to_string()))
@@ -534,6 +562,112 @@ mod tests {
             c.relay_url("inbox"),
             "http://localhost:7755/v1/t/github/acme/relay/inbox"
         );
+    }
+
+    #[tokio::test]
+    #[cfg_attr(not(target_os = "macos"), ignore)]
+    async fn relay_post_retries_transient_failures() {
+        use axum::{extract::State, routing::post, Router};
+        use dojo_protocol::relay::{RelayRunStatus, RelaySessionUpdate};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        // Fake Worker that 400s the first two hits (mimicking the vite dev Worker's
+        // cold-route body-drop) then 200s — proving post_retry retries a transient
+        // non-2xx and eventually succeeds.
+        async fn session(State(hits): State<Arc<AtomicUsize>>) -> axum::http::StatusCode {
+            let n = hits.fetch_add(1, Ordering::SeqCst);
+            if n < 2 {
+                axum::http::StatusCode::BAD_REQUEST
+            } else {
+                axum::http::StatusCode::OK
+            }
+        }
+        let hits = Arc::new(AtomicUsize::new(0));
+        let app = Router::new()
+            .route("/v1/t/{origin}/{org}/relay/session", post(session))
+            .with_state(hits.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap(); });
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        let cref = format!("dojo-relay-retry-{}", uuid::Uuid::new_v4());
+        crate::gateway_keys::set_key(&cref, "device-token-relay").unwrap();
+        let mut m = membership("http://localhost:7755/github/acme", &cref);
+        m.registry_url = format!("http://{addr}");
+        let c = DojoClient::for_membership(&m);
+
+        let update = RelaySessionUpdate {
+            run_id: "run-1".into(),
+            status: RelayRunStatus::Running,
+            title: "t".into(),
+            goal: None,
+            progress_done: 0,
+            progress_total: 0,
+            current_phase: None,
+            current_feature: None,
+            last_event_at: None,
+            paused_until: None,
+            pause_reason: None,
+        };
+        c.publish_session_update(&update)
+            .await
+            .expect("retries past the two transient 400s and succeeds");
+        assert_eq!(hits.load(Ordering::SeqCst), 3, "two 400s + one 200 = 3 attempts");
+
+        crate::gateway_keys::delete_key(&cref).unwrap();
+    }
+
+    #[tokio::test]
+    #[cfg_attr(not(target_os = "macos"), ignore)]
+    async fn raise_inbox_item_does_not_retry_ambiguous_failures() {
+        use axum::{extract::State, routing::post, Router};
+        use dojo_protocol::relay::{
+            RelayInboxItem, RelayInboxKind, RelayInboxStatus, RelayMessageDirection,
+        };
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        // A 5xx may have created the row, so a non-idempotent raise must NOT retry —
+        // else it duplicates the gate (the exact bug dogfooding hit). Exactly ONE
+        // attempt, then the error surfaces (→ hook_gate fails open, no dup).
+        async fn inbox(State(hits): State<Arc<AtomicUsize>>) -> axum::http::StatusCode {
+            hits.fetch_add(1, Ordering::SeqCst);
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR
+        }
+        let hits = Arc::new(AtomicUsize::new(0));
+        let app = Router::new()
+            .route("/v1/t/{origin}/{org}/relay/inbox", post(inbox))
+            .with_state(hits.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap(); });
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        let cref = format!("dojo-raise-noretry-{}", uuid::Uuid::new_v4());
+        crate::gateway_keys::set_key(&cref, "device-token-relay").unwrap();
+        let mut m = membership("http://localhost:7755/github/acme", &cref);
+        m.registry_url = format!("http://{addr}");
+        let c = DojoClient::for_membership(&m);
+
+        let item = RelayInboxItem {
+            id: None,
+            run_id: "run-1".into(),
+            segment_id: None,
+            kind: RelayInboxKind::Approval,
+            direction: RelayMessageDirection::AgentToHuman,
+            status: RelayInboxStatus::Pending,
+            payload: serde_json::json!({"prompt": "Approve Bash?"}),
+            reply: None,
+            created_at: None,
+            answered_at: None,
+        };
+        let err = c.raise_inbox_item(&item).await.unwrap_err();
+        assert!(matches!(err, DojoClientError::Status(500)), "got {err:?}");
+        assert_eq!(hits.load(Ordering::SeqCst), 1, "no retry on an ambiguous 5xx (dup-safety)");
+
+        crate::gateway_keys::delete_key(&cref).unwrap();
     }
 
     #[tokio::test]
