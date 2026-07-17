@@ -213,8 +213,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/sessions/{id}", get(sessions::get_session).put(sessions::update_session_handler))
         .route("/api/sessions/{id}/tool-timeline", get(sessions::get_session_tool_timeline))
         .route("/api/sessions/{id}/replay", get(sessions::get_session_replay))
-        // Relay runs (P3.2): daemon-owned autonomous-run observability
-        .route("/api/runs", get(runs::list_runs))
+        // Relay runs (P3.2 observability + P3.8 run-control create)
+        .route("/api/runs", get(runs::list_runs).post(runs::create_run))
         .route("/api/runs/{id}", get(runs::get_run))
         // Patterns
         .route("/api/patterns/{project}/detect", post(codebase::detect_patterns))
