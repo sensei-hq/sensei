@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { Button } from '@rokkit/ui';
 	import { invalidateAll } from '$app/navigation';
 	import ConsoleHead from '$lib/components/ConsoleHead.svelte';
 	import DojoChip from '$lib/components/DojoChip.svelte';
@@ -43,6 +44,11 @@
 	let nudgeSent = $state(false);
 	const canNudge = $derived(nudgeText.trim().length > 0);
 
+	// The composer is progressive: collapsed to a compact trigger so the run
+	// detail isn't anchored by an empty box. Expands on demand and collapses
+	// again once a nudge lands.
+	let showNudge = $state(false);
+
 	async function nudge() {
 		if (!canNudge || nudging) return;
 		nudging = true;
@@ -55,6 +61,7 @@
 			});
 			nudgeText = '';
 			nudgeSent = true;
+			showNudge = false;
 		} catch (e) {
 			nudgeError = e instanceof DojoApiError ? e.message : 'could not send the nudge';
 		} finally {
@@ -161,14 +168,11 @@
 					<RelayStatusBadge status={data.run.status} />
 					<span class="mono text-ink-mute text-xs">{done}/{total}</span>
 				{/if}
-				<button
-					type="button"
+				<Button
+					variant="primary"
+					size="sm"
 					onclick={send}
 					disabled={sending || pending.length === 0}
-					class="bg-ink text-on-primary inline-flex items-center gap-2 rounded-lg text-xs font-medium"
-					style="padding: 8px 13px; border: none"
-					style:opacity={sending || pending.length === 0 ? 0.5 : 1}
-					style:cursor={sending || pending.length === 0 ? 'not-allowed' : 'pointer'}
 				>
 					<span class="kanji" style="font-size: 12px">送</span>
 					{#if sending}
@@ -178,7 +182,7 @@
 							<span class="mono" style="opacity: 0.7">· {pending.length} to send</span>
 						{/if}
 					{/if}
-				</button>
+				</Button>
 			</div>
 		{/snippet}
 	</ConsoleHead>
@@ -296,23 +300,21 @@
 											</div>
 										{/if}
 
-										<!-- PR-review affordances: Approve / Request changes / Comment + note. -->
+										<!-- PR-review affordances: Approve / Request changes / Comment + note.
+											 A segmented toggle — the drafted verdict reads as a filled primary. -->
 										<div class="flex flex-wrap items-center gap-2" style="margin-top: 9px">
 											{#each VERDICTS as v (v.verdict)}
 												{@const active = draft?.verdict === v.verdict}
-												<button
-													type="button"
+												<Button
+													variant={active ? 'primary' : 'default'}
+													style={active ? 'default' : 'outline'}
+													size="sm"
 													onclick={() => setVerdict(step.seq, v.verdict)}
 													aria-pressed={active}
-													class="inline-flex items-center gap-1 rounded-lg text-xs font-medium {active
-														? 'bg-ink text-on-primary'
-														: 'bg-paper border-paper-edge text-ink-soft border'}"
-													style="padding: 6px 11px; cursor: pointer"
-													style:border={active ? 'none' : undefined}
 												>
 													<span class="kanji" style="font-size: 11px">{v.kanji}</span>
 													{v.label}
-												</button>
+												</Button>
 											{/each}
 										</div>
 
@@ -338,58 +340,64 @@
 		{/if}
 
 		{#if data.run && !data.error}
-			<!-- Nudge the run — an unsolicited steer sent to the held run. -->
+			<!-- Nudge the run — an unsolicited steer sent to the held run. Collapsed
+				 to a compact trigger by default; the composer expands on demand. -->
 			<div
 				class="bg-paper-soft border-paper-edge rounded-xl border"
 				style="padding: 15px 18px; margin-top: 18px"
 			>
-				<div class="flex items-center gap-2">
-					<span class="kanji text-accent" style="font-size: 13px">促</span>
-					<span
-						class="text-ink-mute text-xs font-semibold"
-						style="letter-spacing: 0.14em; text-transform: uppercase">Nudge the run</span
-					>
-				</div>
-				<div class="text-ink-mute text-xs" style="margin-top: 4px; line-height: 1.5">
-					Steer it mid-flight — sensei picks the note up on its next check.
-				</div>
+				{#if !showNudge}
+					<!-- Collapsed: a calm trigger + any lingering "sent" confirmation. -->
+					<div class="flex items-center gap-3">
+						<Button style="ghost" size="sm" onclick={() => (showNudge = true)}>
+							<span class="kanji text-accent" style="font-size: 13px">促</span>
+							Nudge the run
+						</Button>
+						{#if nudgeSent}
+							<span class="text-success inline-flex items-center gap-1 text-xs">
+								<span class="kanji text-success" style="font-size: 11px">済</span>
+								Nudge sent
+							</span>
+						{/if}
+					</div>
+				{:else}
+					<div class="flex items-center gap-2">
+						<span class="kanji text-accent" style="font-size: 13px">促</span>
+						<span
+							class="text-ink-mute text-xs font-semibold"
+							style="letter-spacing: 0.14em; text-transform: uppercase">Nudge the run</span
+						>
+					</div>
+					<div class="text-ink-mute text-xs" style="margin-top: 4px; line-height: 1.5">
+						Steer it mid-flight — sensei picks the note up on its next check.
+					</div>
 
-				<textarea
-					aria-label="Nudge the run"
-					bind:value={nudgeText}
-					placeholder="Steer the run — e.g. 'focus on the API first'"
-					rows="2"
-					disabled={nudging}
-					class="bg-paper border-paper-edge text-ink w-full rounded-lg border text-sm"
-					style="padding: 8px 11px; margin-top: 10px; resize: vertical; font-family: inherit; line-height: 1.5"
-				></textarea>
+					<textarea
+						aria-label="Nudge the run"
+						bind:value={nudgeText}
+						placeholder="Steer the run — e.g. 'focus on the API first'"
+						rows="2"
+						disabled={nudging}
+						class="bg-paper border-paper-edge text-ink w-full rounded-lg border text-sm"
+						style="padding: 8px 11px; margin-top: 10px; resize: vertical; font-family: inherit; line-height: 1.5"
+					></textarea>
 
-				{#if nudgeError}
-					<div class="text-danger text-xs" style="margin-top: 8px">
-						Nudge not sent. <span class="mono text-ink-mute">{nudgeError}</span>
+					{#if nudgeError}
+						<div class="text-danger text-xs" style="margin-top: 8px">
+							Nudge not sent. <span class="mono text-ink-mute">{nudgeError}</span>
+						</div>
+					{/if}
+
+					<div class="flex items-center gap-3" style="margin-top: 10px">
+						<Button variant="primary" size="sm" onclick={nudge} disabled={nudging || !canNudge}>
+							<span class="kanji" style="font-size: 12px">送</span>
+							{nudging ? 'Sending…' : 'Send'}
+						</Button>
+						<Button style="link" size="sm" onclick={() => (showNudge = false)} disabled={nudging}>
+							Cancel
+						</Button>
 					</div>
 				{/if}
-
-				<div class="flex items-center gap-3" style="margin-top: 10px">
-					<button
-						type="button"
-						onclick={nudge}
-						disabled={nudging || !canNudge}
-						class="bg-ink text-on-primary inline-flex items-center gap-2 rounded-lg text-xs font-medium"
-						style="padding: 8px 13px; border: none"
-						style:opacity={nudging || !canNudge ? 0.5 : 1}
-						style:cursor={nudging || !canNudge ? 'not-allowed' : 'pointer'}
-					>
-						<span class="kanji" style="font-size: 12px">送</span>
-						{nudging ? 'Sending…' : 'Send'}
-					</button>
-					{#if nudgeSent}
-						<span class="text-success inline-flex items-center gap-1 text-xs">
-							<span class="kanji text-success" style="font-size: 11px">済</span>
-							Nudge sent
-						</span>
-					{/if}
-				</div>
 			</div>
 		{/if}
 	</div>

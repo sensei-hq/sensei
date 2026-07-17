@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { Button } from '@rokkit/ui';
 	import { relativeAge } from '$lib/triage-view';
 	import { replyToGate, DojoApiError, type RelayGate } from '$lib/relay-data';
 
@@ -46,6 +47,11 @@
 	let freeText = $state('');
 	let busy = $state(false);
 	let replyError = $state<string | null>(null);
+
+	// The note is progressive: hidden until asked for, so a card isn't a wall of
+	// empty textboxes. Reveal it via "Add note", or auto-reveal when the human is
+	// about to Decline (a decline usually wants a reason).
+	let showNote = $state(false);
 
 	// Fold an optional trimmed note onto whatever reply body the affordance built.
 	function withNote(reply: Record<string, unknown>): Record<string, unknown> {
@@ -99,59 +105,52 @@
 		</div>
 	{/if}
 
-	<!-- Optional note carried along with any reply. -->
-	<textarea
-		bind:value={note}
-		placeholder="Add a note (optional)…"
-		rows="2"
-		disabled={busy}
-		class="bg-paper border-paper-edge text-ink w-full rounded-lg border text-sm"
-		style="padding: 8px 11px; margin-top: 12px; resize: vertical; font-family: inherit; line-height: 1.5"
-	></textarea>
+	<!-- Optional note carried along with any reply — revealed on demand. -->
+	{#if showNote}
+		<textarea
+			bind:value={note}
+			placeholder="Add a note (optional)…"
+			rows="2"
+			disabled={busy}
+			class="bg-paper border-paper-edge text-ink w-full rounded-lg border text-sm"
+			style="padding: 8px 11px; margin-top: 12px; resize: vertical; font-family: inherit; line-height: 1.5"
+		></textarea>
+	{:else}
+		<div style="margin-top: 12px">
+			<Button style="link" size="sm" onclick={() => (showNote = true)}>
+				<span aria-hidden="true">＋</span>
+				Add note
+			</Button>
+		</div>
+	{/if}
 
 	{#if options.length > 0}
 		<!-- Decision: one button per option → { choice: <option> }. -->
 		<div class="flex flex-wrap items-center gap-2" style="margin-top: 10px">
 			{#each options as option (option)}
-				<button
-					type="button"
-					onclick={() => send({ choice: option })}
-					disabled={busy}
-					class="bg-ink text-on-primary inline-flex items-center gap-1 rounded-lg text-xs font-medium"
-					style="padding: 8px 13px; border: none"
-					style:opacity={busy ? 0.5 : 1}
-					style:cursor={busy ? 'not-allowed' : 'pointer'}
-				>
+				<Button variant="primary" size="sm" onclick={() => send({ choice: option })} disabled={busy}>
 					{option}
-				</button>
+				</Button>
 			{/each}
 		</div>
 	{:else if gate.kind === 'approval'}
 		<!-- Approval: Approve / Decline → { verdict: 'approve' | 'deny' }. -->
 		<div class="flex flex-wrap items-center gap-2" style="margin-top: 10px">
-			<button
-				type="button"
-				onclick={() => send({ verdict: 'approve' })}
-				disabled={busy}
-				class="bg-ink text-on-primary inline-flex items-center gap-1 rounded-lg text-xs font-medium"
-				style="padding: 8px 13px; border: none"
-				style:opacity={busy ? 0.5 : 1}
-				style:cursor={busy ? 'not-allowed' : 'pointer'}
-			>
-				<span class="kanji text-accent" style="font-size: 11px">許</span>
+			<Button variant="primary" size="sm" onclick={() => send({ verdict: 'approve' })} disabled={busy}>
+				<span class="kanji" style="font-size: 11px">許</span>
 				{busy ? 'Sending…' : 'Approve'}
-			</button>
-			<button
-				type="button"
+			</Button>
+			<Button
+				variant="secondary"
+				style="outline"
+				size="sm"
 				onclick={() => send({ verdict: 'deny' })}
+				onpointerenter={() => (showNote = true)}
+				onfocus={() => (showNote = true)}
 				disabled={busy}
-				class="bg-paper border-paper-edge text-ink-soft inline-flex items-center gap-1 rounded-lg border text-xs font-medium"
-				style="padding: 8px 13px"
-				style:opacity={busy ? 0.5 : 1}
-				style:cursor={busy ? 'not-allowed' : 'pointer'}
 			>
 				{busy ? 'Sending…' : 'Decline'}
-			</button>
+			</Button>
 		</div>
 	{:else}
 		<!-- Free-text: a small input → { text: <value> } with Send. -->
@@ -164,18 +163,15 @@
 				class="bg-paper border-paper-edge text-ink flex-1 rounded-lg border text-sm"
 				style="padding: 8px 11px; min-width: 0; font-family: inherit"
 			/>
-			<button
-				type="button"
+			<Button
+				variant="primary"
+				size="sm"
 				onclick={() => send({ text: freeText })}
 				disabled={busy || freeText.trim() === ''}
-				class="bg-ink text-on-primary inline-flex items-center gap-1 rounded-lg text-xs font-medium"
-				style="padding: 8px 13px; border: none"
-				style:opacity={busy || freeText.trim() === '' ? 0.5 : 1}
-				style:cursor={busy || freeText.trim() === '' ? 'not-allowed' : 'pointer'}
 			>
 				<span class="kanji" style="font-size: 11px">送</span>
 				{busy ? 'Sending…' : 'Send'}
-			</button>
+			</Button>
 		</div>
 	{/if}
 </div>

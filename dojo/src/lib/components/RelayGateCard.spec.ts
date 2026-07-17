@@ -69,6 +69,18 @@ describe('RelayGateCard', () => {
 		expect(queryByText('Round-trip')).toBeNull();
 	});
 
+	it('hides the note textarea by default and reveals it on "Add note"', async () => {
+		stubFetch();
+		const { getByText, queryByPlaceholderText, getByPlaceholderText } = render(RelayGateCard, {
+			gate: gate(),
+			tenantKey: 'personal/jerry',
+			accessToken: 'JWT'
+		});
+		expect(queryByPlaceholderText('Add a note (optional)…')).toBeNull();
+		await fireEvent.click(getByText('Add note'));
+		expect(getByPlaceholderText('Add a note (optional)…')).toBeTruthy();
+	});
+
 	it('approval posts { verdict: "approve" } with the note and fires onReplied', async () => {
 		let sent: { inbox_id?: string; reply?: Record<string, unknown> } = {};
 		const fetchFn = stubFetch((_url, init) => {
@@ -82,6 +94,8 @@ describe('RelayGateCard', () => {
 			accessToken: 'JWT',
 			onReplied
 		});
+		// The note is progressive: reveal it before typing (default state hides it).
+		await fireEvent.click(getByText('Add note'));
 		await fireEvent.input(getByPlaceholderText('Add a note (optional)…'), {
 			target: { value: 'go for it' }
 		});
