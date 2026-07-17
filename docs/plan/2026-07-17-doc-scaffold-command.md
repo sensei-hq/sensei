@@ -517,3 +517,20 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 - **Type consistency:** `Entry`, `Layout`, `ScaffoldReport`, `canonical_layout(&str,&str)`, `materialize(&Path,&Layout)`, `run(&Path)` — names/signatures identical across Tasks 1–3. `Entry::path()` used by both `materialize` and the tests.
 - **Placeholders:** none — every step has real code and exact commands.
 - **Reuse (CLAUDE.md DRY):** `run()` reuses the existing `crate::format_date()`; `scaffold_cmd` mirrors `init_project_scope`'s cwd + `[created]/[exists]` idiom rather than inventing a new one.
+
+---
+
+## Post-implementation notes (shipped 2026-07-17)
+
+Built via subagent-driven TDD; per-task spec + code-quality reviews + a final whole-feature review (verdict: **Ship**). Commits on `develop`: `b546db74` (pure layout), `0b8c91f3` (materialize), `5bf594a1` (CLI wiring).
+
+**Approved deviations from the plan text (both toward the "no silent errors" house rule):**
+1. `ScaffoldReport` gained a `failed: Vec<(String, String)>` field, and `materialize` **records** IO errors (no `.ok()` discards; parent-dir creation chained into the write) instead of the plan's original `.ok()` swallow. Added test `materialize_records_failures_instead_of_swallowing` (read-only base).
+2. `scaffold_cmd` prints `[failed]` to stderr and **exits non-zero** when any entry fails.
+
+**Follow-ups (minor, non-blocking — from the final review):**
+- Doc-comment the `Entry`/`Layout` fields.
+- Add a `--help`/README note that `scaffold` targets **new / pre-structure** projects — on an already-restructured repo it adds the canonical slots *additively* (idempotent skip-if-exists), yielding a hybrid layout.
+- If a 4th command needs "resolve target dir or exit 1", extract `resolve_target_dir(Option<&str>) -> PathBuf` (currently duplicated with `init_project_scope`).
+
+**Deferred to later Phase-1 plans:** per-feature dossier scaffolder (`sensei scaffold feature <name>`), memory-anchoring to spine slots, baseline `--kind`.
