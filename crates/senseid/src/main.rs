@@ -31,6 +31,7 @@ pub mod verdicts;
 pub mod ranking;
 pub mod model_insight;
 pub mod runs;
+pub mod run_limits;
 pub mod agent_spawn;
 mod classifiers;
 mod adapters;

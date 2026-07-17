@@ -28,7 +28,8 @@
 
 use super::super::executor::TaskContext;
 use super::super::Task;
-use crate::agent_spawn::{run_agent, AgentCommand};
+use crate::agent_spawn::{run_agent, AgentCommand, AgentOutput};
+use crate::run_limits::{detect_limit, resolve_paused_until, LimitHit};
 use crate::runs::{Run, RunEventKind};
 use std::time::Duration;
 
@@ -37,6 +38,77 @@ use std::time::Duration;
 /// hang a run tick — on expiry the child is killed+reaped and the run is marked
 /// `Stalled` for the watchdog (P3.6) to recover.
 const DRIVE_TIMEOUT: Duration = Duration::from_secs(600); // 10 minutes
+
+/// P3.4 limit-pause tuning. `LIMIT_JITTER_SECS` spreads the resume herd so many
+/// paused runs don't all wake on the same instant (added to the parsed reset).
+/// `LIMIT_DEFAULT_BACKOFF_MINS` is the capped backoff when a limit is detected
+/// but its reset time is unparseable/ambiguous — the next tick re-checks
+/// (relay-engine §5, "capped backoff + re-check").
+const LIMIT_JITTER_SECS: i64 = 60;
+const LIMIT_DEFAULT_BACKOFF_MINS: i64 = 30;
+
+/// The intended outcome of one drive step, computed *purely* from the captured
+/// [`AgentOutput`] (+ the wall clock for limit-reset math). Splitting the
+/// decision out of the DB-writing [`drive_run`] makes the whole outcome map —
+/// including the P3.4 limit-pause path — unit-testable without a database.
+///
+/// The DB-write wrapper ([`apply_outcome`]) turns each variant into the matching
+/// run_event (+ status change). A limit **supersedes** the exit code: if the
+/// output carries a limit message we pause, regardless of the code the CLI
+/// exited with (Claude Code prints the limit as text and may exit 0 or non-zero).
+#[derive(Debug, Clone, PartialEq)]
+enum DriveOutcome {
+    /// A rate/usage limit was detected in the output → pause the run until
+    /// `paused_until` (RFC-3339), then let `resume_due_runs` auto-resume it.
+    Limit { paused_until: String, reason: String, reset_at: Option<String> },
+    /// The step finished cleanly (exit 0, no limit) → FeatureDone, stay Running.
+    Done,
+    /// The child hit the wall-clock timeout → Stalled for the watchdog (P3.6).
+    Stalled { timeout_secs: u64 },
+    /// A non-zero exit (no limit) → Flagged, stay Running (progress-over-asking).
+    NonZeroExit { exit_code: Option<i32> },
+}
+
+/// Map a captured agent output to the intended [`DriveOutcome`]. Pure: no DB, no
+/// env — `now`/`jitter`/`default_backoff`/`timeout_secs` are injected so the
+/// limit-reset math is deterministic in tests. The **limit check comes first**: a
+/// limit message supersedes the exit code (§5 — a limit is a pause, never a
+/// failure/stop).
+fn map_drive_outcome(
+    out: &AgentOutput,
+    now: chrono::DateTime<chrono::Utc>,
+    jitter: chrono::Duration,
+    default_backoff: chrono::Duration,
+    timeout_secs: u64,
+) -> DriveOutcome {
+    // Limit detection scans combined stdout+stderr. This runs BEFORE the
+    // exit-code mapping so a "you've hit your limit" line pauses the run even
+    // when the CLI exits 0 (or non-zero) — the limit supersedes the code.
+    let combined = format!("{}\n{}", out.stdout, out.stderr);
+    if let Some(hit) = detect_limit(&combined, now) {
+        let paused_until = resolve_paused_until(&hit, now, jitter, default_backoff);
+        return DriveOutcome::Limit {
+            paused_until: paused_until.to_rfc3339(),
+            reason: hit.reason.clone(),
+            reset_at: limit_reset_rfc3339(&hit),
+        };
+    }
+
+    if out.timed_out {
+        return DriveOutcome::Stalled { timeout_secs };
+    }
+    match out.exit_code {
+        Some(0) => DriveOutcome::Done,
+        code => DriveOutcome::NonZeroExit { exit_code: code },
+    }
+}
+
+/// The parsed reset instant of a limit hit as RFC-3339, or `None` when the reset
+/// time was unparseable (a capped-backoff pause). Logical detail for the event —
+/// never raw output.
+fn limit_reset_rfc3339(hit: &LimitHit) -> Option<String> {
+    hit.reset_at.map(|dt| dt.to_rfc3339())
+}
 
 /// Resolved drive configuration for one tick. Parsed from the environment at
 /// the handler boundary ([`DriveConfig::from_env`]) and passed into the pure-ish
@@ -230,12 +302,15 @@ async fn drive_run(ctx: &TaskContext, cfg: &DriveConfig, run: &Run) -> Result<()
     // 5. Spawn + supervise. The primitive never panics and always kills+reaps.
     let phase = run.current_phase.clone();
     let feature = Some(label.clone());
-    match run_agent(&cmd).await {
+    let out = match run_agent(&cmd).await {
+        Ok(out) => out,
         Err(e) => {
             // Could not launch/reap the child (bad binary, EACCES, i/o). Not a
             // task error — record it logically and let the next tick retry.
+            // (No AgentOutput → no limit message to inspect, so this stays a
+            // plain Flag; it never routes through the outcome map.)
             tracing::warn!(run_id = %run_id, error = %e, "relay drive: agent spawn failed");
-            append(
+            return append(
                 ctx,
                 &run_id,
                 RunEventKind::Flagged,
@@ -243,27 +318,78 @@ async fn drive_run(ctx: &TaskContext, cfg: &DriveConfig, run: &Run) -> Result<()
                 feature.as_deref(),
                 serde_json::json!({ "note": "agent could not be started" }),
             )
-            .await
+            .await;
         }
-        Ok(out) if out.timed_out => {
+    };
+
+    // 6. Decide the outcome PURELY from the captured output (+ the clock for the
+    //    limit-reset math), then apply it. The limit check lives inside
+    //    `map_drive_outcome` and runs before the exit-code mapping, so a
+    //    "you've hit your limit" line pauses the run regardless of exit code
+    //    (P3.4 / relay-engine §5). The gateway-routed 429 path is separate — it
+    //    is normalized in `gateway-embedded` (relay-engine §8), NOT here.
+    let outcome = map_drive_outcome(
+        &out,
+        chrono::Utc::now(),
+        chrono::Duration::seconds(LIMIT_JITTER_SECS),
+        chrono::Duration::minutes(LIMIT_DEFAULT_BACKOFF_MINS),
+        cfg.timeout.as_secs(),
+    );
+    apply_outcome(ctx, &run_id, phase.as_deref(), feature.as_deref(), &label, outcome).await
+}
+
+/// Turn a pure [`DriveOutcome`] into its run_event(s) + status change. This is
+/// the single DB-writing side of the outcome map; the decision itself is made in
+/// [`map_drive_outcome`] so it is testable without a database. Event details stay
+/// logical/stripped (labels, codes, reset time) — never stdout/stderr or code
+/// (relay-engine D10).
+async fn apply_outcome(
+    ctx: &TaskContext,
+    run_id: &uuid::Uuid,
+    phase: Option<&str>,
+    feature: Option<&str>,
+    label: &str,
+    outcome: DriveOutcome,
+) -> Result<(), String> {
+    use dojo_protocol::relay::RelayRunStatus;
+    match outcome {
+        DriveOutcome::Limit { paused_until, reason, reset_at } => {
+            // A limit is a PAUSE, never a stop (§5, degrade-not-stop). Flip the
+            // run to Paused with paused_until = reset + jitter; the already-built
+            // `resume_due_runs` scheduler auto-resumes it when the window elapses.
+            // We deliberately do NOT also emit FeatureDone/Flagged — the limit
+            // supersedes the exit code.
+            tracing::info!(run_id = %run_id, %paused_until, "relay drive: paused on limit; will auto-resume");
+            ctx.pg()
+                .update_run_status(run_id, RelayRunStatus::Paused, Some(&paused_until), Some(&reason))
+                .await
+                .map_err(|e| format!("update_run_status(Paused) failed: {e}"))?;
+            // Logical detail only: reason + reset window. Never raw output/code.
+            let mut detail = serde_json::json!({ "reason": reason, "paused_until": paused_until });
+            if let Some(reset_at) = reset_at {
+                detail["reset_at"] = serde_json::json!(reset_at);
+            }
+            append(ctx, run_id, RunEventKind::PausedOnLimit, phase, feature, detail).await
+        }
+        DriveOutcome::Stalled { timeout_secs } => {
             // Timeout → Stalled so the watchdog/P3.6 can recover it. The child
             // was already killed+reaped by the primitive.
             tracing::warn!(run_id = %run_id, "relay drive: agent step timed out");
             append(
                 ctx,
-                &run_id,
+                run_id,
                 RunEventKind::Stalled,
-                phase.as_deref(),
-                feature.as_deref(),
-                serde_json::json!({ "note": "agent step timed out", "timeout_secs": cfg.timeout.as_secs() }),
+                phase,
+                feature,
+                serde_json::json!({ "note": "agent step timed out", "timeout_secs": timeout_secs }),
             )
             .await?;
             ctx.pg()
-                .update_run_status(&run_id, dojo_protocol::relay::RelayRunStatus::Stalled, None, None)
+                .update_run_status(run_id, RelayRunStatus::Stalled, None, None)
                 .await
                 .map_err(|e| format!("update_run_status(Stalled) failed: {e}"))
         }
-        Ok(out) if out.exit_code == Some(0) => {
+        DriveOutcome::Done => {
             // Clean exit → the step finished. Emit FeatureDone and leave the run
             // Running: the next tick advances again. We deliberately do NOT
             // complete_run(Done) here — a real completion signal arrives with
@@ -271,28 +397,27 @@ async fn drive_run(ctx: &TaskContext, cfg: &DriveConfig, run: &Run) -> Result<()
             // step is done", not "the whole plan is done".
             append(
                 ctx,
-                &run_id,
+                run_id,
                 RunEventKind::FeatureDone,
-                phase.as_deref(),
-                feature.as_deref(),
+                phase,
+                feature,
                 serde_json::json!({ "feature": label }),
             )
             .await
         }
-        Ok(out) => {
+        DriveOutcome::NonZeroExit { exit_code } => {
             // Non-zero exit. Per progress-over-asking we record it as Flagged
             // and keep the run Running (rather than hard-Failing) so the next
             // tick can retry / a human can inspect — the exit code is logical
             // status, and we never dump stdout/stderr into the event.
-            let code = out.exit_code;
-            tracing::warn!(run_id = %run_id, exit_code = ?code, "relay drive: agent step exited non-zero");
+            tracing::warn!(run_id = %run_id, ?exit_code, "relay drive: agent step exited non-zero");
             append(
                 ctx,
-                &run_id,
+                run_id,
                 RunEventKind::Flagged,
-                phase.as_deref(),
-                feature.as_deref(),
-                serde_json::json!({ "note": "agent step exited non-zero", "exit_code": code }),
+                phase,
+                feature,
+                serde_json::json!({ "note": "agent step exited non-zero", "exit_code": exit_code }),
             )
             .await
         }
@@ -505,6 +630,94 @@ mod tests {
         assert_eq!(short_label("   "), "");
     }
 
+    // --- Pure outcome-map unit tests (no DB, no env, no spawn) ---
+    //
+    // These drive the P3.4 decision directly: a hand-built AgentOutput + a fixed
+    // clock in, the intended DriveOutcome out. No database, no `claude`.
+
+    use chrono::{Duration as ChronoDuration, TimeZone, Utc};
+
+    fn fixed_now() -> chrono::DateTime<chrono::Utc> {
+        Utc.with_ymd_and_hms(2026, 7, 17, 8, 0, 0).unwrap()
+    }
+
+    fn out_with(stdout: &str, stderr: &str, exit_code: Option<i32>, timed_out: bool) -> AgentOutput {
+        AgentOutput { stdout: stdout.into(), stderr: stderr.into(), exit_code, timed_out }
+    }
+
+    fn map(out: &AgentOutput) -> DriveOutcome {
+        map_drive_outcome(
+            out,
+            fixed_now(),
+            ChronoDuration::seconds(LIMIT_JITTER_SECS),
+            ChronoDuration::minutes(LIMIT_DEFAULT_BACKOFF_MINS),
+            600,
+        )
+    }
+
+    #[test]
+    fn outcome_the_exact_five_day_run_string_is_a_limit_pause() {
+        // The literal line that stopped the 5-day run, printed on stdout with a
+        // clean (0) exit — the limit must supersede the exit code and pause.
+        let out = out_with(
+            "Paused — you've hit your limit. Limits will reset at 11:29 AM · View usage",
+            "",
+            Some(0),
+            false,
+        );
+        match map(&out) {
+            DriveOutcome::Limit { paused_until, reason, reset_at } => {
+                assert_eq!(reason, "rate/usage limit reached");
+                assert!(reset_at.is_some(), "11:29 AM must parse to a reset time");
+                // paused_until = reset + jitter; reset is next-11:29, so it is
+                // strictly in the future relative to `now`.
+                let pu = chrono::DateTime::parse_from_rfc3339(&paused_until).unwrap();
+                assert!(pu.with_timezone(&Utc) > fixed_now(), "paused into the future");
+            }
+            other => panic!("expected Limit, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn outcome_limit_supersedes_a_nonzero_exit() {
+        // Limit text on STDERR + a non-zero exit → still a Limit (not a Flag).
+        let out = out_with("", "usage limit reached; resets at 23:29", Some(1), false);
+        assert!(matches!(map(&out), DriveOutcome::Limit { .. }), "limit supersedes exit code");
+    }
+
+    #[test]
+    fn outcome_limit_without_parseable_time_uses_default_backoff() {
+        let out = out_with("Paused — you've hit your limit. Try again later.", "", Some(0), false);
+        match map(&out) {
+            DriveOutcome::Limit { paused_until, reset_at, .. } => {
+                assert_eq!(reset_at, None, "no parseable reset time → reset_at None");
+                // Falls back to now + default backoff (30 min).
+                let expected = (fixed_now() + ChronoDuration::minutes(LIMIT_DEFAULT_BACKOFF_MINS))
+                    .to_rfc3339();
+                assert_eq!(paused_until, expected, "unparseable reset → capped backoff");
+            }
+            other => panic!("expected Limit, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn outcome_clean_exit_no_limit_is_done() {
+        let out = out_with("Wrote 3 files. Build OK.", "", Some(0), false);
+        assert_eq!(map(&out), DriveOutcome::Done);
+    }
+
+    #[test]
+    fn outcome_timeout_is_stalled() {
+        let out = out_with("partial...", "", None, true);
+        assert_eq!(map(&out), DriveOutcome::Stalled { timeout_secs: 600 });
+    }
+
+    #[test]
+    fn outcome_nonzero_exit_no_limit_is_flagged() {
+        let out = out_with("", "error: compilation failed", Some(101), false);
+        assert_eq!(map(&out), DriveOutcome::NonZeroExit { exit_code: Some(101) });
+    }
+
     // --- drive_run behavior tests (DB-guarded; NEVER spawn real claude) ---
     //
     // These pass a hand-built DriveConfig straight into `drive_run`, so they
@@ -714,5 +927,79 @@ mod tests {
 
         pg_delete_run(pg, &id).await;
         cleanup_project(pg, &project_id, &root_id, &dir).await;
+    }
+
+    /// Write an executable stub that IGNORES its args (the drive passes
+    /// `-p <prompt>`) and prints `line` to stdout, then exits 0 — so we can feed
+    /// the real drive path a "you've hit your limit" message WITHOUT ever
+    /// spawning `claude`. Returns the stub's path (used as `agent_cmd`).
+    fn limit_stub_script(line: &str) -> std::path::PathBuf {
+        use std::io::Write;
+        use std::os::unix::fs::PermissionsExt;
+        let uniq = uuid::Uuid::new_v4();
+        let path = std::env::temp_dir().join(format!("sensei_limit_stub_{uniq}.sh"));
+        let mut f = std::fs::File::create(&path).unwrap();
+        // `printf '%s\n'` avoids any echo-flag portability issues with the em
+        // dash / interpunct in the limit copy.
+        writeln!(f, "#!/bin/sh\nprintf '%s\\n' \"{line}\"\nexit 0").unwrap();
+        f.flush().unwrap();
+        let mut perms = std::fs::metadata(&path).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&path, perms).unwrap();
+        path
+    }
+
+    #[tokio::test]
+    async fn enabled_drive_on_limit_pauses_and_schedules_auto_resume() {
+        // THE 5-day-run fix, end to end through the real drive path: a stub
+        // agent prints the exact limit line on stdout and exits 0. The drive
+        // must PAUSE the run (paused_until in the future) + emit PausedOnLimit,
+        // and must NOT emit FeatureDone (the limit supersedes the 0 exit). No
+        // real claude is spawned. `resume_due_runs` (tested elsewhere) then
+        // auto-resumes when paused_until elapses.
+        let Some(ctx) = make_ctx().await else { return; };
+        let pg = ctx.pg();
+        let (project_id, root_id, dir) = seed_project_with_cwd(pg).await;
+
+        let id = pg
+            .create_run(&NewRun {
+                project_id: Some(project_id),
+                goal: Some("drive the next step".into()),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        let stub = limit_stub_script(
+            "Paused — you've hit your limit. Limits will reset at 11:29 AM · View usage",
+        );
+        let cfg = DriveConfig {
+            enabled: true,
+            agent_cmd: stub.to_string_lossy().into_owned(),
+            timeout: Duration::from_secs(10),
+        };
+
+        let run = pg.get_run(&id).await.unwrap().unwrap();
+        drive_run(&ctx, &cfg, &run).await.unwrap();
+
+        // The run is Paused with a future paused_until…
+        let run = pg.get_run(&id).await.unwrap().unwrap();
+        assert_eq!(run.status, RelayRunStatus::Paused, "a limit pauses the run (never fails/stops)");
+        let paused_until = run.paused_until.as_deref().expect("paused_until must be set");
+        let pu = chrono::DateTime::parse_from_rfc3339(paused_until).unwrap();
+        assert!(pu.with_timezone(&chrono::Utc) > chrono::Utc::now(), "paused into the future");
+        assert!(run.pause_reason.as_deref().unwrap().contains("limit"), "logical reason recorded");
+
+        // …a PausedOnLimit cadence event was emitted, and NO FeatureDone.
+        let kinds: Vec<RunEventKind> =
+            pg.list_run_events(&id, 10).await.unwrap().into_iter().map(|e| e.kind).collect();
+        assert!(kinds.contains(&RunEventKind::FeatureStarted), "step was announced");
+        assert!(kinds.contains(&RunEventKind::PausedOnLimit), "expected PausedOnLimit, got {kinds:?}");
+        assert!(!kinds.contains(&RunEventKind::FeatureDone), "a limit supersedes the exit code");
+        assert!(!kinds.contains(&RunEventKind::Flagged), "a limit is a pause, not a flag");
+
+        pg_delete_run(pg, &id).await;
+        cleanup_project(pg, &project_id, &root_id, &dir).await;
+        std::fs::remove_file(&stub).ok();
     }
 }
