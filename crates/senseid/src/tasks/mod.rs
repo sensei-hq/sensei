@@ -12,6 +12,7 @@ pub mod progress;
 pub mod progress_emitter;
 pub mod analyzer_scheduler;
 pub mod advance_run_scheduler;
+pub mod watchdog_scheduler;
 pub mod contribute_scheduler;
 pub mod log_pruner;
 pub mod activity_pruner;
