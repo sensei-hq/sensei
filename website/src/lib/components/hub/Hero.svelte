@@ -106,7 +106,7 @@
       grid-template-columns: 1fr;
     }
     .hero-h1 {
-      font-size: 38px;
+      font-size: var(--text-3xl);
     }
   }
 </style>
