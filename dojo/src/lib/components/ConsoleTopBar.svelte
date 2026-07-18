@@ -6,7 +6,14 @@
 	// member count · avatar · log out. Org details come from the selected tenant's
 	// org record (chrome only — the switcher is a static affordance in R9; the
 	// live org-switch flow is /orgs).
-	let { org }: { org: DojoOrg | undefined } = $props();
+	// `onMenu` opens the mobile nav drawer (the layout owns the state); on md:+ the
+	// sidebar is always visible so the trigger is md:hidden. `navExpanded` reflects the
+	// drawer's open state onto the trigger for assistive tech (aria-expanded).
+	let {
+		org,
+		onMenu,
+		navExpanded = false
+	}: { org: DojoOrg | undefined; onMenu?: () => void; navExpanded?: boolean } = $props();
 
 	const initials = $derived(
 		(org?.name ?? 'Dōjō')
@@ -23,9 +30,19 @@
 </script>
 
 <div
-	class="border-paper-edge bg-paper flex flex-shrink-0 items-center gap-4 border-b"
-	style="height: 54px; padding: 0 18px"
+	class="border-paper-edge bg-paper flex h-[54px] flex-shrink-0 items-center gap-2 border-b px-3 md:gap-4 md:px-[18px]"
 >
+	<button
+		type="button"
+		onclick={() => onMenu?.()}
+		aria-label="Open navigation"
+		aria-controls="console-nav"
+		aria-expanded={navExpanded}
+		class="text-ink-soft hover:text-ink -ml-1 flex h-[34px] w-[34px] cursor-pointer items-center justify-center rounded-lg bg-transparent md:hidden"
+	>
+		<span aria-hidden="true" class="text-lg leading-none">☰</span>
+	</button>
+
 	<div class="flex items-baseline gap-2">
 		<span class="kanji text-accent" style="font-size: 22px; line-height: 1">結</span>
 		<span class="display text-lg" style="letter-spacing: -0.01em">Dōjō</span>
@@ -48,7 +65,7 @@
 	<span class="flex-1"></span>
 
 	<div
-		class="bg-paper-soft border-paper-edge flex items-center gap-2 rounded-lg border"
+		class="bg-paper-soft border-paper-edge hidden items-center gap-2 rounded-lg border md:flex"
 		style="padding: 6px 11px; width: 260px"
 	>
 		<span class="kanji text-ink-mute text-xs">探</span>
@@ -56,7 +73,7 @@
 	</div>
 
 	{#if org}
-		<span class="mono text-ink-mute text-xs">{org.members} members</span>
+		<span class="mono text-ink-mute hidden text-xs md:inline">{org.members} members</span>
 	{/if}
 
 	<span
@@ -74,6 +91,6 @@
 		title="Log out"
 	>
 		<span class="kanji text-ink-mute text-xs">出</span>
-		<span class="text-xs">Log out</span>
+		<span class="hidden text-xs md:inline">Log out</span>
 	</button>
 </div>

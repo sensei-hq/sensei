@@ -21,7 +21,10 @@ export default defineConfig({
 			'$env/dynamic/public': new URL(
 				'./src/lib/test-stubs/env-dynamic-public.ts',
 				import.meta.url
-			).pathname
+			).pathname,
+			// $app/paths (resolve) likewise isn't generated under vitest; a pass-through
+			// stub lets components that build hrefs (nav, top bar) render in specs.
+			'$app/paths': new URL('./src/lib/test-stubs/app-paths.ts', import.meta.url).pathname
 		}
 	}
 });
