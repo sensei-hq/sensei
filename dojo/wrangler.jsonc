@@ -27,6 +27,17 @@
 	// $env/dynamic/{public,private}. Local `wrangler dev`: gitignored .dev.vars
 	// (see .dev.vars.example); `bun run dev` (Vite) uses the gitignored .env.
 	"keep_vars": true,
+	// Web Push / VAPID (relay P4.4 send). Declared here as documentation — the
+	// VALUES are NOT committed (this repo is public). At runtime SvelteKit reads
+	// them from platform.env via $env/dynamic/{public,private}:
+	//   VAPID_PRIVATE_KEY — SECRET. Prod: `wrangler secret put VAPID_PRIVATE_KEY`.
+	//                       Local: gitignored .dev.vars (base64url `d` from
+	//                       .dev-vapid.json). NEVER a plaintext var / never in git.
+	//   VAPID_SUBJECT     — mailto: contact. Dashboard var (or secret); .dev.vars local.
+	//   PUBLIC_VAPID_KEY  — base64url raw public key; PUBLIC_ ships to the browser.
+	//                       Dashboard var; .env (Vite) / .dev.vars (wrangler) local.
+	// No "vars" block with values on purpose: keep_vars:true preserves the
+	// dashboard-managed values across deploys, and none of these belong in git.
 	// Served at <name>.<subdomain>.workers.dev + a versioned preview URL per
 	// deploy. Set workers_dev:false to serve only from the custom domain.
 	"workers_dev": true,

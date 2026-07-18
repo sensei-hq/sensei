@@ -94,17 +94,41 @@ If Jerry prefers Worker-SSE, P4.1/P4.2 change; flagged here.
 - **Deps:** dev VAPID keypair (I generate). **Autonomous** for client + store + route.
 - **Out of scope:** the actual send-on-gate (P4.4); native APNs/FCM (P5+).
 
-### P4.4 — Web Push send from the Worker  ·  Worker
-- **What:** on a blocking-gate `relay_inbox` insert (and stall/crash events), the
-  Worker sends a Web Push to the user's `enabled` subscriptions using a
-  Worker-compatible VAPID/WebCrypto sender, **respecting `notification_prefs`**
-  (events opt-in, quiet_hours, muted_tenants). Zero-knowledge payload: "needs you /
-  stalled / crashed on <run>" — never code/diffs.
+### P4.4 — Web Push send from the Worker  ·  Worker  ·  **DONE (develop)**
+- **What:** on a raised needs-you `relay_inbox` insert (`approval`/`decision`/`stall`,
+  `agent_to_human` only — never `chat`/`nudge`/`human_to_agent`) AND on a run's
+  transition into `status='crashed'` (relay/session POST), the Worker sends a Web
+  Push to the user's `enabled` subscriptions, **respecting `notification_prefs`**
+  (events opt-in default-OFF, quiet_hours incl. wrap-past-midnight, muted_tenants).
+  Zero-knowledge payload `{title, body, url}`: "needs you / stalled / crashed on
+  <run title>" + deep-link `/console/relay/<run_id>` — never code/diffs/commands.
+  Fire-and-forget via `platform.context.waitUntil` (CF adapter); fail-open — a push
+  failure never breaks the gate raise. 404/410 from a push service → that
+  `push_subscriptions.enabled` is set false. Subscriptions deduped by endpoint.
+- **How (implemented):** VAPID (ES256 JWT) + payload encryption delegated to
+  `@block65/webcrypto-web-push` (MIT, WebCrypto, no node built-ins — Workers-safe;
+  the smallest clean option). Auth header normalised to RFC 8292
+  `Authorization: vapid t=<jwt>, k=<pubkey>`. **NOTE / deviation:** that library
+  encrypts with the `aesgcm` scheme (RFC 8291 draft-04; `Content-Encoding: aesgcm`
+  + `Encryption`/`Crypto-Key` companions), NOT the newer `aes128gcm` (RFC 8188)
+  named in this plan. `aesgcm` is still accepted by the major push services
+  (FCM/Mozilla/WebKit); the sender passes the encoding through honestly (never
+  relabels). Migrating to an `aes128gcm` sender is a follow-up IF a target push
+  service rejects `aesgcm`. Pure logic (prefs gate / dedup / payload / header
+  shape) is unit-tested (vitest); the crypto+fetch send is thin + injectable.
+  Files: `src/lib/server/relay-push-send.ts` (+ `.spec.ts`),
+  `src/lib/server/relay-push-env.ts`, trigger wiring in `relay/inbox` +
+  `relay/session` (+ `relay/relay-push-trigger.spec.ts`).
 - **Acceptance:** a raised gate → the backgrounded phone receives a push → tapping it
   opens the gate card → Approve/Deny → the daemon's `await_reply` sees the answer →
   the engine proceeds (the P4 headline round-trip). Quiet-hours/muted respected.
+  **Delivered-push acceptance is the P4 hand-off e2e** (Playwright + a real
+  subscription against a real push service) — not claimable in the build; the build
+  verifies trigger-kind selection, prefs gate + dedup + expired-disable (unit), and
+  a well-formed request shape (headers + encrypted body) against a mock endpoint.
 - **Deps:** P4.3; the VAPID **private** key (dev local; **prod = Jerry secret**).
-- **Out of scope:** batching/digests; retry/backoff on push failure (track).
+- **Out of scope:** batching/digests; retry/backoff on push failure (track);
+  aes128gcm migration (track, only if a push service rejects aesgcm).
 
 ### P4.5 — offline / reconnect / session-ended  ·  PWA
 - **What:** local draft store for per-segment review + queued replies/guidance; a
@@ -127,7 +151,7 @@ If Jerry prefers Worker-SSE, P4.1/P4.2 change; flagged here.
 ## Sequencing
 
 `P4.1 (RLS+publication)` → `P4.2 (realtime swap)` → `P4.3 (push client)` →
-`P4.4 (push send)` → `P4.5 (offline)` → `P4.6 (blocked-on-me home)`.
+`P4.4 (push send)` ✅ → `P4.5 (offline)` → `P4.6 (blocked-on-me home)`.
 P4.3 is independent of P4.1/4.2 and can interleave. Each chunk commits to `develop`
 under approach A (no main-merge/bump). End-of-P4: `sensei-security-reviewer`
 (RLS policy correctness, push payload zero-knowledge, VAPID secret handling) +
@@ -140,6 +164,18 @@ under approach A (no main-merge/bump). End-of-P4: `sensei-security-reviewer`
   the matching **private** key as a `wrangler secret` (never in git) for the
   P4.4 sender. Dev used a locally-generated keypair: public key in `dojo/.env`
   (`PUBLIC_VAPID_KEY`), private key in `dojo/.dev-vapid.json` (**gitignored**).
+  The P4.4 sender reads three Worker env bindings (see `dojo/.dev.vars.example`
+  + the doc block in `wrangler.jsonc`):
+  - `VAPID_PRIVATE_KEY` — **SECRET**, the base64url `d` scalar of the P-256
+    keypair. Prod: `cd dojo && wrangler secret put VAPID_PRIVATE_KEY` (paste the
+    prod private-key `d`). NEVER a plaintext dashboard var / never in git.
+  - `VAPID_SUBJECT` — a `mailto:` contact, e.g. `mailto:relay@sensei-hq.com`
+    (dashboard var or secret).
+  - `PUBLIC_VAPID_KEY` — the base64url raw public key (dashboard var; shipped to
+    the browser AND used by the send to build the VAPID `k=` param). Same value
+    client + server.
+  If `VAPID_PRIVATE_KEY`/`VAPID_SUBJECT`/`PUBLIC_VAPID_KEY` are unset the sender
+  no-ops (logs + skips) — a missing key never breaks a gate raise.
 - Enable Supabase Realtime publication on `dojo.relay_*` in prod.
 - Apply + validate the relay RLS policies in prod.
 - (If native later) APNs/FCM credentials.
