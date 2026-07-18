@@ -501,3 +501,26 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 - **Type consistency:** `feature_layout(&str,&str) -> Layout`, `is_safe_feature_name(&str) -> bool`, `run_feature(&Path,&str) -> Result<ScaffoldReport,String>`, `ScaffoldTarget::Feature { name: String }`, `scaffold_cmd(Option<ScaffoldTarget>, Option<&str>)` — names/signatures identical across tasks. Reuses `Entry`/`Layout`/`materialize`/`ScaffoldReport{created,skipped,failed}`/`crate::format_date` unchanged.
 - **Placeholders:** none — every step has real code + exact commands.
 - **Reuse (CLAUDE.md DRY):** `run_feature` reuses `materialize` (no second IO path); `feature_layout` reuses `Entry`/`Layout`; templates mirror the project `*_md` helpers' frontmatter+voice; `scaffold_cmd` keeps the one `[created]/[exists]/[failed]` printer for both forms.
+
+---
+
+## Post-implementation notes (shipped 2026-07-18)
+
+Built via inline TDD (red → green per task). Commits on `develop`: `0f15480e`
+(pure `feature_layout` + `run_feature`, Tasks 1–2 combined) · `8723520a` (CLI
+wiring, Task 3). 13 `scaffold::tests` + 24 `sensei-cli` tests green, `clippy -D
+warnings` clean, smoke-verified (project scaffold · feature dossier 7 entries ·
+idempotent re-run · `../evil` rejected exit 1, no leak).
+
+**Reviewer** (`feature-dev:code-reviewer`): **no high-confidence issues.** Confirmed
+the name-safety guard sits on the single write path and covers all realistic traversal
+vectors on the target platforms (absolute paths / drive letters / `~` / unicode
+separators all inert or captured, never escape); idempotency via the reused
+`materialize`; clap nested-optional-subcommand + `global` path arg is standard; DRY
+(reuses `Entry`/`Layout`/`materialize`/`ScaffoldReport`/`format_date`); no silent-error
+discards; dossier slots match §3.2 with governance correctly excluded.
+
+**No deviations from the plan.** Executed as written.
+
+**Deferred to later Phase-1 plans:** memory-anchoring (L0/L1/L2 + memories → spine
+slots), baseline capability-contract scaffold (`--kind`).
