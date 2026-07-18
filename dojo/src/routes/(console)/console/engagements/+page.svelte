@@ -151,7 +151,7 @@
 				class="bg-ink text-on-primary inline-flex items-center gap-2 rounded-lg text-xs font-medium"
 				style="padding: 8px 13px; cursor: pointer; border: none"
 			>
-				<span class="kanji" style="font-size: 12px">客</span>
+				<span class="kanji text-xs">客</span>
 				{showRegister ? 'Close' : 'Register engagement'}
 			</button>
 		{/snippet}
@@ -175,7 +175,7 @@
 			class="bg-paper-soft border-paper-edge border-accent flex items-start gap-3 rounded-xl border"
 			style="border-left-width: 3px; padding: 13px 16px; margin: 18px 0"
 		>
-			<span class="kanji text-accent" style="font-size: 16px; line-height: 1.2">盾</span>
+			<span class="kanji text-accent text-base" style="line-height: 1.2">盾</span>
 			<div class="text-ink-soft text-xs" style="line-height: 1.55">
 				<b class="text-ink font-semibold">One model for every client.</b> Standards, patterns and the
 				memory behind them travel upstream; client, repo, identifiers and source are always dropped. If
@@ -189,8 +189,7 @@
 				style="padding: 16px 18px; margin-bottom: 18px"
 			>
 				<div
-					class="text-ink-mute font-semibold uppercase"
-					style="font-size: 10px; letter-spacing: 0.1em; margin-bottom: 12px"
+					class="text-ink-mute font-semibold uppercase text-xs" style="letter-spacing: 0.1em; margin-bottom: 12px"
 				>
 					Register an engagement
 				</div>
@@ -238,8 +237,7 @@
 
 		<div class="bg-paper-soft border-paper-edge overflow-x-auto rounded-xl border">
 			<div
-				class="border-paper-edge text-ink-mute grid gap-4 border-b font-semibold uppercase min-w-[600px]"
-				style="grid-template-columns: 1.4fr 1.6fr 0.9fr 0.9fr auto; padding: 11px 18px; font-size: 10px; letter-spacing: 0.1em"
+				class="border-paper-edge text-ink-mute grid gap-4 border-b font-semibold uppercase min-w-[600px] text-xs" style="grid-template-columns: 1.4fr 1.6fr 0.9fr 0.9fr auto; padding: 11px 18px; letter-spacing: 0.1em"
 			>
 				<span>Client</span><span>Projects</span><span>Status</span><span>Updated</span><span
 					>Actions</span
@@ -262,8 +260,7 @@
 					>
 						<div class="flex items-center gap-3" style="min-width: 0">
 							<span
-								class="kanji text-accent flex-shrink-0 text-center"
-								style="font-size: 16px; width: 18px">客</span
+								class="kanji text-accent flex-shrink-0 text-center text-base" style="width: 18px">客</span
 							>
 							<div style="min-width: 0">
 								<div class="text-ink truncate text-sm">{eng.client}</div>

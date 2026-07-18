@@ -106,7 +106,7 @@
 				class="bg-ink text-on-primary inline-flex items-center gap-2 rounded-lg text-xs font-medium"
 				style="padding: 8px 13px; cursor: pointer; border: none"
 			>
-				<span class="kanji" style="font-size: 12px">規</span>
+				<span class="kanji text-xs">規</span>
 				{showAdd ? 'Close' : 'Add policy'}
 			</button>
 		{/snippet}
@@ -126,7 +126,7 @@
 
 		{#if showAdd}
 			<div class="bg-paper-soft border-paper-edge rounded-xl border" style="padding: 16px 18px; margin: 18px 0">
-				<div class="text-ink-mute font-semibold uppercase" style="font-size: 10px; letter-spacing: 0.1em; margin-bottom: 12px">
+				<div class="text-ink-mute font-semibold uppercase text-xs" style="letter-spacing: 0.1em; margin-bottom: 12px">
 					Add or edit a scope policy
 				</div>
 				<div class="grid gap-3" style="grid-template-columns: 1.6fr 1.2fr 1fr auto; align-items: end">
@@ -162,8 +162,7 @@
 
 		<div class="bg-paper-soft border-paper-edge overflow-hidden rounded-xl border" style="margin-top: 18px">
 			<div
-				class="border-paper-edge text-ink-mute grid gap-4 border-b font-semibold uppercase"
-				style="grid-template-columns: 1.8fr 1.4fr 1fr 0.9fr auto; padding: 11px 18px; font-size: 10px; letter-spacing: 0.1em"
+				class="border-paper-edge text-ink-mute grid gap-4 border-b font-semibold uppercase text-xs" style="grid-template-columns: 1.8fr 1.4fr 1fr 0.9fr auto; padding: 11px 18px; letter-spacing: 0.1em"
 			>
 				<span>Scope</span><span>Attribution</span><span>Retention</span><span>Updated</span><span></span>
 			</div>
@@ -179,7 +178,7 @@
 						style="grid-template-columns: 1.8fr 1.4fr 1fr 0.9fr auto; padding: 13px 18px"
 					>
 						<div class="flex items-center gap-2" style="min-width: 0">
-							<span class="kanji text-ink-mute text-center" style="font-size: 14px; width: 18px">層</span>
+							<span class="kanji text-ink-mute text-center text-sm" style="width: 18px">層</span>
 							<span class="text-ink truncate text-sm">{p.scope_key}</span>
 						</div>
 						<div class="flex items-center gap-2">

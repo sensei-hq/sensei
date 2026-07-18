@@ -44,7 +44,7 @@
 		style="width: 57%; padding: 44px 52px; background: linear-gradient(160deg, var(--accent-soft) 0%, var(--paper-soft) 60%)"
 	>
 		<div class="flex items-center gap-3">
-			<span class="kanji text-accent" style="font-size: 26px; line-height: 1">結</span>
+			<span class="kanji text-accent text-2xl" style="line-height: 1">結</span>
 			<span class="display text-xl" style="letter-spacing: -0.01em">Dōjō</span>
 			<span
 				class="mono bg-paper border-paper-edge text-ink-mute rounded-full border text-xs"
@@ -56,7 +56,7 @@
 			<div class="text-ink-mute text-xs uppercase" style="letter-spacing: 0.2em; margin-bottom: 10px">
 				Welcome back
 			</div>
-			<h1 class="display font-light" style="font-size: 42px; letter-spacing: -0.02em; margin: 0; line-height: 1.08">
+			<h1 class="display font-light text-3xl" style="letter-spacing: -0.02em; margin: 0; line-height: 1.08">
 				Your team kept<br />learning while<br />you were away.
 			</h1>
 			<p class="text-ink-soft text-sm" style="line-height: 1.6; margin: 16px 0 0; max-width: 440px">
@@ -71,7 +71,7 @@
 					<span class="kanji text-accent text-sm">共</span>
 					<span class="text-accent"><Spark data={m.contribSpark} /></span>
 				</div>
-				<div class="display text-ink font-light" style="font-size: 30px; line-height: 1">
+				<div class="display text-ink font-light text-2xl" style="line-height: 1">
 					{m.contribWeek}
 				</div>
 				<div class="text-ink-mute text-xs" style="margin-top: 7px; line-height: 1.35">
@@ -82,7 +82,7 @@
 				<div class="flex items-center justify-between" style="margin-bottom: 9px">
 					<span class="kanji text-accent text-sm">決</span>
 				</div>
-				<div class="display text-ink font-light" style="font-size: 30px; line-height: 1">
+				<div class="display text-ink font-light text-2xl" style="line-height: 1">
 					{m.approvedWeek}
 				</div>
 				<div class="text-ink-mute text-xs" style="margin-top: 7px; line-height: 1.35">
@@ -93,7 +93,7 @@
 				<div class="flex items-center justify-between" style="margin-bottom: 9px">
 					<span class="kanji text-accent text-sm">盾</span>
 				</div>
-				<div class="display text-ink font-light" style="font-size: 30px; line-height: 1">
+				<div class="display text-ink font-light text-2xl" style="line-height: 1">
 					{m.dereferenced}
 				</div>
 				<div class="text-ink-mute text-xs" style="margin-top: 7px; line-height: 1.35">
@@ -107,19 +107,18 @@
 			class="bg-paper border-paper-edge flex items-center gap-4 rounded-xl border"
 			style="margin-top: 14px; padding: 15px 17px"
 		>
-			<span class="kanji text-accent" style="font-size: 22px">守</span>
+			<span class="kanji text-accent text-xl">守</span>
 			<div class="flex-1" style="min-width: 0">
 				<div
-					class="text-ink-faint font-semibold uppercase"
-					style="font-size: 10.5px; letter-spacing: 0.12em; margin-bottom: 3px"
+					class="text-ink-faint font-semibold uppercase text-xs" style="letter-spacing: 0.12em; margin-bottom: 3px"
 				>
 					Just published · Company
 				</div>
 				<div class="text-ink text-sm">Never log refresh tokens, even at debug level</div>
 			</div>
 			<div class="text-right">
-				<div class="display text-success font-light" style="font-size: 22px">+{adoptionLift}pp</div>
-				<div class="text-ink-mute" style="font-size: 10px">first-try resolution</div>
+				<div class="display text-success font-light text-xl">+{adoptionLift}pp</div>
+				<div class="text-ink-mute text-xs">first-try resolution</div>
 			</div>
 		</div>
 
@@ -132,7 +131,7 @@
 	<!-- ── right · sign-in options ── -->
 	<div class="flex flex-1 items-center justify-center" style="min-width: 0; padding: 40px">
 		<div style="width: 364px; max-width: 100%">
-			<h2 class="display font-normal" style="font-size: 26px; letter-spacing: -0.015em; margin: 0; line-height: 1.1">
+			<h2 class="display font-normal text-2xl" style="letter-spacing: -0.015em; margin: 0; line-height: 1.1">
 				Sign in to continue
 			</h2>
 			<p class="text-ink-mute text-sm" style="line-height: 1.55; margin: 8px 0 26px">
@@ -156,7 +155,7 @@
 			<!-- divider -->
 			<div class="flex items-center gap-3" style="margin: 20px 0">
 				<span class="bg-paper-edge flex-1" style="height: 1px"></span>
-				<span class="mono text-ink-faint" style="font-size: 10.5px; letter-spacing: 0.1em">OR</span>
+				<span class="mono text-ink-faint text-xs" style="letter-spacing: 0.1em">OR</span>
 				<span class="bg-paper-edge flex-1" style="height: 1px"></span>
 			</div>
 
@@ -164,8 +163,7 @@
 			<form onsubmit={sendMagicLink}>
 				<label
 					for="dojo-email"
-					class="text-ink-mute block font-semibold uppercase"
-					style="font-size: 11px; letter-spacing: 0.1em; margin-bottom: 7px">Work email</label
+					class="text-ink-mute block font-semibold uppercase text-xs" style="letter-spacing: 0.1em; margin-bottom: 7px">Work email</label
 				>
 				<input
 					id="dojo-email"
@@ -205,10 +203,9 @@
 					<button
 						type="button"
 						onclick={() => (selfHost = true)}
-						class="text-ink-soft flex w-full items-center justify-center gap-2"
-						style="background: none; border: none; cursor: pointer; font-size: 12.5px"
+						class="text-ink-soft flex w-full items-center justify-center gap-2 text-sm" style="background: none; border: none; cursor: pointer"
 					>
-						<span class="kanji text-ink-mute" style="font-size: 13px">基</span>
+						<span class="kanji text-ink-mute text-sm">基</span>
 						Connecting to a self-hosted Dōjō?
 						<span class="text-accent">Enter its URL →</span>
 					</button>
@@ -216,8 +213,7 @@
 					<div>
 						<label
 							for="dojo-selfhost"
-							class="text-ink-mute block font-semibold uppercase"
-							style="font-size: 11px; letter-spacing: 0.1em; margin-bottom: 7px">Self-hosted Dōjō URL</label
+							class="text-ink-mute block font-semibold uppercase text-xs" style="letter-spacing: 0.1em; margin-bottom: 7px">Self-hosted Dōjō URL</label
 						>
 						<div class="flex gap-2">
 							<input
