@@ -1,8 +1,9 @@
-# Frontend (SvelteKit + Tauri) — guidelines
+# Frontend (SvelteKit) — guidelines
 
-Authoritative rules for the desktop app under `sensei/app/`. Every screen, every
-refactor, every new feature follows this. When in doubt, this document overrides
-inherited habits from the existing code.
+Authoritative rules for **every rokkit-powered SvelteKit surface** — `sensei/app/`
+(desktop, Tauri), `dojo/` (web console), and `website/`. Every screen, every refactor,
+every new feature follows this. When in doubt, this document overrides inherited habits
+from the existing code. The design system is one system; these surfaces share it.
 
 Companion docs:
 - Visual system reference — `sensei/docs/mockups/Zen-Sumi Design System/colors_and_type.css`
@@ -116,6 +117,44 @@ Hairlines via `border border-paper-edge` (or `border-t-paper-edge`,
 `border-l-paper-edge`, etc.). Dashed sub-checks etc. via
 `border-dashed border-paper-edge`. Status-tinted edges via the auto-emitted
 `border-success-soft`, `border-accent-soft`, etc.
+
+### 1.7 Responsive — mobile-first, prefix utilities, never `@media` for layout
+
+UnoCSS breakpoints (shared across surfaces): `sm` 640 · `md` 768 · `lg` 1024 · `xl`
+1280. Write the **phone layout as the base** (unprefixed), then layer wider layouts
+with `md:` / `lg:`. On the dōjō web console the canonical split is `<md` phone /
+`md:+` desktop.
+
+| Intent | Classes |
+| --- | --- |
+| desktop-only element | `hidden md:block` / `hidden md:flex` |
+| mobile-only element (hamburger) | `md:hidden` |
+| stack on phone, row on desktop | `flex flex-col md:flex-row` |
+| 1-col → multi-col grid | `grid grid-cols-1 md:grid-cols-3` |
+| full-width phone, fixed desktop | `w-full md:w-[218px]` |
+| off-canvas drawer → static sidebar | `fixed md:static -translate-x-full md:translate-x-0` + swap-on-open |
+| wide content (data tables) | wrap in an `overflow-x-auto` container + `min-w-[…]`; the page never scrolls horizontally |
+
+- **Never** author `@media` blocks in `<style>` for layout. The only legit `@media`
+  is `prefers-reduced-motion` (a motion concern, §3.4).
+- **Swap conflicting utilities, don't stack them.** Two utilities that set the same
+  property resolve by stylesheet source order (not class-attribute order), so toggle by
+  swapping the whole class: `{open ? 'translate-x-0' : '-translate-x-full'}
+  md:translate-x-0`, never both at once.
+
+### 1.8 Per-surface config parity
+
+Each surface (`app/`, `dojo/`, `website/`) has its own `uno.config.js`, but the
+`theme` block **must be identical** — the eight-stop `fontSize` scale (§1.3), the
+spacing grid (§1.4), the radii (§1.5), and the letter-spacing / line-height / duration
+/ shadow stops. **Customizing the UnoCSS defaults is encouraged — but do it identically
+across surfaces.** `sensei/app/uno.config.js` is the reference implementation: its
+`fontSize` tuples map `text-sm`→13px, `text-base`→15px, `text-lg`→17px, … so the
+utilities *are* the design system. Without that block, `text-sm` falls back to
+UnoCSS's default 14px and authors hand-code `font-size` (the exact drift this document
+exists to prevent). `dojo/` and `website/` must carry the same `theme`. Never patch the
+gap with inline `style="font-size:…"`, `<style>` sizes, or `@media` — fix the config
+once, use the utilities everywhere.
 
 ---
 
