@@ -10,16 +10,24 @@
 	// code or diffs — the payload carries a stripped prompt by design. Presentational
 	// plus the single replyToGate mutation; mirrors the run-detail Send pattern (busy
 	// $state, DojoApiError-aware catch → inline error line, onReplied() on success).
+	//
+	// `onReply` is an OPTIONAL delivery override: when the host page provides it (e.g.
+	// the run-detail page, which routes replies through its P4.5 offline queue so an
+	// offline Approve/Deny gets held + flushed on reconnect), the card delegates the
+	// send to it instead of calling replyToGate directly. Absent it, the card falls
+	// back to the direct replyToGate mutation — so every other caller/test is unchanged.
 	let {
 		gate,
 		tenantKey,
 		accessToken,
-		onReplied
+		onReplied,
+		onReply
 	}: {
 		gate: RelayGate;
 		tenantKey: string;
 		accessToken: string | null;
 		onReplied?: () => void;
+		onReply?: (inboxId: string, reply: Record<string, unknown>) => Promise<void>;
 	} = $props();
 
 	const ZERO_UUID = '00000000-0000-0000-0000-000000000000';
@@ -63,8 +71,15 @@
 		if (busy) return;
 		busy = true;
 		replyError = null;
+		const body = withNote(reply);
 		try {
-			await replyToGate(tenantKey, gate.id, withNote(reply), { fetch, accessToken });
+			// Delegate delivery to the host when it wants to (offline-queue aware); else
+			// fall back to the direct mutation so standalone callers keep working.
+			if (onReply) {
+				await onReply(gate.id, body);
+			} else {
+				await replyToGate(tenantKey, gate.id, body, { fetch, accessToken });
+			}
 			onReplied?.();
 		} catch (e) {
 			replyError = e instanceof DojoApiError ? e.message : 'could not send your reply';

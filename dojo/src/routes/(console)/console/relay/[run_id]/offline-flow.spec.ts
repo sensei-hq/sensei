@@ -92,6 +92,30 @@ async function offlineAwareSend(
 	}
 }
 
+/** The page's `replyGate` (RelayGateCard's onReply delegate): offline → queue a
+ *  `reply` entry + resolve (never throw); online → replyToGate; a NETWORK failure
+ *  queues instead, a DojoApiError rethrows so the card surfaces it inline. Mirrors
+ *  the exact source in +page.svelte so the queue shape + branch logic is covered. */
+async function offlineAwareReply(
+	store: KeyValueStore,
+	online: boolean,
+	inboxId: string,
+	reply: Record<string, unknown>
+): Promise<'queued' | 'sent'> {
+	if (!online) {
+		enqueue(store, { kind: 'reply', runId: RUN, payload: { inboxId, reply } });
+		return 'queued';
+	}
+	try {
+		await replyToGate(TENANT, inboxId, reply, OPTS);
+		return 'sent';
+	} catch (e) {
+		if (e instanceof DojoApiError) throw e;
+		enqueue(store, { kind: 'reply', runId: RUN, payload: { inboxId, reply } });
+		return 'queued';
+	}
+}
+
 describe('run-detail offline flow', () => {
 	beforeEach(() => {
 		submitReview.mockReset();
@@ -123,6 +147,60 @@ describe('run-detail offline flow', () => {
 		submitReview.mockRejectedValueOnce(new DojoApiError(422, 'run already closed'));
 		const result = await offlineAwareSend(store, true, [{ seq: 1, verdict: 'approve' }]);
 		expect(result).toBe('error');
+		expect(size(store, RUN)).toBe(0);
+	});
+
+	it('offline gate reply: enqueues a `reply` entry (replyToGate NOT called) and resolves', async () => {
+		const store = memoryStore();
+		const result = await offlineAwareReply(store, false, 'inbox-1', { verdict: 'approve' });
+		expect(result).toBe('queued');
+		expect(replyToGate).not.toHaveBeenCalled();
+		const queued = peekAll(store, RUN);
+		expect(queued.length).toBe(1);
+		// The queued shape must match what flush()'s `reply` sender reads.
+		expect(queued[0]).toMatchObject({
+			kind: 'reply',
+			runId: RUN,
+			payload: { inboxId: 'inbox-1', reply: { verdict: 'approve' } }
+		});
+	});
+
+	it('online gate reply: calls replyToGate and does NOT queue', async () => {
+		const store = memoryStore();
+		replyToGate.mockResolvedValueOnce(undefined);
+		const result = await offlineAwareReply(store, true, 'inbox-1', { verdict: 'deny', note: 'no' });
+		expect(result).toBe('sent');
+		expect(replyToGate).toHaveBeenCalledWith(TENANT, 'inbox-1', { verdict: 'deny', note: 'no' }, OPTS);
+		expect(size(store, RUN)).toBe(0);
+	});
+
+	it('gate reply network failure mid-send queues instead of throwing', async () => {
+		const store = memoryStore();
+		replyToGate.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+		const result = await offlineAwareReply(store, true, 'inbox-1', { verdict: 'approve' });
+		expect(result).toBe('queued');
+		expect(size(store, RUN)).toBe(1);
+	});
+
+	it('gate reply DojoApiError rethrows (card shows it inline) and does NOT queue', async () => {
+		const store = memoryStore();
+		replyToGate.mockRejectedValueOnce(new DojoApiError(422, 'gate already answered'));
+		await expect(offlineAwareReply(store, true, 'inbox-1', { verdict: 'approve' })).rejects.toBeInstanceOf(
+			DojoApiError
+		);
+		expect(size(store, RUN)).toBe(0);
+	});
+
+	it('reconnect flush: a queued gate reply flushes through replyToGate', async () => {
+		const store = memoryStore();
+		await offlineAwareReply(store, false, 'inbox-1', { choice: 'Sessions' });
+		expect(size(store, RUN)).toBe(1);
+
+		replyToGate.mockResolvedValue(undefined);
+		const { sent, failed } = await flushQueue(store, peekAll(store, RUN), makeSender());
+		expect(failed).toEqual([]);
+		expect(sent.length).toBe(1);
+		expect(replyToGate).toHaveBeenCalledWith(TENANT, 'inbox-1', { choice: 'Sessions' }, OPTS);
 		expect(size(store, RUN)).toBe(0);
 	});
 

@@ -135,6 +135,42 @@
 		}
 	}
 
+	// Queue one gate reply locally (offline, or a mid-send network drop). The entry
+	// shape matches exactly what flush()'s `reply` sender reads
+	// (replyToGate(…, entry.payload.inboxId, entry.payload.reply, …)), so the existing
+	// reconnect flush delivers it — no new flush path needed. Shows the same calm
+	// held-locally confirmation the review/nudge use.
+	function queueReply(inboxId: string, reply: Record<string, unknown>) {
+		if (!store) return;
+		enqueue(store, { kind: 'reply', runId: data.runId, payload: { inboxId, reply } });
+		sendQueuedNote = "reply queued — it'll send when you reconnect";
+		refreshQueued();
+	}
+
+	// RelayGateCard's `onReply` delegate — the gate-reply analogue of send()/nudge():
+	// offline → hold + resolve (never throw, so the card shows the calm queued note,
+	// not an error); online → replyToGate + invalidateAll, and a network-failure catch
+	// queues instead (a real DojoApiError rethrows so the card surfaces it inline).
+	async function replyGate(inboxId: string, reply: Record<string, unknown>) {
+		if (!online) {
+			queueReply(inboxId, reply);
+			return;
+		}
+		try {
+			await replyToGate(data.tenantKey, inboxId, reply, {
+				fetch,
+				accessToken: data.accessToken
+			});
+			sendQueuedNote = null;
+			await invalidateAll();
+		} catch (e) {
+			// A DojoApiError is a real API rejection — rethrow so the card shows it inline.
+			// Anything else is a network failure (offline mid-send) — hold + flush later.
+			if (e instanceof DojoApiError) throw e;
+			queueReply(inboxId, reply);
+		}
+	}
+
 	// Phase → Step tree from the flat, seq-ordered segment list. Top-level segments
 	// (parent_id === null) are phases; the rest hang under their parent, keeping the
 	// load's seq order within each group. Orphans (a parent that isn't a top-level
@@ -188,11 +224,11 @@
 	const total = $derived(data.segments.length);
 
 	// This run's pending "needs you" gates (dojo.relay_inbox rows) — the live-answer
-	// affordance. Filtered to this run in the load; each is answered via RelayGateCard's
-	// replyToGate mutation, and onReplied → invalidateAll refreshes the list.
-	// Offline follow-up: RelayGateCard calls replyToGate directly, so an offline reply
-	// surfaces the card's inline error rather than queueing — wiring gate-reply into the
-	// P4.5 offline queue (its `reply` dispatch already exists) is a tracked follow-up.
+	// affordance. Filtered to this run in the load; each is answered via RelayGateCard,
+	// and onReplied → invalidateAll refreshes the list. The card delegates delivery to
+	// `replyGate` below (its `onReply` prop) so an offline Approve/Deny is HELD in the
+	// P4.5 queue and flushed on reconnect — matching the review/nudge offline pattern —
+	// instead of surfacing the card's inline error.
 	const gates = $derived<RelayGate[]>(data.gates);
 
 	// Queue the current review batch locally (offline, or a mid-send network drop).
@@ -426,7 +462,7 @@
 							gate={g}
 							tenantKey={data.tenantKey}
 							accessToken={data.accessToken}
-							onReplied={() => invalidateAll()}
+							onReply={replyGate}
 						/>
 					{/each}
 				</div>
