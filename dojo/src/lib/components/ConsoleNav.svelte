@@ -6,7 +6,14 @@
 	// Policies, Health, Audit) are wired; the rest render as "soon"
 	// (non-interactive) per the mockup's DOJO_BUILT gating. `active` is the current
 	// section id.
-	let { active, tenantKey }: { active: string; tenantKey: string } = $props();
+	// `open`/`onClose` drive the mobile drawer (md:+ renders a static sidebar where
+	// `open` is irrelevant). `onClose` fires from the backdrop and on navigation.
+	let {
+		active,
+		tenantKey,
+		open = false,
+		onClose
+	}: { active: string; tenantKey: string; open?: boolean; onClose?: () => void } = $props();
 
 	// A wired destination's route id (`to`); absent → a "soon" placeholder. Each id
 	// maps to its console sub-route below.
@@ -99,9 +106,19 @@
 	}
 </script>
 
+{#if open}
+	<button
+		type="button"
+		aria-label="Close navigation"
+		onclick={() => onClose?.()}
+		class="bg-ink fixed inset-0 z-40 cursor-pointer border-none opacity-50 md:hidden"
+	></button>
+{/if}
 <aside
-	class="border-paper-edge bg-paper-soft flex flex-shrink-0 flex-col overflow-auto border-r"
-	style="width: 218px; padding: 16px 12px"
+	id="console-nav"
+	class="border-paper-edge bg-paper-soft fixed inset-y-0 left-0 z-50 flex w-[218px] flex-shrink-0 flex-col overflow-auto border-r px-3 py-4 transition-transform duration-200 md:static md:z-auto md:translate-x-0 md:transition-none {open
+		? 'translate-x-0'
+		: '-translate-x-full'}"
 >
 	{#each groups as grp (grp.group)}
 		<div style="margin-bottom: 14px">
@@ -117,6 +134,7 @@
 					{#if it.to}
 						<a
 							href={hrefFor(it.to)}
+							onclick={() => onClose?.()}
 							aria-current={on ? 'page' : undefined}
 							class="grid w-full items-center gap-2 rounded-lg no-underline {on
 								? 'bg-paper border-paper-edge text-ink border'
