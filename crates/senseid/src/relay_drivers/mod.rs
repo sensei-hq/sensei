@@ -8,10 +8,12 @@
 
 pub mod acp;
 pub mod claude;
+pub mod fallback;
 pub mod trait_def;
 
 pub use acp::{acp_update_to_segments, AcpObserveDriver};
 pub use claude::ClaudeDriver;
+pub use fallback::{coarse_status, coarse_to_run_status, CoarseStatus, FallbackDriver};
 pub use trait_def::{DriveCapability, DriveStep, RunDriver};
 
 use crate::tasks::handlers::advance_run::DriveConfig;
