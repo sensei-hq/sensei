@@ -190,4 +190,13 @@ under approach A (no main-merge/bump). End-of-P4: `sensei-security-reviewer`
   no-ops (logs + skips) — a missing key never breaks a gate raise.
 - Enable Supabase Realtime publication on `dojo.relay_*` in prod.
 - Apply + validate the relay RLS policies in prod.
+- **`PUBLIC_SUPABASE_ANON_KEY` (P4.2 client Realtime):** set the **prod**
+  anon/publishable key as a Worker **public** var (it is shipped to the browser —
+  `src/lib/relay-realtime.ts` reads `env.PUBLIC_SUPABASE_ANON_KEY` from
+  `$env/dynamic/public`). It is public by design: RLS + the user's session JWT
+  scope access, so the anon key alone grants nothing. `PUBLIC_SUPABASE_URL`
+  already exists. Dev uses the local anon JWT from `supabase status` in
+  `dojo/.env` (**gitignored**); `dojo/.env.example` + `dojo/.dev.vars.example`
+  carry an empty placeholder. If it (or the URL) is unset, the client-direct
+  Realtime subscription no-ops and the surface falls back to action-refresh.
 - (If native later) APNs/FCM credentials.

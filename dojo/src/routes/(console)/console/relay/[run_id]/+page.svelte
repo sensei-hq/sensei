@@ -29,6 +29,8 @@
 	} from '$lib/relay-offline';
 	import { isOnline, watchConnectivity } from '$lib/relay-connectivity';
 	import { segmentStateBadge } from '$lib/relay-view';
+	import { env } from '$env/dynamic/public';
+	import { subscribeRelay } from '$lib/relay-realtime';
 
 	// Relay run detail (mockup relay-planner.jsx RelayPlan + dojo-relay.jsx WatchPhases):
 	// a run's segment outline as a Phase → Step tree, with a PR-review-style verdict
@@ -303,11 +305,32 @@
 
 		// Seed live connectivity, then keep it in sync. A reconnect edge flushes.
 		online = isOnline();
-		const teardown = watchConnectivity((isOn, reconnected) => {
+		const connectivityTeardown = watchConnectivity((isOn, reconnected) => {
 			online = isOn;
 			if (reconnected) flush();
 		});
-		return teardown;
+
+		// P4.2 realtime swap: subscribe to Supabase Realtime on the user's relay rows
+		// so this run's outline/inbox refresh LIVE (a new gate/segment/progress update
+		// arrives without a user action). subscribeRelay authorizes as the user
+		// (data.accessToken → session JWT) so RLS scopes it to their own runs; onChange
+		// debounces an invalidateAll. It also serves as a reconnect-refresh signal — a
+		// redundant invalidateAll alongside P4.5's online/offline flush is harmless. A
+		// no-op under SSR / when unauthenticated. Scoped to this run's topic so its
+		// channel is distinct per run.
+		const realtimeTeardown = subscribeRelay({
+			url: env.PUBLIC_SUPABASE_URL,
+			anonKey: env.PUBLIC_SUPABASE_ANON_KEY,
+			accessToken: data.accessToken,
+			topic: `relay:run:${data.runId}`,
+			onChange: () => invalidateAll()
+		});
+
+		// Tear down BOTH on unmount — no leaked listeners or channels on navigate-away.
+		return () => {
+			connectivityTeardown();
+			realtimeTeardown();
+		};
 	});
 
 	// Persist drafts as the user edits, debounced ~300ms. Reads `drafts`/`nudgeText`
