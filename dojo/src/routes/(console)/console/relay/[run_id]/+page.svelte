@@ -1,16 +1,33 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { Button } from '@rokkit/ui';
 	import { invalidateAll } from '$app/navigation';
 	import ConsoleHead from '$lib/components/ConsoleHead.svelte';
 	import DojoChip from '$lib/components/DojoChip.svelte';
 	import RelayStatusBadge from '$lib/components/RelayStatusBadge.svelte';
+	import RelayOfflineBanner from '$lib/components/RelayOfflineBanner.svelte';
 	import {
 		submitReview,
 		sendNudge,
+		replyToGate,
 		DojoApiError,
 		type RelaySegment,
 		type SegmentReview
 	} from '$lib/relay-data';
+	import {
+		memoryStore,
+		loadDrafts,
+		saveDraft,
+		clearDrafts,
+		enqueue,
+		peekAll,
+		size,
+		flushQueue,
+		type KeyValueStore,
+		type QueuedAction,
+		type ActionSender
+	} from '$lib/relay-offline';
+	import { isOnline, watchConnectivity } from '$lib/relay-connectivity';
 	import { segmentStateBadge } from '$lib/relay-view';
 
 	// Relay run detail (mockup relay-planner.jsx RelayPlan + dojo-relay.jsx WatchPhases):
@@ -33,6 +50,26 @@
 
 	let sending = $state(false);
 	let sendError = $state<string | null>(null);
+	// A calm, non-fatal confirmation shown when a send/nudge is HELD locally (offline
+	// or a mid-send network drop) rather than delivered — cleared on the next real send.
+	let sendQueuedNote = $state<string | null>(null);
+
+	// ── Offline / reconnect / draft-queue (P4.5) ─────────────────────────────────
+	// Connectivity + the local draft/queue store. `store` is built client-side only
+	// (never at SSR/module eval — localStorage doesn't exist on the server); it
+	// wraps window.localStorage when present, else an in-memory fallback so callers
+	// never null-check. `online` keeps its $state default true so SSR renders online;
+	// onMount seeds it from isOnline() and watchConnectivity keeps it live.
+	let store: KeyValueStore | undefined = $state();
+	let online = $state(true);
+	let queuedCount = $state(0);
+	let flushing = $state(false);
+	let flushNote = $state<string | null>(null);
+
+	/** Re-read the queued count for THIS run (call after any enqueue / flush). */
+	function refreshQueued() {
+		if (store) queuedCount = size(store, data.runId);
+	}
 
 	// "Nudge the run" composer — an unsolicited steer sent TO the held run
 	// (sendNudge → a new relay_inbox row, distinct from the PR-review batch). Same
@@ -49,11 +86,29 @@
 	// again once a nudge lands.
 	let showNudge = $state(false);
 
+	// Queue the current nudge locally (offline, or a mid-send network drop). Shared
+	// by the offline short-circuit and the network-failure catch so both behave the
+	// same: hold it, confirm calmly, collapse the composer, refresh the count.
+	function queueNudge() {
+		if (!store) return;
+		enqueue(store, { kind: 'nudge', runId: data.runId, payload: { text: nudgeText.trim() } });
+		nudgeText = '';
+		showNudge = false;
+		sendQueuedNote = "nudge queued — it'll send when you reconnect";
+		refreshQueued();
+	}
+
 	async function nudge() {
 		if (!canNudge || nudging) return;
 		nudging = true;
 		nudgeError = null;
 		nudgeSent = false;
+		// Offline: hold the nudge locally rather than fail — it flushes on reconnect.
+		if (!online) {
+			queueNudge();
+			nudging = false;
+			return;
+		}
 		try {
 			await sendNudge(data.tenantKey, data.runId, nudgeText.trim(), {
 				fetch,
@@ -62,8 +117,15 @@
 			nudgeText = '';
 			nudgeSent = true;
 			showNudge = false;
+			sendQueuedNote = null;
 		} catch (e) {
-			nudgeError = e instanceof DojoApiError ? e.message : 'could not send the nudge';
+			// A DojoApiError is a real API rejection — surface it inline. Anything else
+			// is a network failure (offline mid-send) — hold the nudge and flush later.
+			if (e instanceof DojoApiError) {
+				nudgeError = e.message;
+			} else {
+				queueNudge();
+			}
 		} finally {
 			nudging = false;
 		}
@@ -121,23 +183,143 @@
 	const done = $derived(data.segments.filter((s) => s.state === 'done').length);
 	const total = $derived(data.segments.length);
 
+	// Queue the current review batch locally (offline, or a mid-send network drop).
+	// Drafts are intentionally NOT cleared here — they stay until the entry actually
+	// flushes, so a re-open still shows the pending review.
+	function queueReview() {
+		if (!store) return;
+		enqueue(store, { kind: 'review', runId: data.runId, payload: { reviews: pending } });
+		sendQueuedNote = "review queued — it'll send when you reconnect";
+		refreshQueued();
+	}
+
 	async function send() {
 		if (pending.length === 0) return;
 		sending = true;
 		sendError = null;
+		// Offline: hold the batch locally rather than fail — it flushes on reconnect.
+		if (!online) {
+			queueReview();
+			sending = false;
+			return;
+		}
 		try {
 			await submitReview(data.tenantKey, data.runId, pending, {
 				fetch,
 				accessToken: data.accessToken
 			});
 			drafts = {};
+			if (store) clearDrafts(store, data.runId);
+			sendQueuedNote = null;
 			await invalidateAll();
 		} catch (e) {
-			sendError = e instanceof DojoApiError ? e.message : 'could not send the review';
+			// A DojoApiError is a real API rejection — surface it inline. Anything else
+			// is a network failure (offline mid-send) — hold the batch and flush later.
+			if (e instanceof DojoApiError) {
+				sendError = e.message;
+			} else {
+				queueReview();
+			}
 		} finally {
 			sending = false;
 		}
 	}
+
+	// Flush every queued mutation for this run through the real relay-data senders.
+	// Runs on reconnect (via watchConnectivity) and from the banner's "Send queued".
+	// Each sender is wrapped so a DojoApiError OR a network error becomes a kept
+	// {ok:false} (flushQueue leaves failures queued for a later retry); a success is
+	// {ok:true} and its entry is removed durably. Partial-failure safe — never throws.
+	async function flush() {
+		if (!store || !online || flushing) return;
+		flushing = true;
+		const sender: ActionSender = async (entry: QueuedAction) => {
+			try {
+				if (entry.kind === 'review') {
+					await submitReview(data.tenantKey, entry.runId, entry.payload.reviews, {
+						fetch,
+						accessToken: data.accessToken
+					});
+				} else if (entry.kind === 'nudge') {
+					await sendNudge(data.tenantKey, entry.runId, entry.payload.text, {
+						fetch,
+						accessToken: data.accessToken,
+						kind: entry.payload.kind
+					});
+				} else {
+					await replyToGate(data.tenantKey, entry.payload.inboxId, entry.payload.reply, {
+						fetch,
+						accessToken: data.accessToken
+					});
+				}
+				return { ok: true } as const;
+			} catch (e) {
+				const error = e instanceof Error ? e.message : 'send failed';
+				return { ok: false, error } as const;
+			}
+		};
+		try {
+			const { sent, failed } = await flushQueue(store, peekAll(store, data.runId), sender);
+			refreshQueued();
+			if (failed.length === 0 && sent.length > 0) {
+				drafts = {};
+				clearDrafts(store, data.runId);
+				flushNote = null;
+				sendQueuedNote = null;
+				await invalidateAll();
+			} else if (failed.length > 0) {
+				flushNote = "some changes couldn't send yet — still queued";
+			}
+		} finally {
+			flushing = false;
+		}
+	}
+
+	onMount(() => {
+		// Build the storage adapter CLIENT-SIDE only: window.localStorage when it
+		// exists (private mode / disabled storage → fall back to in-memory so the page
+		// never throws). Never touched at module/SSR eval time.
+		let ls: KeyValueStore | undefined;
+		try {
+			if (typeof window !== 'undefined' && window.localStorage) ls = window.localStorage;
+		} catch {
+			ls = undefined; // storage blocked (private mode) — fall through to memory.
+		}
+		store = ls ?? memoryStore();
+
+		// Rehydrate any held drafts BEFORE anything can edit — seed the review drafts
+		// and the nudge composer from the last-persisted bundle. Doing this first
+		// means the persist effect (below) can't clobber a fresh rehydrate.
+		const held = loadDrafts(store, data.runId);
+		if (Object.keys(held.segments).length > 0) drafts = { ...held.segments };
+		if (held.nudge) nudgeText = held.nudge;
+		refreshQueued();
+
+		// Offline note: with no live connection the page still shows the last-loaded
+		// outline/inbox that SvelteKit's load data retained — the durable server rows
+		// (dojo.relay_segments / relay_inbox) remain the source of truth. A deeper
+		// offline mirror (IndexedDB snapshot of the outline) is a deferred follow-up,
+		// out of scope for P4.5 v1; here we only buffer drafts + the outbound queue.
+
+		// Seed live connectivity, then keep it in sync. A reconnect edge flushes.
+		online = isOnline();
+		const teardown = watchConnectivity((isOn, reconnected) => {
+			online = isOn;
+			if (reconnected) flush();
+		});
+		return teardown;
+	});
+
+	// Persist drafts as the user edits, debounced ~300ms. Reads `drafts`/`nudgeText`
+	// (its dependencies) and writes the whole per-run bundle. Guarded so it no-ops
+	// until the store is ready; the timeout is cleared on re-run/unmount via teardown.
+	$effect(() => {
+		if (!store) return;
+		const s = store;
+		const snapshot = { segments: { ...drafts }, nudge: nudgeText.trim() ? nudgeText : undefined };
+		const timer = setTimeout(() => saveDraft(s, data.runId, snapshot), 300);
+		return () => clearTimeout(timer);
+	});
 
 	// The three verdict affordances, in the order the mockup reviews read.
 	const VERDICTS: { verdict: Verdict; kanji: string; label: string }[] = [
@@ -188,6 +370,8 @@
 	</ConsoleHead>
 
 	<div class="flex-1 overflow-auto" style="padding: 8px 28px 28px">
+		<RelayOfflineBanner {online} queued={queuedCount} {flushing} onSend={flush} note={flushNote} />
+
 		{#if data.error}
 			<div
 				class="bg-warning-soft border-warning-edge text-ink-soft flex items-center gap-2 rounded-xl border text-sm"
@@ -207,6 +391,17 @@
 			>
 				<span class="kanji text-warning">検</span>
 				<span>Review not sent. <span class="mono text-ink-mute text-xs">{sendError}</span></span>
+			</div>
+		{/if}
+
+		{#if sendQueuedNote}
+			<!-- Held-locally confirmation — a calm success tone, not an error. -->
+			<div
+				class="bg-success-soft border-success-edge text-ink-soft flex items-center gap-2 rounded-xl border text-sm"
+				style="padding: 12px 16px; margin-top: 16px"
+			>
+				<span class="kanji text-success" style="font-size: 12px">済</span>
+				<span>{sendQueuedNote}</span>
 			</div>
 		{/if}
 
