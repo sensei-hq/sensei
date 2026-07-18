@@ -61,12 +61,18 @@ to live once P4.2 lands. Their P4.2 dependency is therefore soft, not hard.
 
 ## Chunks (ordered; per-chunk cadence = TDD → build/test → reviewer → commit `develop`)
 
-### P4.1 — relay RLS + realtime publication (local)  ·  DDL
-- **What:** RLS policies on `dojo.relay_sessions` / `relay_segments` / `relay_inbox`
-  so a signed-in user can `SELECT` only rows for runs in a Dōjō they're a member of
-  (join through `dojo.memberships`); add those tables to the `supabase_realtime`
-  publication (local). The Worker keeps its `service_role` write path (bypasses RLS);
-  RLS only governs the new client-direct **read/subscribe** path.
+### P4.1 — relay RLS + realtime publication (local)  ·  DDL  ·  ✅ SHIPPED
+- **What:** SELECT-only RLS policies (role `authenticated`) so a signed-in user can
+  read only their **own** relay rows — `user_id = auth.uid()` on `relay_sessions`/
+  `relay_inbox`, and `relay_segments` via the session join. **Own-rows-only** (not
+  membership/tenant-wide — that broader team visibility is a deliberate **P6**
+  extension). A table-level `grant select to authenticated` is REQUIRED alongside RLS
+  (else `permission denied` before RLS even evaluates). Relay tables added to the
+  `supabase_realtime` publication (via a `supabase/migrations/*.sql`, NOT dbd — it's a
+  Supabase-owned object). The Worker keeps its `service_role` write path (bypasses
+  RLS); RLS only governs the new client-direct **read/subscribe** path. JWT harness
+  (`scripts/relay-rls-check.sh`) proves member-sees-own / non-member-none /
+  service-role-all / in-publication (12/12 against local supabase).
 - **Acceptance:** with a local anon/authed JWT, a member `SELECT`s their run's inbox
   rows and gets them; a non-member gets zero rows; the Worker's service-role writes
   still succeed; the tables appear in the realtime publication. Tested via a psql/JWT
