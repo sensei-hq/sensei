@@ -6,13 +6,15 @@
 	import DojoChip from '$lib/components/DojoChip.svelte';
 	import RelayStatusBadge from '$lib/components/RelayStatusBadge.svelte';
 	import RelayOfflineBanner from '$lib/components/RelayOfflineBanner.svelte';
+	import RelayGateCard from '$lib/components/RelayGateCard.svelte';
 	import {
 		submitReview,
 		sendNudge,
 		replyToGate,
 		DojoApiError,
 		type RelaySegment,
-		type SegmentReview
+		type SegmentReview,
+		type RelayGate
 	} from '$lib/relay-data';
 	import {
 		memoryStore,
@@ -184,6 +186,14 @@
 
 	const done = $derived(data.segments.filter((s) => s.state === 'done').length);
 	const total = $derived(data.segments.length);
+
+	// This run's pending "needs you" gates (dojo.relay_inbox rows) — the live-answer
+	// affordance. Filtered to this run in the load; each is answered via RelayGateCard's
+	// replyToGate mutation, and onReplied → invalidateAll refreshes the list.
+	// Offline follow-up: RelayGateCard calls replyToGate directly, so an offline reply
+	// surfaces the card's inline error rather than queueing — wiring gate-reply into the
+	// P4.5 offline queue (its `reply` dispatch already exists) is a tracked follow-up.
+	const gates = $derived<RelayGate[]>(data.gates);
 
 	// Queue the current review batch locally (offline, or a mid-send network drop).
 	// Drafts are intentionally NOT cleared here — they stay until the entry actually
@@ -394,6 +404,34 @@
 
 	<div class="flex-1 overflow-auto" style="padding: 8px 28px 28px">
 		<RelayOfflineBanner {online} queued={queuedCount} {flushing} onSend={flush} note={flushNote} />
+
+		{#if gates.length > 0}
+			<!-- Needs you — this run's pending gate(s), answerable in place. Sits at the
+				 top of the run body so the away-from-keyboard loop doesn't dead-end: a
+				 gate surfaced in the blocked-home can be replied to right here. -->
+			<div
+				class="bg-paper-soft border-paper-edge rounded-xl border"
+				style="padding: 15px 18px; margin-top: 16px"
+			>
+				<div class="flex items-center gap-2">
+					<span class="kanji text-accent" style="font-size: 13px">要</span>
+					<span
+						class="text-ink-mute text-xs font-semibold"
+						style="letter-spacing: 0.14em; text-transform: uppercase">Needs you</span
+					>
+				</div>
+				<div class="flex flex-col gap-3" style="margin-top: 12px">
+					{#each gates as g (g.id)}
+						<RelayGateCard
+							gate={g}
+							tenantKey={data.tenantKey}
+							accessToken={data.accessToken}
+							onReplied={() => invalidateAll()}
+						/>
+					{/each}
+				</div>
+			</div>
+		{/if}
 
 		{#if data.error}
 			<div
