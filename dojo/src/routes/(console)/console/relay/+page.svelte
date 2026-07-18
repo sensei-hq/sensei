@@ -5,6 +5,10 @@
 	import RelayStatusBadge from '$lib/components/RelayStatusBadge.svelte';
 	import { relativeAge } from '$lib/triage-view';
 	import { progressWidth } from '$lib/relay-view';
+	import { onMount } from 'svelte';
+	import { invalidateAll } from '$app/navigation';
+	import { env } from '$env/dynamic/public';
+	import { subscribeRelay } from '$lib/relay-realtime';
 
 	// Relay run list (mockup dojo-relay.jsx "Active"/RelayProjectsBody): every
 	// supervised run the caller can see in this tenant, one card each. The card is a
@@ -17,6 +21,22 @@
 	// detail page and invalidateAll to refresh this section (P4.2 will make removal
 	// live via realtime). Mirrors triage/+page.svelte.
 	let { data } = $props();
+
+	// P4.2 realtime swap: subscribe to Supabase Realtime on the signed-in user's
+	// relay rows so a raised gate / status change refreshes this list LIVE, not just
+	// on a user action. subscribeRelay authorizes as the user (data.accessToken →
+	// the session JWT), so RLS scopes the stream to their own runs; onChange debounces
+	// an invalidateAll so a burst of changes triggers a single refresh. It's a no-op
+	// under SSR or when unauthenticated (the action-refresh path still works), and its
+	// teardown removes the channel on unmount so navigating away never leaks a channel.
+	onMount(() =>
+		subscribeRelay({
+			url: env.PUBLIC_SUPABASE_URL,
+			anonKey: env.PUBLIC_SUPABASE_ANON_KEY,
+			accessToken: data.accessToken,
+			onChange: () => invalidateAll()
+		})
+	);
 
 	// Format an ISO instant as a short local time for the "paused until" line.
 	function shortTime(iso: string): string {
