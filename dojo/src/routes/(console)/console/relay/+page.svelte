@@ -1,7 +1,6 @@
 <script lang="ts">
-	import { invalidateAll } from '$app/navigation';
 	import ConsoleHead from '$lib/components/ConsoleHead.svelte';
-	import RelayGateCard from '$lib/components/RelayGateCard.svelte';
+	import RelayBlockedHome from '$lib/components/RelayBlockedHome.svelte';
 	import RelayNotifyToggle from '$lib/components/RelayNotifyToggle.svelte';
 	import RelayStatusBadge from '$lib/components/RelayStatusBadge.svelte';
 	import { relativeAge } from '$lib/triage-view';
@@ -9,12 +8,14 @@
 
 	// Relay run list (mockup dojo-relay.jsx "Active"/RelayProjectsBody): every
 	// supervised run the caller can see in this tenant, one card each. The card is a
-	// link into the run detail route. Above it, a "Needs you" band (mockup "requires
-	// you" / RelayProjectsBody.needs) surfaces the pending gates the agent is waiting
-	// on, one RelayGateCard each. Presentational only — the load (+page.ts → listRuns
-	// + listGates) does the fetching and degrades to empty lists + a surfaced error so
-	// the shell still renders; the cards' replies invalidateAll to refresh. Mirrors
-	// triage/+page.svelte.
+	// link into the run detail route. Above it, the P4.6 "Blocked on you" home
+	// (RelayBlockedHome) is the first-class away-from-keyboard landing — it aggregates
+	// the pending gates the agent is waiting on across all runs, urgency-ordered, each
+	// linking to its gate card. Presentational only — the load (+page.ts → listRuns +
+	// listGates) does the fetching and degrades to empty lists + a surfaced error so
+	// the shell still renders. Refresh-based for now: gate replies happen on the run
+	// detail page and invalidateAll to refresh this section (P4.2 will make removal
+	// live via realtime). Mirrors triage/+page.svelte.
 	let { data } = $props();
 
 	// Format an ISO instant as a short local time for the "paused until" line.
@@ -55,27 +56,11 @@
 			</div>
 		{/if}
 
-		{#if data.gates.length > 0}
-			<div style="margin-top: 18px">
-				<div class="flex items-center gap-2" style="margin-bottom: 12px">
-					<span class="kanji text-accent" style="font-size: 13px">要</span>
-					<span
-						class="text-ink-mute text-xs font-semibold"
-						style="letter-spacing: 0.14em; text-transform: uppercase">Needs you</span
-					>
-					<span class="mono text-accent text-xs">{data.gates.length}</span>
-				</div>
-				<div class="flex flex-col gap-3">
-					{#each data.gates as gate (gate.id)}
-						<RelayGateCard
-							{gate}
-							tenantKey={data.tenantKey}
-							accessToken={data.accessToken}
-							onReplied={() => invalidateAll()}
-						/>
-					{/each}
-				</div>
-			</div>
+		{#if !data.error}
+			<!-- P4.6 "Blocked on you" home — the first-class landing across all runs.
+				 Owns its own empty state ("nothing's waiting on you"), so it renders
+				 whether or not there are gates; hidden only when the shell is erroring. -->
+			<RelayBlockedHome gates={data.gates} />
 		{/if}
 
 		{#if data.runs.length === 0 && !data.error}
