@@ -65,7 +65,7 @@
     padding: 0 6px;
   }
   .section-label {
-    font-size: 8.5px;
+    font-size: var(--text-xs);
     letter-spacing: 0.18em;
     color: var(--sumi-3);
     text-transform: uppercase;
@@ -83,19 +83,19 @@
     gap: 8px;
     padding: 5px 8px;
     border-radius: 5px;
-    font-size: 11px;
+    font-size: var(--text-xs);
   }
   .nav-item.active {
     background: var(--paper-3);
   }
-  .item-kanji { font-size: 11px; }
-  .item-badge { font-size: 8.5px; color: var(--sumi-3); }
+  .item-kanji { font-size: var(--text-xs); }
+  .item-badge { font-size: var(--text-xs); color: var(--sumi-3); }
   .active-projects {
     display: flex;
     flex-direction: column;
     gap: 4px;
     padding: 0 8px;
-    font-size: 11px;
+    font-size: var(--text-xs);
     color: var(--sumi-2);
   }
 </style>

@@ -68,17 +68,17 @@
     margin-bottom: 18px;
   }
   .section-tag {
-    font-size: 10px;
+    font-size: var(--text-xs);
     letter-spacing: 0.18em;
     color: var(--sumi-3);
     text-transform: uppercase;
   }
   .title {
-    font-size: 22px;
+    font-size: var(--text-xl);
     font-weight: 400;
     margin: 4px 0 0;
   }
-  .stats { font-size: 11px; color: var(--sumi-3); }
+  .stats { font-size: var(--text-xs); color: var(--sumi-3); }
   .sparkline {
     height: 60px;
     margin-bottom: 22px;
@@ -96,7 +96,7 @@
     margin-bottom: 10px;
   }
   .lane-title {
-    font-size: 10px;
+    font-size: var(--text-xs);
     letter-spacing: 0.16em;
     color: var(--sumi-3);
     text-transform: uppercase;
@@ -105,7 +105,7 @@
     display: flex;
     flex-direction: column;
     gap: 6px;
-    font-size: 11px;
+    font-size: var(--text-xs);
     color: var(--sumi-2);
   }
   .lane-item {

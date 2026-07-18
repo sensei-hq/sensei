@@ -61,13 +61,13 @@
     margin-bottom: 4px;
   }
   .section-tag {
-    font-size: 10px;
+    font-size: var(--text-xs);
     letter-spacing: 0.18em;
     color: var(--sumi-3);
     text-transform: uppercase;
   }
   .title {
-    font-size: 20px;
+    font-size: var(--text-xl);
     font-weight: 400;
     margin: 0 0 16px;
     letter-spacing: -0.01em;
@@ -78,14 +78,14 @@
     gap: 24px;
   }
   .label {
-    font-size: 9px;
+    font-size: var(--text-xs);
     letter-spacing: 0.18em;
     color: var(--sumi-3);
     text-transform: uppercase;
     margin-bottom: 10px;
   }
   .body-text {
-    font-size: 12px;
+    font-size: var(--text-xs);
     color: var(--sumi);
     line-height: 1.65;
     margin-bottom: 14px;
@@ -94,7 +94,7 @@
     display: flex;
     flex-direction: column;
     gap: 6px;
-    font-size: 11px;
+    font-size: var(--text-xs);
     color: var(--sumi-2);
   }
   .provenance {
@@ -105,7 +105,7 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
-    font-size: 11px;
+    font-size: var(--text-xs);
     color: var(--sumi-2);
   }
   .prov-key { color: var(--sumi-3); }
@@ -115,7 +115,7 @@
     margin: 14px 0;
   }
   .prov-desc {
-    font-size: 11px;
+    font-size: var(--text-xs);
     color: var(--sumi-2);
     line-height: 1.5;
   }

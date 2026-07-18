@@ -22,6 +22,19 @@
   --font-ui: 'Inter', system-ui, -apple-system, sans-serif;
   --font-mono: 'JetBrains Mono', 'SF Mono', Menlo, monospace;
 
+  /* ── Type scale — 8 stops (the design system's whole budget; matches
+     the text-* utilities in uno.config.js). Use these in <style> blocks
+     instead of literal px. Display/hero type may exceed --text-4xl as a
+     sanctioned bespoke exception (marketing decks/watermarks). */
+  --text-xs: 11px;
+  --text-sm: 13px;
+  --text-base: 15px;
+  --text-lg: 17px;
+  --text-xl: 22px;
+  --text-2xl: 28px;
+  --text-3xl: 40px;
+  --text-4xl: 56px;
+
   /* ── Legacy aliases → Rokkit named tokens ───────────────────
      Existing pages reference these names; map them onto rokkit's
      tokens so they inherit themeing + dark-mode flip for free. */
