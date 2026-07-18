@@ -2,6 +2,7 @@
 	import { invalidateAll } from '$app/navigation';
 	import ConsoleHead from '$lib/components/ConsoleHead.svelte';
 	import RelayGateCard from '$lib/components/RelayGateCard.svelte';
+	import RelayNotifyToggle from '$lib/components/RelayNotifyToggle.svelte';
 	import RelayStatusBadge from '$lib/components/RelayStatusBadge.svelte';
 	import { relativeAge } from '$lib/triage-view';
 	import { progressWidth } from '$lib/relay-view';
@@ -34,7 +35,11 @@
 		eyebrow="Relay · runs"
 		title="Runs you're supervising"
 		sub="Every supervised run across your Dōjō — what's running, what's stuck, and what needs you. Approvals and decisions rise to the top; nothing moves without your say."
-	/>
+	>
+		{#snippet right()}
+			<RelayNotifyToggle tenantKey={data.tenantKey} accessToken={data.accessToken} />
+		{/snippet}
+	</ConsoleHead>
 
 	<div class="flex-1 overflow-auto" style="padding: 8px 28px 28px">
 		{#if data.error}

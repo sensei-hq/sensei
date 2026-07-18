@@ -134,7 +134,12 @@ under approach A (no main-merge/bump). End-of-P4: `sensei-security-reviewer`
 `semgrep`; dojo `bun run check`/`build`/`test` per chunk.
 
 ## Prod checklist (hand to Jerry at end of P4 — do NOT do autonomously)
-- Generate prod VAPID keypair; set the private key as a Worker secret; public key in prod config.
+- **VAPID keypair (Web Push):** generate a **prod** keypair. Set the prod
+  **public** key as the `PUBLIC_VAPID_KEY` Worker var (it is shipped to the
+  browser — the client reads `env.PUBLIC_VAPID_KEY` in `RelayNotifyToggle`). Set
+  the matching **private** key as a `wrangler secret` (never in git) for the
+  P4.4 sender. Dev used a locally-generated keypair: public key in `dojo/.env`
+  (`PUBLIC_VAPID_KEY`), private key in `dojo/.dev-vapid.json` (**gitignored**).
 - Enable Supabase Realtime publication on `dojo.relay_*` in prod.
 - Apply + validate the relay RLS policies in prod.
 - (If native later) APNs/FCM credentials.
