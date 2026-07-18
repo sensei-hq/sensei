@@ -95,8 +95,7 @@
 >
 	<div class="flex items-start gap-3">
 		<span
-			class="kanji text-accent flex-shrink-0 text-center"
-			style="font-size: 20px; width: 24px; line-height: 1.1">要</span
+			class="kanji text-accent flex-shrink-0 text-center text-xl" style="width: 24px; line-height: 1.1">要</span
 		>
 		<div class="flex-1" style="min-width: 0">
 			<div class="text-ink text-sm font-medium" style="line-height: 1.5">{prompt}</div>
@@ -152,7 +151,7 @@
 		<!-- Approval: Approve / Decline → { verdict: 'approve' | 'deny' }. -->
 		<div class="flex flex-wrap items-center gap-2" style="margin-top: 10px">
 			<Button variant="primary" size="sm" onclick={() => send({ verdict: 'approve' })} disabled={busy}>
-				<span class="kanji" style="font-size: 11px">許</span>
+				<span class="kanji text-xs">許</span>
 				{busy ? 'Sending…' : 'Approve'}
 			</Button>
 			<Button
@@ -184,7 +183,7 @@
 				onclick={() => send({ text: freeText })}
 				disabled={busy || freeText.trim() === ''}
 			>
-				<span class="kanji" style="font-size: 11px">送</span>
+				<span class="kanji text-xs">送</span>
 				{busy ? 'Sending…' : 'Send'}
 			</Button>
 		</div>

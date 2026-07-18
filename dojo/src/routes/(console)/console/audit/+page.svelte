@@ -36,8 +36,7 @@
 
 		<div class="bg-paper-soft border-paper-edge overflow-hidden rounded-xl border" style="margin-top: 18px">
 			<div
-				class="border-paper-edge text-ink-mute grid gap-3 border-b font-semibold uppercase"
-				style="grid-template-columns: 78px 150px 1.4fr 130px 0.9fr; padding: 11px 18px; font-size: 10px; letter-spacing: 0.1em"
+				class="border-paper-edge text-ink-mute grid gap-3 border-b font-semibold uppercase text-xs" style="grid-template-columns: 78px 150px 1.4fr 130px 0.9fr; padding: 11px 18px; letter-spacing: 0.1em"
 			>
 				<span>Time</span><span>Action</span><span>Target</span><span>Actor</span><span>When</span>
 			</div>

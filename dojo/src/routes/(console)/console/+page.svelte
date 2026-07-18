@@ -91,10 +91,10 @@
 			>
 				<div class="flex items-center gap-2" style="margin-bottom: 10px">
 					<span class="kanji text-accent text-sm">門</span>
-					<span class="text-ink-mute uppercase" style="font-size: 11px; letter-spacing: 0.12em">Pending triage</span>
+					<span class="text-ink-mute uppercase text-xs" style="letter-spacing: 0.12em">Pending triage</span>
 				</div>
 				<div class="flex items-end justify-between gap-2">
-					<div class="display text-ink font-light" style="font-size: 34px; line-height: 1">{pending}</div>
+					<div class="display text-ink font-light text-2xl" style="line-height: 1">{pending}</div>
 					<span class="mono text-accent text-xs">review →</span>
 				</div>
 				<div class="text-ink-mute text-xs" style="margin-top: 8px">across your scopes</div>
@@ -103,10 +103,10 @@
 			<div class="bg-paper-soft border-paper-edge flex-1 rounded-xl border" style="padding: 16px 18px; min-width: 0">
 				<div class="flex items-center gap-2" style="margin-bottom: 10px">
 					<span class="kanji text-accent text-sm">共</span>
-					<span class="text-ink-mute uppercase" style="font-size: 11px; letter-spacing: 0.12em">Contributions · 7d</span>
+					<span class="text-ink-mute uppercase text-xs" style="letter-spacing: 0.12em">Contributions · 7d</span>
 				</div>
 				<div class="flex items-end justify-between gap-2">
-					<div class="display text-ink font-light" style="font-size: 34px; line-height: 1">{m.contribWeek}</div>
+					<div class="display text-ink font-light text-2xl" style="line-height: 1">{m.contribWeek}</div>
 					<span class="text-accent"><Spark data={m.contribSpark} /></span>
 				</div>
 			</div>
@@ -114,10 +114,10 @@
 			<div class="bg-paper-soft border-paper-edge flex-1 rounded-xl border" style="padding: 16px 18px; min-width: 0">
 				<div class="flex items-center gap-2" style="margin-bottom: 10px">
 					<span class="kanji text-accent text-sm">決</span>
-					<span class="text-ink-mute uppercase" style="font-size: 11px; letter-spacing: 0.12em">Approved · 7d</span>
+					<span class="text-ink-mute uppercase text-xs" style="letter-spacing: 0.12em">Approved · 7d</span>
 				</div>
 				<div class="flex items-end justify-between gap-2">
-					<div class="display text-ink font-light" style="font-size: 34px; line-height: 1">{m.approvedWeek}</div>
+					<div class="display text-ink font-light text-2xl" style="line-height: 1">{m.approvedWeek}</div>
 				</div>
 				<div class="text-ink-mute text-xs" style="margin-top: 8px">published to matching scopes</div>
 			</div>
@@ -125,10 +125,10 @@
 			<div class="bg-paper-soft border-paper-edge flex-1 rounded-xl border" style="padding: 16px 18px; min-width: 0">
 				<div class="flex items-center gap-2" style="margin-bottom: 10px">
 					<span class="kanji text-accent text-sm">果</span>
-					<span class="text-ink-mute uppercase" style="font-size: 11px; letter-spacing: 0.12em">Adoption lift</span>
+					<span class="text-ink-mute uppercase text-xs" style="letter-spacing: 0.12em">Adoption lift</span>
 				</div>
 				<div class="flex items-end justify-between gap-2">
-					<div class="display text-ink font-light" style="font-size: 34px; line-height: 1">
+					<div class="display text-ink font-light text-2xl" style="line-height: 1">
 						+{Math.round(m.adoptionLift * 100)}pp
 					</div>
 					<span class="text-success"><Spark data={[6, 7, 6, 9, 8, 10, 11]} /></span>
@@ -142,7 +142,7 @@
 			<!-- triage preview (live) -->
 			<div class="bg-paper-soft border-paper-edge overflow-hidden rounded-xl border">
 				<div class="border-paper-edge flex items-center border-b" style="padding: 13px 16px">
-					<span class="text-ink-mute uppercase" style="font-size: 11px; letter-spacing: 0.14em">Top of the triage queue</span>
+					<span class="text-ink-mute uppercase text-xs" style="letter-spacing: 0.14em">Top of the triage queue</span>
 					<span class="flex-1"></span>
 					<a
 					href={resolve('/(console)/console/triage')}
@@ -164,7 +164,7 @@
 								: ''}"
 							style="grid-template-columns: auto 1fr auto; padding: 12px 16px"
 						>
-							<span class="kanji text-accent text-center" style="font-size: 17px; width: 20px">{kindKanji(c.kind)}</span>
+							<span class="kanji text-accent text-center text-lg" style="width: 20px">{kindKanji(c.kind)}</span>
 							<div style="min-width: 0">
 								<div class="text-ink truncate text-sm">{c.title}</div>
 								<div class="flex items-center gap-2" style="margin-top: 4px">
@@ -183,7 +183,7 @@
 				<div class="bg-paper-soft border-success-edge rounded-xl border" style="padding: 15px 17px">
 					<div class="flex items-center gap-2" style="margin-bottom: 8px">
 						<span class="kanji text-success text-sm">盾</span>
-						<span class="text-ink-mute uppercase" style="font-size: 11px; letter-spacing: 0.14em">Confidentiality</span>
+						<span class="text-ink-mute uppercase text-xs" style="letter-spacing: 0.14em">Confidentiality</span>
 					</div>
 					<div class="text-ink text-sm" style="line-height: 1.55">
 						<b class="font-semibold">{m.dereferenced}</b> client lessons auto-dereferenced this week ·
@@ -201,15 +201,14 @@
 
 				<div class="bg-paper-soft border-paper-edge flex-1 overflow-hidden rounded-xl border">
 					<div
-						class="border-paper-edge text-ink-mute border-b uppercase"
-						style="padding: 13px 16px; font-size: 11px; letter-spacing: 0.14em"
+						class="border-paper-edge text-ink-mute border-b uppercase text-xs" style="padding: 13px 16px; letter-spacing: 0.14em"
 					>
 						Recent activity
 					</div>
 					<div style="padding: 4px 0">
 						{#each activity as a (a.text)}
 							<div class="grid items-start gap-3" style="grid-template-columns: auto 1fr auto; padding: 9px 16px">
-								<span class="kanji text-center {a.tone}" style="font-size: 13px; width: 16px">{a.kanji}</span>
+								<span class="kanji text-center {a.tone} text-sm" style="width: 16px">{a.kanji}</span>
 								<span class="text-ink-soft text-xs" style="line-height: 1.45">{a.text}</span>
 								<span class="mono text-ink-faint text-xs">{a.when}</span>
 							</div>
@@ -222,7 +221,7 @@
 		<!-- Published · adoption & health (static demo content) -->
 		<div style="margin-top: 18px">
 			<div class="flex items-center" style="margin-bottom: 9px">
-				<span class="text-ink-mute font-semibold uppercase" style="font-size: 11px; letter-spacing: 0.14em"
+				<span class="text-ink-mute font-semibold uppercase text-xs" style="letter-spacing: 0.14em"
 					>Published · adoption &amp; health</span
 				>
 				<span class="mono text-ink-faint text-xs" style="margin-left: 10px">the Impact loop, scoped to the org</span>
@@ -235,7 +234,7 @@
 							: ''}"
 						style="grid-template-columns: auto 1fr 150px 92px 120px; padding: 13px 16px"
 					>
-						<span class="kanji text-center {p.neg ? 'text-warning' : 'text-accent'}" style="font-size: 17px; width: 20px"
+						<span class="kanji text-center {p.neg ? 'text-warning' : 'text-accent'} text-lg" style="width: 20px"
 							>{p.kanji}</span
 						>
 						<div style="min-width: 0">
@@ -258,7 +257,7 @@
 									class="border-warning-edge bg-paper text-warning inline-flex items-center gap-2 rounded-lg border text-xs"
 									style="padding: 6px 12px; cursor: pointer"
 								>
-									<span class="kanji" style="font-size: 12px">退</span> Retract
+									<span class="kanji text-xs">退</span> Retract
 								</button>
 							{:else}
 								<DojoChip toneClass="text-success">active</DojoChip>
@@ -270,7 +269,7 @@
 					class="border-paper-edge text-ink-mute flex items-center gap-2 border-t text-xs"
 					style="padding: 10px 16px; line-height: 1.45"
 				>
-					<span class="kanji text-warning" style="font-size: 12px">退</span>
+					<span class="kanji text-warning text-xs">退</span>
 					<span
 						>Lifecycle <b class="text-ink-soft font-semibold">active → deprecated → retracted</b>. Negative impact is
 						flagged automatically; one-click retract pulls a teaching back and notifies adopters.</span

@@ -63,7 +63,7 @@
 			</span>
 			{#if queued > 0}
 				<Button variant="primary" size="sm" onclick={onSend} disabled={flushing}>
-					<span class="kanji" style="font-size: 12px">送</span>
+					<span class="kanji text-xs">送</span>
 					{flushing ? 'Sending…' : 'Send queued'}
 				</Button>
 			{/if}

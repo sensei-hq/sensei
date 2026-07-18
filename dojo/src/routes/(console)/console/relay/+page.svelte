@@ -88,7 +88,7 @@
 				class="border-ink-faint text-ink-mute flex flex-col items-center gap-2 rounded-xl border border-dashed text-center"
 				style="padding: 48px 28px; margin-top: 24px"
 			>
-				<span class="kanji text-ink-faint" style="font-size: 30px">継</span>
+				<span class="kanji text-ink-faint text-2xl">継</span>
 				<div class="text-ink-soft text-sm">No runs yet</div>
 				<div class="text-ink-mute text-xs">Start one from the daemon and it will appear here.</div>
 			</div>
@@ -104,8 +104,7 @@
 					>
 						<div class="flex items-start gap-3">
 							<span
-								class="kanji text-accent flex-shrink-0 text-center"
-								style="font-size: 20px; width: 24px; line-height: 1.1">継</span
+								class="kanji text-accent flex-shrink-0 text-center text-xl" style="width: 24px; line-height: 1.1">継</span
 							>
 							<div class="flex-1" style="min-width: 0">
 								<div class="flex items-center gap-2">

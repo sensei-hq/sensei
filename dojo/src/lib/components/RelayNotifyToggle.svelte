@@ -82,7 +82,7 @@
 
 {#if toggleState === 'enabled'}
 	<span class="text-ink-mute text-xs" style="white-space: nowrap">
-		<span class="kanji text-accent" style="font-size: 11px">鈴</span>
+		<span class="kanji text-accent text-xs">鈴</span>
 		{status || 'Notifications on'}
 	</span>
 {:else if toggleState === 'unsupported'}
@@ -94,7 +94,7 @@
 {:else}
 	<div class="flex flex-col items-end" style="gap: 4px">
 		<Button variant="primary" size="sm" onclick={enable} disabled={busy}>
-			<span class="kanji" style="font-size: 11px">鈴</span>
+			<span class="kanji text-xs">鈴</span>
 			{busy ? 'Enabling…' : 'Notify me'}
 		</Button>
 		{#if toggleState === 'error' && status}

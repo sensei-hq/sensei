@@ -68,7 +68,7 @@
 					style="padding: 8px 13px; cursor: pointer; border: none"
 					style:opacity={sweeping ? 0.6 : 1}
 				>
-					<span class="kanji" style="font-size: 12px">選</span>
+					<span class="kanji text-xs">選</span>
 					{sweeping ? 'Running sweep…' : 'Run promotion sweep'}
 				</button>
 			</div>
@@ -117,7 +117,7 @@
 				class="border-ink-faint text-ink-mute flex flex-col items-center gap-2 rounded-xl border border-dashed text-center"
 				style="padding: 48px 28px; margin-top: 24px"
 			>
-				<span class="kanji text-ink-faint" style="font-size: 30px">門</span>
+				<span class="kanji text-ink-faint text-2xl">門</span>
 				<div class="text-ink-soft text-sm">The queue is clear</div>
 				<div class="text-ink-mute text-xs">Nothing is waiting for review across your scopes.</div>
 			</div>
@@ -127,7 +127,7 @@
 			<div style="margin-top: 18px">
 				<div class="flex items-center gap-2" style="margin-bottom: 8px">
 					<span class="kanji text-ink-mute text-sm">規</span>
-					<span class="text-ink-mute font-semibold uppercase" style="font-size: 11px; letter-spacing: 0.12em"
+					<span class="text-ink-mute font-semibold uppercase text-xs" style="letter-spacing: 0.12em"
 						>{g.scope}</span
 					>
 					<span class="mono text-ink-faint text-xs">{g.rows.length}</span>
@@ -142,7 +142,7 @@
 							class="grid items-center gap-4 no-underline {i < g.rows.length - 1 ? 'border-paper-edge border-b' : ''}"
 							style="grid-template-columns: auto 1fr auto auto auto; padding: 13px 16px"
 						>
-							<span class="kanji text-accent text-center" style="font-size: 18px; width: 22px">{kindKanji(c.kind)}</span>
+							<span class="kanji text-accent text-center text-lg" style="width: 22px">{kindKanji(c.kind)}</span>
 							<div style="min-width: 0">
 								<div class="text-ink text-sm">{c.title}</div>
 								<div class="flex flex-wrap items-center gap-2" style="margin-top: 5px">

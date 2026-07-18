@@ -37,5 +37,5 @@
 			stroke-dasharray="{dash} {circumference}"
 		/>
 	</svg>
-	<span class="display text-ink absolute font-light" style="font-size: 28px">{label}</span>
+	<span class="display text-ink absolute font-light text-2xl">{label}</span>
 </div>

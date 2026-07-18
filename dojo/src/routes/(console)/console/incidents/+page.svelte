@@ -137,7 +137,7 @@
 					class="bg-ink text-on-primary inline-flex items-center gap-2 rounded-lg text-xs font-medium"
 					style="padding: 8px 13px; cursor: pointer; border: none"
 				>
-					<span class="kanji" style="font-size: 12px">警</span>
+					<span class="kanji text-xs">警</span>
 					{showOpen ? 'Close' : 'Open incident'}
 				</button>
 			</div>
@@ -163,8 +163,7 @@
 				style="padding: 16px 18px; margin: 18px 0"
 			>
 				<div
-					class="text-ink-mute font-semibold uppercase"
-					style="font-size: 10px; letter-spacing: 0.1em; margin-bottom: 12px"
+					class="text-ink-mute font-semibold uppercase text-xs" style="letter-spacing: 0.1em; margin-bottom: 12px"
 				>
 					Open an incident
 				</div>
@@ -217,8 +216,7 @@
 
 		<div class="bg-paper-soft border-paper-edge overflow-x-auto rounded-xl border" style="margin-top: 18px">
 			<div
-				class="border-paper-edge text-ink-mute grid gap-3 border-b font-semibold uppercase min-w-[660px]"
-				style="grid-template-columns: 0.9fr 1.6fr 1.1fr 1fr 1fr auto; padding: 11px 18px; font-size: 10px; letter-spacing: 0.1em"
+				class="border-paper-edge text-ink-mute grid gap-3 border-b font-semibold uppercase min-w-[660px] text-xs" style="grid-template-columns: 0.9fr 1.6fr 1.1fr 1fr 1fr auto; padding: 11px 18px; letter-spacing: 0.1em"
 			>
 				<span>Severity</span><span>Incident</span><span>Status</span><span>SLA</span><span>Owner</span
 				><span>Actions</span>

@@ -82,7 +82,7 @@
 
 	{#if !row}
 		<div class="flex flex-1 flex-col items-center justify-center gap-3 text-center" style="padding: 40px">
-			<span class="kanji text-ink-faint" style="font-size: 34px">検</span>
+			<span class="kanji text-ink-faint text-2xl">検</span>
 			{#if data.error}
 				<div class="text-ink-soft text-sm">Live triage is unavailable</div>
 				<div class="mono text-ink-mute text-xs">{data.error}</div>
@@ -109,8 +109,7 @@
 					<DojoChip toneClass="text-ink-mute">{row.state}</DojoChip>
 				</div>
 				<h1
-					class="display text-ink font-light"
-					style="font-size: 27px; letter-spacing: -0.015em; line-height: 1.18; margin: 0 0 20px"
+					class="display text-ink font-light text-2xl" style="letter-spacing: -0.015em; line-height: 1.18; margin: 0 0 20px"
 				>
 					{row.title}
 				</h1>
@@ -131,7 +130,7 @@
 					<div class="bg-paper-soft border-paper-edge rounded-xl border" style="padding: 13px 15px; margin-bottom: 16px">
 						<div class="flex items-center gap-2" style="margin-bottom: 9px">
 							<span class="kanji text-ink-mute text-sm">双</span>
-							<span class="text-ink-mute font-semibold uppercase" style="font-size: 11px; letter-spacing: 0.12em"
+							<span class="text-ink-mute font-semibold uppercase text-xs" style="letter-spacing: 0.12em"
 								>Near-duplicate · {band === 'merge' ? 'merge suggested' : 'flagged for review'}</span
 							>
 						</div>
@@ -168,13 +167,12 @@
 			>
 				<div class="flex flex-col items-center gap-2">
 					<EnsoRing progress={row.confidence ?? 0} label={confidencePct(row.confidence)} />
-					<span class="text-ink-mute uppercase" style="font-size: 11px; letter-spacing: 0.12em">Confidence</span>
+					<span class="text-ink-mute uppercase text-xs" style="letter-spacing: 0.12em">Confidence</span>
 				</div>
 
 				<div>
 					<div
-						class="text-ink-faint font-semibold uppercase"
-						style="font-size: 10.5px; letter-spacing: 0.14em; margin-bottom: 6px"
+						class="text-ink-faint font-semibold uppercase text-xs" style="letter-spacing: 0.14em; margin-bottom: 6px"
 					>
 						Contributors
 					</div>
@@ -186,7 +184,7 @@
 
 				<div>
 					<div class="flex items-center" style="margin-bottom: 6px">
-						<span class="text-ink-faint font-semibold uppercase" style="font-size: 10.5px; letter-spacing: 0.14em"
+						<span class="text-ink-faint font-semibold uppercase text-xs" style="letter-spacing: 0.14em"
 							>Distribute to</span
 						>
 					</div>
@@ -207,8 +205,7 @@
 				<div>
 					<label
 						for="decide-reason"
-						class="text-ink-faint font-semibold uppercase"
-						style="font-size: 10.5px; letter-spacing: 0.14em; display: block; margin-bottom: 6px">Decision note</label
+						class="text-ink-faint font-semibold uppercase text-xs" style="letter-spacing: 0.14em; display: block; margin-bottom: 6px">Decision note</label
 					>
 					<textarea
 						id="decide-reason"
@@ -238,7 +235,7 @@
 						style="padding: 11px; border: none; cursor: pointer"
 						style:opacity={deciding !== null ? 0.6 : 1}
 					>
-						<span class="kanji text-accent" style="font-size: 13px">決</span>
+						<span class="kanji text-accent text-sm">決</span>
 						{deciding === 'approve' ? 'Approving…' : 'Approve & publish'}
 					</button>
 					<div class="flex gap-2">

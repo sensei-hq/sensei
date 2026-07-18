@@ -18,9 +18,9 @@
 		class="border-paper-edge bg-paper flex flex-shrink-0 items-center gap-3 border-b"
 		style="height: 54px; padding: 0 22px"
 	>
-		<span class="kanji text-accent" style="font-size: 22px; line-height: 1">結</span>
+		<span class="kanji text-accent text-xl" style="line-height: 1">結</span>
 		<span class="display text-lg" style="letter-spacing: -0.01em">Dōjō</span>
-		<span class="mono text-ink-faint" style="font-size: 10.5px">dojo.sensei-hq.com</span>
+		<span class="mono text-ink-faint text-xs">dojo.sensei-hq.com</span>
 		<span class="flex-1"></span>
 		<span
 			class="bg-accent-soft text-accent flex items-center justify-center rounded-full text-xs font-semibold"
@@ -38,7 +38,7 @@
 			<div class="text-ink-mute text-xs uppercase" style="letter-spacing: 0.2em; margin-bottom: 8px">
 				Signed in as {user.handle}
 			</div>
-			<h1 class="display font-light" style="font-size: 32px; letter-spacing: -0.02em; margin: 0; line-height: 1.1">
+			<h1 class="display font-light text-2xl" style="letter-spacing: -0.02em; margin: 0; line-height: 1.1">
 				Your organizations
 			</h1>
 			<p class="text-ink-soft text-sm" style="line-height: 1.55; margin: 8px 0 26px; max-width: 560px">
@@ -65,7 +65,7 @@
 							class="bg-paper border-paper-edge flex items-center justify-center rounded-xl border"
 							style="width: 46px; height: 46px"
 						>
-							<span class="kanji text-accent" style="font-size: 24px">{o.kanji}</span>
+							<span class="kanji text-accent text-xl">{o.kanji}</span>
 						</div>
 						<div style="min-width: 0">
 							<div class="flex flex-wrap items-center gap-2">
@@ -76,7 +76,7 @@
 								{/if}
 							</div>
 							<div class="flex flex-wrap items-center gap-3" style="margin-top: 7px">
-								<span class="mono text-ink-soft" style="font-size: 11.5px">
+								<span class="mono text-ink-soft text-xs">
 									{#if o.host === 'self'}
 										<span class="text-ink-faint">self-hosted · </span>{o.url}
 									{:else}
@@ -91,19 +91,19 @@
 						<div class="flex items-center" style="gap: 22px">
 							<div class="text-right">
 								<div class="text-ink text-sm">{o.role}</div>
-								<div class="mono text-ink-faint" style="font-size: 10px; margin-top: 2px">{o.from}</div>
+								<div class="mono text-ink-faint text-xs" style="margin-top: 2px">{o.from}</div>
 							</div>
 							<div class="text-right" style="min-width: 64px">
-								<div class="mono text-ink-soft" style="font-size: 11.5px">
+								<div class="mono text-ink-soft text-xs">
 									{o.members}
 									{o.members === 1 ? 'member' : 'members'}
 								</div>
 								{#if o.pending > 0}
-									<div class="mono text-accent" style="font-size: 10.5px; margin-top: 3px">
+									<div class="mono text-accent text-xs" style="margin-top: 3px">
 										{o.pending} to triage
 									</div>
 								{:else}
-									<div class="mono text-ink-faint" style="font-size: 10.5px; margin-top: 3px">up to date</div>
+									<div class="mono text-ink-faint text-xs" style="margin-top: 3px">up to date</div>
 								{/if}
 							</div>
 							<button
@@ -114,7 +114,7 @@
 									: 'bg-paper border-paper-edge text-ink border'}"
 								style="padding: 10px 18px; cursor: pointer"
 							>
-								Enter <span style="font-size: 12px">→</span>
+								Enter <span class="text-xs">→</span>
 							</button>
 						</div>
 					</div>
@@ -126,7 +126,7 @@
 				class="bg-paper border-ink-faint flex items-center gap-4 rounded-2xl border border-dashed"
 				style="margin-top: 18px; padding: 16px 20px"
 			>
-				<span class="kanji text-ink-mute" style="font-size: 20px">迎</span>
+				<span class="kanji text-ink-mute text-xl">迎</span>
 				<div class="flex-1" style="min-width: 0">
 					<div class="text-ink text-sm">Join another organization</div>
 					<div class="text-ink-mute text-xs" style="margin-top: 2px">

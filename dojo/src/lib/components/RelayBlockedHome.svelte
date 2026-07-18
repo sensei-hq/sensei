@@ -28,8 +28,7 @@
 	{@const sev = gateSeverity(gate)}
 	<div class="flex items-start gap-3">
 		<span
-			class="kanji text-accent flex-shrink-0 text-center"
-			style="font-size: 20px; width: 24px; line-height: 1.1">要</span
+			class="kanji text-accent flex-shrink-0 text-center text-xl" style="width: 24px; line-height: 1.1">要</span
 		>
 		<div class="flex-1" style="min-width: 0">
 			<div class="text-ink text-sm font-medium" style="line-height: 1.5">{ask(gate)}</div>
@@ -53,7 +52,7 @@
 		class="border-ink-faint text-ink-mute flex flex-col items-center gap-2 rounded-xl border border-dashed text-center"
 		style="padding: 48px 28px; margin-top: 24px"
 	>
-		<span class="kanji text-ink-faint" style="font-size: 30px">静</span>
+		<span class="kanji text-ink-faint text-2xl">静</span>
 		<div class="text-ink-soft text-sm">Nothing's waiting on you</div>
 		<div class="text-ink-mute text-xs">
 			the runs are progressing — sensei will surface anything that needs your call.
@@ -62,7 +61,7 @@
 {:else}
 	<div style="margin-top: 18px">
 		<div class="flex items-center gap-2" style="margin-bottom: 12px">
-			<span class="kanji text-accent" style="font-size: 13px">要</span>
+			<span class="kanji text-accent text-sm">要</span>
 			<span
 				class="text-ink-mute text-xs font-semibold"
 				style="letter-spacing: 0.14em; text-transform: uppercase">Blocked on you</span

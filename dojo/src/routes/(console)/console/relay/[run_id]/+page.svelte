@@ -425,7 +425,7 @@
 					onclick={send}
 					disabled={sending || pending.length === 0}
 				>
-					<span class="kanji" style="font-size: 12px">送</span>
+					<span class="kanji text-xs">送</span>
 					{#if sending}
 						Sending review…
 					{:else}
@@ -450,7 +450,7 @@
 				style="padding: 15px 18px; margin-top: 16px"
 			>
 				<div class="flex items-center gap-2">
-					<span class="kanji text-accent" style="font-size: 13px">要</span>
+					<span class="kanji text-accent text-sm">要</span>
 					<span
 						class="text-ink-mute text-xs font-semibold"
 						style="letter-spacing: 0.14em; text-transform: uppercase">Needs you</span
@@ -497,7 +497,7 @@
 				class="bg-success-soft border-success-edge text-ink-soft flex items-center gap-2 rounded-xl border text-sm"
 				style="padding: 12px 16px; margin-top: 16px"
 			>
-				<span class="kanji text-success" style="font-size: 12px">済</span>
+				<span class="kanji text-success text-xs">済</span>
 				<span>{sendQueuedNote}</span>
 			</div>
 		{/if}
@@ -507,7 +507,7 @@
 				class="border-ink-faint text-ink-mute flex flex-col items-center gap-2 rounded-xl border border-dashed text-center"
 				style="padding: 48px 28px; margin-top: 24px"
 			>
-				<span class="kanji text-ink-faint" style="font-size: 30px">継</span>
+				<span class="kanji text-ink-faint text-2xl">継</span>
 				<div class="text-ink-soft text-sm">No outline yet</div>
 				<div class="text-ink-mute text-xs">The run hasn't published its plan.</div>
 			</div>
@@ -584,7 +584,7 @@
 												class="bg-success-soft border-success-edge text-ink-soft inline-flex items-center gap-2 rounded-lg border text-xs"
 												style="padding: 5px 10px; margin-top: 8px"
 											>
-												<span class="kanji text-success" style="font-size: 12px">済</span>
+												<span class="kanji text-success text-xs">済</span>
 												<span>Reviewed · <b class="font-semibold">{verdictLabel(step.response_verdict)}</b></span>
 												{#if step.response_note}
 													<span class="text-ink-mute">— {step.response_note}</span>
@@ -604,7 +604,7 @@
 													onclick={() => setVerdict(step.seq, v.verdict)}
 													aria-pressed={active}
 												>
-													<span class="kanji" style="font-size: 11px">{v.kanji}</span>
+													<span class="kanji text-xs">{v.kanji}</span>
 													{v.label}
 												</Button>
 											{/each}
@@ -642,19 +642,19 @@
 					<!-- Collapsed: a calm trigger + any lingering "sent" confirmation. -->
 					<div class="flex items-center gap-3">
 						<Button style="ghost" size="sm" onclick={() => (showNudge = true)}>
-							<span class="kanji text-accent" style="font-size: 13px">促</span>
+							<span class="kanji text-accent text-sm">促</span>
 							Nudge the run
 						</Button>
 						{#if nudgeSent}
 							<span class="text-success inline-flex items-center gap-1 text-xs">
-								<span class="kanji text-success" style="font-size: 11px">済</span>
+								<span class="kanji text-success text-xs">済</span>
 								Nudge sent
 							</span>
 						{/if}
 					</div>
 				{:else}
 					<div class="flex items-center gap-2">
-						<span class="kanji text-accent" style="font-size: 13px">促</span>
+						<span class="kanji text-accent text-sm">促</span>
 						<span
 							class="text-ink-mute text-xs font-semibold"
 							style="letter-spacing: 0.14em; text-transform: uppercase">Nudge the run</span
@@ -682,7 +682,7 @@
 
 					<div class="flex items-center gap-3" style="margin-top: 10px">
 						<Button variant="primary" size="sm" onclick={nudge} disabled={nudging || !canNudge}>
-							<span class="kanji" style="font-size: 12px">送</span>
+							<span class="kanji text-xs">送</span>
 							{nudging ? 'Sending…' : 'Send'}
 						</Button>
 						<Button style="link" size="sm" onclick={() => (showNudge = false)} disabled={nudging}>

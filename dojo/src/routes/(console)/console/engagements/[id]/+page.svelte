@@ -96,7 +96,7 @@
 						? 'Export the compliance report'
 						: 'Blocked: a non-dereferenced artifact is present'}
 				>
-					<span class="kanji" style="font-size: 12px">録</span>
+					<span class="kanji text-xs">録</span>
 					{exporting === 'csv' ? 'Exporting…' : 'Export CSV'}
 				</button>
 				<button
@@ -131,7 +131,7 @@
 			class="bg-paper-soft border-paper-edge flex items-center gap-4 rounded-xl border"
 			style="padding: 14px 18px; margin-bottom: 18px"
 		>
-			<span class="kanji text-accent" style="font-size: 22px">客</span>
+			<span class="kanji text-accent text-xl">客</span>
 			<div class="flex-1" style="min-width: 0">
 				<div class="text-ink text-base">{clientLabel}</div>
 				{#if data.engagement}
@@ -170,8 +170,7 @@
 			style="margin-top: 18px"
 		>
 			<div
-				class="border-paper-edge text-ink-mute grid gap-3 border-b font-semibold uppercase"
-				style="grid-template-columns: 60px 1fr 90px 1fr 0.8fr; padding: 11px 18px; font-size: 10px; letter-spacing: 0.1em"
+				class="border-paper-edge text-ink-mute grid gap-3 border-b font-semibold uppercase text-xs" style="grid-template-columns: 60px 1fr 90px 1fr 0.8fr; padding: 11px 18px; letter-spacing: 0.1em"
 			>
 				<span>Seq</span><span>Artifact</span><span>Kind</span><span>Strip status</span><span
 					>When</span

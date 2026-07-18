@@ -79,9 +79,9 @@
 				<div class="bg-paper-soft border-paper-edge flex-1 rounded-xl border" style="padding: 16px 18px; min-width: 0">
 					<div class="flex items-center gap-2" style="margin-bottom: 12px">
 						<span class="kanji text-accent text-sm">{s.kanji}</span>
-						<span class="text-ink-mute uppercase" style="font-size: 11px; letter-spacing: 0.12em">{s.label}</span>
+						<span class="text-ink-mute uppercase text-xs" style="letter-spacing: 0.12em">{s.label}</span>
 					</div>
-					<div class="display font-light {s.tone}" style="font-size: 36px; line-height: 1">{s.value}</div>
+					<div class="display font-light {s.tone} text-3xl" style="line-height: 1">{s.value}</div>
 					<div class="text-ink-mute text-xs" style="margin-top: 9px; line-height: 1.4">{s.sub}</div>
 				</div>
 			{/each}
