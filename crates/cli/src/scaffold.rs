@@ -253,6 +253,99 @@ pub fn run_feature(target: &Path, feature: &str) -> Result<ScaffoldReport, Strin
     Ok(materialize(target, &layout))
 }
 
+/// The kind of project a baseline contract targets — selects the adapter column.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+#[value(rename_all = "lower")]
+pub enum BaselineKind {
+    Code,
+    Content,
+}
+
+impl BaselineKind {
+    /// Stable slug used in the contract's frontmatter.
+    pub fn slug(self) -> &'static str {
+        match self {
+            BaselineKind::Code => "code",
+            BaselineKind::Content => "content",
+        }
+    }
+}
+
+/// The baseline capability-contract layout (spec §3.6). Pure — one file,
+/// `docs/baseline.md`, rendered for the given kind.
+pub fn baseline_layout(kind: BaselineKind, date: &str) -> Layout {
+    Layout {
+        entries: vec![Entry::File {
+            path: "docs/baseline.md".to_string(),
+            contents: baseline_md(kind, date),
+        }],
+    }
+}
+
+fn baseline_md(kind: BaselineKind, date: &str) -> String {
+    // Capability × adapter, per §3.6. The adapter column switches on kind.
+    let rows: &[(&str, &str)] = match kind {
+        BaselineKind::Code => &[
+            ("Format", "prettier / rustfmt"),
+            ("Lint", "eslint / clippy"),
+            ("Unit test", "vitest / cargo test"),
+            ("Flow test", "Playwright e2e"),
+            ("Coverage", "coverage %"),
+            ("Quality", "qlty.sh score"),
+            ("Security", "semgrep / deps scan"),
+            ("Churn + velocity", "git signal"),
+            (
+                "Design system",
+                "rokkit tokens + component catalog (no hand-rolled primitives)",
+            ),
+        ],
+        BaselineKind::Content => &[
+            ("Format", "style-guide conformance"),
+            ("Lint", "grammar / tone"),
+            ("Unit test", "fact / continuity check"),
+            ("Integration", "chapter-to-chapter coherence"),
+            ("Flow test", "full read-through / arc check"),
+            ("Coverage", "outline coverage"),
+            ("Quality", "readability / pacing"),
+            ("Churn + velocity", "draft-revision signal"),
+            ("Design system", "template / layout system"),
+        ],
+    };
+    let mut table = String::from("| Capability | Adapter |\n|---|---|\n");
+    for (cap, adapter) in rows {
+        table.push_str(&format!("| {cap} | {adapter} |\n"));
+    }
+    format!(
+        "---\nname: Baseline — capability contract\nkind: {kind}\nupdated: {date}\n---\n\n\
+         # Baseline — the capability contract\n\n\
+         > The capabilities every change must satisfy — a *contract*, not a fixed toolset.\n\
+         > Installed once at project start (recommend-and-confirm); after that it's just\n\
+         > `bun run x` / `make x`. Sensei detects the stack and fills concrete tools\n\
+         > (rides the manifest-adapter); conformance streams into the Signals slot as the\n\
+         > project health score.\n\n\
+         {table}\n\
+         ## Gates\n\n\
+         - **Security scan — block.**\n\
+         - **Test coverage ≥ 80% — block** (org-tunable via Dōjō).\n\
+         - **Quality floor — block.**\n\n\
+         Everything else is installed + guided, ratcheting up over time.\n\n\
+         ## Governance\n\n\
+         The strictness layer is **live**, not recorded here — resolved at the point of\n\
+         work via `get_rules` (org / Dōjō top-down + contributed bottom-up); mandatory\n\
+         rules are non-overridable. This file records the *contract*; governance sets the\n\
+         *strictness*.\n",
+        kind = kind.slug()
+    )
+}
+
+/// Scaffold the baseline contract into `target/docs/baseline.md`. Stamps today's
+/// date and reuses the idempotent `materialize`.
+pub fn run_baseline(target: &Path, kind: BaselineKind) -> ScaffoldReport {
+    let date = crate::format_date();
+    let layout = baseline_layout(kind, &date);
+    materialize(target, &layout)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -454,5 +547,59 @@ mod tests {
             assert!(run_feature(tmp.path(), bad).is_err(), "must reject {bad:?}");
         }
         assert!(!tmp.path().join("../evil").exists());
+    }
+
+    // ── baseline capability-contract scaffolder (`sensei scaffold baseline`) ──
+
+    #[test]
+    fn baseline_layout_is_a_single_contract_file() {
+        let l = baseline_layout(BaselineKind::Code, "2026-07-18");
+        assert_eq!(paths(&l), vec!["docs/baseline.md"]);
+    }
+
+    #[test]
+    fn baseline_code_names_code_tools_and_the_gate() {
+        let l = baseline_layout(BaselineKind::Code, "2026-07-18");
+        let md = match &l.entries[0] {
+            Entry::File { contents, .. } => contents,
+            _ => panic!("baseline.md is a file"),
+        };
+        assert!(md.contains("kind: code"), "frontmatter carries the kind");
+        assert!(md.contains("2026-07-18"), "carries the date");
+        assert!(md.contains("eslint") || md.contains("clippy"), "code lint adapter");
+        assert!(md.contains("80%"), "the ≥80% coverage gate");
+        assert!(md.contains("get_rules"), "governance is live, not scaffolded");
+    }
+
+    #[test]
+    fn baseline_content_uses_non_code_adapters() {
+        let l = baseline_layout(BaselineKind::Content, "2026-07-18");
+        let md = match &l.entries[0] {
+            Entry::File { contents, .. } => contents,
+            _ => panic!("baseline.md is a file"),
+        };
+        assert!(md.contains("kind: content"), "frontmatter carries the kind");
+        assert!(md.contains("grammar") || md.contains("tone"), "content lint adapter");
+        assert!(!md.contains("eslint"), "no code tools in the content contract");
+    }
+
+    #[test]
+    fn run_baseline_writes_the_contract() {
+        let tmp = tempfile::tempdir().unwrap();
+        let report = run_baseline(tmp.path(), BaselineKind::Code);
+        assert_eq!(report.created, vec!["docs/baseline.md".to_string()]);
+        assert!(tmp.path().join("docs/baseline.md").is_file());
+        assert!(report.failed.is_empty());
+    }
+
+    #[test]
+    fn run_baseline_is_idempotent() {
+        let tmp = tempfile::tempdir().unwrap();
+        run_baseline(tmp.path(), BaselineKind::Code);
+        let f = tmp.path().join("docs/baseline.md");
+        fs::write(&f, "EDITED").unwrap();
+        let second = run_baseline(tmp.path(), BaselineKind::Code);
+        assert!(second.created.is_empty(), "second run creates nothing");
+        assert_eq!(fs::read_to_string(&f).unwrap(), "EDITED", "not overwritten");
     }
 }
