@@ -70,6 +70,7 @@
   <script type="text/babel" src="lib/dojo/dojo-shared.jsx"></script>
   <script type="text/babel" src="lib/dojo/dojo-admin.jsx"></script>
   <script type="text/babel" src="lib/dojo/dojo-governance.jsx"></script>
+  <script type="text/babel" src="lib/dojo/dojo-identity.jsx"></script>
   <script type="text/babel" src="lib/dojo/dojo-billing.jsx"></script>
   <script type="text/babel" src="lib/dojo/dojo-maintainer.jsx"></script>
   <script type="text/babel" src="lib/dojo/dojo-extensions.jsx"></script>
@@ -90,6 +91,9 @@
             <DCArtboard id="saas-signin" label="★ Welcome back · sign in" width={W} height={H}>
               <DojoSignIn/>
             </DCArtboard>
+            <DCArtboard id="saas-signin-mobile" label="★ Sign in · mobile (first screen on a phone)" width={390} height={844}>
+              <div style={{ width: 390, height: 844, borderRadius: 44, overflow: "hidden", border: "1px solid var(--edge)" }}><DojoSignIn mobile={true}/></div>
+            </DCArtboard>
             <DCArtboard id="saas-orgs" label="★ Your organizations · multi-membership" width={W} height={H}>
               <DojoOrgs/>
             </DCArtboard>
@@ -98,6 +102,15 @@
             </DCArtboard>
             <DCArtboard id="saas-create" label="★ Create a Dōjō · name · hosting · who joins" width={W} height={H}>
               <DojoCreate/>
+            </DCArtboard>
+            <DCArtboard id="saas-orgs-mobile" label="Your Dōjōs · mobile" width={390} height={844}>
+              <div style={{ width: 390, height: 844, borderRadius: 44, overflow: "hidden", border: "1px solid var(--edge)" }}><DojoOrgs mobile={true}/></div>
+            </DCArtboard>
+            <DCArtboard id="saas-empty-mobile" label="First entry · mobile" width={390} height={844}>
+              <div style={{ width: 390, height: 844, borderRadius: 44, overflow: "hidden", border: "1px solid var(--edge)" }}><DojoOrgsEmpty mobile={true}/></div>
+            </DCArtboard>
+            <DCArtboard id="saas-create-mobile" label="Create a Dōjō · mobile" width={390} height={844}>
+              <div style={{ width: 390, height: 844, borderRadius: 44, overflow: "hidden", border: "1px solid var(--edge)" }}><DojoCreate mobile={true}/></div>
             </DCArtboard>
           </DCSection>
 
@@ -113,11 +126,20 @@
             <DCArtboard id="billing" label="★ Plan & billing · free public/personal · paid team · Relay tiering" width={W} height={H}>
               <DojoAdminConsole initial="billing"/>
             </DCArtboard>
+            <DCArtboard id="billing-pastdue" label="Plan & billing · past-due / dunning state" width={W} height={H}>
+              <div className="artboard-shell" style={{ height: "100%" }}><DojoBilling past={true}/></div>
+            </DCArtboard>
+            <DCArtboard id="identity" label="★ Identity & SSO · OIDC/SAML · SCIM · git-role mapping" width={W} height={H}>
+              <DojoAdminConsole initial="identity"/>
+            </DCArtboard>
             <DCArtboard id="maintainer" label="★ Maintainer console · Triage → Candidate · Knowledge" width={W} height={H}>
               <DojoMaintainerConsole initial="triage"/>
             </DCArtboard>
             <DCArtboard id="catalog" label="★ Extensions catalog · team-shared skills · agents · commands" width={W} height={H}>
               <DojoMaintainerConsole initial="catalog"/>
+            </DCArtboard>
+            <DCArtboard id="approvals" label="★ Approvals · second-approver queue" width={W} height={H}>
+              <DojoMaintainerConsole initial="approvals"/>
             </DCArtboard>
             <DCArtboard id="lead" label="★ Lead console · Clients · Audit" width={W} height={H}>
               <DojoLeadConsole initial="clients"/>
@@ -138,6 +160,9 @@
             </DCArtboard>
             <DCArtboard id="r-watch" label="Relay · Watch progress — phases + activity" width={W} height={H}>
               <DojoDeveloperConsole relayStart="watch"/>
+            </DCArtboard>
+            <DCArtboard id="r-logs" label="Relay · Session log — full timestamped trail" width={W} height={H}>
+              <DojoDeveloperConsole relayStart="logs"/>
             </DCArtboard>
             <DCArtboard id="r-chat" label="Relay · Chat with a running session" width={W} height={H}>
               <DojoAdminConsole relayStart="chat"/>
@@ -165,6 +190,15 @@
             <DCArtboard id="m-chat" label="Chat back to sensei · mid-session" width={390} height={844}>
               <DojoMobileChat/>
             </DCArtboard>
+            <DCArtboard id="m-logs" label="Session log · full timestamped trail" width={390} height={844}>
+              <DojoMobileLogs/>
+            </DCArtboard>
+            <DCArtboard id="m-offline" label="★ Relay offline · connection lost (realtime failure mode)" width={390} height={844}>
+              <DojoMobileConn kind="offline"/>
+            </DCArtboard>
+            <DCArtboard id="m-ended" label="Relay · session ended" width={390} height={844}>
+              <DojoMobileConn kind="ended"/>
+            </DCArtboard>
             <DCArtboard id="m-more" label="More · consoles + switch Dōjō on mobile" width={390} height={844}>
               <DojoMobileMore/>
             </DCArtboard>
@@ -184,6 +218,27 @@
             </DCArtboard>
             <DCArtboard id="mc-developer" label="Developer console · mobile" width={390} height={844}>
               <DojoDeveloperConsole initial="teams" mobile/>
+            </DCArtboard>
+          </DCSection>
+
+          <DCSection id="dojo-kanji-legend"
+                     title="Kanji legend"
+                     subtitle="Every functional kanji in the console, decoded. Kanji sit beside a text label in the UI — never as the sole marker of a state — so this is a reference, not a decoder ring.">
+            <DCArtboard id="kanji-legend" label="Kanji marks · glossary" width={W} height={620}>
+              <div className="sensei bg-paper" style={{ width: "100%", height: "100%", overflow: "auto" }}>
+                <div className="p-6" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)" }}>
+                  {[["結","Dōjō / team"],["社","Org / company"],["組","Team"],["件","Project"],["技","Stack / skill"],["己","Personal"],["群","Community / collective"],["客","Client"],
+                    ["掟","Governance rules"],["問","Agents & personas"],["令","Commands"],["庫","Catalog / library"],["蔵","Knowledge"],["門","Triage"],["承","Second approval"],["検","Review gate"],
+                    ["携","Relay"],["場","Projects"],["決","Decision / inbox"],["話","Chat"],["録","Session log / audit"],["観","Monitor / observe"],["盾","Anonymize / confidentiality"],["守","Guard"],
+                    ["任","Members & roles"],["規","Scopes & policies"],["鍵","Identity / SSO"],["円","Plan & billing"],["迎","Onboarding / inherit"],["絶","Connection lost"],["了","Session ended"],["眠","Daemon asleep"]
+                  ].map(([k, m]) => (
+                    <div key={k} className="bg-paper-soft border-1px border-paper-edge gap-3 p-3" style={{ display: "flex", alignItems: "center", borderRadius: "var(--radius-lg)", margin: 6 }}>
+                      <span className="kanji text-2xl text-accent" style={{ width: 30, textAlign: "center", flexShrink: 0 }}>{k}</span>
+                      <span className="text-sm text-ink">{m}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
             </DCArtboard>
           </DCSection>
 

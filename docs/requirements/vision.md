@@ -131,6 +131,41 @@ control a business needs (self-hosting, SSO, audit) — never to use sensei, nev
 for tokens (inference is BYO-key and local). Tiers + open pricing questions:
 [journeys/dojo → Business model](../journeys/dojo.md#business-model--free-where-public-or-personal).
 
+## Why it's worth building — one loop, not two products
+
+Source: [`../mockups/Sensei/Sensei End-to-End Journey.html`](../mockups/Sensei/Sensei%20End-to-End%20Journey.html)
+— the machine → Dōjō → beyond loop, a developer's day (Rin), an org's practice
+(Keiko), and the honest case for building it.
+
+**The case, plainly.** Two problems most tools ignore: **knowledge evaporates**
+between sessions and people, and **autonomous work needs a human at the gate.**
+Sensei captures the first locally and lets the Dōjō share it; Relay makes the
+second answerable from anywhere.
+
+**Who benefits** — *Solo dev*: a memory that persists + free personal governance.
+*Team*: conventions taught once, inherited on join. *Agency*: client
+confidentiality with an audit trail. *Org*: measurable first-try-right lift across
+repos.
+
+**Why it's defensible.** Local-first + BYOK means **no token markup to undercut**
+and privacy as the default, not a feature. The moat is the **accumulated, governed
+knowledge graph** — plus **confidentiality-grade anonymization**, which is exactly
+what regulated and agency buyers pay for.
+
+**What has to be true (the load-bearing risks).** Local observation surfaces
+lessons good enough to trust; teams will actually curate (triage can't become a
+chore); realtime through the Dōjō is reliable enough to gate on; the free tier
+converts to paid team seats. The first two are validated **before** investing in
+the enterprise surface.
+
+**The verdict — build the loop, not the halves.** The desktop app alone is a nice
+notebook; the Dōjō alone is a governance console with nothing to govern. Together
+they form a **flywheel**: local observation feeds the shared mind, the shared mind
+makes every developer better, and that pulls more observation in. Sequence the
+wedge — **ship the free local loop** (observe → learn → personal Dōjō) to seed
+adoption, then **charge teams for coordination** (shared scopes, governance,
+Relay-at-scale, confidentiality).
+
 ## The six non-negotiable themes
 
 Every requirement and design decision honours these. If something pushes against

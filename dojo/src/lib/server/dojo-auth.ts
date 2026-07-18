@@ -18,7 +18,38 @@ export function apiError(status: number, message: string): Response {
 	});
 }
 
-export type Caller = { tenantId: string; userId: string; role: string; access: AccessLevel };
+export type Caller = {
+	tenantId: string;
+	userId: string;
+	role: string;
+	access: AccessLevel;
+	/** Present on the API-key (device-token) plane — the caller's membership row. */
+	membershipId?: string;
+};
+
+/** Lowercase hex sha256 (Web Crypto — available in the Worker runtime and Node). */
+async function sha256Hex(input: string): Promise<string> {
+	const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input));
+	return Array.from(new Uint8Array(digest))
+		.map((b) => b.toString(16).padStart(2, '0'))
+		.join('');
+}
+
+/** Resolve the `{origin}/{org}` tenant id, or throw 404/500. */
+async function resolveTenantId(
+	db: ReturnType<typeof dojoDb>,
+	origin: string,
+	org: string
+): Promise<string> {
+	const { data: tenant, error } = await db
+		.from('tenants')
+		.select('id')
+		.eq('key', `${origin}/${org}`)
+		.maybeSingle();
+	if (error) throw apiError(500, 'tenant lookup failed');
+	if (!tenant) throw apiError(404, 'no such tenant');
+	return tenant.id as string;
+}
 
 /** Extract the Supabase access token: `Authorization: Bearer <jwt>` (API/desktop
  *  plane) or the kavach session's `access_token` (web console). */
@@ -56,21 +87,73 @@ export async function resolveTenantAccess(
 	const userId = userData.user.id;
 
 	// Resolve the tenant by its `{origin}/{org}` key.
-	const { data: tenant, error: tErr } = await db
-		.from('tenants').select('id').eq('key', `${origin}/${org}`).maybeSingle();
-	if (tErr) throw apiError(500, 'tenant lookup failed');
-	if (!tenant) throw apiError(404, 'no such tenant');
+	const tenantId = await resolveTenantId(db, origin, org);
 
-	// The caller's membership role in this tenant (active only).
+	// The caller's membership (id + role) in this tenant (active only).
 	const { data: mem } = await db
-		.from('memberships').select('role')
-		.eq('tenant_id', tenant.id).eq('user_id', userId).is('disabled_at', null)
+		.from('memberships').select('id, role')
+		.eq('tenant_id', tenantId).eq('user_id', userId).is('disabled_at', null)
 		.maybeSingle();
 
 	const access = roleToAccess(mem?.role);
 	if (access < floor) throw apiError(403, `${accessLabel(floor)} role required`);
 
-	return { tenantId: tenant.id as string, userId, role: mem?.role ?? 'member', access };
+	return {
+		tenantId,
+		userId,
+		role: mem?.role ?? 'member',
+		access,
+		membershipId: mem?.id as string | undefined
+	};
+}
+
+/**
+ * Authenticate a MACHINE caller (the daemon) on the API-key / device-token plane
+ * — relay auth plane A. The daemon sends its Keychain device token as
+ * `Authorization: Bearer <token>`; we sha256 it and match
+ * `dojo.memberships.device_token_hash` for the route's tenant (active only). The
+ * token is **per-membership** (per tenant×user). The compared value is itself a
+ * hash, so the lookup leaks nothing about the token (cf. `dojo.api_keys`). Throws
+ * a Response (401/403/404) like `resolveTenantAccess`.
+ *
+ * Phone/console callers use `resolveTenantAccess` (Supabase-JWT plane) instead.
+ * (Plane B — signed payloads via `memberships.device_key` — is a hardening
+ * follow-up; see docs/plan/decisions.md.)
+ */
+export async function resolveApiKeyAccess(
+	origin: string,
+	org: string,
+	request: Request,
+	floor: AccessLevel
+): Promise<Caller> {
+	const auth = request.headers.get('authorization') ?? '';
+	const token = auth.toLowerCase().startsWith('bearer ') ? auth.slice(7).trim() : '';
+	if (!token) throw apiError(401, 'unauthenticated');
+
+	const db = dojoDb();
+	const tenantId = await resolveTenantId(db, origin, org);
+
+	const hash = await sha256Hex(token);
+	const { data: mem, error } = await db
+		.from('memberships')
+		.select('id, user_id, role')
+		.eq('tenant_id', tenantId)
+		.eq('device_token_hash', hash)
+		.is('disabled_at', null)
+		.maybeSingle();
+	if (error) throw apiError(500, 'device auth lookup failed');
+	if (!mem) throw apiError(401, 'invalid device token');
+
+	const access = roleToAccess(mem.role);
+	if (access < floor) throw apiError(403, `${accessLabel(floor)} role required`);
+
+	return {
+		tenantId,
+		userId: mem.user_id as string,
+		role: (mem.role as string) ?? 'member',
+		access,
+		membershipId: mem.id as string
+	};
 }
 
 export { ACCESS };

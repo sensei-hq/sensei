@@ -32,6 +32,7 @@ use crate::api::handlers::preferences;
 use crate::api::handlers::share_review;
 use crate::api::handlers::upgrades;
 use crate::api::handlers::corrections;
+use crate::api::handlers::runs;
 
 pub fn create_router(state: AppState) -> Router {
     Router::new()
@@ -212,6 +213,9 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/sessions/{id}", get(sessions::get_session).put(sessions::update_session_handler))
         .route("/api/sessions/{id}/tool-timeline", get(sessions::get_session_tool_timeline))
         .route("/api/sessions/{id}/replay", get(sessions::get_session_replay))
+        // Relay runs (P3.2 observability + P3.8 run-control create)
+        .route("/api/runs", get(runs::list_runs).post(runs::create_run))
+        .route("/api/runs/{id}", get(runs::get_run))
         // Patterns
         .route("/api/patterns/{project}/detect", post(codebase::detect_patterns))
         .route("/api/patterns/{project}", get(codebase::list_patterns))
@@ -221,6 +225,11 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/patterns/{project}/conventions", get(codebase::project_conventions_handler))
         // Hook event ingestion (from sensei-hook.ts)
         .route("/hook/event", post(sessions::ingest_hook_event))
+        // Hook gate (relay-engine feature B): a PreToolUse hook asks whether a
+        // tool may proceed; the daemon raises a phone gate and blocks for the
+        // answer. Fail-open (allow) unless a human explicitly denies. Gating is
+        // OFF unless SENSEI_RELAY_GATE_TOOLS names the tool.
+        .route("/hook/gate", post(sessions::hook_gate))
         // Structured logging: POST ingests (CLI, MCP, app); GET reads for the
         // Observatory · Logs screen.
         .route("/api/logs", post(logs::ingest_log).get(logs::get_logs))

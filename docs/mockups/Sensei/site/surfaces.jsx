@@ -218,15 +218,14 @@ function SurfaceInstruments() {
   const modes = [
     { k: "具", t: "Playground", d: "Run any MCP tool in isolation, with real arguments, and read the raw result. Sensei watches each call to learn which tools earn their place." },
     { k: "録", t: "Replay", d: "Step back through exactly what the assistant called during a session — the order, the inputs, the latency — so a surprise becomes legible." },
-    { k: "健", t: "Health", d: "Which tools are fast, flaky, or unused, tracked over time. The toolset stays honest instead of quietly rotting." },
   ];
   return (
     <SurfaceBlock
       n="05" kanji="具" name="Instruments" role="具 · your tools, observed"
-      headline="Your tools, observed — tried, replayed, and kept honest."
-      lead={<>An assistant is only as good as the instruments it can reach. Instruments lets you exercise each MCP tool, see what was actually called, and watch the whole toolset's health.</>}
+      headline="Your tools, observed — tried in isolation, replayed in full."
+      lead={<>An assistant is only as good as the instruments it can reach. Instruments lets you exercise each MCP tool in isolation and replay exactly what was called during a session.</>}
       why="When a session goes wrong, the tool is as likely a culprit as the model. You can't trust what you can't watch.">
-      <SurfMechLabel>Three ways to look · one toolset</SurfMechLabel>
+      <SurfMechLabel>Two ways to look · one toolset</SurfMechLabel>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)' }} className="gap-3" >
         {modes.map(m => (
           <div key={m.t} style={{ background: 'var(--paper)', border: 'var(--hairline)', borderRadius: 10 }} className="py-5 px-4" >
