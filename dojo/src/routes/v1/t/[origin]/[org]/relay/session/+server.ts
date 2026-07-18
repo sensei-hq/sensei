@@ -4,6 +4,7 @@
 import type { RequestHandler } from './$types';
 import { dojoDb } from '$lib/server/dojo-supabase';
 import { resolveApiKeyAccess, resolveTenantAccess, apiError, ACCESS } from '$lib/server/dojo-auth';
+import { sendRelayPushFromEnv } from '$lib/server/relay-push-env';
 
 const COLS =
 	'id, run_id, title, goal, status, progress_done, progress_total, current_phase, current_feature, last_event_at, paused_until, pause_reason, started_at, completed_at';
@@ -12,13 +13,27 @@ const str = (v: unknown): string | null => (typeof v === 'string' ? v : null);
 const int = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
 
 // Daemon → publish the run's filtered status (upsert on tenant_id+run_id).
-export const POST: RequestHandler = async ({ params, request }) => {
+export const POST: RequestHandler = async ({ params, request, platform }) => {
 	try {
 		const caller = await resolveApiKeyAccess(params.origin, params.org, request, ACCESS.contributor);
 		const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
 		const runId = str(body.run_id);
 		if (!runId) return apiError(400, 'run_id is required');
-		const { data, error } = await dojoDb()
+		const db = dojoDb();
+		const status = str(body.status) ?? 'running';
+		const title = str(body.title) ?? '';
+
+		// Read the prior status so a crash push fires only on the TRANSITION into
+		// crashed — not on every subsequent heartbeat upsert while already crashed.
+		const { data: prior, error: pErr } = await db
+			.from('relay_sessions')
+			.select('status')
+			.eq('tenant_id', caller.tenantId)
+			.eq('run_id', runId)
+			.maybeSingle();
+		if (pErr) return apiError(500, pErr.message);
+
+		const { data, error } = await db
 			.from('relay_sessions')
 			.upsert(
 				{
@@ -26,9 +41,9 @@ export const POST: RequestHandler = async ({ params, request }) => {
 					membership_id: caller.membershipId,
 					user_id: caller.userId,
 					run_id: runId,
-					title: str(body.title) ?? '',
+					title,
 					goal: str(body.goal),
-					status: str(body.status) ?? 'running',
+					status,
 					progress_done: int(body.progress_done),
 					progress_total: int(body.progress_total),
 					current_phase: str(body.current_phase),
@@ -43,6 +58,26 @@ export const POST: RequestHandler = async ({ params, request }) => {
 			.select('id')
 			.single();
 		if (error) return apiError(500, error.message);
+
+		// P4.4 — push on a crash. A crash is a run STATUS (not an inbox kind), so it's
+		// pushed here, gated by the `crashed` opt-in. Only on the transition into
+		// crashed (prior !== crashed) to avoid re-pushing on heartbeat upserts.
+		// Fire-and-forget via waitUntil; fail-open (the send swallows its own errors).
+		if (status === 'crashed' && (prior?.status as string | undefined) !== 'crashed') {
+			const push = sendRelayPushFromEnv({
+				userId: caller.userId,
+				tenantId: caller.tenantId,
+				runId,
+				runTitle: title,
+				signal: { type: 'crashed' }
+			});
+			if (platform?.context?.waitUntil) {
+				platform.context.waitUntil(push);
+			} else {
+				push.catch(() => {});
+			}
+		}
+
 		return Response.json({ id: data.id });
 	} catch (e) {
 		if (e instanceof Response) return e;
