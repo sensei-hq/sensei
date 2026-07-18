@@ -438,7 +438,7 @@
 		{/snippet}
 	</ConsoleHead>
 
-	<div class="flex-1 overflow-auto" style="padding: 8px 28px 28px">
+	<div class="flex-1 overflow-auto px-4 pt-2 pb-7 md:px-7">
 		<RelayOfflineBanner {online} queued={queuedCount} {flushing} onSend={flush} note={flushNote} />
 
 		{#if gates.length > 0}
