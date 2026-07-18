@@ -132,6 +132,20 @@ describe('relay/push/subscribe', () => {
 		expect(res.status).toBe(400);
 		expect((await res.json()).error).toMatch(/p256dh|auth/);
 	});
+
+	it('400s a non-https endpoint (SSRF guard)', async () => {
+		const res = await subscribePOST(
+			ev({ endpoint: 'http://169.254.169.254/latest/meta-data', keys: { p256dh: 'PK', auth: 'AK' } })
+		);
+		expect(res.status).toBe(400);
+		expect((await res.json()).error).toMatch(/https/);
+	});
+
+	it('400s an unparseable endpoint URL', async () => {
+		const res = await subscribePOST(ev({ endpoint: 'not a url', keys: { p256dh: 'PK', auth: 'AK' } }));
+		expect(res.status).toBe(400);
+		expect((await res.json()).error).toMatch(/valid URL/);
+	});
 });
 
 describe('relay/push/prefs', () => {
