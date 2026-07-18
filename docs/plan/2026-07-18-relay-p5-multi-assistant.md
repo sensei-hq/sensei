@@ -110,7 +110,11 @@ step runs + how gates/nudges/status flow* for that backend.
    planning/impl-cycle orchestrator only once there are multiple backends to
    actually normalize (avoids abstracting on one example).
 4. **New dep(s).** ACP (P5.2) will likely add an external crate — raise it as its own
-   decision when scoped ([[feedback_external_dep_issue]]).
+   decision when scoped ([[feedback_external_dep_issue]]). **RESOLVED 2026-07-18
+   (Jerry): use the official `agent-client-protocol` crate** (Apache-2.0, the spec's
+   own Rust SDK, Client + Agent traits, JSON-RPC/serde/tokio, Zed-maintained) — its
+   Client trait for the observe side. Pin a current version; respect the 7-day
+   min-release-age.
 
 ## Build order (locked)
 `P5.1 (Claude behind the trait, no behavior change)` → `P5.2 ACP observe-first` →
