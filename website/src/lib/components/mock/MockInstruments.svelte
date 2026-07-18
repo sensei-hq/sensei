@@ -96,7 +96,7 @@
     overflow: hidden;
   }
   .desc {
-    font-size: 11px;
+    font-size: var(--text-xs);
     color: var(--sumi-2);
     margin-bottom: 14px;
     max-width: 480px;
@@ -108,7 +108,7 @@
   }
   .mcp-chip {
     padding: 5px 10px;
-    font-size: 11px;
+    font-size: var(--text-xs);
     border-radius: 4px;
     border: var(--hairline);
     color: var(--sumi-2);
@@ -128,11 +128,11 @@
     grid-template-columns: auto 1fr auto;
     gap: 8px;
     align-items: center;
-    font-size: 11px;
+    font-size: var(--text-xs);
     border-bottom: var(--ink-line);
   }
   .tool-kind {
-    font-size: 9px;
+    font-size: var(--text-xs);
     padding: 2px 5px;
     border-radius: 2px;
     background: var(--paper-3);
@@ -145,5 +145,5 @@
     color: var(--shu);
   }
   .tool-name { color: var(--sumi); }
-  .tool-arrow { font-size: 9px; color: var(--sumi-3); }
+  .tool-arrow { font-size: var(--text-xs); color: var(--sumi-3); }
 </style>

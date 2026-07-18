@@ -57,7 +57,7 @@
   .title {
     flex: 1;
     text-align: center;
-    font-size: 11px;
+    font-size: var(--text-xs);
     color: var(--sumi-3);
     letter-spacing: 0.02em;
   }

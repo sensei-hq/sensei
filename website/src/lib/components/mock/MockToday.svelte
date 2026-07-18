@@ -66,13 +66,13 @@
     background: var(--paper);
   }
   .date-label {
-    font-size: 10px;
+    font-size: var(--text-xs);
     letter-spacing: 0.18em;
     color: var(--sumi-3);
     text-transform: uppercase;
   }
   .greeting {
-    font-size: 24px;
+    font-size: var(--text-xl);
     font-weight: 400;
     margin: 6px 0 18px;
     letter-spacing: -0.01em;
@@ -92,13 +92,13 @@
     margin-bottom: 6px;
   }
   .obs-tag {
-    font-size: 10px;
+    font-size: var(--text-xs);
     letter-spacing: 0.18em;
     color: var(--sumi-3);
     text-transform: uppercase;
   }
   .obs-text {
-    font-size: 17px;
+    font-size: var(--text-lg);
     line-height: 1.4;
     color: var(--sumi);
     max-width: 380px;
@@ -109,10 +109,10 @@
     gap: 4px;
     align-items: flex-end;
     color: var(--sumi-3);
-    font-size: 10px;
+    font-size: var(--text-xs);
   }
-  .obs-count { font-size: 18px; color: var(--sumi); }
-  .obs-period { font-size: 10px; }
+  .obs-count { font-size: var(--text-lg); color: var(--sumi); }
+  .obs-period { font-size: var(--text-xs); }
   .columns {
     display: grid;
     grid-template-columns: 1.4fr 1fr;
@@ -120,7 +120,7 @@
     margin-top: 22px;
   }
   .col-label {
-    font-size: 9px;
+    font-size: var(--text-xs);
     letter-spacing: 0.18em;
     color: var(--sumi-3);
     text-transform: uppercase;
@@ -141,13 +141,13 @@
   .notice-item.bordered {
     border-bottom: var(--ink-line);
   }
-  .notice-text { font-size: 12px; color: var(--sumi); }
-  .notice-project { font-size: 9px; color: var(--sumi-3); }
+  .notice-text { font-size: var(--text-xs); color: var(--sumi); }
+  .notice-project { font-size: var(--text-xs); color: var(--sumi-3); }
   .teachings {
     display: flex;
     flex-direction: column;
     gap: 8px;
-    font-size: 11px;
+    font-size: var(--text-xs);
     color: var(--sumi-2);
   }
   .faded { color: var(--sumi-4); }

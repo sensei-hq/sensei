@@ -55,21 +55,21 @@
 
 <style>
   .section-tag {
-    font-size: 11px;
+    font-size: var(--text-xs);
     letter-spacing: 0.22em;
     color: var(--sumi-3);
     text-transform: uppercase;
     margin-bottom: 16px;
   }
   .page-title {
-    font-size: 48px;
+    font-size: var(--text-3xl);
     font-weight: 300;
     margin: 0 0 20px;
     letter-spacing: -0.025em;
     line-height: 1.1;
   }
   .page-intro {
-    font-size: 17px;
+    font-size: var(--text-lg);
     color: var(--sumi-2);
     font-weight: 300;
     line-height: 1.6;
@@ -84,7 +84,7 @@
     cursor: pointer;
     display: flex;
     justify-content: space-between;
-    font-size: 17px;
+    font-size: var(--text-lg);
     color: var(--sumi);
     font-weight: 400;
     list-style: none;
@@ -92,13 +92,13 @@
   .faq-summary::-webkit-details-marker { display: none; }
   .faq-toggle { color: var(--sumi-3); }
   .faq-answer {
-    font-size: 14px;
+    font-size: var(--text-sm);
     color: var(--sumi-2);
     line-height: 1.7;
     margin-top: 16px;
     max-width: 720px;
   }
   @media (max-width: 900px) {
-    .page-title { font-size: 32px; }
+    .page-title { font-size: var(--text-2xl); }
   }
 </style>

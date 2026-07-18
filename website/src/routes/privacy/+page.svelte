@@ -79,32 +79,32 @@
 
 <style>
   .section-tag {
-    font-size: 11px;
+    font-size: var(--text-xs);
     letter-spacing: 0.22em;
     color: var(--sumi-3);
     text-transform: uppercase;
     margin-bottom: 16px;
   }
   .page-title {
-    font-size: 44px;
+    font-size: var(--text-3xl);
     font-weight: 300;
     margin: 0 0 12px;
     letter-spacing: -0.025em;
     line-height: 1.1;
   }
   .updated {
-    font-size: 12px;
+    font-size: var(--text-xs);
     color: var(--sumi-3);
     margin: 0 0 56px;
   }
   .prose {
-    font-size: 15px;
+    font-size: var(--text-base);
     color: var(--sumi-2);
     line-height: 1.75;
   }
   .prose h2 {
     font-family: var(--font-display);
-    font-size: 22px;
+    font-size: var(--text-xl);
     font-weight: 400;
     color: var(--sumi);
     margin: 48px 0 16px;
@@ -120,6 +120,6 @@
   }
   .prose a:hover { text-decoration: underline; }
   @media (max-width: 900px) {
-    .page-title { font-size: 32px; }
+    .page-title { font-size: var(--text-2xl); }
   }
 </style>

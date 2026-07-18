@@ -419,7 +419,7 @@
   }
 
   .section-tag {
-    font-size: 11px;
+    font-size: var(--text-xs);
     letter-spacing: 0.22em;
     color: var(--sumi-3);
     text-transform: uppercase;
@@ -456,14 +456,14 @@
     flex-shrink: 0;
   }
   .logo-text {
-    font-size: 19px;
+    font-size: var(--text-lg);
     letter-spacing: -0.01em;
     color: var(--sumi);
   }
   .nav-links {
     display: flex;
     gap: 32px;
-    font-size: 13px;
+    font-size: var(--text-sm);
     align-items: center;
   }
   .nav-link {
@@ -511,7 +511,7 @@
     margin-bottom: 24px;
   }
   .hero-tag-text {
-    font-size: 11px;
+    font-size: var(--text-xs);
     letter-spacing: 0.22em;
     color: var(--sumi-3);
     text-transform: uppercase;
@@ -529,7 +529,7 @@
     font-style: normal;
   }
   .hero-sub {
-    font-size: 19px;
+    font-size: var(--text-lg);
     color: var(--sumi-2);
     line-height: 1.55;
     margin-top: 32px;
@@ -543,12 +543,12 @@
     margin-top: 40px;
   }
   .hero-link {
-    font-size: 14px;
+    font-size: var(--text-sm);
     color: var(--sumi-2);
     text-decoration: none;
   }
   .hero-note {
-    font-size: 12px;
+    font-size: var(--text-xs);
     color: var(--sumi-3);
     margin-top: 16px;
     letter-spacing: 0.05em;
@@ -577,12 +577,12 @@
   }
   .stat { text-align: center; }
   .stat-value {
-    font-size: 30px;
+    font-size: var(--text-2xl);
     font-weight: 400;
     color: var(--sumi);
   }
   .stat-label {
-    font-size: 11px;
+    font-size: var(--text-xs);
     letter-spacing: 0.16em;
     text-transform: uppercase;
     color: var(--sumi-3);
@@ -600,14 +600,14 @@
     align-items: start;
   }
   .what-heading {
-    font-size: 44px;
+    font-size: var(--text-3xl);
     font-weight: 300;
     margin: 0;
     letter-spacing: -0.025em;
     line-height: 1.1;
   }
   .what-body {
-    font-size: 18px;
+    font-size: var(--text-lg);
     line-height: 1.65;
     color: var(--sumi-2);
     font-weight: 300;
@@ -623,7 +623,7 @@
   }
   .how-inner { max-width: 1200px; margin: 0 auto; }
   .how-heading {
-    font-size: 56px;
+    font-size: var(--text-4xl);
     font-weight: 300;
     margin: 0 0 72px;
     letter-spacing: -0.025em;
@@ -642,32 +642,32 @@
     position: relative;
   }
   .step-kanji {
-    font-size: 48px;
+    font-size: var(--text-3xl);
     color: var(--shu);
     line-height: 1;
     margin-bottom: 18px;
   }
   .step-phase {
-    font-size: 11px;
+    font-size: var(--text-xs);
     letter-spacing: 0.22em;
     color: var(--sumi-3);
     text-transform: uppercase;
     margin-bottom: 10px;
   }
   .step-title {
-    font-size: 22px;
+    font-size: var(--text-xl);
     font-weight: 400;
     margin: 0 0 16px;
     letter-spacing: -0.01em;
   }
   .step-text {
-    font-size: 14px;
+    font-size: var(--text-sm);
     color: var(--sumi-2);
     line-height: 1.65;
     margin-bottom: 20px;
   }
   .step-sub {
-    font-size: 12px;
+    font-size: var(--text-xs);
     color: var(--sumi-3);
     font-style: italic;
     padding-top: 14px;
@@ -678,14 +678,14 @@
   .gallery { padding: 120px 56px 60px; }
   .gallery-inner { max-width: 1200px; margin: 0 auto; }
   .gallery-heading {
-    font-size: 56px;
+    font-size: var(--text-4xl);
     font-weight: 300;
     margin: 0 0 16px;
     letter-spacing: -0.025em;
     line-height: 1.05;
   }
   .gallery-sub {
-    font-size: 17px;
+    font-size: var(--text-lg);
     color: var(--sumi-2);
     max-width: 600px;
     line-height: 1.6;
@@ -710,17 +710,17 @@
   .gallery-item.reverse .gallery-caption { order: 0; }
   .gallery-screen { overflow-x: auto; }
   .gallery-num {
-    font-size: 11px;
+    font-size: var(--text-xs);
     margin-bottom: 8px;
   }
   .gallery-name {
-    font-size: 32px;
+    font-size: var(--text-2xl);
     font-weight: 400;
     margin-bottom: 14px;
     letter-spacing: -0.015em;
   }
   .gallery-desc {
-    font-size: 14px;
+    font-size: var(--text-sm);
     color: var(--sumi-2);
     line-height: 1.65;
   }
@@ -751,21 +751,21 @@
     position: relative;
   }
   .philosophy-heading {
-    font-size: 48px;
+    font-size: var(--text-3xl);
     font-weight: 300;
     margin: 0 0 36px;
     letter-spacing: -0.025em;
     line-height: 1.18;
   }
   .philosophy-body {
-    font-size: 17px;
+    font-size: var(--text-lg);
     color: var(--sumi-2);
     font-weight: 300;
     line-height: 1.7;
     margin: 0 0 22px;
   }
   .philosophy-note {
-    font-size: 15px;
+    font-size: var(--text-base);
     color: var(--sumi-2);
     line-height: 1.75;
     margin: 0;
@@ -782,7 +782,7 @@
     align-items: start;
   }
   .privacy-heading {
-    font-size: 40px;
+    font-size: var(--text-3xl);
     font-weight: 300;
     margin: 0;
     letter-spacing: -0.025em;
@@ -800,14 +800,14 @@
     padding-bottom: 32px;
   }
   .privacy-item.bordered { border-bottom: var(--hairline); }
-  .privacy-kanji { font-size: 32px; color: var(--sumi-2); }
+  .privacy-kanji { font-size: var(--text-2xl); color: var(--sumi-2); }
   .privacy-title {
-    font-size: 20px;
+    font-size: var(--text-xl);
     margin-bottom: 10px;
     letter-spacing: -0.01em;
   }
   .privacy-text {
-    font-size: 15px;
+    font-size: var(--text-base);
     color: var(--sumi-2);
     line-height: 1.65;
   }
@@ -822,14 +822,14 @@
   }
   .pricing-inner { max-width: 760px; margin: 0 auto; }
   .pricing-heading {
-    font-size: 56px;
+    font-size: var(--text-4xl);
     font-weight: 300;
     margin: 0 0 24px;
     letter-spacing: -0.025em;
     line-height: 1.05;
   }
   .pricing-body {
-    font-size: 17px;
+    font-size: var(--text-lg);
     color: var(--sumi-2);
     font-weight: 300;
     line-height: 1.65;
@@ -840,7 +840,7 @@
   .faq { padding: 120px 56px; }
   .faq-inner { max-width: 960px; margin: 0 auto; }
   .faq-heading {
-    font-size: 44px;
+    font-size: var(--text-3xl);
     font-weight: 300;
     margin: 0 0 48px;
     letter-spacing: -0.025em;
@@ -858,20 +858,20 @@
     background: var(--paper-2);
   }
   .faq-card-q {
-    font-size: 18px;
+    font-size: var(--text-lg);
     font-weight: 400;
     margin-bottom: 12px;
     letter-spacing: -0.01em;
   }
   .faq-card-a {
-    font-size: 14px;
+    font-size: var(--text-sm);
     color: var(--sumi-2);
     line-height: 1.65;
   }
   .faq-more {
     display: inline-block;
     margin-top: 32px;
-    font-size: 14px;
+    font-size: var(--text-sm);
     color: var(--sumi-2);
     text-decoration: none;
     transition: color 0.15s;
@@ -887,14 +887,14 @@
   }
   .support-inner { max-width: 720px; margin: 0 auto; }
   .support-heading {
-    font-size: 32px;
+    font-size: var(--text-2xl);
     font-weight: 300;
     margin: 0 0 22px;
     letter-spacing: -0.02em;
     line-height: 1.25;
   }
   .support-body {
-    font-size: 14px;
+    font-size: var(--text-sm);
     color: var(--sumi-2);
     line-height: 1.7;
     margin: 0 0 32px;
@@ -903,7 +903,7 @@
   /* ── Footer ────────────────────────────────────────── */
   .footer {
     padding: 56px;
-    font-size: 12px;
+    font-size: var(--text-xs);
     color: var(--sumi-3);
     border-top: var(--hairline);
   }
@@ -922,13 +922,13 @@
     margin-bottom: 12px;
   }
   .footer-desc {
-    font-size: 11px;
+    font-size: var(--text-xs);
     color: var(--sumi-3);
     max-width: 280px;
     line-height: 1.6;
   }
   .footer-version {
-    font-size: 10px;
+    font-size: var(--text-xs);
     color: var(--sumi-4);
     margin-top: 14px;
   }
@@ -937,7 +937,7 @@
     gap: 56px;
   }
   .footer-col-title {
-    font-size: 10px;
+    font-size: var(--text-xs);
     letter-spacing: 0.22em;
     color: var(--sumi-4);
     text-transform: uppercase;
@@ -949,7 +949,7 @@
     gap: 8px;
   }
   .footer-link {
-    font-size: 12px;
+    font-size: var(--text-xs);
     color: var(--sumi-2);
     text-decoration: none;
   }
@@ -958,32 +958,32 @@
   /* ── Responsive ────────────────────────────────────── */
   @media (max-width: 900px) {
     .nav-inner { padding: 20px 24px; }
-    .nav-links { gap: 20px; font-size: 12px; }
+    .nav-links { gap: 20px; font-size: var(--text-xs); }
     .hero { padding: 48px 24px 32px; }
     .hero-kanji { font-size: 180px; right: 24px; }
-    .hero-heading { font-size: 48px; }
-    .hero-sub { font-size: 16px; }
+    .hero-heading { font-size: var(--text-3xl); }
+    .hero-sub { font-size: var(--text-base); }
     .stats { padding: 24px; }
     .stats-inner { grid-template-columns: repeat(2, 1fr); gap: 20px; }
     .what-it-is { padding: 80px 24px; }
     .what-inner { grid-template-columns: 1fr; gap: 32px; }
     .how-it-works { padding: 80px 24px; }
-    .how-heading { font-size: 36px; }
+    .how-heading { font-size: var(--text-3xl); }
     .steps-grid { grid-template-columns: 1fr; gap: 24px; }
     .gallery { padding: 80px 24px 40px; }
-    .gallery-heading { font-size: 36px; }
+    .gallery-heading { font-size: var(--text-3xl); }
     .gallery-item, .gallery-item.reverse { grid-template-columns: 1fr; }
     .gallery-item.reverse .gallery-screen { order: 0; }
     .gallery-item.reverse .gallery-caption { order: 1; }
     .philosophy { padding: 100px 24px; }
     .philosophy-kanji { font-size: 280px; }
-    .philosophy-heading { font-size: 32px; }
+    .philosophy-heading { font-size: var(--text-2xl); }
     .privacy { padding: 80px 24px; }
     .privacy-inner { grid-template-columns: 1fr; gap: 40px; }
     .pricing { padding: 80px 24px; }
-    .pricing-heading { font-size: 36px; }
+    .pricing-heading { font-size: var(--text-3xl); }
     .faq { padding: 80px 24px; }
-    .faq-heading { font-size: 32px; }
+    .faq-heading { font-size: var(--text-2xl); }
     .faq-cards { grid-template-columns: 1fr; }
     .support { padding: 80px 24px; }
     .footer { padding: 40px 24px; }

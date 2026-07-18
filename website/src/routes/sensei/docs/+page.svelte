@@ -171,21 +171,21 @@
 
 <style>
   .section-tag {
-    font-size: 11px;
+    font-size: var(--text-xs);
     letter-spacing: 0.22em;
     color: var(--sumi-3);
     text-transform: uppercase;
     margin-bottom: 16px;
   }
   .page-title {
-    font-size: 48px;
+    font-size: var(--text-3xl);
     font-weight: 300;
     margin: 0 0 32px;
     letter-spacing: -0.025em;
     line-height: 1.15;
   }
   .section-title {
-    font-size: 36px;
+    font-size: var(--text-3xl);
     font-weight: 300;
     margin: 0 0 28px;
     letter-spacing: -0.02em;
@@ -195,7 +195,7 @@
     margin-bottom: 100px;
   }
   .prose {
-    font-size: 16px;
+    font-size: var(--text-base);
     color: var(--sumi-2);
     line-height: 1.75;
   }
@@ -221,18 +221,18 @@
     background: var(--paper-2);
   }
   .toolkit-kanji {
-    font-size: 32px;
+    font-size: var(--text-2xl);
     color: var(--shu);
     margin-bottom: 14px;
   }
   .toolkit-title {
-    font-size: 20px;
+    font-size: var(--text-xl);
     font-weight: 400;
     margin: 0 0 12px;
     letter-spacing: -0.01em;
   }
   .toolkit-desc {
-    font-size: 13px;
+    font-size: var(--text-sm);
     color: var(--sumi-2);
     line-height: 1.65;
     margin: 0;
@@ -256,12 +256,12 @@
     border-radius: 10px;
     text-align: center;
   }
-  .hw-spec { font-size: 13px; color: var(--sumi-3); margin-bottom: 6px; }
-  .hw-model { font-size: 16px; font-weight: 500; color: var(--sumi); }
-  .hw-note { font-size: 11px; color: var(--sumi-3); margin-top: 4px; }
+  .hw-spec { font-size: var(--text-sm); color: var(--sumi-3); margin-bottom: 6px; }
+  .hw-model { font-size: var(--text-base); font-weight: 500; color: var(--sumi); }
+  .hw-note { font-size: var(--text-xs); color: var(--sumi-3); margin-top: 4px; }
   @media (max-width: 900px) {
-    .page-title { font-size: 32px; }
-    .section-title { font-size: 28px; }
+    .page-title { font-size: var(--text-2xl); }
+    .section-title { font-size: var(--text-2xl); }
     .toolkit-grid { grid-template-columns: 1fr; }
     .hw-grid { grid-template-columns: 1fr; }
   }

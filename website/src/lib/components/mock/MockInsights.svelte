@@ -48,13 +48,13 @@
   }
   .heading { margin-bottom: 20px; }
   .section-tag {
-    font-size: 10px;
+    font-size: var(--text-xs);
     letter-spacing: 0.18em;
     color: var(--sumi-3);
     text-transform: uppercase;
   }
   .title {
-    font-size: 22px;
+    font-size: var(--text-xl);
     font-weight: 400;
     margin: 4px 0 0;
   }
@@ -78,14 +78,14 @@
     gap: 10px;
   }
   .card-title {
-    font-size: 13px;
+    font-size: var(--text-sm);
     color: var(--sumi);
     flex: 1;
   }
   .card-meta {
     display: flex;
     justify-content: space-between;
-    font-size: 10px;
+    font-size: var(--text-xs);
     color: var(--sumi-3);
   }
   .bar-track {
