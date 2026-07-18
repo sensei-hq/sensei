@@ -34,6 +34,7 @@ pub mod runs;
 pub mod run_limits;
 pub mod run_watchdog;
 pub mod agent_spawn;
+pub mod relay_drivers;
 mod classifiers;
 mod adapters;
 mod analysis;
