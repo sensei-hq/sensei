@@ -29,7 +29,7 @@ const GV_DATA = {
     stance: { autonomy: 1, sharing: 2, review: 1, anon: 2 },
     rules: [
       { k: "守", type: "guard", t: "Never log refresh tokens, even at debug level", tone: "var(--accent)" },
-      { k: "理", type: "principle", t: "Public APIs stay backward-compatible two minor versions", tone: "var(--ink-2)" },
+      { k: "理", type: "principle", t: "Public APIs stay backward-compatible two minor versions", tone: "var(--ink-soft)" },
       { k: "禁", type: "anti", t: "No secrets in source — use the vault, never .env in git", tone: "var(--warning)" },
     ],
     skills: [{ k: "技", t: "Write a conventional-commit message" }, { k: "技", t: "Draft an ADR from a decision" }],
@@ -74,49 +74,58 @@ const GV_EMPTY = { stance: { autonomy: 1, sharing: 1, review: 1, anon: 2 }, rule
 /* stance dials — each posture is a 3-stop segmented choice */
 const STANCE = [
   { id: "autonomy", kanji: "自", label: "Agent autonomy", help: "how far sensei goes before it gates to a human",
-    stops: ["Gate often", "Balanced", "Run free"] },
+    stops: ["Gate often", "Balanced", "Run free"],
+    conseq: ["Every prod-touching or irreversible step pauses for approval.", "Routine steps run free; risky or irreversible ones gate to a human.", "Only explicitly-flagged commands gate — everything else runs."] },
   { id: "sharing", kanji: "共", label: "Sharing", help: "what leaves this scope, upward",
-    stops: ["Manual", "Opt-in", "Automatic"] },
+    stops: ["Manual", "Opt-in", "Automatic"],
+    conseq: ["Nothing leaves unless someone shares it by hand.", "Lessons queue in ready-to-share; you confirm each batch.", "Lessons past the confidence bar are sent up on a cadence."] },
   { id: "review", kanji: "検", label: "Review", help: "approvals required before a lesson publishes",
-    stops: ["1 approval", "2 approvals", "Consensus"] },
+    stops: ["1 approval", "2 approvals", "Consensus"],
+    conseq: ["One named maintainer decision publishes a lesson.", "High-impact items wait for a second maintainer.", "All scope owners must sign off before anything publishes."] },
 ];
 
-function GvSection({ kanji, title, count, addLabel, children, empty }) {
+function GvSection({ kanji, title, count, addLabel, children, empty, inheritedCount = 0 }) {
   return (
-    <div style={{ background: "var(--paper-2)", border: "var(--hairline)", borderRadius: 12, overflow: "hidden" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", borderBottom: "var(--hairline)" }}>
-        <span className="kanji" style={{ fontSize: 15, color: "var(--accent)" }}>{kanji}</span>
-        <span style={{ fontSize: 11, letterSpacing: ".14em", textTransform: "uppercase", color: "var(--ink-3)", fontWeight: 600 }}>{title}</span>
-        <span className="mono" style={{ fontSize: 11, color: "var(--ink-4)" }}>{count}</span>
+    <div style={{ background: "var(--paper-soft)", border: "var(--hairline)", borderRadius: "var(--radius-lg)", overflow: "hidden" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", padding: "var(--space-3) var(--space-4)", borderBottom: "var(--hairline)" }}>
+        <span className="kanji" style={{ fontSize: "var(--text-base)", color: "var(--accent)" }}>{kanji}</span>
+        <span style={{ fontSize: "var(--text-xs)", letterSpacing: ".14em", textTransform: "uppercase", color: "var(--ink-mute)", fontWeight: 600 }}>{title}</span>
+        <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--ink-faint)" }}>{count} here{inheritedCount > 0 ? ` · ${inheritedCount} inherited` : ""}</span>
         <span style={{ flex: 1 }} />
-        <button style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "var(--paper)", border: "var(--hairline)",
-          borderRadius: 7, padding: "5px 11px", cursor: "pointer", fontFamily: "inherit", fontSize: 12, color: "var(--ink-2)" }}>
+        <button style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-1)", background: "var(--paper)", border: "var(--hairline)",
+          borderRadius: "var(--radius)", padding: "var(--space-1) var(--space-3)", cursor: "pointer", fontFamily: "inherit", fontSize: "var(--text-xs)", color: "var(--ink-soft)" }}>
           <span style={{ color: "var(--accent)" }}>+</span> {addLabel}
         </button>
       </div>
-      {count === 0
-        ? <div style={{ padding: "18px 16px", fontSize: 12.5, color: "var(--ink-4)", fontStyle: "italic" }}>{empty}</div>
+      {count === 0 && inheritedCount === 0
+        ? <div style={{ padding: "var(--space-4) var(--space-4)", fontSize: "var(--text-sm)", color: "var(--ink-faint)", fontStyle: "italic" }}>{empty}</div>
         : <div>{children}</div>}
     </div>
   );
 }
-function GvRow({ item, last, showTag }) {
+function GvRow({ item, last, showTag, inherited }) {
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "auto 1fr auto", gap: 12, alignItems: "center",
-                  padding: "11px 16px", borderBottom: last ? "none" : "1px solid var(--edge)" }}>
-      <span className="kanji" style={{ fontSize: 16, color: item.tone || "var(--ink-3)", width: 20, textAlign: "center" }}>{item.k}</span>
-      <span style={{ fontSize: 13.5, color: "var(--ink)" }}>{item.t}</span>
-      {showTag && item.tag
-        ? <span className="mono" style={{ fontSize: 10.5, color: "var(--accent)" }}>{item.tag}</span>
-        : item.type
-          ? <DojoChip>{item.type === "anti" ? "anti-pattern" : item.type}</DojoChip>
-          : <span style={{ fontSize: 12, color: "var(--ink-4)" }}>edit</span>}
+    <div style={{ display: "grid", gridTemplateColumns: "auto 1fr auto", gap: "var(--space-3)", alignItems: "center",
+                  padding: "var(--space-3) var(--space-4)", borderBottom: last ? "none" : "1px solid var(--paper-edge)", opacity: inherited ? 0.62 : 1 }}>
+      <span className="kanji" style={{ fontSize: "var(--text-base)", color: inherited ? "var(--ink-faint)" : (item.tone || "var(--ink-mute)"), width: 20, textAlign: "center" }}>{item.k}</span>
+      <span style={{ fontSize: "var(--text-sm)", color: "var(--ink)", textDecoration: item._overridden ? "line-through" : "none", textDecorationColor: "var(--ink-faint)", opacity: item._overridden ? 0.75 : 1 }}>{item.t}</span>
+      {inherited
+        ? <span className="mono" style={{ fontSize: "var(--text-xs)", color: item._overridden ? "var(--danger)" : "var(--ink-faint)", whiteSpace: "nowrap" }}>{item._overridden ? "overridden here" : "↑ " + item._from}</span>
+        : item._overrides
+          ? <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--accent)", whiteSpace: "nowrap" }}>overrides ↑ {item._overrides}</span>
+        : showTag && item.tag
+          ? <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--accent)" }}>{item.tag}</span>
+          : item.type
+            ? <DojoChip>{item.type === "anti" ? "anti-pattern" : item.type}</DojoChip>
+            : <span style={{ fontSize: "var(--text-xs)", color: "var(--ink-faint)" }}>edit</span>}
     </div>
   );
 }
 
-function DojoGovernance() {
+function DojoGovernance({ mobile = false }) {
   const [scopeId, setScopeId] = gvS("proj-auth");
+  const [stanceOv, setStanceOv] = gvS({});   // { scopeId: { autonomy: n, … } }
+  const [showOnboard, setShowOnboard] = gvS(false);
   const scope = GV_SCOPES.find(s => s.id === scopeId) || GV_SCOPES[0];
   const d = GV_DATA[scopeId] || GV_EMPTY;
   const isProject = scope.kind === "Project";
@@ -125,8 +134,16 @@ function DojoGovernance() {
   const chain = [];
   let cur = scope;
   while (cur) { chain.push(cur); cur = cur.parent ? GV_SCOPES.find(s => s.id === cur.parent) : null; }
+  // A project also inherits from any Stack scope (React/Rust/…), not just its parent ladder.
+  if (scope.kind === "Project" || scope.kind === "Team") {
+    GV_SCOPES.filter(s => s.kind === "Stack").forEach(s => { if (!chain.some(c => c.id === s.id)) chain.push(s); });
+  }
   const inherited = chain.slice(1);
-  const sum = (key) => chain.reduce((n, s) => n + ((GV_DATA[s.id] || GV_EMPTY)[key] || []).length, 0);
+  const sum = (key) => {
+    const seen = new Set();
+    chain.forEach(s => ((GV_DATA[s.id] || GV_EMPTY)[key] || []).forEach(it => seen.add((it.t || it.name || JSON.stringify(it)).toLowerCase())));
+    return seen.size;
+  };
 
   const grouped = [
     { kanji: "掟", title: "Rules · guards · principles", key: "rules", add: "Add rule", empty: "No rules defined at this scope yet." },
@@ -137,30 +154,47 @@ function DojoGovernance() {
 
   return (
     <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", background: "var(--paper)" }}>
-      <DojoHead kanji="掟" eyebrow="Govern · define" title="Governance & shared knowledge"
+      <DojoHead mobile={mobile} kanji="掟" eyebrow="Govern · define" title="Governance & shared knowledge"
         sub="Define the stance and the shared skills, agents, commands, rules — and a project's memory — at each scope. Everything cascades down the ladder, so a developer who joins inherits it on day one."
-        right={<DojoChip tone="var(--ink-2)" soft="var(--paper-2)" border="var(--hairline)">{scope.kanji} {scope.name} · {scope.kind}</DojoChip>} />
+        right={<DojoChip tone="var(--ink-soft)" soft="var(--paper-soft)" border="var(--hairline)">{scope.kanji} {scope.name} · {scope.kind}</DojoChip>} />
 
-      <div style={{ flex: 1, display: "grid", gridTemplateColumns: "230px 1fr", minHeight: 0 }}>
-        {/* scope picker */}
-        <aside style={{ borderRight: "var(--hairline)", background: "var(--paper-2)", overflow: "auto", padding: "16px 12px" }}>
+      <div style={mobile
+          ? { flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }
+          : { flex: 1, display: "grid", gridTemplateColumns: "minmax(150px, 230px) 1fr", minHeight: 0 }}>
+        {/* scope picker — rail on desktop, wrapping pill row on mobile */}
+        {mobile ? (
+          <div style={{ flexShrink: 0, display: "flex", flexWrap: "wrap", gap: "var(--space-1)", padding: "var(--space-2) var(--space-3)", borderBottom: "var(--hairline)", background: "var(--paper-soft)" }}>
+            {GV_SCOPES.map(s => {
+              const on = s.id === scopeId;
+              return (
+                <button key={s.id} onClick={() => setScopeId(s.id)} style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-1)",
+                  borderRadius: "var(--radius-full)", padding: "var(--space-1) var(--space-3)", fontSize: "var(--text-xs)", cursor: "pointer",
+                  background: on ? "var(--ink)" : "transparent", color: on ? "var(--paper)" : "var(--ink-soft)",
+                  border: on ? "1px solid var(--ink)" : "var(--hairline)" }}>
+                  <span className="kanji" style={{ fontSize: "var(--text-sm)", color: on ? "var(--paper)" : "var(--accent)" }}>{s.kanji}</span>{s.name}
+                </button>
+              );
+            })}
+          </div>
+        ) : (
+        <aside style={{ borderRight: "var(--hairline)", background: "var(--paper-soft)", overflow: "auto", padding: "var(--space-4) var(--space-3)" }}>
           {["Org", "Team", "Project", "Stack"].map(kind => (
-            <div key={kind} style={{ marginBottom: 14 }}>
-              <div style={{ fontSize: 9.5, letterSpacing: ".14em", textTransform: "uppercase", color: "var(--ink-4)", fontWeight: 600, padding: "0 8px", marginBottom: 6 }}>{kind}</div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            <div key={kind} style={{ marginBottom: "var(--space-3)" }}>
+              <div style={{ fontSize: "var(--text-xs)", letterSpacing: ".14em", textTransform: "uppercase", color: "var(--ink-faint)", fontWeight: 600, padding: "0 var(--space-2)", marginBottom: "var(--space-1)" }}>{kind}</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-1)" }}>
                 {GV_SCOPES.filter(s => s.kind === kind).map(s => {
                   const on = s.id === scopeId;
                   const n = ((GV_DATA[s.id] || GV_EMPTY).rules || []).length + ((GV_DATA[s.id] || GV_EMPTY).skills || []).length;
                   return (
                     <button key={s.id} onClick={() => setScopeId(s.id)} style={{
-                      display: "grid", gridTemplateColumns: "auto 1fr auto", alignItems: "center", gap: 9, width: "100%", textAlign: "left",
-                      borderRadius: 7, padding: "8px 9px", cursor: "pointer", fontSize: 13,
+                      display: "grid", gridTemplateColumns: "auto 1fr auto", alignItems: "center", gap: "var(--space-2)", width: "100%", textAlign: "left",
+                      borderRadius: "var(--radius)", padding: "var(--space-2) var(--space-2)", cursor: "pointer", fontSize: "var(--text-sm)",
                       background: on ? "var(--paper)" : "transparent", border: on ? "var(--hairline)" : "1px solid transparent",
-                      color: on ? "var(--ink)" : "var(--ink-2)", fontFamily: "inherit",
+                      color: on ? "var(--ink)" : "var(--ink-soft)", fontFamily: "inherit",
                     }}>
-                      <span className="kanji" style={{ fontSize: 14, width: 16, textAlign: "center", color: on ? "var(--accent)" : "var(--ink-3)" }}>{s.kanji}</span>
+                      <span className="kanji" style={{ fontSize: "var(--text-sm)", width: 16, textAlign: "center", color: on ? "var(--accent)" : "var(--ink-mute)" }}>{s.kanji}</span>
                       <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.name}</span>
-                      {n > 0 && <span className="mono" style={{ fontSize: 10, color: "var(--ink-4)" }}>{n}</span>}
+                      {n > 0 && <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--ink-faint)" }}>{n}</span>}
                     </button>
                   );
                 })}
@@ -168,52 +202,76 @@ function DojoGovernance() {
             </div>
           ))}
         </aside>
+        )}
 
         {/* authoring main */}
-        <main style={{ overflow: "auto", padding: 24 }}>
+        <main style={{ overflow: "auto", padding: mobile ? "var(--space-4)" : "var(--space-5)", flex: mobile ? 1 : undefined, minHeight: mobile ? 0 : undefined }}>
           {/* stance */}
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-            <span style={{ fontSize: 11, letterSpacing: ".14em", textTransform: "uppercase", color: "var(--ink-3)", fontWeight: 600 }}>Governance stance</span>
-            <span className="mono" style={{ fontSize: 11, color: "var(--ink-4)" }}>{scope.name}</span>
+          <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", marginBottom: "var(--space-3)" }}>
+            <span style={{ fontSize: "var(--text-xs)", letterSpacing: ".14em", textTransform: "uppercase", color: "var(--ink-mute)", fontWeight: 600 }}>Governance stance</span>
+            <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--ink-faint)" }}>{scope.name}</span>
             <span style={{ flex: 1 }} />
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, color: "var(--ink-3)" }}>
-              <span className="kanji" style={{ fontSize: 13, color: "var(--accent)" }}>盾</span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-1)", fontSize: "var(--text-xs)", color: "var(--ink-mute)" }}>
+              <span className="kanji" style={{ fontSize: "var(--text-sm)", color: "var(--accent)" }}>盾</span>
               Client anonymization · always on
             </span>
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 12, marginBottom: 24 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "var(--space-3)", marginBottom: "var(--space-5)" }}>
             {STANCE.map(st => {
-              const val = d.stance[st.id] ?? 1;
+              const val = (stanceOv[scopeId] || {})[st.id] ?? d.stance[st.id] ?? 1;
               return (
-                <div key={st.id} style={{ background: "var(--paper-2)", border: "var(--hairline)", borderRadius: 12, padding: "13px 15px" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3 }}>
-                    <span className="kanji" style={{ fontSize: 14, color: "var(--accent)" }}>{st.kanji}</span>
-                    <span style={{ fontSize: 13, color: "var(--ink)", fontWeight: 500 }}>{st.label}</span>
+                <div key={st.id} style={{ background: "var(--paper-soft)", border: "var(--hairline)", borderRadius: "var(--radius-lg)", padding: "var(--space-3) var(--space-4)" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", marginBottom: "var(--space-1)" }}>
+                    <span className="kanji" style={{ fontSize: "var(--text-sm)", color: "var(--accent)" }}>{st.kanji}</span>
+                    <span style={{ fontSize: "var(--text-sm)", color: "var(--ink)", fontWeight: 500 }}>{st.label}</span>
                   </div>
-                  <div style={{ fontSize: 11.5, color: "var(--ink-3)", lineHeight: 1.4, marginBottom: 10 }}>{st.help}</div>
-                  <div style={{ display: "flex", background: "var(--paper-3)", borderRadius: 8, padding: 3, gap: 2 }}>
+                  <div style={{ fontSize: "var(--text-xs)", color: "var(--ink-mute)", lineHeight: 1.4, marginBottom: "var(--space-2)" }}>{st.help}</div>
+                  <div style={{ display: "flex", background: "var(--paper-mute)", borderRadius: "var(--radius-lg)", padding: "var(--space-1)", gap: "var(--space-1)" }}>
                     {st.stops.map((stop, i) => {
                       const on = i === val;
                       return (
-                        <div key={i} style={{ flex: 1, textAlign: "center", borderRadius: 6, padding: "6px 4px", fontSize: 11.5,
+                        <div key={i} onClick={() => setStanceOv(o => ({ ...o, [scopeId]: { ...(o[scopeId] || {}), [st.id]: i } }))}
+                          style={{ flex: 1, textAlign: "center", borderRadius: "var(--radius)", padding: "var(--space-1) var(--space-1)", fontSize: "var(--text-xs)",
                           fontWeight: on ? 600 : 400, cursor: "pointer",
-                          background: on ? "var(--paper)" : "transparent", color: on ? "var(--ink)" : "var(--ink-3)",
-                          boxShadow: on ? "0 1px 2px rgba(0,0,0,0.08)" : "none" }}>{stop}</div>
+                          background: on ? "var(--paper)" : "transparent", color: on ? "var(--ink)" : "var(--ink-mute)",
+                          boxShadow: on ? "var(--shadow-sm)" : "none" }}>{stop}</div>
                       );
                     })}
+                  </div>
+                  <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-1)", marginTop: "var(--space-2)", fontSize: "var(--text-xs)", color: "var(--ink-mute)", lineHeight: 1.45 }}>
+                    <span style={{ color: "var(--accent)", flexShrink: 0 }}>→</span>{st.conseq[val]}
                   </div>
                 </div>
               );
             })}
           </div>
 
-          {/* authored knowledge */}
-          <div style={{ display: "grid", gridTemplateColumns: isProject ? "1fr 1fr" : "1fr 1fr", gap: 14 }}>
+          {/* authored knowledge — defined here + inherited (greyed, source-tagged) */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: "var(--space-3)" }}>
             {grouped.map(g => {
               const items = d[g.key] || [];
+              const inheritedTitles = {};
+              inherited.forEach(s => ((GV_DATA[s.id] || GV_EMPTY)[g.key] || []).forEach(it => {
+                const key = (it.t || "").toLowerCase();
+                if (!(key in inheritedTitles)) inheritedTitles[key] = s.name;
+              }));
+              const localTitles = new Set(items.map(it => (it.t || "").toLowerCase()));
+              // Mark local rules that shadow an inherited one, rather than hiding the collision.
+              const localItems = items.map(it => {
+                const key = (it.t || "").toLowerCase();
+                return inheritedTitles[key] ? { ...it, _overrides: inheritedTitles[key] } : it;
+              });
+              const inheritedItems = [];
+              inherited.forEach(s => ((GV_DATA[s.id] || GV_EMPTY)[g.key] || []).forEach(it => {
+                const key = (it.t || "").toLowerCase();
+                if (!inheritedItems.some(x => (x.t || "").toLowerCase() === key))
+                  inheritedItems.push({ ...it, _from: s.name, _overridden: localTitles.has(key) });
+              }));
               return (
-                <GvSection key={g.key} kanji={g.kanji} title={g.title} count={items.length} addLabel={g.add} empty={g.empty}>
-                  {items.map((it, i) => <GvRow key={i} item={it} last={i === items.length - 1} />)}
+                <GvSection key={g.key} kanji={g.kanji} title={g.title} count={items.length} addLabel={g.add} empty={g.empty}
+                  inheritedCount={inheritedItems.length}>
+                  {localItems.map((it, i) => <GvRow key={"l" + i} item={it} last={i === localItems.length - 1 && inheritedItems.length === 0} />)}
+                  {inheritedItems.map((it, i) => <GvRow key={"i" + i} item={it} last={i === inheritedItems.length - 1} inherited />)}
                 </GvSection>
               );
             })}
@@ -221,7 +279,7 @@ function DojoGovernance() {
 
           {/* memory — project scope only */}
           {isProject && (
-            <div style={{ marginTop: 14 }}>
+            <div style={{ marginTop: "var(--space-3)" }}>
               <GvSection kanji="憶" title="Memory & learnings · this project" count={(d.memory || []).length} addLabel="Add learning"
                 empty="Nothing learned here yet — sensei fills this as the team works.">
                 {(d.memory || []).map((it, i) => <GvRow key={i} item={it} last={i === d.memory.length - 1} showTag />)}
@@ -230,27 +288,46 @@ function DojoGovernance() {
           )}
 
           {/* what a new developer inherits */}
-          <div style={{ marginTop: 20, background: "var(--paper-2)", border: "1px solid var(--accent)", borderRadius: 12, padding: "16px 18px" }}>
-            <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
-              <span className="kanji" style={{ fontSize: 26, color: "var(--accent)", lineHeight: 1 }}>迎</span>
+          <div style={{ marginTop: "var(--space-4)", background: "var(--paper-soft)", border: "1px solid var(--accent)", borderRadius: "var(--radius-lg)", padding: "var(--space-4) var(--space-4)" }}>
+            <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-3)", flexWrap: mobile ? "wrap" : "nowrap" }}>
+              <span className="kanji" style={{ fontSize: "var(--text-2xl)", color: "var(--accent)", lineHeight: 1 }}>迎</span>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 14.5, color: "var(--ink)", fontWeight: 600 }}>What a new developer on {scope.name} inherits</div>
-                <div style={{ fontSize: 12.5, color: "var(--ink-2)", lineHeight: 1.55, marginTop: 3 }}>
+                <div style={{ fontSize: "var(--text-base)", color: "var(--ink)", fontWeight: 600 }}>What a new developer on {scope.name} inherits</div>
+                <div style={{ fontSize: "var(--text-sm)", color: "var(--ink-soft)", lineHeight: 1.55, marginTop: "var(--space-1)" }}>
                   Composed down the ladder{inherited.length > 0 && <> — this scope plus {inherited.map((s, i) => <span key={s.id}><b style={{ fontWeight: 600 }}>{s.name}</b>{i < inherited.length - 1 ? " · " : ""}</span>)}</>}. Delivered to their Observatory the moment they connect.
                 </div>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 11 }}>
+                <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap", marginTop: "var(--space-3)" }}>
                   <DojoChip tone="var(--accent)" soft="var(--accent-soft)">{sum("rules")} rules</DojoChip>
-                  <DojoChip tone="var(--ink-2)">{sum("skills")} skills</DojoChip>
-                  <DojoChip tone="var(--ink-2)">{sum("agents")} agents</DojoChip>
-                  <DojoChip tone="var(--ink-2)">{sum("commands")} commands</DojoChip>
+                  <DojoChip tone="var(--ink-soft)">{sum("skills")} skills</DojoChip>
+                  <DojoChip tone="var(--ink-soft)">{sum("agents")} agents</DojoChip>
+                  <DojoChip tone="var(--ink-soft)">{sum("commands")} commands</DojoChip>
                   {isProject && <DojoChip tone="var(--success)" soft="var(--success-soft)">{sum("memory")} learnings</DojoChip>}
                 </div>
               </div>
-              <button style={{ flexShrink: 0, alignSelf: "center", display: "inline-flex", alignItems: "center", gap: 7, background: "var(--ink)", color: "var(--paper)",
-                border: "none", borderRadius: 8, padding: "10px 16px", cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 500 }}>
-                <span className="kanji" style={{ fontSize: 13, color: "var(--accent)" }}>観</span> Preview onboarding
+              <button onClick={() => setShowOnboard(v => !v)} style={{ flexShrink: 0, alignSelf: "center", display: "inline-flex", alignItems: "center", gap: "var(--space-2)", background: "var(--ink)", color: "var(--paper)",
+                border: "none", borderRadius: "var(--radius-lg)", padding: "var(--space-2) var(--space-4)", cursor: "pointer", fontFamily: "inherit", fontSize: "var(--text-sm)", fontWeight: 500 }}>
+                <span className="kanji" style={{ fontSize: "var(--text-sm)", color: "var(--accent)" }}>観</span> {showOnboard ? "Hide preview" : "Preview onboarding"}
               </button>
             </div>
+            {showOnboard && (
+              <div style={{ marginTop: "var(--space-3)", borderTop: "1px solid var(--paper-edge)", paddingTop: "var(--space-3)" }}>
+                <div style={{ fontSize: "var(--text-xs)", letterSpacing: ".12em", textTransform: "uppercase", color: "var(--ink-mute)", fontWeight: 600, marginBottom: "var(--space-2)" }}>What lands in their Observatory on connect</div>
+                {chain.map(s => {
+                  const sd = GV_DATA[s.id] || GV_EMPTY;
+                  const parts = [["rules", sd.rules], ["skills", sd.skills], ["agents", sd.agents], ["commands", sd.commands], ["learnings", sd.memory]]
+                    .filter(([, arr]) => (arr || []).length).map(([n, arr]) => `${arr.length} ${n}`).join(" · ");
+                  if (!parts) return null;
+                  return (
+                    <div key={s.id} style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", padding: "var(--space-1) 0", fontSize: "var(--text-sm)", color: "var(--ink-soft)" }}>
+                      <span className="kanji" style={{ fontSize: "var(--text-sm)", color: "var(--ink-mute)", width: 18, textAlign: "center" }}>{s.kanji}</span>
+                      <span style={{ color: "var(--ink)", minWidth: 110 }}>{s.name}</span>
+                      <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--ink-mute)" }}>{parts}</span>
+                    </div>
+                  );
+                })}
+                <div style={{ fontSize: "var(--text-xs)", color: "var(--ink-faint)", marginTop: "var(--space-1)" }}>Composed by specificity — a more specific scope's rule wins on collision.</div>
+              </div>
+            )}
           </div>
         </main>
       </div>

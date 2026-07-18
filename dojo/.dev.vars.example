@@ -12,3 +12,17 @@
 PUBLIC_SUPABASE_URL=
 PUBLIC_SUPABASE_ANON_KEY=
 SUPABASE_SERVICE_ROLE_KEY=
+
+# Web Push (relay P4.4 send) — VAPID. The sender (src/lib/server/relay-push-send.ts)
+# reads these from platform.env via $env/dynamic/{public,private}:
+#   VAPID_PRIVATE_KEY — base64url `d` scalar of the P-256 keypair (private JWK `d`
+#                       from a keypair generator). PRIVATE — server-only, never
+#                       shipped to the browser. Prod = `wrangler secret put
+#                       VAPID_PRIVATE_KEY` (never in git).
+#   VAPID_SUBJECT     — a `mailto:` (or https) contact, e.g. mailto:relay@sensei-hq.com.
+#   PUBLIC_VAPID_KEY  — base64url raw public key; PUBLIC_-prefixed so it ships to the
+#                       browser (the P4.3 subscribe flow reads it) AND is used by the
+#                       send to build the VAPID `k=` param. Same value client + server.
+VAPID_PRIVATE_KEY=
+VAPID_SUBJECT=
+PUBLIC_VAPID_KEY=

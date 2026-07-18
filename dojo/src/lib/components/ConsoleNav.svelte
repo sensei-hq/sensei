@@ -13,6 +13,7 @@
 	type RouteId =
 		| 'overview'
 		| 'triage'
+		| 'relay'
 		| 'members'
 		| 'identities'
 		| 'policies'
@@ -41,6 +42,7 @@
 			items: [
 				{ id: 'overview', kanji: '全', label: 'Overview', to: 'overview' },
 				{ id: 'triage', kanji: '門', label: 'Triage', to: 'triage' },
+				{ id: 'relay', kanji: '継', label: 'Relay', to: 'relay' },
 				{ id: 'knowledge', kanji: '蔵', label: 'Knowledge' }
 			]
 		},
@@ -77,6 +79,8 @@
 				return resolve('/(console)/console');
 			case 'triage':
 				return resolve('/(console)/console/triage');
+			case 'relay':
+				return resolve('/(console)/console/relay');
 			case 'members':
 				return resolve('/(console)/console/members');
 			case 'identities':
