@@ -23,17 +23,17 @@
      style="overflow:hidden">
     <div class="p-7">
       <div class="flex items-center justify-between mb-5">
-        <span class="mono text-ink-faint" style="font-size:12px">{p.index}</span>
-        <span class="mono rounded-sm px-2 py-0 {statusClass(p.status)}" style="font-size:11px;white-space:nowrap">{p.status}</span>
+        <span class="mono text-ink-faint text-xs">{p.index}</span>
+        <span class="mono rounded-sm px-2 py-0 {statusClass(p.status)} text-xs" style="white-space:nowrap">{p.status}</span>
       </div>
       <div class="flex items-baseline gap-3 mb-2">
-        <span class="display text-ink" style="font-size:32px;font-weight:400;letter-spacing:-0.02em">{p.name}</span>
-        <span class="mono text-ink-mute" style="font-size:11px;letter-spacing:0.1em;text-transform:uppercase">{p.category}</span>
+        <span class="display text-ink text-2xl" style="font-weight:400;letter-spacing:-0.02em">{p.name}</span>
+        <span class="mono text-ink-mute text-xs" style="letter-spacing:0.1em;text-transform:uppercase">{p.category}</span>
       </div>
-      <p class="display text-ink m-0" style="font-size:22px;font-weight:300;letter-spacing:-0.015em;line-height:1.3">
+      <p class="display text-ink m-0 text-xl" style="font-weight:300;letter-spacing:-0.015em;line-height:1.3">
         {p.tagline}
       </p>
-      <p class="text-ink-soft mt-3" style="font-size:14px;line-height:1.65;max-width:460px">{p.blurb}</p>
+      <p class="text-ink-soft mt-3 text-sm" style="line-height:1.65;max-width:460px">{p.blurb}</p>
       <div class="flex flex-col gap-2 mt-5 mb-6">
         {#each (p.highlights ?? []) as h (h)}
           <div class="flex items-center gap-3">
@@ -45,7 +45,7 @@
       <div class="flex items-center justify-between flex-wrap gap-4">
         <div class="flex flex-wrap gap-2">
           {#each p.meta as m (m)}
-            <span class="mono text-ink-mute border border-paper-edge rounded-sm" style="font-size:10.5px;padding:2px 7px;white-space:nowrap">{m}</span>
+            <span class="mono text-ink-mute border border-paper-edge rounded-sm text-xs" style="padding:2px 7px;white-space:nowrap">{m}</span>
           {/each}
         </div>
         <span class="text-{p.id} text-sm font-medium">Explore Sensei →</span>
@@ -54,7 +54,7 @@
     <!-- Kanji panel -->
     <div class="kanji-panel border-l border-paper-edge">
       <span class="kanji text-{p.id}" style="font-size:220px;line-height:1;opacity:0.92">{p.kanji}</span>
-      <span class="mono" style="position:absolute;bottom:18px;right:20px;font-size:10.5px;letter-spacing:0.18em;text-transform:uppercase;color:var(--ink-faint)">Kan · to observe</span>
+      <span class="mono text-xs" style="position:absolute;bottom:18px;right:20px;letter-spacing:0.18em;text-transform:uppercase;color:var(--ink-faint)">Kan · to observe</span>
     </div>
   </a>
 {:else}
@@ -65,20 +65,20 @@
      class="product-card border border-paper-edge rounded-lg bg-paper-soft no-underline text-{p.id}">
     <div class="p-6 flex flex-col" style="flex:1">
       <div class="flex items-center justify-between">
-        <span class="mono text-ink-faint" style="font-size:12px">{p.index}</span>
-        <span class="mono rounded-sm px-2 py-0 {statusClass(p.status)}" style="font-size:11px;white-space:nowrap">{p.status}</span>
+        <span class="mono text-ink-faint text-xs">{p.index}</span>
+        <span class="mono rounded-sm px-2 py-0 {statusClass(p.status)} text-xs" style="white-space:nowrap">{p.status}</span>
       </div>
-      <span class="kanji text-{p.id}" style="font-size:56px;line-height:1;margin:20px 0 16px">{p.kanji}</span>
+      <span class="kanji text-{p.id} text-4xl" style="line-height:1;margin:20px 0 16px">{p.kanji}</span>
       <div class="flex items-baseline gap-2 mb-1">
-        <span class="display text-ink" style="font-size:22px;font-weight:400;letter-spacing:-0.02em">{p.name}</span>
+        <span class="display text-ink text-xl" style="font-weight:400;letter-spacing:-0.02em">{p.name}</span>
       </div>
-      <span class="mono text-ink-mute mb-3" style="font-size:11px;letter-spacing:0.1em;text-transform:uppercase">{p.category}</span>
-      <p class="display text-ink m-0" style="font-size:17px;font-weight:400;line-height:1.3">{p.tagline}</p>
-      <p class="text-ink-soft mt-2" style="font-size:13.5px;line-height:1.6">{p.blurb}</p>
+      <span class="mono text-ink-mute mb-3 text-xs" style="letter-spacing:0.1em;text-transform:uppercase">{p.category}</span>
+      <p class="display text-ink m-0 text-lg" style="font-weight:400;line-height:1.3">{p.tagline}</p>
+      <p class="text-ink-soft mt-2 text-sm" style="line-height:1.6">{p.blurb}</p>
       <div style="flex:1"></div>
       <div class="mt-5 mb-4 flex flex-wrap gap-2">
         {#each p.meta as m (m)}
-          <span class="mono text-ink-mute border border-paper-edge rounded-sm" style="font-size:10.5px;padding:2px 7px;white-space:nowrap">{m}</span>
+          <span class="mono text-ink-mute border border-paper-edge rounded-sm text-xs" style="padding:2px 7px;white-space:nowrap">{m}</span>
         {/each}
       </div>
       <div class="border-t border-paper-edge pt-4 flex items-center justify-between">

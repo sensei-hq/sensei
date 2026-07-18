@@ -10,8 +10,8 @@
       <!-- Sensei HQ brushed-ensō mark (i-brand:sensei-hq), tinted to the brand vermillion -->
       <span class="i-brand:sensei-hq text-primary flex-shrink-0 block" style="width:28px;height:28px" aria-hidden="true"></span>
       <span class="flex items-baseline gap-2">
-        <span class="display text-ink" style="font-size:18px;letter-spacing:-0.01em">Sensei</span>
-        <span class="mono text-ink-mute" style="font-size:11px;letter-spacing:0.08em">HQ</span>
+        <span class="display text-ink text-lg" style="letter-spacing:-0.01em">Sensei</span>
+        <span class="mono text-ink-mute text-xs" style="letter-spacing:0.08em">HQ</span>
       </span>
     </a>
 

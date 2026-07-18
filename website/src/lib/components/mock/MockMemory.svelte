@@ -9,7 +9,7 @@
   <MockSidebar active="memories" />
   <main class="content">
     <div class="header-row">
-      <span class="kanji" style="font-size: 24px; color: var(--shu);">覚</span>
+      <span class="kanji text-xl" style="color: var(--shu)">覚</span>
       <span class="section-tag">Memory · adopted</span>
     </div>
     <h1 class="display title">Prefer local component state to lifted state</h1>

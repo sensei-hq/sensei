@@ -13,7 +13,7 @@
   <nav class="page-nav">
     <a href="{base}/sensei" class="back-link">
       <span class="i-brand:sensei text-sensei" style="width:20px;height:20px;flex-shrink:0" aria-hidden="true"></span>
-      <span class="display" style="font-size: 15px;">Sensei</span>
+      <span class="display text-base">Sensei</span>
     </a>
   </nav>
 
