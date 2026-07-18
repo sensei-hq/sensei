@@ -42,16 +42,22 @@ autonomous build never handles a prod secret or silently changes cloud infra
 **Rule:** I build + test everything against local supabase/dev keys, and raise a
 short checklist of the prod cloud steps for Jerry rather than touching prod.
 
-## Design fork (decided, flag for review)
+## Design fork — RESOLVED 2026-07-18 (Jerry): client-direct Supabase Realtime + RLS
 
-**Realtime transport: client-direct Supabase Realtime + RLS** (chosen) vs
-Worker-mediated SSE. The written design (relay-engine §2, line 74/442) says "phone
-subscribes Supabase Realtime", and the phone is already a Supabase-JWT client
-(`resolveTenantAccess`). So: phone subscribes directly, RLS enforces per-user row
-access. Alternative (Worker holds the realtime conn, phone connects via SSE) avoids
-pulling RLS forward but adds Worker infra and diverges from the doc. **Chosen:
-client-direct + RLS** — matches the doc and the phone's existing JWT-client role.
-If Jerry prefers Worker-SSE, P4.1/P4.2 change; flagged here.
+Confirmed **client-direct Supabase Realtime + RLS** over Worker-mediated SSE. The
+phone subscribes Supabase Realtime directly with its JWT; RLS enforces per-user row
+access. Matches the written design (relay-engine §2, line 74/442) + the phone's
+existing JWT-client role. This pulls the deferred RLS item forward into P4.1 (I
+author + test policies locally; prod rollout is a Jerry checklist item).
+
+## Build order — REVISED 2026-07-18
+
+Push loop shipped first (autonomous, no cloud infra): **P4.3 ✅** (`2e5bd323`),
+**P4.4 ✅** (Worker send). Jerry then chose to build **P4.6 + P4.5 next**
+(autonomous), ahead of P4.1/P4.2 (realtime + RLS, which need his cloud-infra
+checklist). So P4.6/P4.5 are built to **degrade gracefully without realtime** —
+refresh-based now (`invalidateAll` / browser `online`/`offline` events), upgrading
+to live once P4.2 lands. Their P4.2 dependency is therefore soft, not hard.
 
 ## Chunks (ordered; per-chunk cadence = TDD → build/test → reviewer → commit `develop`)
 
