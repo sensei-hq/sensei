@@ -6,9 +6,11 @@
 //! watchdog. P5.1 ships exactly one backend — [`ClaudeDriver`] — behind the
 //! trait, with zero behavior change.
 
+pub mod acp;
 pub mod claude;
 pub mod trait_def;
 
+pub use acp::{acp_update_to_segments, AcpObserveDriver};
 pub use claude::ClaudeDriver;
 pub use trait_def::{DriveCapability, DriveStep, RunDriver};
 
