@@ -1,0 +1,26 @@
+{
+  "name": "Dōjō Relay",
+  "short_name": "Relay",
+  "description": "Supervise your autonomous runs — approve gates, answer decisions, unstick stalls, anywhere.",
+  "id": "/console/relay",
+  "start_url": "/console/relay",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#FAF8F5",
+  "theme_color": "#E8552B",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "type": "image/svg+xml",
+      "sizes": "any",
+      "purpose": "any"
+    },
+    {
+      "src": "/favicon.svg",
+      "type": "image/svg+xml",
+      "sizes": "any",
+      "purpose": "maskable"
+    }
+  ]
+}

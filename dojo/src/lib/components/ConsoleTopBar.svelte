@@ -10,9 +10,14 @@
 
 	const initials = $derived(
 		(org?.name ?? 'Dōjō')
+			// Drop parenthetical qualifiers e.g. "Jerry (personal)" → "Jerry".
+			.replace(/\([^)]*\)/g, ' ')
 			.split(/\s+/)
+			// Keep only tokens whose first character is alphanumeric, so stray
+			// punctuation (e.g. a leftover "(") never becomes an initial.
+			.filter((w) => /^[\p{L}\p{N}]/u.test(w))
 			.slice(0, 2)
-			.map((w) => w[0]?.toUpperCase() ?? '')
+			.map((w) => w[0].toUpperCase())
 			.join('')
 	);
 </script>

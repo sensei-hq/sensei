@@ -19,24 +19,14 @@ const { useState: mbS } = React;
 
 /* ═══ data · per-user, across every Dōjō ═════════════════════ */
 const flagMeta = {
-  gate:    { tone: "var(--accent)",  soft: "var(--accent-soft)",  label: "decision waiting" },
-  approve: { tone: "var(--accent)",  soft: "var(--accent-soft)",  label: "approval waiting" },
-  doing:   { tone: "var(--success)", soft: "var(--success-soft)", label: "on track" },
-  stall:   { tone: "var(--warning)", soft: "var(--warning-soft)", label: "stalled" },
-  done:    { tone: "var(--ink-3)",   soft: "var(--paper-3)",      label: "done" },
+  gate:    { tone: "var(--accent)",  soft: "var(--accent-soft)", edge: "var(--accent-edge)",  label: "decision waiting" },
+  approve: { tone: "var(--accent)",  soft: "var(--accent-soft)", edge: "var(--accent-edge)",  label: "approval waiting" },
+  doing:   { tone: "var(--success)", soft: "var(--success-soft)", edge: "var(--success-edge)", label: "on track" },
+  stall:   { tone: "var(--warning)", soft: "var(--warning-soft)", edge: "var(--warning-edge)", label: "stalled" },
+  done:    { tone: "var(--ink-mute)",   soft: "var(--paper-mute)", edge: "var(--paper-edge)",      label: "done" },
 };
-const kindTone = { Employer: "var(--ink-2)", Client: "var(--accent)", Community: "var(--success)", Personal: "var(--ink-3)" };
-const kindKanji = { Employer: "社", Client: "客", Community: "群", Personal: "己" };
-function DojoTag({ p }) {
-  const tone = kindTone[p.kind] || "var(--ink-3)";
-  return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10.5, color: tone,
-      background: `color-mix(in oklch, ${tone} 12%, transparent)`, border: `1px solid color-mix(in oklch, ${tone} 28%, transparent)`,
-      borderRadius: 999, padding: "2px 8px", whiteSpace: "nowrap" }}>
-      <span className="kanji" style={{ fontSize: 11 }}>{kindKanji[p.kind] || "結"}</span>{p.dojo}
-    </span>
-  );
-}
+const kindTone = window.DOJO_KIND_TONE;
+const DojoTag = (props) => React.createElement(window.DojoKindTag, props);
 const MB_PROJECTS = [
   { id: "auth",   kanji: "鍵", name: "lumen-auth",     dojo: "Acme Corp", kind: "Employer", phase: 2, of: 4, pct: 47, now: "refresh-token store", flag: "approve", note: "approve migration" },
   { id: "bill",   kanji: "円", name: "billing-svc",    dojo: "Acme Corp", kind: "Employer", phase: 3, of: 5, pct: 61, now: "webhook retry tests", flag: "doing",   note: "running" },
@@ -50,18 +40,11 @@ const INBOX = [
 ];
 
 /* ═══ small shared pieces ════════════════════════════════════ */
-function Live() {
-  return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10.5, color: "var(--success)",
-                  background: "var(--success-soft)", border: "1px solid var(--success-edge)", borderRadius: 999, padding: "3px 9px" }}>
-      <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--success)" }} />live
-    </span>
-  );
-}
+const Live = (props) => React.createElement(window.DojoLive, props);
 function Bar({ pct, tone }) {
   return (
-    <div style={{ height: 6, borderRadius: 3, background: "var(--paper-3)", overflow: "hidden" }}>
-      <div style={{ width: pct + "%", height: "100%", background: tone || "var(--ink)", borderRadius: 3 }} />
+    <div style={{ height: 6, borderRadius: "var(--radius-sm)", background: "var(--paper-mute)", overflow: "hidden" }}>
+      <div style={{ width: pct + "%", height: "100%", background: tone || "var(--ink)", borderRadius: "var(--radius-sm)" }} />
     </div>
   );
 }
@@ -69,33 +52,33 @@ function Bar({ pct, tone }) {
 /* ═══ 1 · PROJECTS body (adaptive) ═══════════════════════════ */
 function RelayProjectsBody({ wide = false, onOpen }) {
   const needs = MB_PROJECTS.filter(p => ["gate", "approve", "stall"].includes(p.flag));
-  const pad = wide ? 28 : 16;
+  const pad = wide ? "var(--space-5)" : "var(--space-4)";
   return (
     <div style={{ height: "100%", overflow: "auto", padding: pad }}>
       {/* needs you */}
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-        <span className="kanji" style={{ fontSize: 14, color: "var(--accent)" }}>要</span>
-        <span style={{ fontSize: 11, letterSpacing: ".14em", textTransform: "uppercase", color: "var(--ink-3)", fontWeight: 600 }}>Needs you</span>
-        <span className="mono" style={{ fontSize: 11, color: "var(--accent)" }}>{needs.length}</span>
+      <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", marginBottom: "var(--space-3)" }}>
+        <span className="kanji" style={{ fontSize: "var(--text-sm)", color: "var(--accent)" }}>要</span>
+        <span style={{ fontSize: "var(--text-xs)", letterSpacing: ".14em", textTransform: "uppercase", color: "var(--ink-mute)", fontWeight: 600 }}>Needs you</span>
+        <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--accent)" }}>{needs.length}</span>
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: wide ? "repeat(auto-fill, minmax(300px, 1fr))" : "1fr", gap: 12, marginBottom: 26 }}>
+      <div style={{ display: "grid", gridTemplateColumns: wide ? "repeat(auto-fill, minmax(300px, 1fr))" : "1fr", gap: "var(--space-3)", marginBottom: "var(--space-5)" }}>
         {needs.map(p => {
           const f = flagMeta[p.flag];
           return (
-            <div key={p.id} style={{ background: f.soft, border: `1px solid color-mix(in oklch, ${f.tone} 30%, transparent)`, borderRadius: 14, padding: "14px 16px" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <span className="kanji" style={{ fontSize: 18, color: f.tone }}>{p.kanji}</span>
+            <div key={p.id} style={{ background: f.soft, border: `1px solid ${f.edge || "var(--paper-edge)"}`, borderRadius: "var(--radius-lg)", padding: "var(--space-3) var(--space-4)" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
+                <span className="kanji" style={{ fontSize: "var(--text-lg)", color: f.tone }}>{p.kanji}</span>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div className="mono" style={{ fontSize: 12.5, color: "var(--ink)" }}>{p.name}</div>
-                  <div style={{ marginTop: 4 }}><DojoTag p={p} /></div>
+                  <div className="mono" style={{ fontSize: "var(--text-sm)", color: "var(--ink)" }}>{p.name}</div>
+                  <div style={{ marginTop: "var(--space-1)" }}><DojoTag p={p} /></div>
                 </div>
-                <span style={{ fontSize: 10.5, fontWeight: 600, color: f.tone }}>{f.label}</span>
+                <span style={{ fontSize: "var(--text-xs)", fontWeight: 600, color: f.tone }}>{f.label}</span>
               </div>
-              <button onClick={onOpen} style={{ width: "100%", marginTop: 12, padding: "10px", borderRadius: 9, border: "none", cursor: "pointer",
+              <button onClick={onOpen} style={{ width: "100%", marginTop: "var(--space-3)", padding: "var(--space-2)", borderRadius: "var(--radius-lg)", border: "none", cursor: "pointer",
                     background: p.flag === "stall" ? "var(--paper)" : "var(--ink)", color: p.flag === "stall" ? "var(--ink)" : "var(--paper)",
-                    boxShadow: p.flag === "stall" ? "inset 0 0 0 1px var(--edge)" : "none",
-                    fontSize: 13, fontWeight: 500, fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}>
-                <span className="kanji" style={{ fontSize: 13, color: "var(--accent)" }}>{p.flag === "approve" ? "認" : p.flag === "gate" ? "決" : "促"}</span>
+                    boxShadow: p.flag === "stall" ? "inset 0 0 0 1px var(--paper-edge)" : "none",
+                    fontSize: "var(--text-sm)", fontWeight: 500, fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "center", gap: "var(--space-2)" }}>
+                <span className="kanji" style={{ fontSize: "var(--text-sm)", color: "var(--accent)" }}>{p.flag === "approve" ? "認" : p.flag === "gate" ? "決" : "促"}</span>
                 {p.flag === "approve" ? "Review the command" : p.flag === "gate" ? "Answer the decision" : "Nudge to continue"}
               </button>
             </div>
@@ -103,32 +86,32 @@ function RelayProjectsBody({ wide = false, onOpen }) {
         })}
       </div>
       {/* all active */}
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-        <span className="kanji" style={{ fontSize: 14, color: "var(--ink-3)" }}>場</span>
-        <span style={{ fontSize: 11, letterSpacing: ".14em", textTransform: "uppercase", color: "var(--ink-3)", fontWeight: 600 }}>Active</span>
-        <span className="mono" style={{ fontSize: 11, color: "var(--ink-4)" }}>{MB_PROJECTS.length}</span>
+      <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", marginBottom: "var(--space-3)" }}>
+        <span className="kanji" style={{ fontSize: "var(--text-sm)", color: "var(--ink-mute)" }}>場</span>
+        <span style={{ fontSize: "var(--text-xs)", letterSpacing: ".14em", textTransform: "uppercase", color: "var(--ink-mute)", fontWeight: 600 }}>Active</span>
+        <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--ink-faint)" }}>{MB_PROJECTS.length}</span>
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: wide ? "repeat(auto-fill, minmax(300px, 1fr))" : "1fr", gap: 12 }}>
+      <div style={{ display: "grid", gridTemplateColumns: wide ? "repeat(auto-fill, minmax(300px, 1fr))" : "1fr", gap: "var(--space-3)" }}>
         {MB_PROJECTS.map(p => {
           const f = flagMeta[p.flag];
           return (
-            <button key={p.id} onClick={onOpen} style={{ textAlign: "left", cursor: "pointer", background: "var(--paper-2)", border: "var(--hairline)", borderRadius: 14, padding: "14px 16px", fontFamily: "inherit" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <span className="kanji" style={{ fontSize: 17, color: "var(--ink-3)" }}>{p.kanji}</span>
+            <button key={p.id} onClick={onOpen} style={{ textAlign: "left", cursor: "pointer", background: "var(--paper-soft)", border: "var(--hairline)", borderRadius: "var(--radius-lg)", padding: "var(--space-3) var(--space-4)", fontFamily: "inherit" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
+                <span className="kanji" style={{ fontSize: "var(--text-lg)", color: "var(--ink-mute)" }}>{p.kanji}</span>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div className="mono" style={{ fontSize: 12.5, color: "var(--ink)" }}>{p.name}</div>
-                  <div style={{ marginTop: 5 }}><DojoTag p={p} /></div>
+                  <div className="mono" style={{ fontSize: "var(--text-sm)", color: "var(--ink)" }}>{p.name}</div>
+                  <div style={{ marginTop: "var(--space-1)" }}><DojoTag p={p} /></div>
                 </div>
-                <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10.5, color: f.tone }}>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-1)", fontSize: "var(--text-xs)", color: f.tone }}>
                   <span style={{ width: 6, height: 6, borderRadius: "50%", background: f.tone }} />{f.label}
                 </span>
               </div>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", margin: "11px 0 6px" }}>
-                <span className="mono" style={{ fontSize: 11, color: "var(--ink-3)" }}>Phase {p.phase} of {p.of}</span>
-                <span className="mono" style={{ fontSize: 11, color: "var(--ink-3)" }}>{p.pct}%</span>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", margin: "var(--space-3) 0 var(--space-1)" }}>
+                <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--ink-mute)" }}>Phase {p.phase} of {p.of}</span>
+                <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--ink-mute)" }}>{p.pct}%</span>
               </div>
               <Bar pct={p.pct} tone={p.flag === "stall" ? "var(--warning)" : "var(--ink)"} />
-              <div style={{ fontSize: 11.5, color: "var(--ink-2)", marginTop: 9 }}>{p.flag === "stall" ? "Paused · " : "Now · "}{p.now}</div>
+              <div style={{ fontSize: "var(--text-xs)", color: "var(--ink-soft)", marginTop: "var(--space-2)" }}>{p.flag === "stall" ? "Paused · " : "Now · "}{p.now}</div>
             </button>
           );
         })}
@@ -140,24 +123,24 @@ function RelayProjectsBody({ wide = false, onOpen }) {
 /* ═══ 2 · INBOX body (adaptive · two-pane when wide) ═════════ */
 function RelayInboxList({ sel, setSel }) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
       {INBOX.map(it => {
         const on = sel === it.id;
         return (
-          <button key={it.id} onClick={() => setSel(it.id)} style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", textAlign: "left", cursor: "pointer",
-                background: on ? "var(--paper-3)" : "var(--paper-2)", border: on ? "1px solid var(--accent)" : "var(--hairline)", borderRadius: 13, padding: "13px 15px", fontFamily: "inherit" }}>
-            <span style={{ width: 38, height: 38, borderRadius: 10, flexShrink: 0, background: "var(--paper-3)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <span className="kanji" style={{ fontSize: 18, color: it.tone }}>{it.k}</span>
+          <button key={it.id} onClick={() => setSel(it.id)} style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", width: "100%", textAlign: "left", cursor: "pointer",
+                background: on ? "var(--paper-mute)" : "var(--paper-soft)", border: on ? "1px solid var(--accent)" : "var(--hairline)", borderRadius: "var(--radius-lg)", padding: "var(--space-3) var(--space-4)", fontFamily: "inherit" }}>
+            <span style={{ width: 38, height: 38, borderRadius: "var(--radius-lg)", flexShrink: 0, background: "var(--paper-mute)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <span className="kanji" style={{ fontSize: "var(--text-lg)", color: it.tone }}>{it.k}</span>
             </span>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-                <span style={{ fontSize: 10, letterSpacing: ".1em", textTransform: "uppercase", color: it.tone, fontWeight: 700 }}>{it.kind === "stall" ? "stalled" : it.kind}</span>
-                <span className="mono" style={{ fontSize: 10, color: "var(--ink-4)" }}>{it.w}</span>
+              <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
+                <span style={{ fontSize: "var(--text-xs)", letterSpacing: ".1em", textTransform: "uppercase", color: it.tone, fontWeight: 700 }}>{it.kind === "stall" ? "stalled" : it.kind}</span>
+                <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--ink-faint)" }}>{it.w}</span>
               </div>
-              <div style={{ fontSize: 14, color: "var(--ink)", marginTop: 2 }}>{it.title}</div>
-              <div className="mono" style={{ fontSize: 10.5, color: "var(--ink-3)", marginTop: 2 }}>{it.proj} · {it.dojo}</div>
+              <div style={{ fontSize: "var(--text-sm)", color: "var(--ink)", marginTop: "var(--space-1)" }}>{it.title}</div>
+              <div className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--ink-mute)", marginTop: "var(--space-1)" }}>{it.proj} · {it.dojo}</div>
             </div>
-            <span style={{ fontSize: 14, color: "var(--ink-4)" }}>→</span>
+            <span style={{ fontSize: "var(--text-sm)", color: "var(--ink-faint)" }}>→</span>
           </button>
         );
       })}
@@ -168,14 +151,14 @@ function RelayInboxBody({ wide = false }) {
   const [sel, setSel] = mbS(INBOX[0].id);
   const item = INBOX.find(x => x.id === sel) || INBOX[0];
   const intro = (
-    <p style={{ fontSize: 12.5, color: "var(--ink-3)", lineHeight: 1.5, margin: "0 0 14px" }}>
+    <p style={{ fontSize: "var(--text-sm)", color: "var(--ink-mute)", lineHeight: 1.5, margin: "0 0 var(--space-3)" }}>
       Answer when you can — other tracks keep moving. Pushed live through your Dōjō.
     </p>
   );
-  if (!wide) return <div style={{ height: "100%", overflow: "auto", padding: 16 }}>{intro}<RelayInboxList sel={sel} setSel={setSel} /></div>;
+  if (!wide) return <div style={{ height: "100%", overflow: "auto", padding: "var(--space-4)" }}>{intro}<RelayInboxList sel={sel} setSel={setSel} /></div>;
   return (
     <div style={{ display: "flex", height: "100%", minHeight: 0 }}>
-      <div style={{ width: 380, flexShrink: 0, borderRight: "var(--hairline)", overflow: "auto", padding: 22 }}>
+      <div style={{ width: 380, flexShrink: 0, borderRight: "var(--hairline)", overflow: "auto", padding: "var(--space-5)" }}>
         {intro}<RelayInboxList sel={sel} setSel={setSel} />
       </div>
       <div style={{ flex: 1, minWidth: 0, overflow: "auto" }}>
@@ -187,41 +170,50 @@ function RelayInboxBody({ wide = false }) {
 
 /* ═══ 3 · APPROVE body ═══════════════════════════════════════ */
 function RelayApproveBody({ wide = false }) {
+  const [done, setDone] = mbS(false);
   return (
-    <div style={{ maxWidth: wide ? 640 : "none", margin: wide ? "0 auto" : 0, padding: wide ? "28px" : "18px 16px" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 14 }}>
-        <span className="kanji" style={{ fontSize: 20, color: "var(--accent)" }}>認</span>
+    <div style={{ maxWidth: wide ? 640 : "none", margin: wide ? "0 auto" : 0, padding: wide ? "var(--space-5)" : "var(--space-4) var(--space-4)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", marginBottom: "var(--space-3)" }}>
+        <span className="kanji" style={{ fontSize: "var(--text-xl)", color: "var(--accent)" }}>認</span>
         <div>
-          <div style={{ fontSize: 11, letterSpacing: ".14em", textTransform: "uppercase", color: "var(--ink-3)", fontWeight: 600 }}>sensei wants to run</div>
-          <div style={{ fontSize: 11.5, color: "var(--ink-3)", marginTop: 2 }}>lumen-auth · Acme Corp · paused, waiting on you</div>
+          <div style={{ fontSize: "var(--text-xs)", letterSpacing: ".14em", textTransform: "uppercase", color: "var(--ink-mute)", fontWeight: 600 }}>sensei wants to run</div>
+          <div style={{ fontSize: "var(--text-xs)", color: "var(--ink-mute)", marginTop: "var(--space-1)" }}>lumen-auth · Acme Corp · paused, waiting on you</div>
         </div>
       </div>
-      <div style={{ background: "var(--paper-3)", border: "var(--hairline)", borderRadius: 11, padding: "13px 14px" }}>
-        <div style={{ fontSize: 10, letterSpacing: ".12em", textTransform: "uppercase", color: "var(--ink-4)", fontWeight: 600, marginBottom: 7 }}>The command</div>
-        <div className="mono" style={{ fontSize: 12.5, color: "var(--ink)", lineHeight: 1.6, wordBreak: "break-all" }}>psql $DB &lt; migrations/003_refresh_tokens.sql</div>
+      <div style={{ background: "var(--paper-mute)", border: "var(--hairline)", borderRadius: "var(--radius-lg)", padding: "var(--space-3) var(--space-3)" }}>
+        <div style={{ fontSize: "var(--text-xs)", letterSpacing: ".12em", textTransform: "uppercase", color: "var(--ink-faint)", fontWeight: 600, marginBottom: "var(--space-2)" }}>The command</div>
+        <div className="mono" style={{ fontSize: "var(--text-sm)", color: "var(--ink)", lineHeight: 1.6, wordBreak: "break-all" }}>psql $DB &lt; migrations/003_refresh_tokens.sql</div>
       </div>
-      <div style={{ display: "flex", gap: 8, margin: "10px 0 18px", flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: "var(--space-2)", margin: "var(--space-2) 0 var(--space-4)", flexWrap: "wrap" }}>
         <DojoChip tone="var(--warning)" soft="var(--warning-soft)">writes to prod</DojoChip>
-        <DojoChip tone="var(--ink-2)">creates 2 tables</DojoChip>
-        <DojoChip tone="var(--ink-2)">reversible · down migration</DojoChip>
+        <DojoChip tone="var(--ink-soft)">creates 2 tables</DojoChip>
+        <DojoChip tone="var(--ink-soft)">reversible · down migration</DojoChip>
       </div>
-      <div style={{ marginBottom: 8, fontSize: 11, letterSpacing: ".12em", textTransform: "uppercase", color: "var(--ink-3)", fontWeight: 600 }}>Why</div>
-      <p style={{ fontSize: 13.5, color: "var(--ink-2)", lineHeight: 1.6, margin: "0 0 18px" }}>
-        The refresh-token store needs its tables before the new session flow can be tested. Adds <span className="mono" style={{ fontSize: 12 }}>refresh_tokens</span> and <span className="mono" style={{ fontSize: 12 }}>token_families</span>, with a matching down migration.
+      <div style={{ marginBottom: "var(--space-2)", fontSize: "var(--text-xs)", letterSpacing: ".12em", textTransform: "uppercase", color: "var(--ink-mute)", fontWeight: 600 }}>Why</div>
+      <p style={{ fontSize: "var(--text-sm)", color: "var(--ink-soft)", lineHeight: 1.6, margin: "0 0 var(--space-4)" }}>
+        The refresh-token store needs its tables before the new session flow can be tested. Adds <span className="mono" style={{ fontSize: "var(--text-xs)" }}>refresh_tokens</span> and <span className="mono" style={{ fontSize: "var(--text-xs)" }}>token_families</span>, with a matching down migration.
       </p>
-      <div style={{ background: "var(--paper-2)", border: "var(--hairline)", borderRadius: 11, padding: "12px 14px", marginBottom: 18 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--ink-3)" }}>
-          <span className="kanji" style={{ fontSize: 13, color: "var(--accent)" }}>透</span>
+      <div style={{ background: "var(--paper-soft)", border: "var(--hairline)", borderRadius: "var(--radius-lg)", padding: "var(--space-3) var(--space-3)", marginBottom: "var(--space-4)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", fontSize: "var(--text-xs)", color: "var(--ink-mute)" }}>
+          <span className="kanji" style={{ fontSize: "var(--text-sm)", color: "var(--accent)" }}>透</span>
           Reached you through your Dōjō — the daemon is holding the session open in real time.
         </div>
       </div>
-      <div style={{ display: "flex", flexDirection: wide ? "row" : "column", gap: 9 }}>
-        <button style={{ flex: 1, padding: "13px", borderRadius: 11, border: "none", cursor: "pointer", background: "var(--ink)", color: "var(--paper)", fontSize: 14, fontWeight: 600, fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
-          <span className="kanji" style={{ fontSize: 14, color: "var(--accent)" }}>許</span> Approve &amp; continue
+      {done ? (
+        <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", background: "var(--success-soft)", border: "1px solid var(--success-edge)", borderRadius: "var(--radius-lg)", padding: "var(--space-3) var(--space-4)" }}>
+          <span className="kanji" style={{ fontSize: "var(--text-lg)", color: "var(--success)" }}>済</span>
+          <div><div style={{ fontSize: "var(--text-sm)", color: "var(--ink)", fontWeight: 600 }}>Approved · session resumed</div>
+            <div style={{ fontSize: "var(--text-xs)", color: "var(--ink-mute)", marginTop: "var(--space-1)" }}>sensei is running the migration now — you'll be pinged if anything else needs you.</div></div>
+        </div>
+      ) : (
+      <div style={{ display: "flex", flexDirection: wide ? "row" : "column", gap: "var(--space-2)" }}>
+        <button onClick={() => setDone(true)} style={{ flex: 1, padding: "var(--space-3)", borderRadius: "var(--radius-lg)", border: "none", cursor: "pointer", background: "var(--ink)", color: "var(--paper)", fontSize: "var(--text-sm)", fontWeight: 600, fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "center", gap: "var(--space-2)" }}>
+          <span className="kanji" style={{ fontSize: "var(--text-sm)", color: "var(--accent)" }}>許</span> Approve &amp; continue
         </button>
-        <button style={{ flex: wide ? "0 0 auto" : 1, padding: "13px 18px", borderRadius: 11, border: "var(--hairline)", cursor: "pointer", background: "var(--paper)", color: "var(--ink-2)", fontSize: 13.5, fontFamily: "inherit" }}>Deny</button>
-        <button style={{ flex: wide ? "0 0 auto" : 1, padding: "13px 18px", borderRadius: 11, border: "var(--hairline)", cursor: "pointer", background: "var(--paper)", color: "var(--ink-2)", fontSize: 13.5, fontFamily: "inherit" }}>Ask a question</button>
+        <button style={{ flex: wide ? "0 0 auto" : 1, padding: "var(--space-3) var(--space-4)", borderRadius: "var(--radius-lg)", border: "var(--hairline)", cursor: "pointer", background: "var(--paper)", color: "var(--ink-soft)", fontSize: "var(--text-sm)", fontFamily: "inherit" }}>Deny</button>
+        <button style={{ flex: wide ? "0 0 auto" : 1, padding: "var(--space-3) var(--space-4)", borderRadius: "var(--radius-lg)", border: "var(--hairline)", cursor: "pointer", background: "var(--paper)", color: "var(--ink-soft)", fontSize: "var(--text-sm)", fontFamily: "inherit" }}>Ask a question</button>
       </div>
+      )}
     </div>
   );
 }
@@ -229,52 +221,72 @@ function RelayApproveBody({ wide = false }) {
 /* ═══ 4 · DECISION body ══════════════════════════════════════ */
 function RelayDecisionBody({ wide = false }) {
   const [choice, setChoice] = mbS(2);
+  const [sent, setSent] = mbS(false);
   const opts = [["Stateless JWT", "simplest"], ["Server sessions", "revocable"], ["Hybrid — JWT + refresh store", "recommended"]];
   return (
-    <div style={{ maxWidth: wide ? 640 : "none", margin: wide ? "0 auto" : 0, padding: wide ? "28px" : "18px 16px" }}>
-      <div style={{ fontSize: 11, letterSpacing: ".14em", textTransform: "uppercase", color: "var(--ink-3)", fontWeight: 600, marginBottom: 8 }}>sensei is asking · initech-portal</div>
-      <div style={{ fontSize: 18, color: "var(--ink)", fontWeight: 600, lineHeight: 1.35, marginBottom: 18 }}>Which session strategy should sensei use?</div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+    <div style={{ maxWidth: wide ? 640 : "none", margin: wide ? "0 auto" : 0, padding: wide ? "var(--space-5)" : "var(--space-4) var(--space-4)" }}>
+      <div style={{ fontSize: "var(--text-xs)", letterSpacing: ".14em", textTransform: "uppercase", color: "var(--ink-mute)", fontWeight: 600, marginBottom: "var(--space-2)" }}>sensei is asking · initech-portal</div>
+      <div style={{ fontSize: "var(--text-lg)", color: "var(--ink)", fontWeight: 600, lineHeight: 1.35, marginBottom: "var(--space-4)" }}>Which session strategy should sensei use?</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
         {opts.map((o, i) => {
           const s = i === choice;
           return (
-            <button key={i} onClick={() => setChoice(i)} style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", textAlign: "left", cursor: "pointer",
-                  background: s ? "var(--accent-soft)" : "var(--paper-2)", fontFamily: "inherit",
-                  border: s ? "1px solid color-mix(in oklch, var(--accent) 45%, transparent)" : "var(--hairline)", borderRadius: 13, padding: "14px 15px" }}>
-              <span style={{ width: 20, height: 20, borderRadius: "50%", flexShrink: 0, border: s ? "none" : "2px solid var(--edge)", background: s ? "var(--accent)" : "transparent", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                {s && <span style={{ color: "var(--paper)", fontSize: 11 }}>✓</span>}
+            <button key={i} onClick={() => setChoice(i)} style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", width: "100%", textAlign: "left", cursor: "pointer",
+                  background: s ? "var(--accent-soft)" : "var(--paper-soft)", fontFamily: "inherit",
+                  border: s ? "1px solid var(--accent-edge)" : "var(--hairline)", borderRadius: "var(--radius-lg)", padding: "var(--space-3) var(--space-4)" }}>
+              <span style={{ width: 20, height: 20, borderRadius: "50%", flexShrink: 0, border: s ? "none" : "2px solid var(--paper-edge)", background: s ? "var(--accent)" : "transparent", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                {s && <span style={{ color: "var(--paper)", fontSize: "var(--text-xs)" }}>✓</span>}
               </span>
-              <span style={{ fontSize: 14.5, color: "var(--ink)" }}><span style={{ fontWeight: s ? 600 : 500 }}>{o[0]}</span><span style={{ color: "var(--ink-3)", fontWeight: 400 }}> · {o[1]}</span></span>
+              <span style={{ fontSize: "var(--text-base)", color: "var(--ink)" }}><span style={{ fontWeight: s ? 600 : 500 }}>{o[0]}</span><span style={{ color: "var(--ink-mute)", fontWeight: 400 }}> · {o[1]}</span></span>
             </button>
           );
         })}
       </div>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "16px 2px" }}>
-        <span style={{ flex: 1, height: 1, background: "var(--edge)" }} /><span className="mono" style={{ fontSize: 10, color: "var(--ink-4)" }}>OR</span><span style={{ flex: 1, height: 1, background: "var(--edge)" }} />
+      <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", margin: "var(--space-4) var(--space-1)" }}>
+        <span style={{ flex: 1, height: 1, background: "var(--paper-edge)" }} /><span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--ink-faint)" }}>OR</span><span style={{ flex: 1, height: 1, background: "var(--paper-edge)" }} />
       </div>
-      <div style={{ background: "var(--paper)", border: "var(--hairline)", borderRadius: 13, padding: "13px 14px", fontSize: 13.5, color: "var(--ink-3)", minHeight: 46 }}>Type your own answer…</div>
-      <button style={{ width: "100%", marginTop: 16, padding: "14px", borderRadius: 11, border: "none", cursor: "pointer", background: "var(--accent)", color: "#fff", fontSize: 15, fontWeight: 600, fontFamily: "inherit" }}>Send answer</button>
+      <div style={{ background: "var(--paper)", border: "var(--hairline)", borderRadius: "var(--radius-lg)", padding: "var(--space-3) var(--space-3)", fontSize: "var(--text-sm)", color: "var(--ink-mute)", minHeight: 46 }}>Type your own answer…</div>
+      <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", marginTop: "var(--space-3)", fontSize: "var(--text-xs)", color: "var(--ink-mute)" }}>
+        <span className="kanji" style={{ fontSize: "var(--text-xs)", color: "var(--accent)" }}>透</span> Reached you through your Dōjō · other tracks keep moving
+      </div>
+      {sent ? (
+        <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", marginTop: "var(--space-4)", background: "var(--success-soft)", border: "1px solid var(--success-edge)", borderRadius: "var(--radius-lg)", padding: "var(--space-3) var(--space-4)" }}>
+          <span className="kanji" style={{ fontSize: "var(--text-base)", color: "var(--success)" }}>済</span>
+          <div style={{ fontSize: "var(--text-sm)", color: "var(--ink)" }}><b style={{ fontWeight: 600 }}>Answer sent</b> — sensei is continuing the track.</div>
+        </div>
+      ) : (
+        <button onClick={() => setSent(true)} style={{ width: "100%", marginTop: "var(--space-4)", padding: "var(--space-3)", borderRadius: "var(--radius-lg)", border: "none", cursor: "pointer", background: "var(--accent)", color: "var(--paper)", fontSize: "var(--text-base)", fontWeight: 600, fontFamily: "inherit" }}>Send answer</button>
+      )}
     </div>
   );
 }
 
 /* ═══ 5 · STALL / nudge body ═════════════════════════════════ */
 function RelayStallBody({ wide = false }) {
+  const [nudged, setNudged] = mbS(false);
   return (
-    <div style={{ maxWidth: wide ? 640 : "none", margin: wide ? "0 auto" : 0, padding: wide ? "28px" : "18px 16px" }}>
-      <div style={{ background: "var(--warning-soft)", border: "1px solid color-mix(in oklch, var(--warning) 32%, transparent)", borderRadius: 13, padding: "16px" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span className="kanji" style={{ fontSize: 20, color: "var(--warning)" }}>静</span>
-          <div><div style={{ fontSize: 15, fontWeight: 600, color: "var(--ink)" }}>This track has gone quiet</div>
-            <div style={{ fontSize: 12, color: "var(--ink-2)", marginTop: 2 }}>telemetry · Personal · no activity 22m · waiting on API rate limit</div></div>
+    <div style={{ maxWidth: wide ? 640 : "none", margin: wide ? "0 auto" : 0, padding: wide ? "var(--space-5)" : "var(--space-4) var(--space-4)" }}>
+      <div style={{ background: "var(--warning-soft)", border: "1px solid var(--warning-edge)", borderRadius: "var(--radius-lg)", padding: "var(--space-4)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
+          <span className="kanji" style={{ fontSize: "var(--text-xl)", color: "var(--warning)" }}>静</span>
+          <div><div style={{ fontSize: "var(--text-base)", fontWeight: 600, color: "var(--ink)" }}>This track has gone quiet</div>
+            <div style={{ fontSize: "var(--text-xs)", color: "var(--ink-soft)", marginTop: "var(--space-1)" }}>telemetry · Personal · no activity 22m · waiting on API rate limit</div></div>
         </div>
-        <div style={{ fontSize: 12.5, color: "var(--ink-3)", marginTop: 12 }}>sensei will retry on its own in ~8m. You can nudge it now.</div>
+        <div style={{ fontSize: "var(--text-sm)", color: "var(--ink-mute)", marginTop: "var(--space-3)" }}>sensei will retry on its own in ~8m. You can nudge it now.</div>
       </div>
-      <div style={{ display: "flex", flexDirection: wide ? "row" : "column", gap: 9, marginTop: 16 }}>
-        <button style={{ flex: 1, padding: "13px", borderRadius: 11, border: "none", cursor: "pointer", background: "var(--ink)", color: "var(--paper)", fontSize: 14, fontWeight: 600, fontFamily: "inherit" }}>Nudge to continue</button>
-        <button style={{ flex: 1, padding: "13px", borderRadius: 11, border: "var(--hairline)", cursor: "pointer", background: "var(--paper)", color: "var(--ink-2)", fontSize: 13.5, fontFamily: "inherit" }}>Pause track</button>
-        <button style={{ flex: wide ? "0 0 auto" : 1, padding: "13px 18px", borderRadius: 11, border: "var(--hairline)", cursor: "pointer", background: "var(--paper)", color: "var(--ink-2)", fontSize: 13.5, fontFamily: "inherit" }}>View logs</button>
+      {nudged ? (
+        <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", marginTop: "var(--space-4)", background: "var(--success-soft)", border: "1px solid var(--success-edge)", borderRadius: "var(--radius-lg)", padding: "var(--space-3) var(--space-4)" }}>
+          <span className="kanji" style={{ fontSize: "var(--text-lg)", color: "var(--success)" }}>済</span>
+          <div><div style={{ fontSize: "var(--text-sm)", color: "var(--ink)", fontWeight: 600 }}>Nudged · track resumed</div>
+            <div style={{ fontSize: "var(--text-xs)", color: "var(--ink-mute)", marginTop: "var(--space-1)" }}>sensei picked the work back up — you'll be pinged if it stalls again.</div></div>
+        </div>
+      ) : (
+      <div style={{ display: "flex", flexDirection: wide ? "row" : "column", gap: "var(--space-2)", marginTop: "var(--space-4)" }}>
+        <button onClick={() => setNudged(true)} style={{ flex: 1, padding: "var(--space-3)", borderRadius: "var(--radius-lg)", border: "none", cursor: "pointer", background: "var(--ink)", color: "var(--paper)", fontSize: "var(--text-sm)", fontWeight: 600, fontFamily: "inherit" }}>Nudge to continue</button>
+        <button style={{ flex: 1, padding: "var(--space-3)", borderRadius: "var(--radius-lg)", border: "var(--hairline)", cursor: "pointer", background: "var(--paper)", color: "var(--ink-soft)", fontSize: "var(--text-sm)", fontFamily: "inherit" }}>Pause track</button>
+        <button style={{ flex: wide ? "0 0 auto" : 1, padding: "var(--space-3) var(--space-4)", borderRadius: "var(--radius-lg)", border: "var(--hairline)", cursor: "pointer", background: "var(--paper)", color: "var(--ink-soft)", fontSize: "var(--text-sm)", fontFamily: "inherit" }}>View logs</button>
       </div>
+      )}
     </div>
   );
 }
@@ -291,32 +303,32 @@ function WatchPhases() {
     { n: "03", name: "Rollout", state: "next", items: [] },
   ];
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
       {phases.map(ph => (
-        <div key={ph.n} style={{ background: "var(--paper-2)", border: "var(--hairline)", borderRadius: 13, overflow: "hidden" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderBottom: ph.items.length ? "var(--hairline)" : "none" }}>
-            <span className="mono" style={{ fontSize: 11, color: "var(--ink-4)" }}>{ph.n}</span>
-            <span style={{ flex: 1, fontSize: 14, color: ph.state === "next" ? "var(--ink-2)" : "var(--ink)", fontWeight: 600 }}>{ph.name}</span>
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10.5, color: ph.state === "doing" ? "var(--success)" : "var(--ink-3)" }}>
-              <span style={{ width: 6, height: 6, borderRadius: "50%", background: ph.state === "doing" ? "var(--success)" : ph.state === "done" ? "var(--ink-3)" : "var(--edge)" }} />
+        <div key={ph.n} style={{ background: "var(--paper-soft)", border: "var(--hairline)", borderRadius: "var(--radius-lg)", overflow: "hidden" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", padding: "var(--space-3) var(--space-3)", borderBottom: ph.items.length ? "var(--hairline)" : "none" }}>
+            <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--ink-faint)" }}>{ph.n}</span>
+            <span style={{ flex: 1, fontSize: "var(--text-sm)", color: ph.state === "next" ? "var(--ink-soft)" : "var(--ink)", fontWeight: 600 }}>{ph.name}</span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-1)", fontSize: "var(--text-xs)", color: ph.state === "doing" ? "var(--success)" : "var(--ink-mute)" }}>
+              <span style={{ width: 6, height: 6, borderRadius: "50%", background: ph.state === "doing" ? "var(--success)" : ph.state === "done" ? "var(--ink-mute)" : "var(--paper-edge)" }} />
               {ph.state === "doing" ? "in progress" : ph.state}
             </span>
           </div>
           {ph.items.map((it, i) => {
             const done = it.kind === "done", gate = it.kind === "gate", doing = it.kind === "doing";
             return (
-              <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 11, padding: "10px 14px", borderBottom: i < ph.items.length - 1 ? "1px solid var(--edge)" : "none" }}>
-                <span style={{ width: 18, height: 18, marginTop: 1, borderRadius: gate ? 5 : "50%", flexShrink: 0,
+              <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-3)", padding: "var(--space-2) var(--space-3)", borderBottom: i < ph.items.length - 1 ? "1px solid var(--paper-edge)" : "none" }}>
+                <span style={{ width: 18, height: 18, marginTop: "var(--space-1)", borderRadius: gate ? "var(--radius-sm)" : "50%", flexShrink: 0,
                       background: done ? "var(--ink)" : gate ? "var(--accent-soft)" : "transparent",
-                      border: done ? "none" : `2px solid ${gate ? "var(--accent)" : doing ? "var(--success)" : "var(--edge)"}`,
+                      border: done ? "none" : `2px solid ${gate ? "var(--accent)" : doing ? "var(--success)" : "var(--paper-edge)"}`,
                       display: "flex", alignItems: "center", justifyContent: "center" }}>
-                  {done && <span style={{ color: "var(--paper)", fontSize: 10 }}>✓</span>}
-                  {gate && <span className="kanji" style={{ fontSize: 9, color: "var(--accent)" }}>鍵</span>}
+                  {done && <span style={{ color: "var(--paper)", fontSize: "var(--text-xs)" }}>✓</span>}
+                  {gate && <span className="kanji" style={{ fontSize: "var(--text-xs)", color: "var(--accent)" }}>鍵</span>}
                   {doing && <span style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--success)" }} />}
                 </span>
                 <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 13.5, color: done ? "var(--ink-3)" : "var(--ink)", fontWeight: gate || doing ? 600 : 400 }}>{it.label}</div>
-                  {it.note && <div style={{ fontSize: 11.5, color: gate ? "var(--accent)" : doing ? "var(--success)" : "var(--ink-3)", marginTop: 2 }}>{it.note}</div>}
+                  <div style={{ fontSize: "var(--text-sm)", color: done ? "var(--ink-mute)" : "var(--ink)", fontWeight: gate || doing ? 600 : 400 }}>{it.label}</div>
+                  {it.note && <div style={{ fontSize: "var(--text-xs)", color: gate ? "var(--accent)" : doing ? "var(--success)" : "var(--ink-mute)", marginTop: "var(--space-1)" }}>{it.note}</div>}
                 </div>
               </div>
             );
@@ -328,23 +340,23 @@ function WatchPhases() {
 }
 function WatchActivity() {
   const feed = [
-    { k: "書", t: "Wrote store.ts · 42 lines", w: "14:08", tone: "var(--ink-3)" },
+    { k: "書", t: "Wrote store.ts · 42 lines", w: "14:08", tone: "var(--ink-mute)" },
     { k: "試", t: "12 tests pass · 0 fail", w: "14:05", tone: "var(--success)" },
     { k: "認", t: "Paused for approval · prod migration", w: "14:04", tone: "var(--accent)" },
   ];
   return (
     <div>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-        <span className="kanji" style={{ fontSize: 13, color: "var(--ink-3)" }}>刻</span>
-        <span style={{ fontSize: 11, letterSpacing: ".14em", textTransform: "uppercase", color: "var(--ink-3)", fontWeight: 600 }}>Activity</span>
-        <span style={{ flex: 1 }} /><span className="mono" style={{ fontSize: 10.5, color: "var(--accent)" }}>full log →</span>
+      <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", marginBottom: "var(--space-2)" }}>
+        <span className="kanji" style={{ fontSize: "var(--text-sm)", color: "var(--ink-mute)" }}>刻</span>
+        <span style={{ fontSize: "var(--text-xs)", letterSpacing: ".14em", textTransform: "uppercase", color: "var(--ink-mute)", fontWeight: 600 }}>Activity</span>
+        <span style={{ flex: 1 }} /><span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--accent)" }}>full log →</span>
       </div>
-      <div style={{ background: "var(--paper-2)", border: "var(--hairline)", borderRadius: 13, overflow: "hidden" }}>
+      <div style={{ background: "var(--paper-soft)", border: "var(--hairline)", borderRadius: "var(--radius-lg)", overflow: "hidden" }}>
         {feed.map((e, i) => (
-          <div key={i} style={{ display: "grid", gridTemplateColumns: "auto 1fr auto", gap: 11, alignItems: "center", padding: "11px 14px", borderBottom: i < feed.length - 1 ? "1px solid var(--edge)" : "none" }}>
-            <span className="kanji" style={{ fontSize: 14, color: e.tone, width: 16, textAlign: "center" }}>{e.k}</span>
-            <span style={{ fontSize: 12.5, color: "var(--ink-2)" }}>{e.t}</span>
-            <span className="mono" style={{ fontSize: 10.5, color: "var(--ink-4)" }}>{e.w}</span>
+          <div key={i} style={{ display: "grid", gridTemplateColumns: "auto 1fr auto", gap: "var(--space-3)", alignItems: "center", padding: "var(--space-3) var(--space-3)", borderBottom: i < feed.length - 1 ? "1px solid var(--paper-edge)" : "none" }}>
+            <span className="kanji" style={{ fontSize: "var(--text-sm)", color: e.tone, width: 16, textAlign: "center" }}>{e.k}</span>
+            <span style={{ fontSize: "var(--text-sm)", color: "var(--ink-soft)" }}>{e.t}</span>
+            <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--ink-faint)" }}>{e.w}</span>
           </div>
         ))}
       </div>
@@ -353,15 +365,15 @@ function WatchActivity() {
 }
 function RelayWatchBody({ wide = false }) {
   return (
-    <div style={{ height: "100%", overflow: "auto", padding: wide ? 28 : 16 }}>
-      <div style={{ fontFamily: "var(--font-display, serif)", fontSize: wide ? 24 : 19, color: "var(--ink)", fontWeight: 400, letterSpacing: "-0.01em" }}>OAuth &amp; session hardening</div>
-      <div className="mono" style={{ fontSize: 11.5, color: "var(--ink-3)", marginTop: 3 }}>lumen-auth · Acme Corp · auto</div>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", margin: "14px 0 6px", maxWidth: 520 }}>
-        <span className="mono" style={{ fontSize: 11, color: "var(--ink-2)" }}>Phase 2 of 4</span>
-        <span className="mono" style={{ fontSize: 11, color: "var(--ink-2)" }}>47%</span>
+    <div style={{ height: "100%", overflow: "auto", padding: wide ? "var(--space-5)" : "var(--space-4)" }}>
+      <div style={{ fontFamily: "var(--font-display, serif)", fontSize: wide ? "var(--text-xl)" : "var(--text-lg)", color: "var(--ink)", fontWeight: 400, letterSpacing: "-0.01em" }}>OAuth &amp; session hardening</div>
+      <div className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--ink-mute)", marginTop: "var(--space-1)" }}>lumen-auth · Acme Corp · auto</div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", margin: "var(--space-3) 0 var(--space-1)", maxWidth: 520 }}>
+        <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--ink-soft)" }}>Phase 2 of 4</span>
+        <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--ink-soft)" }}>47%</span>
       </div>
       <div style={{ maxWidth: 520 }}><Bar pct={47} /></div>
-      <div style={{ display: "grid", gridTemplateColumns: wide ? "1.3fr 1fr" : "1fr", gap: wide ? 22 : 20, marginTop: 20, alignItems: "start" }}>
+      <div style={{ display: "grid", gridTemplateColumns: wide ? "1.3fr 1fr" : "1fr", gap: wide ? "var(--space-5)" : "var(--space-4)", marginTop: "var(--space-4)", alignItems: "start" }}>
         <WatchPhases /><WatchActivity />
       </div>
     </div>
@@ -379,26 +391,75 @@ function RelayChatBody({ wide = false }) {
   ];
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column", minHeight: 0 }}>
-      <div style={{ flex: 1, overflow: "auto", padding: wide ? "24px" : "16px", display: "flex", flexDirection: "column", gap: 12 }}>
-        <div style={{ width: "100%", maxWidth: wide ? 720 : "none", margin: wide ? "0 auto" : 0, display: "flex", flexDirection: "column", gap: 12 }}>
+      <div style={{ flex: 1, overflow: "auto", padding: wide ? "var(--space-5)" : "var(--space-4)", display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
+        <div style={{ width: "100%", maxWidth: wide ? 720 : "none", margin: wide ? "0 auto" : 0, display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
           {thread.map((m, i) => {
             const me = m.who === "you";
             return (
-              <div key={i} style={{ display: "flex", flexDirection: "column", alignItems: me ? "flex-end" : "flex-start", gap: 3 }}>
-                {!me && <span className="kanji" style={{ fontSize: 11, color: "var(--accent)", marginLeft: 4 }}>先生</span>}
-                <div style={{ maxWidth: "82%", padding: "10px 13px", borderRadius: 15, background: me ? "var(--ink)" : "var(--paper-2)", color: me ? "var(--paper)" : "var(--ink)",
-                      border: me ? "none" : "var(--hairline)", borderBottomRightRadius: me ? 5 : 15, borderBottomLeftRadius: me ? 15 : 5, fontSize: 13.5, lineHeight: 1.5 }}>{m.t}</div>
+              <div key={i} style={{ display: "flex", flexDirection: "column", alignItems: me ? "flex-end" : "flex-start", gap: "var(--space-1)" }}>
+                {!me && <span className="kanji" style={{ fontSize: "var(--text-xs)", color: "var(--accent)", marginLeft: "var(--space-1)" }}>先生</span>}
+                <div style={{ maxWidth: "82%", padding: "var(--space-2) var(--space-3)", borderRadius: "var(--radius-full)", background: me ? "var(--ink)" : "var(--paper-soft)", color: me ? "var(--paper)" : "var(--ink)",
+                      border: me ? "none" : "var(--hairline)", borderBottomRightRadius: me ? 5 : 15, borderBottomLeftRadius: me ? 15 : 5, fontSize: "var(--text-sm)", lineHeight: 1.5 }}>{m.t}</div>
               </div>
             );
           })}
         </div>
       </div>
-      <div style={{ flexShrink: 0, borderTop: "var(--hairline)", padding: wide ? "12px 24px" : "12px 16px" }}>
-        <div style={{ maxWidth: wide ? 720 : "none", margin: wide ? "0 auto" : 0, display: "flex", gap: 9, alignItems: "center" }}>
-          <div style={{ flex: 1, background: "var(--paper)", border: "var(--hairline)", borderRadius: 22, padding: "11px 15px", fontSize: 13.5, color: "var(--ink-3)" }}>Message sensei…</div>
-          <button style={{ width: 42, height: 42, borderRadius: "50%", border: "none", cursor: "pointer", background: "var(--ink)", color: "var(--paper)", fontSize: 15, flexShrink: 0 }}>↑</button>
+      <div style={{ flexShrink: 0, borderTop: "var(--hairline)", padding: wide ? "var(--space-3) var(--space-5)" : "var(--space-3) var(--space-4)" }}>
+        <div style={{ maxWidth: wide ? 720 : "none", margin: wide ? "0 auto" : 0, display: "flex", gap: "var(--space-2)", alignItems: "center" }}>
+          <div style={{ flex: 1, background: "var(--paper)", border: "var(--hairline)", borderRadius: "var(--radius-full)", padding: "var(--space-3) var(--space-4)", fontSize: "var(--text-sm)", color: "var(--ink-mute)" }}>Message sensei…</div>
+          <button style={{ width: 42, height: 42, borderRadius: "50%", border: "none", cursor: "pointer", background: "var(--ink)", color: "var(--paper)", fontSize: "var(--text-base)", flexShrink: 0 }}>↑</button>
         </div>
       </div>
+    </div>
+  );
+}
+
+/* ═══ SESSION LOG body (adaptive) ════════════════════════════ */
+function RelayLogsBody({ wide = false }) {
+  const rows = [
+    { t: "14:08", k: "書", tone: "var(--ink-mute)", txt: "Wrote store.ts · 42 lines" },
+    { t: "14:05", k: "試", tone: "var(--success)", txt: "12 tests pass · 0 fail" },
+    { t: "14:04", k: "認", tone: "var(--accent)", txt: "Paused for approval · prod migration" },
+    { t: "14:01", k: "案", tone: "var(--ink-mute)", txt: "Planned refresh-token store schema" },
+    { t: "13:58", k: "讀", tone: "var(--ink-mute)", txt: "Read token_families migration history" },
+    { t: "13:55", k: "始", tone: "var(--ink-mute)", txt: "Started phase 2 · session hardening" },
+  ];
+  return (
+    <div style={{ height: "100%", overflow: "auto", padding: wide ? "var(--space-5)" : "var(--space-4)" }}>
+      <div className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--ink-faint)", marginBottom: "var(--space-3)" }}>lumen-auth · Acme Corp · newest first</div>
+      <div style={{ background: "var(--paper-soft)", border: "var(--hairline)", borderRadius: "var(--radius-lg)", overflow: "hidden", maxWidth: wide ? 720 : "none" }}>
+        {rows.map((e, i) => (
+          <div key={i} style={{ display: "grid", gridTemplateColumns: "52px auto 1fr", gap: "var(--space-3)", alignItems: "center", padding: "var(--space-3) var(--space-4)", borderBottom: i < rows.length - 1 ? "1px solid var(--paper-edge)" : "none" }}>
+            <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--ink-faint)" }}>{e.t}</span>
+            <span className="kanji" style={{ fontSize: "var(--text-base)", color: e.tone, width: 18, textAlign: "center" }}>{e.k}</span>
+            <span style={{ fontSize: "var(--text-sm)", color: "var(--ink)" }}>{e.txt}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const RELAY_CONN = {
+  offline: { k: "絶", title: "Connection lost", sub: "Can't reach this session right now.", body: "The daemon on your machine isn't answering through the Dōjō. Your place is saved — actions resume the moment it reconnects.", cta: "Retry now", tone: "var(--warning)" },
+  ended:   { k: "了", title: "Session ended", sub: "This track has finished.", body: "sensei closed the session — nothing more needs you here. The outcome and every step are in the log.", cta: "View session log", tone: "var(--ink-mute)" },
+  asleep:  { k: "眠", title: "Daemon asleep", sub: "Your machine is idle.", body: "The daemon is sleeping to save power. Wake it to resume now, or it picks up on its own when you're back at the keyboard.", cta: "Wake daemon", tone: "var(--ink-mute)" },
+};
+function RelayConnState({ kind = "offline", wide = false }) {
+  const s = RELAY_CONN[kind] || RELAY_CONN.offline;
+  const off = kind !== "ended";
+  return (
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "var(--space-3)", textAlign: "center", padding: wide ? "var(--space-7)" : "var(--space-6) var(--space-5)" }}>
+      <span className="kanji" style={{ fontSize: "var(--text-4xl)", color: s.tone, lineHeight: 1 }}>{s.k}</span>
+      <div className="display" style={{ fontSize: "var(--text-xl)", fontWeight: 400, letterSpacing: "-0.01em", color: "var(--ink)" }}>{s.title}</div>
+      <div style={{ fontSize: "var(--text-sm)", color: "var(--ink-soft)" }}>{s.sub}</div>
+      <p style={{ fontSize: "var(--text-sm)", color: "var(--ink-mute)", lineHeight: 1.6, margin: "var(--space-1) 0 var(--space-1)", maxWidth: 360 }}>{s.body}</p>
+      <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-1)", fontSize: "var(--text-xs)", color: off ? "var(--warning)" : "var(--ink-mute)",
+        background: off ? "var(--warning-soft)" : "var(--paper-mute)", border: off ? "1px solid var(--warning-edge)" : "var(--hairline)", borderRadius: "var(--radius-full)", padding: "var(--space-1) var(--space-2)" }}>
+        <span style={{ width: 6, height: 6, borderRadius: "50%", background: off ? "var(--warning)" : "var(--ink-faint)" }} />{off ? "offline · through your Dōjō" : "session closed"}
+      </span>
+      <button style={{ marginTop: "var(--space-2)", padding: "var(--space-3) var(--space-4)", borderRadius: "var(--radius-lg)", border: "none", cursor: "pointer", background: "var(--ink)", color: "var(--paper)", fontSize: "var(--text-sm)", fontWeight: 500, fontFamily: "inherit" }}>{s.cta}</button>
     </div>
   );
 }
@@ -409,6 +470,7 @@ const RELAY_META = {
   inbox:    { kanji: "決", eyebrow: "Relay · you", title: "Inbox", sub: "Decisions, approvals and nudges waiting on you — across every Dōjō. Answer when you can; other tracks keep moving." },
   watch:    { kanji: "観", eyebrow: "Relay · you", title: "Watch progress", sub: "Phases, what's done · doing · next, and the live activity feed for a running track." },
   chat:     { kanji: "話", eyebrow: "Relay · you", title: "Chat with sensei", sub: "Talk to a running session mid-flight — ask a question, steer a decision, or give the go-ahead." },
+  logs:     { kanji: "録", eyebrow: "Relay · you", title: "Session log", sub: "Every step sensei took on this track — timestamped, from first action to now." },
 };
 function RelayArea({ view = "projects", wide = true, onOpen }) {
   const m = RELAY_META[view] || RELAY_META.projects;
@@ -416,6 +478,7 @@ function RelayArea({ view = "projects", wide = true, onOpen }) {
   const body = view === "inbox" ? <RelayInboxBody wide={wide} />
     : view === "watch" ? <RelayWatchBody wide={wide} />
     : view === "chat" ? <RelayChatBody wide={wide} />
+    : view === "logs" ? <RelayLogsBody wide={wide} />
     : <RelayProjectsBody wide={wide} onOpen={onOpen} />;
   // chat & inbox manage their own scroll; projects/watch scroll inside body
   const flush = view === "chat" || view === "inbox";
@@ -431,53 +494,35 @@ function RelayArea({ view = "projects", wide = true, onOpen }) {
 function MobileFrame({ children, label }) {
   return (
     <div className="sensei" data-screen-label={label} style={{ width: 390, height: 844, borderRadius: 44, background: "var(--paper)",
-      border: "1px solid var(--edge)", boxShadow: "var(--shadow-lg, 0 20px 60px rgba(0,0,0,.18))", overflow: "hidden", position: "relative", display: "flex", flexDirection: "column" }}>
-      <div style={{ flexShrink: 0, height: 44, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 26px", fontSize: 13, color: "var(--ink)", fontWeight: 600 }}>
-        <span className="mono">9:41</span><span style={{ display: "inline-flex", gap: 5, alignItems: "center", opacity: 0.8 }}><span style={{ fontSize: 11 }}>●●●</span><span style={{ fontSize: 11 }}>◗</span></span>
+      border: "1px solid var(--paper-edge)", boxShadow: "var(--shadow-lg)", overflow: "hidden", position: "relative", display: "flex", flexDirection: "column" }}>
+      <div style={{ flexShrink: 0, height: 44, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 var(--space-5)", fontSize: "var(--text-sm)", color: "var(--ink)", fontWeight: 600 }}>
+        <span className="mono">9:41</span><span style={{ display: "inline-flex", gap: "var(--space-1)", alignItems: "center", opacity: 0.8 }}><span style={{ fontSize: "var(--text-xs)" }}>●●●</span><span style={{ fontSize: "var(--text-xs)" }}>◗</span></span>
       </div>
       <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>{children}</div>
       <div style={{ flexShrink: 0, height: 22, display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <span style={{ width: 128, height: 5, borderRadius: 3, background: "var(--ink-4)", opacity: 0.5 }} />
+        <span style={{ width: 128, height: 5, borderRadius: "var(--radius-sm)", background: "var(--ink-faint)", opacity: 0.5 }} />
       </div>
     </div>
   );
 }
 function MHead({ title, sub, back, right, live }) {
   return (
-    <div style={{ flexShrink: 0, padding: "6px 18px 12px", borderBottom: "var(--hairline)" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        {back && <span className="mono" style={{ fontSize: 13, color: "var(--accent)" }}>←</span>}
-        <span className="kanji" style={{ fontSize: 19, color: "var(--accent)", lineHeight: 1 }}>結</span>
+    <div style={{ flexShrink: 0, padding: "var(--space-1) var(--space-4) var(--space-3)", borderBottom: "var(--hairline)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
+        {back && <span className="mono" style={{ fontSize: "var(--text-sm)", color: "var(--accent)" }}>←</span>}
+        <span className="kanji" style={{ fontSize: "var(--text-lg)", color: "var(--accent)", lineHeight: 1 }}>結</span>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 15, color: "var(--ink)", fontWeight: 600, lineHeight: 1.1 }}>{title}</div>
-          {sub && <div className="mono" style={{ fontSize: 10.5, color: "var(--ink-4)", marginTop: 1 }}>{sub}</div>}
+          <div style={{ fontSize: "var(--text-base)", color: "var(--ink)", fontWeight: 600, lineHeight: 1.1 }}>{title}</div>
+          {sub && <div className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--ink-faint)", marginTop: "var(--space-1)" }}>{sub}</div>}
         </div>
         {live && <Live />}{right}
       </div>
     </div>
   );
 }
-const MOBILE_TABS = [
-  { id: "projects", kanji: "場", label: "Projects" },
-  { id: "inbox", kanji: "決", label: "Inbox", badge: 3 },
-  { id: "chat", kanji: "話", label: "Chat" },
-  { id: "more", kanji: "⋯", label: "More" },
-];
+const MOBILE_TABS = window.DOJO_MOBILE_TABS;
 function MTabs({ active }) {
-  return (
-    <div style={{ flexShrink: 0, display: "grid", gridTemplateColumns: "repeat(4,1fr)", borderTop: "var(--hairline)", background: "var(--paper)" }}>
-      {MOBILE_TABS.map(t => {
-        const on = active === t.id;
-        return (
-          <div key={t.id} style={{ position: "relative", display: "flex", flexDirection: "column", alignItems: "center", gap: 3, padding: "8px 4px 6px", color: on ? "var(--ink)" : "var(--ink-3)" }}>
-            <span className="kanji" style={{ fontSize: 17, color: on ? "var(--accent)" : "var(--ink-3)" }}>{t.kanji}</span>
-            <span style={{ fontSize: 10, fontWeight: on ? 600 : 400 }}>{t.label}</span>
-            {t.badge != null && <span className="mono" style={{ position: "absolute", top: 4, left: "calc(50% + 6px)", fontSize: 9, fontWeight: 600, color: "var(--paper)", background: "var(--accent)", borderRadius: 10, padding: "0 5px", lineHeight: "14px" }}>{t.badge}</span>}
-          </div>
-        );
-      })}
-    </div>
-  );
+  return <window.DojoTabBar tabs={MOBILE_TABS} active={active} />;
 }
 
 function DojoMobileProjects() {
@@ -509,24 +554,24 @@ function DojoMobileMore() {
   return (
     <MobileFrame label="Mobile · More (consoles)">
       <MHead title="More" sub="Rin Saito · rin-saito" />
-      <div style={{ flex: 1, overflow: "auto", padding: "16px 16px" }}>
-        <div style={{ fontSize: 11, letterSpacing: ".14em", textTransform: "uppercase", color: "var(--ink-3)", fontWeight: 600, marginBottom: 10 }}>Consoles · this Dōjō</div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 22 }}>
+      <div style={{ flex: 1, overflow: "auto", padding: "var(--space-4) var(--space-4)" }}>
+        <div style={{ fontSize: "var(--text-xs)", letterSpacing: ".14em", textTransform: "uppercase", color: "var(--ink-mute)", fontWeight: 600, marginBottom: "var(--space-2)" }}>Consoles · this Dōjō</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)", marginBottom: "var(--space-5)" }}>
           {consoles.map((c, i) => (
-            <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, background: "var(--paper-2)", border: "var(--hairline)", borderRadius: 12, padding: "13px 15px", opacity: c.role ? 1 : 0.55 }}>
-              <span className="kanji" style={{ fontSize: 20, color: "var(--accent)", width: 24, textAlign: "center" }}>{c.k}</span>
-              <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 14, color: "var(--ink)" }}>{c.name} console</div><div style={{ fontSize: 11, color: "var(--ink-3)", marginTop: 1 }}>{c.sub}</div></div>
-              {c.role ? <span style={{ fontSize: 14, color: "var(--ink-4)" }}>→</span> : <span className="mono" style={{ fontSize: 9.5, color: "var(--ink-4)" }}>no access</span>}
+            <div key={i} style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", background: "var(--paper-soft)", border: "var(--hairline)", borderRadius: "var(--radius-lg)", padding: "var(--space-3) var(--space-4)", opacity: c.role ? 1 : 0.55 }}>
+              <span className="kanji" style={{ fontSize: "var(--text-xl)", color: "var(--accent)", width: 24, textAlign: "center" }}>{c.k}</span>
+              <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: "var(--text-sm)", color: "var(--ink)" }}>{c.name} console</div><div style={{ fontSize: "var(--text-xs)", color: "var(--ink-mute)", marginTop: "var(--space-1)" }}>{c.sub}</div></div>
+              {c.role ? <span style={{ fontSize: "var(--text-sm)", color: "var(--ink-faint)" }}>→</span> : <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--ink-faint)" }}>no access</span>}
             </div>
           ))}
         </div>
-        <div style={{ fontSize: 11, letterSpacing: ".14em", textTransform: "uppercase", color: "var(--ink-3)", fontWeight: 600, marginBottom: 10 }}>Switch Dōjō</div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <div style={{ fontSize: "var(--text-xs)", letterSpacing: ".14em", textTransform: "uppercase", color: "var(--ink-mute)", fontWeight: 600, marginBottom: "var(--space-2)" }}>Switch Dōjō</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
           {orgs.map(([k, n, r], i) => (
-            <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, background: i === 0 ? "var(--paper-2)" : "transparent", border: i === 0 ? "1px solid var(--accent)" : "var(--hairline)", borderRadius: 12, padding: "12px 15px" }}>
-              <span className="kanji" style={{ fontSize: 18, color: "var(--accent)", width: 22, textAlign: "center" }}>{k}</span>
-              <span style={{ flex: 1, fontSize: 14, color: "var(--ink)" }}>{n}</span>
-              <span className="mono" style={{ fontSize: 10.5, color: "var(--ink-3)" }}>{r}</span>
+            <div key={i} style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", background: i === 0 ? "var(--paper-soft)" : "transparent", border: i === 0 ? "1px solid var(--accent)" : "var(--hairline)", borderRadius: "var(--radius-lg)", padding: "var(--space-3) var(--space-4)" }}>
+              <span className="kanji" style={{ fontSize: "var(--text-lg)", color: "var(--accent)", width: 22, textAlign: "center" }}>{k}</span>
+              <span style={{ flex: 1, fontSize: "var(--text-sm)", color: "var(--ink)" }}>{n}</span>
+              <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--ink-mute)" }}>{r}</span>
             </div>
           ))}
         </div>
@@ -544,31 +589,39 @@ function DojoMobileConnect() {
   return (
     <MobileFrame label="Mobile · How it connects">
       <MHead title="How Relay works now" sub="through your Dōjō" />
-      <div style={{ flex: 1, overflow: "auto", padding: "22px 18px" }}>
-        <p style={{ fontSize: 14, color: "var(--ink-2)", lineHeight: 1.6, margin: "0 0 24px" }}>No device pairing, no separate install. The daemon keeps a live line to the Dōjō; your phone just opens the Dōjō and picks up the session in real time.</p>
+      <div style={{ flex: 1, overflow: "auto", padding: "var(--space-5) var(--space-4)" }}>
+        <p style={{ fontSize: "var(--text-sm)", color: "var(--ink-soft)", lineHeight: 1.6, margin: "0 0 var(--space-5)" }}>No device pairing, no separate install. The daemon keeps a live line to the Dōjō; your phone just opens the Dōjō and picks up the session in real time.</p>
         <div style={{ display: "flex", flexDirection: "column" }}>
           {steps.map((st, i) => (
             <React.Fragment key={i}>
-              <div style={{ display: "flex", alignItems: "center", gap: 14, background: "var(--paper-2)", border: "var(--hairline)", borderRadius: 13, padding: "15px 16px" }}>
-                <span className="kanji" style={{ fontSize: 26, color: "var(--accent)", width: 32, textAlign: "center" }}>{st.k}</span>
-                <div style={{ flex: 1 }}><div style={{ fontSize: 15, color: "var(--ink)", fontWeight: 600 }}>{st.t}</div><div className="mono" style={{ fontSize: 11, color: "var(--ink-3)", marginTop: 2 }}>{st.s}</div><div style={{ fontSize: 12, color: "var(--ink-2)", marginTop: 4 }}>{st.note}</div></div>
+              <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", background: "var(--paper-soft)", border: "var(--hairline)", borderRadius: "var(--radius-lg)", padding: "var(--space-4) var(--space-4)" }}>
+                <span className="kanji" style={{ fontSize: "var(--text-2xl)", color: "var(--accent)", width: 32, textAlign: "center" }}>{st.k}</span>
+                <div style={{ flex: 1 }}><div style={{ fontSize: "var(--text-base)", color: "var(--ink)", fontWeight: 600 }}>{st.t}</div><div className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--ink-mute)", marginTop: "var(--space-1)" }}>{st.s}</div><div style={{ fontSize: "var(--text-xs)", color: "var(--ink-soft)", marginTop: "var(--space-1)" }}>{st.note}</div></div>
               </div>
-              {i < steps.length - 1 && <div style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: "6px 0" }}><span style={{ fontSize: 18, color: "var(--success)" }}>↕</span><span className="mono" style={{ fontSize: 9.5, color: "var(--success)" }}>live · realtime</span></div>}
+              {i < steps.length - 1 && <div style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: "var(--space-1) 0" }}><span style={{ fontSize: "var(--text-lg)", color: "var(--success)" }}>↕</span><span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--success)" }}>live · realtime</span></div>}
             </React.Fragment>
           ))}
         </div>
-        <div style={{ display: "flex", alignItems: "flex-start", gap: 9, marginTop: 22, background: "var(--paper-2)", border: "var(--hairline)", borderRadius: 12, padding: "13px 15px" }}>
-          <span className="kanji" style={{ fontSize: 15, color: "var(--ink-3)" }}>携</span>
-          <span style={{ fontSize: 12, color: "var(--ink-3)", lineHeight: 1.55 }}>The native Relay app still works too — it stays for push notifications and offline. This browser experience mirrors it.</span>
+        <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-2)", marginTop: "var(--space-5)", background: "var(--paper-soft)", border: "var(--hairline)", borderRadius: "var(--radius-lg)", padding: "var(--space-3) var(--space-4)" }}>
+          <span className="kanji" style={{ fontSize: "var(--text-base)", color: "var(--ink-mute)" }}>携</span>
+          <span style={{ fontSize: "var(--text-xs)", color: "var(--ink-mute)", lineHeight: 1.55 }}>The native Relay app still works too — it stays for push notifications and offline. This browser experience mirrors it.</span>
         </div>
       </div>
     </MobileFrame>
   );
 }
 
+function DojoMobileLogs() {
+  return <MobileFrame label="Mobile · Session log"><MHead title="Session log" sub="lumen-auth · Acme Corp" back /><div style={{ flex: 1, minHeight: 0 }}><RelayLogsBody wide={false} /></div></MobileFrame>;
+}
+
+function DojoMobileConn({ kind = "offline" }) {
+  return <MobileFrame label={"Mobile · Relay " + kind}><MHead title="Relay" sub="lumen-auth · Acme Corp" back /><div style={{ flex: 1, minHeight: 0 }}><RelayConnState kind={kind} /></div></MobileFrame>;
+}
+
 Object.assign(window, {
-  RelayArea, RELAY_META,
+  RelayArea, RELAY_META, RelayLogsBody, RelayConnState,
   RelayProjectsBody, RelayInboxBody, RelayWatchBody, RelayChatBody, RelayApproveBody, RelayDecisionBody, RelayStallBody,
-  MobileFrame, DojoMobileProjects, DojoMobileProject, DojoMobileApprove,
+  MobileFrame, DojoMobileProjects, DojoMobileProject, DojoMobileApprove, DojoMobileLogs, DojoMobileConn,
   DojoMobileDecision, DojoMobileInbox, DojoMobileChat, DojoMobileMore, DojoMobileConnect,
 });

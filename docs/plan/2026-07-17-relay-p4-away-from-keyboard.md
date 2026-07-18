@@ -1,0 +1,202 @@
+---
+name: Relay P4 — away-from-keyboard (push · realtime · offline)
+description: Phased implementation plan for relay-engine P4 — Web Push, Supabase realtime swap, offline/reconnect, and the "what's blocked on me" home.
+date: 2026-07-17
+status: in-progress
+---
+
+# Relay P4 — away-from-keyboard
+
+**Goal:** a backgrounded phone gets a **push** when the autonomous run needs the
+human (gate / stall / crash) → the human answers → the engine proceeds; and while
+watching, the surface updates **live** (realtime, not action-refresh) and degrades
+**gracefully offline** (drafts queued, sent on reconnect). Closes the
+away-from-keyboard gap left after P3 (the engine runs; the human just isn't tethered).
+
+Design source: [`relay-engine.md`](relay-engine.md) §Liveness, §Offline, P4 row
+(line ~471). Supersedes nothing; extends the P2 phone surface + P3 engine.
+
+## Where we start (surveyed 2026-07-17)
+
+- `@supabase/supabase-js` is already a dojo dep → client-direct realtime is feasible.
+- `dojo.push_subscriptions` + `dojo.notification_prefs` DDL exist (from P0), unused.
+- Transport today: the console/phone refresh via `invalidateAll()` **on user action
+  only** — no live subscription, no push. "Realtime swap" = add a live subscription
+  that refreshes on change; "push" = notify while backgrounded.
+- No service worker / PWA manifest yet (`dojo/static/` is just a favicon).
+- Worker relay routes live under `/v1/t/[origin]/[org]/relay/*`
+  (session·segments·inbox·reply·review·gates·nudge).
+
+## Infra / secrets prerequisites — AUTONOMOUS vs JERRY-GATED
+
+P4 is the first phase that touches secrets + cloud config. Explicit split so the
+autonomous build never handles a prod secret or silently changes cloud infra
+(cf. [[feedback_external_dep_issue]], [[feedback_no_build_against_live_dev]]):
+
+| Prerequisite | Autonomous (dev/local) | Jerry-gated (prod) |
+|---|---|---|
+| **VAPID keypair** (Web Push) | I generate a **dev** keypair; public key in dev config, private key in a **local-only** `.env` (gitignored, never committed) | **prod** VAPID keys → Jerry sets them as Worker secrets (`wrangler secret`); never in git |
+| **Supabase Realtime publication** on `dojo.relay_*` | enable on **local** supabase (config/migration) | **prod** publication enablement → Jerry / infra |
+| **RLS policies** on `dojo.relay_*` | author + test policies against **local** supabase | **prod** apply + validation → Jerry (RLS was a deferred hardening item; P4.1 pulls it forward because client-direct realtime needs it) |
+
+**Rule:** I build + test everything against local supabase/dev keys, and raise a
+short checklist of the prod cloud steps for Jerry rather than touching prod.
+
+## Design fork — RESOLVED 2026-07-18 (Jerry): client-direct Supabase Realtime + RLS
+
+Confirmed **client-direct Supabase Realtime + RLS** over Worker-mediated SSE. The
+phone subscribes Supabase Realtime directly with its JWT; RLS enforces per-user row
+access. Matches the written design (relay-engine §2, line 74/442) + the phone's
+existing JWT-client role. This pulls the deferred RLS item forward into P4.1 (I
+author + test policies locally; prod rollout is a Jerry checklist item).
+
+## Build order — REVISED 2026-07-18
+
+Push loop shipped first (autonomous, no cloud infra): **P4.3 ✅** (`2e5bd323`),
+**P4.4 ✅** (Worker send). Jerry then chose to build **P4.6 + P4.5 next**
+(autonomous), ahead of P4.1/P4.2 (realtime + RLS, which need his cloud-infra
+checklist). So P4.6/P4.5 are built to **degrade gracefully without realtime** —
+refresh-based now (`invalidateAll` / browser `online`/`offline` events), upgrading
+to live once P4.2 lands. Their P4.2 dependency is therefore soft, not hard.
+
+## Chunks (ordered; per-chunk cadence = TDD → build/test → reviewer → commit `develop`)
+
+### P4.1 — relay RLS + realtime publication (local)  ·  DDL  ·  ✅ SHIPPED
+- **What:** SELECT-only RLS policies (role `authenticated`) so a signed-in user can
+  read only their **own** relay rows — `user_id = auth.uid()` on `relay_sessions`/
+  `relay_inbox`, and `relay_segments` via the session join. **Own-rows-only** (not
+  membership/tenant-wide — that broader team visibility is a deliberate **P6**
+  extension). A table-level `grant select to authenticated` is REQUIRED alongside RLS
+  (else `permission denied` before RLS even evaluates). Relay tables added to the
+  `supabase_realtime` publication (via a `supabase/migrations/*.sql`, NOT dbd — it's a
+  Supabase-owned object). The Worker keeps its `service_role` write path (bypasses
+  RLS); RLS only governs the new client-direct **read/subscribe** path. JWT harness
+  (`scripts/relay-rls-check.sh`) proves member-sees-own / non-member-none /
+  service-role-all / in-publication (12/12 against local supabase).
+- **Acceptance:** with a local anon/authed JWT, a member `SELECT`s their run's inbox
+  rows and gets them; a non-member gets zero rows; the Worker's service-role writes
+  still succeed; the tables appear in the realtime publication. Tested via a psql/JWT
+  harness against local supabase.
+- **Deps:** none. **Autonomous** (local). Prod apply → Jerry checklist.
+- **Out of scope:** prod RLS rollout; RLS on non-relay `dojo.*` tables (separate item).
+
+### P4.2 — realtime swap (phone/console)  ·  `.svelte`/`.ts` (svelte MCP + rokkit)
+- **What:** a `relay-realtime.ts` helper that opens a supabase-js Realtime channel on
+  the signed-in user's relay rows; the relay run-list + run-detail pages subscribe on
+  mount and refresh (`invalidateAll()` or a store patch) on `INSERT`/`UPDATE`;
+  unsubscribe on unmount. Replaces action-only refresh with live updates.
+- **Acceptance:** with two clients, an inbox insert (a raised gate) appears on the
+  watching client within ~1–2s with no user action; the "last progress N min ago"
+  clock ticks from live `run_event`/session updates; unsubscribe on navigate-away (no
+  leaked channels). Unit-test the pure subscribe/patch logic; build for SSR.
+- **Deps:** P4.1. **Autonomous** (local). **svelte MCP + svelte-file-editor +
+  rokkit-components + semantic-styles-rokkit mandatory** for the `.svelte` edits.
+- **Out of scope:** push (P4.3/4.4); offline (P4.5).
+
+### P4.3 — Web Push: service worker + subscribe + store  ·  PWA + Worker route
+- **What:** a PWA manifest + a service worker (`push` → `showNotification`,
+  `notificationclick` → focus/open the run/gate); a subscribe flow (fetch the VAPID
+  **public** key from a Worker config route → `PushManager.subscribe` → POST the
+  subscription to a new `/v1/relay/push/subscribe` Worker route → `push_subscriptions`);
+  a minimal notification-prefs opt-in (events) writing `notification_prefs`.
+- **Acceptance:** a user enables notifications → a `push_subscriptions` row is written
+  with `{endpoint,p256dh,auth}`; the SW registers; a locally-triggered test push shows
+  a notification and tapping it opens the right run. Dev VAPID public key wired; the
+  send is P4.4.
+- **Deps:** dev VAPID keypair (I generate). **Autonomous** for client + store + route.
+- **Out of scope:** the actual send-on-gate (P4.4); native APNs/FCM (P5+).
+
+### P4.4 — Web Push send from the Worker  ·  Worker  ·  **DONE (develop)**
+- **What:** on a raised needs-you `relay_inbox` insert (`approval`/`decision`/`stall`,
+  `agent_to_human` only — never `chat`/`nudge`/`human_to_agent`) AND on a run's
+  transition into `status='crashed'` (relay/session POST), the Worker sends a Web
+  Push to the user's `enabled` subscriptions, **respecting `notification_prefs`**
+  (events opt-in default-OFF, quiet_hours incl. wrap-past-midnight, muted_tenants).
+  Zero-knowledge payload `{title, body, url}`: "needs you / stalled / crashed on
+  <run title>" + deep-link `/console/relay/<run_id>` — never code/diffs/commands.
+  Fire-and-forget via `platform.context.waitUntil` (CF adapter); fail-open — a push
+  failure never breaks the gate raise. 404/410 from a push service → that
+  `push_subscriptions.enabled` is set false. Subscriptions deduped by endpoint.
+- **How (implemented):** VAPID (ES256 JWT) + payload encryption delegated to
+  `@block65/webcrypto-web-push` (MIT, WebCrypto, no node built-ins — Workers-safe;
+  the smallest clean option). Auth header normalised to RFC 8292
+  `Authorization: vapid t=<jwt>, k=<pubkey>`. **NOTE / deviation:** that library
+  encrypts with the `aesgcm` scheme (RFC 8291 draft-04; `Content-Encoding: aesgcm`
+  + `Encryption`/`Crypto-Key` companions), NOT the newer `aes128gcm` (RFC 8188)
+  named in this plan. `aesgcm` is still accepted by the major push services
+  (FCM/Mozilla/WebKit); the sender passes the encoding through honestly (never
+  relabels). Migrating to an `aes128gcm` sender is a follow-up IF a target push
+  service rejects `aesgcm`. Pure logic (prefs gate / dedup / payload / header
+  shape) is unit-tested (vitest); the crypto+fetch send is thin + injectable.
+  Files: `src/lib/server/relay-push-send.ts` (+ `.spec.ts`),
+  `src/lib/server/relay-push-env.ts`, trigger wiring in `relay/inbox` +
+  `relay/session` (+ `relay/relay-push-trigger.spec.ts`).
+- **Acceptance:** a raised gate → the backgrounded phone receives a push → tapping it
+  opens the gate card → Approve/Deny → the daemon's `await_reply` sees the answer →
+  the engine proceeds (the P4 headline round-trip). Quiet-hours/muted respected.
+  **Delivered-push acceptance is the P4 hand-off e2e** (Playwright + a real
+  subscription against a real push service) — not claimable in the build; the build
+  verifies trigger-kind selection, prefs gate + dedup + expired-disable (unit), and
+  a well-formed request shape (headers + encrypted body) against a mock endpoint.
+- **Deps:** P4.3; the VAPID **private** key (dev local; **prod = Jerry secret**).
+- **Out of scope:** batching/digests; retry/backoff on push failure (track);
+  aes128gcm migration (track, only if a push service rejects aesgcm).
+
+### P4.5 — offline / reconnect / session-ended  ·  PWA
+- **What:** local draft store for per-segment review + queued replies/guidance; a
+  Send-batch on reconnect; session-ended + reconnect UX; the surface reads durable
+  `relay_inbox`/`relay_segments` when offline (cached).
+- **Acceptance:** airplane-mode → read the outline, mark approve/request-changes,
+  queue a nudge → reconnect → Send delivers the batch → the engine applies queued
+  guidance at the next safe boundary; a closed/re-opened app restores state.
+- **Deps:** P4.2 (realtime for reconnect signal), P2 review UI. **Autonomous** (local).
+
+### P4.6 — "what's blocked on me" home  ·  `.svelte` (svelte MCP + rokkit)
+- **What:** a home view aggregating open gates / needs-you across the user's runs
+  (the away-from-keyboard landing: "here's what's waiting on you"), ordered by
+  urgency, each linking to its gate card.
+- **Acceptance:** with gates open on 2+ runs, the home lists exactly the open
+  needs-you items across runs, newest/most-urgent first; answering one removes it
+  live (via P4.2 realtime). Empty state when nothing's blocked.
+- **Deps:** P4.2. **Autonomous** (local). svelte MCP + rokkit mandatory.
+
+## Sequencing
+
+`P4.1 (RLS+publication)` → `P4.2 (realtime swap)` → `P4.3 (push client)` →
+`P4.4 (push send)` ✅ → `P4.5 (offline)` → `P4.6 (blocked-on-me home)`.
+P4.3 is independent of P4.1/4.2 and can interleave. Each chunk commits to `develop`
+under approach A (no main-merge/bump). End-of-P4: `sensei-security-reviewer`
+(RLS policy correctness, push payload zero-knowledge, VAPID secret handling) +
+`semgrep`; dojo `bun run check`/`build`/`test` per chunk.
+
+## Prod checklist (hand to Jerry at end of P4 — do NOT do autonomously)
+- **VAPID keypair (Web Push):** generate a **prod** keypair. Set the prod
+  **public** key as the `PUBLIC_VAPID_KEY` Worker var (it is shipped to the
+  browser — the client reads `env.PUBLIC_VAPID_KEY` in `RelayNotifyToggle`). Set
+  the matching **private** key as a `wrangler secret` (never in git) for the
+  P4.4 sender. Dev used a locally-generated keypair: public key in `dojo/.env`
+  (`PUBLIC_VAPID_KEY`), private key in `dojo/.dev-vapid.json` (**gitignored**).
+  The P4.4 sender reads three Worker env bindings (see `dojo/.dev.vars.example`
+  + the doc block in `wrangler.jsonc`):
+  - `VAPID_PRIVATE_KEY` — **SECRET**, the base64url `d` scalar of the P-256
+    keypair. Prod: `cd dojo && wrangler secret put VAPID_PRIVATE_KEY` (paste the
+    prod private-key `d`). NEVER a plaintext dashboard var / never in git.
+  - `VAPID_SUBJECT` — a `mailto:` contact, e.g. `mailto:relay@sensei-hq.com`
+    (dashboard var or secret).
+  - `PUBLIC_VAPID_KEY` — the base64url raw public key (dashboard var; shipped to
+    the browser AND used by the send to build the VAPID `k=` param). Same value
+    client + server.
+  If `VAPID_PRIVATE_KEY`/`VAPID_SUBJECT`/`PUBLIC_VAPID_KEY` are unset the sender
+  no-ops (logs + skips) — a missing key never breaks a gate raise.
+- Enable Supabase Realtime publication on `dojo.relay_*` in prod.
+- Apply + validate the relay RLS policies in prod.
+- **`PUBLIC_SUPABASE_ANON_KEY` (P4.2 client Realtime):** set the **prod**
+  anon/publishable key as a Worker **public** var (it is shipped to the browser —
+  `src/lib/relay-realtime.ts` reads `env.PUBLIC_SUPABASE_ANON_KEY` from
+  `$env/dynamic/public`). It is public by design: RLS + the user's session JWT
+  scope access, so the anon key alone grants nothing. `PUBLIC_SUPABASE_URL`
+  already exists. Dev uses the local anon JWT from `supabase status` in
+  `dojo/.env` (**gitignored**); `dojo/.env.example` + `dojo/.dev.vars.example`
+  carry an empty placeholder. If it (or the URL) is unset, the client-direct
+  Realtime subscription no-ops and the surface falls back to action-refresh.
+- (If native later) APNs/FCM credentials.

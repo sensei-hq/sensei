@@ -12,6 +12,7 @@ create table if not exists dojo.memberships (
 , attribution_default  dojo.attribution_mode not null default 'named'
 , sync_status          dojo.sync_status      not null default 'authenticating'
 , device_key           text
+, device_token_hash    text
 , last_heartbeat_at    timestamptz
 , disabled_at          timestamptz
 , created_at           timestamptz           not null default now()
@@ -21,6 +22,7 @@ create table if not exists dojo.memberships (
 
 create index if not exists memberships_tenant_idx on dojo.memberships(tenant_id);
 create index if not exists memberships_user_idx on dojo.memberships(user_id);
+create index if not exists memberships_device_token_hash_idx on dojo.memberships(device_token_hash) where device_token_hash is not null;
 
 comment on table dojo.memberships is
 'A user''s participation in one Dōjō. A developer belongs to zero or many.
@@ -46,3 +48,9 @@ comment on column dojo.memberships.sync_status
      is 'Last-known connection health (healthy/stale/error/authenticating), mirrored from the daemon for the connections pane.';
 comment on column dojo.memberships.device_key
      is 'Public device key for verifying signed federation payloads, captured at membership creation.';
+comment on column dojo.memberships.device_token_hash
+     is 'sha256 of the daemon''s bearer device token (relay auth plane A, beta): the
+relay routes authenticate a machine caller by hashing the presented Bearer and
+matching this per (tenant, membership). Set by the seed / pairing; rotate via
+re-pairing. The stronger signed-payload path (device_key above, plane B) is a
+security-hardening follow-up before real/prod tokens.';

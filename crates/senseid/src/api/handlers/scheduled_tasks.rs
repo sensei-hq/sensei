@@ -32,6 +32,7 @@ struct ScheduledTask {
 /// added or its watermark key changes.
 const TASKS: &[ScheduledTask] = &[
     ScheduledTask { name: "analyzer", description: "Session/log analyzer — findings, recommendations, learned memories", watermark_key: Some("analyzer.last_full_refresh") },
+    ScheduledTask { name: "advance_run", description: "Relay run scheduler — auto-resume due pauses + tick active runs", watermark_key: None },
     ScheduledTask { name: "reconcile", description: "Folder/index reconcile — self-healing scan-drift repair", watermark_key: Some("reconcile.last_run") },
     ScheduledTask { name: "index_audit", description: "Index integrity audit (read-only drift check)", watermark_key: Some("audit.last_run") },
     ScheduledTask { name: "contribute", description: "Dōjō upstream contribute cadence", watermark_key: Some("collective.last_prepared") },

@@ -112,8 +112,13 @@ then **A + B** (close the loop + de-noise).
 
 **Recommended order:** D (floor current) → A + B (close loop + de-noise, make
 shipped screens truthful) → C (the differentiator) → F / G (net-new + relay,
-gated on the design track). Dōjō live (Phase 4) + Relay (Phase 5) are strategic
-tracks that run parallel once their prerequisites land.
+gated on the design track). **Dōjō live (Phase 4) + Relay (Phase 5) are being
+accelerated** (2026-07-16 decision) — the marketing site already presents them, so
+they **ship rather than get gated**. Phase 4's infra is already decided (Cloudflare
+Worker + Supabase) and the `dojo-mind` federation backend is built — so the real work
+is **porting `/v1` into the Worker + the join flow** (Phase 4), not an infra decision.
+Relay (Phase 5) is greenfield and gets its own R0–R4 breakdown. Until each lands, the
+site stays honest (unbuilt ≠ shipped).
 
 ## Implementation phases
 
@@ -153,15 +158,28 @@ flowchart LR
 ### Phase 3 — Net-new surfaces
 **Theme:** breadth, now that the data behind each surface is real.
 - WS F: Solution segment (3 screens), Bootstrap splash, consolidation screen, insights-reasoning drawer, first-run polish (G8). **Needs the design track** (solution + bootstrap mockups).
+- **Local export/import** — Settings → Export a JSON dump of every memory / pattern / guard; Import to restore. Was advertised on the marketing site before it existed; **claim dropped 2026-07-16**, feature parked here (C3 from the site↔product audit, [DOJO-REVIEW §C](../mockups/DOJO-REVIEW.md)).
+- **DORA delivery-performance module** — the DORA Four Keys + generative-culture signal *alongside* FTR (FTR = leading/session; DORA = lagging/delivery), correlating AI-pairing with delivery outcomes. **Prereq: a deploy/release-signal detector** (sensei captures coding, not CI/CD today). Frame + metric map: [`spec/governance/default-constitution.md`](../spec/governance/default-constitution.md).
+- **Default governance bundle** — ship the curated starter constitution / guardrails / guidelines (DORA + XP/CD + Core Protocols) as the **default** personal-Dōjō rules so a fresh project inherits real rules, not an empty file. Drafted: [`spec/governance/default-constitution.md`](../spec/governance/default-constitution.md).
 **Exit:** the not-built cluster is closed; every new surface renders real data.
 
-### Phase 4 — Dōjō live activation *(external-blocked)*
+### Phase 4 — Dōjō live activation
 **Theme:** extend the loop across a team, exactly.
-- Stand up a Dōjō server (localhost first), exercise memberships → contribute → triage → distribute end-to-end; wire the console.
-**Exit:** a finding travels dev → maintainer → downstream with anonymization + preview, on real infra. Gated on the SaaS-infra decision — parallel to Phases 1–3, not blocking them. **Team relay (R8) rides on this.**
+- **Infra is decided** — the Dōjō cloud runs on a **Cloudflare Worker + cloud Supabase** (`dojo/`), auth via kavach; the old "external-blocked on a SaaS-infra decision" framing is **stale**. The daemon's live federation backend (`dojo-mind`, 26 real `/v1` routes — triage/approve/distribute, identity, policies, engagements, incidents, compliance) is **already built and running**; the gap is the human **console**.
+- **Console backend — port `/v1` to the Worker** *(decision 2026-07-16: Path A)* — port dojo-mind's `/v1/t/{tenant}/…` logic route-by-route into the Worker (13 of ~14 routes still stubbed; `engagements/+server.ts` is the reference), rather than deploying `sensei-dojo` + proxying (Path B, rejected — no deploy artifact today). Order: triage → members/identities/policies → incidents/engagements+bind → audit/compliance → health. **Keep the TS in sync with dojo-mind's triage scoring / k-anonymity logic.**
+- **Build the join/membership flow** — magic-link creates `auth.users` but no membership; the "Join" button is dead → every console surface 403s. This unblocks the rest.
+**Exit:** a finding travels dev → maintainer → downstream with anonymization + preview; a new member can join an org and reach the console. Parallel to Phases 1–3. **Team relay (R8) rides on this.**
 
 ### Phase 5 — Relay *(new surface — WS G)*
 **Theme:** supervise long, multi-agent runs from anywhere, without leaking code (objectives R1–R8; [architecture/relay](../architecture/relay.md)).
+- **The Relay engine — end-goal design + phased build-up (P0–P6):**
+  [`relay-engine.md`](relay-engine.md). The daemon-owned autonomous run engine + its
+  zero-knowledge phone/console surface — rides the existing `dojo/client.rs` → Worker
+  `/v1` device-token transport (poll-first), robustly rebuilds the 5-day vacation run
+  (limit-safe pause/resume, crash recovery, *progress over asking*, hybrid
+  local-model routing), and normalizes multiple assistants behind one contract. Beta =
+  single-user personal Dōjō (P0–P2); **team relay (P6) folds into Phase 4.** The
+  R1–R8 objectives below are the full team vision it builds toward.
 - **Specs first** — `docs/spec/screen/relay-*.md` (14 mockups, 0 specced) via the design track.
 - **Coordinator** — supervise the agent CLIs + run the active plan in auto mode + publish filtered status + raise gates (grows the daemon; new Observatory rail item).
 - **Zero-knowledge relay** — encrypted pairing + scoped/revocable permissions; filtered status only; daemon outbound-only; adopt Apache-2.0 **ACP** (not Zed's GPL crate).

@@ -271,6 +271,16 @@ pub(crate) async fn ingest_hook_event(
         tracing::warn!(error = %e, event_type, assistant_family, "ingest_hook_event: insert failed");
     }
 
+    // Relay segment-publish (A2): a TodoWrite carries the run's todo outline —
+    // project it into the relay and push to enrolled dojos. Fire-and-forget so
+    // the publish (a DB read + bounded HTTP posts) never blocks the hook.
+    if tool_name == Some("TodoWrite") && !session_id.is_empty() {
+        let task = crate::tasks::Task::new(
+            crate::tasks::TaskKind::PublishRelaySegments, "", session_id,
+        );
+        state.task_queue.enqueue(task).await;
+    }
+
     // Derive/maintain the activity.sessions row from the hook stream (#31).
     // A session is one assistant session_id, attributed to the indexed folder
     // its cwd resolves to; Stop/SessionEnd marks it completed. Best-effort —
@@ -292,6 +302,232 @@ pub(crate) async fn ingest_hook_event(
         }
 
     StatusCode::OK
+}
+
+// ── Hook gate (relay-engine feature B) ───────────────────────────────────────
+
+/// Build a Claude Code `PreToolUse` hook decision body. `decision` is `"allow"`
+/// or `"deny"`; `reason` is the human-facing explanation the hook surfaces.
+fn gate_decision(decision: &str, reason: &str) -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": decision,
+            "permissionDecisionReason": reason,
+        }
+    }))
+}
+
+/// `POST /hook/gate` — the daemon↔agent control leg (relay-engine feature B).
+///
+/// A Claude `PreToolUse` hook POSTs the tool-call payload here; the daemon
+/// decides whether the tool may proceed. When the tool is in the
+/// `SENSEI_RELAY_GATE_TOOLS` allow-list AND a Dōjō is enrolled, it raises a
+/// blocking relay gate to the phone, waits (bounded ~50s) for the human's
+/// answer, and returns allow/deny. Everything else — gating off, non-uuid
+/// session, no dojo, any raise/poll error, timeout — is **fail-open → allow**.
+///
+/// ALWAYS returns 200 with an allow/deny body; NEVER a 5xx. Fail-open error
+/// paths `tracing::warn!` (never swallowed). Only an explicit human `deny`
+/// reply blocks. The payload raised to the phone carries only the tool NAME —
+/// no tool args, code, or diffs (zero-knowledge, D10).
+pub(crate) async fn hook_gate(
+    State(state): State<AppState>,
+    Json(payload): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+    use crate::dojo::gate::{
+        classify_hard_block, decision_from_reply, gated_tools_from_env, needs_semantic_review,
+        parse_semantic_verdict, semantic_system_prompt, semantic_user_message, should_gate,
+    };
+
+    let session_id = payload["session_id"].as_str().unwrap_or("");
+    let tool_name = payload["tool_name"].as_str().unwrap_or("");
+    let cwd = payload["cwd"].as_str();
+    // The PreToolUse event carries the tool's input alongside its name. Parse
+    // defensively — a missing/malformed `tool_input` defaults to `{}`, which the
+    // classifier treats as progress (no danger inferable ⇒ don't over-block).
+    let tool_input = payload.get("tool_input").cloned().unwrap_or_else(|| serde_json::json!({}));
+
+    // Two ways a call gates (relay-engine.md §5, P3.5):
+    //  1. static allow-list — a tool named in SENSEI_RELAY_GATE_TOOLS, OR
+    //  2. hard-block — a genuinely dangerous action (deploy / main-branch /
+    //     destructive / credentials / money), even with NO allow-list set.
+    // Everything else PROGRESSES (progress-over-asking). The hard-block only
+    // RAISES a gate for a human to approve/deny — it never auto-denies.
+    let gate_env = std::env::var("SENSEI_RELAY_GATE_TOOLS").ok();
+    let gated = gated_tools_from_env(gate_env.as_deref());
+    let mut hard_block = classify_hard_block(tool_name, &tool_input);
+
+    // gemma4 semantic backstop (pre-drive hardening). The deterministic classifier
+    // above is a literal-matching FLOOR; a determined obfuscation can evade it.
+    // ORDER MATTERS: only when the deterministic verdict is `None` AND the command
+    // carries an obfuscation/indirection marker do we ask gemma4 for a second
+    // opinion — so the benign 99% keeps the byte-for-byte fast path (no model call).
+    // FAIL-OPEN: timeout, gateway error, !success, or an unparseable/`dangerous:false`
+    // answer all keep the deterministic verdict (progress). Only a parsed
+    // `dangerous:true` becomes an effective hard-block. A gemma4 outage must never
+    // start blocking everything and never stop the run.
+    if hard_block.is_none()
+        && let Some(cmd) = needs_semantic_review(tool_name, &tool_input)
+    {
+        use gateway::types::capability::Capability;
+        use gateway::types::request::{InferenceRequest, Message, MessageRole, Payload};
+        let request = InferenceRequest {
+            capability: Capability::TextChat,
+            model: None,
+            router: None,
+            chain: Some("reasoning".into()),
+            payload: Payload::Chat {
+                messages: vec![Message::text(MessageRole::User, semantic_user_message(&cmd))],
+                system: Some(semantic_system_prompt().to_string()),
+                max_tokens: Some(200),
+                temperature: None,
+                tools: Vec::new(),
+            },
+            budget: None,
+        };
+        // Bound the call so a cold / wedged embedded inference can't hang the
+        // PreToolUse gate. Timeout → fail-open (keep the deterministic verdict).
+        let fut = state.gateway.execute(&request);
+        match tokio::time::timeout(std::time::Duration::from_secs(8), fut).await {
+            Ok(Ok(resp)) if resp.success => {
+                match resp.content.as_deref().and_then(parse_semantic_verdict) {
+                    Some(hb) => {
+                        // A semantic backstop raised a gate. Zero-knowledge: log the
+                        // tool + category only — NEVER the command text.
+                        tracing::info!(
+                            session_id,
+                            tool_name,
+                            category = hb.category,
+                            "hook_gate: semantic backstop raised a gate"
+                        );
+                        hard_block = Some(hb);
+                    }
+                    None => {
+                        // dangerous:false / unparseable → defer to progress.
+                        tracing::warn!(
+                            session_id,
+                            tool_name,
+                            "hook_gate: semantic backstop returned no block — progressing (fail-open)"
+                        );
+                    }
+                }
+            }
+            Ok(Ok(_)) => tracing::warn!(
+                session_id,
+                tool_name,
+                "hook_gate: semantic backstop response not successful — progressing (fail-open)"
+            ),
+            Ok(Err(e)) => tracing::warn!(
+                session_id,
+                tool_name,
+                error = %e,
+                "hook_gate: semantic backstop gateway error — progressing (fail-open)"
+            ),
+            Err(_) => tracing::warn!(
+                session_id,
+                tool_name,
+                "hook_gate: semantic backstop timed out — progressing (fail-open)"
+            ),
+        }
+    }
+
+    if !should_gate(tool_name, &gated) && hard_block.is_none() {
+        return gate_decision("allow", "not gated");
+    }
+    if let Some(hb) = &hard_block {
+        tracing::info!(session_id, tool_name, category = hb.category, "hook_gate: hard-block classified — raising gate");
+    }
+
+    // Fail-open: a non-uuid session (non-Claude harness) would 500 the Worker
+    // (relay run_id is uuid NOT NULL), so never gate it.
+    if uuid::Uuid::parse_str(session_id).is_err() {
+        tracing::warn!(session_id, tool_name, "hook_gate: non-uuid session — allowing (fail-open)");
+        return gate_decision("allow", "gate unavailable — allowed");
+    }
+
+    // Fail-open: no enrolled Dōjō ⇒ nowhere to raise the gate ⇒ allow.
+    let memberships = match state.pg.list_dojo_memberships().await {
+        Ok(ms) => ms.into_iter().filter(|m| m.enabled).collect::<Vec<_>>(),
+        Err(e) => {
+            tracing::warn!(error = %e, "hook_gate: list_dojo_memberships failed — allowing (fail-open)");
+            return gate_decision("allow", "gate unavailable — allowed");
+        }
+    };
+    let Some(membership) = memberships.into_iter().next() else {
+        return gate_decision("allow", "no dojo enrolled");
+    };
+    // FIRST enabled membership only (personal beta = one). Gating across
+    // multiple memberships (which phone answers, quorum, races) is a tracked
+    // follow-up — see relay-engine.md feature B.
+    let client = crate::dojo::client::DojoClient::for_membership(&membership);
+
+    // Ensure the cloud session exists so the phone can render the gate in
+    // context (Running status; no segments — the gate carries its own prompt).
+    let update = crate::dojo::relay_project::session_update(
+        session_id,
+        &crate::dojo::relay_project::title_from_cwd(cwd),
+        &[],
+    );
+    if let Err(e) = client.publish_session_update(&update).await {
+        tracing::warn!(session_id, error = %e, "hook_gate: session update failed — allowing (fail-open)");
+        return gate_decision("allow", "gate unavailable — allowed");
+    }
+
+    // Raise the gate. Zero-knowledge: the payload names the tool and — for a
+    // hard-block — the matched danger CATEGORY + REASON only. Never its
+    // args/code/diffs (the reason is a fixed daemon-owned phrase, not command text).
+    let gate_payload = match &hard_block {
+        Some(hb) => serde_json::json!({
+            "prompt": format!("Hard-block: {}. Approve {tool_name}?", hb.reason),
+            "tool": tool_name,
+            "category": hb.category,
+            "reason": hb.reason,
+        }),
+        None => serde_json::json!({
+            "prompt": format!("Approve {tool_name}?"),
+            "tool": tool_name,
+        }),
+    };
+    let item = dojo_protocol::relay::RelayInboxItem {
+        id: None,
+        run_id: session_id.to_string(),
+        segment_id: None,
+        kind: dojo_protocol::relay::RelayInboxKind::Approval,
+        direction: dojo_protocol::relay::RelayMessageDirection::AgentToHuman,
+        status: dojo_protocol::relay::RelayInboxStatus::Pending,
+        payload: gate_payload,
+        reply: None,
+        created_at: None,
+        answered_at: None,
+    };
+    let ack = match client.raise_inbox_item(&item).await {
+        Ok(ack) => ack,
+        Err(e) => {
+            tracing::warn!(session_id, tool_name, error = %e, "hook_gate: raise failed — allowing (fail-open)");
+            return gate_decision("allow", "gate unavailable — allowed");
+        }
+    };
+
+    // Block (bounded < Claude's 60s hook cap) for the human's answer.
+    match client
+        .await_reply(&ack.id, ack.seq, std::time::Duration::from_secs(50))
+        .await
+    {
+        Ok(reply) => {
+            let decision = decision_from_reply(reply.as_ref());
+            let reason = match (decision, reply.is_some()) {
+                ("deny", _) => "declined from your phone",
+                (_, true) => "approved from your phone",
+                (_, false) => "gate timed out — allowed",
+            };
+            gate_decision(decision, reason)
+        }
+        Err(e) => {
+            tracing::warn!(session_id, tool_name, error = %e, "hook_gate: await_reply failed — allowing (fail-open)");
+            gate_decision("allow", "gate unavailable — allowed")
+        }
+    }
 }
 
 // ── Workflow State ──────────────────────────────────────────────────────────

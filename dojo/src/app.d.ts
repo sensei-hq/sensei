@@ -9,6 +9,15 @@ declare global {
 			// cookie. Null when unauthenticated.
 			session: Session | null;
 		}
+
+		// The Cloudflare Workers platform (adapter-cloudflare). `context.waitUntil`
+		// lets a route run background work (the relay P4.4 push send) without
+		// blocking / failing the response — used at the relay/inbox trigger site.
+		// Undefined outside the Worker (local `bun run dev` / vitest), so callers
+		// guard on it. Only the fields we use are declared.
+		interface Platform {
+			context?: { waitUntil(promise: Promise<unknown>): void };
+		}
 	}
 
 	// @rokkit/states ships JS source; its `types` field points at an unpublished

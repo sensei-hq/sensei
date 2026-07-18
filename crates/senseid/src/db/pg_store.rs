@@ -1,6 +1,8 @@
 use std::time::Duration;
 use sqlx_postgres::{PgPool, PgPoolOptions};
 use sensei_bootstrap::{DB_POOL_MAX_CONNECTIONS, DB_POOL_ACQUIRE_TIMEOUT_SECS, DB_POOL_IDLE_TIMEOUT_SECS};
+use dojo_protocol::relay::RelayRunStatus;
+use crate::runs::{NewRun, Run, RunEvent, RunEventKind};
 
 /// PostgreSQL store.
 /// Schema is managed by `dbd apply`, not by this code.
@@ -582,6 +584,330 @@ impl PgStore {
         Ok(())
     }
 
+    // ── Runs (relay engine run-state — activity.runs / activity.run_events) ─
+    //
+    // Durable state of an autonomous multi-phase run + its append-only cadence
+    // log. `status` is `sensei.run_status` (bound via
+    // `RelayRunStatus::as_db_str` cast `$N::sensei.run_status`, mirroring the
+    // `$N::sensei.assistant_family` cast on `insert_assistant_event`). `kind` is
+    // `sensei.run_event_kind`, bound the same way. Timestamps come back as
+    // RFC-3339 `::text` (like `DojoMembership.last_heartbeat_at`). See
+    // `crate::runs` for the row types.
+
+    /// Columns of `activity.runs` in `Run` field order. `timestamptz` columns
+    /// are projected to true RFC-3339 text via `to_json(col)#>>'{}'` (Postgres'
+    /// `::text` cast is space-separated, NOT RFC-3339); this matches
+    /// `chrono::to_rfc3339()` used elsewhere without pulling chrono into the row
+    /// tuple. Shared by every run SELECT.
+    const RUN_SELECT: &'static str =
+        "SELECT id, project_id, plan_ref, goal, status::text,
+                to_json(paused_until)#>>'{}',
+                pause_reason, current_phase, current_feature, dojo_session_id,
+                max_concurrency,
+                to_json(started_at)#>>'{}',
+                to_json(completed_at)#>>'{}',
+                to_json(heartbeat_at)#>>'{}',
+                to_json(created_at)#>>'{}',
+                to_json(updated_at)#>>'{}'
+           FROM activity.runs";
+
+    /// Map a raw run row tuple to a [`Run`]. `status` arrives as text and is
+    /// parsed with [`RelayRunStatus::from_db_str`]; an unknown value is a hard
+    /// error (never a silent default) — the enum and the DDL must agree.
+    #[allow(clippy::type_complexity)]
+    fn map_run_row(
+        row: (
+            uuid::Uuid, Option<uuid::Uuid>, String, Option<String>, String, Option<String>,
+            Option<String>, Option<String>, Option<String>, Option<uuid::Uuid>,
+            i32, String, Option<String>, Option<String>, String, String,
+        ),
+    ) -> Result<Run, String> {
+        let (
+            id, project_id, plan_ref, goal, status, paused_until, pause_reason,
+            current_phase, current_feature, dojo_session_id, max_concurrency,
+            started_at, completed_at, heartbeat_at, created_at, updated_at,
+        ) = row;
+        let status = RelayRunStatus::from_db_str(&status)
+            .ok_or_else(|| format!("unknown run_status from DB: {status:?}"))?;
+        Ok(Run {
+            id, project_id, plan_ref, goal, status, paused_until, pause_reason,
+            current_phase, current_feature, dojo_session_id, max_concurrency,
+            started_at, completed_at, heartbeat_at, created_at, updated_at,
+        })
+    }
+
+    /// Create a run. `id`, `status` (`'running'`), and all timestamps are
+    /// DB-defaulted; `plan_ref`/`max_concurrency` fall back to the DDL defaults
+    /// (`''` / `1`) when the caller passes `None`. Returns the new run id.
+    pub async fn create_run(&self, new: &NewRun) -> Result<uuid::Uuid, String> {
+        let (id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO activity.runs
+                (project_id, plan_ref, goal, dojo_session_id, max_concurrency)
+             VALUES($1, COALESCE($2, ''), $3, $4, COALESCE($5, 1)) RETURNING id"
+        )
+            .bind(new.project_id)
+            .bind(new.plan_ref.as_deref())
+            .bind(new.goal.as_deref())
+            .bind(new.dojo_session_id)
+            .bind(new.max_concurrency)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(id)
+    }
+
+    /// Fetch one run by id, or `None` if it does not exist.
+    pub async fn get_run(&self, id: &uuid::Uuid) -> Result<Option<Run>, String> {
+        let row: Option<(
+            uuid::Uuid, Option<uuid::Uuid>, String, Option<String>, String, Option<String>,
+            Option<String>, Option<String>, Option<String>, Option<uuid::Uuid>,
+            i32, String, Option<String>, Option<String>, String, String,
+        )> = sqlx_core::query_as::query_as(&format!("{} WHERE id = $1", Self::RUN_SELECT))
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        row.map(Self::map_run_row).transpose()
+    }
+
+    /// Runs that still need the scheduler's attention — `running`, `paused`,
+    /// `stalled`, or `blocked` (uses the partial `runs_active_idx`).
+    /// Newest-started first. `blocked` is included so a run waiting on a gate is
+    /// still ticked (heartbeat) and shown in `GET /api/runs` — otherwise it
+    /// drops out of the active set and looks crashed.
+    pub async fn list_active_runs(&self) -> Result<Vec<Run>, String> {
+        let rows: Vec<(
+            uuid::Uuid, Option<uuid::Uuid>, String, Option<String>, String, Option<String>,
+            Option<String>, Option<String>, Option<String>, Option<uuid::Uuid>,
+            i32, String, Option<String>, Option<String>, String, String,
+        )> = sqlx_core::query_as::query_as(&format!(
+            "{} WHERE status IN ('running', 'paused', 'stalled', 'blocked') ORDER BY started_at DESC",
+            Self::RUN_SELECT
+        ))
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        rows.into_iter().map(Self::map_run_row).collect()
+    }
+
+    /// Set a run's status and (optionally) its pause fields, bumping
+    /// `updated_at`. `paused_until`/`pause_reason` are written as given, so pass
+    /// `None` for both to clear a pause on resume.
+    pub async fn update_run_status(
+        &self,
+        id: &uuid::Uuid,
+        status: RelayRunStatus,
+        paused_until: Option<&str>,
+        pause_reason: Option<&str>,
+    ) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE activity.runs
+                SET status       = $2::sensei.run_status,
+                    paused_until = $3::timestamptz,
+                    pause_reason = $4,
+                    updated_at   = now()
+              WHERE id = $1"
+        )
+            .bind(id)
+            .bind(status.as_db_str())
+            .bind(paused_until)
+            .bind(pause_reason)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Update the run's current phase/feature progress markers (+ `updated_at`).
+    pub async fn set_run_progress(
+        &self,
+        id: &uuid::Uuid,
+        phase: Option<&str>,
+        feature: Option<&str>,
+    ) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE activity.runs
+                SET current_phase = $2, current_feature = $3, updated_at = now()
+              WHERE id = $1"
+        )
+            .bind(id)
+            .bind(phase)
+            .bind(feature)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Bump the run's liveness heartbeat to `now()` (drives stall detection).
+    /// Also refreshes `updated_at`.
+    pub async fn touch_run_heartbeat(&self, id: &uuid::Uuid) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE activity.runs SET heartbeat_at = now(), updated_at = now() WHERE id = $1"
+        )
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Mark a run terminal — sets `status` (expected `Done`/`Failed`) and stamps
+    /// `completed_at = now()` (+ `updated_at`).
+    pub async fn complete_run(&self, id: &uuid::Uuid, status: RelayRunStatus) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE activity.runs
+                SET status = $2::sensei.run_status, completed_at = now(), updated_at = now()
+              WHERE id = $1"
+        )
+            .bind(id)
+            .bind(status.as_db_str())
+            .execute(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Append one cadence event to `activity.run_events`. `detail` is the
+    /// structured, stripped payload (never code/diffs). Returns the new
+    /// `bigserial` id.
+    pub async fn append_run_event(
+        &self,
+        run_id: &uuid::Uuid,
+        kind: RunEventKind,
+        phase: Option<&str>,
+        feature: Option<&str>,
+        detail: &serde_json::Value,
+    ) -> Result<i64, String> {
+        let (id,): (i64,) = sqlx_core::query_as::query_as(
+            "INSERT INTO activity.run_events(run_id, kind, phase, feature, detail)
+             VALUES($1, $2::sensei.run_event_kind, $3, $4, $5) RETURNING id"
+        )
+            .bind(run_id)
+            .bind(kind.as_db_str())
+            .bind(phase)
+            .bind(feature)
+            .bind(detail)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(id)
+    }
+
+    /// A run's cadence events, newest first, capped at `limit`. `kind` arrives
+    /// as text and is parsed with [`RunEventKind::from_db_str`]; an unknown
+    /// value is a hard error, never a silent skip.
+    pub async fn list_run_events(&self, run_id: &uuid::Uuid, limit: i64) -> Result<Vec<RunEvent>, String> {
+        let rows: Vec<(i64, uuid::Uuid, String, Option<String>, Option<String>, serde_json::Value, String)> =
+            sqlx_core::query_as::query_as(
+                "SELECT id, run_id, kind::text, phase, feature, detail,
+                        to_json(created_at)#>>'{}'
+                   FROM activity.run_events
+                  WHERE run_id = $1
+                  ORDER BY created_at DESC, id DESC
+                  LIMIT $2"
+            )
+                .bind(run_id)
+                .bind(limit)
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|e| e.to_string())?;
+        rows.into_iter()
+            .map(|(id, run_id, kind, phase, feature, detail, created_at)| {
+                let kind = RunEventKind::from_db_str(&kind)
+                    .ok_or_else(|| format!("unknown run_event_kind from DB: {kind:?}"))?;
+                Ok(RunEvent { id, run_id, kind, phase, feature, detail, created_at })
+            })
+            .collect()
+    }
+
+    /// Flip every `paused` run whose `paused_until` has elapsed back to
+    /// `running`, clearing the pause fields. The `<=` comparison runs SQL-side
+    /// (`paused_until <= now()`) so we never parse RFC-3339 back into Rust just
+    /// to compare clocks. Returns the ids of the runs that were resumed, so the
+    /// scheduler can log a `Resumed` cadence event + kick an `AdvanceRun` tick
+    /// for each. A run with `paused_until IS NULL` (an indefinite/manual pause)
+    /// is never auto-resumed.
+    pub async fn resume_due_runs(&self) -> Result<Vec<uuid::Uuid>, String> {
+        let rows: Vec<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
+            "UPDATE activity.runs
+                SET status       = 'running'::sensei.run_status,
+                    paused_until = NULL,
+                    pause_reason = NULL,
+                    updated_at   = now()
+              WHERE status = 'paused'::sensei.run_status
+                AND paused_until IS NOT NULL
+                AND paused_until <= now()
+             RETURNING id"
+        )
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id,)| id).collect())
+    }
+
+    // ── Watchdog (P3.6) ────────────────────────────────────────────────
+
+    /// The runs the watchdog can act on — `running` or `stalled` — with just the
+    /// fields it needs to assess liveness: `(id, status text, heartbeat_at,
+    /// started_at, recovery_attempts)`. Deliberately a lightweight query (NOT
+    /// [`Self::RUN_SELECT`]/[`Self::map_run_row`]) so adding the watchdog never
+    /// perturbs the `Run` row surface. Timestamps come back as RFC-3339 via the
+    /// same `to_json(col)#>>'{}'` idiom as `RUN_SELECT`; `heartbeat_at` is
+    /// `Option` (a run may not have heartbeated yet, so the caller falls back to
+    /// `started_at`).
+    pub async fn list_recoverable_runs(
+        &self,
+    ) -> Result<Vec<(uuid::Uuid, String, Option<String>, String, i32)>, String> {
+        let rows: Vec<(uuid::Uuid, String, Option<String>, String, i32)> =
+            sqlx_core::query_as::query_as(
+                "SELECT id, status::text,
+                        to_json(heartbeat_at)#>>'{}',
+                        to_json(started_at)#>>'{}',
+                        recovery_attempts
+                   FROM activity.runs
+                  WHERE status IN ('running', 'stalled')",
+            )
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(rows)
+    }
+
+    /// Bounded auto-recovery: flip a `stalled` run back to `running`, record the
+    /// new attempt count, and refresh the heartbeat so the recovered run isn't
+    /// immediately re-flagged stale on the next watchdog tick.
+    pub async fn recover_run(&self, id: &uuid::Uuid, next_attempt: i32) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE activity.runs
+                SET status            = 'running'::sensei.run_status,
+                    recovery_attempts = $2,
+                    heartbeat_at      = now(),
+                    updated_at        = now()
+              WHERE id = $1",
+        )
+        .bind(id)
+        .bind(next_attempt)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Reset the bounded-recovery counter to 0 on real progress (a clean drive
+    /// step) so a long overnight run that recovered earlier doesn't prematurely
+    /// give up later.
+    pub async fn reset_run_recovery(&self, id: &uuid::Uuid) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE activity.runs SET recovery_attempts = 0, updated_at = now() WHERE id = $1",
+        )
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     // ── PG Function Wrappers ───────────────────────────────────────────
 
     /// BM25-style keyword ranking: matches nodes by name/signature/docstring.
@@ -828,6 +1154,25 @@ impl PgStore {
              ORDER BY abs_path"
         ).bind(project_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(|(p,)| p).collect())
+    }
+
+    /// Resolve a project's canonical working-directory path — the `abs_path` of
+    /// its shallowest repo-root folder (`kind IN ('git','standalone')`). Used by
+    /// the relay run driver (P3.3b) to pick the cwd it spawns the agent in.
+    ///
+    /// Shortest `abs_path` wins so a monorepo project resolves to the repo root
+    /// rather than a nested sub-package. `None` when the project has no
+    /// repo-root folder (e.g. a project deleted out from under a run). The
+    /// caller must still confirm the path exists on disk before spawning.
+    pub async fn project_root_path(&self, project_id: &uuid::Uuid) -> Result<Option<String>, String> {
+        let row: Option<(String,)> = sqlx_core::query_as::query_as(
+            "SELECT abs_path
+             FROM sensei.folders
+             WHERE project_id = $1 AND kind::text IN ('git','standalone')
+             ORDER BY length(abs_path), abs_path
+             LIMIT 1"
+        ).bind(project_id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.map(|(p,)| p))
     }
 
     /// Mark a folder as indexed with detected libs.
@@ -3799,6 +4144,24 @@ impl PgStore {
             "SELECT id, event_type, tool_name, ts, payload FROM activity.assistant_events
              WHERE session_id = $1 ORDER BY ts"
         ).bind(client_session_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())
+    }
+
+    /// The most recent `TodoWrite` event for a session: its `(payload, cwd)`.
+    /// `None` when the session has no `TodoWrite` yet. Feeds the relay
+    /// segment-publish path (P2) — `payload` holds the todo list
+    /// (`payload.tool_input.todos`, projected by [`crate::dojo::relay_project`]);
+    /// `cwd` names the working folder for the run title. Reads the jsonb column
+    /// straight into `serde_json::Value` (same pattern as
+    /// [`Self::get_hook_events_for_session`]).
+    pub async fn latest_todowrite(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<(serde_json::Value, Option<String>)>, String> {
+        let row: Option<(serde_json::Value, Option<String>)> = sqlx_core::query_as::query_as(
+            "SELECT payload, cwd FROM activity.assistant_events
+             WHERE session_id = $1 AND tool_name = 'TodoWrite' ORDER BY ts DESC LIMIT 1"
+        ).bind(session_id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row)
     }
 
     /// Upsert a batch of tool-call verdicts (#90). Idempotent: repeated calls
@@ -12275,5 +12638,213 @@ mod knowledge_tests {
         }
         let max = pg.latest_hook_event_ts("claude").await.unwrap().unwrap();
         assert!(max >= base + 5000, "expected >= {} got {max}", base + 5000);
+    }
+}
+
+#[cfg(test)]
+mod run_tests {
+    //! DB-touching CRUD tests for the relay run-state model. Each test is
+    //! self-contained: `project_id` is `None` (nullable FK), and every created
+    //! run is cascade-deleted at the end (`run_events` cascade with the run).
+    //! Guarded like the neighbouring pg_store tests — a missing test DB means
+    //! the test no-ops rather than fails.
+    use super::*;
+
+    async fn delete_run(pg: &PgStore, id: &uuid::Uuid) {
+        sqlx_core::query::query("DELETE FROM activity.runs WHERE id = $1")
+            .bind(id).execute(pg.pool()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn create_get_and_defaults() {
+        let Ok(pg) = PgStore::connect_test().await else { return; };
+        // Minimal create — plan_ref/max_concurrency fall back to DDL defaults.
+        let id = pg.create_run(&NewRun::default()).await.unwrap();
+        let run = pg.get_run(&id).await.unwrap().expect("run exists");
+        assert_eq!(run.id, id);
+        assert_eq!(run.project_id, None);
+        assert_eq!(run.plan_ref, "", "plan_ref defaults to ''");
+        assert_eq!(run.status, RelayRunStatus::Running, "status defaults to running");
+        assert_eq!(run.max_concurrency, 1, "max_concurrency defaults to 1");
+        assert!(run.paused_until.is_none());
+        assert!(run.completed_at.is_none());
+        assert!(run.started_at.contains('T'), "started_at is RFC-3339 text");
+        assert!(run.created_at.contains('T'));
+
+        // Unknown id → None, not an error.
+        assert!(pg.get_run(&uuid::Uuid::new_v4()).await.unwrap().is_none());
+
+        delete_run(&pg, &id).await;
+    }
+
+    #[tokio::test]
+    async fn create_with_fields() {
+        let Ok(pg) = PgStore::connect_test().await else { return; };
+        let session = uuid::Uuid::new_v4();
+        let id = pg.create_run(&NewRun {
+            project_id: None,
+            plan_ref: Some("docs/plan/P3.md".into()),
+            goal: Some("ship relay".into()),
+            dojo_session_id: Some(session),
+            max_concurrency: Some(3),
+        }).await.unwrap();
+        let run = pg.get_run(&id).await.unwrap().unwrap();
+        assert_eq!(run.plan_ref, "docs/plan/P3.md");
+        assert_eq!(run.goal.as_deref(), Some("ship relay"));
+        assert_eq!(run.dojo_session_id, Some(session));
+        assert_eq!(run.max_concurrency, 3);
+        delete_run(&pg, &id).await;
+    }
+
+    #[tokio::test]
+    async fn status_pause_progress_heartbeat_complete() {
+        // Holds the shared resume lock: this test asserts a run STAYS paused, but
+        // the global resume_due_runs (scheduler tests) would resume any paused run
+        // whose paused_until has elapsed — so serialize against those callers.
+        let _guard = crate::runs::resume_test_lock().lock().await;
+        let Ok(pg) = PgStore::connect_test().await else { return; };
+        let id = pg.create_run(&NewRun::default()).await.unwrap();
+
+        // Pause with a FAR-FUTURE resume time + reason (never "due", so the
+        // global resume sweep can't flip it mid-assertion).
+        pg.update_run_status(
+            &id, RelayRunStatus::Paused,
+            Some("2999-07-17T11:29:00Z"), Some("weekly cap"),
+        ).await.unwrap();
+        let run = pg.get_run(&id).await.unwrap().unwrap();
+        assert_eq!(run.status, RelayRunStatus::Paused);
+        assert!(run.paused_until.as_deref().unwrap().contains("2999-07-17"));
+        assert_eq!(run.pause_reason.as_deref(), Some("weekly cap"));
+
+        // Resume clears the pause fields.
+        pg.update_run_status(&id, RelayRunStatus::Running, None, None).await.unwrap();
+        let run = pg.get_run(&id).await.unwrap().unwrap();
+        assert_eq!(run.status, RelayRunStatus::Running);
+        assert!(run.paused_until.is_none());
+        assert!(run.pause_reason.is_none());
+
+        // Progress markers.
+        pg.set_run_progress(&id, Some("P3"), Some("run-state model")).await.unwrap();
+        let run = pg.get_run(&id).await.unwrap().unwrap();
+        assert_eq!(run.current_phase.as_deref(), Some("P3"));
+        assert_eq!(run.current_feature.as_deref(), Some("run-state model"));
+
+        // Heartbeat sets heartbeat_at.
+        assert!(run.heartbeat_at.is_none());
+        pg.touch_run_heartbeat(&id).await.unwrap();
+        let run = pg.get_run(&id).await.unwrap().unwrap();
+        assert!(run.heartbeat_at.as_deref().unwrap().contains('T'));
+
+        // Terminal completion stamps completed_at.
+        pg.complete_run(&id, RelayRunStatus::Done).await.unwrap();
+        let run = pg.get_run(&id).await.unwrap().unwrap();
+        assert_eq!(run.status, RelayRunStatus::Done);
+        assert!(run.completed_at.as_deref().unwrap().contains('T'));
+
+        delete_run(&pg, &id).await;
+    }
+
+    #[tokio::test]
+    async fn list_active_runs_filters_by_status() {
+        let Ok(pg) = PgStore::connect_test().await else { return; };
+        let active = pg.create_run(&NewRun::default()).await.unwrap(); // running
+        let paused = pg.create_run(&NewRun::default()).await.unwrap();
+        pg.update_run_status(&paused, RelayRunStatus::Paused, None, None).await.unwrap();
+        // A blocked run (waiting on a gate) must stay in the active set so the
+        // scheduler keeps heartbeating it and GET /api/runs keeps showing it —
+        // otherwise once P3.3 sets status='blocked' the run drops out and looks
+        // crashed. (The advance_run handler has a Blocked-heartbeat branch.)
+        let blocked = pg.create_run(&NewRun::default()).await.unwrap();
+        pg.update_run_status(&blocked, RelayRunStatus::Blocked, None, None).await.unwrap();
+        let terminal = pg.create_run(&NewRun::default()).await.unwrap();
+        pg.complete_run(&terminal, RelayRunStatus::Done).await.unwrap();
+
+        let ids: std::collections::HashSet<uuid::Uuid> =
+            pg.list_active_runs().await.unwrap().into_iter().map(|r| r.id).collect();
+        assert!(ids.contains(&active), "running run is active");
+        assert!(ids.contains(&paused), "paused run is active");
+        assert!(ids.contains(&blocked), "blocked run is active");
+        assert!(!ids.contains(&terminal), "done run is excluded");
+
+        for id in [active, paused, blocked, terminal] { delete_run(&pg, &id).await; }
+    }
+
+    #[tokio::test]
+    async fn append_and_list_events_newest_first() {
+        let Ok(pg) = PgStore::connect_test().await else { return; };
+        let id = pg.create_run(&NewRun::default()).await.unwrap();
+
+        let e1 = pg.append_run_event(
+            &id, RunEventKind::PhaseStarted, Some("P3"), None, &serde_json::json!({}),
+        ).await.unwrap();
+        let e2 = pg.append_run_event(
+            &id, RunEventKind::PausedOnLimit, Some("P3"), Some("run-state"),
+            &serde_json::json!({ "reset_at": "2026-07-17T11:29:00Z" }),
+        ).await.unwrap();
+        assert!(e2 > e1, "bigserial is monotonic");
+
+        let events = pg.list_run_events(&id, 10).await.unwrap();
+        assert_eq!(events.len(), 2);
+        // Newest first — the paused_on_limit event leads.
+        assert_eq!(events[0].id, e2);
+        assert_eq!(events[0].kind, RunEventKind::PausedOnLimit);
+        assert_eq!(events[0].feature.as_deref(), Some("run-state"));
+        assert_eq!(events[0].detail["reset_at"], serde_json::json!("2026-07-17T11:29:00Z"));
+        assert_eq!(events[1].kind, RunEventKind::PhaseStarted);
+        assert_eq!(events[1].detail, serde_json::json!({}), "detail defaults to {{}}");
+        assert!(events[0].created_at.contains('T'));
+
+        // limit caps the result.
+        assert_eq!(pg.list_run_events(&id, 1).await.unwrap().len(), 1);
+
+        delete_run(&pg, &id).await; // cascades run_events
+        assert!(pg.list_run_events(&id, 10).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn resume_due_runs_flips_only_elapsed_pauses() {
+        // resume_due_runs is a global UPDATE; serialize with the scheduler test
+        // that also creates due-paused runs (see runs::resume_test_lock).
+        let _guard = crate::runs::resume_test_lock().lock().await;
+        let Ok(pg) = PgStore::connect_test().await else { return; };
+        // Clear any stray due pauses so our set assertions are exact.
+        pg.resume_due_runs().await.unwrap();
+
+        // Due: paused with paused_until in the past → should resume.
+        let due = pg.create_run(&NewRun::default()).await.unwrap();
+        pg.update_run_status(
+            &due, RelayRunStatus::Paused,
+            Some("2000-01-01T00:00:00Z"), Some("elapsed cap"),
+        ).await.unwrap();
+
+        // Not-yet-due: paused with paused_until far in the future.
+        let future = pg.create_run(&NewRun::default()).await.unwrap();
+        pg.update_run_status(
+            &future, RelayRunStatus::Paused,
+            Some("2999-01-01T00:00:00Z"), Some("weekly cap"),
+        ).await.unwrap();
+
+        // Indefinite: paused with NULL paused_until (manual pause) → never auto-resumes.
+        let indefinite = pg.create_run(&NewRun::default()).await.unwrap();
+        pg.update_run_status(&indefinite, RelayRunStatus::Paused, None, None).await.unwrap();
+
+        let resumed: std::collections::HashSet<uuid::Uuid> =
+            pg.resume_due_runs().await.unwrap().into_iter().collect();
+        assert!(resumed.contains(&due), "elapsed pause resumes");
+        assert!(!resumed.contains(&future), "future pause stays paused");
+        assert!(!resumed.contains(&indefinite), "indefinite pause stays paused");
+
+        // The due run is now running with its pause fields cleared.
+        let run = pg.get_run(&due).await.unwrap().unwrap();
+        assert_eq!(run.status, RelayRunStatus::Running);
+        assert!(run.paused_until.is_none(), "paused_until cleared on resume");
+        assert!(run.pause_reason.is_none(), "pause_reason cleared on resume");
+        // The future run is untouched.
+        assert_eq!(pg.get_run(&future).await.unwrap().unwrap().status, RelayRunStatus::Paused);
+
+        // Idempotent: a second call resumes nothing (nothing left due).
+        assert!(pg.resume_due_runs().await.unwrap().into_iter().all(|id| id != due));
+
+        for id in [due, future, indefinite] { delete_run(&pg, &id).await; }
     }
 }

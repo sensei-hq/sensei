@@ -1,83 +1,163 @@
-# Dōjō mockup — outstanding fixes (for the designer)
+# Sensei mockups — what to fix and build
 
-> The 11 `Sensei/lib/dojo/*.jsx` screens (+ new `dojo-identity`), judged against the
-> Dōjō journey map and `Sensei/CLAUDE.md`. The **product-critical** gaps are
-> resolved (redaction preview, create-Dōjō→plan funnel, SSO/SCIM screen, Relay
-> offline/session-ended states, recall, billing seat-roster/meters/dunning,
-> maintainer reach trust-bug, governance in-context inheritance). **This lists only
-> what still needs fixing before build.** Each item = issue + concrete fix. Priority
-> order at the bottom.
->
-> *(Kept at `docs/mockups/` — outside `Sensei/` — so it survives replacing the whole
-> `Sensei/` mockup folder.)*
+One page for the designer. What each mockup surface needs, plus the roadmap the site
+should reflect. Kept simple and current (2026-07-16).
 
-## 0 · Urgent — live breakage
-- **`site/tokens.css` not synced.** `--accent-edge` / `--warning-edge` were added to
-  `lib/tokens.css` (4 refs) but **not** `site/tokens.css` (0 refs). Any screen served
-  from `site/` referencing them gets an **undefined var**. **Sync the two files first.**
+Before opening any file, check **`docs/spec/MOCKUP-INDEX.md`** — it maps each screen to
+its current source file. Many screens have older/superseded variants; never target
+anything under `lib/discarded/`.
 
-## 1 · Design-system migration (S1 · S4 · S2) — highest leverage; dark mode is broken
-- **S1 · ~0% adoption.** Every screen — incl. the new shared kit, `dojo-identity`,
-  and `InappRedact` — is hand-rolled inline `style` over **deprecated numbered
-  tokens** (`--paper-2/-3`, `--ink-2/-3/-4`, `--edge`, `--hairline`). Migrate to
-  semantic utilities (`bg-paper-soft`, `text-ink-mute`, `border-paper-edge`) + `zs-*`
-  components (`zs-btn`, `zs-card`, `zs-input`, `zs-badge`), per `lib/assistant-card.jsx`.
-- **S4 · off-scale type** everywhere (`9 / 10.5 / 11.5 / 12.5 / 13.5 / 14.5 / 26 / 34 / 42`)
-  — now baked into the shared primitives too. Snap to the scale
-  (11/13/15/17/22/28/40) or named type classes.
-- **S2 · raw color literals persist** — amber `oklch(0.52 0.13 60)` in **admin (7×)**,
-  **maintainer (6×)**, **inapp** (bind / share / travel / downstream);
-  `color-mix(in oklch…)` in **relay** (`DojoTag`, needs-you cards) + **billing**
-  (enterprise dark tier); `rgba()` in **extensions**. The tokens now exist — use
-  `--warning` / `--warning-edge` / `--danger*`. Delete every inline `oklch`/`rgba`/`color-mix`.
+---
 
-## 2 · Danger-vs-warning (S3)
-- Route **Retract** (admin), **Decline** + **Supersede** (maintainer), and
-  **declined** (inapp = amber, developer = grey) to the **`danger`** family (the
-  `DojoBtn danger` variant now exists). Keep amber only for caution/inferred/flagged.
+## The roadmap
 
-## 3 · Responsive (S5) — half-done
-- Still fixed-grid / won't stack on mobile: saas **orgs** + **create**, admin
-  **Monitor** + **Scopes**, **governance**, lead **6-col audit ledger**, **billing
-  tiers**, developer **contributions**, extensions **toolbar** — and the *new*
-  `dojo-identity`, `InappRedact`, `DojoOrgsEmpty` (shipped without the responsive
-  contract). Thread `mobile`, stack columns, card-per-row for the ledger.
+The site and mockups must show what's **shipped** honestly and mark everything else as
+**roadmap** — never present an unbuilt feature as available. Each roadmap item gets a
+status badge and a waitlist ("notify me").
 
-## 4 · Unwired stubs (the "never-blind / what-happens-next" promise)
-- Revise **"Save revision"** discards edits (calls `setRevising(false)` only);
-  **"Preview recipients"**, **"Preview onboarding"**, and the **stance-dial
-  consequence preview** have no action. Wire them (or show the real preview modal/state).
-- **Stall** (relay) has no acknowledged post-action state (Approve/Decision do).
+The roadmap data already exists: `site/features-data.js` (mirrors `website/src/lib/features.ts`).
+It's on `window.SENSEI_ROADMAP`. Read from it; don't hardcode. Update `status` there as work
+lands and the mockups follow.
 
-## 5 · Fabricated provenance (reappeared — the §4 anti-pattern)
-- `DojoApprovals` round-robins first-approver names + times
-  (`["Keiko T.","Marco D."][i%2]`); Candidate hardcodes **"Sven K."** as the
-  suggested approver. Derive from real data (`SCOPE_OWNERS`) — don't fabricate on a
-  trust surface.
+Where things stand:
 
-## 6 · Routing · terminology · logic gaps
-- **`dojo-identity` has no nav route** — the shell's "Settings · SSO" item is
-  disabled (`opacity 0.6`), so the finished screen is unreachable. Route to it.
-- **Terminology residue** — **lead** still says "strip" / "dereference"; **inapp**
-  keeps "dereferencing" and three synonyms coexist (*anonymized / source dropped /
-  stripped*). Retire everything to **"anonymize"**.
-- **Governance** — overridden inherited rules are **hidden, not marked** (show them
-  struck-through / "overridden"); inheritance **ignores Stack scopes** (only walks
-  `parent`, so a project never inherits its Stack governance).
-- **`InappShare` "Share N" count** is hardcoded — track the checkbox selection.
+- **Available now (shipped)** — the app (Today, Sessions, Insights, Memories, Instruments,
+  Projects) and the engine (local capture, live code graph, the learning loop, semantic
+  search + context-pack, MCP server, model routing, rules & governance).
+- **Next — deeper insight (planned)** — Configure & preferences, Extend & customize,
+  Pattern catalog, Export & import, DORA metrics, starter governance bundle.
+- **Dōjō — for teams (in progress)** — team consoles, contribute → approve → distribute,
+  sign-in & membership.
+- **Relay (beta)** — the live line, the run engine, the mobile companion.
+- **On the horizon (planned)** — the Collective, Enterprise (SSO / SCIM / billing).
 
-## 7 · Primitive duplication residue (S6)
-- `IdPanel` is a **3rd** local `Panel`; relay keeps its own `MOBILE_TABS` / `Live`
-  alongside the shared ones; per-kind `color-mix` maps re-appear in relay instead of
-  `DojoChip` / `OriginChip`. Consolidate into `dojo-shared`.
+---
 
-## Priority order
-1. **Sync `site/tokens.css`** (§0) — live-breakage fix, do first.
-2. **S1 / S4 / S2** token + utility + type migration (§1) — unblocks dark mode; highest leverage.
-3. **Danger routing** (§2).
-4. **Wire the stubs** (§4) + **de-fabricate provenance** (§5).
-5. **Finish responsive** (§3) + **route `dojo-identity`** into the nav (§6).
-6. **Terminology** + governance **override marking** / **Stack inheritance** + `InappShare` count (§6).
-7. **Primitive consolidation** (§7).
+## Website — `site/variant-*.jsx`
 
-*Updated 2026-07-15 (round 2) — resolved items removed; open items only.*
+Build on **variant-b** (it has the right positioning). Keep variant-a's restraint as the
+tuning target. Leave variant-c out for now.
+
+**Fix the copy (these claims are wrong — and they're also live on the real site):**
+
+- **Privacy over-claim.** Remove "0 external requests", "never makes outbound network
+  requests", and "logs nothing remotely". Sensei does make outbound calls (your AI model,
+  Dōjō, Relay, library docs, update check). Say instead: *local-first; no telemetry; nothing
+  leaves without an explicit action you take.*
+- **Export / import.** Remove the "Settings → Export / Import JSON" claim. It isn't built.
+  It's a roadmap item.
+- **Assistants.** Don't say "any assistant that speaks MCP", and don't name Cursor / Windsurf
+  / Copilot / Codex / Aider. Say: *works with Claude Code and Zed today; more as adapters land.*
+- **Instruments.** Drop "watch toolset health over time" (not built). Say what it does now:
+  *try tools in isolation, replay what the assistant did.*
+
+**Don't reintroduce these (the live site is already correct):**
+
+- Don't name **SQLite** — say *a local database in `~/.sensei`*.
+- Don't hardcode the version — wire the footer to the app version.
+
+**Add:**
+
+- **Roadmap beat.** A new section after pricing that reads `window.SENSEI_ROADMAP` and shows
+  Dōjō / Relay / Collective with status badges. Include a **waitlist** field ("notify me" /
+  "request early access") on the roadmap items.
+- **FTR beat.** First-turn-resolution is the product's headline metric but appears nowhere.
+  Add it — a stat in the stats strip or a caption on Sessions.
+
+**Pricing.** Keep the honest "free during preview / sponsorship" model. Drop variant-a's "no
+upgrade prompt. Ever." Mention the paid team / Dōjō tier only in the roadmap, not as a live tier.
+
+**Design & layout:**
+
+- **Design system** — use the named tokens and the type scale, not inline styles, off-scale
+  font sizes, or deprecated numbered tokens.
+- **Responsive** — nothing adapts today. Add breakpoints (hero, stats 4→2→1, steps, gallery,
+  pricing) and a mobile nav. Non-negotiable for a public site.
+- **Hierarchy** — variant-b uses one big size for the hero *and* every section heading. Step
+  the section headings down so the hero stands alone.
+- **Nav** — add Pricing / Teams / Relay anchors and a persistent Download button.
+- **Essentials** — add a quickstart / install snippet (brew), a docs link, and a trust strip.
+- **Dead code** — `GalleryB` is defined but never rendered. Delete it or wire it.
+
+**Waitlist build note (for whoever implements it):** the site is static — there's no server.
+The form must POST from the browser to the Dōjō Worker (`dojo.sensei-hq.com/v1/…`) or do a
+Supabase insert. It can't use a SvelteKit form action.
+
+---
+
+## Sensei — the app — `lib/observatory/`, `lib/project/`, `lib/setup/`, `lib/relay/`
+
+The app screens are largely done (25 live). Read `MOCKUP-INDEX.md` first — prefer the
+`-v2` / `-simple` files, never `discarded/`.
+
+**Still to design (these are the "deeper insight" roadmap screens):**
+
+- **Configure & preferences** (#43) — the settings surface. Also split the setup wizard into a
+  short first-run flow plus a persistent, editable Preferences screen.
+- **Extend & customize** (#44) — finish the agent / persona / skill editors.
+- **Pattern catalog** (#45).
+- **Context-pack tool** (#46).
+
+**Fix:**
+
+- **Instruments → Health** is parked (the data doesn't join yet). The Health mockup shouldn't
+  imply it works — mark it roadmap or soften it.
+- Any screen showing **Dōjō / Collective / Relay** is a roadmap feature. Fine as a design — just
+  make sure the website doesn't present these as shipped.
+
+**Consistency:**
+
+- Keep app screens on the design system (`assistant-card.jsx` is the reference).
+- The Rokkit component migration (#47, steps 4–14) is ongoing — new or edited screens should use
+  Rokkit components.
+
+---
+
+## Dōjō — team consoles — `lib/dojo/*.jsx`
+
+Twelve console screens (admin, maintainer, lead, developer, plus a shared frame, and
+billing / governance / identity / extensions / relay / in-app). This is the **Dōjō for teams**
+roadmap (in progress) — the design is ahead of the build.
+
+**Biggest gap — design system (do this first):**
+
+- Almost no adoption. Every screen is hand-rolled inline styles over deprecated numbered
+  tokens. Migrate to the named tokens and the `zs-*` components, like the app screens. **Until
+  this lands, dark mode is unreadable.**
+- Off-scale font sizes everywhere — snap to the type scale.
+- A few raw color literals remain (DojoKindTag, relay, billing, extensions, governance) —
+  replace them with `-soft` / `-edge` tokens.
+
+**Responsive (weak):**
+
+- Most screens take no mobile prop and either reflow loosely or scroll sideways. Thread a mobile
+  prop into each screen and stack.
+- Worst case: the lead **audit ledger** scrolls horizontally — make it one card per row on mobile.
+
+**Small fixes:**
+
+- Maintainer **Decline** button looks like a neutral button — make it the danger style (like
+  Retract / Supersede).
+- Admin **"Retract downstream"** button does nothing — wire a confirm + preview.
+- Admin **precedence-ladder verdict** is hardcoded — make it read the actual ladder order.
+- Replace **"source dropped"** with **"anonymize"** everywhere.
+- **InappShare** checkboxes don't toggle — make the rows real toggles so the count updates.
+- Extensions **"Scope ▾"** shows a generic label — show the card's actual scope.
+- `dojo-inapp.jsx` has a garbled, duplicated sentence (~L291) — fix it.
+- Lead and relay define their own local copies of shared primitives (Panel, MOBILE_TABS) — use
+  `dojo-shared.jsx`.
+
+Note: `dojo-saas.jsx` (Orgs, SignIn) is the Dōjō **website** surface, not a desktop screen.
+
+---
+
+## Priority
+
+1. **Website accuracy** — privacy, export, assistants, instruments. It's live and wrong.
+2. **Website roadmap beat + waitlist + FTR beat.**
+3. **Dōjō design-system migration** — unblocks dark mode; highest-leverage console work.
+4. **Website design system + responsive.**
+5. **Dōjō responsive + the small fixes.**
+6. **Sensei app** — design the roadmap screens (#43–#46), split the wizard, soften Instruments Health.
+
+*Updated 2026-07-16.*

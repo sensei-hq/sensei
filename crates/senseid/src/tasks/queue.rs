@@ -331,6 +331,18 @@ impl TaskQueue {
             || state.running.values().any(|t| t.kind == kind)
     }
 
+    /// True if a task of `kind` AND `path` is currently pending, blocked, or
+    /// running. The per-(kind, path) variant of [`has_pending_kind`] — used by
+    /// the advance-run scheduler to de-dup `AdvanceRun` ticks for the same run
+    /// (run id rides in `task.path`) so a backed-up queue never piles up
+    /// duplicate ticks for one run in the unbounded `VecDeque`.
+    pub async fn has_pending_kind_path(&self, kind: super::TaskKind, path: &str) -> bool {
+        let state = self.inner.lock().await;
+        state.pending.iter().any(|t| t.kind == kind && t.path == path)
+            || state.blocked.iter().any(|t| t.kind == kind && t.path == path)
+            || state.running.values().any(|t| t.kind == kind && t.path == path)
+    }
+
     /// Test-only: a snapshot of every task the queue has seen (pending, blocked,
     /// running, completed) as `(kind, folder_path, path)`. Lets a test assert
     /// the enqueue GRAPH — which kinds were enqueued for which owner
@@ -552,6 +564,35 @@ mod tests {
         q.complete(task.id).await;
         let evt = rx.recv().await.unwrap();
         assert!(matches!(evt, TaskEvent::Completed { task_id, .. } if task_id == id));
+    }
+
+    #[tokio::test]
+    async fn has_pending_kind_path_matches_kind_and_path() {
+        let q = TaskQueue::new();
+        let run_a = "aaaaaaaa-0000-0000-0000-000000000000";
+        let run_b = "bbbbbbbb-0000-0000-0000-000000000000";
+
+        // Empty queue: nothing pending for either run.
+        assert!(!q.has_pending_kind_path(TaskKind::AdvanceRun, run_a).await);
+
+        q.enqueue(Task::new(TaskKind::AdvanceRun, "", run_a)).await;
+
+        // Same kind AND path → pending.
+        assert!(q.has_pending_kind_path(TaskKind::AdvanceRun, run_a).await);
+        // Same kind, different path → not pending (per-run scoping).
+        assert!(!q.has_pending_kind_path(TaskKind::AdvanceRun, run_b).await);
+        // Same path, different kind → not pending.
+        assert!(!q.has_pending_kind_path(TaskKind::ProcessFile, run_a).await);
+
+        // A running (dequeued) AdvanceRun still counts as pending for its run.
+        let t = q.next_task().await;
+        assert_eq!(t.path, run_a);
+        assert!(q.has_pending_kind_path(TaskKind::AdvanceRun, run_a).await,
+            "a running tick still blocks a duplicate enqueue");
+
+        // Once completed, it's gone from the active set.
+        q.complete(t.id).await;
+        assert!(!q.has_pending_kind_path(TaskKind::AdvanceRun, run_a).await);
     }
 
     #[tokio::test]
