@@ -42,7 +42,8 @@
 
 use super::super::executor::TaskContext;
 use super::super::Task;
-use crate::agent_spawn::{run_agent, AgentCommand, AgentOutput};
+use crate::agent_spawn::AgentOutput;
+use crate::relay_drivers::{driver_for, DriveStep, RunDriver};
 use crate::run_limits::{detect_limit, resolve_paused_until, LimitHit};
 use crate::runs::{Run, RunEventKind};
 use std::time::Duration;
@@ -305,15 +306,13 @@ async fn drive_run(ctx: &TaskContext, cfg: &DriveConfig, run: &Run) -> Result<()
         .await
         .map_err(|e| format!("append_run_event(FeatureStarted) failed: {e}"))?;
 
-    // 4. Build the command: `<agent_cmd> -p <prompt>` in the project cwd, under a
-    //    bounded timeout. The spawned claude carries the sensei plugin, so its
-    //    PreToolUse hook drives the existing `/hook/gate` — no gate wiring here.
-    let cmd = AgentCommand::new(
-        cfg.agent_cmd.clone(),
-        vec!["-p".to_string(), prompt],
-        cfg.timeout,
-    )
-    .with_cwd(&cwd);
+    // 4. Select the run-drive backend (P5.1). The driver owns *how* the step
+    //    runs for its backend; for Claude that's the same `<agent_cmd> -p
+    //    <prompt>` spawn in the project cwd under a bounded timeout. The spawned
+    //    claude carries the sensei plugin, so its PreToolUse hook drives the
+    //    existing `/hook/gate` — no gate wiring here. `driver_for` honors
+    //    `cfg.agent_cmd` (so `SENSEI_RUN_AGENT_CMD` + the drive-smoke stub work).
+    let driver = driver_for(cfg);
 
     // Refresh liveness right before a potentially long spawn so the stall
     // detector doesn't trip mid-step.
@@ -322,10 +321,12 @@ async fn drive_run(ctx: &TaskContext, cfg: &DriveConfig, run: &Run) -> Result<()
         .await
         .map_err(|e| format!("touch_run_heartbeat failed: {e}"))?;
 
-    // 5. Spawn + supervise. The primitive never panics and always kills+reaps.
+    // 5. Drive one step + supervise. The primitive never panics and always
+    //    kills+reaps; a bad exit / timeout rides in the returned AgentOutput.
     let phase = run.current_phase.clone();
     let feature = Some(label.clone());
-    let out = match run_agent(&cmd).await {
+    let step = DriveStep { cwd: &cwd, prompt: &prompt, timeout: cfg.timeout };
+    let out = match driver.drive_step(step).await {
         Ok(out) => out,
         Err(e) => {
             // Could not launch/reap the child (bad binary, EACCES, i/o). Not a
