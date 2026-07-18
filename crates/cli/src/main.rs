@@ -139,6 +139,12 @@ enum ScaffoldTarget {
         /// Feature name (a single path segment → docs/features/<name>/)
         name: String,
     },
+    /// Scaffold the baseline capability contract (docs/baseline.md)
+    Baseline {
+        /// Project kind — selects the adapter column
+        #[arg(long, value_enum, default_value_t = scaffold::BaselineKind::Code)]
+        kind: scaffold::BaselineKind,
+    },
 }
 
 /// `sensei index <cmd>` — index diagnostics. Read-only; the daemon owns repair.
@@ -1032,6 +1038,14 @@ fn scaffold_cmd(what: Option<ScaffoldTarget>, path: Option<&str>) {
                 }
             }
         }
+        Some(ScaffoldTarget::Baseline { kind }) => {
+            println!(
+                "=== sensei scaffold baseline --kind {} ===\n{}\n",
+                kind.slug(),
+                target.display()
+            );
+            scaffold::run_baseline(&target, kind)
+        }
         None => {
             println!("=== sensei scaffold ===\n{}\n", target.display());
             scaffold::run(&target)
@@ -1257,6 +1271,27 @@ mod tests {
                 ..
             }) => assert_eq!(name, "auth"),
             _ => panic!("expected Scaffold feature command"),
+        }
+    }
+
+    #[test]
+    fn scaffold_baseline_subcommand_parses_kind() {
+        let cli = Cli::parse_from(["sensei", "scaffold", "baseline", "--kind", "content"]);
+        match cli.command {
+            Some(Commands::Scaffold {
+                what: Some(ScaffoldTarget::Baseline { kind }),
+                ..
+            }) => assert_eq!(kind, scaffold::BaselineKind::Content),
+            _ => panic!("expected Scaffold baseline command"),
+        }
+        // default kind = code
+        let d = Cli::parse_from(["sensei", "scaffold", "baseline"]);
+        match d.command {
+            Some(Commands::Scaffold {
+                what: Some(ScaffoldTarget::Baseline { kind }),
+                ..
+            }) => assert_eq!(kind, scaffold::BaselineKind::Code),
+            _ => panic!("expected Scaffold baseline command"),
         }
     }
 }
