@@ -152,6 +152,107 @@ pub fn run(target: &Path) -> ScaffoldReport {
     materialize(target, &layout)
 }
 
+/// The per-feature dossier (spec §3.2, feature-scope column). Pure — takes the
+/// feature name + date, returns the layout rooted at `docs/features/<feature>/`.
+/// Mirrors the project spine, lighter: Intent(brief) · Structure(design) ·
+/// Outcomes/Signals(tests) · Decisions(decisions) + plan + optional mockup-ref.
+pub fn feature_layout(feature: &str, date: &str) -> Layout {
+    let base = format!("docs/features/{feature}");
+    let dir = |p: String| Entry::Dir(p);
+    let file = |p: String, c: String| Entry::File { path: p, contents: c };
+    Layout {
+        entries: vec![
+            file(format!("{base}/brief.md"), feature_brief_md(feature, date)),
+            file(format!("{base}/design.md"), feature_design_md(feature, date)),
+            file(format!("{base}/plan.md"), feature_plan_md(feature, date)),
+            dir(format!("{base}/tests")),
+            file(format!("{base}/tests/README.md"), feature_tests_md(feature, date)),
+            file(format!("{base}/decisions.md"), feature_decisions_md(feature, date)),
+            file(format!("{base}/mockup-ref.md"), feature_mockup_ref_md(feature, date)),
+        ],
+    }
+}
+
+fn feature_brief_md(feature: &str, date: &str) -> String {
+    format!(
+        "---\nname: {feature} — brief\nupdated: {date}\n---\n\n# {feature} — brief\n\n\
+         > Intent. The user objective + the data it moves — not the layout.\n\
+         > Audience inherits the project personas. Keep it short; sharpen as it clarifies.\n\n\
+         ## Goal\n\n<!-- One paragraph: the user objective this chunk delivers. -->\n\n\
+         ## Acceptance\n\n<!-- Observable outcomes that mean done. Mirror into tests/. -->\n\n\
+         ## Data\n\n<!-- The entities/fields this touches (not screens). -->\n"
+    )
+}
+
+fn feature_design_md(feature: &str, date: &str) -> String {
+    format!(
+        "---\nname: {feature} — design\nupdated: {date}\n---\n\n# {feature} — design\n\n\
+         > Structure. Depth dialed by risk: shallow for low-risk/known; deep with a\n\
+         > fixed cross-layer contract for high blast-radius — settled BEFORE code.\n\n\
+         ## Cross-layer contract\n\n\
+         <!-- db → api → ui interface the sub-agents build against. Fix it here first. -->\n\n\
+         ## Gates that apply\n\n\
+         <!-- Rules relevant here — resolved live via get_rules; note the ones that bind. -->\n\n\
+         ## Approach\n\n<!-- How it's built, proportional to risk. -->\n"
+    )
+}
+
+fn feature_plan_md(feature: &str, date: &str) -> String {
+    format!(
+        "---\nname: {feature} — plan\nupdated: {date}\n---\n\n# {feature} — plan\n\n\
+         > Tasks. The build steps for this chunk — bite-sized, TDD, frequent commits.\n"
+    )
+}
+
+fn feature_tests_md(feature: &str, date: &str) -> String {
+    format!(
+        "---\nname: {feature} — acceptance\nupdated: {date}\n---\n\n# {feature} — acceptance\n\n\
+         > Outcomes / signals. The acceptance criteria for this chunk and the tests that\n\
+         > prove them. Coverage for {feature} lives here.\n"
+    )
+}
+
+fn feature_decisions_md(feature: &str, date: &str) -> String {
+    format!(
+        "---\nname: {feature} — decisions\nupdated: {date}\n---\n\n# {feature} — decisions\n\n\
+         > Append-only. One entry per decision: date · decision · why · alternatives.\n\
+         > The chunk's anti-rework memory — never re-derive a settled choice.\n"
+    )
+}
+
+fn feature_mockup_ref_md(feature: &str, date: &str) -> String {
+    format!(
+        "---\nname: {feature} — mockup ref\nupdated: {date}\n---\n\n# {feature} — mockup reference\n\n\
+         > Optional. Link to the section of the system-wide mockup (docs/mockups/) this\n\
+         > feature realizes. The mockup is one cohesive artifact — point here, don't fork it.\n"
+    )
+}
+
+/// A feature name must be a single, safe path segment — no separators, no `..`,
+/// non-empty. Guards against scaffolding outside `docs/features/` (path traversal).
+pub fn is_safe_feature_name(name: &str) -> bool {
+    !name.is_empty()
+        && name != "."
+        && name != ".."
+        && !name.contains('/')
+        && !name.contains('\\')
+        && !name.contains("..")
+}
+
+/// Scaffold a feature dossier under `target/docs/features/<feature>/`. Validates the
+/// name, stamps today's date, and reuses the idempotent `materialize`. Returns an
+/// Err with a message on an unsafe name (nothing is written).
+pub fn run_feature(target: &Path, feature: &str) -> Result<ScaffoldReport, String> {
+    if !is_safe_feature_name(feature) {
+        return Err(format!(
+            "invalid feature name {feature:?} — use a single path segment (no '/', '\\', or '..')"
+        ));
+    }
+    let date = crate::format_date();
+    let layout = feature_layout(feature, &date);
+    Ok(materialize(target, &layout))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -268,5 +369,90 @@ mod tests {
 
         assert!(!report.failed.is_empty(), "failures recorded, not swallowed");
         assert!(report.created.is_empty(), "nothing created under a read-only base");
+    }
+
+    // ── feature-dossier scaffolder (`sensei scaffold feature <name>`) ───────
+
+    #[test]
+    fn feature_layout_has_every_dossier_slot() {
+        let l = feature_layout("auth", "2026-07-18");
+        let p = paths(&l);
+        for expected in [
+            "docs/features/auth/brief.md",
+            "docs/features/auth/design.md",
+            "docs/features/auth/plan.md",
+            "docs/features/auth/tests",
+            "docs/features/auth/tests/README.md",
+            "docs/features/auth/decisions.md",
+            "docs/features/auth/mockup-ref.md",
+        ] {
+            assert!(p.contains(&expected), "dossier missing {expected}");
+        }
+    }
+
+    #[test]
+    fn feature_layout_is_rooted_at_the_named_feature() {
+        let l = feature_layout("billing", "2026-07-18");
+        assert!(
+            l.entries.iter().all(|e| e.path().starts_with("docs/features/billing/")),
+            "every entry is under docs/features/<name>/"
+        );
+    }
+
+    #[test]
+    fn feature_layout_governance_is_not_a_slot() {
+        // §3.2: constraints/governance are LIVE (get_rules), never a dossier file/folder.
+        let l = feature_layout("auth", "2026-07-18");
+        assert!(
+            !paths(&l).iter().any(|p| p.contains("governance") || p.ends_with("/rules.md")),
+            "governance must not be scaffolded into the dossier"
+        );
+    }
+
+    #[test]
+    fn feature_brief_interpolates_name_and_date() {
+        let l = feature_layout("checkout", "2026-07-18");
+        let brief = l
+            .entries
+            .iter()
+            .find_map(|e| match e {
+                Entry::File { path, contents } if path == "docs/features/checkout/brief.md" => Some(contents),
+                _ => None,
+            })
+            .expect("brief.md present");
+        assert!(brief.contains("checkout"), "brief names the feature");
+        assert!(brief.contains("2026-07-18"), "brief carries the date");
+    }
+
+    #[test]
+    fn run_feature_creates_the_dossier_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        let report = run_feature(tmp.path(), "auth").expect("safe name");
+        assert!(report.created.contains(&"docs/features/auth/brief.md".to_string()));
+        assert!(tmp.path().join("docs/features/auth/brief.md").is_file());
+        assert!(tmp.path().join("docs/features/auth/tests").is_dir());
+        assert!(tmp.path().join("docs/features/auth/tests/README.md").is_file());
+        assert!(tmp.path().join("docs/features/auth/decisions.md").is_file());
+        assert!(report.skipped.is_empty() && report.failed.is_empty());
+    }
+
+    #[test]
+    fn run_feature_is_idempotent() {
+        let tmp = tempfile::tempdir().unwrap();
+        run_feature(tmp.path(), "auth").unwrap();
+        let brief = tmp.path().join("docs/features/auth/brief.md");
+        fs::write(&brief, "EDITED").unwrap();
+        let second = run_feature(tmp.path(), "auth").unwrap();
+        assert!(second.created.is_empty(), "second run creates nothing");
+        assert_eq!(fs::read_to_string(&brief).unwrap(), "EDITED", "not overwritten");
+    }
+
+    #[test]
+    fn run_feature_rejects_unsafe_names() {
+        let tmp = tempfile::tempdir().unwrap();
+        for bad in ["../evil", "a/b", "..", "", "."] {
+            assert!(run_feature(tmp.path(), bad).is_err(), "must reject {bad:?}");
+        }
+        assert!(!tmp.path().join("../evil").exists());
     }
 }
