@@ -215,9 +215,9 @@
 			</div>
 		{/if}
 
-		<div class="bg-paper-soft border-paper-edge overflow-hidden rounded-xl border" style="margin-top: 18px">
+		<div class="bg-paper-soft border-paper-edge overflow-x-auto rounded-xl border" style="margin-top: 18px">
 			<div
-				class="border-paper-edge text-ink-mute grid gap-3 border-b font-semibold uppercase"
+				class="border-paper-edge text-ink-mute grid gap-3 border-b font-semibold uppercase min-w-[660px]"
 				style="grid-template-columns: 0.9fr 1.6fr 1.1fr 1fr 1fr auto; padding: 11px 18px; font-size: 10px; letter-spacing: 0.1em"
 			>
 				<span>Severity</span><span>Incident</span><span>Status</span><span>SLA</span><span>Owner</span
@@ -232,7 +232,7 @@
 				{#each data.incidents as inc, i (inc.id)}
 					{@const breached = isSlaBreached(inc)}
 					<div
-						class="grid items-center gap-3 {i < data.incidents.length - 1
+						class="grid items-center gap-3 min-w-[660px] {i < data.incidents.length - 1
 							? 'border-paper-edge border-b'
 							: ''} {breached ? 'bg-danger-soft' : ''}"
 						style="grid-template-columns: 0.9fr 1.6fr 1.1fr 1fr 1fr auto; padding: 12px 18px"
