@@ -14,7 +14,7 @@
     <div class="hero-observation">
       <div class="obs-left">
         <div class="obs-header">
-          <span class="kanji" style="font-size: 22px; color: var(--shu);">繰</span>
+          <span class="kanji text-xl" style="color: var(--shu)">繰</span>
           <span class="obs-tag">Pattern recurring</span>
         </div>
         <div class="display obs-text">
@@ -38,7 +38,7 @@
             { k: '灯', l: 'New idiom emerging in shoji-ui', d: 'shoji-ui' },
           ] as it, i}
             <div class="notice-item" class:bordered={i < 2}>
-              <span class="kanji" style="font-size: 13px; color: var(--sumi-2);">{it.k}</span>
+              <span class="kanji text-sm" style="color: var(--sumi-2)">{it.k}</span>
               <span class="notice-text">{it.l}</span>
               <span class="mono notice-project">{it.d}</span>
             </div>

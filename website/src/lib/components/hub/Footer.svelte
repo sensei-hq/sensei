@@ -39,11 +39,11 @@
           <!-- Sensei HQ brushed-ensō mark (i-brand:sensei-hq), tinted to the brand vermillion -->
           <span class="i-brand:sensei-hq text-primary block flex-shrink-0" style="width:26px;height:26px" aria-hidden="true"></span>
           <span class="flex items-baseline gap-2">
-            <span class="display text-ink" style="font-size:16px">Sensei</span>
-            <span class="mono text-ink-mute" style="font-size:11px;letter-spacing:0.08em">HQ</span>
+            <span class="display text-ink text-base">Sensei</span>
+            <span class="mono text-ink-mute text-xs" style="letter-spacing:0.08em">HQ</span>
           </span>
         </div>
-        <p class="text-ink-mute m-0" style="font-size:13px;line-height:1.6;max-width:280px">
+        <p class="text-ink-mute m-0 text-sm" style="line-height:1.6;max-width:280px">
           A small workshop of developer tools. Built quietly, in Tennessee.
         </p>
       </div>
@@ -51,7 +51,7 @@
       <!-- Link columns -->
       {#each cols as col (col.title)}
         <div>
-          <span class="mono text-ink-mute block mb-4" style="font-size:11px;letter-spacing:0.12em;text-transform:uppercase">{col.title}</span>
+          <span class="mono text-ink-mute block mb-4 text-xs" style="letter-spacing:0.12em;text-transform:uppercase">{col.title}</span>
           <div class="flex flex-col gap-2">
             {#each col.items as item (item.label)}
               <a href={item.href}
@@ -65,8 +65,8 @@
     </div>
 
     <div class="border-t border-paper-edge mt-7 pt-5 flex items-center justify-between flex-wrap gap-3">
-      <span class="mono text-ink-faint" style="font-size:11px">© 2026 Sensei HQ · All rights reserved</span>
-      <span class="mono text-ink-faint" style="font-size:11px">道 · the way</span>
+      <span class="mono text-ink-faint text-xs">© 2026 Sensei HQ · All rights reserved</span>
+      <span class="mono text-ink-faint text-xs">道 · the way</span>
     </div>
   </div>
 </footer>

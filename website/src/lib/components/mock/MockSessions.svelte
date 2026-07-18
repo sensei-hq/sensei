@@ -38,7 +38,7 @@
       {#each lanes as lane}
         <div>
           <div class="lane-header">
-            <span class="kanji" style="font-size: 13px; color: {lane.accent};">{lane.kanji}</span>
+            <span class="kanji text-sm" style="color: {lane.accent}">{lane.kanji}</span>
             <span class="lane-title">{lane.title}</span>
           </div>
           <div class="lane-items">

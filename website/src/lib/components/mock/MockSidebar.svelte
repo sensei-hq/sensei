@@ -14,8 +14,8 @@
 
 <aside class="sidebar">
   <div class="logo">
-    <span class="i-brand:sensei text-sensei" style="font-size: 16px; width: 16px; height: 16px;" aria-hidden="true"></span>
-    <span class="display" style="font-size: 13px;">Sensei</span>
+    <span class="i-brand:sensei text-sensei text-base" style="width: 16px; height: 16px" aria-hidden="true"></span>
+    <span class="display text-sm">Sensei</span>
   </div>
 
   <div class="section">

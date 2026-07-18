@@ -6,14 +6,14 @@
   <div class="flex items-end justify-between flex-wrap gap-4 mb-7">
     <div>
       <div class="flex items-baseline gap-3 mb-3">
-        <span class="kanji text-primary" style="font-size:40px;line-height:1">育</span>
-        <span class="mono text-ink-mute" style="font-size:11px;letter-spacing:0.12em;text-transform:uppercase">Iku · to nurture — in incubation</span>
+        <span class="kanji text-primary text-3xl" style="line-height:1">育</span>
+        <span class="mono text-ink-mute text-xs" style="letter-spacing:0.12em;text-transform:uppercase">Iku · to nurture — in incubation</span>
       </div>
-      <h2 class="display text-ink m-0" style="font-size:40px;font-weight:300;letter-spacing:-0.02em">
+      <h2 class="display text-ink m-0 text-3xl" style="font-weight:300;letter-spacing:-0.02em">
         Still taking shape.
       </h2>
     </div>
-    <p class="text-ink-soft" style="font-size:14px;line-height:1.6;max-width:380px">
+    <p class="text-ink-soft text-sm" style="line-height:1.6;max-width:380px">
       Experiments we are nurturing in the workshop. Rougher edges, same
       temperament — these may grow into the next tools we ship.
     </p>
@@ -24,19 +24,19 @@
       <div class="incubation-card border border-paper-edge border-dashed rounded-lg text-{p.id}">
         <div class="p-6 flex flex-col" style="flex:1">
           <div class="flex items-center justify-between">
-            <span class="kanji text-{p.id}" style="font-size:44px;line-height:1">{p.kanji}</span>
-            <span class="flex items-center gap-2 border border-paper-edge rounded-sm px-2 py-1 text-ink-mute mono" style="font-size:10.5px;white-space:nowrap">
+            <span class="kanji text-{p.id} text-3xl" style="line-height:1">{p.kanji}</span>
+            <span class="flex items-center gap-2 border border-paper-edge rounded-sm px-2 py-1 text-ink-mute mono text-xs" style="white-space:nowrap">
               <span class="incubation-dot" style="background:var(--{p.id})"></span>
               Incubating
             </span>
           </div>
           <div class="flex items-baseline gap-2 mt-5 mb-1">
-            <span class="display text-ink" style="font-size:20px;font-weight:400;letter-spacing:-0.02em">{p.name}</span>
-            <span class="mono text-ink-faint" style="font-size:10.5px;white-space:nowrap">{p.label}</span>
+            <span class="display text-ink text-xl" style="font-weight:400;letter-spacing:-0.02em">{p.name}</span>
+            <span class="mono text-ink-faint text-xs" style="white-space:nowrap">{p.label}</span>
           </div>
-          <span class="mono text-ink-mute mb-3" style="font-size:11px;letter-spacing:0.1em;text-transform:uppercase">{p.category}</span>
-          <p class="display text-ink m-0" style="font-size:16px;font-weight:400;line-height:1.3">{p.tagline}</p>
-          <p class="text-ink-soft mt-2" style="font-size:13.5px;line-height:1.6">{p.blurb}</p>
+          <span class="mono text-ink-mute mb-3 text-xs" style="letter-spacing:0.1em;text-transform:uppercase">{p.category}</span>
+          <p class="display text-ink m-0 text-base" style="font-weight:400;line-height:1.3">{p.tagline}</p>
+          <p class="text-ink-soft mt-2 text-sm" style="line-height:1.6">{p.blurb}</p>
         </div>
       </div>
     {/each}

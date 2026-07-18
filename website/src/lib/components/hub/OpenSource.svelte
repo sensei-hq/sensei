@@ -7,19 +7,19 @@
   <div class="opensource-grid gap-8">
     <div>
       <div class="flex items-baseline gap-3 mb-4">
-        <span class="kanji text-primary" style="font-size:40px;line-height:1">公</span>
-        <span class="mono text-ink-mute" style="font-size:11px;letter-spacing:0.12em;text-transform:uppercase">Kō · in the open</span>
+        <span class="kanji text-primary text-3xl" style="line-height:1">公</span>
+        <span class="mono text-ink-mute text-xs" style="letter-spacing:0.12em;text-transform:uppercase">Kō · in the open</span>
       </div>
-      <h2 class="display text-ink m-0" style="font-size:28px;font-weight:400;letter-spacing:-0.015em;line-height:1.3">
+      <h2 class="display text-ink m-0 text-2xl" style="font-weight:400;letter-spacing:-0.015em;line-height:1.3">
         Two of our tools are built in the open.
       </h2>
-      <p class="text-ink-soft mt-4" style="font-size:14px;line-height:1.7;max-width:420px">
+      <p class="text-ink-soft mt-4 text-sm" style="line-height:1.7;max-width:420px">
         Rokkit and Kavach are MIT-licensed and developed in public. Read the
         source, file an issue, or send a pull request — the workshop door is open.
       </p>
       <Button href="https://github.com/sensei-hq" target="_blank" rel="noopener"
               style="outline" size="md" class="mt-5">
-        <span class="kanji" style="font-size:14px;line-height:1">叉</span>
+        <span class="kanji text-sm" style="line-height:1">叉</span>
         Browse the repositories
       </Button>
     </div>
@@ -31,10 +31,10 @@
              class="repo-row gap-4 px-5 py-4 no-underline">
             <span class="repo-dot {r.accentClass}"></span>
             <span>
-              <span class="mono text-ink block" style="font-size:13px">{r.name}</span>
+              <span class="mono text-ink block text-sm">{r.name}</span>
               <span class="text-ink-mute text-xs">{r.note}</span>
             </span>
-            <span class="mono text-ink-mute" style="font-size:11px">{r.lang}</span>
+            <span class="mono text-ink-mute text-xs">{r.lang}</span>
           </a>
         {/each}
       </div>
