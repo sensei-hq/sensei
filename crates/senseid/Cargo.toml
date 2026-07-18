@@ -87,6 +87,13 @@ gateway = { git = "https://github.com/sensei-hq/gateway.git", rev = "d8ec222" }
 # `embedded-*` cargo features above.
 gateway-embedded = { git = "https://github.com/sensei-hq/gateway.git", rev = "d8ec222" }
 dojo-protocol = { path = "../dojo-protocol" }
+# Relay P5.2 — ACP (Agent Client Protocol) observe-first. The spec's official
+# Rust SDK (Apache-2.0, Zed-maintained). We use only its `schema::v1` wire types
+# (SessionNotification / SessionUpdate / Plan / ToolCall — pure serde) for the
+# observe→segment mapping; the live client connection loop is P5.2b. Pinned to a
+# release ≥7 days old (1.2.0 published 2026-07-07). Default features only — no
+# `unstable_*` features enabled.
+agent-client-protocol = "=1.2.0"
 sensei-bootstrap = { path = "../bootstrap" }
 sensei-config = { path = "../sensei-config" }
 sensei-logger = { path = "../logger" }

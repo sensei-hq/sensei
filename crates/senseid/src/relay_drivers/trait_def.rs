@@ -17,6 +17,8 @@
 //! driver does **not** own gating in P5.1.
 
 use crate::agent_spawn::{AgentOutput, AgentSpawnError};
+use agent_client_protocol::schema::v1::SessionUpdate;
+use dojo_protocol::relay::RelaySegment;
 use std::future::Future;
 use std::path::Path;
 use std::time::Duration;
@@ -70,10 +72,29 @@ pub trait RunDriver: Send + Sync {
         step: DriveStep<'_>,
     ) -> impl Future<Output = Result<AgentOutput, AgentSpawnError>> + Send;
 
-    // FOLLOW-UP (P5.2/P5.3): richer per-backend seam methods, added as the
-    // capability ladder is built out — none are needed by P5.1's Claude backend
-    // (its gate is out-of-band via the sensei-plugin PreToolUse hook):
-    //   fn gate(&self, …)   -> impl Future<Output = GateDisposition> + Send;  // raise/await a gate for THIS backend
+    /// P5.2 observe seam: project one ACP session update into relay outline
+    /// segments (the phone outline), or `None` if this backend does not observe
+    /// an ACP stream.
+    ///
+    /// This is the OBSERVE direction of the capability ladder — a **pure**,
+    /// side-effect-free projection (the caller owns publishing via
+    /// [`crate::dojo::client::DojoClient::upsert_segments`], the SAME path the
+    /// TodoWrite projection uses). The default is `None`, so backends that are
+    /// not ACP observers (Claude — its progress comes from captured TodoWrite
+    /// events, not an ACP stream) are unaffected and need not implement it.
+    /// The ACP backend ([`crate::relay_drivers::acp::AcpObserveDriver`])
+    /// overrides it to run [`crate::relay_drivers::acp::acp_update_to_segments`].
+    ///
+    /// Zero-knowledge (D10): the projection carries only summarized logical
+    /// status — never code, diffs, file contents, or raw tool args.
+    fn observe_update(&self, _update: &SessionUpdate) -> Option<Vec<RelaySegment>> {
+        None
+    }
+
+    // FOLLOW-UP (P5.2b/P5.3): the remaining per-backend seam methods, added as
+    // the capability ladder is built out — none are needed by P5.1's Claude
+    // backend or P5.2's ACP observe-first:
+    //   fn gate(&self, …)   -> impl Future<Output = GateDisposition> + Send;  // raise/await a gate for THIS backend (P5.2b+)
     //   fn nudge(&self, …)  -> impl Future<Output = Result<(), …>> + Send;     // steer (healthy) / unstick (stalled)
     //   fn observe(&self, …) -> DriveStatus;                                   // running/idle/done + progress
 }
