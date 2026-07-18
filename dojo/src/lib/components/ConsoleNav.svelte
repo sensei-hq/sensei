@@ -123,8 +123,8 @@
 	{#each groups as grp (grp.group)}
 		<div style="margin-bottom: 14px">
 			<div
-				class="text-ink-faint font-semibold uppercase"
-				style="font-size: 9.5px; letter-spacing: 0.14em; padding: 0 8px; margin-bottom: 6px"
+				class="text-ink-faint text-xs font-semibold uppercase"
+				style="letter-spacing: 0.14em; padding: 0 8px; margin-bottom: 6px"
 			>
 				{grp.group}
 			</div>
@@ -136,20 +136,20 @@
 							href={hrefFor(it.to)}
 							onclick={() => onClose?.()}
 							aria-current={on ? 'page' : undefined}
-							class="grid w-full items-center gap-2 rounded-lg no-underline {on
+							class="grid w-full items-center gap-2 rounded-lg text-sm no-underline {on
 								? 'bg-paper border-paper-edge text-ink border'
 								: 'text-ink-soft border border-transparent'}"
-							style="grid-template-columns: auto 1fr auto; text-align: left; padding: 8px 9px; font-size: 13px"
+							style="grid-template-columns: auto 1fr auto; text-align: left; padding: 8px 9px"
 						>
 							<span
-								class="kanji text-center {on ? 'text-accent' : 'text-ink-mute'}"
-								style="font-size: 13px; width: 15px">{it.kanji}</span
+								class="kanji text-sm text-center {on ? 'text-accent' : 'text-ink-mute'}"
+								style="width: 15px">{it.kanji}</span
 							>
 							<span>{it.label}</span>
 							{#if it.badge != null}
 								<span
-									class="mono bg-accent text-on-primary rounded-full font-semibold"
-									style="font-size: 10px; padding: 0 6px; line-height: 16px">{it.badge}</span
+									class="mono bg-accent text-on-primary rounded-full text-xs font-semibold"
+									style="padding: 0 6px; line-height: 16px">{it.badge}</span
 								>
 							{:else}
 								<span></span>
@@ -158,12 +158,12 @@
 					{:else}
 						<div
 							title="Designed in a later pass"
-							class="text-ink-faint grid w-full items-center gap-2 rounded-lg border border-transparent"
-							style="grid-template-columns: auto 1fr auto; text-align: left; padding: 8px 9px; font-size: 13px; opacity: 0.6"
+							class="text-ink-faint grid w-full items-center gap-2 rounded-lg border border-transparent text-sm"
+							style="grid-template-columns: auto 1fr auto; text-align: left; padding: 8px 9px; opacity: 0.6"
 						>
-							<span class="kanji text-ink-mute text-center" style="font-size: 13px; width: 15px">{it.kanji}</span>
+							<span class="kanji text-ink-mute text-sm text-center" style="width: 15px">{it.kanji}</span>
 							<span>{it.label}</span>
-							<span class="text-ink-faint" style="font-size: 8.5px; letter-spacing: 0.06em">soon</span>
+							<span class="text-ink-faint text-xs" style="letter-spacing: 0.06em">soon</span>
 						</div>
 					{/if}
 				{/each}
@@ -173,10 +173,10 @@
 
 	<div class="flex-1"></div>
 	<div
-		class="border-paper-edge text-ink-mute grid w-full items-center gap-2 border-t"
-		style="grid-template-columns: auto 1fr; text-align: left; padding: 12px 9px 0; font-size: 13px; opacity: 0.6"
+		class="border-paper-edge text-ink-mute grid w-full items-center gap-2 border-t text-sm"
+		style="grid-template-columns: auto 1fr; text-align: left; padding: 12px 9px 0; opacity: 0.6"
 	>
-		<span class="kanji text-ink-mute text-center" style="font-size: 13px; width: 15px">調</span>
+		<span class="kanji text-ink-mute text-sm text-center" style="width: 15px">調</span>
 		<span>Settings · SSO</span>
 	</div>
 </aside>

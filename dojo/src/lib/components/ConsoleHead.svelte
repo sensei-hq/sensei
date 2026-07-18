@@ -21,12 +21,12 @@
 <div
 	class="border-paper-edge flex flex-shrink-0 items-start gap-3 border-b px-4 pt-[22px] pb-[18px] md:gap-5 md:px-7"
 >
-	<span class="kanji text-accent flex-shrink-0" style="font-size: 38px; line-height: 1">{kanji}</span>
+	<span class="kanji text-accent text-3xl flex-shrink-0" style="line-height: 1">{kanji}</span>
 	<div class="flex-1" style="min-width: 0">
-		<div class="text-ink-mute uppercase" style="font-size: 11px; letter-spacing: 0.18em; margin-bottom: 4px">
+		<div class="text-ink-mute text-xs uppercase" style="letter-spacing: 0.18em; margin-bottom: 4px">
 			{eyebrow}
 		</div>
-		<h1 class="display font-normal" style="font-size: 24px; letter-spacing: -0.015em; margin: 0; line-height: 1.05">
+		<h1 class="display text-xl font-normal" style="letter-spacing: -0.015em; margin: 0; line-height: 1.05">
 			{title}
 		</h1>
 		{#if sub}

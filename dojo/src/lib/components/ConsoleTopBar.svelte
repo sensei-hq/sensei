@@ -44,7 +44,7 @@
 	</button>
 
 	<div class="flex items-baseline gap-2">
-		<span class="kanji text-accent" style="font-size: 22px; line-height: 1">結</span>
+		<span class="kanji text-accent text-xl" style="line-height: 1">結</span>
 		<span class="display text-lg" style="letter-spacing: -0.01em">Dōjō</span>
 	</div>
 
