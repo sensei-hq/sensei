@@ -19,7 +19,7 @@ mod generate;
 mod consolidate;
 mod consolidate_governance;
 mod publish_segments;
-mod advance_run;
+pub(crate) mod advance_run;
 mod warm_insight_copy;
 mod rank;
 mod model_insight;
