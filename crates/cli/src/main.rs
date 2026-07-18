@@ -89,8 +89,11 @@ enum Commands {
 
     /// Scaffold the canonical Sensei doc structure into a project
     Scaffold {
+        /// What to scaffold (default: the project-level doc structure)
+        #[command(subcommand)]
+        what: Option<ScaffoldTarget>,
         /// Target directory (default: current directory)
-        #[arg(long)]
+        #[arg(long, global = true)]
         path: Option<String>,
     },
 
@@ -125,6 +128,16 @@ enum Commands {
         /// Target ACP (default: all detected). e.g. claude, cursor, zed
         #[arg(long)]
         acp: Option<String>,
+    },
+}
+
+/// `sensei scaffold <what>` targets. Absent = the project-level doc structure.
+#[derive(Subcommand)]
+enum ScaffoldTarget {
+    /// Scaffold a per-feature dossier under docs/features/<name>/
+    Feature {
+        /// Feature name (a single path segment → docs/features/<name>/)
+        name: String,
     },
 }
 
@@ -175,7 +188,7 @@ fn main() -> ExitCode {
         Some(Commands::Restart { port }) => restart_daemon(port.unwrap_or_else(|| cfg().daemon_port)),
         Some(Commands::Status) => daemon_cmd("status", None),
         Some(Commands::Scan { path }) => scan(&path),
-        Some(Commands::Scaffold { path }) => scaffold_cmd(path.as_deref()),
+        Some(Commands::Scaffold { what, path }) => scaffold_cmd(what, path.as_deref()),
         Some(Commands::Index { cmd }) => match cmd {
             IndexCommands::Doctor => index_doctor(),
         },
@@ -994,7 +1007,7 @@ fn scan(path: &str) {
 /// `sensei scaffold` — materialize the canonical doc structure into `path`
 /// (default: current directory). Prints a `[created]`/`[exists]` report per
 /// path and exits non-zero if anything failed (no silent errors).
-fn scaffold_cmd(path: Option<&str>) {
+fn scaffold_cmd(what: Option<ScaffoldTarget>, path: Option<&str>) {
     let target = match path {
         Some(p) => PathBuf::from(p),
         None => match std::env::current_dir() {
@@ -1005,8 +1018,25 @@ fn scaffold_cmd(path: Option<&str>) {
             }
         },
     };
-    println!("=== sensei scaffold ===\n{}\n", target.display());
-    let report = scaffold::run(&target);
+    let report = match what {
+        Some(ScaffoldTarget::Feature { name }) => {
+            println!(
+                "=== sensei scaffold feature {name} ===\n{}\n",
+                target.display()
+            );
+            match scaffold::run_feature(&target, &name) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("Error: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        None => {
+            println!("=== sensei scaffold ===\n{}\n", target.display());
+            scaffold::run(&target)
+        }
+    };
     for p in &report.created {
         println!("  [created] {p}");
     }
@@ -1202,16 +1232,31 @@ mod tests {
     }
 
     #[test]
-    fn scaffold_subcommand_parses_with_and_without_path() {
+    fn scaffold_subcommand_parses_project_form() {
         let bare = Cli::parse_from(["sensei", "scaffold"]);
         match bare.command {
-            Some(Commands::Scaffold { path }) => assert!(path.is_none()),
+            Some(Commands::Scaffold { what, path }) => {
+                assert!(what.is_none());
+                assert!(path.is_none());
+            }
             _ => panic!("expected Scaffold command"),
         }
         let with = Cli::parse_from(["sensei", "scaffold", "--path", "/tmp/x"]);
         match with.command {
-            Some(Commands::Scaffold { path }) => assert_eq!(path.as_deref(), Some("/tmp/x")),
+            Some(Commands::Scaffold { path, .. }) => assert_eq!(path.as_deref(), Some("/tmp/x")),
             _ => panic!("expected Scaffold command"),
+        }
+    }
+
+    #[test]
+    fn scaffold_feature_subcommand_parses() {
+        let cli = Cli::parse_from(["sensei", "scaffold", "feature", "auth"]);
+        match cli.command {
+            Some(Commands::Scaffold {
+                what: Some(ScaffoldTarget::Feature { name }),
+                ..
+            }) => assert_eq!(name, "auth"),
+            _ => panic!("expected Scaffold feature command"),
         }
     }
 }
