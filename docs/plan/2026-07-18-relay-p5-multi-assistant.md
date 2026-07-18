@@ -96,23 +96,24 @@ step runs + how gates/nudges/status flow* for that backend.
   the full orchestrator now, or ship P5.1–P5.3 (the adapter layer) and defer the
   planning/impl-cycle orchestrator to P5.4-later once ≥2 backends exist to normalize.
 
-## OPEN DECISIONS — need Jerry's plan/spec input BEFORE building past P5.1
+## DECISIONS — RESOLVED 2026-07-18 (Jerry, via AskUserQuestion)
 
-1. **Sequencing / scope.** Start with **P5.1 only** (Claude behind the trait — the
-   safe, no-behavior-change extraction that proves the abstraction), then reassess
-   ACP/fallback? Or commit to the full P5.1→P5.4 arc now?
-2. **ACP depth (P5.2).** Full drive-over-ACP, or observe-first (P5.2a) then drive?
-   (Full ACP hosting is the biggest single lift in P5 — a real protocol + dep.)
-3. **Fallback mechanism (P5.3).** MCP-coarse (recommended) vs file-watch / poll /
-   OTLP for the first fallback backend?
-4. **Orchestrator (P5.4).** Build the planning/impl-cycle orchestrator wrapper as
-   part of P5, or defer it until the adapter layer (P5.1–P5.3) proves out with 2+
-   backends?
-5. **New dep(s).** ACP + any fallback transport may add external crates — raise each
-   as its own decision when scoped (per [[feedback_external_dep_issue]]).
+1. **P5.2 = ACP (Zed) — OBSERVE-FIRST.** Add the ACP backend but start observe-only
+   (surface an ACP session's status/segments in the relay view) before full
+   drive-over-ACP. De-risks the biggest lift; rich feed sooner. (Full drive-over-ACP
+   becomes P5.2b once observe proves out.)
+2. **P5.3 fallback = MCP-coarse.** aider/Codex/plain CLIs report coarse status
+   (running/idle/done) via sensei's MCP (already everywhere; lowest new infra).
+   Gating for fallbacks is checkpoint/time-based, not live PreToolUse.
+3. **Orchestrator (P5.4) = DEFERRED until 2+ backends exist.** Ship the adapter layer
+   (P5.1 Claude → P5.2 ACP-observe → P5.3 MCP-fallback) first; build the
+   planning/impl-cycle orchestrator only once there are multiple backends to
+   actually normalize (avoids abstracting on one example).
+4. **New dep(s).** ACP (P5.2) will likely add an external crate — raise it as its own
+   decision when scoped ([[feedback_external_dep_issue]]).
 
-## Recommendation
-Build **P5.1 now** (autonomous, decision-light, high-value: it de-risks the whole
-phase by proving the adapter with the working Claude backend + zero behavior change),
-and settle decisions 1–4 with Jerry before P5.2+. P5.1's reviewer + the unchanged P3
-drive smoke are its gate.
+## Build order (locked)
+`P5.1 (Claude behind the trait, no behavior change)` → `P5.2 ACP observe-first` →
+`P5.3 MCP-coarse fallback` → **[reassess: orchestrator P5.4 once 2+ backends live].**
+Each chunk: TDD → build/test → reviewer → commit `develop` (approach A; batched to
+`main` at a later Jerry-gated release).
