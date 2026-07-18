@@ -1,6 +1,32 @@
 import { describe, it, expect } from 'vitest';
-import { statusBadge, segmentStateBadge, progressWidth } from './relay-view';
-import type { RelayRunStatus, SegmentState } from './relay-data';
+import {
+	statusBadge,
+	segmentStateBadge,
+	progressWidth,
+	gateSeverity,
+	orderGatesByUrgency,
+	blockedSummary,
+	gateHref
+} from './relay-view';
+import type { RelayRunStatus, SegmentState, RelayGate } from './relay-data';
+
+const ZERO_UUID = '00000000-0000-0000-0000-000000000000';
+
+// A gate builder mirroring the RelayGateCard spec — a real RelayGate shape with
+// overridable fields so each ordering/summary case is explicit about what it varies.
+function gate(overrides: Partial<RelayGate> = {}): RelayGate {
+	return {
+		id: 'g1',
+		seq: 1,
+		run_id: 'run-1',
+		run_title: 'Round-trip',
+		segment_id: null,
+		kind: 'approval',
+		payload: {},
+		created_at: '2026-07-18T12:00:00.000Z',
+		...overrides
+	};
+}
 
 describe('relay-view', () => {
 	describe('statusBadge', () => {
@@ -101,6 +127,109 @@ describe('relay-view', () => {
 		it('clamps out-of-range done into 0–100%', () => {
 			expect(progressWidth(9, 4)).toBe('100%');
 			expect(progressWidth(-3, 4)).toBe('0%');
+		});
+	});
+
+	describe('gateSeverity', () => {
+		it('reads an explicit payload.gate_severity when present', () => {
+			expect(gateSeverity(gate({ kind: 'chat', payload: { gate_severity: 'blocking' } }))).toBe(
+				'blocking'
+			);
+			expect(gateSeverity(gate({ kind: 'approval', payload: { gate_severity: 'advisory' } }))).toBe(
+				'advisory'
+			);
+		});
+
+		it('falls back to kind: approval/decision/stall block, chat/nudge advise', () => {
+			expect(gateSeverity(gate({ kind: 'approval', payload: {} }))).toBe('blocking');
+			expect(gateSeverity(gate({ kind: 'decision', payload: {} }))).toBe('blocking');
+			expect(gateSeverity(gate({ kind: 'stall', payload: {} }))).toBe('blocking');
+			expect(gateSeverity(gate({ kind: 'chat', payload: {} }))).toBe('advisory');
+			expect(gateSeverity(gate({ kind: 'nudge', payload: {} }))).toBe('advisory');
+		});
+
+		it('treats a garbage payload.gate_severity as absent and falls back to kind', () => {
+			expect(gateSeverity(gate({ kind: 'approval', payload: { gate_severity: 'bogus' } }))).toBe(
+				'blocking'
+			);
+			expect(gateSeverity(gate({ kind: 'chat', payload: { gate_severity: 42 } }))).toBe('advisory');
+		});
+
+		it('treats an unknown kind with no payload severity as advisory (not urgent)', () => {
+			expect(gateSeverity(gate({ kind: 'weird', payload: {} }))).toBe('advisory');
+		});
+	});
+
+	describe('orderGatesByUrgency', () => {
+		it('puts blocking gates before advisory ones', () => {
+			const adv = gate({ id: 'adv', kind: 'chat' });
+			const blk = gate({ id: 'blk', kind: 'approval' });
+			expect(orderGatesByUrgency([adv, blk]).map((g) => g.id)).toEqual(['blk', 'adv']);
+		});
+
+		it('within a severity band, orders oldest-waiting first', () => {
+			const newer = gate({ id: 'newer', created_at: '2026-07-18T12:00:00.000Z' });
+			const older = gate({ id: 'older', created_at: '2026-07-18T09:00:00.000Z' });
+			expect(orderGatesByUrgency([newer, older]).map((g) => g.id)).toEqual(['older', 'newer']);
+		});
+
+		it('is a total order: blocking-oldest, blocking-newer, advisory-oldest, advisory-newer', () => {
+			const gates = [
+				gate({ id: 'adv-new', kind: 'chat', created_at: '2026-07-18T12:00:00.000Z' }),
+				gate({ id: 'blk-new', kind: 'approval', created_at: '2026-07-18T12:00:00.000Z' }),
+				gate({ id: 'adv-old', kind: 'chat', created_at: '2026-07-18T08:00:00.000Z' }),
+				gate({ id: 'blk-old', kind: 'approval', created_at: '2026-07-18T08:00:00.000Z' })
+			];
+			expect(orderGatesByUrgency(gates).map((g) => g.id)).toEqual([
+				'blk-old',
+				'blk-new',
+				'adv-old',
+				'adv-new'
+			]);
+		});
+
+		it('is stable for equal keys (same severity + timestamp keep input order)', () => {
+			const a = gate({ id: 'a', kind: 'approval', created_at: '2026-07-18T10:00:00.000Z' });
+			const b = gate({ id: 'b', kind: 'approval', created_at: '2026-07-18T10:00:00.000Z' });
+			expect(orderGatesByUrgency([a, b]).map((g) => g.id)).toEqual(['a', 'b']);
+			expect(orderGatesByUrgency([b, a]).map((g) => g.id)).toEqual(['b', 'a']);
+		});
+
+		it('is pure — does not mutate the input array', () => {
+			const gates = [gate({ id: 'a', kind: 'chat' }), gate({ id: 'b', kind: 'approval' })];
+			const before = gates.map((g) => g.id);
+			orderGatesByUrgency(gates);
+			expect(gates.map((g) => g.id)).toEqual(before);
+		});
+
+		it('handles the empty list', () => {
+			expect(orderGatesByUrgency([])).toEqual([]);
+		});
+	});
+
+	describe('blockedSummary', () => {
+		it('counts total, blocking and advisory', () => {
+			const gates = [
+				gate({ id: '1', kind: 'approval' }),
+				gate({ id: '2', kind: 'decision' }),
+				gate({ id: '3', kind: 'chat' })
+			];
+			expect(blockedSummary(gates)).toEqual({ total: 3, blocking: 2, advisory: 1 });
+		});
+
+		it('is all-zero for the empty list', () => {
+			expect(blockedSummary([])).toEqual({ total: 0, blocking: 0, advisory: 0 });
+		});
+	});
+
+	describe('gateHref', () => {
+		it('deep-links to the gate’s run', () => {
+			expect(gateHref(gate({ run_id: 'run-42' }))).toBe('/console/relay/run-42');
+		});
+
+		it('returns null for a missing run id or the all-zeros uuid (no orphan link)', () => {
+			expect(gateHref(gate({ run_id: null }))).toBeNull();
+			expect(gateHref(gate({ run_id: ZERO_UUID }))).toBeNull();
 		});
 	});
 });
