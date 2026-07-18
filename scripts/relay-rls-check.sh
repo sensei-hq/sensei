@@ -47,6 +47,23 @@ RLSCOUNT=$("${PSQL[@]}" -c "
     and c.relname in ('relay_sessions','relay_segments','relay_inbox');")
 assert 3 "$RLSCOUNT" "rls-enabled: row level security on all three relay tables"
 
+# --- grant catalog: anon has NOTHING; authenticated is SELECT-only (no I/U/D) --
+# (P4 security-review #1: lock "anon sees nothing" explicitly rather than inferring
+# it from the authenticated-user test; and reconfirm authenticated can't write —
+# a write grant would let the phone bypass the Worker's service-role path.)
+ANONGRANTS=$("${PSQL[@]}" -c "
+  select count(*) from information_schema.role_table_grants
+  where grantee='anon' and table_schema='dojo'
+    and table_name in ('relay_sessions','relay_segments','relay_inbox');")
+assert 0 "$ANONGRANTS" "anon-has-nothing: no grants for anon on the three relay tables"
+
+AUTHWRITES=$("${PSQL[@]}" -c "
+  select count(*) from information_schema.role_table_grants
+  where grantee='authenticated' and table_schema='dojo'
+    and table_name in ('relay_sessions','relay_segments','relay_inbox')
+    and privilege_type in ('INSERT','UPDATE','DELETE');")
+assert 0 "$AUTHWRITES" "authenticated-select-only: no INSERT/UPDATE/DELETE grant to authenticated"
+
 # --- Seed fixtures + run all RLS assertions inside ONE transaction, rollback --
 # Everything below runs server-side so `set local role` / `set_config(...,true)`
 # (transaction-local) applies to the same session and is auto-reverted on

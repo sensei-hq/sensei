@@ -24,6 +24,19 @@ export const POST: RequestHandler = async ({ params, request, locals }) => {
 		// p256dh/auth keys is unusable for a VAPID send, so reject it up front.
 		const endpoint = typeof body.endpoint === 'string' ? body.endpoint.trim() : '';
 		if (!endpoint) return apiError(400, 'endpoint is required');
+		// The Worker later fetch()es this endpoint to send the push (P4.4), so it's
+		// an SSRF surface. Every real Web Push endpoint is https — require it, which
+		// blocks http/internal-host targets. (Self-scoped even without this: a user
+		// can only push against their own subscriptions. A push-service host
+		// allowlist is a tracked follow-up — see decisions.md — deferred because an
+		// incomplete list would reject legitimate browser endpoints.)
+		let endpointUrl: URL;
+		try {
+			endpointUrl = new URL(endpoint);
+		} catch {
+			return apiError(400, 'endpoint must be a valid URL');
+		}
+		if (endpointUrl.protocol !== 'https:') return apiError(400, 'endpoint must be https');
 		const keys = (body.keys ?? {}) as Record<string, unknown>;
 		const p256dh = typeof keys.p256dh === 'string' ? keys.p256dh : '';
 		const auth = typeof keys.auth === 'string' ? keys.auth : '';
