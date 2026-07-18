@@ -175,9 +175,9 @@
 			</div>
 		{/if}
 
-		<div class="bg-paper-soft border-paper-edge overflow-hidden rounded-xl border">
+		<div class="bg-paper-soft border-paper-edge overflow-x-auto rounded-xl border">
 			<div
-				class="border-paper-edge text-ink-mute grid gap-4 border-b font-semibold uppercase"
+				class="border-paper-edge text-ink-mute grid gap-4 border-b font-semibold uppercase min-w-[600px]"
 				style="grid-template-columns: 1.6fr 1fr 1.3fr 1fr auto; padding: 11px 18px; font-size: 10px; letter-spacing: 0.1em"
 			>
 				<span>Member</span><span>Via</span><span>Dōjō role</span><span>Sync</span><span>Active</span>
@@ -190,7 +190,9 @@
 			{:else}
 				{#each data.members as m, i (m.id)}
 					<div
-						class="grid items-center gap-4 {i < data.members.length - 1 ? 'border-paper-edge border-b' : ''}"
+						class="grid items-center gap-4 min-w-[600px] {i < data.members.length - 1
+							? 'border-paper-edge border-b'
+							: ''}"
 						style="grid-template-columns: 1.6fr 1fr 1.3fr 1fr auto; padding: 13px 18px"
 					>
 						<div class="flex items-center gap-3" style="min-width: 0">

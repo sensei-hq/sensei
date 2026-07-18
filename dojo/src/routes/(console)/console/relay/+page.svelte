@@ -62,7 +62,7 @@
 		{/snippet}
 	</ConsoleHead>
 
-	<div class="flex-1 overflow-auto" style="padding: 8px 28px 28px">
+	<div class="flex-1 overflow-auto px-4 pt-2 pb-7 md:px-7">
 		{#if data.error}
 			<div
 				class="bg-warning-soft border-warning-edge text-ink-soft flex items-center gap-2 rounded-xl border text-sm"

@@ -19,8 +19,7 @@
 </script>
 
 <div
-	class="border-paper-edge flex flex-shrink-0 items-start gap-5 border-b"
-	style="padding: 22px 28px 18px"
+	class="border-paper-edge flex flex-shrink-0 items-start gap-3 border-b px-4 pt-[22px] pb-[18px] md:gap-5 md:px-7"
 >
 	<span class="kanji text-accent flex-shrink-0" style="font-size: 38px; line-height: 1">{kanji}</span>
 	<div class="flex-1" style="min-width: 0">

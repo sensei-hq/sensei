@@ -236,9 +236,9 @@
 			</div>
 		{/if}
 
-		<div class="bg-paper-soft border-paper-edge overflow-hidden rounded-xl border">
+		<div class="bg-paper-soft border-paper-edge overflow-x-auto rounded-xl border">
 			<div
-				class="border-paper-edge text-ink-mute grid gap-4 border-b font-semibold uppercase"
+				class="border-paper-edge text-ink-mute grid gap-4 border-b font-semibold uppercase min-w-[600px]"
 				style="grid-template-columns: 1.4fr 1.6fr 0.9fr 0.9fr auto; padding: 11px 18px; font-size: 10px; letter-spacing: 0.1em"
 			>
 				<span>Client</span><span>Projects</span><span>Status</span><span>Updated</span><span
@@ -255,7 +255,7 @@
 			{:else}
 				{#each data.engagements as eng, i (eng.id)}
 					<div
-						class="grid items-center gap-4 {i < data.engagements.length - 1
+						class="grid items-center gap-4 min-w-[600px] {i < data.engagements.length - 1
 							? 'border-paper-edge border-b'
 							: ''}"
 						style="grid-template-columns: 1.4fr 1.6fr 0.9fr 0.9fr auto; padding: 13px 18px"
