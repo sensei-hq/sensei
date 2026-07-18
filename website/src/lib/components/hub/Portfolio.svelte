@@ -10,12 +10,12 @@
   <div class="portfolio-inner mx-auto px-7 py-24">
     <div class="flex items-end justify-between flex-wrap gap-4 mb-7">
       <div>
-        <span class="mono text-ink-mute mb-3 block" style="font-size:11px;letter-spacing:0.12em;text-transform:uppercase">The portfolio</span>
-        <h2 class="display text-ink m-0" style="font-size:40px;font-weight:300;letter-spacing:-0.02em">
+        <span class="mono text-ink-mute mb-3 block text-xs" style="letter-spacing:0.12em;text-transform:uppercase">The portfolio</span>
+        <h2 class="display text-ink m-0 text-3xl" style="font-weight:300;letter-spacing:-0.02em">
           Four tools, one workshop.
         </h2>
       </div>
-      <p class="text-ink-soft" style="font-size:14px;line-height:1.6;max-width:360px">
+      <p class="text-ink-soft text-sm" style="line-height:1.6;max-width:360px">
         Each carries its own mark and its own accent — but they share a
         temperament, a type system, and a refusal to get in your way.
       </p>

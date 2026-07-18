@@ -152,7 +152,7 @@
       </p>
       <div class="hero-actions">
         <Button href="{RELEASE_BASE}/{dlFile}" variant="primary" size="lg">
-          <span class="kanji" style="font-size: 19px; line-height: 1;">下</span>
+          <span class="kanji text-lg" style="line-height: 1">下</span>
           Download for {os}
         </Button>
         <a href="#how" class="hero-link">See how it works ↓</a>
@@ -294,7 +294,7 @@
   <section id="privacy" class="privacy">
     <div class="privacy-inner">
       <div class="privacy-left">
-        <span class="kanji" style="font-size: 56px; color: var(--shu);">蔵</span>
+        <span class="kanji text-4xl" style="color: var(--shu)">蔵</span>
         <div class="section-tag" style="margin-top: 16px;">Privacy & local-first</div>
         <h2 class="display privacy-heading">
           Your sessions stay on your machine.
@@ -329,7 +329,7 @@
       </p>
       <div style="margin-top: 44px;">
         <Button href="{RELEASE_BASE}/{dlFile}" variant="primary" size="lg">
-          <span class="kanji" style="font-size: 19px; line-height: 1;">下</span>
+          <span class="kanji text-lg" style="line-height: 1">下</span>
           Download for {os}
         </Button>
       </div>
@@ -363,7 +363,7 @@
   <!-- ═══ Support ═══ -->
   <section class="support">
     <div class="support-inner">
-      <span class="kanji" style="font-size: 56px; color: var(--shu);">志</span>
+      <span class="kanji text-4xl" style="color: var(--shu)">志</span>
       <div class="section-tag" style="margin-top: 14px;">Support development</div>
       <h2 class="display support-heading">
         If sensei has earned a place in your practice, you can help keep it growing.
@@ -384,7 +384,7 @@
       <div class="footer-brand">
         <div class="footer-logo">
           <span class="i-brand:sensei text-sensei" style="width:22px;height:22px;flex-shrink:0" aria-hidden="true"></span>
-          <span class="display" style="font-size: 16px; color: var(--sumi-2);">Sensei</span>
+          <span class="display text-base" style="color: var(--sumi-2)">Sensei</span>
         </div>
         <div class="footer-desc">
           A patient observer for AI-assisted work. Built quietly,

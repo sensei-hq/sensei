@@ -19,27 +19,27 @@
     <!-- Statement -->
     <div>
       <div class="flex items-baseline gap-3 mb-5">
-        <span class="kanji text-primary" style="font-size:44px;line-height:1">道</span>
-        <span class="mono text-ink-mute" style="font-size:11px;letter-spacing:0.12em;text-transform:uppercase">Dō · the way — an independent studio</span>
+        <span class="kanji text-primary text-3xl" style="line-height:1">道</span>
+        <span class="mono text-ink-mute text-xs" style="letter-spacing:0.12em;text-transform:uppercase">Dō · the way — an independent studio</span>
       </div>
       <h1 class="display text-ink m-0 hero-h1">
         We build quiet, sharp tools for the people who build software.
       </h1>
-      <p class="text-ink-soft mt-5" style="font-size:17px;line-height:1.6;max-width:540px">
+      <p class="text-ink-soft mt-5 text-lg" style="line-height:1.6;max-width:540px">
         Sensei HQ is a small workshop of developer tools — four instruments,
         one temperament. Restraint over noise, craft over scale, and a deep
         respect for the person on the other side of the screen.
       </p>
       <div class="flex items-center flex-wrap gap-3 mt-6">
-        <a href="#products" class="bg-primary text-on-primary rounded-md px-5 py-3 font-medium flex items-center gap-3 no-underline" style="font-size:15px">
-          <span class="kanji" style="font-size:15px;line-height:1">見</span>
+        <a href="#products" class="bg-primary text-on-primary rounded-md px-5 py-3 font-medium flex items-center gap-3 no-underline text-base">
+          <span class="kanji text-base" style="line-height:1">見</span>
           See the tools
         </a>
         <a href="#approach" class="text-ink-soft text-sm no-underline">How we work ↓</a>
       </div>
       <div class="flex flex-wrap gap-4 mt-7">
         {#each meta as m (m)}
-          <span class="mono text-ink-mute" style="font-size:11px">{m}</span>
+          <span class="mono text-ink-mute text-xs">{m}</span>
         {/each}
       </div>
     </div>
@@ -47,8 +47,8 @@
     <!-- In the workshop -->
     <aside class="border border-paper-edge rounded-lg bg-paper-soft" style="overflow:hidden">
       <div class="px-5 py-4 border-b border-paper-edge flex items-center justify-between">
-        <span class="mono text-ink-mute" style="font-size:11px;letter-spacing:0.12em;text-transform:uppercase">In the workshop</span>
-        <span class="mono text-ink-faint" style="font-size:11px">04</span>
+        <span class="mono text-ink-mute text-xs" style="letter-spacing:0.12em;text-transform:uppercase">In the workshop</span>
+        <span class="mono text-ink-faint text-xs">04</span>
       </div>
       <div class="divide-y divide-paper-edge">
         {#each PRODUCTS as p (p.id)}
@@ -56,9 +56,9 @@
              target={isExternal(p) ? '_blank' : undefined}
              rel={isExternal(p) ? 'noopener' : undefined}
              class="workshop-row gap-4 px-5 py-4 no-underline text-{p.id}">
-            <span class="kanji" style="font-size:26px;line-height:1;width:30px;text-align:center">{p.kanji}</span>
+            <span class="kanji text-2xl" style="line-height:1;width:30px;text-align:center">{p.kanji}</span>
             <span>
-              <span class="display text-ink block" style="font-size:15px">{p.name}</span>
+              <span class="display text-ink block text-base">{p.name}</span>
               <span class="text-ink-mute text-xs">{p.category}</span>
             </span>
             <span class="product-dot" style="background:var(--{p.id})"></span>

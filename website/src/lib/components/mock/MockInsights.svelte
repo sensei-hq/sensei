@@ -23,7 +23,7 @@
       {#each cards as c}
         <div class="card">
           <div class="card-header">
-            <span class="kanji" style="font-size: 18px; color: var(--shu);">{c.kanji}</span>
+            <span class="kanji text-lg" style="color: var(--shu)">{c.kanji}</span>
             <span class="display card-title">{c.title}</span>
           </div>
           <div class="card-meta">

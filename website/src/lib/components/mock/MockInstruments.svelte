@@ -28,10 +28,10 @@
     <div class="tabs">
       {#each tabs as t}
         <div class="tab" class:active={t.on}>
-          <span class="kanji" style="font-size: 12px; color: {t.on ? 'var(--shu)' : 'var(--sumi-3)'};">
+          <span class="kanji text-xs" style="color: {t.on ? 'var(--shu)' : 'var(--sumi-3)'}">
             {t.k}
           </span>
-          <span style="font-size: 11px; color: {t.on ? 'var(--sumi)' : 'var(--sumi-3)'};">
+          <span class="text-xs" style="color: {t.on ? 'var(--sumi)' : 'var(--sumi-3)'}">
             {t.l}
           </span>
         </div>
