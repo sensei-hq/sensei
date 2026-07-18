@@ -387,3 +387,25 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 - **Type consistency:** `BaselineKind{Code,Content}` + `.slug()`, `baseline_layout(BaselineKind,&str)->Layout`, `run_baseline(&Path,BaselineKind)->ScaffoldReport`, `ScaffoldTarget::Baseline{kind: BaselineKind}` — identical across tasks. Reuses `Entry`/`Layout`/`materialize`/`ScaffoldReport`/`format_date`.
 - **Placeholders:** none.
 - **Reuse (CLAUDE.md DRY):** `run_baseline` reuses `materialize`; the Baseline arm reuses `scaffold_cmd`'s one printer; template mirrors the project/feature `*_md` frontmatter+voice.
+
+---
+
+## Post-implementation notes (shipped 2026-07-18)
+
+Built via inline TDD (red → green). Commits on `develop`: `6c05e6ce` (pure
+`baseline_layout` + `run_baseline`, Tasks 1–2) · `910e1177` (CLI wiring, Task 3). 18
+`scaffold::tests` + 30 `sensei-cli` tests green, `clippy -D warnings` clean,
+smoke-verified (code default · content adapters `grammar / tone` with no `eslint` ·
+idempotent no-clobber on re-run / kind-change).
+
+**Reviewer** (`feature-dev:code-reviewer`): **no high-confidence issues.** Confirmed
+correctness vs §3.6 (n/a rows dropped rather than rendered — deliberate; gate line +
+governance-is-live match), idempotency via reused `materialize`, clap `ValueEnum`
+default + both parse forms, DRY reuse, no silent-error discards, and **no traversal
+surface** (kind is a closed enum — unlike the feature name, no user string reaches a
+path segment).
+
+**No deviations from the plan** (implemented essentially verbatim).
+
+**Last Phase-1 sub-unit remaining:** memory-anchoring (L0/L1/L2 + memories → spine
+slots) — needs a brainstorm (touches the memory system, not just the CLI).
