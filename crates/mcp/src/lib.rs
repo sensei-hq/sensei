@@ -510,7 +510,7 @@ pub fn handle_list_tools() -> Value {
                     ("project_id", "string", "Project UUID — overrides project name lookup."),
                     ("limit",      "string", "Max memories to return (default 200, cap 500)"),
                     ("tags",       "string", "Comma-separated tag filter"),
-                    ("slot",       "string", "optional: restrict/lead context with memories anchored to this spine slot"),
+                    ("slot",       "string", "optional: lead the context with memories anchored to this spine slot (vision|personas|journeys|roadmap|design|mockups|decisions|brief|plan|tests)"),
                     ("feature",    "string", "optional feature name for a feature-scope slot"),
                 ]),
             // ── Relay run-control (P3.8) ─────────────────────────────────────
