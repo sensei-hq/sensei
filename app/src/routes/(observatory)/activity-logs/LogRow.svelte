@@ -39,7 +39,7 @@
     </span>
 
     <span
-      class="text-xs uppercase tracking-wider text-center rounded py-[2px] px-1 {tone.text} {tone.bg}"
+      class="text-xs uppercase tracking-wider text-center rounded py-1 px-1 {tone.text} {tone.bg}"
       data-log-level-chip
     >
       {row.level}
