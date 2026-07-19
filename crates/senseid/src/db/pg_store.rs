@@ -8848,6 +8848,63 @@ impl PgStore {
         tx.commit().await.map_err(|e| e.to_string())?;
         Ok(true)
     }
+
+    // ── Front-door intake: playbooks / rules / guide / runs ────────────
+
+    pub async fn list_playbooks(&self) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(String, String, String, String, Option<String>)> = sqlx_core::query_as::query_as(
+            "SELECT name, title, when_to_use, opening_tone, method_ref
+               FROM sensei.playbooks WHERE enabled ORDER BY name"
+        ).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(name,title,wtu,tone,mref)| serde_json::json!({
+            "name":name,"title":title,"when_to_use":wtu,"opening_tone":tone,"method_ref":mref
+        })).collect())
+    }
+
+    pub async fn list_intake_guide(&self) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(String, Option<String>, String, Option<String>)> = sqlx_core::query_as::query_as(
+            "SELECT kind, axis, prompt, help FROM sensei.intake_guide WHERE enabled
+              ORDER BY (kind='frame') DESC, axis"
+        ).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(kind,axis,prompt,help)| serde_json::json!({
+            "kind":kind,"axis":axis,"prompt":prompt,"help":help
+        })).collect())
+    }
+
+    /// Returns the rule set as pure `crate::playbook::Rule`s (ready for the resolver).
+    pub async fn list_playbook_rules(&self) -> Result<Vec<crate::playbook::Rule>, String> {
+        use crate::playbook::{Rule, Lifecycle, Intent, Risk};
+        let rows: Vec<(uuid::Uuid, String, Option<String>, Option<String>, Option<String>, String, String, i32)> =
+            sqlx_core::query_as::query_as(
+                "SELECT id, name, match_lifecycle::text, match_intent::text, match_risk::text,
+                        playbook, rationale, priority
+                   FROM sensei.playbook_rules WHERE enabled ORDER BY priority DESC"
+            ).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id,name,lf,it,rk,pb,rat,pri)| Rule {
+            id: Some(id), name,
+            match_lifecycle: lf.as_deref().and_then(Lifecycle::parse),
+            match_intent:    it.as_deref().and_then(Intent::parse),
+            match_risk:      rk.as_deref().and_then(Risk::parse),
+            playbook: pb, rationale: rat, priority: pri,
+        }).collect())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn insert_playbook_run(
+        &self, session_id: Option<uuid::Uuid>, feature: Option<&str>,
+        lifecycle: &str, intent: &str, risk: &str,
+        rule_id: Option<uuid::Uuid>, playbook: &str, rationale: &str, confirmed: bool,
+    ) -> Result<uuid::Uuid, String> {
+        let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.playbook_run
+               (session_id, feature, lifecycle, intent, risk, rule_id, playbook, rationale, confirmed)
+             VALUES ($1,$2,$3::sensei.chunk_lifecycle,$4::sensei.chunk_intent,$5::sensei.chunk_risk,$6,$7,$8,$9)
+             RETURNING id"
+        ).bind(session_id).bind(feature).bind(lifecycle).bind(intent).bind(risk)
+         .bind(rule_id).bind(playbook).bind(rationale).bind(confirmed)
+         .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.0)
+    }
 }
 
 #[cfg(test)]
@@ -12985,5 +13042,38 @@ mod run_tests {
         assert!(pg.resume_due_runs().await.unwrap().into_iter().all(|id| id != due));
 
         for id in [due, future, indefinite] { delete_run(&pg, &id).await; }
+    }
+}
+
+#[cfg(test)]
+mod playbook_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn playbook_rules_load_and_run_roundtrip() {
+        let Ok(pg) = PgStore::connect_test().await else { return; };
+
+        let rules = pg.list_playbook_rules().await.unwrap();
+        assert!(rules.iter().any(|r| r.playbook == "spec_driven"));
+
+        let playbooks = pg.list_playbooks().await.unwrap();
+        assert!(playbooks.iter().any(|p| p["name"] == "spec_driven"));
+
+        let guide = pg.list_intake_guide().await.unwrap();
+        assert!(guide.iter().any(|g| g["kind"] == "frame"));
+
+        let run_id = pg.insert_playbook_run(
+            None, None, "greenfield", "feature", "high",
+            None, "spec_driven", "hi", true,
+        ).await.unwrap();
+
+        let row: (String, String, String, String, bool) = sqlx_core::query_as::query_as(
+            "SELECT lifecycle::text, intent::text, risk::text, playbook, confirmed
+               FROM sensei.playbook_run WHERE id = $1"
+        ).bind(run_id).fetch_one(&pg.pool).await.unwrap();
+        assert_eq!(row, ("greenfield".into(), "feature".into(), "high".into(), "spec_driven".into(), true));
+
+        sqlx_core::query::query("DELETE FROM sensei.playbook_run WHERE id = $1")
+            .bind(run_id).execute(&pg.pool).await.unwrap();
     }
 }
