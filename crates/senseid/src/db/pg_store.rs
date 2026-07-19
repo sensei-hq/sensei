@@ -8886,19 +8886,46 @@ impl PgStore {
     /// Returns the rule set as pure `crate::playbook::Rule`s (ready for the resolver).
     pub async fn list_playbook_rules(&self) -> Result<Vec<crate::playbook::Rule>, String> {
         use crate::playbook::{Rule, Lifecycle, Intent, Risk};
-        let rows: Vec<(uuid::Uuid, String, Option<String>, Option<String>, Option<String>, String, String, i32)> =
+        let rows: Vec<(uuid::Uuid, String, Option<String>, Option<String>, Option<String>, String, String, i32, i32)> =
             sqlx_core::query_as::query_as(
                 "SELECT id, name, match_lifecycle::text, match_intent::text, match_risk::text,
-                        playbook, rationale, priority
+                        playbook, rationale, priority, coalesce(base_priority, priority)
                    FROM sensei.playbook_rules WHERE enabled ORDER BY priority DESC"
             ).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
-        Ok(rows.into_iter().map(|(id,name,lf,it,rk,pb,rat,pri)| Rule {
+        Ok(rows.into_iter().map(|(id,name,lf,it,rk,pb,rat,pri,base_pri)| Rule {
             id: Some(id), name,
             match_lifecycle: lf.as_deref().and_then(Lifecycle::parse),
             match_intent:    it.as_deref().and_then(Intent::parse),
             match_risk:      rk.as_deref().and_then(Risk::parse),
-            playbook: pb, rationale: rat, priority: pri, base_priority: pri,
+            playbook: pb, rationale: rat, priority: pri, base_priority: base_pri,
         }).collect())
+    }
+
+    /// Snapshot the session's outcome onto confirmed, not-yet-attributed runs. Returns rows updated.
+    pub async fn attribute_playbook_outcomes(&self) -> Result<u64, String> {
+        let res = sqlx_core::query::query(
+            "UPDATE sensei.playbook_run pr
+                SET outcome = s.outcome::text, outcome_ftr = s.ftr
+               FROM activity.sessions s
+              WHERE pr.session_id = s.id AND pr.confirmed
+                AND pr.outcome IS NULL AND s.outcome IS NOT NULL"
+        ).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(res.rows_affected())
+    }
+
+    pub async fn playbook_combo_stats(&self) -> Result<Vec<crate::playbook::ComboPlaybookStat>, String> {
+        use crate::playbook::{ComboPlaybookStat, Lifecycle, Intent, Risk};
+        let rows: Vec<(String, String, String, String, i64, f64)> = sqlx_core::query_as::query_as(
+            "SELECT lifecycle::text, intent::text, risk::text, playbook,
+                    count(*)::int8, avg(outcome_ftr::int)::float8
+               FROM sensei.playbook_run
+              WHERE confirmed AND outcome_ftr IS NOT NULL
+              GROUP BY lifecycle, intent, risk, playbook"
+        ).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().filter_map(|(l,i,r,pb,n,ftr)| Some(ComboPlaybookStat {
+            lifecycle: Lifecycle::parse(&l)?, intent: Intent::parse(&i)?, risk: Risk::parse(&r)?,
+            playbook: pb, n, ftr_rate: ftr,
+        })).collect())
     }
 
     /// `classified_by` records how the axes were derived (e.g. "manual",
@@ -13151,5 +13178,47 @@ mod playbook_tests {
             None, false,
         ).await.unwrap();
         assert!(pg.session_has_confirmed_run(&sid).await.unwrap());
+    }
+
+    /// The §9 attribution join: a confirmed playbook_run picks up its session's
+    /// outcome/ftr, feeds the per-combo FTR aggregate, and is idempotent (a
+    /// second attribution pass touches nothing new). Mirrors the
+    /// `session_confirmed_run_gate` folder/session setup above.
+    #[tokio::test]
+    async fn attribution_and_stats_roundtrip() {
+        let Ok(pg) = PgStore::connect_test().await else { return; };
+
+        pg.execute_raw(
+            "INSERT INTO sensei.folders_to_watch(id, path, name, status) \
+             VALUES('00000000-0000-0000-0000-000000000001', '/_test', '_test', 'watching'::sensei.watch_status) \
+             ON CONFLICT DO NOTHING"
+        ).await.unwrap();
+        let suffix = format!("attrib_{}", uuid::Uuid::new_v4());
+        let abs_path = format!("/_test/{}", suffix);
+        let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path) \
+             VALUES('00000000-0000-0000-0000-000000000001', 'git'::sensei.folder_kind, $1, $1, $2) \
+             ON CONFLICT(abs_path) DO UPDATE SET name = EXCLUDED.name RETURNING id"
+        ).bind(&suffix).bind(&abs_path).fetch_one(&pg.pool).await.unwrap();
+        let fid = row.0;
+
+        // a confirmed run linked to a session with a known ftr
+        let sid = pg.create_session(&fid, "§9 test", None).await.unwrap();
+        pg.execute_raw(&format!(
+            "update activity.sessions set outcome='completed', ftr=true where id='{sid}'"
+        )).await.unwrap();
+        pg.insert_playbook_run(
+            Some(sid), None, "stable", "bug", "low",
+            None, "debug_flow", "r", true, Some("manual"), false,
+        ).await.unwrap();
+
+        let n = pg.attribute_playbook_outcomes().await.unwrap();
+        assert!(n >= 1);
+
+        let stats = pg.playbook_combo_stats().await.unwrap();
+        assert!(stats.iter().any(|s| s.playbook == "debug_flow" && s.n >= 1));
+
+        // idempotent: second attribution touches 0 new
+        assert_eq!(pg.attribute_playbook_outcomes().await.unwrap(), 0);
     }
 }
