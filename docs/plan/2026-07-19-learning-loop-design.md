@@ -85,15 +85,16 @@ baseline. Only combos/playbooks with `n >= MIN_SAMPLE` participate.
 `fn learn(stats: &[ComboPlaybookStat], rules: &[Rule]) -> LearnPlan` where
 `LearnPlan { reweights: Vec<(Uuid /*rule_id*/, i32 /*new_priority*/)>, proposals: Vec<LearnedRule> }`.
 No IO — unit-testable. Constants (sensible defaults now; org-tunable = deferred):
-`MIN_SAMPLE=5`, `FTR_DELTA=0.2`, `REWEIGHT_K=40`, `REWEIGHT_BOUND=20`.
+`MIN_SAMPLE=5`, `FTR_DELTA=0.2`, `REWEIGHT_K=40`, `REWEIGHT_BOUND=20`, `REWEIGHT_TARGET_FTR=0.5`.
 
 - **Reweight (existing rules):** for each enabled rule, aggregate the attributed runs whose axes
   **match the rule** (wildcard `NULL` match columns span all values of that axis) **and** whose
   `playbook` = the rule's playbook → the rule's observed `n` + `ftr_rate`. If `n>=MIN_SAMPLE`:
-  `new_priority = base_priority + clamp(round(REWEIGHT_K * (ftr_rate - GLOBAL_BASELINE)),
-  -REWEIGHT_BOUND, +REWEIGHT_BOUND)` where `GLOBAL_BASELINE` = mean FTR across all attributed runs.
-  (So the wildcard high-risk rule is scored on `spec_driven`'s FTR across *all* high-risk combos.)
-  Deterministic from current stats ⇒ idempotent, bounded, self-correcting.
+  `new_priority = base_priority + clamp(round(REWEIGHT_K * (ftr_rate - REWEIGHT_TARGET_FTR)),
+  -REWEIGHT_BOUND, +REWEIGHT_BOUND)` where `REWEIGHT_TARGET_FTR = 0.5` (a fixed neutral midpoint —
+  robust + degeneracy-free; only relative order matters to the resolver). (So the wildcard high-risk
+  rule is scored on `spec_driven`'s FTR across *all* high-risk combos.) Deterministic from current
+  stats ⇒ idempotent, bounded, self-correcting.
 - **Propose (new mapping):** for an axes-combo where the **best** playbook `b` ≠ the recommended one
   `r`, and `b.n>=MIN_SAMPLE` and `b.ftr_rate - r.ftr_rate >= FTR_DELTA`: emit a `LearnedRule`
   (match = the exact combo, `playbook=b`, `priority` = the combo's current top priority + 1,
@@ -172,4 +173,4 @@ thresholds (constants now); a `reject` verb (leave-disabled suffices).
 
 - Exact analyzer global-pass registration point + task enum variant name — pin against
   `analyzer_scheduler.rs`'s existing global-pass set (`AggregateCorrections`, …) in the plan.
-- `GLOBAL_BASELINE` recomputed each pass vs a rolling value — start recomputed (simplest, idempotent).
+- `REWEIGHT_TARGET_FTR` is a fixed 0.5 midpoint (org-tunable later); revisit if domains show a systematically low/high baseline FTR where a data-relative baseline would differentiate better.
