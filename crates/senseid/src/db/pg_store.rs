@@ -8889,19 +8889,26 @@ impl PgStore {
         }).collect())
     }
 
+    /// `classified_by` records how the axes were derived (e.g. "manual",
+    /// a gateway model id, or "heuristic-fallback") and `model_fallback`
+    /// flags whether the local-model path fell back to the heuristic —
+    /// both feed the §9 measurement of local-model usefulness.
     #[allow(clippy::too_many_arguments)]
     pub async fn insert_playbook_run(
         &self, session_id: Option<uuid::Uuid>, feature: Option<&str>,
         lifecycle: &str, intent: &str, risk: &str,
         rule_id: Option<uuid::Uuid>, playbook: &str, rationale: &str, confirmed: bool,
+        classified_by: Option<&str>, model_fallback: bool,
     ) -> Result<uuid::Uuid, String> {
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.playbook_run
-               (session_id, feature, lifecycle, intent, risk, rule_id, playbook, rationale, confirmed)
-             VALUES ($1,$2,$3::sensei.chunk_lifecycle,$4::sensei.chunk_intent,$5::sensei.chunk_risk,$6,$7,$8,$9)
+               (session_id, feature, lifecycle, intent, risk, rule_id, playbook, rationale, confirmed,
+                classified_by, model_fallback)
+             VALUES ($1,$2,$3::sensei.chunk_lifecycle,$4::sensei.chunk_intent,$5::sensei.chunk_risk,$6,$7,$8,$9,$10,$11)
              RETURNING id"
         ).bind(session_id).bind(feature).bind(lifecycle).bind(intent).bind(risk)
          .bind(rule_id).bind(playbook).bind(rationale).bind(confirmed)
+         .bind(classified_by).bind(model_fallback)
          .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(row.0)
     }
@@ -13065,6 +13072,7 @@ mod playbook_tests {
         let run_id = pg.insert_playbook_run(
             None, None, "greenfield", "feature", "high",
             None, "spec_driven", "hi", true,
+            Some("manual"), false,
         ).await.unwrap();
 
         let row: (String, String, String, String, bool) = sqlx_core::query_as::query_as(
