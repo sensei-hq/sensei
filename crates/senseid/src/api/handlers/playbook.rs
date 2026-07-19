@@ -70,7 +70,7 @@ pub(crate) async fn recommend_playbook(
     let rec = recommend(&axes, &rules);
 
     // Persist the run (recommend-and-confirm defaults confirmed=false until the caller confirms).
-    let confirmed = body["confirm"].as_bool().unwrap_or(false);
+    let confirmed = parse_confirm(&body["confirm"]);
     let session_id = body["session_id"].as_str().and_then(|s| s.parse().ok());
     if let Err(e) = state
         .pg
@@ -228,6 +228,15 @@ fn parse_axes_response(content: &str) -> Option<Axes> {
     Some(Axes { lifecycle, intent, risk })
 }
 
+/// Accept `confirm` as a JSON bool OR the string "true" (case-insensitive). The MCP tool
+/// forwards `confirm` as a string; direct HTTP/app callers may send a real bool. Without
+/// this coercion the string form silently read as `false` and never recorded a confirmed run.
+fn parse_confirm(v: &serde_json::Value) -> bool {
+    v.as_bool()
+        .or_else(|| v.as_str().map(|s| s.eq_ignore_ascii_case("true")))
+        .unwrap_or(false)
+}
+
 #[cfg(test)]
 mod classify_tests {
     use super::*;
@@ -243,5 +252,17 @@ mod classify_tests {
     fn heuristic_high_blast() {
         let a = heuristic_axes("rename the session store used everywhere", true, 40);
         assert_eq!(a.risk.as_str(), "high");
+    }
+
+    #[test]
+    fn confirm_accepts_bool_and_string() {
+        use serde_json::json;
+        // MCP tool sends the string form; direct callers may send a real bool.
+        assert!(parse_confirm(&json!(true)));
+        assert!(parse_confirm(&json!("true")));
+        assert!(parse_confirm(&json!("TRUE")));
+        assert!(!parse_confirm(&json!("false")));
+        assert!(!parse_confirm(&json!(false)));
+        assert!(!parse_confirm(&serde_json::Value::Null));
     }
 }
