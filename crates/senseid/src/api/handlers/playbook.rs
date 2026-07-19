@@ -237,6 +237,29 @@ fn parse_confirm(v: &serde_json::Value) -> bool {
         .unwrap_or(false)
 }
 
+/// GET /api/playbook/rule-proposals -> { proposals: [...] }
+///
+/// Pending §9 learned-rule proposals (`source='learned' AND NOT enabled`) — the
+/// accept-path list an operator reviews before promoting one into the resolver.
+pub(crate) async fn list_rule_proposals(State(state): State<AppState>) -> Json<serde_json::Value> {
+    Json(serde_json::json!({ "proposals": state.pg.list_playbook_rule_proposals().await.unwrap_or_default() }))
+}
+
+/// POST /api/playbook/rule/{id}/accept -> { accepted: id } | { error: ... }
+///
+/// Flips a §9 learned-rule proposal `enabled=true`, making it visible to the
+/// resolver's `list_playbook_rules`.
+pub(crate) async fn accept_rule(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Json<serde_json::Value> {
+    let uid = match id.parse() { Ok(u) => u, Err(_) => return Json(serde_json::json!({"error":"invalid id"})) };
+    match state.pg.accept_playbook_rule(&uid).await {
+        Ok(()) => Json(serde_json::json!({"accepted": id})),
+        Err(e) => Json(serde_json::json!({"error": e})),
+    }
+}
+
 #[cfg(test)]
 mod classify_tests {
     use super::*;
