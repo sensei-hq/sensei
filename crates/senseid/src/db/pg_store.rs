@@ -8861,6 +8861,18 @@ impl PgStore {
         })).collect())
     }
 
+    /// Fetch a single playbook by name (any enabled state), for enriching a
+    /// recommendation response with its `opening_tone` + `when_to_use`.
+    pub async fn get_playbook(&self, name: &str) -> Result<Option<serde_json::Value>, String> {
+        let row: Option<(String, String, String, String, Option<String>)> = sqlx_core::query_as::query_as(
+            "SELECT name, title, when_to_use, opening_tone, method_ref
+               FROM sensei.playbooks WHERE name = $1"
+        ).bind(name).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.map(|(name, title, wtu, tone, mref)| serde_json::json!({
+            "name": name, "title": title, "when_to_use": wtu, "opening_tone": tone, "method_ref": mref
+        })))
+    }
+
     pub async fn list_intake_guide(&self) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(String, Option<String>, String, Option<String>)> = sqlx_core::query_as::query_as(
             "SELECT kind, axis, prompt, help FROM sensei.intake_guide WHERE enabled
@@ -13083,5 +13095,16 @@ mod playbook_tests {
 
         sqlx_core::query::query("DELETE FROM sensei.playbook_run WHERE id = $1")
             .bind(run_id).execute(&pg.pool).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn get_playbook_tone() {
+        let Ok(pg) = PgStore::connect_test().await else { return; };
+
+        let pb = pg.get_playbook("debug_flow").await.unwrap().unwrap();
+        assert_eq!(pb["name"], "debug_flow");
+        assert!(!pb["opening_tone"].as_str().unwrap().is_empty());
+
+        assert!(pg.get_playbook("_test:no_such_playbook").await.unwrap().is_none());
     }
 }

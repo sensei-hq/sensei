@@ -218,6 +218,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/runs", get(runs::list_runs).post(runs::create_run))
         .route("/api/runs/{id}", get(runs::get_run))
         // Front-door intake: axes -> playbook recommendation
+        .route("/api/playbook/guide", get(playbook::get_intake_guide))
         .route("/api/playbook/recommend", post(playbook::recommend_playbook))
         // Patterns
         .route("/api/patterns/{project}/detect", post(codebase::detect_patterns))
