@@ -1,0 +1,6 @@
+{"name":"clear + high blast-radius","match_lifecycle":"","match_intent":"","match_risk":"high","playbook":"spec_driven","rationale":"High blast-radius — force a deep design before code.","priority":100}
+{"name":"greenfield, objective fuzzy","match_lifecycle":"greenfield","match_intent":"explore","match_risk":"","playbook":"vibe","rationale":"Greenfield with a fuzzy objective — spike to learn.","priority":60}
+{"name":"greenfield, UX-heavy","match_lifecycle":"greenfield","match_intent":"ux","match_risk":"","playbook":"mockup_first","rationale":"Greenfield and UX-heavy — design the surface first.","priority":60}
+{"name":"stable product, bug","match_lifecycle":"stable","match_intent":"bug","match_risk":"","playbook":"debug_flow","rationale":"A bug in a stable product — reproduce, fix, regress.","priority":60}
+{"name":"stable product, enhancement","match_lifecycle":"stable","match_intent":"enhancement","match_risk":"","playbook":"change_flow","rationale":"Enhancing a stable product — impact-analyse first.","priority":50}
+{"name":"known feature, low risk","match_lifecycle":"","match_intent":"feature","match_risk":"low","playbook":"gsd","rationale":"Known low-risk feature — lean plan then build.","priority":40}
