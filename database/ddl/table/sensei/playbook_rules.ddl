@@ -8,9 +8,13 @@ create table if not exists playbook_rules (
 , playbook         text            not null references sensei.playbooks(name)
 , rationale        text            not null
 , priority         integer         not null
+, base_priority   integer
 , enabled          boolean         not null default true
 , source           text            not null default 'builtin'
 , created_at       timestamptz     not null default now()
 , constraint playbook_rules_source_chk check (source in ('builtin','org','learned'))
 );
 create index if not exists playbook_rules_match_idx on playbook_rules(enabled, priority desc);
+create unique index if not exists playbook_rules_learned_uq
+    on playbook_rules(match_lifecycle, match_intent, match_risk, playbook)
+    where source = 'learned';
