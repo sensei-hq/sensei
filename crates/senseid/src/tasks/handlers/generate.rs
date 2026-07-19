@@ -502,6 +502,14 @@ mod tests {
         assert_eq!(category.as_deref(), Some("convention"));
         assert_eq!(origin, "learned");
 
+        // The analyzer's real write path anchors it: category/mtype="convention"
+        // → default_slot → "design" (project scope, so no feature).
+        let anchor: (Option<String>, Option<String>) = sqlx_core::query_as::query_as(
+            "SELECT spine_slot::text, feature FROM sensei.memories WHERE source_id = $1"
+        ).bind(pat_id).fetch_one(pg.pool()).await.unwrap();
+        assert_eq!(anchor.0.as_deref(), Some("design"), "analyzer memory self-anchors into the design slot");
+        assert_eq!(anchor.1, None, "analyzer memories are project-scope — no feature");
+
         // Second run: idempotent — nothing new.
         let again = generate_for_project(&ctx, &pid).await.unwrap();
         assert_eq!(again, 0, "re-run must not duplicate");
