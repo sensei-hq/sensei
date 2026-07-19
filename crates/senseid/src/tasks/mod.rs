@@ -95,6 +95,13 @@ pub enum TaskKind {
     /// fallback→warm text transition, no inference on the wire. Idempotent
     /// (cached recs skipped) and bounded per tick; enqueued each analyzer tick.
     WarmInsightCopy,
+    /// Global: §9 learning loop — attribute confirmed `playbook_run`s' outcomes
+    /// from `activity.sessions`, aggregate per-(axes×playbook) FTR stats, run the
+    /// pure `crate::playbook::learn` policy (bounded reweight + propose), and
+    /// apply the plan (UPDATE priorities off `base_priority`; UPSERT
+    /// `source='learned', enabled=false` proposals). Idempotent; enqueued once
+    /// per scheduler tick alongside the other global passes.
+    LearnPlaybooks,
     /// Relay segment-publish (A2): project a session's latest `TodoWrite` into
     /// the relay outline and push it to every enrolled Dōjō. The assistant
     /// `session_id` is carried in `task.path` (and used directly as the relay
@@ -138,6 +145,7 @@ impl std::fmt::Display for TaskKind {
             Self::ClassifyPendingVerdicts => write!(f, "classify_pending_verdicts"),
             Self::ConsolidateGovernance => write!(f, "consolidate_governance"),
             Self::WarmInsightCopy => write!(f, "warm_insight_copy"),
+            Self::LearnPlaybooks => write!(f, "learn_playbooks"),
             Self::PublishRelaySegments => write!(f, "publish_relay_segments"),
             Self::AdvanceRun => write!(f, "advance_run"),
         }
@@ -178,7 +186,12 @@ impl TaskKind {
             // multi-row insert — well under a minute in practice, but keep
             // the same 3-minute budget as the other analyzer touch-ups so a
             // pathological corpus doesn't wedge the queue.
-            | TaskKind::AggregateToolInsights => Duration::from_secs(180),
+            | TaskKind::AggregateToolInsights
+            // Learning-loop pass: one UPDATE join + one GROUP BY aggregate +
+            // a bounded number of UPDATE/UPSERT statements off the (small)
+            // playbook_rules table — same order of cost as the tool-insights
+            // snapshot.
+            | TaskKind::LearnPlaybooks => Duration::from_secs(180),
             // Whole-repo, barrier, embedding and network-bound doc-indexing
             // tasks can legitimately run for minutes on a large repository.
             TaskKind::ScanRoot
@@ -385,6 +398,7 @@ mod tests {
             TaskKind::BackfillTranscriptFile, TaskKind::AggregateCorrections,
             TaskKind::AggregateToolInsights, TaskKind::ClassifyPendingVerdicts,
             TaskKind::ConsolidateGovernance, TaskKind::WarmInsightCopy,
+            TaskKind::LearnPlaybooks,
             TaskKind::PublishRelaySegments, TaskKind::AdvanceRun,
         ] {
             assert!(k.watchdog_timeout().as_secs() > 0, "{k} must have a positive cap");
