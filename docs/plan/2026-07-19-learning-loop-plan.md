@@ -168,6 +168,7 @@ const MIN_SAMPLE: i64 = 5;
 const FTR_DELTA: f64 = 0.2;
 const REWEIGHT_K: f64 = 40.0;
 const REWEIGHT_BOUND: i32 = 20;
+const REWEIGHT_TARGET_FTR: f64 = 0.5; // neutral FTR midpoint the reweight measures against
 
 #[derive(Clone, Debug)]
 pub struct ComboPlaybookStat {
@@ -197,14 +198,10 @@ fn stat_matches_rule(s: &ComboPlaybookStat, r: &Rule) -> bool {
 /// bounded priority reweights (existing rules) + proposed new learned rules.
 pub fn learn(stats: &[ComboPlaybookStat], rules: &[Rule]) -> LearnPlan {
     let mut plan = LearnPlan::default();
-    let total_n: i64 = stats.iter().map(|s| s.n).sum();
-    if total_n == 0 {
-        return plan;
-    }
-    let global_baseline: f64 =
-        stats.iter().map(|s| s.ftr_rate * s.n as f64).sum::<f64>() / total_n as f64;
 
-    // Reweight: each rule scored on its playbook's FTR across the combos it matches.
+    // Reweight: each rule scored on its playbook's FTR across the combos it matches,
+    // measured against a fixed neutral target (REWEIGHT_TARGET_FTR) — robust and
+    // degeneracy-free (no dependence on the mix of other data).
     for r in rules {
         let matching: Vec<&ComboPlaybookStat> =
             stats.iter().filter(|s| s.playbook == r.playbook && stat_matches_rule(s, r)).collect();
@@ -213,7 +210,7 @@ pub fn learn(stats: &[ComboPlaybookStat], rules: &[Rule]) -> LearnPlan {
             continue;
         }
         let ftr = matching.iter().map(|s| s.ftr_rate * s.n as f64).sum::<f64>() / n as f64;
-        let adj = ((REWEIGHT_K * (ftr - global_baseline)).round() as i32)
+        let adj = ((REWEIGHT_K * (ftr - REWEIGHT_TARGET_FTR)).round() as i32)
             .clamp(-REWEIGHT_BOUND, REWEIGHT_BOUND);
         let new_priority = r.base_priority + adj;
         if let Some(id) = r.id {
