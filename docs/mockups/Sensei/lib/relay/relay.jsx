@@ -38,13 +38,13 @@ const Lock = ({ s = 16, c = R.ink2 }) => (
     <path d="M4 7V5a3.5 3.5 0 0 1 7 0v2" stroke={c} strokeWidth="1.6"/>
   </svg>
 );
-const Check = ({ s = 12, c = '#fff', w = 1.9 }) => (
+const Check = ({ s = 12, c = 'var(--paper)', w = 1.9 }) => (
   <svg width={s} height={s} viewBox="0 0 13 13"><path d="M2.5 7l2.8 2.8L10.5 3.5" stroke={c} strokeWidth={w} fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
 );
 const Chevron = ({ c = R.ink3 }) => (
   <svg width="9" height="15" viewBox="0 0 9 15"><path d="M7 1L1.5 7.5 7 14" stroke={c} strokeWidth="2.2" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
 );
-const ArrowUp = ({ c = '#fff' }) => (
+const ArrowUp = ({ c = 'var(--paper)' }) => (
   <svg width="15" height="15" viewBox="0 0 15 15"><path d="M7.5 13V3M3 7l4.5-4.5L12 7" stroke={c} strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
 );
 const Warn = ({ s = 22, c = R.accent }) => (
@@ -89,7 +89,7 @@ function TaskCard({ task, onOpen }) {
       textAlign: 'left', width: '100%', display: 'block',
       background: blocked ? R.aSoft : R.paper2,
       border: blocked ? '1px solid color-mix(in oklch, var(--accent) 30%, transparent)' : 'var(--hairline)',
-      borderRadius: 20, padding: '15px 16px', opacity: done ? 0.66 : 1, cursor: 'pointer',
+      borderRadius: 20, padding: '16px 16px', opacity: done ? 0.66 : 1, cursor: 'pointer',
     }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <span className="mono" style={{ fontSize: 11, letterSpacing: '.3px', color: statusCol, display: 'flex', alignItems: 'center', gap: 7 }}>
@@ -97,7 +97,7 @@ function TaskCard({ task, onOpen }) {
         </span>
         <span className="mono" style={{ fontSize: 12, color: R.ink3 }}>{task.ago}</span>
       </div>
-      <div style={{ fontSize: 17, fontWeight: 600, margin: '9px 0 4px', color: R.ink }}>{task.title}</div>
+      <div style={{ fontSize: 17, fontWeight: 600, margin: '12px 0 4px', color: R.ink }}>{task.title}</div>
       <div style={{ fontSize: 13, fontWeight: 500, color: statusCol, display: 'flex', alignItems: 'center', gap: 6, fontFamily: R.ui }}>
         {done && <Check s={13} c={R.ink3} w={1.8}/>}{task.status}
       </div>
@@ -116,7 +116,7 @@ function RelayDashboard({ dark = false }) {
   return (
     <IOSDevice dark={dark}>
       <Screen pad={60}>
-        <div style={{ padding: '8px 22px 18px' }}>
+        <div style={{ padding: '8px 24px 16px' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <RelayMark/>
             <div style={{ width: 34, height: 34, borderRadius: 17, background: R.paper2, border: 'var(--hairline)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Lock/></div>
@@ -128,7 +128,7 @@ function RelayDashboard({ dark = false }) {
             ))}
           </div>
         </div>
-        <div style={{ flex: 1, overflow: 'auto', padding: '2px 16px 34px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div style={{ flex: 1, overflow: 'auto', padding: '4px 16px 32px', display: 'flex', flexDirection: 'column', gap: 12 }}>
           {tasks.map((t, i) => <TaskCard key={i} task={t}/>)}
         </div>
       </Screen>
@@ -152,27 +152,27 @@ function TimelineRow({ time, live, block, children }) {
 }
 
 function RelayTaskDetail({ dark = false }) {
-  const chip = { fontFamily: R.mono, fontSize: 12, background: R.paper3, padding: '3px 7px', borderRadius: 6 };
+  const chip = { fontFamily: R.mono, fontSize: 12, background: R.paper3, padding: '4px 8px', borderRadius: 6 };
   return (
     <IOSDevice dark={dark}>
       <Screen pad={56}>
-        <div style={{ padding: '8px 20px 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={{ padding: '8px 24px 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <Backbtn/>
           <span className="mono" style={{ fontSize: 12, color: R.ink3 }}>macbook-pro · Claude · 4m</span>
         </div>
-        <div style={{ padding: '12px 22px 6px' }}>
+        <div style={{ padding: '12px 24px 8px' }}>
           <div style={{ fontFamily: R.disp, fontSize: 24, fontWeight: 400, letterSpacing: '-.01em', color: R.ink }}>Refactor auth module</div>
           <div style={{ fontSize: 13, fontWeight: 600, color: R.accent, marginTop: 8, display: 'flex', alignItems: 'center', gap: 7 }}><span style={{ width: 8, height: 8, borderRadius: '50%', background: R.accent }}/>Blocked — waiting for your approval</div>
         </div>
 
-        <div style={{ flex: 1, overflow: 'auto', padding: '10px 22px 20px' }}>
+        <div style={{ flex: 1, overflow: 'auto', padding: '12px 24px 24px' }}>
           {/* stages */}
           <div className="zs-eyebrow" style={{ marginBottom: 10 }}>Plan · 4 of 6</div>
           <div style={{ background: R.paper2, border: 'var(--hairline)', borderRadius: 16, padding: '4px 4px', marginBottom: 22 }}>
             {[['Analyze current auth flow','done'],['Draft OAuth schema','done'],['Migrate user model','done'],['Apply DB migration','block'],['Update tests & ship','todo']].map(([label, st], i, a) => {
               const done = st === 'done', block = st === 'block';
               return (
-                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 13, padding: '13px 14px', borderBottom: i < a.length - 1 ? '.5px solid var(--edge)' : 'none', background: block ? R.aSoft : 'transparent', borderRadius: block ? 12 : 0, margin: block ? '2px 4px' : 0 }}>
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 13, padding: '16px 16px', borderBottom: i < a.length - 1 ? '.5px solid var(--edge)' : 'none', background: block ? R.aSoft : 'transparent', borderRadius: block ? 12 : 0, margin: block ? '2px 4px' : 0 }}>
                   <span style={{ width: 22, height: 22, borderRadius: '50%', flexShrink: 0, background: done ? R.ink : 'transparent', border: done ? 'none' : block ? '2.5px solid var(--accent)' : '2px solid color-mix(in oklch, var(--ink) 16%, transparent)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{done && <Check/>}</span>
                   <div style={{ flex: 1 }}>
                     <div style={{ fontSize: 15, fontWeight: block ? 600 : 400, color: done ? R.ink3 : R.ink }}>{label}</div>
@@ -194,12 +194,12 @@ function RelayTaskDetail({ dark = false }) {
         </div>
 
         {/* approval sheet */}
-        <div style={{ padding: '12px 16px 30px', background: 'linear-gradient(180deg, transparent, var(--paper) 34%)' }}>
-          <div style={{ background: R.paper2, border: 'var(--hairline)', borderRadius: 20, padding: '15px 16px', boxShadow: 'var(--shadow)' }}>
+        <div style={{ padding: '12px 16px 32px', background: 'linear-gradient(180deg, transparent, var(--paper) 34%)' }}>
+          <div style={{ background: R.paper2, border: 'var(--hairline)', borderRadius: 20, padding: '16px 16px', boxShadow: 'var(--shadow)' }}>
             <div className="mono" style={{ fontSize: 11, letterSpacing: '.5px', color: R.ink3, marginBottom: 8 }}>RUN ON PRODUCTION DB</div>
-            <div className="mono" style={{ fontSize: 13, background: R.paper3, borderRadius: 10, padding: '10px 12px', color: R.ink }}>psql &lt; 003_add_oauth.sql</div>
+            <div className="mono" style={{ fontSize: 13, background: R.paper3, borderRadius: 10, padding: '12px 12px', color: R.ink }}>psql &lt; 003_add_oauth.sql</div>
             <div style={{ display: 'flex', gap: 9, marginTop: 12 }}>
-              <div style={{ flex: 1, height: 44, borderRadius: 12, background: R.accent, color: '#fff', fontWeight: 600, fontSize: 15, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>Approve</div>
+              <div style={{ flex: 1, height: 44, borderRadius: 12, background: R.accent, color: 'var(--paper)', fontWeight: 600, fontSize: 15, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>Approve</div>
               <div style={{ flex: 1, height: 44, borderRadius: 12, background: R.paper3, color: R.ink2, fontWeight: 600, fontSize: 15, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>Deny</div>
             </div>
           </div>
@@ -215,7 +215,7 @@ function RelayTaskDetail({ dark = false }) {
 function Toggle({ on = true }) {
   return (
     <span style={{ width: 44, height: 26, borderRadius: 13, background: on ? R.jade : R.paper3, border: on ? 'none' : 'var(--hairline)', position: 'relative', flexShrink: 0 }}>
-      <span style={{ position: 'absolute', top: 3, [on ? 'right' : 'left']: 3, width: 20, height: 20, borderRadius: '50%', background: '#fff', boxShadow: '0 1px 2px rgba(0,0,0,.2)' }}/>
+      <span style={{ position: 'absolute', top: 3, [on ? 'right' : 'left']: 3, width: 20, height: 20, borderRadius: '50%', background: 'var(--paper)', boxShadow: 'var(--shadow-sm)' }}/>
     </span>
   );
 }
@@ -224,22 +224,22 @@ function RelayApprove({ dark = false }) {
   return (
     <IOSDevice dark={dark}>
       <Screen pad={56} style={{ paddingBottom: 30 }}>
-        <div style={{ padding: '8px 20px 4px', display: 'flex', justifyContent: 'flex-end' }}>
+        <div style={{ padding: '8px 24px 4px', display: 'flex', justifyContent: 'flex-end' }}>
           <div style={{ width: 34, height: 34, borderRadius: 17, background: R.paper2, border: 'var(--hairline)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <svg width="15" height="15" viewBox="0 0 15 15"><path d="M4 4l7 7M11 4l-7 7" stroke={R.ink3} strokeWidth="2" strokeLinecap="round"/></svg>
           </div>
         </div>
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '0 22px' }}>
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '0 24px' }}>
           <div style={{ width: 48, height: 48, borderRadius: 14, background: R.aSoft, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 18 }}><Warn/></div>
           <div style={{ fontFamily: R.disp, fontSize: 26, fontWeight: 400, letterSpacing: '-.01em', lineHeight: 1.2, color: R.ink }}>The agent wants to run a command</div>
           <div style={{ fontSize: 14, color: R.ink2, marginTop: 8 }}>On <span className="mono" style={{ fontSize: 13 }}>mac-mini</span> · destructive · not reversible</div>
           <div className="mono" style={{ fontSize: 13.5, lineHeight: 1.6, background: R.ink, color: R.paper, borderRadius: 14, padding: 16, marginTop: 18 }}>rm -rf ./dist<br/>npm run build --prod</div>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: R.paper2, border: 'var(--hairline)', borderRadius: 14, padding: '14px 16px', marginTop: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: R.paper2, border: 'var(--hairline)', borderRadius: 14, padding: '16px 16px', marginTop: 12 }}>
             <span style={{ fontSize: 14, fontWeight: 500, color: R.ink }}>Dry-run in a sandbox first</span><Toggle on/>
           </div>
         </div>
-        <div style={{ padding: '16px 22px 0', display: 'flex', flexDirection: 'column', gap: 10 }}>
-          <div style={{ height: 50, borderRadius: 14, background: R.accent, color: '#fff', fontWeight: 600, fontSize: 16, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>Approve &amp; run</div>
+        <div style={{ padding: '16px 24px 0', display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{ height: 50, borderRadius: 14, background: R.accent, color: 'var(--paper)', fontWeight: 600, fontSize: 16, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>Approve &amp; run</div>
           <div style={{ height: 50, borderRadius: 14, background: R.paper3, color: R.ink2, fontWeight: 600, fontSize: 16, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>Reject</div>
         </div>
       </Screen>
@@ -254,20 +254,20 @@ function RelayRespond({ dark = false }) {
   return (
     <IOSDevice dark={dark} keyboard>
       <Screen pad={56} style={{ height: '100%' }}>
-        <div style={{ padding: '8px 20px 12px', display: 'flex', alignItems: 'center', gap: 11, borderBottom: '.5px solid var(--edge)' }}>
+        <div style={{ padding: '8px 24px 12px', display: 'flex', alignItems: 'center', gap: 11, borderBottom: '.5px solid var(--edge)' }}>
           <Backbtn/>
           <div><div style={{ fontSize: 15, fontWeight: 600, color: R.ink }}>Refactor auth module</div><div className="mono" style={{ fontSize: 11, color: R.ink3 }}>macbook-pro · Claude</div></div>
         </div>
         <div style={{ flex: 1, overflow: 'auto', padding: '16px 16px 8px', display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <div style={{ alignSelf: 'flex-start', maxWidth: '82%', background: R.paper2, border: 'var(--hairline)', borderRadius: '18px 18px 18px 5px', padding: '11px 14px', fontSize: 14, lineHeight: 1.45, color: R.ink }}>I need to pick a migration strategy. Which do you want?</div>
+          <div style={{ alignSelf: 'flex-start', maxWidth: '82%', background: R.paper2, border: 'var(--hairline)', borderRadius: '18px 18px 18px 5px', padding: '12px 16px', fontSize: 14, lineHeight: 1.45, color: R.ink }}>I need to pick a migration strategy. Which do you want?</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <div style={{ background: R.paper2, border: 'var(--hairline)', borderRadius: 13, padding: '12px 14px', fontSize: 14, fontWeight: 600, color: R.ink }}>Additive &amp; reversible <span style={{ fontWeight: 400, color: R.ink3 }}>· safest</span></div>
-            <div style={{ background: R.paper2, border: 'var(--hairline)', borderRadius: 13, padding: '12px 14px', fontSize: 14, fontWeight: 600, color: R.ink }}>In-place rewrite <span style={{ fontWeight: 400, color: R.ink3 }}>· faster</span></div>
+            <div style={{ background: R.paper2, border: 'var(--hairline)', borderRadius: 13, padding: '12px 16px', fontSize: 14, fontWeight: 600, color: R.ink }}>Additive &amp; reversible <span style={{ fontWeight: 400, color: R.ink3 }}>· safest</span></div>
+            <div style={{ background: R.paper2, border: 'var(--hairline)', borderRadius: 13, padding: '12px 16px', fontSize: 14, fontWeight: 600, color: R.ink }}>In-place rewrite <span style={{ fontWeight: 400, color: R.ink3 }}>· faster</span></div>
           </div>
-          <div style={{ alignSelf: 'flex-end', maxWidth: '82%', background: R.accent, color: '#fff', borderRadius: '18px 18px 5px 18px', padding: '11px 14px', fontSize: 14, lineHeight: 1.45 }}>Go additive. Keep the old columns for a week.</div>
-          <div style={{ alignSelf: 'flex-start', maxWidth: '82%', background: R.paper2, border: 'var(--hairline)', borderRadius: '18px 18px 18px 5px', padding: '11px 14px', fontSize: 14, lineHeight: 1.45, color: R.ink }}>Got it — resuming with an additive migration.</div>
+          <div style={{ alignSelf: 'flex-end', maxWidth: '82%', background: R.accent, color: 'var(--paper)', borderRadius: '18px 18px 5px 18px', padding: '12px 16px', fontSize: 14, lineHeight: 1.45 }}>Go additive. Keep the old columns for a week.</div>
+          <div style={{ alignSelf: 'flex-start', maxWidth: '82%', background: R.paper2, border: 'var(--hairline)', borderRadius: '18px 18px 18px 5px', padding: '12px 16px', fontSize: 14, lineHeight: 1.45, color: R.ink }}>Got it — resuming with an additive migration.</div>
         </div>
-        <div style={{ padding: '6px 14px 8px' }}>
+        <div style={{ padding: '8px 16px 8px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, background: R.paper2, border: 'var(--hairline)', borderRadius: 22, padding: '8px 8px 8px 16px' }}>
             <span style={{ flex: 1, fontSize: 15, color: R.ink3 }}>Message the agent…</span>
             <div style={{ width: 32, height: 32, borderRadius: 16, background: R.accent, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><ArrowUp/></div>
@@ -283,7 +283,7 @@ function RelayRespond({ dark = false }) {
 // ═══════════════════════════════════════════════════════════════════
 function PermRow({ label, on, last }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 16px', borderBottom: last ? 'none' : '.5px solid var(--edge)' }}>
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 16px', borderBottom: last ? 'none' : '.5px solid var(--edge)' }}>
       <span style={{ fontSize: 15, color: R.ink }}>{label}</span><Toggle on={on}/>
     </div>
   );
@@ -293,9 +293,9 @@ function RelaySecurity({ dark = false }) {
   return (
     <IOSDevice dark={dark}>
       <Screen pad={56}>
-        <div style={{ padding: '8px 20px 0', display: 'flex', alignItems: 'center' }}><Backbtn/></div>
-        <div style={{ padding: '12px 22px 6px' }}><div style={{ fontFamily: R.disp, fontSize: 26, fontWeight: 400, letterSpacing: '-.02em', color: R.ink }}>Security</div></div>
-        <div style={{ flex: 1, overflow: 'auto', padding: '10px 16px 34px', display: 'flex', flexDirection: 'column', gap: 18 }}>
+        <div style={{ padding: '8px 24px 0', display: 'flex', alignItems: 'center' }}><Backbtn/></div>
+        <div style={{ padding: '12px 24px 8px' }}><div style={{ fontFamily: R.disp, fontSize: 26, fontWeight: 400, letterSpacing: '-.02em', color: R.ink }}>Security</div></div>
+        <div style={{ flex: 1, overflow: 'auto', padding: '12px 16px 32px', display: 'flex', flexDirection: 'column', gap: 18 }}>
 
           <div style={{ background: R.ink, borderRadius: 20, padding: 18, color: R.paper }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 11 }}>
@@ -337,18 +337,18 @@ function RelayPairing({ dark = false }) {
   return (
     <IOSDevice dark={dark}>
       <Screen pad={64} style={{ paddingBottom: 30 }}>
-        <div style={{ padding: '8px 22px 0' }}><RelayMark/></div>
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '0 26px', textAlign: 'center', alignItems: 'center' }}>
+        <div style={{ padding: '8px 24px 0' }}><RelayMark/></div>
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '0 24px', textAlign: 'center', alignItems: 'center' }}>
           <div style={{ fontFamily: R.disp, fontSize: 26, fontWeight: 400, letterSpacing: '-.02em', lineHeight: 1.25, color: R.ink }}>Pair your Mac</div>
           <div style={{ fontSize: 14, color: R.ink2, marginTop: 8, lineHeight: 1.5 }}>On your machine, run the command below.<br/>Nothing leaves your Mac until it matches this code.</div>
 
-          <div style={{ margin: '26px 0', display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 10, width: '100%' }}>
+          <div style={{ margin: '24px 0', display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 10, width: '100%' }}>
             {['7','2','9','4','1','6'].map((d, i) => (
               <div key={i} style={{ aspectRatio: '1', borderRadius: 16, background: R.paper2, border: 'var(--hairline)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: R.disp, fontSize: 34, color: R.ink }}>{d}</div>
             ))}
           </div>
 
-          <div className="mono" style={{ fontSize: 13, background: R.ink, color: R.paper, borderRadius: 12, padding: '12px 14px', width: '100%', boxSizing: 'border-box' }}>$ sensei relay pair</div>
+          <div className="mono" style={{ fontSize: 13, background: R.ink, color: R.paper, borderRadius: 12, padding: '12px 16px', width: '100%', boxSizing: 'border-box' }}>$ sensei relay pair</div>
           <div style={{ fontSize: 12, color: R.ink3, marginTop: 14, display: 'flex', alignItems: 'center', gap: 8 }}><span style={{ width: 7, height: 7, borderRadius: '50%', background: R.jade, animation: 'relayPulse 2s infinite' }}/>Waiting for macbook-pro…</div>
         </div>
       </Screen>

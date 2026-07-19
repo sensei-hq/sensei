@@ -48,7 +48,7 @@ function InappJoin({ onContinue }) {
   return (
     <InappFrame label="First run · join your org" title="Sensei  先生  ·  first run">
       <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: "var(--space-6)" }}>
-        <div style={{ width: 560, background: "var(--paper-soft)", border: "var(--hairline)", borderRadius: "var(--radius-full)",
+        <div style={{ width: 560, background: "var(--paper-soft)", border: "var(--hairline)", borderRadius: "var(--radius-lg)",
                       padding: "var(--space-6) var(--space-6)", textAlign: "center", boxShadow: "var(--shadow)" }}>
           <div style={{ position: "relative", height: 64, marginBottom: "var(--space-2)" }}>
             <span className="kanji" style={{ fontSize: "var(--text-4xl)", color: "var(--accent)", lineHeight: 1 }}>結</span>

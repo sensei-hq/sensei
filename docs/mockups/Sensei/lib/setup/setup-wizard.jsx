@@ -246,7 +246,7 @@ function WizRail({ stages, stageIdx, setStageIdx, onExit, freeNav = false, railT
             Everything Sensei can be told — search or browse.
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'var(--paper)',
-                        border: 'var(--hairline)', borderRadius: 6, padding: '6px 8px' }} className="mb-3" >
+                        border: 'var(--hairline)', borderRadius: 6, padding: '8px 8px' }} className="mb-3" >
             <span className="kanji" style={{ fontSize: 11, color: 'var(--ink-3)' }}>探</span>
             <input value={q} onChange={e => setQ(e.target.value)}
                    placeholder="search settings…"
@@ -291,7 +291,7 @@ function WizRail({ stages, stageIdx, setStageIdx, onExit, freeNav = false, railT
                   <span style={{ fontSize: 13 }}>{s.title}</span>
                   {freeNav && !ql && REVIEW.has(s.id) && (
                     <span className="mono" style={{ fontSize: 9, letterSpacing: '0.06em', textTransform: 'uppercase',
-                          color: 'var(--accent)', background: 'var(--accent-soft)', borderRadius: 10, padding: '1px 5px' }}>review</span>
+                          color: 'var(--accent)', background: 'var(--accent-soft)', borderRadius: 10, padding: '4px 8px' }}>review</span>
                   )}
                 </div>
                 {isCur && (
@@ -1577,7 +1577,7 @@ function WizProjects({ state, upd }) {
                         position: 'absolute', top: 'calc(100% + 4px)', left: 0, zIndex: 10,
                         minWidth: 220,
                         background: 'var(--paper)', border: 'var(--hairline)', borderRadius: 6,
-                        boxShadow: '0 4px 16px rgba(0,0,0,0.08)',
+                        boxShadow: 'var(--shadow)',
                         animation: 'expandIn .15s ease-out'
 }} className="p-1" >
                         <div style={{
@@ -2310,7 +2310,7 @@ function WizPreferences({ state, upd }) {
                        width: 16, height: 16, borderRadius: '50%',
                        background: 'var(--paper)',
                        transition: 'left 0.18s ease',
-                       boxShadow: '0 1px 3px rgba(0,0,0,0.18)' }}/>
+                       boxShadow: 'var(--shadow-sm)' }}/>
     </button>
   );
   const Segment = ({ value, onChange, options }) => (

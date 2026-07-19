@@ -382,7 +382,7 @@ function ObsNegativeAlert() {
         </div>
         <button style={{
  fontSize: 11, color: 'var(--paper)',
-                          background: 'rgba(255,255,255,0.15)', border: 'none', borderRadius: 4, cursor: 'pointer'
+                          background: 'var(--on-primary-faint)', border: 'none', borderRadius: 4, cursor: 'pointer'
 }} className="py-1 px-3" >
           dismiss
         </button>

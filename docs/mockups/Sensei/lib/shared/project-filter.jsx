@@ -122,7 +122,7 @@ function ProjectFilter({
             [align === 'right' ? 'right' : 'left']: 0,
             width: 240, background: 'var(--paper)',
             border: 'var(--hairline)', borderRadius: 6,
-            boxShadow: '0 6px 18px rgba(0,0,0,0.06)', zIndex: 30, maxHeight: 240, overflow: 'auto'
+            boxShadow: 'var(--shadow)', zIndex: 30, maxHeight: 240, overflow: 'auto'
 }} className="p-1" >
             {matches.length === 0 && (
               <div style={{

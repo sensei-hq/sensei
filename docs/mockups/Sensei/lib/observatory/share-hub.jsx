@@ -65,7 +65,7 @@ function ShbMini({ n, l, accent, mono }) {
 function ShbFlat({ glyph, label, subtle, onClick }) {
   return (
     <button onClick={onClick} style={{ fontSize: 13, background: "transparent", border: "none", cursor: "pointer",
-          color: subtle ? "var(--ink-4)" : "var(--ink-2)", display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 10px" }}>
+          color: subtle ? "var(--ink-4)" : "var(--ink-2)", display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 12px" }}>
       {glyph && <span className="kanji" style={{ fontSize: 13, color: "var(--ink-3)" }}>{glyph}</span>}{label}
     </button>
   );
@@ -77,10 +77,10 @@ function ShbSeg({ options, value, onChange }) {
         const on = value === o.id;
         return (
           <button key={o.id} onClick={() => onChange(o.id)} style={{
-            border: "none", cursor: "pointer", borderRadius: 6, padding: "6px 12px",
+            border: "none", cursor: "pointer", borderRadius: 6, padding: "8px 12px",
             fontSize: 12.5, fontWeight: on ? 600 : 400, display: "inline-flex", alignItems: "center", gap: 6,
             background: on ? "var(--paper)" : "transparent", color: on ? "var(--ink)" : "var(--ink-3)",
-            boxShadow: on ? "0 1px 2px rgba(0,0,0,0.08)" : "none",
+            boxShadow: on ? "var(--shadow-sm)" : "none",
           }}>
             {o.kanji && <span className="kanji" style={{ fontSize: 14, color: on ? (o.color || "var(--accent)") : "var(--ink-4)" }}>{o.kanji}</span>}
             {o.label}
@@ -107,7 +107,7 @@ function SrcBadge({ src, small }) {
 function ScopePill({ label }) {
   return (
     <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10.5, color: "var(--ink-3)",
-          background: "var(--paper-3)", border: "var(--hairline)", borderRadius: 999, padding: "2px 8px", whiteSpace: "nowrap" }}>
+          background: "var(--paper-3)", border: "var(--hairline)", borderRadius: 999, padding: "4px 8px", whiteSpace: "nowrap" }}>
       <span className="kanji" style={{ fontSize: 11, color: "var(--ink-4)" }}>及</span>{label}
     </span>
   );
