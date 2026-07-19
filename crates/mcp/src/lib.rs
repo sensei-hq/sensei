@@ -239,6 +239,13 @@ pub fn daemon_request_for(
             Some(DaemonRequest::post_json("/api/playbook/recommend", body))
         }
 
+        // ── §9 learning loop: accept path ────────────────────────────────────
+        "list_playbook_rule_proposals" => Some(DaemonRequest::get("/api/playbook/rule-proposals")),
+        "accept_playbook_rule" => {
+            let id = args["id"].as_str().unwrap_or("");
+            Some(DaemonRequest::post_json(format!("/api/playbook/rule/{id}/accept"), json!({})))
+        }
+
         // ── Everything else → the daemon mcp proxy ──────────────────────────
         _ => {
             let params = build_daemon_params(args, repo_id);
@@ -563,6 +570,16 @@ pub fn handle_list_tools() -> Value {
                     ("feature",    "string", "feature slug when the chunk maps to a dossier"),
                     ("confirm",    "string", "true to record the run as confirmed"),
                 ]),
+            // ── §9 learning loop: accept path ─────────────────────────────────
+            tool("list_playbook_rule_proposals",
+                "List pending §9 learned-rule proposals (source='learned', not yet enabled) — new \
+                 playbook rules the learning loop proposed from observed FTR outcomes. Review before accepting.",
+                &[],
+                &[]),
+            tool("accept_playbook_rule",
+                "Accept a §9 learned-rule proposal, flipping it enabled so the recommender starts using it.",
+                &[("id", "string", "The proposal's rule UUID (from list_playbook_rule_proposals)")],
+                &[]),
         ]
     })
 }
@@ -928,6 +945,7 @@ mod tests {
         "propose_memory", "save_memory", "promote_memory", "accept_proposal",
         "reject_proposal", "record_outcome", "get_layered_context",
         "start_run", "run_status", "recommend_playbook", "get_intake_guide",
+        "list_playbook_rule_proposals", "accept_playbook_rule",
     ];
 
     fn tools() -> Vec<Value> {

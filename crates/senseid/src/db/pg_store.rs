@@ -9007,6 +9007,16 @@ impl PgStore {
             "playbook": pb, "rationale": rat, "priority": pri, "created_at": created,
         })).collect())
     }
+
+    /// Accept a §9 learned-rule proposal: flip it `enabled=true` so the resolver's
+    /// `list_playbook_rules` (which filters `WHERE enabled`) picks it up. Scoped to
+    /// `source='learned'` — never flips a builtin/manual rule via this path.
+    pub async fn accept_playbook_rule(&self, id: &uuid::Uuid) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE sensei.playbook_rules SET enabled=true WHERE id=$1 AND source='learned'"
+        ).bind(id).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -13286,5 +13296,19 @@ mod playbook_tests {
         assert!(proposals.iter().any(|p| p["playbook"] == "mockup_first"));
         pg.apply_learn_plan(&plan).await.unwrap();   // idempotent upsert
         assert_eq!(pg.list_playbook_rule_proposals().await.unwrap().iter().filter(|p| p["playbook"]=="mockup_first").count(), 1);
+    }
+
+    #[tokio::test]
+    async fn accept_flips_proposal_enabled() {
+        let Ok(pg) = PgStore::connect_test().await else { return; };
+        use crate::playbook::{LearnPlan, LearnedRule, Lifecycle, Intent, Risk};
+        pg.apply_learn_plan(&LearnPlan { reweights: vec![], proposals: vec![LearnedRule {
+            lifecycle: Lifecycle::Greenfield, intent: Intent::Ux, risk: Risk::High,
+            playbook: "spec_driven".into(), priority: 205, rationale: "t".into() }] }).await.unwrap();
+        let props = pg.list_playbook_rule_proposals().await.unwrap();
+        let id = props.iter().find(|p| p["playbook"]=="spec_driven").unwrap()["id"].as_str().unwrap().to_string();
+        pg.accept_playbook_rule(&id.parse().unwrap()).await.unwrap();
+        // now enabled → visible to the resolver-facing list
+        assert!(pg.list_playbook_rules().await.unwrap().iter().any(|r| r.id == Some(id.parse().unwrap())));
     }
 }
