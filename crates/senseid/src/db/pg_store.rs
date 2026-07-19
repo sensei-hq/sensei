@@ -8897,7 +8897,7 @@ impl PgStore {
             match_lifecycle: lf.as_deref().and_then(Lifecycle::parse),
             match_intent:    it.as_deref().and_then(Intent::parse),
             match_risk:      rk.as_deref().and_then(Risk::parse),
-            playbook: pb, rationale: rat, priority: pri,
+            playbook: pb, rationale: rat, priority: pri, base_priority: pri,
         }).collect())
     }
 
