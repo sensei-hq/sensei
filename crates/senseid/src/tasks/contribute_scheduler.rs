@@ -239,6 +239,7 @@ mod tests {
             content: "Gate merges on a green pipeline before deploy.".into(),
             impact: None, tags: vec![], triage_signal: None, status: "active".into(),
             namespace_id: None, enforcement: None, origin: Some("learned".into()), source_id: None,
+            spine_slot: None, feature: None,
         }).await.unwrap();
         let batch = pg.create_memory_share_batch(&proj, &[mem], None).await.unwrap();
         pg.set_memory_share_batch_status(&batch, "approved", None).await.unwrap();

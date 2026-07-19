@@ -83,6 +83,11 @@ pub struct InsertMemory {
     pub enforcement:   Option<String>, // enforcement enum value; None → DB default 'recommended'
     pub origin:        Option<String>, // None → DB default 'learned'
     pub source_id:     Option<uuid::Uuid>, // provenance: knowledge_sources.id for origin='federated'
+    // Spine anchoring (memory-anchoring design 2026-07-18): which doc-slot this
+    // memory belongs to, and — for feature-scoped slots — which feature. Both
+    // nullable; None/None = unanchored.
+    pub spine_slot:    Option<String>, // sensei.spine_slot enum value
+    pub feature:       Option<String>,
 }
 
 pub struct OutcomeRow {
@@ -1938,13 +1943,14 @@ impl PgStore {
     pub async fn create_memory(
         &self, project_id: Option<&uuid::Uuid>, scope: &str, scope_filter: Option<&str>,
         mem_type: &str, title: &str, content: &str, impact: Option<&str>,
-        session_id: Option<&uuid::Uuid>,
+        session_id: Option<&uuid::Uuid>, spine_slot: Option<&str>, feature: Option<&str>,
     ) -> Result<uuid::Uuid, String> {
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
-            "INSERT INTO sensei.memories(project_id, scope, scope_filter, type, title, content, impact, session_id)
-             VALUES($1, $2::sensei.memory_scope, $3, $4::sensei.memory_type, $5, $6, $7, $8) RETURNING id"
+            "INSERT INTO sensei.memories(project_id, scope, scope_filter, type, title, content, impact, session_id, spine_slot, feature)
+             VALUES($1, $2::sensei.memory_scope, $3, $4::sensei.memory_type, $5, $6, $7, $8, $9::sensei.spine_slot, $10) RETURNING id"
         ).bind(project_id).bind(scope).bind(scope_filter).bind(mem_type)
             .bind(title).bind(content).bind(impact).bind(session_id)
+            .bind(spine_slot).bind(feature)
             .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(row.0)
     }
@@ -6869,11 +6875,12 @@ impl PgStore {
         let id: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.memories
                 (project_id, scope, scope_filter, type, title, content, impact,
-                 tags, triage_signal, status, namespace_id, enforcement, origin, source_id)
+                 tags, triage_signal, status, namespace_id, enforcement, origin, source_id,
+                 spine_slot, feature)
              VALUES ($1, $2::sensei.memory_scope, $3, $4::sensei.memory_type, $5, $6, $7,
                      $8, $9, $10::sensei.memory_status, $11,
                      COALESCE($12::sensei.enforcement, 'recommended'::sensei.enforcement),
-                     COALESCE($13, 'learned'), $14)
+                     COALESCE($13, 'learned'), $14, $15::sensei.spine_slot, $16)
              RETURNING id"
         )
             .bind(m.project_id)
@@ -6881,6 +6888,7 @@ impl PgStore {
             .bind(&m.mtype).bind(&m.title).bind(&m.content).bind(&m.impact)
             .bind(&m.tags).bind(&m.triage_signal).bind(&m.status)
             .bind(m.namespace_id).bind(&m.enforcement).bind(&m.origin).bind(m.source_id)
+            .bind(&m.spine_slot).bind(&m.feature)
             .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(id.0)
     }
@@ -9423,7 +9431,7 @@ mod tests {
     #[tokio::test]
     async fn memory_create_and_get() {
         let s = pg_store().await;
-        let id = s.create_memory(None, "global", None, "decision", "_test:mem_create", "Always use TDD", Some("Bugs ship to prod"), None).await.unwrap();
+        let id = s.create_memory(None, "global", None, "decision", "_test:mem_create", "Always use TDD", Some("Bugs ship to prod"), None, None, None).await.unwrap();
         let m = s.get_memory(&id).await.unwrap().unwrap();
         assert_eq!(m["title"], "_test:mem_create");
         assert_eq!(m["scope"], "global");
@@ -9434,9 +9442,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn create_memory_persists_spine_slot_and_feature() {
+        let s = pg_store().await;
+        let pid = s.create_project(&format!("_test:mem_slot-{}", uuid::Uuid::new_v4()), None, None).await.unwrap();
+        let id = s.create_memory(Some(&pid), "project", None, "decision", "t", "c", None, None,
+            Some("decisions"), Some("auth")).await.unwrap();
+        let row: (Option<String>, Option<String>) = sqlx_core::query_as::query_as(
+            "SELECT spine_slot::text, feature FROM sensei.memories WHERE id = $1"
+        ).bind(id).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(row, (Some("decisions".into()), Some("auth".into())));
+        sqlx_core::query::query("DELETE FROM sensei.memories WHERE id = $1").bind(id).execute(s.pool()).await.unwrap();
+        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1").bind(pid).execute(s.pool()).await.unwrap();
+    }
+
+    #[tokio::test]
     async fn memory_reinforce() {
         let s = pg_store().await;
-        let id = s.create_memory(None, "global", None, "pattern", "_test:mem_reinforce", "rule", None, None).await.unwrap();
+        let id = s.create_memory(None, "global", None, "pattern", "_test:mem_reinforce", "rule", None, None, None, None).await.unwrap();
         s.reinforce_memory(&id, 1.0).await.unwrap();
         s.reinforce_memory(&id, 1.0).await.unwrap();
         let m = s.get_memory(&id).await.unwrap().unwrap();
@@ -9451,7 +9473,7 @@ mod tests {
     #[tokio::test]
     async fn memory_archive() {
         let s = pg_store().await;
-        let id = s.create_memory(None, "global", None, "question", "_test:mem_archive", "open q", None, None).await.unwrap();
+        let id = s.create_memory(None, "global", None, "question", "_test:mem_archive", "open q", None, None, None, None).await.unwrap();
         s.archive_memory(&id).await.unwrap();
         let m = s.get_memory(&id).await.unwrap().unwrap();
         assert_eq!(m["status"], "archived");
@@ -9461,8 +9483,8 @@ mod tests {
     #[tokio::test]
     async fn memory_list_active() {
         let s = pg_store().await;
-        let id1 = s.create_memory(None, "global", None, "decision", "_test:mem_list_a", "rule a", None, None).await.unwrap();
-        let id2 = s.create_memory(None, "global", None, "decision", "_test:mem_list_b", "rule b", None, None).await.unwrap();
+        let id1 = s.create_memory(None, "global", None, "decision", "_test:mem_list_a", "rule a", None, None, None, None).await.unwrap();
+        let id2 = s.create_memory(None, "global", None, "decision", "_test:mem_list_b", "rule b", None, None, None, None).await.unwrap();
         let active = s.list_active_memories(None, Some("global")).await.unwrap();
         assert!(active.iter().any(|m| m["title"] == "_test:mem_list_a"));
         assert!(active.iter().any(|m| m["title"] == "_test:mem_list_b"));
@@ -9474,7 +9496,7 @@ mod tests {
     #[tokio::test]
     async fn memory_example_add_and_list() {
         let s = pg_store().await;
-        let mid = s.create_memory(None, "global", None, "pattern", "_test:mem_ex", "rule", None, None).await.unwrap();
+        let mid = s.create_memory(None, "global", None, "pattern", "_test:mem_ex", "rule", None, None, None, None).await.unwrap();
         s.add_memory_example(&mid, "fn:auth_handler", true, Some("canonical auth")).await.unwrap();
         s.add_memory_example(&mid, "fn:inline_auth", false, Some("avoid inline")).await.unwrap();
         let examples = s.list_memory_examples(&mid).await.unwrap();
@@ -9491,7 +9513,7 @@ mod tests {
         let s = pg_store().await;
         let fid = create_test_folder(&s, &format!("mem_ev_{}", uuid::Uuid::new_v4())).await;
         let sid = s.create_session(&fid, "test", None).await.unwrap();
-        let mid = s.create_memory(None, "global", None, "decision", "_test:mem_ev", "rule", None, None).await.unwrap();
+        let mid = s.create_memory(None, "global", None, "decision", "_test:mem_ev", "rule", None, None, None, None).await.unwrap();
         s.add_memory_evidence(&mid, &sid, Some("user corrected twice")).await.unwrap();
         let evidence = s.list_memory_evidence(&mid).await.unwrap();
         assert_eq!(evidence.len(), 1);
@@ -9504,9 +9526,9 @@ mod tests {
     #[tokio::test]
     async fn memory_links_parent_child() {
         let s = pg_store().await;
-        let parent = s.create_memory(None, "global", None, "decision", "_test:mem_parent", "combined", None, None).await.unwrap();
-        let child1 = s.create_memory(None, "global", None, "decision", "_test:mem_child1", "original 1", None, None).await.unwrap();
-        let child2 = s.create_memory(None, "global", None, "decision", "_test:mem_child2", "original 2", None, None).await.unwrap();
+        let parent = s.create_memory(None, "global", None, "decision", "_test:mem_parent", "combined", None, None, None, None).await.unwrap();
+        let child1 = s.create_memory(None, "global", None, "decision", "_test:mem_child1", "original 1", None, None, None, None).await.unwrap();
+        let child2 = s.create_memory(None, "global", None, "decision", "_test:mem_child2", "original 2", None, None, None, None).await.unwrap();
         s.link_memories(&parent, &child1).await.unwrap();
         s.link_memories(&parent, &child2).await.unwrap();
         let children = s.get_memory_children(&parent).await.unwrap();
@@ -9730,6 +9752,7 @@ mod tests {
             enforcement: None,
             origin: Some("learned".to_string()),
             source_id: Some(pat_id),
+            spine_slot: None, feature: None,
         };
         let mem_id = s.insert_memory(&mem).await.unwrap();
         if strength_bump > 0.0 {
@@ -11880,6 +11903,7 @@ mod tests {
             content: "Use a dedicated migration tool over hand-rolled SQL.".into(),
             impact: None, tags: vec![], triage_signal: None, status: "active".into(),
             namespace_id: None, enforcement: None, origin: Some("learned".into()), source_id: None,
+            spine_slot: None, feature: None,
         }).await.unwrap();
         let batch = pg.create_memory_share_batch(&proj, &[mem], None).await.unwrap();
         pg.set_memory_share_batch_status(&batch, "approved", None).await.unwrap();
@@ -11975,6 +11999,7 @@ mod tests {
             title: item1.title.clone(), content: item1.body.clone(), impact: None,
             tags: vec!["dojo".into()], triage_signal: None, status: "active".into(),
             namespace_id: None, enforcement: Some("recommended".into()), origin: Some("dojo".into()), source_id: None,
+            spine_slot: None, feature: None,
         };
         let memory_id = pg.land_dojo_inbox_memory(item1.id, &mem_input).await.unwrap();
         let (origin,): (String,) = sqlx_core::query_as::query_as(
@@ -12264,17 +12289,24 @@ mod knowledge_tests {
             mtype: "convention".into(), title: "t1".into(), content: "c1".into(),
             impact: None, tags: vec![], triage_signal: None, status: "proposed".into(),
             namespace_id: None, enforcement: None, origin: None, source_id: None,
+            spine_slot: None, feature: None,
         }).await.unwrap();
         let _m2 = pg.insert_memory(&InsertMemory {
             project_id: Some(project_id), scope: "project".into(), scope_filter: None,
             mtype: "convention".into(), title: "t2".into(), content: "c2".into(),
             impact: None, tags: vec![], triage_signal: None, status: "active".into(),
             namespace_id: None, enforcement: None, origin: None, source_id: None,
+            spine_slot: None, feature: None,
         }).await.unwrap();
 
         let proposed = pg.list_memories(Some(project_id), Some("proposed"), None, 50).await.unwrap();
         assert_eq!(proposed.len(), 1);
         assert_eq!(proposed[0]["id"].as_str().unwrap(), m1.to_string());
+
+        // `list-status` is a reused fixture project (ensure_test_project, #34) —
+        // clean up so repeated runs don't accrete proposed rows into the count.
+        sqlx_core::query::query("DELETE FROM sensei.memories WHERE id = ANY($1)")
+            .bind(&[m1, _m2][..]).execute(pg.pool()).await.unwrap();
     }
 
     #[tokio::test]
@@ -12288,6 +12320,7 @@ mod knowledge_tests {
             impact: None, tags: vec![], triage_signal: Some("revert".into()),
             status: "proposed".into(),
             namespace_id: None, enforcement: None, origin: None, source_id: None,
+            spine_slot: None, feature: None,
         }).await.unwrap();
 
         let new_status = pg.set_memory_status(mid, "active", &["proposed"]).await.unwrap();
@@ -12308,6 +12341,7 @@ mod knowledge_tests {
             mtype: "convention".into(), title: "t".into(), content: "c".into(),
             impact: None, tags: vec![], triage_signal: None, status: "active".into(),
             namespace_id: None, enforcement: None, origin: None, source_id: None,
+            spine_slot: None, feature: None,
         }).await.unwrap();
         let skipped = pg.record_outcomes_batch(&[
             OutcomeRow { memory_id: mid, session_id: None, outcome: "applied".into(), context: None }
@@ -12325,23 +12359,26 @@ mod knowledge_tests {
         let pg = PgStore::connect(&std::env::var("SENSEI_TEST_DB_URL").unwrap()).await.unwrap();
         let pid = pg.ensure_test_project("blend").await.unwrap();
 
-        pg.insert_memory(&InsertMemory {
+        let m_p = pg.insert_memory(&InsertMemory {
             project_id: Some(pid), scope: "project".into(), scope_filter: None,
             mtype: "convention".into(), title: "P".into(), content: "p".into(),
             impact: None, tags: vec![], triage_signal: None, status: "active".into(),
             namespace_id: None, enforcement: None, origin: None, source_id: None,
+            spine_slot: None, feature: None,
         }).await.unwrap();
-        pg.insert_memory(&InsertMemory {
+        let m_s = pg.insert_memory(&InsertMemory {
             project_id: None, scope: "stack".into(), scope_filter: Some("rust".into()),
             mtype: "convention".into(), title: "S".into(), content: "s".into(),
             impact: None, tags: vec![], triage_signal: None, status: "active".into(),
             namespace_id: None, enforcement: None, origin: None, source_id: None,
+            spine_slot: None, feature: None,
         }).await.unwrap();
-        pg.insert_memory(&InsertMemory {
+        let m_g = pg.insert_memory(&InsertMemory {
             project_id: None, scope: "global".into(), scope_filter: None,
             mtype: "convention".into(), title: "G".into(), content: "g".into(),
             impact: None, tags: vec![], triage_signal: None, status: "active".into(),
             namespace_id: None, enforcement: None, origin: None, source_id: None,
+            spine_slot: None, feature: None,
         }).await.unwrap();
 
         let blob = pg.assemble_context(pid, &["rust".into()], None, 50).await.unwrap();
@@ -12358,12 +12395,19 @@ mod knowledge_tests {
             impact: None, tags: vec![], triage_signal: Some("revert".into()),
             status: "proposed".into(),
             namespace_id: None, enforcement: None, origin: None, source_id: None,
+            spine_slot: None, feature: None,
         }).await.unwrap();
         let blob2 = pg.assemble_context(pid, &["rust".into()], None, 50).await.unwrap();
         let titles2: Vec<String> = blob2["memories"].as_array().unwrap().iter()
             .map(|m| m["title"].as_str().unwrap().to_string()).collect();
         assert!(!titles2.contains(&"PROP".to_string()));
-        let _ = m_prop;
+
+        // `blend` is a reused fixture project (#34) and "S"/"G" are global/stack
+        // scoped — visible to every project. Clean up so repeated runs don't
+        // accrete rows that eventually push this test's own memories out of
+        // assemble_context's top-N window.
+        sqlx_core::query::query("DELETE FROM sensei.memories WHERE id = ANY($1)")
+            .bind(&[m_p, m_s, m_g, m_prop][..]).execute(pg.pool()).await.unwrap();
     }
 
     #[tokio::test]
@@ -12378,6 +12422,7 @@ mod knowledge_tests {
             mtype: "convention".into(), title: "L".into(), content: "l".into(),
             impact: None, tags: vec![], triage_signal: None, status: "active".into(),
             namespace_id: None, enforcement: None, origin: None, source_id: None,
+            spine_slot: None, feature: None,
         }).await.unwrap();
 
         let blob = pg.assemble_context(pid, &[], None, 50).await.unwrap();
@@ -12414,6 +12459,7 @@ mod knowledge_tests {
             mtype: "convention".into(), title: "W".into(), content: "w".into(),
             impact: None, tags: vec![], triage_signal: None, status: "active".into(),
             namespace_id: None, enforcement: None, origin: None, source_id: None,
+            spine_slot: None, feature: None,
         }).await.unwrap();
 
         // One load in-window, one back-dated outside the 7d window.
@@ -12437,6 +12483,7 @@ mod knowledge_tests {
             mtype: "convention".into(), title: "F".into(), content: "f".into(),
             impact: None, tags: vec![], triage_signal: None, status: "active".into(),
             namespace_id: None, enforcement: None, origin: None, source_id: None,
+            spine_slot: None, feature: None,
         }).await.unwrap();
 
         // In-window outcomes: applied + ignored count; consulted + violated do not.
@@ -12467,6 +12514,7 @@ mod knowledge_tests {
             mtype: "convention".into(), title: "D".into(), content: "d".into(),
             impact: None, tags: vec![], triage_signal: None, status: "active".into(),
             namespace_id: None, enforcement: None, origin: None, source_id: None,
+            spine_slot: None, feature: None,
         }).await.unwrap();
 
         sqlx_core::query::query("INSERT INTO activity.memory_loads (memory_id) VALUES ($1)")
@@ -12493,6 +12541,7 @@ mod knowledge_tests {
             impact: None, tags: vec![], triage_signal: None, status: "active".into(),
             namespace_id: None, enforcement: Some("recommended".into()),
             origin: Some("federated".into()), source_id: Some(src),
+            spine_slot: None, feature: None,
         }).await.unwrap();
         let got: (Option<uuid::Uuid>,) = sqlx_core::query_as::query_as(
             "SELECT source_id FROM sensei.memories WHERE id = $1")
@@ -12530,6 +12579,7 @@ mod knowledge_tests {
             mtype: "convention".into(), title: "conv A".into(), content: conv_content.clone(),
             impact: None, tags: vec![], triage_signal: Some("repeat_pattern".into()), status: "active".into(),
             namespace_id: None, enforcement: None, origin: Some("learned".into()), source_id: None,
+            spine_slot: None, feature: None,
         }).await.unwrap();
 
         // A genuinely-global rule: unscoped AND not tied to a project — the real
@@ -12540,6 +12590,7 @@ mod knowledge_tests {
             mtype: "convention".into(), title: "global rule".into(), content: global_content.clone(),
             impact: None, tags: vec![], triage_signal: None, status: "active".into(),
             namespace_id: None, enforcement: Some("recommended".into()), origin: Some("authored".into()), source_id: None,
+            spine_slot: None, feature: None,
         }).await.unwrap();
 
         // Project A's ruleset: A's convention (labeled `project`) + the global rule.
@@ -12597,7 +12648,8 @@ mod knowledge_tests {
             project_id: None, scope: "global".into(), scope_filter: None, mtype: "convention".into(),
             title: "t".into(), content: "c".into(), impact: None, tags: vec![], triage_signal: None,
             status: "active".into(), namespace_id: Some(org_ns), enforcement: Some("recommended".into()),
-            origin: Some("federated".into()), source_id: Some(src) }).await.unwrap();
+            origin: Some("federated".into()), source_id: Some(src),
+            spine_slot: None, feature: None }).await.unwrap();
         pg.upsert_federated_memory(&src, &remote, "hash1", Some(&mem), 5).await.unwrap();
         pg.upsert_federated_memory(&src, &remote, "hash1", Some(&mem), 9).await.unwrap(); // idempotent
         let link = pg.find_federated_memory(&src, &remote).await.unwrap().unwrap();
