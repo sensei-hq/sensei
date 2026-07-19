@@ -19,6 +19,24 @@ Enum "sensei"."auth_type" {
   "none"
 }
 
+Enum "sensei"."chunk_intent" {
+  "explore"
+  "ux"
+  "feature"
+  "enhancement"
+  "bug"
+}
+
+Enum "sensei"."chunk_lifecycle" {
+  "greenfield"
+  "stable"
+}
+
+Enum "sensei"."chunk_risk" {
+  "low"
+  "high"
+}
+
 Enum "sensei"."dml_operation" {
   "INSERT"
   "UPDATE"
@@ -145,6 +163,11 @@ Enum "sensei"."library_ecosystem" {
   "pypi"
   "cargo"
   "go"
+  "maven"
+  "nuget"
+  "rubygems"
+  "composer"
+  "swiftpm"
   "docs"
 }
 
@@ -215,6 +238,7 @@ Enum "sensei"."model_capability" {
   "summarize"
   "vision"
   "audio"
+  "image"
 }
 
 Enum "sensei"."node_kind" {
@@ -286,6 +310,39 @@ Enum "sensei"."router_type" {
   "local"
 }
 
+Enum "sensei"."run_event_kind" {
+  "phase_started"
+  "feature_started"
+  "feature_done"
+  "phase_done"
+  "gate_raised"
+  "gate_passed"
+  "flagged"
+  "committed"
+  "pushed"
+  "merged"
+  "bumped"
+  "paused_on_limit"
+  "resumed"
+  "throttled"
+  "stalled"
+  "crashed"
+  "recovered"
+  "housekeeping"
+  "done"
+  "failed"
+}
+
+Enum "sensei"."run_status" {
+  "running"
+  "paused"
+  "stalled"
+  "crashed"
+  "blocked"
+  "done"
+  "failed"
+}
+
 Enum "sensei"."service_kind" {
   "data"
   "api"
@@ -312,6 +369,19 @@ Enum "sensei"."session_outcome" {
 Enum "sensei"."snapshot_kind" {
   "manual"
   "checkpoint"
+}
+
+Enum "sensei"."spine_slot" {
+  "vision"
+  "personas"
+  "journeys"
+  "roadmap"
+  "design"
+  "mockups"
+  "decisions"
+  "brief"
+  "plan"
+  "tests"
 }
 
 Enum "sensei"."task_status" {
@@ -670,6 +740,24 @@ commands to each configured assistant.
 '''
 }
 
+Table "sensei"."collective_preferences" {
+  "singleton" BOOLEAN [pk, not null, default: true, note: 'Fixed true (CHECK) — enforces exactly one row; the upsert keys ON CONFLICT (singleton).']
+  "destination" TEXT [not null, default: 'none', note: 'Where insights go: none | global (public commons) | dojo (company) | both. Default none — nothing leaves the machine.']
+  "cadence" TEXT [not null, default: 'manual', note: 'How often batches are prepared: manual | daily | weekly. manual pauses batching until the user triggers next-batch.']
+  "categories" JSONB [not null, default: `'{}'::JSONB`, note: 'Per-category share toggles as jsonb {category: bool}. Categories: memory, pattern, rule, prompt, guard, skill, agent (spec Purpose list). A false value drops that kind from the next batch.']
+  "attribution_default" TEXT [not null, default: 'dereferenced', note: 'Default attribution applied when an insight leaves the machine: named | anonymous | dereferenced (mirrors dojo.attribution_mode / dojo_protocol::AttributionMode). Default dereferenced — the safest (source stripped).']
+  "updated_at" TIMESTAMPTZ [not null, default: `now()`]
+
+  Note: '''
+Single-row (singleton boolean PK) collective-intelligence sharing preferences for
+the local user. Backs GET/PUT /api/preferences/collective and gates the Dōjō
+contribute loop: destination (none|global|dojo|both), cadence (manual|daily|weekly),
+per-category share toggles (jsonb), and the default attribution mode. When no row
+exists the API returns conservative defaults (destination none, manual, attribution
+dereferenced).
+'''
+}
+
 Table "sensei"."config" {
   "key" TEXT [pk, not null, note: 'Preference key.']
   "value" TEXT [not null, note: 'Preference value stored as text (JSON-encoded for complex values).']
@@ -702,6 +790,56 @@ raw rules; Tier-2 asks a model to merge them into one coherent, deduped,
 conflict-flagged markdown ruleset. Each consolidation is a kept version; the row
 with status=approved for a scope is the active merged ruleset (it feeds
 ~/.sensei/rules.md). Versioning IS the history — no separate history table.
+'''
+}
+
+Table "sensei"."dojo_memberships" {
+  "id" UUID [pk, not null, note: 'The service membership id (dojo.memberships.id), assigned by the Dōjō console at pairing. sensei.projects.dojo_id references this value.']
+  "registry_url" TEXT [not null]
+  "tenant_key" TEXT [not null]
+  "dojo_url" TEXT [not null]
+  "kind" TEXT [not null, note: 'employer | client | community | personal — drives client-precedence routing (see dojo/routing.rs). client-bound work routes to the client Dōjō and is dereferenced; employer is excluded.']
+  "org_slugs" TEXT[] [not null, default: '{}', note: 'Git-remote owner slugs this membership covers (lowercased), mirrored from dojo.memberships.org_slugs. dojo/routing.rs::infer_binding matches a project\'s repo owner against this set to SUGGEST a binding (confirm-inferred in the About panel) — it never auto-commits.']
+  "role" TEXT [not null, default: 'contributor']
+  "authenticated_via" TEXT [not null, default: 'device_code']
+  "attribution_default" TEXT [not null, default: 'named']
+  "credential_ref" TEXT [not null, note: 'Keychain entry id for the per-membership device token (Bearer auth). The token is never stored in Postgres.']
+  "sync_status" TEXT [not null, default: 'authenticating', note: 'Last-known connection health: healthy | stale | error | authenticating. Derived on the daemon side from last_heartbeat_at and surfaced on the Dōjō connections pane.']
+  "last_seq" BIGINT [not null, default: 0]
+  "last_heartbeat_at" TIMESTAMPTZ
+  "enabled" BOOLEAN [not null, default: true]
+  "created_at" TIMESTAMPTZ [not null, default: `now()`]
+  "updated_at" TIMESTAMPTZ [not null, default: `now()`]
+
+  indexes {
+    kind [name: 'dojo_memberships_kind_idx']
+  }
+
+  Note: '''
+Daemon-local mirror of the Dōjōs this install is connected to. Fork 1: the
+authoritative dojo.memberships row lives in the Dōjō service DB; this row records
+the registry URL, tenant_key, service membership id (as the PK), Keychain
+credential_ref, and last-known sync_status so the daemon can route and federate.
+sensei.projects.dojo_id points at id. The device token is in the OS Keychain
+(credential_ref), never in Postgres — same discipline as sensei.knowledge_sources.
+'''
+}
+
+Table "sensei"."dojo_preferences" {
+  "scope" TEXT [pk, not null, default: 'user', note: 'Preference scope: \'user\' now; later a dojo / org / namespace key. PK part.']
+  "capability" TEXT [pk, not null, note: 'Canonical command verb the preference applies to (test / build / lint / run / format / typecheck / e2e / bench / docs / start / dev). PK part.']
+  "preferred" TEXT [not null, note: 'Match token for the preferred command — matched against a command\'s raw_name (exact) or command_line (substring), case-insensitively. E.g. \'nextest\'.']
+  "note" TEXT [note: 'Optional human note on why this preference exists.']
+  "updated_at" TIMESTAMPTZ [not null, default: `now()`, note: 'When the preference was last set.']
+
+  Note: '''
+Capability → preferred-tool bias for the command surface (the get_commands MCP
+tool + the project-window action buttons). When a project exposes several
+commands of the same canonical category — e.g. two `test` commands, `cargo test`
+and `cargo nextest` — the preference marks/ranks the one to prefer. `scope` is
+`user` today (the local developer's own choice); when a Dōjō exists it will also
+carry org / team / dojo scopes that override the user default (the same
+specificity ladder as governance). One row per (scope, capability).
 '''
 }
 
@@ -757,6 +895,39 @@ removing an entry triggers a re-scan of that subtree.
 '''
 }
 
+Table "sensei"."insight_copy" {
+  "kind" TEXT [pk, not null, note: 'Stable snake_case insight key (e.g. tool_dormant) — InsightKind::as_str.']
+  "facts_hash" TEXT [pk, not null, note: 'sha256(kind + canonical_json(facts)); any facts change makes a new key.']
+  "title" TEXT [not null, note: 'Model-generated card title (validated against the char + voice limits).']
+  "detail" TEXT [not null, note: 'Model-generated card detail (validated against the char + voice limits).']
+  "model_provider" TEXT [note: 'Provider/router that produced the copy (e.g. ollama), NULL when unknown.']
+  "model_id" TEXT [note: 'Model id that produced the copy (e.g. gemma4), NULL when unknown.']
+  "generated_at" TIMESTAMPTZ [not null, default: `now()`, note: 'When this copy was generated (reset on regeneration).']
+  "last_used_at" TIMESTAMPTZ [not null, default: `now()`, note: 'Bumped to now() on every cache read; drives the 30-day eviction sweep.']
+
+  indexes {
+    last_used_at [name: 'insight_copy_last_used_idx']
+  }
+
+  Note: '''
+Persisted mentor-voice insight copy produced by the insight-copy pipeline.
+Keyed on (kind, facts_hash) so identical facts reuse the same generated copy;
+the static per-call-site fallback template is used only on cold start,
+timeout, or model failure. Rows evict after 30 days of no use.
+'''
+}
+
+Table "sensei"."intake_guide" {
+  "id" UUID [pk, not null, default: `gen_random_uuid()`]
+  "kind" TEXT [not null]
+  "axis" TEXT
+  "prompt" TEXT [not null]
+  "help" TEXT
+  "enabled" BOOLEAN [not null, default: true]
+  "source" TEXT [not null, default: 'builtin']
+  "created_at" TIMESTAMPTZ [not null, default: `now()`]
+}
+
 Table "sensei"."libraries" {
   "id" UUID [pk, not null, default: `gen_random_uuid()`, note: 'Surrogate primary key (UUID).']
   "kind" library_kind [not null, default: 'detected', note: 'Library classification: detected (from package manifests) or imported (manually registered).']
@@ -795,6 +966,17 @@ Consolidates the former libraries, lib_meta, and shared_libs tables.
 '''
 }
 
+Table "sensei"."playbooks" {
+  "name" TEXT [pk, not null]
+  "title" TEXT [not null]
+  "when_to_use" TEXT [not null]
+  "opening_tone" TEXT [not null]
+  "method_ref" TEXT
+  "enabled" BOOLEAN [not null, default: true]
+  "source" TEXT [not null, default: 'builtin']
+  "created_at" TIMESTAMPTZ [not null, default: `now()`]
+}
+
 Table "sensei"."projects" {
   "id" UUID [pk, not null, default: `gen_random_uuid()`, note: 'Surrogate primary key (UUID).']
   "name" TEXT [not null, note: 'Project display name — initially derived from parent folder name or git remote.']
@@ -812,11 +994,13 @@ Table "sensei"."projects" {
   "privacy" JSONB [not null, default: '{}', note: 'Per-project privacy settings: {logPrompts:bool, logFileContents:bool, redactSecrets:bool, shareWithCloud:bool}. Defaults to empty = inherit global config.']
   "excluded_globs" JSONB [not null, default: '[]', note: 'Glob patterns to exclude from indexing for this project: ["dist/**", "*.generated.*"]. Layered on top of folders_to_watch.excluded.']
   "tags" TEXT[] [not null, default: '{}', note: 'Array of tag strings for quick filtering. Vocabulary controlled by sensei.tags table.']
+  "dojo_id" UUID [note: 'Optional binding to the Dōjō membership this project routes findings to (dojo.memberships.id in the separate Dōjō service DB). Nullable — most projects have no Dōjō. Not a DB-level FK: dojo.* lives in another database (Fork 1). Client-membership bindings take precedence over employer ones.']
   "modified_at" TIMESTAMPTZ [not null, default: `now()`, note: 'Timestamp of the last modification to this row.']
 
   indexes {
     maturity [name: 'projects_maturity_idx']
     tags [name: 'projects_tags_idx']
+    dojo_id [name: 'projects_dojo_id_idx']
   }
 
   Note: '''
@@ -884,6 +1068,26 @@ External service registry for MCP servers and inference providers.
 '''
 }
 
+Table "sensei"."symbol_names" {
+  "name" TEXT [pk, not null, note: 'The symbol name (matches sensei.nodes.name). Primary key — global, deduped.']
+  "first_seen" TIMESTAMPTZ [not null, default: `now()`, note: 'When this name was first recorded as an indexed symbol.']
+  "last_seen" TIMESTAMPTZ [not null, default: `now()`, note: 'When this name was last seen as a current indexed symbol (updated each scan).']
+
+  Note: '''
+Global registry of every code-symbol name ever indexed. The doc-drift scan
+(scan_project_doc_drift) uses it as the "was ever a real symbol" gate: a doc
+mention is flagged broken only when the name IS in this registry (it was a real
+symbol at some point) but no longer resolves to a current sensei.nodes row
+(removed / renamed). Identifiers that were NEVER symbols — Rust enum variants,
+serde-renamed camelCase API fields, string-dispatched MCP tool names — are prose
+or config, not drift, so their absence from the graph is not flagged (this
+killed the ~408 false-positive drift rows). Populated each drift scan by
+record_symbol_names (a monotonic upsert of the current symbol names); never
+pruned, so a removed symbol stays known and its stale doc references surface as
+real drift.
+'''
+}
+
 Table "sensei"."tags" {
   "tag" TEXT [pk, not null, note: 'Tag text value — the controlled vocabulary entry.']
   "category" TEXT [note: 'Optional category for grouping tags (e.g. "stack", "domain", "status").']
@@ -894,6 +1098,30 @@ Controlled vocabulary for tags used across the system.
 Tables that need tags carry a tags text[] column for quick access.
 This table provides autocomplete and validation.
 - category: optional grouping (e.g. "stack", "domain", "status")
+'''
+}
+
+Table "sensei"."tool_call_verdicts" {
+  "id" bigserial [pk, not null]
+  "session_id" TEXT [not null]
+  "event_id" BIGINT [not null, unique]
+  "tool_name" TEXT
+  "verdict" TEXT [not null]
+  "confidence" REAL [not null, default: 1.0]
+  "reason" TEXT
+  "classified_at" TIMESTAMPTZ [not null, default: `now()`]
+
+  indexes {
+    session_id [name: 'tool_call_verdicts_session_idx']
+    event_id [name: 'tool_call_verdicts_event_idx']
+    verdict [name: 'tool_call_verdicts_verdict_idx']
+  }
+
+  Note: '''
+#90 Per-tool-call usage verdict (used / partial / ignored). Classified from
+the (PostToolUse, next-event) pair on the same session. Rebuildable at any
+time — the classifier is idempotent, so re-running against a new heuristic
+just refreshes the table. Read-time joined by the Replay tab (#84).
 '''
 }
 
@@ -996,6 +1224,16 @@ Table "staging"."fallback_chains" {
   "modified_at" TIMESTAMPTZ [not null, default: `now()`]
 }
 
+Table "staging"."intake_guide" {
+  "kind" TEXT
+  "axis" TEXT
+  "prompt" TEXT
+  "help" TEXT
+  "enabled" BOOLEAN [default: true]
+  "source" TEXT [default: 'builtin']
+  "modified_at" TIMESTAMPTZ [not null, default: `now()`]
+}
+
 Table "staging"."libraries" {
   "name" TEXT
   "ecosystem" TEXT
@@ -1083,6 +1321,30 @@ Table "staging"."models_in_router" {
   "modified_at" TIMESTAMPTZ [not null, default: `now()`]
 }
 
+Table "staging"."playbook_rules" {
+  "name" TEXT
+  "match_lifecycle" TEXT
+  "match_intent" TEXT
+  "match_risk" TEXT
+  "playbook" TEXT
+  "rationale" TEXT
+  "priority" INTEGER
+  "enabled" BOOLEAN [default: true]
+  "source" TEXT [default: 'builtin']
+  "modified_at" TIMESTAMPTZ [not null, default: `now()`]
+}
+
+Table "staging"."playbooks" {
+  "name" TEXT
+  "title" TEXT
+  "when_to_use" TEXT
+  "opening_tone" TEXT
+  "method_ref" TEXT
+  "enabled" BOOLEAN [default: true]
+  "source" TEXT [default: 'builtin']
+  "modified_at" TIMESTAMPTZ [not null, default: `now()`]
+}
+
 Table "staging"."providers" {
   "name" TEXT
   "display_name" TEXT
@@ -1117,6 +1379,41 @@ Table "staging"."scopes" {
   "shareable" BOOLEAN [default: false]
   "description" TEXT
   "modified_at" TIMESTAMPTZ [not null, default: `now()`]
+}
+
+Table "activity"."runs" {
+  "id" UUID [pk, not null, default: `gen_random_uuid()`]
+  "project_id" UUID
+  "plan_ref" TEXT [not null, default: '', note: 'Path/ref of the committed plan doc the run executes.']
+  "goal" TEXT
+  "status" run_status [not null, default: 'running']
+  "paused_until" TIMESTAMPTZ [note: 'When a limit pause auto-resumes; NULL while running. Reset time parsed from the CLI limit message.']
+  "pause_reason" TEXT [note: 'Human-readable pause cause (e.g. "rate limit", "weekly cap") shown in the feed.']
+  "current_phase" TEXT
+  "current_feature" TEXT
+  "dojo_session_id" UUID [note: 'The cloud dojo.relay_sessions(id) mirroring this run. Plain uuid — no cross-DB FK.']
+  "max_concurrency" INTEGER [not null, default: 1, note: 'Active sub-agent cap; graduated response throttles this to 1 under rate-limit pressure.']
+  "started_at" TIMESTAMPTZ [not null, default: `now()`]
+  "completed_at" TIMESTAMPTZ
+  "heartbeat_at" TIMESTAMPTZ
+  "recovery_attempts" INTEGER [not null, default: 0, note: 'Bounded auto-recovery counter — incremented on each watchdog recovery; reset to 0 on real progress (a clean drive step); at the cap the run escalates to crashed.']
+  "created_at" TIMESTAMPTZ [not null, default: `now()`]
+  "updated_at" TIMESTAMPTZ [not null, default: `now()`]
+
+  indexes {
+    (project_id, started_at) [name: 'runs_project_idx']
+    status [name: 'runs_active_idx']
+  }
+
+  Note: '''
+A daemon-owned autonomous run of a multi-phase plan — the relay engine's executor.
+Survives daemon restarts (durable run-state; fixes the vacation run's
+session-coupled death). plan_ref points at the committed plan doc. status is
+authoritative; the cloud dojo.relay_sessions mirrors it. paused_until + pause_reason
+carry limit pauses (rate limit / weekly cap) with auto-resume. dojo_session_id is
+the cloud relay session's id (plain uuid — no cross-DB FK). max_concurrency is
+throttled to 1 under rate-limit pressure.
+'''
 }
 
 Table "gateway"."models" {
@@ -1270,6 +1567,39 @@ Consolidates the former lib_doc_sections, shared_lib_sections, and lib_docs tabl
 '''
 }
 
+Table "sensei"."mcp_servers" {
+  "id" UUID [pk, not null, default: `gen_random_uuid()`]
+  "acp_family" TEXT [not null]
+  "mcp_key" TEXT [not null]
+  "scope" TEXT [not null]
+  "project_id" UUID
+  "config_source" TEXT [not null]
+  "command" TEXT [not null, default: '']
+  "args" JSONB [not null, default: '[]']
+  "env" JSONB [not null, default: '{}']
+  "enabled" BOOLEAN [not null, default: true]
+  "connection_state" TEXT [not null, default: 'unknown']
+  "last_error" TEXT
+  "last_seen_at" TIMESTAMPTZ [not null, default: `now()`]
+  "discovered_at" TIMESTAMPTZ [not null, default: `now()`]
+
+  indexes {
+    (acp_family, mcp_key) [unique, name: 'mcp_servers_user_unique']
+    (acp_family, mcp_key, project_id) [unique, name: 'mcp_servers_project_unique']
+    project_id [name: 'mcp_servers_project_idx']
+    acp_family [name: 'mcp_servers_family_idx']
+    enabled [name: 'mcp_servers_enabled_idx']
+    last_seen_at [name: 'mcp_servers_last_seen_idx']
+  }
+
+  Note: '''
+#84 T2 Slice A. MCP servers discovered from ACP config files (Claude Code,
+Zed, Cursor, Codex, OpenCode, …). One row per (acp_family, mcp_key, scope,
+project). Scanned on daemon start and manual refresh. Consumed by the
+Instruments Playground / Replay / Health tabs.
+'''
+}
+
 Table "sensei"."memory_share_batches" {
   "id" UUID [pk, not null, default: `gen_random_uuid()`, note: 'Surrogate primary key (UUID).']
   "project_id" UUID [not null, note: 'FK to projects — batches are always scoped to a single project.']
@@ -1319,6 +1649,24 @@ README frontmatter (organization/project/team) and detected stack.
 '''
 }
 
+Table "sensei"."playbook_rules" {
+  "id" UUID [pk, not null, default: `gen_random_uuid()`]
+  "name" TEXT [not null]
+  "match_lifecycle" chunk_lifecycle
+  "match_intent" chunk_intent
+  "match_risk" chunk_risk
+  "playbook" TEXT [not null]
+  "rationale" TEXT [not null]
+  "priority" INTEGER [not null]
+  "enabled" BOOLEAN [not null, default: true]
+  "source" TEXT [not null, default: 'builtin']
+  "created_at" TIMESTAMPTZ [not null, default: `now()`]
+
+  indexes {
+    (enabled, priority) [name: 'playbook_rules_match_idx']
+  }
+}
+
 Table "sensei"."project_libraries" {
   "library_id" UUID [not null]
   "project_id" UUID
@@ -1360,6 +1708,28 @@ project_id = X  = active only in that project.
 services.installed is the top-level "is this installed" flag; this table
 controls whether an installed service is enabled for a given project so
 the Instruments playground can offer per-project MCP configurations.
+'''
+}
+
+Table "activity"."run_events" {
+  "id" bigserial [pk, not null]
+  "run_id" UUID [not null]
+  "kind" run_event_kind [not null]
+  "phase" TEXT
+  "feature" TEXT
+  "detail" JSONB [not null, default: '{}', note: 'Structured, stripped event payload (e.g. {"reset_at": …} for paused_on_limit). No code, no diffs.']
+  "created_at" TIMESTAMPTZ [not null, default: `now()`]
+
+  indexes {
+    (run_id, created_at) [name: 'run_events_run_idx']
+    (kind, created_at) [name: 'run_events_kind_idx']
+  }
+
+  Note: '''
+Append-only cadence log for a run — the source of the filtered Relay feed AND the
+audit trail. One row per logical event (feature shipped · gate raised · paused on
+limit · resumed · crashed · housekeeping · …). Logical progress only — never diffs
+or raw tool output (D10). bigserial: high write volume.
 '''
 }
 
@@ -1477,7 +1847,8 @@ Leiden algorithm community clusters. Computed offline as a batch job.
 
 Table "inference"."detected_patterns" {
   "id" UUID [pk, not null, default: `gen_random_uuid()`, note: 'Surrogate primary key (UUID).']
-  "folder_id" UUID [not null, note: 'Foreign key to folders — which folder this pattern was detected in.']
+  "project_id" UUID [not null, note: 'Foreign key to projects — the scoping key. Patterns aggregate at project level (#82).']
+  "folder_id" UUID [note: 'Optional foreign key to folders — the file/folder locus for file-scoped signals (churn). Nullable; SET NULL on folder delete.']
   "name" TEXT [not null, note: 'Pattern name (e.g. "Adapter", "Duplicated auth guard", "God node · router.ts").']
   "family" TEXT [note: 'Pattern family: GoF · structural, GoF · behavioral, resilience, data-access, etc.']
   "lifecycle" pattern_lifecycle [not null, default: 'suggested', note: 'Pattern state: suggested (emerging), gap (recommended but absent), rule (enforced in sessions).']
@@ -1496,6 +1867,7 @@ Table "inference"."detected_patterns" {
   "modified_at" TIMESTAMPTZ [not null, default: `now()`, note: 'Timestamp of the last modification to this row.']
 
   indexes {
+    project_id [name: 'detected_patterns_project_id_idx']
     folder_id [name: 'detected_patterns_folder_id_idx']
     lifecycle [name: 'detected_patterns_lifecycle_idx']
     is_anti_pattern [name: 'detected_patterns_anti_pattern_idx']
@@ -1503,7 +1875,14 @@ Table "inference"."detected_patterns" {
   }
 
   Note: '''
-Code patterns detected during indexing and analysis.
+Code patterns detected during indexing and analysis, scoped to a project.
+- project_id: the scoping key. Uniqueness is (project_id, name, is_anti_pattern)
+  so patterns aggregate across every folder in the project — a churn pattern
+  for the same file that shows in multiple folder passes merges into one row
+  (#82).
+- folder_id: optional locus pointer for file/folder-scoped signals (churn).
+  Nullable so the row survives folder deletes; on-delete-set-null preserves
+  the pattern row while dropping the stale locus.
 - lifecycle: suggested (emerging, 2+ places) → gap (recommended but absent) → rule (enforced)
 - is_anti_pattern: true for duplication, god-nodes, monoliths, dead code, copy-paste
 - fix_pattern_id: for anti-patterns, self-ref to the constructive pattern that would fix it
@@ -1559,6 +1938,35 @@ Lifecycle: pending → accepted (user acts) → measured (verdict assigned)
 - current_ftr: rolling FTR after the change
 - verdict: positive (FTR improved), negative (FTR dropped), neutral, pending
 - measured_at: when verdict was last computed
+'''
+}
+
+Table "sensei"."assistant_tools" {
+  "id" UUID [pk, not null, default: `gen_random_uuid()`]
+  "assistant_family" TEXT [not null]
+  "source_type" TEXT [not null]
+  "source_key" TEXT [not null]
+  "tool_name" TEXT [not null]
+  "invoked_name" TEXT [not null]
+  "description" TEXT
+  "server_id" UUID
+  "discovered_at" TIMESTAMPTZ [not null, default: `now()`]
+  "updated_at" TIMESTAMPTZ [not null, default: `now()`]
+
+  indexes {
+    (assistant_family, source_type, source_key, tool_name) [unique, name: 'assistant_tools_unique']
+    invoked_name [name: 'assistant_tools_invoked_idx']
+    (assistant_family, source_type, source_key) [name: 'assistant_tools_source_idx']
+    server_id [name: 'assistant_tools_server_idx']
+  }
+
+  Note: '''
+Unified per-assistant tool inventory (MCP + built-in) — the registry half of
+the Instruments · Health share grid. tools_registered per source. Config stays
+on the typed source tables (mcp_servers). `invoked_name` is the harness-qualified
+name that joins sensei.tool_usage_stats.tool_name (e.g.
+mcp__plugin_playwright_playwright__browser_click, or a bare built-in like Bash).
+Plugins are captured in sensei.extensions, not here.
 '''
 }
 
@@ -1654,6 +2062,29 @@ is the per-source monotonic pull cursor.
 '''
 }
 
+Table "sensei"."mcp_tool_manifests" {
+  "id" UUID [pk, not null, default: `gen_random_uuid()`]
+  "server_id" UUID [not null, unique]
+  "tools" JSONB [not null, default: '[]']
+  "tool_count" INT [not null, default: 0]
+  "probed_at" TIMESTAMPTZ [not null, default: `now()`]
+  "ttl_seconds" INT [not null, default: 900]
+  "error" TEXT
+  "protocol_version" TEXT
+  "server_name" TEXT
+  "server_version" TEXT
+
+  indexes {
+    probed_at [name: 'mcp_tool_manifests_probed_at_idx']
+  }
+
+  Note: '''
+#84 T2 Slice B. Cached tool_list JSON-RPC responses per MCP server. Refreshed
+on TTL expiry or explicit request. `server_id` is UNIQUE so a manifest re-probe
+overwrites in place rather than accumulating.
+'''
+}
+
 Table "sensei"."memories" {
   "id" UUID [pk, not null, default: `gen_random_uuid()`, note: 'Surrogate primary key (UUID).']
   "project_id" UUID [note: 'Foreign key to projects. Null = global memory (applies to all projects).']
@@ -1661,7 +2092,7 @@ Table "sensei"."memories" {
   "scope_filter" TEXT [note: 'Qualifier for scope: stack name (e.g. "rust"), task type (e.g. "fix"), module path (e.g. "src/api"). Null for global/project scope.']
   "namespace_id" UUID [note: 'Governance scope instance this rule applies to (organization/project/technology/...). Null = unscoped (general). Resolution gathers rules across a repo\'s member namespaces + always-on general/user.']
   "enforcement" enforcement [not null, default: 'recommended', note: 'Authority axis: advisory < recommended < required < mandatory. mandatory = non-overridable constitution tier (a more specific scope cannot weaken it).']
-  "origin" TEXT [not null, default: 'learned', note: 'Provenance: learned (knowledge plane), authored (written directly), promoted (elevated from a narrower scope), federated (pulled from a DÅjÅ).']
+  "origin" TEXT [not null, default: 'learned', note: 'Provenance: learned (knowledge plane), authored (written directly), promoted (elevated from a narrower scope), federated (pulled from a DÅjÅ), dojo (applied from a Dōjō downstream artifact — see sensei.dojo_inbox).']
   "source_id" UUID [note: 'When origin=promoted/federated, the id of the source memory (or remote record) this was derived from. Null otherwise.']
   "type" memory_type [not null, note: 'Knowledge category: decision (architectural), pattern (code convention), convention (team norm), preference (style rule), continuity (session handoff), question (open issue).']
   "title" TEXT [not null, note: 'Short label used as heading in context output.']
@@ -1674,14 +2105,19 @@ Table "sensei"."memories" {
   "last_relevant_at" TIMESTAMPTZ [note: 'Timestamp of last reinforcement or violation. Used for recency-based surfacing.']
   "session_id" UUID [note: 'Session that created this memory. Null for imported or collective memories.']
   "tags" TEXT[] [not null, default: '{}', note: 'Free-form tags (e.g. security, performance, compliance). GIN-indexed for &&/@> filters.']
+  "spine_slot" spine_slot
+  "feature" TEXT
   "triage_signal" TEXT [note: 'Which capture heuristic surfaced this memory (revert/correction/actually/repeat_pattern/override/test_failure). Null for explicit /save.']
   "category" memory_category [note: 'Quality dimension for the learnings UI anatomy, orthogonal to `type`: correctness, convention, pattern, preference. Null until classified.']
   "created_at" TIMESTAMPTZ [not null, default: `now()`, note: 'When this memory was first learned/created (stable). Distinct from modified_at, which moves on every reinforcement; the UI shows this as "learned".']
   "modified_at" TIMESTAMPTZ [not null, default: `now()`, note: 'Timestamp of the last modification to this row.']
+  "generalised" BOOLEAN [not null, default: false, note: 'Ready-to-share flag: true once sensei has rewritten this memory into a project-agnostic rule (stored in generalised_content), meaning it is ready to widen up the scope ladder. Set only by an explicit /generalise action; never fabricated.']
+  "generalised_content" TEXT [note: 'The project-agnostic rewrite of `content` — identifiers (project/repo/file/service/person names) stripped and restated as a general principle. Null until generalised.']
 
   indexes {
     (project_id, scope, status) [name: 'memories_project_id_idx']
     (scope, scope_filter) [name: 'memories_scope_idx']
+    (project_id, spine_slot) [name: 'memories_spine_slot_idx']
     (namespace_id, enforcement, status) [name: 'memories_namespace_idx']
     strength [name: 'memories_strength_idx']
     tags [name: 'memories_tags_idx']
@@ -1758,6 +2194,29 @@ Relationships between nodes are stored in the edges table.
 '''
 }
 
+Table "sensei"."project_commands" {
+  "id" bigserial [pk, not null]
+  "folder_id" UUID [not null]
+  "raw_name" TEXT [not null]
+  "command_line" TEXT [not null]
+  "category" TEXT
+  "ecosystem" TEXT [not null]
+  "source_file" TEXT
+  "discovered_at" TIMESTAMPTZ [not null, default: `now()`]
+
+  indexes {
+    folder_id [name: 'project_commands_folder_idx']
+    category [name: 'project_commands_category_idx']
+    ecosystem [name: 'project_commands_ecosystem_idx']
+  }
+
+  Note: '''
+#83 T1 commands surface. Discoverable commands per folder — populated from
+manifest adapters. One row per (folder_id, raw_name); re-scan replaces the
+per-folder set atomically via delete-then-insert.
+'''
+}
+
 Table "sensei"."project_dependencies" {
   "from_project_id" UUID [pk, not null, note: 'FK to projects — the project whose manifest names the dep.']
   "to_project_id" UUID [pk, not null, note: 'FK to projects — the project the local-protocol dep resolves to.']
@@ -1827,6 +2286,33 @@ Per-file scan fingerprint used by the indexer to skip unchanged files.
 - mtime: file modification time as unix ms
 - content_hash: sha256 of file content for change detection
 - indexed_at: when this file was last successfully indexed
+'''
+}
+
+Table "activity"."memory_loads" {
+  "id" bigserial [pk, not null, note: 'Surrogate primary key (bigserial — high write volume).']
+  "session_id" UUID [note: 'Optional FK to activity.sessions. NULL in v1 (per-session correlation deferred); set null when the session is deleted.']
+  "client_session_id" TEXT [note: 'Optional assistant-side session id string (not a DB UUID). Reserved for future per-session correlation; NULL in v1.']
+  "project_id" UUID [note: 'The project the context was assembled for (not necessarily the memory\'s own scope — global/stack memories load into many projects). Null when unknown or after the project is deleted.']
+  "memory_id" UUID [not null, note: 'Foreign key to memories — which memory was loaded/injected.']
+  "source" TEXT [not null, default: 'get_layered_context', note: 'Which delivery path logged this load (e.g. get_layered_context).']
+  "loaded_at" TIMESTAMPTZ [not null, default: `now()`, note: 'When the memory was delivered into context (server clock).']
+
+  indexes {
+    (memory_id, loaded_at) [name: 'memory_loads_memory_id_idx']
+    (session_id, loaded_at) [name: 'memory_loads_session_idx']
+  }
+
+  Note: '''
+Per-memory load log — one row per (memory, delivery) event. Written when a
+memory is injected into an assistant's context (e.g. get_layered_context /
+assemble_context). The read counterpart of sensei.memory_outcomes: loads here
+plus applied/ignored outcomes there answer "did injected memory help?" over a
+rolling window (loaded vs followed vs skipped). High write volume — bigserial
+key. Insertion is non-fatal on the context-delivery hot path: a failure to log
+must never block context delivery.
+v1 logs with session_id NULL (per-memory COUNT needs no session join);
+per-session correlation is a deferred follow-up.
 '''
 }
 
@@ -1958,6 +2444,74 @@ Doc-to-code drift tracking. One row per reference from a doc node to a code node
 - broken: target was deleted or renamed
 - expected_signature: what the doc says the symbol looks like
 - actual_signature: what the code actually has (null if broken)
+'''
+}
+
+Table "sensei"."dojo_inbox" {
+  "id" UUID [pk, not null, default: `gen_random_uuid()`]
+  "membership_id" UUID [not null, note: 'Source Dōjō connection (sensei.dojo_memberships.id). Cascade-deletes with the membership.']
+  "artifact_seq" BIGINT [not null, note: 'The federation cursor seq of the source artifact (dojo.artifacts seq). The per-membership pull cursor itself lives on sensei.dojo_memberships.last_seq.']
+  "artifact_signature" TEXT [not null, note: 'dojo-protocol artifact signature (content hash over kind/title/body/payload). The dedup key: unique per membership so a re-pull cannot duplicate.']
+  "remote_id" TEXT
+  "kind" TEXT [not null, note: 'principle | pattern | prompt | guard | skill | agent. Only principle/pattern auto-land on Apply (→ sensei.memories); the rest stay pending with a note.']
+  "title" TEXT [not null]
+  "body" TEXT [not null]
+  "scope" JSONB [not null, default: '{}']
+  "attribution" JSONB [not null, default: '{}']
+  "state" TEXT [not null, default: 'pending', note: 'pending | applied | muted | pinned. applied = landed into sensei.memories (applied_memory_id set); muted = hidden from the default Upgrades list; pinned = floated to the top / outranks ambiguous local alternatives.']
+  "note" TEXT [note: 'Reason an Apply did not land: a deferred kind (skill/agent/prompt/guard) or a scope that does not apply to this install. Null otherwise.']
+  "applied_memory_id" UUID [note: 'The sensei.memories row this artifact landed as (origin=dojo). Null until applied (or for kinds that do not land).']
+  "received_at" TIMESTAMPTZ [not null, default: `now()`]
+  "updated_at" TIMESTAMPTZ [not null, default: `now()`]
+
+  indexes {
+    state [name: 'dojo_inbox_state_idx']
+    membership_id [name: 'dojo_inbox_membership_idx']
+  }
+
+  Note: '''
+Daemon-local downstream inbox (C7). One row per (source membership, pulled
+artifact): the Dōjō service distributes approved artifacts to a membership; the
+daemon pulls them (cursor = sensei.dojo_memberships.last_seq) and mirrors them
+here as `pending` for the Upgrades screen. The DOWNSTREAM twin of
+sensei.dojo_outbox. Apply lands a principle/pattern as a sensei.memories row
+(origin='dojo', applied_memory_id links it); skill/agent/prompt/guard are held
+pending (consent-sensitive install, deferred). mute/pin are local overrides that
+never land anything. The unique (membership_id, artifact_signature) key makes a
+re-pull idempotent.
+'''
+}
+
+Table "sensei"."dojo_outbox" {
+  "id" UUID [pk, not null, default: `gen_random_uuid()`]
+  "membership_id" UUID [not null, note: 'Destination Dōjō (sensei.dojo_memberships.id). Cascade-deletes with the membership.']
+  "batch_id" UUID
+  "memory_id" UUID
+  "signature" TEXT [not null, note: 'dojo-protocol artifact signature (content hash over the CHECKED publish-safe kind/title/body/payload). The dedup key: unique per membership.']
+  "state" TEXT [not null, default: 'pending', note: 'pending | sent | held | queued | error. `held` is the confidentiality outcome (dereference could not guarantee safety); `queued` is a retryable transport failure.']
+  "sent_seq" BIGINT [note: 'The federation cursor seq the Dōjō assigned on publish. NULL until sent.']
+  "remote_id" TEXT [note: 'The dojo.artifacts.id the Dōjō assigned on publish. NULL until sent.']
+  "last_attempt_at" TIMESTAMPTZ
+  "created_at" TIMESTAMPTZ [not null, default: `now()`]
+  "updated_at" TIMESTAMPTZ [not null, default: `now()`]
+
+  indexes {
+    state [name: 'dojo_outbox_state_idx']
+    batch_id [name: 'dojo_outbox_batch_idx']
+  }
+
+  Note: '''
+Durable upstream-contribution ledger (C6). One row per (destination membership,
+artifact signature): a batch approved for sharing fans out to every routed Dōjō
+and every member memory, each producing an artifact whose send state is tracked
+here. The unique (membership_id, signature) key makes replay after a federation
+drop idempotent — a retry never double-publishes. Mirrors the
+sensei.federated_memories ledger used by the rules-federation push path.
+- pending: planned, not yet attempted
+- sent:    published; sent_seq / remote_id carry the Dōjō-assigned identity
+- held:    confidentiality gate refused it (residual identifier risk) — not sent
+- queued:  a transient (network / 5xx) failure — awaits replay
+- error:   a permanent (4xx / undecodable) failure — logged, not auto-retried
 '''
 }
 
@@ -2144,7 +2698,29 @@ or a batch cleanly clears the association.
 '''
 }
 
+Table "sensei"."playbook_run" {
+  "id" UUID [pk, not null, default: `gen_random_uuid()`]
+  "session_id" UUID
+  "feature" TEXT
+  "lifecycle" chunk_lifecycle [not null]
+  "intent" chunk_intent [not null]
+  "risk" chunk_risk [not null]
+  "rule_id" UUID
+  "playbook" TEXT [not null]
+  "rationale" TEXT [not null]
+  "confirmed" BOOLEAN [not null, default: false]
+  "outcome" TEXT
+  "classified_by" TEXT
+  "model_fallback" BOOLEAN [not null, default: false]
+  "created_at" TIMESTAMPTZ [not null, default: `now()`]
+
+  indexes {
+    session_id [name: 'playbook_run_session_idx']
+  }
+}
+
 Ref: "sensei"."extensions"."plugin_id" > "sensei"."extensions"."id" [delete: cascade]
+Ref: "activity"."runs"."project_id" > "sensei"."projects"."id" [delete: set null]
 Ref: "gateway"."models"."provider_id" > "gateway"."providers"."id" [delete: cascade]
 Ref: "inference"."reasoning_traces"."project_id" > "sensei"."projects"."id" [delete: set null]
 Ref: "sensei"."extension_projects"."extension_id" > "sensei"."extensions"."id" [delete: cascade]
@@ -2153,12 +2729,15 @@ Ref: "sensei"."folders"."root_id" > "sensei"."folders_to_watch"."id" [delete: ca
 Ref: "sensei"."folders"."parent_id" > "sensei"."folders"."id" [delete: cascade]
 Ref: "sensei"."folders"."project_id" > "sensei"."projects"."id" [delete: set null]
 Ref: "sensei"."library_pages"."library_id" > "sensei"."libraries"."id" [delete: cascade]
+Ref: "sensei"."mcp_servers"."project_id" > "sensei"."projects"."id" [delete: cascade]
 Ref: "sensei"."memory_share_batches"."project_id" > "sensei"."projects"."id" [delete: cascade]
 Ref: "sensei"."namespaces"."scope_key" > "sensei"."scopes"."key"
+Ref: "sensei"."playbook_rules"."playbook" > "sensei"."playbooks"."name"
 Ref: "sensei"."project_libraries"."library_id" > "sensei"."libraries"."id" [delete: cascade]
 Ref: "sensei"."project_libraries"."project_id" > "sensei"."projects"."id" [delete: cascade]
 Ref: "sensei"."service_projects"."service_id" > "sensei"."services"."id" [delete: cascade]
 Ref: "sensei"."service_projects"."project_id" > "sensei"."projects"."id" [delete: cascade]
+Ref: "activity"."run_events"."run_id" > "activity"."runs"."id" [delete: cascade]
 Ref: "activity"."sessions"."folder_id" > "sensei"."folders"."id" [delete: cascade]
 Ref: "activity"."sessions"."project_id" > "sensei"."projects"."id" [delete: set null]
 Ref: "gateway"."fallback_chain_models"."chain_id" > "gateway"."fallback_chains"."id" [delete: cascade]
@@ -2167,26 +2746,33 @@ Ref: "gateway"."fallback_chain_models"."model_id" > "gateway"."models"."id" [del
 Ref: "gateway"."models_in_router"."router_id" > "gateway"."routers"."id" [delete: cascade]
 Ref: "gateway"."models_in_router"."model_id" > "gateway"."models"."id" [delete: cascade]
 Ref: "inference"."communities"."folder_id" > "sensei"."folders"."id" [delete: cascade]
-Ref: "inference"."detected_patterns"."folder_id" > "sensei"."folders"."id" [delete: cascade]
+Ref: "inference"."detected_patterns"."project_id" > "sensei"."projects"."id" [delete: cascade]
+Ref: "inference"."detected_patterns"."folder_id" > "sensei"."folders"."id" [delete: set null]
 Ref: "inference"."detected_patterns"."fix_pattern_id" > "inference"."detected_patterns"."id" [delete: set null]
 Ref: "inference"."recommendations"."project_id" > "sensei"."projects"."id" [delete: cascade]
 Ref: "inference"."recommendations"."reasoning_trace_id" > "inference"."reasoning_traces"."id" [delete: set null]
+Ref: "sensei"."assistant_tools"."server_id" > "sensei"."mcp_servers"."id" [delete: cascade]
 Ref: "sensei"."benchmark_reports"."folder_id" > "sensei"."folders"."id" [delete: set null]
 Ref: "sensei"."benchmark_runs"."folder_id" > "sensei"."folders"."id" [delete: cascade]
 Ref: "sensei"."folder_namespaces"."folder_id" > "sensei"."folders"."id" [delete: cascade]
 Ref: "sensei"."folder_namespaces"."namespace_id" > "sensei"."namespaces"."id" [delete: cascade]
 Ref: "sensei"."index_errors"."folder_id" > "sensei"."folders"."id" [delete: cascade]
 Ref: "sensei"."knowledge_sources"."namespace_id" > "sensei"."namespaces"."id" [delete: set null]
+Ref: "sensei"."mcp_tool_manifests"."server_id" > "sensei"."mcp_servers"."id" [delete: cascade]
 Ref: "sensei"."memories"."project_id" > "sensei"."projects"."id" [delete: cascade]
 Ref: "sensei"."memories"."namespace_id" > "sensei"."namespaces"."id" [delete: set null]
 Ref: "sensei"."nodes"."folder_id" > "sensei"."folders"."id" [delete: cascade]
 Ref: "sensei"."nodes"."parent_id" > "sensei"."nodes"."id" [delete: cascade]
+Ref: "sensei"."project_commands"."folder_id" > "sensei"."folders"."id" [delete: cascade]
 Ref: "sensei"."project_dependencies"."from_project_id" > "sensei"."projects"."id" [delete: cascade]
 Ref: "sensei"."project_dependencies"."to_project_id" > "sensei"."projects"."id" [delete: cascade]
 Ref: "sensei"."project_dependencies"."from_folder_id" > "sensei"."folders"."id" [delete: cascade]
 Ref: "sensei"."referenced_libraries"."folder_id" > "sensei"."folders"."id" [delete: cascade]
 Ref: "sensei"."referenced_libraries"."library_id" > "sensei"."libraries"."id" [delete: cascade]
 Ref: "sensei"."scan_state"."folder_id" > "sensei"."folders"."id" [delete: cascade]
+Ref: "activity"."memory_loads"."session_id" > "activity"."sessions"."id" [delete: set null]
+Ref: "activity"."memory_loads"."project_id" > "sensei"."projects"."id" [delete: set null]
+Ref: "activity"."memory_loads"."memory_id" > "sensei"."memories"."id" [delete: cascade]
 Ref: "activity"."snapshots"."session_id" > "activity"."sessions"."id" [delete: cascade]
 Ref: "activity"."snapshots"."folder_id" > "sensei"."folders"."id" [delete: cascade]
 Ref: "activity"."task_sessions"."session_id" > "activity"."sessions"."id" [delete: set null]
@@ -2196,6 +2782,11 @@ Ref: "inference"."corrections"."memory_id" > "sensei"."memories"."id" [delete: s
 Ref: "inference"."drift_items"."folder_id" > "sensei"."folders"."id" [delete: cascade]
 Ref: "inference"."drift_items"."doc_node_id" > "sensei"."nodes"."id" [delete: cascade]
 Ref: "inference"."drift_items"."code_node_id" > "sensei"."nodes"."id" [delete: set null]
+Ref: "sensei"."dojo_inbox"."membership_id" > "sensei"."dojo_memberships"."id" [delete: cascade]
+Ref: "sensei"."dojo_inbox"."applied_memory_id" > "sensei"."memories"."id" [delete: set null]
+Ref: "sensei"."dojo_outbox"."membership_id" > "sensei"."dojo_memberships"."id" [delete: cascade]
+Ref: "sensei"."dojo_outbox"."batch_id" > "sensei"."memory_share_batches"."id" [delete: set null]
+Ref: "sensei"."dojo_outbox"."memory_id" > "sensei"."memories"."id" [delete: set null]
 Ref: "sensei"."edges"."folder_id" > "sensei"."folders"."id" [delete: cascade]
 Ref: "sensei"."edges"."source_id" > "sensei"."nodes"."id" [delete: cascade]
 Ref: "sensei"."edges"."target_id" > "sensei"."nodes"."id" [delete: cascade]
@@ -2211,3 +2802,6 @@ Ref: "sensei"."memory_outcomes"."memory_id" > "sensei"."memories"."id" [delete: 
 Ref: "sensei"."memory_outcomes"."session_id" > "activity"."sessions"."id" [delete: set null]
 Ref: "sensei"."memory_share_batch_members"."batch_id" > "sensei"."memory_share_batches"."id" [delete: cascade]
 Ref: "sensei"."memory_share_batch_members"."memory_id" > "sensei"."memories"."id" [delete: cascade]
+Ref: "sensei"."playbook_run"."session_id" > "activity"."sessions"."id" [delete: set null]
+Ref: "sensei"."playbook_run"."rule_id" > "sensei"."playbook_rules"."id" [delete: set null]
+Ref: "sensei"."playbook_run"."playbook" > "sensei"."playbooks"."name"
