@@ -1,0 +1,16 @@
+set search_path to sensei, extensions;
+create table if not exists playbook_rules (
+  id               uuid            primary key default gen_random_uuid()
+, name             text            not null
+, match_lifecycle  chunk_lifecycle
+, match_intent     chunk_intent
+, match_risk       chunk_risk
+, playbook         text            not null references sensei.playbooks(name)
+, rationale        text            not null
+, priority         integer         not null
+, enabled          boolean         not null default true
+, source           text            not null default 'builtin'
+, created_at       timestamptz     not null default now()
+, constraint playbook_rules_source_chk check (source in ('builtin','org','learned'))
+);
+create index if not exists playbook_rules_match_idx on playbook_rules(enabled, priority desc);
