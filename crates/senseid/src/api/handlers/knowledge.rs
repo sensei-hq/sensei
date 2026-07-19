@@ -314,6 +314,13 @@ pub(crate) struct MemoryBody {
     pub folder:        Option<String>,
     /// Authority: advisory|recommended|required|mandatory (default recommended).
     pub enforcement:   Option<String>,
+    // ── Spine anchoring (optional) ────────────────────────────────────────
+    /// Doc-slot this memory anchors to (`sensei.spine_slot`); scope-validated
+    /// against `feature` via `memory_slot::validate_scope`.
+    pub spine_slot:    Option<String>,
+    /// Feature name for feature-scoped slots (brief/plan/tests); must be
+    /// absent for project-only slots (vision/personas/journeys/roadmap/mockups).
+    pub feature:       Option<String>,
 }
 
 async fn insert_with_status(
@@ -334,6 +341,16 @@ async fn insert_with_status(
     }
     if require_triage_signal && body.triage_signal.as_deref().unwrap_or("").is_empty() {
         return Err(err(StatusCode::BAD_REQUEST, "triage_signal required for proposals"));
+    }
+    // Spine anchoring: an explicit slot must be a known `sensei.spine_slot`
+    // value, and (slot, feature) must satisfy the project-vs-feature scope
+    // rule (crate::memory_slot::validate_scope) before it reaches the DB.
+    let spine_slot = body.spine_slot.as_deref().filter(|s| !s.is_empty());
+    if let Some(slot_str) = spine_slot {
+        let slot = crate::memory_slot::SpineSlot::parse(slot_str)
+            .ok_or_else(|| err(StatusCode::BAD_REQUEST, &format!("unknown spine_slot: {slot_str}")))?;
+        crate::memory_slot::validate_scope(slot, body.feature.as_deref())
+            .map_err(|e| err(StatusCode::BAD_REQUEST, &e))?;
     }
     let pid = match &body.project_id {
         Some(s) => Some(uuid::Uuid::parse_str(s).map_err(|_| err(StatusCode::BAD_REQUEST, "bad project_id"))?),
@@ -359,6 +376,8 @@ async fn insert_with_status(
         enforcement:   body.enforcement.filter(|s| !s.is_empty()),
         origin:        Some(origin.to_string()),
         source_id:     None,
+        spine_slot:    body.spine_slot.filter(|s| !s.is_empty()),
+        feature:       body.feature.filter(|s| !s.is_empty()),
     }).await.map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
     Ok(Json(serde_json::json!({ "id": id, "status": status })))
 }
