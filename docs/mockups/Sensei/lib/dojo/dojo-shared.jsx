@@ -27,7 +27,7 @@ function DojoChip({ children, tone = "var(--ink-mute)", soft = "var(--paper-mute
   return (
     <span className="mono text-xs inline-flex items-center gap-1 rounded-full" style={{
       letterSpacing: ".04em", color: tone, background: soft,
-      border: border || "1px solid transparent", padding: "2px 8px", whiteSpace: "nowrap",
+      border: border || "1px solid transparent", padding: "4px 8px", whiteSpace: "nowrap",
     }}>{children}</span>
   );
 }
@@ -86,7 +86,7 @@ function DojoTopBar({ org, role }) {
             <div className="flex items-center gap-2 border-b" style={{ padding: "var(--space-2) var(--space-3)" }}>
               <span className="kanji text-sm text-ink-mute">探</span>
               <span className="flex-1 text-sm text-ink-faint">Switch Dōjō…</span>
-              <span className="mono text-xs text-ink-faint bg-paper-mute rounded-sm" style={{ padding: "2px 6px" }}>⌘K</span>
+              <span className="mono text-xs text-ink-faint bg-paper-mute rounded-sm" style={{ padding: "4px 8px" }}>⌘K</span>
             </div>
             <button className="flex items-center gap-3 w-full text-left bg-accent-soft border-b" style={{ padding: "var(--space-2) var(--space-3)" }}>
               <span className="kanji text-accent text-base">場</span>
@@ -125,7 +125,7 @@ function DojoTopBar({ org, role }) {
         )}
       </div>
       {role && (
-        <span className="mono text-xs text-accent bg-accent-soft rounded-full inline-flex items-center gap-1" style={{ border: "1px solid var(--accent-edge)", padding: "3px 11px" }}>{role.kanji} {role.label}</span>
+        <span className="mono text-xs text-accent bg-accent-soft rounded-full inline-flex items-center gap-1" style={{ border: "1px solid var(--accent-edge)", padding: "4px 12px" }}>{role.kanji} {role.label}</span>
       )}
       <div className="flex-1" />
       <div className="zs-input" style={{ width: 240 }}>
@@ -161,7 +161,7 @@ function DojoRoleNav({ nav, active, setActive }) {
                   <span className={"kanji text-sm text-center " + (on ? "text-accent" : "text-ink-mute")} style={{ width: 15 }}>{it.kanji}</span>
                   <span>{it.label}</span>
                   {it.badge != null
-                    ? <span className="mono text-xs font-semibold bg-accent rounded-full" style={{ padding: "0 6px", lineHeight: "16px" }}>{it.badge}</span>
+                    ? <span className="mono text-xs font-semibold bg-accent rounded-full" style={{ padding: "0 8px", lineHeight: "16px" }}>{it.badge}</span>
                     : <span/>}
                 </button>
               );
@@ -231,7 +231,7 @@ function DojoTabBar({ tabs, active, onNav }) {
             <span className={"kanji text-lg " + (on ? "text-accent" : "text-ink-mute")}>{it.kanji}</span>
             <span className={"text-xs " + (on ? "font-semibold" : "font-normal")} style={{ whiteSpace: "nowrap" }}>{it.label.split(" ")[0]}</span>
             {it.badge != null && (
-              <span className="mono text-xs font-semibold bg-accent rounded-full" style={{ position: "absolute", top: 5, right: "50%", marginRight: -18, padding: "0 5px", lineHeight: "14px" }}>{it.badge}</span>
+              <span className="mono text-xs font-semibold bg-accent rounded-full" style={{ position: "absolute", top: 5, right: "50%", marginRight: -18, padding: "0 8px", lineHeight: "14px" }}>{it.badge}</span>
             )}
           </button>
         );
@@ -302,7 +302,7 @@ function DojoRoleShell({ label, role, nav, active, setActive, children, mobile =
 
 function DojoLive({ label = "live" }) {
   return (
-    <span className="inline-flex items-center gap-1 text-xs text-success bg-success-soft border-1px border-success-edge rounded-full" style={{ padding: "3px 9px" }}>
+    <span className="inline-flex items-center gap-1 text-xs text-success bg-success-soft border-1px border-success-edge rounded-full" style={{ padding: "4px 12px" }}>
       <span className="rounded-full" style={{ width: 6, height: 6, background: "var(--success)" }} />{label}
     </span>
   );
@@ -334,7 +334,7 @@ function DojoKindTag({ p }) {
   const edge = DOJO_KIND_EDGE[p.kind] || "var(--paper-edge)";
   return (
     <span className="inline-flex items-center gap-1 text-xs rounded-full" style={{ color: tone,
-      background: soft, border: `1px solid ${edge}`, padding: "2px 8px", whiteSpace: "nowrap" }}>
+      background: soft, border: `1px solid ${edge}`, padding: "4px 8px", whiteSpace: "nowrap" }}>
       <span className="kanji text-xs">{DOJO_KIND_KANJI[p.kind] || "結"}</span>{p.dojo}
     </span>
   );

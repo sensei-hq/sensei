@@ -53,7 +53,7 @@ function ScreenState({
         <div className="display" style={{ fontSize: 20, fontWeight: 400, color: "var(--ink)", letterSpacing: "-0.01em" }}>{errorTitle}</div>
         <div style={{ fontSize: 13.5, color: "var(--ink-2)", lineHeight: 1.55, maxWidth: 380 }}>{errorHint}</div>
         <button onClick={onRetry} style={{ marginTop: 8, display: "inline-flex", alignItems: "center", gap: 8,
-          padding: "9px 16px", borderRadius: 8, border: "none", cursor: "pointer",
+          padding: "12px 16px", borderRadius: 8, border: "none", cursor: "pointer",
           background: "var(--ink)", color: "var(--paper)", fontSize: 13, fontWeight: 500, fontFamily: "inherit" }}>
           <span className="kanji" style={{ fontSize: 13, color: "var(--accent)" }}>再</span>{"Retry"}
         </button>

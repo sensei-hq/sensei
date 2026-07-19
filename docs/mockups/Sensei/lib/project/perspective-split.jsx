@@ -242,9 +242,9 @@ function PerspectiveChrome({ title, accent = "var(--accent)", subtitle, onClose 
       flexShrink: 0, position: 'relative'
 }} className="px-3" >
       <div style={{ display: 'flex' }} className="gap-2" >
-        <span style={{ width: 11, height: 11, borderRadius: '50%', background: '#ed6a5e' }}/>
-        <span style={{ width: 11, height: 11, borderRadius: '50%', background: '#f5bf4f' }}/>
-        <span style={{ width: 11, height: 11, borderRadius: '50%', background: '#62c554' }}/>
+        <span style={{ width: 11, height: 11, borderRadius: '50%', background: 'var(--danger)' }}/>
+        <span style={{ width: 11, height: 11, borderRadius: '50%', background: 'var(--warning)' }}/>
+        <span style={{ width: 11, height: 11, borderRadius: '50%', background: 'var(--success)' }}/>
       </div>
       <div style={{
  flex: 1, textAlign: 'center', display: 'flex',
@@ -269,10 +269,10 @@ function PerspectiveChrome({ title, accent = "var(--accent)", subtitle, onClose 
 // ─── A single project window (chrome + sidebar + content) ──
 function ProjectWindow({ project, height = 720, accent = "var(--accent)", onSwitchProject }) {
   return (
-    <div className="sensei" style={{ height, display: 'flex', flexDirection: 'column',
+    <div className="sensei" data-theme="light" style={{ height, display: 'flex', flexDirection: 'column',
                    background: 'var(--paper)', overflow: 'hidden',
                    borderRadius: 10,
-                   boxShadow: '0 1px 3px rgba(0,0,0,0.08), 0 14px 40px rgba(40,30,20,0.16)' }}>
+                   boxShadow: 'var(--shadow-lg)' }}>
       <PerspectiveChrome
         title={`先生  ·  ${project.name}`}
         subtitle="project window"
@@ -290,10 +290,10 @@ function ProjectWindow({ project, height = 720, accent = "var(--accent)", onSwit
 // ─── A single collective window (chrome + sidebar + content) ──
 function CollectiveWindow({ height = 720, onProjectClick, dimContent = false, accent = "var(--success)" }) {
   return (
-    <div className="sensei" style={{ height, display: 'flex', flexDirection: 'column',
+    <div className="sensei" data-theme="light" style={{ height, display: 'flex', flexDirection: 'column',
                    background: 'var(--paper)', overflow: 'hidden',
                    borderRadius: 10,
-                   boxShadow: '0 1px 3px rgba(0,0,0,0.08), 0 14px 40px rgba(40,30,20,0.12)',
+                   boxShadow: 'var(--shadow-lg)',
                    filter: dimContent ? 'saturate(0.6) brightness(0.96)' : 'none' }}>
       <PerspectiveChrome
         title="先生  ·  collective"
@@ -458,9 +458,9 @@ function PerspectiveSplitA() {
   const project = D.projects.active.find(p => p.id === "lumen-cloud") || D.projects.active[0];
 
   return (
-    <div style={{
+    <div data-theme="dark" style={{
       width: '100%', height: '100%', overflow: 'hidden',
-      background: 'linear-gradient(135deg, oklch(0.42 0.02 50), oklch(0.30 0.012 50))',
+      background: 'linear-gradient(135deg, var(--paper-3), var(--paper))',
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       position: 'relative'
 }} className="p-5" >
@@ -471,7 +471,7 @@ function PerspectiveSplitA() {
 }} className="gap-1" >
         {Array.from({ length: 8 }).map((_, i) => (
           <div key={i} style={{ width: 26, height: 26, borderRadius: 6,
-                                  background: 'rgba(255,255,255,0.15)' }}/>
+                                  background: 'var(--paper-3)' }}/>
         ))}
       </div>
 
@@ -481,7 +481,7 @@ function PerspectiveSplitA() {
 }} className="gap-5" >
         <div>
           <div style={{
- fontSize: 11, letterSpacing: '0.16em', color: 'rgba(255,255,255,0.55)',
+ fontSize: 11, letterSpacing: '0.16em', color: 'var(--ink-3)',
                          textTransform: 'uppercase'
 }} className="mb-2 pl-1" >
             Window 1 · Collective perspective
@@ -491,7 +491,7 @@ function PerspectiveSplitA() {
         </div>
         <div>
           <div style={{
- fontSize: 11, letterSpacing: '0.16em', color: 'rgba(255,255,255,0.55)',
+ fontSize: 11, letterSpacing: '0.16em', color: 'var(--ink-3)',
                          textTransform: 'uppercase'
 }} className="mb-2 pl-1" >
             Window 2 · Project perspective · {project.name}
@@ -537,15 +537,15 @@ function PerspectiveSplitC() {
   const project = D.projects.active.find(p => p.id === "lumen-cloud") || D.projects.active[0];
 
   return (
-    <div style={{
+    <div data-theme="dark" style={{
       width: '100%', height: '100%', overflow: 'hidden',
-      background: 'linear-gradient(135deg, oklch(0.40 0.02 50), oklch(0.28 0.012 50))',
+      background: 'linear-gradient(135deg, var(--paper-3), var(--paper))',
       position: 'relative', boxSizing: 'border-box'
 }} className="p-5" >
       {/* Back window — collective, slightly offset top-left, dimmed */}
       <div style={{ position: 'absolute', top: 28, left: 28, right: 220, bottom: 120 }}>
         <div style={{
- fontSize: 11, letterSpacing: '0.16em', color: 'rgba(255,255,255,0.5)',
+ fontSize: 11, letterSpacing: '0.16em', color: 'var(--ink-3)',
                        textTransform: 'uppercase'
 }} className="mb-2 pl-1" >
           Behind · Collective (still open)
@@ -572,7 +572,7 @@ function PerspectiveSplitC() {
       <div style={{ position: 'absolute', top: 90, right: 50, bottom: 50,
                      width: 'calc(60% - 50px)', minWidth: 720 }}>
         <div style={{
- fontSize: 11, letterSpacing: '0.16em', color: 'rgba(255,255,255,0.65)',
+ fontSize: 11, letterSpacing: '0.16em', color: 'var(--ink-3)',
                        textTransform: 'uppercase'
 }} className="mb-2 pl-1" >
           Front · Project window · just opened
@@ -580,7 +580,7 @@ function PerspectiveSplitC() {
         <div style={{ position: 'relative', height: 'calc(100% - 28px)' }}>
           {/* Glow behind the new window */}
           <div style={{ position: 'absolute', inset: -8, borderRadius: 14,
-                          background: 'radial-gradient(circle at 50% 0%, rgba(192,71,45,0.45), transparent 70%)',
+                          background: 'radial-gradient(circle at 50% 0%, var(--accent-edge), transparent 70%)',
                           filter: 'blur(18px)', pointerEvents: 'none' }}/>
           <ProjectWindow project={project} height="100%" accent="var(--accent)"/>
         </div>

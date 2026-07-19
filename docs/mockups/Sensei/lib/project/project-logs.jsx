@@ -283,7 +283,7 @@ function PLogIssueModal({ session, project, onClose }) {
 
   return (
     <div onClick={onClose}
-         style={{ position: 'absolute', inset: 0, background: 'rgba(20,18,15,0.42)',
+         style={{ position: 'absolute', inset: 0, background: 'var(--scrim)',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                   zIndex: 30, backdropFilter: 'blur(2px)' }}>
       <div onClick={e => e.stopPropagation()}
@@ -291,7 +291,7 @@ function PLogIssueModal({ session, project, onClose }) {
              width: '88%', maxWidth: 980, maxHeight: '90%',
              background: 'var(--paper)', border: 'var(--hairline)', borderRadius: 12,
              display: 'flex', flexDirection: 'column',
-             boxShadow: '0 24px 60px rgba(0,0,0,0.22)'
+             boxShadow: 'var(--shadow-lg)'
            }}>
         {/* Header */}
         <div style={{

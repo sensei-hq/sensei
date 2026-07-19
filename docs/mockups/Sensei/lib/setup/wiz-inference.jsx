@@ -203,7 +203,7 @@ function OllamaRow({ m, progress, pullQueue, setPullQueue }) {
     <span title="pulled"
           style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
                     width: 22, height: 22, borderRadius: 4,
-                    background: 'rgba(122,158,98,.12)',
+                    background: 'var(--success-soft)',
                     color: 'var(--success)', fontSize: 13 }}>✓</span>
   ) : active ? (
     <span style={{
@@ -452,13 +452,13 @@ function SplitKeyInput(p) {
 function AddProviderModal({ D, onAdd, onClose }) {
   return (
     <div onClick={onClose}
-         style={{ position: 'absolute', inset: 0, background: 'rgba(30,27,24,.35)',
+         style={{ position: 'absolute', inset: 0, background: 'var(--scrim)',
                    display: 'grid', placeItems: 'center', zIndex: 20 }}>
       <div onClick={e => e.stopPropagation()}
            style={{
  background: 'var(--paper)', border: 'var(--hairline)',
                      borderRadius: 8, width: 420,
-                     boxShadow: '0 16px 40px rgba(0,0,0,.18)'
+                     boxShadow: 'var(--shadow-lg)'
 }} className="p-5" >
         <div className="display mb-1" style={{ fontSize: 15 }}>Add router</div>
         <div style={{ fontSize: 13, color: 'var(--ink-3)' }} className="mb-4" >

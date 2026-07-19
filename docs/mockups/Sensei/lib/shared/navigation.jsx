@@ -271,7 +271,7 @@ function ProjPill({ children, tone }) {
       fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase',
       color: isDormant ? 'var(--ink-3)' : 'var(--ink-2)',
       background: 'var(--paper-3)', border: 'var(--hairline)',
-      borderRadius: 999, padding: '2px 8px', whiteSpace: 'nowrap', flexShrink: 0
+      borderRadius: 999, padding: '4px 8px', whiteSpace: 'nowrap', flexShrink: 0
     }}>
       {children}
     </span>
@@ -313,7 +313,7 @@ function ProjectsPaletteB() {
 
       {/* Dimmed observatory underneath (illustrative only) */}
       <div style={{
- position: 'absolute', inset: '38px 0 0', background: 'var(--paper)', filter: 'blur(1px)', opacity: 0.7
+ position: 'absolute', inset: '32px 0 0', background: 'var(--paper)', filter: 'blur(1px)', opacity: 0.7
 }} className="py-6 px-7" >
         <div style={{
  fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
@@ -323,15 +323,15 @@ function ProjectsPaletteB() {
           Good morning, Aiko.
         </h1>
       </div>
-      <div style={{ position: 'absolute', inset: '38px 0 0',
-                    background: 'oklch(0.22 0.012 50 / 0.28)' }}/>
+      <div style={{ position: 'absolute', inset: '32px 0 0',
+                    background: 'var(--scrim)' }}/>
 
       {/* The palette */}
       <div style={{ position: 'absolute', left: '50%', top: 110,
                     transform: 'translateX(-50%)',
                     width: 640, maxHeight: 560,
                     background: 'var(--paper)', borderRadius: 12,
-                    boxShadow: '0 24px 60px rgba(0,0,0,0.3)',
+                    boxShadow: 'var(--shadow-lg)',
                     border: 'var(--hairline)', overflow: 'hidden',
                     display: 'flex', flexDirection: 'column' }}>
         <div style={{

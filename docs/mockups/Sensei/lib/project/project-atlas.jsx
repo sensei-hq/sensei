@@ -416,7 +416,7 @@ function AtlasRelist({ title, ids, graph, onDrill }) {
             <span key={id} onClick={() => onDrill && n && onDrill(id, true)}
                   className="mono" style={{
                     fontSize: 11, color: "var(--ink-2)", cursor: "pointer",
-                    border: "1px solid var(--edge)", borderRadius: 4, padding: "2px 7px",
+                    border: "1px solid var(--edge)", borderRadius: 4, padding: "4px 8px",
                   }}>
               {n ? n.label : id}
             </span>
@@ -541,7 +541,7 @@ function ProjectAtlas() {
           <button onClick={() => setDocsOn(v => !v)} style={{
             display: "flex", alignItems: "center", gap: 8, cursor: "pointer",
             border: "var(--hairline)", borderRadius: 6, background: docsOn ? "var(--warning-soft)" : "transparent",
-            padding: "6px 11px", fontSize: 12, color: docsOn ? "var(--warning)" : "var(--ink-3)",
+            padding: "8px 12px", fontSize: 12, color: docsOn ? "var(--warning)" : "var(--ink-3)",
             whiteSpace: "nowrap",
           }}>
             <span style={{ width: 10, height: 10, borderRadius: 3,
@@ -561,7 +561,7 @@ function ProjectAtlas() {
                 <button onClick={() => gotoCrumb(i)} className="mono" style={{
                   background: "none", border: "none", cursor: "pointer", fontSize: 12,
                   color: i === crumbs.length - 1 ? "var(--ink)" : "var(--ink-3)",
-                  fontWeight: i === crumbs.length - 1 ? 600 : 400, padding: "2px 4px",
+                  fontWeight: i === crumbs.length - 1 ? 600 : 400, padding: "4px 4px",
                 }}>{c.label}</button>
               </React.Fragment>
             ))}
@@ -570,11 +570,11 @@ function ProjectAtlas() {
           <div style={{ display: "flex", background: "var(--paper-3)", borderRadius: 7, padding: 3 }}>
             {ATLAS_LEVELS.map(l => (
               <button key={l.id} onClick={() => goLevel(l.id)} style={{
-                border: "none", cursor: "pointer", borderRadius: 5, padding: "5px 12px",
+                border: "none", cursor: "pointer", borderRadius: 5, padding: "8px 12px",
                 fontSize: 12, fontWeight: level === l.id ? 600 : 400,
                 background: level === l.id ? "var(--paper)" : "transparent",
                 color: level === l.id ? "var(--ink)" : "var(--ink-3)",
-                boxShadow: level === l.id ? "0 1px 2px rgba(0,0,0,0.08)" : "none",
+                boxShadow: level === l.id ? "var(--shadow-sm)" : "none",
               }}>{l.label}</button>
             ))}
           </div>
@@ -613,7 +613,7 @@ function ProjectAtlasWindow() {
       <div style={{ height: 38, background: "var(--paper-2)", borderBottom: "var(--hairline)",
                     display: "flex", alignItems: "center", flexShrink: 0, position: "relative" }}>
         <div style={{ display: "flex", position: "absolute", left: 14 }} className="gap-2">
-          {["#ED6A5E", "#F4BF4F", "#61C554"].map(c => (
+          {["var(--danger)", "var(--warning)", "var(--success)"].map(c => (
             <span key={c} style={{ width: 11, height: 11, borderRadius: "50%", background: c }}/>
           ))}
         </div>

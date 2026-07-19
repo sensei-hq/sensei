@@ -520,7 +520,7 @@ function ProjPatterns({ openAction }) {
   const focus = list.find(x => x.id === focusId) || list[0];
 
   return (
-    <div style={{ padding: '32px 40px 48px' }}>
+    <div style={{ padding: '32px 32px 48px' }}>
       {/* Section header — matches the other project panes */}
       <div style={{ display: 'flex', alignItems: 'flex-end' }} className="gap-4 mb-5" >
         <span className="kanji" style={{ fontSize: 56, color: 'var(--accent)', lineHeight: 1 }}>紋</span>
@@ -1408,12 +1408,12 @@ function ProjActionDrawer({ rec, mode, onClose }) {
   ];
   return (
     <div style={{
-      position: 'absolute', inset: 0, background: 'oklch(0.22 0.012 50 / 0.4)',
+      position: 'absolute', inset: 0, background: 'var(--scrim)',
       display: 'flex', justifyContent: 'flex-end', zIndex: 50
     }} onClick={onClose}>
       <div onClick={(e) => e.stopPropagation()}
            style={{ width: 520, background: 'var(--paper)',
-                    boxShadow: '-12px 0 32px rgba(0,0,0,0.15)',
+                    boxShadow: 'var(--shadow-lg)',
                     display: 'flex', flexDirection: 'column', minHeight: 0 }}>
         <div style={{
  borderBottom: 'var(--hairline)',

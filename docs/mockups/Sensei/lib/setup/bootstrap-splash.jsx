@@ -270,7 +270,7 @@ function SplashGateRow({ gate, status, delay = 0 }) {
   return (
     <div className="splash-ink" style={{
       animationDelay: `${delay}s`,
-      padding: '5px 0',
+      padding: '8px 0',
       borderBottom: '1px solid var(--edge)',
       opacity: isPending ? 0.5 : 1,
       transition: 'opacity .3s'
@@ -404,7 +404,7 @@ function Splash({ state }) {
               <div style={{
                 marginTop: 18, maxWidth: 300,
                 border: '1px solid var(--edge)', borderRadius: 8,
-                padding: '12px 14px', background: 'var(--paper-2)'
+                padding: '12px 16px', background: 'var(--paper-2)'
               }}>
                 <div style={{
                   fontSize: 10, letterSpacing: '0.16em', textTransform: 'uppercase',
@@ -436,7 +436,7 @@ function Splash({ state }) {
               <div style={{
                 marginTop: 18, maxWidth: 320,
                 border: '1px solid var(--edge)', borderRadius: 8,
-                padding: '14px 16px', background: 'var(--paper-2)'
+                padding: '16px 16px', background: 'var(--paper-2)'
               }}>
                 <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 10 }}>
                   <span style={{ fontSize: 10, letterSpacing: '0.16em', textTransform: 'uppercase',
@@ -474,7 +474,7 @@ function Splash({ state }) {
                 {/* Step 1 — the only manual action */}
                 <div style={{ border: '1px solid var(--edge)', borderRadius: 8, overflow: 'hidden' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10,
-                                padding: '10px 14px', borderBottom: '1px solid var(--edge)' }}>
+                                padding: '12px 16px', borderBottom: '1px solid var(--edge)' }}>
                     <span style={{ width: 18, height: 18, borderRadius: '50%', background: 'var(--accent)',
                                    color: 'var(--paper)', fontSize: 11, fontWeight: 600, display: 'flex',
                                    alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>1</span>
@@ -482,14 +482,14 @@ function Splash({ state }) {
                       <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--ink)' }}>Install Homebrew</div>
                       <div style={{ fontSize: 10.5, color: 'var(--ink-4)' }}>The one thing to run by hand · ~1 min</div>
                     </div>
-                    <button style={{ fontSize: 11, padding: '5px 10px', background: 'var(--ink)', color: 'var(--paper)',
+                    <button style={{ fontSize: 11, padding: '8px 12px', background: 'var(--ink)', color: 'var(--paper)',
                                      border: 'none', borderRadius: 'var(--radius-sm)', cursor: 'pointer', letterSpacing: 0.2 }}>Copy</button>
                   </div>
-                  <pre className="splash-script" style={{ borderRadius: 0, padding: '12px 14px', maxHeight: 'none' }}>{`/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"`}</pre>
+                  <pre className="splash-script" style={{ borderRadius: 0, padding: '12px 16px', maxHeight: 'none' }}>{`/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"`}</pre>
                 </div>
 
                 {/* Step 2 — automatic */}
-                <div style={{ border: '1px solid var(--edge)', borderRadius: 8, padding: '10px 14px',
+                <div style={{ border: '1px solid var(--edge)', borderRadius: 8, padding: '12px 16px',
                               display: 'flex', gap: 10, alignItems: 'flex-start' }}>
                   <span style={{ width: 18, height: 18, borderRadius: '50%', background: 'var(--paper-3)',
                                  color: 'var(--ink-3)', fontSize: 11, fontWeight: 600, display: 'flex',
@@ -503,7 +503,7 @@ function Splash({ state }) {
                 </div>
 
                 {/* Offline / proxy path */}
-                <div style={{ border: '1px dashed var(--edge)', borderRadius: 8, padding: '10px 12px' }}>
+                <div style={{ border: '1px dashed var(--edge)', borderRadius: 8, padding: '12px 12px' }}>
                   <div style={{ fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase',
                                 color: 'var(--ink-4)', fontWeight: 500, marginBottom: 5 }}>No internet · behind a proxy</div>
                   <div style={{ fontSize: 10.5, color: 'var(--ink-3)', lineHeight: 1.5 }}>
@@ -514,7 +514,7 @@ function Splash({ state }) {
 
                 {/* Re-check */}
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, marginTop: 'auto' }}>
-                  <button style={{ fontSize: 11.5, padding: '6px 12px', background: 'var(--accent)', color: 'var(--paper)',
+                  <button style={{ fontSize: 11.5, padding: '8px 12px', background: 'var(--accent)', color: 'var(--paper)',
                                    border: 'none', borderRadius: 'var(--radius-sm)', cursor: 'pointer', letterSpacing: 0.2 }}>
                     I've run it · re-check
                   </button>
@@ -605,7 +605,7 @@ function Splash({ state }) {
                         style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 10.5,
                                  fontFamily: 'var(--font-ui)', color: 'var(--ink-3)', background: 'transparent',
                                  border: '1px solid var(--edge)', borderRadius: 'var(--radius-sm)',
-                                 padding: '4px 9px', cursor: 'pointer', letterSpacing: 0.2 }}>
+                                 padding: '4px 12px', cursor: 'pointer', letterSpacing: 0.2 }}>
                         <span style={{ fontSize: 11, lineHeight: 1 }}>↻</span> Re-check
                       </button>
                       <SplashStatusDisc status={o} size={32} />
@@ -633,7 +633,7 @@ function Splash({ state }) {
             {/* Continue */}
             <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 14 }}>
               <button style={{
-                fontSize: 12, padding: '7px 14px',
+                fontSize: 12, padding: '8px 16px',
                 background: 'var(--ink)', color: 'var(--paper)',
                 border: 'none', borderRadius: 'var(--radius-sm)',
                 cursor: 'pointer', letterSpacing: 0.2,

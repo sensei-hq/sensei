@@ -11,7 +11,7 @@
 function EcoNode({ k, title, sub, tone = "var(--accent)", solid, children, style }) {
   return (
     <div style={{ background: solid ? "var(--paper-3)" : "var(--paper-2)", border: "var(--hairline)",
-      borderRadius: 10, padding: "12px 14px", display: "flex", flexDirection: "column", gap: 6, ...style }}>
+      borderRadius: 10, padding: "12px 16px", display: "flex", flexDirection: "column", gap: 6, ...style }}>
       <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
         <span className="kanji" style={{ fontSize: 20, color: tone, lineHeight: 1, flexShrink: 0 }}>{k}</span>
         <div style={{ minWidth: 0 }}>
@@ -27,9 +27,9 @@ function EcoNode({ k, title, sub, tone = "var(--accent)", solid, children, style
 function EcoZone({ label, kanji, note, accent, children, style }) {
   return (
     <div style={{ position: "relative", border: `1.5px dashed color-mix(in oklch, ${accent} 45%, var(--edge))`,
-      borderRadius: 16, padding: "26px 18px 18px", background: `color-mix(in oklch, ${accent} 4%, transparent)`, ...style }}>
+      borderRadius: 16, padding: "24px 16px 16px", background: `color-mix(in oklch, ${accent} 4%, transparent)`, ...style }}>
       <div style={{ position: "absolute", top: -11, left: 18, display: "inline-flex", alignItems: "center", gap: 7,
-        background: "var(--paper)", padding: "0 9px" }}>
+        background: "var(--paper)", padding: "0 12px" }}>
         <span className="kanji" style={{ fontSize: 15, color: accent }}>{kanji}</span>
         <span style={{ fontSize: 10.5, letterSpacing: ".14em", textTransform: "uppercase", color: "var(--ink-3)", fontWeight: 600 }}>{label}</span>
         {note && <span style={{ fontSize: 10.5, color: "var(--ink-4)" }}>· {note}</span>}
@@ -85,11 +85,11 @@ function EcosystemArchitecture() {
               <div style={{ fontSize: 11.5, color: "var(--ink-2)", lineHeight: 1.5 }}>
                 One inference entry point, linked into the desktop app. Picks the model per task and carries your keys.
               </div>
-              <div style={{ background: "var(--paper)", border: "var(--hairline)", borderRadius: 8, padding: "9px 11px", marginTop: 4 }}>
+              <div style={{ background: "var(--paper)", border: "var(--hairline)", borderRadius: 8, padding: "12px 12px", marginTop: 4 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <span className="kanji" style={{ fontSize: 16, color: "var(--accent)" }}>火</span>
                   <span style={{ fontSize: 12.5, color: "var(--ink)", fontWeight: 500, flex: 1 }}>Embedded Ollama</span>
-                  <span className="mono" style={{ fontSize: 9.5, color: "var(--accent)", background: "var(--accent-soft)", border: "1px solid oklch(0.58 0.15 35/.28)", borderRadius: 20, padding: "2px 8px" }}>default · Gemma 4</span>
+                  <span className="mono" style={{ fontSize: 9.5, color: "var(--accent)", background: "var(--accent-soft)", border: "1px solid var(--accent-edge)", borderRadius: 20, padding: "4px 8px" }}>default · Gemma 4</span>
                 </div>
                 <div style={{ fontSize: 10.5, color: "var(--ink-4)", marginTop: 5 }}>bundled · fast local inference, no setup</div>
               </div>
@@ -123,7 +123,7 @@ function EcosystemArchitecture() {
               <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 2 }}>
                 {byok.map(m => (
                   <span key={m} className="mono" style={{ fontSize: 10.5, color: "var(--ink-2)", background: "var(--paper-3)",
-                    border: "var(--hairline)", borderRadius: 20, padding: "2px 9px" }}>{m}</span>
+                    border: "var(--hairline)", borderRadius: 20, padding: "4px 12px" }}>{m}</span>
                 ))}
               </div>
             </EcoNode>
@@ -134,10 +134,10 @@ function EcosystemArchitecture() {
             style={{ flex: 1, display: "flex", flexDirection: "column", gap: 14 }}>
             {/* two-way flow legend */}
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 7, fontSize: 11.5, color: "var(--ink-2)", background: "var(--paper-2)", border: "var(--hairline)", borderRadius: 20, padding: "4px 11px" }}>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 7, fontSize: 11.5, color: "var(--ink-2)", background: "var(--paper-2)", border: "var(--hairline)", borderRadius: 20, padding: "4px 12px" }}>
                 <span style={{ color: "var(--accent)", fontSize: 14 }}>↑</span> you push / publish lessons up
               </span>
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 7, fontSize: 11.5, color: "var(--ink-2)", background: "var(--paper-2)", border: "var(--hairline)", borderRadius: 20, padding: "4px 11px" }}>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 7, fontSize: 11.5, color: "var(--ink-2)", background: "var(--paper-2)", border: "var(--hairline)", borderRadius: 20, padding: "4px 12px" }}>
                 <span style={{ color: "var(--success)", fontSize: 14 }}>↓</span> consolidated knowledge comes back down
               </span>
             </div>
@@ -147,8 +147,8 @@ function EcosystemArchitecture() {
                   The team/org hive-mind: individuals contribute → triage → approve → <b style={{ fontWeight: 600, color: "var(--ink)" }}>consolidated practice flows back</b> to everyone in the team. Every login lands here.
                 </div>
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                  <span className="mono" style={{ fontSize: 10, color: "var(--success)", background: "var(--success-soft)", border: "1px solid var(--success-edge)", borderRadius: 20, padding: "2px 9px" }}>self-host · in-house</span>
-                  <span className="mono" style={{ fontSize: 10, color: "var(--ink-2)", background: "var(--paper-3)", border: "var(--hairline)", borderRadius: 20, padding: "2px 9px" }}>or managed SaaS</span>
+                  <span className="mono" style={{ fontSize: 10, color: "var(--success)", background: "var(--success-soft)", border: "1px solid var(--success-edge)", borderRadius: 20, padding: "4px 12px" }}>self-host · in-house</span>
+                  <span className="mono" style={{ fontSize: 10, color: "var(--ink-2)", background: "var(--paper-3)", border: "var(--hairline)", borderRadius: 20, padding: "4px 12px" }}>or managed SaaS</span>
                 </div>
               </EcoNode>
               <EcoNode k="群" title="Global Collective" sub="public commons · anonymized" tone="var(--ink-2)" style={{ flex: "0 0 250px" }}>

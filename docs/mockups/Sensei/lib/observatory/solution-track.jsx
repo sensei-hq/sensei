@@ -93,7 +93,7 @@ function SolChrome({ view }) {
     <div style={{ height: 38, background: "var(--paper-2)", borderBottom: "var(--hairline)",
                   display: "flex", alignItems: "center", flexShrink: 0, position: "relative" }}>
       <div style={{ display: "flex", position: "absolute", left: 14 }} className="gap-2">
-        {["#ED6A5E", "#F4BF4F", "#61C554"].map(c => (
+        {["var(--danger)", "var(--warning)", "var(--success)"].map(c => (
           <span key={c} style={{ width: 11, height: 11, borderRadius: "50%", background: c }}/>
         ))}
       </div>
@@ -240,7 +240,7 @@ function SolutionDashboard({ state = "ready" } = {}) {
                   <span className="mono" style={{ fontSize: 13, color: "var(--ink)" }}>{p.name}</span>
                 </span>
                 {p.warn && <span style={{ fontSize: 10.5, letterSpacing: ".08em", textTransform: "uppercase",
-                        color: "var(--warning)", background: "var(--warning-soft)", padding: "3px 8px", borderRadius: 999 }}>needs eyes</span>}
+                        color: "var(--warning)", background: "var(--warning-soft)", padding: "4px 8px", borderRadius: 999 }}>needs eyes</span>}
               </div>
               <div style={{ display: "flex", alignItems: "baseline", gap: 4 }} className="mt-4">
                 <span className="display" style={{ fontSize: 32, fontWeight: 400, lineHeight: 1,
@@ -260,7 +260,7 @@ function SolutionDashboard({ state = "ready" } = {}) {
         <div style={{ background: "var(--paper-2)", border: "var(--hairline)", borderRadius: 10 }}>
           {SOL.insights.map((x, i) => (
             <div key={i} style={{ display: "grid", gridTemplateColumns: "auto 1fr auto", alignItems: "center",
-                  gap: 14, padding: "14px 18px", borderBottom: i < SOL.insights.length-1 ? "var(--hairline)" : "none" }}>
+                  gap: 14, padding: "16px 16px", borderBottom: i < SOL.insights.length-1 ? "var(--hairline)" : "none" }}>
               <span className="kanji" style={{ fontSize: 22, color: toneColor(x.tone), width: 26 }}>{x.kanji}</span>
               <div>
                 <div style={{ fontSize: 11, letterSpacing: ".14em", textTransform: "uppercase", color: "var(--ink-3)" }}>
@@ -307,11 +307,11 @@ function SolutionArchitecture({ filter, setFilter, state = "ready" }) {
               const on = filter === o.id;
               return (
                 <button key={o.id} onClick={() => { setFilter(o.id); setSelected(null); }} style={{
-                  border: "none", cursor: "pointer", borderRadius: 5, padding: "5px 12px",
+                  border: "none", cursor: "pointer", borderRadius: 5, padding: "8px 12px",
                   fontSize: 12, fontWeight: on ? 600 : 400,
                   background: on ? "var(--paper)" : "transparent",
                   color: on ? "var(--ink)" : "var(--ink-3)",
-                  boxShadow: on ? "0 1px 2px rgba(0,0,0,0.08)" : "none",
+                  boxShadow: on ? "var(--shadow-sm)" : "none",
                   fontFamily: o.id === "all" ? "var(--font-ui)" : "var(--font-mono)",
                 }}>{o.label}</button>
               );
@@ -377,7 +377,7 @@ function SolutionSessions({ filter, setFilter, forceEmpty, state = "ready" }) {
               <button key={c.id} onClick={() => setFilter(c.id)} style={{
                 display: "inline-flex", alignItems: "center", gap: 7, cursor: "pointer",
                 border: on ? "1px solid var(--ink)" : "var(--hairline)", borderRadius: 999,
-                padding: "6px 13px", fontSize: 12.5,
+                padding: "8px 16px", fontSize: 12.5,
                 background: on ? "var(--ink)" : "transparent",
                 color: on ? "var(--paper)" : "var(--ink-2)",
               }}>
@@ -401,14 +401,14 @@ function SolutionSessions({ filter, setFilter, forceEmpty, state = "ready" }) {
           <>
             {/* column header */}
             <div style={{ display: "grid", gridTemplateColumns: "150px 1fr 120px 90px 90px",
-                  gap: 16, padding: "10px 28px", borderBottom: "var(--hairline)",
+                  gap: 16, padding: "12px 24px", borderBottom: "var(--hairline)",
                   fontSize: 11, letterSpacing: "0.14em", textTransform: "uppercase", color: "var(--ink-3)" }}>
               <span>Project</span><span>Session</span><span>When</span><span>Length</span>
               <span style={{ textAlign: "right" }}>FTR</span>
             </div>
             {rows.map(s => (
               <div key={s.id} style={{ display: "grid", gridTemplateColumns: "150px 1fr 120px 90px 90px",
-                    gap: 16, padding: "15px 28px", borderBottom: "var(--hairline)", alignItems: "center" }}>
+                    gap: 16, padding: "16px 24px", borderBottom: "var(--hairline)", alignItems: "center" }}>
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
                   <span className="kanji" style={{ fontSize: 15, color: "var(--ink-3)" }}>{projKanji(s.project)}</span>
                   <span className="mono" style={{ fontSize: 12, color: "var(--ink-2)" }}>{projName(s.project)}</span>

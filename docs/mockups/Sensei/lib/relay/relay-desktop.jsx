@@ -51,7 +51,7 @@ function RelayWindow({ active = 'relay', children }) {
           <div style={{ marginTop: 'auto' }} className="gap-2 p-3">
             <div className="px-1 pb-2" style={{ fontSize: 11, letterSpacing: '.16em', color: rc('ink-3'), textTransform: 'uppercase' }}>Paired</div>
             {[['macbook-pro', true], ['mac-mini', true], ['iPhone 16 Pro', true]].map(([n]) => (
-              <div key={n} className="px-1" style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: rc('ink-2'), padding: '3px 4px' }}><Dot c={rc('success')}/><span className="mono" style={{ fontSize: 12 }}>{n}</span></div>
+              <div key={n} className="px-1" style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: rc('ink-2'), padding: '4px 4px' }}><Dot c={rc('success')}/><span className="mono" style={{ fontSize: 12 }}>{n}</span></div>
             ))}
           </div>
         </aside>
@@ -108,7 +108,7 @@ function RelayCoordinator() {
             <REB>Published stream</REB>
             <div className="rounded-lg border-1px bg-paper-soft" style={{ overflow: 'hidden' }}>
               {events.map(([t, m, k, d, s], i) => (
-                <div key={i} style={{ display: 'grid', gridTemplateColumns: 'auto auto 1fr auto', gap: 12, alignItems: 'center', padding: '13px 16px', borderBottom: i < events.length - 1 ? 'var(--hairline)' : 'none', background: s === 'gate' ? rc('accent-soft') : 'transparent' }}>
+                <div key={i} style={{ display: 'grid', gridTemplateColumns: 'auto auto 1fr auto', gap: 12, alignItems: 'center', padding: '16px 16px', borderBottom: i < events.length - 1 ? 'var(--hairline)' : 'none', background: s === 'gate' ? rc('accent-soft') : 'transparent' }}>
                   <span className="mono text-xs text-ink-mute">{t}</span>
                   <Dot c={tone[s]} pulse={s === 'live'}/>
                   <div style={{ minWidth: 0 }}>
@@ -128,7 +128,7 @@ function RelayCoordinator() {
             <div className="rounded-lg border-1px p-4" style={{ background: rc('accent-soft'), borderColor: 'color-mix(in oklch, var(--accent) 30%, transparent)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><DLock c={rc('accent')}/><span className="mono text-xs" style={{ color: rc('accent') }}>macbook-pro · auth</span></div>
               <div className="text-lg font-semibold" style={{ marginTop: 10 }}>Approve database migration</div>
-              <div className="mono text-sm" style={{ background: rc('ink'), color: rc('paper'), borderRadius: 8, padding: '10px 12px', marginTop: 12 }}>psql &lt; 003_add_oauth.sql</div>
+              <div className="mono text-sm" style={{ background: rc('ink'), color: rc('paper'), borderRadius: 8, padding: '12px 12px', marginTop: 12 }}>psql &lt; 003_add_oauth.sql</div>
               <div className="text-sm text-ink-soft" style={{ marginTop: 12, lineHeight: 1.5 }}>Relayed to <b>iPhone 16 Pro</b> 40s ago · awaiting your decision there, or answer here.</div>
               <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
                 <button className="zs-btn zs-btn-primary" style={{ flex: 1, justifyContent: 'center', background: rc('accent') }}>Approve</button>
@@ -167,7 +167,7 @@ function RelayPlanAuthor() {
           {steps.map(([label, mode, why], i) => {
             const gate = mode === 'gate';
             return (
-              <div key={i} style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 14, alignItems: 'center', padding: '15px 18px', borderBottom: i < steps.length - 1 ? 'var(--hairline)' : 'none' }}>
+              <div key={i} style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 14, alignItems: 'center', padding: '16px 16px', borderBottom: i < steps.length - 1 ? 'var(--hairline)' : 'none' }}>
                 <span className="mono text-xs text-ink-faint" style={{ width: 18 }}>{String(i + 1).padStart(2, '0')}</span>
                 <div>
                   <div className="text-base" style={{ fontWeight: gate ? 600 : 400 }}>{label}</div>
@@ -306,11 +306,11 @@ function DojoRelayGates() {
         </div>
 
         <div className="rounded-lg border-1px bg-paper-soft" style={{ overflow: 'hidden' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr 1.2fr 1fr 96px', gap: 12, padding: '10px 18px', borderBottom: 'var(--hairline)' }} className="zs-eyebrow">
+          <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr 1.2fr 1fr 96px', gap: 12, padding: '12px 16px', borderBottom: 'var(--hairline)' }} className="zs-eyebrow">
             <span>Gate</span><span>Project</span><span>Source</span><span>Handled by</span><span>Status</span>
           </div>
           {gates.map(([g, proj, src, who, st, tone], i) => (
-            <div key={i} style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr 1.2fr 1fr 96px', gap: 12, alignItems: 'center', padding: '14px 18px', borderBottom: i < gates.length - 1 ? 'var(--hairline)' : 'none' }}>
+            <div key={i} style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr 1.2fr 1fr 96px', gap: 12, alignItems: 'center', padding: '16px 16px', borderBottom: i < gates.length - 1 ? 'var(--hairline)' : 'none' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}><DLock c={tone === 'success' ? rc('success') : rc('accent')}/><span className="text-sm" style={{ fontWeight: 500 }}>{g}</span></div>
               <span className="mono text-xs text-ink-mute">{proj}</span>
               <span className="mono text-xs text-ink-mute">{src}</span>

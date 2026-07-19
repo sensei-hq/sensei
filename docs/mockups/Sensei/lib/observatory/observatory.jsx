@@ -27,14 +27,14 @@ function groupKeyOf(section) {
 }
 function ObsSubTabs({ group, section, setSection }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '10px 24px',
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '12px 24px',
                   borderBottom: 'var(--hairline)', background: 'var(--paper)', flexShrink: 0 }}>
       {group.items.map(([id, label, badge, tone]) => {
         const on = section === id;
         return (
           <button key={id} onClick={() => setSection(id)}
                   style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12,
-                           padding: '5px 11px', borderRadius: 6, border: 'none', cursor: 'pointer',
+                           padding: '8px 12px', borderRadius: 6, border: 'none', cursor: 'pointer',
                            background: on ? 'var(--ink)' : 'var(--paper-3)',
                            color: on ? 'var(--paper)' : 'var(--ink-2)', fontFamily: 'inherit' }}>
             {label}
@@ -212,7 +212,7 @@ function ObsSidebar({ section, setSection, activeProjectId, onOpenProject, mode,
       {badge != null && (
         badgeTone
           ? <span className="mono" style={{ fontSize: 10, fontWeight: 600, color: 'var(--paper)',
-                          background: badgeTone, borderRadius: 10, padding: '0 6px', lineHeight: '16px' }}>{badge}</span>
+                          background: badgeTone, borderRadius: 10, padding: '0 8px', lineHeight: '16px' }}>{badge}</span>
           : <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>{badge}</span>
       )}
     </button>
@@ -277,7 +277,7 @@ function ObsSidebar({ section, setSection, activeProjectId, onOpenProject, mode,
               const on = (v === 'focus') === focus;
               return (
                 <button key={v} onClick={() => setFocus(v === 'focus')}
-                        style={{ fontSize: 10, padding: '2px 7px', borderRadius: 3, border: 'none',
+                        style={{ fontSize: 10, padding: '4px 8px', borderRadius: 3, border: 'none',
                                  background: on ? 'var(--paper)' : 'transparent',
                                  color: on ? 'var(--ink)' : 'var(--ink-3)', cursor: 'pointer',
                                  fontFamily: 'inherit' }}>{l}</button>
@@ -393,7 +393,7 @@ function FirstEntryToast({ onDismiss, mode }) {
       position: 'absolute', top: 24, left: '50%', transform: 'translateX(-50%)',
       background: 'var(--ink)', color: 'var(--paper)', borderRadius: 10,
       display: 'flex', alignItems: 'center',
-      boxShadow: '0 6px 24px rgba(0,0,0,0.2)', zIndex: 20,
+      boxShadow: 'var(--shadow-lg)', zIndex: 20,
       animation: 'toast-in .45s ease-out'
 }} className="gap-4 py-3 pl-4 pr-5" >
       <span className="kanji" style={{ fontSize: 22, color: 'var(--accent)' }}>礼</span>
@@ -410,7 +410,7 @@ function FirstEntryToast({ onDismiss, mode }) {
       <label style={{
  display: 'flex', alignItems: 'center',
                        fontSize: 11, color: 'var(--edge)',
-                       opacity: 0.85, cursor: 'pointer', borderLeft: '1px solid rgba(255,255,255,0.18)'
+                       opacity: 0.85, cursor: 'pointer', borderLeft: '1px solid var(--on-primary-faint)'
 }} className="gap-1 ml-2 pl-3" >
         <input type="checkbox" checked={hide} onChange={toggleHide}
                 style={{ accentColor: 'var(--accent)', cursor: 'pointer' }}/>
@@ -457,7 +457,7 @@ function FirstSessionGuide({ onOpenToday, onOpenProject }) {
         <div style={{ display: 'flex', alignItems: 'center' }} className="gap-2 mt-1" >
           <code className="mono" style={{
             fontSize: 11, color: 'var(--ink-2)', background: 'var(--paper)',
-            border: 'var(--hairline)', borderRadius: 4, padding: '3px 7px',
+            border: 'var(--hairline)', borderRadius: 4, padding: '4px 8px',
             whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 230
           }}>{fs.command}</code>
           <button onClick={copyCmd}

@@ -358,7 +358,7 @@ function MiniTrend({ sessions, days, checkpoints = [] }) {
           background: 'var(--paper)',
           border: 'var(--hairline)',
           borderRadius: 4,
-          boxShadow: '0 4px 14px rgba(0,0,0,0.08)',
+          boxShadow: 'var(--shadow)',
           fontSize: 11, lineHeight: 1.4,
           pointerEvents: 'none',
           zIndex: 5
@@ -1439,7 +1439,7 @@ function SessionsDigestZenMiniHeaderPreview() {
   const Frame = ({ children }) => (
     <div style={{ borderRadius: 10, border: 'var(--hairline)',
                     background: 'var(--paper)',
-                    boxShadow: '0 4px 14px rgba(0,0,0,0.04)',
+                    boxShadow: 'var(--shadow-sm)',
                     overflow: 'hidden' }}>
       {children}
     </div>

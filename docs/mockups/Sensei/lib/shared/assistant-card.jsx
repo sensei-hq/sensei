@@ -74,7 +74,7 @@ function CapChip({ status = "idle", label }) {
   }[status];
   return (
     <span className={"inline-flex items-center mono text-xs rounded-full " + (CHIP_SKIN[status] || "")}
-          style={{ gap: 6, padding: "3px 10px 3px 8px", whiteSpace: "nowrap", transition: _XFADE }}>
+          style={{ gap: 6, padding: "4px 12px 4px 8px", whiteSpace: "nowrap", transition: _XFADE }}>
       {icon}
       {label}
     </span>
