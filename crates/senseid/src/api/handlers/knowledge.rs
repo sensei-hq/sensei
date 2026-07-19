@@ -116,7 +116,7 @@ pub(crate) async fn get_context(
     );
     let stack_ids = state.pg.get_project_stack_ids(&pid).await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
-    let blob = state.pg.assemble_context(pid, &stack_ids, tags.as_deref(), q.limit.unwrap_or(200))
+    let blob = state.pg.assemble_context(pid, &stack_ids, tags.as_deref(), q.limit.unwrap_or(200), None)
         .await.map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
     Ok(Json(blob))
 }
