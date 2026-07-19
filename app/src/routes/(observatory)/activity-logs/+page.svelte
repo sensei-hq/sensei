@@ -147,12 +147,12 @@
     />
 
     <!-- since (time range) -->
-    <div class="inline-flex bg-paper-mute rounded p-[3px]" role="group" aria-label="Time range">
+    <div class="inline-flex bg-paper-mute rounded p-1" role="group" aria-label="Time range">
       {#each SINCE_OPTIONS as opt (opt.value)}
         {@const active = data.filters.since === opt.value}
         <button
           type="button"
-          class="text-xs rounded py-[5px] px-3 cursor-pointer border-none"
+          class="text-xs rounded py-2 px-3 cursor-pointer border-none"
           class:bg-paper={active}
           class:text-ink={active}
           class:font-semibold={active}

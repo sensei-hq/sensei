@@ -81,7 +81,7 @@
         <div class="text-xs uppercase tracking-wider text-ink-mute mb-2">Calls · {dependsOn.length}</div>
         <div class="flex flex-wrap gap-1">
           {#each dependsOn as name, i (name + i)}
-            <span class="font-mono text-xs text-ink-soft border border-paper-edge rounded py-[2px] px-[7px]">{name}</span>
+            <span class="font-mono text-xs text-ink-soft border border-paper-edge rounded py-1 px-2">{name}</span>
           {/each}
         </div>
       </div>
@@ -91,7 +91,7 @@
         <div class="text-xs uppercase tracking-wider text-ink-mute mb-2">Called by · {usedBy.length}</div>
         <div class="flex flex-wrap gap-1">
           {#each usedBy as name, i (name + i)}
-            <span class="font-mono text-xs text-ink-soft border border-paper-edge rounded py-[2px] px-[7px]">{name}</span>
+            <span class="font-mono text-xs text-ink-soft border border-paper-edge rounded py-1 px-2">{name}</span>
           {/each}
         </div>
       </div>
