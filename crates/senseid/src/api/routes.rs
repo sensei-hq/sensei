@@ -775,6 +775,62 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
+    // ── Spine anchoring on the save/propose HTTP path ────────────────────
+
+    #[tokio::test]
+    async fn save_memory_scope_validates_spine_slot() {
+        let (app, state) = test_app().await;
+
+        // brief is a feature-scope slot; without a feature it must be rejected.
+        let resp = app.clone().oneshot(
+            Request::builder().method("POST")
+                .uri("/api/knowledge/memories")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::json!({
+                    "scope": "global", "type": "decision",
+                    "title": "_test:slot_brief_nofeature", "content": "c",
+                    "spine_slot": "brief",
+                }).to_string())).unwrap()
+        ).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "feature-scope slot needs a feature");
+
+        // Unknown slot is a 400 too.
+        let resp = app.clone().oneshot(
+            Request::builder().method("POST")
+                .uri("/api/knowledge/memories")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::json!({
+                    "scope": "global", "type": "decision",
+                    "title": "_test:slot_nonsense", "content": "c",
+                    "spine_slot": "nonsense",
+                }).to_string())).unwrap()
+        ).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "unknown spine_slot rejected");
+
+        // brief + feature is valid and persists both columns.
+        let resp = app.oneshot(
+            Request::builder().method("POST")
+                .uri("/api/knowledge/memories")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::json!({
+                    "scope": "global", "type": "decision",
+                    "title": "_test:slot_brief_auth", "content": "c",
+                    "spine_slot": "brief", "feature": "auth",
+                }).to_string())).unwrap()
+        ).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let id = uuid::Uuid::parse_str(json["id"].as_str().unwrap()).unwrap();
+        let row: (Option<String>, Option<String>) = sqlx_core::query_as::query_as(
+            "SELECT spine_slot::text, feature FROM sensei.memories WHERE id = $1"
+        ).bind(id).fetch_one(state.pg.pool()).await.unwrap();
+        assert_eq!(row, (Some("brief".into()), Some("auth".into())));
+
+        sqlx_core::query::query("DELETE FROM sensei.memories WHERE id = $1")
+            .bind(id).execute(state.pg.pool()).await.unwrap();
+    }
+
     // ── MCP-proxy ↔ daemon seam ──────────────────────────────────────────
     //
     // The sensei MCP proxy (crates/mcp) resolves a caller's project to its
