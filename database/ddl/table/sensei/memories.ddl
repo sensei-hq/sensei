@@ -24,6 +24,11 @@ create table if not exists memories (
 , last_relevant_at         timestamptz
 , session_id               uuid
 , tags                     text[]        not null default '{}'
+-- Spine-slot anchor (design 2026-07-18-memory-anchoring): which doc slot this
+-- memory belongs to, for slot-scoped retrieval. `feature` disambiguates scope
+-- (null = project-scope; set = docs/features/<feature>/). Both nullable = unanchored.
+, spine_slot               spine_slot
+, feature                  text
 , triage_signal            text
 , category                 memory_category
 , created_at               timestamptz   not null default now()
@@ -40,6 +45,9 @@ create index if not exists memories_project_id_idx
 
 create index if not exists memories_scope_idx
     on memories(scope, scope_filter)
+ where status = 'active';
+create index if not exists memories_spine_slot_idx
+    on memories(project_id, spine_slot)
  where status = 'active';
 
 -- Resolution lookup: active rules for a namespace ordered by authority.
