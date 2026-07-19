@@ -5,24 +5,42 @@ use axum::{extract::State, Json};
 use crate::api::state::AppState;
 use crate::playbook::{recommend, Axes, Intent, Lifecycle, Risk};
 
-/// POST /api/playbook/recommend  { lifecycle, intent, risk, session_id?, feature?, confirm? }
+/// POST /api/playbook/recommend
+/// `{ lifecycle, intent, risk, session_id?, feature?, confirm? }` — pre-classified axes, OR
+/// `{ chunk, has_existing_code?, blast?, session_id?, feature?, confirm? }` — free text, classified via
+/// `classify_chunk` (gateway, heuristic fallback) before recommending.
 ///
-/// Pre-classified axes in, a playbook recommendation out. This endpoint takes
-/// the axes directly (no LLM involved), so every run it persists is recorded
-/// `classified_by = "manual"` — Task 9's `classify_chunk` path is the one that
-/// sets `classified_by` to the real gateway model id or "heuristic-fallback".
+/// The direct-axes path takes no LLM, so every run it persists is recorded
+/// `classified_by = "manual"`, `model_fallback = false`. The `chunk` (text) path
+/// records the real `classified_by`/`model_fallback` from `classify_chunk` — this is
+/// how §9 measures whether the local model actually pulls its weight vs. the heuristic.
 pub(crate) async fn recommend_playbook(
     State(state): State<AppState>,
     Json(body): Json<serde_json::Value>,
 ) -> Json<serde_json::Value> {
-    let (Some(lf), Some(it), Some(rk)) = (
+    let direct_axes = (
         body["lifecycle"].as_str().and_then(Lifecycle::parse),
         body["intent"].as_str().and_then(Intent::parse),
         body["risk"].as_str().and_then(Risk::parse),
-    ) else {
-        return Json(serde_json::json!({ "error": "lifecycle/intent/risk required (valid axis values)" }));
+    );
+
+    let (axes, classified_by, model_fallback) = match direct_axes {
+        (Some(lf), Some(it), Some(rk)) => (Axes { lifecycle: lf, intent: it, risk: rk }, "manual".to_string(), false),
+        _ => {
+            let Some(chunk) = body["chunk"].as_str().filter(|s| !s.is_empty()) else {
+                return Json(serde_json::json!({
+                    "error": "either lifecycle/intent/risk or a non-empty chunk (text) is required"
+                }));
+            };
+            // Bounded inputs to the heuristic fallback — see `heuristic_axes` doc comment
+            // for why `has_existing_code`/`blast` stay simple params here rather than a
+            // full code-graph-derived blast-radius (deferred; docs/plan/2026-07-19-frontdoor-intake-design.md §"risk").
+            let has_existing_code = body["has_existing_code"].as_bool().unwrap_or(true);
+            let blast = body["blast"].as_i64().unwrap_or(0);
+            let cls = classify_chunk(&state, chunk, has_existing_code, blast).await;
+            (cls.axes, cls.classified_by, cls.model_fallback)
+        }
     };
-    let axes = Axes { lifecycle: lf, intent: it, risk: rk };
 
     let rules = match state.pg.list_playbook_rules().await {
         Ok(r) => r,
@@ -41,15 +59,15 @@ pub(crate) async fn recommend_playbook(
         .insert_playbook_run(
             session_id,
             body["feature"].as_str(),
-            lf.as_str(),
-            it.as_str(),
-            rk.as_str(),
+            axes.lifecycle.as_str(),
+            axes.intent.as_str(),
+            axes.risk.as_str(),
             rec.rule_id,
             &rec.playbook,
             &rec.rationale,
             confirmed,
-            Some("manual"),
-            false,
+            Some(classified_by.as_str()),
+            model_fallback,
         )
         .await
     {
@@ -62,4 +80,142 @@ pub(crate) async fn recommend_playbook(
         "rule": rec.rule_name,
         "defaulted": rec.defaulted,
     }))
+}
+
+/// Deterministic fallback — also the classifier when the gateway is unavailable.
+///
+/// `has_existing_code` and `blast` are deliberately simple bounded inputs (not a
+/// full code-graph-derived blast-radius — see docs/plan/2026-07-19-frontdoor-intake-design.md
+/// §"risk" for the deferred fuller derivation via callers/community reach).
+pub(crate) fn heuristic_axes(text: &str, has_existing_code: bool, blast: i64) -> Axes {
+    let t = text.to_lowercase();
+    let lifecycle = if has_existing_code { Lifecycle::Stable } else { Lifecycle::Greenfield };
+    let intent = if t.contains("bug") || t.contains("fix") || t.contains("crash") || t.contains("regression") {
+        Intent::Bug
+    } else if t.contains("ui") || t.contains("design") || t.contains("mockup") || t.contains("screen") {
+        Intent::Ux
+    } else if t.contains("improve") || t.contains("enhance") || t.contains("tweak") {
+        Intent::Enhancement
+    } else if !has_existing_code && (t.contains("explore") || t.contains("spike") || t.contains("try")) {
+        Intent::Explore
+    } else {
+        Intent::Feature
+    };
+    let risk = if blast >= 10 { Risk::High } else { Risk::Low };
+    Axes { lifecycle, intent, risk }
+}
+
+/// Result of classifying a chunk into axes: the axes themselves, plus attribution
+/// for §9's measurement of whether the local gateway model is actually useful here.
+pub(crate) struct Classification {
+    pub axes: Axes,
+    pub classified_by: String,
+    pub model_fallback: bool,
+}
+
+/// Classify a text chunk into `{lifecycle, intent, risk}` via the embedded gateway
+/// (reasoning chain), falling back to `heuristic_axes` on ANY error, timeout, or
+/// unparseable/invalid response. Fail-open — never blocks the caller, never silent
+/// (every fallback is logged via `tracing::warn!`).
+pub(crate) async fn classify_chunk(
+    state: &AppState,
+    text: &str,
+    has_existing_code: bool,
+    blast: i64,
+) -> Classification {
+    use gateway::types::capability::Capability;
+    use gateway::types::request::{InferenceRequest, Message, MessageRole, Payload};
+
+    let system = "You classify a chunk of software work into three axes for a playbook \
+recommender. Respond with ONLY compact JSON and no prose: \
+{\"lifecycle\":\"greenfield|stable\",\"intent\":\"explore|ux|feature|enhancement|bug\",\"risk\":\"low|high\"}. \
+`lifecycle`: greenfield = new/empty project, stable = existing product. \
+`intent`: explore = fuzzy/spike, ux = UX-heavy surface, feature = new known feature, \
+enhancement = improving something existing, bug = fixing a defect. \
+`risk`: high = touches many callers/a wide blast-radius, low = contained.";
+    let user = format!("Chunk to classify:\n<<<CHUNK\n{text}\nCHUNK>>>");
+
+    let request = InferenceRequest {
+        capability: Capability::TextChat,
+        model: None,
+        router: None,
+        chain: Some("reasoning".into()),
+        payload: Payload::Chat {
+            messages: vec![Message::text(MessageRole::User, user)],
+            system: Some(system.to_string()),
+            max_tokens: Some(200),
+            temperature: None,
+            tools: Vec::new(),
+        },
+        budget: None,
+    };
+
+    let fut = state.gateway.execute(&request);
+    let fallback = || Classification {
+        axes: heuristic_axes(text, has_existing_code, blast),
+        classified_by: "heuristic".to_string(),
+        model_fallback: true,
+    };
+
+    match tokio::time::timeout(std::time::Duration::from_secs(8), fut).await {
+        Ok(Ok(resp)) if resp.success => match resp.content.as_deref().and_then(parse_axes_response) {
+            Some(axes) => Classification {
+                axes,
+                classified_by: resp.model.unwrap_or_else(|| "gateway".to_string()),
+                model_fallback: false,
+            },
+            None => {
+                tracing::warn!(
+                    "classify_chunk: gateway response unparseable/invalid — falling back to heuristic"
+                );
+                fallback()
+            }
+        },
+        Ok(Ok(_)) => {
+            tracing::warn!("classify_chunk: gateway response not successful — falling back to heuristic");
+            fallback()
+        }
+        Ok(Err(e)) => {
+            tracing::warn!(error = %e, "classify_chunk: gateway error — falling back to heuristic");
+            fallback()
+        }
+        Err(_) => {
+            tracing::warn!("classify_chunk: gateway call timed out — falling back to heuristic");
+            fallback()
+        }
+    }
+}
+
+/// Extract and validate `{lifecycle,intent,risk}` from a (possibly fenced/prose-wrapped)
+/// gateway response. Any missing/invalid axis value is a parse-miss (`None`) — the
+/// caller fails open to the heuristic rather than persist a partially-guessed axis set.
+fn parse_axes_response(content: &str) -> Option<Axes> {
+    let start = content.find('{')?;
+    let end = content.rfind('}')?;
+    if end <= start {
+        return None;
+    }
+    let v: serde_json::Value = serde_json::from_str(&content[start..=end]).ok()?;
+    let lifecycle = v.get("lifecycle").and_then(|s| s.as_str()).and_then(Lifecycle::parse)?;
+    let intent = v.get("intent").and_then(|s| s.as_str()).and_then(Intent::parse)?;
+    let risk = v.get("risk").and_then(|s| s.as_str()).and_then(Risk::parse)?;
+    Some(Axes { lifecycle, intent, risk })
+}
+
+#[cfg(test)]
+mod classify_tests {
+    use super::*;
+
+    #[test]
+    fn heuristic_bug_on_stable() {
+        let a = heuristic_axes("fix the crash when the token refreshes", /*has_existing_code=*/true, /*blast=*/2);
+        assert_eq!(a.intent.as_str(), "bug");
+        assert_eq!(a.lifecycle.as_str(), "stable");
+    }
+
+    #[test]
+    fn heuristic_high_blast() {
+        let a = heuristic_axes("rename the session store used everywhere", true, 40);
+        assert_eq!(a.risk.as_str(), "high");
+    }
 }
