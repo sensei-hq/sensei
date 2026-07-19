@@ -26,6 +26,7 @@ mod model_insight;
 mod corrections_llm;
 mod prompt_classify;
 pub(crate) mod tool_insights;
+mod learn_playbooks;
 pub(crate) mod helpers;
 
 pub use scan::{scan_root, branch_switch};
@@ -44,3 +45,4 @@ pub use consolidate_governance::consolidate_governance;
 pub use publish_segments::publish_relay_segments;
 pub use advance_run::advance_run;
 pub use warm_insight_copy::warm_insight_copy;
+pub use learn_playbooks::learn_playbooks;

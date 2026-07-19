@@ -8962,6 +8962,51 @@ impl PgStore {
         ).bind(session_id).fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(row.0)
     }
+
+    /// Apply a §9 `learn()` plan: reweight existing rules' `priority` in place
+    /// (off their immutable `base_priority`), and UPSERT proposed new rules as
+    /// `source='learned', enabled=false` (invisible to the resolver's
+    /// `list_playbook_rules` until accepted). Upsert targets the learned
+    /// partial-unique index so re-running the same plan is idempotent.
+    pub async fn apply_learn_plan(&self, plan: &crate::playbook::LearnPlan) -> Result<(), String> {
+        for (id, new_priority) in &plan.reweights {
+            sqlx_core::query::query("UPDATE sensei.playbook_rules SET priority = $2 WHERE id = $1")
+                .bind(id).bind(new_priority).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        }
+        for p in &plan.proposals {
+            sqlx_core::query::query(
+                "INSERT INTO sensei.playbook_rules
+                   (name, match_lifecycle, match_intent, match_risk, playbook, rationale,
+                    priority, base_priority, enabled, source)
+                 VALUES ($1, $2::sensei.chunk_lifecycle, $3::sensei.chunk_intent, $4::sensei.chunk_risk,
+                         $5, $6, $7, $7, false, 'learned')
+                 ON CONFLICT (match_lifecycle, match_intent, match_risk, playbook)
+                   WHERE source='learned'
+                 DO UPDATE SET rationale = excluded.rationale, priority = excluded.priority, base_priority = excluded.priority"
+            )
+            .bind(format!("learned: {}", p.playbook))
+            .bind(p.lifecycle.as_str()).bind(p.intent.as_str()).bind(p.risk.as_str())
+            .bind(&p.playbook).bind(&p.rationale).bind(p.priority)
+            .execute(&self.pool).await.map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+
+    /// Pending §9 learned-rule proposals (`source='learned' AND NOT enabled`) —
+    /// invisible to the resolver until accepted. Backs the accept-path list
+    /// endpoint/MCP tool (Task 5) and is exercised directly by the T4 apply test.
+    pub async fn list_playbook_rule_proposals(&self) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, String, Option<String>, Option<String>, Option<String>, String, String, i32, chrono::DateTime<chrono::Utc>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT id, name, match_lifecycle::text, match_intent::text, match_risk::text,
+                        playbook, rationale, priority, created_at
+                   FROM sensei.playbook_rules WHERE source='learned' AND NOT enabled ORDER BY created_at DESC"
+            ).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id,name,lf,it,rk,pb,rat,pri,created)| serde_json::json!({
+            "id": id, "name": name, "match_lifecycle": lf, "match_intent": it, "match_risk": rk,
+            "playbook": pb, "rationale": rat, "priority": pri, "created_at": created,
+        })).collect())
+    }
 }
 
 #[cfg(test)]
@@ -13220,5 +13265,26 @@ mod playbook_tests {
 
         // idempotent: second attribution touches 0 new
         assert_eq!(pg.attribute_playbook_outcomes().await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn apply_learn_plan_reweights_and_upserts() {
+        let Ok(pg) = PgStore::connect_test().await else { return; };
+        let rules = pg.list_playbook_rules().await.unwrap();
+        let debug = rules.iter().find(|r| r.playbook == "debug_flow").unwrap();
+        use crate::playbook::{LearnPlan, LearnedRule, Lifecycle, Intent, Risk};
+        let plan = LearnPlan {
+            reweights: vec![(debug.id.unwrap(), debug.base_priority + 5)],
+            proposals: vec![LearnedRule { lifecycle: Lifecycle::Stable, intent: Intent::Feature,
+                risk: Risk::Low, playbook: "mockup_first".into(), priority: 200, rationale: "t".into() }],
+        };
+        pg.apply_learn_plan(&plan).await.unwrap();
+        let after = pg.list_playbook_rules().await.unwrap();
+        assert_eq!(after.iter().find(|r| r.id == debug.id).unwrap().priority, debug.base_priority + 5);
+        // proposal is enabled=false → NOT in the resolver-visible list_playbook_rules (which filters WHERE enabled)
+        let proposals = pg.list_playbook_rule_proposals().await.unwrap();
+        assert!(proposals.iter().any(|p| p["playbook"] == "mockup_first"));
+        pg.apply_learn_plan(&plan).await.unwrap();   // idempotent upsert
+        assert_eq!(pg.list_playbook_rule_proposals().await.unwrap().iter().filter(|p| p["playbook"]=="mockup_first").count(), 1);
     }
 }
