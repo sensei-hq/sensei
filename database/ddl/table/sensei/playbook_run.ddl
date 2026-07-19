@@ -11,6 +11,8 @@ create table if not exists playbook_run (
 , rationale   text            not null
 , confirmed   boolean         not null default false
 , outcome     text
+, classified_by   text
+, model_fallback  boolean     not null default false
 , created_at  timestamptz     not null default now()
 );
 create index if not exists playbook_run_session_idx on playbook_run(session_id);

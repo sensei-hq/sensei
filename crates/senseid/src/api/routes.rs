@@ -33,6 +33,7 @@ use crate::api::handlers::share_review;
 use crate::api::handlers::upgrades;
 use crate::api::handlers::corrections;
 use crate::api::handlers::runs;
+use crate::api::handlers::playbook;
 
 pub fn create_router(state: AppState) -> Router {
     Router::new()
@@ -216,6 +217,8 @@ pub fn create_router(state: AppState) -> Router {
         // Relay runs (P3.2 observability + P3.8 run-control create)
         .route("/api/runs", get(runs::list_runs).post(runs::create_run))
         .route("/api/runs/{id}", get(runs::get_run))
+        // Front-door intake: axes -> playbook recommendation
+        .route("/api/playbook/recommend", post(playbook::recommend_playbook))
         // Patterns
         .route("/api/patterns/{project}/detect", post(codebase::detect_patterns))
         .route("/api/patterns/{project}", get(codebase::list_patterns))

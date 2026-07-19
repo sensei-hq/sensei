@@ -225,6 +225,19 @@ pub fn daemon_request_for(
             None => Some(DaemonRequest::get("/api/runs")),
         },
 
+        // ── Front-door intake ────────────────────────────────────────────────
+        "recommend_playbook" => {
+            let mut body = serde_json::json!({
+                "lifecycle": args["lifecycle"], "intent": args["intent"], "risk": args["risk"],
+            });
+            for k in ["session_id", "feature", "confirm"] {
+                if let Some(v) = args[k].as_str().filter(|s| !s.is_empty()) {
+                    body[k] = serde_json::json!(v);
+                }
+            }
+            Some(DaemonRequest::post_json("/api/playbook/recommend", body))
+        }
+
         // ── Everything else → the daemon mcp proxy ──────────────────────────
         _ => {
             let params = build_daemon_params(args, repo_id);
@@ -530,6 +543,20 @@ pub fn handle_list_tools() -> Value {
                  cadence events (the filtered feed — phase/feature/gate/commit markers, no code).",
                 &[],
                 &[("run_id", "string", "A specific run's UUID. Omit to list all active runs.")]),
+            // ── Front-door intake ────────────────────────────────────────────
+            tool("recommend_playbook",
+                "Recommend a playbook for the current work chunk from its lifecycle/intent/risk. \
+                 Call after the intake dialogue has classified the chunk. Returns playbook + rationale.",
+                &[
+                    ("lifecycle", "string", "greenfield | stable"),
+                    ("intent",    "string", "explore | ux | feature | enhancement | bug"),
+                    ("risk",      "string", "low | high (blast-radius)"),
+                ],
+                &[
+                    ("session_id", "string", "session UUID to attribute the run to"),
+                    ("feature",    "string", "feature slug when the chunk maps to a dossier"),
+                    ("confirm",    "string", "true to record the run as confirmed"),
+                ]),
         ]
     })
 }
@@ -894,7 +921,7 @@ mod tests {
         "gateway_status", "consensus", "generate_image", "log_event",
         "propose_memory", "save_memory", "promote_memory", "accept_proposal",
         "reject_proposal", "record_outcome", "get_layered_context",
-        "start_run", "run_status",
+        "start_run", "run_status", "recommend_playbook",
     ];
 
     fn tools() -> Vec<Value> {
