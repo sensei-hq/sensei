@@ -1,0 +1,4 @@
+{"kind":"frame","axis":"","prompt":"You are running the sensei intake. Identify the chunk's lifecycle, intent, and risk, then recommend a playbook with a one-line reason. Ask only what you cannot infer from the project.","help":"Grounds the whole intake conversation."}
+{"kind":"axis","axis":"lifecycle","prompt":"Is this a greenfield effort or a change to a stable product?","help":"Infer from the spine/drift: existing code + docs → stable; empty/new → greenfield."}
+{"kind":"axis","axis":"intent","prompt":"What is the goal — explore, a UX-heavy surface, a new feature, an enhancement, or a bug fix?","help":"Maps to chunk_intent: explore/ux/feature/enhancement/bug."}
+{"kind":"axis","axis":"risk","prompt":"How much does this touch — is the blast-radius high?","help":"Use the code graph (callers/community reach) — many dependents → high."}

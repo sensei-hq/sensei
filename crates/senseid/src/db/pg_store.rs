@@ -8890,7 +8890,7 @@ impl PgStore {
     }
 
     /// `classified_by` records how the axes were derived (e.g. "manual",
-    /// a gateway model id, or "heuristic-fallback") and `model_fallback`
+    /// a gateway model id, or "heuristic") and `model_fallback`
     /// flags whether the local-model path fell back to the heuristic —
     /// both feed the §9 measurement of local-model usefulness.
     #[allow(clippy::too_many_arguments)]

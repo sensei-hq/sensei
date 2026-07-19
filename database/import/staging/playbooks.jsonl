@@ -1,0 +1,6 @@
+{"name":"vibe","title":"Vibe / spike","when_to_use":"Greenfield, objective fuzzy — explore then extract learnings (discardable).","opening_tone":"Explore fast and loose; capture what you learn, keep nothing you cannot justify."}
+{"name":"mockup_first","title":"Mockup-first","when_to_use":"Greenfield, UX-heavy — design the surface before the spec.","opening_tone":"Start from the mockup; let the UI shape the spec."}
+{"name":"spec_driven","title":"Spec-driven","when_to_use":"Clear objective + high blast-radius — force a deep design first.","opening_tone":"Slow down: write the design, enumerate edge cases, before any code."}
+{"name":"gsd","title":"Get stuff done","when_to_use":"Known feature, low risk — lean plan then build.","opening_tone":"Lean plan, then build; keep it tight."}
+{"name":"change_flow","title":"Change-flow","when_to_use":"Stable product enhancement — impact analysis then targeted design.","opening_tone":"Map impact first; design the smallest change that lands the value."}
+{"name":"debug_flow","title":"Debug-flow","when_to_use":"Stable product bug — reproduce, fix, add a regression test.","opening_tone":"Reproduce first; fix; lock it with a regression test."}
