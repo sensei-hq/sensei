@@ -61,7 +61,7 @@
 <style>
   .content {
     flex: 1;
-    padding: 28px 36px;
+    padding: 24px 32px;
     overflow: hidden;
     background: var(--paper);
   }
@@ -82,7 +82,7 @@
     grid-template-columns: 1fr auto;
     gap: 24px;
     align-items: start;
-    padding-bottom: 18px;
+    padding-bottom: 16px;
     border-bottom: var(--hairline);
   }
   .obs-header {

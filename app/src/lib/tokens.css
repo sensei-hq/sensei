@@ -110,7 +110,7 @@
 .btn-outline:hover { background: var(--paper-mute); }
 
 .btn-cta {
-  padding: 10px 24px;
+  padding: 12px 24px;
   font-size: 13px;
   font-weight: 500;
   color: var(--on-primary);

@@ -439,7 +439,7 @@
   .nav-inner {
     max-width: 1200px;
     margin: 0 auto;
-    padding: 24px 56px;
+    padding: 24px 48px;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -489,7 +489,7 @@
 
   /* ── Hero ──────────────────────────────────────────── */
   .hero {
-    padding: 72px 56px 40px;
+    padding: 64px 48px 32px;
     max-width: 1200px;
     margin: 0 auto;
     position: relative;
@@ -565,7 +565,7 @@
   .stats {
     border-top: var(--hairline);
     border-bottom: var(--hairline);
-    padding: 32px 56px;
+    padding: 32px 48px;
     background: var(--paper-2);
   }
   .stats-inner {
@@ -590,7 +590,7 @@
   }
 
   /* ── What it is ────────────────────────────────────── */
-  .what-it-is { padding: 120px 56px; }
+  .what-it-is { padding: 120px 48px; }
   .what-inner {
     max-width: 1200px;
     margin: 0 auto;
@@ -618,7 +618,7 @@
   .how-it-works {
     border-top: var(--hairline);
     border-bottom: var(--hairline);
-    padding: 120px 56px;
+    padding: 120px 48px;
     background: var(--paper-2);
   }
   .how-inner { max-width: 1200px; margin: 0 auto; }
@@ -635,7 +635,7 @@
     gap: 64px;
   }
   .step-card {
-    padding: 32px 28px;
+    padding: 32px 24px;
     background: var(--paper);
     border: var(--hairline);
     border-radius: 12px;
@@ -670,12 +670,12 @@
     font-size: var(--text-xs);
     color: var(--sumi-3);
     font-style: italic;
-    padding-top: 14px;
+    padding-top: 12px;
     border-top: var(--hairline);
   }
 
   /* ── Gallery ───────────────────────────────────────── */
-  .gallery { padding: 120px 56px 60px; }
+  .gallery { padding: 120px 48px 64px; }
   .gallery-inner { max-width: 1200px; margin: 0 auto; }
   .gallery-heading {
     font-size: var(--text-4xl);
@@ -729,7 +729,7 @@
   .philosophy {
     border-top: var(--hairline);
     border-bottom: var(--hairline);
-    padding: 160px 56px;
+    padding: 160px 48px;
     background: var(--paper-2);
     position: relative;
     overflow: hidden;
@@ -772,7 +772,7 @@
   }
 
   /* ── Privacy ───────────────────────────────────────── */
-  .privacy { padding: 120px 56px; background: var(--paper); }
+  .privacy { padding: 120px 48px; background: var(--paper); }
   .privacy-inner {
     max-width: 1200px;
     margin: 0 auto;
@@ -816,7 +816,7 @@
   .pricing {
     border-top: var(--hairline);
     border-bottom: var(--hairline);
-    padding: 120px 56px;
+    padding: 120px 48px;
     background: var(--paper-2);
     text-align: center;
   }
@@ -837,7 +837,7 @@
   }
 
   /* ── FAQ ────────────────────────────────────────────── */
-  .faq { padding: 120px 56px; }
+  .faq { padding: 120px 48px; }
   .faq-inner { max-width: 960px; margin: 0 auto; }
   .faq-heading {
     font-size: var(--text-3xl);
@@ -852,7 +852,7 @@
     gap: 24px;
   }
   .faq-card {
-    padding: 28px;
+    padding: 24px;
     border: var(--hairline);
     border-radius: 12px;
     background: var(--paper-2);
@@ -882,7 +882,7 @@
   .support {
     border-top: var(--hairline);
     background: var(--paper-2);
-    padding: 100px 56px;
+    padding: 96px 48px;
     text-align: center;
   }
   .support-inner { max-width: 720px; margin: 0 auto; }
@@ -902,7 +902,7 @@
 
   /* ── Footer ────────────────────────────────────────── */
   .footer {
-    padding: 56px;
+    padding: 48px;
     font-size: var(--text-xs);
     color: var(--sumi-3);
     border-top: var(--hairline);
@@ -957,7 +957,7 @@
 
   /* ── Responsive ────────────────────────────────────── */
   @media (max-width: 900px) {
-    .nav-inner { padding: 20px 24px; }
+    .nav-inner { padding: 16px 24px; }
     .nav-links { gap: 20px; font-size: var(--text-xs); }
     .hero { padding: 48px 24px 32px; }
     .hero-kanji { font-size: 180px; right: 24px; }
@@ -965,28 +965,28 @@
     .hero-sub { font-size: var(--text-base); }
     .stats { padding: 24px; }
     .stats-inner { grid-template-columns: repeat(2, 1fr); gap: 20px; }
-    .what-it-is { padding: 80px 24px; }
+    .what-it-is { padding: 64px 24px; }
     .what-inner { grid-template-columns: 1fr; gap: 32px; }
-    .how-it-works { padding: 80px 24px; }
+    .how-it-works { padding: 64px 24px; }
     .how-heading { font-size: var(--text-3xl); }
     .steps-grid { grid-template-columns: 1fr; gap: 24px; }
-    .gallery { padding: 80px 24px 40px; }
+    .gallery { padding: 64px 24px 32px; }
     .gallery-heading { font-size: var(--text-3xl); }
     .gallery-item, .gallery-item.reverse { grid-template-columns: 1fr; }
     .gallery-item.reverse .gallery-screen { order: 0; }
     .gallery-item.reverse .gallery-caption { order: 1; }
-    .philosophy { padding: 100px 24px; }
+    .philosophy { padding: 96px 24px; }
     .philosophy-kanji { font-size: 280px; }
     .philosophy-heading { font-size: var(--text-2xl); }
-    .privacy { padding: 80px 24px; }
+    .privacy { padding: 64px 24px; }
     .privacy-inner { grid-template-columns: 1fr; gap: 40px; }
-    .pricing { padding: 80px 24px; }
+    .pricing { padding: 64px 24px; }
     .pricing-heading { font-size: var(--text-3xl); }
-    .faq { padding: 80px 24px; }
+    .faq { padding: 64px 24px; }
     .faq-heading { font-size: var(--text-2xl); }
     .faq-cards { grid-template-columns: 1fr; }
-    .support { padding: 80px 24px; }
-    .footer { padding: 40px 24px; }
+    .support { padding: 64px 24px; }
+    .footer { padding: 32px 24px; }
     .footer-inner { flex-direction: column; gap: 32px; }
     .footer-cols { gap: 32px; }
   }

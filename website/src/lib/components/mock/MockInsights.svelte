@@ -64,7 +64,7 @@
     gap: 14px;
   }
   .card {
-    padding: 14px 16px;
+    padding: 12px 16px;
     background: var(--paper-2);
     border: var(--hairline);
     border-radius: 8px;

@@ -200,7 +200,7 @@
     display: flex;
     flex-direction: column;
     gap: 11px;
-    padding: 15px 18px;
+    padding: 16px 16px;
     border: 1px solid var(--paper-edge);
     border-radius: 10px;
     background: var(--paper-soft);
@@ -278,7 +278,7 @@
     gap: 6px;
     font-family: var(--font-mono);
     font-size: 11px;
-    padding: 3px 10px 3px 8px;
+    padding: 4px 12px 4px 8px;
     border-radius: 999px;
     border: 1px solid var(--paper-edge);
     background: transparent;
@@ -315,7 +315,7 @@
     display: flex;
     align-items: flex-start;
     gap: 8px;
-    padding: 9px 11px;
+    padding: 12px 12px;
     border-radius: 7px;
     background: var(--danger-soft);
     border: 1px solid color-mix(in oklch, var(--danger) 32%, transparent);

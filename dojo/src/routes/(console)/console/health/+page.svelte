@@ -58,7 +58,7 @@
 			{#if data.health}
 				<span
 					class="bg-success-soft border-success-edge text-success mono inline-flex items-center gap-2 rounded-full border text-xs"
-					style="padding: 3px 10px"
+					style="padding: 4px 8px"
 				>
 					● live
 				</span>
@@ -66,7 +66,7 @@
 		{/snippet}
 	</ConsoleHead>
 
-	<div class="flex-1 overflow-auto" style="padding: 28px">
+	<div class="flex-1 overflow-auto" style="padding: 24px">
 		{#if data.error}
 			<ConsoleBanner>
 				Live health is unavailable — showing empty signals.
@@ -76,7 +76,7 @@
 
 		<div class="flex gap-4" style="margin-top: 18px">
 			{#each signals as s (s.label)}
-				<div class="bg-paper-soft border-paper-edge flex-1 rounded-xl border" style="padding: 16px 18px; min-width: 0">
+				<div class="bg-paper-soft border-paper-edge flex-1 rounded-xl border" style="padding: 16px 16px; min-width: 0">
 					<div class="flex items-center gap-2" style="margin-bottom: 12px">
 						<span class="kanji text-accent text-sm">{s.kanji}</span>
 						<span class="text-ink-mute uppercase text-xs" style="letter-spacing: 0.12em">{s.label}</span>
@@ -89,7 +89,7 @@
 
 		<div
 			class="bg-paper-soft border-paper-edge flex items-center gap-2 rounded-xl border"
-			style="margin-top: 18px; padding: 13px 16px"
+			style="margin-top: 18px; padding: 12px 16px"
 		>
 			<span class="kanji text-accent text-sm">録</span>
 			<span class="text-ink-soft text-sm" style="line-height: 1.5">

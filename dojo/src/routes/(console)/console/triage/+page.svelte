@@ -65,7 +65,7 @@
 					onclick={runSweep}
 					disabled={sweeping}
 					class="bg-ink text-on-primary inline-flex items-center gap-2 rounded-lg text-xs font-medium"
-					style="padding: 8px 13px; cursor: pointer; border: none"
+					style="padding: 8px 12px; cursor: pointer; border: none"
 					style:opacity={sweeping ? 0.6 : 1}
 				>
 					<span class="kanji text-xs">選</span>
@@ -75,7 +75,7 @@
 		{/snippet}
 	</ConsoleHead>
 
-	<div class="flex-1 overflow-auto" style="padding: 8px 28px 28px">
+	<div class="flex-1 overflow-auto" style="padding: 8px 24px 24px">
 		{#if data.error}
 			<div
 				class="bg-warning-soft border-warning-edge text-ink-soft flex items-center gap-2 rounded-xl border text-sm"
@@ -115,7 +115,7 @@
 		{#if groups.length === 0 && !data.error}
 			<div
 				class="border-ink-faint text-ink-mute flex flex-col items-center gap-2 rounded-xl border border-dashed text-center"
-				style="padding: 48px 28px; margin-top: 24px"
+				style="padding: 48px 24px; margin-top: 24px"
 			>
 				<span class="kanji text-ink-faint text-2xl">門</span>
 				<div class="text-ink-soft text-sm">The queue is clear</div>
@@ -140,7 +140,7 @@
 								signature: c.signature
 							})}
 							class="grid items-center gap-4 no-underline {i < g.rows.length - 1 ? 'border-paper-edge border-b' : ''}"
-							style="grid-template-columns: auto 1fr auto auto auto; padding: 13px 16px"
+							style="grid-template-columns: auto 1fr auto auto auto; padding: 12px 16px"
 						>
 							<span class="kanji text-accent text-center text-lg" style="width: 22px">{kindKanji(c.kind)}</span>
 							<div style="min-width: 0">

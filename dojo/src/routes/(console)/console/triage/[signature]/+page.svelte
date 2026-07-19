@@ -69,7 +69,7 @@
 
 <div class="bg-paper flex h-full w-full flex-col overflow-hidden">
 	<!-- breadcrumb -->
-	<div class="border-paper-edge flex flex-shrink-0 items-center gap-2 border-b" style="padding: 12px 28px">
+	<div class="border-paper-edge flex flex-shrink-0 items-center gap-2 border-b" style="padding: 12px 24px">
 		<a
 			href={resolve('/(console)/console/triage')}
 			class="mono text-accent text-xs no-underline">← Triage</a
@@ -81,7 +81,7 @@
 	</div>
 
 	{#if !row}
-		<div class="flex flex-1 flex-col items-center justify-center gap-3 text-center" style="padding: 40px">
+		<div class="flex flex-1 flex-col items-center justify-center gap-3 text-center" style="padding: 32px">
 			<span class="kanji text-ink-faint text-2xl">検</span>
 			{#if data.error}
 				<div class="text-ink-soft text-sm">Live triage is unavailable</div>
@@ -95,14 +95,14 @@
 			<a
 				href={resolve('/(console)/console/triage')}
 				class="bg-paper border-paper-edge text-ink mono rounded-lg border text-xs no-underline"
-				style="padding: 8px 14px; margin-top: 4px">← Back to triage</a
+				style="padding: 8px 12px; margin-top: 4px">← Back to triage</a
 			>
 		</div>
 	{:else}
 		{@const band = similarityBand(row.similarity)}
 		<div class="grid min-h-0 flex-1" style="grid-template-columns: 1fr 332px">
 			<!-- main -->
-			<div class="overflow-auto" style="padding: 24px 28px 32px">
+			<div class="overflow-auto" style="padding: 24px 24px 32px">
 				<div class="flex flex-wrap gap-2" style="margin-bottom: 12px">
 					<DojoChip>{kindLabel(row.kind)}</DojoChip>
 					<DojoChip toneClass="text-ink-soft">{scope}</DojoChip>
@@ -115,7 +115,7 @@
 				</h1>
 
 				<!-- evidence -->
-				<div class="bg-paper-soft border-paper-edge rounded-xl border" style="padding: 13px 16px; margin-bottom: 16px">
+				<div class="bg-paper-soft border-paper-edge rounded-xl border" style="padding: 12px 16px; margin-bottom: 16px">
 					<div class="flex items-center gap-2">
 						<span class="kanji text-ink-mute text-sm">証</span>
 						<span class="text-ink text-sm"
@@ -127,14 +127,14 @@
 
 				<!-- similarity / near-duplicate (Evaluate — the merge suggestion band) -->
 				{#if band === 'merge' || band === 'flagged'}
-					<div class="bg-paper-soft border-paper-edge rounded-xl border" style="padding: 13px 15px; margin-bottom: 16px">
+					<div class="bg-paper-soft border-paper-edge rounded-xl border" style="padding: 12px 16px; margin-bottom: 16px">
 						<div class="flex items-center gap-2" style="margin-bottom: 9px">
 							<span class="kanji text-ink-mute text-sm">双</span>
 							<span class="text-ink-mute font-semibold uppercase text-xs" style="letter-spacing: 0.12em"
 								>Near-duplicate · {band === 'merge' ? 'merge suggested' : 'flagged for review'}</span
 							>
 						</div>
-						<div class="border-paper-edge flex items-center gap-3 border-b" style="padding: 7px 0">
+						<div class="border-paper-edge flex items-center gap-3 border-b" style="padding: 8px 0">
 							<span class="text-ink text-sm" style="flex: 1"
 								>Nearest artifact{row.nearest_artifact_id
 									? ` · ${row.nearest_artifact_id.slice(0, 8)}`
@@ -152,7 +152,7 @@
 				<!-- the fuller artifact body isn't exposed by the triage API -->
 				<div
 					class="border-ink-faint text-ink-mute rounded-xl border border-dashed text-xs"
-					style="padding: 13px 16px; line-height: 1.55"
+					style="padding: 12px 16px; line-height: 1.55"
 				>
 					<span class="kanji text-ink-faint text-sm">芽</span>
 					The learning, cause and context (and the evidence sessions) live on the artifact body, which the triage
@@ -163,7 +163,7 @@
 			<!-- decide rail -->
 			<div
 				class="border-paper-edge bg-paper-soft flex flex-col gap-5 overflow-auto border-l"
-				style="padding: 22px 20px"
+				style="padding: 24px 16px"
 			>
 				<div class="flex flex-col items-center gap-2">
 					<EnsoRing progress={row.confidence ?? 0} label={confidencePct(row.confidence)} />
@@ -190,7 +190,7 @@
 					</div>
 					<div
 						class="bg-paper border-paper-edge flex items-center gap-2 rounded-lg border"
-						style="padding: 9px 11px"
+						style="padding: 8px 12px"
 					>
 						<span class="kanji text-accent text-sm">規</span>
 						<span class="text-ink text-sm" style="flex: 1">{scope}</span>
@@ -213,12 +213,12 @@
 						placeholder="Reason (required to decline)…"
 						rows="3"
 						class="bg-paper border-paper-edge text-ink w-full rounded-lg border text-sm"
-						style="padding: 9px 11px; box-sizing: border-box; resize: vertical; font-family: inherit"
+						style="padding: 8px 12px; box-sizing: border-box; resize: vertical; font-family: inherit"
 					></textarea>
 				</div>
 
 				{#if decideError}
-					<div class="bg-warning-soft border-warning-edge text-ink-soft rounded-lg border text-xs" style="padding: 9px 11px">
+					<div class="bg-warning-soft border-warning-edge text-ink-soft rounded-lg border text-xs" style="padding: 8px 12px">
 						{decideError}
 					</div>
 				{/if}
@@ -232,7 +232,7 @@
 						onclick={() => decide('approve')}
 						disabled={deciding !== null}
 						class="bg-ink text-on-primary inline-flex items-center justify-center gap-2 rounded-lg text-sm font-medium"
-						style="padding: 11px; border: none; cursor: pointer"
+						style="padding: 12px; border: none; cursor: pointer"
 						style:opacity={deciding !== null ? 0.6 : 1}
 					>
 						<span class="kanji text-accent text-sm">決</span>
@@ -244,7 +244,7 @@
 							onclick={() => decide('revise')}
 							disabled={deciding !== null}
 							class="bg-paper border-paper-edge text-ink-soft flex-1 rounded-lg border text-sm"
-							style="padding: 9px; cursor: pointer"
+							style="padding: 8px; cursor: pointer"
 							style:opacity={deciding !== null ? 0.6 : 1}
 						>
 							{deciding === 'revise' ? 'Revising…' : 'Revise'}
@@ -254,7 +254,7 @@
 							onclick={() => decide('decline')}
 							disabled={deciding !== null}
 							class="bg-paper border-paper-edge text-ink-soft flex-1 rounded-lg border text-sm"
-							style="padding: 9px; cursor: pointer"
+							style="padding: 8px; cursor: pointer"
 							style:opacity={deciding !== null ? 0.6 : 1}
 						>
 							{deciding === 'decline' ? 'Declining…' : 'Decline'}

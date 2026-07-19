@@ -30,7 +30,7 @@
     font-family: var(--font-ui);
   }
   .page-nav {
-    padding: 24px 56px;
+    padding: 24px 48px;
     border-bottom: var(--hairline);
   }
   .back-link {
@@ -42,10 +42,10 @@
   .page-content {
     max-width: 800px;
     margin: 0 auto;
-    padding: 80px 56px 120px;
+    padding: 64px 48px 120px;
   }
   @media (max-width: 900px) {
-    .page-nav { padding: 20px 24px; }
-    .page-content { padding: 48px 24px 80px; }
+    .page-nav { padding: 16px 24px; }
+    .page-content { padding: 48px 24px 64px; }
   }
 </style>

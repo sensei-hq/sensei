@@ -86,7 +86,7 @@
 				type="button"
 				onclick={() => (showInvite = !showInvite)}
 				class="bg-ink text-on-primary inline-flex items-center gap-2 rounded-lg text-xs font-medium"
-				style="padding: 8px 13px; cursor: pointer; border: none"
+				style="padding: 4px 12px; cursor: pointer; border: none"
 			>
 				<span class="kanji text-xs">任</span>
 				{showInvite ? 'Close' : 'Provision member'}
@@ -94,7 +94,7 @@
 		{/snippet}
 	</ConsoleHead>
 
-	<div class="flex-1 overflow-auto" style="padding: 28px">
+	<div class="flex-1 overflow-auto" style="padding: 24px">
 		{#if data.error}
 			<ConsoleBanner>
 				Live members are unavailable. <span class="mono text-ink-mute text-xs">{data.error}</span>
@@ -109,7 +109,7 @@
 		<!-- JIT provisioning note (mockup) -->
 		<div
 			class="bg-paper-soft border-paper-edge border-accent flex items-start gap-3 rounded-xl border"
-			style="border-left-width: 3px; padding: 13px 16px; margin: 18px 0"
+			style="border-left-width: 3px; padding: 12px 16px; margin: 18px 0"
 		>
 			<span class="kanji text-accent text-base" style="line-height: 1.2">任</span>
 			<div class="text-ink-soft text-xs" style="line-height: 1.55">
@@ -121,7 +121,7 @@
 		</div>
 
 		{#if showInvite}
-			<div class="bg-paper-soft border-paper-edge rounded-xl border" style="padding: 16px 18px; margin-bottom: 18px">
+			<div class="bg-paper-soft border-paper-edge rounded-xl border" style="padding: 16px 16px; margin-bottom: 18px">
 				<div class="text-ink-mute font-semibold uppercase text-xs" style="letter-spacing: 0.1em; margin-bottom: 12px">
 					Provision a membership
 				</div>
@@ -130,14 +130,14 @@
 						<span class="text-ink-mute text-xs">User id (uuid)</span>
 						<input
 							class="bg-paper border-paper-edge text-ink rounded-md border text-sm"
-							style="padding: 7px 9px"
+							style="padding: 8px 8px"
 							bind:value={formUser}
 							placeholder="00000000-0000-…"
 						/>
 					</label>
 					<label class="flex flex-col gap-1">
 						<span class="text-ink-mute text-xs">Authenticated via</span>
-						<select class="bg-paper border-paper-edge text-ink rounded-md border text-sm" style="padding: 7px 9px" bind:value={formVia}>
+						<select class="bg-paper border-paper-edge text-ink rounded-md border text-sm" style="padding: 8px 8px" bind:value={formVia}>
 							<option value="sso">SSO</option>
 							<option value="github_oauth">GitHub OAuth</option>
 							<option value="device_code">Device code</option>
@@ -147,14 +147,14 @@
 						<span class="text-ink-mute text-xs">Git role (optional)</span>
 						<input
 							class="bg-paper border-paper-edge text-ink rounded-md border text-sm"
-							style="padding: 7px 9px"
+							style="padding: 8px 8px"
 							bind:value={formGitRole}
 							placeholder="write"
 						/>
 					</label>
 					<label class="flex flex-col gap-1">
 						<span class="text-ink-mute text-xs">Role override</span>
-						<select class="bg-paper border-paper-edge text-ink rounded-md border text-sm" style="padding: 7px 9px" bind:value={formRole}>
+						<select class="bg-paper border-paper-edge text-ink rounded-md border text-sm" style="padding: 8px 8px" bind:value={formRole}>
 							<option value="">derive from git</option>
 							{#each MEMBER_ROLES as r (r)}
 								<option value={r}>{roleLabel(r)}</option>
@@ -166,7 +166,7 @@
 						onclick={invite}
 						disabled={!canInvite}
 						class="bg-ink text-on-primary inline-flex items-center gap-2 rounded-lg text-xs font-medium"
-						style="padding: 8px 13px; cursor: pointer; border: none"
+						style="padding: 4px 12px; cursor: pointer; border: none"
 						style:opacity={canInvite ? 1 : 0.5}
 					>
 						{inviting ? 'Provisioning…' : 'Provision'}
@@ -177,13 +177,13 @@
 
 		<div class="bg-paper-soft border-paper-edge overflow-x-auto rounded-xl border">
 			<div
-				class="border-paper-edge text-ink-mute grid gap-4 border-b font-semibold uppercase min-w-[600px] text-xs" style="grid-template-columns: 1.6fr 1fr 1.3fr 1fr auto; padding: 11px 18px; letter-spacing: 0.1em"
+				class="border-paper-edge text-ink-mute grid gap-4 border-b font-semibold uppercase min-w-[600px] text-xs" style="grid-template-columns: 1.6fr 1fr 1.3fr 1fr auto; padding: 12px 16px; letter-spacing: 0.1em"
 			>
 				<span>Member</span><span>Via</span><span>Dōjō role</span><span>Sync</span><span>Active</span>
 			</div>
 
 			{#if data.members.length === 0}
-				<div class="text-ink-mute text-sm" style="padding: 20px 18px">
+				<div class="text-ink-mute text-sm" style="padding: 16px 16px">
 					{data.error ? 'Could not load members.' : 'No members yet — provision one above.'}
 				</div>
 			{:else}
@@ -192,7 +192,7 @@
 						class="grid items-center gap-4 min-w-[600px] {i < data.members.length - 1
 							? 'border-paper-edge border-b'
 							: ''}"
-						style="grid-template-columns: 1.6fr 1fr 1.3fr 1fr auto; padding: 13px 18px"
+						style="grid-template-columns: 1.6fr 1fr 1.3fr 1fr auto; padding: 12px 16px"
 					>
 						<div class="flex items-center gap-3" style="min-width: 0">
 							<span

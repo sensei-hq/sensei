@@ -16,7 +16,7 @@
 	<!-- top bar -->
 	<div
 		class="border-paper-edge bg-paper flex flex-shrink-0 items-center gap-3 border-b"
-		style="height: 54px; padding: 0 22px"
+		style="height: 54px; padding: 0 24px"
 	>
 		<span class="kanji text-accent text-xl" style="line-height: 1">結</span>
 		<span class="display text-lg" style="letter-spacing: -0.01em">Dōjō</span>
@@ -33,7 +33,7 @@
 		>
 	</div>
 
-	<div class="flex-1 overflow-auto" style="padding: 36px 0">
+	<div class="flex-1 overflow-auto" style="padding: 32px 0">
 		<div style="max-width: 820px; margin: 0 auto; padding: 0 32px">
 			<div class="text-ink-mute text-xs uppercase" style="letter-spacing: 0.2em; margin-bottom: 8px">
 				Signed in as {user.handle}
@@ -59,7 +59,7 @@
 						class="bg-paper-soft grid items-center gap-5 rounded-2xl {o.last
 							? 'border-accent'
 							: 'border-paper-edge'} border"
-						style="grid-template-columns: auto 1fr auto; padding: 16px 20px"
+						style="grid-template-columns: auto 1fr auto; padding: 16px 16px"
 					>
 						<div
 							class="bg-paper border-paper-edge flex items-center justify-center rounded-xl border"
@@ -112,7 +112,7 @@
 								class="inline-flex items-center gap-2 rounded-lg text-sm font-medium {o.last
 									? 'bg-primary text-on-primary'
 									: 'bg-paper border-paper-edge text-ink border'}"
-								style="padding: 10px 18px; cursor: pointer"
+								style="padding: 8px 16px; cursor: pointer"
 							>
 								Enter <span class="text-xs">→</span>
 							</button>
@@ -124,7 +124,7 @@
 			<!-- join another -->
 			<div
 				class="bg-paper border-ink-faint flex items-center gap-4 rounded-2xl border border-dashed"
-				style="margin-top: 18px; padding: 16px 20px"
+				style="margin-top: 18px; padding: 16px 16px"
 			>
 				<span class="kanji text-ink-mute text-xl">迎</span>
 				<div class="flex-1" style="min-width: 0">
@@ -138,12 +138,12 @@
 					type="text"
 					placeholder="invite code"
 					class="bg-paper border-paper-edge text-ink rounded-lg border text-sm"
-					style="width: 170px; box-sizing: border-box; padding: 11px 13px"
+					style="width: 170px; box-sizing: border-box; padding: 12px 12px"
 				/>
 				<button
 					type="button"
 					class="bg-paper border-paper-edge text-ink rounded-lg border text-sm"
-					style="padding: 11px 18px; white-space: nowrap; cursor: pointer">Join</button
+					style="padding: 12px 16px; white-space: nowrap; cursor: pointer">Join</button
 				>
 			</div>
 

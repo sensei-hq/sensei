@@ -91,7 +91,7 @@
 
 <div
 	class="bg-paper-soft border-accent-edge rounded-xl border"
-	style="padding: 15px 18px"
+	style="padding: 12px 16px"
 >
 	<div class="flex items-start gap-3">
 		<span
@@ -127,7 +127,7 @@
 			rows="2"
 			disabled={busy}
 			class="bg-paper border-paper-edge text-ink w-full rounded-lg border text-sm"
-			style="padding: 8px 11px; margin-top: 12px; resize: vertical; font-family: inherit; line-height: 1.5"
+			style="padding: 8px 12px; margin-top: 12px; resize: vertical; font-family: inherit; line-height: 1.5"
 		></textarea>
 	{:else}
 		<div style="margin-top: 12px">
@@ -175,7 +175,7 @@
 				placeholder="Type your answer…"
 				disabled={busy}
 				class="bg-paper border-paper-edge text-ink flex-1 rounded-lg border text-sm"
-				style="padding: 8px 11px; min-width: 0; font-family: inherit"
+				style="padding: 8px 12px; min-width: 0; font-family: inherit"
 			/>
 			<Button
 				variant="primary"

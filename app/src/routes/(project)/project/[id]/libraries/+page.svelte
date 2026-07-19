@@ -149,7 +149,7 @@
         color: var(--accent);
     }
     .badge {
-        padding: 1px 6px;
+        padding: 1px 8px;
         border-radius: 999px;
         font-size: 10px;
         line-height: 1.4;

@@ -471,7 +471,7 @@
         font-family: var(--font-mono);
         font-size: 10.5px;
         background: var(--paper-mute);
-        padding: 1px 5px;
+        padding: 1px 8px;
         border-radius: 3px;
     }
 

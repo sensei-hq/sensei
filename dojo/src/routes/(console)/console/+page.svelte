@@ -67,7 +67,7 @@
 		{/snippet}
 	</ConsoleHead>
 
-	<div class="flex-1 overflow-auto" style="padding: 28px">
+	<div class="flex-1 overflow-auto" style="padding: 24px">
 		{#if data.error}
 			<div
 				class="bg-warning-soft border-warning-edge text-ink-soft flex items-center gap-2 rounded-xl border text-sm"
@@ -87,7 +87,7 @@
 			<a
 				href={resolve('/(console)/console/triage')}
 				class="bg-paper-soft border-paper-edge flex-1 rounded-xl border no-underline"
-				style="padding: 16px 18px; min-width: 0"
+				style="padding: 16px 16px; min-width: 0"
 			>
 				<div class="flex items-center gap-2" style="margin-bottom: 10px">
 					<span class="kanji text-accent text-sm">門</span>
@@ -100,7 +100,7 @@
 				<div class="text-ink-mute text-xs" style="margin-top: 8px">across your scopes</div>
 			</a>
 
-			<div class="bg-paper-soft border-paper-edge flex-1 rounded-xl border" style="padding: 16px 18px; min-width: 0">
+			<div class="bg-paper-soft border-paper-edge flex-1 rounded-xl border" style="padding: 16px 16px; min-width: 0">
 				<div class="flex items-center gap-2" style="margin-bottom: 10px">
 					<span class="kanji text-accent text-sm">共</span>
 					<span class="text-ink-mute uppercase text-xs" style="letter-spacing: 0.12em">Contributions · 7d</span>
@@ -111,7 +111,7 @@
 				</div>
 			</div>
 
-			<div class="bg-paper-soft border-paper-edge flex-1 rounded-xl border" style="padding: 16px 18px; min-width: 0">
+			<div class="bg-paper-soft border-paper-edge flex-1 rounded-xl border" style="padding: 16px 16px; min-width: 0">
 				<div class="flex items-center gap-2" style="margin-bottom: 10px">
 					<span class="kanji text-accent text-sm">決</span>
 					<span class="text-ink-mute uppercase text-xs" style="letter-spacing: 0.12em">Approved · 7d</span>
@@ -122,7 +122,7 @@
 				<div class="text-ink-mute text-xs" style="margin-top: 8px">published to matching scopes</div>
 			</div>
 
-			<div class="bg-paper-soft border-paper-edge flex-1 rounded-xl border" style="padding: 16px 18px; min-width: 0">
+			<div class="bg-paper-soft border-paper-edge flex-1 rounded-xl border" style="padding: 16px 16px; min-width: 0">
 				<div class="flex items-center gap-2" style="margin-bottom: 10px">
 					<span class="kanji text-accent text-sm">果</span>
 					<span class="text-ink-mute uppercase text-xs" style="letter-spacing: 0.12em">Adoption lift</span>
@@ -141,7 +141,7 @@
 		<div class="grid gap-5" style="grid-template-columns: 1.4fr 1fr; margin-top: 18px">
 			<!-- triage preview (live) -->
 			<div class="bg-paper-soft border-paper-edge overflow-hidden rounded-xl border">
-				<div class="border-paper-edge flex items-center border-b" style="padding: 13px 16px">
+				<div class="border-paper-edge flex items-center border-b" style="padding: 12px 16px">
 					<span class="text-ink-mute uppercase text-xs" style="letter-spacing: 0.14em">Top of the triage queue</span>
 					<span class="flex-1"></span>
 					<a
@@ -150,7 +150,7 @@
 				>
 				</div>
 				{#if preview.length === 0}
-					<div class="text-ink-mute text-sm" style="padding: 20px 16px">
+					<div class="text-ink-mute text-sm" style="padding: 16px 16px">
 						Nothing waiting — the queue is clear.
 					</div>
 				{:else}
@@ -180,7 +180,7 @@
 
 			<!-- confidentiality + recent activity (static demo content) -->
 			<div class="flex flex-col gap-5">
-				<div class="bg-paper-soft border-success-edge rounded-xl border" style="padding: 15px 17px">
+				<div class="bg-paper-soft border-success-edge rounded-xl border" style="padding: 16px 16px">
 					<div class="flex items-center gap-2" style="margin-bottom: 8px">
 						<span class="kanji text-success text-sm">盾</span>
 						<span class="text-ink-mute uppercase text-xs" style="letter-spacing: 0.14em">Confidentiality</span>
@@ -192,7 +192,7 @@
 					</div>
 					<div
 						class="border-paper-edge flex items-center gap-2 border-t"
-						style="margin-top: 10px; padding-top: 10px"
+						style="margin-top: 10px; padding-top: 8px"
 					>
 						<span class="bg-success rounded-full" style="width: 6px; height: 6px"></span>
 						<span class="mono text-ink-mute text-xs uppercase" style="letter-spacing: 0.06em">Leak-guard armed</span>
@@ -201,13 +201,13 @@
 
 				<div class="bg-paper-soft border-paper-edge flex-1 overflow-hidden rounded-xl border">
 					<div
-						class="border-paper-edge text-ink-mute border-b uppercase text-xs" style="padding: 13px 16px; letter-spacing: 0.14em"
+						class="border-paper-edge text-ink-mute border-b uppercase text-xs" style="padding: 12px 16px; letter-spacing: 0.14em"
 					>
 						Recent activity
 					</div>
 					<div style="padding: 4px 0">
 						{#each activity as a (a.text)}
-							<div class="grid items-start gap-3" style="grid-template-columns: auto 1fr auto; padding: 9px 16px">
+							<div class="grid items-start gap-3" style="grid-template-columns: auto 1fr auto; padding: 8px 16px">
 								<span class="kanji text-center {a.tone} text-sm" style="width: 16px">{a.kanji}</span>
 								<span class="text-ink-soft text-xs" style="line-height: 1.45">{a.text}</span>
 								<span class="mono text-ink-faint text-xs">{a.when}</span>
@@ -232,7 +232,7 @@
 						class="grid items-center gap-4 {i < published.length - 1 ? 'border-paper-edge border-b' : ''} {p.neg
 							? 'bg-warning-soft'
 							: ''}"
-						style="grid-template-columns: auto 1fr 150px 92px 120px; padding: 13px 16px"
+						style="grid-template-columns: auto 1fr 150px 92px 120px; padding: 12px 16px"
 					>
 						<span class="kanji text-center {p.neg ? 'text-warning' : 'text-accent'} text-lg" style="width: 20px"
 							>{p.kanji}</span
@@ -255,7 +255,7 @@
 								<button
 									type="button"
 									class="border-warning-edge bg-paper text-warning inline-flex items-center gap-2 rounded-lg border text-xs"
-									style="padding: 6px 12px; cursor: pointer"
+									style="padding: 4px 12px; cursor: pointer"
 								>
 									<span class="kanji text-xs">退</span> Retract
 								</button>
@@ -267,7 +267,7 @@
 				{/each}
 				<div
 					class="border-paper-edge text-ink-mute flex items-center gap-2 border-t text-xs"
-					style="padding: 10px 16px; line-height: 1.45"
+					style="padding: 8px 16px; line-height: 1.45"
 				>
 					<span class="kanji text-warning text-xs">退</span>
 					<span

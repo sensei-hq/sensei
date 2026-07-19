@@ -27,7 +27,7 @@
 		{/snippet}
 	</ConsoleHead>
 
-	<div class="flex-1 overflow-auto" style="padding: 28px">
+	<div class="flex-1 overflow-auto" style="padding: 24px">
 		{#if data.error}
 			<ConsoleBanner>
 				Live audit is unavailable. <span class="mono text-ink-mute text-xs">{data.error}</span>
@@ -36,20 +36,20 @@
 
 		<div class="bg-paper-soft border-paper-edge overflow-hidden rounded-xl border" style="margin-top: 18px">
 			<div
-				class="border-paper-edge text-ink-mute grid gap-3 border-b font-semibold uppercase text-xs" style="grid-template-columns: 78px 150px 1.4fr 130px 0.9fr; padding: 11px 18px; letter-spacing: 0.1em"
+				class="border-paper-edge text-ink-mute grid gap-3 border-b font-semibold uppercase text-xs" style="grid-template-columns: 78px 150px 1.4fr 130px 0.9fr; padding: 12px 16px; letter-spacing: 0.1em"
 			>
 				<span>Time</span><span>Action</span><span>Target</span><span>Actor</span><span>When</span>
 			</div>
 
 			{#if data.events.length === 0}
-				<div class="text-ink-mute text-sm" style="padding: 20px 18px">
+				<div class="text-ink-mute text-sm" style="padding: 16px 16px">
 					{data.error ? 'Could not load the audit trail.' : 'No admin actions recorded yet.'}
 				</div>
 			{:else}
 				{#each data.events as e, i (e.id)}
 					<div
 						class="grid items-center gap-3 {i < data.events.length - 1 ? 'border-paper-edge border-b' : ''}"
-						style="grid-template-columns: 78px 150px 1.4fr 130px 0.9fr; padding: 12px 18px"
+						style="grid-template-columns: 78px 150px 1.4fr 130px 0.9fr; padding: 12px 16px"
 					>
 						<span class="mono text-ink-faint text-xs">{clockTime(e.ts)}</span>
 						<span>

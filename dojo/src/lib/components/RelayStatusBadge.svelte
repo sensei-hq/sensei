@@ -14,7 +14,7 @@
 </script>
 
 <span
-	class="mono border-paper-edge inline-flex items-center rounded-full border {badge.toneClass} text-xs" style="padding: 2px 8px; letter-spacing: 0.02em; gap: 5px"
+	class="mono border-paper-edge inline-flex items-center rounded-full border {badge.toneClass} text-xs" style="padding: 4px 8px; letter-spacing: 0.02em; gap: 5px"
 >
 	{#if running}
 		<span class="pulse-dot bg-accent" aria-hidden="true"></span>
