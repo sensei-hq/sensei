@@ -93,6 +93,10 @@ async fn enqueue_global_passes(queue: &TaskQueue) {
     // Insights/Today board reads cached copy on first view (idempotent — cached
     // recs skipped).
     queue.enqueue(Task::new(TaskKind::WarmInsightCopy, "", "")).await;
+    // §9 learning loop: attribute confirmed playbook_run outcomes, aggregate FTR
+    // stats, and apply the learn() plan (bounded reweight + learned proposals).
+    // Idempotent — safe alongside the other global passes on every due tick.
+    queue.enqueue(Task::new(TaskKind::LearnPlaybooks, "", "")).await;
 }
 
 /// Resolve the tick interval from a config value, falling back to the default
@@ -331,6 +335,10 @@ mod tests {
         assert!(
             kinds.contains(&TaskKind::WarmInsightCopy),
             "eager insight-copy warming must ride the global-passes tick, got {kinds:?}",
+        );
+        assert!(
+            kinds.contains(&TaskKind::LearnPlaybooks),
+            "§9 learning-loop pass must ride the global-passes tick, got {kinds:?}",
         );
     }
 
