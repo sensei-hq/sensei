@@ -7488,12 +7488,32 @@ impl PgStore {
         Ok(row)
     }
 
+    /// Active memories anchored to (slot[, feature]) for a project. `feature=None`
+    /// matches project-scope (feature IS NULL); `Some(f)` matches that feature.
+    pub async fn list_memories_for_slot(
+        &self, project_id: &uuid::Uuid, slot: &str, feature: Option<&str>, limit: i64,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, String, String, Option<String>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT id, title, content, feature FROM sensei.memories
+                  WHERE status='active' AND project_id = $1
+                    AND spine_slot = $2::sensei.spine_slot
+                    AND feature IS NOT DISTINCT FROM $3
+                  ORDER BY strength DESC, modified_at DESC LIMIT $4"
+            ).bind(project_id).bind(slot).bind(feature).bind(limit)
+            .fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id, title, content, feature)|
+            serde_json::json!({ "id": id, "title": title, "content": content, "feature": feature })
+        ).collect())
+    }
+
     pub async fn assemble_context(
         &self,
         project_id: uuid::Uuid,
         stack_ids:  &[String],
         tags:       Option<&[String]>,
         limit:      i64,
+        slot:       Option<(&str, Option<&str>)>,
     ) -> Result<serde_json::Value, String> {
         let allowed = ["active", "reinforced", "battle_tested", "challenged"];
         let allowed_owned: Vec<String> = allowed.iter().map(|s| s.to_string()).collect();
@@ -7551,7 +7571,7 @@ impl PgStore {
             }
         }
 
-        let memories: Vec<serde_json::Value> = rows.into_iter().map(|r| serde_json::json!({
+        let mut memories: Vec<serde_json::Value> = rows.into_iter().map(|r| serde_json::json!({
             "id":               r.0,
             "scope":            r.2,
             "scope_filter":     r.3,
@@ -7566,6 +7586,24 @@ impl PgStore {
             "tags":             r.13,
             "updated_at":       r.15.to_rfc3339(),
         })).collect();
+
+        // Slot hint: lead the bundle with slot-anchored memories, deduped against
+        // the general blend above (a slot-anchored memory that also matched the
+        // scope/tag blend must not appear twice).
+        if let Some((s, feature)) = slot {
+            let anchored = self.list_memories_for_slot(&project_id, s, feature, limit).await?;
+            if !anchored.is_empty() {
+                let anchored_ids: std::collections::HashSet<String> = anchored.iter()
+                    .filter_map(|m| m["id"].as_str().map(|s| s.to_string()))
+                    .collect();
+                memories.retain(|m| {
+                    m["id"].as_str().map(|id| !anchored_ids.contains(id)).unwrap_or(true)
+                });
+                let mut led = anchored;
+                led.append(&mut memories);
+                memories = led;
+            }
+        }
 
         // Version = max modified_at across the set (stable identifier for cache validation).
         let version = memories.iter()
@@ -12381,7 +12419,7 @@ mod knowledge_tests {
             spine_slot: None, feature: None,
         }).await.unwrap();
 
-        let blob = pg.assemble_context(pid, &["rust".into()], None, 50).await.unwrap();
+        let blob = pg.assemble_context(pid, &["rust".into()], None, 50, None).await.unwrap();
         let titles: Vec<String> = blob["memories"].as_array().unwrap().iter()
             .map(|m| m["title"].as_str().unwrap().to_string()).collect();
         assert!(titles.contains(&"P".to_string()));
@@ -12397,7 +12435,7 @@ mod knowledge_tests {
             namespace_id: None, enforcement: None, origin: None, source_id: None,
             spine_slot: None, feature: None,
         }).await.unwrap();
-        let blob2 = pg.assemble_context(pid, &["rust".into()], None, 50).await.unwrap();
+        let blob2 = pg.assemble_context(pid, &["rust".into()], None, 50, None).await.unwrap();
         let titles2: Vec<String> = blob2["memories"].as_array().unwrap().iter()
             .map(|m| m["title"].as_str().unwrap().to_string()).collect();
         assert!(!titles2.contains(&"PROP".to_string()));
@@ -12408,6 +12446,55 @@ mod knowledge_tests {
         // assemble_context's top-N window.
         sqlx_core::query::query("DELETE FROM sensei.memories WHERE id = ANY($1)")
             .bind(&[m_p, m_s, m_g, m_prop][..]).execute(pg.pool()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn list_memories_for_slot_matches_slot_and_feature() {
+        if ddl_test_skip() { return; }
+        let pg = PgStore::connect(&std::env::var("SENSEI_TEST_DB_URL").unwrap()).await.unwrap();
+        let pid = pg.ensure_test_project("slot-retrieval").await.unwrap();
+
+        let m_design = pg.create_memory(Some(&pid), "project", None, "decision",
+            "design-project-scope", "c", None, None, Some("design"), None).await.unwrap();
+        let m_design_auth = pg.create_memory(Some(&pid), "project", None, "decision",
+            "design-auth-feature", "c", None, None, Some("design"), Some("auth")).await.unwrap();
+        let m_decisions = pg.create_memory(Some(&pid), "project", None, "decision",
+            "decisions-project-scope", "c", None, None, Some("decisions"), None).await.unwrap();
+
+        let design_project = pg.list_memories_for_slot(&pid, "design", None, 50).await.unwrap();
+        assert_eq!(design_project.len(), 1);
+        assert_eq!(design_project[0]["id"].as_str().unwrap(), m_design.to_string());
+
+        let design_auth = pg.list_memories_for_slot(&pid, "design", Some("auth"), 50).await.unwrap();
+        assert_eq!(design_auth.len(), 1);
+        assert_eq!(design_auth[0]["id"].as_str().unwrap(), m_design_auth.to_string());
+
+        sqlx_core::query::query("DELETE FROM sensei.memories WHERE id = ANY($1)")
+            .bind(&[m_design, m_design_auth, m_decisions][..]).execute(pg.pool()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn assemble_context_leads_with_slot_anchored_memory() {
+        if ddl_test_skip() { return; }
+        let pg = PgStore::connect(&std::env::var("SENSEI_TEST_DB_URL").unwrap()).await.unwrap();
+        let pid = pg.ensure_test_project("slot-leads").await.unwrap();
+
+        // Unanchored memory created first so a strength/recency-only ordering
+        // would put it ahead of the slot-anchored one below.
+        let m_unanchored = pg.create_memory(Some(&pid), "project", None, "decision",
+            "unanchored", "c", None, None, None, None).await.unwrap();
+        let m_design = pg.create_memory(Some(&pid), "project", None, "decision",
+            "design-anchored", "c", None, None, Some("design"), None).await.unwrap();
+
+        let blob = pg.assemble_context(pid, &[], None, 50, Some(("design", None))).await.unwrap();
+        let ids: Vec<String> = blob["memories"].as_array().unwrap().iter()
+            .map(|m| m["id"].as_str().unwrap().to_string()).collect();
+        assert_eq!(ids.first().map(String::as_str), Some(m_design.to_string().as_str()),
+            "slot-anchored memory must lead the assembled bundle");
+        assert!(ids.contains(&m_unanchored.to_string()), "general blend still present");
+
+        sqlx_core::query::query("DELETE FROM sensei.memories WHERE id = ANY($1)")
+            .bind(&[m_unanchored, m_design][..]).execute(pg.pool()).await.unwrap();
     }
 
     #[tokio::test]
@@ -12425,7 +12512,7 @@ mod knowledge_tests {
             spine_slot: None, feature: None,
         }).await.unwrap();
 
-        let blob = pg.assemble_context(pid, &[], None, 50).await.unwrap();
+        let blob = pg.assemble_context(pid, &[], None, 50, None).await.unwrap();
         // Context is still delivered (writer is additive, non-fatal).
         assert!(blob["memories"].as_array().unwrap().iter()
             .any(|m| m["id"].as_str() == Some(&mid.to_string())));
@@ -12436,7 +12523,7 @@ mod knowledge_tests {
         assert_eq!(skipped, 0);
 
         // A second delivery logs a second load row.
-        pg.assemble_context(pid, &[], None, 50).await.unwrap();
+        pg.assemble_context(pid, &[], None, 50, None).await.unwrap();
         let (loaded2, _, _) = pg.memory_telemetry_7d(mid).await.unwrap();
         assert_eq!(loaded2, 2);
 
