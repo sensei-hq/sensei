@@ -50,7 +50,7 @@
 {#if gates.length === 0}
 	<div
 		class="border-ink-faint text-ink-mute flex flex-col items-center gap-2 rounded-xl border border-dashed text-center"
-		style="padding: 48px 28px; margin-top: 24px"
+		style="padding: 48px 24px; margin-top: 24px"
 	>
 		<span class="kanji text-ink-faint text-2xl">静</span>
 		<div class="text-ink-soft text-sm">Nothing's waiting on you</div>
@@ -79,14 +79,14 @@
 					<a
 						{href}
 						class="bg-paper-soft border-paper-edge block rounded-xl border no-underline"
-						style="padding: 15px 18px"
+						style="padding: 12px 16px"
 					>
 						{@render rowBody(gate)}
 					</a>
 				{:else}
 					<div
 						class="bg-paper-soft border-paper-edge rounded-xl border"
-						style="padding: 15px 18px"
+						style="padding: 12px 16px"
 					>
 						{@render rowBody(gate)}
 					</div>

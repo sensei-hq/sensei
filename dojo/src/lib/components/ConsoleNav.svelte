@@ -139,7 +139,7 @@
 							class="grid w-full items-center gap-2 rounded-lg text-sm no-underline {on
 								? 'bg-paper border-paper-edge text-ink border'
 								: 'text-ink-soft border border-transparent'}"
-							style="grid-template-columns: auto 1fr auto; text-align: left; padding: 8px 9px"
+							style="grid-template-columns: auto 1fr auto; text-align: left; padding: 8px 8px"
 						>
 							<span
 								class="kanji text-sm text-center {on ? 'text-accent' : 'text-ink-mute'}"
@@ -149,7 +149,7 @@
 							{#if it.badge != null}
 								<span
 									class="mono bg-accent text-on-primary rounded-full text-xs font-semibold"
-									style="padding: 0 6px; line-height: 16px">{it.badge}</span
+									style="padding: 0 8px; line-height: 16px">{it.badge}</span
 								>
 							{:else}
 								<span></span>
@@ -159,7 +159,7 @@
 						<div
 							title="Designed in a later pass"
 							class="text-ink-faint grid w-full items-center gap-2 rounded-lg border border-transparent text-sm"
-							style="grid-template-columns: auto 1fr auto; text-align: left; padding: 8px 9px; opacity: 0.6"
+							style="grid-template-columns: auto 1fr auto; text-align: left; padding: 8px 8px; opacity: 0.6"
 						>
 							<span class="kanji text-ink-mute text-sm text-center" style="width: 15px">{it.kanji}</span>
 							<span>{it.label}</span>
@@ -174,7 +174,7 @@
 	<div class="flex-1"></div>
 	<div
 		class="border-paper-edge text-ink-mute grid w-full items-center gap-2 border-t text-sm"
-		style="grid-template-columns: auto 1fr; text-align: left; padding: 12px 9px 0; opacity: 0.6"
+		style="grid-template-columns: auto 1fr; text-align: left; padding: 12px 8px 8px; opacity: 0.6"
 	>
 		<span class="kanji text-ink-mute text-sm text-center" style="width: 15px">調</span>
 		<span>Settings · SSO</span>

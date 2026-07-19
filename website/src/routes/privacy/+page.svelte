@@ -112,7 +112,7 @@
   }
   .prose h2:first-child { margin-top: 0; }
   .prose p { margin: 0 0 16px; }
-  .prose ul { margin: 0 0 16px; padding-left: 20px; }
+  .prose ul { margin: 0 0 16px; padding-left: 16px; }
   .prose li { margin-bottom: 8px; }
   .prose a {
     color: var(--shu);

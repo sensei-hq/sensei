@@ -41,14 +41,14 @@
 	<!-- ── left · welcome back + insight into the Dōjō ── -->
 	<div
 		class="border-paper-edge flex flex-shrink-0 flex-col overflow-auto border-r"
-		style="width: 57%; padding: 44px 52px; background: linear-gradient(160deg, var(--accent-soft) 0%, var(--paper-soft) 60%)"
+		style="width: 57%; padding: 48px 48px; background: linear-gradient(160deg, var(--accent-soft) 0%, var(--paper-soft) 60%)"
 	>
 		<div class="flex items-center gap-3">
 			<span class="kanji text-accent text-2xl" style="line-height: 1">結</span>
 			<span class="display text-xl" style="letter-spacing: -0.01em">Dōjō</span>
 			<span
 				class="mono bg-paper border-paper-edge text-ink-mute rounded-full border text-xs"
-				style="padding: 3px 10px">dojo.sensei-hq.com</span
+				style="padding: 4px 8px">dojo.sensei-hq.com</span
 			>
 		</div>
 
@@ -66,7 +66,7 @@
 		</div>
 
 		<div class="grid" style="grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-top: 34px">
-			<div class="bg-paper border-paper-edge rounded-xl border" style="padding: 15px 16px">
+			<div class="bg-paper border-paper-edge rounded-xl border" style="padding: 16px 16px">
 				<div class="flex items-center justify-between" style="margin-bottom: 9px">
 					<span class="kanji text-accent text-sm">共</span>
 					<span class="text-accent"><Spark data={m.contribSpark} /></span>
@@ -78,7 +78,7 @@
 					lessons shared this week
 				</div>
 			</div>
-			<div class="bg-paper border-paper-edge rounded-xl border" style="padding: 15px 16px">
+			<div class="bg-paper border-paper-edge rounded-xl border" style="padding: 16px 16px">
 				<div class="flex items-center justify-between" style="margin-bottom: 9px">
 					<span class="kanji text-accent text-sm">決</span>
 				</div>
@@ -89,7 +89,7 @@
 					approved &amp; distributed
 				</div>
 			</div>
-			<div class="bg-paper border-paper-edge rounded-xl border" style="padding: 15px 16px">
+			<div class="bg-paper border-paper-edge rounded-xl border" style="padding: 16px 16px">
 				<div class="flex items-center justify-between" style="margin-bottom: 9px">
 					<span class="kanji text-accent text-sm">盾</span>
 				</div>
@@ -105,7 +105,7 @@
 		<!-- latest approved teaching -->
 		<div
 			class="bg-paper border-paper-edge flex items-center gap-4 rounded-xl border"
-			style="margin-top: 14px; padding: 15px 17px"
+			style="margin-top: 14px; padding: 16px 16px"
 		>
 			<span class="kanji text-accent text-xl">守</span>
 			<div class="flex-1" style="min-width: 0">
@@ -129,7 +129,7 @@
 	</div>
 
 	<!-- ── right · sign-in options ── -->
-	<div class="flex flex-1 items-center justify-center" style="min-width: 0; padding: 40px">
+	<div class="flex flex-1 items-center justify-center" style="min-width: 0; padding: 32px">
 		<div style="width: 364px; max-width: 100%">
 			<h2 class="display font-normal text-2xl" style="letter-spacing: -0.015em; margin: 0; line-height: 1.1">
 				Sign in to continue
@@ -143,7 +143,7 @@
 				type="button"
 				disabled
 				class="bg-primary text-on-primary flex w-full items-center justify-center gap-3 rounded-lg text-sm font-medium"
-				style="padding: 13px 18px; cursor: not-allowed; opacity: 0.55"
+				style="padding: 12px 16px; cursor: not-allowed; opacity: 0.55"
 			>
 				<span class="i-auth-github" aria-hidden="true" style="width: 18px; height: 18px"></span>
 				Continue with GitHub
@@ -171,13 +171,13 @@
 					bind:value={email}
 					placeholder="you@company.com"
 					class="bg-paper border-paper-edge text-ink w-full rounded-lg border text-sm"
-					style="box-sizing: border-box; padding: 11px 13px; margin-bottom: 10px"
+					style="box-sizing: border-box; padding: 12px 12px; margin-bottom: 10px"
 				/>
 				<button
 					type="submit"
 					disabled={status === 'sending'}
 					class="bg-paper border-paper-edge text-ink flex w-full items-center justify-center gap-2 rounded-lg border text-sm"
-					style="padding: 12px 18px; cursor: pointer"
+					style="padding: 12px 16px; cursor: pointer"
 				>
 					<span class="kanji text-accent text-sm">鍵</span>
 					{status === 'sending' ? 'Sending…' : status === 'sent' ? 'Link sent' : 'Email me a magic link'}
@@ -198,7 +198,7 @@
 			{/if}
 
 			<!-- self-hosted -->
-			<div style="margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--paper-edge)">
+			<div style="margin-top: 22px; padding-top: 16px; border-top: 1px solid var(--paper-edge)">
 				{#if !selfHost}
 					<button
 						type="button"
@@ -222,7 +222,7 @@
 								bind:value={selfHostUrl}
 								placeholder="dojo.yourcompany.com"
 								class="bg-paper border-paper-edge text-ink flex-1 rounded-lg border text-sm"
-								style="box-sizing: border-box; padding: 11px 13px"
+								style="box-sizing: border-box; padding: 12px 12px"
 							/>
 							<button
 								type="button"

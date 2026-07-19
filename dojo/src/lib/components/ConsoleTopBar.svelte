@@ -52,7 +52,7 @@
 	<a
 		href={resolve('/orgs')}
 		class="bg-paper-soft border-paper-edge inline-flex items-center gap-2 rounded-lg border no-underline"
-		style="margin-left: 6px; padding: 6px 11px"
+		style="margin-left: 6px; padding: 4px 12px"
 	>
 		<span class="kanji text-accent text-sm">{org?.kanji ?? '道'}</span>
 		<span class="text-ink text-sm">{org?.name ?? 'Select organization'}</span>
@@ -66,7 +66,7 @@
 
 	<div
 		class="bg-paper-soft border-paper-edge hidden items-center gap-2 rounded-lg border md:flex"
-		style="padding: 6px 11px; width: 260px"
+		style="padding: 4px 12px; width: 260px"
 	>
 		<span class="kanji text-ink-mute text-xs">探</span>
 		<span class="text-ink-faint text-xs">search knowledge…</span>
@@ -87,7 +87,7 @@
 	<button
 		type="button"
 		class="border-paper-edge text-ink-soft inline-flex items-center gap-2 rounded-lg border"
-		style="padding: 6px 11px; background: transparent; cursor: pointer"
+		style="padding: 4px 12px; background: transparent; cursor: pointer"
 		title="Log out"
 	>
 		<span class="kanji text-ink-mute text-xs">出</span>

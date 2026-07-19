@@ -98,7 +98,7 @@
     color: var(--sumi-2);
   }
   .provenance {
-    padding-left: 18px;
+    padding-left: 16px;
     border-left: var(--hairline);
   }
   .prov-list {

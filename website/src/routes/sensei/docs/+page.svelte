@@ -205,7 +205,7 @@
     font-family: var(--font-mono);
     font-size: 0.9em;
     background: var(--paper-2);
-    padding: 2px 6px;
+    padding: 4px 4px;
     border-radius: 4px;
   }
   .toolkit-grid {
@@ -215,7 +215,7 @@
     margin-top: 8px;
   }
   .toolkit-card {
-    padding: 28px;
+    padding: 24px;
     border: var(--hairline);
     border-radius: 12px;
     background: var(--paper-2);
@@ -241,7 +241,7 @@
     font-family: var(--font-mono);
     font-size: 0.9em;
     background: var(--paper-3);
-    padding: 1px 5px;
+    padding: 4px 4px;
     border-radius: 3px;
   }
   .hw-grid {
@@ -251,7 +251,7 @@
     margin-top: 20px;
   }
   .hw-card {
-    padding: 20px;
+    padding: 16px;
     border: var(--hairline);
     border-radius: 10px;
     text-align: center;

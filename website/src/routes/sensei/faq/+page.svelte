@@ -77,7 +77,7 @@
   }
   .faq-item {
     border-top: var(--hairline);
-    padding: 28px 0;
+    padding: 24px 0;
   }
   .faq-item.last { border-bottom: var(--hairline); }
   .faq-summary {

@@ -90,7 +90,7 @@
 					onclick={() => runExport('csv')}
 					disabled={!passes || exporting !== null}
 					class="bg-ink text-on-primary inline-flex items-center gap-2 rounded-lg text-xs font-medium"
-					style="padding: 8px 13px; cursor: pointer; border: none"
+					style="padding: 8px 12px; cursor: pointer; border: none"
 					style:opacity={!passes || exporting !== null ? 0.5 : 1}
 					title={passes
 						? 'Export the compliance report'
@@ -104,7 +104,7 @@
 					onclick={() => runExport('json')}
 					disabled={!passes || exporting !== null}
 					class="border-paper-edge text-ink-soft inline-flex items-center rounded-lg border text-xs font-medium"
-					style="padding: 8px 13px; cursor: pointer; background: transparent"
+					style="padding: 8px 12px; cursor: pointer; background: transparent"
 					style:opacity={!passes || exporting !== null ? 0.5 : 1}
 				>
 					{exporting === 'json' ? 'Exporting…' : 'JSON'}
@@ -113,7 +113,7 @@
 		{/snippet}
 	</ConsoleHead>
 
-	<div class="flex-1 overflow-auto" style="padding: 28px">
+	<div class="flex-1 overflow-auto" style="padding: 24px">
 		<a
 			href={backHref}
 			class="mono text-ink-mute text-xs no-underline"
@@ -129,7 +129,7 @@
 		<!-- Engagement summary -->
 		<div
 			class="bg-paper-soft border-paper-edge flex items-center gap-4 rounded-xl border"
-			style="padding: 14px 18px; margin-bottom: 18px"
+			style="padding: 12px 16px; margin-bottom: 18px"
 		>
 			<span class="kanji text-accent text-xl">客</span>
 			<div class="flex-1" style="min-width: 0">
@@ -170,7 +170,7 @@
 			style="margin-top: 18px"
 		>
 			<div
-				class="border-paper-edge text-ink-mute grid gap-3 border-b font-semibold uppercase text-xs" style="grid-template-columns: 60px 1fr 90px 1fr 0.8fr; padding: 11px 18px; letter-spacing: 0.1em"
+				class="border-paper-edge text-ink-mute grid gap-3 border-b font-semibold uppercase text-xs" style="grid-template-columns: 60px 1fr 90px 1fr 0.8fr; padding: 12px 16px; letter-spacing: 0.1em"
 			>
 				<span>Seq</span><span>Artifact</span><span>Kind</span><span>Strip status</span><span
 					>When</span
@@ -178,7 +178,7 @@
 			</div>
 
 			{#if data.artifacts.length === 0}
-				<div class="text-ink-mute text-sm" style="padding: 20px 18px">
+				<div class="text-ink-mute text-sm" style="padding: 16px 16px">
 					{data.error
 						? 'Could not load the audit view.'
 						: 'No artifacts shared under this engagement yet.'}
@@ -189,7 +189,7 @@
 						class="grid items-center gap-3 {i < data.artifacts.length - 1
 							? 'border-paper-edge border-b'
 							: ''} {a.dereferenced ? '' : 'bg-danger-soft'}"
-						style="grid-template-columns: 60px 1fr 90px 1fr 0.8fr; padding: 12px 18px"
+						style="grid-template-columns: 60px 1fr 90px 1fr 0.8fr; padding: 12px 16px"
 					>
 						<span class="mono text-ink-faint text-xs">#{a.seq}</span>
 						<span class="text-ink truncate text-sm" title={a.title}>{a.title}</span>

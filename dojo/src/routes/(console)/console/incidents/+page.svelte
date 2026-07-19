@@ -135,7 +135,7 @@
 					type="button"
 					onclick={() => (showOpen = !showOpen)}
 					class="bg-ink text-on-primary inline-flex items-center gap-2 rounded-lg text-xs font-medium"
-					style="padding: 8px 13px; cursor: pointer; border: none"
+					style="padding: 4px 12px; cursor: pointer; border: none"
 				>
 					<span class="kanji text-xs">警</span>
 					{showOpen ? 'Close' : 'Open incident'}
@@ -144,7 +144,7 @@
 		{/snippet}
 	</ConsoleHead>
 
-	<div class="flex-1 overflow-auto" style="padding: 28px">
+	<div class="flex-1 overflow-auto" style="padding: 24px">
 		{#if data.error}
 			<ConsoleBanner>
 				Live incidents are unavailable.
@@ -160,7 +160,7 @@
 		{#if showOpen}
 			<div
 				class="bg-paper-soft border-paper-edge rounded-xl border"
-				style="padding: 16px 18px; margin: 18px 0"
+				style="padding: 16px 16px; margin: 18px 0"
 			>
 				<div
 					class="text-ink-mute font-semibold uppercase text-xs" style="letter-spacing: 0.1em; margin-bottom: 12px"
@@ -172,7 +172,7 @@
 						<span class="text-ink-mute text-xs">Title</span>
 						<input
 							class="bg-paper border-paper-edge text-ink rounded-md border text-sm"
-							style="padding: 7px 9px"
+							style="padding: 8px 8px"
 							bind:value={formTitle}
 							placeholder="Near-leak in shared example"
 						/>
@@ -183,7 +183,7 @@
 							class="bg-paper border-paper-edge rounded-md border text-sm {severityToneClass(
 								formSeverity
 							)}"
-							style="padding: 7px 9px"
+							style="padding: 8px 8px"
 							bind:value={formSeverity}
 						>
 							{#each INCIDENT_SEVERITIES as s (s)}
@@ -195,7 +195,7 @@
 						<span class="text-ink-mute text-xs">Description (optional)</span>
 						<input
 							class="bg-paper border-paper-edge text-ink rounded-md border text-sm"
-							style="padding: 7px 9px"
+							style="padding: 8px 8px"
 							bind:value={formDescription}
 							placeholder="what happened"
 						/>
@@ -205,7 +205,7 @@
 						onclick={openIncident}
 						disabled={!canOpen}
 						class="bg-ink text-on-primary inline-flex items-center gap-2 rounded-lg text-xs font-medium"
-						style="padding: 8px 13px; cursor: pointer; border: none"
+						style="padding: 4px 12px; cursor: pointer; border: none"
 						style:opacity={canOpen ? 1 : 0.5}
 					>
 						{opening ? 'Opening…' : 'Open'}
@@ -216,14 +216,14 @@
 
 		<div class="bg-paper-soft border-paper-edge overflow-x-auto rounded-xl border" style="margin-top: 18px">
 			<div
-				class="border-paper-edge text-ink-mute grid gap-3 border-b font-semibold uppercase min-w-[660px] text-xs" style="grid-template-columns: 0.9fr 1.6fr 1.1fr 1fr 1fr auto; padding: 11px 18px; letter-spacing: 0.1em"
+				class="border-paper-edge text-ink-mute grid gap-3 border-b font-semibold uppercase min-w-[660px] text-xs" style="grid-template-columns: 0.9fr 1.6fr 1.1fr 1fr 1fr auto; padding: 12px 16px; letter-spacing: 0.1em"
 			>
 				<span>Severity</span><span>Incident</span><span>Status</span><span>SLA</span><span>Owner</span
 				><span>Actions</span>
 			</div>
 
 			{#if data.incidents.length === 0}
-				<div class="text-ink-mute text-sm" style="padding: 20px 18px">
+				<div class="text-ink-mute text-sm" style="padding: 16px 16px">
 					{data.error ? 'Could not load incidents.' : 'No incidents — nothing to contain.'}
 				</div>
 			{:else}
@@ -233,7 +233,7 @@
 						class="grid items-center gap-3 min-w-[660px] {i < data.incidents.length - 1
 							? 'border-paper-edge border-b'
 							: ''} {breached ? 'bg-danger-soft' : ''}"
-						style="grid-template-columns: 0.9fr 1.6fr 1.1fr 1fr 1fr auto; padding: 12px 18px"
+						style="grid-template-columns: 0.9fr 1.6fr 1.1fr 1fr 1fr auto; padding: 12px 16px"
 					>
 						<div class="flex items-center gap-2">
 							<select
@@ -243,7 +243,7 @@
 								class="bg-paper border-paper-edge rounded-md border text-xs {severityToneClass(
 									inc.severity
 								)}"
-								style="padding: 3px 6px; cursor: pointer"
+								style="padding: 4px 4px; cursor: pointer"
 								aria-label="Severity for {inc.title}"
 							>
 								{#each INCIDENT_SEVERITIES as s (s)}
@@ -265,7 +265,7 @@
 								class="bg-paper border-paper-edge rounded-md border text-xs {incidentStatusToneClass(
 									inc.status
 								)}"
-								style="padding: 3px 6px; cursor: pointer"
+								style="padding: 4px 4px; cursor: pointer"
 								aria-label="Status for {inc.title}"
 							>
 								{#each INCIDENT_STATUSES as s (s)}
@@ -295,7 +295,7 @@
 									onclick={() => setStatus(inc, 'resolved')}
 									disabled={busyId === inc.id}
 									class="border-success-edge text-success inline-flex items-center rounded-md border text-xs"
-									style="padding: 5px 10px; cursor: pointer; background: transparent"
+									style="padding: 4px 8px; cursor: pointer; background: transparent"
 									style:opacity={busyId === inc.id ? 0.5 : 1}
 									>{busyId === inc.id ? 'Resolving…' : 'Resolve'}</button
 								>
@@ -305,7 +305,7 @@
 									onclick={() => setStatus(inc, 'open')}
 									disabled={busyId === inc.id}
 									class="border-paper-edge text-ink-soft inline-flex items-center rounded-md border text-xs"
-									style="padding: 5px 10px; cursor: pointer; background: transparent"
+									style="padding: 4px 8px; cursor: pointer; background: transparent"
 									style:opacity={busyId === inc.id ? 0.5 : 1}>Reopen</button
 								>
 							{/if}
@@ -314,7 +314,7 @@
 								onclick={() => remove(inc)}
 								disabled={busyId === inc.id}
 								class="border-danger-edge text-danger inline-flex items-center rounded-md border text-xs"
-								style="padding: 5px 10px; cursor: pointer; background: transparent"
+								style="padding: 4px 8px; cursor: pointer; background: transparent"
 								style:opacity={busyId === inc.id ? 0.5 : 1}
 								aria-label="Delete incident {inc.title}">Delete</button
 							>
