@@ -8924,6 +8924,17 @@ impl PgStore {
          .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(row.0)
     }
+
+    /// Whether `session_id` has a *confirmed* playbook_run — the gate the
+    /// nudge hook (`POST /hook/nudge`) uses to decide whether to suggest
+    /// `/sensei:intake`. A session with no confirmed run yet is nudged;
+    /// one that already confirmed a playbook is left alone.
+    pub async fn session_has_confirmed_run(&self, session_id: &uuid::Uuid) -> Result<bool, String> {
+        let row: (bool,) = sqlx_core::query_as::query_as(
+            "SELECT exists(SELECT 1 FROM sensei.playbook_run WHERE session_id = $1 AND confirmed)"
+        ).bind(session_id).fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.0)
+    }
 }
 
 #[cfg(test)]
@@ -13106,5 +13117,39 @@ mod playbook_tests {
         assert!(!pb["opening_tone"].as_str().unwrap().is_empty());
 
         assert!(pg.get_playbook("_test:no_such_playbook").await.unwrap().is_none());
+    }
+
+    /// A session's nudge gate flips false → true once a *confirmed*
+    /// playbook_run is recorded against it — this is the query `hook_nudge`
+    /// (api/handlers/sessions.rs) uses to decide whether to suggest
+    /// `/sensei:intake`. Mirrors `create_test_folder` from the sibling
+    /// `tests` module inline since that helper isn't visible here.
+    #[tokio::test]
+    async fn session_confirmed_run_gate() {
+        let Ok(pg) = PgStore::connect_test().await else { return; };
+
+        pg.execute_raw(
+            "INSERT INTO sensei.folders_to_watch(id, path, name, status) \
+             VALUES('00000000-0000-0000-0000-000000000001', '/_test', '_test', 'watching'::sensei.watch_status) \
+             ON CONFLICT DO NOTHING"
+        ).await.unwrap();
+        let suffix = format!("nudge_{}", uuid::Uuid::new_v4());
+        let abs_path = format!("/_test/{}", suffix);
+        let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path) \
+             VALUES('00000000-0000-0000-0000-000000000001', 'git'::sensei.folder_kind, $1, $1, $2) \
+             ON CONFLICT(abs_path) DO UPDATE SET name = EXCLUDED.name RETURNING id"
+        ).bind(&suffix).bind(&abs_path).fetch_one(&pg.pool).await.unwrap();
+        let fid = row.0;
+
+        let sid = pg.create_session(&fid, "intake test", None).await.unwrap();
+        assert!(!pg.session_has_confirmed_run(&sid).await.unwrap());
+
+        pg.insert_playbook_run(
+            Some(sid), None, "stable", "bug", "low",
+            None, "debug_flow", "r", true,
+            None, false,
+        ).await.unwrap();
+        assert!(pg.session_has_confirmed_run(&sid).await.unwrap());
     }
 }

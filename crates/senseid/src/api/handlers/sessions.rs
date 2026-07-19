@@ -530,6 +530,37 @@ pub(crate) async fn hook_gate(
     }
 }
 
+/// POST /hook/nudge  { session_id }  ->  { nudge: bool, message?: string }
+///
+/// Non-blocking, informational only (unlike `hook_gate`, which can block a
+/// tool call): suggests `/sensei:intake` when a session has started work
+/// without a confirmed playbook run. **Fail-open** — mirrors `hook_gate`'s
+/// posture: a missing/unparseable `session_id` or any DB error yields
+/// `{nudge:false}` and never blocks. This endpoint exists but is not wired
+/// to any registered plugin hook by default (see the sensei plugin's
+/// hooks config — activation is a separate, Jerry-gated decision).
+pub(crate) async fn hook_nudge(
+    State(state): State<AppState>,
+    Json(payload): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+    let Some(session_id) = payload["session_id"].as_str().and_then(|s| s.parse::<uuid::Uuid>().ok())
+    else {
+        return Json(serde_json::json!({ "nudge": false }));
+    };
+
+    match state.pg.session_has_confirmed_run(&session_id).await {
+        Ok(true) => Json(serde_json::json!({ "nudge": false })),
+        Ok(false) => Json(serde_json::json!({
+            "nudge": true,
+            "message": "No playbook chosen for this chunk yet — consider /sensei:intake to pick one."
+        })),
+        Err(e) => {
+            tracing::warn!(error = %e, "hook_nudge: db error — fail-open (no nudge)");
+            Json(serde_json::json!({ "nudge": false }))
+        }
+    }
+}
+
 // ── Workflow State ──────────────────────────────────────────────────────────
 
 pub(crate) async fn get_workflow_state(
