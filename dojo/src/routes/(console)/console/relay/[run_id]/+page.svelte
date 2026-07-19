@@ -447,7 +447,7 @@
 				 gate surfaced in the blocked-home can be replied to right here. -->
 			<div
 				class="bg-paper-soft border-paper-edge rounded-xl border"
-				style="padding: 15px 18px; margin-top: 16px"
+				style="padding: 12px 16px; margin-top: 16px"
 			>
 				<div class="flex items-center gap-2">
 					<span class="kanji text-accent text-sm">要</span>
@@ -505,7 +505,7 @@
 		{#if data.segments.length === 0 && !data.error}
 			<div
 				class="border-ink-faint text-ink-mute flex flex-col items-center gap-2 rounded-xl border border-dashed text-center"
-				style="padding: 48px 28px; margin-top: 24px"
+				style="padding: 48px 24px; margin-top: 24px"
 			>
 				<span class="kanji text-ink-faint text-2xl">継</span>
 				<div class="text-ink-soft text-sm">No outline yet</div>
@@ -521,9 +521,9 @@
 						<!-- Phase header -->
 						<div
 							class="flex items-start gap-3 {node.steps.length > 0 ? 'border-paper-edge border-b' : ''}"
-							style="padding: 14px 16px"
+							style="padding: 16px 16px"
 						>
-							<span class="mono text-ink-faint flex-shrink-0 text-xs" style="width: 22px; padding-top: 2px"
+							<span class="mono text-ink-faint flex-shrink-0 text-xs" style="width: 22px; padding-top: 4px"
 								>{String(node.phase.seq).padStart(2, '0')}</span
 							>
 							<div class="flex-1" style="min-width: 0">
@@ -554,7 +554,7 @@
 							{@const blocking = step.gate_severity === 'blocking'}
 							<div
 								class="{i < node.steps.length - 1 ? 'border-paper-edge border-b' : ''}"
-								style="padding: 13px 16px 13px 40px"
+								style="padding: 12px 16px 12px 32px"
 							>
 								<div class="flex items-start gap-3">
 									<div class="flex-1" style="min-width: 0">
@@ -582,7 +582,7 @@
 											<!-- Already reviewed — prior verdict shown; re-review still allowed. -->
 											<div
 												class="bg-success-soft border-success-edge text-ink-soft inline-flex items-center gap-2 rounded-lg border text-xs"
-												style="padding: 5px 10px; margin-top: 8px"
+												style="padding: 4px 8px; margin-top: 8px"
 											>
 												<span class="kanji text-success text-xs">済</span>
 												<span>Reviewed · <b class="font-semibold">{verdictLabel(step.response_verdict)}</b></span>
@@ -619,7 +619,7 @@
 													: 'Add a comment (optional)…'}
 												rows="2"
 												class="bg-paper border-paper-edge text-ink w-full rounded-lg border text-sm"
-												style="padding: 8px 11px; margin-top: 8px; resize: vertical; font-family: inherit; line-height: 1.5"
+												style="padding: 8px 12px; margin-top: 8px; resize: vertical; font-family: inherit; line-height: 1.5"
 											></textarea>
 										{/if}
 									</div>
@@ -636,7 +636,7 @@
 				 to a compact trigger by default; the composer expands on demand. -->
 			<div
 				class="bg-paper-soft border-paper-edge rounded-xl border"
-				style="padding: 15px 18px; margin-top: 18px"
+				style="padding: 12px 16px; margin-top: 18px"
 			>
 				{#if !showNudge}
 					<!-- Collapsed: a calm trigger + any lingering "sent" confirmation. -->
@@ -671,7 +671,7 @@
 						rows="2"
 						disabled={nudging}
 						class="bg-paper border-paper-edge text-ink w-full rounded-lg border text-sm"
-						style="padding: 8px 11px; margin-top: 10px; resize: vertical; font-family: inherit; line-height: 1.5"
+						style="padding: 8px 12px; margin-top: 10px; resize: vertical; font-family: inherit; line-height: 1.5"
 					></textarea>
 
 					{#if nudgeError}

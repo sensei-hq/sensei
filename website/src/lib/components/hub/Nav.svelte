@@ -35,7 +35,7 @@
     -webkit-backdrop-filter: blur(14px) saturate(150%);
     -webkit-mask-image: linear-gradient(to bottom, #000 72%, transparent);
     mask-image: linear-gradient(to bottom, #000 72%, transparent);
-    padding-bottom: 6px;
+    padding-bottom: 8px;
   }
   .hub-nav-inner {
     max-width: 1120px;

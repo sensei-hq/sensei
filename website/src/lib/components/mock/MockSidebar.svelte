@@ -50,7 +50,7 @@
 <style>
   .sidebar {
     width: 168px;
-    padding: 16px 10px;
+    padding: 16px 8px;
     background: var(--paper-2);
     border-right: var(--hairline);
     display: flex;
@@ -62,14 +62,14 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 0 6px;
+    padding: 0 4px;
   }
   .section-label {
     font-size: var(--text-xs);
     letter-spacing: 0.18em;
     color: var(--sumi-3);
     text-transform: uppercase;
-    padding: 0 8px 6px;
+    padding: 0 8px 4px;
   }
   .nav-items {
     display: flex;
@@ -81,7 +81,7 @@
     grid-template-columns: auto 1fr auto;
     align-items: center;
     gap: 8px;
-    padding: 5px 8px;
+    padding: 4px 8px;
     border-radius: 5px;
     font-size: var(--text-xs);
   }

@@ -45,7 +45,7 @@
       <div class="flex items-center justify-between flex-wrap gap-4">
         <div class="flex flex-wrap gap-2">
           {#each p.meta as m (m)}
-            <span class="mono text-ink-mute border border-paper-edge rounded-sm text-xs" style="padding:2px 7px;white-space:nowrap">{m}</span>
+            <span class="mono text-ink-mute border border-paper-edge rounded-sm text-xs" style="padding:4px 8px;white-space:nowrap">{m}</span>
           {/each}
         </div>
         <span class="text-{p.id} text-sm font-medium">Explore Sensei →</span>
@@ -78,7 +78,7 @@
       <div style="flex:1"></div>
       <div class="mt-5 mb-4 flex flex-wrap gap-2">
         {#each p.meta as m (m)}
-          <span class="mono text-ink-mute border border-paper-edge rounded-sm text-xs" style="padding:2px 7px;white-space:nowrap">{m}</span>
+          <span class="mono text-ink-mute border border-paper-edge rounded-sm text-xs" style="padding:4px 8px;white-space:nowrap">{m}</span>
         {/each}
       </div>
       <div class="border-t border-paper-edge pt-4 flex items-center justify-between">

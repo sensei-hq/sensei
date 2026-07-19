@@ -104,7 +104,7 @@
 				type="button"
 				onclick={() => (showAdd = !showAdd)}
 				class="bg-ink text-on-primary inline-flex items-center gap-2 rounded-lg text-xs font-medium"
-				style="padding: 8px 13px; cursor: pointer; border: none"
+				style="padding: 8px 12px; cursor: pointer; border: none"
 			>
 				<span class="kanji text-xs">規</span>
 				{showAdd ? 'Close' : 'Add policy'}
@@ -112,7 +112,7 @@
 		{/snippet}
 	</ConsoleHead>
 
-	<div class="flex-1 overflow-auto" style="padding: 28px">
+	<div class="flex-1 overflow-auto" style="padding: 24px">
 		{#if data.error}
 			<ConsoleBanner>
 				Live policies are unavailable. <span class="mono text-ink-mute text-xs">{data.error}</span>
@@ -125,18 +125,18 @@
 		{/if}
 
 		{#if showAdd}
-			<div class="bg-paper-soft border-paper-edge rounded-xl border" style="padding: 16px 18px; margin: 18px 0">
+			<div class="bg-paper-soft border-paper-edge rounded-xl border" style="padding: 16px 16px; margin: 18px 0">
 				<div class="text-ink-mute font-semibold uppercase text-xs" style="letter-spacing: 0.1em; margin-bottom: 12px">
 					Add or edit a scope policy
 				</div>
 				<div class="grid gap-3" style="grid-template-columns: 1.6fr 1.2fr 1fr auto; align-items: end">
 					<label class="flex flex-col gap-1">
 						<span class="text-ink-mute text-xs">Scope key</span>
-						<input class="bg-paper border-paper-edge text-ink rounded-md border text-sm" style="padding: 7px 9px" bind:value={formScope} placeholder="Team · Payments" />
+						<input class="bg-paper border-paper-edge text-ink rounded-md border text-sm" style="padding: 8px 8px" bind:value={formScope} placeholder="Team · Payments" />
 					</label>
 					<label class="flex flex-col gap-1">
 						<span class="text-ink-mute text-xs">Attribution default</span>
-						<select class="bg-paper border-paper-edge text-ink rounded-md border text-sm" style="padding: 7px 9px" bind:value={formAttribution}>
+						<select class="bg-paper border-paper-edge text-ink rounded-md border text-sm" style="padding: 8px 8px" bind:value={formAttribution}>
 							{#each ATTRIBUTION_MODES as m (m)}
 								<option value={m}>{attributionLabel(m)}</option>
 							{/each}
@@ -144,14 +144,14 @@
 					</label>
 					<label class="flex flex-col gap-1">
 						<span class="text-ink-mute text-xs">Retention (days)</span>
-						<input class="bg-paper border-paper-edge text-ink rounded-md border text-sm" style="padding: 7px 9px" bind:value={formRetention} placeholder="365" inputmode="numeric" />
+						<input class="bg-paper border-paper-edge text-ink rounded-md border text-sm" style="padding: 8px 8px" bind:value={formRetention} placeholder="365" inputmode="numeric" />
 					</label>
 					<button
 						type="button"
 						onclick={add}
 						disabled={!canAdd}
 						class="bg-ink text-on-primary inline-flex items-center gap-2 rounded-lg text-xs font-medium"
-						style="padding: 8px 13px; cursor: pointer; border: none"
+						style="padding: 8px 12px; cursor: pointer; border: none"
 						style:opacity={canAdd ? 1 : 0.5}
 					>
 						{adding ? 'Saving…' : 'Save'}
@@ -162,20 +162,20 @@
 
 		<div class="bg-paper-soft border-paper-edge overflow-hidden rounded-xl border" style="margin-top: 18px">
 			<div
-				class="border-paper-edge text-ink-mute grid gap-4 border-b font-semibold uppercase text-xs" style="grid-template-columns: 1.8fr 1.4fr 1fr 0.9fr auto; padding: 11px 18px; letter-spacing: 0.1em"
+				class="border-paper-edge text-ink-mute grid gap-4 border-b font-semibold uppercase text-xs" style="grid-template-columns: 1.8fr 1.4fr 1fr 0.9fr auto; padding: 12px 16px; letter-spacing: 0.1em"
 			>
 				<span>Scope</span><span>Attribution</span><span>Retention</span><span>Updated</span><span></span>
 			</div>
 
 			{#if data.policies.length === 0}
-				<div class="text-ink-mute text-sm" style="padding: 20px 18px">
+				<div class="text-ink-mute text-sm" style="padding: 16px 16px">
 					{data.error ? 'Could not load policies.' : 'No policies yet — a scope inherits its parent until one is set.'}
 				</div>
 			{:else}
 				{#each data.policies as p, i (p.id)}
 					<div
 						class="grid items-center gap-4 {i < data.policies.length - 1 ? 'border-paper-edge border-b' : ''}"
-						style="grid-template-columns: 1.8fr 1.4fr 1fr 0.9fr auto; padding: 13px 18px"
+						style="grid-template-columns: 1.8fr 1.4fr 1fr 0.9fr auto; padding: 12px 16px"
 					>
 						<div class="flex items-center gap-2" style="min-width: 0">
 							<span class="kanji text-ink-mute text-center text-sm" style="width: 18px">層</span>
@@ -209,7 +209,7 @@
 							onclick={() => remove(p.id)}
 							disabled={busyId === p.id}
 							class="border-paper-edge text-ink-soft inline-flex items-center gap-1 rounded-md border text-xs"
-							style="padding: 5px 10px; cursor: pointer; background: transparent"
+							style="padding: 4px 8px; cursor: pointer; background: transparent"
 							style:opacity={busyId === p.id ? 0.5 : 1}
 							aria-label="Remove policy {p.scope_key}"
 						>

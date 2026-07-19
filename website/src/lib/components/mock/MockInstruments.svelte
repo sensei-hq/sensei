@@ -76,7 +76,7 @@
   .tabs {
     display: flex;
     gap: 0;
-    padding: 14px 28px 0;
+    padding: 12px 24px 0;
     border-bottom: var(--hairline);
   }
   .tab {
@@ -92,7 +92,7 @@
   }
   .body {
     flex: 1;
-    padding: 20px 28px;
+    padding: 16px 24px;
     overflow: hidden;
   }
   .desc {
@@ -107,7 +107,7 @@
     margin-bottom: 16px;
   }
   .mcp-chip {
-    padding: 5px 10px;
+    padding: 4px 8px;
     font-size: var(--text-xs);
     border-radius: 4px;
     border: var(--hairline);
@@ -123,7 +123,7 @@
     gap: 6px;
   }
   .tool-row {
-    padding: 8px 10px;
+    padding: 8px 8px;
     display: grid;
     grid-template-columns: auto 1fr auto;
     gap: 8px;
@@ -133,7 +133,7 @@
   }
   .tool-kind {
     font-size: var(--text-xs);
-    padding: 2px 5px;
+    padding: 4px 4px;
     border-radius: 2px;
     background: var(--paper-3);
     color: var(--sumi-3);

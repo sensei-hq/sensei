@@ -11,7 +11,7 @@
 </script>
 
 <span
-	class="mono border-paper-edge inline-flex items-center rounded-full border {toneClass} text-xs" style="padding: 2px 8px; letter-spacing: 0.02em"
+	class="mono border-paper-edge inline-flex items-center rounded-full border {toneClass} text-xs" style="padding: 4px 8px; letter-spacing: 0.02em"
 >
 	{@render children()}
 </span>
