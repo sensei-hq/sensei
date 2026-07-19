@@ -17,19 +17,19 @@
     })();
   </script>
   <style>
-    html, body { margin: 0; padding: 0; height: 100%; background: var(--paper, #f0eee9); font-family: 'Inter', system-ui, sans-serif; }
+    html, body { margin:0; padding:0; height: 100%; background: var(--paper); font-family: 'Inter', system-ui, sans-serif; }
     #root { height: 100vh; }
     /* dark-mode tweak control */
     #theme-tweak {
       position: fixed; top: 14px; right: 14px; z-index: 9999;
-      display: inline-flex; align-items: center; gap: 8px;
-      padding: 8px 13px; border-radius: 999px; cursor: pointer;
+      display: inline-flex; align-items: center; gap:var(--space-2);
+      padding:var(--space-2) var(--space-3); border-radius: 999px; cursor: pointer;
       background: var(--paper-2); color: var(--ink-2);
       border: 1px solid var(--paper-edge);
-      font: 500 12.5px 'Inter', system-ui, sans-serif;
-      box-shadow: 0 1px 3px rgba(0,0,0,.08);
+      font: 500 var(--text-sm)/1.2 var(--font-ui);
+      box-shadow: var(--shadow-sm);
     }
-    #theme-tweak .kanji { font-size: 13px; color: var(--accent); }
+    #theme-tweak .kanji { font-size:var(--text-sm); color: var(--accent); }
   </style>
 </head>
 <body>
@@ -232,7 +232,7 @@
                     ["携","Relay"],["場","Projects"],["決","Decision / inbox"],["話","Chat"],["録","Session log / audit"],["観","Monitor / observe"],["盾","Anonymize / confidentiality"],["守","Guard"],
                     ["任","Members & roles"],["規","Scopes & policies"],["鍵","Identity / SSO"],["円","Plan & billing"],["迎","Onboarding / inherit"],["絶","Connection lost"],["了","Session ended"],["眠","Daemon asleep"]
                   ].map(([k, m]) => (
-                    <div key={k} className="bg-paper-soft border-1px border-paper-edge gap-3 p-3" style={{ display: "flex", alignItems: "center", borderRadius: "var(--radius-lg)", margin: 6 }}>
+                    <div key={k} className="bg-paper-soft border-1px border-paper-edge gap-3 p-3" style={{ display: "flex", alignItems: "center", borderRadius: "var(--radius-lg)", margin:6 }}>
                       <span className="kanji text-2xl text-accent" style={{ width: 30, textAlign: "center", flexShrink: 0 }}>{k}</span>
                       <span className="text-sm text-ink">{m}</span>
                     </div>

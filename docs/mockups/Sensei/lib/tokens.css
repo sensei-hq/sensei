@@ -10,7 +10,7 @@
 
 @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500;9..144,600&family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
 
-:root {
+:root, [data-theme="light"] {
   --washi-50:  oklch(0.985 0.006 85);
   --washi-100: oklch(0.975 0.008 85);
   --washi-200: oklch(0.955 0.010 85);
@@ -67,6 +67,7 @@
   --warning-edge: oklch(0.720 0.120 75 / 0.30);
   --on-primary-soft: oklch(0.975 0.008 85 / 0.78);
   --on-primary-mute: oklch(0.975 0.008 85 / 0.62);
+  --on-primary-faint: oklch(0.975 0.008 85 / 0.20);
 
   /* Legacy aliases — keep older JSX functional */
   --sumi:        var(--ink);
@@ -179,6 +180,7 @@
   --warning-edge: oklch(0.780 0.120 75 / 0.34);
   --on-primary-soft: oklch(0.170 0.010 50 / 0.82);
   --on-primary-mute: oklch(0.170 0.010 50 / 0.66);
+  --on-primary-faint: oklch(0.170 0.010 50 / 0.20);
 
   --hairline: 1px solid var(--edge);
   --ink-line: 1px solid oklch(0.94 0.008 85 / 0.12);

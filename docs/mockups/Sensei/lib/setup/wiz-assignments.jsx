@@ -119,7 +119,7 @@ function SplitVariant({ D, priority, move, remove, add }) {
               </div>
               <span style={{
  fontSize: 11, fontFeatureSettings: '"tnum"', borderRadius: 3,
-                              background: on ? 'rgba(255,255,255,.18)' : 'var(--paper-2)',
+                              background: on ? 'var(--on-primary-faint)' : 'var(--paper-2)',
                               color: on ? 'var(--paper)' : 'var(--ink-3)'
 }} className="py-1 px-2" >
                 {count}
@@ -250,7 +250,7 @@ function IconBtn({ onClick, disabled, primary, children }) {
             style={{ width: 22, height: 22, border: 'none',
                      background: 'transparent',
                      color: disabled
-                              ? (primary ? 'rgba(255,255,255,.22)' : 'var(--ink-4)')
+                              ? (primary ? 'var(--on-primary-faint)' : 'var(--ink-4)')
                               : (primary ? 'var(--paper)' : 'var(--ink-2)'),
                      fontSize: 11,
                      cursor: disabled ? 'default' : 'pointer',

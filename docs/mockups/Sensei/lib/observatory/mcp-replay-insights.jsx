@@ -591,10 +591,10 @@ function Kpi({ kanji, label, value, delta, deltaTone, hint, tone }) {
 
 function SignalCard({ s }) {
   const palette = {
-    warn:        { border: "var(--warning)",  tintBg: "rgba(194,141,68,0.06)",  label: "warn"  },
-    opportunity: { border: "var(--success)", tintBg: "rgba(122,158,98,0.06)", label: "lift" },
+    warn:        { border: "var(--warning)",  tintBg: "var(--warning-soft)",  label: "warn"  },
+    opportunity: { border: "var(--success)", tintBg: "var(--success-soft)", label: "lift" },
     unused:      { border: "var(--ink-3)", tintBg: "var(--paper-2)",         label: "quiet" },
-    win:         { border: "var(--accent)",    tintBg: "rgba(196,80,53,0.06)",   label: "win"   }
+    win:         { border: "var(--accent)",    tintBg: "var(--accent-soft)",   label: "win"   }
   };
   const p = palette[s.kind] || palette.warn;
   return (

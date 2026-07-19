@@ -42,7 +42,7 @@ function StatePill({ state }) {
 }
 
 const AwayPill = () => (
-  <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, background: R.paper2, border: 'var(--hairline)', borderRadius: 999, padding: '6px 13px 6px 11px', fontSize: 12.5, color: R.ink2 }}>
+  <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, background: R.paper2, border: 'var(--hairline)', borderRadius: 999, padding: '8px 16px 8px 12px', fontSize: 12.5, color: R.ink2 }}>
     <span style={{ width: 7, height: 7, borderRadius: '50%', background: R.jade, animation: 'relayPulse 2s infinite' }}/>Auto mode · working while you’re away
   </div>
 );
@@ -61,7 +61,7 @@ function RelayProjects({ dark = false }) {
   return (
     <IOSDevice dark={dark}>
       <Screen pad={60}>
-        <div style={{ padding: '8px 22px 16px' }}>
+        <div style={{ padding: '8px 24px 16px' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <RelayMark/>
             <div style={{ width: 34, height: 34, borderRadius: 17, background: R.paper2, border: 'var(--hairline)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Lock/></div>
@@ -69,7 +69,7 @@ function RelayProjects({ dark = false }) {
           <div style={{ fontFamily: R.disp, fontSize: 32, fontWeight: 400, letterSpacing: '-.02em', marginTop: 14, color: R.ink }}>Projects</div>
           <div style={{ marginTop: 14 }}><AwayPill/></div>
         </div>
-        <div style={{ flex: 1, overflow: 'auto', padding: '2px 16px 34px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div style={{ flex: 1, overflow: 'auto', padding: '4px 16px 32px', display: 'flex', flexDirection: 'column', gap: 12 }}>
           {projects.map((p, i) => {
             const c = flagCol[p.flag];
             const attn = p.flag === 'gate' || p.flag === 'stall';
@@ -86,7 +86,7 @@ function RelayProjects({ dark = false }) {
                   </span>
                   <span className="mono" style={{ fontSize: 11, color: R.ink3 }}>{p.machines}</span>
                 </div>
-                <div style={{ fontFamily: R.disp, fontSize: 19, fontWeight: 400, letterSpacing: '-.01em', color: R.ink, margin: '11px 0 12px' }}>{p.plan}</div>
+                <div style={{ fontFamily: R.disp, fontSize: 19, fontWeight: 400, letterSpacing: '-.01em', color: R.ink, margin: '12px 0 12px' }}>{p.plan}</div>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
                   <span className="mono" style={{ fontSize: 11.5, color: R.ink2 }}>Phase {p.phase} of {p.of}</span>
                   <span className="mono" style={{ fontSize: 11.5, color: R.ink2 }}>{p.pct}%</span>
@@ -117,7 +117,7 @@ function PlanItem({ label, kind, note, last }) {
   const done = kind === 'done', doing = kind === 'doing', gate = kind === 'gate';
   const ring = done ? R.ink : gate ? R.accent : doing ? R.jade : 'color-mix(in oklch, var(--ink) 16%, transparent)';
   return (
-    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '11px 4px', borderBottom: last ? 'none' : '.5px solid var(--edge)' }}>
+    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '12px 4px', borderBottom: last ? 'none' : '.5px solid var(--edge)' }}>
       <span style={{ width: 20, height: 20, marginTop: 1, borderRadius: gate ? 5 : '50%', flexShrink: 0, background: done ? R.ink : gate ? R.aSoft : 'transparent', border: done ? 'none' : `2px solid ${ring}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         {done && <Check s={11}/>}
         {gate && <Lock s={10} c={R.accent}/>}
@@ -135,7 +135,7 @@ function PlanPhase({ n, name, state, count, items, open }) {
   const stateCol = { done: R.ink4, doing: R.jade, next: R.ink4 };
   return (
     <div style={{ background: R.paper2, border: 'var(--hairline)', borderRadius: 18, overflow: 'hidden' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px', borderBottom: open ? '.5px solid var(--edge)' : 'none' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '16px 16px', borderBottom: open ? '.5px solid var(--edge)' : 'none' }}>
         <span className="mono" style={{ fontSize: 12, color: R.ink3, width: 20 }}>{n}</span>
         <div style={{ flex: 1 }}>
           <div style={{ fontSize: 15, fontWeight: 600, color: state === 'next' ? R.ink2 : R.ink }}>{name}</div>
@@ -143,7 +143,7 @@ function PlanPhase({ n, name, state, count, items, open }) {
         <span className="mono" style={{ fontSize: 11, color: R.ink3 }}>{count}</span>
         <StatePill state={state}/>
       </div>
-      {open && <div style={{ padding: '2px 16px 6px' }}>{items.map((it, i) => <PlanItem key={i} {...it} last={i === items.length - 1}/>)}</div>}
+      {open && <div style={{ padding: '4px 16px 8px' }}>{items.map((it, i) => <PlanItem key={i} {...it} last={i === items.length - 1}/>)}</div>}
     </div>
   );
 }
@@ -152,19 +152,19 @@ function RelayPlan({ dark = false }) {
   return (
     <IOSDevice dark={dark}>
       <Screen pad={56}>
-        <div style={{ padding: '8px 20px 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={{ padding: '8px 24px 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <Backbtn/>
           <span className="mono" style={{ fontSize: 12, color: R.ink3 }}>lumen-auth · auto</span>
         </div>
-        <div style={{ padding: '12px 22px 8px' }}>
+        <div style={{ padding: '12px 24px 8px' }}>
           <div style={{ fontFamily: R.disp, fontSize: 23, fontWeight: 400, letterSpacing: '-.01em', color: R.ink }}>OAuth & session hardening</div>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '14px 0 8px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '16px 0 8px' }}>
             <span className="mono" style={{ fontSize: 12, color: R.ink2 }}>Phase 2 of 4</span>
             <span className="mono" style={{ fontSize: 12, color: R.ink2 }}>47%</span>
           </div>
           <PBar pct={47}/>
         </div>
-        <div style={{ flex: 1, overflow: 'auto', padding: '12px 16px 34px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div style={{ flex: 1, overflow: 'auto', padding: '12px 16px 32px', display: 'flex', flexDirection: 'column', gap: 12 }}>
           <PlanPhase n="01" name="Foundation" state="done" count="2 / 2" open={false}/>
           <PlanPhase n="02" name="Session hardening" state="doing" count="1 / 3" open items={[
             { label: 'Rotate signing keys', kind: 'done' },
@@ -196,17 +196,17 @@ function DecisionQ({ eyebrow, q, options, chosen, freehand }) {
         {options.map((o, i) => {
           const sel = i === chosen;
           return (
-            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 11, background: sel ? R.aSoft : R.paper, border: sel ? '1px solid color-mix(in oklch, var(--accent) 45%, transparent)' : 'var(--hairline)', borderRadius: 12, padding: '11px 13px' }}>
+            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 11, background: sel ? R.aSoft : R.paper, border: sel ? '1px solid color-mix(in oklch, var(--accent) 45%, transparent)' : 'var(--hairline)', borderRadius: 12, padding: '12px 16px' }}>
               <span style={{ width: 18, height: 18, borderRadius: '50%', flexShrink: 0, border: sel ? 'none' : '2px solid color-mix(in oklch, var(--ink) 20%, transparent)', background: sel ? R.accent : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{sel && <Check s={10}/>}</span>
               <span style={{ fontSize: 14, color: R.ink }}><span style={{ fontWeight: sel ? 600 : 500 }}>{o[0]}</span>{o[1] && <span style={{ color: R.ink3, fontWeight: 400 }}> · {o[1]}</span>}</span>
             </div>
           );
         })}
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '11px 2px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '12px 4px' }}>
         <span style={{ flex: 1, height: 1, background: 'var(--edge)' }}/><span className="mono" style={{ fontSize: 10.5, color: R.ink4, letterSpacing: '.5px' }}>OR</span><span style={{ flex: 1, height: 1, background: 'var(--edge)' }}/>
       </div>
-      <div style={{ background: R.paper, border: 'var(--hairline)', borderRadius: 12, padding: '11px 13px', fontSize: 13.5, color: freehand ? R.ink : R.ink3, lineHeight: 1.4 }}>{freehand || 'Type your answer…'}</div>
+      <div style={{ background: R.paper, border: 'var(--hairline)', borderRadius: 12, padding: '12px 16px', fontSize: 13.5, color: freehand ? R.ink : R.ink3, lineHeight: 1.4 }}>{freehand || 'Type your answer…'}</div>
     </div>
   );
 }
@@ -215,15 +215,15 @@ function RelayDecisions({ dark = false }) {
   return (
     <IOSDevice dark={dark}>
       <Screen pad={56}>
-        <div style={{ padding: '8px 20px 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={{ padding: '8px 24px 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <Backbtn/>
           <span className="mono" style={{ fontSize: 12, color: R.accent }}>2 waiting</span>
         </div>
-        <div style={{ padding: '12px 22px 4px' }}>
+        <div style={{ padding: '12px 24px 4px' }}>
           <div style={{ fontFamily: R.disp, fontSize: 24, fontWeight: 400, letterSpacing: '-.01em', color: R.ink }}>Decisions</div>
           <div style={{ fontSize: 13, color: R.ink2, marginTop: 6 }}>Answer when you can — other tracks keep moving.</div>
         </div>
-        <div style={{ flex: 1, overflow: 'auto', padding: '14px 16px 8px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div style={{ flex: 1, overflow: 'auto', padding: '16px 16px 8px', display: 'flex', flexDirection: 'column', gap: 12 }}>
           <DecisionQ
             eyebrow="lumen-auth · phase 2"
             q="Which session strategy should sensei use?"
@@ -236,8 +236,8 @@ function RelayDecisions({ dark = false }) {
             chosen={-1}
             freehand={null}/>
         </div>
-        <div style={{ padding: '10px 16px 30px', background: 'linear-gradient(180deg, transparent, var(--paper) 30%)' }}>
-          <div style={{ height: 50, borderRadius: 14, background: R.accent, color: '#fff', fontWeight: 600, fontSize: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+        <div style={{ padding: '12px 16px 32px', background: 'linear-gradient(180deg, transparent, var(--paper) 30%)' }}>
+          <div style={{ height: 50, borderRadius: 14, background: R.accent, color: 'var(--paper)', fontWeight: 600, fontSize: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
             Send 1 answer<span style={{ fontWeight: 400, opacity: .75, fontSize: 13 }}>· 1 left</span>
           </div>
         </div>
@@ -254,7 +254,7 @@ function MiniStep({ kind, label, note, last }) {
   const done = kind === 'done', doing = kind === 'doing';
   const c = done ? R.ink4 : doing ? P.warn : 'color-mix(in oklch, var(--ink) 16%, transparent)';
   return (
-    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '11px 0', borderBottom: last ? 'none' : '.5px solid var(--edge)' }}>
+    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '12px 0', borderBottom: last ? 'none' : '.5px solid var(--edge)' }}>
       <span style={{ width: 18, height: 18, borderRadius: '50%', marginTop: 1, flexShrink: 0, background: done ? R.ink : 'transparent', border: done ? 'none' : `2px solid ${c}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{done && <Check s={10}/>}</span>
       <div style={{ flex: 1 }}>
         <div style={{ fontSize: 14.5, color: done ? R.ink3 : R.ink, fontWeight: doing ? 600 : 400 }}>{label}</div>
@@ -268,11 +268,11 @@ function RelayNudge({ dark = false }) {
   return (
     <IOSDevice dark={dark}>
       <Screen pad={56}>
-        <div style={{ padding: '8px 20px 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={{ padding: '8px 24px 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <Backbtn/>
           <span className="mono" style={{ fontSize: 12, color: R.ink3 }}>telemetry · auto</span>
         </div>
-        <div style={{ flex: 1, overflow: 'auto', padding: '14px 22px 20px' }}>
+        <div style={{ flex: 1, overflow: 'auto', padding: '16px 24px 24px' }}>
           {/* stalled banner */}
           <div style={{ background: P.warnSoft, border: `1px solid color-mix(in oklch, ${P.warn} 32%, transparent)`, borderRadius: 18, padding: '16px 16px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -287,7 +287,7 @@ function RelayNudge({ dark = false }) {
             <div style={{ fontSize: 12.5, color: R.ink3, marginTop: 12 }}>sensei will retry on its own in ~8m. You can nudge it now.</div>
           </div>
 
-          <div style={{ fontFamily: R.disp, fontSize: 20, fontWeight: 400, letterSpacing: '-.01em', color: R.ink, margin: '22px 0 4px' }}>Event pipeline rewrite</div>
+          <div style={{ fontFamily: R.disp, fontSize: 20, fontWeight: 400, letterSpacing: '-.01em', color: R.ink, margin: '24px 0 4px' }}>Event pipeline rewrite</div>
           <div className="mono" style={{ fontSize: 11.5, color: R.ink3, marginBottom: 12 }}>Phase 1 of 3 · 18%</div>
 
           <div className="zs-eyebrow" style={{ marginBottom: 4 }}>Where it stands</div>
@@ -296,8 +296,8 @@ function RelayNudge({ dark = false }) {
           <MiniStep kind="next" label="Backfill last 30 days" last/>
         </div>
 
-        <div style={{ padding: '12px 22px 30px', display: 'flex', flexDirection: 'column', gap: 10 }}>
-          <div style={{ height: 50, borderRadius: 14, background: R.accent, color: '#fff', fontWeight: 600, fontSize: 16, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>Nudge to continue</div>
+        <div style={{ padding: '12px 24px 32px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{ height: 50, borderRadius: 14, background: R.accent, color: 'var(--paper)', fontWeight: 600, fontSize: 16, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>Nudge to continue</div>
           <div style={{ height: 50, borderRadius: 14, background: R.paper3, color: R.ink2, fontWeight: 600, fontSize: 16, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>View logs</div>
         </div>
       </Screen>
