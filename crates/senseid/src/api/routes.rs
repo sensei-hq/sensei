@@ -234,6 +234,10 @@ pub fn create_router(state: AppState) -> Router {
         // answer. Fail-open (allow) unless a human explicitly denies. Gating is
         // OFF unless SENSEI_RELAY_GATE_TOOLS names the tool.
         .route("/hook/gate", post(sessions::hook_gate))
+        // Intake nudge hook (front-door intake plan, T5): non-blocking, informs
+        // whether a session has no confirmed playbook run yet. Not wired to any
+        // registered plugin hook by default — see marketplace/plugins/sensei/hooks.
+        .route("/hook/nudge", post(sessions::hook_nudge))
         // Structured logging: POST ingests (CLI, MCP, app); GET reads for the
         // Observatory · Logs screen.
         .route("/api/logs", post(logs::ingest_log).get(logs::get_logs))
