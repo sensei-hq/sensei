@@ -102,3 +102,14 @@ the memory — anchor memories to the doc slots so they surface *at the point of
 validation, `list_memories_for_slot`, slot-aware `assemble_context`, MCP param plumbing.
 **Out (own follow-ups):** LLM slot-classification; auto-inject-by-cwd (the hook);
 one-shot backfill of existing memories; Dōjō/federation slot propagation.
+
+**OPEN DECISION (surfaced by the Task-3 review, 2026-07-18):** `promote_memory`'s
+copy-INSERT (`pg_store.rs` ~7049) does **not** carry `spine_slot`/`feature` onto the
+promoted copy — so promoting an anchored memory to a broader namespace currently drops
+its anchor. This is pre-existing (the function predates anchoring) and *not* wired here
+because promotion is cross-scope: a project-doc slot like a feature's `brief` has no
+meaning at org/global scope. **Decision to make:** (a) intentional — a promoted memory
+resets its anchor (recommended for feature-scoped slots, whose `feature` is
+project-specific); (b) carry the *logical* slot (`design`/`decisions`) but drop
+`feature`; (c) carry both. Leaning (a)/(b); deferred to the Dōjō/federation-slot
+follow-up rather than silently changed here.
