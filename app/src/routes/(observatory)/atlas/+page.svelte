@@ -175,12 +175,12 @@
     <span class="flex-1"></span>
 
     <!-- level segmented control -->
-    <div class="inline-flex bg-paper-mute rounded p-[3px]" role="group" aria-label="Granularity">
+    <div class="inline-flex bg-paper-mute rounded p-1" role="group" aria-label="Granularity">
       {#each LEVELS as l (l.value)}
         {@const active = view.level === l.value}
         <button
           type="button"
-          class="text-xs rounded py-[5px] px-3 cursor-pointer border-none"
+          class="text-xs rounded py-2 px-3 cursor-pointer border-none"
           class:bg-paper={active}
           class:text-ink={active}
           class:font-semibold={active}

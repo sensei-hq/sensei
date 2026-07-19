@@ -30,7 +30,7 @@
 </script>
 
 <div
-	class="border-paper-edge bg-paper flex h-[54px] flex-shrink-0 items-center gap-2 border-b px-3 md:gap-4 md:px-[18px]"
+	class="border-paper-edge bg-paper flex h-[54px] flex-shrink-0 items-center gap-2 border-b px-3 md:gap-4 md:px-4"
 >
 	<button
 		type="button"
