@@ -83,7 +83,7 @@ pub(crate) async fn get_memory(
 }
 
 // ============================================================================
-// GET /api/knowledge/context?project_id=&limit=&tags=csv
+// GET /api/knowledge/context?project_id=&limit=&tags=csv&slot=&feature=
 // ============================================================================
 
 #[derive(Deserialize)]
@@ -96,6 +96,14 @@ pub(crate) struct ContextQuery {
     pub project:    Option<String>,
     pub limit:      Option<i64>,
     pub tags:       Option<String>,
+    /// Optional spine slot hint (`sensei.spine_slot`) — when present, memories
+    /// anchored to this slot (+ optional `feature`) lead the assembled bundle
+    /// (see `PgStore::assemble_context`'s `slot` param). Absent → unchanged
+    /// general blend, exactly the prior behavior.
+    pub slot:       Option<String>,
+    /// Feature name for a feature-scope slot (brief/plan/tests). Ignored when
+    /// `slot` is absent.
+    pub feature:    Option<String>,
 }
 
 pub(crate) async fn get_context(
@@ -116,7 +124,9 @@ pub(crate) async fn get_context(
     );
     let stack_ids = state.pg.get_project_stack_ids(&pid).await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
-    let blob = state.pg.assemble_context(pid, &stack_ids, tags.as_deref(), q.limit.unwrap_or(200), None)
+    let slot = q.slot.as_deref().filter(|s| !s.is_empty())
+        .map(|s| (s, q.feature.as_deref().filter(|f| !f.is_empty())));
+    let blob = state.pg.assemble_context(pid, &stack_ids, tags.as_deref(), q.limit.unwrap_or(200), slot)
         .await.map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
     Ok(Json(blob))
 }
