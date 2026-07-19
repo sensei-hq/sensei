@@ -460,3 +460,37 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 - **Placeholders:** none — pure logic + DDL shown in full; wiring steps name exact functions/files + the `grep` to find every caller to update (create_memory, assemble_context).
 - **Reuse (CLAUDE.md DRY):** extends `create_memory`/`assemble_context`/`MemoryBody`/`build_memory_body` rather than adding parallel paths; the one `default_slot`/`validate_scope`/`SpineSlot` lives in `memory_slot.rs` and is the single source used by every layer.
 - **Migration note (verify at execution):** confirm the daemon reads this repo's `database/` (via a release bump or `SENSEI_DDL_DIR`) so the new columns are present when the Rust tempdb tests run (per [[feedback_ddl_source_first]]).
+
+---
+
+## Post-implementation notes (shipped 2026-07-18)
+
+Executed via **subagent-driven development** (fresh implementer per task; the
+integration-heavy tasks got a spec+quality review, the pure task a controller check;
+a whole-feature final review at the end). Commits on `develop`:
+`ab215a87` (DDL) · `5ed3d001` (pure SpineSlot/default_slot/validate_scope) ·
+`9ca4bcaa` (write-path anchoring) · `b5d16646` (write-path test follow-up) ·
+`ed23e416` (slot-scoped retrieval) · `633a40d8` (MCP/HTTP plumbing) · `<docstring fix>`.
+
+**Deviations from the plan (all sound, reviewer-confirmed):**
+1. The analyzer writes via `InsertMemory`/`insert_memory`, **not** `create_memory` — so
+   both write paths (+ ~34 call sites) were extended with `spine_slot`/`feature`. The
+   analyzer anchors at `generate.rs`'s `Planned::Memory` arm via `default_slot`.
+2. `context_pack` (query.rs) was **not** given a slot param — it assembles
+   symbols/snippets and never reaches `assemble_context`; only `get_layered_context`
+   (→ `GET /api/knowledge/context` → `assemble_context`) carries the slot hint.
+3. Task-3 review caught two skipped plan tests (analyzer-anchoring assertion + HTTP
+   scope-validation) → added in `b5d16646`.
+
+**Final review:** feature coheres end-to-end — write→`list_memories_for_slot`→
+slot-lead `assemble_context`→`get_context`→`get_layered_context` round-trip proven in
+tests; enum labels exact across DDL/`SpineSlot`/tool-schemas; feature-scope isolation
+(`IS NOT DISTINCT FROM`) holds; `slot=None` is byte-for-byte backward-compatible.
+`cargo test -p senseid -p sensei-mcp` green (1668 + 46), clippy clean.
+
+**Open decision logged** (design §deferred): `promote_memory` drops the anchor on the
+promoted copy — reset vs carry-logical-slot vs carry-both, deferred to the
+federation-slot follow-up. **Also deferred:** LLM slot-classification; auto-inject-by-cwd
+(the hook that makes push fully automatic); one-shot backfill of existing memories.
+
+NOT merged to `main` (approach A — Jerry-gated batch release).

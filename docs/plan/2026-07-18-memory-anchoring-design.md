@@ -1,7 +1,7 @@
 ---
 name: Memory-anchoring — design
 date: 2026-07-18
-status: approved (brainstorm) — implementation plan next
+status: SHIPPED on develop 2026-07-18 (subagent-driven TDD, reviewer-clean; plan 2026-07-18-memory-anchoring-plan.md)
 ---
 
 # Memory-anchoring — design
