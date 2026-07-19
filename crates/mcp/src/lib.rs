@@ -226,6 +226,7 @@ pub fn daemon_request_for(
         },
 
         // ── Front-door intake ────────────────────────────────────────────────
+        "get_intake_guide" => Some(DaemonRequest::get("/api/playbook/guide")),
         "recommend_playbook" => {
             let mut body = serde_json::json!({
                 "lifecycle": args["lifecycle"], "intent": args["intent"], "risk": args["risk"],
@@ -544,6 +545,11 @@ pub fn handle_list_tools() -> Value {
                 &[],
                 &[("run_id", "string", "A specific run's UUID. Omit to list all active runs.")]),
             // ── Front-door intake ────────────────────────────────────────────
+            tool("get_intake_guide",
+                "Load the intake guide (grounding frame + per-axis elicitation prompts + the playbook \
+                 catalog) to run /sensei:intake. Call at the start of an intake before asking the user anything.",
+                &[],
+                &[]),
             tool("recommend_playbook",
                 "Recommend a playbook for the current work chunk from its lifecycle/intent/risk. \
                  Call after the intake dialogue has classified the chunk. Returns playbook + rationale.",
@@ -921,7 +927,7 @@ mod tests {
         "gateway_status", "consensus", "generate_image", "log_event",
         "propose_memory", "save_memory", "promote_memory", "accept_proposal",
         "reject_proposal", "record_outcome", "get_layered_context",
-        "start_run", "run_status", "recommend_playbook",
+        "start_run", "run_status", "recommend_playbook", "get_intake_guide",
     ];
 
     fn tools() -> Vec<Value> {

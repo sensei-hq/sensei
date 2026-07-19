@@ -5,6 +5,24 @@ use axum::{extract::State, Json};
 use crate::api::state::AppState;
 use crate::playbook::{recommend, Axes, Intent, Lifecycle, Risk};
 
+/// GET /api/playbook/guide -> { frame, axes: [{axis, prompt, help}], playbooks: [...] }
+///
+/// Serves the grounding frame + per-axis elicitation prompts + the playbook catalog
+/// that `/sensei:intake` uses to run the guided questionnaire. Fetched (not
+/// hardcoded) so the guide stays org-tunable at runtime.
+pub(crate) async fn get_intake_guide(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let guide = state.pg.list_intake_guide().await.unwrap_or_default();
+    let playbooks = state.pg.list_playbooks().await.unwrap_or_default();
+    let frame = guide
+        .iter()
+        .find(|g| g["kind"] == "frame")
+        .and_then(|g| g["prompt"].as_str())
+        .unwrap_or("")
+        .to_string();
+    let axes: Vec<_> = guide.into_iter().filter(|g| g["kind"] == "axis").collect();
+    Json(serde_json::json!({ "frame": frame, "axes": axes, "playbooks": playbooks }))
+}
+
 /// POST /api/playbook/recommend
 /// `{ lifecycle, intent, risk, session_id?, feature?, confirm? }` — pre-classified axes, OR
 /// `{ chunk, has_existing_code?, blast?, session_id?, feature?, confirm? }` — free text, classified via
@@ -74,11 +92,19 @@ pub(crate) async fn recommend_playbook(
         tracing::error!("recommend_playbook: insert_playbook_run failed: {e}");
     }
 
+    // Enrich the response with the chosen playbook's tone so the caller (the
+    // /sensei:intake procedure) can adopt it as posture without a second round-trip.
+    let pb = state.pg.get_playbook(&rec.playbook).await.ok().flatten();
+    let opening_tone = pb.as_ref().and_then(|p| p["opening_tone"].as_str()).unwrap_or("").to_string();
+    let when_to_use = pb.as_ref().and_then(|p| p["when_to_use"].as_str()).unwrap_or("").to_string();
+
     Json(serde_json::json!({
         "playbook": rec.playbook,
         "rationale": rec.rationale,
         "rule": rec.rule_name,
         "defaulted": rec.defaulted,
+        "opening_tone": opening_tone,
+        "when_to_use": when_to_use,
     }))
 }
 
