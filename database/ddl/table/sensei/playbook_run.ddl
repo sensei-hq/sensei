@@ -13,6 +13,7 @@ create table if not exists playbook_run (
 , outcome     text
 , classified_by   text
 , model_fallback  boolean     not null default false
+, outcome_ftr boolean
 , created_at  timestamptz     not null default now()
 );
 create index if not exists playbook_run_session_idx on playbook_run(session_id);
