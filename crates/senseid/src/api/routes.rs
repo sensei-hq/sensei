@@ -659,7 +659,7 @@ mod tests {
 
     /// Seed one active memory (`status='active'`, `strength=1.0`) and return its id.
     async fn seed_memory(state: &AppState, title: &str, content: &str) -> uuid::Uuid {
-        state.pg.create_memory(None, "global", None, "decision", title, content, None, None)
+        state.pg.create_memory(None, "global", None, "decision", title, content, None, None, None, None)
             .await.unwrap()
     }
 
@@ -814,11 +814,11 @@ mod tests {
             .await.unwrap();
 
         let mem_title = format!("_test:mcp-seam-memory-{}", std::process::id());
-        state.pg.create_memory(Some(&pid), "project", None, "convention", &mem_title, "seam memory", None, None)
+        state.pg.create_memory(Some(&pid), "project", None, "convention", &mem_title, "seam memory", None, None, None, None)
             .await.unwrap();
         // A general-scoped rule (namespace_id NULL, active) so the resolved
         // folder's ruleset is non-empty regardless of DB baseline.
-        state.pg.create_memory(None, "global", None, "convention", "_test:mcp-seam-rule", "seam rule", None, None)
+        state.pg.create_memory(None, "global", None, "convention", "_test:mcp-seam-rule", "seam rule", None, None, None, None)
             .await.unwrap();
 
         // ── get_layered_context: proxy sends ?project=<name> ──
@@ -944,10 +944,10 @@ mod tests {
             .await.unwrap();
 
         let mem_title = format!("_test:contract-mem-{short}");
-        state.pg.create_memory(Some(&pid), "project", None, "convention", &mem_title, "seam memory", None, None)
+        state.pg.create_memory(Some(&pid), "project", None, "convention", &mem_title, "seam memory", None, None, None, None)
             .await.unwrap();
         let rule_title = format!("_test:contract-rule-{short}");
-        state.pg.create_memory(None, "global", None, "convention", &rule_title, "seam rule", None, None)
+        state.pg.create_memory(None, "global", None, "convention", &rule_title, "seam rule", None, None, None, None)
             .await.unwrap();
 
         let fn_name = format!("contract_fn_{short}");

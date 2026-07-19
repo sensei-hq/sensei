@@ -285,6 +285,7 @@ fn build_memory(
         // The dojo artifact id is a remote string, not a local memory uuid; the
         // link back lives on dojo_inbox.applied_memory_id instead.
         source_id: None,
+        spine_slot: None, feature: None,
     }
 }
 

@@ -176,6 +176,7 @@ async fn apply_pulled_rule(
                 status: "active".into(), namespace_id: Some(ns),
                 enforcement: Some(pulled.rule.enforcement.clone()),
                 origin: Some("federated".into()), source_id: Some(src.id),
+                spine_slot: None, feature: None,
             }).await?;
             pg.upsert_federated_memory(&src.id, &remote_id, &pulled.rule.content_hash, Some(&mem), pulled.seq).await?;
             Ok(RuleOutcome::Applied)

@@ -301,6 +301,9 @@ pub async fn generate_for_project(
                 {
                     continue;
                 }
+                // Analyzer memories self-anchor into the spine's design/decisions
+                // slot from their category/type (project scope — no feature).
+                let slot = crate::memory_slot::default_slot(Some(category.as_str()), &mtype);
                 let mem = crate::db::pg_store::InsertMemory {
                     project_id: Some(*project_id),
                     scope: "project".to_string(),
@@ -316,6 +319,8 @@ pub async fn generate_for_project(
                     enforcement: None,
                     origin: Some("learned".to_string()),
                     source_id: Some(pattern_id),
+                    spine_slot: Some(slot.as_str().to_string()),
+                    feature: None,
                 };
                 match ctx.pg().insert_memory(&mem).await {
                     Ok(id) => {
