@@ -22,6 +22,7 @@ pub mod gateway_routers;
 pub mod model_provision;
 pub mod maturity;
 pub mod memory_slot;
+pub mod playbook;
 pub mod observatory_home;
 pub mod project_overview;
 pub mod insights;
