@@ -158,6 +158,12 @@ pub fn daemon_request_for(
             if let Some(t) = args["tags"].as_str().filter(|s| !s.is_empty()) {
                 req = req.with_query("tags", t);
             }
+            if let Some(s) = args["slot"].as_str().filter(|s| !s.is_empty()) {
+                req = req.with_query("slot", s);
+            }
+            if let Some(f) = args["feature"].as_str().filter(|s| !s.is_empty()) {
+                req = req.with_query("feature", f);
+            }
             Some(req)
         }
 
@@ -234,7 +240,10 @@ pub fn daemon_request_for(
 /// send the identical body; only the endpoint differs. `project_id` precedence:
 /// explicit arg wins, else the resolved project name (when scope=project).
 /// Governance fields (`gov_scope` + `folder`=cwd, `enforcement`) are attached
-/// only when the caller set them.
+/// only when the caller set them. Spine anchoring (`spine_slot`, `feature`) is
+/// likewise attached only when the caller set them — the daemon's
+/// `insert_with_status` validates the (slot, feature) scope rule and persists
+/// both columns; absent here means unchanged behavior for every existing call.
 fn build_memory_body(args: &Value, cwd: &str, repo_id: &str) -> Value {
     let scope = args["scope"].as_str().unwrap_or("");
     let tags: Vec<String> = args["tags"].as_str().unwrap_or("")
@@ -250,7 +259,10 @@ fn build_memory_body(args: &Value, cwd: &str, repo_id: &str) -> Value {
         "content": args["content"].as_str().unwrap_or(""),
         "tags":    tags,
     });
-    for (arg_key, body_key) in [("scope_filter", "scope_filter"), ("impact", "impact"), ("triage_signal", "triage_signal")] {
+    for (arg_key, body_key) in [
+        ("scope_filter", "scope_filter"), ("impact", "impact"), ("triage_signal", "triage_signal"),
+        ("spine_slot", "spine_slot"), ("feature", "feature"),
+    ] {
         if let Some(v) = args[arg_key].as_str().filter(|s| !s.is_empty()) {
             body[body_key] = json!(v);
         }
@@ -446,6 +458,8 @@ pub fn handle_list_tools() -> Value {
                     ("tags",         "string", "Comma-separated tag list (e.g. 'security,performance')"),
                     ("gov_scope",    "string", "Governance scope this rule governs: general|user|organization|client|technology|team|project|repository (resolved against the current repo)"),
                     ("enforcement",  "string", "Authority: advisory|recommended|required|mandatory (default recommended; mandatory = non-overridable)"),
+                    ("spine_slot",   "string", "spine slot to anchor to: vision|personas|journeys|roadmap|design|mockups|decisions|brief|plan|tests"),
+                    ("feature",      "string", "feature name — required for feature-scope slots (brief/plan/tests)"),
                 ]),
             tool("save_memory",
                 "Explicit memory save — used when the user runs /save. Goes straight into active state. \
@@ -463,6 +477,8 @@ pub fn handle_list_tools() -> Value {
                     ("tags",         "string", "Comma-separated tags"),
                     ("gov_scope",    "string", "Governance scope this rule governs: general|user|organization|client|technology|team|project|repository (resolved against the current repo)"),
                     ("enforcement",  "string", "Authority: advisory|recommended|required|mandatory (default recommended; mandatory = non-overridable)"),
+                    ("spine_slot",   "string", "spine slot to anchor to: vision|personas|journeys|roadmap|design|mockups|decisions|brief|plan|tests"),
+                    ("feature",      "string", "feature name — required for feature-scope slots (brief/plan/tests)"),
                 ]),
             tool("promote_memory",
                 "Promote a proven (battle-tested) rule to a broader governance scope, e.g. project → organization. \
@@ -494,6 +510,8 @@ pub fn handle_list_tools() -> Value {
                     ("project_id", "string", "Project UUID — overrides project name lookup."),
                     ("limit",      "string", "Max memories to return (default 200, cap 500)"),
                     ("tags",       "string", "Comma-separated tag filter"),
+                    ("slot",       "string", "optional: restrict/lead context with memories anchored to this spine slot"),
+                    ("feature",    "string", "optional feature name for a feature-scope slot"),
                 ]),
             // ── Relay run-control (P3.8) ─────────────────────────────────────
             tool("start_run",
@@ -1053,6 +1071,23 @@ mod tests {
     }
 
     #[test]
+    fn context_request_forwards_slot_and_feature_when_present() {
+        // slot hint threads onto the daemon request as query params; absent →
+        // absent (zero behavior change for every existing get_layered_context call).
+        let req = daemon_request_for(
+            "get_layered_context",
+            &json!({ "slot": "brief", "feature": "auth" }),
+            "/cwd", Some("sensei"),
+        ).unwrap();
+        assert_eq!(q(&req, "slot"), Some("brief"));
+        assert_eq!(q(&req, "feature"), Some("auth"));
+
+        let no_slot = daemon_request_for("get_layered_context", &json!({}), "/cwd", Some("sensei")).unwrap();
+        assert_eq!(q(&no_slot, "slot"), None, "no slot arg → no slot query param");
+        assert_eq!(q(&no_slot, "feature"), None, "no feature arg → no feature query param");
+    }
+
+    #[test]
     fn context_request_none_when_no_project_resolvable() {
         // No explicit project_id, nothing resolved → binary returns a guidance error.
         assert_eq!(daemon_request_for("get_layered_context", &json!({}), "/cwd", None), None);
@@ -1243,6 +1278,44 @@ mod tests {
         assert_eq!(body["gov_scope"], "organization");
         assert_eq!(body["folder"], "/proj/cwd", "cwd forwarded as governing folder");
         assert_eq!(body["enforcement"], "mandatory");
+    }
+
+    #[test]
+    fn memory_write_carries_spine_slot_and_feature_when_present() {
+        // save_memory/propose_memory both route through build_memory_body; a
+        // feature-scope slot (e.g. "brief") plus its feature must ride onto the
+        // body unchanged so the daemon's insert_with_status can validate + persist
+        // them (spine_slot/feature columns on sensei.memories).
+        let req = daemon_request_for(
+            "save_memory",
+            &json!({ "scope": "project", "type": "decision", "title": "t", "content": "c",
+                     "project_id": "sensei", "spine_slot": "brief", "feature": "auth" }),
+            "/proj/cwd", Some("sensei"),
+        ).unwrap();
+        let body = req.body.unwrap();
+        assert_eq!(body["spine_slot"], "brief");
+        assert_eq!(body["feature"], "auth");
+
+        // propose_memory carries the same fields.
+        let prop = daemon_request_for(
+            "propose_memory",
+            &json!({ "scope": "global", "type": "decision", "title": "t", "content": "c",
+                     "triage_signal": "revert", "spine_slot": "design" }),
+            "/cwd", Some("sensei"),
+        ).unwrap();
+        let pbody = prop.body.unwrap();
+        assert_eq!(pbody["spine_slot"], "design");
+        assert!(pbody.get("feature").is_none(), "no feature arg → no feature key");
+
+        // Neither arg present → neither key present (zero behavior change).
+        let plain = daemon_request_for(
+            "save_memory",
+            &json!({ "scope": "global", "type": "decision", "title": "t", "content": "c" }),
+            "/cwd", Some("sensei"),
+        ).unwrap();
+        let plain_body = plain.body.unwrap();
+        assert!(plain_body.get("spine_slot").is_none(), "no spine_slot arg → no spine_slot key");
+        assert!(plain_body.get("feature").is_none(), "no feature arg → no feature key");
     }
 
     #[test]

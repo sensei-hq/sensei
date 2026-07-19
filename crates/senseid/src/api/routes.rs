@@ -831,6 +831,50 @@ mod tests {
             .bind(id).execute(state.pg.pool()).await.unwrap();
     }
 
+    #[tokio::test]
+    async fn get_context_slot_hint_leads_the_bundle() {
+        // The MCP `get_layered_context` slot hint (Task 5) reaches this handler as
+        // ?slot=&feature=, which get_context forwards into assemble_context's
+        // `slot` param. A slot-anchored memory must lead the bundle when the hint
+        // is present, and the endpoint's prior behavior (no slot) must stay
+        // unchanged when the hint is absent.
+        let (app, state) = test_app().await;
+        let pid = state.pg.ensure_test_project("route-slot-context").await.unwrap();
+
+        let m_unanchored = state.pg.create_memory(
+            Some(&pid), "project", None, "decision", "_test:route_slot_unanchored", "c",
+            None, None, None, None,
+        ).await.unwrap();
+        let m_design = state.pg.create_memory(
+            Some(&pid), "project", None, "decision", "_test:route_slot_design", "c",
+            None, None, Some("design"), None,
+        ).await.unwrap();
+
+        // With ?slot=design: the slot-anchored memory leads.
+        let (status, blob) = get_json(
+            &app, &format!("/api/knowledge/context?project_id={pid}&slot=design"),
+        ).await;
+        assert_eq!(status, StatusCode::OK);
+        let ids: Vec<String> = blob["memories"].as_array().unwrap().iter()
+            .map(|m| m["id"].as_str().unwrap().to_string()).collect();
+        assert_eq!(ids.first().map(String::as_str), Some(m_design.to_string().as_str()),
+            "slot-anchored memory must lead when ?slot= is present");
+        assert!(ids.contains(&m_unanchored.to_string()), "general blend still present");
+
+        // Without ?slot=: unchanged general blend (order not slot-led).
+        let (status_plain, blob_plain) = get_json(
+            &app, &format!("/api/knowledge/context?project_id={pid}"),
+        ).await;
+        assert_eq!(status_plain, StatusCode::OK);
+        let plain_ids: Vec<String> = blob_plain["memories"].as_array().unwrap().iter()
+            .map(|m| m["id"].as_str().unwrap().to_string()).collect();
+        assert!(plain_ids.contains(&m_design.to_string()) && plain_ids.contains(&m_unanchored.to_string()),
+            "both memories still present with no slot hint");
+
+        sqlx_core::query::query("DELETE FROM sensei.memories WHERE id = ANY($1)")
+            .bind(&[m_unanchored, m_design][..]).execute(state.pg.pool()).await.unwrap();
+    }
+
     // ── MCP-proxy ↔ daemon seam ──────────────────────────────────────────
     //
     // The sensei MCP proxy (crates/mcp) resolves a caller's project to its
