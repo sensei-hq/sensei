@@ -123,7 +123,7 @@ No code, diff body, or transcript text appears anywhere.
 
 ## Related
 
-- Objectives [R1](../../requirements/objectives.md#relay--supervising-long-runs-from-anywhere) (modular plan · phases → features · checkpoints · gates), [R4](../../requirements/objectives.md#relay--supervising-long-runs-from-anywhere) (minimal + exact human-in-the-loop · exact command), [R5](../../requirements/objectives.md#relay--supervising-long-runs-from-anywhere) (zero-knowledge)
+- Objectives [R1](../../objectives.md#relay--supervising-long-runs-from-anywhere) (modular plan · phases → features · checkpoints · gates), [R4](../../objectives.md#relay--supervising-long-runs-from-anywhere) (minimal + exact human-in-the-loop · exact command), [R5](../../objectives.md#relay--supervising-long-runs-from-anywhere) (zero-knowledge)
 - [architecture/relay](../../architecture/relay.md) — the planner model (project → plan → phase → feature·checkpoint·gate) + gate shapes
 - [journeys/relay](../../journeys/relay.md) — run & supervise round-trip
 - Sibling relay screens: [Dashboard](relay-dashboard.md) · [Approve](relay-approve.md) (full-screen gate) · [Respond](relay-respond.md) (decide gate) · [Security](relay-security.md) · [Pairing](relay-pairing.md)

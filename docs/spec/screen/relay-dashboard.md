@@ -110,7 +110,7 @@ screen that could not have crossed a status-only pipe.
 
 ## Related
 
-- Objectives [R3](../../requirements/objectives.md#relay--supervising-long-runs-from-anywhere) (legible remote status · done·doing·next · nudges), [R5](../../requirements/objectives.md#relay--supervising-long-runs-from-anywhere) (zero-knowledge), [R7](../../requirements/objectives.md#relay--supervising-long-runs-from-anywhere) (multi-agent, multi-machine, grouped by machine)
+- Objectives [R3](../../objectives.md#relay--supervising-long-runs-from-anywhere) (legible remote status · done·doing·next · nudges), [R5](../../objectives.md#relay--supervising-long-runs-from-anywhere) (zero-knowledge), [R7](../../objectives.md#relay--supervising-long-runs-from-anywhere) (multi-agent, multi-machine, grouped by machine)
 - [architecture/relay](../../architecture/relay.md) — coordinator publishes filtered status; three planes
 - [journeys/relay](../../journeys/relay.md) — run & supervise round-trip
 - Sibling relay screens: [Task detail](relay-task-detail.md) · [Approve](relay-approve.md) · [Respond](relay-respond.md) · [Security](relay-security.md) · [Pairing](relay-pairing.md)

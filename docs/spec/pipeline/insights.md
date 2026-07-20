@@ -14,7 +14,7 @@
 
 An insight is the **human-facing output of the retrospective loop** — the moment
 the graph + signals turn into something a person can act on. The promise
-([[requirements/vision]]) is *"what needs me, what's working, and what's quiet, in
+([[vision]]) is *"what needs me, what's working, and what's quiet, in
 that order"* — not a knowledge base to browse. Every insight is judged by the
 north star: does surfacing it move **FTR**, or expose why FTR moved? Kanji 今 — *now*.
 

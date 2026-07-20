@@ -6,9 +6,9 @@
 > per-screen/per-pipeline contracts live in [`../spec/`](../spec/README.md);
 > this folder owns component boundaries, data flow, and the rationale behind them.
 
-Every layer doc opens by naming the [objectives](../requirements/objectives.md)
+Every layer doc opens by naming the [objectives](../objectives.md)
 it serves, then describes structure and flow. Where a design decision pushes
-against a [vision theme](../requirements/vision.md#the-six-non-negotiable-themes),
+against a [vision theme](../vision.md#the-six-non-negotiable-themes),
 it says so.
 
 ## The system at a glance

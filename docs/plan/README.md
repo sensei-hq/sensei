@@ -1,7 +1,7 @@
 # Open issues — implementation vs vision → the plan
 
 > A **living** gap analysis. It measures the current build against
-> [`vision.md`](../requirements/vision.md) + [`objectives.md`](../requirements/objectives.md), ranks the gaps by
+> [`vision.md`](../vision.md) + [`objectives.md`](../objectives.md), ranks the gaps by
 > FTR value, and organises the work into sequenced workstreams. Updated as
 > workstreams land. Evidence date: **2026-07-14** (four live audits: UI, daemon,
 > MCP, docs — against the running daemon on :7744 + `sensei` DB).

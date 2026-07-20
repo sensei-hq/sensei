@@ -9,10 +9,10 @@
 
 ## Reading order
 
-1. [`vision.md`](vision.md) — the north-star (**FTR**), the core retrospective
+1. [`vision.md`](../vision.md) — the north-star (**FTR**), the core retrospective
    loop, the four-segment journey, and the six non-negotiable themes. Visuals are
    drawn from the mockup journey maps.
-2. [`objectives.md`](objectives.md) — the WHAT broken down per segment
+2. [`objectives.md`](../objectives.md) — the WHAT broken down per segment
    (Bootstrap · First-run &amp; Preferences · Observatory · Project window) plus
    the cross-cutting **Dōjō** layer, each with a measurable "met when."
 

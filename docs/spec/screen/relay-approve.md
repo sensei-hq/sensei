@@ -96,7 +96,7 @@ even that is coordinator-echoed.
 
 ## Related
 
-- Objectives [R4](../../requirements/objectives.md#relay--supervising-long-runs-from-anywhere) (minimal + exact human-in-the-loop · the **exact command**), [R5](../../requirements/objectives.md#relay--supervising-long-runs-from-anywhere) (zero-knowledge), [R7](../../requirements/objectives.md#relay--supervising-long-runs-from-anywhere) (which machine)
+- Objectives [R4](../../objectives.md#relay--supervising-long-runs-from-anywhere) (minimal + exact human-in-the-loop · the **exact command**), [R5](../../objectives.md#relay--supervising-long-runs-from-anywhere) (zero-knowledge), [R7](../../objectives.md#relay--supervising-long-runs-from-anywhere) (which machine)
 - [architecture/relay](../../architecture/relay.md) — gates come in two shapes: **approve** (exact command first) and **decide**
 - [journeys/relay](../../journeys/relay.md) — `gate: approve → the exact command first`
 - Sibling relay screens: [Task detail](relay-task-detail.md) (docked sheet that opens this) · [Respond](relay-respond.md) (the *decide* gate) · [Dashboard](relay-dashboard.md) · [Security](relay-security.md) · [Pairing](relay-pairing.md)

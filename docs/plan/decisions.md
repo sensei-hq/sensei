@@ -10,7 +10,7 @@
 
 | Concept | Where it lives now |
 |---|---|
-| The **four-segment journey** (Bootstrap · First-run+Prefs · Observatory · Project) | [requirements/vision.md](../requirements/vision.md), [objectives.md](../requirements/objectives.md) |
+| The **four-segment journey** (Bootstrap · First-run+Prefs · Observatory · Project) | [vision.md](../vision.md), [objectives.md](../objectives.md) |
 | **Value before setup** — projects first, not a wizard | vision theme 1; realised as first-run-scan + Preferences |
 | The **module lifecycles** (the loops inside the daily app) | objectives O5 |
 | **FTR** as the single north-star | vision.md |
@@ -59,7 +59,7 @@ The *why*, so a rejected shape isn't re-proposed. Salvaged from the old `design/
 | **Diagnostic sessions/traces + issue export** (#39) | Larger new-schema + cross-cutting capture effort; only flat `public.logs` today | when support/debug UX is prioritised |
 | **Image-gen as seed** (#77) · **embedded in CI release binaries** (#78) | Need `model_capability=image` / cross-platform native llama.cpp sign-off | gateway/seed hardening pass |
 | **Dōjō live activation** | External-blocked (needs a remote server + SaaS-infra decision) | Phase 4 |
-| ~~ACP + control-plane / relay~~ **PROMOTED to an active vision 2026-07-14** | adopt Apache-2.0 **ACP**, not Zed's GPL agent crate; agents on your hardware, filtered status only, daemon outbound-only | now specced: [requirements](../requirements/vision.md#the-relay--long-runs-supervised-from-anywhere) R1–R8 + [architecture/relay](../architecture/relay.md) + a plan phase. Still future to *build* |
+| ~~ACP + control-plane / relay~~ **PROMOTED to an active vision 2026-07-14** | adopt Apache-2.0 **ACP**, not Zed's GPL agent crate; agents on your hardware, filtered status only, daemon outbound-only | now specced: [requirements](../vision.md#the-relay--long-runs-supervised-from-anywhere) R1–R8 + [architecture/relay](../architecture/relay.md) + a plan phase. Still future to *build* |
 | **Response cache** (semantic cache of notable LLM outputs — TTL/pin/secret-scrub, ≤3 session-start hints) | distinct from the memory pipeline; never built | when prompt/response reuse becomes a cost lever |
 | **Telemetry transactional-outbox** (durable event write-buffer + backoff/eviction + queue-depth health) | accepted direct-write today | when "no events lost during downtime" is prioritised |
 | **Data-source connectors** (Confluence/Jira/Notion/Figma as graph-node producers — "the graph doesn't care whether a node came from git or Confluence") | repo-only today | when Solution scope needs non-repo members |

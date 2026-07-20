@@ -6,7 +6,7 @@
 **Data:** _greenfield — the coordinator supervises local agent CLIs, tracks paired devices, publishes the filtered event stream, and holds pending gates; shapes proposed below_
 **App file:** _greenfield — not built_ (the Observatory rail item `app/src/routes/(observatory)/relay/+page.svelte`)
 **Daemon files:** _greenfield — coordinator not built_ (grows `crates/senseid`; new `coordinator` module + relay transport)
-**Status:** greenfield (Relay backend unbuilt) — see [architecture/relay](../../architecture/relay.md), objectives [R5 · R7](../../requirements/objectives.md#relay--supervising-long-runs-from-anywhere)
+**Status:** greenfield (Relay backend unbuilt) — see [architecture/relay](../../architecture/relay.md), objectives [R5 · R7](../../objectives.md#relay--supervising-long-runs-from-anywhere)
 
 ## Purpose
 
