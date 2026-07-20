@@ -45,6 +45,9 @@ test.describe('Intake — front door', () => {
   });
 
   test('direct navigation renders the intake screen', async ({ tauriPage }) => {
+    // Cold-boot health-ready can take ~50s on a fresh e2e DB; navigateToScreen
+    // re-navigates through the gate for up to 120s, so lift the per-test cap.
+    test.setTimeout(180_000);
     await navigateToScreen(tauriPage, '/intake', '[data-testid="intake-input"]');
     expect(await pathname(tauriPage)).toBe('/intake');
     await expect(tauriPage.locator('[data-testid="intake-input"]')).toBeVisible();
@@ -59,15 +62,35 @@ test.describe('Intake — front door', () => {
   });
 
   test('freeform → recommend → confirm records a run', async ({ tauriPage }) => {
+    test.setTimeout(180_000);
     await navigateToScreen(tauriPage, '/intake', '[data-testid="intake-input"]');
 
-    await tauriPage.locator('[data-testid="intake-input"]').fill('fix the null deref when the token refreshes');
+    // The tauri-playwright `fill` helper drives HTMLInputElement.value, which
+    // throws on a <textarea>; set the value via the native textarea setter and
+    // dispatch `input` so Svelte's bind:value picks it up.
+    await tauriPage.evaluate(`
+      (function() {
+        var el = document.querySelector('[data-testid="intake-input"]');
+        var setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+        setter.call(el, 'fix the null deref when the token refreshes');
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+      })()
+    `);
+    await new Promise((r) => setTimeout(r, 300)); // let the disabled-state derive settle
     await tauriPage.locator('[data-testid="intake-recommend"]').click();
 
     // Classify (gateway, heuristic fallback) + recommend can take a few seconds.
     await expect(tauriPage.locator('[data-testid="intake-card"]')).toBeVisible({ timeout: 30_000 });
-    await expect(tauriPage.locator('[data-testid="intake-playbook-title"]')).not.toBeEmpty();
-    await expect(tauriPage.locator('[data-testid="intake-axes"]')).toBeVisible();
+    // Read textContent directly — the tauri-playwright wrapper's negated
+    // matchers (`.not.toBeEmpty()`) are unreliable; assert the real content.
+    const title = ((await tauriPage.evaluate(
+      `(document.querySelector('[data-testid="intake-playbook-title"]') || {}).textContent || ''`,
+    )) as string).trim();
+    expect(title.length, `playbook title should not be empty`).toBeGreaterThan(0);
+    const axes = ((await tauriPage.evaluate(
+      `(document.querySelector('[data-testid="intake-axes"]') || {}).textContent || ''`,
+    )) as string).trim();
+    expect(axes.length, `axis chips should render`).toBeGreaterThan(0);
 
     await tauriPage.locator('[data-testid="intake-confirm"]').click();
     await expect(tauriPage.locator('[data-testid="intake-recorded"]')).toBeVisible({ timeout: 15_000 });
