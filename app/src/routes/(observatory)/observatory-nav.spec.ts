@@ -28,6 +28,10 @@ describe("buildNavItems", () => {
     expect(topHrefs).toContain("/"); // Today
     expect(topHrefs).toContain("/projects");
     expect(topHrefs).toContain("/settings"); // Settings
+
+    // Intake is the front door — the leading anchor, above Today.
+    expect(topHrefs[0]).toBe("/intake");
+    expect(byHref(entries, "/intake")?.text).toBe("Intake");
   });
 
   it("hides Review group, separator and Settings in Focus", () => {
