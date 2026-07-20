@@ -1,0 +1,88 @@
+<script lang="ts">
+  import { untrack } from 'svelte';
+  import { PageHeader } from '$lib/components';
+  import { senseiApi } from '$lib/api.js';
+  import { appState } from '$lib/appstate.svelte.js';
+  import { IntakeState } from './intake.svelte.js';
+
+  let { data } = $props();
+
+  const api = senseiApi(appState.port);
+  // Seed the state once from the loaded guide; the state owns recommend/confirm
+  // thereafter. untrack makes the one-time read explicit (see insights/+page.svelte).
+  const intake = new IntakeState(untrack(() => data.guide));
+
+  function recommend(): void { void intake.recommend(api); }
+  function confirm(): void { void intake.confirm(api); }
+</script>
+
+<div class="flex flex-col gap-3 p-4 max-w-2xl">
+  <PageHeader kanji="門" eyebrow="Sensei" title="Intake" description="Start a chunk of work" variant="h1" />
+
+  {#if intake.phase !== 'recorded'}
+    <section class="flex flex-col gap-2">
+      {#if intake.guide.frame}
+        <p class="text-sm text-ink-soft m-0">{intake.guide.frame}</p>
+      {/if}
+      <textarea
+        class="w-full min-h-32 rounded bg-paper-soft border border-paper-edge py-2 px-3 text-sm text-ink"
+        placeholder="Describe the work chunk…"
+        bind:value={intake.chunk}
+        disabled={intake.phase === 'loading'}
+      ></textarea>
+      <div class="flex justify-end">
+        <button
+          class="text-sm bg-ink text-paper rounded-sm py-1 px-3 border-none cursor-pointer disabled:opacity-50"
+          onclick={recommend}
+          disabled={intake.phase === 'loading' || !intake.chunk.trim()}
+        >
+          {intake.phase === 'loading' ? 'Reading…' : 'Recommend a playbook'}
+        </button>
+      </div>
+    </section>
+  {/if}
+
+  {#if intake.phase === 'error'}
+    <p class="text-sm bg-danger-soft text-danger border border-danger rounded py-2 px-3 m-0">{intake.error}</p>
+  {/if}
+
+  {#if intake.rec && (intake.phase === 'recommended' || intake.phase === 'recorded')}
+    {@const r = intake.rec}
+    <section class="flex flex-col gap-2 rounded bg-paper-soft border border-paper-edge py-2 px-3">
+      <div class="flex items-center justify-between gap-2">
+        <h2 class="text-sm font-medium text-ink m-0">{intake.playbookTitle}</h2>
+        {#if r.auto_select}
+          <span class="text-xs bg-success-soft text-success rounded-sm py-1 px-2">
+            trusted · FTR {r.trust.ftr.toFixed(2)} over {r.trust.n}
+          </span>
+        {/if}
+      </div>
+      <p class="text-sm text-ink-soft m-0 leading-snug">{r.rationale}</p>
+      {#if r.opening_tone}
+        <p class="text-xs italic text-ink-faint m-0">{r.opening_tone}</p>
+      {/if}
+      <div class="flex flex-wrap gap-2 text-xs text-ink-soft">
+        <span class="border border-paper-edge rounded-sm py-1 px-2">{r.lifecycle}</span>
+        <span class="border border-paper-edge rounded-sm py-1 px-2">{r.intent}</span>
+        <span class="border border-paper-edge rounded-sm py-1 px-2">{r.risk}</span>
+      </div>
+
+      {#if intake.phase === 'recorded'}
+        <div class="flex items-center justify-between gap-2">
+          <p class="text-sm text-success m-0">
+            {r.auto_select ? 'Auto-selected and recorded.' : 'Recorded.'}
+          </p>
+          <button class="text-xs text-accent bg-transparent border-none cursor-pointer" onclick={() => intake.reset()}>
+            New intake
+          </button>
+        </div>
+      {:else}
+        <div class="flex justify-end">
+          <button class="text-sm bg-ink text-paper rounded-sm py-1 px-3 border-none cursor-pointer" onclick={confirm}>
+            Use this playbook
+          </button>
+        </div>
+      {/if}
+    </section>
+  {/if}
+</div>
