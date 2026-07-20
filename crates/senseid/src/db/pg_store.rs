@@ -8928,6 +8928,22 @@ impl PgStore {
         })).collect())
     }
 
+    /// Confirmed+attributed sample size + FTR rate for one exact (lifecycle, intent,
+    /// risk, playbook) combo — the auto-select-on-trust gate's evidence lookup.
+    pub async fn playbook_combo_trust(
+        &self, lifecycle: &str, intent: &str, risk: &str, playbook: &str,
+    ) -> Result<(i64, f64), String> {
+        let row: (i64, f64) = sqlx_core::query_as::query_as(
+            "SELECT count(*)::int8, coalesce(avg(outcome_ftr::int)::float8, 0.0)
+               FROM sensei.playbook_run
+              WHERE confirmed AND outcome_ftr IS NOT NULL
+                AND lifecycle=$1::sensei.chunk_lifecycle AND intent=$2::sensei.chunk_intent
+                AND risk=$3::sensei.chunk_risk AND playbook=$4"
+        ).bind(lifecycle).bind(intent).bind(risk).bind(playbook)
+         .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row)
+    }
+
     /// `classified_by` records how the axes were derived (e.g. "manual",
     /// a gateway model id, or "heuristic") and `model_fallback`
     /// flags whether the local-model path fell back to the heuristic —
@@ -13247,6 +13263,9 @@ mod playbook_tests {
             None, false,
         ).await.unwrap();
         assert!(pg.session_has_confirmed_run(&sid).await.unwrap());
+        // clean slate — shared test DB; this combo is also asserted exactly by
+        // playbook_combo_trust_counts_ftr
+        pg.execute_raw(&format!("delete from sensei.playbook_run where session_id = '{sid}'")).await.ok();
     }
 
     /// The §9 attribution join: a confirmed playbook_run picks up its session's
@@ -13289,6 +13308,9 @@ mod playbook_tests {
 
         // idempotent: second attribution touches 0 new
         assert_eq!(pg.attribute_playbook_outcomes().await.unwrap(), 0);
+        // clean slate — shared test DB; this combo is also asserted exactly by
+        // playbook_combo_trust_counts_ftr
+        pg.execute_raw(&format!("delete from sensei.playbook_run where session_id = '{sid}'")).await.ok();
     }
 
     #[tokio::test]
@@ -13326,6 +13348,25 @@ mod playbook_tests {
         pg.accept_playbook_rule(&id.parse().unwrap()).await.unwrap();
         // now enabled → visible to the resolver-facing list
         assert!(pg.list_playbook_rules().await.unwrap().iter().any(|r| r.id == Some(id.parse().unwrap())));
+    }
+
+    #[tokio::test]
+    async fn playbook_combo_trust_counts_ftr() {
+        let Ok(pg) = PgStore::connect_test().await else { return; };
+        pg.execute_raw("delete from sensei.playbook_run where feature = 'trust-test'").await.ok();
+        // two confirmed+attributed runs for (stable,bug,low, debug_flow): one ftr, one not → n=2, ftr=0.5
+        for ftr in ["true", "false"] {
+            pg.execute_raw(&format!(
+                "insert into sensei.playbook_run (feature, lifecycle, intent, risk, playbook, rationale, confirmed, outcome_ftr) \
+                 values ('trust-test','stable','bug','low','debug_flow','t', true, {ftr})")).await.unwrap();
+        }
+        let (n, ftr) = pg.playbook_combo_trust("stable","bug","low","debug_flow").await.unwrap();
+        assert_eq!(n, 2);
+        assert!((ftr - 0.5).abs() < 1e-9);
+        // empty combo → (0, 0.0)
+        let (n0, f0) = pg.playbook_combo_trust("greenfield","ux","high","vibe").await.unwrap();
+        assert_eq!(n0, 0); assert_eq!(f0, 0.0);
+        pg.execute_raw("delete from sensei.playbook_run where feature = 'trust-test'").await.ok();
     }
 
     #[tokio::test]
