@@ -62,6 +62,11 @@ Status: ✅ built · 🟡 partial · ❌ planned.
 - Gateway — route each LLM step to local vs paid models (finish products past the paywall) ✅
 - HF model support ❌
 
+## Helpers — the delivery + interaction layer
+- Collection of skills, commands, agents, plugin for assisting the llm ✅
+- MCP — a way for the llm to access the rich analytical + structural data available for projects ✅
+- A way for the user to interact with tools + helpers the way the llm does — to see what works and what does not 🟡
+
 ## Dōjō — team / org (the bounded plane)
 - Shared governance — rules + promotion + federation ✅
 - Collective intelligence — shared memories / patterns across the team 🟡
