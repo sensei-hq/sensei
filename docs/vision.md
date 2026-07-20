@@ -59,7 +59,7 @@ its FTR impact never **measured**, the loop generates but never closes.
 ## The journey — four segments + a cross-cutting Dōjō
 
 Source of truth for the visuals: [`mockups/Sensei/Sensei Journey Map.html`](mockups/Sensei/Sensei%20Journey%20Map.html)
-and [`mockups/Sensei/Sensei Dōjō Journey Map.html`](mockups/Sensei/Sensei%20D%C5%8Djo%20Journey%20Map.html).
+and [`mockups/Sensei/Sensei Dōjō Journey Map.html`](mockups/Sensei/Sensei%20D%C5%8Dj%C5%8D%20Journey%20Map.html).
 
 ```mermaid
 flowchart TD
@@ -103,7 +103,7 @@ Multi-agent workflows are becoming the norm: several assistants (Claude Code ·
 Codex · OpenCode · Aider) running long, mostly-autonomous jobs across your
 machines. **Relay** makes that legible and controllable when you're away from the
 keyboard — now **folded into the Dōjō**, reachable on phone and console. Visual
-source: [`mockups/Sensei/Sensei Dōjō Journey Map.html`](mockups/Sensei/Sensei%20D%C5%8Djo%20Journey%20Map.html).
+source: [`mockups/Sensei/Sensei Dōjō Journey Map.html`](mockups/Sensei/Sensei%20D%C5%8Dj%C5%8D%20Journey%20Map.html).
 
 - **Agents run on your own hardware.** The daemon supervises the agent CLIs and
   publishes only a *filtered status* — never the code, never the raw transcript.

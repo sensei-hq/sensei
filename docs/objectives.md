@@ -136,8 +136,7 @@ flowchart LR
 **Make multi-agent, away-from-keyboard work legible and controllable, without
 leaking code.** A cross-cutting capability: a **coordinator** (in the daemon), a
 **zero-knowledge relay**, and a **mobile companion** — plus a modular **planner**.
-Visual: [`journeys/relay.md`](journeys/relay.md), mockup
-[`mockups/Sensei/Sensei Relay.html`](mockups/Sensei/Sensei%20Relay.html).
+Visual: [`journeys/relay.md`](journeys/relay.md).
 
 | # | Objective | Met when |
 |---|---|---|
