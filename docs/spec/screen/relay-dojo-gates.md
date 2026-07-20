@@ -6,7 +6,7 @@
 **Data:** _greenfield — org-wide relay gates fan into one shared on-call queue; each gate carries source attribution + a handler; decisions land in the Dōjō record; shapes proposed below_
 **App file:** _greenfield — not built_ (Dōjō `dojo/`, a SvelteKit route, SSO-gated — see [architecture/dojo](../../architecture/dojo.md))
 **Daemon files:** _greenfield — team relay routing not built_ (grows `crates/dojo-mind` / `sensei-dojo`; the coordinators stay **outbound-only** and publish gates into the Dōjō, which fans them to on-call)
-**Status:** greenfield (Relay + team routing unbuilt) — see [architecture/relay](../../architecture/relay.md) "Team relay (Dōjō)", objective [R8](../../requirements/objectives.md#relay--supervising-long-runs-from-anywhere)
+**Status:** greenfield (Relay + team routing unbuilt) — see [architecture/relay](../../architecture/relay.md) "Team relay (Dōjō)", objective [R8](../../objectives.md#relay--supervising-long-runs-from-anywhere)
 
 ## Purpose
 

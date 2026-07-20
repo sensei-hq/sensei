@@ -85,7 +85,7 @@ permission granting.
 
 ## Related
 
-- Objectives [R6](../../requirements/objectives.md#relay--supervising-long-runs-from-anywhere) (secure pairing round-trip + explicit, revocable permissions), [R5](../../requirements/objectives.md#relay--supervising-long-runs-from-anywhere) (zero-knowledge), [R7](../../requirements/objectives.md#relay--supervising-long-runs-from-anywhere) (pair multiple machines)
+- Objectives [R6](../../objectives.md#relay--supervising-long-runs-from-anywhere) (secure pairing round-trip + explicit, revocable permissions), [R5](../../objectives.md#relay--supervising-long-runs-from-anywhere) (zero-knowledge), [R7](../../objectives.md#relay--supervising-long-runs-from-anywhere) (pair multiple machines)
 - [architecture/relay](../../architecture/relay.md) — security model: encrypted pairing round-trip establishes keys between coordinator and phone
 - [journeys/relay](../../journeys/relay.md) — onboarding: install → pairing round-trip → grant permissions
 - Sibling relay screens: [Security](relay-security.md) (where pairing completes into permission granting) · [Dashboard](relay-dashboard.md) · [Approve](relay-approve.md) · [Respond](relay-respond.md) · [Task detail](relay-task-detail.md)

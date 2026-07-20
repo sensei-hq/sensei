@@ -3,7 +3,7 @@ name: Sensei Operating Model — vision reframe
 description: Sensei + Dōjō as the operating system for AI-assisted work — the unified model, canonical doc structure, playbooks, planner, baseline/governance, design subsystem, gap analysis, and roadmap.
 date: 2026-07-17
 status: draft (brainstorm output — pending review)
-supersedes: reframes the vision in requirements/vision.md; complements the gap analysis in plan/README.md
+supersedes: reframes the vision in vision.md; complements the gap analysis in plan/README.md
 ---
 
 # Sensei Operating Model
@@ -11,7 +11,7 @@ supersedes: reframes the vision in requirements/vision.md; complements the gap a
 > This is a **strategy reframe**, not a feature spec. It restates what
 > Sensei + Dōjō *is*, defines the single way a project runs under it, and maps
 > the gap between that model and today's build. Each numbered pillar spawns its
-> own focused sub-spec. It reframes [`requirements/vision.md`](../requirements/vision.md)
+> own focused sub-spec. It reframes [`vision.md`](../vision.md)
 > and feeds [`plan/README.md`](README.md)'s ranked-gap roadmap.
 
 ---

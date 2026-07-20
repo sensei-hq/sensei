@@ -2,7 +2,7 @@
 
 > How one developer + their assistant move through sensei. Distilled from
 > [`../mockups/Sensei/Sensei Journey Map.html`](../mockups/Sensei/Sensei%20Journey%20Map.html).
-> Traces to [requirements/objectives](../requirements/objectives.md). The
+> Traces to [objectives](../objectives.md). The
 > end-to-end version — Rin, working across several orgs — is in
 > [`../mockups/Sensei/Sensei End-to-End Journey.html`](../mockups/Sensei/Sensei%20End-to-End%20Journey.html)
 > (see [journeys → the whole loop](README.md#the-whole-loop--machine--dōjō--beyond)).
