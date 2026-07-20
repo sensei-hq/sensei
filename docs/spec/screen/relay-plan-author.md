@@ -6,7 +6,7 @@
 **Data:** _greenfield — a project's one active plan (phases → features · checkpoints · gates); each step carries an auto|gate mode; shapes proposed below_
 **App file:** _greenfield — not built_ (`app/src/routes/(observatory)/relay/plan/+page.svelte`)
 **Daemon files:** _greenfield — planner model not built_ (grows `crates/senseid`; new `plan` module — see [architecture/relay](../../architecture/relay.md) "the planner model")
-**Status:** greenfield (Relay backend unbuilt) — see [architecture/relay](../../architecture/relay.md), objective [R1](../../requirements/objectives.md#relay--supervising-long-runs-from-anywhere)
+**Status:** greenfield (Relay backend unbuilt) — see [architecture/relay](../../architecture/relay.md), objective [R1](../../objectives.md#relay--supervising-long-runs-from-anywhere)
 
 ## Purpose
 

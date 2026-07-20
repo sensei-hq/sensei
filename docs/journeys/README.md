@@ -40,7 +40,7 @@ flowchart LR
 ```
 
 Why it's worth building as one loop — the value case, who benefits, defensibility
-and risks — is in [requirements/vision → Why it's worth building](../requirements/vision.md#why-its-worth-building--one-loop-not-two-products).
+and risks — is in [vision → Why it's worth building](../vision.md#why-its-worth-building--one-loop-not-two-products).
 
 ## Contents
 

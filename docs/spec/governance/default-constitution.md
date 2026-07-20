@@ -110,5 +110,5 @@ delivery module (prerequisite: a deploy/release-signal detector).
 
 ## Related
 - [[pipeline/governance]] — how rules resolve, inherit, promote, and consolidate.
-- [[requirements/vision]] — the FTR north star + why AI amplifies fundamentals.
+- [[vision]] — the FTR north star + why AI amplifies fundamentals.
 - [[plan]] — the DORA delivery module + deploy-signal detector.

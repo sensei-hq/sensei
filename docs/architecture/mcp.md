@@ -1,6 +1,6 @@
 # Layer · mcp
 
-> **Serves:** the *deliver* step of the [core loop](../requirements/vision.md#the-core-loop)
+> **Serves:** the *deliver* step of the [core loop](../vision.md#the-core-loop)
 > — getting the right context to the assistant, first try. This is where FTR is
 > won or lost in the moment.
 

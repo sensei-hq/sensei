@@ -2,8 +2,8 @@
 
 > The **WHAT**, broken down. Each objective states the outcome and how we know
 > it's met — never the implementation. Architecture
-> ([`../architecture/`](../architecture/README.md)) maps each to a layer; the
-> per-screen/per-pipeline contracts live in [`../spec/`](../spec/README.md).
+> ([`architecture/`](architecture/README.md)) maps each to a layer; the
+> per-screen/per-pipeline contracts live in [`spec/`](spec/README.md).
 > Traces back to [`vision.md`](vision.md).
 
 Objectives are grouped by the four personal segments plus the cross-cutting
@@ -136,8 +136,8 @@ flowchart LR
 **Make multi-agent, away-from-keyboard work legible and controllable, without
 leaking code.** A cross-cutting capability: a **coordinator** (in the daemon), a
 **zero-knowledge relay**, and a **mobile companion** — plus a modular **planner**.
-Visual: [`../journeys/relay.md`](../journeys/relay.md), mockup
-[`../mockups/Sensei/Sensei Relay.html`](../mockups/Sensei/Sensei%20Relay.html).
+Visual: [`journeys/relay.md`](journeys/relay.md), mockup
+[`mockups/Sensei/Sensei Relay.html`](mockups/Sensei/Sensei%20Relay.html).
 
 | # | Objective | Met when |
 |---|---|---|
@@ -158,5 +158,5 @@ Visual: [`../journeys/relay.md`](../journeys/relay.md), mockup
 
 ## Read next
 
-- [`open-issues.md`](../plan/README.md) — how far the implementation is from these objectives, ranked, with the plan.
-- [`../architecture/README.md`](../architecture/README.md) — the layers that deliver them.
+- [`open-issues.md`](plan/README.md) — how far the implementation is from these objectives, ranked, with the plan.
+- [`architecture/README.md`](architecture/README.md) — the layers that deliver them.

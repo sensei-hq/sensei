@@ -107,7 +107,7 @@ coordinator's permission record and takes effect immediately.
 
 ## Related
 
-- Objectives [R5](../../requirements/objectives.md#relay--supervising-long-runs-from-anywhere) (zero-knowledge by construction), [R6](../../requirements/objectives.md#relay--supervising-long-runs-from-anywhere) (secure pairing + explicit, revocable permissions), [R7](../../requirements/objectives.md#relay--supervising-long-runs-from-anywhere) (multi-machine)
+- Objectives [R5](../../objectives.md#relay--supervising-long-runs-from-anywhere) (zero-knowledge by construction), [R6](../../objectives.md#relay--supervising-long-runs-from-anywhere) (secure pairing + explicit, revocable permissions), [R7](../../objectives.md#relay--supervising-long-runs-from-anywhere) (multi-machine)
 - [architecture/relay](../../architecture/relay.md) — security model (zero-knowledge relay · encrypted pairing · scoped revocable permissions; prefer kavach / Dōjō auth stack over hand-rolled)
 - [journeys/relay](../../journeys/relay.md) — onboarding: pair once → grant permissions
 - Sibling relay screens: [Pairing](relay-pairing.md) (the round-trip this launches) · [Dashboard](relay-dashboard.md) (lock chip routes here) · [Approve](relay-approve.md) · [Respond](relay-respond.md) · [Task detail](relay-task-detail.md)

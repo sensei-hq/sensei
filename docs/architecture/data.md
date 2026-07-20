@@ -1,7 +1,7 @@
 # Layer · data
 
 > **Serves:** every objective — the data layer is the substrate the whole
-> [core loop](../requirements/vision.md#the-core-loop) turns on. Owns the schema,
+> [core loop](../vision.md#the-core-loop) turns on. Owns the schema,
 > the model, and the DB conventions.
 
 ## What it is

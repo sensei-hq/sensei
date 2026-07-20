@@ -96,7 +96,7 @@ question, labels, and replies crosses the relay.
 
 ## Related
 
-- Objectives [R4](../../requirements/objectives.md#relay--supervising-long-runs-from-anywhere) (a decision as **3–4 options + a free reply**), [R5](../../requirements/objectives.md#relay--supervising-long-runs-from-anywhere) (zero-knowledge)
+- Objectives [R4](../../objectives.md#relay--supervising-long-runs-from-anywhere) (a decision as **3–4 options + a free reply**), [R5](../../objectives.md#relay--supervising-long-runs-from-anywhere) (zero-knowledge)
 - [architecture/relay](../../architecture/relay.md) — gate shape **decide** (3–4-option question plus a free reply — the way sensei asks)
 - [journeys/relay](../../journeys/relay.md) — `gate: decide → 3–4 options + a free reply`
 - Sibling relay screens: [Approve](relay-approve.md) (the *approve* gate) · [Task detail](relay-task-detail.md) · [Dashboard](relay-dashboard.md) · [Security](relay-security.md) · [Pairing](relay-pairing.md)

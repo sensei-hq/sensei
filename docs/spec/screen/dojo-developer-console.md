@@ -58,6 +58,6 @@ publish stay with maintainers and admins — this is the contributor view.
 
 ## Related
 
-- Objectives [DJ1–DJ5](../../requirements/objectives.md#dōjō--the-cross-cutting-team-layer) · [architecture/dojo](../../architecture/dojo.md) · [journeys/dojo](../../journeys/dojo.md)
+- Objectives [DJ1–DJ5](../../objectives.md#dōjō--the-cross-cutting-team-layer) · [architecture/dojo](../../architecture/dojo.md) · [journeys/dojo](../../journeys/dojo.md)
 - Sibling consoles: [[screen/dojo-maintainer-console]] · [[screen/dojo-admin-console]] · [[screen/dojo-lead-console]]
 - In-app developer flows (Observatory): [[screen/dojo-developer-flow]] · [[screen/observatory-dojo-connections]]
