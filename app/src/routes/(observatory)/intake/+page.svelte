@@ -16,7 +16,7 @@
   function confirm(): void { void intake.confirm(api); }
 </script>
 
-<div class="flex flex-col gap-3 p-4 max-w-2xl">
+<div class="flex flex-col gap-3 p-4 max-w-2xl" data-testid="intake">
   <PageHeader kanji="門" eyebrow="Sensei" title="Intake" description="Start a chunk of work" variant="h1" />
 
   {#if intake.phase !== 'recorded'}
@@ -29,12 +29,14 @@
         placeholder="Describe the work chunk…"
         bind:value={intake.chunk}
         disabled={intake.phase === 'loading'}
+        data-testid="intake-input"
       ></textarea>
       <div class="flex justify-end">
         <button
           class="text-sm bg-ink text-paper rounded-sm py-1 px-3 border-none cursor-pointer disabled:opacity-50"
           onclick={recommend}
           disabled={intake.phase === 'loading' || !intake.chunk.trim()}
+          data-testid="intake-recommend"
         >
           {intake.phase === 'loading' ? 'Reading…' : 'Recommend a playbook'}
         </button>
@@ -43,16 +45,16 @@
   {/if}
 
   {#if intake.phase === 'error'}
-    <p class="text-sm bg-danger-soft text-danger border border-danger rounded py-2 px-3 m-0">{intake.error}</p>
+    <p class="text-sm bg-danger-soft text-danger border border-danger rounded py-2 px-3 m-0" data-testid="intake-error">{intake.error}</p>
   {/if}
 
   {#if intake.rec && (intake.phase === 'recommended' || intake.phase === 'recorded')}
     {@const r = intake.rec}
-    <section class="flex flex-col gap-2 rounded bg-paper-soft border border-paper-edge py-2 px-3">
+    <section class="flex flex-col gap-2 rounded bg-paper-soft border border-paper-edge py-2 px-3" data-testid="intake-card">
       <div class="flex items-center justify-between gap-2">
-        <h2 class="text-sm font-medium text-ink m-0">{intake.playbookTitle}</h2>
+        <h2 class="text-sm font-medium text-ink m-0" data-testid="intake-playbook-title">{intake.playbookTitle}</h2>
         {#if r.auto_select}
-          <span class="text-xs bg-success-soft text-success rounded-sm py-1 px-2">
+          <span class="text-xs bg-success-soft text-success rounded-sm py-1 px-2" data-testid="intake-trust-badge">
             trusted · FTR {r.trust.ftr.toFixed(2)} over {r.trust.n}
           </span>
         {/if}
@@ -61,7 +63,7 @@
       {#if r.opening_tone}
         <p class="text-xs italic text-ink-faint m-0">{r.opening_tone}</p>
       {/if}
-      <div class="flex flex-wrap gap-2 text-xs text-ink-soft">
+      <div class="flex flex-wrap gap-2 text-xs text-ink-soft" data-testid="intake-axes">
         <span class="border border-paper-edge rounded-sm py-1 px-2">{r.lifecycle}</span>
         <span class="border border-paper-edge rounded-sm py-1 px-2">{r.intent}</span>
         <span class="border border-paper-edge rounded-sm py-1 px-2">{r.risk}</span>
@@ -69,16 +71,16 @@
 
       {#if intake.phase === 'recorded'}
         <div class="flex items-center justify-between gap-2">
-          <p class="text-sm text-success m-0">
+          <p class="text-sm text-success m-0" data-testid="intake-recorded">
             {r.auto_select ? 'Auto-selected and recorded.' : 'Recorded.'}
           </p>
-          <button class="text-xs text-accent bg-transparent border-none cursor-pointer" onclick={() => intake.reset()}>
+          <button class="text-xs text-accent bg-transparent border-none cursor-pointer" onclick={() => intake.reset()} data-testid="intake-reset">
             New intake
           </button>
         </div>
       {:else}
         <div class="flex justify-end">
-          <button class="text-sm bg-ink text-paper rounded-sm py-1 px-3 border-none cursor-pointer" onclick={confirm}>
+          <button class="text-sm bg-ink text-paper rounded-sm py-1 px-3 border-none cursor-pointer" onclick={confirm} data-testid="intake-confirm">
             Use this playbook
           </button>
         </div>
