@@ -483,23 +483,23 @@ export const load: PageLoad = async () => {
   function confirm(): void { void intake.confirm(api); }
 </script>
 
-<div class="mx-auto flex max-w-2xl flex-col gap-6 p-6">
-  <PageHeader kanji="門" title="Intake" subtitle="Start a chunk of work" />
+<div class="flex flex-col gap-3 p-4 max-w-2xl">
+  <PageHeader kanji="門" eyebrow="Sensei" title="Intake" description="Start a chunk of work" variant="h1" />
 
   {#if intake.phase !== 'recorded'}
-    <section class="flex flex-col gap-3">
+    <section class="flex flex-col gap-2">
       {#if intake.guide.frame}
-        <p class="text-sm text-ink-faint">{intake.guide.frame}</p>
+        <p class="text-sm text-ink-soft m-0">{intake.guide.frame}</p>
       {/if}
       <textarea
-        class="min-h-32 w-full rounded border border-line bg-surface p-3 text-sm text-ink"
+        class="w-full min-h-32 rounded bg-paper-soft border border-paper-edge py-2 px-3 text-sm text-ink"
         placeholder="Describe the work chunk…"
         bind:value={intake.chunk}
         disabled={intake.phase === 'loading'}
       ></textarea>
       <div class="flex justify-end">
         <button
-          class="rounded bg-accent px-4 py-2 text-sm text-on-accent disabled:opacity-50"
+          class="text-sm bg-ink text-paper rounded-sm py-1 px-3 border-none cursor-pointer disabled:opacity-50"
           onclick={recommend}
           disabled={intake.phase === 'loading' || !intake.chunk.trim()}
         >
@@ -510,42 +510,42 @@ export const load: PageLoad = async () => {
   {/if}
 
   {#if intake.phase === 'error'}
-    <p class="rounded border border-danger bg-danger/10 p-3 text-sm text-danger">{intake.error}</p>
+    <p class="text-sm bg-danger-soft text-danger border border-danger rounded py-2 px-3 m-0">{intake.error}</p>
   {/if}
 
   {#if intake.rec && (intake.phase === 'recommended' || intake.phase === 'recorded')}
     {@const r = intake.rec}
-    <section class="flex flex-col gap-3 rounded border border-line bg-surface p-4">
-      <div class="flex items-center justify-between gap-3">
-        <h2 class="text-base font-medium text-ink">{intake.playbookTitle}</h2>
+    <section class="flex flex-col gap-2 rounded bg-paper-soft border border-paper-edge py-2 px-3">
+      <div class="flex items-center justify-between gap-2">
+        <h2 class="text-sm font-medium text-ink m-0">{intake.playbookTitle}</h2>
         {#if r.auto_select}
-          <span class="rounded bg-success/15 px-2 py-1 text-xs text-success">
+          <span class="text-xs bg-success-soft text-success rounded-sm py-1 px-2">
             trusted · FTR {r.trust.ftr.toFixed(2)} over {r.trust.n}
           </span>
         {/if}
       </div>
-      <p class="text-sm text-ink-soft">{r.rationale}</p>
+      <p class="text-sm text-ink-soft m-0 leading-snug">{r.rationale}</p>
       {#if r.opening_tone}
-        <p class="text-xs italic text-ink-faint">{r.opening_tone}</p>
+        <p class="text-xs italic text-ink-faint m-0">{r.opening_tone}</p>
       {/if}
-      <div class="flex flex-wrap gap-2 text-xs text-ink-faint">
-        <span class="rounded bg-surface-2 px-2 py-1">{r.lifecycle}</span>
-        <span class="rounded bg-surface-2 px-2 py-1">{r.intent}</span>
-        <span class="rounded bg-surface-2 px-2 py-1">{r.risk}</span>
+      <div class="flex flex-wrap gap-2 text-xs text-ink-soft">
+        <span class="border border-paper-edge rounded-sm py-1 px-2">{r.lifecycle}</span>
+        <span class="border border-paper-edge rounded-sm py-1 px-2">{r.intent}</span>
+        <span class="border border-paper-edge rounded-sm py-1 px-2">{r.risk}</span>
       </div>
 
       {#if intake.phase === 'recorded'}
-        <div class="flex items-center justify-between gap-3">
-          <p class="text-sm text-success">
+        <div class="flex items-center justify-between gap-2">
+          <p class="text-sm text-success m-0">
             {r.auto_select ? 'Auto-selected and recorded.' : 'Recorded.'}
           </p>
-          <button class="text-sm text-accent underline" onclick={() => intake.reset()}>
+          <button class="text-xs text-accent bg-transparent border-none cursor-pointer" onclick={() => intake.reset()}>
             New intake
           </button>
         </div>
       {:else}
         <div class="flex justify-end">
-          <button class="rounded bg-accent px-4 py-2 text-sm text-on-accent" onclick={confirm}>
+          <button class="text-sm bg-ink text-paper rounded-sm py-1 px-3 border-none cursor-pointer" onclick={confirm}>
             Use this playbook
           </button>
         </div>
@@ -555,7 +555,9 @@ export const load: PageLoad = async () => {
 </div>
 ```
 
-- [ ] **Step 3: Svelte MCP autofixer.** Run the autofixer over BOTH `+page.svelte` and `+page.ts` (`mcp__plugin_svelte_svelte__svelte-autofixer`); apply every fix; re-run until clean. Confirm the token/class names it reports as valid — if any token above is not in the design system, replace it with the nearest canonical token from `docs/architecture/frontend-svelte-guidelines.md` (do not invent tokens).
+Tokens above are copied from `app/src/routes/(observatory)/insights/RecCard.svelte` (card = `rounded bg-paper-soft border border-paper-edge`; primary button = `bg-ink text-paper rounded-sm`; text = `text-ink`/`text-ink-soft`/`text-ink-faint`/`text-accent`; soft states = `bg-success-soft`/`bg-danger-soft`) — do NOT substitute `bg-surface`/`border-line`/`text-on-accent` (those don't exist in this design system). `PageHeader` props are `{ kanji, eyebrow, title, description, variant }` (verified against `PageHeader.harness.svelte`) — there is no `subtitle`.
+
+- [ ] **Step 3: Svelte MCP autofixer.** Run the autofixer over BOTH `+page.svelte` and `+page.ts` (`mcp__plugin_svelte_svelte__svelte-autofixer`); apply every fix; re-run until clean. If the autofixer or `bun run check` flags any class/token as unknown, replace it with the nearest canonical token used in sibling observatory pages (grep them) — do not invent tokens.
 
 - [ ] **Step 4: Type-check.** Run: `cd app && bun run check 2>&1 | tail -15` → no new errors. Confirm `./$types.js` resolves (SvelteKit generates it once the route dir exists; if `check` regenerates types it may need a second run).
 
