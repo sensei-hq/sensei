@@ -68,6 +68,7 @@ pub async fn consolidate_global_rules(
             tools: Vec::new(),
         },
         budget: None,
+        auth: None,
     };
     let resp = gateway
         .execute(&request)

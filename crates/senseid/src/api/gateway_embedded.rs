@@ -26,7 +26,7 @@ pub use ort_init::register_ort;
 
 #[cfg(feature = "embedded-fastembed")]
 mod fastembed_init {
-    use gateway::adapters::{AdapterRegistry, InferenceAdapter};
+    use gateway::adapters::{AdapterRegistry, Model};
     use gateway_embedded::adapters::{FastembedAdapter, FastembedConfig};
     use gateway_embedded::registry::{ModelEntry, ModelFormat, ModelSource};
     use std::path::Path;
@@ -61,9 +61,7 @@ mod fastembed_init {
         let adapter = FastembedAdapter::load(&entry, cfg)
             .map_err(|e| format!("FastembedAdapter::load: {e}"))?;
         let id = adapter.id().to_string();
-        registry
-            .register(Arc::new(adapter) as Arc<dyn InferenceAdapter>)
-            .await;
+        registry.register(Arc::new(adapter)).await;
         Ok(id)
     }
 
@@ -140,6 +138,7 @@ mod fastembed_init {
                 routers,
                 models,
                 chains: HashMap::new(),
+                constraints: Default::default(),
             };
             let cb = CircuitBreakerManager::new(CircuitBreakerConfig::default());
             let gw = Gateway::new(config, registry, cb);
@@ -163,6 +162,7 @@ mod fastembed_init {
                     ],
                 },
                 budget: None,
+                auth: None,
             };
 
             let response = gw.execute(&request).await.expect("gateway.execute");
@@ -186,7 +186,7 @@ mod fastembed_init {
 
 #[cfg(feature = "embedded-ort")]
 mod ort_init {
-    use gateway::adapters::{AdapterRegistry, InferenceAdapter};
+    use gateway::adapters::{AdapterRegistry, Model};
     use gateway_embedded::adapters::{OrtAdapter, OrtConfig};
     use gateway_embedded::registry::{ModelEntry, ModelFormat, ModelSource};
     use std::path::Path;
@@ -223,9 +223,7 @@ mod ort_init {
         let adapter = OrtAdapter::load(&entry, cfg)
             .map_err(|e| format!("OrtAdapter::load: {e}"))?;
         let id = adapter.id().to_string();
-        registry
-            .register(Arc::new(adapter) as Arc<dyn InferenceAdapter>)
-            .await;
+        registry.register(Arc::new(adapter)).await;
         Ok(id)
     }
 
@@ -303,6 +301,7 @@ mod ort_init {
                 routers,
                 models,
                 chains: HashMap::new(),
+                constraints: Default::default(),
             };
             let cb = CircuitBreakerManager::new(CircuitBreakerConfig::default());
             let gw = Gateway::new(config, registry, cb);
@@ -319,6 +318,7 @@ mod ort_init {
                     ],
                 },
                 budget: None,
+                auth: None,
             };
 
             let response = gw.execute(&request).await.expect("gateway.execute");

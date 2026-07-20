@@ -98,6 +98,7 @@ pub async fn summarize_cluster(
             tools: Vec::new(),
         },
         budget: None,
+        auth: None,
     };
     match gateway.execute(&request).await {
         Ok(resp) if resp.success => {

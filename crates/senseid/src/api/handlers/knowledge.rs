@@ -647,6 +647,7 @@ pub(crate) async fn generalise_memory(
             tools: Vec::new(),
         },
         budget: None,
+        auth: None,
     };
 
     // Timeout / gateway error / empty-or-unparseable output all degrade the SAME

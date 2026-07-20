@@ -236,6 +236,7 @@ pub(crate) fn assemble(
         routers,
         models,
         chains,
+        constraints: Default::default(),
     }
 }
 

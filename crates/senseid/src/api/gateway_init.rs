@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use gateway::adapters::noop::NoopAdapter;
-use gateway::adapters::{AdapterRegistry, InferenceAdapter};
+use gateway::adapters::AdapterRegistry;
 use gateway::circuit_breaker::{CircuitBreakerConfig, CircuitBreakerManager};
 use gateway::types::config::GatewayConfig;
 use gateway::Gateway;
@@ -42,7 +42,7 @@ pub async fn init_gateway(db_config: Option<GatewayConfig>) -> Arc<Gateway> {
 
     // Always register noop as fallback
     adapters
-        .register(Arc::new(NoopAdapter) as Arc<dyn InferenceAdapter>)
+        .register(Arc::new(NoopAdapter))
         .await;
 
     // Optional in-process embedding adapters. Each is only active when
@@ -106,7 +106,7 @@ pub async fn init_gateway(db_config: Option<GatewayConfig>) -> Arc<Gateway> {
                     "Gateway: embedded-llama adapter registered (resolver: managed → ollama)"
                 );
                 adapters
-                    .register(Arc::new(adapter) as Arc<dyn InferenceAdapter>)
+                    .register(Arc::new(adapter))
                     .await;
             }
             Err(e) => tracing::warn!("Gateway: embedded-llama adapter unavailable: {e}"),
@@ -119,7 +119,7 @@ pub async fn init_gateway(db_config: Option<GatewayConfig>) -> Arc<Gateway> {
             Ok(adapter) => {
                 tracing::info!("Gateway: Ollama adapter registered");
                 adapters
-                    .register(Arc::new(adapter) as Arc<dyn InferenceAdapter>)
+                    .register(Arc::new(adapter))
                     .await;
             }
             Err(e) => tracing::warn!("Gateway: Ollama adapter failed to initialize: {}", e),
@@ -138,14 +138,14 @@ pub async fn init_gateway(db_config: Option<GatewayConfig>) -> Arc<Gateway> {
     match gateway::adapters::anthropic::AnthropicAdapter::new() {
         Ok(adapter) => {
             tracing::info!("Gateway: Anthropic adapter registered");
-            adapters.register(Arc::new(adapter) as Arc<dyn InferenceAdapter>).await;
+            adapters.register(Arc::new(adapter)).await;
         }
         Err(e) => tracing::warn!("Gateway: Anthropic adapter failed: {}", e),
     }
     match gateway::adapters::openai::OpenAIAdapter::new() {
         Ok(adapter) => {
             tracing::info!("Gateway: OpenAI adapter registered");
-            adapters.register(Arc::new(adapter) as Arc<dyn InferenceAdapter>).await;
+            adapters.register(Arc::new(adapter)).await;
         }
         Err(e) => tracing::warn!("Gateway: OpenAI adapter failed: {}", e),
     }
@@ -161,14 +161,14 @@ pub async fn init_gateway(db_config: Option<GatewayConfig>) -> Arc<Gateway> {
     match gateway::adapters::grok::GrokAdapter::new() {
         Ok(adapter) => {
             tracing::info!("Gateway: Grok adapter registered");
-            adapters.register(Arc::new(adapter) as Arc<dyn InferenceAdapter>).await;
+            adapters.register(Arc::new(adapter)).await;
         }
         Err(e) => tracing::warn!("Gateway: Grok adapter failed: {}", e),
     }
     match gateway::adapters::gemini::GeminiAdapter::new() {
         Ok(adapter) => {
             tracing::info!("Gateway: Gemini adapter registered");
-            adapters.register(Arc::new(adapter) as Arc<dyn InferenceAdapter>).await;
+            adapters.register(Arc::new(adapter)).await;
         }
         Err(e) => tracing::warn!("Gateway: Gemini adapter failed: {}", e),
     }
@@ -179,7 +179,7 @@ pub async fn init_gateway(db_config: Option<GatewayConfig>) -> Arc<Gateway> {
     match gateway::adapters::bedrock::BedrockAdapter::new().await {
         Ok(adapter) => {
             tracing::info!("Gateway: Bedrock adapter registered");
-            adapters.register(Arc::new(adapter) as Arc<dyn InferenceAdapter>).await;
+            adapters.register(Arc::new(adapter)).await;
         }
         Err(e) => tracing::warn!("Gateway: Bedrock adapter failed: {}", e),
     }
@@ -539,7 +539,12 @@ fn baseline_production_config() -> GatewayConfig {
         fallback_triggers: vec![FallbackTrigger::RateLimit, FallbackTrigger::Timeout, FallbackTrigger::ProviderError],
     });
 
-    GatewayConfig { routers, models, chains }
+    GatewayConfig {
+        routers,
+        models,
+        chains,
+        constraints: Default::default(),
+    }
 }
 
 /// Copy one baseline chain into `db`, pulling in any models/routers it
@@ -629,7 +634,7 @@ async fn register_openai_compatible(adapters: &AdapterRegistry, id: &str) {
         Ok(adapter) => {
             tracing::info!("Gateway: OpenAI-compatible adapter registered as '{id}'");
             adapters
-                .register(Arc::new(adapter) as Arc<dyn InferenceAdapter>)
+                .register(Arc::new(adapter))
                 .await;
         }
         Err(e) => tracing::warn!("Gateway: '{id}' adapter failed: {e}"),
@@ -660,7 +665,7 @@ pub async fn init_gateway_test() -> Arc<Gateway> {
 
     let adapters = AdapterRegistry::new();
     adapters
-        .register(Arc::new(NoopAdapter) as Arc<dyn InferenceAdapter>)
+        .register(Arc::new(NoopAdapter))
         .await;
 
     // Tests need a minimal config so execute() doesn't return NotConfigured
@@ -711,6 +716,7 @@ pub async fn init_gateway_test() -> Arc<Gateway> {
         routers,
         models,
         chains,
+        constraints: Default::default(),
     };
     let cb = CircuitBreakerManager::new(CircuitBreakerConfig::default());
     Arc::new(Gateway::new(config, adapters, cb))
@@ -733,7 +739,10 @@ mod tests {
         register_openai_compatible(&adapters, "nvidia").await;
 
         for id in ["openrouter", "vercel", "nvidia"] {
-            let got = adapters.get(id).await;
+            // OpenAI-compatible adapters register into every capability map
+            // they implement (chat/embed/stt/tts/image); `chat` is enough to
+            // confirm registration landed under the expected id.
+            let got = adapters.chat(id).await;
             assert!(got.is_some(), "expected adapter '{id}' to be registered");
             assert_eq!(got.unwrap().id(), id);
         }
@@ -823,6 +832,7 @@ mod tests {
                     fallback_triggers: vec![],
                 },
             )]),
+            constraints: Default::default(),
         };
 
         let baseline = baseline_production_config();
@@ -870,6 +880,7 @@ mod tests {
                     fallback_triggers: vec![],
                 },
             )]),
+            constraints: Default::default(),
         };
 
         let baseline = baseline_production_config();

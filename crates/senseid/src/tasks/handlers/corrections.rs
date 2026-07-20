@@ -90,6 +90,7 @@ async fn embed_items(ctx: &TaskContext, items: &[CorrItem]) -> Option<Vec<Vec<f3
             chain: Some("embed".to_string()),
             payload: Payload::Embed { texts: batch_texts },
             budget: None,
+            auth: None,
         };
         match tokio::time::timeout(
             std::time::Duration::from_secs(EMBED_TIMEOUT_SECS),

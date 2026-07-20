@@ -239,6 +239,7 @@ impl Generalizer for GatewayGeneralizer {
                     tools: Vec::new(),
                 },
                 budget: None,
+                auth: None,
             };
             match tokio::time::timeout(POLISH_TIMEOUT, gateway.execute(&request)).await {
                 Ok(Ok(resp)) if resp.success => resp.content.as_deref().and_then(parse_generalise_response),
