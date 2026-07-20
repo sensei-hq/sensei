@@ -69,25 +69,28 @@ pub(crate) async fn recommend_playbook(
     };
     let rec = recommend(&axes, &rules);
 
-    // Persist the run (recommend-and-confirm defaults confirmed=false until the caller confirms).
-    let confirmed = parse_confirm(&body["confirm"]);
+    // Persist the run unless this is a preview call. Recommend-and-confirm
+    // defaults confirmed=false until the caller confirms; the app intake form's
+    // recommend leg passes preview=true (classify + recommend, no row written).
+    let confirmed = parse_bool_flag(&body["confirm"]);
     let session_id = body["session_id"].as_str().and_then(|s| s.parse().ok());
-    if let Err(e) = state
-        .pg
-        .insert_playbook_run(
-            session_id,
-            body["feature"].as_str(),
-            axes.lifecycle.as_str(),
-            axes.intent.as_str(),
-            axes.risk.as_str(),
-            rec.rule_id,
-            &rec.playbook,
-            &rec.rationale,
-            confirmed,
-            Some(classified_by.as_str()),
-            model_fallback,
-        )
-        .await
+    if should_persist(&body)
+        && let Err(e) = state
+            .pg
+            .insert_playbook_run(
+                session_id,
+                body["feature"].as_str(),
+                axes.lifecycle.as_str(),
+                axes.intent.as_str(),
+                axes.risk.as_str(),
+                rec.rule_id,
+                &rec.playbook,
+                &rec.rationale,
+                confirmed,
+                Some(classified_by.as_str()),
+                model_fallback,
+            )
+            .await
     {
         tracing::error!("recommend_playbook: insert_playbook_run failed: {e}");
     }
@@ -110,6 +113,9 @@ pub(crate) async fn recommend_playbook(
     Json(serde_json::json!({
         "playbook": rec.playbook,
         "rationale": rec.rationale,
+        "lifecycle": axes.lifecycle.as_str(),
+        "intent": axes.intent.as_str(),
+        "risk": axes.risk.as_str(),
         "rule": rec.rule_name,
         "defaulted": rec.defaulted,
         "opening_tone": opening_tone,
@@ -239,13 +245,20 @@ fn parse_axes_response(content: &str) -> Option<Axes> {
     Some(Axes { lifecycle, intent, risk })
 }
 
-/// Accept `confirm` as a JSON bool OR the string "true" (case-insensitive). The MCP tool
-/// forwards `confirm` as a string; direct HTTP/app callers may send a real bool. Without
-/// this coercion the string form silently read as `false` and never recorded a confirmed run.
-fn parse_confirm(v: &serde_json::Value) -> bool {
+/// Parse a truthy flag: a real JSON bool, or the string `"true"` (case-insensitive).
+/// The MCP tool layer forwards flags as strings; direct HTTP callers send bools.
+/// Shared by the `confirm` and `preview` flags on `recommend_playbook`.
+fn parse_bool_flag(v: &serde_json::Value) -> bool {
     v.as_bool()
         .or_else(|| v.as_str().map(|s| s.eq_ignore_ascii_case("true")))
         .unwrap_or(false)
+}
+
+/// Whether a `recommend_playbook` call should record a `playbook_run`. Preview
+/// calls (the app intake form's recommend leg) classify + recommend without
+/// writing a row; the confirm leg persists exactly one.
+fn should_persist(body: &serde_json::Value) -> bool {
+    !parse_bool_flag(&body["preview"])
 }
 
 /// GET /api/playbook/rule-proposals -> { proposals: [...] }
@@ -298,14 +311,23 @@ mod classify_tests {
     }
 
     #[test]
-    fn confirm_accepts_bool_and_string() {
+    fn bool_flag_accepts_bool_and_string() {
         use serde_json::json;
         // MCP tool sends the string form; direct callers may send a real bool.
-        assert!(parse_confirm(&json!(true)));
-        assert!(parse_confirm(&json!("true")));
-        assert!(parse_confirm(&json!("TRUE")));
-        assert!(!parse_confirm(&json!("false")));
-        assert!(!parse_confirm(&json!(false)));
-        assert!(!parse_confirm(&serde_json::Value::Null));
+        assert!(parse_bool_flag(&json!(true)));
+        assert!(parse_bool_flag(&json!("true")));
+        assert!(parse_bool_flag(&json!("TRUE")));
+        assert!(!parse_bool_flag(&json!("false")));
+        assert!(!parse_bool_flag(&json!(false)));
+        assert!(!parse_bool_flag(&serde_json::Value::Null));
+    }
+
+    #[test]
+    fn preview_flag_skips_persist() {
+        use serde_json::json;
+        assert!(should_persist(&json!({})));                   // no preview → persist
+        assert!(should_persist(&json!({ "preview": false }))); // explicit false → persist
+        assert!(!should_persist(&json!({ "preview": true })));  // preview → skip
+        assert!(!should_persist(&json!({ "preview": "true" }))); // string form → skip
     }
 }
