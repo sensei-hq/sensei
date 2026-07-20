@@ -1,38 +1,58 @@
 # Sensei documentation
 
-> **Observe. Learn. Improve.** Sensei is the retrospective loop for a pair
-> (you + your AI assistant) that otherwise never gets one. North-star: **FTR** —
-> first-turn resolution.
+> sensei is the OS for AI-assisted work: it **observes** the pair (you + your AI
+> assistant), **learns** from what happens, and helps you **improve**. The
+> north-star is **FTR** — first-turn resolution. These docs are organised by
+> *stage* (why → who → how → what's built) and each stage names its primary
+> audience, so you read only the stages your role needs.
 
-## The six folders
+## The stages, and who reads them
 
-A reading flow — each answers a narrower question. Not strictly linear, but this
-order works:
+A stage is a folder (or a top-level file for the vision tier). Purpose says what
+belongs there; audience says who it's written for.
+
+| Folder / file | Purpose | Primary audience |
+|---|---|---|
+| **`vision.md` + `objectives.md`** | why sensei exists + measurable objectives — top-level files | product owner, all |
+| **[`personas/`](personas/)** | who we serve + their goals | PO, designer |
+| **[`journeys/`](journeys/README.md)** | end-to-end flows | PO, designer, dev |
+| **[`roadmap/`](roadmap/)** | phases, sequencing, status | PO |
+| **[`design/`](design/)** | design system + cross-cutting UX | designer, dev |
+| **[`mockups/`](mockups/)** | system-wide mockup bundle | designer, dev |
+| **[`features/<name>/`](features/README.md)** | the complete per-feature spec — **the source of truth** | PO validates + agent grounds + dev builds |
+| **[`architecture/`](architecture/README.md)** | technical "how," per surface | dev, agent |
+| **[`spec/`](spec/README.md)** | legacy per-screen build specs (**transitional** — folds into `features/*/design.md` or `architecture/` as touched) | dev |
+| **[`plan/*`](plan/README.md)** | dated **transient** build plans | dev/agent |
 
 ```mermaid
 flowchart LR
-    R[1 · requirements/<br/>what &amp; why] --> J[2 · journeys/<br/>the path]
-    J --> M[3 · mockups/<br/>the screens]
-    M --> A[4 · architecture/<br/>how — layers]
-    A --> S[5 · spec/<br/>buildable]
-    S --> P[6 · plan/<br/>what's next]
+    V[vision.md<br/>why] --> P[personas/<br/>who]
+    P --> J[journeys/<br/>flows]
+    J --> F[features/&lt;name&gt;/<br/>the spec — source of truth]
+    F --> A[architecture/<br/>how]
+    A --> PL[plan/*<br/>transient build detail]
 ```
 
-| # | Folder | What's in it |
-|---|---|---|
-| 1 | **[requirements/](requirements/README.md)** | The **WHAT &amp; WHY** — [vision](requirements/vision.md) (north-star FTR, the core loop, the six themes) → [objectives](requirements/objectives.md) (measurable "met when" per segment + Dōjō). |
-| 2 | **[journeys/](journeys/README.md)** | The **visual path** — the [personal](journeys/sensei.md) + [Dōjō](journeys/dojo.md) journeys as Mermaid, distilled from the mockup journey maps. |
-| 3 | **[mockups/](mockups/)** | The **screens** — HTML mockups, journey maps, the design system. The visual source of truth. |
-| 4 | **[architecture/](architecture/README.md)** | The **HOW** — a layered system view + per-layer docs (data · daemon · cli · app · mcp · marketplace · dojo · website), plus `concepts/` (shared vocabulary) and the enforced `frontend-svelte-guidelines.md`. |
-| 5 | **[spec/](spec/README.md)** | The **buildable contract** — per-screen and per-pipeline specs with a five-section "done" definition. The implementation source-of-truth. |
-| 6 | **[plan/](plan/README.md)** | **What's next** — the living gap-analysis → phased roadmap ([plan/README](plan/README.md)) and the [decision log](plan/decisions.md) (adopted · **discarded**, don't re-propose · **deferred**, revisit-when). |
+Loose at the top level: this `README.md`, `vision.md`, `objectives.md`,
+[`backlog.md`](backlog.md) (the GitHub-issue index — start there for tracked
+work), and the [`decisions.md`](decisions.md) log.
 
-Loose at the top level: this `README.md` and [`backlog.md`](backlog.md) (the
-GitHub-issue index — start there for tracked work).
+### Reading paths
 
-> Everything is folded into these six; there is no `archive/`. Superseded docs and
-> full engineering history live in **git history** (`git log --follow`, or
-> `git show <rev>:docs/…`).
+Read only the stages your role needs:
+
+- **Product owner** → `vision.md` + `objectives.md` → `features/<name>/{brief,design}` (validate) → `journeys/`.
+- **Designer** → `personas/` → `journeys/` → `mockups/` + `design/` → `features/<name>/mockup-ref.md`.
+- **Developer / agent** → `features/<name>/` (the complete truth) → `architecture/` → `plan/*` (current build).
+
+### Source of truth
+
+A feature's truth lives in its `features/<name>/` dossier. `plan/operating-model.md`
+is the strategy (why + system); dated `plan/*` docs are transient build detail;
+`spec/` is transitional (its content folds into the relevant `features/*/design.md`
+or `architecture/` as each screen is next worked). Superseded docs and full
+engineering history live in **git history** (`git log --follow`, or
+`git show <rev>:docs/…`) — there is no `archive/`.
 
 ## Monorepo structure
 
