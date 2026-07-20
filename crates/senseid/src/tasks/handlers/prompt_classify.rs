@@ -106,6 +106,7 @@ async fn classify_chunk(gateway: &Gateway, prompts: &[&str]) -> Option<Vec<Promp
             tools: Vec::new(),
         },
         budget: None,
+        auth: None,
     };
 
     match gateway.execute(&request).await {

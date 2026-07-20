@@ -191,6 +191,7 @@ enhancement = improving something existing, bug = fixing a defect. \
             tools: Vec::new(),
         },
         budget: None,
+        auth: None,
     };
 
     let fut = state.gateway.execute(&request);

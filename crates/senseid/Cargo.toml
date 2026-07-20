@@ -82,10 +82,10 @@ thiserror = "2"
 chrono = { version = "0.4", features = ["serde"] }
 dirs = "6"
 reqwest = { version = "0.12", default-features = false, features = ["json", "blocking", "rustls-tls", "stream"] }
-gateway = { git = "https://github.com/sensei-hq/gateway.git", rev = "d8ec222" }
+gateway = { git = "https://github.com/sensei-hq/gateway.git", tag = "v0.3.1" }
 # Registry + trait types only by default — engine adapters land via the
 # `embedded-*` cargo features above.
-gateway-embedded = { git = "https://github.com/sensei-hq/gateway.git", rev = "d8ec222" }
+gateway-embedded = { git = "https://github.com/sensei-hq/gateway.git", tag = "v0.3.1" }
 dojo-protocol = { path = "../dojo-protocol" }
 # Relay P5.2 — ACP (Agent Client Protocol) observe-first. The spec's official
 # Rust SDK (Apache-2.0, Zed-maintained). We use only its `schema::v1` wire types

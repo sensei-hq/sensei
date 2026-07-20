@@ -385,6 +385,7 @@ pub(crate) async fn hook_gate(
                 tools: Vec::new(),
             },
             budget: None,
+            auth: None,
         };
         // Bound the call so a cold / wedged embedded inference can't hang the
         // PreToolUse gate. Timeout → fail-open (keep the deterministic verdict).
