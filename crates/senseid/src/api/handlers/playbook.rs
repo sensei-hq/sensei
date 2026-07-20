@@ -98,6 +98,15 @@ pub(crate) async fn recommend_playbook(
     let opening_tone = pb.as_ref().and_then(|p| p["opening_tone"].as_str()).unwrap_or("").to_string();
     let when_to_use = pb.as_ref().and_then(|p| p["when_to_use"].as_str()).unwrap_or("").to_string();
 
+    // Auto-select-on-trust: only low-risk chunks, only with proven FTR history.
+    let (auto_select, trust_n, trust_ftr) = if matches!(axes.risk, crate::playbook::Risk::Low) {
+        match state.pg.playbook_combo_trust(
+            axes.lifecycle.as_str(), axes.intent.as_str(), axes.risk.as_str(), &rec.playbook).await {
+            Ok((n, ftr)) => (crate::playbook::is_trusted(axes.risk, n, ftr), n, ftr),
+            Err(e) => { tracing::warn!(error=%e, "recommend_playbook: trust query failed — no auto-select"); (false, 0, 0.0) }
+        }
+    } else { (false, 0, 0.0) };
+
     Json(serde_json::json!({
         "playbook": rec.playbook,
         "rationale": rec.rationale,
@@ -105,6 +114,8 @@ pub(crate) async fn recommend_playbook(
         "defaulted": rec.defaulted,
         "opening_tone": opening_tone,
         "when_to_use": when_to_use,
+        "auto_select": auto_select,
+        "trust": { "n": trust_n, "ftr": trust_ftr },
     }))
 }
 
