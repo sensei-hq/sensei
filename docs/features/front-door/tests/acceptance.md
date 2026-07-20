@@ -36,7 +36,7 @@ here is a gap that gets fixed later, not one that gets papered over.
 These are real, working code on `develop` — not vapor — but haven't gone out
 in a tagged release yet (on `develop`, post-`v0.6.0`, not released).
 
-- [x] The §9 learning loop: FTR attribution (the analyzer's `LearnPlaybooks`
+- [x] The §5 learning loop: FTR attribution (the analyzer's `LearnPlaybooks`
   global pass joins a confirmed run's session FTR back onto the
   `playbook_run`), bounded reweight (rule `priority` nudged toward a fixed
   target FTR, clamped, deterministic and idempotent), learned-rule proposals
@@ -75,7 +75,7 @@ fix belongs — a separate chunk, not this one.
   `decisions.md`, Open decisions).
 - [ ] **App form is session-less.** The app path passes the app's session id
   if one exists, else `null` — so app-initiated intakes are recorded but not
-  FTR-attributed, and don't feed the §9 learning loop. Only the CLI/agent path
+  FTR-attributed, and don't feed the §5 learning loop. Only the CLI/agent path
   (which runs inside a live coding session) currently trains the rule
   weights. Fix = a separate chunk, contingent on whether app-initiated chunks
   ever get their own FTR signal (no session to score against today).

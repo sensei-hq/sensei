@@ -21,7 +21,7 @@ updated: 2026-07-20
   is advisory only. Why: the app isn't a coding session, so there's no FTR
   signal to attribute back to it — attributing a fake or absent outcome would
   corrupt the learning loop. The CLI/agent path, which runs inside a live
-  coding session, is what feeds §9 learning; the app tells the user what
+  coding session, is what feeds §5 learning; the app tells the user what
   sensei would do without pretending to train on it.
 
 - **2026-07-19 — Auto-select thresholds: `Risk::Low` + `n >= 10` + `ftr >=
@@ -49,3 +49,14 @@ updated: 2026-07-20
   or keep the `gsd` default — and separately, whether a "defaulted, no rule
   matched" recommendation should surface more loudly to the user than the
   current one-line `rationale` string.
+- **Where does the learning-review surface (S5) live** — the individual
+  Sensei app, or Dōjō (team/org governance)? Leaning Dōjō for accept/reject of
+  learned rules; Sensei for "your own" per-combo stats. Mock both placements
+  if cheap. See [design.md](design.md) §7.
+- **Axis correction.** v1 shows the inferred axes read-only on the
+  recommendation card. Should the card let the user override an axis before
+  confirming (which would re-recommend)? Design the affordance even if the
+  build defers it.
+- **Playbook catalog placement (S2).** Standalone reference screen vs. a
+  panel on the intake screen vs. a section in settings — undecided; should
+  scale gracefully as the catalog grows (it's runtime-extensible).

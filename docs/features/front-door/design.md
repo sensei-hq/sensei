@@ -218,7 +218,40 @@ The app path is **session-less by design** (§2): it passes the app's session
 id if one exists, else `null`, so app-confirmed runs are recorded but not
 FTR-attributed.
 
-## 7. Depth note
+## 7. Planned / secondary surfaces
+
+Two screens from the original designer brief are not built — recorded here so
+the shape is known when they're next picked up.
+
+- **Intake / run history (S4).** Recorded chunks over time: what was started,
+  which playbook, and — once the learning loop attributes it — how it turned
+  out (FTR). A per-user log that feeds the sense that sensei is learning your
+  patterns. Likely a tab on the intake screen or under the project.
+- **Playbook learning review (S5).** Where a human reviews what the learning
+  loop produced: per-combo FTR stats, and proposed new rules (`source=
+  'learned'`, §5) to accept or reject. Governance-flavored — may belong in
+  **Dōjō** (the team/org control plane) rather than the individual Sensei app;
+  unresolved, see [decisions.md](decisions.md) Open decisions.
+
+## 8. Journeys
+
+Four concrete walkthroughs of the intake flow, end to end:
+
+- **J1 — Stable bug fix (recommend-and-confirm).** "Fix the null deref when
+  the session token refreshes" → `stable/bug/low` → **debug_flow**. User
+  glances at the axis chips, confirms, goes to work.
+- **J2 — Greenfield UX spike (design-first).** "Prototype a new onboarding
+  wizard, still figuring out the shape" → `greenfield/ux/low` →
+  **mockup_first**.
+- **J3 — High-blast-radius change (forced rigor).** "Rename the session store
+  used across the app" → `stable/enhancement/high` → **spec_driven**, with an
+  explicit confirm required (high-risk never auto-selects).
+- **J4 — Trusted routine chunk (auto-select).** A small bug fix where
+  debug_flow has landed cleanly 12 times for this axes-combo (FTR 0.9) →
+  sensei auto-selects, records, and announces the trust badge instead of
+  waiting on a confirm click.
+
+## 9. Depth note
 
 This feature is shipped-but-partial: the intake flow, both surfaces, the
 rule matrix, the learning loop, and auto-select described above are built to
