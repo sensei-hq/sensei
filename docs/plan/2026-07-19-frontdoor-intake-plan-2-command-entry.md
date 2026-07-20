@@ -216,7 +216,7 @@ git commit -m "feat(marketplace): name /sensei:intake as the session-start front
 
 ---
 
-### Task 5: Nudge hook — `/hook/nudge` endpoint + plugin hook (OFF by default)
+### Task 5: Nudge hook — `/hook/nudge` endpoint + plugin hook (built OFF; **ACTIVATED 2026-07-19 `28cc3d7c`** — once-per-session guard + CC `additionalContext` output + registered in plugin.json)
 
 **Files:**
 - Modify: `crates/senseid/src/db/pg_store.rs`, `crates/senseid/src/api/handlers/sessions.rs` (or `playbook.rs`), `crates/senseid/src/api/routes.rs`
@@ -302,4 +302,4 @@ git commit -m "feat(senseid,marketplace): intake nudge hook — /hook/nudge endp
 - **Spec coverage:** `/sensei:intake` (guide → classify → recommend-and-confirm → persist → tone) ✓ T1–T3; always-the-entry guidance ✓ T4; nudge hook OFF ✓ T5. Data/resolver/recommender = Plan 1.
 - **Agent-driven dialogue:** the intake conversation is the agent's job (an LLM in-session), so the "command" is a marketplace `.md` procedure calling MCP tools — not a CLI binary subcommand (a binary can't hold a clarifying dialogue). `classify_chunk` (Plan 1) covers the non-agent/app-form path.
 - **Type/tool consistency:** tool names (`get_intake_guide`, `recommend_playbook`, `log_event`) and axis labels match Plan 1 + the command file. `recommend_playbook` args (`lifecycle/intent/risk/session_id/feature/confirm`) match Plan 1 Task 8.
-- **Deferred:** hook *activation*; the Sensei-app schema-form renderer of the guide; §9 outcome population; Dōjō org/learned authoring.
+- **Deferred:** the Sensei-app schema-form renderer of the guide; Dōjō org/learned authoring. (§9 outcome population + hook **activation** both SHIPPED since — activation `28cc3d7c`.)
