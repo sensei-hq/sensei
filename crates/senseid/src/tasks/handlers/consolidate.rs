@@ -187,6 +187,7 @@ pub async fn consolidate_for_project(
             tools: Vec::new(),
         },
         budget: None,
+        auth: None,
     };
     let resp = match ctx.app_state.gateway.execute(&request).await {
         Ok(r) if r.success => r,

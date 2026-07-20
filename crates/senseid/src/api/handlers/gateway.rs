@@ -111,6 +111,7 @@ pub(crate) async fn infer(
         chain: body.chain,
         payload,
         budget: None,
+        auth: None,
     };
 
     match state.gateway.execute(&request).await {
@@ -143,6 +144,7 @@ pub(crate) async fn embed(
         chain: None,
         payload: Payload::Embed { texts: body.texts },
         budget: None,
+        auth: None,
     };
 
     match state.gateway.execute(&request).await {

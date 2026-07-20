@@ -443,6 +443,7 @@ async fn call_once(
             tools: Vec::new(),
         },
         budget: None,
+        auth: None,
     };
 
     match tokio::time::timeout(Duration::from_millis(WARM_TIMEOUT_MS), gateway.execute(&request)).await {
