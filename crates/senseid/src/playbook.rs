@@ -154,6 +154,15 @@ pub fn learn(stats: &[ComboPlaybookStat], rules: &[Rule]) -> LearnPlan {
     plan
 }
 
+const TRUST_MIN_SAMPLE: i64 = 10;
+const TRUST_FTR: f64 = 0.8;
+
+/// Auto-select gate: a low-risk chunk whose chosen playbook has enough proven FTR history.
+/// Stricter than §9's learn thresholds — skipping a human confirm demands more evidence.
+pub fn is_trusted(risk: Risk, n: i64, ftr: f64) -> bool {
+    risk == Risk::Low && n >= TRUST_MIN_SAMPLE && ftr >= TRUST_FTR
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -246,5 +255,14 @@ mod tests {
             stat(Lifecycle::Stable, Intent::Feature, Risk::Low, "vibe", 8, 0.85), // delta 0.05 < 0.2
         ];
         assert!(learn(&stats, &rules).proposals.is_empty());
+    }
+
+    #[test]
+    fn trusted_only_for_proven_low_risk() {
+        assert!(is_trusted(Risk::Low, 10, 0.8));   // boundary: n==MIN, ftr==TARGET
+        assert!(is_trusted(Risk::Low, 40, 0.95));
+        assert!(!is_trusted(Risk::High, 40, 0.95)); // high-risk never auto-selects
+        assert!(!is_trusted(Risk::Low, 9, 0.95));   // too few samples
+        assert!(!is_trusted(Risk::Low, 40, 0.79));  // FTR below target
     }
 }
