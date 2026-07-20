@@ -106,3 +106,16 @@ The 2026-07-14 mockup-gap pass is closed. Details in [`spec/MOCKUP-INDEX.md`](sp
 |------|---------|
 | _(file issue)_ | **On-page SEO** — canonical, OpenGraph, Twitter Card tags + a generated `sitemap.xml` (root `<svelte:head>`); submit to Search Console. |
 | _(file issue)_ | **Website redesign** — screenshots→flows + a "For teams · 結 Dōjō" section + a Teams nav; **reconcile the "0 external requests / local-first" promise with the opt-in networked Dōjō**; trim Dōjō copy to shipped reality. |
+
+---
+
+## Front door — deploy + tooling findings (2026-07-20, from intake e2e verification)
+
+Surfaced while verifying the app intake form end-to-end. The feature itself is fine (4/4 e2e green); these are deploy/tooling gaps that broke the *live* daemon + the e2e harness.
+
+| Item | Detail |
+|---|---|
+| **Deployed `sensei` DB behind `develop`** | Live DB (from released v0.6.0 bundle) was missing `sensei.playbook_run` (whole table), `playbook_rules.base_priority`, the learned index, and the catalog/guide/rules seeds → `recommend` 500'd (`column base_priority does not exist`). **Interim fix applied** to the local `sensei` DB (surgical additive DDL + seed of playbooks/intake_guide/playbook_rules) so intake works for manual test. **The durable fix is a proper deploy** — a `dbd reconcile` also wants to apply a ⚠ **`gateway.models.capabilities` type change** (`sensei.model_capability[] → model_capability[]`, flagged for a two-snapshot migration) + `sensei.memories` anchoring cols. Fold into the next `make bump`, or reconcile deliberately with the gateway.models change reviewed. |
+| **`dbd import` broken on `staging.assistant_events`** | `dbd deploy`/`import` aborts: `relation "_temp" does not exist` on the assistant_events jsonl → the whole seed import fails → **fresh-DB bootstrap provisioning fails**, which is why the e2e daemon wouldn't cold-boot (the app's bootstrap apply+import step errors, so `senseid` is never spawned → `:7744` never binds). Fix the import path (dbd 0.8.10 + the assistant_events staging load), then the standard e2e can self-provision. |
+| **e2e standard `globalSetup` lacked `SENSEI_DDL_DIR`** | Unlike `globalSetup-cold`, it applied the *released* bundle → stale schema for new columns. **Fixed** (`SENSEI_DDL_DIR` + boot-wait 120→240s). Note: the daemon binds `:7744` only *after* embedded-model warmup — a fresh install shows no port for a while (consider binding before warmup). |
+| **Classifier under-reads `ux`** | Dogfood: "produce UI mockups/screens…" classified as `intent=feature` (→ `gsd`), not `ux` (→ `mockup_first`). The classifier (LLM + heuristic) doesn't treat design/mockup work as UX. Tighten the `classify_chunk` prompt + `heuristic_axes` (design/mockup/screen/UI/wireframe → `ux`). Good candidate for the §9 learning loop once real runs accrue. |
