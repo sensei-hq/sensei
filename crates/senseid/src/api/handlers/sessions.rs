@@ -530,14 +530,29 @@ pub(crate) async fn hook_gate(
     }
 }
 
+/// Sessions already nudged this process lifetime. Once-per-session guard so
+/// an un-confirmed session gets suggested `/sensei:intake` a single time
+/// instead of on every PreToolUse call (it would otherwise fire on every
+/// tool call for the rest of the session — spammy, not a nudge). Mirrors the
+/// `inflight()` idiom in `analysis::insight_copy` (`OnceLock` + `Mutex`,
+/// poison recovered rather than panicking the daemon). In-process only —
+/// resets on daemon restart, which is acceptable for an advisory nudge.
+fn nudged_sessions() -> &'static std::sync::Mutex<std::collections::HashSet<uuid::Uuid>> {
+    static NUDGED: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<uuid::Uuid>>> =
+        std::sync::OnceLock::new();
+    NUDGED.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()))
+}
+
 /// POST /hook/nudge  { session_id }  ->  { nudge: bool, message?: string }
 ///
 /// Non-blocking, informational only (unlike `hook_gate`, which can block a
 /// tool call): suggests `/sensei:intake` when a session has started work
-/// without a confirmed playbook run. **Fail-open** — mirrors `hook_gate`'s
-/// posture: a missing/unparseable `session_id` or any DB error yields
-/// `{nudge:false}` and never blocks. This endpoint exists but is not wired
-/// to any registered plugin hook by default (see the sensei plugin's
+/// without a confirmed playbook run. Nudges **once per session** — a second
+/// call for the same un-confirmed session returns `{nudge:false}` rather
+/// than repeating (see [`nudged_sessions`]). **Fail-open** — mirrors
+/// `hook_gate`'s posture: a missing/unparseable `session_id` or any DB error
+/// yields `{nudge:false}` and never blocks. This endpoint exists but is not
+/// wired to any registered plugin hook by default (see the sensei plugin's
 /// hooks config — activation is a separate, Jerry-gated decision).
 pub(crate) async fn hook_nudge(
     State(state): State<AppState>,
@@ -550,10 +565,17 @@ pub(crate) async fn hook_nudge(
 
     match state.pg.session_has_confirmed_run(&session_id).await {
         Ok(true) => Json(serde_json::json!({ "nudge": false })),
-        Ok(false) => Json(serde_json::json!({
-            "nudge": true,
-            "message": "No playbook chosen for this chunk yet — consider /sensei:intake to pick one."
-        })),
+        Ok(false) => {
+            let mut nudged = nudged_sessions().lock().unwrap_or_else(|e| e.into_inner());
+            if !nudged.insert(session_id) {
+                // Already nudged this session — stay quiet on repeat calls.
+                return Json(serde_json::json!({ "nudge": false }));
+            }
+            Json(serde_json::json!({
+                "nudge": true,
+                "message": "No playbook chosen for this chunk yet — consider /sensei:intake to pick one."
+            }))
+        }
         Err(e) => {
             tracing::warn!(error = %e, "hook_nudge: db error — fail-open (no nudge)");
             Json(serde_json::json!({ "nudge": false }))
@@ -643,5 +665,52 @@ mod tests {
         assert_eq!(range_to_days(Some("1y")), None);
         assert_eq!(range_to_days(Some("")), None);
         assert_eq!(range_to_days(None), None);
+    }
+
+    // ── hook_nudge once-per-session guard ────────────────────────────────
+
+    use super::hook_nudge;
+    use crate::api::state::SharedState;
+    use axum::extract::State;
+    use axum::response::Json;
+    use std::sync::Arc;
+
+    async fn make_state() -> Option<super::AppState> {
+        let queue = Arc::new(crate::tasks::queue::TaskQueue::new());
+        let gateway = crate::api::gateway_init::init_gateway_test().await;
+        let pg = crate::db::pg_store::PgStore::connect_test().await.ok()?;
+        Some(Arc::new(SharedState {
+            task_queue: queue,
+            pg,
+            gateway,
+            event_tx: { let (tx, _) = tokio::sync::broadcast::channel(16); tx },
+            breaker: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+        }))
+    }
+
+    #[tokio::test]
+    async fn hook_nudge_fires_once_per_unconfirmed_session() {
+        let Some(state) = make_state().await else { return; };
+        // Fresh session with no playbook_run row at all → session_has_confirmed_run
+        // is Ok(false), so the first call should nudge.
+        let session_id = uuid::Uuid::new_v4();
+        let payload = serde_json::json!({ "session_id": session_id.to_string() });
+
+        let Json(first) = hook_nudge(State(state.clone()), Json(payload.clone())).await;
+        assert_eq!(first["nudge"], serde_json::json!(true));
+        assert!(first["message"].as_str().is_some());
+
+        // Second call for the SAME session must stay quiet even though the
+        // session is still unconfirmed — the once-per-session guard, not the
+        // DB state, suppresses it.
+        let Json(second) = hook_nudge(State(state.clone()), Json(payload)).await;
+        assert_eq!(second["nudge"], serde_json::json!(false));
+    }
+
+    #[tokio::test]
+    async fn hook_nudge_missing_session_id_is_fail_open() {
+        let Some(state) = make_state().await else { return; };
+        let Json(body) = hook_nudge(State(state), Json(serde_json::json!({}))).await;
+        assert_eq!(body["nudge"], serde_json::json!(false));
     }
 }
