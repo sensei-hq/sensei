@@ -23,9 +23,8 @@ the surface requirements this feature must satisfy live in:
 - [`design.md`](design.md) §2 ("Two surfaces") — the CLI/agent surface and
   the app's `/intake` Observatory screen, including the five UI states
   (`describe` / `loading` / `recommended` / `recorded` / `error`).
-- [`../../requirements/front-door.md`](../../requirements/front-door.md) §4
-  ("Surfaces & screens") — S1–S3, the screen-by-screen brief for the
-  designer (intake screen, recommendation card, playbook catalog).
+- [`design.md`](design.md) §7 ("Planned / secondary surfaces") — S4 (intake/
+  run history) and S5 (playbook learning review), not yet built.
 
 **Update this file when the screens land** — replace this section with the
 actual mockup links and drop the "pending" status.

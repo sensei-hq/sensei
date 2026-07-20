@@ -54,6 +54,21 @@ or `architecture/` as each screen is next worked). Superseded docs and full
 engineering history live in **git history** (`git log --follow`, or
 `git show <rev>:docs/…`) — there is no `archive/`.
 
+## Migration policy
+
+The canonical structure above is adopted. Migration is **feature-by-feature,
+as each is next touched** — not a one-shot rewrite.
+
+- `requirements/` is fully absorbed: vision + objectives moved to top-level
+  `vision.md` / `objectives.md`; `front-door.md` moved to
+  `features/front-door/`. The folder is left in place as redirects.
+- `spec/` folds into the relevant `features/*/design.md` or `architecture/`
+  as each screen is next worked — it is not migrated wholesale.
+- Dated `plan/*` docs are transient build detail; they are not migrated, they
+  age out.
+
+Nothing is deleted until its content is migrated — history is in git.
+
 ## Monorepo structure
 
 | Directory | Language | Purpose |
