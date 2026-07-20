@@ -109,11 +109,50 @@ exports[`ObservatorySidebar > hides the Review group and Settings when Focus is 
     >
       <!---->
       <a
+        data-level="1"
+        data-list-item=""
+        data-path="0"
+        href="/intake"
+      >
+        <!---->
+        <!---->
+        <!---->
+        <span
+          aria-hidden="true"
+          data-item-icon-literal=""
+        >
+          門
+        </span>
+        
+        
+        <!---->
+         
+        <span
+          data-item-text=""
+        >
+          <span
+            data-item-label=""
+          >
+            Intake
+          </span>
+           
+          <!---->
+        </span>
+        <!---->
+         
+        <!---->
+         
+        <!---->
+        <!---->
+      </a>
+      
+      <!---->
+      <a
         aria-current="page"
         data-active="true"
         data-level="1"
         data-list-item=""
-        data-path="0"
+        data-path="1"
         href="/"
       >
         <!---->
@@ -152,7 +191,7 @@ exports[`ObservatorySidebar > hides the Review group and Settings when Focus is 
       <a
         data-level="1"
         data-list-item=""
-        data-path="1"
+        data-path="2"
         href="/projects"
       >
         <!---->
@@ -193,7 +232,7 @@ exports[`ObservatorySidebar > hides the Review group and Settings when Focus is 
         data-accordion-trigger=""
         data-level="1"
         data-list-group=""
-        data-path="2"
+        data-path="3"
         disabled=""
         type="button"
       >
@@ -229,7 +268,7 @@ exports[`ObservatorySidebar > hides the Review group and Settings when Focus is 
       <a
         data-level="2"
         data-list-item=""
-        data-path="2-0"
+        data-path="3-0"
         href="/insights"
       >
         <!---->
@@ -273,7 +312,7 @@ exports[`ObservatorySidebar > hides the Review group and Settings when Focus is 
       <a
         data-level="2"
         data-list-item=""
-        data-path="2-1"
+        data-path="3-1"
         href="/learnings"
       >
         <!---->
@@ -317,7 +356,7 @@ exports[`ObservatorySidebar > hides the Review group and Settings when Focus is 
       <a
         data-level="2"
         data-list-item=""
-        data-path="2-2"
+        data-path="3-2"
         href="/impact"
       >
         <!---->
@@ -361,7 +400,7 @@ exports[`ObservatorySidebar > hides the Review group and Settings when Focus is 
       <a
         data-level="2"
         data-list-item=""
-        data-path="2-3"
+        data-path="3-3"
         href="/traceability"
       >
         <!---->
@@ -405,7 +444,7 @@ exports[`ObservatorySidebar > hides the Review group and Settings when Focus is 
       <a
         data-level="2"
         data-list-item=""
-        data-path="2-4"
+        data-path="3-4"
         href="/upgrades"
       >
         <!---->
@@ -451,7 +490,7 @@ exports[`ObservatorySidebar > hides the Review group and Settings when Focus is 
         data-accordion-trigger=""
         data-level="1"
         data-list-group=""
-        data-path="3"
+        data-path="4"
         disabled=""
         type="button"
       >
@@ -487,7 +526,7 @@ exports[`ObservatorySidebar > hides the Review group and Settings when Focus is 
       <a
         data-level="2"
         data-list-item=""
-        data-path="3-0"
+        data-path="4-0"
         href="/sessions"
       >
         <!---->
@@ -531,7 +570,7 @@ exports[`ObservatorySidebar > hides the Review group and Settings when Focus is 
       <a
         data-level="2"
         data-list-item=""
-        data-path="3-1"
+        data-path="4-1"
         href="/libraries"
       >
         <!---->
@@ -575,7 +614,7 @@ exports[`ObservatorySidebar > hides the Review group and Settings when Focus is 
       <a
         data-level="2"
         data-list-item=""
-        data-path="3-2"
+        data-path="4-2"
         href="/atlas"
       >
         <!---->
@@ -614,7 +653,7 @@ exports[`ObservatorySidebar > hides the Review group and Settings when Focus is 
       <a
         data-level="2"
         data-list-item=""
-        data-path="3-3"
+        data-path="4-3"
         href="/instruments"
       >
         <!---->
@@ -653,7 +692,7 @@ exports[`ObservatorySidebar > hides the Review group and Settings when Focus is 
       <a
         data-level="2"
         data-list-item=""
-        data-path="3-4"
+        data-path="4-4"
         href="/activity-logs"
       >
         <!---->
@@ -692,7 +731,7 @@ exports[`ObservatorySidebar > hides the Review group and Settings when Focus is 
       <a
         data-level="2"
         data-list-item=""
-        data-path="3-5"
+        data-path="4-5"
         href="/dojo/connections"
       >
         <!---->
@@ -731,7 +770,7 @@ exports[`ObservatorySidebar > hides the Review group and Settings when Focus is 
       <a
         data-level="2"
         data-list-item=""
-        data-path="3-6"
+        data-path="4-6"
         href="/dojo/sharing"
       >
         <!---->
@@ -770,7 +809,7 @@ exports[`ObservatorySidebar > hides the Review group and Settings when Focus is 
       <a
         data-level="2"
         data-list-item=""
-        data-path="3-7"
+        data-path="4-7"
         href="/share-review"
       >
         <!---->
@@ -814,7 +853,7 @@ exports[`ObservatorySidebar > hides the Review group and Settings when Focus is 
       <a
         data-level="1"
         data-list-item=""
-        data-path="5"
+        data-path="6"
         href="/settings"
       >
         <!---->
