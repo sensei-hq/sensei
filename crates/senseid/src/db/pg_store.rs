@@ -13294,6 +13294,7 @@ mod playbook_tests {
     #[tokio::test]
     async fn apply_learn_plan_reweights_and_upserts() {
         let Ok(pg) = PgStore::connect_test().await else { return; };
+        pg.execute_raw("delete from sensei.playbook_rules where source='learned'").await.ok(); // clean slate — shared test DB
         let rules = pg.list_playbook_rules().await.unwrap();
         let debug = rules.iter().find(|r| r.playbook == "debug_flow").unwrap();
         use crate::playbook::{LearnPlan, LearnedRule, Lifecycle, Intent, Risk};
@@ -13315,6 +13316,7 @@ mod playbook_tests {
     #[tokio::test]
     async fn accept_flips_proposal_enabled() {
         let Ok(pg) = PgStore::connect_test().await else { return; };
+        pg.execute_raw("delete from sensei.playbook_rules where source='learned'").await.ok(); // clean slate — shared test DB
         use crate::playbook::{LearnPlan, LearnedRule, Lifecycle, Intent, Risk};
         pg.apply_learn_plan(&LearnPlan { reweights: vec![], proposals: vec![LearnedRule {
             lifecycle: Lifecycle::Greenfield, intent: Intent::Ux, risk: Risk::High,
