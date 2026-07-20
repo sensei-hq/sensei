@@ -70,6 +70,8 @@ export function buildNavItems({ focus, projectCount }: NavOptions): NavEntry[] {
     // Anchors — where every day starts (top-level; the "Observatory" header +
     // All|Focus toggle live in the sidebar chrome, not the List — the toggle
     // can't live in a group header until rokkit stops disabling them).
+    // Front door — where a chunk of work starts; the leading anchor.
+    link("門", "Intake", "/intake"),
     link("家", "Today", "/"),
     link("場", "Projects", "/projects", { badge: projectCount }),
     // Needs you — the daily payoff: everything with a pending decision.
