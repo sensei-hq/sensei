@@ -260,6 +260,15 @@ pub(crate) async fn accept_rule(
     }
 }
 
+/// GET /api/playbook/model-stats -> { stats: [...] }
+///
+/// FTR by `classified_by` (+ `model_fallback`) — measures whether the local
+/// gateway model's chunk classification is actually useful vs. the heuristic
+/// fallback. Dashboard/inspection read; no MCP tool.
+pub(crate) async fn model_stats(State(state): State<AppState>) -> Json<serde_json::Value> {
+    Json(serde_json::json!({ "stats": state.pg.playbook_model_stats().await.unwrap_or_default() }))
+}
+
 #[cfg(test)]
 mod classify_tests {
     use super::*;

@@ -220,9 +220,10 @@ pub fn create_router(state: AppState) -> Router {
         // Front-door intake: axes -> playbook recommendation
         .route("/api/playbook/guide", get(playbook::get_intake_guide))
         .route("/api/playbook/recommend", post(playbook::recommend_playbook))
-        // §9 learning loop: accept path
+        // §9 learning loop: accept path + model-stats read
         .route("/api/playbook/rule-proposals", get(playbook::list_rule_proposals))
         .route("/api/playbook/rule/{id}/accept", post(playbook::accept_rule))
+        .route("/api/playbook/model-stats", get(playbook::model_stats))
         // Patterns
         .route("/api/patterns/{project}/detect", post(codebase::detect_patterns))
         .route("/api/patterns/{project}", get(codebase::list_patterns))

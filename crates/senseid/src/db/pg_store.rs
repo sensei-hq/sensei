@@ -9017,6 +9017,20 @@ impl PgStore {
         ).bind(id).execute(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(())
     }
+
+    /// FTR by `classified_by` (+ `model_fallback`) — measures whether the local
+    /// gateway model's chunk classification is actually useful vs. the heuristic
+    /// fallback (§9 model-stats read).
+    pub async fn playbook_model_stats(&self) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(Option<String>, Option<bool>, i64, f64)> = sqlx_core::query_as::query_as(
+            "SELECT classified_by, model_fallback, count(*)::int8, avg(outcome_ftr::int)::float8
+               FROM sensei.playbook_run WHERE confirmed AND outcome_ftr IS NOT NULL
+              GROUP BY classified_by, model_fallback ORDER BY count(*) DESC"
+        ).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(cb,mf,n,ftr)| serde_json::json!({
+            "classified_by": cb, "model_fallback": mf, "n": n, "ftr_rate": ftr
+        })).collect())
+    }
 }
 
 #[cfg(test)]
@@ -13310,5 +13324,13 @@ mod playbook_tests {
         pg.accept_playbook_rule(&id.parse().unwrap()).await.unwrap();
         // now enabled → visible to the resolver-facing list
         assert!(pg.list_playbook_rules().await.unwrap().iter().any(|r| r.id == Some(id.parse().unwrap())));
+    }
+
+    #[tokio::test]
+    async fn model_stats_groups_by_classified_by() {
+        let Ok(pg) = PgStore::connect_test().await else { return; };
+        let rows = pg.playbook_model_stats().await.unwrap();
+        // shape check: each row has classified_by + n + ftr_rate keys (may be empty on a fresh DB)
+        if let Some(r) = rows.first() { assert!(r.get("classified_by").is_some() && r.get("ftr_rate").is_some()); }
     }
 }
