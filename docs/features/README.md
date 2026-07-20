@@ -18,6 +18,11 @@ are decided together, after every bullet is written up.
 
 Status: ✅ built · 🟡 partial · ❌ planned.
 
+## 0 · Setup & onboarding — the on-ramp
+- Install + dependency probe (bootstrap: check + auto-fix prerequisites) ✅
+- First-run scan — index the project + first pass ✅
+- Preferences / configuration — name · cadence · correction-aggressiveness · roots · assistants ✅
+
 ## 1 · Capture — the neutral recorder
 - Session capture — prompts, tool calls, edits, outcomes, across assistants ✅
 - Transcripts + events ingest ✅
@@ -26,12 +31,16 @@ Status: ✅ built · 🟡 partial · ❌ planned.
 - Code + activity graph (files · functions · components · hooks · docs) ✅
 - Incremental watcher · scan · reconcile ✅
 - Semantic search + context assembly (embeddings) ✅
+- Project atlas / visualization — see the graph (structure · calls · communities) 🟡
+- Solution / multi-repo view — analyze across the repos in one solution 🟡
 
 ## 3 · Synthetic analysis — the guiding principles (the core)
+- Analyzer engine — schedules + runs the analysis passes over each project ✅
 - Graph / architecture analysis — cycles · depth · layering 🟡
 - Duplicates detection ✅
 - Communities / clustering ✅
 - Document drift — doc ↔ code divergence ✅
+- Traceability — requirement / doc ↔ code linkage 🟡
 - Metrics calculation — FTR · delivery · signals (churn · correction-prone) ✅
 - Governance — rules hierarchy (mandatory · scoped · promoted), resolved live ✅
 
@@ -51,6 +60,7 @@ Status: ✅ built · 🟡 partial · ❌ planned.
 ## 6 · Planning & delivery
 - Planner — idea/specs → features → phases → value releases (confirm once, then run) ❌
 - Baseline / definition-of-done — capability contract (lint · format · coverage · tests · quality · security · design-system) + gates; verify by effect 🟡
+- Testability / TDD coaching — guide toward tested, verifiable work 🟡
 - Autonomous multi-day runs — execute planned phases without babysitting "continue"; remote supervise / nudge 🟡
 - Execution — graph-safe parallelism, contracts-first, mindsets auto-invoked ❌
 - Design / mockup subsystem — brief → mockups on the design-system → handoff ❌
@@ -60,6 +70,7 @@ Status: ✅ built · 🟡 partial · ❌ planned.
 - Canonical doc spine + scaffold + per-feature dossiers ✅
 - Brownfield onboarding — reconstruct the spine from existing code, reconcile drift ❌
 - Gateway — route each LLM step to local vs paid models (finish products past the paywall) ✅
+- Model inferencing + benchmarking — pick/verify which model handles which task well 🟡
 - HF model support ❌
 
 ## Helpers — the delivery + interaction layer
