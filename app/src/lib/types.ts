@@ -756,6 +756,53 @@ export interface InsightsBoard {
   corrections: InsightCorrection[];
 }
 
+// ─── Front door · Intake ──────────────────────────────────────────────────
+
+/** One playbook in the front-door catalog (from GET /api/playbook/guide). */
+export interface IntakePlaybook {
+  name: string;
+  title: string;
+  when_to_use: string;
+  opening_tone: string;
+  method_ref: string | null;
+}
+
+/** One per-axis prompt in the intake guide (kind === "axis"). */
+export interface IntakeAxisGuide {
+  kind: string;
+  axis: string | null;
+  prompt: string;
+  help: string | null;
+}
+
+/** GET /api/playbook/guide — the front-door frame + axis prompts + catalog. */
+export interface IntakeGuide {
+  frame: string;
+  axes: IntakeAxisGuide[];
+  playbooks: IntakePlaybook[];
+}
+
+/** Proven FTR history for the recommended combo (drives the auto-select badge). */
+export interface PlaybookTrust {
+  n: number;
+  ftr: number;
+}
+
+/** POST /api/playbook/recommend — the classified axes + the chosen playbook. */
+export interface PlaybookRecommendation {
+  playbook: string;
+  rationale: string;
+  lifecycle: string;
+  intent: string;
+  risk: string;
+  rule: string;
+  defaulted: boolean;
+  opening_tone: string;
+  when_to_use: string;
+  auto_select: boolean;
+  trust: PlaybookTrust;
+}
+
 export interface ProjectSession {
   id: string;
   task: string;

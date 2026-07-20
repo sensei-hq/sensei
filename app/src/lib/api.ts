@@ -16,6 +16,7 @@ import type {
   SessionReplayResponse, McpServerRow, McpServerToolsManifest,
   ObservatoryToday, ObservatoryFtr, ProjectOverview,
   InsightsBoard, LogRow, ScheduledTask,
+  IntakeGuide, PlaybookRecommendation,
 } from './types.js';
 import type {
   MemoryListResponse, MemoryDetail, ContextResponse,
@@ -404,6 +405,18 @@ export function senseiApi(port: number) {
           projects: [], recommendations: [], memories: [], patterns: [], corrections: [],
         },
       ),
+
+    // ── Front door · Intake ─────────────────────────────────────────────
+    // The guide (frame + axis prompts + catalog) for the intake screen.
+    // Fallback is the empty guide so a daemon hiccup renders the quiet state.
+    getIntakeGuide: () =>
+      get<IntakeGuide>('/api/playbook/guide', { frame: '', axes: [], playbooks: [] }),
+
+    // Classify + recommend a playbook. `{ chunk, preview: true }` previews
+    // (no row written); `{ lifecycle, intent, risk, confirm: true }` records
+    // the confirmed run. tryPost so the form can surface errors.
+    recommendPlaybook: (body: Record<string, unknown>) =>
+      tryPost<PlaybookRecommendation>('/api/playbook/recommend', body),
 
     getProjectSessions: (id: string, limit = 50) =>
       get<{ sessions: ProjectSession[] }>(
