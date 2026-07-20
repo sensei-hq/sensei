@@ -8,7 +8,7 @@ create table if not exists models (
 , full_name                text               not null
 , display_name             text               not null
 , description              text
-, capabilities             model_capability[] not null default '{}'
+, capabilities             sensei.model_capability[] not null default '{}'
 , context_window           integer
 , max_output_tokens        integer
 , parameters_count         bigint
