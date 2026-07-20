@@ -97,10 +97,19 @@ export default async function globalSetup(): Promise<void> {
   //    macOS, Tauri inherits the spawning environment for child process
   //    spawns, and bootstrap's daemon_start resolver now ALSO passes
   //    --instance=e2e on the senseid CLI as a second line of defence.
+  //    SENSEI_DDL_DIR points bootstrap at the repo DDL so the fresh e2e DB
+  //    gets the CURRENT schema (incl. additive columns not yet in the released
+  //    bundle — the bundle can lag the code between bumps). Mirrors
+  //    globalSetup-cold; without it, tests exercising new columns 500 on a
+  //    "column does not exist" from the stale bundled schema.
   const proc = spawn(APP_BINARY, [], {
     detached: true,
     stdio: 'ignore',
-    env: { ...process.env, SENSEI_INSTANCE: INSTANCE },
+    env: {
+      ...process.env,
+      SENSEI_DDL_DIR: join(APP_REPO, '..', 'database'),
+      SENSEI_INSTANCE: INSTANCE,
+    },
   });
   await new Promise<void>((res, rej) => {
     proc.once('error', rej);
@@ -115,7 +124,10 @@ export default async function globalSetup(): Promise<void> {
   console.log('[globalSetup] Socket ready.');
 
   console.log(`[globalSetup] Waiting for daemon on port ${DAEMON_PORT} (instance=${INSTANCE})...`);
-  await waitForPort(DAEMON_PORT, 120_000);
+  // The daemon compiles/loads the embedded model before it binds the port; a
+  // cold box right after a build can take >2min, so allow generous headroom
+  // (a genuine hang is still bounded by Playwright's own run timeout).
+  await waitForPort(DAEMON_PORT, 240_000);
 
   // 5. Authoritative DB-isolation check — fetch /health from the daemon
   //    actually bound to the port and confirm it's on the expected
