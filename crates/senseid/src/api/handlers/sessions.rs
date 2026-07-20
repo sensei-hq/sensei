@@ -551,9 +551,9 @@ fn nudged_sessions() -> &'static std::sync::Mutex<std::collections::HashSet<uuid
 /// call for the same un-confirmed session returns `{nudge:false}` rather
 /// than repeating (see [`nudged_sessions`]). **Fail-open** — mirrors
 /// `hook_gate`'s posture: a missing/unparseable `session_id` or any DB error
-/// yields `{nudge:false}` and never blocks. This endpoint exists but is not
-/// wired to any registered plugin hook by default (see the sensei plugin's
-/// hooks config — activation is a separate, Jerry-gated decision).
+/// yields `{nudge:false}` and never blocks. Registered in the sensei plugin's
+/// `PreToolUse` hooks (activated 2026-07-19); `hooks/nudge` reshapes this
+/// response into Claude Code's `additionalContext` so the suggestion surfaces.
 pub(crate) async fn hook_nudge(
     State(state): State<AppState>,
     Json(payload): Json<serde_json::Value>,
