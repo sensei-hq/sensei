@@ -52,7 +52,7 @@ function ObsSubTabs({ group, section, setSection }) {
   );
 }
 
-function ObservatoryDaily({ stateMode = "mature", firstEntry = false, onBack }) {
+function ObservatoryDaily({ stateMode = "mature", firstEntry = false, initialSection = null, onBack }) {
   const [mode, setMode] = oS(stateMode);       // "mature" | "early"
   // Sections actually routed below: home · projects · project · sessions · logs
   // · libraries · insights · memories · upgrades · share-review · consolidation
@@ -60,7 +60,7 @@ function ObservatoryDaily({ stateMode = "mature", firstEntry = false, onBack }) 
   // Landing section depends on maturity: until insights exist we open on
   // Projects (the real payoff of the scan), not an empty Today. Once sensei
   // is "mature" (insights formed) Today becomes the home view.
-  const [section, setSection] = oS(stateMode === "early" ? "projects" : "home");
+  const [section, setSection] = oS(initialSection || (stateMode === "early" ? "projects" : "home"));
   const [activeProjectId, setActiveProjectId] = oS(null);
   // Where the user opened the current project FROM, so "back" returns there
   // (Today / Projects index / wherever) instead of always dumping on Projects.
@@ -127,6 +127,7 @@ function ObservatoryDaily({ stateMode = "mature", firstEntry = false, onBack }) 
             return <ObsSubTabs group={grp} section={section} setSection={setSection}/>;
           })()}
           <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
+          {section === "intake"    && <IntakeScreen/>}
           {section === "home"      && <ObsHome mode={mode} hero={hero} insights={insights} adopted={adopted} D={D} onOpenProject={openProject}/>}
           {section === "projects"  && (
             <div style={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
@@ -161,7 +162,8 @@ function ObservatoryDaily({ stateMode = "mature", firstEntry = false, onBack }) 
               {section === "instruments-health"     && <InstrumentsHealthSimple subNav={instrNav}/>}
             </>;
           })()}
-          {section !== "home" && section !== "projects" && section !== "project" &&
+          {section !== "intake" &&
+           section !== "home" && section !== "projects" && section !== "project" &&
            section !== "sessions" &&
            section !== "logs" &&
            section !== "libraries" &&
@@ -287,6 +289,7 @@ function ObsSidebar({ section, setSection, activeProjectId, onOpenProject, mode,
         </div>
         <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
           {/* Anchors — where every day starts */}
+          <NavItem id="intake"    kanji="門" label="Intake"/>
           <NavItem id="home"      kanji="家" label="Today"/>
           <NavItem id="projects"  kanji="場" label="Projects"   badge={D.projects.active.length + D.projects.recent.length}/>
           {/* Needs you — the daily payoff: everything with a pending decision */}
@@ -594,7 +597,8 @@ function ObservatoryEarlyApp()       { return <ObservatoryDaily stateMode="early
 // wizard inside the actual observatory shell (Configure → Done) and is
 // the dedicated artboard for that moment.
 function ObservatoryEntryApp()       { return <ObservatoryDaily stateMode="early"  firstEntry={true}/>; }
+function ObservatoryIntakeApp()      { return <ObservatoryDaily stateMode="mature" initialSection="intake"/>; }
 
 Object.assign(window, {
-  ObservatoryDaily, ObservatoryDailyApp, ObservatoryEarlyApp, ObservatoryEntryApp
+  ObservatoryDaily, ObservatoryDailyApp, ObservatoryEarlyApp, ObservatoryEntryApp, ObservatoryIntakeApp
 });

@@ -61,6 +61,7 @@
   <script type="text/babel" src="lib/shared/assistant-card.jsx"></script>
   <script type="text/babel" src="lib/setup/setup-wizard.jsx"></script>
   <script type="text/babel" src="lib/observatory/observatory-today.jsx"></script>
+  <script type="text/babel" src="lib/observatory/intake.jsx"></script>
   <script type="text/babel" src="lib/observatory/observatory.jsx"></script>
   <script type="text/babel" src="lib/project/project-shared.jsx"></script>
   <script type="text/babel" src="lib/project/perspective-split.jsx"></script>
@@ -187,6 +188,9 @@
               </DCArtboard>
               <DCArtboard id="coll-early" label="Early state · still listening · guided first session leads Projects (0/3 to first lesson)" width={1280} height={860}>
                 <div className="artboard-shell"><ObservatoryEarlyApp/></div>
+              </DCArtboard>
+              <DCArtboard id="coll-intake" label="★ Intake · the front door — describe a chunk → recommend a playbook → confirm (Start · Playbooks · History)" width={1280} height={860}>
+                <div className="artboard-shell"><ObservatoryIntakeApp/></div>
               </DCArtboard>
             </DCSection>
 

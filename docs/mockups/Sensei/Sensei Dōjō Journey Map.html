@@ -668,7 +668,15 @@ const CONSOLE = [
         op:["One-click retract downstream; flag negative impact."],
         gp:["The retire / rollback flow for an approved teaching?"],
         res:"Every published teaching has a lifecycle — active → deprecated → retracted. One-click retract pulls it downstream and flags adopters; a negative-impact signal auto-suggests retraction before a bad teaching spreads further.",
-        status:"done", statusNote:"Built on the Overview (Console §overview) — published teachings carry the active→deprecated→retracted lifecycle, with negative impact flagged and one-click retract downstream." }
+        status:"done", statusNote:"Built on the Overview (Console §overview) — published teachings carry the active→deprecated→retracted lifecycle, with negative impact flagged and one-click retract downstream." },
+      { k:"覚", name:"Review playbook learning", m:40,
+        goal:"Let proven outcomes tune how work is planned at the front door — without hand-writing every rule.",
+        approach:"A proposed-rules queue: sensei attributes first-turn resolution back to each lifecycle·intent·risk combo and proposes a re-weighting, with the FTR evidence and run count.",
+        fr:["Playbook defaults ossify — last quarter's best play may not ship cleanest now, and no one owns re-tuning them."],
+        op:["Accept a proposal into a scope so it cascades; dismiss with a reason; gate high-risk combos on a second approver."],
+        gp:["Who owns re-tuning per scope, and how are accepted rule changes versioned or rolled back?"],
+        res:"Proposed re-weightings ('for stable · enhancement · low, prefer change-flow — FTR 0.71 → 0.90 over 14 runs') land in the same accept / revise / decline queue as every other candidate, scoped and cascaded on accept; high-risk combos gate on a second approver. The front-door recommendation improves itself from real outcomes, governed like any other rule.",
+        status:"planned", statusNote:"New — the front-door learning loop's governance surface; folds into Governance authoring as a proposed-rules section (Console §governance · playbook learning)." }
     ]},
   { k:"長", name:"Org admin", surf:"Console", meta:"console · runs the server & identity",
     note:"Stand up the server, connect identity, provision members, define scopes & policies, and monitor the hive-mind's health.",

@@ -84,6 +84,105 @@ const STANCE = [
     conseq: ["One named maintainer decision publishes a lesson.", "High-impact items wait for a second maintainer.", "All scope owners must sign off before anything publishes."] },
 ];
 
+/* S5 · playbook learning review — the loop attributes each recorded chunk's
+   outcome (did the first turn land?) back to a lifecycle·intent·risk combo and
+   proposes a re-weighting. A maintainer accepts (→ becomes a governance rule at
+   this scope) or dismisses. This is the governance half of the front-door loop;
+   a developer's own per-combo FTR lives in the Sensei app's Intake · History. */
+const GV_PB = { vibe: "Vibe / spike", mockup_first: "Mockup-first", spec_driven: "Spec-driven",
+  gsd: "Get stuff done", change_flow: "Change-flow", debug_flow: "Debug-flow" };
+const GV_PROPOSALS = [
+  { id: "p1", lifecycle: "stable", intent: "enhancement", risk: "low", prefer: "change_flow", over: "gsd",
+    ftrFrom: 0.71, ftrTo: 0.90, n: 14, why: "Impact-first runs landed cleaner than lean-plan on stable enhancements." },
+  { id: "p2", lifecycle: "greenfield", intent: "explore", risk: "low", prefer: "vibe", over: "mockup_first",
+    ftrFrom: 0.60, ftrTo: 0.82, n: 9, why: "Discardable spikes beat premature mockups when the objective is fuzzy." },
+  { id: "p3", lifecycle: "stable", intent: "bug", risk: "high", prefer: "spec_driven", over: "debug_flow",
+    ftrFrom: 0.55, ftrTo: 0.78, n: 6, why: "High-blast bugs did better with a design pass before the fix." },
+];
+function GvAxisChip({ label, value, high }) {
+  return (
+    <span className="mono" style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-1)",
+      borderRadius: "var(--radius-full)", padding: "2px var(--space-2)", fontSize: "var(--text-xs)", whiteSpace: "nowrap",
+      background: high ? "var(--warning-soft)" : "var(--paper)", border: high ? "1px solid var(--warning-edge)" : "var(--hairline)",
+      color: high ? "var(--warning)" : "var(--ink-soft)" }}>
+      <span style={{ color: "var(--ink-faint)" }}>{label}</span><span style={{ fontWeight: 600 }}>{value}</span>
+    </span>
+  );
+}
+function PlaybookReview({ scope, mobile }) {
+  const [status, setStatus] = gvS({});  // { id: 'accepted' | 'dismissed' }
+  const pending = GV_PROPOSALS.filter(p => !status[p.id]);
+  return (
+    <div style={{ marginTop: "var(--space-3)" }}>
+      <GvSection kanji="覚" title="Playbook learning · proposed rules"
+        count={pending.length} addLabel="New rule"
+        empty="Nothing proposed — the loop is still gathering outcomes.">
+        <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", padding: "var(--space-2) var(--space-4)",
+          borderBottom: "1px solid var(--paper-edge)", fontSize: "var(--text-xs)", color: "var(--ink-mute)", lineHeight: 1.45 }}>
+          <span className="kanji" style={{ color: "var(--accent)", fontSize: "var(--text-sm)" }}>察</span>
+          Sensei attributes first-turn resolution back to each combo and proposes a re-weighting. Accept to make it a rule at
+          <b style={{ fontWeight: 600, color: "var(--ink-soft)" }}> {scope.name}</b>; it then cascades to everyone below.
+        </div>
+        {GV_PROPOSALS.map((p, i) => {
+          const st = status[p.id];
+          const last = i === GV_PROPOSALS.length - 1;
+          return (
+            <div key={p.id} style={{ display: "grid", gridTemplateColumns: mobile ? "1fr" : "1fr auto", gap: "var(--space-3)",
+              alignItems: "center", padding: "var(--space-3) var(--space-4)", borderBottom: last ? "none" : "1px solid var(--paper-edge)",
+              opacity: st === "dismissed" ? 0.5 : 1 }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", flexWrap: "wrap", marginBottom: "var(--space-1)" }}>
+                  <GvAxisChip label="lifecycle" value={p.lifecycle} />
+                  <GvAxisChip label="intent" value={p.intent} />
+                  <GvAxisChip label="risk" value={p.risk} high={p.risk === "high"} />
+                  <span style={{ fontSize: "var(--text-sm)", color: "var(--ink)" }}>
+                    → prefer <b style={{ fontWeight: 600 }}>{GV_PB[p.prefer]}</b>
+                    <span style={{ color: "var(--ink-faint)" }}> over {GV_PB[p.over]}</span>
+                  </span>
+                </div>
+                <div style={{ fontSize: "var(--text-xs)", color: "var(--ink-mute)", lineHeight: 1.45 }}>
+                  {p.why}{" "}
+                  <span className="mono" style={{ color: "var(--success)" }}>
+                    FTR {p.ftrFrom.toFixed(2)} → {p.ftrTo.toFixed(2)}
+                  </span>
+                  <span className="mono" style={{ color: "var(--ink-faint)" }}> · {p.n} runs</span>
+                </div>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", justifySelf: mobile ? "start" : "end" }}>
+                {st === "accepted" ? (
+                  <span className="mono" style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-1)",
+                    fontSize: "var(--text-xs)", color: "var(--success)", background: "var(--success-soft)",
+                    border: "1px solid var(--success-edge)", borderRadius: "var(--radius-full)", padding: "3px var(--space-3)" }}>
+                    ✓ rule at {scope.name}
+                  </span>
+                ) : st === "dismissed" ? (
+                  <button onClick={() => setStatus(s => ({ ...s, [p.id]: null }))} className="mono"
+                    style={{ fontSize: "var(--text-xs)", color: "var(--ink-mute)", background: "none", border: "none", cursor: "pointer" }}>
+                    dismissed · undo
+                  </button>
+                ) : (
+                  <>
+                    <button onClick={() => setStatus(s => ({ ...s, [p.id]: "dismissed" }))}
+                      style={{ fontSize: "var(--text-sm)", color: "var(--ink-soft)", background: "var(--paper)", border: "var(--hairline)",
+                        borderRadius: "var(--radius)", padding: "var(--space-1) var(--space-3)", cursor: "pointer", fontFamily: "inherit" }}>
+                      Dismiss
+                    </button>
+                    <button onClick={() => setStatus(s => ({ ...s, [p.id]: "accepted" }))}
+                      style={{ fontSize: "var(--text-sm)", color: "var(--paper)", background: "var(--ink)", border: "none",
+                        borderRadius: "var(--radius)", padding: "var(--space-1) var(--space-4)", cursor: "pointer", fontFamily: "inherit", fontWeight: 500 }}>
+                      Accept
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </GvSection>
+    </div>
+  );
+}
+
 function GvSection({ kanji, title, count, addLabel, children, empty, inheritedCount = 0 }) {
   return (
     <div style={{ background: "var(--paper-soft)", border: "var(--hairline)", borderRadius: "var(--radius-lg)", overflow: "hidden" }}>
@@ -286,6 +385,9 @@ function DojoGovernance({ mobile = false }) {
               </GvSection>
             </div>
           )}
+
+          {/* S5 · playbook learning — accept/reject proposed re-weightings */}
+          <PlaybookReview scope={scope} mobile={mobile} />
 
           {/* what a new developer inherits */}
           <div style={{ marginTop: "var(--space-4)", background: "var(--paper-soft)", border: "1px solid var(--accent)", borderRadius: "var(--radius-lg)", padding: "var(--space-4) var(--space-4)" }}>
