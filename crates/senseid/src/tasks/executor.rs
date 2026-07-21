@@ -168,6 +168,7 @@ mod tests {
             gateway,
             event_tx: { let (tx, _) = tokio::sync::broadcast::channel(16); tx },
             breaker: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+            provisioning: None,
         });
         Arc::new(TaskContext {
             queue,

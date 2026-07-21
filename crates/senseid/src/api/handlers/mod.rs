@@ -18,6 +18,7 @@ pub(crate) mod instruments;
 pub(crate) mod gateway_routers;
 pub(crate) mod gateway_chains;
 pub(crate) mod gateway_image;
+pub(crate) mod model_provisioning;
 pub(crate) mod knowledge;
 pub(crate) mod dojo;
 pub(crate) mod preferences;
