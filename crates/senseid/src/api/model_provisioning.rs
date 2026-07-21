@@ -130,17 +130,6 @@ impl ModelProvisioning {
             .unwrap_or(ProvisionPhase::Absent)
     }
 
-    /// Snapshot of every tracked model's live phase (order unspecified; the
-    /// status handler merges this into the stable catalog order).
-    fn all_phases(&self) -> Vec<(String, ProvisionPhase)> {
-        self.phases
-            .lock()
-            .expect("provisioning phases mutex poisoned")
-            .iter()
-            .map(|(id, p)| (id.clone(), p.clone()))
-            .collect()
-    }
-
     /// Set `model`'s live phase.
     fn set_phase(&self, model: &str, phase: ProvisionPhase) {
         self.phases
@@ -149,10 +138,37 @@ impl ModelProvisioning {
             .insert(model.to_string(), phase);
     }
 
-    /// A snapshot of every model the service is (or has been) provisioning, with
-    /// its current phase. Mirrors the old supervisor's `status_all`.
+    /// Disk-aware phase of `model`: the in-memory tracked phase when a pull is
+    /// live or finished THIS session; otherwise on-disk truth — `Ready` if the
+    /// model is already provisioned in the managed store (pulled in a previous
+    /// run, before a daemon restart cleared the in-memory map), else `Absent`.
+    ///
+    /// The map never stores `Absent` (`ensure` only sets Queued/Downloading/…/
+    /// Ready/Failed), so a `phase_of` of `Absent` unambiguously means "untracked"
+    /// → fall back to the managed store.
+    async fn phase_for(&self, model: &str) -> ProvisionPhase {
+        let tracked = self.phase_of(model);
+        if !matches!(tracked, ProvisionPhase::Absent) {
+            return tracked;
+        }
+        if self.provisioner.is_provisioned(model).await {
+            ProvisionPhase::Ready
+        } else {
+            ProvisionPhase::Absent
+        }
+    }
+
+    /// The provisionable catalog, each entry with its disk-aware phase. This is
+    /// what the status endpoint lists — so a model pulled in a previous run shows
+    /// `Ready` (not `Absent`) even before any `ensure` this session. The handler
+    /// merges display names from [`provisioning_catalog`] on top.
     pub async fn status_all(&self) -> Vec<(String, ProvisionPhase)> {
-        self.all_phases()
+        let mut out = Vec::new();
+        for (id, _name) in provisioning_catalog() {
+            let phase = self.phase_for(&id).await;
+            out.push((id, phase));
+        }
+        out
     }
 
     /// Begin (or join) an on-demand pull of `model`, returning its current phase.
@@ -267,11 +283,13 @@ pub(crate) type ReportPhase = Arc<dyn Fn(ProvisionPhase) + Send + Sync>;
 #[async_trait::async_trait]
 impl gateway::ReadinessProbe for ModelProvisioning {
     async fn phase(&self, model: &str) -> ProvisionPhase {
-        self.phase_of(model)
+        self.phase_for(model).await
     }
 
     async fn status_all(&self) -> Vec<(String, ProvisionPhase)> {
-        self.all_phases()
+        // Fully-qualified to call the inherent (disk-aware catalog) method, not
+        // recurse into this trait method.
+        ModelProvisioning::status_all(self).await
     }
 }
 
@@ -296,14 +314,57 @@ mod tests {
         );
     }
 
-    /// A fresh service has no live phases: `status_all` is empty and any model
-    /// reads `Absent`. The status handler overlays this onto the catalog, so a
-    /// model shows up `absent` before any pull begins.
+    /// A fresh service over an empty managed dir: `status_all` lists the catalog
+    /// with each model `Absent` (nothing tracked, nothing on disk).
     #[tokio::test]
-    async fn fresh_service_reports_absent_and_empty_status() {
-        let svc = Arc::new(ModelProvisioning::new(std::env::temp_dir()));
-        assert!(svc.status_all().await.is_empty());
+    async fn fresh_service_lists_catalog_as_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        let svc = Arc::new(ModelProvisioning::new(dir.path().to_path_buf()));
+        assert_eq!(
+            svc.status_all().await,
+            vec![("gemma2:2b".to_string(), ProvisionPhase::Absent)],
+            "status lists the catalog; fresh service has nothing on disk → Absent",
+        );
         assert_eq!(svc.phase_of("gemma2:2b"), ProvisionPhase::Absent);
+    }
+
+    /// `phase_for` prefers the in-memory tracked phase, then falls back to on-disk
+    /// truth so a model pulled in a PREVIOUS run (empty phase map after a restart)
+    /// reports `Ready` rather than `Absent`.
+    #[tokio::test]
+    async fn phase_for_prefers_tracked_then_falls_back_to_disk() {
+        use local_engine::registry::{ManagedResolver, ModelEntry, ModelFormat, ModelSource};
+
+        let dir = tempfile::tempdir().unwrap();
+        let svc = Arc::new(ModelProvisioning::new(dir.path().to_path_buf()));
+
+        // Untracked + empty managed store → Absent.
+        assert_eq!(svc.phase_for("gemma2:2b").await, ProvisionPhase::Absent);
+
+        // A tracked (in-flight) phase wins over disk.
+        svc.set_phase("gemma2:2b", ProvisionPhase::Downloading { done: 1, total: Some(2) });
+        assert_eq!(
+            svc.phase_for("gemma2:2b").await,
+            ProvisionPhase::Downloading { done: 1, total: Some(2) },
+        );
+
+        // Untracked but present on disk (registered + file) → Ready.
+        let other = tempfile::tempdir().unwrap();
+        let svc2 = Arc::new(ModelProvisioning::new(other.path().to_path_buf()));
+        let file = other.path().join("gemma2_2b.gguf");
+        tokio::fs::write(&file, b"stub").await.unwrap();
+        ManagedResolver::new(other.path())
+            .add(ModelEntry {
+                id: "gemma2:2b".into(),
+                name: "Gemma 2 2B".into(),
+                format: ModelFormat::Gguf,
+                source: ModelSource::Managed { path: file },
+                sha256: None,
+                size_bytes: None,
+            })
+            .await
+            .unwrap();
+        assert_eq!(svc2.phase_for("gemma2:2b").await, ProvisionPhase::Ready);
     }
 
     /// `ensure` (via the injectable seam) transitions a fresh model
@@ -389,7 +450,8 @@ mod tests {
     #[tokio::test]
     async fn readiness_probe_reflects_live_phases() {
         use gateway::ReadinessProbe;
-        let svc = Arc::new(ModelProvisioning::new(std::env::temp_dir()));
+        let dir = tempfile::tempdir().unwrap();
+        let svc = Arc::new(ModelProvisioning::new(dir.path().to_path_buf()));
         let probe: Arc<dyn ReadinessProbe> = svc.clone();
 
         assert_eq!(probe.phase("gemma2:2b").await, ProvisionPhase::Absent);
