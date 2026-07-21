@@ -33,7 +33,7 @@
           <span
             class="display text-3xl font-normal"
             class:text-ink={mode === 'mature'}
-            class:text-ink-soft={mode === 'early'}
+            class:text-ink-mute={mode === 'early'}
           >{chip.value}</span>
           <span class="text-xs text-ink-soft">%</span>
           <span data-ftr-arrow={chip.direction} class="font-mono text-xs {chip.toneClass}">
