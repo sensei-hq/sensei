@@ -5,13 +5,15 @@ edition = "2024"
 description = "Sensei indexer daemon — graph-based code intelligence"
 
 [features]
-# Opt-in in-process inference adapters from gateway-embedded. Each one
-# enables heavyweight native deps (ORT runtime for fastembed, C++ for
-# llama.cpp). Off by default — the daemon ships only HTTP adapters
-# unless one of these is enabled at build time.
-embedded-fastembed = ["gateway-embedded/fastembed"]
-embedded-llama-cpp = ["gateway-embedded/llama-cpp"]
-embedded-ort = ["gateway-embedded/ort"]
+# Opt-in in-process inference adapters (from sensei-local-providers, coldbooted
+# by sensei-local-engine). Each enables heavyweight native deps (ORT runtime for
+# fastembed / ort, C++ for llama.cpp). Off by default — the daemon ships only
+# HTTP adapters unless one of these is enabled at build time. `local-engine/<fmt>`
+# also enables the matching `local-providers/<fmt>`; both are listed so the
+# optional `local-providers` dep is unambiguously pulled in either way.
+embedded-fastembed = ["local-engine/fastembed", "local-providers/fastembed"]
+embedded-llama-cpp = ["local-engine/llama-cpp", "local-providers/llama-cpp"]
+embedded-ort = ["local-engine/ort", "local-providers/ort"]
 
 [dependencies]
 # HTTP server
@@ -82,10 +84,18 @@ thiserror = "2"
 chrono = { version = "0.4", features = ["serde"] }
 dirs = "6"
 reqwest = { version = "0.12", default-features = false, features = ["json", "blocking", "rustls-tls", "stream"] }
-gateway = { git = "https://github.com/sensei-hq/gateway.git", tag = "v0.3.1" }
-# Registry + trait types only by default — engine adapters land via the
-# `embedded-*` cargo features above.
-gateway-embedded = { git = "https://github.com/sensei-hq/gateway.git", tag = "v0.3.1" }
+# v0.4.0 split the old gateway/gateway-embedded monolith five ways. sensei
+# consumes three of them; shared model/type vocabulary lives in sensei-kernel,
+# re-exported through these, so we don't depend on kernel directly.
+# Routing engine + cloud provider adapters (behind the default `cloud` feature).
+gateway = { package = "sensei-gateway", git = "https://github.com/sensei-hq/gateway.git", tag = "v0.4.0", features = ["cloud"] }
+# Local model engine: id→bytes resolvers (managed / ollama / external / chained,
+# used by model_provision) plus Hugging Face pull (hf-download). Always present;
+# the heavy in-process adapter backends land only via the embedded-* features.
+local-engine = { package = "sensei-local-engine", git = "https://github.com/sensei-hq/gateway.git", tag = "v0.4.0", features = ["hf-download"] }
+# In-process inference adapters (llama.cpp / fastembed / ort). Optional — pulled
+# in (with its heavy native backend) only when an embedded-* feature is enabled.
+local-providers = { package = "sensei-local-providers", git = "https://github.com/sensei-hq/gateway.git", tag = "v0.4.0", optional = true }
 dojo-protocol = { path = "../dojo-protocol" }
 # Relay P5.2 — ACP (Agent Client Protocol) observe-first. The spec's official
 # Rust SDK (Apache-2.0, Zed-maintained). We use only its `schema::v1` wire types

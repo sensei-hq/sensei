@@ -19,7 +19,7 @@
 
 use std::path::{Path, PathBuf};
 
-use gateway_embedded::registry::{
+use local_engine::registry::{
     ManagedResolver, ModelEntry, ModelFormat, ModelResolver, ModelSource,
 };
 use sha2::{Digest, Sha256};
