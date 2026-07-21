@@ -108,6 +108,9 @@ export default async function globalSetup(): Promise<void> {
     env: {
       ...process.env,
       SENSEI_DDL_DIR: join(APP_REPO, '..', 'database'),
+      // SENSEI_INSTANCE=e2e also makes the daemon skip the in-process llama.cpp
+      // model (gateway_init.rs) — a warming model would peg it and stall
+      // data-dependent screens within test timeouts.
       SENSEI_INSTANCE: INSTANCE,
     },
   });

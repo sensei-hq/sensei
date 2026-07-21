@@ -96,4 +96,33 @@ describe('reroute', () => {
       expect(reroute({ url: new URL('http://localhost/setup/welcome') })).toBeUndefined();
     });
   });
+
+  // A project window is opened deliberately from an already-healthy main
+  // window, but it boots with its own fresh JS heap where healthState starts
+  // 'checking' (isOk=false). Without a bypass, reroute bounces the fresh
+  // window to /health and the project never renders — the "project window
+  // won't open" bug. Project-window routes (`/project/{id}/...`) must pass the
+  // gates unconditionally.
+  describe('project window (fresh heap, gates not yet satisfied)', () => {
+    it('lets /project/{id}/* through while health is still checking', () => {
+      setHealth('checking');
+      expect(reroute({ url: new URL('http://localhost/project/abc-123/overview') })).toBeUndefined();
+    });
+
+    it('lets /project/{id}/* through while health needs action', () => {
+      setHealth('needs-action');
+      expect(reroute({ url: new URL('http://localhost/project/abc-123/sessions') })).toBeUndefined();
+    });
+
+    it('lets /project/{id}/* through even when setup is incomplete', () => {
+      setHealth('ok');
+      setSetupComplete(false);
+      expect(reroute({ url: new URL('http://localhost/project/abc-123/about') })).toBeUndefined();
+    });
+
+    it('still gates the observatory /projects list (plural) when not ok', () => {
+      setHealth('needs-action');
+      expect(reroute({ url: new URL('http://localhost/projects') })).toBe('/health');
+    });
+  });
 });

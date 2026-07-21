@@ -1,20 +1,31 @@
 <script lang="ts">
     import ProjectSidebar from './ProjectSidebar.svelte';
+    import ProjectGlyph from '../../../(observatory)/projects/ProjectGlyph.svelte';
+    import { projectIcon } from '../../../(observatory)/projects/buckets.js';
+    import { apiBase } from '$lib/api.js';
+    import { appState } from '$lib/appstate.svelte.js';
 
     let { data, children } = $props();
 
-    const kanji = $derived(data.project?.icon?.value ?? '場');
+    // Resolve the icon the same way the project cards do: an image icon (e.g. a
+    // repo logo .svg) renders as an <img>, a kanji icon as a glyph, else the 場
+    // fallback — never the raw icon value (e.g. "rokkit.svg") shown as text.
+    const icon = $derived(
+        projectIcon(data.project ?? { id: data.projectId, icon: null }, apiBase(appState.port)),
+    );
     const ftr14d = $derived(data.ftrMetrics?.ftr14d ?? 0);
 </script>
 
-<div class="flex flex-col h-screen overflow-hidden bg-paper-soft text-ink">
+<div data-component="project-shell" class="flex flex-col h-screen overflow-hidden bg-paper-soft text-ink">
     <!-- Primary accent stripe -->
     <div class="h-0.5 bg-accent shrink-0"></div>
 
-    <!-- Titlebar / drag region -->
-    <div class="drag-region h-9 flex items-center gap-2 px-4 shrink-0">
-        <span class="kanji text-lg text-accent">{kanji}</span>
-        <span class="text-sm font-semibold">{data.project?.name ?? '…'}</span>
+    <!-- Titlebar / drag region. Left inset (pl-[80px]) clears the macOS
+         overlay traffic lights that float top-left, so the project name is
+         never hidden behind them. -->
+    <div data-component="project-titlebar" class="drag-region h-9 flex items-center gap-2 pl-[80px] pr-4 shrink-0">
+        <ProjectGlyph {icon} />
+        <span data-component="project-name" class="text-sm font-semibold">{data.project?.name ?? '…'}</span>
         <span class="text-xs text-ink-faint">· project window</span>
     </div>
 
