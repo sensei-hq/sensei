@@ -6,6 +6,8 @@ This is an index, not a copy — the detailed, living sources are
 [`../plan/README.md`](../plan/README.md) (the gap analysis that drives sequencing)
 and [`../spec/EXECUTION-PLAN.md`](../spec/EXECUTION-PLAN.md) (the locked execution plan).
 
+- **[phases.md](phases.md)** — the six-phase roadmap (MVP → relay → analytics → chat → payments → orchestrator) with goals, includes, and exit criteria. Detailed phase 1–3 stories: [`../plan/2026-07-20-phases-1-3-plan.md`](../plan/2026-07-20-phases-1-3-plan.md).
+
 ## Current status (distilled)
 
 - 25+ screens are live; surface area is largely built (Observatory + project window essentially complete).

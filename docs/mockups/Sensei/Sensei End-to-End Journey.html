@@ -129,6 +129,7 @@
         <h3>Your machine</h3>
         <div class="zt">local-first · Sensei desktop</div>
         <div class="node"><span class="nk">観</span>Observes every session<span class="sub">local</span></div>
+        <div class="node"><span class="nk">始</span>Front door · recommends a playbook<span class="sub">per chunk</span></div>
         <div class="node"><span class="nk">門</span>Gateway · embedded Ollama<span class="sub">Gemma 4</span></div>
         <div class="node"><span class="nk">蔵</span>Your memories &amp; learnings<span class="sub">private</span></div>
         <div class="node"><span class="nk">常</span>Daemon holds the live line<span class="sub">realtime</span></div>
@@ -138,6 +139,7 @@
         <h3>The Dōjō</h3>
         <div class="zt">team · self-hosted or SaaS</div>
         <div class="node"><span class="nk">門</span>Triage → approve → publish<span class="sub">govern</span></div>
+        <div class="node"><span class="nk">覚</span>Playbook learning · accept rules<span class="sub">outcomes</span></div>
         <div class="node"><span class="nk">掟</span>Governance model per scope<span class="sub">authored</span></div>
         <div class="node"><span class="nk">庫</span>Shared extensions catalog<span class="sub">curated</span></div>
         <div class="node"><span class="nk">携</span>Relay · watch · approve · decide<span class="sub">away</span></div>
@@ -252,6 +254,11 @@ const DEV = [
     does:"Bootstraps its own runtime and starts watching sessions on the machine; the embedded gateway runs Gemma 4 by default, no keys required.",
     fr:"The first run asks for setup before showing any payoff — easy to bounce.",
     op:"Prove value from the first watched session; keep everything local so trust is the default." },
+  { k:"門", surf:"Desktop · CLI", name:"Start a chunk at the front door",
+    goal:"Begin a piece of work with the right amount of rigor — no more, no less.",
+    does:"Reads the chunk and classifies it on three axes — lifecycle · intent · risk — then recommends a playbook (debug-flow, spec-driven, …) with a one-line reason; trusted low-risk chunks auto-select, high blast-radius always waits for an explicit confirm.",
+    fr:"Every task gets the same ceremony — a one-line fix over-planned, a risky rewrite under-planned.",
+    op:"Depth follows risk; sensei's read is shown back as three chips you can correct before you agree." },
   { k:"観", surf:"Desktop", name:"First lesson forms",
     goal:"See sensei actually learn something about my work.",
     does:"Withholds teachings until confident, then surfaces a first pattern — 'refresh-token rotation corrected, 3rd time' — with the evidence behind it.",
@@ -300,6 +307,11 @@ const ORG = [
     does:"Defines a stance (autonomy · sharing · review) plus rules, skills, agents, commands — and a project's memory — per scope; everything cascades org → team → project → stack.",
     fr:"Onboarding a newcomer means re-teaching rules that live in people's heads.",
     op:"A joiner inherits the composed bundle on connect; preview exactly what lands." },
+  { k:"覚", surf:"Dōjō", name:"Review what the loop learned",
+    goal:"Let proven outcomes tune how work is planned — without hand-writing every rule.",
+    does:"Sensei attributes first-turn resolution back to each lifecycle·intent·risk combo and proposes re-weightings — 'for stable · enhancement · low, prefer change-flow, FTR 0.71 → 0.90 over 14 runs'; a maintainer accepts it into a scope or dismisses it, and accepted rules cascade to everyone below.",
+    fr:"Playbook defaults can ossify — what worked last quarter may not be what ships cleanest now.",
+    op:"The front-door recommendation tunes itself from real outcomes, governed by the same accept/reject as every other rule." },
   { k:"門", surf:"Dōjō", name:"Curate what gets taught",
     goal:"Keep the shared mind high-signal as contributions arrive.",
     does:"Triage ranks incoming lessons by impact then age; each is approved, revised or declined, with high-impact items gated on a second approver. A shared extensions catalog curates skills and agents for the whole team.",

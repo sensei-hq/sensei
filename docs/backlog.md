@@ -100,6 +100,14 @@ The 2026-07-14 mockup-gap pass is closed. Details in [`spec/MOCKUP-INDEX.md`](sp
 
 ---
 
+## Cleanup / tech-debt
+
+| Item | Summary |
+|------|---------|
+| _(file issue)_ | **Rename `setup` remnants after the entry-gate simplification.** The entry gate was simplified to health-gate → folder-scan → dōjō-auto-discover; everything else moved to a separate Configuration surface (see [`features/changes.md`](features/changes.md)). The config routes still live under `app/src/routes/(config)/setup/` and share `setup`-named modules (`app/src/lib/setup/*`, `stages.ts`). Rename/reorganize so the code reflects Setup (the gate) vs Configuration, and drop the leftover wizard-only stages. |
+
+---
+
 ## Website
 
 | Item | Summary |
