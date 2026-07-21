@@ -91,6 +91,28 @@ impl Provisioner {
         self.ensure_model_with_progress(id, |_done, _total| {}).await
     }
 
+    /// The on-disk path of model `id` if it's already provisioned — registered
+    /// in the managed index AND its file present. `None` otherwise. The shared
+    /// presence check behind [`Self::ensure_model_with_progress`]'s idempotent
+    /// early-return and [`Self::is_provisioned`].
+    async fn present_path(&self, id: &str) -> Option<PathBuf> {
+        let managed = ManagedResolver::new(&self.managed_root);
+        match managed.resolve(id).await {
+            Ok(Some(entry)) if entry.source.path().exists() => {
+                Some(entry.source.path().to_path_buf())
+            }
+            _ => None,
+        }
+    }
+
+    /// Whether model `id` is already provisioned (registered + on disk). Lets the
+    /// provisioning service report `Ready` for a model pulled in a PREVIOUS run:
+    /// the in-memory phase map is empty after a daemon restart, but the managed
+    /// store persists, so readiness/status must fall back to on-disk truth.
+    pub async fn is_provisioned(&self, id: &str) -> bool {
+        self.present_path(id).await.is_some()
+    }
+
     /// Same as [`Self::ensure_model`] but reports download progress: `on_progress`
     /// is called with `(bytes_written, total)` as the blob streams, where `total`
     /// is the model layer's declared `size` from the manifest (`None` only if the
@@ -104,11 +126,8 @@ impl Provisioner {
         id: &str,
         mut on_progress: impl FnMut(u64, Option<u64>),
     ) -> Result<PathBuf, String> {
-        let managed = ManagedResolver::new(&self.managed_root);
-        if let Ok(Some(entry)) = managed.resolve(id).await
-            && entry.source.path().exists()
-        {
-            return Ok(entry.source.path().to_path_buf());
+        if let Some(path) = self.present_path(id).await {
+            return Ok(path);
         }
 
         let (name, tag) = split_id(id);
@@ -143,6 +162,7 @@ impl Provisioner {
         })
         .await?;
 
+        let managed = ManagedResolver::new(&self.managed_root);
         managed
             .add(ModelEntry {
                 id: id.to_string(),
@@ -264,6 +284,39 @@ mod tests {
         assert_eq!(managed_filename("all-minilm"), "all-minilm.gguf");
         assert_eq!(managed_filename("gemma2:2b"), "gemma2_2b.gguf");
         assert_eq!(managed_filename("library/foo:bar"), "library_foo_bar.gguf");
+    }
+
+    /// `is_provisioned` is true only when the model is BOTH registered in the
+    /// managed index AND its file is on disk — the on-disk truth the provisioning
+    /// service falls back to when its in-memory phase map is empty (post-restart).
+    #[tokio::test]
+    async fn is_provisioned_reflects_managed_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let prov = Provisioner::new(dir.path());
+
+        // Nothing registered → not provisioned.
+        assert!(!prov.is_provisioned("gemma2:2b").await);
+
+        // Register the model + create its file → provisioned.
+        let path = dir.path().join(managed_filename("gemma2:2b"));
+        tokio::fs::write(&path, b"stub gguf").await.unwrap();
+        ManagedResolver::new(dir.path())
+            .add(ModelEntry {
+                id: "gemma2:2b".to_string(),
+                name: "Gemma 2 2B".to_string(),
+                format: ModelFormat::Gguf,
+                source: ModelSource::Managed { path: path.clone() },
+                sha256: None,
+                size_bytes: None,
+            })
+            .await
+            .unwrap();
+        assert!(prov.is_provisioned("gemma2:2b").await);
+
+        // Registered but the file was removed → not provisioned (the presence
+        // check verifies the file exists, not just the index entry).
+        tokio::fs::remove_file(&path).await.unwrap();
+        assert!(!prov.is_provisioned("gemma2:2b").await);
     }
 
     /// End-to-end against the live Ollama registry: pull the tiny all-minilm
