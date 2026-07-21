@@ -1,8 +1,10 @@
 <script lang="ts">
+  import { Toggle } from '@rokkit/ui';
+  import type { ProxyItem } from '@rokkit/states';
   import { openProjectWindow } from '$lib/stores/windows.svelte.js';
   import { Eyebrow } from '$lib/components';
   import { projectStatus, type EnrichedProject } from './buckets.js';
-  import { projectsView, type ProjectFilter } from './projects-view.svelte.js';
+  import { projectsView, type ProjectFilter, type ProjectView } from './projects-view.svelte.js';
   import ProjectCard from './ProjectCard.svelte';
   import ProjectRow from './ProjectRow.svelte';
 
@@ -40,16 +42,19 @@
     openProjectWindow(id, name).catch((e) => console.error(e));
   }
 
-  const chips: Array<{ v: ProjectFilter; label: string; kanji: string }> = [
-    { v: 'all',      label: 'All',      kanji: '全' },
-    { v: 'active',   label: 'Active',   kanji: '動' },
-    { v: 'dormant',  label: 'Dormant',  kanji: '眠' },
-    { v: 'archived', label: 'Archived', kanji: '蔵' },
-  ];
+  // Rokkit Toggle options. Toggle reads `label`; extra keys (kanji/count/glyph)
+  // are read in the itemContent snippet via proxy.get(). Filter counts are live,
+  // so its options are derived.
+  const filterOptions = $derived([
+    { value: 'all',      label: 'All',      kanji: '全', count: counts.all },
+    { value: 'active',   label: 'Active',   kanji: '動', count: counts.active },
+    { value: 'dormant',  label: 'Dormant',  kanji: '眠', count: counts.dormant },
+    { value: 'archived', label: 'Archived', kanji: '蔵', count: counts.archived },
+  ]);
 
-  const views: Array<{ v: 'grid' | 'list'; glyph: string; label: string }> = [
-    { v: 'grid', glyph: '田', label: 'grid view' },
-    { v: 'list', glyph: '≣', label: 'list view' },
+  const viewOptions = [
+    { value: 'grid', label: 'grid view', icon: 'i-solar:widget-2-linear' },
+    { value: 'list', label: 'list view', icon: 'i-solar:hamburger-menu-linear' },
   ];
 </script>
 
@@ -69,55 +74,31 @@
 
   <!-- Filter chips + view toggle + search -->
   <div class="py-3 px-7 gap-4 border-b border-paper-edge flex items-center">
-    <div class="flex gap-1">
-      {#each chips as c (c.v)}
-        {@const on = projectsView.filter === c.v}
-        {@const n = counts[c.v]}
-        <button
-          type="button"
-          data-chip={c.v}
-          data-active={on || undefined}
-          onclick={() => projectsView.setFilter(c.v)}
-          class="py-1 px-3 gap-2 text-[11px] rounded inline-flex items-center transition-colors"
-          class:bg-ink={on}
-          class:text-paper={on}
-          class:text-ink-mute={!on}
-        >
-          <span class="kanji text-[11px]">{c.kanji}</span>
-          {c.label}
-          <span
-            class="font-mono text-[11px]"
-            class:text-paper={on}
-            class:text-ink-faint={!on}
-          >{n}</span>
-        </button>
-      {/each}
-    </div>
+    <Toggle
+      options={filterOptions}
+      value={projectsView.filter}
+      onchange={(v: unknown) => projectsView.setFilter(v as ProjectFilter)}
+      aria-label="filter projects by status"
+    >
+      {#snippet itemContent(proxy: ProxyItem)}
+        <span class="kanji text-[11px]">{proxy.get('kanji')}</span>
+        <span>{proxy.label}</span>
+        <span class="font-mono text-[11px] text-ink-mute">{proxy.get('count')}</span>
+      {/snippet}
+    </Toggle>
     <span class="flex-1"></span>
 
-    <!-- View toggle: grid 田 / list ≣ -->
-    <div
-      class="flex gap-1 p-1 bg-paper-soft border border-paper-edge rounded"
-      role="group"
+    <!-- View switcher: grid 田 / list ≣ -->
+    <Toggle
+      options={viewOptions}
+      value={projectsView.view}
+      onchange={(v: unknown) => projectsView.setView(v as ProjectView)}
       aria-label="view"
     >
-      {#each views as v (v.v)}
-        {@const on = projectsView.view === v.v}
-        <button
-          type="button"
-          data-view-toggle={v.v}
-          aria-pressed={on}
-          aria-label={v.label}
-          onclick={() => projectsView.setView(v.v)}
-          class="py-1 px-2 rounded-sm transition-colors"
-          class:bg-paper={on}
-          class:text-ink={on}
-          class:text-ink-mute={!on}
-        >
-          <span class="kanji text-[12px]">{v.glyph}</span>
-        </button>
-      {/each}
-    </div>
+      {#snippet itemContent(proxy: ProxyItem)}
+        <span class="{proxy.get('icon')} text-[16px]" aria-hidden="true"></span>
+      {/snippet}
+    </Toggle>
 
     <div class="flex items-center bg-paper-soft border border-paper-edge rounded gap-2 py-1 px-2 min-w-[260px]">
       <span class="kanji text-[11px] text-ink-soft">探</span>
