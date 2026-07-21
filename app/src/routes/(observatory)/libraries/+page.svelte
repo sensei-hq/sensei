@@ -11,7 +11,6 @@
     let libs = $state<LibEntry[]>([]);
     let loading = $state(true);
     let search = $state("");
-    let kindFilter = $state<"all" | "code" | "service">("all");
     let selectedLib = $state<LibEntry | null>(null);
     let usageData = $state<UsageEntry[]>([]);
     let usageLoading = $state(false);
@@ -59,7 +58,7 @@
 <PageHeader kanji="書" eyebrow="Libraries" title="Libraries" />
 <div class="max-w-[960px] mx-auto px-12 pt-8 pb-16">
 
-    <!-- Search + filters -->
+    <!-- Search -->
     <div class="flex items-center gap-4 mb-6">
         <input
             class="lib-search flex-1 px-3.5 py-2 border border-paper-mute rounded-md bg-paper-soft text-ink text-sm outline-none"
@@ -67,15 +66,6 @@
             placeholder="Search libraries..."
             bind:value={search}
         />
-        <div class="flex gap-1.5">
-            {#each [["all", "All"], ["code", "Code"], ["service", "Services"]] as [key, label]}
-                <button
-                    class="filter-chip px-3.5 py-1 rounded-full border border-paper-mute bg-transparent text-xs cursor-pointer text-ink-mute"
-                    class:active={kindFilter === key}
-                    onclick={() => (kindFilter = key as any)}>{label}</button
-                >
-            {/each}
-        </div>
     </div>
 
     {#if loading}
@@ -159,15 +149,6 @@
 <style>
     .lib-search:focus {
         border-color: var(--ink-soft);
-    }
-
-    .filter-chip:hover {
-        background: var(--paper-mute);
-    }
-    .filter-chip.active {
-        background: var(--ink);
-        color: var(--paper-soft);
-        border-color: var(--ink);
     }
 
     .lib-card:hover {
