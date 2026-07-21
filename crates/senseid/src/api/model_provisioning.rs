@@ -73,6 +73,38 @@ pub(crate) fn provisioning_plans(
     plans
 }
 
+/// The provisionable catalog as flat `(id, display_name)` pairs, derived from
+/// [`provisioning_plans`]. This is what the status endpoint (and the UI) list so
+/// a client can see every pullable model — with its current phase overlaid —
+/// before any pull has started. `display_name` falls back to the id when a plan
+/// carries no `name`.
+///
+/// Pure over [`provisioning_plans`]; no runtime, network, or llama.cpp backend.
+#[cfg(feature = "embedded-llama-cpp")]
+pub(crate) fn provisioning_catalog() -> Vec<(String, String)> {
+    use local_engine::ProvisionPlan;
+
+    let mut catalog: Vec<(String, String)> = provisioning_plans()
+        .into_values()
+        .map(|plan| match plan {
+            ProvisionPlan::HfGguf { spec } => {
+                let name = spec.name.unwrap_or_else(|| spec.id.clone());
+                (spec.id, name)
+            }
+            // `ProvisionPlan` is #[non_exhaustive]; any future variant still
+            // needs an id/name pair to appear in the catalog. Until such a
+            // variant exists this arm is unreachable, but we must not silently
+            // drop it — panic loudly in debug so a new plan kind is a
+            // deliberate, reviewed catalog change rather than a silent gap.
+            _ => unreachable!("provisioning catalog: unhandled ProvisionPlan variant"),
+        })
+        .collect();
+    // HashMap iteration order is nondeterministic; sort by id so the status
+    // list (and its tests) are stable.
+    catalog.sort_by(|a, b| a.0.cmp(&b.0));
+    catalog
+}
+
 /// Build the on-demand provisioning supervisor, sharing the given adapter
 /// registry and managed-store resolver.
 ///
@@ -148,5 +180,22 @@ mod tests {
     #[test]
     fn provisioning_plans_has_exactly_one_entry() {
         assert_eq!(provisioning_plans().len(), 1);
+    }
+
+    /// `provisioning_catalog` flattens the plans to `(id, display_name)` pairs.
+    /// Today: one entry, id `gemma2:2b`, name "Gemma 2 2B Instruct" (the plan's
+    /// `name`). This is the shape the status endpoint + UI render.
+    #[test]
+    fn provisioning_catalog_lists_id_and_display_name() {
+        let catalog = provisioning_catalog();
+        assert_eq!(catalog.len(), 1, "one on-demand model today");
+        assert_eq!(
+            catalog[0],
+            (
+                "gemma2:2b".to_string(),
+                "Gemma 2 2B Instruct".to_string(),
+            ),
+            "catalog carries the model id and its display name",
+        );
     }
 }

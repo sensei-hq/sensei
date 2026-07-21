@@ -58,20 +58,53 @@ pub(crate) async fn provision_model(
     })))
 }
 
-/// GET /api/gateway/models/provision/status — a snapshot of every model the
-/// supervisor is (or has been) provisioning, with its current phase. Empty
-/// `models` list when the daemon lacks the embedded engine.
+/// Merge the fixed provisioning catalog with the supervisor's live phases into
+/// the status wire rows. Every catalog `(id, name)` appears exactly once; its
+/// phase is the live phase from `live` when the supervisor is tracking it, else
+/// `Absent` (not started). Output order follows the catalog (stable), so a
+/// model shows up with phase `absent` before any pull begins.
+///
+/// Pure over its inputs — unit-testable without a runtime or the embedded
+/// engine.
+#[cfg(feature = "embedded-llama-cpp")]
+fn merge_catalog_phases(
+    catalog: Vec<(String, String)>,
+    live: Vec<(String, gateway::ProvisionPhase)>,
+) -> Vec<Value> {
+    use std::collections::HashMap;
+    let live: HashMap<String, gateway::ProvisionPhase> = live.into_iter().collect();
+    catalog
+        .into_iter()
+        .map(|(id, name)| {
+            let phase = live.get(&id).cloned().unwrap_or(gateway::ProvisionPhase::Absent);
+            json!({ "id": id, "name": name, "phase": phase_json(&phase) })
+        })
+        .collect()
+}
+
+/// GET /api/gateway/models/provision/status — the full provisionable catalog,
+/// each entry with its current phase. A catalog model appears with phase
+/// `absent` before any pull begins; once a pull starts the supervisor's live
+/// phase overlays it. Empty `models` list when the daemon lacks the embedded
+/// engine (no catalog, nothing to pull).
+#[cfg(feature = "embedded-llama-cpp")]
 pub(crate) async fn provision_status(State(state): State<AppState>) -> Json<Value> {
     let models: Vec<Value> = match &state.provisioning {
-        Some(sup) => sup
-            .status_all()
-            .await
-            .into_iter()
-            .map(|(id, phase)| json!({ "id": id, "phase": phase_json(&phase) }))
-            .collect(),
+        Some(sup) => merge_catalog_phases(
+            crate::api::model_provisioning::provisioning_catalog(),
+            sup.status_all().await,
+        ),
         None => Vec::new(),
     };
     Json(json!({ "models": models }))
+}
+
+/// GET /api/gateway/models/provision/status — non-embedded build. There is no
+/// catalog and no supervisor, so the status is always an empty `models` list;
+/// a client can still poll unconditionally.
+#[cfg(not(feature = "embedded-llama-cpp"))]
+pub(crate) async fn provision_status(State(_state): State<AppState>) -> Json<Value> {
+    Json(json!({ "models": [] }))
 }
 
 #[cfg(test)]
@@ -98,5 +131,54 @@ mod tests {
             phase_json(&gateway::ProvisionPhase::Failed { error: "disk full".into() }),
             json!({"phase": "failed", "error": "disk full"})
         );
+    }
+
+    /// The status shape merges the fixed catalog with live phases: a catalog
+    /// entry with NO live phase appears with `absent` (so the UI can list a
+    /// pullable model before any pull), while an entry the supervisor is
+    /// tracking gets its live phase. Order follows the catalog.
+    #[cfg(feature = "embedded-llama-cpp")]
+    #[test]
+    fn merge_catalog_phases_defaults_untracked_to_absent_and_overlays_live() {
+        let catalog = vec![
+            ("gemma2:2b".to_string(), "Gemma 2 2B Instruct".to_string()),
+            ("phantom:1b".to_string(), "Phantom 1B".to_string()),
+        ];
+        let live = vec![(
+            "gemma2:2b".to_string(),
+            gateway::ProvisionPhase::Downloading { done: 5, total: Some(100) },
+        )];
+
+        let rows = super::merge_catalog_phases(catalog, live);
+        assert_eq!(rows.len(), 2, "every catalog entry appears once");
+
+        // Tracked model overlays its live phase, carries id + display name.
+        assert_eq!(rows[0]["id"], "gemma2:2b");
+        assert_eq!(rows[0]["name"], "Gemma 2 2B Instruct");
+        assert_eq!(
+            rows[0]["phase"],
+            json!({"phase": "downloading", "done": 5, "total": 100}),
+        );
+
+        // Untracked catalog model defaults to `absent` — still pullable.
+        assert_eq!(rows[1]["id"], "phantom:1b");
+        assert_eq!(rows[1]["name"], "Phantom 1B");
+        assert_eq!(rows[1]["phase"], json!({"phase": "absent"}));
+    }
+
+    /// The real catalog merged against an empty live set (no pull started yet)
+    /// yields the whole catalog with every model `absent` — the first-load
+    /// state the UI must render before any pull.
+    #[cfg(feature = "embedded-llama-cpp")]
+    #[test]
+    fn merge_catalog_phases_first_load_is_full_catalog_all_absent() {
+        let rows = super::merge_catalog_phases(
+            crate::api::model_provisioning::provisioning_catalog(),
+            Vec::new(),
+        );
+        assert_eq!(rows.len(), 1, "one on-demand model today");
+        assert_eq!(rows[0]["id"], "gemma2:2b");
+        assert_eq!(rows[0]["name"], "Gemma 2 2B Instruct");
+        assert_eq!(rows[0]["phase"], json!({"phase": "absent"}));
     }
 }
