@@ -440,6 +440,7 @@ mod tests {
             gateway,
             event_tx,
             breaker: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+            provisioning: None,
         });
         Arc::new(TaskContext {
             queue,
@@ -459,6 +460,7 @@ mod tests {
             gateway,
             event_tx,
             breaker: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+            provisioning: None,
         });
         let ctx = Arc::new(TaskContext {
             queue,
