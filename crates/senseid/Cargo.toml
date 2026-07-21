@@ -81,6 +81,9 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 thiserror = "2"
+# Implementing the gateway's `kernel::ReadinessProbe` (an async trait) for the
+# sensei-owned ModelProvisioning service. Same version the gateway kernel uses.
+async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
 dirs = "6"
 reqwest = { version = "0.12", default-features = false, features = ["json", "blocking", "rustls-tls", "stream"] }
@@ -89,10 +92,16 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "blo
 # re-exported through these, so we don't depend on kernel directly.
 # Routing engine + cloud provider adapters (behind the default `cloud` feature).
 gateway = { package = "sensei-gateway", git = "https://github.com/sensei-hq/gateway.git", tag = "v0.4.0", features = ["cloud"] }
-# Local model engine: id→bytes resolvers (managed / ollama / external / chained,
-# used by model_provision) plus Hugging Face pull (hf-download). Always present;
-# the heavy in-process adapter backends land only via the embedded-* features.
-local-engine = { package = "sensei-local-engine", git = "https://github.com/sensei-hq/gateway.git", tag = "v0.4.0", features = ["hf-download"] }
+# Local model engine: id→bytes resolvers (managed / ollama / external / chained),
+# used by both model_provision (the sensei-owned Ollama-registry puller) and the
+# ModelProvisioning service's readiness/registration wiring. Always present; the
+# heavy in-process adapter backends land only via the embedded-* features.
+#
+# NOTE: the `hf-download` feature (hf-hub puller) is intentionally NOT enabled:
+# on-demand provisioning downloads via the Ollama registry (crate::model_provision),
+# which is not Xet-affected. HF-as-a-source returns once gateway#5 (hf-hub Xet
+# stall) is resolved.
+local-engine = { package = "sensei-local-engine", git = "https://github.com/sensei-hq/gateway.git", tag = "v0.4.0" }
 # In-process inference adapters (llama.cpp / fastembed / ort). Optional — pulled
 # in (with its heavy native backend) only when an embedded-* feature is enabled.
 local-providers = { package = "sensei-local-providers", git = "https://github.com/sensei-hq/gateway.git", tag = "v0.4.0", optional = true }
