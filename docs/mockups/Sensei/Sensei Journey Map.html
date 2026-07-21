@@ -714,6 +714,7 @@ function buildLadders(){
 
 /* ── module lifecycles ── */
 const MODLC=[
+  {k:"門",name:"Front door",stages:["Describe","Classify","Recommend","Confirm","Record"],loop:true,note:"depth follows risk — trusted low-risk auto-selects; high blast-radius always confirms"},
   {k:"覚",name:"Memory",stages:["Observe","Form","Vet","Adopt","Reinforce"],loop:true,note:"the learning loop — reinforced or retired as evidence shifts"},
   {k:"巻",name:"Traceability",stages:["Link","Check","Detect drift","Fix","Verify"],note:"confidence-scored — high-confidence drift auto-applies (§2.4)"},
   {k:"果",name:"Impact",stages:["Accept","Measure","Verdict","Keep / revert"],loop:true,note:"regressions now surface in nav — Impact › Regressions"},
