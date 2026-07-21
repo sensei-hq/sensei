@@ -50,8 +50,7 @@ pub(crate) async fn provision_model(
 
     // Non-blocking: spawn/join the background job and report the phase right now
     // (`Queued` for a fresh pull, or the live phase of an in-flight/ready one).
-    let handle = sup.ensure(&id, local_engine::EnsureOpts { wait: false });
-    let phase = handle.phase();
+    let phase = sup.ensure(&id);
     Ok(Json(json!({
         "model": id,
         "phase": phase_json(&phase),
@@ -178,7 +177,7 @@ mod tests {
         );
         assert_eq!(rows.len(), 1, "one on-demand model today");
         assert_eq!(rows[0]["id"], "gemma2:2b");
-        assert_eq!(rows[0]["name"], "Gemma 2 2B Instruct");
+        assert_eq!(rows[0]["name"], "Gemma 2 2B");
         assert_eq!(rows[0]["phase"], json!({"phase": "absent"}));
     }
 }

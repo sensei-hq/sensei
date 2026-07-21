@@ -1,201 +1,439 @@
-//! On-demand Hugging Face model provisioning wiring.
+//! On-demand model provisioning — a sensei-owned service (#79, gateway#5).
 //!
-//! The gateway v0.4.0 release ships a library-owned [`ProvisioningSupervisor`]
-//! (`local_engine`) that can pull a GGUF chat model from the Hugging Face Hub
-//! and coldboot it behind the embedded llama.cpp router — so local chat works
-//! without a pre-populated ollama/managed model. This module owns senseid's
-//! side of that wiring:
+//! The embedded chat model (`gemma2:2b`) is downloaded on demand so local chat
+//! works without a pre-populated ollama/managed model. Downloads go through the
+//! **Ollama registry over plain HTTP + sha256** ([`crate::model_provision`]),
+//! NOT the gateway's Hugging Face puller: hf-hub 0.4.3 stalls on Xet-backed HF
+//! repos (all modern GGUF repos — gateway#5), whereas the Ollama registry serves
+//! the same model ids the rest of the gateway uses and its manifest digest
+//! doubles as the sha256 to verify against.
 //!
-//! - [`provisioning_plans`] — the fixed catalog of what senseid can pull
-//!   (currently one entry: `gemma2:2b`).
-//! - [`build_supervisor`] — assemble a [`ProvisioningSupervisor`] over those
-//!   plans, sharing the SAME `AdapterRegistry` + managed-store resolver that the
-//!   `embedded-llama` adapter uses (see [`crate::api::gateway_init`]).
+//! We own the provisioning service instead of the gateway's
+//! [`ProvisioningSupervisor`] because the supervisor's `with_puller` takes a
+//! concrete `HfHubPuller` (no seam to inject sensei's Ollama puller) and its
+//! `ProvisionPlan` is `#[non_exhaustive]` (can't drive an Ollama download from
+//! the daemon). [`ModelProvisioning`] mirrors the supervisor's proven shape — a
+//! shared phase map, a concurrency cap, and the [`kernel::ReadinessProbe`] impl
+//! — over sensei's [`Provisioner`](crate::model_provision::Provisioner).
 //!
-//! Everything that constructs a [`ProvisionPlan::HfGguf`] or calls the
-//! coldboot builders (`with_registry`/`with_resolver`/`with_puller`) is gated
-//! behind `embedded-llama-cpp` — only that build enables `local-engine`'s
-//! `llama-cpp` (+ `coldboot`, +`hf-download`) features. The
-//! [`ProvisioningSupervisor`] type itself is available in every build (the
-//! `local-engine` dep is non-optional), so the daemon can carry an
-//! `Option<Arc<ProvisioningSupervisor>>` unconditionally and simply hold `None`
-//! when built without the embedded engine.
+//! Wired as the gateway's readiness probe at startup (see
+//! [`crate::api::gateway_init`]), so a chain leg whose model is still being
+//! pulled degrades to a terminal `ModelNotReady { model, phase }` while
+//! `gemma2:2b` downloads, then serves the instant the pull reaches `Ready`.
+//! Once a model lands in the managed store, the already-registered
+//! `embedded-llama` adapter lazy-loads it on the next inference request — a
+//! completed download is servable with no explicit coldboot.
 //!
-//! Provisioning is **on-demand only**: this module never calls `ensure`. The
-//! supervisor is wired as the gateway's readiness probe at startup, but a pull
-//! begins solely when the `POST /api/gateway/models/{id}/provision` handler
-//! asks for it.
+//! Provisioning is **on-demand only**: nothing here or at startup auto-pulls; a
+//! pull begins solely when the `POST /api/gateway/models/{id}/provision` handler
+//! calls [`ModelProvisioning::ensure`].
+//!
+//! The service is only *constructed* in an `embedded-llama-cpp` build (it's
+//! useful only when the embedded-llama adapter exists to serve the result — see
+//! [`crate::api::gateway_init`]), but the [`ModelProvisioning`] type itself
+//! compiles in every build: its deps ([`Provisioner`], `kernel::ReadinessProbe`,
+//! [`gateway::ProvisionPhase`]) are all non-optional. So [`crate::api::state`]
+//! can carry an `Option<Arc<ModelProvisioning>>` unconditionally and simply hold
+//! `None` when built without the embedded engine — no per-call-site cfg on the
+//! ~15 `SharedState` constructors.
 
-/// HF repo the on-demand embedded chat model is pulled from. Isolated as a
-/// named constant (with the file below) so the exact repo/filename is trivial
-/// to adjust if the published GGUF asset name changes upstream.
-#[cfg(feature = "embedded-llama-cpp")]
-pub(crate) const GEMMA2_2B_HF_REPO: &str = "bartowski/gemma-2-2b-it-GGUF";
+// The type + its `ReadinessProbe` impl compile in every build so `SharedState`
+// can carry `Option<Arc<ModelProvisioning>>` unconditionally, but the service is
+// only CONSTRUCTED / driven in an `embedded-llama-cpp` build (`gateway_init` +
+// the provision handlers, both feature-gated). In a non-embedded build the field
+// is always `None`, so the constructor / catalog / status surface is genuinely
+// unused there — suppress dead-code in THAT build only. The embedded build (the
+// one that actually uses these) keeps the lint on, so real dead code still
+// surfaces where it matters.
+#![cfg_attr(not(feature = "embedded-llama-cpp"), allow(dead_code))]
 
-/// GGUF file within [`GEMMA2_2B_HF_REPO`] to download. Q4_K_M is the balanced
-/// quant (~1.7 GB) that fits a laptop while keeping usable chat quality.
-#[cfg(feature = "embedded-llama-cpp")]
-pub(crate) const GEMMA2_2B_HF_FILE: &str = "gemma-2-2b-it-Q4_K_M.gguf";
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
-/// Stable model id the plan is keyed by. MUST match the baseline config's
-/// embedded chat model id + its `api_model_id` (see
+use gateway::ProvisionPhase;
+use tokio::sync::Semaphore;
+
+use crate::model_provision::Provisioner;
+
+/// Stable model id the embedded chat model is keyed by. MUST match the baseline
+/// config's embedded chat model id + its `api_model_id` (see
 /// [`crate::api::gateway_init::baseline_production_config`]) so the gateway's
 /// readiness probe degrades the embedded chat leg to `ModelNotReady` while this
-/// model is being pulled, then serves it once `Ready`.
-#[cfg(feature = "embedded-llama-cpp")]
+/// model is being pulled, then serves it once `Ready`. Also the id the
+/// [`Provisioner`] registers under in the managed store.
 pub(crate) const EMBEDDED_CHAT_MODEL_ID: &str = "gemma2:2b";
 
-/// The fixed catalog of models senseid can provision on demand, keyed by model
-/// id. Currently one entry: the embedded chat model pulled as a GGUF from HF.
+/// Human-readable name shown in the status list / UI for the embedded chat model.
+const EMBEDDED_CHAT_MODEL_NAME: &str = "Gemma 2 2B";
+
+/// The fixed catalog of models sensei can provision on demand, as
+/// `(id, display_name)` pairs. Currently one entry: the embedded chat model.
 ///
 /// Pure over its constants — unit-testable without a runtime, network, or the
 /// llama.cpp backend.
-#[cfg(feature = "embedded-llama-cpp")]
-pub(crate) fn provisioning_plans(
-) -> std::collections::HashMap<String, local_engine::ProvisionPlan> {
-    use local_engine::registry::{ModelFormat, PullSpec};
-    use local_engine::ProvisionPlan;
-
-    let mut plans = std::collections::HashMap::new();
-    plans.insert(
+fn catalog() -> Vec<(String, String)> {
+    vec![(
         EMBEDDED_CHAT_MODEL_ID.to_string(),
-        ProvisionPlan::HfGguf {
-            spec: PullSpec {
-                repo: GEMMA2_2B_HF_REPO.to_string(),
-                revision: None,
-                id: EMBEDDED_CHAT_MODEL_ID.to_string(),
-                name: Some("Gemma 2 2B Instruct".to_string()),
-                format: ModelFormat::Gguf,
-                files: vec![GEMMA2_2B_HF_FILE.to_string()],
-            },
-        },
-    );
-    plans
+        EMBEDDED_CHAT_MODEL_NAME.to_string(),
+    )]
 }
 
-/// The provisionable catalog as flat `(id, display_name)` pairs, derived from
-/// [`provisioning_plans`]. This is what the status endpoint (and the UI) list so
-/// a client can see every pullable model — with its current phase overlaid —
-/// before any pull has started. `display_name` falls back to the id when a plan
-/// carries no `name`.
+/// The provisionable catalog as flat `(id, display_name)` pairs. This is what
+/// the status endpoint (and the UI) list so a client can see every pullable
+/// model — with its current phase overlaid — before any pull has started.
 ///
-/// Pure over [`provisioning_plans`]; no runtime, network, or llama.cpp backend.
-#[cfg(feature = "embedded-llama-cpp")]
+/// Kept as a free function (mirrors the old supervisor surface) so the status
+/// handler can merge the catalog with live phases exactly as it does today.
 pub(crate) fn provisioning_catalog() -> Vec<(String, String)> {
-    use local_engine::ProvisionPlan;
-
-    let mut catalog: Vec<(String, String)> = provisioning_plans()
-        .into_values()
-        .map(|plan| match plan {
-            ProvisionPlan::HfGguf { spec } => {
-                let name = spec.name.unwrap_or_else(|| spec.id.clone());
-                (spec.id, name)
-            }
-            // `ProvisionPlan` is #[non_exhaustive]; any future variant still
-            // needs an id/name pair to appear in the catalog. Until such a
-            // variant exists this arm is unreachable, but we must not silently
-            // drop it — panic loudly in debug so a new plan kind is a
-            // deliberate, reviewed catalog change rather than a silent gap.
-            _ => unreachable!("provisioning catalog: unhandled ProvisionPlan variant"),
-        })
-        .collect();
-    // HashMap iteration order is nondeterministic; sort by id so the status
-    // list (and its tests) are stable.
-    catalog.sort_by(|a, b| a.0.cmp(&b.0));
-    catalog
+    catalog()
 }
 
-/// Build the on-demand provisioning supervisor, sharing the given adapter
-/// registry and managed-store resolver.
+/// Sensei-owned on-demand model-provisioning service. Held as
+/// `Arc<ModelProvisioning>` so the shared phase map is visible across the
+/// spawned download job, the readiness probe, and the status endpoint.
 ///
-/// The supervisor coldboots a pulled GGUF into an `EmbeddedLlamaAdapter` and
-/// registers it into `adapters` (the SAME registry the gateway dispatches
-/// through), and resolves/verifies bytes through `resolver` (the SAME
-/// managed→ollama chain the `embedded-llama` adapter already uses). The HF
-/// puller writes into `managed_dir` — the managed store `resolver`'s
-/// `ManagedResolver` leg reads from — so a freshly-pulled file resolves for the
-/// coldboot verify step.
-///
-/// `max_concurrent` is 1: a single embedded chat model, and concurrent large
-/// GGUF pulls would only contend for disk/RAM.
-#[cfg(feature = "embedded-llama-cpp")]
-pub(crate) fn build_supervisor(
-    adapters: gateway::adapters::AdapterRegistry,
-    resolver: std::sync::Arc<dyn local_engine::registry::ModelResolver>,
-    managed_dir: std::path::PathBuf,
-) -> local_engine::ProvisioningSupervisor {
-    use local_engine::registry::{HfHubPuller, ManagedResolver};
-    use std::sync::Arc;
-
-    local_engine::ProvisioningSupervisor::new(provisioning_plans(), 1)
-        .with_registry(adapters)
-        .with_resolver(resolver)
-        .with_puller(Arc::new(HfHubPuller::new(
-            ManagedResolver::new(managed_dir),
-            // No HF token: the embedded chat model is a public repo. A gated /
-            // private repo would need a token threaded through here.
-            None,
-        )))
+/// The provisionable catalog is a fixed constant, not per-instance state: the
+/// status handler reads it from the free [`provisioning_catalog`] and merges
+/// live phases (from [`Self::status_all`]) on top — so it is not duplicated here.
+pub struct ModelProvisioning {
+    /// The Ollama-registry downloader, writing into the managed model dir.
+    provisioner: Arc<Provisioner>,
+    /// Live phase per model id. `std::sync::Mutex` (never held across `.await`).
+    /// Shared (`Arc`) so the spawned job and the probe see the same map.
+    phases: Arc<Mutex<HashMap<String, ProvisionPhase>>>,
+    /// Caps concurrent pulls at 1 (a single embedded chat model; concurrent
+    /// large GGUF pulls would only contend for disk/RAM).
+    sem: Arc<Semaphore>,
 }
 
-#[cfg(all(test, feature = "embedded-llama-cpp"))]
-mod tests {
-    use super::*;
-    use local_engine::registry::ModelFormat;
-    use local_engine::ProvisionPlan;
-
-    /// The catalog must carry the embedded chat model keyed by its resolvable id
-    /// with the expected HF repo, file, and format. This is the contract the
-    /// baseline config + readiness probe rely on (config id == plan id ==
-    /// resolvable id); a drift here silently breaks on-demand chat.
-    #[test]
-    fn provisioning_plans_contains_embedded_chat_model() {
-        let plans = provisioning_plans();
-        let plan = plans
-            .get("gemma2:2b")
-            .expect("catalog must contain the embedded chat model 'gemma2:2b'");
-
-        match plan {
-            ProvisionPlan::HfGguf { spec } => {
-                assert_eq!(spec.repo, "bartowski/gemma-2-2b-it-GGUF");
-                assert_eq!(spec.id, "gemma2:2b");
-                assert_eq!(spec.format, ModelFormat::Gguf);
-                assert_eq!(
-                    spec.files,
-                    vec!["gemma-2-2b-it-Q4_K_M.gguf".to_string()],
-                    "single GGUF file to pull"
-                );
-                assert_eq!(spec.name.as_deref(), Some("Gemma 2 2B Instruct"));
-                assert!(spec.revision.is_none(), "revision defaults to main");
-            }
-            // `ProvisionPlan` is #[non_exhaustive] and does not derive Debug, so
-            // the wildcard arm can't print the variant — a bare panic is enough.
-            _ => panic!("expected HfGguf plan, got a different variant"),
+impl ModelProvisioning {
+    /// Build the service over `managed_dir` — the same managed-store dir the
+    /// `embedded-llama` adapter resolves from, so a completed download is
+    /// immediately servable.
+    pub fn new(managed_dir: PathBuf) -> Self {
+        Self {
+            provisioner: Arc::new(Provisioner::new(managed_dir)),
+            phases: Arc::new(Mutex::new(HashMap::new())),
+            sem: Arc::new(Semaphore::new(1)),
         }
     }
 
-    /// The catalog holds exactly the one on-demand model today — a guard so an
-    /// accidental extra entry (which would auto-appear in status/CLI output)
-    /// is a deliberate, reviewed change.
-    #[test]
-    fn provisioning_plans_has_exactly_one_entry() {
-        assert_eq!(provisioning_plans().len(), 1);
+    /// Current phase of `model`, or `Absent` if untracked. Locks only, no await
+    /// held — shared body behind the inherent status and the readiness probe.
+    fn phase_of(&self, model: &str) -> ProvisionPhase {
+        self.phases
+            .lock()
+            .expect("provisioning phases mutex poisoned")
+            .get(model)
+            .cloned()
+            .unwrap_or(ProvisionPhase::Absent)
     }
 
-    /// `provisioning_catalog` flattens the plans to `(id, display_name)` pairs.
-    /// Today: one entry, id `gemma2:2b`, name "Gemma 2 2B Instruct" (the plan's
-    /// `name`). This is the shape the status endpoint + UI render.
+    /// Snapshot of every tracked model's live phase (order unspecified; the
+    /// status handler merges this into the stable catalog order).
+    fn all_phases(&self) -> Vec<(String, ProvisionPhase)> {
+        self.phases
+            .lock()
+            .expect("provisioning phases mutex poisoned")
+            .iter()
+            .map(|(id, p)| (id.clone(), p.clone()))
+            .collect()
+    }
+
+    /// Set `model`'s live phase.
+    fn set_phase(&self, model: &str, phase: ProvisionPhase) {
+        self.phases
+            .lock()
+            .expect("provisioning phases mutex poisoned")
+            .insert(model.to_string(), phase);
+    }
+
+    /// A snapshot of every model the service is (or has been) provisioning, with
+    /// its current phase. Mirrors the old supervisor's `status_all`.
+    pub async fn status_all(&self) -> Vec<(String, ProvisionPhase)> {
+        self.all_phases()
+    }
+
+    /// Begin (or join) an on-demand pull of `model`, returning its current phase.
+    /// Non-blocking, idempotent, deduped by id: if the model is `Ready` or a job
+    /// is in flight, returns that phase unchanged; otherwise transitions to
+    /// `Queued`, spawns a background download job, and returns `Queued`.
+    ///
+    /// The real download runs through the [`Provisioner`]; see [`Self::ensure_with`]
+    /// for the injectable seam the unit tests drive without a network.
+    pub fn ensure(self: &Arc<Self>, model: &str) -> ProvisionPhase {
+        let provisioner = self.provisioner.clone();
+        let model_owned = model.to_string();
+        self.ensure_with(model, move |report| {
+            let provisioner = provisioner.clone();
+            let model_owned = model_owned.clone();
+            async move {
+                provisioner
+                    .ensure_model_with_progress(&model_owned, |done, total| {
+                        report(ProvisionPhase::Downloading { done, total });
+                    })
+                    .await
+                    .map(|_| ())
+            }
+        })
+    }
+
+    /// Injectable core of [`Self::ensure`]. `download` is given a `report`
+    /// callback (to push `Downloading{done,total}` progress into the shared phase
+    /// map) and returns a future resolving to `Ok(())` on a completed download or
+    /// `Err(msg)` on failure — no network dependency, so tests drive
+    /// Downloading→Ready and Downloading→Failed deterministically.
+    ///
+    /// Dedup + spawn semantics (holding the phase lock only for the check-and-set,
+    /// never across `.await`):
+    /// - `Ready` or in-flight (`Queued`/`Downloading`/`Verifying`/`Loading`) →
+    ///   return that phase, spawn nothing.
+    /// - `Absent` or `Failed` → set `Queued`, spawn the job, return `Queued`.
+    ///
+    /// The job (holding a semaphore permit): set `Downloading{done:0,total:None}`,
+    /// run `download` (progress → `Downloading{done,total}`), then `Ready` on
+    /// success or `Failed{error}` on error. An `ensure_model` that finds the
+    /// model already present returns fast, so `download` resolves `Ok` almost
+    /// immediately → `Ready` (the idempotent short-circuit).
+    pub(crate) fn ensure_with<F, Fut>(self: &Arc<Self>, model: &str, download: F) -> ProvisionPhase
+    where
+        F: FnOnce(ReportPhase) -> Fut + Send + 'static,
+        Fut: std::future::Future<Output = Result<(), String>> + Send + 'static,
+    {
+        {
+            // Check-and-set under a single lock hold (no `.await` inside) so two
+            // concurrent `ensure` calls for the same id can't both pass the dedup
+            // check and spawn a job: the first flips the phase to `Queued`, the
+            // second sees the in-flight phase and returns.
+            let mut phases = self.phases.lock().expect("provisioning phases mutex poisoned");
+            // `Ready` or in-flight → return that phase, spawn nothing (dedup).
+            // `Absent`/`Failed` (or untracked) fall through to (re)start a job.
+            if let Some(phase) = phases.get(model)
+                && (matches!(phase, ProvisionPhase::Ready) || phase.is_in_flight())
+            {
+                return phase.clone();
+            }
+            phases.insert(model.to_string(), ProvisionPhase::Queued);
+        }
+
+        let this = self.clone();
+        let model_owned = model.to_string();
+        let sem = self.sem.clone();
+        tokio::spawn(async move {
+            // `acquire_owned` errs only if the semaphore is closed, which we
+            // never do; the permit releases on return (and on panic).
+            let _permit = sem.acquire_owned().await;
+            this.set_phase(
+                &model_owned,
+                ProvisionPhase::Downloading { done: 0, total: None },
+            );
+
+            // Progress reporter handed to `download`: pushes each transition into
+            // the shared phase map so the readiness probe + status see live bytes.
+            let report: ReportPhase = {
+                let this = this.clone();
+                let model_owned = model_owned.clone();
+                Arc::new(move |phase: ProvisionPhase| this.set_phase(&model_owned, phase))
+            };
+
+            match download(report).await {
+                Ok(()) => this.set_phase(&model_owned, ProvisionPhase::Ready),
+                Err(error) => {
+                    // Surface the failure on the phase map (a client polls status
+                    // / the readiness probe for it); also log so an operator sees
+                    // it without polling.
+                    tracing::warn!(model = %model_owned, %error, "model provisioning failed");
+                    this.set_phase(&model_owned, ProvisionPhase::Failed { error });
+                }
+            }
+        });
+
+        ProvisionPhase::Queued
+    }
+}
+
+/// Callback the download job pushes phase transitions through (progress →
+/// `Downloading{done,total}`). Shared (`Arc`) + `Send`/`Sync` so it can cross the
+/// spawn boundary and be called from inside the download future.
+pub(crate) type ReportPhase = Arc<dyn Fn(ProvisionPhase) + Send + Sync>;
+
+/// The gateway consults readiness through this port; we answer from the live
+/// phase map. A model still being pulled reports its in-flight phase, so a chain
+/// leg keyed on it degrades to `ModelNotReady` rather than a generic failure.
+///
+/// `gateway::ReadinessProbe` is a re-export of `kernel::ReadinessProbe`, so this
+/// impl satisfies the bound on [`gateway::Gateway::with_readiness`].
+#[async_trait::async_trait]
+impl gateway::ReadinessProbe for ModelProvisioning {
+    async fn phase(&self, model: &str) -> ProvisionPhase {
+        self.phase_of(model)
+    }
+
+    async fn status_all(&self) -> Vec<(String, ProvisionPhase)> {
+        self.all_phases()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use tokio::sync::Notify;
+
+    /// The catalog carries exactly the one on-demand model today (`gemma2:2b`)
+    /// with its display name — the shape the status endpoint + UI render, and the
+    /// contract the baseline config + readiness probe rely on (catalog id ==
+    /// config id == resolvable id). A drift here silently breaks on-demand chat.
     #[test]
-    fn provisioning_catalog_lists_id_and_display_name() {
+    fn catalog_lists_exactly_the_embedded_chat_model() {
         let catalog = provisioning_catalog();
         assert_eq!(catalog.len(), 1, "one on-demand model today");
         assert_eq!(
             catalog[0],
-            (
-                "gemma2:2b".to_string(),
-                "Gemma 2 2B Instruct".to_string(),
-            ),
+            ("gemma2:2b".to_string(), "Gemma 2 2B".to_string()),
             "catalog carries the model id and its display name",
+        );
+    }
+
+    /// A fresh service has no live phases: `status_all` is empty and any model
+    /// reads `Absent`. The status handler overlays this onto the catalog, so a
+    /// model shows up `absent` before any pull begins.
+    #[tokio::test]
+    async fn fresh_service_reports_absent_and_empty_status() {
+        let svc = Arc::new(ModelProvisioning::new(std::env::temp_dir()));
+        assert!(svc.status_all().await.is_empty());
+        assert_eq!(svc.phase_of("gemma2:2b"), ProvisionPhase::Absent);
+    }
+
+    /// `ensure` (via the injectable seam) transitions a fresh model
+    /// Queued → Downloading{progress} → Ready, driving progress through the
+    /// `report` callback without any network. Uses a gate so the assertions
+    /// observe the intermediate `Downloading` state before completion.
+    #[tokio::test]
+    async fn ensure_with_drives_downloading_to_ready() {
+        let svc = Arc::new(ModelProvisioning::new(std::env::temp_dir()));
+        let release = Arc::new(Notify::new());
+        let release_job = release.clone();
+
+        // First call: fresh (Absent) → returns Queued and spawns the job.
+        let phase = svc.ensure_with("gemma2:2b", move |report| async move {
+            // Report mid-download progress, then block until the test releases us.
+            report(ProvisionPhase::Downloading { done: 42, total: Some(100) });
+            release_job.notified().await;
+            Ok(())
+        });
+        assert_eq!(phase, ProvisionPhase::Queued, "fresh ensure returns Queued");
+
+        // Wait for the job to publish Downloading progress.
+        wait_until(&svc, "gemma2:2b", |p| {
+            matches!(p, ProvisionPhase::Downloading { done: 42, total: Some(100) })
+        })
+        .await;
+
+        // A concurrent ensure while downloading joins the in-flight job (no new
+        // job) and returns the live Downloading phase unchanged.
+        let joined = svc.ensure_with("gemma2:2b", |_report| async {
+            panic!("in-flight ensure must NOT spawn a second download job");
+        });
+        assert_eq!(
+            joined,
+            ProvisionPhase::Downloading { done: 42, total: Some(100) },
+            "in-flight ensure returns the live phase, deduped",
+        );
+
+        // Let the job finish → Ready.
+        release.notify_one();
+        wait_until(&svc, "gemma2:2b", |p| matches!(p, ProvisionPhase::Ready)).await;
+
+        // An ensure on a Ready model is a no-op that returns Ready.
+        let already = svc.ensure_with("gemma2:2b", |_report| async {
+            panic!("ensure on a Ready model must NOT spawn a download job");
+        });
+        assert_eq!(already, ProvisionPhase::Ready);
+    }
+
+    /// A failing download transitions Queued → Downloading → Failed{error}, and a
+    /// subsequent `ensure` RESTARTS the job (Failed is not terminal for retry).
+    #[tokio::test]
+    async fn ensure_with_drives_downloading_to_failed_then_retries() {
+        let svc = Arc::new(ModelProvisioning::new(std::env::temp_dir()));
+
+        let phase = svc.ensure_with("gemma2:2b", |_report| async {
+            Err("registry unreachable".to_string())
+        });
+        assert_eq!(phase, ProvisionPhase::Queued);
+
+        wait_until(&svc, "gemma2:2b", |p| matches!(p, ProvisionPhase::Failed { .. })).await;
+        assert_eq!(
+            svc.phase_of("gemma2:2b"),
+            ProvisionPhase::Failed { error: "registry unreachable".to_string() },
+        );
+
+        // Failed → a fresh ensure restarts provisioning (returns Queued, spawns
+        // a new job) rather than being stuck on the old failure.
+        let ran = Arc::new(AtomicBool::new(false));
+        let ran_job = ran.clone();
+        let retry = svc.ensure_with("gemma2:2b", move |_report| async move {
+            ran_job.store(true, Ordering::SeqCst);
+            Ok(())
+        });
+        assert_eq!(retry, ProvisionPhase::Queued, "Failed model re-queues on ensure");
+        wait_until(&svc, "gemma2:2b", |p| matches!(p, ProvisionPhase::Ready)).await;
+        assert!(ran.load(Ordering::SeqCst), "retry job actually ran");
+    }
+
+    /// The readiness probe answers from the same live phase map: a model mid-pull
+    /// reports its in-flight phase (so a chain leg degrades to ModelNotReady), an
+    /// untracked model reports Absent, and `status_all` mirrors the map.
+    #[tokio::test]
+    async fn readiness_probe_reflects_live_phases() {
+        use gateway::ReadinessProbe;
+        let svc = Arc::new(ModelProvisioning::new(std::env::temp_dir()));
+        let probe: Arc<dyn ReadinessProbe> = svc.clone();
+
+        assert_eq!(probe.phase("gemma2:2b").await, ProvisionPhase::Absent);
+
+        let release = Arc::new(Notify::new());
+        let release_job = release.clone();
+        svc.ensure_with("gemma2:2b", move |report| async move {
+            report(ProvisionPhase::Downloading { done: 1, total: Some(10) });
+            release_job.notified().await;
+            Ok(())
+        });
+        wait_until(&svc, "gemma2:2b", |p| {
+            matches!(p, ProvisionPhase::Downloading { .. })
+        })
+        .await;
+
+        assert_eq!(
+            probe.phase("gemma2:2b").await,
+            ProvisionPhase::Downloading { done: 1, total: Some(10) },
+            "probe reflects the in-flight download phase",
+        );
+        let all = probe.status_all().await;
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].0, "gemma2:2b");
+
+        release.notify_one();
+    }
+
+    /// Poll the live phase map until `pred` holds, with a bounded timeout so a
+    /// hung job fails the test instead of hanging forever.
+    async fn wait_until(
+        svc: &Arc<ModelProvisioning>,
+        model: &str,
+        pred: impl Fn(&ProvisionPhase) -> bool,
+    ) {
+        for _ in 0..200 {
+            if pred(&svc.phase_of(model)) {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        panic!(
+            "phase for '{model}' never satisfied the predicate (last: {:?})",
+            svc.phase_of(model)
         );
     }
 }
