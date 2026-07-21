@@ -546,6 +546,7 @@ mod tests {
             gateway,
             event_tx: { let (tx, _) = tokio::sync::broadcast::channel(16); tx },
             breaker: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+            provisioning: None,
         });
         Some(Arc::new(TaskContext { queue, app_state, _graph_path: None, logger: sensei_logger::Logger::noop() }))
     }

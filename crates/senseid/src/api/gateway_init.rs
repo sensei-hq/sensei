@@ -37,7 +37,19 @@ pub fn keychain_api_key(router_id: &str) -> Option<String> {
 /// - OpenAI: OPENAI_API_KEY env var
 /// - Grok: XAI_API_KEY env var
 /// - Noop: always registered as graceful degradation fallback
-pub async fn init_gateway(db_config: Option<GatewayConfig>) -> Arc<Gateway> {
+///
+/// Returns the gateway plus an optional on-demand model-provisioning supervisor
+/// ([`local_engine::ProvisioningSupervisor`]). The supervisor is `Some` only in
+/// an `embedded-llama-cpp` build running the DEFAULT instance — the same
+/// conditions under which the `embedded-llama` adapter is registered. When
+/// present it is wired as the gateway's readiness probe (so an in-flight pull
+/// degrades the embedded chat leg to `ModelNotReady` rather than a generic
+/// failure) and handed back so the HTTP layer can drive on-demand pulls; it
+/// NEVER auto-pulls at startup. `None` in every other build/instance ⇒ the
+/// gateway behaves exactly as before.
+pub async fn init_gateway(
+    db_config: Option<GatewayConfig>,
+) -> (Arc<Gateway>, Option<Arc<local_engine::ProvisioningSupervisor>>) {
     let adapters = AdapterRegistry::new();
 
     // Always register noop as fallback
@@ -96,6 +108,13 @@ pub async fn init_gateway(db_config: Option<GatewayConfig>) -> Arc<Gateway> {
     // to the chain's fallback. `SENSEI_INSTANCE` is set from the `--instance`
     // CLI arg at process start (main.rs), so — unlike a plain env var — it
     // survives the daemonize re-spawn and is readable here.
+    // The on-demand provisioning supervisor (readiness probe + puller). Built
+    // only alongside the embedded-llama adapter; `None` otherwise. Wired into
+    // the gateway via `.with_readiness` after `Gateway::new` below.
+    // `mut` is used only in the `embedded-llama-cpp` block; the default build
+    // leaves it `None`, so silence the unused-mut lint there.
+    #[allow(unused_mut)]
+    let mut provisioning_supervisor: Option<Arc<local_engine::ProvisioningSupervisor>> = None;
     #[cfg(feature = "embedded-llama-cpp")]
     if std::env::var("SENSEI_INSTANCE").ok().is_some_and(|s| !s.is_empty()) {
         tracing::info!(
@@ -104,14 +123,25 @@ pub async fn init_gateway(db_config: Option<GatewayConfig>) -> Arc<Gateway> {
     } else {
         use local_providers::adapters::EmbeddedLlamaAdapter;
         use local_engine::registry::{ChainedResolver, ManagedResolver, OllamaResolver};
-        let resolver = ChainedResolver::new()
-            .push(Arc::new(ManagedResolver::new(
-                crate::paths::sensei_dir().join("models"),
-            )))
-            .push(Arc::new(OllamaResolver::new(
-                crate::paths::home().join(".ollama/models"),
-            )));
-        match EmbeddedLlamaAdapter::with_shared_backend("embedded-llama", Arc::new(resolver)) {
+
+        // Managed-store dir the embedded-llama adapter resolves from AND the HF
+        // puller writes into — one path so a freshly-pulled GGUF resolves for
+        // coldboot. Kept as a single binding (DRY): both the adapter's resolver
+        // and the supervisor's puller are derived from it below.
+        let managed_dir = crate::paths::sensei_dir().join("models");
+
+        // Resolver: sensei-managed files first, then a read-through view of the
+        // local ollama cache. Built once as `Arc<dyn ModelResolver>` and shared
+        // by the adapter and the provisioning supervisor.
+        let resolver: Arc<dyn local_engine::registry::ModelResolver> = Arc::new(
+            ChainedResolver::new()
+                .push(Arc::new(ManagedResolver::new(managed_dir.clone())))
+                .push(Arc::new(OllamaResolver::new(
+                    crate::paths::home().join(".ollama/models"),
+                ))),
+        );
+
+        match EmbeddedLlamaAdapter::with_shared_backend("embedded-llama", resolver.clone()) {
             Ok(adapter) => {
                 tracing::info!(
                     "Gateway: embedded-llama adapter registered (resolver: managed → ollama)"
@@ -122,6 +152,19 @@ pub async fn init_gateway(db_config: Option<GatewayConfig>) -> Arc<Gateway> {
             }
             Err(e) => tracing::warn!("Gateway: embedded-llama adapter unavailable: {e}"),
         }
+
+        // On-demand HF provisioning: share the SAME adapter registry (so a
+        // coldbooted model registers where the gateway dispatches) and the SAME
+        // resolver + managed dir. Wired as the readiness probe below; it only
+        // pulls when the provision HTTP handler asks — never at startup.
+        provisioning_supervisor = Some(Arc::new(
+            crate::api::model_provisioning::build_supervisor(
+                adapters.clone(),
+                resolver,
+                managed_dir,
+            ),
+        ));
+        tracing::info!("Gateway: on-demand model-provisioning supervisor wired (readiness probe)");
     }
 
     // Probe Ollama
@@ -226,7 +269,15 @@ pub async fn init_gateway(db_config: Option<GatewayConfig>) -> Arc<Gateway> {
 
     let cb = CircuitBreakerManager::new(CircuitBreakerConfig::default());
 
-    let gw = Gateway::new(config, adapters, cb);
+    let mut gw = Gateway::new(config, adapters, cb);
+
+    // Attach the provisioning supervisor as the gateway's readiness probe: when
+    // a chain exhausts to a candidate whose model is still being pulled, the
+    // gateway returns a terminal `ModelNotReady { model, phase }` instead of the
+    // generic failure — so callers/UI can see "downloading" rather than "broken".
+    if let Some(sup) = &provisioning_supervisor {
+        gw = gw.with_readiness(sup.clone());
+    }
 
     // Pre-populate any RouterConfig api_key fields from the Keychain.
     // Now meaningful: routers are present in the baseline config above.
@@ -238,7 +289,7 @@ pub async fn init_gateway(db_config: Option<GatewayConfig>) -> Arc<Gateway> {
         adapter_list
     );
 
-    Arc::new(gw)
+    (Arc::new(gw), provisioning_supervisor)
 }
 
 /// Minimal baseline production config — one entry per shipped router that
@@ -473,8 +524,17 @@ fn baseline_production_config() -> GatewayConfig {
     // PREFERRED candidate when registered; the `embedded-llama` adapter
     // resolves `gemma2:2b` from the managed dir or the ollama cache. Absent /
     // unresolvable ⇒ the chains below fall through to ollama gemma4.
-    models.insert("gemma-embedded".into(), ModelConfig {
-        id: "gemma-embedded".into(),
+    //
+    // The config id, `api_model_id`, and the on-demand provisioning id
+    // (`model_provisioning::EMBEDDED_CHAT_MODEL_ID`) are deliberately the SAME
+    // literal `gemma2:2b`: the gateway's readiness probe (the provisioning
+    // supervisor) is keyed by the chain candidate's config model id, so with
+    // them aligned, a chain that exhausts to this leg while the model is being
+    // pulled degrades to a terminal `ModelNotReady { model: "gemma2:2b" }`
+    // rather than a generic failure — and serves it the instant the pull
+    // reaches `Ready`.
+    models.insert("gemma2:2b".into(), ModelConfig {
+        id: "gemma2:2b".into(),
         api_model_id: Some("gemma2:2b".into()),
         provider: "embedded-llama".into(),
         capabilities: vec![Capability::TextChat],
@@ -502,7 +562,7 @@ fn baseline_production_config() -> GatewayConfig {
     // daemon), gemma4 the working local default today, cloud as last resort.
     let chat_candidates = || {
         vec![
-            ChainEntry { model: "gemma-embedded".into(), router: Some("embedded-llama".into()), api_model_id: None, priority: 1 },
+            ChainEntry { model: "gemma2:2b".into(),      router: Some("embedded-llama".into()), api_model_id: None, priority: 1 },
             ChainEntry { model: "gemma4".into(),         router: Some("ollama".into()),         api_model_id: None, priority: 2 },
             ChainEntry { model: "claude-sonnet".into(),  router: Some("anthropic".into()),      api_model_id: None, priority: 3 },
             ChainEntry { model: "gpt-4o-mini".into(),    router: Some("openai".into()),         api_model_id: None, priority: 4 },
@@ -530,7 +590,7 @@ fn baseline_production_config() -> GatewayConfig {
         id: "insight-copy".into(),
         capability: Capability::TextChat,
         models: vec![
-            ChainEntry { model: "gemma-embedded".into(), router: Some("embedded-llama".into()), api_model_id: None, priority: 1 },
+            ChainEntry { model: "gemma2:2b".into(),      router: Some("embedded-llama".into()), api_model_id: None, priority: 1 },
             ChainEntry { model: "gemma4".into(),         router: Some("ollama".into()),         api_model_id: None, priority: 2 },
         ],
         fallback_triggers: vec![FallbackTrigger::RateLimit, FallbackTrigger::Timeout, FallbackTrigger::ProviderError],

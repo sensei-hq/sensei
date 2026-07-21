@@ -26,6 +26,7 @@ use crate::api::handlers::mcp_servers as mcp_servers_handler;
 use crate::api::handlers::gateway_routers;
 use crate::api::handlers::gateway_chains;
 use crate::api::handlers::gateway_image;
+use crate::api::handlers::model_provisioning;
 use crate::api::handlers::knowledge;
 use crate::api::handlers::dojo;
 use crate::api::handlers::preferences;
@@ -60,6 +61,12 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/gateway/chains/{id}/models/{member_id}",           delete(gateway_chains::remove_chain_model))
         .route("/api/gateway/chains/{id}/models/{member_id}/move",      put(gateway_chains::move_chain_model))
         .route("/api/gateway/image/generate",                post(gateway_image::image_generate))
+        // On-demand model provisioning: pull + coldboot a local GGUF chat model
+        // behind the embedded-llama router. POST starts (or joins) a pull; GET
+        // snapshots every tracked model's phase. Both degrade cleanly when the
+        // daemon lacks the embedded engine (501 / empty list).
+        .route("/api/gateway/models/provision/status",       get(model_provisioning::provision_status))
+        .route("/api/gateway/models/{id}/provision",         post(model_provisioning::provision_model))
         // Repos (individual git repos)
         .route("/api/repos", get(workspace::list_projects).post(workspace::create_project))
         .route("/api/repos/sync-frontmatter", post(workspace::sync_readme_frontmatter))
@@ -359,6 +366,7 @@ mod tests {
             gateway,
             event_tx,
             breaker: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+            provisioning: None,
         });
         let router = create_router(state.clone());
         (router, state)
@@ -383,6 +391,42 @@ mod tests {
             matches!(status, "ok" | "needs-action" | "checking" | "resolving"),
             "unexpected status {status}"
         );
+    }
+
+    /// With no provisioning supervisor (default build / non-embedded), the
+    /// provision POST must degrade to 501 with a clear JSON error — never a
+    /// panic or a silent success. `test_app()` carries `provisioning: None`.
+    #[tokio::test]
+    async fn provision_model_without_supervisor_is_501() {
+        let (app, _) = test_app().await;
+        let resp = app.oneshot(
+            Request::builder().method("POST")
+                .uri("/api/gateway/models/gemma2:2b/provision")
+                .body(Body::empty()).unwrap()
+        ).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_IMPLEMENTED);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(
+            json["error"].as_str().unwrap_or_default().contains("not available"),
+            "expected an explanatory error, got {json}"
+        );
+    }
+
+    /// The status GET always answers 200 with a `models` array — empty when no
+    /// supervisor is wired (default build), so a UI can poll unconditionally.
+    #[tokio::test]
+    async fn provision_status_without_supervisor_is_empty_list() {
+        let (app, _) = test_app().await;
+        let resp = app.oneshot(
+            Request::builder()
+                .uri("/api/gateway/models/provision/status")
+                .body(Body::empty()).unwrap()
+        ).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["models"].as_array().map(|a| a.len()), Some(0));
     }
 
     #[tokio::test]

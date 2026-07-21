@@ -148,7 +148,7 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
             None
         }
     };
-    let gateway = super::gateway_init::init_gateway(db_config).await;
+    let (gateway, provisioning) = super::gateway_init::init_gateway(db_config).await;
 
     let (event_tx, _) = tokio::sync::broadcast::channel(1024);
     let state = Arc::new(SharedState {
@@ -157,6 +157,7 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
         gateway,
         event_tx,
         breaker: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+        provisioning,
     });
 
     let task_logger = sensei_logger::Logger::new(

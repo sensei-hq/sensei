@@ -103,6 +103,13 @@ enum Commands {
         cmd: IndexCommands,
     },
 
+    /// Manage local model provisioning — pull a chat model from Hugging Face on
+    /// demand and check what's been pulled.
+    Models {
+        #[command(subcommand)]
+        cmd: ModelsCommands,
+    },
+
     /// Add an external library's documentation
     AddLib {
         /// Library name
@@ -155,6 +162,20 @@ enum IndexCommands {
     Doctor,
 }
 
+/// `sensei models <cmd>` — on-demand local model provisioning via the daemon.
+#[derive(Subcommand)]
+enum ModelsCommands {
+    /// Pull a model (from Hugging Face) and coldboot it behind the embedded
+    /// router. Non-blocking — returns the initial phase; poll `models status`
+    /// for progress.
+    Pull {
+        /// Model id to provision (e.g. `gemma2:2b`).
+        id: String,
+    },
+    /// Show every model the daemon has (or is) provisioning, with its phase.
+    Status,
+}
+
 /// Daemon route the `upgrade` subcommand POSTs to. Kept as a const so the code
 /// path and its parse/target test share one source of truth.
 const UPGRADE_ENDPOINT: &str = "/api/assistants/upgrade";
@@ -197,6 +218,10 @@ fn main() -> ExitCode {
         Some(Commands::Scaffold { what, path }) => scaffold_cmd(what, path.as_deref()),
         Some(Commands::Index { cmd }) => match cmd {
             IndexCommands::Doctor => index_doctor(),
+        },
+        Some(Commands::Models { cmd }) => match cmd {
+            ModelsCommands::Pull { id } => models_pull(&id),
+            ModelsCommands::Status => models_status(),
         },
         Some(Commands::AddLib { name, url }) => add_lib(&name, url.as_deref()),
         Some(Commands::Doctor { fix }) => return ExitCode::from(doctor::run(fix) as u8),
@@ -1151,6 +1176,85 @@ fn add_lib(name: &str, url: Option<&str>) {
     }
 }
 
+/// `sensei models pull <id>` — POST the daemon's provision route and print the
+/// initial phase. Non-blocking on the daemon side; this just reports the phase
+/// the pull started in (`queued`, or the live phase if already in flight/ready).
+fn models_pull(id: &str) {
+    ensure_daemon();
+    let url = format!("{}/api/gateway/models/{}/provision", daemon_url(), id);
+    match client().post(url).send() {
+        Ok(r) if r.status().is_success() => {
+            let d: serde_json::Value = r.json().unwrap_or_default();
+            println!("{}  {}", id, format_phase(&d["phase"]));
+            println!("Pull started in the background — track it with: sensei models status");
+        }
+        // The daemon returns 501 when built without the embedded engine; surface
+        // its JSON `error` verbatim so the reason is actionable, not a bare code.
+        Ok(r) => {
+            let status = r.status();
+            let d: serde_json::Value = r.json().unwrap_or_default();
+            match d["error"].as_str() {
+                Some(msg) => eprintln!("models pull failed: {msg}"),
+                None => eprintln!("models pull failed: HTTP {status}"),
+            }
+        }
+        Err(e) => eprintln!("models pull failed: {e}"),
+    }
+}
+
+/// `sensei models status` — GET the daemon's provision-status snapshot and print
+/// a small `id  phase` table (or a friendly note when nothing is tracked).
+fn models_status() {
+    ensure_daemon();
+    match client().get(format!("{}/api/gateway/models/provision/status", daemon_url())).send() {
+        Ok(r) if r.status().is_success() => {
+            let d: serde_json::Value = r.json().unwrap_or_default();
+            print_models_status(&d);
+        }
+        Ok(r) => eprintln!("models status failed: HTTP {}", r.status()),
+        Err(e) => eprintln!("models status failed: {e}"),
+    }
+}
+
+/// Render a provision-status payload. Kept pure over the JSON so the table
+/// format is unit-testable without a daemon.
+fn print_models_status(d: &serde_json::Value) {
+    let models = d["models"].as_array().cloned().unwrap_or_default();
+    if models.is_empty() {
+        println!("No models provisioning. Start one with: sensei models pull <id>");
+        return;
+    }
+    println!("{:<24} {}", "MODEL", "PHASE");
+    for m in &models {
+        let id = m["id"].as_str().unwrap_or("?");
+        println!("{:<24} {}", id, format_phase(&m["phase"]));
+    }
+}
+
+/// Format a `ProvisionPhase` JSON value (`{"phase":"...", ...}`) as a compact,
+/// human-readable string. Pure over the daemon's serde shape (kernel
+/// `ProvisionPhase`, internally tagged `"phase"`, snake_case).
+fn format_phase(phase: &serde_json::Value) -> String {
+    match phase["phase"].as_str() {
+        Some("downloading") => {
+            let done = phase["done"].as_u64().unwrap_or(0);
+            match phase["total"].as_u64() {
+                Some(total) if total > 0 => {
+                    let pct = (done as f64 / total as f64 * 100.0).round() as u64;
+                    format!("downloading ({pct}%)")
+                }
+                _ => format!("downloading ({} bytes)", done),
+            }
+        }
+        Some("failed") => match phase["error"].as_str() {
+            Some(err) => format!("failed: {err}"),
+            None => "failed".to_string(),
+        },
+        Some(other) => other.to_string(),
+        None => "unknown".to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1212,6 +1316,71 @@ mod tests {
         // Bare `sensei index` must not parse (a subcommand is required), so the
         // command never silently no-ops.
         assert!(Cli::try_parse_from(["sensei", "index"]).is_err());
+    }
+
+    #[test]
+    fn models_pull_subcommand_parses_the_id() {
+        // `sensei models pull gemma2:2b` → Models { Pull { id } } with the id
+        // carried through (including the `:` in the model id).
+        let cli = Cli::parse_from(["sensei", "models", "pull", "gemma2:2b"]);
+        match cli.command {
+            Some(Commands::Models { cmd: ModelsCommands::Pull { id } }) => {
+                assert_eq!(id, "gemma2:2b");
+            }
+            other => panic!("expected Models pull, got {:?}", other.is_some()),
+        }
+    }
+
+    #[test]
+    fn models_status_subcommand_parses() {
+        let cli = Cli::parse_from(["sensei", "models", "status"]);
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Models { cmd: ModelsCommands::Status })
+        ));
+    }
+
+    #[test]
+    fn models_requires_a_subcommand() {
+        // Bare `sensei models` must not parse — a subcommand is required.
+        assert!(Cli::try_parse_from(["sensei", "models"]).is_err());
+    }
+
+    #[test]
+    fn format_phase_renders_each_kernel_phase_shape() {
+        use serde_json::json;
+        // Simple tagged phases render as their name.
+        assert_eq!(format_phase(&json!({"phase": "queued"})), "queued");
+        assert_eq!(format_phase(&json!({"phase": "ready"})), "ready");
+        assert_eq!(format_phase(&json!({"phase": "verifying"})), "verifying");
+        // Downloading with a known total → percentage.
+        assert_eq!(
+            format_phase(&json!({"phase": "downloading", "done": 50, "total": 100})),
+            "downloading (50%)"
+        );
+        // Downloading with an unknown total → byte count (no divide-by-zero).
+        assert_eq!(
+            format_phase(&json!({"phase": "downloading", "done": 42, "total": null})),
+            "downloading (42 bytes)"
+        );
+        // Failed carries the reason.
+        assert_eq!(
+            format_phase(&json!({"phase": "failed", "error": "disk full"})),
+            "failed: disk full"
+        );
+        // Malformed / missing tag never panics.
+        assert_eq!(format_phase(&json!({})), "unknown");
+    }
+
+    #[test]
+    fn print_models_status_handles_empty_and_populated() {
+        // Empty list → prints the "nothing provisioning" hint (no panic).
+        print_models_status(&serde_json::json!({"models": []}));
+        // Populated → renders the table (no panic) across phase shapes.
+        print_models_status(&serde_json::json!({"models": [
+            {"id": "gemma2:2b", "phase": {"phase": "downloading", "done": 1, "total": 4}},
+            {"id": "other", "phase": {"phase": "ready"}},
+        ]}));
     }
 
     #[test]
