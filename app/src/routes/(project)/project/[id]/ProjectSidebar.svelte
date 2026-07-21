@@ -1,5 +1,6 @@
 <script lang="ts">
     import { page } from '$app/state';
+    import { Eyebrow } from '$lib/components';
 
     interface Props {
         projectId: string;
@@ -35,6 +36,8 @@
         <span class="text-xs text-ink-soft">FTR 14d</span>
     </div>
 
+    <div class="px-4 pb-2"><Eyebrow>This project</Eyebrow></div>
+
     <nav class="flex flex-col" aria-label="Project sections">
         {#each SECTIONS as section (section.id)}
             {@const active = isActive(section.id)}
@@ -55,7 +58,7 @@
         background: var(--paper-mute);
     }
     .proj-nav-item.active {
-        background: var(--paper-mute);
+        background: var(--paper);
         color: var(--accent);
     }
 </style>

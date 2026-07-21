@@ -40,6 +40,11 @@ declare module '@rokkit/states' {
   export class ListController { constructor(...args: any[]); [key: string]: any; }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   export const messages: any;
+  // Command registry singleton — register/registerMany return an unregister fn;
+  // `all` is reactive. Untyped surface (see file header); we only need name
+  // resolution and `.registerMany(...)` usability at the boundary.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  export const commands: any;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   export class ProxyTree { constructor(...args: any[]); [key: string]: any; }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
