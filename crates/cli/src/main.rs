@@ -1218,10 +1218,15 @@ fn models_status() {
 
 /// Render a provision-status payload. Kept pure over the JSON so the table
 /// format is unit-testable without a daemon.
+///
+/// The status now lists the full provisionable catalog — every pullable model
+/// with its current phase (`not pulled` before any pull, via `format_phase` of
+/// `{"phase":"absent"}`). An empty list therefore means the daemon has no
+/// catalog at all (built without the embedded engine), not "nothing pulled".
 fn print_models_status(d: &serde_json::Value) {
     let models = d["models"].as_array().cloned().unwrap_or_default();
     if models.is_empty() {
-        println!("No models provisioning. Start one with: sensei models pull <id>");
+        println!("No local models available — this build has no embedded runtime.");
         return;
     }
     println!("{:<24} {}", "MODEL", "PHASE");
@@ -1374,13 +1379,23 @@ mod tests {
 
     #[test]
     fn print_models_status_handles_empty_and_populated() {
-        // Empty list → prints the "nothing provisioning" hint (no panic).
+        // Empty list → the daemon has no catalog (non-embedded build); prints
+        // the "no embedded runtime" note (no panic).
         print_models_status(&serde_json::json!({"models": []}));
-        // Populated → renders the table (no panic) across phase shapes.
+        // Populated catalog → renders the table (no panic) across phase shapes,
+        // including a not-yet-pulled `absent` catalog row.
         print_models_status(&serde_json::json!({"models": [
-            {"id": "gemma2:2b", "phase": {"phase": "downloading", "done": 1, "total": 4}},
-            {"id": "other", "phase": {"phase": "ready"}},
+            {"id": "gemma2:2b", "name": "Gemma 2 2B Instruct", "phase": {"phase": "absent"}},
+            {"id": "downloading-one", "name": "DL", "phase": {"phase": "downloading", "done": 1, "total": 4}},
+            {"id": "other", "name": "Other", "phase": {"phase": "ready"}},
         ]}));
+    }
+
+    #[test]
+    fn format_phase_renders_absent_as_its_name() {
+        // Catalog rows carry `absent` before any pull; format_phase falls
+        // through to the raw phase name — never "unknown", never a panic.
+        assert_eq!(format_phase(&serde_json::json!({"phase": "absent"})), "absent");
     }
 
     #[test]

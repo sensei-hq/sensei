@@ -1534,3 +1534,27 @@ export interface ScheduledTask {
   interval_secs: number | null;
   avg_ms: number | null;
 }
+
+// ─── On-demand local-model provisioning ──────────────────────────────────────
+
+/** The phase of an on-demand local-model pull — the serde shape of
+ *  `kernel::ProvisionPhase` (internally tagged on `phase`, snake_case) as
+ *  returned by `GET /api/gateway/models/provision/status`. Discriminated union
+ *  on `phase` so callers narrow to the payload-carrying variants. */
+export type ProvisionPhase =
+  | { phase: 'absent' }
+  | { phase: 'queued' }
+  | { phase: 'downloading'; done: number; total: number | null }
+  | { phase: 'verifying' }
+  | { phase: 'loading' }
+  | { phase: 'ready' }
+  | { phase: 'failed'; error: string };
+
+/** One provisionable local model — a catalog entry with its current phase. The
+ *  status endpoint lists every pullable model (phase `absent` before any pull),
+ *  overlaying the supervisor's live phase once a pull is in flight. */
+export interface ProvisionModel {
+  id: string;
+  name: string;
+  phase: ProvisionPhase;
+}

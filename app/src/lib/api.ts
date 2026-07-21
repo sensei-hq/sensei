@@ -17,6 +17,7 @@ import type {
   ObservatoryToday, ObservatoryFtr, ProjectOverview,
   InsightsBoard, LogRow, ScheduledTask,
   IntakeGuide, PlaybookRecommendation,
+  ProvisionModel, ProvisionPhase,
 } from './types.js';
 import type {
   MemoryListResponse, MemoryDetail, ContextResponse,
@@ -899,6 +900,24 @@ export function senseiApi(port: number) {
         '/api/gateway/image/generate',
         body,
         { ok: false, paths: [] },
+      ),
+
+    // ── On-demand local-model provisioning ───────────────────────────────
+    // The provisionable catalog with each model's current phase. Fallback is
+    // the empty list so a daemon hiccup (or a non-embedded build) renders the
+    // quiet state, never a broken panel; the UI can poll unconditionally.
+    provisionStatus: () =>
+      get<{ models: ProvisionModel[] }>(
+        '/api/gateway/models/provision/status', { models: [] },
+      ),
+
+    // Begin (or join) an on-demand pull of a local model, returning its initial
+    // phase. `tryPost` so failures propagate: a 501 (embedded provisioning not
+    // available in this build) surfaces as `{ ok: false, error: { status: 501,
+    // … } }` and the UI shows the not-available notice rather than crashing.
+    provisionModel: (id: string) =>
+      tryPost<{ model: string; phase: ProvisionPhase }>(
+        '/api/gateway/models/' + enc(id) + '/provision', {},
       ),
 
     // ── Knowledge plane ──────────────────────────────────────────────────
