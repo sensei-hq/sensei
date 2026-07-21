@@ -5,14 +5,16 @@
     import { goto } from "$app/navigation";
     import { hasTauri } from "$lib/bootstrap.js";
     import { appState } from "$lib/appstate.svelte.js";
+    import { healthState } from "$lib/health-state.svelte.js";
 
     let { children } = $props();
 
-    // Expose appState on window for E2E test helpers (dev builds only).
-    // Tests call `window.__sensei_state__.appState.config = {...}` to inject
-    // daemon config without a full page reload.
+    // Expose appState + healthState on window for E2E test helpers (dev builds
+    // only). Tests inject daemon config via `__sensei_state__.appState.config`
+    // and can drive the boot gate via `__sensei_state__.healthState.status` to
+    // exercise reroute (e.g. the fresh-window project gate).
     if (import.meta.env.DEV && typeof window !== "undefined") {
-        (window as { __sensei_state__?: unknown }).__sensei_state__ = { appState };
+        (window as { __sensei_state__?: unknown }).__sensei_state__ = { appState, healthState };
     }
 
     // One-shot migration: sweep the legacy `sensei:port` key. It used to

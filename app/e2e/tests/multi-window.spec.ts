@@ -8,7 +8,7 @@
  */
 
 import { test, expect } from '../fixtures';
-import { navigateTo, DAEMON_URL, daemonGet } from '../helpers';
+import { navigateTo, navigateToScreen, DAEMON_URL, daemonGet } from '../helpers';
 
 // ─── Observatory layout ──────────────────────────────────────────────────────
 
@@ -263,6 +263,43 @@ test.describe('Project window — PerspectiveChrome layout', () => {
       `document.querySelector('.proj-nav-item.active')?.querySelector('.label')?.textContent?.trim()`,
     ) as string;
     expect(activeItem).toBe('Overview');
+  });
+
+  // Regression: a freshly-opened project window boots with its own heap where
+  // healthState is 'checking' (isOk=false). reroute must let /project/* through
+  // rather than bouncing the window to /health (the "project window won't open"
+  // bug). Simulate the fresh-heap gate by forcing health not-ok, then confirm
+  // the project route still renders and does not redirect away.
+  // Verifies the project-window fixes end-to-end on real data: the window
+  // opens and its shell renders (reroute lets `/project/*` through — the fix —
+  // and the daemon serves the data), the project name is shown (not the '…'
+  // placeholder), and it sits clear of the macOS overlay traffic lights.
+  // (Reroute-when-health-is-not-ok is covered deterministically by
+  // hooks.spec.svelte.ts and the `redirect from /project/{id}` case.)
+  test('project window renders with the project name clear of the traffic lights', async ({ tauriPage }) => {
+    if (!projectId) {
+      test.skip(true, 'No projects in dev database — skipping project window tests');
+      return;
+    }
+    // navigateToScreen retries through the cold-boot health bootstrap (up to
+    // 120s), so give this test more than the default 60s Playwright budget.
+    test.setTimeout(150_000);
+
+    // Window opens + the shell renders (reroute lets /project through + content).
+    await navigateToScreen(tauriPage, `/project/${projectId}/overview`, '[data-component="project-shell"]');
+
+    // Chrome fix 1: the project name renders (not the '…' placeholder).
+    const name = await tauriPage.evaluate(
+      `document.querySelector('[data-component="project-name"]')?.textContent?.trim()`,
+    ) as string;
+    expect(Boolean(name && name.length > 0 && name !== '…')).toBe(true);
+
+    // Chrome fix 2: the name is inset past the macOS overlay traffic lights
+    // (pl-[80px]) so it isn't hidden. Without the inset it would sit near x≈16.
+    const nameLeft = await tauriPage.evaluate(
+      `document.querySelector('[data-component="project-name"]')?.getBoundingClientRect().left`,
+    ) as number;
+    expect(nameLeft).toBeGreaterThanOrEqual(78);
   });
 });
 

@@ -89,8 +89,19 @@ pub async fn init_gateway(db_config: Option<GatewayConfig>) -> Arc<Gateway> {
     // model already pulled by Ollama is reused in place and nothing has to be
     // shipped with the binary. Per-model workers load lazily on first use; a
     // model the resolver can't find degrades to the chain's next leg.
+    // The in-process llama.cpp model is loaded only for the DEFAULT instance.
+    // A named instance (`SENSEI_INSTANCE=<name>`, e.g. e2e) is a throwaway/test
+    // daemon where a warming model (GGML/Metal pipeline compilation) would peg
+    // the process and stall data-dependent screens; there, inference degrades
+    // to the chain's fallback. `SENSEI_INSTANCE` is set from the `--instance`
+    // CLI arg at process start (main.rs), so — unlike a plain env var — it
+    // survives the daemonize re-spawn and is readable here.
     #[cfg(feature = "embedded-llama-cpp")]
-    {
+    if std::env::var("SENSEI_INSTANCE").ok().is_some_and(|s| !s.is_empty()) {
+        tracing::info!(
+            "Gateway: embedded-llama adapter skipped for named instance — inference degrades to fallback"
+        );
+    } else {
         use gateway_embedded::adapters::EmbeddedLlamaAdapter;
         use gateway_embedded::registry::{ChainedResolver, ManagedResolver, OllamaResolver};
         let resolver = ChainedResolver::new()
