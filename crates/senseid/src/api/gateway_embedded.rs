@@ -1,5 +1,5 @@
-//! Optional registration of in-process inference adapters from the
-//! `gateway-embedded` crate.
+//! Optional registration of in-process inference adapters from
+//! `sensei-local-providers` (model bytes resolved via `sensei-local-engine`).
 //!
 //! Each adapter sits behind its own cargo feature so the default
 //! daemon build doesn't pay the native build cost (ORT runtime for
@@ -27,8 +27,8 @@ pub use ort_init::register_ort;
 #[cfg(feature = "embedded-fastembed")]
 mod fastembed_init {
     use gateway::adapters::{AdapterRegistry, Model};
-    use gateway_embedded::adapters::{FastembedAdapter, FastembedConfig};
-    use gateway_embedded::registry::{ModelEntry, ModelFormat, ModelSource};
+    use local_providers::adapters::{FastembedAdapter, FastembedConfig};
+    use local_engine::registry::{ModelEntry, ModelFormat, ModelSource};
     use std::path::Path;
     use std::sync::Arc;
 
@@ -187,8 +187,8 @@ mod fastembed_init {
 #[cfg(feature = "embedded-ort")]
 mod ort_init {
     use gateway::adapters::{AdapterRegistry, Model};
-    use gateway_embedded::adapters::{OrtAdapter, OrtConfig};
-    use gateway_embedded::registry::{ModelEntry, ModelFormat, ModelSource};
+    use local_providers::adapters::{OrtAdapter, OrtConfig};
+    use local_engine::registry::{ModelEntry, ModelFormat, ModelSource};
     use std::path::Path;
     use std::sync::Arc;
 

@@ -102,8 +102,8 @@ pub async fn init_gateway(db_config: Option<GatewayConfig>) -> Arc<Gateway> {
             "Gateway: embedded-llama adapter skipped for named instance — inference degrades to fallback"
         );
     } else {
-        use gateway_embedded::adapters::EmbeddedLlamaAdapter;
-        use gateway_embedded::registry::{ChainedResolver, ManagedResolver, OllamaResolver};
+        use local_providers::adapters::EmbeddedLlamaAdapter;
+        use local_engine::registry::{ChainedResolver, ManagedResolver, OllamaResolver};
         let resolver = ChainedResolver::new()
             .push(Arc::new(ManagedResolver::new(
                 crate::paths::sensei_dir().join("models"),
