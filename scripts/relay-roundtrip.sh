@@ -11,7 +11,7 @@
 # Run from the repo (sensei/). Requires: supabase running, dojo Worker running
 # (cd dojo && PUBLIC_SUPABASE_URL=… SUPABASE_SERVICE_ROLE_KEY=… bun run dev), jq.
 set -uo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit
 
 WORKER=${WORKER:-http://localhost:5173}
 TESTTOKEN=${TESTTOKEN:-relay-dev-device-token}
