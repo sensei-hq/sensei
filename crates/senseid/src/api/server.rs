@@ -21,6 +21,23 @@ fn clear_startup_error() {
 
 const DEFAULT_WORKERS: usize = 3;
 
+/// Resolve the daemon's TCP bind host. **Loopback-only (`127.0.0.1`) by
+/// default** — the daemon's control-plane routes (`/hook/*`, `/api/runs*`)
+/// carry no auth, so a non-loopback bind would expose them to LAN-adjacent
+/// hosts (spurious gate prompts / inert run rows — see
+/// `docs/plan/decisions.md`). The app, CLI, and MCP all connect over loopback,
+/// so this is transparent to them. `SENSEI_BIND_HOST` opts into a specific host
+/// (e.g. `0.0.0.0`) for a deliberate non-loopback deployment — which MUST add
+/// route auth first. Returns `(host, is_loopback)`.
+fn resolve_bind_host(env_host: Option<String>) -> (String, bool) {
+    let host = env_host
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "127.0.0.1".to_string());
+    let is_loopback = matches!(host.as_str(), "127.0.0.1" | "::1" | "localhost");
+    (host, is_loopback)
+}
+
 pub async fn start_server(port: u16) -> std::io::Result<()> {
     super::handlers::health::init_uptime();
 
@@ -28,7 +45,13 @@ pub async fn start_server(port: u16) -> std::io::Result<()> {
     // serve /api/health so the frontend can show the actual cause — old
     // behaviour was to exit, leaving the client to guess "connection
     // refused" with no diagnostic.
-    let listener = match tokio::net::TcpListener::bind(format!("0.0.0.0:{}", port)).await {
+    let (bind_host, is_loopback) = resolve_bind_host(std::env::var("SENSEI_BIND_HOST").ok());
+    if !is_loopback {
+        tracing::warn!(
+            "senseid binding non-loopback host '{bind_host}' (SENSEI_BIND_HOST) — /hook/* and /api/runs* have NO auth and are now network-exposed; add route auth before any real deployment (see docs/plan/decisions.md)"
+        );
+    }
+    let listener = match tokio::net::TcpListener::bind(format!("{bind_host}:{port}")).await {
         Ok(l) => l,
         Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
             let msg = format!(
@@ -426,5 +449,32 @@ async fn spawn_root_watchers(state: &Arc<SharedState>, queue: Arc<TaskQueue>) {
                 tracing::warn!(error = %e, %id, "failed to update watch status to 'watching'");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod bind_host_tests {
+    use super::resolve_bind_host;
+
+    #[test]
+    fn defaults_to_loopback_when_unset_or_blank() {
+        assert_eq!(resolve_bind_host(None), ("127.0.0.1".to_string(), true));
+        assert_eq!(resolve_bind_host(Some(String::new())), ("127.0.0.1".to_string(), true));
+        assert_eq!(resolve_bind_host(Some("   ".to_string())), ("127.0.0.1".to_string(), true));
+    }
+
+    #[test]
+    fn loopback_aliases_are_flagged_loopback() {
+        assert_eq!(resolve_bind_host(Some("127.0.0.1".to_string())).1, true);
+        assert_eq!(resolve_bind_host(Some("::1".to_string())).1, true);
+        assert_eq!(resolve_bind_host(Some("localhost".to_string())).1, true);
+    }
+
+    #[test]
+    fn non_loopback_override_is_used_and_flagged() {
+        assert_eq!(resolve_bind_host(Some("0.0.0.0".to_string())), ("0.0.0.0".to_string(), false));
+        let (host, is_loopback) = resolve_bind_host(Some(" 192.168.1.5 ".to_string()));
+        assert_eq!(host, "192.168.1.5");
+        assert!(!is_loopback, "a LAN host must be flagged non-loopback so the warning fires");
     }
 }
