@@ -5,7 +5,7 @@ language plpgsql
 as $$
 begin
   insert into gateway.models (
-      provider_id, name, version, variant, full_name, display_name
+      provider_id, name, family, version, variant, full_name, display_name
     , description, capabilities, context_window, max_output_tokens
     , parameters_count, memory_gb, license_type, released_on, deprecated_on
     , props, is_active, modified_at
@@ -13,6 +13,7 @@ begin
   select
       p.id
     , stg.name
+    , stg.family
     , stg.version
     , stg.variant
     , stg.full_name
@@ -35,6 +36,7 @@ begin
   on conflict (provider_id, full_name)
   do update set
       name             = excluded.name
+    , family           = excluded.family
     , version          = excluded.version
     , variant          = excluded.variant
     , display_name     = excluded.display_name
