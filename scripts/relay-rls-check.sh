@@ -20,7 +20,7 @@
 # Run from the repo root (sensei/). Requires psql. Uses the standard local
 # supabase Postgres creds unless DBURL is overridden.
 set -uo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit
 
 DBURL=${DBURL:-postgres://postgres:postgres@127.0.0.1:54322/postgres}
 PSQL=(psql "$DBURL" -X -q -v ON_ERROR_STOP=1 -tA)
