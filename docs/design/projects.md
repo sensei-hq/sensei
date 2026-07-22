@@ -64,24 +64,24 @@ in a project; this says how the model, the graph, and the window mechanics work.
 
 ## Project window as a separate Tauri window
 
-- Command: `open_project_window`
-  (`app/src-tauri/src/commands/project_windows.rs:19`). Idempotent — windows
-  are labelled `project-{id}` (`window_label`, line 50); a repeat call for the
-  same id focuses the existing window (`set_focus`) instead of stacking a
-  duplicate.
-- The window loads route `/project/{id}/overview` directly
-  (`WebviewUrl::App`) — no extra IPC payload; the frontend reads `project_id`
-  from the URL route param, so the command is the only state passed at open
-  time.
-- Registered in `app/src-tauri/src/lib.rs:52`
-  (`commands::project_windows::open_project_window`).
+- Opened from the frontend via `openProjectWindow(projectId, projectName)`
+  (`app/src/lib/stores/windows.svelte.ts`), which uses the Tauri
+  `WebviewWindow` JS API directly (`@tauri-apps/api/webviewWindow`). Idempotent
+  — windows are labelled `project-{id}`; a repeat call for the same id focuses
+  the existing window (`setFocus`) instead of stacking a duplicate.
+- The window loads route `/project/{id}` — the frontend reads `project_id`
+  from the URL route param, and `hooks::reroute` resolves it to the project
+  overview. The window chrome (overlay titlebar, hidden title, transparent)
+  matches the main window.
+- Callers: `(observatory)/projects/+page.svelte`,
+  `(observatory)/insights/+page.svelte`, and the ⌘K `project.open` commands in
+  `(observatory)/+layout.svelte`.
 - Frontend routing: `(project)/project/[id]/{overview,sessions,memories,
   patterns,libraries,impact,traceability,about,instruments}` — one route
-  group, name-or-UUID resolves everywhere (mirrors the observatory's
-  `(observatory)/projects/[id]` portfolio view, a thin list-in/detail-out).
-  Shared layout `app/src/routes/(project)/+layout.svelte` +
-  `+layout.ts` just calls `appState.load()` — routing/redirect is
-  `hooks::reroute`'s job, not the layout's.
+  group, name-or-UUID resolves everywhere. Shared layout
+  `app/src/routes/(project)/+layout.svelte` + `+layout.ts` just calls
+  `appState.load()` — routing/redirect is `hooks::reroute`'s job, not the
+  layout's.
 
 ## Project detail API surface
 
