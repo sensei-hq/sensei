@@ -56,67 +56,63 @@ use tokio::sync::Semaphore;
 
 use crate::model_provision::Provisioner;
 
-/// Stable model id the embedded chat model is keyed by. MUST match the baseline
-/// config's embedded chat model id + its `api_model_id` (see
-/// [`crate::api::gateway_init::baseline_production_config`]) so the gateway's
-/// readiness probe degrades the embedded chat leg to `ModelNotReady` while this
-/// model is being pulled, then serves it once `Ready`. Also the id the
-/// [`Provisioner`] registers under in the managed store.
-pub(crate) const EMBEDDED_CHAT_MODEL_ID: &str = "gemma2:2b";
-
-/// Human-readable name shown in the status list / UI for the embedded chat model.
-const EMBEDDED_CHAT_MODEL_NAME: &str = "Gemma 2 2B";
-
-/// The fixed catalog of models sensei can provision on demand, as
-/// `(id, display_name)` pairs. Currently one entry: the embedded chat model.
-///
-/// Pure over its constants — unit-testable without a runtime, network, or the
-/// llama.cpp backend.
-fn catalog() -> Vec<(String, String)> {
-    vec![(
-        EMBEDDED_CHAT_MODEL_ID.to_string(),
-        EMBEDDED_CHAT_MODEL_NAME.to_string(),
-    )]
-}
-
-/// The provisionable catalog as flat `(id, display_name)` pairs. This is what
-/// the status endpoint (and the UI) list so a client can see every pullable
-/// model — with its current phase overlaid — before any pull has started.
-///
-/// Kept as a free function (mirrors the old supervisor surface) so the status
-/// handler can merge the catalog with live phases exactly as it does today.
-pub(crate) fn provisioning_catalog() -> Vec<(String, String)> {
-    catalog()
-}
-
 /// Sensei-owned on-demand model-provisioning service. Held as
 /// `Arc<ModelProvisioning>` so the shared phase map is visible across the
 /// spawned download job, the readiness probe, and the status endpoint.
 ///
-/// The provisionable catalog is a fixed constant, not per-instance state: the
-/// status handler reads it from the free [`provisioning_catalog`] and merges
-/// live phases (from [`Self::status_all`]) on top — so it is not duplicated here.
+/// The provisionable catalog is **config-derived** per instance (not a fixed
+/// constant): [`crate::api::gateway_init`] scans the final [`GatewayConfig`]
+/// for every chain leg routed through the `embedded-llama` adapter and hands
+/// the resulting `(pullable_id, display_name)` pairs to [`Self::new`]. Because
+/// the catalog is also what constrains a pull — [`Self::is_in_catalog`] gates
+/// `ensure` at the handler — a `pull <id>` for an id that isn't a configured
+/// local model is rejected rather than silently attempted.
+///
+/// [`GatewayConfig`]: gateway::types::config::GatewayConfig
 pub struct ModelProvisioning {
     /// The Ollama-registry downloader, writing into the managed model dir.
     provisioner: Arc<Provisioner>,
+    /// The provisionable catalog as flat `(id, display_name)` pairs — the models
+    /// the configured `embedded-llama` legs run on. This is what the status
+    /// endpoint (and the UI) list so a client can see every pullable model —
+    /// with its current phase overlaid — before any pull has started, and what
+    /// [`Self::is_in_catalog`] checks to constrain a pull to a configured model.
+    catalog: Vec<(String, String)>,
     /// Live phase per model id. `std::sync::Mutex` (never held across `.await`).
     /// Shared (`Arc`) so the spawned job and the probe see the same map.
     phases: Arc<Mutex<HashMap<String, ProvisionPhase>>>,
-    /// Caps concurrent pulls at 1 (a single embedded chat model; concurrent
-    /// large GGUF pulls would only contend for disk/RAM).
+    /// Caps concurrent pulls at 1 (concurrent large GGUF pulls would only
+    /// contend for disk/RAM).
     sem: Arc<Semaphore>,
 }
 
 impl ModelProvisioning {
     /// Build the service over `managed_dir` — the same managed-store dir the
     /// `embedded-llama` adapter resolves from, so a completed download is
-    /// immediately servable.
-    pub fn new(managed_dir: PathBuf) -> Self {
+    /// immediately servable — with the config-derived `catalog` of
+    /// `(pullable_id, display_name)` pairs it may provision.
+    pub fn new(managed_dir: PathBuf, catalog: Vec<(String, String)>) -> Self {
         Self {
             provisioner: Arc::new(Provisioner::new(managed_dir)),
+            catalog,
             phases: Arc::new(Mutex::new(HashMap::new())),
             sem: Arc::new(Semaphore::new(1)),
         }
+    }
+
+    /// The provisionable catalog as `(id, display_name)` pairs — the models the
+    /// configured `embedded-llama` legs run on. The status handler reads this to
+    /// build its rows (id + name) and overlays each entry's live phase.
+    pub fn catalog(&self) -> &[(String, String)] {
+        &self.catalog
+    }
+
+    /// Whether `id` is a provisionable model (present in the config-derived
+    /// catalog). The provision handler gates `ensure` on this so a pull for an
+    /// id that isn't a configured local model is rejected, not silently
+    /// attempted against the Ollama registry.
+    pub fn is_in_catalog(&self, id: &str) -> bool {
+        self.catalog.iter().any(|(cid, _)| cid == id)
     }
 
     /// Current phase of `model`, or `Absent` if untracked. Locks only, no await
@@ -161,12 +157,12 @@ impl ModelProvisioning {
     /// The provisionable catalog, each entry with its disk-aware phase. This is
     /// what the status endpoint lists — so a model pulled in a previous run shows
     /// `Ready` (not `Absent`) even before any `ensure` this session. The handler
-    /// merges display names from [`provisioning_catalog`] on top.
+    /// merges display names from [`Self::catalog`] on top.
     pub async fn status_all(&self) -> Vec<(String, ProvisionPhase)> {
         let mut out = Vec::new();
-        for (id, _name) in provisioning_catalog() {
-            let phase = self.phase_for(&id).await;
-            out.push((id, phase));
+        for (id, _name) in &self.catalog {
+            let phase = self.phase_for(id).await;
+            out.push((id.clone(), phase));
         }
         out
     }
@@ -299,19 +295,35 @@ mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
     use tokio::sync::Notify;
 
-    /// The catalog carries exactly the one on-demand model today (`gemma2:2b`)
-    /// with its display name — the shape the status endpoint + UI render, and the
-    /// contract the baseline config + readiness probe rely on (catalog id ==
-    /// config id == resolvable id). A drift here silently breaks on-demand chat.
+    /// A one-entry test catalog matching the shipped embedded chat model, so the
+    /// service tests exercise the same `(id, display_name)` shape the status
+    /// endpoint + UI render without depending on the (config-derived) production
+    /// catalog.
+    fn test_catalog() -> Vec<(String, String)> {
+        vec![("gemma2:2b".to_string(), "gemma2:2b".to_string())]
+    }
+
+    /// A service built with an explicit catalog exposes it verbatim through
+    /// [`ModelProvisioning::catalog`] (what the status handler reads for id +
+    /// display name).
     #[test]
-    fn catalog_lists_exactly_the_embedded_chat_model() {
-        let catalog = provisioning_catalog();
-        assert_eq!(catalog.len(), 1, "one on-demand model today");
+    fn catalog_returns_the_configured_entries() {
+        let svc = ModelProvisioning::new(std::env::temp_dir(), test_catalog());
         assert_eq!(
-            catalog[0],
-            ("gemma2:2b".to_string(), "Gemma 2 2B".to_string()),
-            "catalog carries the model id and its display name",
+            svc.catalog(),
+            &[("gemma2:2b".to_string(), "gemma2:2b".to_string())][..],
+            "catalog is the config-derived list handed to `new`",
         );
+    }
+
+    /// `is_in_catalog` gates a pull: only ids in the config-derived catalog are
+    /// provisionable; anything else is rejected by the handler with a 404.
+    #[test]
+    fn is_in_catalog_only_accepts_configured_ids() {
+        let svc = ModelProvisioning::new(std::env::temp_dir(), test_catalog());
+        assert!(svc.is_in_catalog("gemma2:2b"), "configured model is provisionable");
+        assert!(!svc.is_in_catalog("llama3:70b"), "non-catalog id is rejected");
+        assert!(!svc.is_in_catalog(""), "empty id is rejected");
     }
 
     /// A fresh service over an empty managed dir: `status_all` lists the catalog
@@ -319,7 +331,7 @@ mod tests {
     #[tokio::test]
     async fn fresh_service_lists_catalog_as_absent() {
         let dir = tempfile::tempdir().unwrap();
-        let svc = Arc::new(ModelProvisioning::new(dir.path().to_path_buf()));
+        let svc = Arc::new(ModelProvisioning::new(dir.path().to_path_buf(), test_catalog()));
         assert_eq!(
             svc.status_all().await,
             vec![("gemma2:2b".to_string(), ProvisionPhase::Absent)],
@@ -336,7 +348,7 @@ mod tests {
         use local_engine::registry::{ManagedResolver, ModelEntry, ModelFormat, ModelSource};
 
         let dir = tempfile::tempdir().unwrap();
-        let svc = Arc::new(ModelProvisioning::new(dir.path().to_path_buf()));
+        let svc = Arc::new(ModelProvisioning::new(dir.path().to_path_buf(), test_catalog()));
 
         // Untracked + empty managed store → Absent.
         assert_eq!(svc.phase_for("gemma2:2b").await, ProvisionPhase::Absent);
@@ -350,7 +362,7 @@ mod tests {
 
         // Untracked but present on disk (registered + file) → Ready.
         let other = tempfile::tempdir().unwrap();
-        let svc2 = Arc::new(ModelProvisioning::new(other.path().to_path_buf()));
+        let svc2 = Arc::new(ModelProvisioning::new(other.path().to_path_buf(), test_catalog()));
         let file = other.path().join("gemma2_2b.gguf");
         tokio::fs::write(&file, b"stub").await.unwrap();
         ManagedResolver::new(other.path())
@@ -373,7 +385,7 @@ mod tests {
     /// observe the intermediate `Downloading` state before completion.
     #[tokio::test]
     async fn ensure_with_drives_downloading_to_ready() {
-        let svc = Arc::new(ModelProvisioning::new(std::env::temp_dir()));
+        let svc = Arc::new(ModelProvisioning::new(std::env::temp_dir(), test_catalog()));
         let release = Arc::new(Notify::new());
         let release_job = release.clone();
 
@@ -418,7 +430,7 @@ mod tests {
     /// subsequent `ensure` RESTARTS the job (Failed is not terminal for retry).
     #[tokio::test]
     async fn ensure_with_drives_downloading_to_failed_then_retries() {
-        let svc = Arc::new(ModelProvisioning::new(std::env::temp_dir()));
+        let svc = Arc::new(ModelProvisioning::new(std::env::temp_dir(), test_catalog()));
 
         let phase = svc.ensure_with("gemma2:2b", |_report| async {
             Err("registry unreachable".to_string())
@@ -451,7 +463,7 @@ mod tests {
     async fn readiness_probe_reflects_live_phases() {
         use gateway::ReadinessProbe;
         let dir = tempfile::tempdir().unwrap();
-        let svc = Arc::new(ModelProvisioning::new(dir.path().to_path_buf()));
+        let svc = Arc::new(ModelProvisioning::new(dir.path().to_path_buf(), test_catalog()));
         let probe: Arc<dyn ReadinessProbe> = svc.clone();
 
         assert_eq!(probe.phase("gemma2:2b").await, ProvisionPhase::Absent);
