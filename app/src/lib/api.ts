@@ -219,6 +219,14 @@ export function senseiApi(port: number) {
     updateProject: (id: string, patch: object) =>
       put(`/api/projects/${enc(id)}`, patch),
 
+    /** Error-propagating variant of updateProject — the About-tab metadata
+     *  form drives a saveStatus (idle/saving/saved/error) lifecycle off the
+     *  Result, mirroring trySetConfig on the settings form. The daemon's
+     *  PUT /api/projects/{id} does a partial (COALESCE) update of the editable
+     *  identity subset (name/description/client/goal/maturity/…). */
+    tryUpdateProject: (id: string, patch: object): Promise<ApiResult<void>> =>
+      tryPut(`/api/projects/${enc(id)}`, patch),
+
     deleteProject: (id: string) => del(`/api/projects/${enc(id)}`),
 
     /** Update a single folder. Currently only `role` is honored daemon-side. */
