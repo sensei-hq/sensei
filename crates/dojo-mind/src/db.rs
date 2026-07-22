@@ -91,6 +91,7 @@ impl DojoDb {
             .map_err(|e| DbError::Pool(e.to_string()))?;
         seed_scopes(&pool, &database_dir).await?;
         seed_global_dojo(&pool).await?;
+        seed_default_governance(&pool).await?;
         Ok(Self { _pg: None, pool })
     }
 
@@ -138,6 +139,10 @@ impl DojoDb {
         // Idempotently seed the special-case global-dojo tenant (the procedure's
         // ON CONFLICT DO NOTHING makes re-running on every boot safe).
         seed_global_dojo(&pool).await?;
+        // Idempotently seed the default governance constitution (principles,
+        // guardrails, guidelines, stack templates) into the global-dōjō
+        // namespace. Same ON CONFLICT DO NOTHING safety.
+        seed_default_governance(&pool).await?;
         Ok(Self { _pg: Some(pg), pool })
     }
 
@@ -276,6 +281,20 @@ async fn seed_global_dojo(pool: &PgPool) -> Result<(), DbError> {
         .execute(pool)
         .await
         .map_err(|e| DbError::Seed(format!("seed_global_dojo: {e}")))?;
+    Ok(())
+}
+
+/// Idempotently seed the default governance constitution (principles,
+/// guardrails, guidelines, stack templates) into the global-dōjō namespace via
+/// the deployed `dojo.seed_default_governance()` procedure. Its internal
+/// ON CONFLICT (namespace_id, content_hash) DO NOTHING makes re-running on every
+/// boot a no-op once the rows exist (a reworded rule is a new content_hash =>
+/// new row, never a dup).
+async fn seed_default_governance(pool: &PgPool) -> Result<(), DbError> {
+    sqlx_core::query::query("CALL dojo.seed_default_governance()")
+        .execute(pool)
+        .await
+        .map_err(|e| DbError::Seed(format!("seed_default_governance: {e}")))?;
     Ok(())
 }
 
