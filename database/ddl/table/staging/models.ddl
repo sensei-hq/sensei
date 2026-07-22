@@ -4,6 +4,7 @@ drop table if exists models cascade;
 create table models (
   provider_name            text
 , name                     text
+, family                   text
 , version                  text
 , variant                  text
 , full_name                text
