@@ -33,6 +33,10 @@ fn phase_json(phase: &gateway::ProvisionPhase) -> Value {
 /// of model `id`, returning its initial phase. Idempotent: a second call while a
 /// pull is in flight joins the existing job (the supervisor dedups by id).
 ///
+/// Pulls are constrained to the config-derived catalog: an `id` that isn't a
+/// provisionable model (a configured `embedded-llama` leg) is rejected with
+/// `404 Not Found` rather than attempted against the Ollama registry.
+///
 /// `501 Not Implemented` when the daemon lacks the embedded engine — the only
 /// build that can pull + coldboot a local GGUF.
 pub(crate) async fn provision_model(
@@ -47,6 +51,18 @@ pub(crate) async fn provision_model(
             })),
         ));
     };
+
+    // Constrain the pull to what's configured: only a model the gateway runs on
+    // the `embedded-llama` router is provisionable. Reject anything else so a
+    // stray id never triggers an Ollama-registry download.
+    if !sup.is_in_catalog(&id) {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({
+                "error": format!("unknown model '{id}' — not a provisionable model"),
+            })),
+        ));
+    }
 
     // Non-blocking: spawn/join the background job and report the phase right now
     // (`Queued` for a fresh pull, or the live phase of an in-flight/ready one).
@@ -89,10 +105,10 @@ fn merge_catalog_phases(
 #[cfg(feature = "embedded-llama-cpp")]
 pub(crate) async fn provision_status(State(state): State<AppState>) -> Json<Value> {
     let models: Vec<Value> = match &state.provisioning {
-        Some(sup) => merge_catalog_phases(
-            crate::api::model_provisioning::provisioning_catalog(),
-            sup.status_all().await,
-        ),
+        // The service owns the config-derived catalog (id + display name); merge
+        // its live phases on top so every configured local model lists with its
+        // current phase, `absent` before any pull begins.
+        Some(sup) => merge_catalog_phases(sup.catalog().to_vec(), sup.status_all().await),
         None => Vec::new(),
     };
     Json(json!({ "models": models }))
@@ -165,19 +181,24 @@ mod tests {
         assert_eq!(rows[1]["phase"], json!({"phase": "absent"}));
     }
 
-    /// The real catalog merged against an empty live set (no pull started yet)
-    /// yields the whole catalog with every model `absent` — the first-load
-    /// state the UI must render before any pull.
+    /// A config-derived catalog merged against an empty live set (no pull started
+    /// yet) yields the whole catalog with every model `absent` — the first-load
+    /// state the UI must render before any pull. This is the shape
+    /// [`provision_status`] returns from `ModelProvisioning::catalog()`.
     #[cfg(feature = "embedded-llama-cpp")]
     #[test]
     fn merge_catalog_phases_first_load_is_full_catalog_all_absent() {
-        let rows = super::merge_catalog_phases(
-            crate::api::model_provisioning::provisioning_catalog(),
-            Vec::new(),
-        );
-        assert_eq!(rows.len(), 1, "one on-demand model today");
+        let catalog = vec![
+            ("gemma2:2b".to_string(), "gemma2:2b".to_string()),
+            ("all-minilm".to_string(), "all-minilm-l6-v2".to_string()),
+        ];
+        let rows = super::merge_catalog_phases(catalog, Vec::new());
+        assert_eq!(rows.len(), 2, "every configured local model appears");
         assert_eq!(rows[0]["id"], "gemma2:2b");
-        assert_eq!(rows[0]["name"], "Gemma 2 2B");
+        assert_eq!(rows[0]["name"], "gemma2:2b");
         assert_eq!(rows[0]["phase"], json!({"phase": "absent"}));
+        assert_eq!(rows[1]["id"], "all-minilm");
+        assert_eq!(rows[1]["name"], "all-minilm-l6-v2");
+        assert_eq!(rows[1]["phase"], json!({"phase": "absent"}));
     }
 }
