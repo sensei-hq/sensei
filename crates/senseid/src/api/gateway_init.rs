@@ -112,11 +112,19 @@ pub async fn init_gateway(
     // The on-demand provisioning service (readiness probe + Ollama-registry
     // puller). Built only alongside the embedded-llama adapter; `None` otherwise.
     // Wired into the gateway via `.with_readiness` after `Gateway::new` below.
+    // Construction is DEFERRED: its catalog is derived from the final `config`
+    // (built below), so the embedded-llama block only records the managed dir
+    // here and the service is constructed once the config is known.
     // `mut` is used only in the `embedded-llama-cpp` block; the default build
     // leaves it `None`, so silence the unused-mut lint there.
     #[allow(unused_mut)]
     let mut provisioning_service: Option<Arc<crate::api::model_provisioning::ModelProvisioning>> =
         None;
+    // The managed-store dir the provisioning service downloads into (== the dir
+    // the embedded-llama adapter resolves from). `Some` only when the embedded
+    // adapter path ran; `None` disables provisioning entirely.
+    #[allow(unused_mut, unused_assignments)]
+    let mut provisioning_managed_dir: Option<std::path::PathBuf> = None;
     #[cfg(feature = "embedded-llama-cpp")]
     if std::env::var("SENSEI_INSTANCE").ok().is_some_and(|s| !s.is_empty()) {
         tracing::info!(
@@ -162,10 +170,12 @@ pub async fn init_gateway(
         // adapter resolves from, so a completed download lazy-loads on the next
         // request. Wired as the readiness probe below; it only pulls when the
         // provision HTTP handler asks — never at startup.
-        provisioning_service = Some(Arc::new(
-            crate::api::model_provisioning::ModelProvisioning::new(managed_dir),
-        ));
-        tracing::info!("Gateway: on-demand model-provisioning service wired (readiness probe)");
+        //
+        // The provisionable catalog is DERIVED from the final config (the models
+        // the gateway runs on the `embedded-llama` router), so a pull is
+        // constrained to what's configured. `config` isn't built until below, so
+        // stash the managed dir here and construct the service once it is.
+        provisioning_managed_dir = Some(managed_dir);
     }
 
     // Probe Ollama
@@ -268,6 +278,23 @@ pub async fn init_gateway(
         }
     };
 
+    // Now that the final config is known, construct the on-demand provisioning
+    // service with a catalog DERIVED from it: exactly the models the gateway
+    // runs on the `embedded-llama` router. This constrains a pull to what's
+    // configured — the handler rejects an id that isn't a local model. Only
+    // constructed when the embedded-llama adapter path recorded a managed dir.
+    if let Some(managed_dir) = provisioning_managed_dir.take() {
+        let catalog = embedded_catalog(&config);
+        tracing::info!(
+            "Gateway: on-demand provisioning catalog derived from config: {:?}",
+            catalog.iter().map(|(id, _)| id).collect::<Vec<_>>()
+        );
+        provisioning_service = Some(Arc::new(
+            crate::api::model_provisioning::ModelProvisioning::new(managed_dir, catalog),
+        ));
+        tracing::info!("Gateway: on-demand model-provisioning service wired (readiness probe)");
+    }
+
     let cb = CircuitBreakerManager::new(CircuitBreakerConfig::default());
 
     let mut gw = Gateway::new(config, adapters, cb);
@@ -291,6 +318,43 @@ pub async fn init_gateway(
     );
 
     (Arc::new(gw), provisioning_service)
+}
+
+/// Derive the on-demand provisioning catalog from the final [`GatewayConfig`]:
+/// every model the gateway runs on the `embedded-llama` router, as
+/// `(pullable_id, display_name)` pairs.
+///
+/// The pullable id is the id the embedded-llama adapter resolves + the
+/// [`Provisioner`](crate::model_provision::Provisioner) pulls from the Ollama
+/// registry — the model's api id: prefer the chain entry's `api_model_id`, else
+/// the model's `api_model_id`, else the config model id. The display name is the
+/// config model id (`gemma2:2b`, `all-minilm-l6-v2`). Results are deduped by
+/// pullable id and returned in stable (sorted) order.
+///
+/// Pure over its input — unit-tested against a fixture config without a runtime,
+/// network, or the llama.cpp backend.
+fn embedded_catalog(config: &GatewayConfig) -> Vec<(String, String)> {
+    use std::collections::BTreeMap;
+
+    // Keyed by pullable id so duplicates collapse; BTreeMap yields stable
+    // (sorted-by-id) order. Value is the display name (config model id).
+    let mut catalog: BTreeMap<String, String> = BTreeMap::new();
+    for chain in config.chains.values() {
+        for entry in &chain.models {
+            if entry.router.as_deref() != Some("embedded-llama") {
+                continue;
+            }
+            let pullable_id = entry
+                .api_model_id
+                .clone()
+                .or_else(|| config.models.get(&entry.model).and_then(|m| m.api_model_id.clone()))
+                .unwrap_or_else(|| entry.model.clone());
+            catalog
+                .entry(pullable_id)
+                .or_insert_with(|| entry.model.clone());
+        }
+    }
+    catalog.into_iter().collect()
 }
 
 /// Minimal baseline production config — one entry per shipped router that
@@ -526,14 +590,14 @@ fn baseline_production_config() -> GatewayConfig {
     // resolves `gemma2:2b` from the managed dir or the ollama cache. Absent /
     // unresolvable ⇒ the chains below fall through to ollama gemma4.
     //
-    // The config id, `api_model_id`, and the on-demand provisioning id
-    // (`model_provisioning::EMBEDDED_CHAT_MODEL_ID`) are deliberately the SAME
-    // literal `gemma2:2b`: the gateway's readiness probe (the provisioning
-    // supervisor) is keyed by the chain candidate's config model id, so with
-    // them aligned, a chain that exhausts to this leg while the model is being
-    // pulled degrades to a terminal `ModelNotReady { model: "gemma2:2b" }`
-    // rather than a generic failure — and serves it the instant the pull
-    // reaches `Ready`.
+    // The config id and `api_model_id` are the SAME literal `gemma2:2b`, and the
+    // on-demand provisioning catalog is DERIVED from this config (see
+    // [`embedded_catalog`]) so the pullable id it keys by matches: the gateway's
+    // readiness probe (the provisioning service) is keyed by the chain
+    // candidate's config model id, so with them aligned, a chain that exhausts to
+    // this leg while the model is being pulled degrades to a terminal
+    // `ModelNotReady { model: "gemma2:2b" }` rather than a generic failure — and
+    // serves it the instant the pull reaches `Ready`.
     models.insert("gemma2:2b".into(), ModelConfig {
         id: "gemma2:2b".into(),
         api_model_id: Some("gemma2:2b".into()),
@@ -797,6 +861,171 @@ pub async fn init_gateway_test() -> Arc<Gateway> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `embedded_catalog` collects only the models routed through
+    /// `embedded-llama`, keyed by the pullable api id (entry api_model_id →
+    /// model api_model_id → config id), deduped across chains, in stable order.
+    /// Cloud legs and non-embedded legs are excluded.
+    #[test]
+    fn embedded_catalog_derives_pullable_ids_from_embedded_legs_only() {
+        use gateway::types::capability::Capability;
+        use gateway::types::config::*;
+        use std::collections::HashMap;
+
+        // Two models: a chat model whose pullable id == config id, and an embed
+        // model whose embedded-router api id differs from the config id
+        // (`all-minilm-l6-v2` → pullable `all-minilm`, as the DB seed maps it).
+        let mut models: HashMap<String, ModelConfig> = HashMap::new();
+        models.insert("gemma2:2b".into(), ModelConfig {
+            id: "gemma2:2b".into(),
+            api_model_id: Some("gemma2:2b".into()),
+            provider: "embedded-llama".into(),
+            capabilities: vec![Capability::TextChat],
+            context_window: 8192,
+            max_output_tokens: 4096,
+            pricing: None,
+        });
+        models.insert("all-minilm-l6-v2".into(), ModelConfig {
+            id: "all-minilm-l6-v2".into(),
+            api_model_id: Some("all-minilm-l6-v2".into()),
+            provider: "embedded-llama".into(),
+            capabilities: vec![Capability::TextEmbed],
+            context_window: 512,
+            max_output_tokens: 0,
+            pricing: None,
+        });
+
+        let mut chains: HashMap<String, FallbackChainConfig> = HashMap::new();
+        // A chat chain: embedded gemma2:2b leg + a cloud leg (must NOT appear).
+        chains.insert("reasoning".into(), FallbackChainConfig {
+            id: "reasoning".into(),
+            capability: Capability::TextChat,
+            models: vec![
+                ChainEntry { model: "gemma2:2b".into(), router: Some("embedded-llama".into()), api_model_id: None, priority: 1 },
+                ChainEntry { model: "claude-sonnet".into(), router: Some("anthropic".into()), api_model_id: None, priority: 2 },
+            ],
+            fallback_triggers: vec![],
+        });
+        // A second chat chain repeats the embedded gemma2:2b leg → deduped.
+        chains.insert("classify".into(), FallbackChainConfig {
+            id: "classify".into(),
+            capability: Capability::TextChat,
+            models: vec![
+                ChainEntry { model: "gemma2:2b".into(), router: Some("embedded-llama".into()), api_model_id: None, priority: 1 },
+                ChainEntry { model: "gemma3:12b".into(), router: Some("ollama".into()), api_model_id: None, priority: 2 },
+            ],
+            fallback_triggers: vec![],
+        });
+        // An embed chain whose embedded leg overrides the api id at the ENTRY
+        // level → pullable id comes from the entry, not the model.
+        chains.insert("embed".into(), FallbackChainConfig {
+            id: "embed".into(),
+            capability: Capability::TextEmbed,
+            models: vec![
+                ChainEntry {
+                    model: "all-minilm-l6-v2".into(),
+                    router: Some("embedded-llama".into()),
+                    api_model_id: Some("all-minilm".into()),
+                    priority: 1,
+                },
+                ChainEntry { model: "all-minilm-l6-v2".into(), router: Some("ollama".into()), api_model_id: None, priority: 2 },
+            ],
+            fallback_triggers: vec![],
+        });
+
+        let config = GatewayConfig {
+            routers: HashMap::new(),
+            models,
+            chains,
+            constraints: Default::default(),
+        };
+
+        let catalog = embedded_catalog(&config);
+        // Only the two embedded models, deduped, sorted by pullable id. The
+        // cloud (`claude-sonnet`) and ollama (`gemma3:12b`, ollama all-minilm)
+        // legs are excluded. Display name is the config model id.
+        assert_eq!(
+            catalog,
+            vec![
+                ("all-minilm".to_string(), "all-minilm-l6-v2".to_string()),
+                ("gemma2:2b".to_string(), "gemma2:2b".to_string()),
+            ],
+            "only embedded legs, keyed by pullable api id, deduped + sorted",
+        );
+    }
+
+    /// The entry-level `api_model_id` wins over the model-level one; when neither
+    /// is set the config id is used as the pullable id.
+    #[test]
+    fn embedded_catalog_prefers_entry_then_model_then_config_id() {
+        use gateway::types::capability::Capability;
+        use gateway::types::config::*;
+        use std::collections::HashMap;
+
+        let mut models: HashMap<String, ModelConfig> = HashMap::new();
+        // Model-level api id set; used when the entry doesn't override it.
+        models.insert("model-with-api".into(), ModelConfig {
+            id: "model-with-api".into(),
+            api_model_id: Some("api-from-model".into()),
+            provider: "embedded-llama".into(),
+            capabilities: vec![Capability::TextChat],
+            context_window: 8192,
+            max_output_tokens: 4096,
+            pricing: None,
+        });
+        // No api id anywhere → falls back to the config id.
+        models.insert("bare-model".into(), ModelConfig {
+            id: "bare-model".into(),
+            api_model_id: None,
+            provider: "embedded-llama".into(),
+            capabilities: vec![Capability::TextChat],
+            context_window: 8192,
+            max_output_tokens: 4096,
+            pricing: None,
+        });
+
+        let mut chains: HashMap<String, FallbackChainConfig> = HashMap::new();
+        chains.insert("c".into(), FallbackChainConfig {
+            id: "c".into(),
+            capability: Capability::TextChat,
+            models: vec![
+                // Entry override wins over the model-level api id.
+                ChainEntry { model: "model-with-api".into(), router: Some("embedded-llama".into()), api_model_id: Some("api-from-entry".into()), priority: 1 },
+                ChainEntry { model: "bare-model".into(), router: Some("embedded-llama".into()), api_model_id: None, priority: 2 },
+            ],
+            fallback_triggers: vec![],
+        });
+
+        let config = GatewayConfig {
+            routers: HashMap::new(),
+            models,
+            chains,
+            constraints: Default::default(),
+        };
+
+        assert_eq!(
+            embedded_catalog(&config),
+            vec![
+                ("api-from-entry".to_string(), "model-with-api".to_string()),
+                ("bare-model".to_string(), "bare-model".to_string()),
+            ],
+        );
+    }
+
+    /// The shipped in-code baseline leads its chat + insight chains with the
+    /// embedded `gemma2:2b` leg, so the derived catalog carries it (with the
+    /// config id as display name). Guards the "reasoning leads with embedded"
+    /// invariant the DB seed mirrors.
+    #[test]
+    fn embedded_catalog_from_baseline_carries_gemma2_2b() {
+        let catalog = embedded_catalog(&baseline_production_config());
+        assert!(
+            catalog.iter().any(|(id, name)| id == "gemma2:2b" && name == "gemma2:2b"),
+            "baseline embedded chat model provisionable, got {catalog:?}",
+        );
+        // No cloud/ollama model leaks in (baseline embedded legs are gemma2:2b only).
+        assert_eq!(catalog.len(), 1, "baseline has one embedded model, got {catalog:?}");
+    }
 
     /// Confirms the OpenAI-compatible aggregators we register at startup
     /// (OpenRouter, Vercel AI Gateway, NVIDIA NIM) actually land in the
