@@ -3,6 +3,7 @@ create table if not exists models (
   id                       uuid               primary key default gen_random_uuid()
 , provider_id              uuid               not null references gateway.providers(id) on delete cascade
 , name                     text               not null
+, family                   text
 , version                  text
 , variant                  text
 , full_name                text               not null
@@ -41,7 +42,9 @@ comment on column models.id
 comment on column models.provider_id
      is 'Foreign key to providers — who created this model.';
 comment on column models.name
-     is 'Model family name (e.g. "gemma3", "claude", "gpt").';
+     is 'Model line name — version-specific (e.g. "gemma3", "qwen3", "claude", "gpt"). See `family` for the coarser base-architecture grouping.';
+comment on column models.family
+     is 'Base architecture family for grouping + diversity (e.g. "gemma", "qwen", "llama", "phi", "claude", "gpt"). Coarser than `name` (gemma2/gemma3/gemma4 all → "gemma"). Consumed by the MOE panel / fan-out routing to pick DIVERSE families per role (proposer vs challenger). Nullable.';
 comment on column models.version
      is 'Version string (e.g. "3", "4o", "4.5").';
 comment on column models.variant
