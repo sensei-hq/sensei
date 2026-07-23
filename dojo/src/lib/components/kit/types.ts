@@ -454,3 +454,182 @@ export interface KitClientAuditRow {
 	/** Whether confidentiality held (true) or a contribution was blocked (false). */
 	ok: boolean;
 }
+
+// ── Admin org consoles (dojo2-data `members` · `roles` · `scopeOwners` ·
+//    `billing` · `consoles.identity` · `consoles.health`) ────────────────────
+
+/** A member row on the Members & Roles surface (dojo2-data `members[]`). The
+ *  role is derived from git access; a dōjō override may lift it above the floor. */
+export interface KitMember {
+	name: string;
+	/** The git-derived access line (e.g. "Org owner" · "Repo admin" · "Write"). */
+	git: string;
+	/** developer · maintainer · lead · admin — the additive role. */
+	role: string;
+	/** The scopes the member covers (e.g. "Payments · Ledger"), or "—" for none. */
+	scopes: string;
+	/** Compact "last active" (e.g. "now" · "12m"). */
+	active: string;
+	/** The viewer's own row. */
+	you?: boolean;
+}
+
+/** A role policy card on the Policies surface (dojo2-data `roles[role]`). Roles
+ *  are additive: each rung only ever adds capability over the one below. */
+export interface KitRolePolicy {
+	/** developer · maintainer · lead · admin. */
+	id: string;
+	/** Role glyph (士 · 掟 · 客 · 任). */
+	kanji: string;
+	/** The role label. */
+	label: string;
+	/** A one-line note on what the role adds. */
+	note: string;
+}
+
+/** A scope-ownership row on the Scopes surface (dojo2-data `scopeOwners[slug][]`).
+ *  Who owns/triages each scope's queue — unowned queues route to a fallback. */
+export interface KitScopeOwner {
+	/** The scope label (e.g. "Payments" · "Postgres"). */
+	scope: string;
+	/** The authoring group — Company · Teams · Stacks. */
+	group: string;
+	/** The owner's display name, or `null` when unowned (routes to fallback). */
+	owner: string | null;
+	/** The owner's role, or `null` when unowned. */
+	role: string | null;
+	/** Items waiting in this scope's queue. */
+	queue: number;
+	/** The triage SLA (e.g. "24h"), or "fallback" when unowned. */
+	sla: string;
+}
+
+/** A plan tier card on the billing screen (dojo2-data `billing.tiers[]`). */
+export interface KitBillingTier {
+	/** free · team · ent. */
+	id: string;
+	/** Tier glyph (無 · 組 · 企). */
+	kanji: string;
+	/** The tier name (e.g. "Free" · "Team" · "Enterprise"). */
+	name: string;
+	/** The headline price (e.g. "Free" · "Per seat" · "Contract"). */
+	price: string;
+	/** The price qualifier (e.g. "/ mo · active contributor"). */
+	sub: string;
+	/** The tier's feature lines. */
+	lines: string[];
+	/** The viewer's current tier (accent border · no CTA). */
+	current?: boolean;
+	/** The enterprise tier renders on a dark ink field. */
+	dark?: boolean;
+}
+
+/** A relay free-vs-paid row on the billing screen (dojo2-data `billing.relayRows[]`). */
+export interface KitBillingRelayRow {
+	/** The capability line. */
+	label: string;
+	/** Free for individuals (true) or paid where shared (false). */
+	free: boolean;
+}
+
+/** An invoice row on the billing screen (dojo2-data `billing.invoices[]`). */
+export interface KitBillingInvoice {
+	/** The invoice date (e.g. "Jul 1, 2026"). */
+	d: string;
+	/** The amount (e.g. "$408.00"). */
+	amt: string;
+	/** The status (e.g. "paid"). */
+	s: string;
+}
+
+/** Plan & billing state for an org (dojo2-data `billing`). Free where public or
+ *  personal; seats bill per active contributor. */
+export interface KitBilling {
+	/** The current plan label (e.g. "Team · private"). */
+	plan: string;
+	/** The monthly price per active contributor. */
+	perSeat: number;
+	/** Billable active contributors. */
+	seatsActive: number;
+	/** Read-only members (always free). */
+	seatsReadonly: number;
+	/** The next renewal date (e.g. "Aug 1"). */
+	renews: string;
+	tiers: KitBillingTier[];
+	relayRows: KitBillingRelayRow[];
+	invoices: KitBillingInvoice[];
+}
+
+/** An identity mapping — how a directory/source maps to members + roles
+ *  (dojo2-data `consoles.identity.mappings[]`). */
+export interface KitIdentityMapping {
+	/** The identity source (e.g. "GitHub org · acme"). */
+	source: string;
+	/** What it maps to (e.g. "auto-join · role from repo access"). */
+	to: string;
+	/** How many members the mapping covers. */
+	count: number;
+}
+
+/** Identity & SSO config (dojo2-data `consoles.identity`). The IdP + SCIM state
+ *  + the git/device-code → member mappings roles derive from. */
+export interface KitIdentity {
+	idp: {
+		/** The IdP name (e.g. "Okta"). */
+		name: string;
+		/** The protocol (e.g. "OIDC" · "SAML"). */
+		protocol: string;
+		/** The connection status (e.g. "connected"). */
+		status: string;
+		/** The IdP domain (e.g. "acme.okta.com"). */
+		domain: string;
+	};
+	/** Whether SCIM provisioning is enabled. */
+	scim: boolean;
+	mappings: KitIdentityMapping[];
+}
+
+/** A health signal card (dojo2-data `consoles.health.signals[]`). A vital-sign
+ *  stat with a trend sub-line and a token tone. */
+export interface KitHealthSignal {
+	kanji: string;
+	/** The signal label (e.g. "Sessions this week"). */
+	label: string;
+	/** The headline number (e.g. "312" · "68%"). */
+	n: string;
+	/** The trend/context sub-line (e.g. "↑ 14%" · "within SLA"). */
+	sub: string;
+	/** accent · success · warning · ink — the signal's token tone key. */
+	tone: string;
+}
+
+/** One week's contributions-vs-approvals bar pair (dojo2-data
+ *  `consoles.health.contribVsApprove[]`). */
+export interface KitHealthWeek {
+	/** The week label (e.g. "W1"). */
+	wk: string;
+	/** Contributions that week. */
+	c: number;
+	/** Approvals that week. */
+	a: number;
+}
+
+/** A leak-guard / anomaly alert (dojo2-data `consoles.health.alerts[]`). */
+export interface KitHealthAlert {
+	kanji: string;
+	/** The alert title. */
+	title: string;
+	/** The detail line. */
+	detail: string;
+	/** Compact "how long ago" (e.g. "2h"). */
+	when: string;
+	/** warning · resolved — drives the glyph tone. */
+	sev: string;
+}
+
+/** The shared-mind vital signs (dojo2-data `consoles.health`). */
+export interface KitHealth {
+	signals: KitHealthSignal[];
+	contribVsApprove: KitHealthWeek[];
+	alerts: KitHealthAlert[];
+}

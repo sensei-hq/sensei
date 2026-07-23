@@ -2,6 +2,7 @@ import { redirect } from '@sveltejs/kit';
 import type { PageLoad } from './$types';
 import { ORG_SECTIONS, labelForSection } from '$lib/dojo2-nav';
 import { orgBySlug } from '$lib/dojo2-chrome';
+import { tabForSection } from '$lib/dojo2-role-surfaces-view';
 import {
 	orgProjectsFor,
 	orgConstitutionFor,
@@ -12,7 +13,14 @@ import {
 	engagementsFor,
 	confidentialityFor,
 	incidentsFor,
-	clientAuditFor
+	clientAuditFor,
+	membersFor,
+	rolePoliciesFor,
+	auditLogFor,
+	scopeOwnersFor,
+	identityFor,
+	healthFor,
+	billingFor
 } from '$lib/components/kit/fixtures';
 
 // An org-zone section route. Resolves the org from the slug against real
@@ -24,11 +32,14 @@ import {
 // renders its screen off fixtures this chunk (real `/v1` authorization lands
 // with the wiring).
 //
-// The ported sections render off the kit fixtures (presentational): the
+// Every ported section renders off the kit fixtures (presentational): the
 // Overview `ladder`/`projects`, the maintainer Govern consoles
-// (triage/approvals/knowledge) and the lead Clients consoles
-// (engagements/incidents/clientaudit). Any remaining section still renders the
-// "coming in the rebuild" placeholder.
+// (triage/approvals/knowledge), the lead Clients consoles
+// (engagements/incidents/clientaudit) and the admin consoles
+// (members/scopes/identity/audit/health/billing). The Admin group completes the
+// NAV_ORG screen set — there is no remaining placeholder destination. The
+// `members` and `audit` sections are the SAME screen (ScrRoleSurfaces); the
+// loader maps the section to its opening tab via `tabForSection`.
 export const load: PageLoad = async ({ parent, params }) => {
 	const { memberships } = await parent();
 	const org = orgBySlug(memberships, params.slug);
@@ -52,6 +63,16 @@ export const load: PageLoad = async ({ parent, params }) => {
 		engagements: engagementsFor(slug),
 		confidentiality: confidentialityFor(slug),
 		incidents: incidentsFor(slug),
-		clientAudit: clientAuditFor(slug)
+		clientAudit: clientAuditFor(slug),
+		// Admin consoles. `roleTab` is the opening tab of the shared role-surfaces
+		// screen — `members` → Members, `audit` → Audit.
+		roleTab: tabForSection(params.section),
+		members: membersFor(slug),
+		rolePolicies: rolePoliciesFor(slug),
+		auditLog: auditLogFor(slug),
+		scopeOwners: scopeOwnersFor(slug),
+		identity: identityFor(slug),
+		health: healthFor(slug),
+		billing: billingFor(slug)
 	};
 };

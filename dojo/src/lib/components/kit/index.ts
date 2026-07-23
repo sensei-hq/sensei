@@ -15,6 +15,7 @@ export * from './needs';
 // Primitives.
 export { default as Icon, glyphClass } from './Icon.svelte';
 export { default as KanjiToken } from './KanjiToken.svelte';
+export { default as Avatar } from './Avatar.svelte';
 export { default as Chip } from './Chip.svelte';
 export { default as ClassChip } from './ClassChip.svelte';
 export { default as RoleTag } from './RoleTag.svelte';
