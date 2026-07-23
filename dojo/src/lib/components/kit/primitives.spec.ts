@@ -19,10 +19,12 @@ import { projects, dojos } from './fixtures';
 describe('kit primitives render', () => {
 	afterEach(cleanup);
 
-	it('Icon renders the mapped i-solar class + tone', () => {
+	it('Icon renders the bare name class + tone', () => {
+		// The DOM class is the bare Solar name (`command`); the `i-solar:*-linear`
+		// expansion lives in generated CSS via rokkit.config `icons.overrides`.
 		const { container } = render(Icon, { name: 'command', toneClass: 'text-accent' });
 		const el = container.firstElementChild as HTMLElement;
-		expect(el.className).toContain('i-solar:command-linear');
+		expect(el.className).toContain('command');
 		expect(el.className).toContain('text-accent');
 	});
 
