@@ -2,6 +2,7 @@
 	import { resolve } from '$app/paths';
 	import { dojoBuild } from '$lib/version';
 	import type { TenantKey } from '$lib/tenant';
+	import { pendingContributionCount } from '$lib/developer-view';
 
 	// Left nav (mockup DojoNav): grouped destinations with a kanji glyph. Overview
 	// + Triage (R9), the admin console screens (R10: Members, Identities, Policies,
@@ -25,6 +26,9 @@
 		| 'relay'
 		| 'library'
 		| 'preview'
+		| 'teams'
+		| 'contributions'
+		| 'downstream'
 		| 'members'
 		| 'identities'
 		| 'policies'
@@ -56,6 +60,24 @@
 				{ id: 'relay', kanji: '継', label: 'Relay', to: 'relay' },
 				{ id: 'library', kanji: '蔵', label: 'Library', to: 'library' },
 				{ id: 'preview', kanji: '序', label: 'Effective constitution', to: 'preview' }
+			]
+		},
+		{
+			// The personal / "Me" area (mockup DEV_NAV): the individual
+			// contributor's read-mostly seat, reachable solo (no join-gate, DJ1).
+			// Chunk 5 does the full IA reframe (Relay group + ordering); this is
+			// the minimal additive wiring so the three surfaces are reachable now.
+			group: 'Me',
+			items: [
+				{ id: 'teams', kanji: '群', label: 'My teams', to: 'teams' },
+				{
+					id: 'contributions',
+					kanji: '共',
+					label: 'My contributions',
+					to: 'contributions',
+					badge: pendingContributionCount() || undefined
+				},
+				{ id: 'downstream', kanji: '贈', label: 'For me', to: 'downstream' }
 			]
 		},
 		{
@@ -97,6 +119,12 @@
 				return resolve('/(console)/console/library');
 			case 'preview':
 				return resolve('/(console)/console/preview');
+			case 'teams':
+				return resolve('/(console)/console/teams');
+			case 'contributions':
+				return resolve('/(console)/console/contributions');
+			case 'downstream':
+				return resolve('/(console)/console/downstream');
 			case 'members':
 				return resolve('/(console)/console/members');
 			case 'identities':
