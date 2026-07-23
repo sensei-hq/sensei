@@ -31,16 +31,15 @@
 	}
 </script>
 
-<div class="flex flex-col" style="padding: 32px; gap: 24px">
+<div class="flex flex-col p-8 gap-6">
 	<SectionHead eyebrow={'Relay · chat · ' + session} title={project} />
 
-	<div class="bg-paper-soft border-paper-edge rounded-lg border" style="padding: 24px">
+	<div class="bg-paper-soft border-paper-edge rounded-lg border p-6">
 		<ChatThread {thread} {me} />
 	</div>
 
 	<form
-		class="bg-paper-soft border-paper-edge flex items-center gap-2 rounded-lg border"
-		style="padding: 4px 4px 4px 12px"
+		class="bg-paper-soft border-paper-edge flex items-center gap-2 rounded-lg border py-1 pr-1 pl-3"
 		onsubmit={(e) => {
 			e.preventDefault();
 			send();

@@ -12,6 +12,10 @@ import type {
 	KitLadderRung,
 	KitConflict,
 	KitStanceDial,
+	KitRulePack,
+	KitContribution,
+	KitDownstream,
+	KitContribStat,
 	KitRun,
 	KitGate,
 	KitNeed,
@@ -173,6 +177,18 @@ export const ladder: KitLadderRung[] = [
 			{ kanji: '己', text: 'Explain the plan before editing more than three files' },
 			{ kanji: '己', text: 'Prefer small, reviewable commits over one large diff' }
 		]
+	},
+	{
+		id: 'stack',
+		kanji: '技',
+		scope: 'Stack',
+		name: 'React · TypeScript',
+		caption: 'most specific · refines everything above',
+		tone: 'ink',
+		rules: [
+			{ kanji: '技', text: 'No default exports in shared packages' },
+			{ kanji: '技', text: 'Server state through the query layer, never in a store' }
+		]
 	}
 ];
 
@@ -221,6 +237,131 @@ export const stance: KitStanceDial[] = [
 		value: 2
 	}
 ];
+
+// Adoptable rule-pack bundles (dojo2-data `rulePacks`) — NOT a "library".
+export const rulePacks: KitRulePack[] = [
+	{
+		id: 'p1',
+		kanji: '守',
+		name: 'Auth boundary guards',
+		by: 'Acme · platform',
+		count: 8,
+		adopted: true,
+		note: 'token redaction, signature checks, secret scanning'
+	},
+	{
+		id: 'p2',
+		kanji: '紋',
+		name: 'Payments patterns',
+		by: 'Acme · payments',
+		count: 6,
+		adopted: true,
+		note: 'idempotency, ledger writes, reconciliation'
+	},
+	{
+		id: 'p3',
+		kanji: '技',
+		name: 'React · TypeScript baseline',
+		by: 'Rust Guild',
+		count: 11,
+		adopted: false,
+		note: 'exports, query layer, suspense boundaries'
+	},
+	{
+		id: 'p4',
+		kanji: '盾',
+		name: 'Client engagement shield',
+		by: 'Globex · lead',
+		count: 5,
+		adopted: true,
+		note: 'dereferencing, webhook verification, audit trail'
+	},
+	{
+		id: 'p5',
+		kanji: '理',
+		name: 'API compatibility',
+		by: 'Acme · platform',
+		count: 4,
+		adopted: false,
+		note: 'deprecation windows, versioning, changelog gates'
+	}
+];
+
+// ── Contributions ────────────────────────────────────────────────────────────
+
+// What you shared upstream (per-destination status) + approved-for-you
+// downstream + the lifetime stat row (dojo2-data `contributions`).
+export const contributionsMine: KitContribution[] = [
+	{
+		kanji: '紋',
+		title: 'Adapter wraps a third-party SDK behind a trait',
+		dest: 'Acme Corp',
+		scope: 'Stack · Rust',
+		status: 'approved',
+		when: '2d',
+		note: 'published · +7pp first-try rate'
+	},
+	{
+		kanji: '直',
+		title: 'Prefer $state(...) over let in Svelte 5 components',
+		dest: 'Rust Guild',
+		scope: 'Stack · Svelte',
+		status: 'pending',
+		when: '6h',
+		note: 'in triage · owner Sven K.'
+	},
+	{
+		kanji: '盾',
+		title: 'Verify webhook signature before parsing the body',
+		dest: 'Globex',
+		scope: 'Client · anonymized',
+		status: 'approved',
+		when: '1d',
+		note: 'anonymized · shared safely',
+		client: true
+	},
+	{
+		kanji: '問',
+		title: 'Persona: integration-test author for auth flows',
+		dest: 'Acme Corp',
+		scope: 'Stack · React',
+		status: 'declined',
+		when: '3d',
+		note: 'merged into an existing persona'
+	}
+];
+
+export const contributionsDownstream: KitDownstream[] = [
+	{
+		kanji: '守',
+		title: 'Never log refresh tokens, even at debug level',
+		from: 'Acme Corp',
+		scope: 'Company',
+		when: '8m',
+		adopted: false,
+		kind: 'guard'
+	},
+	{
+		kanji: '紋',
+		title: 'Idempotency key on money-moving mutations',
+		from: 'Acme Corp',
+		scope: 'Team · Payments',
+		when: '4h',
+		adopted: true,
+		kind: 'pattern'
+	},
+	{
+		kanji: '技',
+		title: 'Skill: explain a slow query plan',
+		from: 'Rust Guild',
+		scope: 'Stack · Postgres',
+		when: '1d',
+		adopted: false,
+		kind: 'skill'
+	}
+];
+
+export const contributionsStat: KitContribStat = { approved: 2, pending: 1, helped: 612 };
 
 // ── Relay ──────────────────────────────────────────────────────────────────
 
