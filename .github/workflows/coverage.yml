@@ -29,12 +29,14 @@ jobs:
           tool: cargo-llvm-cov
 
       # --- Rust ---------------------------------------------------------------
-      # v1 covers the no-DB crate (mirrors `make test-crates-fast`). Broaden to
-      # `--workspace` once a postgres + full-schema service is added (the full
-      # crate suite needs sensei_test per the Makefile). llvm-cov emits absolute
-      # paths, so strip the workspace prefix down to repo-root (crates/...).
-      - name: Rust coverage (sensei-bootstrap)
-        run: cargo llvm-cov -p sensei-bootstrap --lcov --output-path target/lcov.info
+      # Covers every crate that tests with NO external infra. senseid + dojo-mind
+      # are excluded: they need a seeded test DB + Supabase roles. dojo-mind boots
+      # an embedded PG that lacks the authenticated/anon/service_role roles its
+      # schema grants to; senseid needs an external sensei_test with the full
+      # schema. Broadening to those is test-infra work, not just a postgres service.
+      # llvm-cov emits absolute paths, so strip the workspace prefix to repo-root.
+      - name: Rust coverage (no-DB crates)
+        run: cargo llvm-cov -p sensei-bootstrap -p sensei-cli -p sensei-mcp -p sensei-config -p sensei-logger -p dojo-protocol --lcov --output-path target/lcov.info
       - name: Normalize Rust paths to repo root
         run: sed -i "s|^SF:${GITHUB_WORKSPACE}/|SF:|" target/lcov.info
 
