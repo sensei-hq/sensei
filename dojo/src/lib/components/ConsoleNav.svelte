@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
+	import { dojoBuild } from '$lib/version';
 
 	// Left nav (mockup DojoNav): grouped destinations with a kanji glyph. Overview
 	// + Triage (R9) and the admin console screens (R10: Members, Identities,
@@ -178,5 +179,15 @@
 	>
 		<span class="kanji text-ink-mute text-sm text-center" style="width: 15px">調</span>
 		<span>Settings · SSO</span>
+	</div>
+	<!-- Build-time version stamp (src/lib/version.ts) so a live deploy is
+	     verifiable at a glance; title carries the ISO build time. -->
+	<div
+		data-testid="dojo-version"
+		class="text-ink-faint text-xs"
+		style="padding: 0 8px 4px"
+		title={dojoBuild.builtAt}
+	>
+		dojo v{dojoBuild.version} · {dojoBuild.gitSha}
 	</div>
 </aside>
