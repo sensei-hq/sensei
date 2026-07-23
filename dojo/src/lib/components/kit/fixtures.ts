@@ -76,6 +76,7 @@ export const projects: KitProject[] = [
 		phase: 'notice',
 		lastRun: '8m',
 		spark: [3, 5, 4, 8, 6, 11, 14],
+		runsWeek: 14,
 		needs: 2,
 		note: '3 patterns surfacing in payments paths'
 	},
@@ -88,6 +89,7 @@ export const projects: KitProject[] = [
 		phase: 'adopt',
 		lastRun: '2h',
 		spark: [6, 7, 5, 9, 8, 9, 9],
+		runsWeek: 9,
 		needs: 0,
 		note: 'idempotency pattern adopted org-wide'
 	},
@@ -100,6 +102,7 @@ export const projects: KitProject[] = [
 		phase: 'watch',
 		lastRun: '1d',
 		spark: [2, 1, 3, 2, 4, 2, 3],
+		runsWeek: 3,
 		needs: 0,
 		note: 'no dōjō · your ladder alone'
 	}

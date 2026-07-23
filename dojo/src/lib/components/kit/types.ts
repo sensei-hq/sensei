@@ -22,6 +22,8 @@ export interface KitProject {
 	note?: string | null;
 	/** Sparkline series for the recent run cadence. */
 	spark?: number[];
+	/** Sessions run against this project this week (dojo2-data `runsWeek`). */
+	runsWeek?: number;
 }
 
 /** A dōjō membership row (dojo2-data `dojos[]`). */
