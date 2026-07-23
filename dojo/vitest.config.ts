@@ -15,7 +15,16 @@ export default defineConfig({
 		// `*.spec.svelte.ts`.
 		include: ['src/**/*.{test,spec}.{js,ts}', 'src/**/*.spec.svelte.ts'],
 		globals: true,
-		setupFiles: []
+		setupFiles: [],
+		// lcov for the qlty coverage upload (paths relative to dojo/, so CI adds
+		// the `dojo` prefix). `bun run test --coverage` writes ./coverage.
+		coverage: {
+			provider: 'v8',
+			reporter: ['text', 'lcov'],
+			reportsDirectory: './coverage',
+			include: ['src/**'],
+			exclude: ['src/**/*.{test,spec}.*', 'src/**/test-stubs/**']
+		}
 	},
 	resolve: {
 		alias: {

@@ -1,0 +1,66 @@
+name: Coverage
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+
+# Least-privilege: this job only reads the repo and uploads coverage to qlty.
+permissions:
+  contents: read
+
+concurrency:
+  group: coverage-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: stable
+          components: llvm-tools-preview
+      - uses: taiki-e/install-action@c44f6b046f1c29ae5918b1e0bfdbb2f1813836fd # v2
+        with:
+          tool: cargo-llvm-cov
+
+      # --- Rust ---------------------------------------------------------------
+      # v1 covers the no-DB crate (mirrors `make test-crates-fast`). Broaden to
+      # `--workspace` once a postgres + full-schema service is added (the full
+      # crate suite needs sensei_test per the Makefile). llvm-cov emits absolute
+      # paths, so strip the workspace prefix down to repo-root (crates/...).
+      - name: Rust coverage (sensei-bootstrap)
+        run: cargo llvm-cov -p sensei-bootstrap --lcov --output-path target/lcov.info
+      - name: Normalize Rust paths to repo root
+        run: sed -i "s|^SF:${GITHUB_WORKSPACE}/|SF:|" target/lcov.info
+
+      # --- SvelteKit (app + dojo) --------------------------------------------
+      # vitest v8 emits paths relative to each package (src/...); the upload
+      # steps add the `app` / `dojo` prefix so they resolve to repo-root.
+      - name: app coverage
+        run: cd app && bun install --frozen-lockfile && bun run test:unit --coverage
+      - name: dojo coverage
+        run: cd dojo && bun install --frozen-lockfile && bun run test --coverage
+
+      # --- Upload (3 reports; qlty merges them for the commit) ----------------
+      - name: Upload Rust coverage
+        uses: qltysh/qlty-action/coverage@08a0a862c159eae9b9003081da6663d96efef637 # v2
+        with:
+          token: ${{ secrets.QLTY_COVERAGE_TOKEN }}
+          files: target/lcov.info
+      - name: Upload app coverage
+        uses: qltysh/qlty-action/coverage@08a0a862c159eae9b9003081da6663d96efef637 # v2
+        with:
+          token: ${{ secrets.QLTY_COVERAGE_TOKEN }}
+          files: app/coverage/lcov.info
+          add-prefix: app
+      - name: Upload dojo coverage
+        uses: qltysh/qlty-action/coverage@08a0a862c159eae9b9003081da6663d96efef637 # v2
+        with:
+          token: ${{ secrets.QLTY_COVERAGE_TOKEN }}
+          files: dojo/coverage/lcov.info
+          add-prefix: dojo
