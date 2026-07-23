@@ -1,11 +1,16 @@
 import { defineConfig } from 'unocss';
 import { presetRokkit } from '@rokkit/unocss';
 import config from './rokkit.config.js';
+import { ICON_CLASSES } from './src/lib/components/kit/icons.ts';
 
 // presetRokkit already includes extractorSvelte, transformerDirectives and
 // transformerVariantGroup. Safelist the kavach auth icons (rendered via
 // dynamic `i-auth-{name}` class names in @kavach/ui's AuthProvider, which
-// UnoCSS can't see statically).
+// UnoCSS can't see statically) AND the dojo2 kit's Solar icons: Icon.svelte
+// picks the `i-solar:*` class at runtime (from src/lib/components/kit/icons.ts),
+// so — like the auth icons — the static scanner can't see them. Spreading
+// ICON_CLASSES guarantees UnoCSS emits every icon rule. The `solar` collection
+// itself is registered in rokkit.config.js's `icons` map.
 //
 // `theme` mirrors `app/uno.config.js` verbatim — per the shared design system
 // (docs/architecture/frontend-svelte-guidelines.md §1.8 per-surface config
@@ -16,7 +21,7 @@ import config from './rokkit.config.js';
 // (docs/mockups/Zen-Sumi Design System/colors_and_type.css).
 export default defineConfig({
 	presets: [presetRokkit(config)],
-	safelist: ['i-auth-magic', 'i-auth-email', 'i-auth-github', 'i-auth-google'],
+	safelist: ['i-auth-magic', 'i-auth-email', 'i-auth-github', 'i-auth-google', ...ICON_CLASSES],
 	theme: {
 		// UnoCSS tuple-short form `[fontSize, lineHeight]` — the object form emits
 		// the JS key `lineHeight:` literally into CSS (invalid property) and floods

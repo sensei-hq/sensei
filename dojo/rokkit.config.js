@@ -67,7 +67,13 @@ export default {
 		radius: 'soft'
 	},
 
-	icons: {},
+	// Register the full Solar iconify set so `i-solar:*` classes resolve
+	// (presetRokkit already includes presetIcons; keys become the UnoCSS
+	// collection prefix). dojo2's kit renders bare Solar names (mockup K2Icon)
+	// through this collection — build-time CSS masks, no network fetch. The
+	// logical-name → `i-solar:*-linear` mapping lives in
+	// src/lib/components/kit/icons.ts and is safelisted in uno.config.js.
+	icons: { solar: '@iconify-json/solar/icons.json' },
 	switcher: 'manual',
 	storageKey: 'sensei-dojo-theme'
 };

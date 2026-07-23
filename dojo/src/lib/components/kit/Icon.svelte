@@ -1,27 +1,15 @@
 <script lang="ts" module>
-	// The kit's K2Icon named Solar (`solar:{name}-bold-duotone`) icons and painted
-	// them as remote <img> tags. Dōjō already ships a Solar-glyph icon collection
-	// through presetRokkit (`i-glyph:*`, see @rokkit/unocss README) — the app's
-	// established `i-solar` idiom, resolved at build time with no network fetch and
-	// no new dependency. This map bridges the handful of kit Solar names whose glyph
-	// key differs; any name not listed falls through to `i-glyph:{name}` verbatim.
-	const GLYPH_ALIAS: Record<string, string> = {
-		'code-2': 'code',
-		command: 'terminal',
-		'lock-keyhole': 'lock',
-		'shield-user': 'shield',
-		'clipboard-check': 'checklist-minimalistic',
-		'pen-2': 'edit',
-		'share-circle': 'share'
-	};
-
-	/** Resolve a kit Solar icon name to its `i-glyph:*` utility class. */
-	export function glyphClass(name: string): string {
-		return `i-glyph:${GLYPH_ALIAS[name] ?? name}`;
-	}
+	// The kit's icon names are bare Solar names (`folder`, `eye`, `command`, …),
+	// following the mockup's K2Icon. They resolve to static `i-solar:*` UnoCSS
+	// classes via the kit icon map (see ./icons.ts) — build-time CSS masks tinted
+	// with the element's text color, no network fetch. `iconClass` is re-exported
+	// here (and through the kit barrel) so callers can resolve a class directly.
+	export { iconClass } from './icons';
 </script>
 
 <script lang="ts">
+	import { iconClass } from './icons';
+
 	// A functional icon — the working-icon layer of the kit. Tinted via a token
 	// text class (e.g. `text-accent`); size is inline geometry the scale doesn't
 	// model. Presentational: no state, no data.
@@ -33,7 +21,7 @@
 </script>
 
 <span
-	class="inline-block flex-shrink-0 {glyphClass(name)} {toneClass}"
+	class="inline-block flex-shrink-0 {iconClass(name)} {toneClass}"
 	style="width: {size}px; height: {size}px"
 	aria-hidden="true"
 ></span>

@@ -19,10 +19,10 @@ import { projects, dojos } from './fixtures';
 describe('kit primitives render', () => {
 	afterEach(cleanup);
 
-	it('Icon renders the mapped i-glyph class + tone', () => {
+	it('Icon renders the mapped i-solar class + tone', () => {
 		const { container } = render(Icon, { name: 'command', toneClass: 'text-accent' });
 		const el = container.firstElementChild as HTMLElement;
-		expect(el.className).toContain('i-glyph:terminal');
+		expect(el.className).toContain('i-solar:command-linear');
 		expect(el.className).toContain('text-accent');
 	});
 
