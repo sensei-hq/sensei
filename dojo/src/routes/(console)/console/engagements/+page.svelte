@@ -19,6 +19,8 @@
 		engagementStatusToneClass
 	} from '$lib/client-view';
 	import { relativeAge } from '$lib/admin-view';
+	import DojoJoinEmpty from '$lib/components/DojoJoinEmpty.svelte';
+	import { requireTenant } from '$lib/org-guard';
 
 	// Engagements (spec: define engagement · mockup DojoClients "Engagements"
 	// registry, dojo-console.jsx l.807). Lists the tenant's client engagements
@@ -50,7 +52,7 @@
 		if (formDescription.trim()) body.description = formDescription.trim();
 		if (formStarts) body.starts_on = formStarts;
 		try {
-			await createEngagement(data.tenantKey, body, { fetch, accessToken: data.accessToken });
+			await createEngagement(requireTenant(data.tenantKey), body, { fetch, accessToken: data.accessToken });
 			formClient = '';
 			formDescription = '';
 			formStarts = '';
@@ -70,7 +72,7 @@
 		actionError = null;
 		try {
 			await updateEngagement(
-				data.tenantKey,
+				requireTenant(data.tenantKey),
 				eng.id,
 				{ status: 'ended' },
 				{ fetch, accessToken: data.accessToken }
@@ -87,7 +89,7 @@
 		busyId = eng.id;
 		actionError = null;
 		try {
-			await deleteEngagement(data.tenantKey, eng.id, { fetch, accessToken: data.accessToken });
+			await deleteEngagement(requireTenant(data.tenantKey), eng.id, { fetch, accessToken: data.accessToken });
 			await invalidateAll();
 		} catch (e) {
 			actionError = e instanceof DojoApiError ? e.message : 'could not delete the engagement';
@@ -114,7 +116,7 @@
 		actionError = null;
 		try {
 			await bindEngagementProject(
-				data.tenantKey,
+				requireTenant(data.tenantKey),
 				eng.id,
 				{ project_id: bindProjectId.trim(), name: bindName.trim() || undefined },
 				{ fetch, accessToken: data.accessToken }
@@ -137,6 +139,11 @@
 	<title>Engagements · Dōjō console</title>
 </svelte:head>
 
+{#if data.noMembership}
+	<div class="bg-paper flex h-full w-full flex-col overflow-hidden">
+		<DojoJoinEmpty what="engagements" />
+	</div>
+{:else}
 <div class="bg-paper flex h-full w-full flex-col overflow-hidden">
 	<ConsoleHead
 		kanji="客"
@@ -361,3 +368,4 @@
 		</div>
 	</div>
 </div>
+{/if}

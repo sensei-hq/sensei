@@ -9,6 +9,8 @@
 	import { invalidateAll } from '$app/navigation';
 	import { env } from '$env/dynamic/public';
 	import { subscribeRelay } from '$lib/relay-realtime';
+	import DojoJoinEmpty from '$lib/components/DojoJoinEmpty.svelte';
+	import { requireTenant } from '$lib/org-guard';
 
 	// Relay run list (mockup dojo-relay.jsx "Active"/RelayProjectsBody): every
 	// supervised run the caller can see in this tenant, one card each. The card is a
@@ -50,6 +52,11 @@
 	<title>Relay · Dōjō console</title>
 </svelte:head>
 
+{#if data.noMembership}
+	<div class="bg-paper flex h-full w-full flex-col overflow-hidden">
+		<DojoJoinEmpty what="relay runs" />
+	</div>
+{:else}
 <div class="bg-paper flex h-full w-full flex-col overflow-hidden">
 	<ConsoleHead
 		kanji="継"
@@ -58,7 +65,7 @@
 		sub="Every supervised run across your Dōjō — what's running, what's stuck, and what needs you. Approvals and decisions rise to the top; nothing moves without your say."
 	>
 		{#snippet right()}
-			<RelayNotifyToggle tenantKey={data.tenantKey} accessToken={data.accessToken} />
+			<RelayNotifyToggle tenantKey={requireTenant(data.tenantKey)} accessToken={data.accessToken} />
 		{/snippet}
 	</ConsoleHead>
 
@@ -166,3 +173,4 @@
 		{/if}
 	</div>
 </div>
+{/if}

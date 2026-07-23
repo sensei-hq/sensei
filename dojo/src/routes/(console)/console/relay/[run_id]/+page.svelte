@@ -7,6 +7,8 @@
 	import RelayStatusBadge from '$lib/components/RelayStatusBadge.svelte';
 	import RelayOfflineBanner from '$lib/components/RelayOfflineBanner.svelte';
 	import RelayGateCard from '$lib/components/RelayGateCard.svelte';
+	import DojoJoinEmpty from '$lib/components/DojoJoinEmpty.svelte';
+	import { requireTenant } from '$lib/org-guard';
 	import {
 		submitReview,
 		sendNudge,
@@ -114,7 +116,7 @@
 			return;
 		}
 		try {
-			await sendNudge(data.tenantKey, data.runId, nudgeText.trim(), {
+			await sendNudge(requireTenant(data.tenantKey), data.runId, nudgeText.trim(), {
 				fetch,
 				accessToken: data.accessToken
 			});
@@ -157,7 +159,7 @@
 			return;
 		}
 		try {
-			await replyToGate(data.tenantKey, inboxId, reply, {
+			await replyToGate(requireTenant(data.tenantKey), inboxId, reply, {
 				fetch,
 				accessToken: data.accessToken
 			});
@@ -252,7 +254,7 @@
 			return;
 		}
 		try {
-			await submitReview(data.tenantKey, data.runId, pending, {
+			await submitReview(requireTenant(data.tenantKey), data.runId, pending, {
 				fetch,
 				accessToken: data.accessToken
 			});
@@ -284,18 +286,18 @@
 		const sender: ActionSender = async (entry: QueuedAction) => {
 			try {
 				if (entry.kind === 'review') {
-					await submitReview(data.tenantKey, entry.runId, entry.payload.reviews, {
+					await submitReview(requireTenant(data.tenantKey), entry.runId, entry.payload.reviews, {
 						fetch,
 						accessToken: data.accessToken
 					});
 				} else if (entry.kind === 'nudge') {
-					await sendNudge(data.tenantKey, entry.runId, entry.payload.text, {
+					await sendNudge(requireTenant(data.tenantKey), entry.runId, entry.payload.text, {
 						fetch,
 						accessToken: data.accessToken,
 						kind: entry.payload.kind
 					});
 				} else {
-					await replyToGate(data.tenantKey, entry.payload.inboxId, entry.payload.reply, {
+					await replyToGate(requireTenant(data.tenantKey), entry.payload.inboxId, entry.payload.reply, {
 						fetch,
 						accessToken: data.accessToken
 					});
@@ -406,6 +408,11 @@
 	<title>{data.run?.title ?? 'Run'} · Relay · Dōjō console</title>
 </svelte:head>
 
+{#if data.noMembership}
+	<div class="bg-paper flex h-full w-full flex-col overflow-hidden">
+		<DojoJoinEmpty what="relay runs" />
+	</div>
+{:else}
 <div class="bg-paper flex h-full w-full flex-col overflow-hidden">
 	<ConsoleHead
 		kanji="継"
@@ -460,7 +467,7 @@
 					{#each gates as g (g.id)}
 						<RelayGateCard
 							gate={g}
-							tenantKey={data.tenantKey}
+							tenantKey={requireTenant(data.tenantKey)}
 							accessToken={data.accessToken}
 							onReply={replyGate}
 						/>
@@ -694,3 +701,4 @@
 		{/if}
 	</div>
 </div>
+{/if}

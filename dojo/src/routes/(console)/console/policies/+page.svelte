@@ -16,6 +16,8 @@
 		ATTRIBUTION_MODES,
 		retentionLabel
 	} from '$lib/admin-view';
+	import DojoJoinEmpty from '$lib/components/DojoJoinEmpty.svelte';
+	import { requireTenant } from '$lib/org-guard';
 
 	// Policies (spec: the policy grid CRUD). Lists the tenant's per-scope policies
 	// (data.policies from list_policies) and lets an admin add/edit-by-scope a
@@ -31,7 +33,7 @@
 		busyId = id;
 		actionError = null;
 		try {
-			await patchPolicy(data.tenantKey, id, { attribution_default }, {
+			await patchPolicy(requireTenant(data.tenantKey), id, { attribution_default }, {
 				fetch,
 				accessToken: data.accessToken
 			});
@@ -47,7 +49,7 @@
 		busyId = id;
 		actionError = null;
 		try {
-			await deletePolicy(data.tenantKey, id, { fetch, accessToken: data.accessToken });
+			await deletePolicy(requireTenant(data.tenantKey), id, { fetch, accessToken: data.accessToken });
 			await invalidateAll();
 		} catch (e) {
 			actionError = e instanceof DojoApiError ? e.message : 'could not remove the policy';
@@ -75,7 +77,7 @@
 		const retention = Number.parseInt(formRetention, 10);
 		if (Number.isFinite(retention)) body.retention_days = retention;
 		try {
-			await upsertPolicy(data.tenantKey, body, { fetch, accessToken: data.accessToken });
+			await upsertPolicy(requireTenant(data.tenantKey), body, { fetch, accessToken: data.accessToken });
 			formScope = '';
 			formRetention = '';
 			showAdd = false;
@@ -92,6 +94,11 @@
 	<title>Policies · Dōjō console</title>
 </svelte:head>
 
+{#if data.noMembership}
+	<div class="bg-paper flex h-full w-full flex-col overflow-hidden">
+		<DojoJoinEmpty what="policies" />
+	</div>
+{:else}
 <div class="bg-paper flex h-full w-full flex-col overflow-hidden">
 	<ConsoleHead
 		kanji="規"
@@ -221,3 +228,4 @@
 		</div>
 	</div>
 </div>
+{/if}
