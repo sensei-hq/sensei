@@ -27,6 +27,7 @@
 			'triage',
 			'relay',
 			'library',
+			'preview',
 			'members',
 			'identities',
 			'policies',

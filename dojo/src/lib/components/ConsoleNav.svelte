@@ -4,10 +4,10 @@
 	import type { TenantKey } from '$lib/tenant';
 
 	// Left nav (mockup DojoNav): grouped destinations with a kanji glyph. Overview
-	// + Triage (R9) and the admin console screens (R10: Members, Identities,
-	// Policies, Health, Audit) are wired; the rest render as "soon"
-	// (non-interactive) per the mockup's DOJO_BUILT gating. `active` is the current
-	// section id.
+	// + Triage (R9), the admin console screens (R10: Members, Identities, Policies,
+	// Health, Audit) and the new governance screens (Library 蔵, Effective
+	// constitution 序) are wired; the rest render as "soon" (non-interactive) per
+	// the mockup's DOJO_BUILT gating. `active` is the current section id.
 	// `open`/`onClose` drive the mobile drawer (md:+ renders a static sidebar where
 	// `open` is irrelevant). `onClose` fires from the backdrop and on navigation.
 	let {
@@ -24,6 +24,7 @@
 		| 'triage'
 		| 'relay'
 		| 'library'
+		| 'preview'
 		| 'members'
 		| 'identities'
 		| 'policies'
@@ -53,7 +54,8 @@
 				{ id: 'overview', kanji: '全', label: 'Overview', to: 'overview' },
 				{ id: 'triage', kanji: '門', label: 'Triage', to: 'triage' },
 				{ id: 'relay', kanji: '継', label: 'Relay', to: 'relay' },
-				{ id: 'library', kanji: '蔵', label: 'Library', to: 'library' }
+				{ id: 'library', kanji: '蔵', label: 'Library', to: 'library' },
+				{ id: 'preview', kanji: '序', label: 'Effective constitution', to: 'preview' }
 			]
 		},
 		{
@@ -93,6 +95,8 @@
 				return resolve('/(console)/console/relay');
 			case 'library':
 				return resolve('/(console)/console/library');
+			case 'preview':
+				return resolve('/(console)/console/preview');
 			case 'members':
 				return resolve('/(console)/console/members');
 			case 'identities':
