@@ -6,7 +6,7 @@
 
 /** The leading icon + verb for a needs-kind. */
 export interface NeedsTone {
-	/** i-glyph icon name for the row's leading mark. */
+	/** Solar icon name for the row's leading mark. */
 	icon: string;
 	/** The one-word verb this kind asks of the viewer. */
 	label: string;

@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { classTone, phaseTone, roleTone, kindTone, glyphClass } from './index';
-import { glyphClass as glyphFromIcon } from './Icon.svelte';
+import { classTone, phaseTone, roleTone, kindTone, iconClass, ICON_FALLBACK } from './index';
+import { iconClass as iconFromName } from './Icon.svelte';
 
 // The vocab maps decide every tone in one place; the lookups default safely and
-// the icon-name→i-glyph bridge resolves both aliased and pass-through names.
+// the icon-name→i-solar bridge resolves a static, safelisted UnoCSS class.
 describe('kit vocab lookups', () => {
 	it('classTone resolves a known kind and defaults to company', () => {
 		expect(classTone('client').label).toBe('client');
@@ -33,19 +33,19 @@ describe('kit vocab lookups', () => {
 	});
 });
 
-describe('Icon glyph mapping', () => {
-	it('aliases the kit Solar names whose glyph key differs', () => {
-		expect(glyphFromIcon('command')).toBe('i-glyph:terminal');
-		expect(glyphFromIcon('lock-keyhole')).toBe('i-glyph:lock');
-		expect(glyphFromIcon('code-2')).toBe('i-glyph:code');
+describe('Icon Solar mapping', () => {
+	it('maps a logical name to its static i-solar:*-linear class', () => {
+		expect(iconFromName('folder')).toBe('i-solar:folder-linear');
+		expect(iconFromName('eye')).toBe('i-solar:eye-linear');
+		expect(iconFromName('scale')).toBe('i-solar:scale-linear');
+		expect(iconFromName('command')).toBe('i-solar:command-linear');
 	});
 
-	it('passes an unaliased name straight through', () => {
-		expect(glyphFromIcon('bell')).toBe('i-glyph:bell');
-		expect(glyphFromIcon('folder')).toBe('i-glyph:folder');
+	it('falls back to a neutral icon for an unmapped name', () => {
+		expect(iconFromName('no-such-icon')).toBe(ICON_FALLBACK);
 	});
 
-	it('re-exports glyphClass from the barrel', () => {
-		expect(glyphClass).toBe(glyphFromIcon);
+	it('re-exports iconClass from the barrel', () => {
+		expect(iconClass).toBe(iconFromName);
 	});
 });
