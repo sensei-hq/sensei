@@ -46,6 +46,11 @@ export default {
 		// session guard, or every daemon/API call 303-redirects to /signin.
 		{ path: '/v1', public: true },
 		{ path: '/orgs', roles: '*' },
-		{ path: '/console', roles: '*' }
+		{ path: '/console', roles: '*' },
+		// The dojo2 shell (rebuild in progress): the personal zone (/you) and the
+		// role-scoped org zone (/org/{slug}). Same guard as the console group — any
+		// signed-in role may open it; per-org role gating lives in the nav + loads.
+		{ path: '/you', roles: '*' },
+		{ path: '/org', roles: '*' }
 	]
 };
