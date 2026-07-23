@@ -245,15 +245,17 @@ function DojoRulePreview({ mobile = false, initial = "globex", onOpenLibrary, on
       <div style={mobile ? { flex: 1, display: "flex", flexDirection: "column", minHeight: 0, overflow: "auto" } : { flex: 1, display: "grid", gridTemplateColumns: "minmax(0,0.92fr) minmax(0,1.08fr)", minHeight: 0 }}>
         {/* left · the ladder */}
         <div style={{ borderRight: mobile ? "none" : "var(--hairline)", borderBottom: mobile ? "var(--hairline)" : "none", overflow: "auto", padding: mobile ? "var(--space-4)" : "var(--space-5)" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", marginBottom: "var(--space-3)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", marginBottom: "var(--space-1)" }}>
             <span style={{ fontSize: "var(--text-xs)", letterSpacing: ".14em", textTransform: "uppercase", color: "var(--ink-mute)", fontWeight: 600 }}>The ladder</span>
-            <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--ink-faint)" }}>broad → specific</span>
+            <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--ink-faint)" }}>{rungs.length} scopes</span>
           </div>
+          <p style={{ fontSize: "var(--text-xs)", color: "var(--ink-mute)", lineHeight: 1.5, margin: "0 0 var(--space-3)" }}>Numbered <b style={{ fontWeight: 600, color: "var(--ink)" }}>broadest (1) → most specific</b>. Each rung <b style={{ fontWeight: 600, color: "var(--ink)" }}>refines the one above</b>; a ★ non-negotiable locks so no narrower rung can relax it. On a client engagement <b style={{ fontWeight: 600, color: "var(--accent)" }}>Company and Client both apply</b> — the client rung sits on top of your company base.</p>
           <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
             {rungs.map((rg, i) => (
-              <div key={rg.id} style={{ position: "relative", background: "var(--paper-soft)", border: "var(--hairline)",
-                borderRadius: "var(--radius-lg)", padding: "var(--space-3) var(--space-4)", marginLeft: i * 10 }}>
+              <div key={rg.id} style={{ position: "relative", background: "var(--paper-soft)", border: "var(--hairline)", borderLeft: "3px solid " + rg.tone,
+                borderRadius: "var(--radius-lg)", padding: "var(--space-3) var(--space-4)", marginLeft: 0 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", flexWrap: "wrap", marginBottom: "var(--space-2)" }}>
+                  <span className="mono" style={{ flexShrink: 0, width: 20, height: 20, borderRadius: "var(--radius-full)", background: "var(--paper-mute)", color: "var(--ink-mute)", fontSize: "var(--text-xs)", display: "inline-flex", alignItems: "center", justifyContent: "center" }}>{i + 1}</span>
                   <span className="kanji" style={{ fontSize: "var(--text-lg)", color: rg.tone }}>{rg.kanji}</span>
                   <span style={{ fontSize: "var(--text-sm)", color: "var(--ink)", fontWeight: 600 }}>{rg.name}</span>
                   <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--ink-soft)" }}>{rg.scope}</span>
