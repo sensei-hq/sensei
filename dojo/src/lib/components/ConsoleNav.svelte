@@ -1,145 +1,40 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
 	import { dojoBuild } from '$lib/version';
-	import type { TenantKey } from '$lib/tenant';
 	import { pendingContributionCount } from '$lib/developer-view';
+	import {
+		buildNavGroups,
+		topGroups,
+		manageGroups,
+		hrefForRoute,
+		type RouteId
+	} from '$lib/nav-items';
 
-	// Left nav (mockup DojoNav): grouped destinations with a kanji glyph. Overview
-	// + Triage (R9), the admin console screens (R10: Members, Identities, Policies,
-	// Health, Audit) and the new governance screens (Library 蔵, Effective
-	// constitution 序) are wired; the rest render as "soon" (non-interactive) per
-	// the mockup's DOJO_BUILT gating. `active` is the current section id.
-	// `open`/`onClose` drive the mobile drawer (md:+ renders a static sidebar where
-	// `open` is irrelevant). `onClose` fires from the backdrop and on navigation.
+	// Left nav (mockup DojoRoleNav + RELAY_GROUP): the personal zone on top — a
+	// "Relay · you" group (the away-from-keyboard Relay surface) and the "Me"
+	// group (teams 群 · contributions 共 · downstream 贈) — then the management
+	// groups (Govern · Org · Clients · Trust) below a divider, de-emphasized.
+	// The IA lives in `nav-items.ts` so ordering/wiring is unit-tested; this
+	// component is presentational. Every wired route stays reachable; role-aware
+	// filtering is Chunk 6. `active` is the current section id. `open`/`onClose`
+	// drive the mobile drawer (md:+ renders a static sidebar where `open` is
+	// irrelevant). `onClose` fires from the backdrop and on navigation.
 	let {
 		active,
-		tenantKey,
 		open = false,
 		onClose
-	}: { active: string; tenantKey: TenantKey; open?: boolean; onClose?: () => void } = $props();
+	}: { active: string; open?: boolean; onClose?: () => void } = $props();
 
-	// A wired destination's route id (`to`); absent → a "soon" placeholder. Each id
-	// maps to its console sub-route below.
-	type RouteId =
-		| 'overview'
-		| 'triage'
-		| 'relay'
-		| 'library'
-		| 'preview'
-		| 'teams'
-		| 'contributions'
-		| 'downstream'
-		| 'members'
-		| 'identities'
-		| 'policies'
-		| 'health'
-		| 'audit'
-		| 'engagements'
-		| 'incidents';
+	// The pending-contributions badge is view-state; the pure nav structure takes
+	// it as an input so `nav-items.ts` stays free of $lib/developer-view.
+	const groups = $derived(
+		buildNavGroups({ pendingContributions: pendingContributionCount() })
+	);
+	const top = $derived(topGroups(groups));
+	const manage = $derived(manageGroups(groups));
 
-	interface NavItem {
-		id: string;
-		kanji: string;
-		label: string;
-		to?: RouteId;
-		badge?: number;
-	}
-	interface NavGroup {
-		group: string;
-		items: NavItem[];
-	}
-
-	// Overview + Triage (R9) and the admin screens (R10) are wired; the rest stay
-	// "soon". The href for a wired item comes from hrefFor(to).
-	const groups = $derived<NavGroup[]>([
-		{
-			group: 'Govern',
-			items: [
-				{ id: 'overview', kanji: '全', label: 'Overview', to: 'overview' },
-				{ id: 'triage', kanji: '門', label: 'Triage', to: 'triage' },
-				{ id: 'relay', kanji: '継', label: 'Relay', to: 'relay' },
-				{ id: 'library', kanji: '蔵', label: 'Library', to: 'library' },
-				{ id: 'preview', kanji: '序', label: 'Effective constitution', to: 'preview' }
-			]
-		},
-		{
-			// The personal / "Me" area (mockup DEV_NAV): the individual
-			// contributor's read-mostly seat, reachable solo (no join-gate, DJ1).
-			// Chunk 5 does the full IA reframe (Relay group + ordering); this is
-			// the minimal additive wiring so the three surfaces are reachable now.
-			group: 'Me',
-			items: [
-				{ id: 'teams', kanji: '群', label: 'My teams', to: 'teams' },
-				{
-					id: 'contributions',
-					kanji: '共',
-					label: 'My contributions',
-					to: 'contributions',
-					badge: pendingContributionCount() || undefined
-				},
-				{ id: 'downstream', kanji: '贈', label: 'For me', to: 'downstream' }
-			]
-		},
-		{
-			group: 'Org',
-			items: [
-				{ id: 'members', kanji: '任', label: 'Members & roles', to: 'members' },
-				{ id: 'identities', kanji: '鍵', label: 'Identities', to: 'identities' },
-				{ id: 'policies', kanji: '規', label: 'Policies', to: 'policies' },
-				{ id: 'scopes', kanji: '層', label: 'Scopes' }
-			]
-		},
-		{
-			group: 'Clients',
-			items: [
-				{ id: 'engagements', kanji: '客', label: 'Engagements', to: 'engagements' },
-				{ id: 'incidents', kanji: '警', label: 'Incidents', to: 'incidents' }
-			]
-		},
-		{
-			group: 'Trust',
-			items: [
-				{ id: 'health', kanji: '観', label: 'Health', to: 'health' },
-				{ id: 'audit', kanji: '録', label: 'Audit trail', to: 'audit' }
-			]
-		}
-	]);
-
-	// Route path for a wired destination. Overview is the console index; every
-	// other wired id is a `/console/{id}` sub-route.
 	function hrefFor(to: RouteId): string {
-		switch (to) {
-			case 'overview':
-				return resolve('/(console)/console');
-			case 'triage':
-				return resolve('/(console)/console/triage');
-			case 'relay':
-				return resolve('/(console)/console/relay');
-			case 'library':
-				return resolve('/(console)/console/library');
-			case 'preview':
-				return resolve('/(console)/console/preview');
-			case 'teams':
-				return resolve('/(console)/console/teams');
-			case 'contributions':
-				return resolve('/(console)/console/contributions');
-			case 'downstream':
-				return resolve('/(console)/console/downstream');
-			case 'members':
-				return resolve('/(console)/console/members');
-			case 'identities':
-				return resolve('/(console)/console/identities');
-			case 'policies':
-				return resolve('/(console)/console/policies');
-			case 'health':
-				return resolve('/(console)/console/health');
-			case 'audit':
-				return resolve('/(console)/console/audit');
-			case 'engagements':
-				return resolve('/(console)/console/engagements');
-			case 'incidents':
-				return resolve('/(console)/console/incidents');
-		}
+		return hrefForRoute(to, resolve);
 	}
 </script>
 
@@ -157,8 +52,8 @@
 		? 'translate-x-0'
 		: '-translate-x-full'}"
 >
-	{#each groups as grp (grp.group)}
-		<div style="margin-bottom: 14px">
+	{#snippet navGroup(grp: (typeof groups)[number])}
+		<div class="mb-4 {grp.manage ? 'opacity-80' : ''}">
 			<div
 				class="text-ink-faint text-xs font-semibold uppercase"
 				style="letter-spacing: 0.14em; padding: 0 8px; margin-bottom: 6px"
@@ -206,9 +101,26 @@
 				{/each}
 			</div>
 		</div>
+	{/snippet}
+
+	<!-- Personal zone (Relay · you + Me) — always on top. -->
+	{#each top as grp (grp.group)}
+		{@render navGroup(grp)}
 	{/each}
 
-	<div class="flex-1"></div>
+	<!-- Spacer + divider: the management groups sit below, de-emphasized. -->
+	<div class="flex-1" style="min-height: 12px"></div>
+	{#if manage.length > 0}
+		<div
+			data-testid="nav-manage-divider"
+			class="border-paper-edge border-t"
+			style="margin: 0 8px 12px"
+		></div>
+	{/if}
+	{#each manage as grp (grp.group)}
+		{@render navGroup(grp)}
+	{/each}
+
 	<div
 		class="border-paper-edge text-ink-mute grid w-full items-center gap-2 border-t text-sm"
 		style="grid-template-columns: auto 1fr; text-align: left; padding: 12px 8px 8px; opacity: 0.6"

@@ -89,3 +89,33 @@ export function tenantKeyFromUrl(url: URL): string {
 export function orgForTenant(tenantKey: string): DojoOrg | undefined {
 	return orgs.find((o) => o.url === tenantKey);
 }
+
+/**
+ * The `document.cookie` assignment that persists a selected org as the session
+ * tenant. Extracted so the exact cookie shape (name/value encoding, path,
+ * SameSite) lives in ONE place — the org picker and the top-bar switcher both
+ * write it identically. Session cookie (no expiry), path=/, SameSite=Lax; not
+ * httpOnly since it's server-owned but not secret.
+ */
+export function tenantCookieString(tenantKey: string): string {
+	return `${TENANT_COOKIE}=${encodeURIComponent(tenantKey)}; path=/; SameSite=Lax`;
+}
+
+/**
+ * Switch the session to a picked org, then navigate to the console home. This is
+ * the ONE tenant-switch path shared by `/orgs` (the "Enter" button) and the
+ * top-bar org switcher — DRY: neither invents its own cookie/goto. Side effects
+ * are injected (`setCookie` = `(s) => (document.cookie = s)`, `navigate` = goto)
+ * so the logic is pure over its inputs and unit-testable without a DOM/router.
+ *
+ * @returns the console route the caller should land on (also passed to
+ *   `navigate`), so a test can assert the destination without a spy on goto.
+ */
+export function enterOrg(
+	org: DojoOrg,
+	deps: { setCookie: (cookie: string) => void; navigate: (to: string) => void; consoleHref: string }
+): string {
+	deps.setCookie(tenantCookieString(tenantKeyOf(org)));
+	deps.navigate(deps.consoleHref);
+	return deps.consoleHref;
+}
