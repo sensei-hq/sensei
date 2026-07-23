@@ -29,7 +29,13 @@ import type {
 	KitEngagement,
 	KitConfidentiality,
 	KitIncident,
-	KitClientAuditRow
+	KitClientAuditRow,
+	KitMember,
+	KitRolePolicy,
+	KitScopeOwner,
+	KitBilling,
+	KitIdentity,
+	KitHealth
 } from './types';
 
 export const me: KitMe = { name: 'Rin Saito', handle: 'rin', avatar: 'R' };
@@ -984,4 +990,235 @@ const clientAudit: Record<string, KitClientAuditRow[]> = {
  *  `consoles.clientAudit`), falling back to the representative `acme` fixture. */
 export function clientAuditFor(slug: string): KitClientAuditRow[] {
 	return clientAudit[slug] ?? clientAudit.acme;
+}
+
+// ── Admin consoles (dojo2-data `members` · `roles` · `scopeOwners` ·
+//    `billing` · `consoles.identity` · `consoles.health`) ────────────────────
+//
+// The admin-console fixtures the Members & Roles / Policies / Audit surface, the
+// Scopes screen, the Identity & SSO screen, the Health / Monitor screen and the
+// Plan & billing screen bind to. Ported 1:1 from the mockup. The org-scoped
+// consoles (scope owners) are keyed by slug with a representative `acme` default
+// any unknown slug falls back to (matching the mockup's single authored
+// fixture); the org-wide fixtures (members, roles, billing, identity, health)
+// are single authored fixtures the accessor returns for any org this chunk. A
+// real per-org lookup lands with the `/v1` wiring.
+
+// Members & Roles — git-derived role + dōjō overrides (dojo2-data `members`).
+export const members: KitMember[] = [
+	{ name: 'Keiko Tanaka', git: 'Org owner', role: 'admin', scopes: 'all', active: 'now' },
+	{
+		name: 'Marco Diaz',
+		git: 'Repo admin',
+		role: 'maintainer',
+		scopes: 'Payments · Ledger',
+		active: '12m'
+	},
+	{
+		name: 'Rin Saito',
+		git: 'Repo admin',
+		role: 'maintainer',
+		scopes: 'Web · Auth',
+		active: 'now',
+		you: true
+	},
+	{
+		name: 'Sven Karlsson',
+		git: 'Repo admin',
+		role: 'maintainer',
+		scopes: 'Platform · API',
+		active: '3h'
+	},
+	{ name: 'Aiko Nakamura', git: 'Write', role: 'developer', scopes: 'Web · Auth', active: '1h' },
+	{ name: 'Tom Becker', git: 'Read', role: 'developer', scopes: '—', active: '5d' }
+];
+
+/** The org's members (dojo2-data `members`). One authored fixture this chunk. */
+export function membersFor(_slug: string): KitMember[] {
+	return members;
+}
+
+// Role policies — additive rungs, each adds capability (dojo2-data `roles`).
+export const rolePolicies: KitRolePolicy[] = [
+	{ id: 'developer', kanji: '士', label: 'developer', note: 'read-mostly · watches & chats' },
+	{ id: 'maintainer', kanji: '掟', label: 'maintainer', note: 'authors governance · triages' },
+	{ id: 'lead', kanji: '客', label: 'lead', note: 'client engagements & audit' },
+	{ id: 'admin', kanji: '任', label: 'admin', note: 'member roles & policies' }
+];
+
+/** The org's role policies (dojo2-data `roles`). Additive: developer →
+ *  maintainer → lead → admin. */
+export function rolePoliciesFor(_slug: string): KitRolePolicy[] {
+	return rolePolicies;
+}
+
+/** The Audit-tab log — a derived read of the shared `chat` thread (mockup
+ *  ScrRoleSurfaces audit tab maps `D2.chat.thread`). Reuses the existing `chat`
+ *  fixture rather than duplicating a near-identical list. */
+export function auditLogFor(_slug: string): KitChatTurn[] {
+	return chat;
+}
+
+// Scope ownership — who owns/triages each scope's queue (dojo2-data `scopeOwners`).
+const scopeOwners: Record<string, KitScopeOwner[]> = {
+	acme: [
+		{
+			scope: 'Company-wide',
+			group: 'Company',
+			owner: 'Keiko Tanaka',
+			role: 'admin',
+			queue: 3,
+			sla: '24h'
+		},
+		{ scope: 'Payments', group: 'Teams', owner: 'Marco Diaz', role: 'maintainer', queue: 5, sla: '12h' },
+		{
+			scope: 'Platform',
+			group: 'Teams',
+			owner: 'Sven Karlsson',
+			role: 'maintainer',
+			queue: 2,
+			sla: '24h'
+		},
+		{
+			scope: 'React · TypeScript',
+			group: 'Stacks',
+			owner: 'Rin Saito',
+			role: 'maintainer',
+			queue: 4,
+			sla: '48h'
+		},
+		{ scope: 'Postgres', group: 'Stacks', owner: null, role: null, queue: 1, sla: 'fallback' }
+	]
+};
+
+/** The scope-ownership rows for a slug (dojo2-data `scopeOwners`), falling back
+ *  to the representative `acme` fixture. */
+export function scopeOwnersFor(slug: string): KitScopeOwner[] {
+	return scopeOwners[slug] ?? scopeOwners.acme;
+}
+
+// Plan & billing — the business model (dojo2-data `billing`).
+export const billing: KitBilling = {
+	plan: 'Team · private',
+	perSeat: 12,
+	seatsActive: 34,
+	seatsReadonly: 14,
+	renews: 'Aug 1',
+	tiers: [
+		{
+			id: 'free',
+			kanji: '無',
+			name: 'Free',
+			price: 'Free',
+			sub: 'public · OSS · personal',
+			lines: [
+				'Public / open-source or personal solo dōjō',
+				'Unlimited members · full governance authoring',
+				'Relay for your own projects — watch · approve · decide · chat',
+				'Fair use: 1 active machine · standard realtime'
+			]
+		},
+		{
+			id: 'team',
+			kanji: '組',
+			name: 'Team',
+			price: 'Per seat',
+			sub: '/ mo · active contributor',
+			current: true,
+			lines: [
+				'Private, shared scopes for a company or team',
+				'Role consoles · client engagements · audit',
+				'Relay across the team — shared inbox, presence, priority realtime',
+				'Read-only members always free'
+			]
+		},
+		{
+			id: 'ent',
+			kanji: '企',
+			name: 'Enterprise',
+			price: 'Contract',
+			sub: 'custom',
+			dark: true,
+			lines: [
+				'Self-hosted / VPC · SSO (OIDC / SAML) + SCIM',
+				'Audit retention & export · air-gapped bundle',
+				'Self-hosted relay · SSO on mobile',
+				'SLA & priority support'
+			]
+		}
+	],
+	relayRows: [
+		{ label: 'Relay on your own projects — watch · approve · decide · chat', free: true },
+		{ label: 'One active machine · standard realtime · native push', free: true },
+		{ label: "Shared team inbox & queue · presence (who's handling this)", free: false },
+		{ label: 'Higher concurrency · priority realtime · approval audit trail', free: false }
+	],
+	invoices: [
+		{ d: 'Jul 1, 2026', amt: '$408.00', s: 'paid' },
+		{ d: 'Jun 1, 2026', amt: '$396.00', s: 'paid' },
+		{ d: 'May 1, 2026', amt: '$372.00', s: 'paid' }
+	]
+};
+
+/** The org's plan & billing state (dojo2-data `billing`). One authored fixture
+ *  this chunk. */
+export function billingFor(_slug: string): KitBilling {
+	return billing;
+}
+
+// Identity & SSO — IdP + SCIM + git/device-code mappings (dojo2-data
+// `consoles.identity`).
+export const identity: KitIdentity = {
+	idp: { name: 'Okta', protocol: 'OIDC', status: 'connected', domain: 'acme.okta.com' },
+	scim: true,
+	mappings: [
+		{ source: 'GitHub org · acme', to: 'auto-join · role from repo access', count: 41 },
+		{ source: 'Magic link · @acme.com', to: 'developer by default', count: 5 },
+		{ source: 'Device code', to: 'read-only', count: 2 }
+	]
+};
+
+/** The org's identity & SSO config (dojo2-data `consoles.identity`). One
+ *  authored fixture this chunk. */
+export function identityFor(_slug: string): KitIdentity {
+	return identity;
+}
+
+// Health / Monitor — the shared mind's vital signs (dojo2-data
+// `consoles.health`).
+export const health: KitHealth = {
+	signals: [
+		{ kanji: '観', label: 'Sessions this week', n: '312', sub: '↑ 14%', tone: 'accent' },
+		{ kanji: '覚', label: 'Adoption rate', n: '68%', sub: 'of approved', tone: 'success' },
+		{ kanji: '盾', label: 'Leak-guard blocks', n: '3', sub: 'all contained', tone: 'warning' },
+		{ kanji: '門', label: 'Queue age · median', n: '6h', sub: 'within SLA', tone: 'ink' }
+	],
+	contribVsApprove: [
+		{ wk: 'W1', c: 18, a: 12 },
+		{ wk: 'W2', c: 22, a: 15 },
+		{ wk: 'W3', c: 19, a: 17 },
+		{ wk: 'W4', c: 26, a: 20 }
+	],
+	alerts: [
+		{
+			kanji: '盾',
+			title: 'Leak-guard held a raw stack trace',
+			detail: 'Initech · auto-contained · no data left',
+			when: '2h',
+			sev: 'resolved'
+		},
+		{
+			kanji: '門',
+			title: 'Postgres scope queue has no owner',
+			detail: '1 candidate routed to fallback',
+			when: '1d',
+			sev: 'warning'
+		}
+	]
+};
+
+/** The org's health / monitor vitals (dojo2-data `consoles.health`). One
+ *  authored fixture this chunk. */
+export function healthFor(_slug: string): KitHealth {
+	return health;
 }
