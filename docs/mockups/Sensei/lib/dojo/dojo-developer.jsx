@@ -181,15 +181,17 @@ function DojoDevDownstream({ mobile = false }) {
 }
 
 /* ─── the developer console ──────────────────────────────── */
-function DojoDeveloperConsole({ initial = "teams", mobile = false, relayStart = null }) {
+function DojoDeveloperConsole({ initial = "teams", mobile = false, relayStart = null, onEnterDojo, onOpenProject }) {
   const [active, setActive] = ddS(initial);
   let screen;
   if (active === "contributions") screen = <DojoDevContributions mobile={mobile} />;
   else if (active === "downstream") screen = <DojoDevDownstream mobile={mobile} />;
-  else screen = <DojoDevTeams mobile={mobile} />;
+  else screen = <DojoDevTeams mobile={mobile} onEnterDojo={onEnterDojo} />;
+  const nav = onOpenProject ? [...DEV_NAV, { group: "Your work", items: [{ id: "__project", kanji: "序", label: "Project rules" }] }] : DEV_NAV;
+  const onSetActive = (id) => { if (id === "__project") { onOpenProject && onOpenProject(); } else setActive(id); };
   return (
     <DojoRoleShell label="Dōjō · Developer console" role={{ kanji: "弟", label: "Developer" }}
-      nav={DEV_NAV} active={active} setActive={setActive} mobile={mobile} relayStart={relayStart}>
+      nav={nav} active={active} setActive={onSetActive} mobile={mobile} relayStart={relayStart} onEnterDojo={onEnterDojo}>
       {screen}
     </DojoRoleShell>
   );
