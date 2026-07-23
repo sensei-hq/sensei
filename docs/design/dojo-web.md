@@ -1,9 +1,11 @@
-# Dōjō web app — sitemap & user flow
+# Dōjō web app — design: sitemap, routes & IA
 
-> The user-first structure of the Dōjō web app (`dojo/`, `dojo.sensei-hq.com`).
-> Captured from the [Dōjō journey map](../../mockups/Sensei/Sensei%20D%C5%8Dj%C5%8D%20Journey%20Map.html)
-> + [`journeys/dojo.md`](../../journeys/dojo.md) + `mockups/Sensei/lib/dojo/*.jsx`, then refined
-> in discussion (2026-07-23). **Discussion draft** — marks shipped vs. gap.
+> The screen / route / navigation structure of the Dōjō web app (`dojo/`,
+> `dojo.sensei-hq.com`) — the **design layer** behind the user-facing
+> [Dōjō feature](../features/dojo/README.md). Captured from the
+> [Dōjō journey map](../mockups/Sensei/Sensei%20D%C5%8Dj%C5%8D%20Journey%20Map.html)
+> + [`journeys/dojo.md`](../journeys/dojo.md) + `mockups/Sensei/lib/dojo/*.jsx`, refined
+> in discussion (2026-07-23).
 >
 > Status legend: **✅ built** · **◐ partial** · **○ target** (not built).
 > (Kanji are kept in prose; Mermaid labels are ASCII-only so they render.)
@@ -129,7 +131,9 @@ flowchart LR
 
 **Conflicts settle in order:** ① confidentiality first → ② a **non-negotiable (★ / mandatory)
 locks** so no narrower scope can relax it → ③ otherwise the **more specific scope refines** the
-broader.
+broader. **Cross-org:** on a client project the owning org (Client) wins ordinary conflicts, but
+the **employer's `mandatory` rules remain a floor — the owner can tighten them, never relax** (a
+company non-negotiable still binds its developer even on client work).
 
 Three surfaces make it usable:
 
@@ -164,26 +168,33 @@ flowchart LR
 | Roles | none | ○ **role-scoped** surfaces (developer/maintainer/lead/admin, additive) |
 | Onboarding | `/orgs` picker | ○ create-a-Dōjō + starter constitution |
 
-## 7. Open questions
+## 7. Decisions & open naming
 
 **Resolved (2026-07-23):**
-- **Q1 Member entry** — ✅ member lands in the **personal view**; **work is the highest-activity
-  surface**; membership/management/config are secondary. A **"My Dōjōs"** section lists orgs + role
+- **Q1 Member entry** — member lands in the **personal view**; **work is the highest-activity
+  surface**; membership/management/config are secondary. A **"my dōjōs"** list shows orgs + role
   (empty state when none).
-- **Q2 Org-context presentation** — ✅ a **distinct org context with its own nav pane** (not inline).
-- **Q3 Routes** — ✅ **`/org/[slug]`** for org context; personal at the post-auth root.
-- **Q (governance drill-in)** — ✅ each org shows **projects in its jurisdiction**; a project drills
-  to a **preview of which ladder levels built its constitution**.
+- **Q2 Org-context presentation** — a **distinct org context with its own nav pane** (not inline).
+- **Q3 Routes** — personal core at the **root `/*`**; org context under a **prefixed segment**
+  `/[org-word]/[slug]`. `/dojo/<slug>` is **rejected** (redundant — the whole site is the Dōjō);
+  exact word is naming pick **N2** below.
+- **Q4 Role → capability** — confirmed: developer read-mostly · maintainer governance · lead
+  clients · admin roles/policies; grants are **additive**. Re-group the mockup nav to match.
+- **Q5 Personal governance placement** — confirmed: a solo user's own rules live in the personal
+  adopt-screen, no org needed; distinct from org authoring. (The screen's *name* is pick **N1**.)
+- **Q7 Cross-org ownership** — confirmed: confidentiality first, then the owning org wins ordinary
+  conflicts, and the **employer's `mandatory` rules are a floor the owner can tighten, never relax**.
+- **Governance drill-in** — each org shows **projects in its jurisdiction**; a project drills to a
+  **preview of which ladder levels built its constitution**.
+
+**Open — naming picks:**
+- **N1 rename the "Library" screen.** "Library" collides with sensei's existing meaning (dependency
+  / lib docs referenced in projects — `get_lib_docs` / `add_library`). Candidates for the governance
+  rule-pack adopt screen: **"rule packs"** (recommended) · "constitution packs" · "presets" ·
+  "rulebook". Touches the route + the `library-*.ts` modules.
+- **N2 org-path segment word.** Candidates: **`/org/[slug]`** (clear, recommended) · `/o/[slug]`
+  (short) · bare `/[slug]` (cleanest, needs a reserved-word guard vs. personal routes).
 
 **Still open:**
-- **Q4 Role → capability** — confirm the target (developer read-mostly · maintainer governance ·
-  lead clients · admin roles/policies) and that grants are **additive**; then re-group the mockup
-  nav (it files governance under admin).
-- **Q5 Personal governance placement** — for a solo user, "your own rules" (personal constitution)
-  lives in the personal Library, no org needed — confirm this stays distinct from org authoring.
 - **Q6 Mobile IA** — journey-map mobile shell is a bottom tab bar (Projects · Inbox · Chat · More);
-  confirm, and where the org switch / My-Dōjōs lives on phone.
-- **Q7 Cross-org ownership resolution** — confidentiality first, then the **owning org wins**
-  ordinary conflicts. Open: does the **employer's `mandatory`** rule still impose a floor the owner
-  can *tighten but not relax*, or does the owning org fully win (employer non-negotiables travel
-  only as personal/conduct guards)?
+  confirm, and where the org switch / my-dōjōs lives on phone.
