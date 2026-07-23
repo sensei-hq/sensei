@@ -79,7 +79,7 @@ export const K2_PHASE: Record<string, PhaseTone> = {
 export interface RoleTone {
 	kanji: string;
 	label: string;
-	/** i-glyph icon name for the role tag. */
+	/** Solar icon name for the role tag. */
 	icon: string;
 }
 
