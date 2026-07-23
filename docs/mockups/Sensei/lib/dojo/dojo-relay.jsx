@@ -19,10 +19,10 @@ const { useState: mbS } = React;
 
 /* ═══ data · per-user, across every Dōjō ═════════════════════ */
 const flagMeta = {
-  gate:    { tone: "var(--accent)",  soft: "var(--accent-soft)", edge: "var(--accent-edge)",  label: "decision waiting" },
-  approve: { tone: "var(--accent)",  soft: "var(--accent-soft)", edge: "var(--accent-edge)",  label: "approval waiting" },
+  gate:    { tone: "var(--accent)",  soft: "var(--accent-soft)", edge: "var(--accent-edge)",  label: "decision waiting", cta: "Answer the decision", ck: "決" },
+  approve: { tone: "var(--accent)",  soft: "var(--accent-soft)", edge: "var(--accent-edge)",  label: "approval waiting", cta: "Review the command", ck: "認" },
   doing:   { tone: "var(--success)", soft: "var(--success-soft)", edge: "var(--success-edge)", label: "on track" },
-  stall:   { tone: "var(--warning)", soft: "var(--warning-soft)", edge: "var(--warning-edge)", label: "stalled" },
+  stall:   { tone: "var(--warning)", soft: "var(--warning-soft)", edge: "var(--warning-edge)", label: "stalled", cta: "Nudge to continue", ck: "促" },
   done:    { tone: "var(--ink-mute)",   soft: "var(--paper-mute)", edge: "var(--paper-edge)",      label: "done" },
 };
 const kindTone = window.DOJO_KIND_TONE;
@@ -52,67 +52,53 @@ function Bar({ pct, tone }) {
 /* ═══ 1 · PROJECTS body (adaptive) ═══════════════════════════ */
 function RelayProjectsBody({ wide = false, onOpen }) {
   const needs = MB_PROJECTS.filter(p => ["gate", "approve", "stall"].includes(p.flag));
+  const rest = MB_PROJECTS.filter(p => !["gate", "approve", "stall"].includes(p.flag));
+  const ordered = [...needs, ...rest];
   const pad = wide ? "var(--space-5)" : "var(--space-4)";
   return (
     <div style={{ height: "100%", overflow: "auto", padding: pad }}>
-      {/* needs you */}
-      <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", marginBottom: "var(--space-3)" }}>
-        <span className="kanji" style={{ fontSize: "var(--text-sm)", color: "var(--accent)" }}>要</span>
-        <span style={{ fontSize: "var(--text-xs)", letterSpacing: ".14em", textTransform: "uppercase", color: "var(--ink-mute)", fontWeight: 600 }}>Needs you</span>
-        <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--accent)" }}>{needs.length}</span>
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: wide ? "repeat(auto-fill, minmax(300px, 1fr))" : "1fr", gap: "var(--space-3)", marginBottom: "var(--space-5)" }}>
-        {needs.map(p => {
-          const f = flagMeta[p.flag];
-          return (
-            <div key={p.id} style={{ background: f.soft, border: `1px solid ${f.edge || "var(--paper-edge)"}`, borderRadius: "var(--radius-lg)", padding: "var(--space-3) var(--space-4)" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
-                <span className="kanji" style={{ fontSize: "var(--text-lg)", color: f.tone }}>{p.kanji}</span>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div className="mono" style={{ fontSize: "var(--text-sm)", color: "var(--ink)" }}>{p.name}</div>
-                  <div style={{ marginTop: "var(--space-1)" }}><DojoTag p={p} /></div>
-                </div>
-                <span style={{ fontSize: "var(--text-xs)", fontWeight: 600, color: f.tone }}>{f.label}</span>
-              </div>
-              <button onClick={() => onOpen && onOpen(p.flag)} style={{ width: "100%", marginTop: "var(--space-3)", padding: "var(--space-2)", borderRadius: "var(--radius-lg)", border: "none", cursor: "pointer",
-                    background: p.flag === "stall" ? "var(--paper)" : "var(--ink)", color: p.flag === "stall" ? "var(--ink)" : "var(--paper)",
-                    boxShadow: p.flag === "stall" ? "inset 0 0 0 1px var(--paper-edge)" : "none",
-                    fontSize: "var(--text-sm)", fontWeight: 500, fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "center", gap: "var(--space-2)" }}>
-                <span className="kanji" style={{ fontSize: "var(--text-sm)", color: "var(--accent)" }}>{p.flag === "approve" ? "認" : p.flag === "gate" ? "決" : "促"}</span>
-                {p.flag === "approve" ? "Review the command" : p.flag === "gate" ? "Answer the decision" : "Nudge to continue"}
-              </button>
-            </div>
-          );
-        })}
-      </div>
-      {/* all active */}
       <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", marginBottom: "var(--space-3)" }}>
         <span className="kanji" style={{ fontSize: "var(--text-sm)", color: "var(--ink-mute)" }}>場</span>
-        <span style={{ fontSize: "var(--text-xs)", letterSpacing: ".14em", textTransform: "uppercase", color: "var(--ink-mute)", fontWeight: 600 }}>Active</span>
+        <span style={{ fontSize: "var(--text-xs)", letterSpacing: ".14em", textTransform: "uppercase", color: "var(--ink-mute)", fontWeight: 600 }}>Active projects</span>
         <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--ink-faint)" }}>{MB_PROJECTS.length}</span>
+        <span style={{ flex: 1 }} />
+        {needs.length > 0 && <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--accent)" }}>{needs.length} need you</span>}
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: wide ? "repeat(auto-fill, minmax(300px, 1fr))" : "1fr", gap: "var(--space-3)" }}>
-        {MB_PROJECTS.map(p => {
+      <div style={{ background: "var(--paper-soft)", border: "var(--hairline)", borderRadius: "var(--radius-lg)", overflow: "hidden" }}>
+        {ordered.map((p, i) => {
           const f = flagMeta[p.flag];
+          const acts = p.flag === "approve" || p.flag === "gate" || p.flag === "stall";
           return (
-            <button key={p.id} onClick={() => onOpen && onOpen(p.flag)} style={{ textAlign: "left", cursor: "pointer", background: "var(--paper-soft)", border: "var(--hairline)", borderRadius: "var(--radius-lg)", padding: "var(--space-3) var(--space-4)", fontFamily: "inherit" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
-                <span className="kanji" style={{ fontSize: "var(--text-lg)", color: "var(--ink-mute)" }}>{p.kanji}</span>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div className="mono" style={{ fontSize: "var(--text-sm)", color: "var(--ink)" }}>{p.name}</div>
-                  <div style={{ marginTop: "var(--space-1)" }}><DojoTag p={p} /></div>
+            <div key={p.id} style={{ display: "grid",
+              gridTemplateColumns: wide ? "3px auto 1fr 150px auto" : "3px auto 1fr auto", gap: "var(--space-3)", alignItems: "center",
+              borderTop: i === 0 ? "none" : "1px solid var(--paper-edge)", paddingRight: "var(--space-4)" }}>
+              <span style={{ alignSelf: "stretch", background: acts ? f.tone : "transparent" }} />
+              <span className="kanji" style={{ fontSize: "var(--text-lg)", color: f.tone, lineHeight: 1, padding: "var(--space-3) 0 var(--space-3) var(--space-3)" }}>{p.kanji}</span>
+              <div style={{ minWidth: 0, padding: "var(--space-3) 0" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", flexWrap: "wrap" }}>
+                  <span className="mono" style={{ fontSize: "var(--text-sm)", color: "var(--ink)" }}>{p.name}</span>
+                  <DojoTag p={p} />
                 </div>
-                <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-1)", fontSize: "var(--text-xs)", color: f.tone }}>
-                  <span style={{ width: 6, height: 6, borderRadius: "50%", background: f.tone }} />{f.label}
-                </span>
+                <div style={{ fontSize: "var(--text-xs)", color: "var(--ink-mute)", marginTop: "var(--space-1)" }}>
+                  <span style={{ color: f.tone, fontWeight: 600 }}>{f.label}</span> · {p.flag === "stall" ? "Paused" : "Now"}: {p.now}
+                </div>
               </div>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", margin: "var(--space-3) 0 var(--space-1)" }}>
-                <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--ink-mute)" }}>Phase {p.phase} of {p.of}</span>
-                <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--ink-mute)" }}>{p.pct}%</span>
-              </div>
-              <Bar pct={p.pct} tone={p.flag === "stall" ? "var(--warning)" : "var(--ink)"} />
-              <div style={{ fontSize: "var(--text-xs)", color: "var(--ink-soft)", marginTop: "var(--space-2)" }}>{p.flag === "stall" ? "Paused · " : "Now · "}{p.now}</div>
-            </button>
+              {wide && (
+                <div>
+                  <Bar pct={p.pct} tone={p.flag === "stall" ? "var(--warning)" : f.tone} />
+                  <div className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--ink-faint)", marginTop: "var(--space-1)" }}>phase {p.phase}/{p.of} · {p.pct}%</div>
+                </div>
+              )}
+              {acts
+                ? <button onClick={() => onOpen && onOpen(p.flag)} style={{ justifySelf: "end", cursor: "pointer", fontFamily: "inherit",
+                    display: "inline-flex", alignItems: "center", gap: "var(--space-1)", whiteSpace: "nowrap",
+                    background: p.flag === "stall" ? "var(--paper)" : "var(--ink)", color: p.flag === "stall" ? "var(--ink)" : "var(--paper)",
+                    boxShadow: p.flag === "stall" ? "inset 0 0 0 1px var(--paper-edge)" : "none",
+                    border: "none", borderRadius: "var(--radius)", padding: "var(--space-1) var(--space-3)", fontSize: "var(--text-xs)", fontWeight: 500 }}>
+                    <span className="kanji" style={{ color: "var(--accent)" }}>{f.ck}</span>{f.cta}
+                  </button>
+                : <button onClick={() => onOpen && onOpen(p.flag)} title="Watch progress" style={{ justifySelf: "end", cursor: "pointer", fontFamily: "inherit", background: "none", border: "none", color: "var(--ink-faint)", fontSize: "var(--text-sm)" }}>→</button>}
+            </div>
           );
         })}
       </div>
@@ -649,6 +635,9 @@ function MobileMoreBody({ onOpen }) {
             <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--ink-mute)" }}>{r}</span>
           </div>
         ))}
+      </div>
+      <div className="mono" style={{ marginTop: "var(--space-5)", fontSize: "var(--text-xs)", color: "var(--ink-faint)", display: "flex", alignItems: "center", gap: "var(--space-1)" }}>
+        <span className="kanji">結</span>Dōjō v0.4.2
       </div>
     </div>
   );

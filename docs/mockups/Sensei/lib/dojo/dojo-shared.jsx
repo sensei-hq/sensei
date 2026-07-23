@@ -188,6 +188,9 @@ function DojoRoleNav({ nav, active, setActive, header }) {
         <span className="kanji text-sm text-ink-mute text-center" style={{ width: 15 }}>調</span>
         <span>Settings · SSO</span>
       </button>
+      <div className="mono" style={{ padding: "var(--space-2) var(--space-2) 0", fontSize: "var(--text-xs)", color: "var(--ink-faint)", display: "flex", alignItems: "center", gap: "var(--space-1)" }}>
+        <span className="kanji">結</span>Dōjō v0.4.2
+      </div>
     </aside>
   );
 }
