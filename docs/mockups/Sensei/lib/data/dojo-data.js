@@ -7,11 +7,11 @@ window.DOJO = {
   // The orgs this user belongs to — the multi-membership model. The console
   // is scoped to one at a time via the org switcher.
   memberships: [
-    { id: "acme",   kanji: "社", name: "Acme Corp",        kind: "employer",  current: true },
-    { id: "globex", kanji: "客", name: "Globex",           kind: "client" },
-    { id: "initech",kanji: "客", name: "Initech",          kind: "client" },
-    { id: "rustco", kanji: "群", name: "Rust Guild",       kind: "community" },
-    { id: "self",   kanji: "己", name: "Personal",         kind: "personal" },
+    { id: "acme",   kanji: "社", name: "Acme Corp",        kind: "employer",  current: true, role: "admin" },
+    { id: "globex", kanji: "客", name: "Globex",           kind: "client", role: "maintainer" },
+    { id: "initech",kanji: "客", name: "Initech",          kind: "client", role: "lead" },
+    { id: "rustco", kanji: "群", name: "Rust Guild",       kind: "community", role: "readonly" },
+    { id: "self",   kanji: "己", name: "Personal",         kind: "personal", role: "owner" },
   ],
 
   org: {

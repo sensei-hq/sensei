@@ -247,13 +247,13 @@ function DojoAudit({ mobile = false }) {
 }
 
 /* ─── the lead console ───────────────────────────────────── */
-function DojoLeadConsole({ initial = "clients", mobile = false, relayStart = null }) {
+function DojoLeadConsole({ initial = "clients", mobile = false, relayStart = null, onExit, enteredOrg }) {
   const [active, setActive] = dlS(initial);
   const go = (s) => { if (LEAD_SECTIONS.includes(s)) setActive(s); };
   const screen = active === "audit" ? <DojoAudit mobile={mobile} /> : <DojoClients go={go} mobile={mobile} />;
   return (
     <DojoRoleShell label="Dōjō · Lead console" role={{ kanji: "客", label: "Client lead" }}
-      nav={LEAD_NAV} active={active} setActive={setActive} mobile={mobile} relayStart={relayStart}>
+      nav={LEAD_NAV} active={active} setActive={setActive} mobile={mobile} relayStart={relayStart} zone="dojo" onExit={onExit} orgOverride={enteredOrg}>
       {screen}
     </DojoRoleShell>
   );

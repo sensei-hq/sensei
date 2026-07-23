@@ -2683,12 +2683,13 @@ function FirstRunScan({ onDone }) {
 }
 
 // Harness — first-run scan, then the observatory landing on Projects (early).
+// No join gate: sign-in → scan your machine → land straight on your running
+// work. Joining a Dōjō is never a step here; it's an optional offer that lives
+// on the workspace itself (and in Today / Preferences), taken when you want to
+// share. Nothing blocks you from your own projects and running tasks.
 function FirstRunApp() {
-  // join (detect the org Dōjō) → scan → enter the observatory
-  const [phase, setPhase] = useS("join");
-  if (phase === "join" && window.InappJoin) {
-    return <InappJoin onContinue={() => setPhase("scan")}/>;
-  }
+  // scan your machine → enter the observatory (Projects, early)
+  const [phase, setPhase] = useS("scan");
   if (phase === "entered" && window.ObservatoryDaily) {
     return <window.ObservatoryDaily stateMode="early" firstEntry={true}/>;
   }

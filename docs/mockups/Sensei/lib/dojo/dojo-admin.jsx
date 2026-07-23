@@ -11,7 +11,7 @@ const ADMIN_NAV = [
     { id: "overview", kanji: "全", label: "Overview" },
     { id: "monitor",  kanji: "観", label: "Monitor" },
   ]},
-  { group: "Org · manage", manage: true, items: [
+  { group: "Org · manage", items: [
     { id: "governance", kanji: "掟", label: "Governance" },
     { id: "members", kanji: "任", label: "Members & roles" },
     { id: "identity", kanji: "鍵", label: "Identity & SSO" },
@@ -206,7 +206,7 @@ function DojoOverview({ go, mobile = false }) {
   );
 }
 
-/* ─── Monitor · hive-mind health ─────────────────────────── */
+/* ─── Monitor · Dōjō health ───────────────────────────────── */
 function DojoMonitor({ go, mobile = false }) {
   const D = window.DOJO, m = D.metrics;
   const days = ["M", "T", "W", "T", "F", "S", "S"];
@@ -238,7 +238,7 @@ function DojoMonitor({ go, mobile = false }) {
   );
   return (
     <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", background: "var(--paper)", position: "relative" }}>
-      <DojoHead mobile={mobile} kanji="観" eyebrow="Org · monitor" title="Hive-mind health"
+      <DojoHead mobile={mobile} kanji="観" eyebrow="Org · monitor" title="Dōjō health"
         sub="Three headline signals — throughput, adoption, and leak-guard — read over the full audit trail. Anomalies surface here and flow straight into the client lead's incident view."
         right={<div style={{ display: "flex", gap: "var(--space-2)", alignItems: "center" }}>
           <DojoChip tone="var(--ink-soft)" soft="var(--paper-soft)" border="var(--hairline)">Last 7 days ▾</DojoChip>
@@ -274,13 +274,13 @@ function DojoMonitor({ go, mobile = false }) {
               <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-1)", fontSize: "var(--text-xs)", color: "var(--ink-mute)" }}><span style={{ width: 9, height: 9, borderRadius: "var(--radius-sm)", background: "var(--accent)", opacity: .85 }} /> contributed</span>
               <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-1)", fontSize: "var(--text-xs)", color: "var(--ink-mute)" }}><span style={{ width: 9, height: 9, borderRadius: "var(--radius-sm)", background: "var(--success)" }} /> approved</span>
             </div>
-            <div style={{ padding: "var(--space-4) var(--space-4) var(--space-4)" }}>
-              <div style={{ display: "flex", alignItems: "flex-end", gap: "var(--space-4)", height: 122 }}>
+            <div style={{ flex: 1, padding: "var(--space-4)", display: "flex", flexDirection: "column", justifyContent: "flex-end" }}>
+              <div style={{ display: "flex", alignItems: "flex-end", gap: "var(--space-4)", height: "100%", minHeight: 110 }}>
                 {weeks.map((w, i) => (
-                  <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: "var(--space-2)" }}>
-                    <div style={{ height: 96, width: "100%", display: "flex", alignItems: "flex-end", justifyContent: "center", gap: "var(--space-1)" }}>
-                      <div style={{ width: 11, height: Math.round(w.c / maxBar * 96), background: "var(--accent)", opacity: .85, borderRadius: "var(--radius-sm) var(--radius-sm) 0 0" }} />
-                      <div style={{ width: 11, height: Math.round(w.a / maxBar * 96), background: "var(--success)", borderRadius: "var(--radius-sm) var(--radius-sm) 0 0" }} />
+                  <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: "var(--space-2)", height: "100%" }}>
+                    <div style={{ flex: 1, width: "100%", display: "flex", alignItems: "flex-end", justifyContent: "center", gap: "var(--space-1)" }}>
+                      <div style={{ width: 11, height: (w.c / maxBar * 100) + "%", background: "var(--accent)", opacity: .85, borderRadius: "var(--radius-sm) var(--radius-sm) 0 0" }} />
+                      <div style={{ width: 11, height: (w.a / maxBar * 100) + "%", background: "var(--success)", borderRadius: "var(--radius-sm) var(--radius-sm) 0 0" }} />
                     </div>
                     <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--ink-faint)" }}>{days[i]}</span>
                   </div>
@@ -502,7 +502,7 @@ function DojoScopes({ mobile = false }) {
 }
 
 /* ─── the admin console ──────────────────────────────────── */
-function DojoAdminConsole({ initial = "overview", mobile = false, relayStart = null }) {
+function DojoAdminConsole({ initial = "overview", mobile = false, relayStart = null, onExit, enteredOrg }) {
   const [active, setActive] = daS(initial);
   const go = (s) => { if (ADMIN_SECTIONS.includes(s)) setActive(s); };
   let screen;
@@ -515,7 +515,7 @@ function DojoAdminConsole({ initial = "overview", mobile = false, relayStart = n
   else screen = <DojoOverview go={go} mobile={mobile} />;
   return (
     <DojoRoleShell label="Dōjō · Admin console" role={{ kanji: "長", label: "Org admin" }}
-      nav={ADMIN_NAV} active={active} setActive={setActive} mobile={mobile} relayStart={relayStart}>
+      nav={ADMIN_NAV} active={active} setActive={setActive} mobile={mobile} relayStart={relayStart} zone="dojo" onExit={onExit} orgOverride={enteredOrg}>
       {screen}
     </DojoRoleShell>
   );
