@@ -1,7 +1,7 @@
 // dojo2 component kit — the reusable foundation every dojo2 screen composes
 // from (ported from docs/mockups/Sensei/lib/dojo2/dojo2-kit.jsx). Chrome +
-// generic primitives only; the DOMAIN components (ladder / rule / relay / needs
-// / decision / chat) land with their screens.
+// generic primitives + the DOMAIN components (governance: ladder / rule /
+// conflict / stance; relay: run / gate / needs / decision / chat).
 //
 // Namespaced under lib/components/kit/ so they don't collide with the
 // soon-to-be-superseded ConsoleNav / ConsoleTopBar. Import as
@@ -10,6 +10,7 @@
 // Vocab + shared types.
 export * from './vocab';
 export * from './types';
+export * from './needs';
 
 // Primitives.
 export { default as Icon, glyphClass } from './Icon.svelte';
@@ -41,3 +42,19 @@ export { default as NavPane } from './NavPane.svelte';
 export { default as AppShell } from './AppShell.svelte';
 export { default as TabBar } from './TabBar.svelte';
 export { default as MobileShell } from './MobileShell.svelte';
+
+// Governance — the constitution ladder + stance.
+export { default as LadderRung } from './LadderRung.svelte';
+export { default as RuleRow } from './RuleRow.svelte';
+export { default as ConflictCard } from './ConflictCard.svelte';
+export { default as StanceDial } from './StanceDial.svelte';
+
+// Relay — live runs · gates · needs-you · decisions · chat.
+export { default as RunCard } from './RunCard.svelte';
+export { default as GateCard } from './GateCard.svelte';
+export { default as NeedsYouBand } from './NeedsYouBand.svelte';
+export { default as NeedsRow } from './NeedsRow.svelte';
+export { default as NeedsActions } from './NeedsActions.svelte';
+export { default as NeedsResolved } from './NeedsResolved.svelte';
+export { default as DecisionCard } from './DecisionCard.svelte';
+export { default as ChatThread } from './ChatThread.svelte';

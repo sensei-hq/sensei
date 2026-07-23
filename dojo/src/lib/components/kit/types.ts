@@ -73,3 +73,134 @@ export interface KitNavGroup {
 	group?: string;
 	items: KitNavItem[];
 }
+
+// ── Governance plane (dojo2-data `ladder` · `conflicts` · `stance`) ─────────
+
+/** A single rule on the constitution ladder (dojo2-data `ladder[].rules[]`). */
+export interface KitRule {
+	/** Brand glyph for the rule's intent. */
+	kanji: string;
+	/** The rule text. */
+	text: string;
+	/** ★ non-negotiable — a hard lock no narrower scope can relax. */
+	hard?: boolean;
+	/** The rung the rule entered from (shown when `showLevel`). */
+	level?: string;
+}
+
+/** One rung of the constitution ladder — a scope + its rules (dojo2-data `ladder[]`). */
+export interface KitLadderRung {
+	id: string;
+	/** Scope glyph (社 · 客 · 己 · 件 · 技). */
+	kanji: string;
+	/** Scope label — Company · Client · Personal · Project · Stack. */
+	scope: string;
+	/** The named entity at this scope (e.g. "Acme Corp"). */
+	name: string;
+	/** A short line on what the rung governs. */
+	caption: string;
+	/** `accent` tints the rung (a switched-on client rung); otherwise neutral ink. */
+	tone?: string;
+	rules?: KitRule[];
+}
+
+/** One side of a settled conflict — the losing/winning rule (dojo2-data `conflicts[].loser`). */
+export interface KitConflictSide {
+	/** The scope level the rule came from. */
+	level: string;
+	text: string;
+}
+
+/** A conflict the ladder settled — topic · loser → winner · why (dojo2-data `conflicts[]`). */
+export interface KitConflict {
+	id: string;
+	topic: string;
+	loser: KitConflictSide;
+	winner: KitConflictSide;
+	why: string;
+	/** A ★ non-negotiable decided it — no narrower scope can relax it. */
+	locked?: boolean;
+}
+
+/** A stance axis — a labelled discrete slider (dojo2-data `stance[]`). */
+export interface KitStanceDial {
+	/** autonomy · sharing · review. */
+	id: string;
+	kanji: string;
+	label: string;
+	caption: string;
+	/** Ordered level labels; the slider snaps between them. */
+	levels: string[];
+	/** Index of the current level within `levels`. */
+	value: number;
+}
+
+// ── Relay plane (dojo2-data `runs` · `gates` · `needsYou` · `decisions` · `chat`) ─
+
+/** A live session in progress (dojo2-data `runs[]`). */
+export interface KitRun {
+	id: string;
+	project: string;
+	assistant: string;
+	/** running · waiting. */
+	state: string;
+	task: string;
+	/** Compact elapsed time (e.g. "38m"). */
+	elapsed: string;
+	edits: number;
+	/** A command is waiting on a gate. */
+	gate?: boolean;
+}
+
+/** A command awaiting approve/deny (dojo2-data `gates[]`). */
+export interface KitGate {
+	id: string;
+	project: string;
+	/** The command line to run. */
+	cmd: string;
+	/** command · secret · … */
+	kind: string;
+	/** guarded · high. */
+	risk: string;
+	why: string;
+	/** Owning session id. */
+	session: string;
+	/** Compact "how long ago" (e.g. "3m"). */
+	age: string;
+}
+
+/** A "blocked on you" item in the cross-dōjō needs-you band (dojo2-data `needsYou[]`). */
+export interface KitNeed {
+	id: string;
+	/** gate · conflict · decision · review — drives the icon + action set. */
+	kind: string;
+	title: string;
+	project: string;
+	/** Owning dōjō display name. */
+	dojo: string;
+	why: string;
+	age: string;
+}
+
+/** A rule to sign off, with options (dojo2-data `decisions[]`). */
+export interface KitDecision {
+	id: string;
+	project: string;
+	title: string;
+	/** The choices; the first is the primary CTA. */
+	options: string[];
+	/** The evidence line under the title. */
+	context: string;
+	age: string;
+}
+
+/** One turn in a sensei-speaks-rarely thread (dojo2-data `chat.thread[]`). */
+export interface KitChatTurn {
+	/** `sensei` for the mentor voice; anything else is the viewer ("me"). */
+	who: string;
+	/** Brand glyph for the sensei voice (default 先). */
+	kanji?: string;
+	text: string;
+	/** Compact "how long ago" (e.g. "38m"). */
+	when: string;
+}
