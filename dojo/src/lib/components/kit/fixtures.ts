@@ -21,7 +21,15 @@ import type {
 	KitNeed,
 	KitDecision,
 	KitChatTurn,
-	KitConstitutionSection
+	KitConstitutionSection,
+	KitTriageGroup,
+	KitCandidateDetail,
+	KitApproval,
+	KitKnowledge,
+	KitEngagement,
+	KitConfidentiality,
+	KitIncident,
+	KitClientAuditRow
 } from './types';
 
 export const me: KitMe = { name: 'Rin Saito', handle: 'rin', avatar: 'R' };
@@ -665,4 +673,315 @@ const orgConstitutions: Record<string, KitConstitutionSection[]> = {
  *  `orgConstitution[slug]`), falling back to the representative `acme` fixture. */
 export function orgConstitutionFor(slug: string): KitConstitutionSection[] {
 	return orgConstitutions[slug] ?? orgConstitutions.acme;
+}
+
+// ── Maintainer + lead consoles (dojo2-data `consoles`) ──────────────────────
+//
+// The role-console fixtures the maintainer (Govern) and lead (Clients) screens
+// bind to. Ported 1:1 from the mockup `consoles` block. As with the org
+// Overview data above, each console is keyed by slug with a representative
+// `acme` default any unknown slug falls back to (matching the mockup's single
+// authored fixture), so a real org route renders without a per-org seed until
+// the `/v1` wiring lands.
+
+// 1 · Triage — candidate learnings awaiting a maintainer decision, grouped by
+// scope, ranked by confidence within each group.
+const triageGroups: Record<string, KitTriageGroup[]> = {
+	acme: [
+		{
+			scope: 'Payments',
+			items: [
+				{
+					id: 't1',
+					kanji: '紋',
+					title: 'Idempotency key on every money-moving mutation',
+					origin: '6 sessions · 3 repos',
+					conf: 0.91,
+					conflicts: 1,
+					dups: 0,
+					impact: 'high'
+				},
+				{
+					id: 't2',
+					kanji: '検',
+					title: 'Reconcile before any ledger migration',
+					origin: 's-2887 · ledger-core',
+					conf: 0.78,
+					conflicts: 0,
+					dups: 2,
+					impact: 'normal'
+				}
+			]
+		},
+		{
+			scope: 'React · TypeScript',
+			items: [
+				{
+					id: 't3',
+					kanji: '技',
+					title: 'Server state through the query layer, never a store',
+					origin: '11 sessions',
+					conf: 0.86,
+					conflicts: 0,
+					dups: 1,
+					impact: 'normal'
+				},
+				{
+					id: 't4',
+					kanji: '直',
+					title: 'Prefer $state(...) over let in Svelte 5',
+					origin: 'Rust Guild mirror',
+					conf: 0.64,
+					conflicts: 0,
+					dups: 0,
+					impact: 'low'
+				}
+			]
+		},
+		{
+			scope: 'Auth boundary',
+			items: [
+				{
+					id: 't5',
+					kanji: '守',
+					title: 'Never log refresh tokens, even at debug level',
+					origin: 's-2891 · lumen-auth',
+					conf: 0.95,
+					conflicts: 0,
+					dups: 0,
+					impact: 'high'
+				}
+			]
+		}
+	]
+};
+
+// The detail for the selected candidate (mockup `candidateDetail`).
+const candidateDetail: KitCandidateDetail = {
+	learning: 'Every money-moving mutation must carry an idempotency key before retry.',
+	cause: 'Two sessions retried a charge on a transient 500 and double-posted to the ledger.',
+	context: 'Surfaced in payments-service across lumen-auth, ledger-core and globex-portal.',
+	evidence: [
+		's-2887 · double-post caught in reconciliation',
+		's-2871 · manual rollback, 40 min',
+		'3 more sessions'
+	],
+	conflict: {
+		loser: 'Company · retry freely on transient failure',
+		winner: 'Project · idempotency key required'
+	},
+	scopes: ['Company', 'Team · Payments', 'Stack · Node']
+};
+
+/** The scope-grouped triage candidates for a slug (dojo2-data
+ *  `consoles.triage`), falling back to the representative `acme` fixture. */
+export function triageGroupsFor(slug: string): KitTriageGroup[] {
+	return triageGroups[slug] ?? triageGroups.acme;
+}
+
+/** The selected-candidate detail (dojo2-data `consoles.candidateDetail`). One
+ *  representative detail this chunk — a real per-candidate lookup lands with the
+ *  `/v1` wiring. */
+export function candidateDetailFor(_slug: string): KitCandidateDetail {
+	return candidateDetail;
+}
+
+// 2 · Approvals — second-approval queue for high-impact/safety candidates.
+const approvals: Record<string, KitApproval[]> = {
+	acme: [
+		{
+			id: 'a1',
+			kanji: '守',
+			title: 'Never log refresh tokens, even at debug level',
+			scope: 'Company',
+			first: 'Keiko Tanaka',
+			when: '2h',
+			impact: 'safety'
+		},
+		{
+			id: 'a2',
+			kanji: '紋',
+			title: 'Promote idempotency key from Project to Company',
+			scope: 'Company',
+			first: 'Marco Diaz',
+			when: '5h',
+			impact: 'high'
+		}
+	]
+};
+
+/** The second-approval queue for a slug (dojo2-data `consoles.approvals`),
+ *  falling back to the representative `acme` fixture. */
+export function approvalsFor(slug: string): KitApproval[] {
+	return approvals[slug] ?? approvals.acme;
+}
+
+// 3 · Knowledge — published library + prune policy + extension catalog.
+const knowledge: Record<string, KitKnowledge> = {
+	acme: {
+		prunePolicy: 'Prune after 90 days unused',
+		active: [
+			{
+				kanji: '紋',
+				title: 'Idempotency key on money-moving mutations',
+				scope: 'Team · Payments',
+				adopted: '6 repos',
+				age: 'adopted 3mo'
+			},
+			{
+				kanji: '守',
+				title: 'Verify webhook signature before parsing',
+				scope: 'Client guard',
+				adopted: '3 repos',
+				age: 'adopted 1mo'
+			},
+			{
+				kanji: '技',
+				title: 'No default exports in shared packages',
+				scope: 'Stack · React',
+				adopted: '9 repos',
+				age: 'adopted 5mo'
+			}
+		],
+		pending: [
+			{
+				kanji: '理',
+				title: 'Deprecation window of two minor versions',
+				scope: 'Company',
+				age: 'unused 84d'
+			}
+		],
+		catalog: [
+			{ kanji: '問', title: 'integration-test author', kind: 'agent', scope: 'Stack · React' },
+			{ kanji: '令', title: 'explain a slow query plan', kind: 'command', scope: 'Stack · Postgres' },
+			{ kanji: '技', title: 'auth-boundary reviewer', kind: 'skill', scope: 'Company' }
+		]
+	}
+};
+
+/** The published-knowledge library for a slug (dojo2-data `consoles.knowledge`),
+ *  falling back to the representative `acme` fixture. */
+export function knowledgeFor(slug: string): KitKnowledge {
+	return knowledge[slug] ?? knowledge.acme;
+}
+
+// 4 · Engagements — the client register + the confidentiality model.
+const engagements: Record<string, KitEngagement[]> = {
+	acme: [
+		{
+			id: 'e1',
+			kanji: '客',
+			client: 'Globex',
+			projects: 'globex-portal · billing',
+			lessons: 86,
+			dropped: 214,
+			since: '7mo',
+			status: 'active'
+		},
+		{
+			id: 'e2',
+			kanji: '客',
+			client: 'Initech',
+			projects: 'agency-monorepo',
+			lessons: 41,
+			dropped: 97,
+			since: '1y',
+			status: 'active'
+		}
+	]
+};
+
+const confidentiality: KitConfidentiality = {
+	kept: ['The lesson — a pattern, a guard, a skill', 'Anonymized code shape', 'Confidence & impact'],
+	dropped: ['Client & repo identifiers', 'Endpoints, hostnames, secrets', 'Literal source & data'],
+	example: {
+		raw: 'await stripe.charges.create({ idempotencyKey })',
+		stripped: 'await <payment-sdk>.<mutation>({ idempotencyKey })'
+	}
+};
+
+/** The client engagements for a slug (dojo2-data `consoles.engagements`),
+ *  falling back to the representative `acme` fixture. */
+export function engagementsFor(slug: string): KitEngagement[] {
+	return engagements[slug] ?? engagements.acme;
+}
+
+/** The confidentiality model (dojo2-data `consoles.confidentiality`) — the
+ *  kept-vs-dropped boundary + the anonymized example. */
+export function confidentialityFor(_slug: string): KitConfidentiality {
+	return confidentiality;
+}
+
+// 5 · Incidents — confidentiality containment.
+const incidents: Record<string, KitIncident[]> = {
+	acme: [
+		{
+			id: 'i1',
+			kanji: '盾',
+			title: 'Near-leak: client hostname in a shared prompt',
+			client: 'Globex',
+			state: 'contained',
+			when: '3d',
+			severity: 'high'
+		},
+		{
+			id: 'i2',
+			kanji: '盾',
+			title: 'Raw stack trace queued to Collective',
+			client: 'Initech',
+			state: 'resolved',
+			when: '2w',
+			severity: 'medium'
+		}
+	]
+};
+
+/** The confidentiality incidents for a slug (dojo2-data `consoles.incidents`),
+ *  falling back to the representative `acme` fixture. */
+export function incidentsFor(slug: string): KitIncident[] {
+	return incidents[slug] ?? incidents.acme;
+}
+
+// 6 · Client audit — the immutable confidentiality ledger.
+const clientAudit: Record<string, KitClientAuditRow[]> = {
+	acme: [
+		{
+			t: '10:42',
+			kanji: '共',
+			event: 'Lesson shared upstream',
+			detail: 'idempotency pattern · anonymized',
+			client: 'Globex',
+			ok: true
+		},
+		{
+			t: '10:41',
+			kanji: '盾',
+			event: 'Stripped 2 identifiers',
+			detail: 'hostname, repo slug',
+			client: 'Globex',
+			ok: true
+		},
+		{
+			t: '09:18',
+			kanji: '却',
+			event: 'Blocked contribution',
+			detail: 'raw source detected · held',
+			client: 'Initech',
+			ok: false
+		},
+		{
+			t: 'Yesterday',
+			kanji: '共',
+			event: 'Lesson shared upstream',
+			detail: 'webhook guard · anonymized',
+			client: 'Globex',
+			ok: true
+		}
+	]
+};
+
+/** The immutable client-audit ledger for a slug (dojo2-data
+ *  `consoles.clientAudit`), falling back to the representative `acme` fixture. */
+export function clientAuditFor(slug: string): KitClientAuditRow[] {
+	return clientAudit[slug] ?? clientAudit.acme;
 }
