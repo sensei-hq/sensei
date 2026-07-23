@@ -9,7 +9,11 @@ export default defineConfig({
 	plugins: [svelte(), svelteTesting()],
 	test: {
 		environment: 'jsdom',
-		include: ['src/**/*.{test,spec}.{js,ts}'],
+		// Include the `.spec.svelte.ts` suffix too so rune-store specs (state modules
+		// that use $state and must run through the Svelte compiler) are picked up —
+		// matching app/vitest.config.ts. The `{test,spec}.{js,ts}` glob alone misses
+		// `*.spec.svelte.ts`.
+		include: ['src/**/*.{test,spec}.{js,ts}', 'src/**/*.spec.svelte.ts'],
 		globals: true,
 		setupFiles: []
 	},
