@@ -141,6 +141,36 @@ export interface KitRulePack {
 	note: string;
 }
 
+/** One section of a dōjō's OWN authored constitution (dojo2-data
+ *  `orgConstitution[slug][]`). A dōjō authors rules at the scopes it owns —
+ *  company-wide, per team, per stack (stacks also adopt rule packs). This is
+ *  NOT the resolution ladder (that appears only at project-preview time): it is
+ *  the maintainer-authoring surface where the dōjō adds/edits/toggles its rules. */
+export interface KitConstitutionSection {
+	id: string;
+	/** Scope glyph (社 · 組 · 技). */
+	kanji: string;
+	/** The scope label (e.g. "Company-wide" · "Payments" · "Postgres"). */
+	scope: string;
+	/** The authoring group the section sits under — Company · Teams · Stacks. */
+	group: string;
+	/** A short line on what the section governs. */
+	caption: string;
+	/** Adopted rule-pack names (stacks only); absent for company/team scopes. */
+	packs?: string[];
+	rules?: KitRule[];
+}
+
+/** The org-context stat row for the org home (dojo2-data `dojos[]` counts). The
+ *  jurisdiction summary — members, items needing a maintainer, projects in flight. */
+export interface KitOrgStats {
+	members: number;
+	/** Items across this jurisdiction that need a maintainer; 0 = none. */
+	needs: number;
+	/** Projects in flight under this dōjō. */
+	projects: number;
+}
+
 /** A stance axis — a labelled discrete slider (dojo2-data `stance[]`). */
 export interface KitStanceDial {
 	/** autonomy · sharing · review. */

@@ -20,7 +20,8 @@ import type {
 	KitGate,
 	KitNeed,
 	KitDecision,
-	KitChatTurn
+	KitChatTurn,
+	KitConstitutionSection
 } from './types';
 
 export const me: KitMe = { name: 'Rin Saito', handle: 'rin', avatar: 'R' };
@@ -499,3 +500,169 @@ export const chat: KitChatTurn[] = [
 	},
 	{ who: 'rin', text: 'Approving now.', when: '3m' }
 ];
+
+// ── Org context ──────────────────────────────────────────────────────────────
+
+/** A project in a dōjō's jurisdiction, before the org-list mapping (dojo2-data
+ *  `orgProjects[slug][]`). The team + maintainers + weekly-run cadence are the
+ *  raw org-scoped fields the mockup folds into a `KitProject`. */
+interface OrgProjectSeed {
+	id: string;
+	kanji: string;
+	name: string;
+	team: string;
+	classification: string;
+	phase: string;
+	maintainers: number;
+	runsWeek: number;
+	needs: number;
+}
+
+// Projects under a dōjō's jurisdiction, keyed by slug (dojo2-data `orgProjects`).
+// A representative single-org fixture (`acme`) is the default any unknown slug
+// falls back to, matching the mockup's `orgProjects[slug] || orgProjects.acme`.
+const orgProjectSeeds: Record<string, OrgProjectSeed[]> = {
+	acme: [
+		{
+			id: 'auth',
+			kanji: '件',
+			name: 'lumen-auth',
+			team: 'Payments',
+			classification: 'company',
+			phase: 'notice',
+			maintainers: 3,
+			runsWeek: 14,
+			needs: 2
+		},
+		{
+			id: 'ledger',
+			kanji: '件',
+			name: 'ledger-core',
+			team: 'Payments',
+			classification: 'company',
+			phase: 'adopt',
+			maintainers: 2,
+			runsWeek: 9,
+			needs: 0
+		},
+		{
+			id: 'gw',
+			kanji: '件',
+			name: 'api-gateway',
+			team: 'Platform',
+			classification: 'company',
+			phase: 'watch',
+			maintainers: 4,
+			runsWeek: 5,
+			needs: 1
+		},
+		{
+			id: 'web',
+			kanji: '件',
+			name: 'acme-web',
+			team: 'Web',
+			classification: 'company',
+			phase: 'notice',
+			maintainers: 2,
+			runsWeek: 8,
+			needs: 1
+		}
+	]
+};
+
+/** The projects in a dōjō's jurisdiction as `KitProject` rows (mockup mapping:
+ *  `repo = slug/name`, `note = team · N maintainers`, `lastRun = N/wk`). An
+ *  unknown slug falls back to the representative `acme` fixture. */
+export function orgProjectsFor(slug: string): KitProject[] {
+	const seeds = orgProjectSeeds[slug] ?? orgProjectSeeds.acme;
+	return seeds.map((p) => ({
+		id: p.id,
+		name: p.name,
+		repo: slug + '/' + p.name,
+		classification: p.classification,
+		phase: p.phase,
+		lastRun: p.runsWeek + '/wk',
+		runsWeek: p.runsWeek,
+		needs: p.needs,
+		dojoName: null,
+		note: p.team + ' · ' + p.maintainers + ' maintainers'
+	}));
+}
+
+// The dōjō's OWN authored constitution, by section (dojo2-data
+// `orgConstitution`). A dōjō authors rules at the scopes it owns: company-wide,
+// per team, per stack (stacks also adopt rule packs). This is NOT the resolution
+// ladder — that only appears at project-preview time. Keyed by slug with an
+// `acme` default any unknown slug falls back to.
+const orgConstitutions: Record<string, KitConstitutionSection[]> = {
+	acme: [
+		{
+			id: 'company',
+			kanji: '社',
+			scope: 'Company-wide',
+			group: 'Company',
+			caption: 'every project in the dōjō',
+			rules: [
+				{ kanji: '守', text: 'No secrets in source — vault only, never .env in git', hard: true },
+				{ kanji: '守', text: 'Never log tokens or PII, even at debug level', hard: true },
+				{ kanji: '理', text: 'Public APIs stay backward-compatible two minor versions' },
+				{ kanji: '検', text: 'Coverage ≥ 80% on money- or auth-touching paths', hard: true }
+			]
+		},
+		{
+			id: 'team-pay',
+			kanji: '組',
+			scope: 'Payments',
+			group: 'Teams',
+			caption: 'payments · ledger repos',
+			rules: [
+				{
+					kanji: '紋',
+					text: 'Every money-moving mutation carries an idempotency key',
+					hard: true
+				},
+				{ kanji: '検', text: 'Reconciliation job runs before any ledger migration' }
+			]
+		},
+		{
+			id: 'team-plat',
+			kanji: '組',
+			scope: 'Platform',
+			group: 'Teams',
+			caption: 'platform · API · gateway',
+			rules: [
+				{ kanji: '理', text: 'Every public endpoint carries a deprecation policy' },
+				{ kanji: '守', text: 'Rate-limit and auth-check at the gateway, not the service' }
+			]
+		},
+		{
+			id: 'stack-react',
+			kanji: '技',
+			scope: 'React · TypeScript',
+			group: 'Stacks',
+			caption: 'adopted packs + rules',
+			packs: ['React · TypeScript baseline'],
+			rules: [
+				{ kanji: '技', text: 'No default exports in shared packages' },
+				{ kanji: '技', text: 'Server state through the query layer, never in a store' }
+			]
+		},
+		{
+			id: 'stack-pg',
+			kanji: '技',
+			scope: 'Postgres',
+			group: 'Stacks',
+			caption: 'no pack adopted yet',
+			packs: [],
+			rules: [
+				{ kanji: '技', text: 'Every migration is reversible or ships a documented backout' }
+			]
+		}
+	]
+};
+
+/** The dōjō's authored constitution sections for a slug (dojo2-data
+ *  `orgConstitution[slug]`), falling back to the representative `acme` fixture. */
+export function orgConstitutionFor(slug: string): KitConstitutionSection[] {
+	return orgConstitutions[slug] ?? orgConstitutions.acme;
+}
