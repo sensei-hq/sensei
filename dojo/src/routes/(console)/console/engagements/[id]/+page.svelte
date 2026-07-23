@@ -4,6 +4,8 @@
 	import ConsoleBanner from '$lib/components/ConsoleBanner.svelte';
 	import DojoChip from '$lib/components/DojoChip.svelte';
 	import { DojoApiError, exportCompliance, type ExportFormat } from '$lib/client-data';
+	import DojoJoinEmpty from '$lib/components/DojoJoinEmpty.svelte';
+	import { requireTenant } from '$lib/org-guard';
 	import {
 		auditPasses,
 		bindingsSummary,
@@ -39,7 +41,7 @@
 		exporting = format;
 		exportError = null;
 		try {
-			const out = await exportCompliance(data.tenantKey, {
+			const out = await exportCompliance(requireTenant(data.tenantKey), {
 				fetch,
 				accessToken: data.accessToken,
 				engagement: data.engagementId,
@@ -76,6 +78,11 @@
 	<title>{clientLabel} · audit · Dōjō console</title>
 </svelte:head>
 
+{#if data.noMembership}
+	<div class="bg-paper flex h-full w-full flex-col overflow-hidden">
+		<DojoJoinEmpty what="engagements" />
+	</div>
+{:else}
 <div class="bg-paper flex h-full w-full flex-col overflow-hidden">
 	<ConsoleHead
 		kanji="録"
@@ -214,3 +221,4 @@
 		</div>
 	</div>
 </div>
+{/if}

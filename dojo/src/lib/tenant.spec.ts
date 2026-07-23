@@ -22,7 +22,8 @@ describe('tenant key plumbing', () => {
 	});
 });
 
-describe('resolveTenantKey (cookie is authoritative)', () => {
+describe('resolveTenantKey (cookie is authoritative, for members)', () => {
+	// A member (hasMembership omitted or true) keeps the original behaviour.
 	it('reads the tenant from the cookie', () => {
 		expect(resolveTenantKey('github/globex', null)).toBe('github/globex');
 	});
@@ -37,10 +38,33 @@ describe('resolveTenantKey (cookie is authoritative)', () => {
 		expect(resolveTenantKey('   ', 'other/initech')).toBe('other/initech');
 	});
 
-	it('falls back to the default when neither cookie nor param is present', () => {
+	it('falls back to the default only when the caller HAS a membership', () => {
+		expect(resolveTenantKey(null, null, true)).toBe(DEFAULT_TENANT_KEY);
+		expect(resolveTenantKey(undefined, undefined, true)).toBe(DEFAULT_TENANT_KEY);
+		expect(resolveTenantKey('', '', true)).toBe(DEFAULT_TENANT_KEY);
+	});
+});
+
+describe('resolveTenantKey (membership-less user is never handed a fabricated tenant)', () => {
+	// DJ1: a signed-in user with zero memberships must NOT be defaulted onto
+	// orgs[0] (Acme). With no cookie/param and hasMembership === false, there is
+	// no tenant — the console shows the personal home, never a live tenant call.
+	it('returns null when there is no cookie/param and no membership', () => {
+		expect(resolveTenantKey(null, null, false)).toBeNull();
+		expect(resolveTenantKey(undefined, undefined, false)).toBeNull();
+		expect(resolveTenantKey('', '', false)).toBeNull();
+		expect(resolveTenantKey('   ', '   ', false)).toBeNull();
+	});
+
+	it('still honours an explicit cookie/param override even without a membership', () => {
+		// A direct dev link (?tenant=) or a lingering cookie is respected — the
+		// no-tenant sentinel only fills the empty case, it does not override intent.
+		expect(resolveTenantKey('github/globex', null, false)).toBe('github/globex');
+		expect(resolveTenantKey(null, 'other/initech', false)).toBe('other/initech');
+	});
+
+	it('defaults to orgs[0] when hasMembership is left unspecified (back-compat)', () => {
 		expect(resolveTenantKey(null, null)).toBe(DEFAULT_TENANT_KEY);
-		expect(resolveTenantKey(undefined, undefined)).toBe(DEFAULT_TENANT_KEY);
-		expect(resolveTenantKey('', '')).toBe(DEFAULT_TENANT_KEY);
 	});
 });
 

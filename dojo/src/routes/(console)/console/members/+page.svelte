@@ -5,6 +5,8 @@
 	import DojoChip from '$lib/components/DojoChip.svelte';
 	import { addMember, DojoApiError, setMemberRole, type NewMembershipBody } from '$lib/admin-data';
 	import { MEMBER_ROLES, relativeAge, roleLabel, roleToneClass, shortId } from '$lib/admin-view';
+	import { requireTenant } from '$lib/org-guard';
+	import DojoJoinEmpty from '$lib/components/DojoJoinEmpty.svelte';
 
 	// Members & roles (mockup DojoMembers, dojo-console.jsx l.649). Lists the
 	// tenant's memberships (data.members from list_members) and lets an admin set a
@@ -22,7 +24,7 @@
 		busyUser = userId;
 		actionError = null;
 		try {
-			await setMemberRole(data.tenantKey, userId, role, {
+			await setMemberRole(requireTenant(data.tenantKey), userId, role, {
 				fetch,
 				accessToken: data.accessToken
 			});
@@ -56,7 +58,7 @@
 		if (formGitRole.trim()) body.git_provider_role = formGitRole.trim();
 		if (formRole) body.role = formRole;
 		try {
-			await addMember(data.tenantKey, body, { fetch, accessToken: data.accessToken });
+			await addMember(requireTenant(data.tenantKey), body, { fetch, accessToken: data.accessToken });
 			formUser = '';
 			formGitRole = '';
 			formRole = '';
@@ -74,6 +76,11 @@
 	<title>Members · Dōjō console</title>
 </svelte:head>
 
+{#if data.noMembership}
+	<div class="bg-paper flex h-full w-full flex-col overflow-hidden">
+		<DojoJoinEmpty what="members" />
+	</div>
+{:else}
 <div class="bg-paper flex h-full w-full flex-col overflow-hidden">
 	<ConsoleHead
 		kanji="任"
@@ -232,3 +239,4 @@
 		</div>
 	</div>
 </div>
+{/if}

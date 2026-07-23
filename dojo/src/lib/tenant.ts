@@ -28,12 +28,20 @@ export const TENANT_COOKIE = 'dojo_tenant';
 export const TENANT_PARAM = 'tenant';
 
 /**
- * A safe fallback tenant key so the console renders without a selection (static
- * render / direct-link / test). Points at the demo employer org. Reaching the
- * console with no selected tenant means the org picker was bypassed — the screen
- * shows a "pick an organization" affordance rather than fabricating a live tenant.
+ * A safe fallback tenant key for a MEMBER who reached the console without an
+ * explicit selection (static render / direct-link / test). Points at the demo
+ * employer org. This default is applied ONLY when the caller has at least one
+ * real membership — a membership-less user must never be handed a fabricated
+ * tenant (see `resolveTenantKey` and DJ1); they land on the personal home.
  */
 export const DEFAULT_TENANT_KEY = orgs[0]?.url ?? 'github/acme';
+
+/**
+ * The no-tenant sentinel: a signed-in user with zero memberships has no tenant.
+ * Returned by `resolveTenantKey` so callers can branch (personal home) and skip
+ * every `/v1/t/{tenant}/…` call rather than fetching against a fabricated org.
+ */
+export type TenantKey = string | null;
 
 /** The discovery path a picked org routes to (its tenant key). */
 export function tenantKeyOf(org: DojoOrg): string {
@@ -42,25 +50,39 @@ export function tenantKeyOf(org: DojoOrg): string {
 
 /**
  * Resolve the tenant key from the persisted cookie (authoritative), falling back
- * to the legacy `?tenant=` param only when no cookie is set, then to the default
- * when neither is present. Pure over its inputs so it's testable and SSR-safe.
- * Empty/whitespace values are ignored.
+ * to the legacy `?tenant=` param only when no cookie is set. Pure over its inputs
+ * so it's testable and SSR-safe. Empty/whitespace values are ignored.
+ *
+ * When neither a cookie nor a param is present, the fallback depends on whether
+ * the caller has a real membership:
+ *   • `hasMembership === false` → `null` (the no-tenant sentinel). A signed-in
+ *     user with zero memberships is NEVER defaulted onto `orgs[0]` (a fabricated
+ *     tenant); they land on the personal home and make no `/v1/t/…` calls (DJ1).
+ *   • otherwise (a member, or membership unknown — back-compat) → `DEFAULT_TENANT_KEY`.
+ *
+ * An explicit cookie/param override always wins, membership or not (a direct dev
+ * link or a lingering selection reflects intent, not fabrication).
  */
-export function resolveTenantKey(cookieValue?: string | null, paramValue?: string | null): string {
+export function resolveTenantKey(
+	cookieValue?: string | null,
+	paramValue?: string | null,
+	hasMembership: boolean = true
+): TenantKey {
 	const cookie = cookieValue?.trim();
 	if (cookie) return cookie;
 	const param = paramValue?.trim();
 	if (param) return param;
-	return DEFAULT_TENANT_KEY;
+	return hasMembership ? DEFAULT_TENANT_KEY : null;
 }
 
 /**
  * Resolve the tenant key from a URL's search params, falling back to the default
  * when absent. Pure over its input so it's testable and SSR-safe. Retained for
- * the dev-override path (the cookie is resolved in the server load).
+ * the dev-override path (the cookie is resolved in the server load); this path
+ * assumes a member context, so it always resolves a concrete key (never null).
  */
 export function tenantKeyFromUrl(url: URL): string {
-	return resolveTenantKey(null, url.searchParams.get(TENANT_PARAM));
+	return resolveTenantKey(null, url.searchParams.get(TENANT_PARAM), true) ?? DEFAULT_TENANT_KEY;
 }
 
 /** The org record backing a tenant key (for chrome: name, kanji, role, members). */

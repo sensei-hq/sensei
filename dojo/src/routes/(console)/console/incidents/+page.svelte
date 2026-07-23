@@ -23,6 +23,8 @@
 		severityToneClass
 	} from '$lib/client-view';
 	import { clockTime, shortId } from '$lib/admin-view';
+	import DojoJoinEmpty from '$lib/components/DojoJoinEmpty.svelte';
+	import { requireTenant } from '$lib/org-guard';
 
 	// Incidents (spec: incident handling 警 · contain a near-leak fast). Lists the
 	// tenant's confidentiality incidents (data.incidents, worst-severity first) and
@@ -51,7 +53,7 @@
 		const body: NewIncidentBody = { title: formTitle.trim(), severity: formSeverity };
 		if (formDescription.trim()) body.description = formDescription.trim();
 		try {
-			await createIncident(data.tenantKey, body, { fetch, accessToken: data.accessToken });
+			await createIncident(requireTenant(data.tenantKey), body, { fetch, accessToken: data.accessToken });
 			formTitle = '';
 			formDescription = '';
 			formSeverity = 'medium';
@@ -69,7 +71,7 @@
 		actionError = null;
 		try {
 			await updateIncident(
-				data.tenantKey,
+				requireTenant(data.tenantKey),
 				inc.id,
 				{ severity: severity as IncidentSeverity },
 				{ fetch, accessToken: data.accessToken }
@@ -88,7 +90,7 @@
 		try {
 			// `status = resolved` closes it server-side; open|investigating reopens.
 			await updateIncident(
-				data.tenantKey,
+				requireTenant(data.tenantKey),
 				inc.id,
 				{ status: status as 'open' | 'investigating' | 'resolved' },
 				{ fetch, accessToken: data.accessToken }
@@ -105,7 +107,7 @@
 		busyId = inc.id;
 		actionError = null;
 		try {
-			await deleteIncident(data.tenantKey, inc.id, { fetch, accessToken: data.accessToken });
+			await deleteIncident(requireTenant(data.tenantKey), inc.id, { fetch, accessToken: data.accessToken });
 			await invalidateAll();
 		} catch (e) {
 			actionError = e instanceof DojoApiError ? e.message : 'could not delete the incident';
@@ -119,6 +121,11 @@
 	<title>Incidents · Dōjō console</title>
 </svelte:head>
 
+{#if data.noMembership}
+	<div class="bg-paper flex h-full w-full flex-col overflow-hidden">
+		<DojoJoinEmpty what="incidents" />
+	</div>
+{:else}
 <div class="bg-paper flex h-full w-full flex-col overflow-hidden">
 	<ConsoleHead
 		kanji="警"
@@ -325,3 +332,4 @@
 		</div>
 	</div>
 </div>
+{/if}

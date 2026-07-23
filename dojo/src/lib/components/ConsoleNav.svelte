@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
 	import { dojoBuild } from '$lib/version';
+	import type { TenantKey } from '$lib/tenant';
 
 	// Left nav (mockup DojoNav): grouped destinations with a kanji glyph. Overview
 	// + Triage (R9) and the admin console screens (R10: Members, Identities,
@@ -14,7 +15,7 @@
 		tenantKey,
 		open = false,
 		onClose
-	}: { active: string; tenantKey: string; open?: boolean; onClose?: () => void } = $props();
+	}: { active: string; tenantKey: TenantKey; open?: boolean; onClose?: () => void } = $props();
 
 	// A wired destination's route id (`to`); absent → a "soon" placeholder. Each id
 	// maps to its console sub-route below.

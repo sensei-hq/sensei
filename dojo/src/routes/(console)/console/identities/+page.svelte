@@ -10,6 +10,8 @@
 		type NewIdentityBody
 	} from '$lib/admin-data';
 	import { AUTH_METHODS, providerKanji, providerLabel, relativeAge } from '$lib/admin-view';
+	import DojoJoinEmpty from '$lib/components/DojoJoinEmpty.svelte';
+	import { requireTenant } from '$lib/org-guard';
 
 	// Identities (spec: SSO / GitHub / device-code identity config CRUD). Lists the
 	// tenant's identity mappings (data.identities from list_identities) and lets an
@@ -25,7 +27,7 @@
 		busyId = id;
 		actionError = null;
 		try {
-			await deleteIdentity(data.tenantKey, id, { fetch, accessToken: data.accessToken });
+			await deleteIdentity(requireTenant(data.tenantKey), id, { fetch, accessToken: data.accessToken });
 			await invalidateAll();
 		} catch (e) {
 			actionError = e instanceof DojoApiError ? e.message : 'could not remove the identity';
@@ -58,7 +60,7 @@
 		if (formEmail.trim()) body.email = formEmail.trim();
 		if (formName.trim()) body.display_name = formName.trim();
 		try {
-			await createIdentity(data.tenantKey, body, { fetch, accessToken: data.accessToken });
+			await createIdentity(requireTenant(data.tenantKey), body, { fetch, accessToken: data.accessToken });
 			formUser = '';
 			formSubject = '';
 			formEmail = '';
@@ -77,6 +79,11 @@
 	<title>Identities · Dōjō console</title>
 </svelte:head>
 
+{#if data.noMembership}
+	<div class="bg-paper flex h-full w-full flex-col overflow-hidden">
+		<DojoJoinEmpty what="identities" />
+	</div>
+{:else}
 <div class="bg-paper flex h-full w-full flex-col overflow-hidden">
 	<ConsoleHead
 		kanji="鍵"
@@ -199,3 +206,4 @@
 		</div>
 	</div>
 </div>
+{/if}

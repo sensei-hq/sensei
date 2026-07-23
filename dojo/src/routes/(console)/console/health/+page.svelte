@@ -2,6 +2,7 @@
 	import ConsoleHead from '$lib/components/ConsoleHead.svelte';
 	import ConsoleBanner from '$lib/components/ConsoleBanner.svelte';
 	import { errorRateToneClass, queueDepthToneClass } from '$lib/admin-view';
+	import DojoJoinEmpty from '$lib/components/DojoJoinEmpty.svelte';
 
 	// Health (spec + mockup DojoMonitor Signal cards): the connections / queue-depth
 	// / publish-rate / error-rate rollups (data.health from admin_health). Read-only
@@ -47,6 +48,11 @@
 	<title>Health · Dōjō console</title>
 </svelte:head>
 
+{#if data.noMembership}
+	<div class="bg-paper flex h-full w-full flex-col overflow-hidden">
+		<DojoJoinEmpty what="health" />
+	</div>
+{:else}
 <div class="bg-paper flex h-full w-full flex-col overflow-hidden">
 	<ConsoleHead
 		kanji="観"
@@ -99,3 +105,4 @@
 		</div>
 	</div>
 </div>
+{/if}

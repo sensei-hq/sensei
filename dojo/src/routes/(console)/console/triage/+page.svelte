@@ -13,6 +13,8 @@
 		similarityBand,
 		similarityToneClass
 	} from '$lib/triage-view';
+	import DojoJoinEmpty from '$lib/components/DojoJoinEmpty.svelte';
+	import { requireTenant } from '$lib/org-guard';
 
 	// Triage queue (mockup DojoTriage): the tenant's open rows grouped by scope,
 	// ranked strongest-first. A maintainer can run the promotion sweep on demand
@@ -30,7 +32,7 @@
 		sweepError = null;
 		sweepResult = null;
 		try {
-			sweepResult = await promoteSweep(data.tenantKey, { fetch, accessToken: data.accessToken });
+			sweepResult = await promoteSweep(requireTenant(data.tenantKey), { fetch, accessToken: data.accessToken });
 			await invalidateAll();
 		} catch (e) {
 			sweepError = e instanceof TriageApiError ? e.message : 'promotion sweep failed';
@@ -51,6 +53,11 @@
 	<title>Triage · Dōjō console</title>
 </svelte:head>
 
+{#if data.noMembership}
+	<div class="bg-paper flex h-full w-full flex-col overflow-hidden">
+		<DojoJoinEmpty what="triage" />
+	</div>
+{:else}
 <div class="bg-paper flex h-full w-full flex-col overflow-hidden">
 	<ConsoleHead
 		kanji="門"
@@ -169,3 +176,4 @@
 		{/each}
 	</div>
 </div>
+{/if}
