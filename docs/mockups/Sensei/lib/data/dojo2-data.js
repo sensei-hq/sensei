@@ -309,4 +309,103 @@ window.DOJO2 = {
       { d: "May 1, 2026", amt: "$372.00", s: "paid" },
     ],
   },
+
+  /* ── org role-console data (ported into the dojo2 IA) ───── */
+  // Govern (maintainer) · Clients (lead) · Admin
+  consoles: {
+    // 1 · Triage — candidate learnings awaiting a maintainer decision
+    triage: [
+      { scope: "Payments", items: [
+        { id: "t1", kanji: "紋", title: "Idempotency key on every money-moving mutation", origin: "6 sessions · 3 repos", conf: 0.91, conflicts: 1, dups: 0, impact: "high" },
+        { id: "t2", kanji: "検", title: "Reconcile before any ledger migration", origin: "s-2887 · ledger-core", conf: 0.78, conflicts: 0, dups: 2, impact: "normal" },
+      ] },
+      { scope: "React · TypeScript", items: [
+        { id: "t3", kanji: "技", title: "Server state through the query layer, never a store", origin: "11 sessions", conf: 0.86, conflicts: 0, dups: 1, impact: "normal" },
+        { id: "t4", kanji: "直", title: "Prefer $state(...) over let in Svelte 5", origin: "Rust Guild mirror", conf: 0.64, conflicts: 0, dups: 0, impact: "low" },
+      ] },
+      { scope: "Auth boundary", items: [
+        { id: "t5", kanji: "守", title: "Never log refresh tokens, even at debug level", origin: "s-2891 · lumen-auth", conf: 0.95, conflicts: 0, dups: 0, impact: "high" },
+      ] },
+    ],
+    // candidate detail (for the selected row)
+    candidateDetail: {
+      learning: "Every money-moving mutation must carry an idempotency key before retry.",
+      cause: "Two sessions retried a charge on a transient 500 and double-posted to the ledger.",
+      context: "Surfaced in payments-service across lumen-auth, ledger-core and globex-portal.",
+      evidence: ["s-2887 · double-post caught in reconciliation", "s-2871 · manual rollback, 40 min", "3 more sessions"],
+      conflict: { loser: "Company · retry freely on transient failure", winner: "Project · idempotency key required" },
+      dupOf: null,
+      scopes: ["Company", "Team · Payments", "Stack · Node"],
+    },
+    // 2 · Approvals — second-approval queue for high-impact candidates
+    approvals: [
+      { id: "a1", kanji: "守", title: "Never log refresh tokens, even at debug level", scope: "Company", first: "Keiko Tanaka", when: "2h", impact: "safety" },
+      { id: "a2", kanji: "紋", title: "Promote idempotency key from Project to Company", scope: "Company", first: "Marco Diaz", when: "5h", impact: "high" },
+    ],
+    // 3 · Knowledge — published library + prune policy; catalog of extensions
+    knowledge: {
+      prunePolicy: "Prune after 90 days unused",
+      active: [
+        { kanji: "紋", title: "Idempotency key on money-moving mutations", scope: "Team · Payments", adopted: "6 repos", age: "adopted 3mo" },
+        { kanji: "守", title: "Verify webhook signature before parsing", scope: "Client guard", adopted: "3 repos", age: "adopted 1mo" },
+        { kanji: "技", title: "No default exports in shared packages", scope: "Stack · React", adopted: "9 repos", age: "adopted 5mo" },
+      ],
+      pending: [
+        { kanji: "理", title: "Deprecation window of two minor versions", scope: "Company", age: "unused 84d" },
+      ],
+      catalog: [
+        { kanji: "問", title: "integration-test author", kind: "agent", scope: "Stack · React" },
+        { kanji: "令", title: "explain a slow query plan", kind: "command", scope: "Stack · Postgres" },
+        { kanji: "技", title: "auth-boundary reviewer", kind: "skill", scope: "Company" },
+      ],
+    },
+    // 4 · Engagements — client confidentiality
+    engagements: [
+      { id: "e1", kanji: "客", client: "Globex", projects: "globex-portal · billing", lessons: 86, dropped: 214, since: "7mo", status: "active" },
+      { id: "e2", kanji: "客", client: "Initech", projects: "agency-monorepo", lessons: 41, dropped: 97, since: "1y", status: "active" },
+    ],
+    confidentiality: {
+      kept: ["The lesson — a pattern, a guard, a skill", "Anonymized code shape", "Confidence & impact"],
+      dropped: ["Client & repo identifiers", "Endpoints, hostnames, secrets", "Literal source & data"],
+      example: { raw: "await stripe.charges.create({ idempotencyKey })", stripped: "await <payment-sdk>.<mutation>({ idempotencyKey })" },
+    },
+    // 5 · Incidents — confidentiality containment
+    incidents: [
+      { id: "i1", kanji: "盾", title: "Near-leak: client hostname in a shared prompt", client: "Globex", state: "contained", when: "3d", severity: "high" },
+      { id: "i2", kanji: "盾", title: "Raw stack trace queued to Collective", client: "Initech", state: "resolved", when: "2w", severity: "medium" },
+    ],
+    // 6 · Client audit — immutable confidentiality ledger
+    clientAudit: [
+      { t: "10:42", kanji: "共", event: "Lesson shared upstream", detail: "idempotency pattern · anonymized", client: "Globex", ok: true },
+      { t: "10:41", kanji: "盾", event: "Stripped 2 identifiers", detail: "hostname, repo slug", client: "Globex", ok: true },
+      { t: "09:18", kanji: "却", event: "Blocked contribution", detail: "raw source detected · held", client: "Initech", ok: false },
+      { t: "Yesterday", kanji: "共", event: "Lesson shared upstream", detail: "webhook guard · anonymized", client: "Globex", ok: true },
+    ],
+    // 7 · Identity & SSO — admin
+    identity: {
+      idp: { name: "Okta", protocol: "OIDC", status: "connected", domain: "acme.okta.com" },
+      scim: true,
+      mappings: [
+        { source: "GitHub org · acme", to: "auto-join · role from repo access", count: 41 },
+        { source: "Magic link · @acme.com", to: "developer by default", count: 5 },
+        { source: "Device code", to: "read-only", count: 2 },
+      ],
+    },
+    // 8 · Health / Monitor — admin
+    health: {
+      signals: [
+        { kanji: "観", label: "Sessions this week", n: "312", sub: "↑ 14%", tone: "var(--accent)" },
+        { kanji: "覚", label: "Adoption rate", n: "68%", sub: "of approved", tone: "var(--success)" },
+        { kanji: "盾", label: "Leak-guard blocks", n: "3", sub: "all contained", tone: "var(--warning)" },
+        { kanji: "門", label: "Queue age · median", n: "6h", sub: "within SLA", tone: "var(--ink)" },
+      ],
+      contribVsApprove: [
+        { wk: "W1", c: 18, a: 12 }, { wk: "W2", c: 22, a: 15 }, { wk: "W3", c: 19, a: 17 }, { wk: "W4", c: 26, a: 20 },
+      ],
+      alerts: [
+        { kanji: "盾", title: "Leak-guard held a raw stack trace", detail: "Initech · auto-contained · no data left", when: "2h", sev: "resolved" },
+        { kanji: "門", title: "Postgres scope queue has no owner", detail: "1 candidate routed to fallback", when: "1d", sev: "warning" },
+      ],
+    },
+  },
 };

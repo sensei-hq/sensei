@@ -35,19 +35,37 @@ const NAV_YOU = [
     { id: "contributions", icon: "upload-square", label: "Contributions", badge: 1 },
   ]},
 ];
-const NAV_ORG = [
+const NAV_ORG_BASE = [
   { group: "Overview", items: [
     { id: "home", icon: "buildings-2", label: "Home" },
     { id: "ladder", icon: "scale", label: "Constitution" },
     { id: "projects", icon: "folder", label: "Projects", badge: 4 },
   ]},
-  { group: "Admin", items: [
+  { group: "Govern", role: "maintainer", items: [
+    { id: "triage", icon: "inbox", label: "Triage", badge: 5 },
+    { id: "approvals", icon: "clipboard-check", label: "Approvals", badge: 2 },
+    { id: "knowledge", icon: "book-2", label: "Knowledge" },
+  ]},
+  { group: "Clients", role: "lead", items: [
+    { id: "engagements", icon: "case-round", label: "Engagements" },
+    { id: "incidents", icon: "shield-warning", label: "Incidents", badge: 1 },
+    { id: "clientaudit", icon: "document-text", label: "Client audit" },
+  ]},
+  { group: "Admin", role: "admin", items: [
     { id: "members", icon: "users-group-rounded", label: "Members & Roles" },
     { id: "scopes", icon: "shield-check", label: "Scopes & policies" },
+    { id: "identity", icon: "key", label: "Identity & SSO" },
     { id: "audit", icon: "clipboard-list", label: "Audit" },
+    { id: "health", icon: "pulse", label: "Health / Monitor" },
     { id: "billing", icon: "card", label: "Plan & billing" },
   ]},
 ];
+// Additive role rank — a group shows when the viewer's role reaches its floor.
+const K2_ROLE_RANK = { developer: 0, maintainer: 1, lead: 2, admin: 3 };
+function navForOrg(org) {
+  const rank = K2_ROLE_RANK[org && org.role] != null ? K2_ROLE_RANK[org.role] : 0;
+  return NAV_ORG_BASE.filter(g => !g.role || rank >= K2_ROLE_RANK[g.role]);
+}
 const TABS_YOU = [
   { id: "work", icon: "widget-4", label: "Work" },
   { id: "runs", icon: "eye", label: "Runs", badge: 3 },
@@ -769,6 +787,359 @@ function ScrBilling({ org, mobile }) {
   );
 }
 
+/* ═══ ORG ROLE CONSOLES (Govern · Clients · Admin) ════════ */
+
+const K2_IMPACT = {
+  high:   { tone: "var(--accent)", soft: "var(--accent-soft)", edge: "var(--accent-edge)" },
+  safety: { tone: "var(--danger)", soft: "var(--danger-soft)", edge: "var(--danger-edge)" },
+  normal: { tone: "var(--ink-mute)", soft: "var(--paper-mute)", edge: "var(--paper-edge)" },
+  low:    { tone: "var(--ink-mute)", soft: "var(--paper-mute)", edge: "var(--paper-edge)" },
+};
+
+// 1 · TRIAGE (maintainer) — ranked candidate queue + candidate detail.
+function ScrTriage({ org, mobile }) {
+  const W = mobile ? BodyM : Body;
+  const groups = D2.consoles.triage;
+  const all = groups.flatMap(g => g.items);
+  const [sel, setSel] = React.useState(all[0].id);
+  const cur = all.find(c => c.id === sel) || all[0];
+  const d = D2.consoles.candidateDetail;
+  const total = all.length;
+  return (
+    <W>
+      <K2SectionHead eyebrow={org.name + " · govern"} title="Triage" count={total}
+        right={<K2Btn size="sm" variant="ghost" icon="tuning-2">My scopes</K2Btn>} />
+      <K2Banner kanji="門" tone="neutral" title="Candidate learnings waiting on a maintainer, grouped by scope and ranked by confidence.">
+        You decide what becomes shared knowledge. High-impact and safety candidates need a second approval before they publish.
+      </K2Banner>
+      <div style={{ display: "grid", gridTemplateColumns: mobile ? "1fr" : "1.1fr 1fr", gap: "var(--space-4)", alignItems: "start" }}>
+        <div className="flex flex-col gap-4">
+          {groups.map(g => (
+            <K2ListSection key={g.scope} icon="layers-minimalistic" title={g.scope} count={g.items.length}>
+              {g.items.map(c => {
+                const im = K2_IMPACT[c.impact] || K2_IMPACT.normal;
+                const on = c.id === sel;
+                return (
+                  <button key={c.id} onClick={() => setSel(c.id)} className={"flex items-center gap-3 w-full text-left border-b " + (on ? "bg-accent-soft" : "")} style={{ padding: "var(--space-3) var(--space-4)", background: on ? undefined : "transparent" }}>
+                    <K2KanjiToken char={c.kanji} size="base" tone="var(--accent)" w={20} />
+                    <div className="flex-1" style={{ minWidth: 0 }}>
+                      <div className="text-sm text-ink" style={{ lineHeight: 1.3 }}>{c.title}</div>
+                      <div className="flex items-center gap-2" style={{ marginTop: 3, flexWrap: "wrap" }}>
+                        <span className="mono text-xs text-ink-faint">{c.origin}</span>
+                        {c.conflicts > 0 && <K2Chip icon="danger-triangle" tone="var(--warning)" soft="var(--warning-soft)" edge="oklch(0.72 0.12 75 / 0.30)">{c.conflicts} conflict</K2Chip>}
+                        {c.dups > 0 && <K2Chip tone="var(--ink-mute)">{c.dups} dup</K2Chip>}
+                        {(c.impact === "high" || c.impact === "safety") && <K2Chip tone={im.tone} soft={im.soft} edge={im.edge}>{c.impact}</K2Chip>}
+                      </div>
+                    </div>
+                    <K2ConfidenceBar v={c.conf} w={56} />
+                  </button>
+                );
+              })}
+            </K2ListSection>
+          ))}
+        </div>
+        {!mobile && (
+          <div className="zs-card-flush" style={{ overflow: "hidden", position: "sticky", top: 0 }}>
+            <div className="flex items-center gap-3 border-b" style={{ padding: "var(--space-4)" }}>
+              <K2KanjiToken char={cur.kanji} size="xl" tone="var(--accent)" />
+              <div className="flex-1"><div className="zs-eyebrow font-semibold text-ink-mute">candidate</div><div className="text-sm font-medium text-ink">{cur.title}</div></div>
+              <K2Enso progress={cur.conf} size={54} label={Math.round(cur.conf * 100) + ""} />
+            </div>
+            <div style={{ padding: "var(--space-4)", display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
+              <div><div className="zs-eyebrow text-ink-mute mb-1">Learning</div><div className="text-sm text-ink">{d.learning}</div></div>
+              <div><div className="zs-eyebrow text-ink-mute mb-1">Cause</div><div className="zs-body-sm">{d.cause}</div></div>
+              <div><div className="zs-eyebrow text-ink-mute mb-1">Evidence</div>
+                <div className="flex flex-col gap-1">{d.evidence.map((e, i) => <div key={i} className="mono text-xs text-ink-soft">· {e}</div>)}</div></div>
+              {cur.conflicts > 0 && (
+                <div className="rounded" style={{ background: "var(--warning-soft)", border: "1px solid oklch(0.72 0.12 75 / 0.30)", padding: "var(--space-3)" }}>
+                  <div className="zs-eyebrow mb-1" style={{ color: "var(--warning)" }}>Conflict — the ladder settles it</div>
+                  <div className="text-xs text-ink-soft" style={{ textDecoration: "line-through" }}>{d.conflict.loser}</div>
+                  <div className="text-sm text-ink font-medium" style={{ marginTop: 2 }}>{d.conflict.winner}</div>
+                </div>
+              )}
+              <div><div className="zs-eyebrow text-ink-mute mb-1">Distribution scope</div>
+                <div className="flex flex-wrap gap-2">{d.scopes.map((s, i) => <K2Chip key={i} tone={i === 1 ? "var(--accent)" : "var(--ink-mute)"} soft={i === 1 ? "var(--accent-soft)" : "var(--paper-mute)"} edge={i === 1 ? "var(--accent-edge)" : "var(--paper-edge)"}>{s}</K2Chip>)}</div></div>
+            </div>
+            <div className="flex flex-wrap gap-2 border-t" style={{ padding: "var(--space-3) var(--space-4)", background: "var(--paper)" }}>
+              <K2Btn size="sm" icon="check-circle">Approve</K2Btn>
+              <K2Btn size="sm" variant="ghost" icon="pen-2">Revise</K2Btn>
+              <span className="flex-1" />
+              <K2Btn size="sm" variant="ghost" icon="close-circle">Decline</K2Btn>
+            </div>
+            {(cur.impact === "high" || cur.impact === "safety") && (
+              <div className="border-t zs-meta" style={{ padding: "var(--space-2) var(--space-4)", background: "var(--paper)" }}>Approving sends this to a second maintainer before it publishes.</div>
+            )}
+          </div>
+        )}
+      </div>
+    </W>
+  );
+}
+
+// 2 · APPROVALS (maintainer) — second-approval queue.
+function ScrApprovals({ org, mobile }) {
+  const W = mobile ? BodyM : Body;
+  const items = D2.consoles.approvals;
+  return (
+    <W>
+      <K2SectionHead eyebrow={org.name + " · govern"} title="Approvals" count={items.length} />
+      <K2Banner kanji="承" tone="neutral" title="A second maintainer signs off high-impact and safety-relevant candidates.">
+        One approval proposes; a second publishes. Nothing safety-relevant reaches a machine on a single signature.
+      </K2Banner>
+      {items.length ? (
+        <div className="zs-card-flush" style={{ overflow: "hidden" }}>
+          {items.map(a => {
+            const im = K2_IMPACT[a.impact] || K2_IMPACT.high;
+            return (
+              <div key={a.id} className="flex items-center gap-4 border-b" style={{ padding: "var(--space-3) var(--space-4)" }}>
+                <K2KanjiToken char={a.kanji} size="lg" tone="var(--accent)" w={22} />
+                <div className="flex-1" style={{ minWidth: 0 }}>
+                  <div className="text-sm text-ink">{a.title}</div>
+                  <div className="mono text-xs text-ink-faint" style={{ marginTop: 1 }}>{a.scope} · first approval: {a.first} · {a.when}</div>
+                </div>
+                <K2Chip tone={im.tone} soft={im.soft} edge={im.edge}>{a.impact}</K2Chip>
+                <K2Btn size="sm" variant="ghost" icon="eye">Review</K2Btn>
+                <K2Btn size="sm" icon="check-circle">Approve</K2Btn>
+              </div>
+            );
+          })}
+        </div>
+      ) : <div className="zs-card-flush"><K2EmptyState kanji="静" title="Nothing awaiting a second look.">High-impact candidates land here for a second signature. The queue is clear.</K2EmptyState></div>}
+    </W>
+  );
+}
+
+// 3 · KNOWLEDGE (+ catalog) (maintainer) — published library + prune + catalog.
+const K2_EXT_ICON = { agent: "user-hands", command: "command", skill: "star" };
+function ScrKnowledge({ org, mobile }) {
+  const W = mobile ? BodyM : Body;
+  const k = D2.consoles.knowledge;
+  return (
+    <W>
+      <K2SectionHead eyebrow={org.name + " · govern"} title="Knowledge"
+        right={<div className="zs-input text-sm" style={{ height: 32, padding: "0 10px", width: "auto" }}><K2Icon name="alt-arrow-down" size={14} color="var(--ink-mute)" /><span className="text-ink-soft" style={{ whiteSpace: "nowrap" }}>{k.prunePolicy}</span></div>} />
+      <K2Banner kanji="蔵" tone="neutral" title="The published library the dōjō has adopted — and what's due to be pruned.">
+        Adopted knowledge distributes to every machine in scope. Unused teachings age out by the prune policy so the shared mind stays lean.
+      </K2Banner>
+      <K2ListSection icon="check-circle" iconColor="var(--success)" title="Active" count={k.active.length}>
+        {k.active.map((r, i) => (
+          <div key={i} className="flex items-center gap-4 border-b" style={{ padding: "var(--space-3) var(--space-4)" }}>
+            <K2KanjiToken char={r.kanji} size="lg" tone="var(--accent)" w={22} />
+            <div className="flex-1" style={{ minWidth: 0 }}><div className="text-sm text-ink">{r.title}</div><div className="mono text-xs text-ink-faint" style={{ marginTop: 1 }}>{r.scope} · {r.adopted} · {r.age}</div></div>
+            <K2Btn size="sm" variant="ghost" icon="pen-2">Edit</K2Btn>
+          </div>
+        ))}
+      </K2ListSection>
+      <K2ListSection icon="trash-bin-minimalistic" title="Pending prune" count={k.pending.length}>
+        {k.pending.map((r, i) => (
+          <div key={i} className="flex items-center gap-4 border-b" style={{ padding: "var(--space-3) var(--space-4)" }}>
+            <K2KanjiToken char={r.kanji} size="lg" tone="var(--ink-mute)" w={22} />
+            <div className="flex-1" style={{ minWidth: 0 }}><div className="text-sm text-ink-soft">{r.title}</div><div className="mono text-xs text-ink-faint" style={{ marginTop: 1 }}>{r.scope} · {r.age}</div></div>
+            <K2Btn size="sm" variant="ghost" icon="restart">Keep</K2Btn>
+          </div>
+        ))}
+      </K2ListSection>
+      <K2ListSection icon="widget-4" title="Catalog · skills, agents & commands" count={k.catalog.length}>
+        {k.catalog.map((c, i) => (
+          <div key={i} className="flex items-center gap-4 border-b" style={{ padding: "var(--space-3) var(--space-4)" }}>
+            <K2Icon name={K2_EXT_ICON[c.kind] || "widget-4"} size={18} color="var(--accent)" />
+            <div className="flex-1" style={{ minWidth: 0 }}><div className="text-sm text-ink">{c.title}</div><div className="mono text-xs text-ink-faint" style={{ marginTop: 1 }}>{c.scope}</div></div>
+            <K2Chip mono tone="var(--ink-mute)">{c.kind}</K2Chip>
+          </div>
+        ))}
+      </K2ListSection>
+    </W>
+  );
+}
+
+// 4 · ENGAGEMENTS (lead) — client register + confidentiality model.
+function ScrEngagements({ org, mobile }) {
+  const W = mobile ? BodyM : Body;
+  const c = D2.consoles.confidentiality;
+  return (
+    <W>
+      <K2SectionHead eyebrow={org.name + " · clients"} title="Engagements" count={D2.consoles.engagements.length}
+        right={<K2Btn size="sm" icon="add-circle">New engagement</K2Btn>} />
+      <K2Banner kanji="盾" tone="accent" title="Share the lesson, never the source.">
+        Findings from a client project are anonymized before they leave the machine — the pattern travels upstream; the client, repo and code never do.
+      </K2Banner>
+      <K2ListSection icon="case-round" title="Client engagements" count={D2.consoles.engagements.length}>
+        {D2.consoles.engagements.map(e => (
+          <div key={e.id} className="flex items-center gap-4 border-b" style={{ padding: "var(--space-3) var(--space-4)" }}>
+            <K2KanjiToken char={e.kanji} size="lg" tone="var(--accent)" w={22} />
+            <div className="flex-1" style={{ minWidth: 0 }}><div className="text-sm font-medium text-ink">{e.client}</div><div className="mono text-xs text-ink-faint" style={{ marginTop: 1 }}>{e.projects} · since {e.since}</div></div>
+            <div className="text-right"><div className="mono text-sm text-ink">{e.lessons}</div><div className="zs-meta">lessons kept</div></div>
+            <div className="text-right"><div className="mono text-sm text-ink-mute">{e.dropped}</div><div className="zs-meta">stripped</div></div>
+            <K2Btn size="sm" variant="ghost" icon="document">Audit</K2Btn>
+          </div>
+        ))}
+      </K2ListSection>
+      <div style={{ display: "grid", gridTemplateColumns: mobile ? "1fr" : "1fr 1fr", gap: "var(--space-4)" }}>
+        <div className="zs-card-flush" style={{ padding: "var(--space-4)" }}>
+          <div className="zs-eyebrow font-semibold text-ink-mute mb-3">What crosses the boundary</div>
+          <div className="flex flex-col gap-2">
+            {c.kept.map((x, i) => <div key={i} className="flex items-center gap-2 text-sm text-ink"><K2Icon name="check-circle" size={15} color="var(--success)" />{x}</div>)}
+            {c.dropped.map((x, i) => <div key={i} className="flex items-center gap-2 text-sm text-ink-soft"><K2Icon name="close-circle" size={15} color="var(--danger)" />{x}</div>)}
+          </div>
+        </div>
+        <div className="zs-card-flush" style={{ padding: "var(--space-4)" }}>
+          <div className="zs-eyebrow font-semibold text-ink-mute mb-3">Anonymized before it leaves</div>
+          <div className="mono text-xs" style={{ background: "var(--paper-mute)", border: "var(--hairline)", borderRadius: "var(--radius)", padding: "var(--space-3)", color: "var(--ink-soft)", textDecoration: "line-through" }}>{c.example.raw}</div>
+          <div className="flex items-center justify-center" style={{ color: "var(--ink-faint)", padding: "var(--space-1)" }}>↓</div>
+          <div className="mono text-xs" style={{ background: "var(--success-soft)", border: "1px solid var(--success-edge)", borderRadius: "var(--radius)", padding: "var(--space-3)", color: "var(--ink)" }}>{c.example.stripped}</div>
+        </div>
+      </div>
+    </W>
+  );
+}
+
+// 5 · INCIDENTS (lead) — confidentiality containment.
+const K2_SEV = { high: { tone: "var(--danger)", soft: "var(--danger-soft)", edge: "var(--danger-edge)" }, medium: { tone: "var(--warning)", soft: "var(--warning-soft)", edge: "oklch(0.72 0.12 75 / 0.30)" } };
+const K2_ISTATE = { contained: "var(--warning)", resolved: "var(--success)", open: "var(--danger)" };
+function ScrIncidents({ org, mobile }) {
+  const W = mobile ? BodyM : Body;
+  return (
+    <W>
+      <K2SectionHead eyebrow={org.name + " · clients"} title="Incidents" count={D2.consoles.incidents.length}
+        right={<K2Btn size="sm" icon="add-circle">Report</K2Btn>} />
+      <K2Banner kanji="盾" tone="warning" title="Contain a near-leak fast.">
+        Leak-guard holds anything that looks like client source before it leaves. Log the containment, set retention, and control client read-access here.
+      </K2Banner>
+      <K2ListSection icon="shield-warning" title="Confidentiality incidents" count={D2.consoles.incidents.length}>
+        {D2.consoles.incidents.map(it => {
+          const sv = K2_SEV[it.severity] || K2_SEV.medium;
+          return (
+            <div key={it.id} className="flex items-center gap-4 border-b" style={{ padding: "var(--space-3) var(--space-4)" }}>
+              <K2KanjiToken char={it.kanji} size="lg" tone={sv.tone} w={22} />
+              <div className="flex-1" style={{ minWidth: 0 }}><div className="text-sm text-ink">{it.title}</div><div className="mono text-xs text-ink-faint" style={{ marginTop: 1 }}>{it.client} · {it.when}</div></div>
+              <K2Chip tone={sv.tone} soft={sv.soft} edge={sv.edge}>{it.severity}</K2Chip>
+              <span className="inline-flex items-center gap-1 text-xs" style={{ color: K2_ISTATE[it.state] }}><span className="rounded-full" style={{ width: 6, height: 6, background: K2_ISTATE[it.state] }} />{it.state}</span>
+              <K2Btn size="sm" variant="ghost" icon="alt-arrow-right">Open</K2Btn>
+            </div>
+          );
+        })}
+      </K2ListSection>
+      <div className="flex flex-wrap gap-2">
+        <K2Chip icon="lock-keyhole" tone="var(--ink-mute)">Retention · 1 year</K2Chip>
+        <K2Chip icon="eye-closed" tone="var(--ink-mute)">Client read-access · off</K2Chip>
+      </div>
+    </W>
+  );
+}
+
+// 6 · CLIENT AUDIT (lead) — immutable confidentiality ledger.
+function ScrClientAudit({ org, mobile }) {
+  const W = mobile ? BodyM : Body;
+  return (
+    <W>
+      <K2SectionHead eyebrow={org.name + " · clients"} title="Client audit trail"
+        right={<div className="flex gap-2"><K2Btn size="sm" variant="ghost" icon="tuning-2">Filter</K2Btn><K2Btn size="sm" variant="ghost" icon="download-minimalistic">Export</K2Btn></div>} />
+      <K2Banner kanji="録" tone="neutral" title="An immutable ledger of exactly what left and what was stripped.">
+        Distinct from the admin action-audit — this proves confidentiality held for each client, entry by entry. Append-only, exportable as CSV or JSON.
+      </K2Banner>
+      <div className="zs-card-flush" style={{ overflow: "hidden" }}>
+        {D2.consoles.clientAudit.map((r, i) => (
+          <div key={i} className="flex items-center gap-4 border-b" style={{ padding: "var(--space-3) var(--space-4)" }}>
+            <K2KanjiToken char={r.kanji} size="base" tone={r.ok ? "var(--ink-mute)" : "var(--danger)"} w={20} />
+            <div className="flex-1" style={{ minWidth: 0 }}><div className="text-sm text-ink">{r.event}</div><div className="mono text-xs text-ink-faint" style={{ marginTop: 1 }}>{r.detail}</div></div>
+            <K2Chip tone="var(--ink-mute)">{r.client}</K2Chip>
+            {r.ok ? <K2Icon name="check-circle" size={16} color="var(--success)" /> : <K2Icon name="shield-warning" size={16} color="var(--danger)" />}
+            <span className="mono text-xs text-ink-faint" style={{ width: 64, textAlign: "right" }}>{r.t}</span>
+          </div>
+        ))}
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <K2Chip icon="lock-keyhole" tone="var(--ink-mute)">Retention · 7 years</K2Chip>
+        <K2Chip icon="eye" tone="var(--ink-mute)">Client read-access · Globex on</K2Chip>
+      </div>
+    </W>
+  );
+}
+
+// 7 · IDENTITY & SSO (admin).
+function ScrIdentity({ org, mobile }) {
+  const W = mobile ? BodyM : Body;
+  const id = D2.consoles.identity;
+  return (
+    <W>
+      <K2SectionHead eyebrow={org.name + " · admin"} title="Identity & SSO" />
+      <K2Banner kanji="鍵" tone="neutral" title="Connect org identity — SSO, provisioning, and how git maps to members.">
+        Roles derive from these mappings; SSO and SCIM keep membership in step with your directory automatically.
+      </K2Banner>
+      <div style={{ display: "grid", gridTemplateColumns: mobile ? "1fr" : "1fr 1fr", gap: "var(--space-4)" }}>
+        <div className="zs-card-flush" style={{ padding: "var(--space-4)" }}>
+          <div className="flex items-center gap-2 mb-2"><K2Icon name="key" size={17} color="var(--accent)" /><span className="zs-eyebrow font-semibold text-ink-mute">Identity provider</span></div>
+          <div className="flex items-center gap-2"><span className="text-lg font-medium text-ink">{id.idp.name}</span><K2Chip mono tone="var(--ink-mute)">{id.idp.protocol}</K2Chip><K2Chip icon="check-circle" tone="var(--success)" soft="var(--success-soft)" edge="var(--success-edge)">{id.idp.status}</K2Chip></div>
+          <div className="mono text-xs text-ink-faint" style={{ marginTop: 4 }}>{id.idp.domain}</div>
+          <div style={{ marginTop: "var(--space-3)" }}><K2Btn size="sm" variant="ghost" icon="tuning-2">Configure</K2Btn></div>
+        </div>
+        <div className="zs-card-flush" style={{ padding: "var(--space-4)" }}>
+          <div className="flex items-center gap-2 mb-2"><K2Icon name="refresh-circle" size={17} color="var(--accent)" /><span className="zs-eyebrow font-semibold text-ink-mute">SCIM provisioning</span></div>
+          <div className="flex items-center gap-2"><span className="text-sm text-ink">{id.scim ? "Enabled — members sync from your directory" : "Disabled"}</span></div>
+          <div style={{ marginTop: "var(--space-3)" }}><K2Btn size="sm" variant="ghost" icon="tuning-2">Manage</K2Btn></div>
+        </div>
+      </div>
+      <K2ListSection icon="link-circle" title="Identity mappings" count={id.mappings.length}
+        right={<K2Btn size="sm" icon="add-circle">Add mapping</K2Btn>}>
+        {id.mappings.map((m, i) => (
+          <div key={i} className="flex items-center gap-4 border-b" style={{ padding: "var(--space-3) var(--space-4)" }}>
+            <div className="flex-1" style={{ minWidth: 0 }}><div className="text-sm text-ink">{m.source}</div><div className="mono text-xs text-ink-faint" style={{ marginTop: 1 }}>→ {m.to}</div></div>
+            <span className="mono text-xs text-ink-mute">{m.count} members</span>
+            <K2Btn size="sm" variant="ghost" icon="pen-2">Edit</K2Btn>
+          </div>
+        ))}
+      </K2ListSection>
+    </W>
+  );
+}
+
+// 8 · HEALTH / MONITOR (admin).
+function ScrHealth({ org, mobile }) {
+  const W = mobile ? BodyM : Body;
+  const h = D2.consoles.health;
+  const max = Math.max(...h.contribVsApprove.flatMap(x => [x.c, x.a]));
+  return (
+    <W>
+      <K2SectionHead eyebrow={org.name + " · admin"} title="Health / Monitor" />
+      <K2Banner kanji="観" tone="neutral" title="The shared mind's vital signs, fed by the audit trail.">
+        Throughput, adoption and leak-guard at a glance. Anomalies surface as alerts before they become incidents.
+      </K2Banner>
+      <div style={{ display: "grid", gridTemplateColumns: mobile ? "1fr 1fr" : "repeat(4, 1fr)", gap: "var(--space-4)" }}>
+        {h.signals.map((s, i) => (
+          <div key={i} className="zs-card-flush" style={{ padding: "var(--space-4)" }}>
+            <div className="flex items-center gap-2 mb-2"><K2KanjiToken char={s.kanji} size="base" tone={s.tone} /><span className="zs-meta">{s.label}</span></div>
+            <K2StatBadge n={s.n} label="" sub={s.sub} tone={s.tone} />
+          </div>
+        ))}
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: mobile ? "1fr" : "1.3fr 1fr", gap: "var(--space-4)", alignItems: "start" }}>
+        <div className="zs-card-flush" style={{ padding: "var(--space-4)" }}>
+          <div className="flex items-center gap-2 mb-3"><span className="zs-eyebrow font-semibold text-ink-mute">Contributions vs approvals</span><span className="flex-1" /><K2Chip tone="var(--accent)" soft="var(--accent-soft)" edge="var(--accent-edge)">contrib</K2Chip><K2Chip tone="var(--success)" soft="var(--success-soft)" edge="var(--success-edge)">approved</K2Chip></div>
+          <div className="flex items-end" style={{ gap: "var(--space-4)", height: 130, padding: "0 var(--space-2)" }}>
+            {h.contribVsApprove.map((x, i) => (
+              <div key={i} className="flex flex-col items-center gap-2" style={{ flex: 1 }}>
+                <div className="flex items-end" style={{ gap: 4, height: 100 }}>
+                  <div style={{ width: 14, height: (x.c / max * 100) + "%", background: "var(--accent)", borderRadius: "3px 3px 0 0" }} />
+                  <div style={{ width: 14, height: (x.a / max * 100) + "%", background: "var(--success)", borderRadius: "3px 3px 0 0" }} />
+                </div>
+                <span className="mono text-xs text-ink-faint">{x.wk}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+        <K2ListSection icon="bell" title="Leak-guard & anomalies" count={h.alerts.length}>
+          {h.alerts.map((a, i) => (
+            <div key={i} className="flex items-start gap-3 border-b" style={{ padding: "var(--space-3) var(--space-4)" }}>
+              <K2KanjiToken char={a.kanji} size="base" tone={a.sev === "warning" ? "var(--warning)" : "var(--success)"} w={20} />
+              <div className="flex-1" style={{ minWidth: 0 }}><div className="text-sm text-ink" style={{ lineHeight: 1.3 }}>{a.title}</div><div className="mono text-xs text-ink-faint" style={{ marginTop: 1 }}>{a.detail} · {a.when}</div></div>
+            </div>
+          ))}
+        </K2ListSection>
+      </div>
+    </W>
+  );
+}
+
 /* ═══ SIGN-IN (adopted from the Dōjō console) ═════════════ */
 function GhMark({ size = 18, color = "var(--paper)" }) {
   return (
@@ -951,9 +1322,17 @@ function DojoApp2({ label, start = "you", startNav, startProject }) {
       home: <ScrOrgHome org={org} onOpenProject={openProject} onAct={onAct} resolved={resolved} />,
       ladder: <ScrOrgLadder org={org} />,
       projects: <ScrProjects projects={projs} showDojo={false} onOpenProject={openProject} eyebrow={org.name + " · jurisdiction"} title="Projects" />,
+      triage: <ScrTriage org={org} />,
+      approvals: <ScrApprovals org={org} />,
+      knowledge: <ScrKnowledge org={org} />,
+      engagements: <ScrEngagements org={org} />,
+      incidents: <ScrIncidents org={org} />,
+      clientaudit: <ScrClientAudit org={org} />,
       members: <ScrRoleSurfaces org={org} tab="members" />,
       scopes: <ScrScopes org={org} />,
+      identity: <ScrIdentity org={org} />,
       audit: <ScrRoleSurfaces org={org} tab="audit" />,
+      health: <ScrHealth org={org} />,
       billing: <ScrBilling org={org} />,
     })[nav] || <ScrOrgHome org={org} onOpenProject={openProject} onAct={onAct} resolved={resolved} />;
   }
@@ -961,7 +1340,7 @@ function DojoApp2({ label, start = "you", startNav, startProject }) {
   return (
     <K2AppShell label={label} context={org ? "org" : "you"} org={org || D2.dojos[0]} dojos={D2.dojos} me={D2.me}
       needsCount={needsCount} onNeeds={onNeeds}
-      nav={org ? NAV_ORG : NAV_YOU} active={proj ? null : nav} onNav={(id) => { setProj(null); setNav(id); }} onPick={onPick}>
+      nav={org ? navForOrg(org) : NAV_YOU} active={proj ? null : nav} onNav={(id) => { setProj(null); setNav(id); }} onPick={onPick}>
       {body}
     </K2AppShell>
   );
@@ -1009,6 +1388,7 @@ function DojoApp2Mobile({ label, start = "you", startTab }) {
 
 Object.assign(window, {
   DojoApp2, DojoApp2Mobile, ScrSignIn, ScrMyDojos, ScrContributions, ScrScopes, ScrBilling,
+  ScrTriage, ScrApprovals, ScrKnowledge, ScrEngagements, ScrIncidents, ScrClientAudit, ScrIdentity, ScrHealth,
   ScrYourWork, ScrProjects, ScrConstitution, ScrRulePacks, ScrProjectPreview,
   ScrRelayWatch, ScrRelayApprove, ScrRelayDecide, ScrRelayChat,
   ScrOrgHome, ScrOrgLadder, ScrRoleSurfaces,
