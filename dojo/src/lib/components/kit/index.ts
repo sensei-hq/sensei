@@ -43,9 +43,10 @@ export { default as AppShell } from './AppShell.svelte';
 export { default as TabBar } from './TabBar.svelte';
 export { default as MobileShell } from './MobileShell.svelte';
 
-// Governance — the constitution ladder + stance.
+// Governance — the constitution ladder + stance + the rule editor.
 export { default as LadderRung } from './LadderRung.svelte';
 export { default as RuleRow } from './RuleRow.svelte';
+export { default as RuleEditor } from './RuleEditor.svelte';
 export { default as ConflictCard } from './ConflictCard.svelte';
 export { default as StanceDial } from './StanceDial.svelte';
 
