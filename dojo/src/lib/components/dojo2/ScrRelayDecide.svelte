@@ -16,7 +16,7 @@
 	} = $props();
 </script>
 
-<div class="flex flex-col" style="padding: 32px; gap: 24px">
+<div class="flex flex-col p-8 gap-6">
 	<SectionHead eyebrow="Relay · decide" title="Rules to sign off" count={decisions.length} />
 
 	{#each decisions as decision (decision.id)}

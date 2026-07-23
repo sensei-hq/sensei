@@ -17,7 +17,7 @@
 	} = $props();
 </script>
 
-<div class="flex flex-col" style="padding: 32px; gap: 24px">
+<div class="flex flex-col p-8 gap-6">
 	<SectionHead eyebrow="Relay · approve" title="Commands waiting on you" count={gates.length} />
 
 	{#if gates.length}

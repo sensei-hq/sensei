@@ -124,6 +124,23 @@ export interface KitConflict {
 	locked?: boolean;
 }
 
+/** An adoptable rule-pack bundle (dojo2-data `rulePacks[]`). Adopting adds its
+ *  rules to the constitution at a chosen scope — a starting point, not a lock. */
+export interface KitRulePack {
+	id: string;
+	/** Brand glyph for the pack's intent. */
+	kanji: string;
+	name: string;
+	/** Who authors the pack (e.g. "Acme · platform"). */
+	by: string;
+	/** How many rules the pack carries. */
+	count: number;
+	/** Whether the viewer has adopted the pack into their constitution. */
+	adopted: boolean;
+	/** A short line on what the pack covers. */
+	note: string;
+}
+
 /** A stance axis — a labelled discrete slider (dojo2-data `stance[]`). */
 export interface KitStanceDial {
 	/** autonomy · sharing · review. */
@@ -194,6 +211,51 @@ export interface KitDecision {
 	/** The evidence line under the title. */
 	context: string;
 	age: string;
+}
+
+// ── Contributions (dojo2-data `contributions`) ─────────────────────────────
+
+/** Something you shared upstream and its fate (dojo2-data `contributions.mine[]`).
+ *  You propose; a maintainer decides — client work anonymizes before it leaves. */
+export interface KitContribution {
+	/** Brand glyph for the shared item's intent. */
+	kanji: string;
+	title: string;
+	/** The destination dōjō the contribution landed in. */
+	dest: string;
+	/** The scope it was proposed at (e.g. "Stack · Rust"). */
+	scope: string;
+	/** approved · pending · declined — drives the status chip. */
+	status: string;
+	/** Compact "how long ago" (e.g. "2d"). */
+	when: string;
+	/** A short line on the outcome / where it sits. */
+	note: string;
+	/** Client work — anonymized before it left; carries a shield marker. */
+	client?: boolean;
+}
+
+/** A downstream item approved for you from a dōjō (dojo2-data
+ *  `contributions.downstream[]`). Never silently merged — you pin it in. */
+export interface KitDownstream {
+	kanji: string;
+	title: string;
+	/** The dōjō it came from. */
+	from: string;
+	scope: string;
+	when: string;
+	/** Whether you've adopted it locally; unadopted rows are "new" + pinnable. */
+	adopted: boolean;
+	/** guard · pattern · skill — the kind of thing shared. */
+	kind: string;
+}
+
+/** The contributions stat row (dojo2-data `contributions.stat`). */
+export interface KitContribStat {
+	approved: number;
+	pending: number;
+	/** Lifetime devs the viewer's contributions have helped. */
+	helped: number;
 }
 
 /** One turn in a sensei-speaks-rarely thread (dojo2-data `chat.thread[]`). */
