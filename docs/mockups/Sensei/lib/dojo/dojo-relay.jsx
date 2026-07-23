@@ -31,12 +31,12 @@ const MB_PROJECTS = [
   { id: "auth",   kanji: "鍵", name: "lumen-auth",     dojo: "Acme Corp", kind: "Employer", phase: 2, of: 4, pct: 47, now: "refresh-token store", flag: "approve", note: "approve migration" },
   { id: "bill",   kanji: "円", name: "billing-svc",    dojo: "Acme Corp", kind: "Employer", phase: 3, of: 5, pct: 61, now: "webhook retry tests", flag: "doing",   note: "running" },
   { id: "portal", kanji: "客", name: "initech-portal", dojo: "Initech",   kind: "Client",   phase: 1, of: 3, pct: 22, now: "session strategy",   flag: "gate",    note: "1 decision" },
-  { id: "tele",   kanji: "測", name: "telemetry",      dojo: "Personal",  kind: "Personal", phase: 1, of: 3, pct: 18, now: "ingest schema",      flag: "stall",   note: "quiet 22m" },
+  { id: "tele",   kanji: "測", name: "telemetry",      dojo: "No Dōjō · local",  kind: "Solo",     phase: 1, of: 3, pct: 18, now: "ingest schema",      flag: "stall",   note: "quiet 22m" },
 ];
 const INBOX = [
   { id: "i1", kind: "approve",  k: "認", tone: "var(--accent)",  title: "Run prod migration", proj: "lumen-auth", dojo: "Acme Corp", w: "2m" },
   { id: "i2", kind: "decision", k: "決", tone: "var(--accent)",  title: "Which session strategy?", proj: "initech-portal", dojo: "Initech", w: "18m" },
-  { id: "i3", kind: "stall",    k: "促", tone: "var(--warning)", title: "Ingest schema — quiet 22m", proj: "telemetry", dojo: "Personal", w: "22m" },
+  { id: "i3", kind: "stall",    k: "促", tone: "var(--warning)", title: "Ingest schema — quiet 22m", proj: "telemetry", dojo: "No Dōjō · local", w: "22m" },
 ];
 
 /* ═══ small shared pieces ════════════════════════════════════ */
@@ -74,7 +74,7 @@ function RelayProjectsBody({ wide = false, onOpen }) {
                 </div>
                 <span style={{ fontSize: "var(--text-xs)", fontWeight: 600, color: f.tone }}>{f.label}</span>
               </div>
-              <button onClick={onOpen} style={{ width: "100%", marginTop: "var(--space-3)", padding: "var(--space-2)", borderRadius: "var(--radius-lg)", border: "none", cursor: "pointer",
+              <button onClick={() => onOpen && onOpen(p.flag)} style={{ width: "100%", marginTop: "var(--space-3)", padding: "var(--space-2)", borderRadius: "var(--radius-lg)", border: "none", cursor: "pointer",
                     background: p.flag === "stall" ? "var(--paper)" : "var(--ink)", color: p.flag === "stall" ? "var(--ink)" : "var(--paper)",
                     boxShadow: p.flag === "stall" ? "inset 0 0 0 1px var(--paper-edge)" : "none",
                     fontSize: "var(--text-sm)", fontWeight: 500, fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "center", gap: "var(--space-2)" }}>
@@ -95,7 +95,7 @@ function RelayProjectsBody({ wide = false, onOpen }) {
         {MB_PROJECTS.map(p => {
           const f = flagMeta[p.flag];
           return (
-            <button key={p.id} onClick={onOpen} style={{ textAlign: "left", cursor: "pointer", background: "var(--paper-soft)", border: "var(--hairline)", borderRadius: "var(--radius-lg)", padding: "var(--space-3) var(--space-4)", fontFamily: "inherit" }}>
+            <button key={p.id} onClick={() => onOpen && onOpen(p.flag)} style={{ textAlign: "left", cursor: "pointer", background: "var(--paper-soft)", border: "var(--hairline)", borderRadius: "var(--radius-lg)", padding: "var(--space-3) var(--space-4)", fontFamily: "inherit" }}>
               <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
                 <span className="kanji" style={{ fontSize: "var(--text-lg)", color: "var(--ink-mute)" }}>{p.kanji}</span>
                 <div style={{ flex: 1, minWidth: 0 }}>
@@ -270,7 +270,7 @@ function RelayStallBody({ wide = false }) {
         <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
           <span className="kanji" style={{ fontSize: "var(--text-xl)", color: "var(--warning)" }}>静</span>
           <div><div style={{ fontSize: "var(--text-base)", fontWeight: 600, color: "var(--ink)" }}>This track has gone quiet</div>
-            <div style={{ fontSize: "var(--text-xs)", color: "var(--ink-soft)", marginTop: "var(--space-1)" }}>telemetry · Personal · no activity 22m · waiting on API rate limit</div></div>
+            <div style={{ fontSize: "var(--text-xs)", color: "var(--ink-soft)", marginTop: "var(--space-1)" }}>telemetry · No Dōjō · local · no activity 22m · waiting on API rate limit</div></div>
         </div>
         <div style={{ fontSize: "var(--text-sm)", color: "var(--ink-mute)", marginTop: "var(--space-3)" }}>sensei will retry on its own in ~8m. You can nudge it now.</div>
       </div>
@@ -398,8 +398,8 @@ function RelayChatBody({ wide = false }) {
             return (
               <div key={i} style={{ display: "flex", flexDirection: "column", alignItems: me ? "flex-end" : "flex-start", gap: "var(--space-1)" }}>
                 {!me && <span className="kanji" style={{ fontSize: "var(--text-xs)", color: "var(--accent)", marginLeft: "var(--space-1)" }}>先生</span>}
-                <div style={{ maxWidth: "82%", padding: "var(--space-2) var(--space-3)", borderRadius: "var(--radius-full)", background: me ? "var(--ink)" : "var(--paper-soft)", color: me ? "var(--paper)" : "var(--ink)",
-                      border: me ? "none" : "var(--hairline)", borderBottomRightRadius: me ? 5 : 15, borderBottomLeftRadius: me ? 15 : 5, fontSize: "var(--text-sm)", lineHeight: 1.5 }}>{m.t}</div>
+                <div style={{ maxWidth: "82%", padding: "var(--space-2) var(--space-3)", borderRadius: "var(--radius-lg)", background: me ? "var(--ink)" : "var(--paper-soft)", color: me ? "var(--paper)" : "var(--ink)",
+                      border: me ? "none" : "var(--hairline)", borderBottomRightRadius: me ? 3 : "var(--radius-lg)", borderBottomLeftRadius: me ? "var(--radius-lg)" : 3, fontSize: "var(--text-sm)", lineHeight: 1.5 }}>{m.t}</div>
               </div>
             );
           })}
@@ -466,11 +466,14 @@ function RelayConnState({ kind = "offline", wide = false }) {
 
 /* ═══ DESKTOP dispatcher — headered wide area ════════════════ */
 const RELAY_META = {
-  projects: { kanji: "場", eyebrow: "Relay · you", title: "Active projects", sub: "Everything running for you, across every Dōjō. Approvals, decisions and stalled tracks rise to the top — pushed live through your Dōjō." },
-  inbox:    { kanji: "決", eyebrow: "Relay · you", title: "Inbox", sub: "Decisions, approvals and nudges waiting on you — across every Dōjō. Answer when you can; other tracks keep moving." },
+  projects: { kanji: "場", eyebrow: "Relay · you", title: "Active projects", sub: "Everything running for you — across every Dōjō and your own solo work, no Dōjō required. Approvals, decisions and stalled tracks rise to the top, pushed live. Relay is free · never gated by plan." },
+  inbox:    { kanji: "決", eyebrow: "Relay · you", title: "Inbox", sub: "Decisions, approvals and nudges waiting on you — across every Dōjō and solo projects alike. Answer when you can; other tracks keep moving." },
   watch:    { kanji: "観", eyebrow: "Relay · you", title: "Watch progress", sub: "Phases, what's done · doing · next, and the live activity feed for a running track." },
   chat:     { kanji: "話", eyebrow: "Relay · you", title: "Chat with sensei", sub: "Talk to a running session mid-flight — ask a question, steer a decision, or give the go-ahead." },
   logs:     { kanji: "録", eyebrow: "Relay · you", title: "Session log", sub: "Every step sensei took on this track — timestamped, from first action to now." },
+  approve:  { kanji: "認", eyebrow: "Relay · you", title: "Approve a gated action", sub: "The exact command sensei wants to run — approve, edit, or decline." },
+  decision: { kanji: "決", eyebrow: "Relay · you", title: "A decision", sub: "Pick an option so the run can continue — or type your own." },
+  stall:    { kanji: "促", eyebrow: "Relay · you", title: "Nudge a stalled track", sub: "This track is paused waiting on you — nudge it back into motion." },
 };
 function RelayArea({ view = "projects", wide = true, onOpen }) {
   const m = RELAY_META[view] || RELAY_META.projects;
@@ -479,6 +482,9 @@ function RelayArea({ view = "projects", wide = true, onOpen }) {
     : view === "watch" ? <RelayWatchBody wide={wide} />
     : view === "chat" ? <RelayChatBody wide={wide} />
     : view === "logs" ? <RelayLogsBody wide={wide} />
+    : view === "approve" ? <RelayApproveBody wide={wide} />
+    : view === "decision" ? <RelayDecisionBody wide={wide} />
+    : view === "stall" ? <RelayStallBody wide={wide} />
     : <RelayProjectsBody wide={wide} onOpen={onOpen} />;
   // chat & inbox manage their own scroll; projects/watch scroll inside body
   const flush = view === "chat" || view === "inbox";
@@ -526,7 +532,7 @@ function MTabs({ active }) {
 }
 
 function DojoMobileProjects() {
-  return <MobileFrame label="Mobile · Projects (home)"><MHead title="Projects" sub="everything running for you · 3 Dōjōs" live /><div style={{ flex: 1, minHeight: 0 }}><RelayProjectsBody wide={false} /></div><MTabs active="projects" /></MobileFrame>;
+  return <MobileFrame label="Mobile · Projects (home)"><MHead title="Projects" sub="everything running for you · your Dōjōs + solo" live /><div style={{ flex: 1, minHeight: 0 }}><RelayProjectsBody wide={false} /></div><MTabs active="projects" /></MobileFrame>;
 }
 function DojoMobileInbox() {
   return <MobileFrame label="Mobile · Inbox"><MHead title="Inbox" sub="what needs you · across Dōjōs" live /><div style={{ flex: 1, minHeight: 0 }}><RelayInboxBody wide={false} /></div><MTabs active="inbox" /></MobileFrame>;
@@ -619,8 +625,84 @@ function DojoMobileConn({ kind = "offline" }) {
   return <MobileFrame label={"Mobile · Relay " + kind}><MHead title="Relay" sub="lumen-auth · Acme Corp" back /><div style={{ flex: 1, minHeight: 0 }}><RelayConnState kind={kind} /></div></MobileFrame>;
 }
 
+function MobileMoreBody({ onOpen }) {
+  const links = [["承", "Approve a gated action", "approve"], ["決", "Answer a decision", "decision"], ["録", "Session log", "logs"]];
+  const orgs = [["社", "Acme Corp", "Admin"], ["客", "Globex", "Maintainer"], ["客", "Initech", "Lead"], ["己", "Personal", "Owner"]];
+  return (
+    <div style={{ flex: 1, overflow: "auto", padding: "var(--space-4)" }}>
+      <div className="zs-eyebrow font-semibold" style={{ marginBottom: "var(--space-2)" }}>Away from keyboard</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)", marginBottom: "var(--space-5)" }}>
+        {links.map(([k, n, id]) => (
+          <button key={id} onClick={() => onOpen(id)} style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", textAlign: "left", cursor: "pointer", background: "var(--paper-soft)", border: "var(--hairline)", borderRadius: "var(--radius-lg)", padding: "var(--space-3) var(--space-4)", fontFamily: "inherit" }}>
+            <span className="kanji" style={{ fontSize: "var(--text-lg)", color: "var(--accent)", width: 22, textAlign: "center" }}>{k}</span>
+            <span style={{ flex: 1, fontSize: "var(--text-sm)", color: "var(--ink)" }}>{n}</span>
+            <span style={{ fontSize: "var(--text-sm)", color: "var(--ink-faint)" }}>→</span>
+          </button>
+        ))}
+      </div>
+      <div className="zs-eyebrow font-semibold" style={{ marginBottom: "var(--space-2)" }}>Switch Dōjō</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
+        {orgs.map(([k, n, r], i) => (
+          <div key={i} style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", background: i === 0 ? "var(--paper-soft)" : "transparent", border: i === 0 ? "1px solid var(--accent)" : "var(--hairline)", borderRadius: "var(--radius-lg)", padding: "var(--space-3) var(--space-4)" }}>
+            <span className="kanji" style={{ fontSize: "var(--text-lg)", color: "var(--accent)", width: 22, textAlign: "center" }}>{k}</span>
+            <span style={{ flex: 1, fontSize: "var(--text-sm)", color: "var(--ink)" }}>{n}</span>
+            <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--ink-mute)" }}>{r}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+/* One WIRED mobile experience — bottom tabs + drill-in/back move between the
+   same Relay bodies. Replaces the pile of standalone DojoMobile* artboards. */
+function DojoMobileFlow({ start = "signin" }) {
+  const [view, setView] = mbS(start);    // signin | app
+  const [tab, setTab] = mbS("projects");  // projects | inbox | chat | more
+  const [drill, setDrill] = mbS(null);   // null | project | approve | decision | logs
+  const go = (id) => { setDrill(null); setTab(id); };
+  if (view === "signin") {
+    return (
+      <MobileFrame label="Mobile flow · Sign in">
+        <window.DojoSignIn mobile onContinue={() => setView("app")} />
+      </MobileFrame>
+    );
+  }
+  const HEAD = {
+    projects: { title: "Projects", sub: "everything running for you · your Dōjōs + solo", live: true },
+    inbox:    { title: "Inbox", sub: "what needs you · across Dōjōs", live: true },
+    chat:     { title: "sensei", sub: "lumen-auth · live session", live: true },
+    more:     { title: "More", sub: "Rin Saito · rin-saito" },
+    project:  { title: "lumen-auth", sub: "Acme Corp · auto", back: true, live: true },
+    approve:  { title: "Approval", sub: "lumen-auth · Acme Corp", back: true, live: true },
+    decision: { title: "Decision", sub: "initech-portal · Initech", back: true, live: true },
+    logs:     { title: "Session log", sub: "lumen-auth · Acme Corp", back: true },
+    stall:    { title: "Nudge a stalled track", sub: "initech-portal · Initech", back: true, live: true },
+  };
+  const h = HEAD[drill || tab];
+  const openFlag = (flag) => setDrill(flag === "approve" ? "approve" : flag === "gate" ? "decision" : flag === "stall" ? "stall" : "project");
+  let body;
+  if (drill === "project") body = <RelayWatchBody wide={false} />;
+  else if (drill === "approve") body = <RelayApproveBody wide={false} />;
+  else if (drill === "decision") body = <RelayDecisionBody wide={false} />;
+  else if (drill === "stall") body = <RelayStallBody wide={false} />;
+  else if (drill === "logs") body = <RelayLogsBody wide={false} />;
+  else if (tab === "inbox") body = <RelayInboxBody wide={false} />;
+  else if (tab === "chat") body = <RelayChatBody wide={false} />;
+  else if (tab === "more") body = <MobileMoreBody onOpen={setDrill} />;
+  else body = <RelayProjectsBody wide={false} onOpen={openFlag} />;
+  return (
+    <MobileFrame label="Mobile flow · Relay">
+      <div onClick={h.back ? () => setDrill(null) : undefined} style={h.back ? { cursor: "pointer" } : undefined}>
+        <MHead title={h.title} sub={h.sub} back={h.back} live={h.live} />
+      </div>
+      <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>{body}</div>
+      {!drill && <window.DojoTabBar tabs={MOBILE_TABS} active={tab} onNav={go} />}
+    </MobileFrame>
+  );
+}
+
 Object.assign(window, {
-  RelayArea, RELAY_META, RelayLogsBody, RelayConnState,
+  RelayArea, RELAY_META, RelayLogsBody, RelayConnState, DojoMobileFlow,
   RelayProjectsBody, RelayInboxBody, RelayWatchBody, RelayChatBody, RelayApproveBody, RelayDecisionBody, RelayStallBody,
   MobileFrame, DojoMobileProjects, DojoMobileProject, DojoMobileApprove, DojoMobileLogs, DojoMobileConn,
   DojoMobileDecision, DojoMobileInbox, DojoMobileChat, DojoMobileMore, DojoMobileConnect,

@@ -43,47 +43,111 @@ const btnPrimary = { background: "var(--ink)", color: "var(--paper)", border: "n
 const btnGhost = { background: "var(--paper-mute)", color: "var(--ink-soft)", border: "none", borderRadius: "var(--radius-lg)",
   padding: "var(--space-2) var(--space-4)", fontSize: "var(--text-sm)", cursor: "pointer", fontFamily: "inherit" };
 
-/* ─── 1 · Bootstrap — join your org ──────────────────────── */
+/* ─── 1 · Bootstrap — first-run home (Dōjō optional) ─────── */
+// NOT a gate. On first run the desktop app lands you on your OWN work — the
+// projects sensei is already watching locally and whatever is running now — so
+// you can work immediately, solo, without joining anything. A detected Dōjō is
+// offered as a demoted, dismissible card on the side; joining stays optional
+// and always available later from Today / Preferences.
 function InappJoin({ onContinue }) {
+  const [dismissed, setDismissed] = iaS(false);
+  const soloFlag = {
+    doing:   { tone: "var(--success)", label: "running",         note: "task running · 4m" },
+    approve: { tone: "var(--accent)",  label: "approval waiting", note: "needs your ok" },
+    stall:   { tone: "var(--warning)", label: "stalled",          note: "quiet 21m" },
+  };
+  const projects = [
+    { k: "測", name: "telemetry-ingest", now: "ingest schema draft",       phase: "1/3", pct: 22,  flag: "doing"   },
+    { k: "記", name: "field-notes",      now: "waiting: rename migration", phase: "2/3", pct: 55,  flag: "approve" },
+    { k: "庫", name: "homelab-scripts",  now: "quiet since 21m",           phase: "1/2", pct: 30,  flag: "stall"   },
+    { k: "頁", name: "personal-site",    now: "phase complete",            phase: "3/3", pct: 100, flag: null      },
+  ];
+  const running = projects.filter(p => p.flag === "doing").length;
+
   return (
-    <InappFrame label="First run · join your org" title="Sensei  先生  ·  first run">
-      <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: "var(--space-6)" }}>
-        <div style={{ width: 560, background: "var(--paper-soft)", border: "var(--hairline)", borderRadius: "var(--radius-lg)",
-                      padding: "var(--space-6) var(--space-6)", textAlign: "center", boxShadow: "var(--shadow)" }}>
-          <div style={{ position: "relative", height: 64, marginBottom: "var(--space-2)" }}>
-            <span className="kanji" style={{ fontSize: "var(--text-4xl)", color: "var(--accent)", lineHeight: 1 }}>結</span>
+    <InappFrame label="First run · your work (Dōjō optional)" title="Sensei  先生  ·  first run">
+      <IaHead kanji="場" eyebrow="First run · working locally" title="Here's what's running."
+        sub={<span>Sensei is already watching your projects on this machine — you don't need a Dōjō to work. <b style={{ fontWeight: 600, color: "var(--ink)" }}>{running} task{running === 1 ? "" : "s"}</b> running now. Joining a Dōjō is optional; do it when you want to share.</span>}
+        right={<div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-1)", fontSize: "var(--text-xs)", color: "var(--ink-mute)",
+            background: "var(--paper-soft)", border: "var(--hairline)", borderRadius: "var(--radius-full)", padding: "var(--space-1) var(--space-3)", whiteSpace: "nowrap" }}>
+            <span className="kanji" style={{ color: "var(--ink-soft)" }}>己</span> solo</span>
+          <button onClick={onContinue} style={{ ...btnPrimary, whiteSpace: "nowrap" }}>Open my workspace →</button>
+        </div>} />
+
+      <div style={{ flex: 1, overflow: "auto", padding: "var(--space-6)", display: "grid",
+                    gridTemplateColumns: dismissed ? "1fr" : "minmax(0,1fr) 320px", gap: "var(--space-5)", alignItems: "start" }}>
+        {/* your work — the actual landing */}
+        <div style={{ minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", marginBottom: "var(--space-3)" }}>
+            <span className="kanji" style={{ fontSize: "var(--text-sm)", color: "var(--ink-mute)" }}>場</span>
+            <span style={{ fontSize: "var(--text-xs)", letterSpacing: ".14em", textTransform: "uppercase", color: "var(--ink-mute)", fontWeight: 600 }}>Your projects</span>
+            <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--ink-faint)" }}>{projects.length}</span>
+            <span style={{ flex: 1 }} />
+            <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--ink-faint)" }}>local · this machine</span>
           </div>
-          <div style={{ fontSize: "var(--text-xs)", letterSpacing: ".2em", textTransform: "uppercase", color: "var(--ink-mute)", marginBottom: "var(--space-2)" }}>A Dōjō was detected</div>
-          <h1 className="display" style={{ fontSize: "var(--text-2xl)", fontWeight: 300, letterSpacing: "-0.02em", margin: "0 0 var(--space-2)", lineHeight: 1.15 }}>
-            <span className="kanji" style={{ fontSize: "var(--text-xl)", color: "var(--accent)" }}>社</span> Acme Corp runs a Dōjō.
-          </h1>
-          <p style={{ fontSize: "var(--text-sm)", color: "var(--ink-soft)", lineHeight: 1.6, margin: "0 0 var(--space-4)", maxWidth: 420, marginInline: "auto" }}>
-            Join to inherit your team's standards on day one — and contribute what you learn back. Nothing here interrupts you; this card waits in Today and Preferences until you're ready.
-          </p>
-          {/* Resolution (Discover): pull, not push — multiple orgs, ranked by signal */}
-          <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)", margin: "0 0 var(--space-4)", textAlign: "left" }}>
-            {[["社", "Acme Corp", "via SSO domain", "keiko@acme.com", true], ["客", "Globex", "via invite link", "engagement workspace", false]].map(([k, n, sig, detail, primary]) => (
-              <div key={n} style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", padding: "var(--space-3) var(--space-3)", borderRadius: "var(--radius-lg)",
-                            background: primary ? "var(--accent-soft)" : "var(--paper)",
-                            border: primary ? "1px solid var(--accent-edge)" : "var(--hairline)" }}>
-                <span className="kanji" style={{ fontSize: "var(--text-xl)", color: "var(--accent)", width: 24, textAlign: "center" }}>{k}</span>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: "var(--text-sm)", color: "var(--ink)", display: "flex", alignItems: "center", gap: "var(--space-2)" }}>{n}<DojoChip>{sig}</DojoChip></div>
-                  <div className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--ink-mute)", marginTop: "var(--space-1)" }}>{detail}</div>
+          <div style={{ background: "var(--paper-soft)", border: "var(--hairline)", borderRadius: "var(--radius-lg)", overflow: "hidden" }}>
+            {projects.map((p, i) => {
+              const f = p.flag ? soloFlag[p.flag] : null;
+              return (
+                <div key={p.name} style={{ display: "grid", gridTemplateColumns: "auto 1fr 150px auto", gap: "var(--space-3)", alignItems: "center",
+                              padding: "var(--space-3) var(--space-4)", borderBottom: i < projects.length - 1 ? "1px solid var(--paper-edge)" : "none" }}>
+                  <span className="kanji" style={{ fontSize: "var(--text-lg)", color: f ? f.tone : "var(--ink-mute)", lineHeight: 1, width: 22, textAlign: "center" }}>{p.k}</span>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
+                      <span className="mono" style={{ fontSize: "var(--text-sm)", color: "var(--ink)" }}>{p.name}</span>
+                      {p.flag === "doing" && <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--success)", flexShrink: 0 }} />}
+                    </div>
+                    <div style={{ fontSize: "var(--text-xs)", color: "var(--ink-mute)", marginTop: "var(--space-1)" }}>{p.now}</div>
+                  </div>
+                  <div>
+                    <div style={{ height: 6, borderRadius: "var(--radius-sm)", background: "var(--paper-mute)", overflow: "hidden" }}>
+                      <div style={{ width: p.pct + "%", height: "100%", background: f ? f.tone : "var(--ink-mute)" }} />
+                    </div>
+                    <div className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--ink-faint)", marginTop: "var(--space-1)" }}>phase {p.phase} · {f ? f.note : "up to date"}</div>
+                  </div>
+                  {f ? <span style={{ fontSize: "var(--text-xs)", fontWeight: 600, color: f.tone, whiteSpace: "nowrap" }}>{f.label}</span>
+                     : <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--ink-faint)" }}>done</span>}
                 </div>
-                <button onClick={onContinue} style={primary ? { ...btnPrimary, padding: "var(--space-2) var(--space-3)" } : { ...btnGhost, padding: "var(--space-2) var(--space-3)" }}>
-                  {primary && <span className="kanji" style={{ fontSize: "var(--text-xs)", color: "var(--accent)" }}>結</span>} Join
-                </button>
-              </div>
-            ))}
+              );
+            })}
           </div>
-          <div style={{ display: "flex", gap: "var(--space-2)", justifyContent: "center" }}>
-            <button onClick={onContinue} style={btnGhost}>Not now · keep in Preferences</button>
-          </div>
-          <div style={{ fontSize: "var(--text-xs)", color: "var(--ink-faint)", marginTop: "var(--space-4)", lineHeight: 1.5 }}>
-            Authenticated by SSO · nothing is shared until you choose to. Highest-confidence signal listed first.
+          <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-2)", marginTop: "var(--space-3)", fontSize: "var(--text-xs)", color: "var(--ink-mute)", lineHeight: 1.5, maxWidth: 620 }}>
+            <span className="kanji" style={{ fontSize: "var(--text-sm)", color: "var(--accent)", flexShrink: 0 }}>基</span>
+            <span>Everything here stays on your machine until you choose to share it. <span style={{ fontStyle: "italic" }}>Still listening.</span></span>
           </div>
         </div>
+
+        {/* detected Dōjō — a demoted, dismissible OFFER, never a wall */}
+        {!dismissed && (
+          <aside style={{ background: "var(--paper-soft)", border: "var(--hairline)", borderRadius: "var(--radius-lg)", padding: "var(--space-4) var(--space-4)" }}>
+            <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-2)" }}>
+              <span className="kanji" style={{ fontSize: "var(--text-xl)", color: "var(--accent)", lineHeight: 1 }}>結</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: "var(--text-xs)", letterSpacing: ".14em", textTransform: "uppercase", color: "var(--ink-mute)", fontWeight: 600 }}>A Dōjō was detected · optional</div>
+                <div style={{ fontSize: "var(--text-sm)", color: "var(--ink)", marginTop: "var(--space-1)", lineHeight: 1.4 }}>Join to inherit your team's standards on day one — and share what you learn back.</div>
+              </div>
+              <button onClick={() => setDismissed(true)} title="Dismiss — stays in Preferences" style={{ background: "none", border: "none", cursor: "pointer",
+                color: "var(--ink-faint)", fontSize: "var(--text-base)", lineHeight: 1, padding: 0, flexShrink: 0 }}>✕</button>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)", margin: "var(--space-3) 0 var(--space-2)" }}>
+              {[["社", "Acme Corp", "via SSO domain", "keiko@acme.com", true], ["客", "Globex", "via invite link", "engagement", false]].map(([k, n, sig, detail, primary]) => (
+                <div key={n} style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", padding: "var(--space-2) var(--space-3)", borderRadius: "var(--radius-lg)",
+                              background: primary ? "var(--accent-soft)" : "var(--paper)", border: primary ? "1px solid var(--accent-edge)" : "var(--hairline)" }}>
+                  <span className="kanji" style={{ fontSize: "var(--text-base)", color: "var(--accent)", width: 20, textAlign: "center" }}>{k}</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: "var(--text-sm)", color: "var(--ink)" }}>{n}</div>
+                    <div className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--ink-mute)" }}>{sig} · {detail}</div>
+                  </div>
+                  <button onClick={onContinue} style={primary ? { ...btnPrimary, padding: "var(--space-1) var(--space-3)" } : { ...btnGhost, padding: "var(--space-1) var(--space-3)" }}>Join</button>
+                </div>
+              ))}
+            </div>
+            <div style={{ fontSize: "var(--text-xs)", color: "var(--ink-faint)", lineHeight: 1.5 }}>
+              Authenticated by SSO · nothing is shared until you choose to. Highest-confidence signal first.
+            </div>
+          </aside>
+        )}
       </div>
     </InappFrame>
   );

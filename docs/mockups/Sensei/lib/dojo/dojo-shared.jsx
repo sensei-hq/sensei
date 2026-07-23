@@ -62,7 +62,7 @@ function DojoHead({ kanji, eyebrow, title, sub, right, mobile = false }) {
 }
 
 /* ─── top bar (org switcher + role) ─────────────────────── */
-function DojoTopBar({ org, role }) {
+function DojoTopBar({ org, role, onEnterDojo }) {
   const D = window.DOJO;
   const [swOpen, setSwOpen] = React.useState(false);
   const mem = D.memberships || [];
@@ -99,7 +99,7 @@ function DojoTopBar({ org, role }) {
               {mem.map(m => {
                 const on = m.current;
                 return (
-                  <button key={m.id} className={"flex items-center gap-3 w-full text-left " + (on ? "bg-paper-soft" : "")} style={{ padding: "var(--space-2) var(--space-3)" }}>
+                  <button key={m.id} onClick={() => onEnterDojo && onEnterDojo(m)} className={"flex items-center gap-3 w-full text-left " + (on ? "bg-paper-soft" : "")} style={{ padding: "var(--space-2) var(--space-3)" }}>
                     <span className="kanji text-accent text-sm text-center" style={{ width: 18 }}>{m.kanji}</span>
                     <div className="flex-1" style={{ minWidth: 0 }}>
                       <div className="text-sm text-ink" style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{m.name}</div>
@@ -142,9 +142,10 @@ function DojoTopBar({ org, role }) {
 }
 
 /* ─── role-scoped left nav (all items live) ─────────────── */
-function DojoRoleNav({ nav, active, setActive }) {
+function DojoRoleNav({ nav, active, setActive, header }) {
   return (
     <aside className="flex flex-col border-r bg-paper-soft" style={{ width: 218, flexShrink: 0, padding: "var(--space-4) var(--space-3)", overflow: "auto" }}>
+      {header}
       {(() => {
         const renderGroup = grp => (
         <div key={grp.group} className="mb-4" style={{ opacity: grp.manage ? 0.82 : 1 }}>
@@ -265,18 +266,65 @@ const RELAY_GROUP = { group: "Relay · you", items: [
   { id: "__r_chat", kanji: "話", label: "Chat" },
 ] };
 const RELAY_IDS = { __r_projects: "projects", __r_inbox: "inbox", __r_chat: "chat" };
-function DojoRoleShell({ label, role, nav, active, setActive, children, mobile = false, relay = true, relayStart = null }) {
+
+/* Management top bar — a deliberately different surface (paper-soft, accent
+   top-rule) so stepping into a Dōjō you administer FEELS like a distinct
+   place from your own work. Carries the exit back to the You zone. */
+function DojoManageBar({ org, role, onExit }) {
   const D = window.DOJO;
-  const org = D.memberships.find(m => m.current) || D.memberships[0];
+  const route = org.url || "sensei-hq.com/" + (org.name || "dojo").toLowerCase().replace(/[^a-z0-9]+/g, "-");
+  return (
+    <div className="flex items-center gap-4 border-b bg-paper-soft px-4" style={{ height: 54, flexShrink: 0, borderTop: "2px solid var(--accent)" }}>
+      <button onClick={onExit} className="zs-btn zs-btn-sm zs-btn-ghost border-1px" title="Back to your work">
+        <span className="text-ink-mute">←</span><span className="kanji text-accent">携</span>Your work
+      </button>
+      <span style={{ width: 1, height: 24, background: "var(--paper-edge)" }} />
+      <div className="flex items-center gap-2" style={{ minWidth: 0 }}>
+        <span className="zs-eyebrow font-semibold text-ink-mute">Managing</span>
+        <span className="kanji text-accent text-lg" style={{ lineHeight: 1 }}>{org.kanji}</span>
+        <span className="display text-lg tracking-tight" style={{ whiteSpace: "nowrap" }}>{org.name}</span>
+        <span className="mono text-xs text-ink-mute bg-paper rounded-full" style={{ border: "1px solid var(--paper-edge)", padding: "3px 10px" }}>{route}</span>
+      </div>
+      {role && (
+        <span className="mono text-xs text-accent bg-accent-soft rounded-full inline-flex items-center gap-1" style={{ border: "1px solid var(--accent-edge)", padding: "4px 12px" }}>{role.kanji} {role.label}</span>
+      )}
+      <div className="flex-1" />
+      <span className="zs-meta">{D.org.members} members</span>
+      <Avatar name="Keiko" size={28} />
+      <button title="Log out" className="zs-btn zs-btn-sm zs-btn-ghost border-1px">
+        <span className="kanji text-ink-mute">出</span>Log out
+      </button>
+    </div>
+  );
+}
+function DojoManageNavHeader({ org, role }) {
+  return (
+    <div className="mb-4">
+      <div className="zs-eyebrow font-semibold text-ink-mute mb-2" style={{ paddingLeft: "var(--space-2)" }}>Dōjō management</div>
+      <div className="flex items-center gap-2 bg-paper border-1px rounded-lg" style={{ padding: "var(--space-2) var(--space-3)" }}>
+        <span className="kanji text-accent text-base">{org.kanji}</span>
+        <div className="flex-1" style={{ minWidth: 0 }}>
+          <div className="text-sm text-ink font-medium" style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{org.name}</div>
+          <div className="mono text-xs text-ink-faint">{role.label} · {org.kind || "employer"}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+function DojoRoleShell({ label, role, nav, active, setActive, children, mobile = false, relay = true, relayStart = null, zone = "you", onExit, onEnterDojo, orgOverride }) {
+  const D = window.DOJO;
+  const org = orgOverride || D.memberships.find(m => m.current) || D.memberships[0];
+  const manage = zone === "dojo";
+  const relayOn = relay && !manage;
   const [relayView, setRelayView] = React.useState(relayStart);
-  const fullNav = relay ? [RELAY_GROUP, ...nav] : nav;
+  const fullNav = relayOn ? [RELAY_GROUP, ...nav] : nav;
   const activeId = relayView ? ("__r_" + relayView) : active;
   const onNav = (id) => {
     if (RELAY_IDS[id]) setRelayView(RELAY_IDS[id]);
     else { setRelayView(null); if (setActive) setActive(id); }
   };
   const main = (relayView && window.RelayArea)
-    ? React.createElement(window.RelayArea, { view: relayView, wide: !mobile, onOpen: () => setRelayView("watch") })
+    ? React.createElement(window.RelayArea, { view: relayView, wide: !mobile, onOpen: (flag) => setRelayView(flag === "approve" ? "approve" : flag === "gate" ? "decision" : flag === "stall" ? "stall" : "watch") })
     : children;
   if (mobile) {
     return (
@@ -291,9 +339,12 @@ function DojoRoleShell({ label, role, nav, active, setActive, children, mobile =
   return (
     <div className="sensei" data-screen-label={label} style={{ width: "100%", height: "100%",
           display: "flex", flexDirection: "column", overflow: "hidden", background: "var(--paper)" }}>
-      <DojoTopBar org={org} role={role} />
+      {manage
+        ? <DojoManageBar org={org} role={role} onExit={onExit} />
+        : <DojoTopBar org={org} role={role} onEnterDojo={onEnterDojo} />}
       <div className="flex" style={{ flex: 1, minHeight: 0 }}>
-        <DojoRoleNav nav={fullNav} active={activeId} setActive={onNav} />
+        <DojoRoleNav nav={fullNav} active={activeId} setActive={onNav}
+          header={manage ? <DojoManageNavHeader org={org} role={role} /> : null} />
         <div className="flex-1" style={{ minWidth: 0 }}>{main}</div>
       </div>
     </div>
@@ -324,10 +375,10 @@ function DojoBtn({ variant = "primary", size = "md", kanji, children, onClick, s
 }
 
 /* Per-kind membership tag — kanji + Dōjō name, tinted by kind (the one map). */
-const DOJO_KIND_TONE = { Employer: "var(--ink-soft)", Client: "var(--accent)", Community: "var(--success)", Personal: "var(--ink-mute)" };
-const DOJO_KIND_KANJI = { Employer: "社", Client: "客", Community: "群", Personal: "己" };
-const DOJO_KIND_SOFT = { Employer: "var(--paper-mute)", Client: "var(--accent-soft)", Community: "var(--success-soft)", Personal: "var(--paper-mute)" };
-const DOJO_KIND_EDGE = { Employer: "var(--paper-edge)", Client: "var(--accent-edge)", Community: "var(--success-edge)", Personal: "var(--paper-edge)" };
+const DOJO_KIND_TONE = { Employer: "var(--ink-soft)", Client: "var(--accent)", Community: "var(--success)", Personal: "var(--ink-mute)", Solo: "var(--ink-mute)" };
+const DOJO_KIND_KANJI = { Employer: "社", Client: "客", Community: "群", Personal: "己", Solo: "己" };
+const DOJO_KIND_SOFT = { Employer: "var(--paper-mute)", Client: "var(--accent-soft)", Community: "var(--success-soft)", Personal: "var(--paper-mute)", Solo: "var(--paper-mute)" };
+const DOJO_KIND_EDGE = { Employer: "var(--paper-edge)", Client: "var(--accent-edge)", Community: "var(--success-edge)", Personal: "var(--paper-edge)", Solo: "var(--paper-edge)" };
 function DojoKindTag({ p }) {
   const tone = DOJO_KIND_TONE[p.kind] || "var(--ink-mute)";
   const soft = DOJO_KIND_SOFT[p.kind] || "var(--paper-mute)";
@@ -342,5 +393,5 @@ function DojoKindTag({ p }) {
 
 Object.assign(window, {
   DOJO_ORIGIN, DOJO_TYPE, DOJO_KIND_TONE, DOJO_KIND_KANJI, DOJO_KIND_SOFT, DOJO_KIND_EDGE, DojoChip, OriginChip, Confidence, DojoHead, DojoLive, DojoBtn, DojoKindTag,
-  DojoTopBar, DojoRoleNav, DojoRoleShell, DojoMobileBar, DojoMobileTabs, DojoTabBar, DOJO_MOBILE_TABS, DojoPanel,
+  DojoTopBar, DojoRoleNav, DojoRoleShell, DojoManageBar, DojoMobileBar, DojoMobileTabs, DojoTabBar, DOJO_MOBILE_TABS, DojoPanel,
 });

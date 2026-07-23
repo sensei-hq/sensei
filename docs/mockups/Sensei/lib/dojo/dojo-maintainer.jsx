@@ -454,7 +454,7 @@ function DojoApprovals({ go }) {
 }
 
 /* ─── the maintainer console ─────────────────────────────── */
-function DojoMaintainerConsole({ initial = "triage", initialCandidate = null, mobile = false, relayStart = null }) {
+function DojoMaintainerConsole({ initial = "triage", initialCandidate = null, mobile = false, relayStart = null, onExit, enteredOrg }) {
   const [section, setSection] = dmS(initial);
   const [candidate, setCandidate] = dmS(initialCandidate);
   const go = (sec, cand = null) => { setSection(sec); setCandidate(cand); };
@@ -466,7 +466,7 @@ function DojoMaintainerConsole({ initial = "triage", initialCandidate = null, mo
   else screen = <DojoTriage go={go} mobile={mobile} />;
   return (
     <DojoRoleShell label="Dōjō · Maintainer console" role={{ kanji: "先", label: "Maintainer" }}
-      nav={MAINT_NAV} active={candidate ? "triage" : section} setActive={(s) => go(s)} mobile={mobile} relayStart={relayStart}>
+      nav={MAINT_NAV} active={candidate ? "triage" : section} setActive={(s) => go(s)} mobile={mobile} relayStart={relayStart} zone="dojo" onExit={onExit} orgOverride={enteredOrg}>
       {screen}
     </DojoRoleShell>
   );

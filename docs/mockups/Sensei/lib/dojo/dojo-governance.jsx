@@ -11,20 +11,43 @@
 
 const { useState: gvS } = React;
 
-/* scope ladder — what you can author against */
+/* scope ladder — what you can author against.
+   Two ladders share this list:
+     · personal (free) — Personal → Project → Stack, available to individuals
+     · company (paid)  — Company → Client → Team → Project, the shared team plane
+   Stack is shared/free. `paid` marks scopes that need the paid team plan. */
 const GV_SCOPES = [
-  { id: "org",     kanji: "社", name: "Company", kind: "Org",     sub: "company-wide" },
-  { id: "team-pay",kanji: "組", name: "Payments",  kind: "Team",    sub: "team", parent: "org" },
-  { id: "team-web",kanji: "組", name: "Web",       kind: "Team",    sub: "team", parent: "org" },
+  { id: "personal", kanji: "己", name: "My projects", kind: "Personal", sub: "personal", free: true },
+  { id: "org",     kanji: "社", name: "Company", kind: "Org",     sub: "company-wide", paid: true },
+  { id: "client-globex", kanji: "客", name: "Globex", kind: "Client", sub: "client engagement", parent: "org", paid: true },
+  { id: "team-pay",kanji: "組", name: "Payments",  kind: "Team",    sub: "team", parent: "org", paid: true },
+  { id: "team-web",kanji: "組", name: "Web",       kind: "Team",    sub: "team", parent: "org", paid: true },
+  { id: "proj-site",kanji:"件", name: "personal-site",kind: "Project", sub: "personal project", parent: "personal", free: true },
   { id: "proj-auth",kanji:"件", name: "lumen-auth",kind: "Project", sub: "project", parent: "team-pay" },
   { id: "proj-bill",kanji:"件", name: "billing-svc",kind:"Project", sub: "project", parent: "team-pay" },
   { id: "stack-rust",kanji:"技",name: "Rust",      kind: "Stack",   sub: "language" },
   { id: "stack-react",kanji:"技",name:"React",     kind: "Stack",   sub: "framework" },
 ];
+// rail grouping order + labels; which kinds sit behind the paid team plan
+const GV_KIND_ORDER = ["Personal", "Org", "Client", "Team", "Project", "Stack"];
+const GV_KIND_LABEL = { Personal: "Personal", Org: "Company", Client: "Client", Team: "Team", Project: "Project", Stack: "Stack" };
+const GV_PAID_KINDS = { Org: true, Client: true, Team: true };
+// Company vs Client is derived per-user from membership: your employer Dōjō is
+// “Company”; an org you’re engaged with (but don’t work for) is a “Client”.
+const GV_KIND_CAPTION = { Org: "your employer", Client: "engagement · not your employer" };
 
 /* authored knowledge, keyed by scope. Each scope shows what's defined *here*;
    the composed onboarding bundle also pulls everything inherited from parents. */
 const GV_DATA = {
+  "personal": {
+    stance: { autonomy: 1, sharing: 0, review: 1, anon: 2 },
+    rules: [
+      { k: "理", type: "principle", t: "Keep it simple — solo project, no ceremony", tone: "var(--ink-soft)" },
+      { k: "守", type: "guard", t: "No secrets in source — use the vault", tone: "var(--accent)" },
+    ],
+    skills: [{ k: "技", t: "Write a conventional-commit message" }],
+    agents: [], commands: [], memory: [],
+  },
   org: {
     stance: { autonomy: 1, sharing: 2, review: 1, anon: 2 },
     rules: [
@@ -255,7 +278,11 @@ function DojoGovernance({ mobile = false }) {
     <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", background: "var(--paper)" }}>
       <DojoHead mobile={mobile} kanji="掟" eyebrow="Govern · define" title="Governance & shared knowledge"
         sub="Define the stance and the shared skills, agents, commands, rules — and a project's memory — at each scope. Everything cascades down the ladder, so a developer who joins inherits it on day one."
-        right={<DojoChip tone="var(--ink-soft)" soft="var(--paper-soft)" border="var(--hairline)">{scope.kanji} {scope.name} · {scope.kind}</DojoChip>} />
+        right={<><DojoChip tone="var(--ink-soft)" soft="var(--paper-soft)" border="var(--hairline)">{scope.kanji} {scope.name} · {scope.kind}</DojoChip>
+          <button style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-1)", background: "var(--paper)", border: "var(--hairline)",
+            borderRadius: "var(--radius)", padding: "var(--space-1) var(--space-3)", cursor: "pointer", fontFamily: "inherit", fontSize: "var(--text-xs)", color: "var(--ink-soft)", whiteSpace: "nowrap" }}>
+            <span className="kanji" style={{ color: "var(--accent)" }}>蔵</span> Add from library
+          </button></>} />
 
       <div style={mobile
           ? { flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }
@@ -277,9 +304,24 @@ function DojoGovernance({ mobile = false }) {
           </div>
         ) : (
         <aside style={{ borderRight: "var(--hairline)", background: "var(--paper-soft)", overflow: "auto", padding: "var(--space-4) var(--space-3)" }}>
-          {["Org", "Team", "Project", "Stack"].map(kind => (
+          <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-1)", padding: "0 var(--space-2)", marginBottom: "var(--space-3)", fontSize: "var(--text-xs)", color: "var(--ink-mute)", lineHeight: 1.4 }}>
+            <span className="kanji" style={{ color: "var(--accent)", flexShrink: 0 }}>己</span>
+            <span>Governance is <b style={{ fontWeight: 600, color: "var(--ink-soft)" }}>free</b> on your personal ladder. The shared company ladder is on the paid team plan — sensei knows which Dōjō is <b style={{ fontWeight: 600, color: "var(--ink-soft)" }}>your company</b> and which is a <b style={{ fontWeight: 600, color: "var(--ink-soft)" }}>client</b> from your membership.</span>
+          </div>
+          {GV_KIND_ORDER.map(kind => {
+            const list = GV_SCOPES.filter(s => s.kind === kind);
+            if (!list.length) return null;
+            const paid = GV_PAID_KINDS[kind];
+            return (
             <div key={kind} style={{ marginBottom: "var(--space-3)" }}>
-              <div style={{ fontSize: "var(--text-xs)", letterSpacing: ".14em", textTransform: "uppercase", color: "var(--ink-faint)", fontWeight: 600, padding: "0 var(--space-2)", marginBottom: "var(--space-1)" }}>{kind}</div>
+              <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", padding: "0 var(--space-2)", marginBottom: "var(--space-1)" }}>
+                <span style={{ fontSize: "var(--text-xs)", letterSpacing: ".14em", textTransform: "uppercase", color: "var(--ink-faint)", fontWeight: 600 }}>{GV_KIND_LABEL[kind]}</span>
+                <span style={{ flex: 1 }} />
+                {paid
+                  ? <span className="mono" title="Paid team plan" style={{ fontSize: "var(--text-xs)", color: "var(--accent)", letterSpacing: ".04em" }}>鍵 paid</span>
+                  : <span className="mono" title="Free for individuals" style={{ fontSize: "var(--text-xs)", color: "var(--success)", letterSpacing: ".04em" }}>free</span>}
+              </div>
+              {GV_KIND_CAPTION[kind] && <div style={{ fontSize: "var(--text-xs)", color: "var(--ink-faint)", padding: "0 var(--space-2)", marginTop: "-2px", marginBottom: "var(--space-1)" }}>{GV_KIND_CAPTION[kind]}</div>}
               <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-1)" }}>
                 {GV_SCOPES.filter(s => s.kind === kind).map(s => {
                   const on = s.id === scopeId;
@@ -299,7 +341,8 @@ function DojoGovernance({ mobile = false }) {
                 })}
               </div>
             </div>
-          ))}
+            );
+          })}
         </aside>
         )}
 
@@ -346,6 +389,17 @@ function DojoGovernance({ mobile = false }) {
           </div>
 
           {/* authored knowledge — defined here + inherited (greyed, source-tagged) */}
+          <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", background: "var(--paper-soft)", border: "var(--hairline)",
+            borderRadius: "var(--radius-lg)", padding: "var(--space-2) var(--space-4)", marginBottom: "var(--space-3)" }}>
+            <span className="kanji" style={{ fontSize: "var(--text-base)", color: "var(--accent)", flexShrink: 0 }}>蔵</span>
+            <span style={{ fontSize: "var(--text-xs)", color: "var(--ink-mute)", lineHeight: 1.45, flex: 1 }}>
+              Don’t start from a blank page — pull proven principles, patterns, compliance controls and stack reviewers from the <b style={{ fontWeight: 600, color: "var(--ink-soft)" }}>constitution library</b>. Prevention is cheaper than rework.
+            </span>
+            <button style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-1)", background: "var(--ink)", border: "none",
+              borderRadius: "var(--radius)", padding: "var(--space-1) var(--space-3)", cursor: "pointer", fontFamily: "inherit", fontSize: "var(--text-xs)", color: "var(--paper)", whiteSpace: "nowrap", flexShrink: 0 }}>
+              Browse library →
+            </button>
+          </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: "var(--space-3)" }}>
             {grouped.map(g => {
               const items = d[g.key] || [];
