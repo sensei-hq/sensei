@@ -5614,7 +5614,6 @@ dependencies = [
  "chrono",
  "clap",
  "dirs",
- "dojo-mind",
  "dojo-protocol",
  "globset",
  "hex",
