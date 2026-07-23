@@ -69,6 +69,8 @@ pub async fn consolidate_global_rules(
         },
         budget: None,
         auth: None,
+        panel: None,
+        consensus: None,
     };
     let resp = gateway
         .execute(&request)

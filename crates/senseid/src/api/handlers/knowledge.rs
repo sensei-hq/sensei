@@ -648,6 +648,8 @@ pub(crate) async fn generalise_memory(
         },
         budget: None,
         auth: None,
+        panel: None,
+        consensus: None,
     };
 
     // Timeout / gateway error / empty-or-unparseable output all degrade the SAME

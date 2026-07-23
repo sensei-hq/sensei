@@ -112,6 +112,8 @@ pub(crate) async fn infer(
         payload,
         budget: None,
         auth: None,
+        panel: None,
+        consensus: None,
     };
 
     match state.gateway.execute(&request).await {
@@ -145,6 +147,8 @@ pub(crate) async fn embed(
         payload: Payload::Embed { texts: body.texts },
         budget: None,
         auth: None,
+        panel: None,
+        consensus: None,
     };
 
     match state.gateway.execute(&request).await {

@@ -386,6 +386,8 @@ pub(crate) async fn hook_gate(
             },
             budget: None,
             auth: None,
+            panel: None,
+            consensus: None,
         };
         // Bound the call so a cold / wedged embedded inference can't hang the
         // PreToolUse gate. Timeout → fail-open (keep the deterministic verdict).
