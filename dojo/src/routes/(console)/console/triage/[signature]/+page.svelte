@@ -5,6 +5,8 @@
 	import DojoChip from '$lib/components/DojoChip.svelte';
 	import EnsoRing from '$lib/components/EnsoRing.svelte';
 	import { decideTriage, TriageApiError, type DecideStatus } from '$lib/triage-data';
+	import DojoJoinEmpty from '$lib/components/DojoJoinEmpty.svelte';
+	import { requireTenant } from '$lib/org-guard';
 	import {
 		confidencePct,
 		kindLabel,
@@ -43,7 +45,7 @@
 		deciding = status;
 		try {
 			await decideTriage(
-				data.tenantKey,
+				requireTenant(data.tenantKey),
 				row.signature,
 				{
 					status,
@@ -67,6 +69,11 @@
 	<title>{row?.title ?? 'Candidate'} · Dōjō console</title>
 </svelte:head>
 
+{#if data.noMembership}
+	<div class="bg-paper flex h-full w-full flex-col overflow-hidden">
+		<DojoJoinEmpty what="triage" />
+	</div>
+{:else}
 <div class="bg-paper flex h-full w-full flex-col overflow-hidden">
 	<!-- breadcrumb -->
 	<div class="border-paper-edge flex flex-shrink-0 items-center gap-2 border-b" style="padding: 12px 24px">
@@ -268,3 +275,4 @@
 		</div>
 	{/if}
 </div>
+{/if}

@@ -3,6 +3,7 @@
 	import ConsoleBanner from '$lib/components/ConsoleBanner.svelte';
 	import DojoChip from '$lib/components/DojoChip.svelte';
 	import { actionLabel, actionToneClass, clockTime, relativeAge, shortId } from '$lib/admin-view';
+	import DojoJoinEmpty from '$lib/components/DojoJoinEmpty.svelte';
 
 	// Audit (mockup DojoAudit, dojo-console.jsx l.934): the immutable admin audit
 	// log (data.events from list_audit) — every admin action, who, and when.
@@ -15,6 +16,11 @@
 	<title>Audit · Dōjō console</title>
 </svelte:head>
 
+{#if data.noMembership}
+	<div class="bg-paper flex h-full w-full flex-col overflow-hidden">
+		<DojoJoinEmpty what="the audit trail" />
+	</div>
+{:else}
 <div class="bg-paper flex h-full w-full flex-col overflow-hidden">
 	<ConsoleHead
 		kanji="録"
@@ -64,3 +70,4 @@
 		</div>
 	</div>
 </div>
+{/if}
