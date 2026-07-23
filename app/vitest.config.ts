@@ -19,6 +19,15 @@ export default defineConfig({
       ['src/routes/**/*.spec.svelte.ts', 'jsdom'],
       ['src/routes/**/*.spec.ts', 'jsdom'],
     ],
+    // lcov for the qlty coverage upload (paths are relative to app/, so CI
+    // adds the `app` prefix). `bun run test:unit --coverage` writes ./coverage.
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'lcov'],
+      reportsDirectory: './coverage',
+      include: ['src/**'],
+      exclude: ['src/**/*.spec.*', 'src/**/*.harness.svelte', 'src/**/test-stubs/**'],
+    },
   },
   resolve: {
     // 'browser' condition ensures Svelte resolves to its client build
