@@ -444,6 +444,8 @@ async fn call_once(
         },
         budget: None,
         auth: None,
+        panel: None,
+        consensus: None,
     };
 
     match tokio::time::timeout(Duration::from_millis(WARM_TIMEOUT_MS), gateway.execute(&request)).await {

@@ -23,6 +23,38 @@ pub fn keychain_api_key(router_id: &str) -> Option<String> {
     gateway_keys::get_key(router_id).ok()
 }
 
+/// Derive a model's lineage `family` (see [`gateway::types::config::ModelConfig::family`])
+/// from its config id, for the hardcoded baseline models. Family is the axis
+/// panel `distinct_by: family` checks care about (e.g. `gemma` vs `qwen`), so
+/// two models on the same backend `provider` but different lineages read as
+/// distinct experts. `None` ⇒ the id is treated as its own family (used for
+/// image-gen models where lineage doesn't apply).
+fn family_for_baseline(id: &str) -> Option<String> {
+    let id = id.to_ascii_lowercase();
+    let fam = if id.contains("gemma") {
+        "gemma"
+    } else if id.contains("qwen") {
+        "qwen"
+    } else if id.contains("llama") {
+        "llama"
+    } else if id.contains("claude") {
+        "claude"
+    } else if id.contains("gemini") {
+        "gemini"
+    } else if id.contains("minilm") {
+        "minilm"
+    } else if id.contains("nomic") {
+        "nomic"
+    } else if id.contains("gpt") {
+        // Covers gpt-4o / gpt-4o-mini chat models; the gpt-image-1 image model
+        // is handled by the image-gen branch below (family doesn't apply there).
+        "gpt"
+    } else {
+        return None;
+    };
+    Some(fam.to_string())
+}
+
 /// Initialize the gateway with detected adapters and a config.
 ///
 /// `db_config` is the table-driven config loaded from the `gateway.*` tables
@@ -467,6 +499,8 @@ fn baseline_production_config() -> GatewayConfig {
         context_window: 0,
         max_output_tokens: 0,
         pricing: None,
+        // Image-gen models: lineage/family isn't a meaningful panel axis here.
+        family: None,
     });
     models.insert("gpt-image-1".into(), ModelConfig {
         id: "gpt-image-1".into(),
@@ -476,6 +510,7 @@ fn baseline_production_config() -> GatewayConfig {
         context_window: 0,
         max_output_tokens: 0,
         pricing: None,
+        family: None,
     });
     models.insert("gpt-4o-mini".into(), ModelConfig {
         id: "gpt-4o-mini".into(),
@@ -485,6 +520,7 @@ fn baseline_production_config() -> GatewayConfig {
         context_window: 128_000,
         max_output_tokens: 16_384,
         pricing: None,
+        family: family_for_baseline("gpt-4o-mini"),
     });
     models.insert("claude-sonnet".into(), ModelConfig {
         id: "claude-sonnet".into(),
@@ -494,6 +530,7 @@ fn baseline_production_config() -> GatewayConfig {
         context_window: 200_000,
         max_output_tokens: 8_192,
         pricing: None,
+        family: family_for_baseline("claude-sonnet"),
     });
     // One representative model per OpenAI-compatible aggregator so the
     // router entries above have something to dispatch to out of the box.
@@ -507,6 +544,7 @@ fn baseline_production_config() -> GatewayConfig {
         context_window: 200_000,
         max_output_tokens: 8_192,
         pricing: None,
+        family: family_for_baseline("openrouter-claude-sonnet-4-5"),
     });
     models.insert("vercel-gpt-4o".into(), ModelConfig {
         id: "vercel-gpt-4o".into(),
@@ -516,6 +554,7 @@ fn baseline_production_config() -> GatewayConfig {
         context_window: 128_000,
         max_output_tokens: 16_384,
         pricing: None,
+        family: family_for_baseline("vercel-gpt-4o"),
     });
     models.insert("nvidia-llama-3.1-70b-instruct".into(), ModelConfig {
         id: "nvidia-llama-3.1-70b-instruct".into(),
@@ -525,6 +564,7 @@ fn baseline_production_config() -> GatewayConfig {
         context_window: 128_000,
         max_output_tokens: 4_096,
         pricing: None,
+        family: family_for_baseline("nvidia-llama-3.1-70b-instruct"),
     });
     // Gemini — one chat model + one embedding model so both
     // capabilities the adapter supports have a dispatch target.
@@ -536,6 +576,7 @@ fn baseline_production_config() -> GatewayConfig {
         context_window: 1_048_576,
         max_output_tokens: 8_192,
         pricing: None,
+        family: family_for_baseline("gemini-2.0-flash"),
     });
     models.insert("gemini-text-embedding-004".into(), ModelConfig {
         id: "gemini-text-embedding-004".into(),
@@ -545,6 +586,7 @@ fn baseline_production_config() -> GatewayConfig {
         context_window: 2_048,
         max_output_tokens: 0,
         pricing: None,
+        family: family_for_baseline("gemini-text-embedding-004"),
     });
     // Bedrock — Claude Sonnet 3.5 v2 is the most broadly-available
     // chat model. Additional Bedrock models (Llama, Mistral, Titan)
@@ -557,6 +599,7 @@ fn baseline_production_config() -> GatewayConfig {
         context_window: 200_000,
         max_output_tokens: 8_192,
         pricing: None,
+        family: family_for_baseline("bedrock-claude-3-5-sonnet"),
     });
     // Local embedding model (Ollama). 384-dim — matches sensei.nodes.embedding
     // vector(384). Used by the EmbedNodes indexing task and semantic search.
@@ -571,6 +614,7 @@ fn baseline_production_config() -> GatewayConfig {
         context_window: 512,
         max_output_tokens: 0,
         pricing: None,
+        family: family_for_baseline("all-minilm"),
     });
     // Local chat model (Ollama gemma4). The PRIMARY TextChat candidate so the
     // gateway works offline / without a cloud API key — used by infer, consensus,
@@ -584,6 +628,7 @@ fn baseline_production_config() -> GatewayConfig {
         context_window: 8_192,
         max_output_tokens: 4_096,
         pricing: None,
+        family: family_for_baseline("gemma4"),
     });
     // In-process embedded chat (llama.cpp via the `embedded-llama` router).
     // PREFERRED candidate when registered; the `embedded-llama` adapter
@@ -606,6 +651,7 @@ fn baseline_production_config() -> GatewayConfig {
         context_window: 8_192,
         max_output_tokens: 4_096,
         pricing: None,
+        family: family_for_baseline("gemma2:2b"),
     });
 
     let mut chains: HashMap<String, FallbackChainConfig> = HashMap::new();
@@ -680,6 +726,9 @@ fn baseline_production_config() -> GatewayConfig {
         models,
         chains,
         constraints: Default::default(),
+        // MOE panels/consensus are configured later (gh#19); empty ⇒ off.
+        panels: Default::default(),
+        consensus: Default::default(),
     }
 }
 
@@ -829,6 +878,7 @@ pub async fn init_gateway_test() -> Arc<Gateway> {
             context_window: 4096,
             max_output_tokens: 1024,
             pricing: None,
+            family: None,
         },
     );
 
@@ -853,6 +903,8 @@ pub async fn init_gateway_test() -> Arc<Gateway> {
         models,
         chains,
         constraints: Default::default(),
+        panels: Default::default(),
+        consensus: Default::default(),
     };
     let cb = CircuitBreakerManager::new(CircuitBreakerConfig::default());
     Arc::new(Gateway::new(config, adapters, cb))
@@ -884,6 +936,7 @@ mod tests {
             context_window: 8192,
             max_output_tokens: 4096,
             pricing: None,
+            family: family_for_baseline("gemma2:2b"),
         });
         models.insert("all-minilm-l6-v2".into(), ModelConfig {
             id: "all-minilm-l6-v2".into(),
@@ -893,6 +946,7 @@ mod tests {
             context_window: 512,
             max_output_tokens: 0,
             pricing: None,
+            family: family_for_baseline("all-minilm-l6-v2"),
         });
 
         let mut chains: HashMap<String, FallbackChainConfig> = HashMap::new();
@@ -938,6 +992,8 @@ mod tests {
             models,
             chains,
             constraints: Default::default(),
+            panels: Default::default(),
+            consensus: Default::default(),
         };
 
         let catalog = embedded_catalog(&config);
@@ -972,6 +1028,7 @@ mod tests {
             context_window: 8192,
             max_output_tokens: 4096,
             pricing: None,
+            family: None,
         });
         // No api id anywhere → falls back to the config id.
         models.insert("bare-model".into(), ModelConfig {
@@ -982,6 +1039,7 @@ mod tests {
             context_window: 8192,
             max_output_tokens: 4096,
             pricing: None,
+            family: None,
         });
 
         let mut chains: HashMap<String, FallbackChainConfig> = HashMap::new();
@@ -1001,6 +1059,8 @@ mod tests {
             models,
             chains,
             constraints: Default::default(),
+            panels: Default::default(),
+            consensus: Default::default(),
         };
 
         assert_eq!(
@@ -1117,6 +1177,7 @@ mod tests {
                     context_window: 8192,
                     max_output_tokens: 4096,
                     pricing: None,
+                    family: family_for_baseline("gemma2:2b"),
                 },
             )]),
             chains: HashMap::from([(
@@ -1134,6 +1195,8 @@ mod tests {
                 },
             )]),
             constraints: Default::default(),
+            panels: Default::default(),
+            consensus: Default::default(),
         };
 
         let baseline = baseline_production_config();
@@ -1182,6 +1245,8 @@ mod tests {
                 },
             )]),
             constraints: Default::default(),
+            panels: Default::default(),
+            consensus: Default::default(),
         };
 
         let baseline = baseline_production_config();
