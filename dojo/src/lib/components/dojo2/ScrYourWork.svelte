@@ -51,7 +51,7 @@
 	}
 </script>
 
-<div class="flex flex-col" style="padding: {mobile ? '16px' : '32px'}; gap: {mobile ? '16px' : '24px'}">
+<div class="flex flex-col {mobile ? 'p-4 gap-4' : 'p-8 gap-6'}">
 	<SectionHead eyebrow="Monday · morning" title="Your work" />
 
 	{#if work.next}
@@ -72,8 +72,7 @@
 
 	{#if !mobile && (runs.length || projects.length || needsYou.length)}
 		<div
-			class="bg-paper-soft border-paper-edge flex items-center rounded-lg border"
-			style="padding: 16px 32px; gap: 48px"
+			class="bg-paper-soft border-paper-edge flex items-center rounded-lg border py-4 px-8 gap-12"
 		>
 			<StatBadge n={work.runsWeek} label="runs this week" sub="↑ from 9" toneClass="text-accent" />
 			<span class="bg-paper-edge" style="width: 1px; height: 34px; flex-shrink: 0"></span>

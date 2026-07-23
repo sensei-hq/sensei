@@ -44,7 +44,7 @@
 	];
 </script>
 
-<div class="flex flex-col" style="padding: 32px; gap: 24px">
+<div class="flex flex-col p-8 gap-6">
 	{#if onBack}
 		<button
 			type="button"
@@ -78,7 +78,7 @@
 	</Banner>
 
 	<div>
-		<div class="flex items-center gap-2" style="margin-bottom: 12px">
+		<div class="flex items-center gap-2 mb-3">
 			<Icon name="layers-minimalistic" size={17} toneClass="text-accent" />
 			<span class="text-ink text-xs font-semibold uppercase" style="letter-spacing: 0.18em">
 				{preview.view === 'layer' ? 'The ladder — broad → specific' : 'Consolidated constitution'}
@@ -122,7 +122,7 @@
 
 	{#if preview.showConflicts}
 		<div>
-			<div class="flex items-center gap-2" style="margin-bottom: 12px">
+			<div class="flex items-center gap-2 mb-3">
 				<Icon name="danger-triangle" size={17} toneClass="text-warning" />
 				<span class="text-ink text-xs font-semibold uppercase" style="letter-spacing: 0.18em">
 					Discarded by the ladder

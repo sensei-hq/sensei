@@ -24,7 +24,7 @@
 	} = $props();
 </script>
 
-<div class="flex flex-col" style="padding: {mobile ? '16px' : '32px'}; gap: {mobile ? '16px' : '24px'}">
+<div class="flex flex-col {mobile ? 'p-4 gap-4' : 'p-8 gap-6'}">
 	<SectionHead {eyebrow} {title} count={projects.length}>
 		{#snippet right()}
 			<Btn size="sm" variant="ghost" icon="tuning-2">Filter</Btn>
