@@ -1,10 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { orgs } from '$lib/dojo-data';
 import {
 	DEFAULT_TENANT_KEY,
+	TENANT_COOKIE,
 	TENANT_PARAM,
+	enterOrg,
 	orgForTenant,
 	resolveTenantKey,
+	tenantCookieString,
 	tenantKeyFromUrl,
 	tenantKeyOf
 } from '$lib/tenant';
@@ -65,6 +68,30 @@ describe('resolveTenantKey (membership-less user is never handed a fabricated te
 
 	it('defaults to orgs[0] when hasMembership is left unspecified (back-compat)', () => {
 		expect(resolveTenantKey(null, null)).toBe(DEFAULT_TENANT_KEY);
+	});
+});
+
+describe('tenantCookieString / enterOrg (the one shared tenant-switch path)', () => {
+	it('encodes the org tenant key into the dojo_tenant session cookie', () => {
+		const cookie = tenantCookieString('github/globex');
+		expect(cookie).toBe(`${TENANT_COOKIE}=github%2Fglobex; path=/; SameSite=Lax`);
+	});
+
+	it('enterOrg writes the tenant cookie for the picked org then navigates to the console', () => {
+		const setCookie = vi.fn();
+		const navigate = vi.fn();
+		const org = orgs[1]; // Globex → github/globex
+		const landed = enterOrg(org, {
+			setCookie,
+			navigate,
+			consoleHref: '/(console)/console'
+		});
+		expect(setCookie).toHaveBeenCalledTimes(1);
+		expect(setCookie).toHaveBeenCalledWith(
+			`${TENANT_COOKIE}=${encodeURIComponent(org.url)}; path=/; SameSite=Lax`
+		);
+		expect(navigate).toHaveBeenCalledWith('/(console)/console');
+		expect(landed).toBe('/(console)/console');
 	});
 });
 
