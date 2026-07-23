@@ -26,6 +26,7 @@
 		const known = [
 			'triage',
 			'relay',
+			'library',
 			'members',
 			'identities',
 			'policies',

@@ -23,6 +23,7 @@
 		| 'overview'
 		| 'triage'
 		| 'relay'
+		| 'library'
 		| 'members'
 		| 'identities'
 		| 'policies'
@@ -52,7 +53,7 @@
 				{ id: 'overview', kanji: '全', label: 'Overview', to: 'overview' },
 				{ id: 'triage', kanji: '門', label: 'Triage', to: 'triage' },
 				{ id: 'relay', kanji: '継', label: 'Relay', to: 'relay' },
-				{ id: 'knowledge', kanji: '蔵', label: 'Knowledge' }
+				{ id: 'library', kanji: '蔵', label: 'Library', to: 'library' }
 			]
 		},
 		{
@@ -90,6 +91,8 @@
 				return resolve('/(console)/console/triage');
 			case 'relay':
 				return resolve('/(console)/console/relay');
+			case 'library':
+				return resolve('/(console)/console/library');
 			case 'members':
 				return resolve('/(console)/console/members');
 			case 'identities':
