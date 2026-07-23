@@ -154,6 +154,8 @@ async fn embed_batch(ctx: &TaskContext, texts: Vec<String>) -> BatchOutcome {
         payload: Payload::Embed { texts },
         budget: None,
         auth: None,
+        panel: None,
+        consensus: None,
     };
     match tokio::time::timeout(
         std::time::Duration::from_secs(EMBED_TIMEOUT_SECS),

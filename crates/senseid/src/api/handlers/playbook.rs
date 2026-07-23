@@ -192,6 +192,8 @@ enhancement = improving something existing, bug = fixing a defect. \
         },
         budget: None,
         auth: None,
+        panel: None,
+        consensus: None,
     };
 
     let fut = state.gateway.execute(&request);

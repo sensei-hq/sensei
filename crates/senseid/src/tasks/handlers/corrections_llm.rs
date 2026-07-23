@@ -99,6 +99,8 @@ pub async fn summarize_cluster(
         },
         budget: None,
         auth: None,
+        panel: None,
+        consensus: None,
     };
     match gateway.execute(&request).await {
         Ok(resp) if resp.success => {

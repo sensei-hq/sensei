@@ -188,6 +188,8 @@ pub async fn consolidate_for_project(
         },
         budget: None,
         auth: None,
+        panel: None,
+        consensus: None,
     };
     let resp = match ctx.app_state.gateway.execute(&request).await {
         Ok(r) if r.success => r,

@@ -163,6 +163,8 @@ mod fastembed_init {
                 },
                 budget: None,
                 auth: None,
+                panel: None,
+                consensus: None,
             };
 
             let response = gw.execute(&request).await.expect("gateway.execute");
@@ -319,6 +321,8 @@ mod ort_init {
                 },
                 budget: None,
                 auth: None,
+                panel: None,
+                consensus: None,
             };
 
             let response = gw.execute(&request).await.expect("gateway.execute");

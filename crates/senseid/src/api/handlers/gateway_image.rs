@@ -136,6 +136,8 @@ pub(crate) async fn image_generate(
         payload,
         budget: None,
         auth: None,
+        panel: None,
+        consensus: None,
     };
 
     let response = state.gateway.execute(&request).await

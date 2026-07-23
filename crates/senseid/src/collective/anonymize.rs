@@ -240,6 +240,8 @@ impl Generalizer for GatewayGeneralizer {
                 },
                 budget: None,
                 auth: None,
+                panel: None,
+                consensus: None,
             };
             match tokio::time::timeout(POLISH_TIMEOUT, gateway.execute(&request)).await {
                 Ok(Ok(resp)) if resp.success => resp.content.as_deref().and_then(parse_generalise_response),

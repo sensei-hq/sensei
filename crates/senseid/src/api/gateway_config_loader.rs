@@ -95,6 +95,10 @@ pub(crate) struct RouterRow {
 #[derive(Debug, Clone)]
 pub(crate) struct ModelRow {
     pub full_name: String,
+    /// `gateway.models.family` — coarse lineage (e.g. `"gemma"`, `"claude"`),
+    /// nullable. Threaded to [`ModelConfig::family`] for MOE panel
+    /// family-distinctness.
+    pub family: Option<String>,
     /// DB `model_capability` enum values (as text).
     pub capabilities: Vec<String>,
     pub context_window: Option<i32>,
@@ -181,6 +185,9 @@ pub(crate) fn build_models(rows: &[ModelRow]) -> HashMap<String, ModelConfig> {
                 context_window: clamp_u32(m.context_window),
                 max_output_tokens: clamp_u32(m.max_output_tokens),
                 pricing: None,
+                // Lineage from `gateway.models.family` — powers MOE panel
+                // family-distinctness. `None` ⇒ id is its own family.
+                family: m.family.clone(),
             },
         );
     }
@@ -237,6 +244,9 @@ pub(crate) fn assemble(
         models,
         chains,
         constraints: Default::default(),
+        // MOE panels/consensus are configured later (gh#19); empty ⇒ off.
+        panels: Default::default(),
+        consensus: Default::default(),
     }
 }
 
@@ -250,6 +260,7 @@ pub(crate) fn assemble(
 type RouterTuple = (String, Option<String>, Option<String>, bool, String, String);
 type ModelTuple = (
     String,
+    Option<String>,
     Vec<String>,
     Option<i32>,
     Option<i32>,
@@ -286,7 +297,7 @@ pub async fn load_gateway_config(pool: &PgPool) -> Result<Option<GatewayConfig>,
     // Models + their default router (is_default first, then any active).
     let model_rows: Vec<ModelTuple> =
         sqlx_core::query_as::query_as(
-            "SELECT m.full_name, m.capabilities::text[], m.context_window, m.max_output_tokens, \
+            "SELECT m.full_name, m.family, m.capabilities::text[], m.context_window, m.max_output_tokens, \
                     dr.router_name, dr.router_model_id \
              FROM gateway.models m \
              LEFT JOIN LATERAL ( \
@@ -306,9 +317,10 @@ pub async fn load_gateway_config(pool: &PgPool) -> Result<Option<GatewayConfig>,
     let models: Vec<ModelRow> = model_rows
         .into_iter()
         .map(
-            |(full_name, capabilities, context_window, max_output_tokens, default_router, default_router_model_id)| {
+            |(full_name, family, capabilities, context_window, max_output_tokens, default_router, default_router_model_id)| {
                 ModelRow {
                     full_name,
+                    family,
                     capabilities,
                     context_window,
                     max_output_tokens,
@@ -454,6 +466,7 @@ mod tests {
     fn model_row(full_name: &str, caps: &[&str], router: &str, rmid: &str) -> ModelRow {
         ModelRow {
             full_name: full_name.to_string(),
+            family: None,
             capabilities: caps.iter().map(|s| s.to_string()).collect(),
             context_window: Some(128_000),
             max_output_tokens: Some(8192),
@@ -481,6 +494,21 @@ mod tests {
     }
 
     #[test]
+    fn build_models_threads_family_from_db_row() {
+        // The DB `gateway.models.family` column flows through to
+        // `ModelConfig::family` (MOE panel family-distinctness); `None` stays
+        // `None` so the id is treated as its own family.
+        let mut with_family = model_row("gemma3:27b", &["chat"], "ollama", "gemma3:27b");
+        with_family.family = Some("gemma".to_string());
+        let models = build_models(&[
+            with_family,
+            model_row("mystery:1b", &["chat"], "ollama", "mystery:1b"),
+        ]);
+        assert_eq!(models["gemma3:27b"].family.as_deref(), Some("gemma"));
+        assert_eq!(models["mystery:1b"].family, None);
+    }
+
+    #[test]
     fn build_models_skips_models_with_no_mappable_capability() {
         let models = build_models(&[model_row("ghost", &["nonsense"], "ollama", "ghost")]);
         assert!(models.is_empty());
@@ -490,6 +518,7 @@ mod tests {
     fn build_models_falls_back_to_full_name_for_api_model_id() {
         let row = ModelRow {
             full_name: "all-minilm-l6-v2".to_string(),
+            family: None,
             capabilities: vec!["embed".to_string()],
             context_window: Some(512),
             max_output_tokens: Some(0),
