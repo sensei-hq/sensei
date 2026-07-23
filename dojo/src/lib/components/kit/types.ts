@@ -298,3 +298,159 @@ export interface KitChatTurn {
 	/** Compact "how long ago" (e.g. "38m"). */
 	when: string;
 }
+
+// ── Maintainer + lead consoles (dojo2-data `consoles`) ──────────────────────
+
+/** A candidate learning waiting on a maintainer in the triage queue (dojo2-data
+ *  `consoles.triage[].items[]`). Ranked by confidence within its scope group. */
+export interface KitTriageCandidate {
+	id: string;
+	/** Brand glyph for the candidate's intent. */
+	kanji: string;
+	title: string;
+	/** Where it came from (e.g. "6 sessions · 3 repos"). */
+	origin: string;
+	/** Confidence 0..1 — drives the bar + the detail enso. */
+	conf: number;
+	/** Ladder conflicts this candidate raises (0 = none). */
+	conflicts: number;
+	/** Near-duplicate candidates it overlaps (0 = none). */
+	dups: number;
+	/** high · safety · normal · low — high/safety show an impact chip + a
+	 *  second-approval note. */
+	impact: string;
+}
+
+/** A scope-grouped batch of triage candidates (dojo2-data `consoles.triage[]`). */
+export interface KitTriageGroup {
+	/** The scope the candidates share (e.g. "Payments"). */
+	scope: string;
+	items: KitTriageCandidate[];
+}
+
+/** The detail for the selected triage candidate (dojo2-data
+ *  `consoles.candidateDetail`). Shown in the desktop right pane. */
+export interface KitCandidateDetail {
+	/** The one-line learning the candidate proposes. */
+	learning: string;
+	/** Why it surfaced. */
+	cause: string;
+	/** Where it surfaced. */
+	context: string;
+	/** The supporting sessions/events. */
+	evidence: string[];
+	/** The ladder conflict this candidate settles (loser → winner). */
+	conflict: { loser: string; winner: string };
+	/** The scope chips it could distribute to; the second is the recommended one. */
+	scopes: string[];
+}
+
+/** A high-impact candidate awaiting a second maintainer's signature (dojo2-data
+ *  `consoles.approvals[]`). */
+export interface KitApproval {
+	id: string;
+	kanji: string;
+	title: string;
+	/** The scope it would publish to. */
+	scope: string;
+	/** Who gave the first approval. */
+	first: string;
+	/** Compact "how long ago" the first approval landed. */
+	when: string;
+	/** high · safety — drives the impact chip tone. */
+	impact: string;
+}
+
+/** A published-knowledge row — adopted or pending prune (dojo2-data
+ *  `consoles.knowledge.active[]` / `.pending[]`). */
+export interface KitKnowledgeRow {
+	kanji: string;
+	title: string;
+	/** The scope it publishes to. */
+	scope: string;
+	/** Adoption reach (e.g. "6 repos") — active rows only. */
+	adopted?: string;
+	/** Age / prune line (e.g. "adopted 3mo" · "unused 84d"). */
+	age: string;
+}
+
+/** A shareable extension in the knowledge catalog (dojo2-data
+ *  `consoles.knowledge.catalog[]`). */
+export interface KitCatalogItem {
+	kanji: string;
+	title: string;
+	/** agent · command · skill — drives the row icon + the kind chip. */
+	kind: string;
+	scope: string;
+}
+
+/** The published-knowledge library + prune policy + catalog (dojo2-data
+ *  `consoles.knowledge`). */
+export interface KitKnowledge {
+	/** The prune-policy line (e.g. "Prune after 90 days unused"). */
+	prunePolicy: string;
+	active: KitKnowledgeRow[];
+	pending: KitKnowledgeRow[];
+	catalog: KitCatalogItem[];
+}
+
+/** A client engagement in the register (dojo2-data `consoles.engagements[]`).
+ *  Lessons cross the boundary anonymized; the client/repo/source never do. */
+export interface KitEngagement {
+	id: string;
+	kanji: string;
+	/** The client display name. */
+	client: string;
+	/** The projects in the engagement. */
+	projects: string;
+	/** Lessons kept (crossed the boundary anonymized). */
+	lessons: number;
+	/** Identifiers/source stripped before anything left. */
+	dropped: number;
+	/** How long the engagement has run (e.g. "7mo"). */
+	since: string;
+	/** active · … */
+	status: string;
+}
+
+/** The confidentiality model — what crosses the boundary and an anonymized
+ *  example (dojo2-data `consoles.confidentiality`). */
+export interface KitConfidentiality {
+	/** What travels upstream (the lesson, anonymized). */
+	kept: string[];
+	/** What is stripped before anything leaves. */
+	dropped: string[];
+	/** A raw → anonymized code example. */
+	example: { raw: string; stripped: string };
+}
+
+/** A confidentiality incident (dojo2-data `consoles.incidents[]`). */
+export interface KitIncident {
+	id: string;
+	kanji: string;
+	title: string;
+	/** The client the incident touched. */
+	client: string;
+	/** contained · resolved · open — drives the state dot tone. */
+	state: string;
+	/** Compact "how long ago" (e.g. "3d"). */
+	when: string;
+	/** high · medium — drives the severity chip tone. */
+	severity: string;
+}
+
+/** An immutable client-audit ledger entry (dojo2-data `consoles.clientAudit[]`).
+ *  Append-only proof that confidentiality held, entry by entry. */
+export interface KitClientAuditRow {
+	/** The wall-clock/relative timestamp (e.g. "10:42" · "Yesterday"). */
+	t: string;
+	kanji: string;
+	/** What happened (e.g. "Lesson shared upstream"). */
+	event: string;
+	/** The specifics (e.g. "idempotency pattern · anonymized"). */
+	detail: string;
+	/** The client the entry concerns. */
+	client: string;
+	/** Whether confidentiality held (true) or a contribution was blocked (false). */
+	ok: boolean;
+}
