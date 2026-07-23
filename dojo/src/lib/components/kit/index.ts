@@ -11,10 +11,9 @@
 export * from './vocab';
 export * from './types';
 export * from './needs';
-export * from './icons';
 
 // Primitives.
-export { default as Icon, iconClass } from './Icon.svelte';
+export { default as Icon } from './Icon.svelte';
 export { default as KanjiToken } from './KanjiToken.svelte';
 export { default as Avatar } from './Avatar.svelte';
 export { default as Chip } from './Chip.svelte';
