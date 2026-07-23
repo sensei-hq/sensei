@@ -248,6 +248,10 @@ mod tests {
     #[tokio::test]
     async fn e2e_daemon_pulls_a_rule_published_on_the_dojo() {
         use crate::db::pg_store::{NewKnowledgeSource, PgStore};
+        use axum::{extract::{Query, State}, routing::get, Json, Router};
+        use dojo_protocol::{content_hash, PublishedRule, PullResponse, PulledRule};
+        use std::collections::HashMap;
+        use std::sync::Arc;
         let Ok(pg) = PgStore::connect_test().await else { return; }; // skip if no test DB
 
         // Seed the `organization` scope used by the pulled rule (sensei_test is empty;
@@ -260,66 +264,79 @@ mod tests {
              ON CONFLICT (key) DO UPDATE SET shareable = EXCLUDED.shareable")
             .execute(pg.pool()).await.unwrap();
 
-        // 1. Start an in-process sensei-dojo on an ephemeral port (embedded PG cached).
-        // Skip (don't fail) when the embedded Postgres can't start — same idiom
-        // as the no-test-DB skip above. That's an environmental prerequisite
-        // (e.g. exhausted SysV SHMMNI from many embedded-PG runs), not a product
-        // fault; this test verifies federation pull, not PG infra availability.
-        let Ok(db) = dojo_mind::db::DojoDb::bootstrap_temp().await else {
-            eprintln!("skipping e2e_daemon_pulls_a_rule_published_on_the_dojo: embedded dojo PG unavailable");
-            return;
-        };
-        let store = dojo_mind::store::DojoStore::new(db.pool().clone());
-        let member = store.create_member("e2e", None, "publisher").await.unwrap();
-        let key = store.issue_key(&member, None).await.unwrap().plaintext;
-        // Hold `db` for the rest of the test (the spawned dojo server uses a clone
-        // of its pool) and let it drop at function end, which tears the embedded
-        // postmaster down. The previous `Box::leak` kept it alive forever, orphaning
-        // one postgres process + one SysV shm segment per run — eventually exhausting
-        // SHMMNI and breaking this very test. `_db` keeps the binding live to scope end.
-        let _db = db;
-        let app = dojo_mind::api::build_router(std::sync::Arc::new(
-            dojo_mind::api::SharedState { store }));
+        // 1. Stand up a tiny axum stub for the dōjō `GET /v1/rules` endpoint on an
+        // ephemeral port (mirrors the sibling `pull_artifacts_forwards_since_and_parses_response`
+        // stub in dojo/client.rs). It respects the `?since=` cursor — echoing
+        // `since + 1` as the new cursor proves the daemon forwarded its `last_seq`,
+        // and returns exactly one active `PulledRule` (built with `content_hash` so
+        // it matches the real publish path). No embedded Postgres, no dojo-mind: the
+        // daemon only ever talks HTTP to a source, so an HTTP stub is a faithful peer
+        // and sidesteps the embedded-PG flakiness the old in-process dōjō carried.
+        let content = format!("e2e federated rule {}", uuid::Uuid::new_v4());
+        // The unique content rides as router State so the `'static` handler and the
+        // post-condition assertion agree on it (reruns don't collide). Same State
+        // pattern as the sibling `relay_post_retries_transient_failures` stub.
+        async fn rules(
+            State(content): State<Arc<String>>,
+            Query(q): Query<HashMap<String, String>>,
+        ) -> Json<PullResponse> {
+            let since: i64 = q.get("since").and_then(|s| s.parse().ok()).unwrap_or(-1);
+            Json(PullResponse {
+                rules: vec![PulledRule {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    seq: since + 1,
+                    status: "active".into(),
+                    version: 1,
+                    rule: PublishedRule {
+                        content_hash: content_hash(&content),
+                        scope_key: "organization".into(),
+                        namespace_slug: "e2e-org".into(),
+                        namespace_name: "E2E Org".into(),
+                        rule_type: "convention".into(),
+                        title: "E2E".into(),
+                        content: (*content).clone(),
+                        impact: None,
+                        enforcement: "mandatory".into(),
+                        origin_repo: None,
+                        published_by: "x".into(),
+                        published_at: "1970-01-01T00:00:00Z".into(),
+                    },
+                }],
+                cursor: since + 1,
+            })
+        }
+        let app = Router::new()
+            .route("/v1/rules", get(rules))
+            .with_state(Arc::new(content.clone()));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap(); });
-        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         let dojo_url = format!("http://{addr}");
 
-        // 2. Publish a rule on the dojo (unique content so reruns don't collide).
-        let client = reqwest::Client::new();
-        let content = format!("e2e federated rule {}", uuid::Uuid::new_v4());
-        let body = serde_json::json!({
-            "content_hash": dojo_protocol::content_hash(&content),
-            "scope_key": "organization", "namespace_slug": "e2e-org", "namespace_name": "E2E Org",
-            "rule_type": "convention", "title": "E2E", "content": content,
-            "impact": null, "enforcement": "mandatory", "origin_repo": null,
-            "published_by": "x", "published_at": "1970-01-01T00:00:00Z"
-        });
-        let r = client.post(format!("{dojo_url}/v1/rules")).bearer_auth(&key).json(&body).send().await.unwrap();
-        assert!(r.status().is_success(), "publish failed: {}", r.status());
-
-        // 3. Register the source on the daemon (key in the Keychain, row in PG).
+        // 2. Register the source on the daemon (key in the Keychain, row in PG). The
+        // stub ignores the bearer, but `pull_source` resolves it, so seed one.
+        let client = crate::federation::http_client();
         let cref = format!("dojo-e2e-{}", uuid::Uuid::new_v4());
-        crate::gateway_keys::set_key(&cref, &key).unwrap();
+        crate::gateway_keys::set_key(&cref, "device-token-e2e").unwrap();
         let src_id = pg.create_knowledge_source(&NewKnowledgeSource {
             kind: "hive_mind".into(), name: "E2E".into(), url: dojo_url,
             namespace_id: None, credential_ref: cref.clone(), direction: "pull".into(),
         }).await.unwrap();
         let src = pg.get_knowledge_source(&src_id).await.unwrap().unwrap();
 
-        // 4. Pull.
+        // 3. Pull.
         let stats = pull_source(&pg, &client, &src).await.expect("pull");
         assert_eq!(stats.applied, 1, "one federated memory created");
         assert!(stats.new_cursor > 0);
 
-        // 5. The pulled rule is a federated, active memory with our content.
+        // 4. The pulled rule is a federated, active memory with our content.
         let (cnt,): (i64,) = sqlx_core::query_as::query_as(
             "SELECT count(*) FROM sensei.memories WHERE origin='federated' AND content=$1 AND status='active'")
             .bind(&content).fetch_one(pg.pool()).await.unwrap();
         assert_eq!(cnt, 1);
 
-        // 6. Cleanup (cascade ledger via source delete; remove memory + keychain entry,
+        // 5. Cleanup (cascade ledger via source delete; remove memory + keychain entry,
         // the namespace the pull created, and the seeded scope row).
         sqlx_core::query::query("DELETE FROM sensei.memories WHERE content=$1")
             .bind(&content).execute(pg.pool()).await.unwrap();
