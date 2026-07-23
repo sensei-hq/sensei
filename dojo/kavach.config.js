@@ -36,6 +36,11 @@ export default {
 	rules: [
 		{ path: '/', public: true },
 		{ path: '/signin', public: true },
+		// Build-time version stamp (GET /version → src/lib/version.ts). Must be
+		// reachable unauthenticated so `curl .../version` confirms the live deploy.
+		// Unmatched paths fall through to the sentry guard's 401→/signin redirect,
+		// so an explicit public rule is required to exempt it.
+		{ path: '/version', public: true },
 		// The machine/token API (/v1/*) self-authenticates in-handler (device-token
 		// or Supabase-JWT plane, see dojo-auth.ts) — it must bypass kavach's web
 		// session guard, or every daemon/API call 303-redirects to /signin.

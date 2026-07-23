@@ -23,6 +23,14 @@ declare global {
 	// @rokkit/states ships JS source; its `types` field points at an unpublished
 	// dist/, so it resolves untyped here. Shim until rokkit ships declarations.
 	// (Declared inside `global` to stay ambient alongside the App namespace.)
+
+	// Build-time constants injected by vite.config.ts `define`. Kept inside
+	// `declare global` (this file is a module because of the top-level import +
+	// `export {}`, so a bare top-level `declare const` would be module-scoped, not
+	// ambient). Consumed via src/lib/version.ts.
+	const __DOJO_VERSION__: string;
+	const __DOJO_GIT_SHA__: string;
+	const __DOJO_BUILD_TIME__: string;
 }
 
 // @rokkit/states resolves untyped — shim until rokkit ships declarations.
