@@ -1,5 +1,22 @@
 # Dōjō web-app — IA rebuild plan (2026-07-22)
 
+## STATUS — overnight run 2026-07-22→23 (all SHIPPED to develop, browser-verified)
+
+| Chunk | Commit | Tests | Browser-verified |
+|---|---|---|---|
+| 1 · DJ1 personal home (membership-less) | `edc0983f` | 311 | ✅ lands "Your work" personal home, zero `/v1/t/` calls, honest empties |
+| 2 · Constitution Library | `753bb300` | 354 | ✅ 6 areas, packs, sticky add-to-constitution footer |
+| 3 · Effective-constitution Preview | `8fdd00b1` | 396 | ✅ 4 lifecycle projects, classification override, ladder + conflicts |
+| 4 · Developer console (teams/contributions/for-me) | `ef996f45` | 423 | ✅ nav wired, honest zero-membership empties |
+| 5 · Nav reframe + org-switcher popover | `aa28bacd` | 454 | ✅ Relay·you+Me on top, popover (role=menu) |
+
+Verified in a real browser (wrangler + Playwright MCP) at **390px mobile + 1280px desktop**, **0 console errors** on every screen, with a real membership-less magic-link user. Production build clean (adapter-cloudflare). NOT merged to main / NOT released (Jerry's call).
+
+**Deferred to discuss (see §4):** live personal-Relay `/v1/relay/session` (backend Rust), Governance authoring, two-shell management step-in (Chunk 6), create-a-Dōjō flow, `/v1` wiring for the new screens (Library/Preview/Developer are presentational off local `-data.ts`), true role-aware nav. One small open decision: the pinned "Relay · you" for a *member* navigates to `/console` but doesn't clear their `dojo_tenant` cookie (a member still resolves their org) — belongs with the Chunk 6 "everyone starts in the You zone" reframe.
+
+---
+
+
 > Bring `dojo/` in line with the **updated mockups** (`docs/mockups/Sensei/lib/dojo/*.jsx`,
 > `Sensei Dōjō Console.html`, `lib/data/dojo-data.js`). Authored for an autonomous
 > overnight run: commit each verified chunk to **develop** only; no release / no main-merge.
