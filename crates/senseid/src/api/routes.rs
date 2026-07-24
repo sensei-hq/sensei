@@ -34,6 +34,7 @@ use crate::api::handlers::share_review;
 use crate::api::handlers::upgrades;
 use crate::api::handlers::corrections;
 use crate::api::handlers::runs;
+use crate::api::handlers::identity;
 use crate::api::handlers::playbook;
 
 pub fn create_router(state: AppState) -> Router {
@@ -86,6 +87,9 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/projects/{id}/repos/{repo_id}", delete(observatory::remove_solution_repo))
         .route("/api/projects/{id}/tags", post(observatory::add_solution_tag))
         .route("/api/projects/{id}/tags/{tag}", delete(observatory::remove_solution_tag))
+        // Git author identity for a folder + its owning project (MCP
+        // get_user_for_project) — who is doing the work, resolved local→global.
+        .route("/api/user", get(identity::get_user))
         // Project detail endpoints (multi-window)
         .route("/api/projects/{id}/ftr",             get(project_detail::get_project_ftr))
         .route("/api/projects/{id}/icon",            get(project_detail::get_project_icon))
