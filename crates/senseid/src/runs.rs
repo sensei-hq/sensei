@@ -172,6 +172,26 @@ pub struct RunEvent {
     pub created_at: String,
 }
 
+/// The run cadence events to append when a run's phase moves from `current` to
+/// `new` — the pure core of the workflow→run phase bridge (an agent's
+/// `update_phase` mirrored onto its active run so it streams phases→segments to
+/// the relay while `drive` stays OFF).
+///
+/// A real transition pairs `phase_done(prev)` + `phase_started(new)` so
+/// [`crate::dojo::relay_run_project`]'s `plan_events_to_segments` renders the
+/// previous phase done and the new one active. Re-entering the same phase is a
+/// no-op (idempotent — repeated `update_phase` calls don't duplicate segments).
+pub fn phase_transition_events(current: Option<&str>, new: &str) -> Vec<(RunEventKind, String)> {
+    match current {
+        Some(prev) if prev == new => Vec::new(),
+        Some(prev) => vec![
+            (RunEventKind::PhaseDone, prev.to_string()),
+            (RunEventKind::PhaseStarted, new.to_string()),
+        ],
+        None => vec![(RunEventKind::PhaseStarted, new.to_string())],
+    }
+}
+
 /// Serializes the DB-gated tests that call the *global* [`crate::db::pg_store::
 /// PgStore::resume_due_runs`] UPDATE (the pg_store CRUD test + the AdvanceRun
 /// scheduler test) so parallel test threads don't steal each other's due-paused
@@ -186,6 +206,30 @@ pub(crate) fn resume_test_lock() -> &'static tokio::sync::Mutex<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn phase_transition_from_none_starts_the_phase() {
+        assert_eq!(
+            phase_transition_events(None, "P1"),
+            vec![(RunEventKind::PhaseStarted, "P1".to_string())]
+        );
+    }
+
+    #[test]
+    fn phase_transition_pairs_done_and_started() {
+        assert_eq!(
+            phase_transition_events(Some("P0"), "P1"),
+            vec![
+                (RunEventKind::PhaseDone, "P0".to_string()),
+                (RunEventKind::PhaseStarted, "P1".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn phase_transition_same_phase_is_a_noop() {
+        assert!(phase_transition_events(Some("P1"), "P1").is_empty());
+    }
 
     #[test]
     fn run_event_kind_db_strings_match_ddl() {
