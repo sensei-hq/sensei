@@ -772,8 +772,11 @@ impl PgStore {
             .filter(|k| !k.is_progress())
             .map(|k| k.as_db_str().to_string())
             .collect();
+        // `to_json(...)#>>'{}'` yields RFC-3339 (the format `parse_rfc3339` and the
+        // rest of RUN_SELECT use) — NOT `::text`, whose `YYYY-MM-DD HH:MM:SS-05`
+        // shape fails to parse and would silently fall back to started_at.
         let row: Option<(String,)> = sqlx_core::query_as::query_as(
-            "SELECT created_at::text FROM activity.run_events
+            "SELECT to_json(created_at)#>>'{}' FROM activity.run_events
               WHERE run_id = $1 AND kind::text <> ALL($2)
               ORDER BY created_at DESC, id DESC LIMIT 1",
         )
