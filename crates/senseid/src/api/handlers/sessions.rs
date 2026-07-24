@@ -626,6 +626,18 @@ pub(crate) async fn update_workflow_state(
         return Json(serde_json::json!({"ok": false, "error": e}));
     }
 
+    // Phase bridge: mirror the workflow phase onto the project's active run so a
+    // daemon-owned run streams phases→segments to the relay while the agent works
+    // (drive stays OFF — this is status only, and it's how the "watch me build
+    // through phases" view is fed). Best-effort: a bridge hiccup must never fail
+    // the workflow-state write above.
+    if let Some(phase) = body["active_phase"].as_str().filter(|s| !s.is_empty())
+        && let Some(project_id) = super::observatory::resolve_project_uuid(&state, &project).await
+        && let Err(e) = state.pg.advance_run_phase_for_project(&project_id, phase).await
+    {
+        tracing::warn!(project = %project, error = %e, "update_phase: run phase bridge failed");
+    }
+
     // Sync to .sensei/state.yaml
     // TODO: Add a lookup for folder abs_path by project name if needed.
     let project_path = body["project_path"].as_str().map(String::from);

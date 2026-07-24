@@ -695,6 +695,59 @@ impl PgStore {
         rows.into_iter().map(Self::map_run_row).collect()
     }
 
+    /// The newest `running` run for a project, if any — the target of the
+    /// workflow→run phase bridge ([`Self::advance_run_phase_for_project`]).
+    /// Only `running` (not paused/stalled/blocked): a paused run shouldn't be
+    /// silently advanced by a stray `update_phase`.
+    pub async fn active_run_for_project(
+        &self,
+        project_id: &uuid::Uuid,
+    ) -> Result<Option<Run>, String> {
+        let row: Option<(
+            uuid::Uuid, Option<uuid::Uuid>, String, Option<String>, String, Option<String>,
+            Option<String>, Option<String>, Option<String>, Option<uuid::Uuid>,
+            i32, String, Option<String>, Option<String>, String, String,
+        )> = sqlx_core::query_as::query_as(&format!(
+            "{} WHERE project_id = $1 AND status = 'running' ORDER BY started_at DESC LIMIT 1",
+            Self::RUN_SELECT
+        ))
+            .bind(project_id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        row.map(Self::map_run_row).transpose()
+    }
+
+    /// Bridge a workflow phase transition onto a project's active run: append the
+    /// pairing cadence events ([`crate::runs::phase_transition_events`]) and move
+    /// the run's `current_phase`, so the run streams phases→segments to the relay
+    /// while an agent works (`drive` stays OFF — this is status only). Returns the
+    /// advanced run id, or `None` when there's no running run / no phase change.
+    /// Best-effort: the caller logs and swallows errors so a bridge hiccup never
+    /// fails the workflow-state write.
+    pub async fn advance_run_phase_for_project(
+        &self,
+        project_id: &uuid::Uuid,
+        phase: &str,
+    ) -> Result<Option<uuid::Uuid>, String> {
+        if phase.is_empty() {
+            return Ok(None);
+        }
+        let Some(run) = self.active_run_for_project(project_id).await? else {
+            return Ok(None);
+        };
+        let events = crate::runs::phase_transition_events(run.current_phase.as_deref(), phase);
+        if events.is_empty() {
+            return Ok(None);
+        }
+        let detail = serde_json::json!({ "via": "update_phase" });
+        for (kind, ph) in &events {
+            self.append_run_event(&run.id, *kind, Some(ph), None, &detail).await?;
+        }
+        self.set_run_progress(&run.id, Some(phase), run.current_feature.as_deref()).await?;
+        Ok(Some(run.id))
+    }
+
     /// Set a run's status and (optionally) its pause fields, bumping
     /// `updated_at`. `paused_until`/`pause_reason` are written as given, so pass
     /// `None` for both to clear a pause on resume.
