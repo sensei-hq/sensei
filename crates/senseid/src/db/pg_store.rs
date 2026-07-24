@@ -695,9 +695,11 @@ impl PgStore {
         rows.into_iter().map(Self::map_run_row).collect()
     }
 
-    /// The newest `running` run for a project, if any — the target of the
-    /// workflow→run phase bridge ([`Self::advance_run_phase_for_project`]).
-    /// Only `running` (not paused/stalled/blocked): a paused run shouldn't be
+    /// The newest `running` or `stalled` run for a project, if any — the target
+    /// of the workflow→run phase bridge ([`Self::advance_run_phase_for_project`]).
+    /// `stalled` is included so an agent that went quiet (→ watchdog-stalled) and
+    /// then resumes revives its run on the next `update_phase`. `paused`/`blocked`
+    /// are excluded — a paused (limit-wait) or gate-blocked run shouldn't be
     /// silently advanced by a stray `update_phase`.
     pub async fn active_run_for_project(
         &self,
@@ -708,7 +710,8 @@ impl PgStore {
             Option<String>, Option<String>, Option<String>, Option<uuid::Uuid>,
             i32, String, Option<String>, Option<String>, String, String,
         )> = sqlx_core::query_as::query_as(&format!(
-            "{} WHERE project_id = $1 AND status = 'running' ORDER BY started_at DESC LIMIT 1",
+            "{} WHERE project_id = $1 AND status IN ('running', 'stalled') \
+             ORDER BY started_at DESC LIMIT 1",
             Self::RUN_SELECT
         ))
             .bind(project_id)
@@ -721,10 +724,11 @@ impl PgStore {
     /// Bridge a workflow phase transition onto a project's active run: append the
     /// pairing cadence events ([`crate::runs::phase_transition_events`]) and move
     /// the run's `current_phase`, so the run streams phases→segments to the relay
-    /// while an agent works (`drive` stays OFF — this is status only). Returns the
-    /// advanced run id, or `None` when there's no running run / no phase change.
-    /// Best-effort: the caller logs and swallows errors so a bridge hiccup never
-    /// fails the workflow-state write.
+    /// while an agent works (`drive` stays OFF — this is status only). If the run
+    /// had gone `stalled` (agent quiet), this fresh progress **revives** it to
+    /// `running`. Returns the advanced run id, or `None` when there's no active
+    /// run / no phase change. Best-effort: the caller logs and swallows errors so
+    /// a bridge hiccup never fails the workflow-state write.
     pub async fn advance_run_phase_for_project(
         &self,
         project_id: &uuid::Uuid,
@@ -740,12 +744,45 @@ impl PgStore {
         if events.is_empty() {
             return Ok(None);
         }
+        // Agent progress on a stalled run = it's back → revive to running first,
+        // so the appended events + the fresh heartbeat land on a running row.
+        if run.status == dojo_protocol::relay::RelayRunStatus::Stalled {
+            self.update_run_status(&run.id, dojo_protocol::relay::RelayRunStatus::Running, None, None)
+                .await?;
+            self.append_run_event(&run.id, crate::runs::RunEventKind::Recovered, Some(phase), None,
+                &serde_json::json!({ "via": "update_phase", "revived": true })).await?;
+        }
         let detail = serde_json::json!({ "via": "update_phase" });
         for (kind, ph) in &events {
             self.append_run_event(&run.id, *kind, Some(ph), None, &detail).await?;
         }
         self.set_run_progress(&run.id, Some(phase), run.current_feature.as_deref()).await?;
         Ok(Some(run.id))
+    }
+
+    /// The timestamp (RFC-3339 text) of a run's newest **agent-progress** event —
+    /// the stall signal's reference. Excludes the daemon's cadence/lifecycle kinds
+    /// (`RunEventKind::is_progress() == false`, built from the enum so it never
+    /// drifts) so the every-tick `housekeeping` marker can't mask an agent stall.
+    /// `None` when the run has emitted no progress event yet (caller falls back to
+    /// `started_at`).
+    pub async fn last_progress_at(&self, run_id: &uuid::Uuid) -> Result<Option<String>, String> {
+        let excluded: Vec<String> = crate::runs::RunEventKind::ALL
+            .iter()
+            .filter(|k| !k.is_progress())
+            .map(|k| k.as_db_str().to_string())
+            .collect();
+        let row: Option<(String,)> = sqlx_core::query_as::query_as(
+            "SELECT created_at::text FROM activity.run_events
+              WHERE run_id = $1 AND kind::text <> ALL($2)
+              ORDER BY created_at DESC, id DESC LIMIT 1",
+        )
+            .bind(run_id)
+            .bind(&excluded)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(row.map(|(ts,)| ts))
     }
 
     /// Set a run's status and (optionally) its pause fields, bumping

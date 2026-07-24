@@ -75,6 +75,29 @@ impl RunEventKind {
         RunEventKind::Failed,
     ];
 
+    /// True when this event marks *agent* progress (the run actually advancing),
+    /// false for the daemon's own cadence/lifecycle bookkeeping. The stall signal
+    /// ([`crate::run_watchdog`]) measures "no progress in N min" against progress
+    /// events only: `Housekeeping` is logged every tick, so counting it would mean
+    /// a run never looks stalled — and pause/resume/throttle/watchdog markers are
+    /// the daemon reacting, not the agent working.
+    ///
+    /// Progress = phase/feature boundaries, gates, and git milestones (commit/
+    /// push/merge/bump), plus terminal done/failed/flagged. Not-progress =
+    /// housekeeping tick + paused/resumed/throttled/stalled/crashed/recovered.
+    pub fn is_progress(&self) -> bool {
+        !matches!(
+            self,
+            RunEventKind::Housekeeping
+                | RunEventKind::PausedOnLimit
+                | RunEventKind::Resumed
+                | RunEventKind::Throttled
+                | RunEventKind::Stalled
+                | RunEventKind::Crashed
+                | RunEventKind::Recovered
+        )
+    }
+
     /// The `sensei.run_event_kind` enum string. MUST match `run_event_kind.ddl`.
     pub fn as_db_str(&self) -> &'static str {
         match self {
@@ -229,6 +252,38 @@ mod tests {
     #[test]
     fn phase_transition_same_phase_is_a_noop() {
         assert!(phase_transition_events(Some("P1"), "P1").is_empty());
+    }
+
+    #[test]
+    fn is_progress_true_for_agent_advancement() {
+        for k in [
+            RunEventKind::PhaseStarted,
+            RunEventKind::FeatureStarted,
+            RunEventKind::FeatureDone,
+            RunEventKind::GateRaised,
+            RunEventKind::Committed,
+            RunEventKind::Pushed,
+            RunEventKind::Merged,
+            RunEventKind::Done,
+            RunEventKind::Failed,
+        ] {
+            assert!(k.is_progress(), "{k:?} is agent progress");
+        }
+    }
+
+    #[test]
+    fn is_progress_false_for_daemon_cadence_and_lifecycle() {
+        for k in [
+            RunEventKind::Housekeeping,
+            RunEventKind::PausedOnLimit,
+            RunEventKind::Resumed,
+            RunEventKind::Throttled,
+            RunEventKind::Stalled,
+            RunEventKind::Crashed,
+            RunEventKind::Recovered,
+        ] {
+            assert!(!k.is_progress(), "{k:?} is daemon bookkeeping, not progress");
+        }
     }
 
     #[test]
