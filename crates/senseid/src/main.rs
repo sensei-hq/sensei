@@ -33,6 +33,7 @@ pub mod verdicts;
 pub mod ranking;
 pub mod model_insight;
 pub mod runs;
+pub mod git_identity;
 pub mod run_limits;
 pub mod run_watchdog;
 pub mod agent_spawn;
