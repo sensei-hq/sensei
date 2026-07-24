@@ -3,11 +3,10 @@ import { presetRokkit } from '@rokkit/unocss';
 import config from './rokkit.config.js';
 
 // presetRokkit already includes extractorSvelte, transformerDirectives and
-// transformerVariantGroup. Safelist the kavach auth icons (rendered via
-// dynamic `i-auth-{name}` class names in @kavach/ui's AuthProvider, which
-// UnoCSS can't see statically). The dojo2 kit's Solar icons need no safelist
-// here: they're `icons.overrides` bare-name shortcuts in rokkit.config.js,
-// which presetRokkit auto-safelists.
+// transformerVariantGroup. No manual icon safelist is needed: the dojo2 kit's
+// Solar icons are `icons.overrides` bare-name shortcuts in rokkit.config.js
+// (auto-safelisted by presetRokkit), and the sign-in brand logos use static
+// `i-simple-icons:*` classes UnoCSS scans directly.
 //
 // `theme` mirrors `app/uno.config.js` verbatim — per the shared design system
 // (docs/architecture/frontend-svelte-guidelines.md §1.8 per-surface config
@@ -18,7 +17,6 @@ import config from './rokkit.config.js';
 // (docs/mockups/Zen-Sumi Design System/colors_and_type.css).
 export default defineConfig({
 	presets: [presetRokkit(config)],
-	safelist: ['i-auth-magic', 'i-auth-email', 'i-auth-github', 'i-auth-google'],
 	theme: {
 		// UnoCSS tuple-short form `[fontSize, lineHeight]` — the object form emits
 		// the JS key `lineHeight:` literally into CSS (invalid property) and floods

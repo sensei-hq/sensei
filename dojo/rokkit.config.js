@@ -155,6 +155,9 @@ export default {
 	// tints cleanly with currentColor.
 	icons: {
 		solar: '@iconify-json/solar/icons.json',
+		// Brand logos for the sign-in providers (GitHub OAuth · Google). Referenced
+		// as `i-simple-icons:{name}` (e.g. the GitHub button in DojoSignIn).
+		'simple-icons': '@iconify-json/simple-icons/icons.json',
 		overrides: Object.fromEntries(ICON_NAMES.map((n) => [n, `i-solar:${n}-linear`]))
 	},
 	switcher: 'manual',
