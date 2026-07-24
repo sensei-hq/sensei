@@ -104,6 +104,17 @@ pub fn daemon_request_for(
             Some(DaemonRequest::get("/api/projects").with_query("under", under))
         }
 
+        // ── Who is doing the work: the folder's effective git author ─────────
+        // `get_user_for_project` resolves the git `user.name`/`user.email` (with
+        // git's own local→global precedence) + the owning project, defaulting to
+        // the MCP call's cwd — same folder-scoping as `find_projects`. The
+        // resolved identity matches the commit author and the Dōjō sign-in, so
+        // a run/plan can be registered to the right person.
+        "get_user_for_project" => {
+            let under = args["under"].as_str().filter(|s| !s.is_empty()).unwrap_or(cwd);
+            Some(DaemonRequest::get("/api/user").with_query("under", under))
+        }
+
         // ── Workflow state ──────────────────────────────────────────────────
         "update_phase" => {
             let body = json!({
@@ -373,6 +384,9 @@ pub fn handle_list_tools() -> Value {
             tool("list_projects", "List all known projects and their index status.", &[], &[]),
             tool("find_projects", "List the projects that live under a folder — the folder-scoped view of list_projects (which returns every project on the machine). Use this to discover which sensei project owns the directory you're working in. Defaults to the current working directory when 'under' is omitted.", &[], &[
                 ("under", "string", "Absolute folder path to scope the search to. Defaults to the current working directory."),
+            ]),
+            tool("get_user_for_project", "Resolve the git author identity — user.name and user.email, using git's own local-over-global precedence (a repo .git/config override wins; otherwise ~/.gitconfig) — for the folder you're working in, plus the sensei project that owns it. This is the same identity as the commit author and the Dōjō sign-in, so it's how a run or plan gets registered to the right person for relay attribution. Defaults to the current working directory when 'under' is omitted.", &[], &[
+                ("under", "string", "Absolute folder path to resolve the identity + owning project for. Defaults to the current working directory."),
             ]),
             tool("use_project", "Pin the active project so every subsequent tool call resolves to it regardless of the server's working directory. Call this when the user tells you which project they're working on (e.g. use_project 'sensei'). The pin persists until you switch it by calling use_project again; an explicit project= argument on any other tool still overrides it for that one call.", &[
                 ("project", "string", "Project name or UUID to pin as active (e.g. 'sensei')."),
@@ -938,7 +952,7 @@ mod tests {
     const EXPECTED_TOOLS: &[&str] = &[
         "search", "context_pack", "get_callers", "get_callees", "get_project_summary",
         "get_lib_docs", "search_lib_docs", "get_communities", "get_patterns",
-        "list_projects", "find_projects", "use_project", "create_session", "update_session", "add_library",
+        "list_projects", "find_projects", "get_user_for_project", "use_project", "create_session", "update_session", "add_library",
         "update_phase", "get_workflow_state", "match_pattern", "get_pattern_for",
         "get_duplicates", "get_project_conventions", "get_rules", "get_commands", "infer", "embed",
         "gateway_status", "consensus", "generate_image", "log_event",
@@ -1423,6 +1437,25 @@ mod tests {
         ).unwrap();
         assert_eq!(req.path, "/api/projects");
         assert_eq!(q(&req, "under"), Some("/some/dir"), "explicit `under` overrides cwd");
+    }
+
+    #[test]
+    fn get_user_for_project_defaults_under_to_cwd() {
+        // No `under` → resolve identity for the MCP call's cwd (same
+        // folder-scoping as find_projects), hitting the daemon's /api/user.
+        let req = daemon_request_for("get_user_for_project", &json!({}), "/my/cwd", None).unwrap();
+        assert_eq!(req.method, HttpMethod::Get);
+        assert_eq!(req.path, "/api/user");
+        assert_eq!(q(&req, "under"), Some("/my/cwd"), "no `under` arg → default to call cwd");
+    }
+
+    #[test]
+    fn get_user_for_project_uses_explicit_under_over_cwd() {
+        let req = daemon_request_for(
+            "get_user_for_project", &json!({ "under": "/some/repo" }), "/my/cwd", None,
+        ).unwrap();
+        assert_eq!(req.path, "/api/user");
+        assert_eq!(q(&req, "under"), Some("/some/repo"), "explicit `under` overrides cwd");
     }
 
     #[test]
