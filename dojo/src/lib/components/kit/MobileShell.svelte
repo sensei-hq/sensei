@@ -2,6 +2,7 @@
 	import type { Snippet } from 'svelte';
 	import Icon from './Icon.svelte';
 	import TabBar from './TabBar.svelte';
+	import LogoutButton from './LogoutButton.svelte';
 	import { K2_ROLE } from './vocab';
 	import type { KitOrg, KitMe, KitNavItem } from './types';
 
@@ -69,17 +70,9 @@
 			style="width: 28px; height: 28px"
 			aria-hidden="true">{initials}</span
 		>
-		<!-- Log out — kavach's configured logout route; full navigation so the
-		     sentry handle clears the session server-side. -->
-		<a
-			href="/logout"
-			data-sveltekit-reload
-			title="Log out"
-			aria-label="Log out"
-			class="text-ink-soft border-paper-edge flex h-[34px] w-[34px] flex-shrink-0 items-center justify-center rounded-full border bg-transparent"
-		>
-			<span class="kanji text-ink-mute text-xs" aria-hidden="true">出</span>
-		</a>
+		<!-- Log out — shared kit control (compact/icon-only on phones); client
+		     signOut() via the kavach context, not a (nonexistent) /logout route. -->
+		<LogoutButton compact />
 	</div>
 	<div class="flex flex-1 flex-col overflow-auto" style="min-height: 0">
 		{#if children}{@render children()}{/if}
