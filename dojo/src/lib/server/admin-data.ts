@@ -85,6 +85,26 @@ export interface HealthRollup {
 	error_rate_1h: number;
 }
 
+// ── enum guards (mirror dojo-mind's `is_member_role` / `is_auth_method` /
+//    `is_attribution_mode`; the DB enums would reject a bad literal, but we
+//    validate first for a clean 400 rather than a 500). ──────────────────────
+const MEMBER_ROLES = ['contributor', 'maintainer', 'lead', 'admin'] as const;
+const AUTH_METHODS = ['sso', 'github_oauth', 'device_code'] as const;
+const ATTRIBUTION_MODES = ['named', 'anonymous', 'dereferenced'] as const;
+
+/** A `dojo.member_role`. */
+export type MemberRole = (typeof MEMBER_ROLES)[number];
+
+export function isMemberRole(v: unknown): v is MemberRole {
+	return typeof v === 'string' && (MEMBER_ROLES as readonly string[]).includes(v);
+}
+function isAuthMethod(v: unknown): boolean {
+	return typeof v === 'string' && (AUTH_METHODS as readonly string[]).includes(v);
+}
+function isAttributionMode(v: unknown): boolean {
+	return typeof v === 'string' && (ATTRIBUTION_MODES as readonly string[]).includes(v);
+}
+
 const MEMBER_COLS =
 	'id, user_id, role, kind, authenticated_via, sync_status, attribution_default, last_heartbeat_at, disabled_at, created_at';
 const IDENTITY_COLS =
@@ -202,4 +222,367 @@ export async function getHealth(db: DojoClient, tenantId: string): Promise<Healt
 		publish_rate_1h: publish.count ?? 0,
 		error_rate_1h: errors.count ?? 0
 	};
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Writes — the port of dojo-mind's admin mutations (set-role · provision-member ·
+// policy upsert/patch/delete · identity create/patch/delete). Each validates its
+// untrusted body into a typed struct (throwing AdminError 400) and returns the
+// row-shape the console client `admin-data.ts` expects. The audit write is the
+// caller's responsibility (the handler calls `recordAudit` after the mutation so
+// a swallowed audit can't fail a committed write); these stay pure over `db`.
+// ════════════════════════════════════════════════════════════════════════════
+
+// ── members: set-role + provision ────────────────────────────────────────────
+
+/**
+ * Override a member's role (`PATCH …/members/{user_id}/role`) — the port of
+ * dojo-mind's `set_member_role`. Validates the role against `dojo.member_role`
+ * (400 on a bad value), updates the tenant's membership for `userId`, and returns
+ * `{ user_id, role }` (the shape `admin-data.ts setMemberRole()` unwraps). A 404
+ * is thrown when no membership matches (unknown user in this tenant).
+ */
+export async function setMemberRole(
+	db: DojoClient,
+	tenantId: string,
+	userId: string,
+	role: unknown
+): Promise<{ user_id: string; role: string }> {
+	if (!isMemberRole(role)) {
+		throw new AdminError(400, 'role must be contributor, maintainer, lead, or admin');
+	}
+	const { data, error } = await db
+		.from('memberships')
+		.update({ role, updated_at: new Date().toISOString() })
+		.eq('tenant_id', tenantId)
+		.eq('user_id', userId)
+		.select('user_id, role')
+		.maybeSingle();
+	if (error) throw new AdminError(500, error.message);
+	if (!data) throw new AdminError(404, 'no such member in this tenant');
+	return data as { user_id: string; role: string };
+}
+
+/** A validated `POST …/members` body — the port of dojo-mind's `NewMembership`. */
+export interface NewMemberInput {
+	user_id: string;
+	kind: string;
+	authenticated_via: string;
+	role: MemberRole;
+	attribution_default?: string;
+}
+
+/** The membership kinds — `dojo.membership_kind`. */
+const MEMBERSHIP_KINDS = ['employer', 'client', 'community', 'personal'] as const;
+
+/**
+ * Validate an untrusted `POST …/members` body into a {@link NewMemberInput}, or
+ * throw AdminError(400). `role` defaults to `contributor` when neither `role` nor
+ * `git_provider_role` resolves to a known role (dojo-mind derives from the
+ * `dojo.roles` map; the console always sends an explicit role for the override).
+ */
+export function parseNewMember(body: Record<string, unknown>): NewMemberInput {
+	const userId = typeof body.user_id === 'string' ? body.user_id.trim() : '';
+	if (!userId) throw new AdminError(400, 'user_id is required');
+	const kind = typeof body.kind === 'string' ? body.kind : '';
+	if (!(MEMBERSHIP_KINDS as readonly string[]).includes(kind)) {
+		throw new AdminError(400, 'kind must be employer, client, community, or personal');
+	}
+	const via = body.authenticated_via;
+	if (!isAuthMethod(via)) {
+		throw new AdminError(400, 'authenticated_via must be sso, github_oauth, or device_code');
+	}
+	// Explicit `role` wins; else the git-provider-derived role; else contributor.
+	const role = isMemberRole(body.role)
+		? body.role
+		: isMemberRole(body.git_provider_role)
+			? body.git_provider_role
+			: 'contributor';
+	const out: NewMemberInput = { user_id: userId, kind, authenticated_via: via as string, role };
+	if (isAttributionMode(body.attribution_default)) {
+		out.attribution_default = body.attribution_default as string;
+	}
+	return out;
+}
+
+/**
+ * Provision a membership (`POST …/members`) — the port of dojo-mind's
+ * `add_membership`. `dojo_url` mirrors the tenant key (the daemon derives the
+ * dōjō url from the same origin/org); returns `{ id, role }` (the shape
+ * `admin-data.ts addMember()` unwraps). A duplicate `(tenant, user)` is a 409.
+ */
+export async function addMember(
+	db: DojoClient,
+	tenantId: string,
+	dojoUrl: string,
+	input: NewMemberInput
+): Promise<{ id: string; role: string }> {
+	const { data, error } = await db
+		.from('memberships')
+		.insert({
+			tenant_id: tenantId,
+			user_id: input.user_id,
+			dojo_url: dojoUrl,
+			kind: input.kind,
+			authenticated_via: input.authenticated_via,
+			role: input.role,
+			...(input.attribution_default ? { attribution_default: input.attribution_default } : {})
+		})
+		.select('id, role')
+		.single();
+	if (error) {
+		// Unique (tenant_id, user_id) violation → already a member.
+		if (error.code === '23505') throw new AdminError(409, 'already a member of this tenant');
+		throw new AdminError(500, error.message);
+	}
+	return data as { id: string; role: string };
+}
+
+// ── policies: upsert / patch / delete ────────────────────────────────────────
+
+/** A validated `POST …/policies` body — the port of dojo-mind's `UpsertPolicy`. */
+export interface UpsertPolicyInput {
+	scope_key: string;
+	attribution_default?: string;
+	confidentiality?: unknown;
+	retention_days?: number | null;
+}
+
+/** Validate a retention_days value (a non-negative integer, or null/absent). */
+function parseRetention(v: unknown): number | null | undefined {
+	if (v == null) return v === null ? null : undefined;
+	if (typeof v !== 'number' || !Number.isInteger(v) || v < 0) {
+		throw new AdminError(400, 'retention_days must be a non-negative integer');
+	}
+	return v;
+}
+
+/**
+ * Validate a `POST …/policies` body into an {@link UpsertPolicyInput}, or throw
+ * AdminError(400). `scope_key` is required; `attribution_default` (when present)
+ * must be a `dojo.attribution_mode`.
+ */
+export function parseUpsertPolicy(body: Record<string, unknown>): UpsertPolicyInput {
+	const scopeKey = typeof body.scope_key === 'string' ? body.scope_key.trim() : '';
+	if (!scopeKey) throw new AdminError(400, 'scope_key is required');
+	const out: UpsertPolicyInput = { scope_key: scopeKey };
+	if (body.attribution_default !== undefined) {
+		if (!isAttributionMode(body.attribution_default)) {
+			throw new AdminError(400, 'attribution_default must be named, anonymous, or dereferenced');
+		}
+		out.attribution_default = body.attribution_default as string;
+	}
+	if (body.confidentiality !== undefined) out.confidentiality = body.confidentiality;
+	const retention = parseRetention(body.retention_days);
+	if (retention !== undefined) out.retention_days = retention;
+	return out;
+}
+
+/**
+ * Create-or-edit a policy by `(tenant, scope_key)` (`POST …/policies`, upsert) —
+ * the port of dojo-mind's `upsert_policy`. Returns `{ id, scope_key }` (the shape
+ * `admin-data.ts upsertPolicy()` unwraps).
+ */
+export async function upsertPolicy(
+	db: DojoClient,
+	tenantId: string,
+	input: UpsertPolicyInput
+): Promise<{ id: string; scope_key: string }> {
+	const row: Record<string, unknown> = {
+		tenant_id: tenantId,
+		scope_key: input.scope_key,
+		updated_at: new Date().toISOString()
+	};
+	if (input.attribution_default !== undefined) row.attribution_default = input.attribution_default;
+	if (input.confidentiality !== undefined) row.confidentiality = input.confidentiality;
+	if (input.retention_days !== undefined) row.retention_days = input.retention_days;
+	const { data, error } = await db
+		.from('policies')
+		.upsert(row, { onConflict: 'tenant_id,scope_key' })
+		.select('id, scope_key')
+		.single();
+	if (error) throw new AdminError(500, error.message);
+	return data as { id: string; scope_key: string };
+}
+
+/** A validated `PATCH …/policies/{id}` body — the port of dojo-mind's
+ *  `PatchPolicy` (every field optional; an absent field is left unchanged). */
+export interface PatchPolicyInput {
+	attribution_default?: string;
+	confidentiality?: unknown;
+	retention_days?: number | null;
+}
+
+/** Validate a `PATCH …/policies/{id}` body into a {@link PatchPolicyInput}. */
+export function parsePatchPolicy(body: Record<string, unknown>): PatchPolicyInput {
+	const out: PatchPolicyInput = {};
+	if (body.attribution_default !== undefined) {
+		if (!isAttributionMode(body.attribution_default)) {
+			throw new AdminError(400, 'attribution_default must be named, anonymous, or dereferenced');
+		}
+		out.attribution_default = body.attribution_default as string;
+	}
+	if (body.confidentiality !== undefined) out.confidentiality = body.confidentiality;
+	const retention = parseRetention(body.retention_days);
+	if (retention !== undefined) out.retention_days = retention;
+	return out;
+}
+
+/**
+ * Patch a policy by id (`PATCH …/policies/{id}`) — the port of dojo-mind's
+ * `patch_policy`. Returns `{ id }`; a 404 is thrown when no tenant policy matches.
+ */
+export async function patchPolicy(
+	db: DojoClient,
+	tenantId: string,
+	id: string,
+	input: PatchPolicyInput
+): Promise<{ id: string }> {
+	const row: Record<string, unknown> = { updated_at: new Date().toISOString() };
+	if (input.attribution_default !== undefined) row.attribution_default = input.attribution_default;
+	if (input.confidentiality !== undefined) row.confidentiality = input.confidentiality;
+	if (input.retention_days !== undefined) row.retention_days = input.retention_days;
+	const { data, error } = await db
+		.from('policies')
+		.update(row)
+		.eq('tenant_id', tenantId)
+		.eq('id', id)
+		.select('id')
+		.maybeSingle();
+	if (error) throw new AdminError(500, error.message);
+	if (!data) throw new AdminError(404, 'no such policy');
+	return data as { id: string };
+}
+
+/**
+ * Delete a policy by id (`DELETE …/policies/{id}`) — returns `true` when a row
+ * was removed, `false` when none matched (the handler maps false → 404).
+ */
+export async function deletePolicy(db: DojoClient, tenantId: string, id: string): Promise<boolean> {
+	const { data, error } = await db
+		.from('policies')
+		.delete()
+		.eq('tenant_id', tenantId)
+		.eq('id', id)
+		.select('id');
+	if (error) throw new AdminError(500, error.message);
+	return (data?.length ?? 0) > 0;
+}
+
+// ── identities: create / patch / delete ──────────────────────────────────────
+
+/** A validated `POST …/identities` body — the port of dojo-mind's `NewIdentity`. */
+export interface NewIdentityInput {
+	user_id: string;
+	provider: string;
+	subject: string;
+	email?: string;
+	display_name?: string;
+}
+
+/** Validate a `POST …/identities` body into a {@link NewIdentityInput}, or throw
+ *  AdminError(400). `user_id`, `provider` (an auth method), `subject` required. */
+export function parseNewIdentity(body: Record<string, unknown>): NewIdentityInput {
+	const userId = typeof body.user_id === 'string' ? body.user_id.trim() : '';
+	if (!userId) throw new AdminError(400, 'user_id is required');
+	if (!isAuthMethod(body.provider)) {
+		throw new AdminError(400, 'provider must be sso, github_oauth, or device_code');
+	}
+	const subject = typeof body.subject === 'string' ? body.subject.trim() : '';
+	if (!subject) throw new AdminError(400, 'subject is required');
+	const out: NewIdentityInput = { user_id: userId, provider: body.provider as string, subject };
+	if (typeof body.email === 'string') out.email = body.email;
+	if (typeof body.display_name === 'string') out.display_name = body.display_name;
+	return out;
+}
+
+/**
+ * Wire an identity provider (`POST …/identities`) — the port of dojo-mind's
+ * `add_identity`. Returns `{ id }`; a duplicate `(tenant, provider, subject)` is
+ * a 409.
+ */
+export async function createIdentity(
+	db: DojoClient,
+	tenantId: string,
+	input: NewIdentityInput
+): Promise<{ id: string }> {
+	const { data, error } = await db
+		.from('identities')
+		.insert({
+			tenant_id: tenantId,
+			user_id: input.user_id,
+			provider: input.provider,
+			subject: input.subject,
+			email: input.email ?? null,
+			display_name: input.display_name ?? null
+		})
+		.select('id')
+		.single();
+	if (error) {
+		if (error.code === '23505') throw new AdminError(409, 'that identity is already mapped');
+		throw new AdminError(500, error.message);
+	}
+	return data as { id: string };
+}
+
+/** A validated `PATCH …/identities/{id}` body — email + display_name only. */
+export interface PatchIdentityInput {
+	email?: string;
+	display_name?: string;
+}
+
+/** Validate a `PATCH …/identities/{id}` body into a {@link PatchIdentityInput}. */
+export function parsePatchIdentity(body: Record<string, unknown>): PatchIdentityInput {
+	const out: PatchIdentityInput = {};
+	if (body.email !== undefined) {
+		if (typeof body.email !== 'string') throw new AdminError(400, 'email must be a string');
+		out.email = body.email;
+	}
+	if (body.display_name !== undefined) {
+		if (typeof body.display_name !== 'string') {
+			throw new AdminError(400, 'display_name must be a string');
+		}
+		out.display_name = body.display_name;
+	}
+	return out;
+}
+
+/**
+ * Update an identity's email / display name (`PATCH …/identities/{id}`) — the
+ * port of dojo-mind's `update_identity`. Returns `{ id }`; a 404 when none matches.
+ */
+export async function updateIdentity(
+	db: DojoClient,
+	tenantId: string,
+	id: string,
+	input: PatchIdentityInput
+): Promise<{ id: string }> {
+	const row: Record<string, unknown> = {};
+	if (input.email !== undefined) row.email = input.email;
+	if (input.display_name !== undefined) row.display_name = input.display_name;
+	const { data, error } = await db
+		.from('identities')
+		.update(row)
+		.eq('tenant_id', tenantId)
+		.eq('id', id)
+		.select('id')
+		.maybeSingle();
+	if (error) throw new AdminError(500, error.message);
+	if (!data) throw new AdminError(404, 'no such identity');
+	return data as { id: string };
+}
+
+/**
+ * Delete an identity by id (`DELETE …/identities/{id}`) — returns `true` when a
+ * row was removed, `false` when none matched (the handler maps false → 404).
+ */
+export async function deleteIdentity(db: DojoClient, tenantId: string, id: string): Promise<boolean> {
+	const { data, error } = await db
+		.from('identities')
+		.delete()
+		.eq('tenant_id', tenantId)
+		.eq('id', id)
+		.select('id');
+	if (error) throw new AdminError(500, error.message);
+	return (data?.length ?? 0) > 0;
 }

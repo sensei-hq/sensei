@@ -6,6 +6,11 @@ import { describe, it, expect } from 'vitest';
 import {
 	shapeIncidents,
 	listIncidents,
+	createIncident,
+	parseNewIncident,
+	updateIncident,
+	parsePatchIncident,
+	deleteIncident,
 	IncidentsError,
 	type Incident,
 	type DojoClient
@@ -79,5 +84,90 @@ describe('listIncidents', () => {
 	it('throws IncidentsError(500) on a query error', async () => {
 		const db = makeDb({ data: null, error: { message: 'boom' } });
 		await expect(listIncidents(db, 't1')).rejects.toThrow(IncidentsError);
+	});
+});
+
+// ── writes ───────────────────────────────────────────────────────────────────
+type MutTerminal = { data?: unknown; error: unknown };
+function makeMutDb(result: MutTerminal) {
+	const captured: { op?: string; payload?: unknown } = {};
+	const b: Record<string, unknown> = {};
+	b.from = () => b;
+	b.update = (p: unknown) => {
+		captured.op = 'update';
+		captured.payload = p;
+		return b;
+	};
+	b.insert = (p: unknown) => {
+		captured.op = 'insert';
+		captured.payload = p;
+		return b;
+	};
+	b.delete = () => {
+		captured.op = 'delete';
+		return b;
+	};
+	b.eq = () => b;
+	b.select = () => b;
+	b.maybeSingle = () => Promise.resolve(result);
+	b.single = () => Promise.resolve(result);
+	b.then = (resolve: (v: MutTerminal) => unknown) => resolve(result);
+	return { db: b as unknown as DojoClient, captured };
+}
+
+describe('parseNewIncident', () => {
+	it('requires a title', () => {
+		expect(() => parseNewIncident({})).toThrow(IncidentsError);
+	});
+	it('defaults severity to medium and rejects a bad severity', () => {
+		expect(parseNewIncident({ title: 'x' }).severity).toBe('medium');
+		expect(parseNewIncident({ title: 'x', severity: 'critical' }).severity).toBe('critical');
+		expect(() => parseNewIncident({ title: 'x', severity: 'ultra' })).toThrow();
+	});
+});
+
+describe('createIncident', () => {
+	it('inserts the incident and returns { id, severity }', async () => {
+		const { db, captured } = makeMutDb({ data: { id: 'i1', severity: 'high' }, error: null });
+		const out = await createIncident(db, 't1', parseNewIncident({ title: 'leak', severity: 'high' }));
+		expect(out).toEqual({ id: 'i1', severity: 'high' });
+		expect((captured.payload as { title: string }).title).toBe('leak');
+	});
+});
+
+describe('parsePatchIncident', () => {
+	it('rejects an empty body and bad enums', () => {
+		expect(() => parsePatchIncident({})).toThrow(IncidentsError);
+		expect(() => parsePatchIncident({ severity: 'x' })).toThrow();
+		expect(() => parsePatchIncident({ status: 'x' })).toThrow();
+	});
+	it('resolves on status=resolved or resolved:true; reopens on open/investigating', () => {
+		expect(parsePatchIncident({ status: 'resolved' })).toMatchObject({ resolve: true });
+		expect(parsePatchIncident({ resolved: true })).toMatchObject({ resolve: true, status: 'resolved' });
+		expect(parsePatchIncident({ status: 'investigating' })).toMatchObject({ reopen: true });
+	});
+});
+
+describe('updateIncident', () => {
+	it('stamps resolved_at when resolving', async () => {
+		const { db, captured } = makeMutDb({ data: { id: 'i1' }, error: null });
+		await updateIncident(db, 't1', 'i1', parsePatchIncident({ resolved: true }));
+		expect((captured.payload as { resolved_at: unknown }).resolved_at).toBeTypeOf('string');
+	});
+	it('clears resolved_at when reopening', async () => {
+		const { db, captured } = makeMutDb({ data: { id: 'i1' }, error: null });
+		await updateIncident(db, 't1', 'i1', parsePatchIncident({ status: 'open' }));
+		expect((captured.payload as { resolved_at: unknown }).resolved_at).toBeNull();
+	});
+	it('404s when nothing matched', async () => {
+		const { db } = makeMutDb({ data: null, error: null });
+		await expect(updateIncident(db, 't1', 'i9', parsePatchIncident({ severity: 'low' }))).rejects.toMatchObject({ status: 404 });
+	});
+});
+
+describe('deleteIncident', () => {
+	it('is true when a row was removed, false when none', async () => {
+		expect(await deleteIncident(makeMutDb({ data: [{ id: 'i1' }], error: null }).db, 't1', 'i1')).toBe(true);
+		expect(await deleteIncident(makeMutDb({ data: [], error: null }).db, 't1', 'i9')).toBe(false);
 	});
 });

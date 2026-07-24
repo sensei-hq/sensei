@@ -27,7 +27,8 @@
 		policies = [],
 		audit = [],
 		me = 'You',
-		mobile = false
+		mobile = false,
+		onSetRole
 	}: {
 		orgName: string;
 		tab?: string;
@@ -36,7 +37,14 @@
 		audit?: KitChatTurn[];
 		me?: string;
 		mobile?: boolean;
+		/** Change a member's role (admin). Called with the row + the chosen role;
+		 *  absent = read-only (fixture render). The row must carry a `userId`. */
+		onSetRole?: (member: KitMember, role: string) => void;
 	} = $props();
+
+	/** The additive role ladder the set-role picker offers (matches
+	 *  `dojo.member_role`). */
+	const ROLE_OPTIONS = ['contributor', 'maintainer', 'lead', 'admin'];
 
 	// The active tab. The nav shares this one screen between the `members` and
 	// `audit` ids, so a members↔audit navigation changes the `tab` prop from the
@@ -97,7 +105,25 @@
 						</div>
 					</div>
 					<span class="text-ink-mute text-xs">{m.active}</span>
-					<RoleTag role={m.role} />
+					{#if onSetRole && m.userId && !m.you}
+						<!-- Change-role picker (admin): a native select keeps the kit lean
+						     and stays keyboard/a11y-correct. The viewer's own row stays a
+						     read-only tag so an admin can't accidentally demote themselves. -->
+						<label class="sr-only" for={'role-' + m.userId}>Role for {m.name}</label>
+						<select
+							id={'role-' + m.userId}
+							class="bg-paper-soft border-paper-edge text-ink rounded border text-xs"
+							style="padding: 4px 8px"
+							value={m.role}
+							onchange={(e) => onSetRole?.(m, (e.currentTarget as HTMLSelectElement).value)}
+						>
+							{#each ROLE_OPTIONS as r (r)}
+								<option value={r}>{r}</option>
+							{/each}
+						</select>
+					{:else}
+						<RoleTag role={m.role} />
+					{/if}
 					<Icon name="alt-arrow-right" size={16} toneClass="text-ink-faint" />
 				</div>
 			{/each}
