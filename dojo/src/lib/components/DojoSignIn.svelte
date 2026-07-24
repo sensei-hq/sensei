@@ -15,6 +15,28 @@
 	let status = $state<'idle' | 'sending' | 'sent' | 'error'>('idle');
 	let message = $state('');
 
+	// GitHub OAuth. kavach maps a non-magic provider to signInWithOAuth; the
+	// redirect returns to this origin. Requires the GitHub provider enabled on
+	// the cloud Supabase project (client id/secret + callback) to complete —
+	// without it the provider surfaces an error here instead of silently failing.
+	async function signInGithub() {
+		if (status === 'sending') return;
+		const signIn = kavach?.signIn as
+			| ((c: {
+					provider: string;
+					redirectTo?: string;
+			  }) => Promise<{ error?: { message?: string } }>)
+			| undefined;
+		if (!signIn) return;
+		status = 'sending';
+		message = '';
+		const result = await signIn({ provider: 'github', redirectTo: window.location.origin });
+		if (result?.error) {
+			status = 'error';
+			message = result.error.message ?? 'Could not start GitHub sign-in.';
+		}
+	}
+
 	async function sendMagicLink(event: SubmitEvent) {
 		event.preventDefault();
 		if (!email || status === 'sending') return;
@@ -138,13 +160,14 @@
 				GitHub brings your organizations and roles automatically. No GitHub? Use a magic link.
 			</p>
 
-			<!-- primary · GitHub (OAuth wiring deferred to a later chunk) -->
+			<!-- primary · GitHub OAuth -->
 			<button
 				type="button"
-				disabled
-				class="bg-primary text-on-primary flex w-full cursor-not-allowed items-center justify-center gap-3 rounded-lg px-4 py-3 text-sm font-medium opacity-55"
+				onclick={signInGithub}
+				disabled={status === 'sending'}
+				class="bg-primary text-on-primary flex w-full cursor-pointer items-center justify-center gap-3 rounded-lg px-4 py-3 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-55"
 			>
-				<span class="i-auth-github h-[18px] w-[18px]" aria-hidden="true"></span>
+				<span class="i-simple-icons:github h-[18px] w-[18px]" aria-hidden="true"></span>
 				Continue with GitHub
 			</button>
 			<div class="text-ink-faint mt-2 text-center text-xs">

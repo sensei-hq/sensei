@@ -14,6 +14,7 @@
     "test:watch": "vitest --config vitest.config.ts"
   },
   "devDependencies": {
+    "@iconify-json/simple-icons": "^1.2.91",
     "@iconify-json/solar": "^1.2.5",
     "@rokkit/cli": "^1.2.0",
     "@sveltejs/adapter-auto": "^7.0.1",

@@ -22,4 +22,19 @@ describe('DojoSignIn', () => {
 		expect(getByText('lessons shared this week')).toBeTruthy();
 		expect(getByText('approved & distributed')).toBeTruthy();
 	});
+
+	it('GitHub button is enabled and starts GitHub OAuth via kavach on click', async () => {
+		const calls: Array<{ provider: string; redirectTo?: string }> = [];
+		const signIn = async (c: { provider: string; redirectTo?: string }) => {
+			calls.push(c);
+			return {};
+		};
+		const { getByRole } = render(DojoSignIn, { context: new Map([['kavach', { signIn }]]) });
+		const btn = getByRole('button', { name: /Continue with GitHub/ }) as HTMLButtonElement;
+		expect(btn.disabled).toBe(false);
+		btn.click();
+		await Promise.resolve();
+		expect(calls).toHaveLength(1);
+		expect(calls[0].provider).toBe('github');
+	});
 });
