@@ -78,7 +78,7 @@ async fn apply_action(
                 RunEventKind::Stalled,
                 None,
                 None,
-                &serde_json::json!({ "note": "heartbeat stale; watchdog marked stalled" }),
+                &serde_json::json!({ "note": "no progress in a while — nudge to continue" }),
             )
             .await
             .map_err(|e| format!("append_run_event(Stalled) failed: {e}"))?;

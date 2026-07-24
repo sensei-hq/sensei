@@ -1,7 +1,7 @@
 ---
 title: Relay stall signal — "no update in 5 min" needs progress-staleness, not heartbeat
 date: 2026-07-24
-status: design note (NOT yet implemented — needs Jerry's sign-off on the "what counts as progress" line)
+status: SHIPPED (develop 773fc4a2 + 4eefad95) — Jerry's "progress = an agent running or awaited; nothing running + work remaining = stall" locked the design; implemented + live-verified
 relates: docs/plan/relay-engine.md · crates/senseid/src/run_watchdog.rs · tasks/handlers/advance_run.rs · tasks/watchdog_scheduler.rs
 ---
 
@@ -63,9 +63,22 @@ exactly the progress signal this would read: while the agent calls `update_phase
 events are fresh; when it goes quiet for 5 min, they go stale → stall → nudge. The input
 exists; only the watchdog's *reference timestamp* needs to change.
 
-## Not done because
+## Shipped (2026-07-24)
 
-Redefining the "am I stuck?" signal unattended risks false-stalls (nag) or never-stalls
-(silent) — the exact failure Jerry wants to avoid. The **progress/noise line (step 1)** and
-the **5-min default** are product calls. Everything else is mechanical + testable
-(pure `is_progress()` unit tests + a watchdog tick test with a stubbed clock).
+Jerry's definition — *"progress = at least one agent running or being awaited; nothing
+running + work remaining = stalled (= stopped to ask); limit-wait is a distinct resumable
+state"* — locked the two open calls (the progress/noise line = exclude `Housekeeping` +
+daemon lifecycle; the 5-min default). Implemented as the two-window watchdog above:
+`RunEventKind::is_progress()`, `PgStore::last_progress_at`, `assess_run(last_progress,
+last_heartbeat, …)`, the phase-bridge revive, and the RFC-3339 fix (`773fc4a2` + `4eefad95`).
+
+**Live-verified:** a quiet run → `stalled` (nudgeable); a backdated no-progress run →
+`stalled` on the tick; `update_phase` → revived to `running`; stays running across sweeps.
+
+**Still open (v2, for when `drive` turns on):** "waiting for it" during a 600s in-flight
+drive step needs the window to exceed the step (or count the in-flight step as progress) —
+today `drive` is OFF so it doesn't bite. And a richer liveness signal (tool/hook activity,
+not just `update_phase`) would tighten the window without false-stalling long single phases.
+External agents hitting a usage limit can't yet self-mark `paused` (auto-resume) — they read
+as `stalled` until they resume; wiring an MCP `pause_run(until)` or hook-based limit
+detection is the follow-up so limit-waits nudge-free-resume.
