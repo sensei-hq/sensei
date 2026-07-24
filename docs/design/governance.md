@@ -45,11 +45,10 @@ lives.
 
 ## Identity, membership & routing
 
-- Auth plane: `crates/dojo-mind/src/auth.rs` (`Role`, `role_satisfies`,
-  `verify_supabase_jwt`, `DojoAccess`, `member_role_to_access`) — Supabase JWT
-  → `dojo.memberships.user_id` → role → access floor
-  (`member < contributor < lead < maintainer < admin`). Ported to the SaaS
-  Worker as `dojo/src/lib/server/dojo-auth.ts` (`resolveTenantAccess`).
+- Auth plane: `dojo/src/lib/server/dojo-auth.ts` (`resolveTenantAccess`,
+  role/access-floor logic) — Supabase JWT → `dojo.memberships.user_id` → role →
+  access floor (`member < contributor < lead < maintainer < admin`). *This is
+  the Worker port of the removed `dojo-mind` Rust auth plane.*
 - Membership types (employer · client · community · personal) bind a project
   to exactly one dōjō; a finding routes only there; client takes precedence —
   see `dojo.member_role` DDL comment and `docs/architecture/dojo.md`
@@ -60,19 +59,19 @@ lives.
 
 ## Promotion / triage lifecycle (contribute → distribute)
 
-- Federation store: `crates/dojo-mind/src/store.rs` (`DojoStore`); HTTP surface
-  `crates/dojo-mind/src/api.rs` (`build_router` — `/v1/rules`, `/v1/t/{tenant}/
-  triage`, `/v1/t/{tenant}/triage/promote`, `/v1/t/{tenant}/audit`,
-  `compliance/export`).
-- Auto-approve vs human triage: `crates/dojo-mind/src/collective/promote.rs`
-  (`score`, `AUTO_APPROVE_SCORE = 0.8`, `PER_CONTRIBUTOR_WEIGHT`,
-  `FTR_DELTA_FULL_CREDIT`, `K_ANONYMITY_MIN_CONTRIBUTORS = 3` — a global-scope
-  artifact needs ≥3 distinct contributors before it can auto-publish, so a
-  published finding can never de-anonymize a lone contributor).
-- SaaS console porting status + the "one deployable, no separate Rust host"
-  decision: `docs/architecture/dojo-deployment.md` §2 (`dojo-mind`'s `/v1` is
-  ~80% CRUD, ported as SvelteKit routes; `engagements` is the reference
-  pattern, `ccd08bc2`).
+- Federation store + HTTP surface: the dojo Worker's `/v1` server routes
+  (`dojo/src/routes/v1/…/+server.ts` — `/v1/t/{tenant}/rules`, `.../artifacts`,
+  `.../triage`, `.../triage/promote`, `.../audit`, `compliance/export`). *Ported
+  from the removed `dojo-mind` Rust service (`DojoStore`, `build_router`).*
+- Auto-approve vs human triage — the promotion scoring (auto-approve score 0.8,
+  per-contributor weight, FTR-delta credit, k-anonymity floor of ≥3 distinct
+  contributors before a global-scope artifact can auto-publish, so a published
+  finding can never de-anonymize a lone contributor). *Ported into the Worker
+  from the removed `dojo-mind` `collective/promote.rs`.*
+- SaaS console porting + the "one deployable, no separate Rust host" decision:
+  `docs/architecture/dojo-deployment.md` §2 (the old `dojo-mind` `/v1` was ~80%
+  CRUD, ported as SvelteKit routes; `engagements` is the reference pattern,
+  `ccd08bc2`; the Rust crate is now removed).
 
 ## Confidentiality, anonymization & audit
 
@@ -80,9 +79,8 @@ lives.
   and the "universal strip" (client work is anonymized the same way every
   time, or it doesn't leave): `docs/architecture/dojo.md` §"Principles".
 - Immutable audit trail + leak-guard: `/v1/t/{tenant_key}/audit`,
-  `/audit/artifacts`, `/compliance/export` routes in
-  `crates/dojo-mind/src/api.rs`; lead-role tests in
-  `crates/dojo-mind/tests/dojo_lead_test.rs`.
+  `/audit/artifacts`, `/compliance/export` routes in the dojo Worker
+  (`dojo/src/routes/v1/…`; ported from the removed `dojo-mind` service).
 
 ## Collective vs dōjō
 
@@ -97,15 +95,17 @@ lives.
 
 - One codebase, two deploy targets: sensei-hosted Cloudflare Worker
   (`dojo.sensei-hq.com`, SvelteKit + `/v1` routes same-origin, Supabase cloud)
-  or in-house (org runs the same service + console on its own infra, data
+  or in-house (org runs the same Worker + console on its own infra, data
   never leaves the company). Full wiring: `docs/architecture/dojo-deployment.md`.
-- `dojo-mind` (Rust binary, `crates/dojo-mind`) is retained for local dev and
-  the future cross-dojo federation pull, not as the hosted console backend.
+- The `dojo-mind` Rust binary has been **removed** (retirement complete): the
+  Worker `/v1` is the only dōjō backend, for the console and for senseid's
+  federation (rules + artifacts over the `dojo_protocol` wire — see
+  `crates/senseid/src/federation` and `crates/senseid/src/dojo`).
 
 ## Budgets & controls (future — not yet built)
 
 - No `budget`/`spend` tables exist yet (checked: no hits under
-  `database/ddl/` or `crates/dojo-mind`). The nearest present-day analog is
+  `database/ddl/` or the dojo Worker's `/v1` routes). The nearest present-day analog is
   Relay's per-tier metering note (device count, concurrency —
   `docs/architecture/dojo.md` §"Metering") and the plan-tier framing in
   [Pricing](../features/07-pricing.md).

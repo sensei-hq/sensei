@@ -47,7 +47,7 @@ flowchart TD
 
     subgraph saas["Dōjō — deploy in-house OR SaaS (org boundary)"]
         CONSOLE["console (web)<br/>developer · maintainer · admin · lead"]
-        DOJOSVC["dojo service<br/>dojo-mind · sensei-dojo"]
+        DOJOSVC["dojo backend<br/>Worker /v1 (SvelteKit)"]
         DDB[("dojo DB")]
         CONSOLE --> DOJOSVC --> DDB
     end
@@ -86,7 +86,7 @@ Each links to its detailed design. The order is data-up (foundation first).
 | **app** | [`app.md`](app.md) | Tauri sidecar + SvelteKit UI (24-token rokkit, state layers) | F1–F3, O*, P* |
 | **mcp** | [`mcp.md`](mcp.md) | context server — the tools an assistant calls mid-task | the core loop's *deliver* step |
 | **marketplace** | [`marketplace.md`](marketplace.md) | skills · commands · plugins · agents (hooks, phase chains, mindsets) | capture + delivery into the assistant |
-| **dojo** | [`dojo.md`](dojo.md) | the SaaS console + `dojo-mind` service — memberships, contribute/triage/distribute, anonymization | DJ1–DJ5, theme 5 |
+| **dojo** | [`dojo.md`](dojo.md) | the SaaS console + its `/v1` backend (dojo Worker; the removed `dojo-mind` Rust service was ported here) — memberships, contribute/triage/distribute, anonymization | DJ1–DJ5, theme 5 |
 | **relay** | [`relay.md`](relay.md) → folded into [`dojo.md`](dojo.md#relay--through-the-dōjō) | the daemon coordinator + the away-from-keyboard surface *through the Dōjō* (realtime · PWA + push · relay data model) | R1–R8 |
 | **website** | [`website.md`](website.md) | marketing site + docs surface | adoption |
 
