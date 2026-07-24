@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { SectionHead, Banner, Btn, Chip, ListSection, KanjiToken } from '$lib/components/kit';
+	import { SectionHead, Banner, Btn, Chip, ListSection, KanjiToken, EmptyState } from '$lib/components/kit';
 	import type { KitIncident } from '$lib/components/kit/types';
 	import { severityTone, stateToneClass } from '$lib/dojo2-incidents-view';
 
@@ -34,6 +34,11 @@
 	</Banner>
 
 	<ListSection icon="shield-warning" title="Confidentiality incidents" count={incidents.length}>
+		{#if !incidents.length}
+			<EmptyState kanji="盾" title="No incidents on record.">
+				Confidentiality containments land here. Nothing has needed leak-guard attention.
+			</EmptyState>
+		{/if}
 		{#each incidents as it (it.id)}
 			{@const sv = severityTone(it.severity)}
 			{@const st = stateToneClass(it.state)}
