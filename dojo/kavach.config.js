@@ -26,7 +26,11 @@ export default {
 		auth: '/signin',
 		logout: '/logout',
 		session: '/auth/session',
-		home: '/orgs'
+		// Post-auth landing = the dojo2 personal home (`/you`). It works solo for a
+		// membership-less user (DJ1 — no fabricated tenant) and is populated for
+		// members; entering a specific org is a second step (/orgs → Enter →
+		// /org/{slug}). The org picker (/orgs) is still reachable as "manage".
+		home: '/you'
 	},
 
 	// Route protection. Public: landing, sign-in and the org picker (reached

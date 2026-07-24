@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { orgs } from '$lib/dojo-data';
+import { orgHref } from '$lib/dojo2-nav';
 import {
 	DEFAULT_TENANT_KEY,
 	TENANT_COOKIE,
@@ -92,6 +93,32 @@ describe('tenantCookieString / enterOrg (the one shared tenant-switch path)', ()
 		);
 		expect(navigate).toHaveBeenCalledWith('/(console)/console');
 		expect(landed).toBe('/(console)/console');
+	});
+});
+
+describe('/orgs Enter → dojo2 org context (landing cutover)', () => {
+	// The org picker's `enter(org)` composes `enterOrg` with `orgHref(org.id)` — the
+	// landing cutover routes a picked org to the dojo2 ORG route (/org/{slug}), NOT
+	// the old /console. The slug is the org `id`, the SAME value `orgBySlug` and the
+	// /org/[slug] load resolve against, so entering lands on a valid org route.
+	it('navigates to /org/{id} (not /console) and still sets the tenant cookie', () => {
+		const setCookie = vi.fn();
+		const navigate = vi.fn();
+		const org = orgs[1]; // Globex → id "globex", url "github/globex"
+
+		enterOrg(org, { setCookie, navigate, consoleHref: orgHref(org.id) });
+
+		// Lands on the dojo2 org context, never the retired /console path.
+		expect(navigate).toHaveBeenCalledWith(`/org/${org.id}`);
+		expect(navigate).toHaveBeenCalledWith(expect.stringMatching(/^\/org\//));
+		const dest = navigate.mock.calls[0][0] as string;
+		expect(dest.startsWith('/console')).toBe(false);
+
+		// The shared tenant-switch still persists the dojo_tenant cookie (tenant key
+		// = org.url), so the resolved /org/[slug] context has its selection.
+		expect(setCookie).toHaveBeenCalledWith(
+			`${TENANT_COOKIE}=${encodeURIComponent(org.url)}; path=/; SameSite=Lax`
+		);
 	});
 });
 
