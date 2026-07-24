@@ -15,7 +15,7 @@ use super::workspace::TagBody;
 /// tools returning empty when the caller passes a project *name* (the
 /// natural shape for AI assistants) — they used to only parse as UUID and
 /// silently 400.
-async fn resolve_project_uuid(state: &AppState, id: &str) -> Option<uuid::Uuid> {
+pub(crate) async fn resolve_project_uuid(state: &AppState, id: &str) -> Option<uuid::Uuid> {
     if let Ok(uuid) = uuid::Uuid::parse_str(id) {
         return Some(uuid);
     }
