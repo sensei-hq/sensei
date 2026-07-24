@@ -359,7 +359,7 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
         });
     }
 
-    // Federation: poll registered dojo-mind sources for applicable rule deltas.
+    // Federation: poll registered Dōjō rules sources for applicable rule deltas.
     crate::federation::run_pull_loop(state.pg.clone(), 300);
 
     // Dōjō upstream contribute cadence (R1): the upstream twin of the pull loop
