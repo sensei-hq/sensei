@@ -66,8 +66,8 @@ describe('ScrRulePacks — adopt/drop rule bundles', () => {
 		expect(getByText('Adopted')).toBeTruthy();
 		expect(getByText('Available')).toBeTruthy();
 		// an adopted pack + an available pack both render by name.
-		expect(getByText('Auth boundary guards')).toBeTruthy();
-		expect(getByText('React · TypeScript baseline')).toBeTruthy();
+		expect(getByText('OWASP ASVS · application security')).toBeTruthy();
+		expect(getByText('Svelte 5 · runes')).toBeTruthy();
 	});
 
 	it('adopting an available pack toggles it to adopted (and fires onToggle)', async () => {
@@ -75,14 +75,17 @@ describe('ScrRulePacks — adopt/drop rule bundles', () => {
 		const { getAllByText, queryAllByText } = render(ScrRulePacks, {
 			props: { packs: rulePacks, onToggle }
 		});
-		// 2 available packs → 2 Adopt buttons; 3 adopted → 3 Drop buttons.
-		expect(getAllByText('Adopt').length).toBe(2);
-		expect(getAllByText('Drop').length).toBe(3);
+		// the fixture split drives the Adopt / Drop tallies (adopted → Drop,
+		// available → Adopt) — derived so the credible-pack content can grow.
+		const adopted = rulePacks.filter((p) => p.adopted).length;
+		const available = rulePacks.length - adopted;
+		expect(getAllByText('Adopt').length).toBe(available);
+		expect(getAllByText('Drop').length).toBe(adopted);
 		await fireEvent.click(getAllByText('Adopt')[0]);
 		expect(onToggle).toHaveBeenCalled();
 		// the toggled pack moved: one fewer Adopt, one more Drop.
-		expect(queryAllByText('Adopt').length).toBe(1);
-		expect(getAllByText('Drop').length).toBe(4);
+		expect(queryAllByText('Adopt').length).toBe(available - 1);
+		expect(getAllByText('Drop').length).toBe(adopted + 1);
 	});
 });
 

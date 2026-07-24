@@ -35,8 +35,11 @@ describe('personalRungs — your standing constitution', () => {
 describe('splitPacks — adopted vs available', () => {
 	it('splits the fixture packs on their adopted flag', () => {
 		const { adopted, available } = splitPacks(rulePacks);
-		expect(adopted.length).toBe(3);
-		expect(available.length).toBe(2);
+		// derived from the fixture split so the credible-pack content can grow.
+		const adoptedCount = rulePacks.filter((p) => p.adopted).length;
+		expect(adopted.length).toBe(adoptedCount);
+		expect(available.length).toBe(rulePacks.length - adoptedCount);
+		expect(adopted.length + available.length).toBe(rulePacks.length);
 		expect(adopted.every((p) => p.adopted)).toBe(true);
 		expect(available.every((p) => !p.adopted)).toBe(true);
 	});

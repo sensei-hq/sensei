@@ -23,7 +23,7 @@ export const NAV_YOU: KitNavGroup[] = [
 		group: 'Work',
 		items: [
 			{ id: 'work', icon: 'widget-4', label: 'Your work' },
-			{ id: 'runs', icon: 'eye', label: 'Live runs', badge: 3 },
+			{ id: 'runs', icon: 'eye', label: 'Live runs' },
 			{ id: 'projects', icon: 'folder', label: 'Projects' }
 		]
 	},
@@ -37,8 +37,8 @@ export const NAV_YOU: KitNavGroup[] = [
 	{
 		group: 'Relay',
 		items: [
-			{ id: 'approve', icon: 'check-circle', label: 'Approve', badge: 2 },
-			{ id: 'decide', icon: 'checklist-minimalistic', label: 'Decide', badge: 2 },
+			{ id: 'approve', icon: 'check-circle', label: 'Approve' },
+			{ id: 'decide', icon: 'checklist-minimalistic', label: 'Decide' },
 			{ id: 'chat', icon: 'chat-round-line', label: 'Chat' }
 		]
 	},
@@ -46,7 +46,7 @@ export const NAV_YOU: KitNavGroup[] = [
 		group: 'Dōjōs',
 		items: [
 			{ id: 'dojos', icon: 'users-group-two-rounded', label: 'My dōjōs' },
-			{ id: 'contributions', icon: 'upload-square', label: 'Contributions', badge: 1 }
+			{ id: 'contributions', icon: 'upload-square', label: 'Contributions' }
 		]
 	}
 ];
@@ -67,15 +67,15 @@ export const NAV_ORG_BASE: OrgNavGroup[] = [
 		items: [
 			{ id: 'home', icon: 'buildings-2', label: 'Home' },
 			{ id: 'ladder', icon: 'scale', label: 'Constitution' },
-			{ id: 'projects', icon: 'folder', label: 'Projects', badge: 4 }
+			{ id: 'projects', icon: 'folder', label: 'Projects' }
 		]
 	},
 	{
 		group: 'Govern',
 		role: 'maintainer',
 		items: [
-			{ id: 'triage', icon: 'inbox', label: 'Triage', badge: 5 },
-			{ id: 'approvals', icon: 'clipboard-check', label: 'Approvals', badge: 2 },
+			{ id: 'triage', icon: 'inbox', label: 'Triage' },
+			{ id: 'approvals', icon: 'clipboard-check', label: 'Approvals' },
 			{ id: 'knowledge', icon: 'book-2', label: 'Knowledge' }
 		]
 	},
@@ -84,7 +84,7 @@ export const NAV_ORG_BASE: OrgNavGroup[] = [
 		role: 'lead',
 		items: [
 			{ id: 'engagements', icon: 'case-round', label: 'Engagements' },
-			{ id: 'incidents', icon: 'shield-warning', label: 'Incidents', badge: 1 },
+			{ id: 'incidents', icon: 'shield-warning', label: 'Incidents' },
 			{ id: 'clientaudit', icon: 'document-text', label: 'Client audit' }
 		]
 	},
@@ -138,15 +138,15 @@ export function navGroupsFor(role: string | null | undefined): KitNavGroup[] {
 /** Personal bottom tabs (mockup `TABS_YOU`). */
 export const TABS_YOU: KitNavItem[] = [
 	{ id: 'work', icon: 'widget-4', label: 'Work' },
-	{ id: 'runs', icon: 'eye', label: 'Runs', badge: 3 },
-	{ id: 'decide', icon: 'checklist-minimalistic', label: 'Needs', badge: 4 },
+	{ id: 'runs', icon: 'eye', label: 'Runs' },
+	{ id: 'decide', icon: 'checklist-minimalistic', label: 'Needs' },
 	{ id: 'chat', icon: 'chat-round-line', label: 'Chat' }
 ];
 
 /** Org bottom tabs (mockup `TABS_ORG`). */
 export const TABS_ORG: KitNavItem[] = [
 	{ id: 'home', icon: 'buildings-2', label: 'Home' },
-	{ id: 'projects', icon: 'folder', label: 'Projects', badge: 4 },
+	{ id: 'projects', icon: 'folder', label: 'Projects' },
 	{ id: 'ladder', icon: 'scale', label: 'Rules' },
 	{ id: 'members', icon: 'users-group-rounded', label: 'Members' }
 ];

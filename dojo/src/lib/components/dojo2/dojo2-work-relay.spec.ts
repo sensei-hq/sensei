@@ -182,4 +182,16 @@ describe('ScrRelayChat — sensei chat thread', () => {
 		await fireEvent.click(getByLabelText('Send reply'));
 		expect(onSend).not.toHaveBeenCalled();
 	});
+
+	it('renders the shared empty state when there is no active run (no thread)', () => {
+		const { getByText, queryByText, queryByPlaceholderText } = render(ScrRelayChat, {
+			props: { thread: [], me }
+		});
+		// the honest empty state — no fabricated project header + empty thread.
+		expect(getByText('No active session.')).toBeTruthy();
+		expect(getByText(/When a run is in flight you can steer it here/)).toBeTruthy();
+		// no fake project name (the old 'lumen-auth' default) and no reply input.
+		expect(queryByText('lumen-auth')).toBeNull();
+		expect(queryByPlaceholderText('reply to sensei…')).toBeNull();
+	});
 });

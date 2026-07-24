@@ -39,30 +39,31 @@
 		by entry. Append-only, exportable as CSV or JSON.
 	</Banner>
 
-	<div class="bg-paper-soft border-paper-edge overflow-hidden rounded-lg border">
-		{#if !entries.length}
-			<EmptyState kanji="録" title="The ledger is empty.">
-				Every share and every strip is recorded here, entry by entry. Nothing has crossed a client
-				boundary yet.
-			</EmptyState>
-		{/if}
-		{#each entries as r (r.t + r.event)}
-			<div class="border-paper-edge flex items-center gap-4 border-b" style="padding: 12px 16px">
-				<KanjiToken char={r.kanji} size="base" toneClass={r.ok ? 'text-ink-mute' : 'text-danger'} w={20} />
-				<div class="flex-1" style="min-width: 0">
-					<div class="text-ink text-sm">{r.event}</div>
-					<div class="mono text-ink-faint text-xs" style="margin-top: 1px">{r.detail}</div>
+	{#if !entries.length}
+		<EmptyState kanji="録" title="The ledger is empty.">
+			Every share and every strip is recorded here, entry by entry. Nothing has crossed a client
+			boundary yet.
+		</EmptyState>
+	{:else}
+		<div class="bg-paper-soft border-paper-edge overflow-hidden rounded-lg border">
+			{#each entries as r (r.t + r.event)}
+				<div class="border-paper-edge flex items-center gap-4 border-b" style="padding: 12px 16px">
+					<KanjiToken char={r.kanji} size="base" toneClass={r.ok ? 'text-ink-mute' : 'text-danger'} w={20} />
+					<div class="flex-1" style="min-width: 0">
+						<div class="text-ink text-sm">{r.event}</div>
+						<div class="mono text-ink-faint text-xs" style="margin-top: 1px">{r.detail}</div>
+					</div>
+					<Chip toneClass="text-ink-mute">{r.client}</Chip>
+					{#if r.ok}
+						<Icon name="check-circle" size={16} toneClass="text-success" />
+					{:else}
+						<Icon name="shield-warning" size={16} toneClass="text-danger" />
+					{/if}
+					<span class="mono text-ink-faint text-xs" style="width: 64px; text-align: right">{r.t}</span>
 				</div>
-				<Chip toneClass="text-ink-mute">{r.client}</Chip>
-				{#if r.ok}
-					<Icon name="check-circle" size={16} toneClass="text-success" />
-				{:else}
-					<Icon name="shield-warning" size={16} toneClass="text-danger" />
-				{/if}
-				<span class="mono text-ink-faint text-xs" style="width: 64px; text-align: right">{r.t}</span>
-			</div>
-		{/each}
-	</div>
+			{/each}
+		</div>
+	{/if}
 
 	<div class="flex flex-wrap gap-2">
 		<Chip icon="lock-keyhole" toneClass="text-ink-mute">Retention · 7 years</Chip>

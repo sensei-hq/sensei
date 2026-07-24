@@ -187,14 +187,24 @@ describe('ScrRelayChat — wired thread', () => {
 		expect(getByText(/Rotate refresh tokens/)).toBeTruthy();
 	});
 
-	it('fires onSend with a trimmed reply', async () => {
+	it('fires onSend with a trimmed reply (when a run is in flight)', async () => {
 		const onSend = vi.fn();
+		// the reply composer only shows for an active run (a non-empty thread) — an
+		// empty thread degrades to the shared EmptyState with no input.
 		const { getByPlaceholderText, getByLabelText } = render(ScrRelayChat, {
-			props: { thread: toKitChatThread([], NOW), onSend }
+			props: { thread: toKitChatThread([wireSegment], NOW), onSend }
 		});
 		await fireEvent.input(getByPlaceholderText('reply to sensei…'), { target: { value: '  ship it  ' } });
 		await fireEvent.click(getByLabelText('Send reply'));
 		expect(onSend).toHaveBeenCalledWith('ship it');
+	});
+
+	it('renders the shared empty state (no composer) with no active run', () => {
+		const { getByText, queryByPlaceholderText } = render(ScrRelayChat, {
+			props: { thread: toKitChatThread([], NOW) }
+		});
+		expect(getByText('No active session.')).toBeTruthy();
+		expect(queryByPlaceholderText('reply to sensei…')).toBeNull();
 	});
 });
 

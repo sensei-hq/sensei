@@ -68,6 +68,23 @@ describe('kit composed primitives render', () => {
 		expect(getByText('sensei surfaces only what it can’t decide alone.')).toBeTruthy();
 	});
 
+	it('EmptyState centers a bordered card (kanji + title + description panel)', () => {
+		const { getByText } = render(EmptyStateHarness, {
+			title: 'Nothing needs you.',
+			body: 'a calm second sentence.'
+		});
+		// the title sits inside a small bordered, rounded, paper-soft card…
+		const card = getByText('Nothing needs you.').closest('div.rounded-lg');
+		expect(card?.className).toContain('border');
+		expect(card?.className).toContain('border-paper-edge');
+		expect(card?.className).toContain('bg-paper-soft');
+		expect(card?.className).toContain('max-w-sm');
+		// …and the card is centered in the available space by its outer wrapper.
+		const outer = card?.parentElement;
+		expect(outer?.className).toContain('items-center');
+		expect(outer?.className).toContain('justify-center');
+	});
+
 	it('SectionHead shows eyebrow, title and count', () => {
 		const { getByText } = render(SectionHeadHarness, {
 			eyebrow: 'my work',
