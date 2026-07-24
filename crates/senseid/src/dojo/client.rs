@@ -370,7 +370,6 @@ impl DojoClient {
     /// answered replies the daemon consumes to continue held runs, plus the new
     /// cursor to persist. Mirrors [`Self::pull_artifacts`] exactly (poll-first;
     /// realtime is a later phone-side add).
-    #[allow(dead_code)] // wired by P1 (round-trip) + P3 (run engine)
     pub async fn poll_inbox(&self, since: i64) -> Result<RelayInboxPull, DojoClientError> {
         let token = self.bearer_async().await?;
         let resp = self
