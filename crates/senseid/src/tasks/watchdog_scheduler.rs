@@ -144,18 +144,32 @@ async fn tick(queue: &TaskQueue, pg: &PgStore, now: DateTime<Utc>, cfg: &Watchdo
             tracing::warn!(run_id = %id, status = %status_str, "watchdog_scheduler: unknown run_status; skipping");
             continue;
         };
-        // Liveness reference: the heartbeat, or started_at for a run that has
-        // never heartbeated. Both unparseable → skip (never panic on bad data).
-        let last_seen = heartbeat
+        // Daemon-liveness reference: the heartbeat, or started_at for a run that
+        // has never heartbeated. Both unparseable → skip (never panic on bad data).
+        let last_heartbeat = heartbeat
             .as_deref()
             .and_then(parse_rfc3339)
             .or_else(|| parse_rfc3339(&started_at));
-        let Some(last_seen) = last_seen else {
+        let Some(last_heartbeat) = last_heartbeat else {
             tracing::warn!(run_id = %id, "watchdog_scheduler: unparseable heartbeat/started_at; skipping");
             continue;
         };
+        // Agent-progress reference: the newest non-housekeeping run event, else
+        // `started_at` for a run that has made no progress yet (so a run that
+        // never advanced stalls 5 min after it started). This is the "no update
+        // in 5 min" signal a running run stalls on. A transient query error falls
+        // back to the (fresh) heartbeat so we never false-stall on a DB hiccup.
+        let started = parse_rfc3339(&started_at).unwrap_or(last_heartbeat);
+        let last_progress = match pg.last_progress_at(&id).await {
+            Ok(Some(ts)) => parse_rfc3339(&ts).unwrap_or(started),
+            Ok(None) => started,
+            Err(e) => {
+                tracing::warn!(run_id = %id, error = %e, "watchdog_scheduler: last_progress_at failed; using heartbeat");
+                last_heartbeat
+            }
+        };
 
-        let action = assess_run(status, last_seen, now, attempts, cfg);
+        let action = assess_run(status, last_progress, last_heartbeat, now, attempts, cfg);
         if let Err(e) = apply_action(queue, pg, &id, action, attempts).await {
             // A single run's write failing must not stop the sweep over the rest.
             tracing::warn!(run_id = %id, error = %e, "watchdog_scheduler: applying action failed; skipping");
@@ -199,10 +213,14 @@ mod tests {
         heartbeat_age_secs: i64,
         attempts: i32,
     ) {
+        // Backdate started_at alongside the heartbeat: with no progress events, the
+        // stall signal's progress reference falls back to started_at, so a
+        // no-progress run this old reads as agent-stale (matches "stale liveness").
         sqlx_core::query::query(
             "UPDATE activity.runs
                 SET status            = $2::sensei.run_status,
                     heartbeat_at      = now() - make_interval(secs => $3),
+                    started_at        = now() - make_interval(secs => $3),
                     recovery_attempts = $4
               WHERE id = $1",
         )
