@@ -37,7 +37,13 @@ export default defineConfig({
 			).pathname,
 			// $app/paths (resolve) likewise isn't generated under vitest; a pass-through
 			// stub lets components that build hrefs (nav, top bar) render in specs.
-			'$app/paths': new URL('./src/lib/test-stubs/app-paths.ts', import.meta.url).pathname
+			'$app/paths': new URL('./src/lib/test-stubs/app-paths.ts', import.meta.url).pathname,
+			// $app/navigation (goto/invalidateAll) — same reason; the LogoutButton
+			// calls goto() on click, so the kit shells need it stubbed to render.
+			'$app/navigation': new URL(
+				'./src/lib/test-stubs/app-navigation.ts',
+				import.meta.url
+			).pathname
 		}
 	}
 });
