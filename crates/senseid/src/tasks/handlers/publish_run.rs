@@ -30,8 +30,17 @@ use super::super::executor::TaskContext;
 use super::super::Task;
 use crate::db::pg_store::DojoMembership;
 use crate::dojo::client::DojoClient;
-use crate::dojo::relay_run_project::run_to_session_update;
+use crate::dojo::relay_nudge::pickup_nudges;
+use crate::dojo::relay_run_project::{
+    plan_events_to_segments, run_to_session_update, segment_progress,
+};
 use crate::runs::Run;
+
+/// How many of a run's newest cadence events to read for the plan→segments
+/// projection. The outline is a handful of phases; this bound keeps the read
+/// cheap while covering every phase of a realistic run (each phase emits only a
+/// couple of phase-transition events).
+const OUTLINE_EVENTS_LIMIT: i64 = 200;
 
 /// Handler for `TaskKind::PublishRun`: federate one run's status to every owning
 /// Dōjō membership. Returns the number of memberships successfully published to.
@@ -63,54 +72,102 @@ pub async fn publish_run(ctx: &TaskContext, task: &Task) -> Result<u32, String> 
         return Ok(0);
     }
 
-    // Newest cadence event timestamp → "last progress N min ago". `list_run_events`
-    // returns newest-first, so the first row (if any) is the latest.
-    let last_event_at = ctx
+    // The run's newest cadence events → the plan outline (phases → segments) +
+    // the "last progress N min ago" timestamp. `list_run_events` is newest-first,
+    // so the first row (if any) is the latest event.
+    let events = ctx
         .pg()
-        .list_run_events(&run_id, 1)
+        .list_run_events(&run_id, OUTLINE_EVENTS_LIMIT)
         .await
-        .map_err(|e| format!("list_run_events failed: {e}"))?
-        .into_iter()
-        .next()
-        .map(|e| e.created_at);
+        .map_err(|e| format!("list_run_events failed: {e}"))?;
+    let last_event_at = events.first().map(|e| e.created_at.clone());
 
-    // P1 chunk 2 publishes the status snapshot (real status + heartbeat + stall).
-    // Plan→segments (progress rollup) is wired in the plan-as-run chunk; until
-    // then progress is an honest 0/0 (a start_run run has no TodoWrite outline).
-    let update = run_to_session_update(&run, last_event_at.as_deref(), 0, 0);
+    // (d) Plan-as-run: a start_run run has no TodoWrite outline, so project its
+    // committed plan phases (expressed via phase_started/phase_done cadence
+    // events) into the relay segments, and derive the progress rollup from them.
+    let segments = plan_events_to_segments(&events);
+    let (progress_done, progress_total) = segment_progress(&segments);
+
+    let update = run_to_session_update(&run, last_event_at.as_deref(), progress_done, progress_total);
 
     let mut published = 0u32;
     // Persist the cloud session id once — from the first membership that acks it.
     let mut persisted = run.dojo_session_id.is_some();
     for m in &memberships {
         let client = DojoClient::for_membership(m);
-        match client.publish_session_update_returning_id(&update).await {
-            Ok(session_id) => {
-                if !persisted {
-                    match uuid::Uuid::parse_str(&session_id) {
-                        Ok(sid) => {
-                            if let Err(e) = ctx.pg().set_run_dojo_session_id(&run_id, &sid).await {
-                                // Non-fatal: the publish succeeded; only the local
-                                // join-id write failed. Log and keep going — the
-                                // next tick retries the persist.
-                                tracing::warn!(run_id = %run_id, error = %e, "publish_run: persisting dojo_session_id failed");
-                            } else {
-                                persisted = true;
-                            }
-                        }
-                        Err(e) => {
-                            tracing::warn!(run_id = %run_id, session_id, error = %e, "publish_run: Worker returned a non-uuid session id");
-                        }
-                    }
-                }
-                published += 1;
-            }
+        let session_id = match client.publish_session_update_returning_id(&update).await {
+            Ok(session_id) => session_id,
             Err(e) => {
                 tracing::warn!(run_id = %run_id, membership = %m.id, error = %e, "publish_run: session publish failed");
+                continue;
+            }
+        };
+        if !persisted {
+            match uuid::Uuid::parse_str(&session_id) {
+                Ok(sid) => {
+                    if let Err(e) = ctx.pg().set_run_dojo_session_id(&run_id, &sid).await {
+                        // Non-fatal: the publish succeeded; only the local join-id
+                        // write failed. Log and keep going — the next tick retries.
+                        tracing::warn!(run_id = %run_id, error = %e, "publish_run: persisting dojo_session_id failed");
+                    } else {
+                        persisted = true;
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(run_id = %run_id, session_id, error = %e, "publish_run: Worker returned a non-uuid session id");
+                }
             }
         }
+        // Upsert the plan outline (idempotent, keyed by session+seq). A segment
+        // failure is logged + skipped: the status snapshot already published, so
+        // the run still surfaces even if the outline lags a tick.
+        if !segments.is_empty()
+            && let Err(e) = client.upsert_segments(&run_id.to_string(), &segments).await
+        {
+            tracing::warn!(run_id = %run_id, membership = %m.id, error = %e, "publish_run: plan segment upsert failed");
+        }
+        published += 1;
     }
+
+    // (e) Nudge pickup — STEER, not drive. Poll the run's owning membership inbox
+    // and SURFACE the human→agent nudges/chats for this run (log). We deliberately
+    // do NOT consume them to advance the run: SENSEI_RUN_DRIVE stays OFF; this is
+    // a manual-steer signal + observability seam only. Best-effort: a poll failure
+    // is logged and skipped (it must never wedge the status publish above).
+    surface_run_nudges(&run_id, &memberships).await;
+
     Ok(published)
+}
+
+/// Poll the run's owning membership inbox and log the human→agent steer messages
+/// for this run. STEER, not drive: it surfaces the human's nudge/chat, never
+/// consumes it to advance the run. Uses the FIRST resolved membership (the run's
+/// owner; personal beta = one). Best-effort — any failure is logged and swallowed
+/// so the nudge poll can never wedge the status publish that already ran.
+///
+/// There is no run-scoped inbox cursor (no new DDL), so this polls from `0` and
+/// logs the surfaced nudges each tick; the run loop's consumer of these is a
+/// later, cursor-backed step. STATUS/steer only.
+async fn surface_run_nudges(run_id: &uuid::Uuid, memberships: &[DojoMembership]) {
+    let Some(m) = memberships.first() else { return };
+    let client = DojoClient::for_membership(m);
+    match client.poll_inbox(0).await {
+        Ok(pull) => {
+            for n in pickup_nudges(&pull.items, &run_id.to_string()) {
+                // Logical only (kind + the human's short message) — never code.
+                tracing::info!(
+                    run_id = %run_id,
+                    inbox_id = n.id.as_deref().unwrap_or(""),
+                    kind = %n.kind,
+                    "relay nudge for run (steer): {}",
+                    n.text
+                );
+            }
+        }
+        Err(e) => {
+            tracing::warn!(run_id = %run_id, membership = %m.id, error = %e, "publish_run: nudge poll failed (steer, non-fatal)");
+        }
+    }
 }
 
 /// The memberships a run federates to: its project-bound membership if the
@@ -224,5 +281,109 @@ mod tests {
         let n = publish_run(&ctx, &task).await.unwrap();
         assert_eq!(n, 0, "no enrolled dojo ⇒ nothing published");
         del_run(pg, &id).await;
+    }
+
+    // Full-path bridge test against an axum stub Worker: seed a project-bound
+    // membership pointing at the stub, create a run with phase events, run the
+    // handler, and assert it publishes the status + plan segments, polls the inbox
+    // for nudges, and persists the cloud session id. Mirrors the client.rs relay
+    // stub tests. DB + macOS-keychain guarded.
+    #[tokio::test]
+    #[cfg_attr(not(target_os = "macos"), ignore)]
+    async fn full_bridge_publishes_status_segments_and_persists_session_id() {
+        use crate::db::pg_store::NewDojoMembership;
+        use crate::runs::RunEventKind;
+        use axum::{extract::Query, routing::get, routing::post, Json, Router};
+        use dojo_protocol::relay::{RelayInboxPull, RelaySegmentsPublish, RelaySessionUpdate};
+        use std::collections::HashMap;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        let Some(ctx) = make_ctx().await else { return; };
+        let pg = ctx.pg();
+
+        // Stub Worker: session returns {id}, segments asserts the projected plan,
+        // inbox returns one human→agent nudge for the run.
+        let seg_hits = Arc::new(AtomicUsize::new(0));
+        let seg_hits2 = seg_hits.clone();
+        async fn session(Json(u): Json<RelaySessionUpdate>) -> Json<serde_json::Value> {
+            // The bridge published a real status + a heartbeat + a progress rollup.
+            assert_eq!(u.progress_total, 2, "two plan phases projected");
+            assert_eq!(u.progress_done, 1, "one phase done");
+            assert!(u.heartbeat_at.is_some(), "heartbeat crossed the wire");
+            Json(serde_json::json!({ "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" }))
+        }
+        let app = Router::new()
+            .route("/v1/t/{origin}/{org}/relay/session", post(session))
+            .route(
+                "/v1/t/{origin}/{org}/relay/segments",
+                post(move |Json(s): Json<RelaySegmentsPublish>| {
+                    let hits = seg_hits2.clone();
+                    async move {
+                        hits.fetch_add(1, Ordering::SeqCst);
+                        assert_eq!(s.segments.len(), 2, "P1 + P2 phase segments");
+                        assert_eq!(s.segments[0].title, "P1");
+                        axum::http::StatusCode::OK
+                    }
+                }),
+            )
+            .route(
+                "/v1/t/{origin}/{org}/relay/inbox",
+                get(|Query(_q): Query<HashMap<String, String>>| async {
+                    Json(RelayInboxPull { items: vec![], cursor: 0 })
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap(); });
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        // Seed a membership pointing at the stub, with a keychain token.
+        let mid = uuid::Uuid::new_v4();
+        let cref = format!("dojo-bridge-{}", uuid::Uuid::new_v4());
+        crate::gateway_keys::set_key(&cref, "device-token-bridge").unwrap();
+        pg.create_dojo_membership(&NewDojoMembership {
+            id: mid,
+            registry_url: format!("http://{addr}"),
+            tenant_key: "github/acme".into(),
+            dojo_url: format!("http://{addr}/github/acme"),
+            kind: "personal".into(),
+            org_slugs: vec![],
+            role: "contributor".into(),
+            authenticated_via: "device_code".into(),
+            attribution_default: "dereferenced".into(),
+            credential_ref: cref.clone(),
+            sync_status: "authenticating".into(),
+        })
+        .await
+        .unwrap();
+
+        // A run (no project → falls back to all enabled memberships = our stub).
+        let id = pg.create_run(&NewRun::default()).await.unwrap();
+        // Stamp a heartbeat (as the AdvanceRun tick would) so the bridge has a
+        // liveness instant to federate — a fresh run is NULL until first ticked.
+        pg.touch_run_heartbeat(&id).await.unwrap();
+        // Plan phases via cadence events: P1 started+done, P2 started.
+        pg.append_run_event(&id, RunEventKind::PhaseStarted, Some("P1"), None, &serde_json::json!({})).await.unwrap();
+        pg.append_run_event(&id, RunEventKind::PhaseDone, Some("P1"), None, &serde_json::json!({})).await.unwrap();
+        pg.append_run_event(&id, RunEventKind::PhaseStarted, Some("P2"), None, &serde_json::json!({})).await.unwrap();
+
+        let task = Task::new(TaskKind::PublishRun, "", &id.to_string());
+        let n = publish_run(&ctx, &task).await.unwrap();
+        assert_eq!(n, 1, "published to the one enrolled membership");
+        assert!(seg_hits.load(Ordering::SeqCst) >= 1, "plan segments were upserted");
+
+        // The cloud session id was persisted onto the run.
+        let run = pg.get_run(&id).await.unwrap().unwrap();
+        assert_eq!(
+            run.dojo_session_id.map(|u| u.to_string()).as_deref(),
+            Some("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+            "the Worker's session id is persisted"
+        );
+
+        del_run(pg, &id).await;
+        sqlx_core::query::query("DELETE FROM sensei.dojo_memberships WHERE id = $1")
+            .bind(mid).execute(pg.pool()).await.unwrap();
+        crate::gateway_keys::delete_key(&cref).unwrap();
     }
 }

@@ -20,8 +20,8 @@
 //! tool output. `goal` is the run's own short goal string (already a human label,
 //! not a prompt body); the daemon set it, so it is safe to mirror.
 
-use crate::runs::Run;
-use dojo_protocol::relay::RelaySessionUpdate;
+use crate::runs::{Run, RunEvent, RunEventKind};
+use dojo_protocol::relay::{RelaySegment, RelaySessionUpdate, SegmentState};
 
 /// A short, single-line label bounded to `max` chars (ellipsized). Keeps the
 /// mirrored `goal` a human phrase, never an unbounded prompt body. Shares the
@@ -104,6 +104,100 @@ pub fn run_to_session_update(
         pause_reason: run.pause_reason.clone(),
         heartbeat_at: run.heartbeat_at.clone(),
     }
+}
+
+/// Project a run's plan into the relay outline (`RelaySegment[]`) — the phone's
+/// Phases view for a `start_run` run, which (unlike the TodoWrite path) has no
+/// per-todo segments.
+///
+/// The daemon has no plan-doc parser and no plan-phases table: a run's plan is
+/// expressed through its cadence log (`activity.run_events`) — each phase surfaces
+/// as `phase_started`/`phase_done` events carrying the `phase` label. So the
+/// committed plan's phases ARE the distinct phase labels the run has advanced
+/// through, in first-seen order. This projects them (newest-relevant kind wins
+/// per phase) into one top-level segment per phase.
+///
+/// Pure — takes the run's events (any order; typically newest-first from
+/// [`crate::db::pg_store::PgStore::list_run_events`]) and returns the outline in
+/// first-seen (chronological) phase order with `seq` = index. Server ids are
+/// `None` (the Worker upserts by session+seq). Zero-knowledge: only the `phase`
+/// label (a short plan label the daemon set) becomes a title — never detail/code.
+pub fn plan_events_to_segments(events: &[RunEvent]) -> Vec<RelaySegment> {
+    // Sort a copy oldest-first so first-seen order is chronological regardless of
+    // the caller's ordering (list_run_events is newest-first). `id` is a
+    // monotonic bigserial, so it is a stable chronological key even when two
+    // events share a timestamp.
+    let mut ordered: Vec<&RunEvent> = events.iter().collect();
+    ordered.sort_by_key(|e| e.id);
+
+    // First-seen phase order + the strongest state seen for each phase.
+    let mut phases: Vec<String> = Vec::new();
+    let mut state_by_phase: std::collections::HashMap<String, SegmentState> =
+        std::collections::HashMap::new();
+
+    for e in ordered {
+        let Some(phase) = e.phase.as_deref().map(str::trim).filter(|p| !p.is_empty()) else {
+            continue;
+        };
+        if let Some(state) = phase_event_state(e.kind) {
+            if !phases.iter().any(|p| p == phase) {
+                phases.push(phase.to_string());
+            }
+            // Later events override earlier ones (a phase that started then
+            // finished ends `Done`; one that later stalled ends `Blocked`).
+            state_by_phase.insert(phase.to_string(), state);
+        }
+    }
+
+    phases
+        .into_iter()
+        .enumerate()
+        .map(|(i, phase)| {
+            let state = state_by_phase.get(&phase).copied().unwrap_or(SegmentState::Pending);
+            RelaySegment {
+                id: None,
+                parent_id: None,
+                seq: i as i32,
+                title: phase,
+                summary: None,
+                detail: None,
+                state,
+                is_gate: false,
+                gate_severity: None,
+                response_verdict: None,
+                response_note: None,
+            }
+        })
+        .collect()
+}
+
+/// The segment state a phase takes from one cadence-event kind, or `None` for a
+/// kind that says nothing about a phase's state (so it neither creates nor
+/// changes a phase segment). A phase that only ever `phase_started` is `Active`;
+/// a `phase_done` marks it `Done`; a run-level failure/stall/crash/block on a
+/// phase reflects onto that phase.
+fn phase_event_state(kind: RunEventKind) -> Option<SegmentState> {
+    match kind {
+        RunEventKind::PhaseStarted => Some(SegmentState::Active),
+        RunEventKind::PhaseDone => Some(SegmentState::Done),
+        RunEventKind::Failed => Some(SegmentState::Failed),
+        RunEventKind::Crashed | RunEventKind::Stalled => Some(SegmentState::Blocked),
+        RunEventKind::GateRaised => Some(SegmentState::Blocked),
+        RunEventKind::GatePassed => Some(SegmentState::Active),
+        // Feature/housekeeping/limit/etc. events don't themselves define a phase's
+        // outline state (they carry a `feature`, not a phase transition).
+        _ => None,
+    }
+}
+
+/// Progress rollup for the session update from projected plan segments:
+/// `(done, total)` where `total` = segment count and `done` = count in the
+/// terminal `Done` state. Matches the TodoWrite path's rollup so the phone reads
+/// both run kinds the same way.
+pub fn segment_progress(segments: &[RelaySegment]) -> (i32, i32) {
+    let total = segments.len() as i32;
+    let done = segments.iter().filter(|s| s.state == SegmentState::Done).count() as i32;
+    (done, total)
 }
 
 #[cfg(test)]
@@ -235,5 +329,79 @@ mod tests {
         let u = run_to_session_update(&r, Some("2026-07-24T12:00:00Z"), 5, 5);
         assert_eq!(u.status, RelayRunStatus::Done);
         assert!(u.status.is_terminal());
+    }
+
+    // ── plan-as-run projector (d) ──────────────────────────────────────
+
+    fn ev(id: i64, kind: RunEventKind, phase: Option<&str>, feature: Option<&str>) -> RunEvent {
+        RunEvent {
+            id,
+            run_id: Uuid::from_u128(0x1111),
+            kind,
+            phase: phase.map(str::to_string),
+            feature: feature.map(str::to_string),
+            detail: serde_json::json!({}),
+            created_at: "2026-07-24T10:00:00Z".into(),
+        }
+    }
+
+    #[test]
+    fn plan_segments_are_phases_in_first_seen_order() {
+        // Events arrive newest-first (as list_run_events returns them); the
+        // projector must still emit phases in chronological (first-seen) order.
+        let events = vec![
+            ev(4, RunEventKind::PhaseStarted, Some("P2"), None),
+            ev(3, RunEventKind::PhaseDone, Some("P1"), None),
+            ev(2, RunEventKind::FeatureDone, Some("P1"), Some("bridge")),
+            ev(1, RunEventKind::PhaseStarted, Some("P1"), None),
+        ];
+        let segs = plan_events_to_segments(&events);
+        assert_eq!(segs.len(), 2, "two distinct phases");
+        assert_eq!(segs[0].title, "P1");
+        assert_eq!(segs[0].seq, 0);
+        assert_eq!(segs[0].state, SegmentState::Done, "P1 started then done");
+        assert_eq!(segs[1].title, "P2");
+        assert_eq!(segs[1].seq, 1);
+        assert_eq!(segs[1].state, SegmentState::Active, "P2 started, not done");
+        // Server ids are None; the Worker upserts by session+seq.
+        assert!(segs.iter().all(|s| s.id.is_none() && s.parent_id.is_none() && !s.is_gate));
+    }
+
+    #[test]
+    fn later_event_overrides_a_phase_state() {
+        // A phase that started, then the run stalled on it → Blocked (the later
+        // event wins over the earlier PhaseStarted's Active).
+        let events = vec![
+            ev(1, RunEventKind::PhaseStarted, Some("P1"), None),
+            ev(2, RunEventKind::Stalled, Some("P1"), None),
+        ];
+        let segs = plan_events_to_segments(&events);
+        assert_eq!(segs.len(), 1);
+        assert_eq!(segs[0].state, SegmentState::Blocked);
+    }
+
+    #[test]
+    fn events_without_a_phase_or_state_are_ignored() {
+        // Feature/housekeeping events (no phase transition) and phase-less events
+        // never create a segment.
+        let events = vec![
+            ev(1, RunEventKind::Housekeeping, None, None),
+            ev(2, RunEventKind::FeatureStarted, Some("P1"), Some("x")), // feature, not a phase transition
+            ev(3, RunEventKind::PhaseStarted, None, None),               // no phase label
+        ];
+        let segs = plan_events_to_segments(&events);
+        assert!(segs.is_empty(), "no phase-transition event ⇒ no segments, got {segs:?}");
+    }
+
+    #[test]
+    fn segment_progress_counts_done_over_total() {
+        let events = vec![
+            ev(1, RunEventKind::PhaseDone, Some("P1"), None),
+            ev(2, RunEventKind::PhaseDone, Some("P2"), None),
+            ev(3, RunEventKind::PhaseStarted, Some("P3"), None),
+        ];
+        let segs = plan_events_to_segments(&events);
+        assert_eq!(segment_progress(&segs), (2, 3), "2 of 3 phases done");
+        assert_eq!(segment_progress(&[]), (0, 0), "empty outline is 0/0");
     }
 }
