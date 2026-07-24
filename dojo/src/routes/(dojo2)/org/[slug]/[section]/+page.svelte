@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { goto } from '$app/navigation';
+	import { goto, invalidateAll } from '$app/navigation';
 	import ScrOrgLadder from '$lib/components/dojo2/ScrOrgLadder.svelte';
 	import ScrProjects from '$lib/components/dojo2/ScrProjects.svelte';
 	import ScrTriage from '$lib/components/dojo2/ScrTriage.svelte';
@@ -14,8 +14,19 @@
 	import ScrHealth from '$lib/components/dojo2/ScrHealth.svelte';
 	import ScrBilling from '$lib/components/dojo2/ScrBilling.svelte';
 	import { orgHref } from '$lib/dojo2-nav';
+	import { requireTenant } from '$lib/org-guard';
+	import { setMemberRole } from '$lib/admin-data';
+	import {
+		createIncident,
+		updateIncident,
+		deleteIncident,
+		updateEngagement,
+		deleteEngagement,
+		createEngagement,
+		DojoApiError
+	} from '$lib/client-data';
 	import { me } from '$lib/components/kit/fixtures';
-	import type { KitProject } from '$lib/components/kit/types';
+	import type { KitProject, KitMember, KitIncident, KitEngagement } from '$lib/components/kit/types';
 
 	// The org-zone section screen. Dispatches to the real screen for every NAV_ORG
 	// destination off the kit fixtures the loader supplies: the Overview
@@ -30,9 +41,45 @@
 	// truth — the shell keeps "Projects" active for the tail).
 	let { data } = $props();
 
+	// A live-action error surfaced honestly under the screen (no silent failure).
+	// Cleared before each attempt; set from the API `error` message on a non-2xx.
+	let actionError = $state<string | null>(null);
+
 	function openProject(p: KitProject) {
 		goto(orgHref(data.slug, 'projects') + '/' + p.id);
 	}
+
+	// Run a console mutation against the resolved org tenant + session token, then
+	// reload so the list reflects the write (invalidateAll re-runs the loader).
+	// A failure surfaces the API message rather than failing silently.
+	async function act(fn: () => Promise<unknown>) {
+		actionError = null;
+		try {
+			await fn();
+			await invalidateAll();
+		} catch (e) {
+			actionError = e instanceof DojoApiError ? e.message : 'that action could not be completed';
+		}
+	}
+
+	const tk = () => requireTenant(data.tenantKey);
+	const opts = () => ({ accessToken: data.accessToken });
+
+	// Admin — set a member's dōjō role (the row carries the underlying user_id).
+	function setRole(m: KitMember, role: string) {
+		if (!m.userId) return;
+		void act(() => setMemberRole(tk(), m.userId as string, role, opts()));
+	}
+
+	// Lead — incident report / resolve / delete.
+	const reportIncident = (title: string) => act(() => createIncident(tk(), { title }, opts()));
+	const resolveIncident = (i: KitIncident) => act(() => updateIncident(tk(), i.id, { resolved: true }, opts()));
+	const removeIncident = (i: KitIncident) => act(() => deleteIncident(tk(), i.id, opts()));
+
+	// Lead — engagement new / close / delete.
+	const newEngagement = (client: string) => act(() => createEngagement(tk(), { client }, opts()));
+	const closeEngagement = (e: KitEngagement) => act(() => updateEngagement(tk(), e.id, { status: 'ended' }, opts()));
+	const removeEngagement = (e: KitEngagement) => act(() => deleteEngagement(tk(), e.id, opts()));
 </script>
 
 <svelte:head><title>{data.title} · {data.orgName} · Dōjō</title></svelte:head>
@@ -58,9 +105,18 @@
 		orgName={data.orgName}
 		engagements={data.engagements}
 		confidentiality={data.confidentiality}
+		onNew={newEngagement}
+		onClose={closeEngagement}
+		onDelete={removeEngagement}
 	/>
 {:else if data.section === 'incidents'}
-	<ScrIncidents orgName={data.orgName} incidents={data.incidents} />
+	<ScrIncidents
+		orgName={data.orgName}
+		incidents={data.incidents}
+		onReport={reportIncident}
+		onResolve={resolveIncident}
+		onDelete={removeIncident}
+	/>
 {:else if data.section === 'clientaudit'}
 	<ScrClientAudit orgName={data.orgName} entries={data.clientAudit} />
 {:else if data.section === 'members' || data.section === 'audit'}
@@ -71,6 +127,7 @@
 		policies={data.rolePolicies}
 		audit={data.auditLog}
 		me={me.name}
+		onSetRole={setRole}
 	/>
 {:else if data.section === 'scopes'}
 	<ScrScopes orgName={data.orgName} owners={data.scopeOwners} />
@@ -80,4 +137,23 @@
 	<ScrHealth orgName={data.orgName} health={data.health} />
 {:else}
 	<ScrBilling orgName={data.orgName} billing={data.billing} />
+{/if}
+
+{#if actionError}
+	<!-- Honest surfacing of a failed console action — a dismissible toast, never a
+	     silent no-op. Cleared on the next attempt. -->
+	<div
+		class="bg-danger-soft border-danger-soft text-ink fixed z-50 flex items-center gap-3 rounded-lg border text-sm"
+		style="right: 16px; bottom: 16px; padding: 12px 16px; max-width: 380px"
+		role="alert"
+	>
+		<span class="flex-1">{actionError}</span>
+		<button
+			type="button"
+			class="text-ink-mute cursor-pointer text-xs underline"
+			onclick={() => (actionError = null)}
+		>
+			dismiss
+		</button>
+	</div>
 {/if}

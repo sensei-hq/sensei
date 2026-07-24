@@ -197,6 +197,11 @@ export const load: PageLoad = async ({ parent, params, fetch }) => {
 		orgName: org.name,
 		section,
 		title: labelForSection(section, 'org'),
+		// The tenant + token the screen's console mutations (set-role, incident +
+		// engagement CRUD) call the /v1 write-routes with — passed through from the
+		// resolved org + the layout so the actions POST/PATCH/DELETE directly.
+		tenantKey,
+		accessToken,
 		// Overview-section data (fixtures — Tier 3, needs DDL).
 		sections: orgConstitutionFor(slug),
 		projects: orgProjectsFor(slug),

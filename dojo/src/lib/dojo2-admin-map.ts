@@ -61,6 +61,7 @@ export function toKitMember(
 			: 'never';
 	const member: KitMember = {
 		name: shortId(m.user_id),
+		userId: m.user_id,
 		git: accessLine(m.authenticated_via),
 		role: m.role,
 		scopes: '—',

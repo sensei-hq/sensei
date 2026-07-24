@@ -34,6 +34,7 @@ describe('toKitMember / toKitMembers', () => {
 	it('maps the row, name falls back to a short user id', () => {
 		const k = toKitMember(member(), { now: NOW });
 		expect(k.name).toBe('aaaaaaaa');
+		expect(k.userId).toBe('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee');
 		expect(k.git).toBe('GitHub');
 		expect(k.role).toBe('maintainer');
 		expect(k.scopes).toBe('—');

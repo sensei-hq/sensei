@@ -80,3 +80,185 @@ export async function listIncidents(db: DojoClient, tenantId: string): Promise<I
 	if (error) throw new IncidentsError(500, error.message);
 	return shapeIncidents((data ?? []) as unknown as Incident[]);
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// Writes — the port of dojo-mind's incident mutations (open · patch/resolve/reopen
+// · delete), lead-gated. Each validates its untrusted body (throwing
+// IncidentsError 400) and returns the shape the console client `client-data.ts`
+// expects. Pure over `db`; the handler records the audit row after the write.
+// ════════════════════════════════════════════════════════════════════════════
+
+const SEVERITIES = ['low', 'medium', 'high', 'critical'] as const;
+const STATUSES = ['open', 'investigating', 'resolved'] as const;
+
+function isSeverity(v: unknown): boolean {
+	return typeof v === 'string' && (SEVERITIES as readonly string[]).includes(v);
+}
+function isStatus(v: unknown): boolean {
+	return typeof v === 'string' && (STATUSES as readonly string[]).includes(v);
+}
+
+/** A validated `POST …/incidents` body — the port of dojo-mind's `NewIncident`.
+ *  `title` required; `severity` defaults to `medium` server-side. */
+export interface NewIncidentInput {
+	title: string;
+	description?: string;
+	severity: string;
+	engagement_id?: string;
+	artifact_id?: string;
+	owner_id?: string;
+	sla_due_at?: string;
+}
+
+/** Validate a `POST …/incidents` body into a {@link NewIncidentInput}, or throw
+ *  IncidentsError(400). `severity` (when present) must be an
+ *  `dojo.incident_severity`; it defaults to `medium`. */
+export function parseNewIncident(body: Record<string, unknown>): NewIncidentInput {
+	const title = typeof body.title === 'string' ? body.title.trim() : '';
+	if (!title) throw new IncidentsError(400, 'title is required');
+	if (body.severity !== undefined && !isSeverity(body.severity)) {
+		throw new IncidentsError(400, 'severity must be low, medium, high, or critical');
+	}
+	const out: NewIncidentInput = {
+		title,
+		severity: isSeverity(body.severity) ? (body.severity as string) : 'medium'
+	};
+	if (typeof body.description === 'string') out.description = body.description;
+	if (typeof body.engagement_id === 'string') out.engagement_id = body.engagement_id;
+	if (typeof body.artifact_id === 'string') out.artifact_id = body.artifact_id;
+	if (typeof body.owner_id === 'string') out.owner_id = body.owner_id;
+	if (typeof body.sla_due_at === 'string') out.sla_due_at = body.sla_due_at;
+	return out;
+}
+
+/**
+ * Open a confidentiality incident (`POST …/incidents`) — the port of dojo-mind's
+ * `open_incident`. Returns `{ id, severity }` (the shape `client-data.ts
+ * createIncident()` unwraps).
+ */
+export async function createIncident(
+	db: DojoClient,
+	tenantId: string,
+	input: NewIncidentInput
+): Promise<{ id: string; severity: string }> {
+	const { data, error } = await db
+		.from('incidents')
+		.insert({
+			tenant_id: tenantId,
+			title: input.title,
+			description: input.description ?? null,
+			severity: input.severity,
+			engagement_id: input.engagement_id ?? null,
+			artifact_id: input.artifact_id ?? null,
+			owner_id: input.owner_id ?? null,
+			sla_due_at: input.sla_due_at ?? null
+		})
+		.select('id, severity')
+		.single();
+	if (error) throw new IncidentsError(500, error.message);
+	return data as { id: string; severity: string };
+}
+
+/** A validated `PATCH …/incidents/{id}` body — the port of dojo-mind's
+ *  `PatchIncident`. Resolving stamps `status='resolved'` + `resolved_at=now`;
+ *  reopening (`open|investigating`) clears `resolved_at`. */
+export interface PatchIncidentInput {
+	severity?: string;
+	status?: string;
+	owner_id?: string;
+	sla_due_at?: string;
+	resolution?: string;
+	/** the derived close flag — set when resolving (status='resolved' or
+	 *  resolved:true), so the store stamps/clears resolved_at. */
+	resolve?: boolean;
+	/** an explicit reopen (status is open|investigating) — clears resolved_at. */
+	reopen?: boolean;
+}
+
+/**
+ * Validate a `PATCH …/incidents/{id}` body into a {@link PatchIncidentInput}, or
+ * throw IncidentsError(400). `resolved: true` OR `status: 'resolved'` closes it;
+ * an explicit `open|investigating` reopens it (clearing `resolved_at`). At least
+ * one field must be present.
+ */
+export function parsePatchIncident(body: Record<string, unknown>): PatchIncidentInput {
+	const out: PatchIncidentInput = {};
+	if (body.severity !== undefined) {
+		if (!isSeverity(body.severity)) {
+			throw new IncidentsError(400, 'severity must be low, medium, high, or critical');
+		}
+		out.severity = body.severity as string;
+	}
+	if (body.status !== undefined) {
+		if (!isStatus(body.status)) {
+			throw new IncidentsError(400, 'status must be open, investigating, or resolved');
+		}
+		out.status = body.status as string;
+		if (body.status === 'resolved') out.resolve = true;
+		else out.reopen = true;
+	}
+	if (body.resolved === true) {
+		out.resolve = true;
+		if (out.status === undefined) out.status = 'resolved';
+	}
+	if (typeof body.owner_id === 'string') out.owner_id = body.owner_id;
+	if (typeof body.sla_due_at === 'string') out.sla_due_at = body.sla_due_at;
+	if (typeof body.resolution === 'string') out.resolution = body.resolution;
+	if (
+		out.severity === undefined &&
+		out.status === undefined &&
+		out.owner_id === undefined &&
+		out.sla_due_at === undefined &&
+		out.resolution === undefined &&
+		!out.resolve
+	) {
+		throw new IncidentsError(400, 'no updatable fields in the request');
+	}
+	return out;
+}
+
+/**
+ * Patch / resolve / reopen an incident (`PATCH …/incidents/{id}`) — the port of
+ * dojo-mind's `patch_incident`. Resolving stamps `resolved_at`; reopening clears
+ * it. Returns `{ id }`; a 404 when no tenant incident matches.
+ */
+export async function updateIncident(
+	db: DojoClient,
+	tenantId: string,
+	id: string,
+	input: PatchIncidentInput
+): Promise<{ id: string }> {
+	const row: Record<string, unknown> = { updated_at: new Date().toISOString() };
+	if (input.severity !== undefined) row.severity = input.severity;
+	if (input.status !== undefined) row.status = input.status;
+	if (input.owner_id !== undefined) row.owner_id = input.owner_id;
+	if (input.sla_due_at !== undefined) row.sla_due_at = input.sla_due_at;
+	if (input.resolution !== undefined) row.resolution = input.resolution;
+	if (input.resolve) row.resolved_at = new Date().toISOString();
+	else if (input.reopen) row.resolved_at = null;
+	const { data, error } = await db
+		.from('incidents')
+		.update(row)
+		.eq('tenant_id', tenantId)
+		.eq('id', id)
+		.select('id')
+		.maybeSingle();
+	if (error) throw new IncidentsError(500, error.message);
+	if (!data) throw new IncidentsError(404, 'no such incident');
+	return data as { id: string };
+}
+
+/**
+ * Delete an incident by id (`DELETE …/incidents/{id}`) — returns `true` when a
+ * row was removed, `false` when none matched (the handler maps false → 404).
+ */
+export async function deleteIncident(db: DojoClient, tenantId: string, id: string): Promise<boolean> {
+	const { data, error } = await db
+		.from('incidents')
+		.delete()
+		.eq('tenant_id', tenantId)
+		.eq('id', id)
+		.select('id');
+	if (error) throw new IncidentsError(500, error.message);
+	return (data?.length ?? 0) > 0;
+}

@@ -11,6 +11,19 @@ import {
 	listPolicies,
 	listAudit,
 	getHealth,
+	setMemberRole,
+	addMember,
+	parseNewMember,
+	upsertPolicy,
+	parseUpsertPolicy,
+	patchPolicy,
+	parsePatchPolicy,
+	deletePolicy,
+	createIdentity,
+	parseNewIdentity,
+	updateIdentity,
+	parsePatchIdentity,
+	deleteIdentity,
 	AdminError,
 	type DojoClient
 } from './admin-data';
@@ -94,5 +107,149 @@ describe('getHealth', () => {
 	it('surfaces a count-query error rather than blanking the strip', async () => {
 		const db = makeCountDb([{ count: null, error: { message: 'count boom' } }]);
 		await expect(getHealth(db, 't1')).rejects.toThrow(AdminError);
+	});
+});
+
+// ── writes ───────────────────────────────────────────────────────────────────
+// A stub that captures the mutated table + payload, then resolves the terminal
+// (`.maybeSingle()` / `.single()`, or awaiting `.select()` for a delete). All the
+// intermediate chain links (update/insert/upsert/delete/eq/select) return `b`.
+type MutTerminal = { data?: unknown; error: unknown };
+function makeMutDb(result: MutTerminal) {
+	const captured: { table?: string; op?: string; payload?: unknown; conflict?: unknown } = {};
+	const b: Record<string, unknown> = {};
+	b.from = (t: string) => {
+		captured.table = t;
+		return b;
+	};
+	b.update = (payload: unknown) => {
+		captured.op = 'update';
+		captured.payload = payload;
+		return b;
+	};
+	b.insert = (payload: unknown) => {
+		captured.op = 'insert';
+		captured.payload = payload;
+		return b;
+	};
+	b.upsert = (payload: unknown, opts: unknown) => {
+		captured.op = 'upsert';
+		captured.payload = payload;
+		captured.conflict = opts;
+		return b;
+	};
+	b.delete = () => {
+		captured.op = 'delete';
+		return b;
+	};
+	b.eq = () => b;
+	b.select = () => b;
+	b.maybeSingle = () => Promise.resolve(result);
+	b.single = () => Promise.resolve(result);
+	// A delete awaits `.select()` directly (no single).
+	b.then = (resolve: (v: MutTerminal) => unknown) => resolve(result);
+	return { db: b as unknown as DojoClient, captured };
+}
+
+describe('setMemberRole', () => {
+	it('rejects an unknown role with 400 before touching the db', async () => {
+		const { db } = makeMutDb({ data: null, error: null });
+		await expect(setMemberRole(db, 't1', 'u1', 'wizard')).rejects.toMatchObject({ status: 400 });
+	});
+	it('updates the role and returns { user_id, role }', async () => {
+		const { db, captured } = makeMutDb({ data: { user_id: 'u1', role: 'lead' }, error: null });
+		expect(await setMemberRole(db, 't1', 'u1', 'lead')).toEqual({ user_id: 'u1', role: 'lead' });
+		expect(captured.op).toBe('update');
+		expect((captured.payload as { role: string }).role).toBe('lead');
+	});
+	it('404s when no membership matches', async () => {
+		const { db } = makeMutDb({ data: null, error: null });
+		await expect(setMemberRole(db, 't1', 'ghost', 'admin')).rejects.toMatchObject({ status: 404 });
+	});
+});
+
+describe('parseNewMember', () => {
+	it('requires user_id, a known kind, and a known auth method', () => {
+		expect(() => parseNewMember({})).toThrow(AdminError);
+		expect(() => parseNewMember({ user_id: 'u1', kind: 'nope', authenticated_via: 'sso' })).toThrow();
+		expect(() => parseNewMember({ user_id: 'u1', kind: 'client', authenticated_via: 'x' })).toThrow();
+	});
+	it('defaults role to contributor and prefers an explicit role', () => {
+		expect(parseNewMember({ user_id: 'u1', kind: 'client', authenticated_via: 'sso' }).role).toBe('contributor');
+		expect(
+			parseNewMember({ user_id: 'u1', kind: 'client', authenticated_via: 'sso', role: 'lead' }).role
+		).toBe('lead');
+		expect(
+			parseNewMember({ user_id: 'u1', kind: 'client', authenticated_via: 'sso', git_provider_role: 'maintainer' }).role
+		).toBe('maintainer');
+	});
+});
+
+describe('addMember', () => {
+	it('inserts the membership with the tenant + dojo_url and returns { id, role }', async () => {
+		const { db, captured } = makeMutDb({ data: { id: 'm1', role: 'contributor' }, error: null });
+		const input = parseNewMember({ user_id: 'u1', kind: 'client', authenticated_via: 'sso' });
+		expect(await addMember(db, 't1', 'github/acme', input)).toEqual({ id: 'm1', role: 'contributor' });
+		const payload = captured.payload as Record<string, unknown>;
+		expect(payload.tenant_id).toBe('t1');
+		expect(payload.dojo_url).toBe('github/acme');
+		expect(payload.user_id).toBe('u1');
+	});
+	it('maps a unique-violation (23505) to 409', async () => {
+		const { db } = makeMutDb({ data: null, error: { code: '23505', message: 'dup' } });
+		const input = parseNewMember({ user_id: 'u1', kind: 'client', authenticated_via: 'sso' });
+		await expect(addMember(db, 't1', 'github/acme', input)).rejects.toMatchObject({ status: 409 });
+	});
+});
+
+describe('policies write', () => {
+	it('parseUpsertPolicy requires scope_key + validates enums', () => {
+		expect(() => parseUpsertPolicy({})).toThrow(AdminError);
+		expect(() => parseUpsertPolicy({ scope_key: 's', attribution_default: 'x' })).toThrow();
+		expect(() => parseUpsertPolicy({ scope_key: 's', retention_days: -1 })).toThrow();
+		expect(parseUpsertPolicy({ scope_key: 's', retention_days: 30 })).toEqual({ scope_key: 's', retention_days: 30 });
+	});
+	it('upsertPolicy upserts on tenant_id,scope_key and returns { id, scope_key }', async () => {
+		const { db, captured } = makeMutDb({ data: { id: 'p1', scope_key: 'all-org' }, error: null });
+		const out = await upsertPolicy(db, 't1', parseUpsertPolicy({ scope_key: 'all-org' }));
+		expect(out).toEqual({ id: 'p1', scope_key: 'all-org' });
+		expect(captured.op).toBe('upsert');
+		expect(captured.conflict).toEqual({ onConflict: 'tenant_id,scope_key' });
+	});
+	it('patchPolicy 404s when nothing matched', async () => {
+		const { db } = makeMutDb({ data: null, error: null });
+		await expect(patchPolicy(db, 't1', 'p9', parsePatchPolicy({ retention_days: 90 }))).rejects.toMatchObject({ status: 404 });
+	});
+	it('deletePolicy is true when a row was removed, false when none', async () => {
+		expect(await deletePolicy(makeMutDb({ data: [{ id: 'p1' }], error: null }).db, 't1', 'p1')).toBe(true);
+		expect(await deletePolicy(makeMutDb({ data: [], error: null }).db, 't1', 'p9')).toBe(false);
+	});
+});
+
+describe('identities write', () => {
+	it('parseNewIdentity requires user_id + a known provider + subject', () => {
+		expect(() => parseNewIdentity({})).toThrow(AdminError);
+		expect(() => parseNewIdentity({ user_id: 'u1', provider: 'x', subject: 's' })).toThrow();
+		expect(() => parseNewIdentity({ user_id: 'u1', provider: 'sso', subject: '' })).toThrow();
+		expect(parseNewIdentity({ user_id: 'u1', provider: 'sso', subject: 'sub' })).toMatchObject({
+			user_id: 'u1',
+			provider: 'sso',
+			subject: 'sub'
+		});
+	});
+	it('createIdentity maps a unique-violation to 409', async () => {
+		const { db } = makeMutDb({ data: null, error: { code: '23505', message: 'dup' } });
+		await expect(
+			createIdentity(db, 't1', parseNewIdentity({ user_id: 'u1', provider: 'sso', subject: 's' }))
+		).rejects.toMatchObject({ status: 409 });
+	});
+	it('updateIdentity 404s when nothing matched; parsePatchIdentity rejects non-strings', async () => {
+		expect(() => parsePatchIdentity({ email: 123 as unknown as string })).toThrow(AdminError);
+		const { db } = makeMutDb({ data: null, error: null });
+		await expect(updateIdentity(db, 't1', 'id9', parsePatchIdentity({ email: 'a@b.co' }))).rejects.toMatchObject({ status: 404 });
+	});
+	it('deleteIdentity is true/false by rows removed', async () => {
+		expect(await deleteIdentity(makeMutDb({ data: [{ id: 'x' }], error: null }).db, 't1', 'x')).toBe(true);
+		expect(await deleteIdentity(makeMutDb({ data: [], error: null }).db, 't1', 'y')).toBe(false);
 	});
 });
