@@ -4,103 +4,228 @@ import { ORG_SECTIONS, labelForSection } from '$lib/dojo2-nav';
 import { orgBySlug } from '$lib/dojo2-chrome';
 import { tabForSection } from '$lib/dojo2-role-surfaces-view';
 import { guardTenantScope } from '$lib/org-guard';
-import { listEngagements, DojoApiError, type Engagement } from '$lib/client-data';
+import { listEngagements, listIncidents, DojoApiError, type Engagement, type Incident } from '$lib/client-data';
+import { listTriage, type TriageRow } from '$lib/triage-data';
+import {
+	listMembers,
+	listPolicies,
+	listIdentities,
+	listAudit,
+	getHealth,
+	type Membership,
+	type Policy,
+	type Identity,
+	type AuditEvent,
+	type HealthRollup
+} from '$lib/admin-data';
 import { toKitEngagements } from '$lib/dojo2-client-map';
-import type { KitEngagement } from '$lib/components/kit/types';
+import {
+	toKitTriageGroups,
+	toKitApprovals,
+	toKitCandidateDetail
+} from '$lib/dojo2-triage-map';
+import { flattenCandidates } from '$lib/dojo2-triage-view';
+import {
+	toKitMembers,
+	toKitRolePolicies,
+	toKitAuditThread,
+	toKitIdentity,
+	toKitHealth
+} from '$lib/dojo2-admin-map';
+import { toKitIncidents, toKitClientAudit } from '$lib/dojo2-incidents-map';
+import type {
+	KitEngagement,
+	KitTriageGroup,
+	KitApproval,
+	KitCandidateDetail,
+	KitMember,
+	KitRolePolicy,
+	KitChatTurn,
+	KitIdentity,
+	KitIncident,
+	KitClientAuditRow,
+	KitHealth
+} from '$lib/components/kit/types';
 import {
 	orgProjectsFor,
 	orgConstitutionFor,
-	triageGroupsFor,
 	candidateDetailFor,
-	approvalsFor,
 	knowledgeFor,
 	confidentialityFor,
-	incidentsFor,
-	clientAuditFor,
-	membersFor,
-	rolePoliciesFor,
-	auditLogFor,
 	scopeOwnersFor,
-	identityFor,
-	healthFor,
 	billingFor
 } from '$lib/components/kit/fixtures';
 
 // An org-zone section route. Resolves the org from the slug against real
 // memberships (redirect to /you if not a member) and validates the section
 // against the known org destinations (redirect to the org home for an unknown
-// tail) — the two-nav never dead-ends. Whether a role-scoped section is even
-// reachable is enforced by `navForOrg` in the shell (a viewer only sees the nav
-// their rank unlocks); a hand-typed URL to a section above your rank still
-// renders its screen off fixtures this chunk (real `/v1` authorization lands
-// with the wiring).
+// tail) — the two-nav never dead-ends.
 //
-// The lead Clients `engagements` section now loads REAL `/v1` data via the SAME
-// console client the shipped `(console)` engagements screen uses
-// (client-data.listEngagements → GET /v1/t/{tenant}/engagements, LEAD floor),
-// mapped to the kit shape by the pure `toKitEngagements`. The fetch runs behind
+// Tier-2 wiring: every org console section that has a Worker read-route now loads
+// REAL `/v1` data via the SAME console clients the shipped `(console)` screens
+// use, mapped to the kit shape by pure `*-map` mappers. Each fetch runs behind
 // `guardTenantScope` on the resolved org's tenant key (`org.url`) and degrades to
-// an empty list on a live-service failure / non-lead 403 / local `/v1` 404 so the
-// screen still renders. The other sections still render off the kit fixtures
-// (presentational): the Overview `ladder`/`projects`, the rest of the maintainer
-// Govern consoles (triage/approvals/knowledge), the rest of the lead Clients
-// consoles (confidentiality — its route isn't built yet — incidents/clientaudit)
-// and the admin consoles (members/scopes/identity/audit/health/billing). The
-// `members` and `audit` sections are the SAME screen (ScrRoleSurfaces); the loader
-// maps the section to its opening tab via `tabForSection`.
+// an empty kit list + a surfaced error (honest-empty / DJ1) on a live-service
+// failure, a role-floor 403, or a dev-only 404 — so the screen always renders.
+// Fetches are section-scoped: only the visited section's data is fetched.
+//   • triage/approvals  → GET …/triage (maintainer floor)
+//   • members/audit     → GET …/members · …/policies · …/audit (admin floor)
+//   • identity          → GET …/identities (admin floor)
+//   • incidents         → GET …/incidents (lead floor)
+//   • clientaudit       → GET …/audit (admin floor — the tenant audit trail)
+//   • health            → GET …/health (admin floor)
+//   • engagements       → GET …/engagements (lead floor)
+// The remaining sections (Overview ladder/projects, knowledge, confidentiality,
+// scopes, billing) still render off kit fixtures — their routes aren't built
+// (Tier 3: scopes/billing/projects/stance need DDL).
 export const load: PageLoad = async ({ parent, params, fetch }) => {
 	const { memberships, accessToken } = await parent();
 	const org = orgBySlug(memberships, params.slug);
 	if (!org) redirect(307, '/you');
 	if (!ORG_SECTIONS.includes(params.section)) redirect(307, `/org/${params.slug}`);
 	const slug = params.slug;
+	const section = params.section;
+	const tenantKey = org.url;
+	const opts = { fetch, accessToken };
 
-	// Engagements: real /v1 data for the lead Clients register (only fetched for
-	// that section). The tenant key is the resolved org's `url`; a fetch failure
-	// (or a non-lead 403 / dev-only 404) degrades to an empty register + a
-	// surfaced error so the screen renders.
-	let engagements: KitEngagement[] = [];
-	let engagementsError: string | null = null;
-	if (params.section === 'engagements') {
+	// A section-scoped guarded fetch: run only for `forSection`, degrade to
+	// `empty` (+ surface the error message) on any failure so the screen renders.
+	async function guardedFor<W, K>(
+		forSection: string,
+		empty: K,
+		fetcher: (tk: string) => Promise<W>,
+		map: (w: W) => K
+	): Promise<{ value: K; error: string | null }> {
+		if (section !== forSection) return { value: empty, error: null };
 		try {
-			const guarded = await guardTenantScope<Engagement[]>(org.url, [], (tk) =>
-				listEngagements(tk, { fetch, accessToken })
-			);
-			engagements = toKitEngagements(guarded.value);
+			const guarded = await guardTenantScope<W>(tenantKey, undefined as unknown as W, fetcher);
+			// A membership-less guard returns the sentinel; treat as empty.
+			if (guarded.noMembership) return { value: empty, error: null };
+			return { value: map(guarded.value), error: null };
 		} catch (e) {
-			engagementsError = e instanceof DojoApiError ? e.message : 'could not reach the dojo service';
+			const error = e instanceof DojoApiError ? e.message : 'could not reach the dojo service';
+			return { value: empty, error };
 		}
 	}
+
+	// Engagements (lead) — the shipped client register.
+	const engagementsRes = await guardedFor<Engagement[], KitEngagement[]>(
+		'engagements',
+		[],
+		(tk) => listEngagements(tk, opts),
+		toKitEngagements
+	);
+
+	// Triage (maintainer) — the raw rows feed BOTH the triage groups and the
+	// approvals list, so fetch once and derive both when either section is active.
+	let triage: KitTriageGroup[] = [];
+	let candidateDetail: KitCandidateDetail = candidateDetailFor(slug);
+	let approvals: KitApproval[] = [];
+	let triageError: string | null = null;
+	if (section === 'triage' || section === 'approvals') {
+		try {
+			const guarded = await guardTenantScope<TriageRow[]>(tenantKey, [], (tk) => listTriage(tk, opts));
+			const rows = guarded.value;
+			triage = toKitTriageGroups(rows);
+			approvals = toKitApprovals(rows);
+			// The detail pane opens on the top-ranked candidate (the same first
+			// selection ScrTriage seeds); an honest-empty detail when the queue is
+			// clear.
+			const top = flattenCandidates(triage)[0];
+			const topRow = top ? rows.find((r) => r.signature === top.id) : undefined;
+			candidateDetail = toKitCandidateDetail(topRow);
+		} catch (e) {
+			triageError = e instanceof DojoApiError ? e.message : 'could not reach the dojo service';
+		}
+	}
+
+	// Members + Policies + Audit (admin) — the shared role-surfaces screen. Fetch
+	// all three when either the members or the audit section is active.
+	let members: KitMember[] = [];
+	let rolePolicies: KitRolePolicy[] = toKitRolePolicies();
+	let auditLog: KitChatTurn[] = [];
+	let membersError: string | null = null;
+	if (section === 'members' || section === 'audit') {
+		try {
+			const [m, p, a] = await Promise.all([
+				guardTenantScope<Membership[]>(tenantKey, [], (tk) => listMembers(tk, opts)),
+				guardTenantScope<Policy[]>(tenantKey, [], (tk) => listPolicies(tk, opts)),
+				guardTenantScope<AuditEvent[]>(tenantKey, [], (tk) => listAudit(tk, opts))
+			]);
+			members = toKitMembers(m.value, { self: undefined });
+			rolePolicies = toKitRolePolicies(p.value);
+			auditLog = toKitAuditThread(a.value);
+		} catch (e) {
+			membersError = e instanceof DojoApiError ? e.message : 'could not reach the dojo service';
+		}
+	}
+
+	// Identity (admin).
+	const identityRes = await guardedFor<Identity[], KitIdentity>(
+		'identity',
+		toKitIdentity([]),
+		(tk) => listIdentities(tk, opts),
+		toKitIdentity
+	);
+
+	// Incidents (lead).
+	const incidentsRes = await guardedFor<{ incidents: Incident[]; open_count: number }, KitIncident[]>(
+		'incidents',
+		[],
+		(tk) => listIncidents(tk, opts),
+		(list) => toKitIncidents(list.incidents)
+	);
+
+	// Client audit (admin — the tenant audit trail projected onto the ledger).
+	const clientAuditRes = await guardedFor<AuditEvent[], KitClientAuditRow[]>(
+		'clientaudit',
+		[],
+		(tk) => listAudit(tk, opts),
+		toKitClientAudit
+	);
+
+	// Health (admin).
+	const healthRes = await guardedFor<HealthRollup, KitHealth>(
+		'health',
+		toKitHealth({ connections: 0, queue_depth: 0, publish_rate_1h: 0, error_rate_1h: 0 }),
+		(tk) => getHealth(tk, opts),
+		toKitHealth
+	);
 
 	return {
 		slug,
 		orgName: org.name,
-		section: params.section,
-		title: labelForSection(params.section, 'org'),
-		// Overview-section data (ported fixtures this chunk).
+		section,
+		title: labelForSection(section, 'org'),
+		// Overview-section data (fixtures — Tier 3, needs DDL).
 		sections: orgConstitutionFor(slug),
 		projects: orgProjectsFor(slug),
 		// Maintainer Govern consoles.
-		triage: triageGroupsFor(slug),
-		candidateDetail: candidateDetailFor(slug),
-		approvals: approvalsFor(slug),
+		triage,
+		candidateDetail,
+		approvals,
+		triageError,
 		knowledge: knowledgeFor(slug),
-		// Lead Clients consoles. Engagements = real /v1; the confidentiality panel
-		// stays on the fixture (its route isn't built yet).
-		engagements,
-		engagementsError,
+		// Lead Clients consoles.
+		engagements: engagementsRes.value,
+		engagementsError: engagementsRes.error,
 		confidentiality: confidentialityFor(slug),
-		incidents: incidentsFor(slug),
-		clientAudit: clientAuditFor(slug),
+		incidents: incidentsRes.value,
+		incidentsError: incidentsRes.error,
+		clientAudit: clientAuditRes.value,
+		clientAuditError: clientAuditRes.error,
 		// Admin consoles. `roleTab` is the opening tab of the shared role-surfaces
 		// screen — `members` → Members, `audit` → Audit.
-		roleTab: tabForSection(params.section),
-		members: membersFor(slug),
-		rolePolicies: rolePoliciesFor(slug),
-		auditLog: auditLogFor(slug),
+		roleTab: tabForSection(section),
+		members,
+		rolePolicies,
+		auditLog,
+		membersError,
 		scopeOwners: scopeOwnersFor(slug),
-		identity: identityFor(slug),
-		health: healthFor(slug),
+		identity: identityRes.value,
+		identityError: identityRes.error,
+		health: healthRes.value,
+		healthError: healthRes.error,
 		billing: billingFor(slug)
 	};
 };
