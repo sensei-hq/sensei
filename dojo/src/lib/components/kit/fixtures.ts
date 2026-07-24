@@ -264,90 +264,210 @@ export const rulePacks: KitRulePack[] = [
 		kanji: '理',
 		name: 'Clean Code · core principles',
 		by: 'R. Martin · Clean Code',
-		count: 14,
 		adopted: true,
-		note: 'small functions, intention-revealing names, single responsibility'
+		note: 'small functions, intention-revealing names, single responsibility',
+		rules: [
+			'A function does one thing and does it at a single level of abstraction',
+			'Keep functions small — a screenful is already too long',
+			'Name things to reveal intent — no encodings, no cryptic abbreviations',
+			'Prefer no more than three arguments; pass an object past that',
+			'A function has no side effects its name does not promise',
+			'Return early — avoid deep nesting and long if/else ladders',
+			'Comment the why, never restate the what the code already says',
+			'A class or module has a single reason to change',
+			'Depend on abstractions, not on concrete implementations',
+			'No duplicated logic — extract the third near-identical copy',
+			'Handle errors with exceptions, not returned error codes',
+			'Never pass or return null across a boundary you control',
+			'Leave each file cleaner than you found it',
+			'Tests are first-class code — kept readable and kept passing'
+		]
 	},
 	{
 		id: 'owasp-asvs',
 		kanji: '守',
 		name: 'OWASP ASVS · application security',
 		by: 'OWASP · ASVS 4.0',
-		count: 22,
 		adopted: true,
-		note: 'input validation, auth boundary, secrets & session handling'
+		note: 'input validation, auth boundary, secrets & session handling',
+		rules: [
+			'Validate every input against an allow-list on the server',
+			'Encode output for the context it renders into to stop injection',
+			'Use parameterized queries — never concatenate untrusted input',
+			'Enforce authentication on every non-public request',
+			'Check authorization on every access, not just at the menu',
+			'Store passwords with a slow, salted hash (argon2 or bcrypt)',
+			'Rotate the session id on login and on privilege change',
+			'Set session cookies HttpOnly, Secure, and SameSite',
+			'Lock, throttle, or MFA-gate repeated failed logins',
+			'Keep secrets out of source — load them from a vault at runtime',
+			'Never log credentials, tokens, or session identifiers',
+			'Verify TLS and pin trust for outbound service calls',
+			'Deny by default — fail closed when a check cannot complete',
+			'Regenerate and expire tokens on logout',
+			'Enforce a strong content-security-policy on every response',
+			'Protect state-changing requests against CSRF',
+			'Cap request and upload size to blunt resource exhaustion',
+			'Scan and pin third-party dependencies for known CVEs',
+			'Return generic errors — never leak stack traces to the client',
+			'Sign and verify webhooks before parsing the body',
+			'Segregate secrets and data by environment — no prod keys in dev',
+			'Log security events with enough context to investigate'
+		]
 	},
 	{
 		id: 'pci-dss',
 		kanji: '盾',
 		name: 'PCI-DSS · cardholder data',
 		by: 'PCI-DSS v4.0',
-		count: 12,
 		adopted: false,
-		note: 'no PAN in logs, encrypted at rest, scoped access & audit trail'
+		note: 'no PAN in logs, encrypted at rest, scoped access & audit trail',
+		rules: [
+			'Never store the full PAN in logs, URLs, or analytics',
+			'Mask the PAN to first-six/last-four wherever it is displayed',
+			'Never store sensitive authentication data after authorization',
+			'Encrypt stored cardholder data with strong, rotated keys',
+			'Encrypt cardholder data in transit over public networks',
+			'Keep encryption keys separate from the data they protect',
+			'Restrict data access to a documented need-to-know',
+			'Give each person a unique id — no shared accounts',
+			'Require MFA for all access into the cardholder data environment',
+			'Log every access to cardholder data with user and timestamp',
+			'Retain audit trails for at least one year, tamper-evident',
+			'Scope the environment — segment card systems off the flat network'
+		]
 	},
 	{
 		id: 'twelve-factor',
 		kanji: '築',
 		name: 'Twelve-Factor · service architecture',
 		by: 'Heroku · 12-Factor',
-		count: 12,
 		adopted: false,
-		note: 'config in env, stateless processes, dev/prod parity'
+		note: 'config in env, stateless processes, dev/prod parity',
+		rules: [
+			'Track one codebase per app in version control, deployed many places',
+			'Declare and isolate dependencies explicitly — never rely on the host',
+			'Store config in the environment, never in the code',
+			'Treat backing services as attachable resources swapped by config',
+			'Strictly separate the build, release, and run stages',
+			'Run the app as one or more stateless, share-nothing processes',
+			'Export services via a port binding — be self-contained',
+			'Scale out by the process model, not by threads in one box',
+			'Start fast and shut down gracefully on SIGTERM',
+			'Keep dev, staging, and prod as similar as possible',
+			'Treat logs as an event stream written to stdout',
+			'Run admin tasks as one-off processes in the same environment'
+		]
 	},
 	{
 		id: 'rust-clippy',
 		kanji: '技',
 		name: 'Rust · clippy defaults',
 		by: 'Rust · clippy',
-		count: 9,
 		adopted: false,
-		note: 'clippy-clean, Result over unwrap, no blocking in async'
+		note: 'clippy-clean, Result over unwrap, no blocking in async',
+		rules: [
+			'cargo clippy passes with no warnings before merge',
+			'Prefer Result and ? over unwrap or expect in non-test code',
+			'Never block a thread inside an async function',
+			'Borrow with &str and &[T] in signatures over owned String and Vec',
+			'Derive Debug, Clone, and PartialEq rather than hand-writing them',
+			'Model absence with Option, not a sentinel value',
+			'Avoid unnecessary clone — let the borrow checker guide ownership',
+			'Gate every unsafe block behind a comment justifying its soundness',
+			'Prefer iterator chains over manual index loops'
+		]
 	},
 	{
 		id: 'ts-strict',
 		kanji: '技',
 		name: 'TypeScript · strict',
 		by: 'TypeScript · strict',
-		count: 8,
 		adopted: true,
-		note: 'no any, exhaustive switches, no non-null assertions'
+		note: 'no any, exhaustive switches, no non-null assertions',
+		rules: [
+			'strict mode is on — no implicit any anywhere',
+			'Never use the any type — reach for unknown and narrow',
+			'Avoid the non-null assertion — handle the null case',
+			'Make switches exhaustive with a never check in the default',
+			'Type function boundaries explicitly — no inferred public any',
+			'Prefer readonly and const assertions for data that never changes',
+			'Model unions as discriminated unions, not loose flags',
+			'No unchecked index access — guard array and record lookups'
+		]
 	},
 	{
 		id: 'svelte-runes',
 		kanji: '技',
 		name: 'Svelte 5 · runes',
 		by: 'Svelte 5 · runes',
-		count: 7,
 		adopted: false,
-		note: '$state/$derived over stores, snippets over slots, no legacy reactivity'
+		note: '$state/$derived over stores, snippets over slots, no legacy reactivity',
+		rules: [
+			'Use $state for reactive local state, not a writable store',
+			'Derive with $derived rather than a reactive $: statement',
+			'Run side effects in $effect, keeping them free of derived logic',
+			'Declare component inputs with $props, not export let',
+			'Compose with snippets and {@render}, not legacy slots',
+			'Bind handlers with onclick, not on:click',
+			'Keep shared reactive state in a .svelte.ts module'
+		]
 	},
 	{
 		id: 'zen-sumi',
 		kanji: '紋',
 		name: 'Zen-Sumi · design tokens',
 		by: 'Zen-Sumi · design tokens',
-		count: 10,
 		adopted: false,
-		note: 'named tokens not hex, 8-stop scale, 4px grid, md: responsive'
+		note: 'named tokens not hex, 8-stop scale, 4px grid, md: responsive',
+		rules: [
+			'Use named tokens — never a hex, oklch, or var() literal in a component',
+			'Size type from the 8-stop scale — never a style font-size',
+			'Space and pad on the 4px grid — never a literal px value',
+			'Take radii from the token scale, not ad-hoc corner values',
+			'Colour from the semantic ramp — paper, ink, accent, never raw',
+			'Lay out mobile-first and add md: prefixes for desktop',
+			'Keep responsive layout in utilities, not a @media in style',
+			'Reach for a kit component before hand-rolling a one-off',
+			'Keep a per-surface config parity so tokens resolve the same',
+			'Ship dark mode from the dual palette, not overridden colours'
+		]
 	},
 	{
 		id: 'a11y-wcag',
 		kanji: '観',
 		name: 'WCAG 2.2 AA · accessibility',
 		by: 'W3C · WCAG 2.2',
-		count: 11,
 		adopted: false,
-		note: 'labels & roles, focus order, contrast, keyboard-reachable'
+		note: 'labels & roles, focus order, contrast, keyboard-reachable',
+		rules: [
+			'Give every control an accessible name and the right role',
+			'Make every interaction reachable and operable by keyboard alone',
+			'Keep a visible, unambiguous focus indicator on every control',
+			'Order focus to follow the reading and interaction flow',
+			'Meet 4.5:1 text contrast — 3:1 for large text and UI edges',
+			'Provide a text alternative for every meaningful image',
+			'Never signal state by colour alone — pair it with text or shape',
+			'Associate every form field with a persistent visible label',
+			'Announce errors in text and tie them to the field',
+			'Respect prefers-reduced-motion — no essential motion-only content',
+			'Structure the page with landmarks and a logical heading order'
+		]
 	},
 	{
 		id: 'conventional',
 		kanji: '整',
 		name: 'Conventional Commits · history',
 		by: 'Conventional Commits 1.0',
-		count: 5,
 		adopted: false,
-		note: 'typed subjects, scoped changes, small single-purpose commits'
+		note: 'typed subjects, scoped changes, small single-purpose commits',
+		rules: [
+			'Prefix each commit with a type (feat/fix/docs/…)',
+			'Use a scope in parentheses for the affected area',
+			'Breaking changes carry a `!` or a `BREAKING CHANGE:` footer',
+			'Subject in imperative mood, ≤72 chars',
+			'Body explains the why, not the what'
+		]
 	}
 ];
 

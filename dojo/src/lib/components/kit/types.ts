@@ -133,8 +133,9 @@ export interface KitRulePack {
 	name: string;
 	/** Who authors the pack (e.g. "Acme · platform"). */
 	by: string;
-	/** How many rules the pack carries. */
-	count: number;
+	/** The rule statements the pack carries — what a viewer reads to decide to
+	 *  adopt. The pack's rule count is `rules.length` (never hand-maintained). */
+	rules: string[];
 	/** Whether the viewer has adopted the pack into their constitution. */
 	adopted: boolean;
 	/** A short line on what the pack covers. */

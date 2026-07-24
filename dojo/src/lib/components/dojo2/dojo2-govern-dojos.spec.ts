@@ -87,6 +87,37 @@ describe('ScrRulePacks — adopt/drop rule bundles', () => {
 		expect(queryAllByText('Adopt').length).toBe(available - 1);
 		expect(getAllByText('Drop').length).toBe(adopted + 1);
 	});
+
+	it('shows each pack rule count as a disclosure, collapsed by default', () => {
+		const { getAllByLabelText, queryByText } = render(ScrRulePacks, { props: { packs: rulePacks } });
+		// a disclosure per pack (one "Show rules" toggle each), collapsed → the
+		// rule text is not in the DOM yet.
+		expect(getAllByLabelText('Show rules').length).toBe(rulePacks.length);
+		const sample = rulePacks[0].rules[0];
+		expect(queryByText(sample)).toBeNull();
+	});
+
+	it('expanding a pack reveals its rules (and flips aria-expanded)', async () => {
+		const target = rulePacks.find((p) => p.id === 'conventional')!;
+		const { getByText, getAllByLabelText, queryByText } = render(ScrRulePacks, {
+			props: { packs: rulePacks }
+		});
+		// the pack sits in the Available section (not adopted) — find its row by
+		// name, then its sibling disclosure toggle.
+		const nameEl = getByText(target.name);
+		const toggle = nameEl.parentElement!.querySelector('button[aria-expanded]') as HTMLButtonElement;
+		expect(toggle.getAttribute('aria-expanded')).toBe('false');
+		// before expanding, the pack's rule text is absent.
+		expect(queryByText(target.rules[0])).toBeNull();
+		await fireEvent.click(toggle);
+		expect(toggle.getAttribute('aria-expanded')).toBe('true');
+		// after expanding, every rule statement in the pack renders.
+		for (const rule of target.rules) {
+			expect(getByText(rule)).toBeTruthy();
+		}
+		// the disclosure now offers to hide the rules again.
+		expect(getAllByLabelText('Hide rules').length).toBe(1);
+	});
 });
 
 describe('ScrMyDojos — memberships grouped + empty state', () => {
