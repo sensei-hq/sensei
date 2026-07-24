@@ -81,13 +81,20 @@ export function toKitRuns(runs: RelayRun[], gates: RelayGate[], now: Date = new 
  * RelayGate → KitGate (the `/you/approve` command card). The kit card wants:
  * project, cmd, kind, risk, why, session, age. The stripped payload carries the
  * command line under `command`/`cmd` and the human-language reason under
- * `prompt`/`reason`; `risk` is derived from the gate severity (`gate_severity`
- * blocking → "high", else "guarded"). `session` is the owning run.
+ * `prompt`/`reason`; `session` is the owning run.
+ *
+ * Risk is derived from the gate's severity. The daemon's hook-gate payload
+ * (sessions.rs) distinguishes a HARD-block from a soft gate by presence, not a
+ * `gate_severity` field: a hard-block carries the matched danger `category`
+ * (+ `reason`), a soft gate carries neither. So a gate is blocking iff its
+ * payload names a `category` → "high"; otherwise "guarded". (An earlier version
+ * read `payload.gate_severity`, which the inbox payload never carries, so every
+ * gate read as "guarded".)
  */
 export function toKitGate(gate: RelayGate, now: Date = new Date()): KitGate {
 	const cmd = payloadStr(gate.payload, 'command') || payloadStr(gate.payload, 'cmd');
 	const why = payloadStr(gate.payload, 'reason') || payloadStr(gate.payload, 'prompt');
-	const blocking = gate.payload?.gate_severity === 'blocking';
+	const blocking = gate.payload?.category != null;
 	return {
 		id: gate.id,
 		project: gate.run_title ?? '',

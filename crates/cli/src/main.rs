@@ -1229,7 +1229,7 @@ fn print_models_status(d: &serde_json::Value) {
         println!("No local models available — this build has no embedded runtime.");
         return;
     }
-    println!("{:<24} {}", "MODEL", "PHASE");
+    println!("{:<24} PHASE", "MODEL");
     for m in &models {
         let id = m["id"].as_str().unwrap_or("?");
         println!("{:<24} {}", id, format_phase(&m["phase"]));
