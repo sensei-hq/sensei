@@ -1,4 +1,12 @@
-@import '@unocss/reset/tailwind.css';
+/* The reset lives in a dedicated lowest-priority cascade layer so real utility
+ * classes always win over its element/attribute resets. Without this, the
+ * reset's `[type=button],[type=submit]{background-color:transparent}` ties the
+ * specificity of `.bg-primary`/`.bg-paper` (both one class/attribute) and, being
+ * emitted later in the bundle, silently wins — every `<button type=…>` with a
+ * `bg-*` class then renders transparent (white-on-white). `@layer reset;`
+ * declared first makes `reset` the lowest layer; unlayered utilities beat it. */
+@layer reset;
+@import '@unocss/reset/tailwind.css' layer(reset);
 @import '@rokkit/themes/base.css';
 @import '@rokkit/themes/zen-sumi.css';
 @import '$lib/tokens.css';
