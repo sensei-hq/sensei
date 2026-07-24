@@ -471,6 +471,9 @@ bump:
 	@# Node manifests
 	@sed -i '' 's/"version": "[^"]*"/"version": "$(_v)"/' app/package.json
 	@sed -i '' 's/"version": "[^"]*"/"version": "$(_v)"/' website/package.json
+	@# Dōjō web app — the version is stamped into the build (vite reads
+	@# package.json) and shown in the console footer / served at /version.
+	@sed -i '' 's/"version": "[^"]*"/"version": "$(_v)"/' dojo/package.json
 	@# Tauri app manifest + Cargo.toml
 	@sed -i '' 's/"version": "[^"]*"/"version": "$(_v)"/' app/src-tauri/tauri.conf.json
 	@sed -i '' "s/^version = \"[^\"]*\"/version = \"$(_v)\"/" app/src-tauri/Cargo.toml
@@ -503,7 +506,7 @@ bump:
 	@# Commit everything
 	@git add VERSION Cargo.lock app/src-tauri/Cargo.lock \
 	  app/package.json app/src-tauri/tauri.conf.json app/src-tauri/Cargo.toml \
-	  website/package.json website/src/routes/+page.svelte \
+	  website/package.json website/src/routes/+page.svelte dojo/package.json \
 	  crates/senseid/Cargo.toml crates/cli/Cargo.toml crates/mcp/Cargo.toml \
 	  crates/bootstrap/Cargo.toml crates/logger/Cargo.toml crates/sensei-config/Cargo.toml \
 	  homebrew/Formula/sensei.rb homebrew/Casks/senseihq.rb \
