@@ -4,6 +4,7 @@
 	import Icon from './Icon.svelte';
 	import KanjiToken from './KanjiToken.svelte';
 	import LogoutButton from './LogoutButton.svelte';
+	import { getInitials } from './initials';
 	import type { KitOrg, KitDojo, KitMe } from './types';
 
 	// Top bar (kit K2TopBar): brand · org switcher · search affordance · needs-you
@@ -36,16 +37,8 @@
 	const isOrg = $derived(context === 'org');
 
 	// Avatar as initials (the kit's window.Avatar) — two-letter monogram, matching
-	// the shipped ConsoleTopBar treatment.
-	const initials = $derived(
-		(me?.name ?? 'You')
-			.replace(/\([^)]*\)/g, ' ')
-			.split(/\s+/)
-			.filter((w) => /^[\p{L}\p{N}]/u.test(w))
-			.slice(0, 2)
-			.map((w) => w[0].toUpperCase())
-			.join('')
-	);
+	// the shipped ConsoleTopBar treatment. Shared: kit/initials.ts.
+	const initials = $derived(getInitials(me?.name));
 </script>
 
 <div

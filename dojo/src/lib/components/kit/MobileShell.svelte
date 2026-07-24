@@ -3,6 +3,7 @@
 	import Icon from './Icon.svelte';
 	import TabBar from './TabBar.svelte';
 	import LogoutButton from './LogoutButton.svelte';
+	import { getInitials } from './initials';
 	import { K2_ROLE } from './vocab';
 	import type { KitOrg, KitMe, KitNavItem } from './types';
 
@@ -29,15 +30,7 @@
 	} = $props();
 
 	const isYou = $derived(context === 'you');
-	const initials = $derived(
-		(me?.name ?? 'You')
-			.replace(/\([^)]*\)/g, ' ')
-			.split(/\s+/)
-			.filter((w) => /^[\p{L}\p{N}]/u.test(w))
-			.slice(0, 2)
-			.map((w) => w[0].toUpperCase())
-			.join('')
-	);
+	const initials = $derived(getInitials(me?.name));
 </script>
 
 <div class="bg-paper flex h-full w-full flex-col overflow-hidden">
