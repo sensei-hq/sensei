@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { SectionHead, Banner, Btn, Chip, Icon, KanjiToken } from '$lib/components/kit';
+	import { SectionHead, Banner, Btn, Chip, Icon, KanjiToken, EmptyState } from '$lib/components/kit';
 	import type { KitClientAuditRow } from '$lib/components/kit/types';
 
 	// The lead client-audit ledger (mockup ScrClientAudit) — an append-only,
@@ -40,6 +40,12 @@
 	</Banner>
 
 	<div class="bg-paper-soft border-paper-edge overflow-hidden rounded-lg border">
+		{#if !entries.length}
+			<EmptyState kanji="録" title="The ledger is empty.">
+				Every share and every strip is recorded here, entry by entry. Nothing has crossed a client
+				boundary yet.
+			</EmptyState>
+		{/if}
 		{#each entries as r (r.t + r.event)}
 			<div class="border-paper-edge flex items-center gap-4 border-b" style="padding: 12px 16px">
 				<KanjiToken char={r.kanji} size="base" toneClass={r.ok ? 'text-ink-mute' : 'text-danger'} w={20} />
