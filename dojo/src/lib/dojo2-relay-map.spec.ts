@@ -115,24 +115,34 @@ describe('toKitRun / toKitRuns', () => {
 });
 
 describe('toKitGate / toKitGates', () => {
-	it('maps a command gate onto the kit card, deriving risk from severity', () => {
+	it('maps a HARD-block gate onto the kit card, deriving high risk from the category', () => {
+		// The daemon's hard-block payload (sessions.rs): prompt + tool + the matched
+		// danger `category` + `reason`. A `category` marks it blocking → "high".
 		const k = toKitGate(
-			gate({ payload: { command: 'pnpm db:migrate --env=staging', reason: 'touches auth schema', gate_severity: 'blocking' } }),
+			gate({
+				payload: {
+					prompt: 'Hard-block: touches auth schema. Approve Bash?',
+					tool: 'Bash',
+					category: 'destructive_db',
+					reason: 'touches auth schema'
+				}
+			}),
 			NOW
 		);
-		expect(k.cmd).toBe('pnpm db:migrate --env=staging');
-		expect(k.why).toBe('touches auth schema');
-		expect(k.risk).toBe('high'); // blocking
+		expect(k.why).toBe('touches auth schema'); // reason preferred over prompt
+		expect(k.risk).toBe('high'); // hard-block carries a category
 		expect(k.kind).toBe('approval');
 		expect(k.project).toBe('lumen-auth');
 		expect(k.session).toBe('run-1');
 		expect(k.age).toBe('3m'); // 11:57 → 12:00
 	});
 
-	it('falls back to guarded risk + a prompt when no command/severity', () => {
-		const k = toKitGate(gate({ payload: { prompt: 'approve the deploy' } }), NOW);
+	it('falls back to guarded risk for a SOFT gate (no category) + shows the prompt', () => {
+		// The daemon's soft-gate payload carries only prompt + tool — no `category`,
+		// so it reads as "guarded" (not blocking).
+		const k = toKitGate(gate({ payload: { prompt: 'Approve Bash?', tool: 'Bash' } }), NOW);
 		expect(k.risk).toBe('guarded');
-		expect(k.cmd).toBe('approve the deploy');
+		expect(k.cmd).toBe('Approve Bash?');
 	});
 
 	it('toKitGates keeps only approvals (drops decisions + chat/nudge)', () => {
