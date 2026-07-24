@@ -7,7 +7,8 @@
 	// leak-guard held before client source could leave, one row each (client ·
 	// when · severity chip · state dot + an open affordance). A retention +
 	// client-read-access chip row sits below. Presentational: the page supplies
-	// the incidents (kit fixtures this chunk).
+	// the incidents (kit fixtures this chunk). Degrades to the shared EmptyState
+	// when nothing has needed leak-guard attention.
 	let {
 		orgName,
 		incidents = [],
@@ -52,42 +53,43 @@
 		set retention, and control client read-access here.
 	</Banner>
 
-	<ListSection icon="shield-warning" title="Confidentiality incidents" count={incidents.length}>
-		{#if !incidents.length}
-			<EmptyState kanji="盾" title="No incidents on record.">
-				Confidentiality containments land here. Nothing has needed leak-guard attention.
-			</EmptyState>
-		{/if}
-		{#each incidents as it (it.id)}
-			{@const sv = severityTone(it.severity)}
-			{@const st = stateToneClass(it.state)}
-			<div class="border-paper-edge flex items-center gap-4 border-b" style="padding: 12px 16px">
-				<KanjiToken char={it.kanji} size="lg" toneClass={sv.text} w={22} />
-				<div class="flex-1" style="min-width: 0">
-					<div class="text-ink text-sm">{it.title}</div>
-					<div class="mono text-ink-faint text-xs" style="margin-top: 1px">
-						{it.client} · {it.when}
+	{#if !incidents.length}
+		<EmptyState kanji="盾" title="No incidents on record.">
+			Confidentiality containments land here. Nothing has needed leak-guard attention.
+		</EmptyState>
+	{:else}
+		<ListSection icon="shield-warning" title="Confidentiality incidents" count={incidents.length}>
+			{#each incidents as it (it.id)}
+				{@const sv = severityTone(it.severity)}
+				{@const st = stateToneClass(it.state)}
+				<div class="border-paper-edge flex items-center gap-4 border-b" style="padding: 12px 16px">
+					<KanjiToken char={it.kanji} size="lg" toneClass={sv.text} w={22} />
+					<div class="flex-1" style="min-width: 0">
+						<div class="text-ink text-sm">{it.title}</div>
+						<div class="mono text-ink-faint text-xs" style="margin-top: 1px">
+							{it.client} · {it.when}
+						</div>
 					</div>
+					<Chip toneClass={sv.text} softClass={sv.soft} edgeClass={sv.edge}>{it.severity}</Chip>
+					<span class="inline-flex items-center gap-1 text-xs {st}">
+						<span class="rounded-full" style="width: 6px; height: 6px; background: currentColor"></span
+						>{it.state}
+					</span>
+					<Btn size="sm" variant="ghost" icon="alt-arrow-right" onclick={() => onOpen?.(it)}>Open</Btn>
+					{#if onResolve && it.state !== 'resolved'}
+						<Btn size="sm" variant="ghost" icon="check-circle" onclick={() => onResolve?.(it)}>
+							Resolve
+						</Btn>
+					{/if}
+					{#if onDelete}
+						<Btn size="sm" variant="ghost" icon="trash-bin-trash" onclick={() => onDelete?.(it)}>
+							Delete
+						</Btn>
+					{/if}
 				</div>
-				<Chip toneClass={sv.text} softClass={sv.soft} edgeClass={sv.edge}>{it.severity}</Chip>
-				<span class="inline-flex items-center gap-1 text-xs {st}">
-					<span class="rounded-full" style="width: 6px; height: 6px; background: currentColor"></span
-					>{it.state}
-				</span>
-				<Btn size="sm" variant="ghost" icon="alt-arrow-right" onclick={() => onOpen?.(it)}>Open</Btn>
-				{#if onResolve && it.state !== 'resolved'}
-					<Btn size="sm" variant="ghost" icon="check-circle" onclick={() => onResolve?.(it)}>
-						Resolve
-					</Btn>
-				{/if}
-				{#if onDelete}
-					<Btn size="sm" variant="ghost" icon="trash-bin-trash" onclick={() => onDelete?.(it)}>
-						Delete
-					</Btn>
-				{/if}
-			</div>
-		{/each}
-	</ListSection>
+			{/each}
+		</ListSection>
+	{/if}
 
 	<div class="flex flex-wrap gap-2">
 		<Chip icon="lock-keyhole" toneClass="text-ink-mute">Retention · 1 year</Chip>
