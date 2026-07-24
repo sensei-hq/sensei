@@ -206,11 +206,9 @@
 			{/if}
 		</div>
 	{:else}
-		<div class="bg-paper-soft border-paper-edge overflow-hidden rounded-lg border">
-			<EmptyState kanji="静" title="The triage queue is clear.">
-				Candidate learnings land here for a maintainer's decision. Nothing is waiting on you right
-				now.
-			</EmptyState>
-		</div>
+		<EmptyState kanji="静" title="The triage queue is clear.">
+			Candidate learnings land here for a maintainer's decision. Nothing is waiting on you right
+			now.
+		</EmptyState>
 	{/if}
 </div>

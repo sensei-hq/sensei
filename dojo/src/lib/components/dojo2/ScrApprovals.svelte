@@ -55,10 +55,8 @@
 			{/each}
 		</div>
 	{:else}
-		<div class="bg-paper-soft border-paper-edge overflow-hidden rounded-lg border">
-			<EmptyState kanji="静" title="Nothing awaiting a second look.">
-				High-impact candidates land here for a second signature. The queue is clear.
-			</EmptyState>
-		</div>
+		<EmptyState kanji="静" title="Nothing awaiting a second look.">
+			High-impact candidates land here for a second signature. The queue is clear.
+		</EmptyState>
 	{/if}
 </div>

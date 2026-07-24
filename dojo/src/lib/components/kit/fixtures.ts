@@ -253,52 +253,101 @@ export const stance: KitStanceDial[] = [
 	}
 ];
 
-// Adoptable rule-pack bundles (dojo2-data `rulePacks`) — NOT a "library".
+// Adoptable rule-pack bundles (dojo2-data `rulePacks`) — NOT a "library". A pack
+// is a credible, recognizable governance bundle a dōjō would adopt into its
+// constitution, spanning the governance areas (core principles · architecture ·
+// security · compliance · language/stack · design system). Sourced to real
+// standards + house authors, not "by ACME"; a couple ship already-adopted.
 export const rulePacks: KitRulePack[] = [
 	{
-		id: 'p1',
+		id: 'clean-code',
+		kanji: '理',
+		name: 'Clean Code · core principles',
+		by: 'R. Martin · Clean Code',
+		count: 14,
+		adopted: true,
+		note: 'small functions, intention-revealing names, single responsibility'
+	},
+	{
+		id: 'owasp-asvs',
 		kanji: '守',
-		name: 'Auth boundary guards',
-		by: 'Acme · platform',
+		name: 'OWASP ASVS · application security',
+		by: 'OWASP · ASVS 4.0',
+		count: 22,
+		adopted: true,
+		note: 'input validation, auth boundary, secrets & session handling'
+	},
+	{
+		id: 'pci-dss',
+		kanji: '盾',
+		name: 'PCI-DSS · cardholder data',
+		by: 'PCI-DSS v4.0',
+		count: 12,
+		adopted: false,
+		note: 'no PAN in logs, encrypted at rest, scoped access & audit trail'
+	},
+	{
+		id: 'twelve-factor',
+		kanji: '築',
+		name: 'Twelve-Factor · service architecture',
+		by: 'Heroku · 12-Factor',
+		count: 12,
+		adopted: false,
+		note: 'config in env, stateless processes, dev/prod parity'
+	},
+	{
+		id: 'rust-clippy',
+		kanji: '技',
+		name: 'Rust · clippy defaults',
+		by: 'Rust · clippy',
+		count: 9,
+		adopted: false,
+		note: 'clippy-clean, Result over unwrap, no blocking in async'
+	},
+	{
+		id: 'ts-strict',
+		kanji: '技',
+		name: 'TypeScript · strict',
+		by: 'TypeScript · strict',
 		count: 8,
 		adopted: true,
-		note: 'token redaction, signature checks, secret scanning'
+		note: 'no any, exhaustive switches, no non-null assertions'
 	},
 	{
-		id: 'p2',
-		kanji: '紋',
-		name: 'Payments patterns',
-		by: 'Acme · payments',
-		count: 6,
-		adopted: true,
-		note: 'idempotency, ledger writes, reconciliation'
-	},
-	{
-		id: 'p3',
+		id: 'svelte-runes',
 		kanji: '技',
-		name: 'React · TypeScript baseline',
-		by: 'Rust Guild',
+		name: 'Svelte 5 · runes',
+		by: 'Svelte 5 · runes',
+		count: 7,
+		adopted: false,
+		note: '$state/$derived over stores, snippets over slots, no legacy reactivity'
+	},
+	{
+		id: 'zen-sumi',
+		kanji: '紋',
+		name: 'Zen-Sumi · design tokens',
+		by: 'Zen-Sumi · design tokens',
+		count: 10,
+		adopted: false,
+		note: 'named tokens not hex, 8-stop scale, 4px grid, md: responsive'
+	},
+	{
+		id: 'a11y-wcag',
+		kanji: '観',
+		name: 'WCAG 2.2 AA · accessibility',
+		by: 'W3C · WCAG 2.2',
 		count: 11,
 		adopted: false,
-		note: 'exports, query layer, suspense boundaries'
+		note: 'labels & roles, focus order, contrast, keyboard-reachable'
 	},
 	{
-		id: 'p4',
-		kanji: '盾',
-		name: 'Client engagement shield',
-		by: 'Globex · lead',
+		id: 'conventional',
+		kanji: '整',
+		name: 'Conventional Commits · history',
+		by: 'Conventional Commits 1.0',
 		count: 5,
-		adopted: true,
-		note: 'dereferencing, webhook verification, audit trail'
-	},
-	{
-		id: 'p5',
-		kanji: '理',
-		name: 'API compatibility',
-		by: 'Acme · platform',
-		count: 4,
 		adopted: false,
-		note: 'deprecation windows, versioning, changelog gates'
+		note: 'typed subjects, scoped changes, small single-purpose commits'
 	}
 ];
 
