@@ -42,6 +42,7 @@ const wireRun: RelayRun = {
 	last_event_at: '2026-07-23T11:30:00Z',
 	paused_until: null,
 	pause_reason: null,
+	heartbeat_at: '2026-07-23T11:59:30Z',
 	started_at: '2026-07-23T11:22:00Z',
 	completed_at: null
 };

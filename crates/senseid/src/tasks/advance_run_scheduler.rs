@@ -50,6 +50,19 @@ pub(crate) async fn enqueue_advance(queue: &TaskQueue, run_id: &uuid::Uuid) {
     queue.enqueue(Task::new(TaskKind::AdvanceRun, "", &path)).await;
 }
 
+/// Enqueue a `PublishRun` status-federation tick for one run id — de-duped, the
+/// same contract as [`enqueue_advance`] but for the P1 run→relay bridge. Skips if
+/// a `PublishRun` for this run is already pending so a backed-up queue never piles
+/// up duplicate publishes. STATUS only — this federates the run's status/heartbeat
+/// to Relay; it never drives the run.
+pub(crate) async fn enqueue_publish_run(queue: &TaskQueue, run_id: &uuid::Uuid) {
+    let path = run_id.to_string();
+    if queue.has_pending_kind_path(TaskKind::PublishRun, &path).await {
+        return;
+    }
+    queue.enqueue(Task::new(TaskKind::PublishRun, "", &path)).await;
+}
+
 /// Resume every due pause, logging a `Resumed` event + enqueueing a tick for
 /// each. Tolerant: a resume-query failure is logged and treated as "nothing
 /// resumed" so the tick still proceeds to the active-run sweep. Extracted so the
@@ -75,6 +88,9 @@ async fn resume_due(queue: &TaskQueue, pg: &PgStore) {
             tracing::warn!(run_id = %id, error = %e, "advance_run_scheduler: logging Resumed event failed");
         }
         enqueue_advance(queue, &id).await;
+        // Federate the resume (paused → running) promptly, not just on the next
+        // active-run sweep.
+        enqueue_publish_run(queue, &id).await;
     }
 }
 
@@ -87,6 +103,10 @@ async fn tick(queue: &TaskQueue, pg: &PgStore) {
         Ok(runs) => {
             for run in &runs {
                 enqueue_advance(queue, &run.id).await;
+                // P1: federate the run's status/heartbeat to Relay each tick (and
+                // thus on any status change) so Jerry can watch the build. STATUS
+                // only — the publish never drives the run.
+                enqueue_publish_run(queue, &run.id).await;
             }
         }
         Err(e) => {
@@ -126,6 +146,21 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn enqueue_publish_run_carries_run_id_and_dedups() {
+        let queue = TaskQueue::new();
+        let id = uuid::Uuid::new_v4();
+        enqueue_publish_run(&queue, &id).await;
+        // A second enqueue with nothing drained is de-duped.
+        enqueue_publish_run(&queue, &id).await;
+
+        assert_eq!(queue.status().await.pending, 1, "publish enqueue is de-duped");
+        let t = queue.next_task().await;
+        assert_eq!(t.kind, TaskKind::PublishRun);
+        assert_eq!(t.path, id.to_string(), "the run id rides in task.path");
+        assert_eq!(t.folder_path, "", "no folder scoping for a run publish");
+    }
+
+    #[tokio::test]
     async fn tick_enqueues_one_per_active_run() {
         // DB-guarded: with a test DB, a tick over N active runs enqueues N ticks.
         // `tick` calls the global `resume_due_runs`, so hold the shared resume
@@ -140,18 +175,25 @@ mod tests {
 
         tick(&queue, &pg).await;
 
-        // Drain the queue and confirm both runs got an AdvanceRun tick. (Other
-        // runs from a shared test DB may also appear — we only assert ours are
-        // present, and that every enqueued task is an AdvanceRun.)
+        // Drain the queue and confirm both runs got an AdvanceRun tick AND a
+        // PublishRun status-federation tick. (Other runs from a shared test DB may
+        // also appear — we only assert ours are present, and that every enqueued
+        // task is one of the two run kinds.)
         let n = queue.status().await.pending;
-        let mut paths = std::collections::HashSet::new();
+        let mut advance_paths = std::collections::HashSet::new();
+        let mut publish_paths = std::collections::HashSet::new();
         for _ in 0..n {
             let t = queue.next_task().await;
-            assert_eq!(t.kind, TaskKind::AdvanceRun);
-            paths.insert(t.path);
+            match t.kind {
+                TaskKind::AdvanceRun => { advance_paths.insert(t.path); }
+                TaskKind::PublishRun => { publish_paths.insert(t.path); }
+                other => panic!("unexpected task kind enqueued by tick: {other}"),
+            }
         }
-        assert!(paths.contains(&a.to_string()), "run a is ticked");
-        assert!(paths.contains(&b.to_string()), "run b is ticked");
+        assert!(advance_paths.contains(&a.to_string()), "run a is ticked (advance)");
+        assert!(advance_paths.contains(&b.to_string()), "run b is ticked (advance)");
+        assert!(publish_paths.contains(&a.to_string()), "run a is published");
+        assert!(publish_paths.contains(&b.to_string()), "run b is published");
 
         for id in [a, b] {
             sqlx_core::query::query("DELETE FROM activity.runs WHERE id = $1")
@@ -178,17 +220,26 @@ mod tests {
         tick(&queue, &pg).await;
         tick(&queue, &pg).await;
 
-        // Count AdvanceRun ticks for OUR run across the whole queue. (Other runs
-        // from a shared test DB may also be enqueued — we only assert ours.)
+        // Count the run's ticks across the whole queue, per kind. (Other runs from
+        // a shared test DB may also be enqueued — we only assert ours.) Both the
+        // AdvanceRun and the PublishRun enqueue are de-duped, so two ticks with
+        // nothing drained enqueue each kind for our run exactly once.
         let want = run.to_string();
         let n = queue.status().await.pending;
-        let mut ours = 0;
+        let mut ours_advance = 0;
+        let mut ours_publish = 0;
         for _ in 0..n {
             let t = queue.next_task().await;
-            assert_eq!(t.kind, TaskKind::AdvanceRun);
-            if t.path == want { ours += 1; }
+            if t.path == want {
+                match t.kind {
+                    TaskKind::AdvanceRun => ours_advance += 1,
+                    TaskKind::PublishRun => ours_publish += 1,
+                    other => panic!("unexpected task kind: {other}"),
+                }
+            }
         }
-        assert_eq!(ours, 1, "two ticks enqueue the AdvanceRun for a run only once");
+        assert_eq!(ours_advance, 1, "two ticks enqueue the AdvanceRun for a run only once");
+        assert_eq!(ours_publish, 1, "two ticks enqueue the PublishRun for a run only once");
 
         sqlx_core::query::query("DELETE FROM activity.runs WHERE id = $1")
             .bind(run).execute(pg.pool()).await.unwrap();
@@ -228,15 +279,23 @@ mod tests {
         // …a Resumed event was logged for it (resume_due appends per resumed id)…
         let events = pg.list_run_events(&due, 10).await.unwrap();
         assert!(events.iter().any(|e| e.kind == RunEventKind::Resumed), "Resumed event logged");
-        // …and an AdvanceRun tick was enqueued for it.
+        // …and both an AdvanceRun tick AND a PublishRun status-federation tick
+        // were enqueued for it.
         let n = queue.status().await.pending;
-        let mut saw_due = false;
+        let mut saw_advance = false;
+        let mut saw_publish = false;
         for _ in 0..n {
             let t = queue.next_task().await;
-            assert_eq!(t.kind, TaskKind::AdvanceRun);
-            if t.path == due.to_string() { saw_due = true; }
+            if t.path == due.to_string() {
+                match t.kind {
+                    TaskKind::AdvanceRun => saw_advance = true,
+                    TaskKind::PublishRun => saw_publish = true,
+                    other => panic!("unexpected task kind: {other}"),
+                }
+            }
         }
-        assert!(saw_due, "resume_due enqueues a tick for the resumed run");
+        assert!(saw_advance, "resume_due enqueues an AdvanceRun tick for the resumed run");
+        assert!(saw_publish, "resume_due enqueues a PublishRun tick for the resumed run");
 
         sqlx_core::query::query("DELETE FROM activity.runs WHERE id = $1")
             .bind(due).execute(pg.pool()).await.unwrap();

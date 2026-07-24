@@ -11,7 +11,7 @@
 use crate::db::pg_store::DojoMembership;
 use dojo_protocol::relay::{
     RelayInboxAck, RelayInboxItem, RelayInboxPull, RelayInboxStatus, RelaySegment,
-    RelaySegmentsPublish, RelaySessionUpdate,
+    RelaySegmentsPublish, RelaySessionAck, RelaySessionUpdate,
 };
 use dojo_protocol::{ArtifactPullResponse, PublishArtifactResponse, PublishedArtifact};
 use std::time::Duration;
@@ -314,6 +314,25 @@ impl DojoClient {
         self.relay_post("session", update).await
     }
 
+    /// Publish the status snapshot AND decode the Worker's `{ id }` response — the
+    /// cloud `dojo.relay_sessions(id)` this run upserted to. Same idempotent POST
+    /// as [`Self::publish_session_update`], but the P1 run-bridge needs the id to
+    /// persist into `activity.runs.dojo_session_id` (so the local run joins to its
+    /// relay session). Mirrors [`Self::publish_artifact`]'s decode discipline: a
+    /// non-2xx → [`DojoClientError::Status`], an undecodable 2xx →
+    /// [`DojoClientError::Decode`].
+    pub async fn publish_session_update_returning_id(
+        &self,
+        update: &RelaySessionUpdate,
+    ) -> Result<String, DojoClientError> {
+        let resp = self.post_retry("session", update, true).await?;
+        let ack = resp
+            .json::<RelaySessionAck>()
+            .await
+            .map_err(|e| DojoClientError::Decode(e.to_string()))?;
+        Ok(ack.id)
+    }
+
     /// Upsert the run's outline segments (`POST relay/segments`). The Worker maps
     /// `run_id` → the cloud session and upserts each segment by (session, seq).
     pub async fn upsert_segments(
@@ -610,6 +629,7 @@ mod tests {
             last_event_at: None,
             paused_until: None,
             pause_reason: None,
+            heartbeat_at: None,
         };
         c.publish_session_update(&update)
             .await
@@ -777,6 +797,7 @@ mod tests {
             last_event_at: None,
             paused_until: None,
             pause_reason: None,
+            heartbeat_at: None,
         };
         c.publish_session_update(&update).await.expect("session publish ok");
 
@@ -825,6 +846,59 @@ mod tests {
         let ack = c.raise_inbox_item(&item).await.expect("inbox publish ok");
         assert_eq!(ack.id, "inbox-42", "raise decodes the Worker ack id");
         assert_eq!(ack.seq, 7, "raise decodes the Worker ack seq");
+
+        crate::gateway_keys::delete_key(&cref).unwrap();
+    }
+
+    #[tokio::test]
+    #[cfg_attr(not(target_os = "macos"), ignore)]
+    async fn publish_session_update_returning_id_decodes_the_cloud_session_id() {
+        use axum::{routing::post, Json, Router};
+        use dojo_protocol::relay::{RelayRunStatus, RelaySessionUpdate};
+
+        // The Worker's `POST relay/session` returns `{ id }` — the upserted cloud
+        // session id. Typed `Json<RelaySessionUpdate>` extraction 422s on a wrong
+        // wire shape (so a green run also proves the run→session update serializes,
+        // including the new heartbeat_at field), and the ack `{id}` is decoded.
+        async fn session(
+            Json(u): Json<RelaySessionUpdate>,
+        ) -> Json<dojo_protocol::relay::RelaySessionAck> {
+            // The bridge's status + heartbeat crossed the wire intact.
+            assert_eq!(u.status, RelayRunStatus::Stalled);
+            assert_eq!(u.heartbeat_at.as_deref(), Some("2026-07-24T10:05:00Z"));
+            Json(dojo_protocol::relay::RelaySessionAck { id: "cloud-sess-77".into() })
+        }
+        let app = Router::new().route("/v1/t/{origin}/{org}/relay/session", post(session));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap(); });
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        let cref = format!("dojo-sess-id-{}", uuid::Uuid::new_v4());
+        crate::gateway_keys::set_key(&cref, "device-token-relay").unwrap();
+        let mut m = membership("http://localhost:7755/github/acme", &cref);
+        m.registry_url = format!("http://{addr}");
+        let c = DojoClient::for_membership(&m);
+
+        let update = RelaySessionUpdate {
+            run_id: "run-1".into(),
+            status: RelayRunStatus::Stalled,
+            title: "sensei".into(),
+            goal: None,
+            progress_done: 2,
+            progress_total: 5,
+            current_phase: Some("P1".into()),
+            current_feature: None,
+            last_event_at: Some("2026-07-24T10:04:30Z".into()),
+            paused_until: None,
+            pause_reason: None,
+            heartbeat_at: Some("2026-07-24T10:05:00Z".into()),
+        };
+        let id = c
+            .publish_session_update_returning_id(&update)
+            .await
+            .expect("publish returns the cloud session id");
+        assert_eq!(id, "cloud-sess-77");
 
         crate::gateway_keys::delete_key(&cref).unwrap();
     }

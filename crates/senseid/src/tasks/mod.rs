@@ -112,6 +112,12 @@ pub enum TaskKind {
     /// per just-resumed run). P3.2 only heartbeats + logs a housekeeping event;
     /// the agent spawn/drive plugs in at the `// P3.3 SEAM` in the handler.
     AdvanceRun,
+    /// Relay run→relay publish bridge (P1): federate one daemon-owned run
+    /// (`activity.runs`) to `dojo.relay_sessions` so Jerry can watch the build —
+    /// the run id is carried in `task.path`. Enqueued each scheduler tick per
+    /// active run (beside `AdvanceRun`). STATUS only (publishes status + heartbeat
+    /// + stall + plan segments); never drives the run.
+    PublishRun,
 }
 
 impl std::fmt::Display for TaskKind {
@@ -148,6 +154,7 @@ impl std::fmt::Display for TaskKind {
             Self::LearnPlaybooks => write!(f, "learn_playbooks"),
             Self::PublishRelaySegments => write!(f, "publish_relay_segments"),
             Self::AdvanceRun => write!(f, "advance_run"),
+            Self::PublishRun => write!(f, "publish_run"),
         }
     }
 }
@@ -182,6 +189,10 @@ impl TaskKind {
             // append — trivially fast. (The agent drive that P3.3 adds will keep
             // its own budget/timeouts; the tick itself stays light.)
             | TaskKind::AdvanceRun
+            // PublishRun (P1): one run read + one events read + a bounded HTTP
+            // post per owning dojo — the same light, network-bounded shape as
+            // PublishRelaySegments.
+            | TaskKind::PublishRun
             // Tool-insights snapshot: a couple of small aggregations + one
             // multi-row insert — well under a minute in practice, but keep
             // the same 3-minute budget as the other analyzer touch-ups so a

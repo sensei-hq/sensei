@@ -116,6 +116,9 @@ pub fn session_update(run_id: &str, title: &str, segments: &[RelaySegment]) -> R
         last_event_at: None,
         paused_until: None,
         pause_reason: None,
+        // The TodoWrite/session-keyed path carries no run heartbeat — that is
+        // the run-bridge's job (relay_run_project::run_to_session_update).
+        heartbeat_at: None,
     }
 }
 

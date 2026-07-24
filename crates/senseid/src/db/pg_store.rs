@@ -757,6 +757,27 @@ impl PgStore {
         Ok(())
     }
 
+    /// Persist the cloud `dojo.relay_sessions(id)` this run mirrors, so a later
+    /// publish tick (and the console/app) can join the local run to its relay
+    /// session. A plain uuid across the DB boundary (no cross-DB FK). Idempotent:
+    /// the P1 bridge writes it once, on the first successful publish. Also bumps
+    /// `updated_at`.
+    pub async fn set_run_dojo_session_id(
+        &self,
+        id: &uuid::Uuid,
+        dojo_session_id: &uuid::Uuid,
+    ) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE activity.runs SET dojo_session_id = $2, updated_at = now() WHERE id = $1"
+        )
+            .bind(id)
+            .bind(dojo_session_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     /// Mark a run terminal — sets `status` (expected `Done`/`Failed`) and stamps
     /// `completed_at = now()` (+ `updated_at`).
     pub async fn complete_run(&self, id: &uuid::Uuid, status: RelayRunStatus) -> Result<(), String> {
@@ -13031,6 +13052,26 @@ mod run_tests {
         assert_eq!(run.goal.as_deref(), Some("ship relay"));
         assert_eq!(run.dojo_session_id, Some(session));
         assert_eq!(run.max_concurrency, 3);
+        delete_run(&pg, &id).await;
+    }
+
+    #[tokio::test]
+    async fn set_run_dojo_session_id_persists_the_cloud_join() {
+        // The P1 run→relay bridge persists the cloud session id after the first
+        // successful publish, so the local run joins to its relay session.
+        let Ok(pg) = PgStore::connect_test().await else { return; };
+        let id = pg.create_run(&NewRun::default()).await.unwrap();
+        // Fresh run has no cloud session yet.
+        assert!(pg.get_run(&id).await.unwrap().unwrap().dojo_session_id.is_none());
+
+        let cloud = uuid::Uuid::new_v4();
+        pg.set_run_dojo_session_id(&id, &cloud).await.unwrap();
+        assert_eq!(
+            pg.get_run(&id).await.unwrap().unwrap().dojo_session_id,
+            Some(cloud),
+            "the cloud session id is persisted onto the run"
+        );
+
         delete_run(&pg, &id).await;
     }
 
