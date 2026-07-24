@@ -49,6 +49,22 @@ describe('splitPacks — adopted vs available', () => {
 	});
 });
 
+describe('rulePacks fixtures — every pack carries its rules', () => {
+	it('gives each pack a non-empty rules list (the count is rules.length)', () => {
+		for (const pack of rulePacks) {
+			expect(Array.isArray(pack.rules)).toBe(true);
+			expect(pack.rules.length).toBeGreaterThan(0);
+		}
+	});
+
+	it('has no blank or duplicate rule statements within a pack', () => {
+		for (const pack of rulePacks) {
+			expect(pack.rules.every((r) => r.trim().length > 0)).toBe(true);
+			expect(new Set(pack.rules).size).toBe(pack.rules.length);
+		}
+	});
+});
+
 describe('groupDojos — membership groups', () => {
 	it('groups fixtures into employer · clients · communities, in order', () => {
 		const groups = groupDojos(dojos);
