@@ -21,4 +21,5 @@ pub mod contribute;
 pub mod gate;
 pub mod memberships;
 pub mod relay_project;
+pub mod relay_run_project;
 pub mod routing;

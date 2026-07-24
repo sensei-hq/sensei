@@ -29,6 +29,9 @@ export interface RelayRun {
 	last_event_at: string | null;
 	paused_until: string | null;
 	pause_reason: string | null;
+	/** Liveness ping (activity.runs.heartbeat_at). Badge staleness from its age
+	 *  (no update in ~5 min = stale). Null until the daemon publishes one. */
+	heartbeat_at: string | null;
 	started_at: string;
 	completed_at: string | null;
 }
