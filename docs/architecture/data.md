@@ -47,7 +47,7 @@ flowchart TD
 | **activity** | `sessions`, `turns`, `assistant_events`, `tool_calls`, `transcript_turns` | the captured pair-behaviour — raw material for FTR |
 | **inference** | `recommendations`, `detected_patterns`, `corrections`, `reasoning_traces` | what the analyzer learns |
 | **gateway** | `routers`, `models`, `chains` | table-driven LLM routing config the daemon loads at boot |
-| **dojo** | `memberships`, `roles`, `engagements`, `artifacts`, `incidents`, `audit_events` | the team layer — lives in the **dojo-mind** service DB, not the local `sensei` DB |
+| **dojo** | `memberships`, `roles`, `engagements`, `artifacts`, `incidents`, `audit_events` | the team layer — lives in the cloud **`dojo.*`** schema (Supabase), served by the dojo Worker's `/v1`, not the local `sensei` DB |
 | public | `logs` (TTL-pruned) | structured-log sink |
 | history / staging | change history · seed import staging | seeding uses timestamp-guarded import procedures |
 

@@ -10,7 +10,6 @@
 | ├ `cli`       |                   | sensei CLI (binary: sensei)                   |
 | ├ `mcp`       |                   | MCP server                                    |
 | ├ `bootstrap` |                   | Installer / prereq checker                    |
-| ├ `dojo-mind` |                   | Federated shared-brain service (binary: sensei-dojo) |
 | └ `logger`    |                   | Structured logging crate                      |
 | `dojo/`       | SvelteKit         | Dōjō web app (developer/maintainer/admin/lead consoles; kavach+Supabase) |
 | `website/`    | SvelteKit         | Marketing website                             |

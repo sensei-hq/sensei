@@ -11,8 +11,8 @@ Two pieces plus the in-app surface:
 
 | Piece | Where | Role |
 |---|---|---|
-| **dojo-mind service** | `crates/dojo-mind` (binary `sensei-dojo`) | the federation server — memberships, contribute/triage/distribute, anonymization, its own DB (`dojo.*` schema) |
-| **dojo web app** | `dojo/` (SvelteKit) | a **responsive SaaS site** (installable PWA) — **developer** · maintainer · admin · **lead** consoles + **Relay** (phone & console), SSO-gated |
+| **dōjō backend** | the dojo Worker's `/v1` (SvelteKit server routes in `dojo/src/routes/v1/…`) | the federation server — memberships, contribute/triage/distribute, anonymization, its DB (`dojo.*` schema). *Formerly the `dojo-mind` Rust service (`sensei-dojo` binary), now removed — ported into the Worker.* |
+| **dojo web app** | `dojo/` (SvelteKit) | a **responsive SaaS site** (installable PWA) — **developer** · maintainer · admin · **lead** consoles + **Relay** (phone & console), SSO-gated. Hosts the `/v1` backend same-origin. |
 | **in-app developer flows** | in the **[Observatory](app.md)** (`(observatory)/dojo/*`) | discover · connect · bind · share · watch · receive — these are Observatory flows, not a separate app |
 
 ```mermaid
@@ -21,7 +21,7 @@ flowchart TD
         D[daemon] --> INAPP[in-app dojo surface]
     end
     subgraph saas["Dōjō (responsive SaaS · or self-hosted)"]
-        CONSOLE[console + Relay<br/>developer·maintainer·admin·lead] --> SVC[dojo-mind · sensei-dojo]
+        CONSOLE[console + Relay<br/>developer·maintainer·admin·lead] --> SVC[dojo Worker /v1]
         SVC --> DDB[(dojo.* DB)]
         SVC --> RT[[Supabase realtime]]
     end
@@ -144,8 +144,9 @@ SaaS-infra decision; it does not block Phases 1–3.
 
 ## Deployment — in-house or SaaS
 
-The Dōjō is one unit: the **service** (`dojo-mind` / `sensei-dojo`) + its **web
-console**. It ships two ways:
+The Dōjō is one unit: the **`/v1` backend** (SvelteKit server routes in the dojo
+Worker — formerly the removed `dojo-mind` / `sensei-dojo` Rust service) + its
+**web console**, both in the one Worker deployable. It ships two ways:
 
 - **SaaS** — sensei-hosted; an org signs up and connects identity.
 - **In-house** — the org runs the same service + console on its own infra (data
