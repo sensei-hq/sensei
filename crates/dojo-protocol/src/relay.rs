@@ -273,6 +273,12 @@ pub struct RelaySessionUpdate {
     /// Why the run is paused (e.g. "rate limit", "weekly cap").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pause_reason: Option<String>,
+    /// RFC 3339 — the run's liveness heartbeat (`activity.runs.heartbeat_at`).
+    /// Mirrors `dojo.relay_sessions.heartbeat_at`. The phone/console badges
+    /// staleness from this instant's age (no update in ~5 min = stale), and it
+    /// backs the watchdog's `stalled` status the bridge also publishes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub heartbeat_at: Option<String>,
 }
 
 /// One node of the phone-renderable outline — mirrors `dojo.relay_segments`. A
@@ -357,6 +363,15 @@ pub struct RelayReply {
 pub struct RelayInboxAck {
     pub id: String,
     pub seq: i64,
+}
+
+/// The Worker's ack for a published status snapshot — the response body of
+/// `POST relay/session`. `id` is the upserted `dojo.relay_sessions.id` (the cloud
+/// session this run mirrors); the daemon persists it into
+/// `activity.runs.dojo_session_id` so the local run joins to its relay session.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RelaySessionAck {
+    pub id: String,
 }
 
 /// Response to the daemon's inbox poll — the answered/pending rows since a cursor
@@ -479,12 +494,14 @@ mod tests {
             last_event_at: Some("2026-07-16T10:00:00Z".into()),
             paused_until: Some("2026-07-16T11:29:00Z".into()),
             pause_reason: Some("weekly cap".into()),
+            heartbeat_at: Some("2026-07-16T10:04:30Z".into()),
         };
         let js = serde_json::to_string(&u).unwrap();
         let back: RelaySessionUpdate = serde_json::from_str(&js).unwrap();
         assert_eq!(back, u);
         let v: serde_json::Value = serde_json::from_str(&js).unwrap();
         assert_eq!(v["status"], json!("paused"));
+        assert_eq!(v["heartbeat_at"], json!("2026-07-16T10:04:30Z"));
         assert!(v.get("goal").is_none(), "None fields are omitted");
         assert!(v.get("current_feature").is_none());
     }
@@ -593,6 +610,17 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&js).unwrap();
         assert_eq!(v["id"], json!("inbox-7"));
         assert_eq!(v["seq"], json!(42));
+    }
+
+    #[test]
+    fn session_ack_round_trips() {
+        // The Worker's `POST relay/session` ack: `{id}` (the cloud session id).
+        let ack = RelaySessionAck { id: "sess-9".into() };
+        let js = serde_json::to_string(&ack).unwrap();
+        let back: RelaySessionAck = serde_json::from_str(&js).unwrap();
+        assert_eq!(back, ack);
+        let v: serde_json::Value = serde_json::from_str(&js).unwrap();
+        assert_eq!(v["id"], json!("sess-9"));
     }
 
     #[test]

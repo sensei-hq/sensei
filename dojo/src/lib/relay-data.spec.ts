@@ -25,6 +25,7 @@ describe('relay-data', () => {
 						last_event_at: null,
 						paused_until: null,
 						pause_reason: null,
+						heartbeat_at: 't-hb',
 						started_at: 't',
 						completed_at: null
 					}
