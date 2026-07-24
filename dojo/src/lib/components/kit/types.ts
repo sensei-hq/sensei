@@ -462,6 +462,9 @@ export interface KitClientAuditRow {
  *  role is derived from git access; a dōjō override may lift it above the floor. */
 export interface KitMember {
 	name: string;
+	/** The underlying `dojo.memberships.user_id`, when the row came from the API
+	 *  (absent on fixtures) — the handle the set-role action patches against. */
+	userId?: string;
 	/** The git-derived access line (e.g. "Org owner" · "Repo admin" · "Write"). */
 	git: string;
 	/** developer · maintainer · lead · admin — the additive role. */

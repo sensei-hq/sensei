@@ -12,19 +12,37 @@
 		orgName,
 		engagements = [],
 		confidentiality,
-		mobile = false
+		mobile = false,
+		onNew,
+		onClose,
+		onDelete
 	}: {
 		orgName: string;
 		engagements?: KitEngagement[];
 		confidentiality: KitConfidentiality;
 		mobile?: boolean;
+		/** Register a new engagement (lead) — prompts for a client name. Absent =
+		 *  read-only. */
+		onNew?: (client: string) => void;
+		/** Close an engagement (lead) — PATCH status=ended, retained for audit. */
+		onClose?: (e: KitEngagement) => void;
+		/** Hard-delete an engagement (lead). */
+		onDelete?: (e: KitEngagement) => void;
 	} = $props();
+
+	// A minimal create flow consistent with the kit (no modal component yet): a
+	// one-line client-name prompt → onNew. Kept lean rather than over-built.
+	function create() {
+		if (!onNew) return;
+		const client = typeof window !== 'undefined' ? window.prompt('New engagement — client name?')?.trim() : '';
+		if (client) onNew(client);
+	}
 </script>
 
 <div class="flex flex-col {mobile ? 'p-4 gap-4' : 'p-8 gap-6'}">
 	<SectionHead eyebrow={orgName + ' · clients'} title="Engagements" count={engagements.length}>
 		{#snippet right()}
-			<Btn size="sm" icon="add-circle">New engagement</Btn>
+			<Btn size="sm" icon="add-circle" onclick={create}>New engagement</Btn>
 		{/snippet}
 	</SectionHead>
 
@@ -52,6 +70,14 @@
 					<div class="text-ink-faint text-xs">stripped</div>
 				</div>
 				<Btn size="sm" variant="ghost" icon="document">Audit</Btn>
+				{#if onClose && e.status !== 'ended'}
+					<Btn size="sm" variant="ghost" icon="lock-keyhole" onclick={() => onClose?.(e)}>Close</Btn>
+				{/if}
+				{#if onDelete}
+					<Btn size="sm" variant="ghost" icon="trash-bin-trash" onclick={() => onDelete?.(e)}>
+						Delete
+					</Btn>
+				{/if}
 			</div>
 		{/each}
 	</ListSection>

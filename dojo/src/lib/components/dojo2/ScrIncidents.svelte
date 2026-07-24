@@ -12,19 +12,38 @@
 		orgName,
 		incidents = [],
 		mobile = false,
-		onOpen
+		onOpen,
+		onReport,
+		onResolve,
+		onDelete
 	}: {
 		orgName: string;
 		incidents?: KitIncident[];
 		mobile?: boolean;
 		onOpen?: (i: KitIncident) => void;
+		/** Report (open) a new incident (lead) — prompts for a title. Absent =
+		 *  read-only. */
+		onReport?: (title: string) => void;
+		/** Resolve an incident (lead) — stamps resolved_at. */
+		onResolve?: (i: KitIncident) => void;
+		/** Delete an incident (lead). */
+		onDelete?: (i: KitIncident) => void;
 	} = $props();
+
+	// A minimal report flow consistent with the kit: click Report → a one-line
+	// title prompt → onReport. No modal component in the kit yet, so a native
+	// prompt keeps it lean (browser-verified) rather than over-building a dialog.
+	function report() {
+		if (!onReport) return;
+		const title = typeof window !== 'undefined' ? window.prompt('New incident — title?')?.trim() : '';
+		if (title) onReport(title);
+	}
 </script>
 
 <div class="flex flex-col {mobile ? 'p-4 gap-4' : 'p-8 gap-6'}">
 	<SectionHead eyebrow={orgName + ' · clients'} title="Incidents" count={incidents.length}>
 		{#snippet right()}
-			<Btn size="sm" icon="add-circle">Report</Btn>
+			<Btn size="sm" icon="add-circle" onclick={report}>Report</Btn>
 		{/snippet}
 	</SectionHead>
 
@@ -56,6 +75,16 @@
 					>{it.state}
 				</span>
 				<Btn size="sm" variant="ghost" icon="alt-arrow-right" onclick={() => onOpen?.(it)}>Open</Btn>
+				{#if onResolve && it.state !== 'resolved'}
+					<Btn size="sm" variant="ghost" icon="check-circle" onclick={() => onResolve?.(it)}>
+						Resolve
+					</Btn>
+				{/if}
+				{#if onDelete}
+					<Btn size="sm" variant="ghost" icon="trash-bin-trash" onclick={() => onDelete?.(it)}>
+						Delete
+					</Btn>
+				{/if}
 			</div>
 		{/each}
 	</ListSection>
