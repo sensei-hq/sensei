@@ -7,7 +7,6 @@
 ##     cli        — sensei CLI (binary: sensei)
 ##     mcp        — MCP server
 ##     bootstrap  — installer/prereq checker
-##     dojo-mind  — federated shared-brain service
 ##     logger     — structured logging crate
 ##   website/     — Marketing website
 ##   docs/        — Documentation
@@ -75,10 +74,6 @@ crates-all:
 	# release gate must compile that path too — catches drift in the
 	# embedded-llama-cpp code that the plain --workspace build skips.
 	cargo build --release -p senseid --features senseid/embedded-llama-cpp
-
-.PHONY: dojo
-dojo:  ## Build the sensei-dojo service binary
-	cargo build --release -p dojo-mind
 
 # ── Dōjō local auth stack (localhost supabase — un-parks the console) ──────────
 # Boots a LOCAL-ONLY supabase stack (auth + db + studio + inbucket) for developing

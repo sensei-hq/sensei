@@ -1,20 +1,24 @@
 # Dōjō deployment — Cloudflare Workers + Supabase
 
-How the Dōjō pieces deploy and connect. Two deployables + one database.
+How the Dōjō pieces deploy and connect. **One deployable + one database:** the
+`/v1` API lives *inside* the dojo Worker (SvelteKit server routes) — there is no
+separate Rust host. The `dojo-mind` Rust crate (`sensei-dojo` binary) has been
+**removed**; the Worker `/v1` is the only dōjō backend, and senseid's federation
+targets that Worker (`crates/senseid/src/federation`, `crates/senseid/src/dojo`).
 
 ```
- dojo.sensei-hq.com          dojo-api.sensei-hq.com          Supabase (cloud)
- ┌─────────────────┐  /v1/…  ┌──────────────────────┐  SQL  ┌──────────────┐
- │ dojo web app    │───────► │ dojo-mind (sensei-    │─────► │ project      │
- │ SvelteKit Worker│  data   │ dojo, Rust/axum)     │       │ sensei-hq    │
- │ kavach SSR auth │         │ federation API       │       │ dojo.* schema│
- └────────┬────────┘         └──────────────────────┘       └──────▲───────┘
+ dojo.sensei-hq.com                         Supabase (cloud)
+ ┌─────────────────┐                        ┌──────────────┐
+ │ dojo web app    │  /v1/… server routes   │ project      │
+ │ SvelteKit Worker│───────────────────────►│ sensei-hq    │
+ │ kavach SSR auth │  service-role client   │ dojo.* schema│
+ └────────┬────────┘                        └──────▲───────┘
           │ auth (magic-link) via kavach + @kavach/adapter-supabase │
           └─────────────────────────────────────────────────────────┘
 ```
 
 - **Auth** — the web app talks to Supabase Auth directly through kavach (`@kavach/adapter-supabase`), using `PUBLIC_SUPABASE_URL` + `PUBLIC_SUPABASE_ANON_KEY`.
-- **Data** — the web app calls **dojo-mind's** `/v1/t/{origin}/{org}/…` endpoints (`src/lib/dojo-api.ts`), *not* Supabase directly. dojo-mind owns the federation logic and connects to Supabase over the Postgres `DATABASE_URL`.
+- **Data** — the web app calls the Worker's own same-origin `/v1/t/{origin}/{org}/…` routes (`dojo/src/routes/v1/…/+server.ts`), which own the federation logic and talk to Supabase via a service-role client. (Formerly served by the `dojo-mind` Rust service, now removed.)
 
 ## 1. dojo web app → Cloudflare **Worker** (`dojo.sensei-hq.com`)
 
@@ -52,7 +56,7 @@ Then add the custom domain `dojo.sensei-hq.com` (Worker → Settings → Domains
 
 ## 2. dojo API → **in the Worker** (no separate host)
 
-**Decision:** the `/v1` API lives *inside* the dojo Worker as SvelteKit server routes (`dojo/src/routes/v1/t/[origin]/[org]/…/+server.ts`) talking to Supabase directly — so the SaaS is **one deployable**, no Rust host. `dojo-mind`'s `/v1` surface is ~80% CRUD over `dojo.*` + a promotion sweep + JWT auth; none of it is Rust-specific.
+**Decision:** the `/v1` API lives *inside* the dojo Worker as SvelteKit server routes (`dojo/src/routes/v1/t/[origin]/[org]/…/+server.ts`) talking to Supabase directly — so the SaaS is **one deployable**, no Rust host. The old `dojo-mind` `/v1` surface was ~80% CRUD over `dojo.*` + a promotion sweep + JWT auth; none of it was Rust-specific, so the whole surface was ported into the Worker and the Rust crate was **removed**.
 
 - **Auth plane** — `lib/server/dojo-auth.ts` (`resolveTenantAccess`) ports dojo-mind's `resolve_tenant_access`: a Supabase JWT (`Authorization: Bearer` for the **desktop/API** plane, or the kavach session `access_token` for the **console**) → `sub` matched to `dojo.memberships.user_id` → role → access floor (`member<contributor<lead<maintainer<admin`). This is the **shared-auth** plane: the desktop app authenticates against the same Supabase project (PKCE/device flow) and calls authorized publish/subscribe endpoints with its JWT.
 - **Data** — `lib/server/dojo-supabase.ts` is a service-role client scoped to the `dojo` schema; routes enforce authz in code (RLS is a hardening follow-up).
@@ -60,7 +64,7 @@ Then add the custom domain `dojo.sensei-hq.com` (Worker → Settings → Domains
 
 **Supabase prerequisites** (one-time, dashboard): Settings → API → **Exposed schemas**: add `dojo` (+ `sensei`); and set the Worker env `SUPABASE_SERVICE_ROLE_KEY` (private). Then `PUBLIC_DOJO_API_URL` is left **unset** — the console calls itself same-origin.
 
-`dojo-mind` (the Rust binary) is kept for **local dev + the eventual cross-dojo federation endpoint** (a change-cursor pull between separate dojos), not as a hosted service for the console. `dojo-api.sensei-hq.com` is **not needed**.
+The `dojo-mind` Rust binary has been **removed** (retirement complete): the Worker `/v1` is the only dōjō backend, for the console *and* for senseid's federation (rules + artifacts ride the Worker's tenant path over the `dojo_protocol` wire — see `crates/senseid/src/federation` and `crates/senseid/src/dojo`). `dojo-api.sensei-hq.com` is **not needed**.
 
 > Status: the `engagements` resource is ported as the reference pattern (`ccd08bc2`). Remaining console resources — incidents, members, identities, policies, triage — follow the same three-line shape (`resolveTenantAccess` floor → `dojoDb().from(table)` → JSON).
 
@@ -68,7 +72,7 @@ Then add the custom domain `dojo.sensei-hq.com` (Worker → Settings → Domains
 
 - Project **sensei-hq** (`lagwuqrtshjtlcuvjfnd`, us-east-1, Postgres 17), linked via `supabase link`.
 - `.env` (git-ignored) holds `SUPABASE_URL`, `SUPABASE_KEY`, `DATABASE_URL`.
-- Schema push: `dojo-mind` deploys the `dojo` scope on boot — `set -a; source .env; set +a; cargo run -p dojo-mind` (reads `DATABASE_URL`). Already done.
+- Schema push: the `dojo` scope was originally deployed by the (now removed) `dojo-mind` service on boot; the `dojo.*` schema now lives in Supabase and is managed alongside the rest of the DDL. Already done.
 
 ## 4. PWA + push (Relay) — *planning-only, not yet built*
 

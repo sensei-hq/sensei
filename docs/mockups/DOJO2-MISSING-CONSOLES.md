@@ -61,6 +61,6 @@ grow two role groups + two admin items:
 - **Blocks:** throughput / adoption / leak-guard signal cards · contributions-vs-approvals chart · leak-guard alerts.
 
 ## Notes for the designer
-- All eight are **already built + tested** in `dojo/` (routes above) and/or the `dojo-mind` backend — the task is to **bring them into the dojo2 IA**: give each a NAV_ORG destination (role-grouped as above) and re-skin to the dojo2 **kit** (`lib/dojo2/dojo2-kit.jsx` — `K2SectionHead`/`K2ListSection`/`K2RoleTag`/`K2Chip`/`K2Btn`/`K2Banner`/`K2EmptyState`, etc.).
+- All eight are **already built + tested** in `dojo/` (routes above) and/or the dojo Worker's `/v1` backend — the task is to **bring them into the dojo2 IA**: give each a NAV_ORG destination (role-grouped as above) and re-skin to the dojo2 **kit** (`lib/dojo2/dojo2-kit.jsx` — `K2SectionHead`/`K2ListSection`/`K2RoleTag`/`K2Chip`/`K2Btn`/`K2Banner`/`K2EmptyState`, etc.).
 - Keep them **role-scoped**: a viewer sees only the groups their role unlocks (maintainer → Govern; lead → Clients; admin → Admin). Personal (NAV_YOU) is unaffected.
 - `Scopes & policies` (dojo2 `ScrScopes`) already covers the old **policies** grid + scope ownership; and dojo2's **Audit** tab covers the admin action-audit — so those don't need re-adding, only the eight above.

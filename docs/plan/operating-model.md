@@ -578,7 +578,7 @@ one coherent whole. Status: ✅ shipped · 🟡 partial / planned · ❌ net-new
 | Capability | Status | Role in the model |
 |---|---|---|
 | Rules hierarchy (mandatory · scopes · promotion · federation) | ✅ | **strictness layer** (§3.6) |
-| Federation backend (`dojo-mind`, 26 `/v1` routes) | ✅ | collective-intelligence transport (§3.11) |
+| Federation backend (dojo Worker `/v1` — rules + artifacts; the `dojo-mind` Rust service was removed, ported here) | ✅ | collective-intelligence transport (§3.11) |
 | Dōjō console · tenants · policies (`/v1` in Worker) | 🟡 port in progress | org governance surface (§3.11) |
 | Default governance bundle | 🟡 planned | baseline default rules (§3.6) |
 | DORA delivery module | 🟡 planned | delivery metrics → Planner (§3.4) |

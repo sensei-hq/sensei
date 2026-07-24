@@ -5,8 +5,8 @@
 **Source mockup:** [`lib/dojo/dojo-developer.jsx`](../../mockups/Sensei/lib/dojo/dojo-developer.jsx) → `DojoDeveloperConsole` (panels: My teams · My contributions · For me)
 **Data:** `dojo.memberships` (per user), the contribute outbox / `federated_memories` ledger (per-destination status), the downstream inbox
 **App file:** _dojo web app (`dojo/`), developer view — greenfield_
-**Daemon files:** `crates/dojo-mind` (memberships, contribute, routing — exist; a per-user read view is greenfield)
-**Status:** greenfield console view; the dojo-mind data model exists but is external-blocked (no live Dōjō server) — see [architecture/dojo](../../architecture/dojo.md)
+**Backend files:** the dojo Worker's `/v1` (`dojo/src/routes/v1/…` — memberships, contribute, routing; ported from the removed `dojo-mind` Rust service; a per-user read view is greenfield)
+**Status:** greenfield console view; the `dojo.*` data model exists (cloud Supabase, served by the Worker `/v1`) — see [architecture/dojo](../../architecture/dojo.md)
 
 ## Purpose
 

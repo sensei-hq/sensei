@@ -74,7 +74,7 @@ Nothing is deleted until its content is migrated — history is in git.
 | Directory | Language | Purpose |
 |---|---|---|
 | `app/` | SvelteKit + Tauri | Desktop app (observatory + project window) |
-| `crates/` | Rust | `senseid` · `cli` · `mcp` · `bootstrap` · `dojo-mind` · `logger` |
+| `crates/` | Rust | `senseid` · `cli` · `mcp` · `bootstrap` · `dojo-protocol` · `logger` |
 | `dojo/` | SvelteKit | Dōjō web app — developer · maintainer · admin · lead consoles (SSO-gated) |
 | `website/` | SvelteKit | Marketing site |
 | `database/` | SQL (dbd) | DDL definitions — one DB `sensei`, port 7744 |
