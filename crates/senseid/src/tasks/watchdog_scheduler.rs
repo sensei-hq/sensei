@@ -280,6 +280,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn tick_keeps_a_running_run_with_recent_progress_untouched() {
+        let _guard = crate::runs::resume_test_lock().lock().await;
+        let Ok(pg) = PgStore::connect_test().await else { return; };
+        let queue = TaskQueue::with_max_repos(16);
+
+        let id = pg.create_run(&NewRun::default()).await.unwrap();
+        // Old start (would stall via the started_at fallback) BUT a fresh progress
+        // event → must stay running. Guards the last_progress_at RFC-3339 format:
+        // a `::text` timestamp fails to parse and silently falls back to
+        // started_at, which would false-stall a live, progressing run.
+        force_liveness(&pg, &id, RelayRunStatus::Running, 3600, 0).await; // started 1h ago
+        pg.append_run_event(&id, RunEventKind::PhaseStarted, Some("P1"), None, &serde_json::json!({}))
+            .await
+            .unwrap(); // fresh progress, just now
+
+        tick(&queue, &pg, Utc::now(), &WatchdogConfig::default()).await;
+
+        let run = pg.get_run(&id).await.unwrap().unwrap();
+        assert_eq!(
+            run.status,
+            RelayRunStatus::Running,
+            "fresh progress keeps a run running despite an old start"
+        );
+
+        delete_run(&pg, &id).await;
+    }
+
+    #[tokio::test]
     async fn tick_recovers_a_stalled_run_under_the_cap() {
         let _guard = crate::runs::resume_test_lock().lock().await;
         let Ok(pg) = PgStore::connect_test().await else { return; };
