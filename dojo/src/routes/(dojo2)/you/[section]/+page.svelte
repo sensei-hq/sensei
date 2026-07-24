@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { goto } from '$app/navigation';
+	import { goto, invalidateAll } from '$app/navigation';
 	import ScrPlaceholder from '$lib/components/dojo2/ScrPlaceholder.svelte';
 	import ScrProjects from '$lib/components/dojo2/ScrProjects.svelte';
 	import ScrRelayWatch from '$lib/components/dojo2/ScrRelayWatch.svelte';
@@ -11,26 +11,49 @@
 	import ScrMyDojos from '$lib/components/dojo2/ScrMyDojos.svelte';
 	import ScrContributions from '$lib/components/dojo2/ScrContributions.svelte';
 	import { youHref } from '$lib/dojo2-nav';
-	import type { KitProject } from '$lib/components/kit/types';
+	import { requireTenant } from '$lib/org-guard';
+	import { replyToGate, sendNudge } from '$lib/relay-data';
+	import type { KitProject, KitGate, KitDecision } from '$lib/components/kit/types';
 
 	// The personal-zone section screen. Dispatches to the real screens for the
 	// ported sections (projects · runs · approve · decide · chat · rules · packs ·
-	// dojos · contributions) off the kit fixtures the loader supplies — NAV_YOU is
-	// now complete. Opening a project routes to the preview drill-in at
-	// /you/projects/[id] (an in-shell route so the URL stays the source of truth —
-	// the shell keeps "Projects" active for the tail). Constitution's "Rule packs
-	// →" link routes to /you/packs.
+	// dojos · contributions). The Relay screens (runs · approve · decide · chat)
+	// and My dōjōs now bind to real /v1 data the loader supplies; their actions
+	// call the relay clients (replyToGate / sendNudge) against the layout tenant +
+	// token and invalidateAll so the list refreshes. Opening a project routes to
+	// the preview drill-in at /you/projects/[id]; Constitution's "Rule packs →"
+	// link routes to /you/packs.
 	let { data } = $props();
 
-	// The screen actions are presentational this chunk — a later chunk wires them
-	// to live `/v1` mutations. The two real navigations are opening a project and
-	// following the Constitution → Rule packs link.
 	function openProject(p: KitProject) {
 		goto(youHref('projects') + '/' + p.id);
 	}
 
 	function goPacks() {
 		goto(youHref('packs'));
+	}
+
+	// Answer a command gate (approve/deny) — a reply to the existing inbox row
+	// (KitGate.id IS the relay_inbox id). Refresh the list on success so the
+	// answered card falls away.
+	async function replyGate(gate: KitGate, verdict: 'approve' | 'deny') {
+		await replyToGate(requireTenant(data.tenantKey), gate.id, { verdict }, { accessToken: data.accessToken });
+		await invalidateAll();
+	}
+
+	// Sign off a decision gate with the chosen option (KitDecision.id IS the
+	// relay_inbox id).
+	async function chooseDecision(decision: KitDecision, option: string) {
+		await replyToGate(requireTenant(data.tenantKey), decision.id, { choice: option }, { accessToken: data.accessToken });
+		await invalidateAll();
+	}
+
+	// Nudge the newest run TO the agent (a new inbox row, distinct from a gate
+	// reply). No-op when there's no run to steer.
+	async function sendChat(text: string) {
+		if (!data.chatRunId) return;
+		await sendNudge(requireTenant(data.tenantKey), data.chatRunId, text, { accessToken: data.accessToken });
+		await invalidateAll();
 	}
 </script>
 
@@ -41,11 +64,15 @@
 {:else if data.section === 'runs'}
 	<ScrRelayWatch runs={data.runs} />
 {:else if data.section === 'approve'}
-	<ScrRelayApprove gates={data.gates} />
+	<ScrRelayApprove
+		gates={data.gates}
+		onApprove={(g) => replyGate(g, 'approve')}
+		onDeny={(g) => replyGate(g, 'deny')}
+	/>
 {:else if data.section === 'decide'}
-	<ScrRelayDecide decisions={data.decisions} />
+	<ScrRelayDecide decisions={data.decisions} onChoose={chooseDecision} />
 {:else if data.section === 'chat'}
-	<ScrRelayChat thread={data.chat} me={data.me} />
+	<ScrRelayChat thread={data.chat} me={data.me} onSend={sendChat} />
 {:else if data.section === 'rules'}
 	<ScrConstitution stance={data.stance} ladder={data.ladder} onGoPacks={goPacks} />
 {:else if data.section === 'packs'}
