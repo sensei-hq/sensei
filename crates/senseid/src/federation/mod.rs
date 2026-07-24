@@ -1,6 +1,14 @@
-//! Federation: push promoted rules to a dojo-mind and poll-pull applicable rules
+//! Federation: push promoted rules to a Dōjō and poll-pull applicable rules
 //! back as memories(origin='federated'). The ACP never talks to a dojo; senseid
 //! owns all outbound calls (spec §4).
+//!
+//! Wire target (D1): rules ride the Worker's **tenant path**
+//! `{KnowledgeSource.url}/rules` — where `url` is the tenant base
+//! `{registry}/v1/t/{origin}/{org}` — authenticated with the per-membership
+//! **device token** (Keychain, via `credential_ref`), the SAME plane the
+//! artifacts client uses (`dojo/client.rs`). The `dojo_protocol` request/response
+//! shapes are unchanged; only the URL + credential kind moved off the retired
+//! dojo-mind's global `/v1/rules` + API-key plane.
 
 use crate::db::pg_store::{InsertMemory, KnowledgeSource, MemoryPushPayload, PgStore};
 use dojo_protocol::{content_hash, PublishedRule, PullResponse};
@@ -74,12 +82,24 @@ async fn resolve_memory_namespace_id(pg: &PgStore, memory_id: &uuid::Uuid) -> Op
     row.and_then(|(n,)| n)
 }
 
+/// The rules endpoint for a source: `{url}/rules`, where `url` is the tenant base
+/// `{registry}/v1/t/{origin}/{org}` the Worker mounts rules under (D1). The
+/// origin/org already live inside `url` as real path segments (registrar-provided),
+/// so there is no `tenant_key` to re-encode here — unlike the artifacts client,
+/// which composes `registry_url` + a bare `tenant_key`. Single join point so
+/// publish + pull agree on the trailing-slash discipline.
+fn rules_url(base: &str) -> String {
+    format!("{}/rules", base.trim_end_matches('/'))
+}
+
 async fn push_one(
     pg: &PgStore, client: &reqwest::Client, src: &KnowledgeSource,
     pr: &PublishedRule, memory_id: uuid::Uuid,
 ) -> Result<(), String> {
+    // The Keychain credential is the per-membership device token (D1), attached as
+    // the Bearer exactly as before — only the credential kind + URL plane changed.
     let key = crate::gateway_keys::get_key(&src.credential_ref).map_err(|e| e.to_string())?;
-    let resp = client.post(format!("{}/v1/rules", src.url.trim_end_matches('/')))
+    let resp = client.post(rules_url(&src.url))
         .bearer_auth(key).json(pr).send().await.map_err(|e| e.to_string())?;
     if !resp.status().is_success() { return Err(format!("dojo returned {}", resp.status())); }
     let pubresp: dojo_protocol::PublishResponse = resp.json().await.map_err(|e| e.to_string())?;
@@ -99,7 +119,8 @@ pub struct PullStats {
 pub async fn pull_source(pg: &PgStore, client: &reqwest::Client, src: &KnowledgeSource)
     -> Result<PullStats, String> {
     let key = crate::gateway_keys::get_key(&src.credential_ref).map_err(|e| e.to_string())?;
-    let resp = client.get(format!("{}/v1/rules?since={}", src.url.trim_end_matches('/'), src.last_seq))
+    let resp = client.get(rules_url(&src.url))
+        .query(&[("since", src.last_seq.to_string())])
         .bearer_auth(key).send().await.map_err(|e| e.to_string())?;
     if !resp.status().is_success() { return Err(format!("dojo returned {}", resp.status())); }
     let page: PullResponse = resp.json().await.map_err(|e| e.to_string())?;
@@ -264,9 +285,12 @@ mod tests {
              ON CONFLICT (key) DO UPDATE SET shareable = EXCLUDED.shareable")
             .execute(pg.pool()).await.unwrap();
 
-        // 1. Stand up a tiny axum stub for the dōjō `GET /v1/rules` endpoint on an
-        // ephemeral port (mirrors the sibling `pull_artifacts_forwards_since_and_parses_response`
-        // stub in dojo/client.rs). It respects the `?since=` cursor — echoing
+        // 1. Stand up a tiny axum stub for the Worker's TENANT-PATH rules endpoint
+        // `GET /v1/t/{origin}/{org}/rules` on an ephemeral port (D1 — rules now ride
+        // the same tenant path + device-token plane as artifacts; mirrors the sibling
+        // `pull_artifacts_forwards_since_and_parses_response` stub in dojo/client.rs).
+        // The `{origin}`/`{org}` matchers prove the daemon built the tenant URL (a bare
+        // `/v1/rules` would 404 here). It respects the `?since=` cursor — echoing
         // `since + 1` as the new cursor proves the daemon forwarded its `last_seq`,
         // and returns exactly one active `PulledRule` (built with `content_hash` so
         // it matches the real publish path). No embedded Postgres, no dojo-mind: the
@@ -306,16 +330,19 @@ mod tests {
             })
         }
         let app = Router::new()
-            .route("/v1/rules", get(rules))
+            .route("/v1/t/{origin}/{org}/rules", get(rules))
             .with_state(Arc::new(content.clone()));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap(); });
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        let dojo_url = format!("http://{addr}");
+        // The source `url` is the tenant base `{registry}/v1/t/{origin}/{org}` the
+        // Worker mounts rules under — the daemon appends `/rules` (D1). This is the
+        // exact shape a rules KnowledgeSource carries post-switch.
+        let dojo_url = format!("http://{addr}/v1/t/github/acme");
 
-        // 2. Register the source on the daemon (key in the Keychain, row in PG). The
-        // stub ignores the bearer, but `pull_source` resolves it, so seed one.
+        // 2. Register the source on the daemon (device token in the Keychain, row in
+        // PG). The stub ignores the bearer, but `pull_source` resolves it, so seed one.
         let client = crate::federation::http_client();
         let cref = format!("dojo-e2e-{}", uuid::Uuid::new_v4());
         crate::gateway_keys::set_key(&cref, "device-token-e2e").unwrap();

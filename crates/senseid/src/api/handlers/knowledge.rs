@@ -853,11 +853,15 @@ pub(crate) async fn record_outcomes(
 
 // ============================================================================
 // Federation sources — /api/knowledge/sources*
-// GET    /api/knowledge/sources             — list registered dojo-mind sources
+// GET    /api/knowledge/sources             — list registered Dōjō rules sources
 // POST   /api/knowledge/sources             — register a source (+ Keychain cred)
 // DELETE /api/knowledge/sources/{id}         — deregister (+ purge Keychain cred)
 // POST   /api/knowledge/sources/{id}/sync    — pull this source now
 // GET    /api/knowledge/sources/{id}/status  — current cursor / enabled state
+//
+// D1: a rules source `url` is the Worker tenant base `{registry}/v1/t/{origin}/{org}`
+// (the daemon appends `/rules`), and `api_key` carries the per-membership device
+// token — the SAME tenant-path + device-token plane the artifacts client uses.
 // ============================================================================
 
 #[derive(serde::Deserialize)]
