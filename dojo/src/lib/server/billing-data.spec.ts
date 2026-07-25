@@ -13,6 +13,9 @@ import {
 	loadActiveSeatRows,
 	getBillingAccount,
 	refreshSeatsUsed,
+	resolveProjectNamespaceId,
+	openOrRefreshSeat,
+	closeSeat,
 	BillingError,
 	type SeatRow,
 	type DojoClient
@@ -60,12 +63,23 @@ function makeDb() {
 		cur.filters.push(['in', c, v]);
 		return b;
 	};
+	b.insert = (p: unknown) => {
+		cur.op = 'insert';
+		cur.payload = p;
+		return b;
+	};
+	b.update = (p: unknown) => {
+		cur.op = 'update';
+		cur.payload = p;
+		return b;
+	};
 	b.upsert = (p: unknown, opts?: { onConflict?: string }) => {
 		cur.op = 'upsert';
 		cur.payload = p;
 		cur.onConflict = opts?.onConflict;
 		return b;
 	};
+	b.single = () => Promise.resolve(results.shift() ?? { data: null, error: null });
 	b.maybeSingle = () => Promise.resolve(results.shift() ?? { data: null, error: null });
 	b.then = (resolve: (v: Terminal) => unknown) => resolve(results.shift() ?? { data: [], error: null });
 	return {
@@ -206,5 +220,96 @@ describe('refreshSeatsUsed', () => {
 		const db = makeDb();
 		db.queue({ data: null, error: { message: 'nope' } });
 		await expect(refreshSeatsUsed(db.client, 't', 1, 'now')).rejects.toBeInstanceOf(BillingError);
+	});
+});
+
+describe('resolveProjectNamespaceId', () => {
+	it('looks up a project-scope namespace by slug in the sensei schema', async () => {
+		const db = makeDb();
+		db.queue({ data: { id: 'ns-1' }, error: null });
+		const id = await resolveProjectNamespaceId(db.client, 'my-proj');
+		expect(id).toBe('ns-1');
+		expect(db.calls[0]).toMatchObject({ schema: 'sensei', table: 'namespaces' });
+		expect(db.calls[0].filters).toEqual([
+			['eq', 'scope_key', 'project'],
+			['eq', 'slug', 'my-proj']
+		]);
+	});
+
+	it('returns null for an unknown slug', async () => {
+		const db = makeDb();
+		db.queue({ data: null, error: null });
+		expect(await resolveProjectNamespaceId(db.client, 'nope')).toBeNull();
+	});
+});
+
+describe('openOrRefreshSeat', () => {
+	it('bumps last_active_at when an active seat already exists', async () => {
+		const db = makeDb();
+		db.queue({ data: { id: 'seat-1' }, error: null }, { data: null, error: null });
+		const r = await openOrRefreshSeat(db.client, {
+			tenantId: 't',
+			userId: 'u',
+			namespaceId: 'n',
+			nowIso: '2026-07-25T00:00:00Z'
+		});
+		expect(r).toEqual({ opened: false, id: 'seat-1' });
+		// read filtered to the ACTIVE seat, then update by id
+		expect(db.calls[0].filters).toEqual([
+			['eq', 'user_id', 'u'],
+			['eq', 'namespace_id', 'n'],
+			['is', 'ended_at', null]
+		]);
+		expect(db.calls[1]).toMatchObject({
+			op: 'update',
+			payload: { last_active_at: '2026-07-25T00:00:00Z' }
+		});
+	});
+
+	it('opens a fresh seat when none is active', async () => {
+		const db = makeDb();
+		db.queue({ data: null, error: null }, { data: { id: 'seat-2' }, error: null });
+		const r = await openOrRefreshSeat(db.client, {
+			tenantId: 't',
+			userId: 'u',
+			namespaceId: 'n',
+			role: 'maintainer',
+			nowIso: 'now'
+		});
+		expect(r).toEqual({ opened: true, id: 'seat-2' });
+		expect(db.calls[1]).toMatchObject({
+			op: 'insert',
+			payload: { tenant_id: 't', user_id: 'u', namespace_id: 'n', role: 'maintainer', last_active_at: 'now' }
+		});
+	});
+
+	it('defaults role to contributor', async () => {
+		const db = makeDb();
+		db.queue({ data: null, error: null }, { data: { id: 'seat-3' }, error: null });
+		await openOrRefreshSeat(db.client, { tenantId: 't', userId: 'u', namespaceId: 'n', nowIso: 'now' });
+		expect((db.calls[1].payload as { role: string }).role).toBe('contributor');
+	});
+});
+
+describe('closeSeat', () => {
+	it('sets ended_at on the active seat and reports it closed', async () => {
+		const db = makeDb();
+		db.queue({ data: [{ id: 'seat-1' }], error: null });
+		const r = await closeSeat(db.client, { userId: 'u', namespaceId: 'n', nowIso: 'end' });
+		expect(r).toEqual({ closed: true });
+		expect(db.calls[0]).toMatchObject({ op: 'update', payload: { ended_at: 'end' } });
+		expect(db.calls[0].filters).toEqual([
+			['eq', 'user_id', 'u'],
+			['eq', 'namespace_id', 'n'],
+			['is', 'ended_at', null]
+		]);
+	});
+
+	it('reports not-closed when there was no active seat', async () => {
+		const db = makeDb();
+		db.queue({ data: [], error: null });
+		expect(await closeSeat(db.client, { userId: 'u', namespaceId: 'n', nowIso: 'end' })).toEqual({
+			closed: false
+		});
 	});
 });
