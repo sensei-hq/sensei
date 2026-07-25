@@ -235,6 +235,22 @@ pub fn daemon_request_for(
             Some(id) => Some(DaemonRequest::get(format!("/api/runs/{id}"))),
             None => Some(DaemonRequest::get("/api/runs")),
         },
+        // `pause_run` marks a run paused-until-reset (a limit-wait, auto-resumes) —
+        // POSTs `/api/runs/pause`; `project` defaults to the cwd-resolved repo, so
+        // the active run for the current project is paused when no run_id is given.
+        "pause_run" => {
+            let mut body = json!({ "until": args["until"].as_str().unwrap_or("") });
+            let project = args["project"].as_str().filter(|s| !s.is_empty()).unwrap_or(repo_id);
+            if !project.is_empty() {
+                body["project"] = json!(project);
+            }
+            for k in ["reason", "run_id"] {
+                if let Some(v) = args[k].as_str().filter(|s| !s.is_empty()) {
+                    body[k] = json!(v);
+                }
+            }
+            Some(DaemonRequest::post_json("/api/runs/pause", body))
+        }
 
         // ── Front-door intake ────────────────────────────────────────────────
         "get_intake_guide" => Some(DaemonRequest::get("/api/playbook/guide")),
@@ -565,6 +581,16 @@ pub fn handle_list_tools() -> Value {
                  cadence events (the filtered feed — phase/feature/gate/commit markers, no code).",
                 &[],
                 &[("run_id", "string", "A specific run's UUID. Omit to list all active runs.")]),
+            tool("pause_run",
+                "Pause a run until a usage/rate limit resets — marks it 'paused' (not stalled) and the \
+                 daemon auto-resumes it at the reset. Call this when you hit (or foresee) a limit so the \
+                 watcher sees a resumable wait, not a stall. Defaults to the active run for the current project.",
+                &[("until", "string", "RFC-3339 timestamp when the limit resets (e.g. 2026-07-25T11:30:00-05:00).")],
+                &[
+                    ("reason", "string", "Human-readable cause (e.g. 'usage limit', 'weekly cap')."),
+                    ("project", "string", "Project name or UUID; defaults to the current project."),
+                    ("run_id", "string", "A specific run's UUID; defaults to the active run for the project."),
+                ]),
             // ── Front-door intake ────────────────────────────────────────────
             tool("get_intake_guide",
                 "Load the intake guide (grounding frame + per-axis elicitation prompts + the playbook \
@@ -958,7 +984,7 @@ mod tests {
         "gateway_status", "consensus", "generate_image", "log_event",
         "propose_memory", "save_memory", "promote_memory", "accept_proposal",
         "reject_proposal", "record_outcome", "get_layered_context",
-        "start_run", "run_status", "recommend_playbook", "get_intake_guide",
+        "start_run", "run_status", "pause_run", "recommend_playbook", "get_intake_guide",
         "list_playbook_rule_proposals", "accept_playbook_rule",
     ];
 
@@ -1437,6 +1463,20 @@ mod tests {
         ).unwrap();
         assert_eq!(req.path, "/api/projects");
         assert_eq!(q(&req, "under"), Some("/some/dir"), "explicit `under` overrides cwd");
+    }
+
+    #[test]
+    fn pause_run_posts_until_and_defaults_project_to_cwd() {
+        let req = daemon_request_for(
+            "pause_run", &json!({ "until": "2026-07-25T11:30:00Z", "reason": "usage limit" }),
+            "/cwd", Some("sensei"),
+        ).unwrap();
+        assert_eq!(req.method, HttpMethod::Post);
+        assert_eq!(req.path, "/api/runs/pause");
+        let body = req.body.as_ref().expect("pause_run has a JSON body");
+        assert_eq!(body["until"], "2026-07-25T11:30:00Z");
+        assert_eq!(body["project"], "sensei", "project defaults to the pinned/cwd repo");
+        assert_eq!(body["reason"], "usage limit");
     }
 
     #[test]

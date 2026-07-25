@@ -21,7 +21,8 @@ use axum::{
 };
 
 use crate::api::state::AppState;
-use crate::runs::NewRun;
+use crate::runs::{NewRun, RunEventKind};
+use dojo_protocol::relay::RelayRunStatus;
 
 /// Cap on the cadence events returned for a single run — the recent tail is what
 /// the timeline renders; older events page in later if we need them.
@@ -139,6 +140,66 @@ pub(crate) async fn create_run(
             tracing::error!(error = %e, "create_run read-back failed");
             Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
+    }
+}
+
+/// POST /api/runs/pause — mark a run **paused until a reset time** (a limit-wait),
+/// so it reads `paused` (not `stalled`) and `resume_due_runs` auto-resumes it at
+/// the reset. This is the distinct resumable state for "waiting for a usage
+/// limit". Body: `{ "until": RFC-3339 (required), "reason"?: string,
+/// "run_id"?: uuid, "project"?: name-or-uuid }` — targets an explicit `run_id`,
+/// else the active (running/stalled) run for the project.
+pub(crate) async fn pause_run(
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let Some(until) = body["until"].as_str().map(str::trim).filter(|s| !s.is_empty()) else {
+        return Err(StatusCode::BAD_REQUEST);
+    };
+    // Validate the instant here so a bad value is a clean 400, not a DB-cast 500.
+    if chrono::DateTime::parse_from_rfc3339(until).is_err() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let reason = body["reason"].as_str().map(str::trim).filter(|s| !s.is_empty());
+
+    // Target: an explicit run_id, else the active run for the (given/cwd) project.
+    let run_id = match body["run_id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) {
+        Some(id) => Some(id),
+        None => match body["project"].as_str().map(str::trim).filter(|s| !s.is_empty()) {
+            Some(p) => match crate::api::util::resolve_project_uuid(&state, p).await {
+                Some(pid) => state.pg.active_run_for_project(&pid).await.ok().flatten().map(|r| r.id),
+                None => None,
+            },
+            None => None,
+        },
+    };
+    let Some(run_id) = run_id else {
+        return Err(StatusCode::NOT_FOUND);
+    };
+
+    if let Err(e) = state
+        .pg
+        .update_run_status(&run_id, RelayRunStatus::Paused, Some(until), reason)
+        .await
+    {
+        tracing::error!(error = %e, "pause_run failed");
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    }
+    // Cadence marker so the feed shows the pause + when it resumes. Best-effort.
+    let _ = state
+        .pg
+        .append_run_event(
+            &run_id,
+            RunEventKind::PausedOnLimit,
+            None,
+            None,
+            &serde_json::json!({ "until": until, "reason": reason, "via": "pause_run" }),
+        )
+        .await;
+
+    match state.pg.get_run(&run_id).await {
+        Ok(Some(run)) => Ok(Json(serde_json::json!({ "run": run }))),
+        _ => Err(StatusCode::INTERNAL_SERVER_ERROR),
     }
 }
 
