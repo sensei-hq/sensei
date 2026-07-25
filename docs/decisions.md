@@ -39,3 +39,23 @@ e2e/local, commits/pushes to `develop`). Human-gated = cloud/prod DB writes, Wor
 deploy, secrets/VAPID/service-role, merge→main, cutover, gate activation, flipping
 `SENSEI_RUN_DRIVE`, any payment-provider choice. The loop prepares + stages gated work,
 writes the evidence, and waits.
+
+---
+
+## 2026-07-25 — Coverage-audit scope calls
+
+Resolved during the mockup/journey/doc/code coverage audit (see
+[`features/coverage-map.md`](features/coverage-map.md)). These set what gets built next.
+
+| Decision | Locked answer | Why / rejected |
+|---|---|---|
+| **D-PLANNER** | **Build a real planner** — takes a goal / spec / issue and generates a structured plan (phases → features → acceptance criteria) that the plan-as-run engine, the project-window **Tasks** tab, and the `sensei-plan-depth-reviewer` gate consume. | The one missing spine: "project needs the planner" + plan-as-run wants phases→features→gates, but plans are hand-authored `docs/plan/*.md` today. Biggest single unlock. Rejected: keep plans human-authored only (no autonomous decomposition). |
+| **D-SCREENS** | Build the **Consolidation** screen (backend already shipped — just the app route), the **Agent/Persona editors** (autonomy ceiling + tool envelope + **replay-test against past sessions**), and **Solution-track** (desktop multi-project engagement rollup — a distinct solo-consultant surface, kept alongside the dōjō Clients zone). **Benchmark runner CUT** for now. | Designed-but-unbuilt with real user value. Benchmark (A/B sensei-vs-no-sensei) is a research/marketing artifact, not a near-term product surface — deferred. |
+| **D-CHECKER** | **Build checker execution** — a rule with a `checker_ref` runs its checker (eslint / ruff / clippy / test) and yields a **pass/fail verdict**. Rules become enforceable, not advisory-only; ties to a future CI/deploy (DORA) signal. | `rule_pack_rules.checker_ref`/`verification` exist but nothing runs them; the old `dojo-library.jsx` wired stack reviewers, dropped in dojo2. Rejected: advisory-only. |
+| **D-SEED (confirmed)** | **Ship the default governance bundle** — wire `seed_default_governance` so a fresh project / personal-dōjō inherits the curated starter constitution (DORA + XP/CD + Core Protocols, `spec/governance/default-constitution.md`) instead of an empty rules file. Content-wiring is **go**; prod Worker apply stays gated (per D-CUTOVER). | A new project starting empty undercuts "grounding that sticks". |
+
+**Still open (mock hygiene / scope):** prune the superseded-but-not-in-`discarded/` mock
+variants (sharing-review, mcp-replay-insights, the multi-option learnings/project-pages/
+libraries/nav files); decide whether dojo2 ports the richer **extension governance**
+(personas/hooks/plugins + org→team→project scoping + adoption tracking) from
+`dojo-extensions.jsx`.
