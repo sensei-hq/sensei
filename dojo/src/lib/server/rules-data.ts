@@ -340,6 +340,47 @@ export function effectivePackRuleTier(ruleTier: string, adoptionOverride: string
 	return adoptionOverride ? maxTier(ruleTier, adoptionOverride) : ruleTier;
 }
 
+/** Parse the `?ns=organization:acme,stack:react` query into (scope_key, slug)
+ *  pairs — how the daemon names its repo's namespaces cross-DB (the stable key,
+ *  not the dojo-side uuid). Malformed segments are dropped. Pure. */
+export function parseNamespacePairs(raw: string | null): Array<{ scope_key: string; slug: string }> {
+	return (raw ?? '')
+		.split(',')
+		.map((s) => s.trim())
+		.filter(Boolean)
+		.map((s) => {
+			const i = s.indexOf(':');
+			return i < 0
+				? { scope_key: '', slug: '' } // no colon → dropped by the filter
+				: { scope_key: s.slice(0, i), slug: s.slice(i + 1) };
+		})
+		.filter((p) => p.scope_key && p.slug);
+}
+
+/** Resolve (scope_key, slug) namespace pairs to their `sensei.namespaces` ids —
+ *  the stable identity across the daemon/dojo DB split. Unknown pairs are
+ *  dropped; a query error logs and yields `[]` (never silent). */
+export async function resolveNamespaceIds(
+	db: DojoClient,
+	pairs: Array<{ scope_key: string; slug: string }>
+): Promise<string[]> {
+	if (pairs.length === 0) return [];
+	const slugs = [...new Set(pairs.map((p) => p.slug))];
+	const { data, error } = await db
+		.schema('sensei')
+		.from('namespaces')
+		.select('id, scope_key, slug')
+		.in('slug', slugs);
+	if (error) {
+		console.error(`namespace resolve failed: ${error.message}`);
+		return [];
+	}
+	const want = new Set(pairs.map((p) => `${p.scope_key} ${p.slug}`));
+	return ((data ?? []) as Array<{ id: string; scope_key: string; slug: string }>)
+		.filter((n) => want.has(`${n.scope_key} ${n.slug}`))
+		.map((n) => n.id);
+}
+
 /** A pack rule resolved for a namespace — the rule's full shape + its pack's
  *  provenance, with the effective (override-applied) enforcement tier. */
 export interface ResolvedPackRule {
