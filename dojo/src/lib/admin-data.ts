@@ -326,6 +326,46 @@ export async function getHealth(
 	return getJson<HealthRollup>(adminUrl(tenantKey, '/health'), opts);
 }
 
+// billing ────────────────────────────────────────────────────────────────────
+
+/** A billable user and the private projects seating them. */
+export interface BillingBillableUser {
+	user_id: string;
+	projects: { name: string; slug: string; role: string }[];
+}
+
+/** Live seat usage for a tenant (`dojo.tenant_seat_usage`). */
+export interface BillingUsage {
+	seats_used: number;
+	total_active_seats: number;
+	billable_users: BillingBillableUser[];
+}
+
+/** A tenant's billing account snapshot (`dojo.billing_accounts`), or null. */
+export interface BillingAccount {
+	plan: string;
+	status: string;
+	seats_included: number;
+	seats_used: number;
+	seats_computed_at: string | null;
+	period_start: string | null;
+	period_end: string | null;
+}
+
+/** `GET …/billing` envelope. */
+export interface BillingResponse {
+	account: BillingAccount | null;
+	usage: BillingUsage;
+}
+
+/** `GET …/billing` — the tenant's billing account + LIVE seat usage (admin). */
+export async function getBilling(
+	tenantKey: string,
+	opts: DojoCallOpts = {}
+): Promise<BillingResponse> {
+	return getJson<BillingResponse>(adminUrl(tenantKey, '/billing'), opts);
+}
+
 /** `GET …/audit` — the admin audit log, most recent first (read-only). */
 export async function listAudit(
 	tenantKey: string,

@@ -12,12 +12,15 @@ import {
 	listIdentities,
 	listAudit,
 	getHealth,
+	getBilling,
 	type Membership,
 	type Policy,
 	type Identity,
 	type AuditEvent,
-	type HealthRollup
+	type HealthRollup,
+	type BillingResponse
 } from '$lib/admin-data';
+import { toKitBilling } from '$lib/dojo2-billing-map';
 import { toKitEngagements } from '$lib/dojo2-client-map';
 import {
 	toKitTriageGroups,
@@ -44,7 +47,8 @@ import type {
 	KitIdentity,
 	KitIncident,
 	KitClientAuditRow,
-	KitHealth
+	KitHealth,
+	KitBilling
 } from '$lib/components/kit/types';
 import {
 	orgProjectsFor,
@@ -75,9 +79,12 @@ import {
 //   • clientaudit       → GET …/audit (admin floor — the tenant audit trail)
 //   • health            → GET …/health (admin floor)
 //   • engagements       → GET …/engagements (lead floor)
+//   • billing           → GET …/billing (admin floor) — the LIVE billable seat
+//     count overlaid on the illustrative pricing catalog (perSeat/tiers/invoices
+//     stay fixture until a payment provider is wired, D-BILLING).
 // The remaining sections (Overview ladder/projects, knowledge, confidentiality,
-// scopes, billing) still render off kit fixtures — their routes aren't built
-// (Tier 3: scopes/billing/projects/stance need DDL).
+// scopes) still render off kit fixtures — their routes aren't built (Tier 3:
+// scopes/projects/stance need further wiring).
 export const load: PageLoad = async ({ parent, params, fetch }) => {
 	const { memberships, accessToken } = await parent();
 	const org = orgBySlug(memberships, params.slug);
@@ -192,6 +199,16 @@ export const load: PageLoad = async ({ parent, params, fetch }) => {
 		toKitHealth
 	);
 
+	// Billing (admin) — the LIVE billable seat count (dojo.tenant_seat_usage) +
+	// plan/renewal overlaid onto the illustrative pricing catalog (perSeat/tiers/
+	// invoices stay fixture until a payment provider is wired, D-BILLING).
+	const billingRes = await guardedFor<BillingResponse, KitBilling>(
+		'billing',
+		billingFor(slug),
+		(tk) => getBilling(tk, opts),
+		(res) => toKitBilling(billingFor(slug), res)
+	);
+
 	return {
 		slug,
 		orgName: org.name,
@@ -231,6 +248,7 @@ export const load: PageLoad = async ({ parent, params, fetch }) => {
 		identityError: identityRes.error,
 		health: healthRes.value,
 		healthError: healthRes.error,
-		billing: billingFor(slug)
+		billing: billingRes.value,
+		billingError: billingRes.error
 	};
 };
