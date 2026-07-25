@@ -184,8 +184,12 @@ pub(crate) async fn get_rules(
         .ok_or_else(|| err(StatusCode::NOT_FOUND, "folder not indexed"))?;
     let folder_id = crate::api::util::json_uuid(&folder["id"])
         .ok_or_else(|| err(StatusCode::INTERNAL_SERVER_ERROR, "folder has no id"))?;
-    let raw = state.pg.resolve_rules_raw(&folder_id).await
+    let mut raw = state.pg.resolve_rules_raw(&folder_id).await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+    // P2: fold in the rules of packs ADOPTED at this repo's namespaces, resolved
+    // through the repo's bound Dōjō (the daemon can't query the Dōjō DB — Fork 1).
+    // Best-effort: any missing binding / call failure yields nothing (logged).
+    raw.extend(resolve_adopted_pack_raws(&state, &folder_id).await);
     let ruleset = crate::governance::structure_ruleset(raw);
 
     // Markdown push shape (D-INJECT): the hooks fetch rendered, tier-filtered
@@ -986,9 +990,86 @@ pub(crate) async fn source_status(
         "direction": src.direction, "last_seq": src.last_seq, "enabled": src.enabled })))
 }
 
+/// Map a Dōjō resolved pack rule to the daemon's `RawRule`: the pack's `area` is
+/// the display/grouping scope label and `source` the authority namespace. Pure.
+fn pack_rule_to_raw(w: crate::dojo::client::PackRuleWire) -> crate::governance::RawRule {
+    crate::governance::RawRule {
+        id: w.rule_id,
+        title: w.statement,
+        content: w.body,
+        impact: w.rationale,
+        enforcement: w.enforcement,
+        scope: w.area,
+        namespace: if w.source.is_empty() { None } else { Some(w.source) },
+    }
+}
+
+/// Resolve the rules of packs adopted at a folder's namespaces, via the folder's
+/// project → bound Dōjō membership → the Worker `rules/resolved` leg. Best-effort:
+/// no binding / membership / namespaces, or any call fault → `[]` (logged, never
+/// silent). The daemon can't query the Dōjō DB directly (Fork 1).
+async fn resolve_adopted_pack_raws(
+    state: &AppState,
+    folder_id: &uuid::Uuid,
+) -> Vec<crate::governance::RawRule> {
+    let resolved = async {
+        let project_id = state.pg.folder_project_id(folder_id).await.ok()??;
+        let membership_id = state.pg.project_bound_membership(&project_id).await.ok()??;
+        let membership = state.pg.get_dojo_membership(&membership_id).await.ok()??;
+        let pairs = state.pg.folder_namespace_pairs(folder_id).await.ok()?;
+        if pairs.is_empty() {
+            return None;
+        }
+        let client = crate::dojo::client::DojoClient::for_membership(&membership);
+        match client.resolved_pack_rules(&pairs).await {
+            Ok(wires) => Some(wires.into_iter().map(pack_rule_to_raw).collect::<Vec<_>>()),
+            Err(e) => {
+                tracing::warn!(error = %e, "get_rules: adopted-pack resolve failed");
+                None
+            }
+        }
+    }
+    .await;
+    resolved.unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pack_rule_to_raw_maps_fields() {
+        let w = crate::dojo::client::PackRuleWire {
+            rule_id: "r1".into(),
+            statement: "Never log tokens".into(),
+            body: "Applies at any log level.".into(),
+            rationale: Some("leaks are a top breach vector".into()),
+            enforcement: "mandatory".into(),
+            source: "OWASP".into(),
+            area: "security".into(),
+        };
+        let r = pack_rule_to_raw(w);
+        assert_eq!(r.title, "Never log tokens");
+        assert_eq!(r.content, "Applies at any log level.");
+        assert_eq!(r.impact.as_deref(), Some("leaks are a top breach vector"));
+        assert_eq!(r.enforcement, "mandatory");
+        assert_eq!(r.scope, "security");
+        assert_eq!(r.namespace.as_deref(), Some("OWASP"));
+    }
+
+    #[test]
+    fn pack_rule_to_raw_empty_source_is_no_namespace() {
+        let w = crate::dojo::client::PackRuleWire {
+            rule_id: "r2".into(),
+            statement: "s".into(),
+            body: String::new(),
+            rationale: None,
+            enforcement: "advisory".into(),
+            source: String::new(),
+            area: "process".into(),
+        };
+        assert!(pack_rule_to_raw(w).namespace.is_none());
+    }
 
     // ── generalise (project-agnostic rewrite) pure helpers ──────────────────
 
