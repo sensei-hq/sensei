@@ -23,6 +23,9 @@ import type {
   MemoryListResponse, MemoryDetail, ContextResponse,
   ProposalCreateBody, MemoryCreateBody, OutcomeBody, OutcomesBatchResponse,
 } from './setup/contracts.js';
+import type {
+  ConsolidatedRuleset, ConsolidateResult,
+} from '../routes/(observatory)/consolidation/consolidation-view.js';
 
 export type ApiError = { status: number; message: string } | { status: 0; message: string };
 
@@ -1025,6 +1028,31 @@ export function senseiApi(port: number) {
 
     recordOutcomes: (outcomes: OutcomeBody[]) =>
       tryPost<OutcomesBatchResponse>('/api/knowledge/outcomes', { outcomes }),
+
+    // ── Governance Tier-2 · ruleset consolidation ────────────────────────
+    // Tier-1 gathers a scope's raw rules; Tier-2 asks a model to merge them into
+    // one coherent, deduped ruleset; a human approves. The current merged
+    // ruleset (approved if present, else latest proposed) or `null` when a
+    // consolidation has never run. Fallback is `null` so a daemon hiccup renders
+    // the empty state, never a broken screen.
+    getConsolidatedRuleset: () =>
+      get<ConsolidatedRuleset | null>('/api/knowledge/rules/consolidated', null),
+
+    // Run the merge now → a fresh `proposed` version, or `{ skipped, reason }`
+    // when there's nothing to merge / the Tier-1 input is unchanged. `tryPost` so
+    // a 502 (merge model unavailable) surfaces as `{ ok: false, error }` for the
+    // screen to show, rather than being absorbed into a fallback.
+    consolidateRules: () =>
+      tryPost<ConsolidateResult>('/api/knowledge/rules/consolidate', {}),
+
+    // Approve a proposed consolidated ruleset (the approval gate). Supersedes the
+    // prior approved version and re-materializes the global rules.md. `tryPost` so
+    // a 404 (unknown ruleset) surfaces to the screen. On success the page
+    // re-fetches to reflect the approved state.
+    approveConsolidatedRuleset: (id: string) =>
+      tryPost<{ id: string; status: 'approved'; scope: string }>(
+        `/api/knowledge/rules/consolidate/${enc(id)}/approve`, {},
+      ),
 
     // ── Knowledge plane — federation sources ─────────────────────────────
     listKnowledgeSources: () =>
