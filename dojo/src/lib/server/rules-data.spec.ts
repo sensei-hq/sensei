@@ -24,6 +24,7 @@ import {
 	PULL_SELECT,
 	maxTier,
 	effectivePackRuleTier,
+	parseNamespacePairs,
 	type DojoClient
 } from './rules-data';
 
@@ -396,5 +397,18 @@ describe('rule-pack tier precedence', () => {
 		expect(effectivePackRuleTier('mandatory', 'required')).toBe('mandatory');
 		// no override → the rule keeps its own tier
 		expect(effectivePackRuleTier('required', null)).toBe('required');
+	});
+
+	it('parseNamespacePairs splits scope:slug and drops malformed', () => {
+		expect(parseNamespacePairs('organization:acme, stack:react')).toEqual([
+			{ scope_key: 'organization', slug: 'acme' },
+			{ scope_key: 'stack', slug: 'react' }
+		]);
+		// slugs may contain colons (only the first splits scope from slug)
+		expect(parseNamespacePairs('project:acme/lumen-auth')).toEqual([
+			{ scope_key: 'project', slug: 'acme/lumen-auth' }
+		]);
+		expect(parseNamespacePairs('')).toEqual([]);
+		expect(parseNamespacePairs('garbage,,:x,y:')).toEqual([]);
 	});
 });
