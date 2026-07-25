@@ -51,9 +51,16 @@ push mandatory+required (SessionStart) / mandatory (PreCompact). En route, fixed
 failed on the large context in macOS bash → *invalid-JSON hook output*; now escapes
 via `python3 json.dumps` (fallback hand-rolled). Both hooks emit valid JSON.
 
-**Remaining (step 4 + authoring):** relay-driver rule injection (drive OFF today);
-a rule-authoring surface. **Deploy gate:** `marketplace/` is a subtree — the hook
-changes reach real sessions only after a marketplace sync + plugin update (the
+**Step 4 (relay-driver) — likely already covered, not separate code.** `advance_run.rs`
+drives via `claude -p` and its own comment notes the spawned claude **carries the sensei
+plugin** (its PreToolUse hook already drives `/hook/gate`). So the driven agent runs the
+**same SessionStart hook** → the tier-aware push already reaches it. Adding an explicit
+rules-in-prompt preamble would risk **double-injection**. Deliberately NOT added: whether
+`claude -p` fires SessionStart in headless mode is the one unknown — verify when `drive` is
+enabled (a human gate anyway), and only add prompt-injection if headless skips SessionStart.
+
+**Remaining:** a rule-authoring surface (UI). **Deploy gate:** `marketplace/` is a subtree —
+the hook changes reach real sessions only after a marketplace sync + plugin update (the
 installed `0.2.29` plugin is stale until then).
 
 ## Why the rest is staged
