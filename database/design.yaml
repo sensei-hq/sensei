@@ -29,11 +29,12 @@ schemas:
 scopes:
   dojo:
     # deps:include pulls FK-referenced tables (dojo.shared_rules → sensei.namespaces →
-    # sensei.scopes) automatically; the enforcement ENUM is a column *type*, not an FK,
-    # so dbd's closure can't reach it — include it explicitly. dojo.* lives in the Dōjō
-    # Rust service's own Postgres — a separate logical DB from the daemon's `sensei` DB.
-    # The only sensei-side link is sensei.projects.dojo_id, a plain uuid (no cross-DB FK).
-    includes: [dojo, sensei.enforcement]
+    # sensei.scopes) automatically; ENUMs used as column *types* are not FKs, so dbd's
+    # closure can't reach them — include each explicitly (enforcement on shared_rules;
+    # namespace_visibility on sensei.namespaces, read by dojo.seats billing). dojo.* lives
+    # in the Dōjō service's own Postgres — a separate logical DB from the daemon's `sensei`
+    # DB. The only sensei-side link is sensei.projects.dojo_id, a plain uuid (no cross-DB FK).
+    includes: [dojo, sensei.enforcement, sensei.namespace_visibility]
     deps: include
     extensions: []      # vector-free: the embedded Dōjō PG lacks pgvector
   default:
