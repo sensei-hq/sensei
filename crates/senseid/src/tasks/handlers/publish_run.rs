@@ -88,7 +88,12 @@ pub async fn publish_run(ctx: &TaskContext, task: &Task) -> Result<u32, String> 
     let segments = plan_events_to_segments(&events);
     let (progress_done, progress_total) = segment_progress(&segments);
 
-    let update = run_to_session_update(&run, last_event_at.as_deref(), progress_done, progress_total);
+    let mut update =
+        run_to_session_update(&run, last_event_at.as_deref(), progress_done, progress_total);
+    // Seat attribution (P4): tell the Worker which project this run is on so it can
+    // open/refresh the caller's billing seat. Best-effort — a missing project or
+    // namespace just means no seat is touched; never fail federation over it.
+    update.project_slug = ctx.pg().run_project_slug(&run_id).await.ok().flatten();
 
     let mut published = 0u32;
     // Persist the cloud session id once — from the first membership that acks it.

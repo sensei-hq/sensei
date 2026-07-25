@@ -7607,6 +7607,27 @@ impl PgStore {
         Ok(row.map(|(id,)| id))
     }
 
+    /// The slug of a run's project namespace (`sensei.namespaces` scope=project),
+    /// or None when the run has no project or no project-scope namespace. Fed to
+    /// the relay federation so the Worker can open the caller's billing seat on
+    /// this project (proof the user is actively using sensei there).
+    pub async fn run_project_slug(&self, run_id: &uuid::Uuid) -> Result<Option<String>, String> {
+        let row: Option<(String,)> = sqlx_core::query_as::query_as(
+            "SELECT n.slug
+               FROM activity.runs r
+               JOIN sensei.folders f ON f.project_id = r.project_id
+               JOIN sensei.folder_namespaces fn ON fn.folder_id = f.id
+               JOIN sensei.namespaces n ON n.id = fn.namespace_id
+              WHERE r.id = $1 AND n.scope_key = 'project'
+              LIMIT 1",
+        )
+        .bind(run_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(row.map(|(slug,)| slug))
+    }
+
     /// The global, repo-independent ruleset: rules at the always-on `general`
     /// and `user` scopes plus genuinely-global unscoped rules (`namespace_id IS
     /// NULL AND project_id IS NULL`). These apply everywhere and are what the
