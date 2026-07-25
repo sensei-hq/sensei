@@ -164,33 +164,11 @@ pub(crate) async fn get_rules(
     Query(q): Query<RulesQuery>,
 ) -> Result<axum::response::Response, (StatusCode, Json<serde_json::Value>)> {
     use axum::response::IntoResponse;
-    let folder_path = match q.folder.as_deref().filter(|s| !s.is_empty()) {
-        Some(folder) => folder.to_string(),
-        None => {
-            let project = q.project.as_deref().filter(|s| !s.is_empty())
-                .ok_or_else(|| err(StatusCode::BAD_REQUEST, "folder or project required"))?;
-            let pid = crate::api::util::resolve_project_uuid(&state, project).await
-                .ok_or_else(|| err(StatusCode::NOT_FOUND, "unknown project"))?;
-            // Root repo abs_path. get_project_repos returns each root's abs_path
-            // under `path`; the first (name-ordered) root governs.
-            let repos = state.pg.get_project_repos(&pid).await
-                .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
-            repos.first().and_then(|r| r["path"].as_str()).map(str::to_string)
-                .ok_or_else(|| err(StatusCode::NOT_FOUND, "project has no indexed repo"))?
-        }
-    };
-    let folder = state.pg.get_repo_by_path(&folder_path).await
-        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
-        .ok_or_else(|| err(StatusCode::NOT_FOUND, "folder not indexed"))?;
-    let folder_id = crate::api::util::json_uuid(&folder["id"])
-        .ok_or_else(|| err(StatusCode::INTERNAL_SERVER_ERROR, "folder has no id"))?;
-    let mut raw = state.pg.resolve_rules_raw(&folder_id).await
+    let (folder_path, folder_id) =
+        resolve_folder(&state, q.folder.as_deref(), q.project.as_deref()).await?;
+    let ruleset = resolve_repo_ruleset(&state, &folder_id)
+        .await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
-    // P2: fold in the rules of packs ADOPTED at this repo's namespaces, resolved
-    // through the repo's bound Dōjō (the daemon can't query the Dōjō DB — Fork 1).
-    // Best-effort: any missing binding / call failure yields nothing (logged).
-    raw.extend(resolve_adopted_pack_raws(&state, &folder_id).await);
-    let ruleset = crate::governance::structure_ruleset(raw);
 
     // Markdown push shape (D-INJECT): the hooks fetch rendered, tier-filtered
     // Markdown as PLAIN TEXT (no client-side jq — macOS ships without it) and
@@ -1033,9 +1011,155 @@ async fn resolve_adopted_pack_raws(
     resolved.unwrap_or_default()
 }
 
+/// Resolve `folder=<abs_path>` OR `project=<name|uuid>` → `(folder_path,
+/// folder_id)`. Shared by the rules + constitution endpoints.
+async fn resolve_folder(
+    state: &AppState,
+    folder: Option<&str>,
+    project: Option<&str>,
+) -> Result<(String, uuid::Uuid), (StatusCode, Json<serde_json::Value>)> {
+    let folder_path = match folder.filter(|s| !s.is_empty()) {
+        Some(f) => f.to_string(),
+        None => {
+            let project = project
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| err(StatusCode::BAD_REQUEST, "folder or project required"))?;
+            let pid = crate::api::util::resolve_project_uuid(state, project)
+                .await
+                .ok_or_else(|| err(StatusCode::NOT_FOUND, "unknown project"))?;
+            let repos = state
+                .pg
+                .get_project_repos(&pid)
+                .await
+                .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+            repos
+                .first()
+                .and_then(|r| r["path"].as_str())
+                .map(str::to_string)
+                .ok_or_else(|| err(StatusCode::NOT_FOUND, "project has no indexed repo"))?
+        }
+    };
+    let folder = state
+        .pg
+        .get_repo_by_path(&folder_path)
+        .await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "folder not indexed"))?;
+    let folder_id = crate::api::util::json_uuid(&folder["id"])
+        .ok_or_else(|| err(StatusCode::INTERNAL_SERVER_ERROR, "folder has no id"))?;
+    Ok((folder_path, folder_id))
+}
+
+/// A repo's full governing ruleset: local memories + every adopted pack's rules
+/// (P2 fold-in), structured strongest-first. Shared by get_rules + constitution.
+async fn resolve_repo_ruleset(
+    state: &AppState,
+    folder_id: &uuid::Uuid,
+) -> Result<crate::governance::ResolvedRuleset, String> {
+    let mut raw = state.pg.resolve_rules_raw(folder_id).await?;
+    raw.extend(resolve_adopted_pack_raws(state, folder_id).await);
+    Ok(crate::governance::structure_ruleset(raw))
+}
+
+/// Group a resolved ruleset into the CONSTITUTION LADDER: one rung per scope,
+/// ordered ascending scope level (most-general first, most-specific last — the
+/// ladder's reading order), each rung's rules kept strongest-first. `general` /
+/// unknown scopes sort first (level -1). Pure.
+fn group_into_ladder(
+    set: &crate::governance::ResolvedRuleset,
+    scopes: &[(String, String, i32)],
+) -> Vec<serde_json::Value> {
+    use std::collections::BTreeMap;
+    let meta = |key: &str| scopes.iter().find(|(k, _, _)| k == key).cloned();
+    // (level, scope_key) → rules in resolved (strongest-first) order.
+    let mut by_scope: BTreeMap<(i32, String), Vec<&crate::governance::ResolvedRule>> =
+        BTreeMap::new();
+    for r in &set.rules {
+        let key = if r.scope.is_empty() { "general".to_string() } else { r.scope.clone() };
+        let level = meta(&key).map(|(_, _, l)| l).unwrap_or(-1);
+        by_scope.entry((level, key)).or_default().push(r);
+    }
+    by_scope
+        .into_iter()
+        .map(|((level, key), rules)| {
+            let mandatory = rules.iter().filter(|r| r.mandatory).count();
+            let name = meta(&key).map(|(_, n, _)| n).unwrap_or_else(|| key.clone());
+            serde_json::json!({
+                "scope_key": key,
+                "scope_name": name,
+                "level": level,
+                "mandatory_count": mandatory,
+                "rules": rules,
+            })
+        })
+        .collect()
+}
+
+/// GET /api/knowledge/constitution?folder=X|project=Y → the repo's resolved
+/// ruleset grouped into the constitution ladder (one rung per scope, general →
+/// specific). What the console renders as "the rules in force here."
+pub(crate) async fn get_constitution(
+    State(state): State<AppState>,
+    Query(q): Query<RulesQuery>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let (folder_path, folder_id) =
+        resolve_folder(&state, q.folder.as_deref(), q.project.as_deref()).await?;
+    let ruleset = resolve_repo_ruleset(&state, &folder_id)
+        .await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+    let scopes = state
+        .pg
+        .list_scopes()
+        .await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+    Ok(Json(serde_json::json!({
+        "folder": folder_path,
+        "total": ruleset.total,
+        "mandatory_count": ruleset.mandatory_count,
+        "rungs": group_into_ladder(&ruleset, &scopes),
+    })))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn group_into_ladder_orders_rungs_by_scope_level() {
+        use crate::governance::{ResolvedRule, ResolvedRuleset};
+        let mk = |title: &str, scope: &str, enf: &str| ResolvedRule {
+            id: title.into(),
+            title: title.into(),
+            content: String::new(),
+            impact: None,
+            enforcement: enf.into(),
+            scope: scope.into(),
+            namespace: None,
+            mandatory: enf == "mandatory",
+        };
+        // strongest-first input across two scopes (org level 20, project level 60)
+        let set = ResolvedRuleset {
+            rules: vec![
+                mk("no secrets", "organization", "mandatory"),
+                mk("idempotency key", "project", "mandatory"),
+                mk("small commits", "project", "advisory"),
+            ],
+            total: 3,
+            mandatory_count: 2,
+        };
+        let scopes = vec![
+            ("organization".into(), "Organization".into(), 20),
+            ("project".into(), "Project".into(), 60),
+        ];
+        let rungs = group_into_ladder(&set, &scopes);
+        assert_eq!(rungs.len(), 2);
+        // most-general first
+        assert_eq!(rungs[0]["scope_key"], "organization");
+        assert_eq!(rungs[0]["level"], 20);
+        assert_eq!(rungs[1]["scope_key"], "project");
+        assert_eq!(rungs[1]["mandatory_count"], 1);
+        assert_eq!(rungs[1]["rules"].as_array().unwrap().len(), 2);
+    }
 
     #[test]
     fn pack_rule_to_raw_maps_fields() {

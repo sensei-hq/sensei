@@ -7493,6 +7493,19 @@ impl PgStore {
         }).collect())
     }
 
+    /// The governance scope ladder — `(key, name, level)` ordered most-general
+    /// first (ascending level). Feeds the constitution endpoint, which groups a
+    /// repo's resolved rules into one rung per scope.
+    pub async fn list_scopes(&self) -> Result<Vec<(String, String, i32)>, String> {
+        let rows: Vec<(String, String, i32)> = sqlx_core::query_as::query_as(
+            "SELECT key, name, level FROM sensei.scopes ORDER BY level",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(rows)
+    }
+
     /// Resolve a repo's namespace at a governance scope — e.g. "this repo's
     /// `project` namespace" or "its `organization` namespace". Used when
     /// authoring a rule so the caller can say "scope this to the project" and we
