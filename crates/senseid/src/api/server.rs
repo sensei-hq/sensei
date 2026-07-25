@@ -465,9 +465,9 @@ mod bind_host_tests {
 
     #[test]
     fn loopback_aliases_are_flagged_loopback() {
-        assert_eq!(resolve_bind_host(Some("127.0.0.1".to_string())).1, true);
-        assert_eq!(resolve_bind_host(Some("::1".to_string())).1, true);
-        assert_eq!(resolve_bind_host(Some("localhost".to_string())).1, true);
+        assert!(resolve_bind_host(Some("127.0.0.1".to_string())).1);
+        assert!(resolve_bind_host(Some("::1".to_string())).1);
+        assert!(resolve_bind_host(Some("localhost".to_string())).1);
     }
 
     #[test]
