@@ -22,6 +22,8 @@ import {
 	recordRulesAudit,
 	RulesError,
 	PULL_SELECT,
+	maxTier,
+	effectivePackRuleTier,
 	type DojoClient
 } from './rules-data';
 
@@ -377,5 +379,22 @@ describe('recordRulesAudit', () => {
 		await recordRulesAudit(db.client, 't1', 'retract', 'rule-1', 'a');
 		const p = db.calls.find((c) => c.table === 'audit_events')!.payload as Record<string, unknown>;
 		expect(p.detail).toEqual({});
+	});
+});
+
+describe('rule-pack tier precedence', () => {
+	it('maxTier returns the stronger enforcement tier', () => {
+		expect(maxTier('advisory', 'required')).toBe('required');
+		expect(maxTier('mandatory', 'required')).toBe('mandatory');
+		expect(maxTier('recommended', 'recommended')).toBe('recommended');
+	});
+
+	it('an adoption override raises a rule but never weakens it', () => {
+		// adopt an advisory pack as required → the rule is raised
+		expect(effectivePackRuleTier('advisory', 'required')).toBe('required');
+		// a mandatory rule can never be lowered by a weaker override
+		expect(effectivePackRuleTier('mandatory', 'required')).toBe('mandatory');
+		// no override → the rule keeps its own tier
+		expect(effectivePackRuleTier('required', null)).toBe('required');
 	});
 });
