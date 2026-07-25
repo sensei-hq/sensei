@@ -647,18 +647,40 @@ impl PgStore {
     pub async fn create_run(&self, new: &NewRun) -> Result<uuid::Uuid, String> {
         let (id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO activity.runs
-                (project_id, plan_ref, goal, dojo_session_id, max_concurrency)
-             VALUES($1, COALESCE($2, ''), $3, $4, COALESCE($5, 1)) RETURNING id"
+                (project_id, plan_ref, goal, dojo_session_id, max_concurrency,
+                 author_name, author_email)
+             VALUES($1, COALESCE($2, ''), $3, $4, COALESCE($5, 1), $6, $7) RETURNING id"
         )
             .bind(new.project_id)
             .bind(new.plan_ref.as_deref())
             .bind(new.goal.as_deref())
             .bind(new.dojo_session_id)
             .bind(new.max_concurrency)
+            .bind(new.author_name.as_deref())
+            .bind(new.author_email.as_deref())
             .fetch_one(&self.pool)
             .await
             .map_err(|e| e.to_string())?;
         Ok(id)
+    }
+
+    /// Read a run's stamped git author `(author_name, author_email)`. Kept off the
+    /// wide `RUN_SELECT` tuple because sqlx caps tuple `FromRow` at 16 columns;
+    /// `Run` reads stay 16-wide, and the author (a rarely-needed attribution
+    /// field) is fetched on demand. `(None, None)` when the run is gone or was
+    /// created without a resolvable git identity.
+    pub async fn run_author(
+        &self,
+        run_id: &uuid::Uuid,
+    ) -> Result<(Option<String>, Option<String>), String> {
+        let row: Option<(Option<String>, Option<String>)> = sqlx_core::query_as::query_as(
+            "SELECT author_name, author_email FROM activity.runs WHERE id = $1",
+        )
+            .bind(run_id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(row.unwrap_or((None, None)))
     }
 
     /// Fetch one run by id, or `None` if it does not exist.
@@ -13139,11 +13161,16 @@ mod run_tests {
             goal: Some("ship relay".into()),
             dojo_session_id: Some(session),
             max_concurrency: Some(3),
+            author_name: Some("Sensei HQ".into()),
+            author_email: Some("dev@sensei-hq.com".into()),
         }).await.unwrap();
         let run = pg.get_run(&id).await.unwrap().unwrap();
         assert_eq!(run.plan_ref, "docs/plan/P3.md");
         assert_eq!(run.goal.as_deref(), Some("ship relay"));
         assert_eq!(run.dojo_session_id, Some(session));
+        assert_eq!(pg.run_author(&id).await.unwrap(),
+            (Some("Sensei HQ".into()), Some("dev@sensei-hq.com".into())),
+            "create_run stamps + run_author reads the git author back");
         assert_eq!(run.max_concurrency, 3);
         delete_run(&pg, &id).await;
     }

@@ -178,6 +178,10 @@ pub struct NewRun {
     pub goal: Option<String>,
     pub dojo_session_id: Option<Uuid>,
     pub max_concurrency: Option<i32>,
+    /// Git author for the run's project (resolved at the create-run handler from
+    /// [`crate::git_identity::read_git_user`]); `None` leaves the columns NULL.
+    pub author_name: Option<String>,
+    pub author_email: Option<String>,
 }
 
 /// One append-only cadence event on a run — a row of `activity.run_events`.
