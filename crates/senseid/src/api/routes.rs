@@ -35,6 +35,7 @@ use crate::api::handlers::upgrades;
 use crate::api::handlers::corrections;
 use crate::api::handlers::runs;
 use crate::api::handlers::identity;
+use crate::api::handlers::stance;
 use crate::api::handlers::playbook;
 
 pub fn create_router(state: AppState) -> Router {
@@ -90,6 +91,10 @@ pub fn create_router(state: AppState) -> Router {
         // Git author identity for a folder + its owning project (MCP
         // get_user_for_project) — who is doing the work, resolved local→global.
         .route("/api/user", get(identity::get_user))
+        // Effective behavioural stance for a folder (autonomy · sharing · review)
+        // — HOW a run behaves, resolved on the sensei.scopes ladder for the git
+        // user. Complements /api/knowledge/rules (WHAT a run may do).
+        .route("/api/stance", get(stance::get_stance))
         // Project detail endpoints (multi-window)
         .route("/api/projects/{id}/ftr",             get(project_detail::get_project_ftr))
         .route("/api/projects/{id}/icon",            get(project_detail::get_project_icon))

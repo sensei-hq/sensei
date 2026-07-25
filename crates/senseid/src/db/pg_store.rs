@@ -7506,6 +7506,49 @@ impl PgStore {
         Ok(rows)
     }
 
+    /// Resolve a user's effective behavioural stance for a repo: the most-specific
+    /// namespace stance on the `sensei.scopes` ladder wins, falling back to the
+    /// user's namespace-less default, then to the enum defaults (via
+    /// [`crate::stance::pick_stance`]). `folder_id` is optional — with `None` (the
+    /// repo isn't indexed / unknown) only the user's default row is a candidate.
+    /// Daemon-local (D-STANCE-SCOPE): stance drives the local session, never a
+    /// tenant-shared value.
+    pub async fn resolve_stance(
+        &self,
+        user_key: &str,
+        folder_id: Option<&uuid::Uuid>,
+    ) -> Result<crate::stance::ResolvedStance, String> {
+        // Candidate rows: the user's namespace-less default (level NULL) plus any
+        // stance bound to a namespace this folder belongs to. The pure
+        // pick_stance applies precedence, so SQL only needs to gather + tag level.
+        let rows: Vec<(Option<i32>, String, String, String)> = sqlx_core::query_as::query_as(
+            "SELECT s.level, st.autonomy::text, st.sharing::text, st.review::text
+               FROM sensei.stances st
+               LEFT JOIN sensei.namespaces n ON n.id = st.namespace_id
+               LEFT JOIN sensei.scopes s ON s.key = n.scope_key
+              WHERE st.user_key = $1
+                AND ( st.namespace_id IS NULL
+                      OR st.namespace_id IN (
+                            SELECT namespace_id FROM sensei.folder_namespaces
+                             WHERE folder_id = $2 ) )",
+        )
+        .bind(user_key)
+        .bind(folder_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        let candidates: Vec<crate::stance::StanceCandidate> = rows
+            .into_iter()
+            .map(|(level, autonomy, sharing, review)| crate::stance::StanceCandidate {
+                level,
+                autonomy,
+                sharing,
+                review,
+            })
+            .collect();
+        Ok(crate::stance::pick_stance(&candidates))
+    }
+
     /// Resolve a repo's namespace at a governance scope — e.g. "this repo's
     /// `project` namespace" or "its `organization` namespace". Used when
     /// authoring a rule so the caller can say "scope this to the project" and we
