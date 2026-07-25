@@ -138,6 +138,80 @@ export async function getBillingAccount(
 	return (data as BillingAccount | null) ?? null;
 }
 
+/** Resolve a project namespace slug to its `sensei.namespaces` id (scope=project),
+ *  or null when unknown. The daemon federates the run's project by slug (its
+ *  cross-DB stable identity); the seat binds to the resolved namespace id. */
+export async function resolveProjectNamespaceId(
+	db: DojoClient,
+	slug: string
+): Promise<string | null> {
+	const { data, error } = await db
+		.schema('sensei')
+		.from('namespaces')
+		.select('id')
+		.eq('scope_key', 'project')
+		.eq('slug', slug)
+		.maybeSingle();
+	if (error) throw new BillingError(500, error.message);
+	return (data as { id: string } | null)?.id ?? null;
+}
+
+/** Open or refresh a user's seat on a project: if an ACTIVE seat exists (partial
+ *  unique on user_id+namespace_id where ended_at is null), bump its
+ *  `last_active_at`; otherwise open a fresh one. Idempotent — the natural call on
+ *  each relay federation ("this user is actively using sensei on this project").
+ *  Returns whether a new seat was opened. */
+export async function openOrRefreshSeat(
+	db: DojoClient,
+	seat: { tenantId: string; userId: string; namespaceId: string; role?: string; nowIso: string }
+): Promise<{ opened: boolean; id: string }> {
+	const { data: existing, error } = await db
+		.from('seats')
+		.select('id')
+		.eq('user_id', seat.userId)
+		.eq('namespace_id', seat.namespaceId)
+		.is('ended_at', null)
+		.maybeSingle();
+	if (error) throw new BillingError(500, error.message);
+	if (existing) {
+		const id = (existing as { id: string }).id;
+		const { error: uErr } = await db.from('seats').update({ last_active_at: seat.nowIso }).eq('id', id);
+		if (uErr) throw new BillingError(500, uErr.message);
+		return { opened: false, id };
+	}
+	const { data: inserted, error: iErr } = await db
+		.from('seats')
+		.insert({
+			tenant_id: seat.tenantId,
+			user_id: seat.userId,
+			namespace_id: seat.namespaceId,
+			role: seat.role ?? 'contributor',
+			last_active_at: seat.nowIso
+		})
+		.select('id')
+		.single();
+	if (iErr) throw new BillingError(500, iErr.message);
+	return { opened: true, id: (inserted as { id: string }).id };
+}
+
+/** Close a user's active seat on a project (set ended_at — soft close, history
+ *  retained). Called when a user is removed from a project. Returns whether a
+ *  seat was closed (false if there was no active one). */
+export async function closeSeat(
+	db: DojoClient,
+	seat: { userId: string; namespaceId: string; nowIso: string }
+): Promise<{ closed: boolean }> {
+	const { data, error } = await db
+		.from('seats')
+		.update({ ended_at: seat.nowIso })
+		.eq('user_id', seat.userId)
+		.eq('namespace_id', seat.namespaceId)
+		.is('ended_at', null)
+		.select('id');
+	if (error) throw new BillingError(500, error.message);
+	return { closed: (data as unknown[] | null ?? []).length > 0 };
+}
+
 /** Persist a freshly computed seat count into the tenant's billing account
  *  (upsert — creates a default `free`/`active` account on first refresh, else
  *  updates the cached snapshot). `nowIso` is injected for deterministic tests. */
