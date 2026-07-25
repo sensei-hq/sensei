@@ -99,12 +99,30 @@ pub(crate) async fn create_run(
     let plan_ref = body["plan_ref"].as_str().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
     let max_concurrency = body["max_concurrency"].as_i64().map(|n| n as i32);
 
+    // Stamp the run with the git author of its project's repo root (user.name /
+    // user.email, git's local→global precedence — the same identity as
+    // get_user_for_project). This registers the run under who's doing the work,
+    // matching the commit author + the Dōjō sign-in. Best-effort: an
+    // unresolvable git identity (no project / not a repo) leaves the columns NULL.
+    let (author_name, author_email) = match project_id {
+        Some(pid) => match state.pg.project_root_path(&pid).await.ok().flatten() {
+            Some(dir) => {
+                let user = crate::git_identity::read_git_user(std::path::Path::new(&dir));
+                (user.name, user.email)
+            }
+            None => (None, None),
+        },
+        None => (None, None),
+    };
+
     let new = NewRun {
         project_id,
         plan_ref,
         goal: Some(goal.to_string()),
         dojo_session_id: None,
         max_concurrency,
+        author_name,
+        author_email,
     };
     let id = match state.pg.create_run(&new).await {
         Ok(id) => id,
