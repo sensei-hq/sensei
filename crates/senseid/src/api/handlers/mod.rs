@@ -30,4 +30,5 @@ pub(crate) mod scheduled_tasks;
 pub(crate) mod mcp_servers;
 pub(crate) mod runs;
 pub(crate) mod identity;
+pub(crate) mod stance;
 pub(crate) mod playbook;
