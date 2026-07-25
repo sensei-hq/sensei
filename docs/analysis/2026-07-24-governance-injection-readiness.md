@@ -1,7 +1,7 @@
 ---
 title: P3 governance injection (D-INJECT) — implementation readiness
 date: 2026-07-24
-status: investigated + scoped; NOT implemented (fresh-context design pass recommended)
+status: CORE SHIPPED (develop 6ede1bdc) — SessionStart + PreCompact tier-aware push + endpoint + escape fix; relay-driver injection + authoring UI remain
 relates: docs/design/instruction-delivery-model.md · docs/decisions.md (D-INJECT) · marketplace/plugins/sensei/hooks/
 ---
 
@@ -42,7 +42,21 @@ always; advisory on-demand.
 4. **Relay driver:** when the daemon drives a run (drive is OFF today), the driver prompt
    must carry the same mandatory/required rules — the driver has no SessionStart hook.
 
-## Why staged, not done in this session
+## Shipped (2026-07-24, `6ede1bdc`)
+
+Steps 1–3 done + live-verified: `governance::render_rules_tiers` + `GET
+/api/knowledge/rules?format=md&tiers=…` (Markdown, no client jq) + the two hooks
+push mandatory+required (SessionStart) / mandatory (PreCompact). En route, fixed a
+**pre-existing bug**: `_lib.sh escape_for_json`'s hand-rolled bash escaping silently
+failed on the large context in macOS bash → *invalid-JSON hook output*; now escapes
+via `python3 json.dumps` (fallback hand-rolled). Both hooks emit valid JSON.
+
+**Remaining (step 4 + authoring):** relay-driver rule injection (drive OFF today);
+a rule-authoring surface. **Deploy gate:** `marketplace/` is a subtree — the hook
+changes reach real sessions only after a marketplace sync + plugin update (the
+installed `0.2.29` plugin is stale until then).
+
+## Why the rest is staged
 
 Correct governance injection is the "make rules stick" feature — getting the tier
 resolution, the materialization format, and the three injection points right is a design
