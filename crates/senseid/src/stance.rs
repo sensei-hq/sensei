@@ -9,10 +9,13 @@
 //! the enum defaults when a user has set no stance at all. The precedence lives
 //! in the pure [`pick_stance`] so it is unit-testable without a database.
 //!
-//! NOTE: the autonomy *decision* (does this dial let a run proceed through a
-//! given step without asking?) is intentionally NOT here yet — the autonomy
-//! ladder's ordering needs an explicit confirmation before a safety gate keys off
-//! it. Resolution + read are safe and stand alone.
+//! The autonomy *decision* — does a dial let a run proceed through a step of a
+//! given risk WITHOUT pausing for a human — lives in [`autonomy_permits`]. Its
+//! semantics were confirmed with the owner (threshold reading): the label names
+//! the LOWEST risk tier that still triggers a pause, so `ask_on_guarded` (the
+//! default) proceeds through ordinary + risky and pauses only on guarded. dbd
+//! sorts enum variants alphabetically, so this code — not the DDL declaration
+//! order — owns the autonomy rank.
 
 /// One stance row in the running for a resolution: its scope level (`None` for
 /// the user's namespace-less default) and the three dial values as their enum
@@ -83,6 +86,39 @@ pub fn pick_stance(candidates: &[StanceCandidate]) -> ResolvedStance {
     ResolvedStance::fallback()
 }
 
+/// The risk tier of a step an autonomous run can reach, ascending by how much it
+/// warrants a human pause. `Guarded` = money / credentials / destructive or
+/// otherwise irreversible actions (the DDL's "guarded step").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StepRisk {
+    Ordinary,
+    Risky,
+    Guarded,
+}
+
+/// Whether a run at `autonomy` may proceed through a step of `risk` WITHOUT
+/// pausing to ask a human. Threshold semantics (owner-confirmed): the dial names
+/// the lowest risk tier that still triggers a pause.
+///
+/// | autonomy         | ordinary | risky | guarded |
+/// |------------------|----------|-------|---------|
+/// | `ask_always`     | ask      | ask   | ask     |
+/// | `ask_on_risky`   | run      | ask   | ask     |
+/// | `ask_on_guarded` | run      | run   | ask     | (default)
+/// | `run_freely`     | run      | run   | run     |
+///
+/// Unknown / unrecognised autonomy → safest (always ask). Pure — the single
+/// source of truth for the "progress over asking" gate.
+pub fn autonomy_permits(autonomy: &str, risk: StepRisk) -> bool {
+    match autonomy {
+        "run_freely" => true,
+        "ask_on_guarded" => risk != StepRisk::Guarded,
+        "ask_on_risky" => risk == StepRisk::Ordinary,
+        // ask_always + any unknown value → never proceed unattended.
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -121,5 +157,29 @@ mod tests {
         ]);
         assert_eq!(r.source, "scoped");
         assert_eq!(r.autonomy, "run_freely");
+    }
+
+    #[test]
+    fn autonomy_permits_matches_the_confirmed_threshold_table() {
+        use StepRisk::*;
+        // ask_always → never proceeds unattended.
+        for r in [Ordinary, Risky, Guarded] {
+            assert!(!autonomy_permits("ask_always", r));
+        }
+        // ask_on_risky → ordinary only.
+        assert!(autonomy_permits("ask_on_risky", Ordinary));
+        assert!(!autonomy_permits("ask_on_risky", Risky));
+        assert!(!autonomy_permits("ask_on_risky", Guarded));
+        // ask_on_guarded (default) → ordinary + risky, pause on guarded.
+        assert!(autonomy_permits("ask_on_guarded", Ordinary));
+        assert!(autonomy_permits("ask_on_guarded", Risky));
+        assert!(!autonomy_permits("ask_on_guarded", Guarded));
+        // run_freely → everything.
+        for r in [Ordinary, Risky, Guarded] {
+            assert!(autonomy_permits("run_freely", r));
+        }
+        // unknown / empty → safest (always ask).
+        assert!(!autonomy_permits("", Ordinary));
+        assert!(!autonomy_permits("bogus", Ordinary));
     }
 }
