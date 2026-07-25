@@ -227,6 +227,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/sessions/{id}/replay", get(sessions::get_session_replay))
         // Relay runs (P3.2 observability + P3.8 run-control create)
         .route("/api/runs", get(runs::list_runs).post(runs::create_run))
+        // Static segment before the `{id}` route so it isn't swallowed as an id.
+        .route("/api/runs/pause", post(runs::pause_run))
         .route("/api/runs/{id}", get(runs::get_run))
         // Front-door intake: axes -> playbook recommendation
         .route("/api/playbook/guide", get(playbook::get_intake_guide))
