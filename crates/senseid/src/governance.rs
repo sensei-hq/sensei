@@ -101,6 +101,20 @@ pub fn render_rules_md(set: &ResolvedRuleset) -> String {
         return out;
     }
 
+    out.push_str(&render_rules_tiers(set, ALL_TIERS));
+    out
+}
+
+/// Every enforcement tier, strongest first — the default for a full render.
+pub const ALL_TIERS: &[&str] = &["mandatory", "required", "recommended", "advisory"];
+
+/// Render only the requested enforcement `tiers` as a Markdown body (grouped,
+/// strongest-first) — the reusable core of [`render_rules_md`] and the tier-aware
+/// push into a hook's `additionalContext` (D-INJECT: SessionStart pushes
+/// mandatory+required, PreCompact re-pushes mandatory). No managed header/intro —
+/// the caller frames it. Empty string when no rule matches the requested tiers.
+pub fn render_rules_tiers(set: &ResolvedRuleset, tiers: &[&str]) -> String {
+    let mut out = String::new();
     // Group by enforcement, strongest first. Input is already ordered, but
     // section headers make authority explicit.
     for (level, heading) in [
@@ -109,6 +123,9 @@ pub fn render_rules_md(set: &ResolvedRuleset) -> String {
         ("recommended", "## Recommended"),
         ("advisory", "## Advisory"),
     ] {
+        if !tiers.contains(&level) {
+            continue;
+        }
         let group: Vec<&ResolvedRule> = set.rules.iter().filter(|r| r.enforcement == level).collect();
         if group.is_empty() {
             continue;
@@ -187,6 +204,25 @@ mod tests {
             scope: scope.to_string(),
             namespace: Some(scope.to_string()),
         }
+    }
+
+    #[test]
+    fn render_rules_tiers_filters_to_requested_tiers() {
+        let set = structure_ruleset(vec![
+            raw("never log secrets", "mandatory", "general"),
+            raw("prefer small PRs", "advisory", "general"),
+        ]);
+        // mandatory only → the mandatory section, not advisory.
+        let md = render_rules_tiers(&set, &["mandatory"]);
+        assert!(md.contains("## Mandatory"), "includes the mandatory heading");
+        assert!(md.contains("never log secrets"));
+        assert!(!md.contains("## Advisory"), "advisory tier excluded");
+        assert!(!md.contains("prefer small PRs"));
+        // no rule in the requested tier → empty (the hook injects nothing).
+        assert!(render_rules_tiers(&set, &["required"]).is_empty());
+        // all tiers renders both sections (the render_rules_md body).
+        let all = render_rules_tiers(&set, ALL_TIERS);
+        assert!(all.contains("## Mandatory") && all.contains("## Advisory"));
     }
 
     #[test]

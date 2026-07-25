@@ -144,6 +144,13 @@ pub(crate) struct RulesQuery {
     /// to the project's root repo abs_path, so a caller that knows the project
     /// but not the folder still gets the right ruleset.
     pub project: Option<String>,
+    /// `md` → return rendered Markdown (`markdown` field) instead of the raw
+    /// `rules` array — the shape the SessionStart/PreCompact hooks inject
+    /// directly (D-INJECT). Any other value / omitted → the JSON rules array.
+    pub format: Option<String>,
+    /// Comma-separated enforcement tiers to include when `format=md` (e.g.
+    /// `mandatory,required`). Omitted → all tiers. Ignored for the JSON shape.
+    pub tiers: Option<String>,
 }
 
 /// Resolve the rules governing a repo: gather its namespace memberships + the
@@ -155,7 +162,8 @@ pub(crate) struct RulesQuery {
 pub(crate) async fn get_rules(
     State(state): State<AppState>,
     Query(q): Query<RulesQuery>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<axum::response::Response, (StatusCode, Json<serde_json::Value>)> {
+    use axum::response::IntoResponse;
     let folder_path = match q.folder.as_deref().filter(|s| !s.is_empty()) {
         Some(folder) => folder.to_string(),
         None => {
@@ -179,12 +187,34 @@ pub(crate) async fn get_rules(
     let raw = state.pg.resolve_rules_raw(&folder_id).await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
     let ruleset = crate::governance::structure_ruleset(raw);
+
+    // Markdown push shape (D-INJECT): the hooks fetch rendered, tier-filtered
+    // Markdown as PLAIN TEXT (no client-side jq — macOS ships without it) and
+    // inject it straight into additionalContext.
+    if q.format.as_deref() == Some("md") {
+        let tiers: Vec<&str> = match q.tiers.as_deref().filter(|s| !s.is_empty()) {
+            Some(list) => list
+                .split(',')
+                .map(str::trim)
+                .filter(|t| crate::governance::ALL_TIERS.contains(t))
+                .collect(),
+            None => crate::governance::ALL_TIERS.to_vec(),
+        };
+        let markdown = crate::governance::render_rules_tiers(&ruleset, &tiers);
+        return Ok((
+            [(axum::http::header::CONTENT_TYPE, "text/markdown; charset=utf-8")],
+            markdown,
+        )
+            .into_response());
+    }
+
     Ok(Json(serde_json::json!({
         "folder": folder_path,
         "total": ruleset.total,
         "mandatory_count": ruleset.mandatory_count,
         "rules": ruleset.rules,
-    })))
+    }))
+    .into_response())
 }
 
 /// Resolve the global ruleset (user + general scope) and write it to
