@@ -279,6 +279,12 @@ pub struct RelaySessionUpdate {
     /// backs the watchdog's `stalled` status the bridge also publishes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub heartbeat_at: Option<String>,
+    /// The slug of the run's project namespace (`sensei.namespaces` scope=project).
+    /// Lets the Worker open/refresh the caller's billing seat on this project —
+    /// proof the user is actively using sensei there (only such users are billed).
+    /// Optional + backward-compatible: absent → no seat is touched.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_slug: Option<String>,
 }
 
 /// One node of the phone-renderable outline — mirrors `dojo.relay_segments`. A
@@ -495,6 +501,7 @@ mod tests {
             paused_until: Some("2026-07-16T11:29:00Z".into()),
             pause_reason: Some("weekly cap".into()),
             heartbeat_at: Some("2026-07-16T10:04:30Z".into()),
+            project_slug: None,
         };
         let js = serde_json::to_string(&u).unwrap();
         let back: RelaySessionUpdate = serde_json::from_str(&js).unwrap();
@@ -504,6 +511,12 @@ mod tests {
         assert_eq!(v["heartbeat_at"], json!("2026-07-16T10:04:30Z"));
         assert!(v.get("goal").is_none(), "None fields are omitted");
         assert!(v.get("current_feature").is_none());
+        assert!(v.get("project_slug").is_none(), "None project_slug is omitted");
+
+        // With a project set, the slug rides the wire (drives seat attribution).
+        let seated = RelaySessionUpdate { project_slug: Some("my-proj".into()), ..u };
+        let jv: serde_json::Value = serde_json::from_str(&serde_json::to_string(&seated).unwrap()).unwrap();
+        assert_eq!(jv["project_slug"], json!("my-proj"));
     }
 
     #[test]
