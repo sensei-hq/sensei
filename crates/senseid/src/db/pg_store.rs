@@ -7499,6 +7499,39 @@ impl PgStore {
     /// attach the right namespace_id from the repo's memberships. Returns None
     /// for always-on scopes (`general`/`user`) or when the repo has no namespace
     /// at that scope.
+    /// A folder's namespace memberships as `(scope_key, slug)` pairs — the stable
+    /// cross-DB identity the Dōjō `rules/resolved` endpoint matches on (the daemon
+    /// and Dōjō have separate namespace uuids). Excludes the always-on
+    /// general/user scopes (no namespace row). Used to fold adopted-pack rules
+    /// into `get_rules`.
+    pub async fn folder_namespace_pairs(
+        &self,
+        folder_id: &uuid::Uuid,
+    ) -> Result<Vec<(String, String)>, String> {
+        let rows: Vec<(String, String)> = sqlx_core::query_as::query_as(
+            "SELECT n.scope_key, n.slug
+               FROM sensei.folder_namespaces fn
+               JOIN sensei.namespaces n ON n.id = fn.namespace_id
+              WHERE fn.folder_id = $1",
+        )
+        .bind(folder_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(rows)
+    }
+
+    /// The project a folder belongs to, or `None` (unattributed folder).
+    pub async fn folder_project_id(&self, folder_id: &uuid::Uuid) -> Result<Option<uuid::Uuid>, String> {
+        let row: Option<(Option<uuid::Uuid>,)> =
+            sqlx_core::query_as::query_as("SELECT project_id FROM sensei.folders WHERE id = $1")
+                .bind(folder_id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| e.to_string())?;
+        Ok(row.and_then(|(pid,)| pid))
+    }
+
     pub async fn namespace_for_folder_scope(&self, folder_id: &uuid::Uuid, scope_key: &str) -> Result<Option<uuid::Uuid>, String> {
         if matches!(scope_key, "general" | "user") {
             return Ok(None); // always-on scopes are unscoped (namespace_id NULL)
