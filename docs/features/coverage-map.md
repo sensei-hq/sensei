@@ -135,13 +135,15 @@ The feature docs are evidence-dated **2026-07-14/20**; a large build wave landed
 
 ---
 
-## G · Open questions (the gaps to resolve)
+## G · Open questions
 
-See the conversation for the ranked grill. Highest-value:
-1. **Planner** — the missing spine that tasks + plan-as-run depend on. Build it, or keep plans doc-authored?
-2. **Designed-not-built desktop screens** — benchmark, solution-track, agent/persona editors, consolidation screen, impact-alert: which are in scope vs cut?
-3. **lib/dojo → dojo2 regressions** — stack reviewers/checkers + extension governance (personas/hooks/plugins + adoption): port or drop?
-4. **Fixture-only dōjō sections** — rule-packs catalog, knowledge, scopes, org-ladder authoring: which to wire next (post-cutover)?
-5. **Gated activations** — relay drive/gate, prod DDL, billing provider, dojo2 cutover, main-merge: sequencing.
-6. **Default governance bundle** — ship the curated starter constitution (wire `seed_default_governance`)?
-7. **Personas** — author the real persona records (currently a stub)?
+**Resolved 2026-07-25** (see [`../decisions.md`](../decisions.md) → Coverage-audit scope calls):
+- **Planner** → build a real one (D-PLANNER). · **Desktop screens** → build Consolidation + Agent/Persona editors + Solution-track; **benchmark cut** (D-SCREENS). · **Rule verification** → build checker execution (D-CHECKER). · **Default governance** → ship the seed (D-SEED confirmed).
+
+**Still open:**
+1. **Mock hygiene** — prune the superseded-but-not-`discarded/` variants (sharing-review, mcp-replay-insights, multi-option learnings/project-pages/libraries/nav)?
+2. **Extension governance** — port the richer `dojo-extensions.jsx` model (personas/hooks/plugins + org→team→project scoping + adoption tracking) into dojo2, or keep the thin catalog?
+3. **Fixture-only dōjō sections** — rule-packs catalog, knowledge, scopes, org-ladder authoring: wiring order (post-cutover)?
+4. **Gated activations** — relay drive/gate, prod DDL, billing provider, dojo2 cutover, main-merge: sequencing.
+5. **Personas** — author the real persona records (`docs/personas/` is a stub)?
+6. **Impact-alert** screen — build the regression full-screen, or fold into the Impact screen?
