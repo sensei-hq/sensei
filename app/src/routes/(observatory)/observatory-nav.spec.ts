@@ -94,6 +94,14 @@ describe("buildNavItems", () => {
     ).toBe(12);
   });
 
+  it("surfaces Consolidation (Tier-2 ruleset review) in the Review group (hidden in Focus)", () => {
+    const c = byHref(buildNavItems({ focus: false }), "/consolidation");
+    expect(c?.text).toBe("Consolidation");
+    expect(c?.kanji).toBe("統");
+    expect(c?.value).toBe("/consolidation");
+    expect(byHref(buildNavItems({ focus: true }), "/consolidation")).toBeUndefined();
+  });
+
   it("surfaces Dōjō connections in the Review group (hidden in Focus)", () => {
     const dojo = byHref(buildNavItems({ focus: false }), "/dojo/connections");
     expect(dojo?.text).toBe("Dōjō");
