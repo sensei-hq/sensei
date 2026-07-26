@@ -8,7 +8,7 @@ import { dojoDb } from '$lib/server/dojo-supabase';
 import { resolveApiKeyAccess, resolveTenantAccess, apiError, ACCESS } from '$lib/server/dojo-auth';
 
 const COLS =
-	'id, session_id, parent_id, seq, title, summary, detail, state, is_gate, gate_severity, response_verdict, response_note, submitted_at';
+	'id, session_id, parent_id, seq, title, summary, detail, agent, model, spec_ref, state, is_gate, gate_severity, response_verdict, response_note, submitted_at';
 
 const str = (v: unknown): string | null => (typeof v === 'string' ? v : null);
 
@@ -38,6 +38,9 @@ export const POST: RequestHandler = async ({ params, request }) => {
 			title: str(s.title) ?? '',
 			summary: str(s.summary),
 			detail: str(s.detail),
+			agent: str(s.agent),
+			model: str(s.model),
+			spec_ref: str(s.spec_ref),
 			state: str(s.state) ?? 'pending',
 			is_gate: s.is_gate === true,
 			gate_severity: str(s.gate_severity),

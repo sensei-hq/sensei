@@ -288,8 +288,30 @@ async fn drive_run(ctx: &TaskContext, cfg: &DriveConfig, run: &Run) -> Result<()
     }
     let prompt = goal.to_string();
 
-    // 3. Announce the step. `detail` stays logical/short — a bounded goal label,
-    //    never the full prompt body or any code.
+    // 2b. Stance gate. An unattended headless single-shot cannot ask a human
+    //     mid-run, so it must not launch when the run author's resolved autonomy
+    //     requires asking before an *ordinary* step (`ask_always`). Finer
+    //     per-step gating (risky/guarded) is enforced in-agent by the spawned
+    //     claude's PreToolUse hook — this is only the launch decision. Resolved
+    //     best-effort: an author/folder/stance lookup miss degrades to the
+    //     fallback stance (`ask_on_guarded`, which permits the launch), because
+    //     the drive already sits behind the OFF-by-default master switch.
+    let stance = resolve_run_stance(ctx, run, &cwd).await;
+    if !crate::stance::autonomy_permits(&stance.autonomy, crate::stance::StepRisk::Ordinary) {
+        return flag(
+            ctx,
+            run,
+            &format!(
+                "author autonomy stance ({}) asks before each step; unattended drive not launched",
+                stance.autonomy
+            ),
+        )
+        .await;
+    }
+
+    // 3. Announce the step. `detail` stays logical/short — a bounded goal label
+    //    plus the autonomy the drive is operating under (observability), never
+    //    the full prompt body or any code.
     let label = short_label(goal);
     ctx.pg()
         .set_run_progress(&run_id, run.current_phase.as_deref(), Some(&label))
@@ -301,7 +323,7 @@ async fn drive_run(ctx: &TaskContext, cfg: &DriveConfig, run: &Run) -> Result<()
             RunEventKind::FeatureStarted,
             run.current_phase.as_deref(),
             Some(&label),
-            &serde_json::json!({ "goal": label }),
+            &serde_json::json!({ "goal": label, "autonomy": stance.autonomy }),
         )
         .await
         .map_err(|e| format!("append_run_event(FeatureStarted) failed: {e}"))?;
@@ -483,6 +505,36 @@ async fn resolve_cwd(ctx: &TaskContext, run: &Run) -> Result<Option<std::path::P
 /// stamped by the caller) and return `Ok(())` — the "can't drive, don't spawn"
 /// terminal for a tick. Status is left as-is (Flagged-but-running), matching
 /// progress-over-asking.
+/// Resolve the behavioural stance the run's author operates under, best-effort:
+/// the git author email (stamped on the run) keyed against the repo at `cwd` on
+/// the scope ladder. Any lookup failure — no author, an un-indexed cwd, or a
+/// missing stances relation — degrades to the fallback stance so the drive gate
+/// fails OPEN (the OFF-by-default master switch already gates activation).
+async fn resolve_run_stance(
+    ctx: &TaskContext,
+    run: &Run,
+    cwd: &std::path::Path,
+) -> crate::stance::ResolvedStance {
+    let author_email = ctx
+        .pg()
+        .run_author(&run.id)
+        .await
+        .ok()
+        .and_then(|(_, email)| email)
+        .unwrap_or_default();
+    let folder_id = ctx
+        .pg()
+        .get_repo_by_path(&cwd.to_string_lossy())
+        .await
+        .ok()
+        .flatten()
+        .and_then(|f| crate::api::util::json_uuid(&f["id"]));
+    ctx.pg()
+        .resolve_stance(&author_email, folder_id.as_ref())
+        .await
+        .unwrap_or_else(|_| crate::stance::ResolvedStance::fallback())
+}
+
 async fn flag(ctx: &TaskContext, run: &Run, note: &str) -> Result<(), String> {
     append(
         ctx,
@@ -892,6 +944,58 @@ mod tests {
         assert_eq!(run.current_feature.as_deref(), Some("drive the next step"));
         assert_eq!(run.status, RelayRunStatus::Running, "0-exit leaves the run Running for the next tick");
 
+        pg_delete_run(pg, &id).await;
+        cleanup_project(pg, &project_id, &root_id, &dir).await;
+    }
+
+    #[tokio::test]
+    async fn enabled_drive_blocked_by_ask_always_author_stance() {
+        let Some(ctx) = make_ctx().await else { return; };
+        let pg = ctx.pg();
+        let (project_id, root_id, dir) = seed_project_with_cwd(pg).await;
+
+        // The run's author has an `ask_always` stance: an unattended headless
+        // single-shot cannot ask a human before each step, so the drive must NOT
+        // launch — even with a stub that WOULD exit 0 if it were spawned.
+        let author = format!("ask-always-{}@test.local", uuid::Uuid::new_v4());
+        sqlx_core::query::query(
+            "INSERT INTO sensei.stances(user_key, namespace_id, autonomy) \
+             VALUES ($1, NULL, 'ask_always'::sensei.stance_autonomy)",
+        )
+        .bind(&author)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+
+        let id = pg
+            .create_run(&NewRun {
+                project_id: Some(project_id),
+                goal: Some("would drive but stance blocks".into()),
+                author_email: Some(author.clone()),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        let run = pg.get_run(&id).await.unwrap().unwrap();
+        drive_run(&ctx, &stub_cfg("echo"), &run).await.unwrap();
+
+        let kinds: Vec<RunEventKind> =
+            pg.list_run_events(&id, 10).await.unwrap().into_iter().map(|e| e.kind).collect();
+        assert!(kinds.contains(&RunEventKind::Flagged), "ask_always must Flag, got {kinds:?}");
+        assert!(
+            !kinds.contains(&RunEventKind::FeatureStarted),
+            "ask_always must not announce or spawn, got {kinds:?}"
+        );
+        // Status untouched — the run stays Running for a human / a later tick.
+        let run = pg.get_run(&id).await.unwrap().unwrap();
+        assert_eq!(run.status, RelayRunStatus::Running);
+
+        sqlx_core::query::query("DELETE FROM sensei.stances WHERE user_key = $1")
+            .bind(&author)
+            .execute(pg.pool())
+            .await
+            .ok();
         pg_delete_run(pg, &id).await;
         cleanup_project(pg, &project_id, &root_id, &dir).await;
     }

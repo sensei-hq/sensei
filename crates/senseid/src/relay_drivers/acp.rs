@@ -95,6 +95,9 @@ pub fn acp_update_to_segments(update: &SessionUpdate) -> Vec<RelaySegment> {
                 gate_severity: None,
                 response_verdict: None,
                 response_note: None,
+                agent: None,
+                model: None,
+                spec_ref: None,
             })
             .collect(),
         // Not part of the outline (transient activity / carries code/args) — an

@@ -243,6 +243,48 @@ impl DojoClient {
         )
     }
 
+    /// Fetch the rules of every pack ADOPTED at the given `(scope_key, slug)`
+    /// namespaces (the P2 full-resolve leg — the daemon can't query the Dōjō DB,
+    /// Fork 1). GETs `/v1/t/{tenant}/rules/resolved?ns=organization:acme,…`; the
+    /// Worker unions the adopted packs with each rule's tier override applied.
+    /// Best-effort at the call site — a transport/parse/status fault surfaces as
+    /// an error the caller logs and skips (pack rules are additive).
+    pub async fn resolved_pack_rules(
+        &self,
+        ns_pairs: &[(String, String)],
+    ) -> Result<Vec<PackRuleWire>, DojoClientError> {
+        if ns_pairs.is_empty() {
+            return Ok(Vec::new());
+        }
+        let token = self.bearer_async().await?;
+        let ns = ns_pairs
+            .iter()
+            .map(|(scope, slug)| format!("{scope}:{slug}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        let url = format!(
+            "{}/v1/t/{}/rules/resolved",
+            self.registry_url,
+            encode_tenant_path(&self.tenant_key)
+        );
+        let resp = self
+            .http
+            .get(&url)
+            .query(&[("ns", ns.as_str())])
+            .bearer_auth(&token)
+            .send()
+            .await
+            .map_err(|e| DojoClientError::Network(e.to_string()))?;
+        if !resp.status().is_success() {
+            return Err(DojoClientError::Status(resp.status().as_u16()));
+        }
+        Ok(resp
+            .json::<ResolvedRulesResponse>()
+            .await
+            .map_err(|e| DojoClientError::Network(e.to_string()))?
+            .rules)
+    }
+
     /// Bounded-retry JSON POST for the relay publishes, returning the successful
     /// response. Retries a transient failure — a transport error or ANY non-2xx —
     /// up to a few attempts with a short backoff. Publishes are safe to retry:
@@ -441,6 +483,29 @@ impl DojoClient {
     }
 }
 
+/// One resolved pack rule from `GET /v1/.../rules/resolved` — the fields the
+/// daemon folds into its ruleset. Matches the Worker's `ResolvedPackRule`
+/// (`dojo/src/lib/server/rules-data.ts`); extra fields there are ignored.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct PackRuleWire {
+    pub rule_id: String,
+    pub statement: String,
+    #[serde(default)]
+    pub body: String,
+    pub rationale: Option<String>,
+    pub enforcement: String,
+    #[serde(default)]
+    pub source: String,
+    #[serde(default)]
+    pub area: String,
+}
+
+/// The `rules/resolved` response envelope: `{ rules: [...] }`.
+#[derive(Debug, serde::Deserialize)]
+struct ResolvedRulesResponse {
+    rules: Vec<PackRuleWire>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -629,6 +694,7 @@ mod tests {
             paused_until: None,
             pause_reason: None,
             heartbeat_at: None,
+            project_slug: None,
         };
         c.publish_session_update(&update)
             .await
@@ -797,6 +863,7 @@ mod tests {
             paused_until: None,
             pause_reason: None,
             heartbeat_at: None,
+            project_slug: None,
         };
         c.publish_session_update(&update).await.expect("session publish ok");
 
@@ -813,6 +880,9 @@ mod tests {
                 gate_severity: None,
                 response_verdict: None,
                 response_note: None,
+                agent: None,
+                model: None,
+                spec_ref: None,
             },
             RelaySegment {
                 id: None,
@@ -826,6 +896,9 @@ mod tests {
                 gate_severity: Some(GateSeverity::Blocking),
                 response_verdict: None,
                 response_note: None,
+                agent: None,
+                model: None,
+                spec_ref: None,
             },
         ];
         c.upsert_segments("run-1", &segs).await.expect("segments publish ok");
@@ -892,6 +965,7 @@ mod tests {
             paused_until: None,
             pause_reason: None,
             heartbeat_at: Some("2026-07-24T10:05:00Z".into()),
+            project_slug: None,
         };
         let id = c
             .publish_session_update_returning_id(&update)

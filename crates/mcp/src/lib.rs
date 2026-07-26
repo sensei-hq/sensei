@@ -104,6 +104,17 @@ pub fn daemon_request_for(
             Some(DaemonRequest::get("/api/projects").with_query("under", under))
         }
 
+        // ── Who is doing the work: the folder's effective git author ─────────
+        // `get_user_for_project` resolves the git `user.name`/`user.email` (with
+        // git's own local→global precedence) + the owning project, defaulting to
+        // the MCP call's cwd — same folder-scoping as `find_projects`. The
+        // resolved identity matches the commit author and the Dōjō sign-in, so
+        // a run/plan can be registered to the right person.
+        "get_user_for_project" => {
+            let under = args["under"].as_str().filter(|s| !s.is_empty()).unwrap_or(cwd);
+            Some(DaemonRequest::get("/api/user").with_query("under", under))
+        }
+
         // ── Workflow state ──────────────────────────────────────────────────
         "update_phase" => {
             let body = json!({
@@ -202,6 +213,27 @@ pub fn daemon_request_for(
             Some(DaemonRequest::post_json("/api/knowledge/outcomes", json!({ "outcomes": outcomes })))
         }
 
+        // `plan` (D-PLANNER) decomposes a goal/spec/issue into a structured plan
+        // (phases → features → acceptance criteria) + rendered docs/plan markdown.
+        "plan" => {
+            let mut body = json!({ "goal": args["goal"].as_str().unwrap_or("") });
+            if let Some(ctx) = args["context"].as_str().filter(|s| !s.is_empty()) {
+                body["context"] = json!(ctx);
+            }
+            Some(DaemonRequest::post_json("/api/planner/generate", body))
+        }
+
+        // `run_checkers` (D-CHECKER) runs the repo's adopted checker-backed rules
+        // (their `checker_ref` command) and returns pass/fail verdicts.
+        "run_checkers" => {
+            let folder = args["folder"].as_str().filter(|s| !s.is_empty()).unwrap_or(cwd);
+            let mut body = json!({ "folder": folder });
+            if let Some(p) = args["project"].as_str().filter(|s| !s.is_empty()) {
+                body["project"] = json!(p);
+            }
+            Some(DaemonRequest::post_json("/api/checkers/run", body))
+        }
+
         // ── Relay run-control (P3.8) → the daemon's /api/runs endpoints ─────
         // `start_run` POSTs a new run; `project` defaults to the resolved repo
         // (name), matching every other tool's cwd→project convention. The daemon
@@ -224,6 +256,71 @@ pub fn daemon_request_for(
             Some(id) => Some(DaemonRequest::get(format!("/api/runs/{id}"))),
             None => Some(DaemonRequest::get("/api/runs")),
         },
+        // `pause_run` marks a run paused-until-reset (a limit-wait, auto-resumes) —
+        // POSTs `/api/runs/pause`; `project` defaults to the cwd-resolved repo, so
+        // the active run for the current project is paused when no run_id is given.
+        "pause_run" => {
+            let mut body = json!({ "until": args["until"].as_str().unwrap_or("") });
+            let project = args["project"].as_str().filter(|s| !s.is_empty()).unwrap_or(repo_id);
+            if !project.is_empty() {
+                body["project"] = json!(project);
+            }
+            for k in ["reason", "run_id"] {
+                if let Some(v) = args[k].as_str().filter(|s| !s.is_empty()) {
+                    body[k] = json!(v);
+                }
+            }
+            Some(DaemonRequest::post_json("/api/runs/pause", body))
+        }
+
+        // ── Automated-run coordinator contract (AR-3) → daemon /api/runs/* ───
+        // `register_plan` seeds an authored plan GRAPH as a run (AR-2): the daemon
+        // validates it (DAG), stores it, and authors the Dōjō outline from it.
+        // `plan` is the graph as a JSON string (parsed here, like record_outcome).
+        "register_plan" => {
+            let goal = args["goal"].as_str().unwrap_or("");
+            let plan: Value =
+                serde_json::from_str(args["plan"].as_str().unwrap_or("")).unwrap_or(Value::Null);
+            let project = args["project"].as_str().filter(|s| !s.is_empty()).unwrap_or(repo_id);
+            let mut body = json!({ "goal": goal, "plan": plan });
+            if !project.is_empty() {
+                body["project"] = json!(project);
+            }
+            if let Some(p) = args["plan_ref"].as_str().filter(|s| !s.is_empty()) {
+                body["plan_ref"] = json!(p);
+            }
+            if let Some(mc) = args["max_concurrency"].as_str().and_then(|s| s.parse::<i64>().ok()) {
+                body["max_concurrency"] = json!(mc);
+            }
+            Some(DaemonRequest::post_json("/api/runs/plan", body))
+        }
+        // `update_task_status` flips one plan task's state as the executor works
+        // the graph — re-projects the authored outline + feeds the progress clock.
+        "update_task_status" => {
+            let run_id = args["run_id"].as_str().unwrap_or("");
+            let task_id = args["task_id"].as_str().unwrap_or("");
+            let mut body = json!({ "state": args["state"].as_str().unwrap_or("") });
+            if let Some(n) = args["note"].as_str().filter(|s| !s.is_empty()) {
+                body["note"] = json!(n);
+            }
+            Some(DaemonRequest::post_json(format!("/api/runs/{run_id}/tasks/{task_id}"), body))
+        }
+        // `report_run_outcome` marks a run terminal (done|failed) — the one terminal
+        // transition an external coordinator may set.
+        "report_run_outcome" => {
+            let run_id = args["run_id"].as_str().unwrap_or("");
+            let mut body = json!({ "outcome": args["outcome"].as_str().unwrap_or("") });
+            if let Some(s) = args["summary"].as_str().filter(|s| !s.is_empty()) {
+                body["summary"] = json!(s);
+            }
+            Some(DaemonRequest::post_json(format!("/api/runs/{run_id}/outcome"), body))
+        }
+        // `get_pending_nudges` pulls the human→agent steer for a run (the "daemon
+        // initiates a check" pull side). Read-only; fail-soft to an empty list.
+        "get_pending_nudges" => {
+            let run_id = args["run_id"].as_str().unwrap_or("");
+            Some(DaemonRequest::get(format!("/api/runs/{run_id}/nudges")))
+        }
 
         // ── Front-door intake ────────────────────────────────────────────────
         "get_intake_guide" => Some(DaemonRequest::get("/api/playbook/guide")),
@@ -373,6 +470,9 @@ pub fn handle_list_tools() -> Value {
             tool("list_projects", "List all known projects and their index status.", &[], &[]),
             tool("find_projects", "List the projects that live under a folder — the folder-scoped view of list_projects (which returns every project on the machine). Use this to discover which sensei project owns the directory you're working in. Defaults to the current working directory when 'under' is omitted.", &[], &[
                 ("under", "string", "Absolute folder path to scope the search to. Defaults to the current working directory."),
+            ]),
+            tool("get_user_for_project", "Resolve the git author identity — user.name and user.email, using git's own local-over-global precedence (a repo .git/config override wins; otherwise ~/.gitconfig) — for the folder you're working in, plus the sensei project that owns it. This is the same identity as the commit author and the Dōjō sign-in, so it's how a run or plan gets registered to the right person for relay attribution. Defaults to the current working directory when 'under' is omitted.", &[], &[
+                ("under", "string", "Absolute folder path to resolve the identity + owning project for. Defaults to the current working directory."),
             ]),
             tool("use_project", "Pin the active project so every subsequent tool call resolves to it regardless of the server's working directory. Call this when the user tells you which project they're working on (e.g. use_project 'sensei'). The pin persists until you switch it by calling use_project again; an explicit project= argument on any other tool still overrides it for that one call.", &[
                 ("project", "string", "Project name or UUID to pin as active (e.g. 'sensei')."),
@@ -534,6 +634,24 @@ pub fn handle_list_tools() -> Value {
                     ("slot",       "string", "optional: lead the context with memories anchored to this spine slot (vision|personas|journeys|roadmap|design|mockups|decisions|brief|plan|tests)"),
                     ("feature",    "string", "optional feature name for a feature-scope slot"),
                 ]),
+            // ── Planning (D-PLANNER) ─────────────────────────────────────────
+            tool("plan",
+                "Decompose a goal, spec, or issue into a structured plan — ordered phases, each with \
+                 features that carry observable acceptance criteria, scope, and dependencies (shaped to \
+                 clear the plan-depth-reviewer bar). Returns the structured plan plus rendered \
+                 docs/plan markdown; review it, save it, then hand the path to `start_run` as plan_ref.",
+                &[("goal", "string", "The goal / spec / issue to decompose into a plan")],
+                &[("context", "string", "Optional grounding — a spec, an issue body, or conventions to plan against")]),
+            tool("run_checkers",
+                "Run this repo's checker-backed governance rules (D-CHECKER) — each rule whose \
+                 verification is a `checker` runs its resolved command (e.g. the repo's lint/test) and \
+                 yields a pass/fail verdict. Returns one result per rule; a rule with no matching command \
+                 for this repo is 'skipped'. Makes adopted rules enforceable, not advisory-only.",
+                &[],
+                &[
+                    ("folder",  "string", "Absolute repo path to check. Defaults to the current project's folder."),
+                    ("project", "string", "Project name or UUID instead of a path."),
+                ]),
             // ── Relay run-control (P3.8) ─────────────────────────────────────
             tool("start_run",
                 "Start a daemon-owned autonomous run against a goal (the relay engine). The daemon \
@@ -551,6 +669,58 @@ pub fn handle_list_tools() -> Value {
                  cadence events (the filtered feed — phase/feature/gate/commit markers, no code).",
                 &[],
                 &[("run_id", "string", "A specific run's UUID. Omit to list all active runs.")]),
+            tool("pause_run",
+                "Pause a run until a usage/rate limit resets — marks it 'paused' (not stalled) and the \
+                 daemon auto-resumes it at the reset. Call this when you hit (or foresee) a limit so the \
+                 watcher sees a resumable wait, not a stall. Defaults to the active run for the current project.",
+                &[("until", "string", "RFC-3339 timestamp when the limit resets (e.g. 2026-07-25T11:30:00-05:00).")],
+                &[
+                    ("reason", "string", "Human-readable cause (e.g. 'usage limit', 'weekly cap')."),
+                    ("project", "string", "Project name or UUID; defaults to the current project."),
+                    ("run_id", "string", "A specific run's UUID; defaults to the active run for the project."),
+                ]),
+            // ── Automated-run coordinator contract (AR-3) ────────────────────
+            tool("register_plan",
+                "Register an authored plan GRAPH as a daemon-owned run and mirror it to Dōjō (phases → \
+                 tasks, each carrying its assigned agent + model + a spec ref). The daemon validates the \
+                 graph (unique task ids, deps resolve, no cycles), stores it, and authors the phone \
+                 outline from it so the whole plan is watchable before execution. Pass `plan` as a JSON \
+                 string: {\"goal\"?, \"phases\":[{\"title\", \"tasks\":[{\"id\", \"title\", \"agent\"?, \
+                 \"model\"?, \"spec_ref\"?, \"deps\"?:[id], \"summary\"?}]}]}. Returns the run.",
+                &[
+                    ("goal", "string", "The run's objective — a short label; the plan graph carries the detail"),
+                    ("plan", "string", "The plan graph as a JSON string (phases → tasks with agent/model/spec_ref/deps)"),
+                ],
+                &[
+                    ("project", "string", "Project name or UUID the run works in. Defaults to the current project."),
+                    ("plan_ref", "string", "Path to the committed human plan doc (e.g. docs/plan/<id>/plan.md)."),
+                    ("max_concurrency", "string", "Max parallel tasks (integer as a string). Defaults to 1."),
+                ]),
+            tool("update_task_status",
+                "Flip one plan task's state as the executor works the graph. Re-projects the task's Dōjō \
+                 segment and feeds the run's progress clock — call it when a task goes active / done / \
+                 failed / blocked. Never touches the liveness heartbeat (that stays the daemon's).",
+                &[
+                    ("run_id", "string", "The run's UUID (from register_plan)."),
+                    ("task_id", "string", "The task's id within the plan graph."),
+                    ("state", "string", "New state: pending | active | done | skipped | failed | blocked | needs_review."),
+                ],
+                &[("note", "string", "Optional one-line note (no code) recorded on the cadence event.")]),
+            tool("report_run_outcome",
+                "Mark a run terminal — done or failed — when the plan is complete (or unrecoverable). The \
+                 one terminal transition an external coordinator may set; the daemon watchdog keeps its \
+                 own independent stall/crash authority.",
+                &[
+                    ("run_id", "string", "The run's UUID."),
+                    ("outcome", "string", "'done' or 'failed'."),
+                ],
+                &[("summary", "string", "Optional one-line outcome summary (no code).")]),
+            tool("get_pending_nudges",
+                "Pull the pending human→agent steer for a run from Dōjō — the 'check in' pull side of the \
+                 contract. Poll it each executor loop and act on any nudge/chat the human sent. Read-only \
+                 and fail-soft (empty list if there's no dojo or the poll fails). Steer, not drive.",
+                &[("run_id", "string", "The run's UUID.")],
+                &[]),
             // ── Front-door intake ────────────────────────────────────────────
             tool("get_intake_guide",
                 "Load the intake guide (grounding frame + per-axis elicitation prompts + the playbook \
@@ -938,13 +1108,14 @@ mod tests {
     const EXPECTED_TOOLS: &[&str] = &[
         "search", "context_pack", "get_callers", "get_callees", "get_project_summary",
         "get_lib_docs", "search_lib_docs", "get_communities", "get_patterns",
-        "list_projects", "find_projects", "use_project", "create_session", "update_session", "add_library",
+        "list_projects", "find_projects", "get_user_for_project", "use_project", "create_session", "update_session", "add_library",
         "update_phase", "get_workflow_state", "match_pattern", "get_pattern_for",
         "get_duplicates", "get_project_conventions", "get_rules", "get_commands", "infer", "embed",
         "gateway_status", "consensus", "generate_image", "log_event",
         "propose_memory", "save_memory", "promote_memory", "accept_proposal",
         "reject_proposal", "record_outcome", "get_layered_context",
-        "start_run", "run_status", "recommend_playbook", "get_intake_guide",
+        "plan", "run_checkers", "start_run", "run_status", "pause_run", "recommend_playbook", "get_intake_guide",
+        "register_plan", "update_task_status", "report_run_outcome", "get_pending_nudges",
         "list_playbook_rule_proposals", "accept_playbook_rule",
     ];
 
@@ -1217,6 +1388,55 @@ mod tests {
     }
 
     #[test]
+    fn register_plan_forwards_parsed_graph_with_resolved_project() {
+        let plan = r#"{"phases":[{"title":"P","tasks":[{"id":"t1","title":"x","agent":"general-purpose","model":"sonnet"}]}]}"#;
+        let req = daemon_request_for(
+            "register_plan",
+            &json!({ "goal": "ship it", "plan": plan, "plan_ref": "docs/plan/x/plan.md" }),
+            "/cwd", Some("sensei"),
+        ).unwrap();
+        assert_eq!(req.method, HttpMethod::Post);
+        assert_eq!(req.path, "/api/runs/plan");
+        let body = req.body.unwrap();
+        assert_eq!(body["goal"], "ship it");
+        assert_eq!(body["project"], "sensei", "unset project defaults to the resolved repo");
+        assert_eq!(body["plan_ref"], "docs/plan/x/plan.md");
+        // The JSON-string plan is parsed into an object the daemon can validate.
+        assert_eq!(body["plan"]["phases"][0]["tasks"][0]["id"], "t1");
+        assert_eq!(body["plan"]["phases"][0]["tasks"][0]["model"], "sonnet");
+    }
+
+    #[test]
+    fn task_status_outcome_and_nudges_target_run_subpaths() {
+        // update_task_status → POST /api/runs/{id}/tasks/{task_id}
+        let u = daemon_request_for(
+            "update_task_status",
+            &json!({ "run_id": "r1", "task_id": "t9", "state": "done", "note": "green" }),
+            "/cwd", Some("sensei"),
+        ).unwrap();
+        assert_eq!(u.method, HttpMethod::Post);
+        assert_eq!(u.path, "/api/runs/r1/tasks/t9");
+        let ub = u.body.unwrap();
+        assert_eq!(ub["state"], "done");
+        assert_eq!(ub["note"], "green");
+
+        // report_run_outcome → POST /api/runs/{id}/outcome
+        let o = daemon_request_for(
+            "report_run_outcome",
+            &json!({ "run_id": "r1", "outcome": "failed", "summary": "gate red" }),
+            "/cwd", Some("sensei"),
+        ).unwrap();
+        assert_eq!(o.path, "/api/runs/r1/outcome");
+        assert_eq!(o.body.unwrap()["outcome"], "failed");
+
+        // get_pending_nudges → GET /api/runs/{id}/nudges (read-only)
+        let n = daemon_request_for("get_pending_nudges", &json!({ "run_id": "r1" }), "/cwd", Some("sensei")).unwrap();
+        assert_eq!(n.method, HttpMethod::Get);
+        assert_eq!(n.path, "/api/runs/r1/nudges");
+        assert!(n.body.is_none());
+    }
+
+    #[test]
     fn duplicates_and_conventions_target_pattern_endpoints() {
         let d = daemon_request_for("get_duplicates", &json!({}), "/cwd", Some("sensei")).unwrap();
         assert_eq!(d.path, "/api/patterns/sensei/duplicates");
@@ -1423,6 +1643,39 @@ mod tests {
         ).unwrap();
         assert_eq!(req.path, "/api/projects");
         assert_eq!(q(&req, "under"), Some("/some/dir"), "explicit `under` overrides cwd");
+    }
+
+    #[test]
+    fn pause_run_posts_until_and_defaults_project_to_cwd() {
+        let req = daemon_request_for(
+            "pause_run", &json!({ "until": "2026-07-25T11:30:00Z", "reason": "usage limit" }),
+            "/cwd", Some("sensei"),
+        ).unwrap();
+        assert_eq!(req.method, HttpMethod::Post);
+        assert_eq!(req.path, "/api/runs/pause");
+        let body = req.body.as_ref().expect("pause_run has a JSON body");
+        assert_eq!(body["until"], "2026-07-25T11:30:00Z");
+        assert_eq!(body["project"], "sensei", "project defaults to the pinned/cwd repo");
+        assert_eq!(body["reason"], "usage limit");
+    }
+
+    #[test]
+    fn get_user_for_project_defaults_under_to_cwd() {
+        // No `under` → resolve identity for the MCP call's cwd (same
+        // folder-scoping as find_projects), hitting the daemon's /api/user.
+        let req = daemon_request_for("get_user_for_project", &json!({}), "/my/cwd", None).unwrap();
+        assert_eq!(req.method, HttpMethod::Get);
+        assert_eq!(req.path, "/api/user");
+        assert_eq!(q(&req, "under"), Some("/my/cwd"), "no `under` arg → default to call cwd");
+    }
+
+    #[test]
+    fn get_user_for_project_uses_explicit_under_over_cwd() {
+        let req = daemon_request_for(
+            "get_user_for_project", &json!({ "under": "/some/repo" }), "/my/cwd", None,
+        ).unwrap();
+        assert_eq!(req.path, "/api/user");
+        assert_eq!(q(&req, "under"), Some("/some/repo"), "explicit `under` overrides cwd");
     }
 
     #[test]

@@ -3,6 +3,8 @@
 	import RoleTag from './RoleTag.svelte';
 	import Icon from './Icon.svelte';
 	import KanjiToken from './KanjiToken.svelte';
+	import LogoutButton from './LogoutButton.svelte';
+	import { getInitials } from './initials';
 	import type { KitOrg, KitDojo, KitMe } from './types';
 
 	// Top bar (kit K2TopBar): brand · org switcher · search affordance · needs-you
@@ -35,16 +37,8 @@
 	const isOrg = $derived(context === 'org');
 
 	// Avatar as initials (the kit's window.Avatar) — two-letter monogram, matching
-	// the shipped ConsoleTopBar treatment.
-	const initials = $derived(
-		(me?.name ?? 'You')
-			.replace(/\([^)]*\)/g, ' ')
-			.split(/\s+/)
-			.filter((w) => /^[\p{L}\p{N}]/u.test(w))
-			.slice(0, 2)
-			.map((w) => w[0].toUpperCase())
-			.join('')
-	);
+	// the shipped ConsoleTopBar treatment. Shared: kit/initials.ts.
+	const initials = $derived(getInitials(me?.name));
 </script>
 
 <div
@@ -113,18 +107,7 @@
 		aria-hidden="true">{initials}</span
 	>
 
-	<!-- Log out — kavach's configured logout route (kavach.config.js `logout`).
-	     `data-sveltekit-reload` forces a full navigation so the sentry handle runs
-	     server-side (clears the session), not client-side routing. -->
-	<a
-		href="/logout"
-		data-sveltekit-reload
-		title="Log out"
-		aria-label="Log out"
-		class="text-ink-soft hover:text-ink border-paper-edge inline-flex flex-shrink-0 items-center gap-2 rounded-lg border bg-transparent"
-		style="padding: 4px 10px"
-	>
-		<span class="kanji text-ink-mute text-xs" aria-hidden="true">出</span>
-		<span class="hidden text-xs md:inline">Log out</span>
-	</a>
+	<!-- Log out — shared kit control; client signOut() via the kavach context
+	     (there is no server /logout route; the supabase session is client-managed). -->
+	<LogoutButton />
 </div>
