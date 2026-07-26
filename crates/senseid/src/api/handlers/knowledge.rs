@@ -206,7 +206,14 @@ pub(crate) async fn materialize_global_rules(
     pg: &crate::db::pg_store::PgStore,
     dir: &std::path::Path,
 ) -> Result<(std::path::PathBuf, usize), String> {
-    let ruleset = crate::governance::structure_ruleset(pg.resolve_global_rules().await?);
+    // The always-on global set = general/user memories + the packs adopted at those
+    // scopes (D-SEED: the bundled constitution + ponytail resolve into ~/.sensei/
+    // rules.md, offline). `None` = no folder → only general/user pack adoptions.
+    // Folded here, not in resolve_global_rules, so the LLM consolidation path
+    // (rule_consolidation) keeps operating on learned memories, not curated packs.
+    let mut raw = pg.resolve_global_rules().await?;
+    raw.extend(pg.resolve_local_pack_raws(None).await.unwrap_or_default());
+    let ruleset = crate::governance::structure_ruleset(raw);
     // Prefer an approved Tier-2 (LLM-merged) ruleset; fall back to the Tier-1 render.
     let md = match pg.get_consolidated_ruleset("global", Some("approved")).await? {
         Some(row) => crate::governance::wrap_managed(row["content"].as_str().unwrap_or_default()),
@@ -1061,7 +1068,7 @@ async fn resolve_repo_ruleset(
     // sensei.rule_packs replica (offline — bundled/adopted/synced packs) and the
     // remote Dōjō fold-in (a member's live org packs). structure_ruleset dedups by
     // content, so a pack present in both planes surfaces once.
-    raw.extend(state.pg.resolve_local_pack_raws(folder_id).await.unwrap_or_default());
+    raw.extend(state.pg.resolve_local_pack_raws(Some(folder_id)).await.unwrap_or_default());
     raw.extend(resolve_adopted_pack_raws(state, folder_id).await);
     Ok(crate::governance::structure_ruleset(raw))
 }
@@ -1256,6 +1263,52 @@ mod tests {
         let body = std::fs::read_to_string(&path).unwrap();
         assert!(body.contains("Managed by sensei"), "managed header present");
         assert!(body.contains("# Sensei Rules"), "title present");
+    }
+
+    #[tokio::test]
+    async fn materialize_folds_general_adopted_packs_into_global_rules() {
+        // D-SEED: a pack adopted at the always-on general scope must land in the
+        // global ~/.sensei/rules.md (via resolve_local_pack_raws(None)), not just
+        // in the per-repo get_rules path. Unique slug/namespace so this never
+        // races the constitution seed test on the shared sensei_test DB.
+        let pg = crate::db::pg_store::PgStore::connect_test().await.unwrap();
+        let pool = pg.pool();
+        sqlx_core::query::query("DELETE FROM sensei.rule_packs WHERE slug = 'global-materialize-test'")
+            .execute(pool).await.unwrap();
+        sqlx_core::query::query(
+            "INSERT INTO sensei.scopes(key, name, level, shareable)
+             VALUES ('general', 'General', 0, false) ON CONFLICT (key) DO NOTHING")
+            .execute(pool).await.unwrap();
+        let (pack,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.rule_packs
+                (slug, name, area, source, summary, enforcement, owner_namespace_id, status, published_by)
+             VALUES ('global-materialize-test', 'GM', 'principles', 'GMSource', 's',
+                     'mandatory', NULL, 'active', 'test')
+             RETURNING id")
+            .fetch_one(pool).await.unwrap();
+        sqlx_core::query::query(
+            "INSERT INTO sensei.rule_pack_rules(pack_id, ordinal, statement, body, enforcement)
+             VALUES ($1, 1, 'Global materialize marker rule', 'B', 'mandatory')")
+            .bind(pack).execute(pool).await.unwrap();
+        let (ns,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.namespaces(scope_key, slug, name)
+             VALUES ('general', 'global-mat-test', 'GM') ON CONFLICT (scope_key, slug) DO UPDATE SET name=excluded.name
+             RETURNING id")
+            .fetch_one(pool).await.unwrap();
+        sqlx_core::query::query(
+            "INSERT INTO sensei.rule_pack_adoptions(pack_id, namespace_id, pinned_version, adopted_by)
+             VALUES ($1, $2, 1, 'test') ON CONFLICT (pack_id, namespace_id) DO NOTHING")
+            .bind(pack).bind(ns).execute(pool).await.unwrap();
+
+        let tmp = tempfile::tempdir().unwrap();
+        let (path, _count) = materialize_global_rules(&pg, tmp.path()).await.unwrap();
+        let body = std::fs::read_to_string(&path).unwrap();
+        assert!(body.contains("Global materialize marker rule"),
+            "a general-adopted pack rule is folded into the global rules file");
+
+        sqlx_core::query::query("DELETE FROM sensei.rule_packs WHERE slug = 'global-materialize-test'")
+            .execute(pool).await.unwrap();
+        sqlx_core::query::query("DELETE FROM sensei.namespaces WHERE id = $1").bind(ns).execute(pool).await.unwrap();
     }
 
     // #13 — Global rules pointer in ~/.claude/CLAUDE.md

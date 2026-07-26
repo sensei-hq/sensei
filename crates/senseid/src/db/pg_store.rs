@@ -7496,13 +7496,16 @@ impl PgStore {
     /// The rules of rule packs adopted at a folder's namespaces (or at the
     /// always-on general/user scopes) resolved from the LOCAL `sensei.rule_packs`
     /// replica (D-LOCAL-PACKS) — offline, in tandem with the remote Dōjō fold-in.
+    /// Pass `Some(folder)` for a repo's ruleset; pass `None` for the always-on
+    /// GLOBAL set (`~/.sensei/rules.md`), where a NULL bind makes the folder
+    /// clause match nothing, leaving only the general/user adoptions.
     /// Effective tier is never-weaken: an adoption override can only RAISE a rule's
     /// enforcement, never lower it (ranked in SQL so the enum's storage order does
     /// not matter). Maps to `RawRule` like the remote `pack_rule_to_raw`: scope =
     /// the pack area, namespace = the pack source.
     pub async fn resolve_local_pack_raws(
         &self,
-        folder_id: &uuid::Uuid,
+        folder_id: Option<&uuid::Uuid>,
     ) -> Result<Vec<crate::governance::RawRule>, String> {
         let rows: Vec<(String, String, String, Option<String>, String, String, String)> =
             sqlx_core::query_as::query_as(
@@ -13761,7 +13764,7 @@ mod pack_resolution_tests {
             .bind(pack).bind(ns).execute(pool).await.unwrap();
 
         // Resolve for a folder with NO folder_namespaces — only the general clause matches.
-        let raws = pg.resolve_local_pack_raws(&uuid::Uuid::new_v4()).await.unwrap();
+        let raws = pg.resolve_local_pack_raws(Some(&uuid::Uuid::new_v4())).await.unwrap();
 
         let mine: Vec<_> = raws.iter().filter(|r| r.title == "S1" || r.title == "S2").collect();
         assert_eq!(mine.len(), 2, "both adopted-pack rules resolve");
@@ -13822,7 +13825,7 @@ mod pack_resolution_tests {
             .fetch_one(pool).await.unwrap();
         assert_eq!(adopted, 3, "three constitution packs adopted at general (idempotent — no dup)");
 
-        let raws = pg.resolve_local_pack_raws(&uuid::Uuid::new_v4()).await.unwrap();
+        let raws = pg.resolve_local_pack_raws(Some(&uuid::Uuid::new_v4())).await.unwrap();
 
         // A mandatory principle resolves, mapped by area→scope.
         let measure = raws.iter().find(|r| r.title == "Measure, then keep what helps")
