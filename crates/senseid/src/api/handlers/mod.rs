@@ -21,6 +21,7 @@ pub(crate) mod gateway_image;
 pub(crate) mod model_provisioning;
 pub(crate) mod knowledge;
 pub(crate) mod planner;
+pub(crate) mod checker;
 pub(crate) mod dojo;
 pub(crate) mod preferences;
 pub(crate) mod share_review;
