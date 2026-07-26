@@ -397,6 +397,12 @@ pub(crate) async fn report_run_outcome(
         .append_run_event(&run_id, kind, None, None, &serde_json::json!({ "summary": summary, "via": "report_run_outcome" }))
         .await;
 
+    // A terminal run drops out of `list_active_runs`, so the scheduler stops
+    // federating it. Enqueue ONE final PublishRun so the terminal status
+    // (done/failed) reaches Dōjō — otherwise the last-federated "running" stays
+    // stale on the phone/console.
+    crate::tasks::advance_run_scheduler::enqueue_publish_run(&state.task_queue, &run_id).await;
+
     match state.pg.get_run(&run_id).await {
         Ok(Some(run)) => Ok(Json(serde_json::json!({ "run": run }))),
         _ => Err(StatusCode::INTERNAL_SERVER_ERROR),
@@ -656,6 +662,12 @@ mod tests {
             Json(serde_json::json!({ "outcome": "done", "summary": "all green" }))).await.unwrap();
         assert_eq!(body["run"]["status"], serde_json::json!("done"));
         assert!(body["run"]["completed_at"].is_string(), "completed_at stamped");
+        // Terminal runs leave list_active_runs, so completion must enqueue a final
+        // federation push — else dojo keeps the stale "running" status.
+        assert!(
+            state.task_queue.has_pending_kind_path(crate::tasks::TaskKind::PublishRun, &id.to_string()).await,
+            "report_run_outcome enqueues a final PublishRun for the terminal status"
+        );
         del(&state, &id).await;
     }
 
