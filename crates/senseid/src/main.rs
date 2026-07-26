@@ -36,6 +36,7 @@ pub mod runs;
 pub mod git_identity;
 pub mod stance;
 pub mod planner;
+pub mod plan_graph;
 pub mod checker;
 pub mod run_limits;
 pub mod run_watchdog;

@@ -45,6 +45,9 @@ pub use tool_insights::aggregate_tool_insights;
 pub use consolidate_governance::consolidate_governance;
 pub use publish_segments::publish_relay_segments;
 pub use publish_run::publish_run;
+// Shared with the run-nudge API handler (get_pending_nudges): membership
+// resolution is identical to the federation task's, so it lives in one place.
+pub(crate) use publish_run::resolve_run_memberships;
 pub use advance_run::advance_run;
 pub use warm_insight_copy::warm_insight_copy;
 pub use learn_playbooks::learn_playbooks;
