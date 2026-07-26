@@ -106,7 +106,7 @@ dojo2 (`(dojo2)/`) is the current rebuild; `(console)/` is legacy (cutover human
 | Stance (autonomy·sharing·review) + autonomy drive gate | ✅ | `sensei.stances`, `/api/stance`, `autonomy_permits` |
 | Federation (pull `/v1/rules` → inbox → memories) | ✅ | `dojo_inbox/outbox`, `knowledge_sources` |
 | Billing (per-tenant seats, private-project count) | ✅ (local) | `dojo.seats`, `billing_accounts`, `tenant_seat_usage`, `/v1/billing`; prod + provider gated |
-| **Planner / tasks-plan** (decompose a plan into features+criteria) | ⛔ | Project window "needs the planner"; no planner exists. Blocks tasks + richer plan-as-run. |
+| **Planner / tasks-plan** (decompose a plan into features+criteria) | ✅ (v0) | `crates/senseid/src/planner.rs` + `POST /api/planner/generate` + MCP `plan`: goal → gateway `reasoning` decomposition → structured phases→features→acceptance-criteria + rendered `docs/plan` md. Stateless (run engine is file-based); DB persistence + Tasks-tab wiring deferred to the project window. |
 | **Local-agent coordinator** (heterogeneous execution router) | 📄 | `design/local-agent-coordinator.md` draft; prereq = gateway inference-usage ledger (none). |
 | **Default governance bundle** (seed the starter constitution) | 📄 | `spec/governance/default-constitution.md` drafted; `seed_default_governance()` has 0 callers. |
 | **DORA delivery module** | 📄 | Framed in spec/backlog; prereq = a deploy/release-signal detector (undocumented). |

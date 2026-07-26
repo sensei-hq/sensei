@@ -213,6 +213,16 @@ pub fn daemon_request_for(
             Some(DaemonRequest::post_json("/api/knowledge/outcomes", json!({ "outcomes": outcomes })))
         }
 
+        // `plan` (D-PLANNER) decomposes a goal/spec/issue into a structured plan
+        // (phases → features → acceptance criteria) + rendered docs/plan markdown.
+        "plan" => {
+            let mut body = json!({ "goal": args["goal"].as_str().unwrap_or("") });
+            if let Some(ctx) = args["context"].as_str().filter(|s| !s.is_empty()) {
+                body["context"] = json!(ctx);
+            }
+            Some(DaemonRequest::post_json("/api/planner/generate", body))
+        }
+
         // ── Relay run-control (P3.8) → the daemon's /api/runs endpoints ─────
         // `start_run` POSTs a new run; `project` defaults to the resolved repo
         // (name), matching every other tool's cwd→project convention. The daemon
@@ -564,6 +574,14 @@ pub fn handle_list_tools() -> Value {
                     ("slot",       "string", "optional: lead the context with memories anchored to this spine slot (vision|personas|journeys|roadmap|design|mockups|decisions|brief|plan|tests)"),
                     ("feature",    "string", "optional feature name for a feature-scope slot"),
                 ]),
+            // ── Planning (D-PLANNER) ─────────────────────────────────────────
+            tool("plan",
+                "Decompose a goal, spec, or issue into a structured plan — ordered phases, each with \
+                 features that carry observable acceptance criteria, scope, and dependencies (shaped to \
+                 clear the plan-depth-reviewer bar). Returns the structured plan plus rendered \
+                 docs/plan markdown; review it, save it, then hand the path to `start_run` as plan_ref.",
+                &[("goal", "string", "The goal / spec / issue to decompose into a plan")],
+                &[("context", "string", "Optional grounding — a spec, an issue body, or conventions to plan against")]),
             // ── Relay run-control (P3.8) ─────────────────────────────────────
             tool("start_run",
                 "Start a daemon-owned autonomous run against a goal (the relay engine). The daemon \
@@ -984,7 +1002,7 @@ mod tests {
         "gateway_status", "consensus", "generate_image", "log_event",
         "propose_memory", "save_memory", "promote_memory", "accept_proposal",
         "reject_proposal", "record_outcome", "get_layered_context",
-        "start_run", "run_status", "pause_run", "recommend_playbook", "get_intake_guide",
+        "plan", "start_run", "run_status", "pause_run", "recommend_playbook", "get_intake_guide",
         "list_playbook_rule_proposals", "accept_playbook_rule",
     ];
 
