@@ -7545,6 +7545,88 @@ impl PgStore {
             .collect())
     }
 
+    /// The checker-backed rules that govern a folder (D-CHECKER): adopted pack
+    /// rules with `verification = 'checker'` and a non-empty `checker_ref`,
+    /// resolved from the same two planes as [`Self::resolve_local_pack_raws`] (the
+    /// folder's namespaces plus the always-on general/user adoptions). Returns
+    /// `(rule_statement, checker_ref)` — the statement is the stable handle, the
+    /// checker_ref the canonical command verb to run.
+    pub async fn resolve_local_checker_rules(
+        &self,
+        folder_id: &uuid::Uuid,
+    ) -> Result<Vec<(String, String)>, String> {
+        let rows: Vec<(String, String)> = sqlx_core::query_as::query_as(
+            "SELECT DISTINCT r.statement, r.checker_ref
+               FROM sensei.rule_pack_adoptions a
+               JOIN sensei.rule_packs p      ON p.id = a.pack_id
+               JOIN sensei.rule_pack_rules r ON r.pack_id = p.id
+              WHERE r.verification = 'checker'
+                AND r.checker_ref IS NOT NULL AND r.checker_ref <> ''
+                AND ( a.namespace_id IN (
+                          SELECT namespace_id FROM sensei.folder_namespaces WHERE folder_id = $1)
+                      OR a.namespace_id IN (
+                          SELECT id FROM sensei.namespaces WHERE scope_key IN ('general', 'user')) )
+              ORDER BY r.statement",
+        )
+        .bind(folder_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(rows)
+    }
+
+    /// The command line a repo runs for a canonical command verb (`lint` | `test`
+    /// | `build` | …), from the manifest-discovered `project_commands`. `None`
+    /// when the repo has no command in that category. Used to map a checker rule's
+    /// `checker_ref` to a runnable command.
+    pub async fn project_command_for(
+        &self,
+        folder_id: &uuid::Uuid,
+        category: &str,
+    ) -> Result<Option<String>, String> {
+        let row: Option<(String,)> = sqlx_core::query_as::query_as(
+            "SELECT command_line FROM sensei.project_commands
+              WHERE folder_id = $1 AND category = $2
+              ORDER BY discovered_at DESC LIMIT 1",
+        )
+        .bind(folder_id)
+        .bind(category)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(row.map(|(c,)| c))
+    }
+
+    /// Append a checker run to `rule_check_runs` (D-CHECKER).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn insert_check_run(
+        &self,
+        folder_id: &uuid::Uuid,
+        rule_statement: &str,
+        checker_ref: &str,
+        command: &str,
+        verdict: &str,
+        exit_code: Option<i32>,
+        output_tail: &str,
+    ) -> Result<(), String> {
+        sqlx_core::query::query(
+            "INSERT INTO sensei.rule_check_runs
+                (folder_id, rule_statement, checker_ref, command, verdict, exit_code, output_tail)
+             VALUES ($1, $2, $3, $4, $5::sensei.check_verdict, $6, $7)",
+        )
+        .bind(folder_id)
+        .bind(rule_statement)
+        .bind(checker_ref)
+        .bind(command)
+        .bind(verdict)
+        .bind(exit_code)
+        .bind(output_tail)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     /// The governance scope ladder — `(key, name, level)` ordered most-general
     /// first (ascending level). Feeds the constitution endpoint, which groups a
     /// repo's resolved rules into one rung per scope.
@@ -13851,5 +13933,45 @@ mod pack_resolution_tests {
             .execute(pool).await.unwrap();
         sqlx_core::query::query("DELETE FROM sensei.namespaces WHERE scope_key='general' AND slug='global-dojo'")
             .execute(pool).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn resolve_local_checker_rules_returns_only_checker_backed_rules() {
+        // D-CHECKER: resolve_local_checker_rules surfaces ONLY adopted rules with
+        // verification='checker' + a checker_ref — a 'review' rule in the same pack
+        // must not appear. Uses a general adoption so a random folder resolves it.
+        let Ok(pg) = PgStore::connect_test().await else { return; };
+        let pool = pg.pool();
+        sqlx_core::query::query("DELETE FROM sensei.rule_packs WHERE slug = 'checker-resolve-test'")
+            .execute(pool).await.unwrap();
+        sqlx_core::query::query(
+            "INSERT INTO sensei.scopes(key, name, level, shareable)
+             VALUES ('general', 'General', 0, false) ON CONFLICT (key) DO NOTHING")
+            .execute(pool).await.unwrap();
+        let ns = pg.upsert_namespace("general", "Bundled", "checker-ns-test").await.unwrap();
+        let (pack,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.rule_packs
+                (slug, name, area, source, summary, enforcement, owner_namespace_id, status, published_by)
+             VALUES ('checker-resolve-test', 'C', 'tech_stack', 's', 's', 'advisory', NULL, 'active', 'test')
+             RETURNING id")
+            .fetch_one(pool).await.unwrap();
+        sqlx_core::query::query(
+            "INSERT INTO sensei.rule_pack_rules(pack_id, ordinal, statement, body, enforcement, verification, checker_ref)
+             VALUES ($1, 1, 'run the linter', 'B', 'advisory', 'checker', 'lint'),
+                    ($1, 2, 'a manual rule',  'B', 'advisory', 'review',  NULL)")
+            .bind(pack).execute(pool).await.unwrap();
+        sqlx_core::query::query(
+            "INSERT INTO sensei.rule_pack_adoptions(pack_id, namespace_id, pinned_version, adopted_by)
+             VALUES ($1, $2, 1, 'test')")
+            .bind(pack).bind(ns).execute(pool).await.unwrap();
+
+        let rules = pg.resolve_local_checker_rules(&uuid::Uuid::new_v4()).await.unwrap();
+        let mine: Vec<_> = rules.iter().filter(|(s, _)| s == "run the linter" || s == "a manual rule").collect();
+        assert_eq!(mine.len(), 1, "only the checker-backed rule resolves, not the review rule");
+        assert_eq!(mine[0], &("run the linter".to_string(), "lint".to_string()));
+
+        sqlx_core::query::query("DELETE FROM sensei.rule_packs WHERE slug = 'checker-resolve-test'")
+            .execute(pool).await.unwrap();
+        sqlx_core::query::query("DELETE FROM sensei.namespaces WHERE id = $1").bind(ns).execute(pool).await.unwrap();
     }
 }

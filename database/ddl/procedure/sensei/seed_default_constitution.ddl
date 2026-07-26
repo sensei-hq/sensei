@@ -163,6 +163,23 @@ begin
   ) as v(pack_slug, ordinal, statement, body, rationale, enforcement)
   join sensei.rule_packs p on p.slug = v.pack_slug and p.owner_namespace_id is null;
 
+  -- Make the lint-checkable stack templates enforceable (D-CHECKER): a
+  -- `verification = 'checker'` rule whose `checker_ref` names a canonical command
+  -- verb runs that verb's discovered command and yields a pass/fail verdict. Only
+  -- the "clean/strict-lint" templates map cleanly to the repo's `lint` command;
+  -- the rest stay `review` (manual). checker_ref = the canonical verb, resolved
+  -- per-repo against sensei.project_commands.
+  update sensei.rule_pack_rules r
+     set verification = 'checker'::sensei.rule_check, checker_ref = 'lint'
+    from sensei.rule_packs p
+   where r.pack_id = p.id
+     and p.owner_namespace_id is null
+     and p.slug = 'stack-templates'
+     and r.statement in (
+       '[stack: rust] (template) clippy-clean',
+       '[stack: typescript] (template) strict types, no any',
+       '[stack: python] (template) ruff clean');
+
   -- ── Auto-adopt the constitution at the always-on general namespace ────────
   -- The stack-templates pack is deliberately excluded — it is opt-in per stack.
   insert into sensei.namespaces (scope_key, slug, name)
