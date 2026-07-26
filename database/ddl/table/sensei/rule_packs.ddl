@@ -1,24 +1,28 @@
-set search_path to dojo, sensei, extensions;
+set search_path to sensei, extensions;
 
 -- A rule pack — the unit of CURATION · DISTRIBUTION · ADOPTION in the governance
 -- plane. A namespace-agnostic LIBRARY artifact ("OWASP Top 10", "Clean Code",
--- "Rokkit Zen-Sumi", or an org's private "Auth boundary guards") that bundles a
--- coherent set of rules (dojo.rule_pack_rules, which own their text) under one
--- area + source + default enforcement, versioned as a whole. A pack governs
--- nothing until a namespace ADOPTS it (dojo.rule_pack_adoptions); resolution then
--- unions the adopted packs' rules for a repo's namespaces (org → project → stack).
+-- "Rokkit Zen-Sumi", "Ponytail", or an org's private "Auth boundary guards") that
+-- bundles a coherent set of rules (sensei.rule_pack_rules, which own their text)
+-- under one area + source + default enforcement, versioned as a whole. A pack
+-- governs nothing until a namespace ADOPTS it (sensei.rule_pack_adoptions);
+-- resolution then unions the adopted packs' rules for a repo's namespaces.
 --
--- Distinct from dojo.shared_rules, which is the per-namespace RESOLVED registry of
--- individually promoted/learned rules — a pack is the reusable, cross-namespace
--- source; shared_rules is where a single namespace's resolved rules land.
-create table if not exists dojo.rule_packs (
+-- SHARED plane (D-LOCAL-PACKS): lives in the `sensei` schema so it deploys to BOTH
+-- the local daemon DB (`default` scope — curated packs resolve OFFLINE alongside
+-- memories, without polluting the learned-memory store) AND the Dōjō Supabase
+-- (`dojo` scope). When a user runs a dōjō the two planes sync; with no dōjō it is
+-- just the local sharing mechanism. Distinct from dojo.shared_rules (the Dōjō-plane
+-- per-namespace registry of individually promoted/learned rules) — a pack is the
+-- reusable, cross-namespace source.
+create table if not exists rule_packs (
   id                 uuid           primary key default gen_random_uuid()
 , slug               text           not null      -- stable id, unique per owner (or globally when owner is NULL)
 , name               text           not null      -- "Auth boundary guards"
 , kanji              text                          -- 守 — optional display token
 , area               rule_pack_area not null       -- the 7-set domain this pack curates
 , source             text           not null      -- authority/provenance: "Robert C. Martin", "OWASP",
-                                                   --   "PCI SSC", "Rokkit", "Acme · platform"
+                                                   --   "PCI SSC", "Rokkit", "Ponytail · DietrichGebert"
 , summary            text                          -- one-liner: why this bundle exists
 , enforcement        enforcement    not null default 'recommended'  -- pack DEFAULT tier; a rule keeps its own
 , owner_namespace_id uuid           references sensei.namespaces(id) on delete cascade
@@ -36,17 +40,19 @@ create table if not exists dojo.rule_packs (
 -- makes the composite constraint above non-restrictive (NULLs are distinct), so a
 -- partial index pins global-library slugs.
 create unique index if not exists rule_packs_global_slug
-    on dojo.rule_packs(slug) where owner_namespace_id is null;
-create index if not exists rule_packs_area_idx on dojo.rule_packs(area);
+    on rule_packs(slug) where owner_namespace_id is null;
+create index if not exists rule_packs_area_idx on rule_packs(area);
 
-comment on table dojo.rule_packs is
+comment on table rule_packs is
 'A rule pack: a namespace-agnostic library bundle of governance rules (curation +
-distribution + adoption). Rules live in dojo.rule_pack_rules (they own their text);
-a namespace adopts the pack via dojo.rule_pack_adoptions. Distinct from
-dojo.shared_rules (the per-namespace resolved registry of individual rules).';
-comment on column dojo.rule_packs.owner_namespace_id
+distribution + adoption). Rules live in sensei.rule_pack_rules (they own their text);
+a namespace adopts the pack via sensei.rule_pack_adoptions. Shared plane
+(D-LOCAL-PACKS) — deploys to both the local daemon DB and the Dōjō Supabase; curated
+packs resolve offline, never poured into sensei.memories. Distinct from
+dojo.shared_rules (the Dōjō-plane per-namespace resolved registry).';
+comment on column rule_packs.owner_namespace_id
      is 'The org namespace that authored a private pack; NULL = a global curated library pack. Never a project — a pack is reusable across repos and scopes.';
-comment on column dojo.rule_packs.enforcement
+comment on column rule_packs.enforcement
      is 'The pack''s DEFAULT enforcement tier. Each rule (rule_pack_rules.enforcement) may set its own; an adoption may override per-namespace (rule_pack_adoptions.enforcement).';
-comment on column dojo.rule_packs.version
+comment on column rule_packs.version
      is 'Pack version, bumped on any change to its rules/membership. An adoption pins the version it adopted (rule_pack_adoptions.pinned_version); re-adopt to take an update.';

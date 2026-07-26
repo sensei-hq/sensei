@@ -413,6 +413,7 @@ export async function resolveAdoptedPackRules(
 	if (namespaceIds.length === 0) return [];
 
 	const { data: adoptions, error: aErr } = await db
+		.schema('sensei')
 		.from('rule_pack_adoptions')
 		.select('pack_id, enforcement')
 		.in('namespace_id', namespaceIds);
@@ -433,8 +434,9 @@ export async function resolveAdoptedPackRules(
 	const packIds = [...overrideByPack.keys()];
 
 	const [{ data: packs, error: pErr }, { data: rules, error: rErr }] = await Promise.all([
-		db.from('rule_packs').select('id, area, source').in('id', packIds),
+		db.schema('sensei').from('rule_packs').select('id, area, source').in('id', packIds),
 		db
+			.schema('sensei')
 			.from('rule_pack_rules')
 			.select(
 				'id, pack_id, ordinal, statement, body, rationale, enforcement, verification, checker_ref, remediation, skill_ref, applies_to'

@@ -1057,6 +1057,11 @@ async fn resolve_repo_ruleset(
     folder_id: &uuid::Uuid,
 ) -> Result<crate::governance::ResolvedRuleset, String> {
     let mut raw = state.pg.resolve_rules_raw(folder_id).await?;
+    // Rule packs resolve from TWO planes, in tandem (D-LOCAL-PACKS): the LOCAL
+    // sensei.rule_packs replica (offline — bundled/adopted/synced packs) and the
+    // remote Dōjō fold-in (a member's live org packs). structure_ruleset dedups by
+    // content, so a pack present in both planes surfaces once.
+    raw.extend(state.pg.resolve_local_pack_raws(folder_id).await.unwrap_or_default());
     raw.extend(resolve_adopted_pack_raws(state, folder_id).await);
     Ok(crate::governance::structure_ruleset(raw))
 }

@@ -1,16 +1,17 @@
-set search_path to dojo, sensei, extensions;
+set search_path to sensei, extensions;
 
 -- The rules a pack contains — the pack OWNS these (they carry their full text and
 -- structure), because a pack is namespace-agnostic and its rules don't belong to
 -- any namespace until the pack is adopted. This is the authored SOURCE of a rule;
 -- on adoption, resolution surfaces these for the adopting namespace (see
--- dojo.rule_pack_adoptions). Modelled from purpose, not the mockup's one-liner:
+-- sensei.rule_pack_adoptions). Modelled from purpose, not the mockup's one-liner:
 -- a rule must be understood (statement + rationale), applied (body), scoped
 -- (applies_to), ranked (enforcement), verified (verification + checker_ref),
--- satisfied (remediation + skill_ref), and trusted (evidence).
-create table if not exists dojo.rule_pack_rules (
+-- satisfied (remediation + skill_ref), and trusted (evidence). Shared plane
+-- (D-LOCAL-PACKS) — see sensei.rule_packs.
+create table if not exists rule_pack_rules (
   id            uuid        primary key default gen_random_uuid()
-, pack_id       uuid        not null references dojo.rule_packs(id) on delete cascade
+, pack_id       uuid        not null references rule_packs(id) on delete cascade
 , ordinal       integer     not null default 0          -- display order within the pack
 
   -- ── the rule ────────────────────────────────────────────────────────────────
@@ -29,17 +30,17 @@ create table if not exists dojo.rule_pack_rules (
 , updated_at    timestamptz not null default now()
 );
 
-create index if not exists rule_pack_rules_pack_idx on dojo.rule_pack_rules(pack_id, ordinal);
+create index if not exists rule_pack_rules_pack_idx on rule_pack_rules(pack_id, ordinal);
 
-comment on table dojo.rule_pack_rules is
+comment on table rule_pack_rules is
 'A pack''s owned rules, with their full text + enforcement structure. The authored
 SOURCE of a rule (namespace-agnostic); adoption of the parent pack surfaces these
 for a namespace. Prose (examples/exceptions) lives in `body`; the behaviour-driving
 parts (verification/checker_ref/skill_ref/applies_to) are structured so the daemon
 can scope injection to relevant files and point at (or run) the checker.';
-comment on column dojo.rule_pack_rules.verification
-     is 'How conformance is decided (dojo.rule_check): manual | checker | test | review. `checker`/`test` name the verifier in checker_ref.';
-comment on column dojo.rule_pack_rules.applies_to
+comment on column rule_pack_rules.verification
+     is 'How conformance is decided (sensei.rule_check): manual | checker | test | review. `checker`/`test` name the verifier in checker_ref.';
+comment on column rule_pack_rules.applies_to
      is 'Applicability predicate finer than scope — e.g. {"path_globs":["**/auth/**"],"languages":["ts"]}. Empty = applies wherever the adopting namespace applies.';
-comment on column dojo.rule_pack_rules.evidence
+comment on column rule_pack_rules.evidence
      is 'Grounding for a learned rule — e.g. {"corrections":4,"incidents":["INC-12"],"cite":"OWASP A02"}. Ties governance to the correction/incident data sensei already captures.';
