@@ -13780,12 +13780,73 @@ mod pack_resolution_tests {
             "a 'required' rule is NOT weakened by the lower 'recommended' adoption tier");
         assert_eq!(r2.impact, None, "NULL rationale → None impact");
 
-        // Cleanup (pack delete cascades rules + adoption; then namespace, then scope).
+        // Cleanup (pack delete cascades rules + adoption; then this test's
+        // namespace). The shared 'general' scope is left in place — other bundled
+        // packs (e.g. the constitution seed) may adopt at it concurrently, so
+        // deleting it would FK-fail; in the throwaway test DB a stray scope row
+        // is harmless.
         for slug in ["pack-resolution-test", "pack-unadopted-test"] {
             sqlx_core::query::query("DELETE FROM sensei.rule_packs WHERE slug = $1")
                 .bind(slug).execute(pool).await.unwrap();
         }
         sqlx_core::query::query("DELETE FROM sensei.namespaces WHERE id = $1").bind(ns).execute(pool).await.unwrap();
-        sqlx_core::query::query("DELETE FROM sensei.scopes WHERE key = 'general'").execute(pool).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn default_constitution_seed_adopts_offline_but_not_stack_templates() {
+        // D-SEED: seed_default_constitution() bundles the constitution as packs
+        // and AUTO-ADOPTS the three constitution packs at the general namespace,
+        // so a fresh install resolves them offline. The stack-templates pack is
+        // seeded but NOT adopted (opt-in per stack).
+        let Ok(pg) = PgStore::connect_test().await else { return; };
+        let pool = pg.pool();
+
+        // The proc guards on the always-on 'general' scope (seeded by import_scopes
+        // in prod); provide it here. Left in place on cleanup (shared).
+        sqlx_core::query::query(
+            "INSERT INTO sensei.scopes(key, name, level, shareable)
+             VALUES ('general', 'General', 0, false) ON CONFLICT (key) DO NOTHING")
+            .execute(pool).await.unwrap();
+
+        // Fresh from this procedure's definition (idempotent — run twice).
+        sqlx_core::query::query("CALL sensei.seed_default_constitution()").execute(pool).await.unwrap();
+        sqlx_core::query::query("CALL sensei.seed_default_constitution()").execute(pool).await.unwrap();
+
+        // Four packs; the three constitution packs adopted, stack-templates not.
+        let (adopted,): (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*) FROM sensei.rule_pack_adoptions a
+               JOIN sensei.rule_packs p ON p.id = a.pack_id
+               JOIN sensei.namespaces n ON n.id = a.namespace_id
+              WHERE n.scope_key='general' AND n.slug='global-dojo'
+                AND p.slug IN ('default-principles','default-architecture','default-process')")
+            .fetch_one(pool).await.unwrap();
+        assert_eq!(adopted, 3, "three constitution packs adopted at general (idempotent — no dup)");
+
+        let raws = pg.resolve_local_pack_raws(&uuid::Uuid::new_v4()).await.unwrap();
+
+        // A mandatory principle resolves, mapped by area→scope.
+        let measure = raws.iter().find(|r| r.title == "Measure, then keep what helps")
+            .expect("constitution principle resolves offline");
+        assert_eq!(measure.enforcement, "mandatory");
+        assert_eq!(measure.scope, "principles", "pack area → rule scope");
+
+        // The 21 adopted constitution rules resolve (4 + 5 + 12); stack templates do not.
+        let constitution = raws.iter()
+            .filter(|r| r.scope == "principles" || r.scope == "architecture" || r.scope == "process")
+            .filter(|r| r.namespace.as_deref() == Some("sensei default constitution (DORA · XP/CD · Core Protocols)"))
+            .count();
+        assert_eq!(constitution, 21, "all constitution rules resolve (idempotent re-seed did not duplicate)");
+        assert!(!raws.iter().any(|r| r.title.contains("[stack:")),
+            "stack-templates is seeded but NOT adopted — its rules must not resolve");
+
+        // Cleanup: delete the four packs (cascade rules + adoptions) + the seeded
+        // namespace. Leave the shared 'general' scope.
+        sqlx_core::query::query(
+            "DELETE FROM sensei.rule_packs
+              WHERE owner_namespace_id IS NULL
+                AND slug IN ('default-principles','default-architecture','default-process','stack-templates')")
+            .execute(pool).await.unwrap();
+        sqlx_core::query::query("DELETE FROM sensei.namespaces WHERE scope_key='general' AND slug='global-dojo'")
+            .execute(pool).await.unwrap();
     }
 }
