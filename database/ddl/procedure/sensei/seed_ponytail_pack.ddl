@@ -1,4 +1,4 @@
-set search_path to dojo, sensei, extensions;
+set search_path to sensei, extensions;
 
 -- Seeds the "Ponytail" global-library rule pack — the minimal-solution coding
 -- discipline (YAGNI · reuse-first · stdlib/native over dependencies · minimal
@@ -6,24 +6,26 @@ set search_path to dojo, sensei, extensions;
 -- RULES so it resolves on the scope ladder + pushes via D-INJECT. See
 -- docs/spec/governance/ponytail-pack.md and docs/decisions.md D-PACK-KIND.
 --
--- A global-library pack: owner_namespace_id = NULL, area = principles, default
--- enforcement = recommended. It governs nothing until a namespace ADOPTS it
--- (dojo.rule_pack_adoptions); resolution then unions its rules for a repo's
--- namespaces. Idempotent: the pack is upserted on its global slug, and its rule
--- set is cleared + re-inserted so edits to THIS procedure are the source of
--- truth on every re-run. Adoptions reference the pack by id (never rule ids) and
--- union its CURRENT rules, so re-seeding never breaks an adoption.
+-- Shared plane (D-LOCAL-PACKS): the pack tables live in the `sensei` schema, so
+-- this procedure seeds BOTH the local daemon DB (default scope) and the Dōjō
+-- Supabase (dojo scope) from one definition. A global-library pack:
+-- owner_namespace_id = NULL, area = principles, default enforcement = recommended.
+-- It governs nothing until a namespace ADOPTS it (sensei.rule_pack_adoptions).
+-- Idempotent: the pack is upserted on its global slug, and its rule set is cleared
+-- + re-inserted so edits to THIS procedure are the source of truth on every
+-- re-run. Adoptions reference the pack by id (never rule ids) and union its
+-- CURRENT rules, so re-seeding never breaks an adoption.
 --
 -- Note the plpgsql variable is `v_pack_id`, NOT `pack_id`: a variable named
 -- `pack_id` would shadow the `rule_pack_rules.pack_id` column in the DELETE's
 -- WHERE (pack_id = pack_id → always true → wipes every pack's rules).
-create or replace procedure dojo.seed_ponytail_pack()
+create or replace procedure sensei.seed_ponytail_pack()
 language plpgsql
 as $$
 declare
   v_pack_id uuid;
 begin
-  insert into dojo.rule_packs
+  insert into sensei.rule_packs
     (slug, name, kanji, area, source, summary, enforcement, owner_namespace_id, status, published_by)
   values
     ('ponytail', 'Ponytail — minimal-solution discipline', '省', 'principles',
@@ -38,14 +40,14 @@ begin
                   summary     = excluded.summary,
                   enforcement = excluded.enforcement,
                   status      = excluded.status,
-                  version     = dojo.rule_packs.version + 1,
+                  version     = sensei.rule_packs.version + 1,
                   updated_at  = now()
   returning id into v_pack_id;
 
   -- Re-sync the pack's rules to this procedure's definition.
-  delete from dojo.rule_pack_rules where pack_id = v_pack_id;
+  delete from sensei.rule_pack_rules where pack_id = v_pack_id;
 
-  insert into dojo.rule_pack_rules
+  insert into sensei.rule_pack_rules
     (pack_id, ordinal, statement, body, rationale, enforcement, verification, remediation)
   values
     (v_pack_id, 1,

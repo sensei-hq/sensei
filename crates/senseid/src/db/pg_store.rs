@@ -7493,6 +7493,55 @@ impl PgStore {
         }).collect())
     }
 
+    /// The rules of rule packs adopted at a folder's namespaces (or at the
+    /// always-on general/user scopes) resolved from the LOCAL `sensei.rule_packs`
+    /// replica (D-LOCAL-PACKS) — offline, in tandem with the remote Dōjō fold-in.
+    /// Effective tier is never-weaken: an adoption override can only RAISE a rule's
+    /// enforcement, never lower it (ranked in SQL so the enum's storage order does
+    /// not matter). Maps to `RawRule` like the remote `pack_rule_to_raw`: scope =
+    /// the pack area, namespace = the pack source.
+    pub async fn resolve_local_pack_raws(
+        &self,
+        folder_id: &uuid::Uuid,
+    ) -> Result<Vec<crate::governance::RawRule>, String> {
+        let rows: Vec<(String, String, String, Option<String>, String, String, String)> =
+            sqlx_core::query_as::query_as(
+                "SELECT r.id::text, r.statement, r.body, r.rationale,
+                        CASE WHEN a.enforcement IS NULL THEN r.enforcement::text
+                             WHEN (CASE a.enforcement::text WHEN 'advisory' THEN 1 WHEN 'recommended' THEN 2 WHEN 'required' THEN 3 WHEN 'mandatory' THEN 4 ELSE 0 END)
+                                > (CASE r.enforcement::text WHEN 'advisory' THEN 1 WHEN 'recommended' THEN 2 WHEN 'required' THEN 3 WHEN 'mandatory' THEN 4 ELSE 0 END)
+                             THEN a.enforcement::text ELSE r.enforcement::text END,
+                        p.area::text,
+                        p.source
+                   FROM sensei.rule_pack_adoptions a
+                   JOIN sensei.rule_packs p      ON p.id = a.pack_id
+                   JOIN sensei.rule_pack_rules r ON r.pack_id = p.id
+                  WHERE a.namespace_id IN (
+                            SELECT namespace_id FROM sensei.folder_namespaces WHERE folder_id = $1)
+                     OR a.namespace_id IN (
+                            SELECT id FROM sensei.namespaces WHERE scope_key IN ('general', 'user'))
+                  ORDER BY r.ordinal",
+            )
+            .bind(folder_id)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(rows
+            .into_iter()
+            .map(|(id, title, content, impact, enforcement, scope, source)| {
+                crate::governance::RawRule {
+                    id,
+                    title,
+                    content,
+                    impact,
+                    enforcement,
+                    scope,
+                    namespace: if source.is_empty() { None } else { Some(source) },
+                }
+            })
+            .collect())
+    }
+
     /// The governance scope ladder — `(key, name, level)` ordered most-general
     /// first (ascending level). Feeds the constitution endpoint, which groups a
     /// repo's resolved rules into one rung per scope.
@@ -13646,5 +13695,97 @@ mod playbook_tests {
         let rows = pg.playbook_model_stats().await.unwrap();
         // shape check: each row has classified_by + n + ftr_rate keys (may be empty on a fresh DB)
         if let Some(r) = rows.first() { assert!(r.get("classified_by").is_some() && r.get("ftr_rate").is_some()); }
+    }
+}
+
+#[cfg(test)]
+mod pack_resolution_tests {
+    //! DB-backed: `resolve_local_pack_raws` folds ADOPTED rule-pack rules into the
+    //! local governance ladder (D-LOCAL-PACKS) — the offline half of the two-plane
+    //! resolution. Proves the field mapping (statement→title, body→content,
+    //! rationale→impact, area→scope, source→namespace), never-weaken effective
+    //! enforcement (an adoption tier LIFTS a weaker rule but never LOWERS a stronger
+    //! one), and that an UN-adopted pack governs nothing. Self-skips when the test DB
+    //! is absent, like the neighbouring pg_store tests.
+    use super::*;
+
+    #[tokio::test]
+    async fn adopted_pack_rules_resolve_with_never_weaken() {
+        let Ok(pg) = PgStore::connect_test().await else { return; };
+        let pool = pg.pool();
+
+        // Clean any leftovers from a prior aborted run (slug is globally unique;
+        // delete cascades the pack's rules + adoptions).
+        for slug in ["pack-resolution-test", "pack-unadopted-test"] {
+            sqlx_core::query::query("DELETE FROM sensei.rule_packs WHERE slug = $1")
+                .bind(slug).execute(pool).await.unwrap();
+        }
+
+        // A 'general' scope + namespace: a general/user adoption resolves for ANY folder.
+        sqlx_core::query::query(
+            "INSERT INTO sensei.scopes(key, name, level, shareable)
+             VALUES ('general', 'General', 5, false)
+             ON CONFLICT (key) DO NOTHING")
+            .execute(pool).await.unwrap();
+        let ns = pg.upsert_namespace("general", "Bundled", "bundled-test").await.unwrap();
+
+        // Adopted pack: two rules with different default tiers (advisory < required).
+        let (pack,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.rule_packs
+                (slug, name, area, source, summary, enforcement, owner_namespace_id, status, published_by)
+             VALUES ('pack-resolution-test', 'T', 'principles', 'TestSource', 's',
+                     'recommended', NULL, 'active', 'test')
+             RETURNING id")
+            .fetch_one(pool).await.unwrap();
+        sqlx_core::query::query(
+            "INSERT INTO sensei.rule_pack_rules(pack_id, ordinal, statement, body, rationale, enforcement)
+             VALUES ($1, 1, 'S1', 'B1', 'R1', 'advisory'),
+                    ($1, 2, 'S2', 'B2', NULL, 'required')")
+            .bind(pack).execute(pool).await.unwrap();
+
+        // Un-adopted pack: its rule must never resolve (a pack governs nothing until adopted).
+        sqlx_core::query::query(
+            "INSERT INTO sensei.rule_packs
+                (slug, name, area, source, summary, enforcement, owner_namespace_id, status, published_by)
+             VALUES ('pack-unadopted-test', 'U', 'security', '', 's', 'mandatory', NULL, 'active', 'test')")
+            .execute(pool).await.unwrap();
+        sqlx_core::query::query(
+            "INSERT INTO sensei.rule_pack_rules(pack_id, ordinal, statement, body, enforcement)
+             SELECT id, 1, 'NOPE', 'B', 'mandatory' FROM sensei.rule_packs WHERE slug='pack-unadopted-test'")
+            .execute(pool).await.unwrap();
+
+        // Adopt the first pack at the general namespace with a 'recommended' override.
+        sqlx_core::query::query(
+            "INSERT INTO sensei.rule_pack_adoptions(pack_id, namespace_id, pinned_version, enforcement, adopted_by)
+             VALUES ($1, $2, 1, 'recommended', 'test')")
+            .bind(pack).bind(ns).execute(pool).await.unwrap();
+
+        // Resolve for a folder with NO folder_namespaces — only the general clause matches.
+        let raws = pg.resolve_local_pack_raws(&uuid::Uuid::new_v4()).await.unwrap();
+
+        let mine: Vec<_> = raws.iter().filter(|r| r.title == "S1" || r.title == "S2").collect();
+        assert_eq!(mine.len(), 2, "both adopted-pack rules resolve");
+        assert!(!raws.iter().any(|r| r.title == "NOPE"), "an un-adopted pack governs nothing");
+
+        let r1 = raws.iter().find(|r| r.title == "S1").unwrap();
+        assert_eq!(r1.content, "B1", "body → content");
+        assert_eq!(r1.impact.as_deref(), Some("R1"), "rationale → impact");
+        assert_eq!(r1.scope, "principles", "area → scope");
+        assert_eq!(r1.namespace.as_deref(), Some("TestSource"), "source → namespace");
+        assert_eq!(r1.enforcement, "recommended",
+            "an advisory rule is LIFTED to the stronger 'recommended' adoption tier");
+
+        let r2 = raws.iter().find(|r| r.title == "S2").unwrap();
+        assert_eq!(r2.enforcement, "required",
+            "a 'required' rule is NOT weakened by the lower 'recommended' adoption tier");
+        assert_eq!(r2.impact, None, "NULL rationale → None impact");
+
+        // Cleanup (pack delete cascades rules + adoption; then namespace, then scope).
+        for slug in ["pack-resolution-test", "pack-unadopted-test"] {
+            sqlx_core::query::query("DELETE FROM sensei.rule_packs WHERE slug = $1")
+                .bind(slug).execute(pool).await.unwrap();
+        }
+        sqlx_core::query::query("DELETE FROM sensei.namespaces WHERE id = $1").bind(ns).execute(pool).await.unwrap();
+        sqlx_core::query::query("DELETE FROM sensei.scopes WHERE key = 'general'").execute(pool).await.unwrap();
     }
 }
