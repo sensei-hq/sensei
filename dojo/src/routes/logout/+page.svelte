@@ -21,6 +21,8 @@
 		try {
 			await signOut?.();
 		} finally {
+			// invalidateAll reruns loads so the sentry guard re-reads the (now
+			// cleared) session for the destination route.
 			await goto('/signin', { invalidateAll: true });
 		}
 	});

@@ -4,7 +4,10 @@ create table if not exists runs (
   id              uuid        primary key default gen_random_uuid()
 , project_id      uuid        references sensei.projects(id) on delete set null
 , plan_ref        text        not null default ''
+, plan_graph      jsonb
 , goal            text
+, author_name     text
+, author_email    text
 , status          run_status  not null default 'running'
 , paused_until    timestamptz
 , pause_reason    text
@@ -34,6 +37,12 @@ throttled to 1 under rate-limit pressure.';
 
 comment on column runs.plan_ref
      is 'Path/ref of the committed plan doc the run executes.';
+comment on column runs.plan_graph
+     is 'The authored plan graph (phases→tasks with agent/model/spec_ref + per-task state) for a run seeded via register_plan; NULL for ad-hoc/cadence-derived runs. publish_run authors relay segments from this when present, else derives them from run_events. Fetched on demand (off the 16-col RUN_SELECT).';
+comment on column runs.author_name
+     is 'Git author name (user.name, local→global) resolved for the run''s project at start_run — who is doing the work. Matches the commit author + the Dōjō sign-in. NULL when git identity was unresolvable.';
+comment on column runs.author_email
+     is 'Git author email (user.email, local→global) — the identity key. Used to attribute the run to a person; the Dōjō membership resolves it to a login.';
 comment on column runs.paused_until
      is 'When a limit pause auto-resumes; NULL while running. Reset time parsed from the CLI limit message.';
 comment on column runs.pause_reason

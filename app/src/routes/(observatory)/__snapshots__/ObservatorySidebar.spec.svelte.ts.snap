@@ -615,6 +615,45 @@ exports[`ObservatorySidebar > hides the Review group and Settings when Focus is 
         data-level="2"
         data-list-item=""
         data-path="4-2"
+        href="/consolidation"
+      >
+        <!---->
+        <!---->
+        <!---->
+        <span
+          aria-hidden="true"
+          data-item-icon-literal=""
+        >
+          統
+        </span>
+        
+        
+        <!---->
+         
+        <span
+          data-item-text=""
+        >
+          <span
+            data-item-label=""
+          >
+            Consolidation
+          </span>
+           
+          <!---->
+        </span>
+        <!---->
+         
+        <!---->
+         
+        <!---->
+        <!---->
+      </a>
+      
+      <!---->
+      <a
+        data-level="2"
+        data-list-item=""
+        data-path="4-3"
         href="/atlas"
       >
         <!---->
@@ -653,7 +692,7 @@ exports[`ObservatorySidebar > hides the Review group and Settings when Focus is 
       <a
         data-level="2"
         data-list-item=""
-        data-path="4-3"
+        data-path="4-4"
         href="/instruments"
       >
         <!---->
@@ -692,7 +731,7 @@ exports[`ObservatorySidebar > hides the Review group and Settings when Focus is 
       <a
         data-level="2"
         data-list-item=""
-        data-path="4-4"
+        data-path="4-5"
         href="/activity-logs"
       >
         <!---->
@@ -731,7 +770,7 @@ exports[`ObservatorySidebar > hides the Review group and Settings when Focus is 
       <a
         data-level="2"
         data-list-item=""
-        data-path="4-5"
+        data-path="4-6"
         href="/dojo/connections"
       >
         <!---->
@@ -770,7 +809,7 @@ exports[`ObservatorySidebar > hides the Review group and Settings when Focus is 
       <a
         data-level="2"
         data-list-item=""
-        data-path="4-6"
+        data-path="4-7"
         href="/dojo/sharing"
       >
         <!---->
@@ -809,7 +848,7 @@ exports[`ObservatorySidebar > hides the Review group and Settings when Focus is 
       <a
         data-level="2"
         data-list-item=""
-        data-path="4-7"
+        data-path="4-8"
         href="/share-review"
       >
         <!---->

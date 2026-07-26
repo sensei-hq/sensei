@@ -22,6 +22,9 @@ import {
 	recordRulesAudit,
 	RulesError,
 	PULL_SELECT,
+	maxTier,
+	effectivePackRuleTier,
+	parseNamespacePairs,
 	type DojoClient
 } from './rules-data';
 
@@ -377,5 +380,35 @@ describe('recordRulesAudit', () => {
 		await recordRulesAudit(db.client, 't1', 'retract', 'rule-1', 'a');
 		const p = db.calls.find((c) => c.table === 'audit_events')!.payload as Record<string, unknown>;
 		expect(p.detail).toEqual({});
+	});
+});
+
+describe('rule-pack tier precedence', () => {
+	it('maxTier returns the stronger enforcement tier', () => {
+		expect(maxTier('advisory', 'required')).toBe('required');
+		expect(maxTier('mandatory', 'required')).toBe('mandatory');
+		expect(maxTier('recommended', 'recommended')).toBe('recommended');
+	});
+
+	it('an adoption override raises a rule but never weakens it', () => {
+		// adopt an advisory pack as required → the rule is raised
+		expect(effectivePackRuleTier('advisory', 'required')).toBe('required');
+		// a mandatory rule can never be lowered by a weaker override
+		expect(effectivePackRuleTier('mandatory', 'required')).toBe('mandatory');
+		// no override → the rule keeps its own tier
+		expect(effectivePackRuleTier('required', null)).toBe('required');
+	});
+
+	it('parseNamespacePairs splits scope:slug and drops malformed', () => {
+		expect(parseNamespacePairs('organization:acme, stack:react')).toEqual([
+			{ scope_key: 'organization', slug: 'acme' },
+			{ scope_key: 'stack', slug: 'react' }
+		]);
+		// slugs may contain colons (only the first splits scope from slug)
+		expect(parseNamespacePairs('project:acme/lumen-auth')).toEqual([
+			{ scope_key: 'project', slug: 'acme/lumen-auth' }
+		]);
+		expect(parseNamespacePairs('')).toEqual([]);
+		expect(parseNamespacePairs('garbage,,:x,y:')).toEqual([]);
 	});
 });

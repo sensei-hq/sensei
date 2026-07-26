@@ -47,6 +47,9 @@ export interface RelaySegment {
 	title: string;
 	summary: string | null;
 	detail: string | null;
+	agent: string | null;
+	model: string | null;
+	spec_ref: string | null;
 	state: SegmentState;
 	is_gate: boolean;
 	gate_severity: 'blocking' | 'advisory' | null;

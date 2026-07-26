@@ -7,6 +7,7 @@ create table if not exists namespaces (
 , slug                     text        not null
 , level                    integer
 , props                    jsonb       not null default '{}'
+, visibility               namespace_visibility not null default 'private'
 , modified_at              timestamptz not null default now()
 , constraint namespaces_unique_identity unique (scope_key, slug)
 );
@@ -33,5 +34,7 @@ comment on column namespaces.level
      is 'Optional per-namespace override of scopes.level. Null = inherit from scope.';
 comment on column namespaces.props
      is 'Extensible metadata (icons, source, etc.).';
+comment on column namespaces.visibility
+     is 'private | public. For project-scope namespaces this is the project''s visibility; a member consumes a tenant billing seat only through a `private` project. Other scopes carry the default and are ignored by billing. Defaults to private (opt into public, never accidentally out).';
 comment on column namespaces.modified_at
      is 'Timestamp of the last modification to this row.';
