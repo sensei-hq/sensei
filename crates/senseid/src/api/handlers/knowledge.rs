@@ -1020,7 +1020,7 @@ async fn resolve_adopted_pack_raws(
 
 /// Resolve `folder=<abs_path>` OR `project=<name|uuid>` → `(folder_path,
 /// folder_id)`. Shared by the rules + constitution endpoints.
-async fn resolve_folder(
+pub(crate) async fn resolve_folder(
     state: &AppState,
     folder: Option<&str>,
     project: Option<&str>,

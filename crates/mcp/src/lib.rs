@@ -223,6 +223,17 @@ pub fn daemon_request_for(
             Some(DaemonRequest::post_json("/api/planner/generate", body))
         }
 
+        // `run_checkers` (D-CHECKER) runs the repo's adopted checker-backed rules
+        // (their `checker_ref` command) and returns pass/fail verdicts.
+        "run_checkers" => {
+            let folder = args["folder"].as_str().filter(|s| !s.is_empty()).unwrap_or(cwd);
+            let mut body = json!({ "folder": folder });
+            if let Some(p) = args["project"].as_str().filter(|s| !s.is_empty()) {
+                body["project"] = json!(p);
+            }
+            Some(DaemonRequest::post_json("/api/checkers/run", body))
+        }
+
         // ── Relay run-control (P3.8) → the daemon's /api/runs endpoints ─────
         // `start_run` POSTs a new run; `project` defaults to the resolved repo
         // (name), matching every other tool's cwd→project convention. The daemon
@@ -582,6 +593,16 @@ pub fn handle_list_tools() -> Value {
                  docs/plan markdown; review it, save it, then hand the path to `start_run` as plan_ref.",
                 &[("goal", "string", "The goal / spec / issue to decompose into a plan")],
                 &[("context", "string", "Optional grounding — a spec, an issue body, or conventions to plan against")]),
+            tool("run_checkers",
+                "Run this repo's checker-backed governance rules (D-CHECKER) — each rule whose \
+                 verification is a `checker` runs its resolved command (e.g. the repo's lint/test) and \
+                 yields a pass/fail verdict. Returns one result per rule; a rule with no matching command \
+                 for this repo is 'skipped'. Makes adopted rules enforceable, not advisory-only.",
+                &[],
+                &[
+                    ("folder",  "string", "Absolute repo path to check. Defaults to the current project's folder."),
+                    ("project", "string", "Project name or UUID instead of a path."),
+                ]),
             // ── Relay run-control (P3.8) ─────────────────────────────────────
             tool("start_run",
                 "Start a daemon-owned autonomous run against a goal (the relay engine). The daemon \
@@ -1002,7 +1023,7 @@ mod tests {
         "gateway_status", "consensus", "generate_image", "log_event",
         "propose_memory", "save_memory", "promote_memory", "accept_proposal",
         "reject_proposal", "record_outcome", "get_layered_context",
-        "plan", "start_run", "run_status", "pause_run", "recommend_playbook", "get_intake_guide",
+        "plan", "run_checkers", "start_run", "run_status", "pause_run", "recommend_playbook", "get_intake_guide",
         "list_playbook_rule_proposals", "accept_playbook_rule",
     ];
 

@@ -29,6 +29,7 @@ use crate::api::handlers::gateway_image;
 use crate::api::handlers::model_provisioning;
 use crate::api::handlers::knowledge;
 use crate::api::handlers::planner;
+use crate::api::handlers::checker;
 use crate::api::handlers::dojo;
 use crate::api::handlers::preferences;
 use crate::api::handlers::share_review;
@@ -292,6 +293,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/knowledge/outcomes",                post(knowledge::record_outcomes))
         .route("/api/knowledge/context",                 get(knowledge::get_context))
         .route("/api/planner/generate",                  post(planner::generate_plan))
+        .route("/api/checkers/run",                      post(checker::run_checkers))
         .route("/api/knowledge/rules",                   get(knowledge::get_rules))
         .route("/api/knowledge/constitution",            get(knowledge::get_constitution))
         .route("/api/knowledge/rules/materialize",       post(knowledge::materialize_rules))

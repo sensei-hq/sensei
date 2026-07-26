@@ -138,7 +138,7 @@ The feature docs are evidence-dated **2026-07-14/20**; a large build wave landed
 ## G · Open questions
 
 **Resolved 2026-07-25** (see [`../decisions.md`](../decisions.md) → Coverage-audit scope calls):
-- **Planner** → build a real one (D-PLANNER). · **Desktop screens** → build Consolidation + Agent/Persona editors + Solution-track; **benchmark cut** (D-SCREENS). · **Rule verification** → build checker execution (D-CHECKER). · **Default governance** → ship the seed (D-SEED confirmed).
+- **Planner** → ✅ v0 SHIPPED (D-PLANNER, `crates/senseid/src/planner.rs`). · **Desktop screens** → Consolidation shipped; Agent/Persona editors + Solution-track pending; **benchmark cut** (D-SCREENS). · **Rule verification** → ✅ v0 SHIPPED (D-CHECKER, `crates/senseid/src/checker.rs` + `rule_check_runs`; manifest-command-only, per-stack gating deferred). · **Default governance** → ✅ SHIPPED as bundled packs (D-SEED).
 
 **Still open:**
 1. **Mock hygiene** — prune the superseded-but-not-`discarded/` variants (sharing-review, mcp-replay-insights, multi-option learnings/project-pages/libraries/nav)?
