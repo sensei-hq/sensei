@@ -50,6 +50,7 @@ scopes:
       - sensei.rule_pack_rules
       - sensei.rule_pack_adoptions
       - sensei.seed_ponytail_pack
+      - sensei.seed_default_constitution
     deps: include
     extensions: []      # vector-free: the embedded Dōjō PG lacks pgvector
   default:
