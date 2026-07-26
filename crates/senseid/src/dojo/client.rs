@@ -880,6 +880,9 @@ mod tests {
                 gate_severity: None,
                 response_verdict: None,
                 response_note: None,
+                agent: None,
+                model: None,
+                spec_ref: None,
             },
             RelaySegment {
                 id: None,
@@ -893,6 +896,9 @@ mod tests {
                 gate_severity: Some(GateSeverity::Blocking),
                 response_verdict: None,
                 response_note: None,
+                agent: None,
+                model: None,
+                spec_ref: None,
             },
         ];
         c.upsert_segments("run-1", &segs).await.expect("segments publish ok");

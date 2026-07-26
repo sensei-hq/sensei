@@ -67,7 +67,7 @@ pub async fn publish_run(ctx: &TaskContext, task: &Task) -> Result<u32, String> 
         return Ok(0);
     };
 
-    let memberships = resolve_run_memberships(ctx, &run).await?;
+    let memberships = resolve_run_memberships(ctx.pg(), &run).await?;
     if memberships.is_empty() {
         return Ok(0);
     }
@@ -82,11 +82,34 @@ pub async fn publish_run(ctx: &TaskContext, task: &Task) -> Result<u32, String> 
         .map_err(|e| format!("list_run_events failed: {e}"))?;
     let last_event_at = events.first().map(|e| e.created_at.clone());
 
-    // (d) Plan-as-run: a start_run run has no TodoWrite outline, so project its
-    // committed plan phases (expressed via phase_started/phase_done cadence
-    // events) into the relay segments, and derive the progress rollup from them.
-    let segments = plan_events_to_segments(&events);
-    let (progress_done, progress_total) = segment_progress(&segments);
+    // Authored-vs-derived outline (AR-2). A run SEEDED from a registered plan
+    // carries its authored graph in `activity.runs.plan_graph` — project THAT
+    // (phase→task structure + per-task agent/model/spec_ref + state). An ad-hoc /
+    // start_run run has no graph, so derive the outline from its cadence phases
+    // (`phase_started`/`phase_done` events). A malformed/failed graph read
+    // FAILS OPEN to the derived outline (a wedged read must never blank the feed).
+    let derived = || {
+        let segs = plan_events_to_segments(&events);
+        let (d, t) = segment_progress(&segs);
+        (segs, d, t)
+    };
+    let (segments, progress_done, progress_total) = match ctx.pg().run_plan_graph(&run_id).await {
+        Ok(Some(raw)) => match serde_json::from_value::<crate::plan_graph::PlanGraph>(raw) {
+            Ok(graph) => {
+                let (d, t) = crate::plan_graph::task_progress(&graph);
+                (crate::plan_graph::plan_to_segments(&graph), d, t)
+            }
+            Err(e) => {
+                tracing::warn!(run_id = %run_id, error = %e, "publish_run: plan_graph parse failed; using cadence-derived outline");
+                derived()
+            }
+        },
+        Ok(None) => derived(),
+        Err(e) => {
+            tracing::warn!(run_id = %run_id, error = %e, "publish_run: plan_graph read failed; using cadence-derived outline");
+            derived()
+        }
+    };
 
     let mut update =
         run_to_session_update(&run, last_event_at.as_deref(), progress_done, progress_total);
@@ -179,14 +202,13 @@ async fn surface_run_nudges(run_id: &uuid::Uuid, memberships: &[DojoMembership])
 /// project is bound (`sensei.projects.dojo_id`), otherwise every enabled
 /// membership. Only enabled memberships are ever returned. DB errors bubble up;
 /// an unbound / unknown project cleanly falls back.
-async fn resolve_run_memberships(
-    ctx: &TaskContext,
+pub(crate) async fn resolve_run_memberships(
+    pg: &crate::db::pg_store::PgStore,
     run: &Run,
 ) -> Result<Vec<DojoMembership>, String> {
     let all_enabled = || async {
         Ok::<_, String>(
-            ctx.pg()
-                .list_dojo_memberships()
+            pg.list_dojo_memberships()
                 .await
                 .map_err(|e| format!("list_dojo_memberships failed: {e}"))?
                 .into_iter()
@@ -198,8 +220,7 @@ async fn resolve_run_memberships(
     let Some(project_id) = run.project_id else {
         return all_enabled().await;
     };
-    let bound = ctx
-        .pg()
+    let bound = pg
         .project_bound_membership(&project_id)
         .await
         .map_err(|e| format!("project_bound_membership failed: {e}"))?;
@@ -210,8 +231,7 @@ async fn resolve_run_memberships(
     // still enabled (a disabled binding falls back to nothing, not to broadcast:
     // an explicit binding is a deliberate scoping the owner shouldn't have
     // silently widened).
-    match ctx
-        .pg()
+    match pg
         .get_dojo_membership(&membership_id)
         .await
         .map_err(|e| format!("get_dojo_membership failed: {e}"))?
@@ -385,6 +405,102 @@ mod tests {
             Some("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
             "the Worker's session id is persisted"
         );
+
+        del_run(pg, &id).await;
+        sqlx_core::query::query("DELETE FROM sensei.dojo_memberships WHERE id = $1")
+            .bind(mid).execute(pg.pool()).await.unwrap();
+        crate::gateway_keys::delete_key(&cref).unwrap();
+    }
+
+    // A run seeded WITH an authored plan graph federates the AUTHORED outline (the
+    // authored-vs-derived branch, AR-2): publish_run projects plan_graph → segments
+    // (phase + tasks) carrying per-task agent/model, NOT the cadence-derived phases.
+    // Captures the published segments and asserts them in the test thread (robust —
+    // an assert inside the stub handler would be swallowed by axum's panic catch).
+    #[tokio::test]
+    #[cfg_attr(not(target_os = "macos"), ignore)]
+    async fn full_bridge_authors_plan_graph_segments() {
+        use crate::db::pg_store::NewDojoMembership;
+        use axum::{extract::Query, routing::get, routing::post, Json, Router};
+        use dojo_protocol::relay::{RelayInboxPull, RelaySegment, RelaySegmentsPublish, RelaySessionUpdate};
+        use std::collections::HashMap;
+        use std::sync::{Arc, Mutex};
+
+        let Some(ctx) = make_ctx().await else { return; };
+        let pg = ctx.pg();
+
+        let captured: Arc<Mutex<Vec<RelaySegment>>> = Arc::new(Mutex::new(Vec::new()));
+        let captured2 = captured.clone();
+        async fn session(Json(_u): Json<RelaySessionUpdate>) -> Json<serde_json::Value> {
+            Json(serde_json::json!({ "id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb" }))
+        }
+        let app = Router::new()
+            .route("/v1/t/{origin}/{org}/relay/session", post(session))
+            .route(
+                "/v1/t/{origin}/{org}/relay/segments",
+                post(move |Json(s): Json<RelaySegmentsPublish>| {
+                    let cap = captured2.clone();
+                    async move {
+                        cap.lock().unwrap().extend(s.segments.clone());
+                        axum::http::StatusCode::OK
+                    }
+                }),
+            )
+            .route(
+                "/v1/t/{origin}/{org}/relay/inbox",
+                get(|Query(_q): Query<HashMap<String, String>>| async {
+                    Json(RelayInboxPull { items: vec![], cursor: 0 })
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap(); });
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        let mid = uuid::Uuid::new_v4();
+        let cref = format!("dojo-authored-{}", uuid::Uuid::new_v4());
+        crate::gateway_keys::set_key(&cref, "device-token-authored").unwrap();
+        pg.create_dojo_membership(&NewDojoMembership {
+            id: mid,
+            registry_url: format!("http://{addr}"),
+            tenant_key: "github/acme".into(),
+            dojo_url: format!("http://{addr}/github/acme"),
+            kind: "personal".into(),
+            org_slugs: vec![],
+            role: "contributor".into(),
+            authenticated_via: "device_code".into(),
+            attribution_default: "dereferenced".into(),
+            credential_ref: cref.clone(),
+            sync_status: "authenticating".into(),
+        })
+        .await
+        .unwrap();
+
+        let graph = serde_json::json!({
+            "phases": [{ "title": "Build", "tasks": [
+                { "id": "t1", "title": "one", "agent": "general-purpose", "model": "sonnet" },
+                { "id": "t2", "title": "two", "model": "opus", "deps": ["t1"] }
+            ]}]
+        });
+        let id = pg
+            .create_run(&NewRun { plan_graph: Some(graph), ..Default::default() })
+            .await
+            .unwrap();
+        pg.touch_run_heartbeat(&id).await.unwrap();
+
+        let task = Task::new(TaskKind::PublishRun, "", &id.to_string());
+        let n = publish_run(&ctx, &task).await.unwrap();
+        assert_eq!(n, 1, "published to the one enrolled membership");
+
+        let segs = captured.lock().unwrap().clone();
+        assert_eq!(segs.len(), 3, "authored outline = phase + 2 tasks, got {segs:?}");
+        assert_eq!(segs[0].title, "Build");
+        assert!(segs[0].agent.is_none(), "a phase carries no agent");
+        assert_eq!(segs[1].title, "one");
+        assert_eq!(segs[1].agent.as_deref(), Some("general-purpose"));
+        assert_eq!(segs[1].model.as_deref(), Some("sonnet"));
+        assert_eq!(segs[2].title, "two");
+        assert_eq!(segs[2].model.as_deref(), Some("opus"), "per-task model rode the wire");
 
         del_run(pg, &id).await;
         sqlx_core::query::query("DELETE FROM sensei.dojo_memberships WHERE id = $1")

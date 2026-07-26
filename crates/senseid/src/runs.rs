@@ -182,6 +182,10 @@ pub struct NewRun {
     /// [`crate::git_identity::read_git_user`]); `None` leaves the columns NULL.
     pub author_name: Option<String>,
     pub author_email: Option<String>,
+    /// The authored plan graph (phases→tasks with agent/model/spec_ref + per-task
+    /// state) for a run seeded via `register_plan`; `None` for ad-hoc runs. Stored
+    /// as jsonb; fetched on demand (off the 16-column `RUN_SELECT`).
+    pub plan_graph: Option<serde_json::Value>,
 }
 
 /// One append-only cadence event on a run — a row of `activity.run_events`.

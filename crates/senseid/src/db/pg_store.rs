@@ -648,8 +648,8 @@ impl PgStore {
         let (id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO activity.runs
                 (project_id, plan_ref, goal, dojo_session_id, max_concurrency,
-                 author_name, author_email)
-             VALUES($1, COALESCE($2, ''), $3, $4, COALESCE($5, 1), $6, $7) RETURNING id"
+                 author_name, author_email, plan_graph)
+             VALUES($1, COALESCE($2, ''), $3, $4, COALESCE($5, 1), $6, $7, $8) RETURNING id"
         )
             .bind(new.project_id)
             .bind(new.plan_ref.as_deref())
@@ -658,10 +658,49 @@ impl PgStore {
             .bind(new.max_concurrency)
             .bind(new.author_name.as_deref())
             .bind(new.author_email.as_deref())
+            .bind(new.plan_graph.as_ref())
             .fetch_one(&self.pool)
             .await
             .map_err(|e| e.to_string())?;
         Ok(id)
+    }
+
+    /// Read a run's authored plan graph (jsonb), or `None` if the run has none
+    /// (ad-hoc/cadence-derived) or does not exist. Kept off the 16-column
+    /// `RUN_SELECT` tuple (same reason as `run_author`) and fetched on demand:
+    /// only `publish_run` (authored-segment projection) and `update_task_status`
+    /// (task-state write-back) need it.
+    pub async fn run_plan_graph(
+        &self,
+        run_id: &uuid::Uuid,
+    ) -> Result<Option<serde_json::Value>, String> {
+        let row: Option<(Option<serde_json::Value>,)> = sqlx_core::query_as::query_as(
+            "SELECT plan_graph FROM activity.runs WHERE id = $1",
+        )
+            .bind(run_id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(row.and_then(|(g,)| g))
+    }
+
+    /// Overwrite a run's authored plan graph (jsonb). Used by `update_task_status`
+    /// to persist a task's new state (read-modify-write of the graph). A no-op-safe
+    /// full replace — the caller owns merging.
+    pub async fn set_run_plan_graph(
+        &self,
+        run_id: &uuid::Uuid,
+        graph: &serde_json::Value,
+    ) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE activity.runs SET plan_graph = $2, updated_at = now() WHERE id = $1",
+        )
+            .bind(run_id)
+            .bind(graph)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(())
     }
 
     /// Read a run's stamped git author `(author_name, author_email)`. Kept off the
@@ -13407,6 +13446,9 @@ mod run_tests {
             max_concurrency: Some(3),
             author_name: Some("Sensei HQ".into()),
             author_email: Some("dev@sensei-hq.com".into()),
+            plan_graph: Some(serde_json::json!({
+                "phases": [{ "title": "P", "tasks": [{ "id": "t1", "title": "x" }] }]
+            })),
         }).await.unwrap();
         let run = pg.get_run(&id).await.unwrap().unwrap();
         assert_eq!(run.plan_ref, "docs/plan/P3.md");
@@ -13416,6 +13458,12 @@ mod run_tests {
             (Some("Sensei HQ".into()), Some("dev@sensei-hq.com".into())),
             "create_run stamps + run_author reads the git author back");
         assert_eq!(run.max_concurrency, 3);
+        // plan_graph stored + read back on demand (off the 16-col RUN_SELECT).
+        let g = pg.run_plan_graph(&id).await.unwrap().expect("plan_graph stored");
+        assert_eq!(g["phases"][0]["tasks"][0]["id"], serde_json::json!("t1"));
+        // set_run_plan_graph overwrites it (the update_task_status write-back path).
+        pg.set_run_plan_graph(&id, &serde_json::json!({ "phases": [] })).await.unwrap();
+        assert_eq!(pg.run_plan_graph(&id).await.unwrap().unwrap(), serde_json::json!({ "phases": [] }));
         delete_run(&pg, &id).await;
     }
 

@@ -70,6 +70,9 @@ pub fn todos_to_segments(todos: &[Todo]) -> Vec<RelaySegment> {
             gate_severity: None,
             response_verdict: None,
             response_note: None,
+            agent: None,
+            model: None,
+            spec_ref: None,
         })
         .collect()
 }

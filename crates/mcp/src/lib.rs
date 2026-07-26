@@ -273,6 +273,55 @@ pub fn daemon_request_for(
             Some(DaemonRequest::post_json("/api/runs/pause", body))
         }
 
+        // ── Automated-run coordinator contract (AR-3) → daemon /api/runs/* ───
+        // `register_plan` seeds an authored plan GRAPH as a run (AR-2): the daemon
+        // validates it (DAG), stores it, and authors the Dōjō outline from it.
+        // `plan` is the graph as a JSON string (parsed here, like record_outcome).
+        "register_plan" => {
+            let goal = args["goal"].as_str().unwrap_or("");
+            let plan: Value =
+                serde_json::from_str(args["plan"].as_str().unwrap_or("")).unwrap_or(Value::Null);
+            let project = args["project"].as_str().filter(|s| !s.is_empty()).unwrap_or(repo_id);
+            let mut body = json!({ "goal": goal, "plan": plan });
+            if !project.is_empty() {
+                body["project"] = json!(project);
+            }
+            if let Some(p) = args["plan_ref"].as_str().filter(|s| !s.is_empty()) {
+                body["plan_ref"] = json!(p);
+            }
+            if let Some(mc) = args["max_concurrency"].as_str().and_then(|s| s.parse::<i64>().ok()) {
+                body["max_concurrency"] = json!(mc);
+            }
+            Some(DaemonRequest::post_json("/api/runs/plan", body))
+        }
+        // `update_task_status` flips one plan task's state as the executor works
+        // the graph — re-projects the authored outline + feeds the progress clock.
+        "update_task_status" => {
+            let run_id = args["run_id"].as_str().unwrap_or("");
+            let task_id = args["task_id"].as_str().unwrap_or("");
+            let mut body = json!({ "state": args["state"].as_str().unwrap_or("") });
+            if let Some(n) = args["note"].as_str().filter(|s| !s.is_empty()) {
+                body["note"] = json!(n);
+            }
+            Some(DaemonRequest::post_json(format!("/api/runs/{run_id}/tasks/{task_id}"), body))
+        }
+        // `report_run_outcome` marks a run terminal (done|failed) — the one terminal
+        // transition an external coordinator may set.
+        "report_run_outcome" => {
+            let run_id = args["run_id"].as_str().unwrap_or("");
+            let mut body = json!({ "outcome": args["outcome"].as_str().unwrap_or("") });
+            if let Some(s) = args["summary"].as_str().filter(|s| !s.is_empty()) {
+                body["summary"] = json!(s);
+            }
+            Some(DaemonRequest::post_json(format!("/api/runs/{run_id}/outcome"), body))
+        }
+        // `get_pending_nudges` pulls the human→agent steer for a run (the "daemon
+        // initiates a check" pull side). Read-only; fail-soft to an empty list.
+        "get_pending_nudges" => {
+            let run_id = args["run_id"].as_str().unwrap_or("");
+            Some(DaemonRequest::get(format!("/api/runs/{run_id}/nudges")))
+        }
+
         // ── Front-door intake ────────────────────────────────────────────────
         "get_intake_guide" => Some(DaemonRequest::get("/api/playbook/guide")),
         "recommend_playbook" => {
@@ -630,6 +679,48 @@ pub fn handle_list_tools() -> Value {
                     ("project", "string", "Project name or UUID; defaults to the current project."),
                     ("run_id", "string", "A specific run's UUID; defaults to the active run for the project."),
                 ]),
+            // ── Automated-run coordinator contract (AR-3) ────────────────────
+            tool("register_plan",
+                "Register an authored plan GRAPH as a daemon-owned run and mirror it to Dōjō (phases → \
+                 tasks, each carrying its assigned agent + model + a spec ref). The daemon validates the \
+                 graph (unique task ids, deps resolve, no cycles), stores it, and authors the phone \
+                 outline from it so the whole plan is watchable before execution. Pass `plan` as a JSON \
+                 string: {\"goal\"?, \"phases\":[{\"title\", \"tasks\":[{\"id\", \"title\", \"agent\"?, \
+                 \"model\"?, \"spec_ref\"?, \"deps\"?:[id], \"summary\"?}]}]}. Returns the run.",
+                &[
+                    ("goal", "string", "The run's objective — a short label; the plan graph carries the detail"),
+                    ("plan", "string", "The plan graph as a JSON string (phases → tasks with agent/model/spec_ref/deps)"),
+                ],
+                &[
+                    ("project", "string", "Project name or UUID the run works in. Defaults to the current project."),
+                    ("plan_ref", "string", "Path to the committed human plan doc (e.g. docs/plan/<id>/plan.md)."),
+                    ("max_concurrency", "string", "Max parallel tasks (integer as a string). Defaults to 1."),
+                ]),
+            tool("update_task_status",
+                "Flip one plan task's state as the executor works the graph. Re-projects the task's Dōjō \
+                 segment and feeds the run's progress clock — call it when a task goes active / done / \
+                 failed / blocked. Never touches the liveness heartbeat (that stays the daemon's).",
+                &[
+                    ("run_id", "string", "The run's UUID (from register_plan)."),
+                    ("task_id", "string", "The task's id within the plan graph."),
+                    ("state", "string", "New state: pending | active | done | skipped | failed | blocked | needs_review."),
+                ],
+                &[("note", "string", "Optional one-line note (no code) recorded on the cadence event.")]),
+            tool("report_run_outcome",
+                "Mark a run terminal — done or failed — when the plan is complete (or unrecoverable). The \
+                 one terminal transition an external coordinator may set; the daemon watchdog keeps its \
+                 own independent stall/crash authority.",
+                &[
+                    ("run_id", "string", "The run's UUID."),
+                    ("outcome", "string", "'done' or 'failed'."),
+                ],
+                &[("summary", "string", "Optional one-line outcome summary (no code).")]),
+            tool("get_pending_nudges",
+                "Pull the pending human→agent steer for a run from Dōjō — the 'check in' pull side of the \
+                 contract. Poll it each executor loop and act on any nudge/chat the human sent. Read-only \
+                 and fail-soft (empty list if there's no dojo or the poll fails). Steer, not drive.",
+                &[("run_id", "string", "The run's UUID.")],
+                &[]),
             // ── Front-door intake ────────────────────────────────────────────
             tool("get_intake_guide",
                 "Load the intake guide (grounding frame + per-axis elicitation prompts + the playbook \
@@ -1024,6 +1115,7 @@ mod tests {
         "propose_memory", "save_memory", "promote_memory", "accept_proposal",
         "reject_proposal", "record_outcome", "get_layered_context",
         "plan", "run_checkers", "start_run", "run_status", "pause_run", "recommend_playbook", "get_intake_guide",
+        "register_plan", "update_task_status", "report_run_outcome", "get_pending_nudges",
         "list_playbook_rule_proposals", "accept_playbook_rule",
     ];
 
@@ -1293,6 +1385,55 @@ mod tests {
         ).unwrap();
         assert_eq!(one.path, "/api/runs/44444444-0000-0000-0000-000000000004");
         assert!(one.body.is_none(), "a status read is a plain GET");
+    }
+
+    #[test]
+    fn register_plan_forwards_parsed_graph_with_resolved_project() {
+        let plan = r#"{"phases":[{"title":"P","tasks":[{"id":"t1","title":"x","agent":"general-purpose","model":"sonnet"}]}]}"#;
+        let req = daemon_request_for(
+            "register_plan",
+            &json!({ "goal": "ship it", "plan": plan, "plan_ref": "docs/plan/x/plan.md" }),
+            "/cwd", Some("sensei"),
+        ).unwrap();
+        assert_eq!(req.method, HttpMethod::Post);
+        assert_eq!(req.path, "/api/runs/plan");
+        let body = req.body.unwrap();
+        assert_eq!(body["goal"], "ship it");
+        assert_eq!(body["project"], "sensei", "unset project defaults to the resolved repo");
+        assert_eq!(body["plan_ref"], "docs/plan/x/plan.md");
+        // The JSON-string plan is parsed into an object the daemon can validate.
+        assert_eq!(body["plan"]["phases"][0]["tasks"][0]["id"], "t1");
+        assert_eq!(body["plan"]["phases"][0]["tasks"][0]["model"], "sonnet");
+    }
+
+    #[test]
+    fn task_status_outcome_and_nudges_target_run_subpaths() {
+        // update_task_status → POST /api/runs/{id}/tasks/{task_id}
+        let u = daemon_request_for(
+            "update_task_status",
+            &json!({ "run_id": "r1", "task_id": "t9", "state": "done", "note": "green" }),
+            "/cwd", Some("sensei"),
+        ).unwrap();
+        assert_eq!(u.method, HttpMethod::Post);
+        assert_eq!(u.path, "/api/runs/r1/tasks/t9");
+        let ub = u.body.unwrap();
+        assert_eq!(ub["state"], "done");
+        assert_eq!(ub["note"], "green");
+
+        // report_run_outcome → POST /api/runs/{id}/outcome
+        let o = daemon_request_for(
+            "report_run_outcome",
+            &json!({ "run_id": "r1", "outcome": "failed", "summary": "gate red" }),
+            "/cwd", Some("sensei"),
+        ).unwrap();
+        assert_eq!(o.path, "/api/runs/r1/outcome");
+        assert_eq!(o.body.unwrap()["outcome"], "failed");
+
+        // get_pending_nudges → GET /api/runs/{id}/nudges (read-only)
+        let n = daemon_request_for("get_pending_nudges", &json!({ "run_id": "r1" }), "/cwd", Some("sensei")).unwrap();
+        assert_eq!(n.method, HttpMethod::Get);
+        assert_eq!(n.path, "/api/runs/r1/nudges");
+        assert!(n.body.is_none());
     }
 
     #[test]

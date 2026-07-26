@@ -169,6 +169,9 @@ pub fn plan_events_to_segments(events: &[RunEvent]) -> Vec<RelaySegment> {
                 gate_severity: None,
                 response_verdict: None,
                 response_note: None,
+                agent: None,
+                model: None,
+                spec_ref: None,
             }
         })
         .collect()
