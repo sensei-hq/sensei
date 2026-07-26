@@ -70,6 +70,9 @@ pub fn todos_to_segments(todos: &[Todo]) -> Vec<RelaySegment> {
             gate_severity: None,
             response_verdict: None,
             response_note: None,
+            agent: None,
+            model: None,
+            spec_ref: None,
         })
         .collect()
 }
@@ -119,6 +122,9 @@ pub fn session_update(run_id: &str, title: &str, segments: &[RelaySegment]) -> R
         // The TodoWrite/session-keyed path carries no run heartbeat — that is
         // the run-bridge's job (relay_run_project::run_to_session_update).
         heartbeat_at: None,
+        // Seat attribution is driven from the run-bridge path (publish_run), not
+        // this session-keyed TodoWrite projection.
+        project_slug: None,
     }
 }
 

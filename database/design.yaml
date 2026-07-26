@@ -29,11 +29,28 @@ schemas:
 scopes:
   dojo:
     # deps:include pulls FK-referenced tables (dojo.shared_rules → sensei.namespaces →
-    # sensei.scopes) automatically; the enforcement ENUM is a column *type*, not an FK,
-    # so dbd's closure can't reach it — include it explicitly. dojo.* lives in the Dōjō
-    # Rust service's own Postgres — a separate logical DB from the daemon's `sensei` DB.
-    # The only sensei-side link is sensei.projects.dojo_id, a plain uuid (no cross-DB FK).
-    includes: [dojo, sensei.enforcement]
+    # sensei.scopes) automatically; ENUMs used as column *types* are not FKs, so dbd's
+    # closure can't reach them — include each explicitly (enforcement on shared_rules;
+    # namespace_visibility on sensei.namespaces, read by dojo.seats billing). dojo.* lives
+    # in the Dōjō service's own Postgres — a separate logical DB from the daemon's `sensei`
+    # DB. The only sensei-side link is sensei.projects.dojo_id, a plain uuid (no cross-DB FK).
+    #
+    # Rule packs (D-LOCAL-PACKS) live in the `sensei` schema and deploy to BOTH planes:
+    # the local daemon DB gets them free (default scope, sensei not excluded); Supabase
+    # gets them here — but nothing in the `dojo` schema references them anymore (they left
+    # dojo), so deps:include can't reach them → list them explicitly (the two enums are
+    # column types too).
+    includes:
+      - dojo
+      - sensei.enforcement
+      - sensei.namespace_visibility
+      - sensei.rule_pack_area
+      - sensei.rule_check
+      - sensei.rule_packs
+      - sensei.rule_pack_rules
+      - sensei.rule_pack_adoptions
+      - sensei.seed_ponytail_pack
+      - sensei.seed_default_constitution
     deps: include
     extensions: []      # vector-free: the embedded Dōjō PG lacks pgvector
   default:

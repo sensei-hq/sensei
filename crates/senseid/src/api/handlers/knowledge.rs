@@ -144,6 +144,13 @@ pub(crate) struct RulesQuery {
     /// to the project's root repo abs_path, so a caller that knows the project
     /// but not the folder still gets the right ruleset.
     pub project: Option<String>,
+    /// `md` → return rendered Markdown (`markdown` field) instead of the raw
+    /// `rules` array — the shape the SessionStart/PreCompact hooks inject
+    /// directly (D-INJECT). Any other value / omitted → the JSON rules array.
+    pub format: Option<String>,
+    /// Comma-separated enforcement tiers to include when `format=md` (e.g.
+    /// `mandatory,required`). Omitted → all tiers. Ignored for the JSON shape.
+    pub tiers: Option<String>,
 }
 
 /// Resolve the rules governing a repo: gather its namespace memberships + the
@@ -155,36 +162,41 @@ pub(crate) struct RulesQuery {
 pub(crate) async fn get_rules(
     State(state): State<AppState>,
     Query(q): Query<RulesQuery>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let folder_path = match q.folder.as_deref().filter(|s| !s.is_empty()) {
-        Some(folder) => folder.to_string(),
-        None => {
-            let project = q.project.as_deref().filter(|s| !s.is_empty())
-                .ok_or_else(|| err(StatusCode::BAD_REQUEST, "folder or project required"))?;
-            let pid = crate::api::util::resolve_project_uuid(&state, project).await
-                .ok_or_else(|| err(StatusCode::NOT_FOUND, "unknown project"))?;
-            // Root repo abs_path. get_project_repos returns each root's abs_path
-            // under `path`; the first (name-ordered) root governs.
-            let repos = state.pg.get_project_repos(&pid).await
-                .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
-            repos.first().and_then(|r| r["path"].as_str()).map(str::to_string)
-                .ok_or_else(|| err(StatusCode::NOT_FOUND, "project has no indexed repo"))?
-        }
-    };
-    let folder = state.pg.get_repo_by_path(&folder_path).await
-        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
-        .ok_or_else(|| err(StatusCode::NOT_FOUND, "folder not indexed"))?;
-    let folder_id = crate::api::util::json_uuid(&folder["id"])
-        .ok_or_else(|| err(StatusCode::INTERNAL_SERVER_ERROR, "folder has no id"))?;
-    let raw = state.pg.resolve_rules_raw(&folder_id).await
+) -> Result<axum::response::Response, (StatusCode, Json<serde_json::Value>)> {
+    use axum::response::IntoResponse;
+    let (folder_path, folder_id) =
+        resolve_folder(&state, q.folder.as_deref(), q.project.as_deref()).await?;
+    let ruleset = resolve_repo_ruleset(&state, &folder_id)
+        .await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
-    let ruleset = crate::governance::structure_ruleset(raw);
+
+    // Markdown push shape (D-INJECT): the hooks fetch rendered, tier-filtered
+    // Markdown as PLAIN TEXT (no client-side jq — macOS ships without it) and
+    // inject it straight into additionalContext.
+    if q.format.as_deref() == Some("md") {
+        let tiers: Vec<&str> = match q.tiers.as_deref().filter(|s| !s.is_empty()) {
+            Some(list) => list
+                .split(',')
+                .map(str::trim)
+                .filter(|t| crate::governance::ALL_TIERS.contains(t))
+                .collect(),
+            None => crate::governance::ALL_TIERS.to_vec(),
+        };
+        let markdown = crate::governance::render_rules_tiers(&ruleset, &tiers);
+        return Ok((
+            [(axum::http::header::CONTENT_TYPE, "text/markdown; charset=utf-8")],
+            markdown,
+        )
+            .into_response());
+    }
+
     Ok(Json(serde_json::json!({
         "folder": folder_path,
         "total": ruleset.total,
         "mandatory_count": ruleset.mandatory_count,
         "rules": ruleset.rules,
-    })))
+    }))
+    .into_response())
 }
 
 /// Resolve the global ruleset (user + general scope) and write it to
@@ -194,7 +206,14 @@ pub(crate) async fn materialize_global_rules(
     pg: &crate::db::pg_store::PgStore,
     dir: &std::path::Path,
 ) -> Result<(std::path::PathBuf, usize), String> {
-    let ruleset = crate::governance::structure_ruleset(pg.resolve_global_rules().await?);
+    // The always-on global set = general/user memories + the packs adopted at those
+    // scopes (D-SEED: the bundled constitution + ponytail resolve into ~/.sensei/
+    // rules.md, offline). `None` = no folder → only general/user pack adoptions.
+    // Folded here, not in resolve_global_rules, so the LLM consolidation path
+    // (rule_consolidation) keeps operating on learned memories, not curated packs.
+    let mut raw = pg.resolve_global_rules().await?;
+    raw.extend(pg.resolve_local_pack_raws(None).await.unwrap_or_default());
+    let ruleset = crate::governance::structure_ruleset(raw);
     // Prefer an approved Tier-2 (LLM-merged) ruleset; fall back to the Tier-1 render.
     let md = match pg.get_consolidated_ruleset("global", Some("approved")).await? {
         Some(row) => crate::governance::wrap_managed(row["content"].as_str().unwrap_or_default()),
@@ -956,9 +975,237 @@ pub(crate) async fn source_status(
         "direction": src.direction, "last_seq": src.last_seq, "enabled": src.enabled })))
 }
 
+/// Map a Dōjō resolved pack rule to the daemon's `RawRule`: the pack's `area` is
+/// the display/grouping scope label and `source` the authority namespace. Pure.
+fn pack_rule_to_raw(w: crate::dojo::client::PackRuleWire) -> crate::governance::RawRule {
+    crate::governance::RawRule {
+        id: w.rule_id,
+        title: w.statement,
+        content: w.body,
+        impact: w.rationale,
+        enforcement: w.enforcement,
+        scope: w.area,
+        namespace: if w.source.is_empty() { None } else { Some(w.source) },
+    }
+}
+
+/// Resolve the rules of packs adopted at a folder's namespaces, via the folder's
+/// project → bound Dōjō membership → the Worker `rules/resolved` leg. Best-effort:
+/// no binding / membership / namespaces, or any call fault → `[]` (logged, never
+/// silent). The daemon can't query the Dōjō DB directly (Fork 1).
+async fn resolve_adopted_pack_raws(
+    state: &AppState,
+    folder_id: &uuid::Uuid,
+) -> Vec<crate::governance::RawRule> {
+    let resolved = async {
+        let project_id = state.pg.folder_project_id(folder_id).await.ok()??;
+        let membership_id = state.pg.project_bound_membership(&project_id).await.ok()??;
+        let membership = state.pg.get_dojo_membership(&membership_id).await.ok()??;
+        let pairs = state.pg.folder_namespace_pairs(folder_id).await.ok()?;
+        if pairs.is_empty() {
+            return None;
+        }
+        let client = crate::dojo::client::DojoClient::for_membership(&membership);
+        match client.resolved_pack_rules(&pairs).await {
+            Ok(wires) => Some(wires.into_iter().map(pack_rule_to_raw).collect::<Vec<_>>()),
+            Err(e) => {
+                tracing::warn!(error = %e, "get_rules: adopted-pack resolve failed");
+                None
+            }
+        }
+    }
+    .await;
+    resolved.unwrap_or_default()
+}
+
+/// Resolve `folder=<abs_path>` OR `project=<name|uuid>` → `(folder_path,
+/// folder_id)`. Shared by the rules + constitution endpoints.
+pub(crate) async fn resolve_folder(
+    state: &AppState,
+    folder: Option<&str>,
+    project: Option<&str>,
+) -> Result<(String, uuid::Uuid), (StatusCode, Json<serde_json::Value>)> {
+    let folder_path = match folder.filter(|s| !s.is_empty()) {
+        Some(f) => f.to_string(),
+        None => {
+            let project = project
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| err(StatusCode::BAD_REQUEST, "folder or project required"))?;
+            let pid = crate::api::util::resolve_project_uuid(state, project)
+                .await
+                .ok_or_else(|| err(StatusCode::NOT_FOUND, "unknown project"))?;
+            let repos = state
+                .pg
+                .get_project_repos(&pid)
+                .await
+                .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+            repos
+                .first()
+                .and_then(|r| r["path"].as_str())
+                .map(str::to_string)
+                .ok_or_else(|| err(StatusCode::NOT_FOUND, "project has no indexed repo"))?
+        }
+    };
+    let folder = state
+        .pg
+        .get_repo_by_path(&folder_path)
+        .await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "folder not indexed"))?;
+    let folder_id = crate::api::util::json_uuid(&folder["id"])
+        .ok_or_else(|| err(StatusCode::INTERNAL_SERVER_ERROR, "folder has no id"))?;
+    Ok((folder_path, folder_id))
+}
+
+/// A repo's full governing ruleset: local memories + every adopted pack's rules
+/// (P2 fold-in), structured strongest-first. Shared by get_rules + constitution.
+async fn resolve_repo_ruleset(
+    state: &AppState,
+    folder_id: &uuid::Uuid,
+) -> Result<crate::governance::ResolvedRuleset, String> {
+    let mut raw = state.pg.resolve_rules_raw(folder_id).await?;
+    // Rule packs resolve from TWO planes, in tandem (D-LOCAL-PACKS): the LOCAL
+    // sensei.rule_packs replica (offline — bundled/adopted/synced packs) and the
+    // remote Dōjō fold-in (a member's live org packs). structure_ruleset dedups by
+    // content, so a pack present in both planes surfaces once.
+    raw.extend(state.pg.resolve_local_pack_raws(Some(folder_id)).await.unwrap_or_default());
+    raw.extend(resolve_adopted_pack_raws(state, folder_id).await);
+    Ok(crate::governance::structure_ruleset(raw))
+}
+
+/// Group a resolved ruleset into the CONSTITUTION LADDER: one rung per scope,
+/// ordered ascending scope level (most-general first, most-specific last — the
+/// ladder's reading order), each rung's rules kept strongest-first. `general` /
+/// unknown scopes sort first (level -1). Pure.
+fn group_into_ladder(
+    set: &crate::governance::ResolvedRuleset,
+    scopes: &[(String, String, i32)],
+) -> Vec<serde_json::Value> {
+    use std::collections::BTreeMap;
+    let meta = |key: &str| scopes.iter().find(|(k, _, _)| k == key).cloned();
+    // (level, scope_key) → rules in resolved (strongest-first) order.
+    let mut by_scope: BTreeMap<(i32, String), Vec<&crate::governance::ResolvedRule>> =
+        BTreeMap::new();
+    for r in &set.rules {
+        let key = if r.scope.is_empty() { "general".to_string() } else { r.scope.clone() };
+        let level = meta(&key).map(|(_, _, l)| l).unwrap_or(-1);
+        by_scope.entry((level, key)).or_default().push(r);
+    }
+    by_scope
+        .into_iter()
+        .map(|((level, key), rules)| {
+            let mandatory = rules.iter().filter(|r| r.mandatory).count();
+            let name = meta(&key).map(|(_, n, _)| n).unwrap_or_else(|| key.clone());
+            serde_json::json!({
+                "scope_key": key,
+                "scope_name": name,
+                "level": level,
+                "mandatory_count": mandatory,
+                "rules": rules,
+            })
+        })
+        .collect()
+}
+
+/// GET /api/knowledge/constitution?folder=X|project=Y → the repo's resolved
+/// ruleset grouped into the constitution ladder (one rung per scope, general →
+/// specific). What the console renders as "the rules in force here."
+pub(crate) async fn get_constitution(
+    State(state): State<AppState>,
+    Query(q): Query<RulesQuery>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let (folder_path, folder_id) =
+        resolve_folder(&state, q.folder.as_deref(), q.project.as_deref()).await?;
+    let ruleset = resolve_repo_ruleset(&state, &folder_id)
+        .await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+    let scopes = state
+        .pg
+        .list_scopes()
+        .await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+    Ok(Json(serde_json::json!({
+        "folder": folder_path,
+        "total": ruleset.total,
+        "mandatory_count": ruleset.mandatory_count,
+        "rungs": group_into_ladder(&ruleset, &scopes),
+    })))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn group_into_ladder_orders_rungs_by_scope_level() {
+        use crate::governance::{ResolvedRule, ResolvedRuleset};
+        let mk = |title: &str, scope: &str, enf: &str| ResolvedRule {
+            id: title.into(),
+            title: title.into(),
+            content: String::new(),
+            impact: None,
+            enforcement: enf.into(),
+            scope: scope.into(),
+            namespace: None,
+            mandatory: enf == "mandatory",
+        };
+        // strongest-first input across two scopes (org level 20, project level 60)
+        let set = ResolvedRuleset {
+            rules: vec![
+                mk("no secrets", "organization", "mandatory"),
+                mk("idempotency key", "project", "mandatory"),
+                mk("small commits", "project", "advisory"),
+            ],
+            total: 3,
+            mandatory_count: 2,
+        };
+        let scopes = vec![
+            ("organization".into(), "Organization".into(), 20),
+            ("project".into(), "Project".into(), 60),
+        ];
+        let rungs = group_into_ladder(&set, &scopes);
+        assert_eq!(rungs.len(), 2);
+        // most-general first
+        assert_eq!(rungs[0]["scope_key"], "organization");
+        assert_eq!(rungs[0]["level"], 20);
+        assert_eq!(rungs[1]["scope_key"], "project");
+        assert_eq!(rungs[1]["mandatory_count"], 1);
+        assert_eq!(rungs[1]["rules"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn pack_rule_to_raw_maps_fields() {
+        let w = crate::dojo::client::PackRuleWire {
+            rule_id: "r1".into(),
+            statement: "Never log tokens".into(),
+            body: "Applies at any log level.".into(),
+            rationale: Some("leaks are a top breach vector".into()),
+            enforcement: "mandatory".into(),
+            source: "OWASP".into(),
+            area: "security".into(),
+        };
+        let r = pack_rule_to_raw(w);
+        assert_eq!(r.title, "Never log tokens");
+        assert_eq!(r.content, "Applies at any log level.");
+        assert_eq!(r.impact.as_deref(), Some("leaks are a top breach vector"));
+        assert_eq!(r.enforcement, "mandatory");
+        assert_eq!(r.scope, "security");
+        assert_eq!(r.namespace.as_deref(), Some("OWASP"));
+    }
+
+    #[test]
+    fn pack_rule_to_raw_empty_source_is_no_namespace() {
+        let w = crate::dojo::client::PackRuleWire {
+            rule_id: "r2".into(),
+            statement: "s".into(),
+            body: String::new(),
+            rationale: None,
+            enforcement: "advisory".into(),
+            source: String::new(),
+            area: "process".into(),
+        };
+        assert!(pack_rule_to_raw(w).namespace.is_none());
+    }
 
     // ── generalise (project-agnostic rewrite) pure helpers ──────────────────
 
@@ -1016,6 +1263,52 @@ mod tests {
         let body = std::fs::read_to_string(&path).unwrap();
         assert!(body.contains("Managed by sensei"), "managed header present");
         assert!(body.contains("# Sensei Rules"), "title present");
+    }
+
+    #[tokio::test]
+    async fn materialize_folds_general_adopted_packs_into_global_rules() {
+        // D-SEED: a pack adopted at the always-on general scope must land in the
+        // global ~/.sensei/rules.md (via resolve_local_pack_raws(None)), not just
+        // in the per-repo get_rules path. Unique slug/namespace so this never
+        // races the constitution seed test on the shared sensei_test DB.
+        let pg = crate::db::pg_store::PgStore::connect_test().await.unwrap();
+        let pool = pg.pool();
+        sqlx_core::query::query("DELETE FROM sensei.rule_packs WHERE slug = 'global-materialize-test'")
+            .execute(pool).await.unwrap();
+        sqlx_core::query::query(
+            "INSERT INTO sensei.scopes(key, name, level, shareable)
+             VALUES ('general', 'General', 0, false) ON CONFLICT (key) DO NOTHING")
+            .execute(pool).await.unwrap();
+        let (pack,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.rule_packs
+                (slug, name, area, source, summary, enforcement, owner_namespace_id, status, published_by)
+             VALUES ('global-materialize-test', 'GM', 'principles', 'GMSource', 's',
+                     'mandatory', NULL, 'active', 'test')
+             RETURNING id")
+            .fetch_one(pool).await.unwrap();
+        sqlx_core::query::query(
+            "INSERT INTO sensei.rule_pack_rules(pack_id, ordinal, statement, body, enforcement)
+             VALUES ($1, 1, 'Global materialize marker rule', 'B', 'mandatory')")
+            .bind(pack).execute(pool).await.unwrap();
+        let (ns,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.namespaces(scope_key, slug, name)
+             VALUES ('general', 'global-mat-test', 'GM') ON CONFLICT (scope_key, slug) DO UPDATE SET name=excluded.name
+             RETURNING id")
+            .fetch_one(pool).await.unwrap();
+        sqlx_core::query::query(
+            "INSERT INTO sensei.rule_pack_adoptions(pack_id, namespace_id, pinned_version, adopted_by)
+             VALUES ($1, $2, 1, 'test') ON CONFLICT (pack_id, namespace_id) DO NOTHING")
+            .bind(pack).bind(ns).execute(pool).await.unwrap();
+
+        let tmp = tempfile::tempdir().unwrap();
+        let (path, _count) = materialize_global_rules(&pg, tmp.path()).await.unwrap();
+        let body = std::fs::read_to_string(&path).unwrap();
+        assert!(body.contains("Global materialize marker rule"),
+            "a general-adopted pack rule is folded into the global rules file");
+
+        sqlx_core::query::query("DELETE FROM sensei.rule_packs WHERE slug = 'global-materialize-test'")
+            .execute(pool).await.unwrap();
+        sqlx_core::query::query("DELETE FROM sensei.namespaces WHERE id = $1").bind(ns).execute(pool).await.unwrap();
     }
 
     // #13 — Global rules pointer in ~/.claude/CLAUDE.md

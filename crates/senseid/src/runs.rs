@@ -75,6 +75,29 @@ impl RunEventKind {
         RunEventKind::Failed,
     ];
 
+    /// True when this event marks *agent* progress (the run actually advancing),
+    /// false for the daemon's own cadence/lifecycle bookkeeping. The stall signal
+    /// ([`crate::run_watchdog`]) measures "no progress in N min" against progress
+    /// events only: `Housekeeping` is logged every tick, so counting it would mean
+    /// a run never looks stalled — and pause/resume/throttle/watchdog markers are
+    /// the daemon reacting, not the agent working.
+    ///
+    /// Progress = phase/feature boundaries, gates, and git milestones (commit/
+    /// push/merge/bump), plus terminal done/failed/flagged. Not-progress =
+    /// housekeeping tick + paused/resumed/throttled/stalled/crashed/recovered.
+    pub fn is_progress(&self) -> bool {
+        !matches!(
+            self,
+            RunEventKind::Housekeeping
+                | RunEventKind::PausedOnLimit
+                | RunEventKind::Resumed
+                | RunEventKind::Throttled
+                | RunEventKind::Stalled
+                | RunEventKind::Crashed
+                | RunEventKind::Recovered
+        )
+    }
+
     /// The `sensei.run_event_kind` enum string. MUST match `run_event_kind.ddl`.
     pub fn as_db_str(&self) -> &'static str {
         match self {
@@ -155,6 +178,14 @@ pub struct NewRun {
     pub goal: Option<String>,
     pub dojo_session_id: Option<Uuid>,
     pub max_concurrency: Option<i32>,
+    /// Git author for the run's project (resolved at the create-run handler from
+    /// [`crate::git_identity::read_git_user`]); `None` leaves the columns NULL.
+    pub author_name: Option<String>,
+    pub author_email: Option<String>,
+    /// The authored plan graph (phases→tasks with agent/model/spec_ref + per-task
+    /// state) for a run seeded via `register_plan`; `None` for ad-hoc runs. Stored
+    /// as jsonb; fetched on demand (off the 16-column `RUN_SELECT`).
+    pub plan_graph: Option<serde_json::Value>,
 }
 
 /// One append-only cadence event on a run — a row of `activity.run_events`.
@@ -172,6 +203,26 @@ pub struct RunEvent {
     pub created_at: String,
 }
 
+/// The run cadence events to append when a run's phase moves from `current` to
+/// `new` — the pure core of the workflow→run phase bridge (an agent's
+/// `update_phase` mirrored onto its active run so it streams phases→segments to
+/// the relay while `drive` stays OFF).
+///
+/// A real transition pairs `phase_done(prev)` + `phase_started(new)` so
+/// [`crate::dojo::relay_run_project`]'s `plan_events_to_segments` renders the
+/// previous phase done and the new one active. Re-entering the same phase is a
+/// no-op (idempotent — repeated `update_phase` calls don't duplicate segments).
+pub fn phase_transition_events(current: Option<&str>, new: &str) -> Vec<(RunEventKind, String)> {
+    match current {
+        Some(prev) if prev == new => Vec::new(),
+        Some(prev) => vec![
+            (RunEventKind::PhaseDone, prev.to_string()),
+            (RunEventKind::PhaseStarted, new.to_string()),
+        ],
+        None => vec![(RunEventKind::PhaseStarted, new.to_string())],
+    }
+}
+
 /// Serializes the DB-gated tests that call the *global* [`crate::db::pg_store::
 /// PgStore::resume_due_runs`] UPDATE (the pg_store CRUD test + the AdvanceRun
 /// scheduler test) so parallel test threads don't steal each other's due-paused
@@ -186,6 +237,62 @@ pub(crate) fn resume_test_lock() -> &'static tokio::sync::Mutex<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn phase_transition_from_none_starts_the_phase() {
+        assert_eq!(
+            phase_transition_events(None, "P1"),
+            vec![(RunEventKind::PhaseStarted, "P1".to_string())]
+        );
+    }
+
+    #[test]
+    fn phase_transition_pairs_done_and_started() {
+        assert_eq!(
+            phase_transition_events(Some("P0"), "P1"),
+            vec![
+                (RunEventKind::PhaseDone, "P0".to_string()),
+                (RunEventKind::PhaseStarted, "P1".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn phase_transition_same_phase_is_a_noop() {
+        assert!(phase_transition_events(Some("P1"), "P1").is_empty());
+    }
+
+    #[test]
+    fn is_progress_true_for_agent_advancement() {
+        for k in [
+            RunEventKind::PhaseStarted,
+            RunEventKind::FeatureStarted,
+            RunEventKind::FeatureDone,
+            RunEventKind::GateRaised,
+            RunEventKind::Committed,
+            RunEventKind::Pushed,
+            RunEventKind::Merged,
+            RunEventKind::Done,
+            RunEventKind::Failed,
+        ] {
+            assert!(k.is_progress(), "{k:?} is agent progress");
+        }
+    }
+
+    #[test]
+    fn is_progress_false_for_daemon_cadence_and_lifecycle() {
+        for k in [
+            RunEventKind::Housekeeping,
+            RunEventKind::PausedOnLimit,
+            RunEventKind::Resumed,
+            RunEventKind::Throttled,
+            RunEventKind::Stalled,
+            RunEventKind::Crashed,
+            RunEventKind::Recovered,
+        ] {
+            assert!(!k.is_progress(), "{k:?} is daemon bookkeeping, not progress");
+        }
+    }
 
     #[test]
     fn run_event_kind_db_strings_match_ddl() {

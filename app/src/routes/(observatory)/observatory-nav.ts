@@ -96,6 +96,7 @@ export function buildNavItems({ focus, projectCount }: NavOptions): NavEntry[] {
       children: [
         link("録", "Sessions", "/sessions", { badge: MOCK.sessions }),
         link("庫", "Libraries", "/libraries", { badge: MOCK.libraries }),
+        link("統", "Consolidation", "/consolidation"),
         link("図", "Atlas", "/atlas"),
         link("具", "Instruments", "/instruments"),
         link("診", "Logs", "/activity-logs"),

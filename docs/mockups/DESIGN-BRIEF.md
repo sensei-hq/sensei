@@ -249,6 +249,29 @@ may be shipped. Keep the honesty rule (B9). *(Lower priority than the dōjō/gov
 
 ---
 
+## Part E · Coverage directives (2026-07-24 — from the coverage audit)
+
+Full audit: [`../analysis/2026-07-24-coverage-audit.md`](../analysis/2026-07-24-coverage-audit.md).
+Triggered by the logout 404 (a designed-but-uncovered critical path). Four directives:
+
+- **E1 · Cover the five missing critical paths.** Design them as first-class Zen-Sumi
+  surfaces, not framework fallbacks: **404 / not-found**, **`+error.svelte` boundary**
+  (failed load → calm page + retry), **permission-denied** (direct URL to a role-gated
+  section), **session-expired / re-auth** (ended session → cue + return-to-where-you-were),
+  **rate-limit (429)**. None exist today in spec or code.
+- **E2 · `EmptyState` is the law for empties.** The shared `kit/EmptyState.svelte` (空 ·
+  "Still listening.") is already adopted by 7+ screens — **always compose it, never
+  hand-roll an empty branch.** Audit `ScrYourWork` / `ScrRelayApprove` for uncovered empties.
+- **E3 · Consolidate duplicated shells into named kit primitives** (data-driven props, no
+  inline `padding`/`letter-spacing` literals — B2/B4): `Card` (the `bg-paper-soft` shell,
+  ~23 copies), `ListItem` (border-bottom row, 8+), `FieldLabel` (uppercase section label,
+  10+), `LabelWithIcon` (6+); fold `Eyebrow` into `SectionHead`'s eyebrow slot. Batch these,
+  browser-verify by computed style (B1). *(Big-touch — do NOT sweep blind.)*
+- **E4 · Shared logic → a util, not a copy.** `getInitials` (`kit/initials.ts`, shipped
+  `0967f0f7`) is the template: a 2nd copy of any computation is a refactor signal.
+
+---
+
 ## Superseded — collapsed into this doc
 `DOJO-REVIEW.md` (2026-07-16, pre-dojo2) · `DOJO2-MISSING-CONSOLES.md` · `DOJO-REDESIGN-BRIEF.md` ·
 `SPACING-CLEANUP.md`. Their live content lives here now; the originals can be retired.

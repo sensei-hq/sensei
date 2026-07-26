@@ -39,22 +39,31 @@ use dojo_protocol::relay::RelayRunStatus;
 /// auto-recovery attempts before a still-stalled run escalates to `crashed`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WatchdogConfig {
-    /// How long a heartbeat may sit untouched before the run is "stale".
+    /// How long a run's **agent progress** may go untouched before a `running`
+    /// run is a stall (Jerry: "no update in 5 min"). Measured against the newest
+    /// *progress* event (not the every-tick housekeeping heartbeat).
+    pub progress_stale_after: std::time::Duration,
+    /// How long a `stalled` run's **heartbeat** may sit untouched before the
+    /// daemon-crash recovery ladder escalates it (recover → crash). Separate from
+    /// `progress_stale_after`: this is "the daemon stopped servicing the run",
+    /// not "the agent went quiet".
     pub stale_after: std::time::Duration,
     /// Max bounded auto-recovery attempts before escalating to `crashed`.
     pub max_recovery: i32,
 }
 
 impl Default for WatchdogConfig {
-    /// `stale_after = 20 min`, `max_recovery = 3`.
+    /// `progress_stale_after = 5 min`, `stale_after = 20 min`, `max_recovery = 3`.
     ///
-    /// **`stale_after` MUST exceed the 600s (`DRIVE_TIMEOUT`) agent-drive cap**
-    /// ([`crate::tasks::handlers::advance_run`]) so a run whose drive step is
-    /// legitimately in-flight (heartbeat frozen at drive-start for up to the
-    /// full drive budget) is never falsely marked stale mid-step. 20 min is a
-    /// comfortable margin over the 10-min drive cap.
+    /// The 5-min progress window is the agent-stuck signal. The 20-min heartbeat
+    /// `stale_after` governs the *stalled* run's daemon-crash ladder and **MUST
+    /// exceed the 600s (`DRIVE_TIMEOUT`) agent-drive cap** so a legitimately
+    /// in-flight drive step is never escalated mid-step. (Enabling `drive` with a
+    /// sub-600s progress window would false-stall long steps — see
+    /// `docs/analysis/2026-07-24-relay-stall-signal.md`; drive stays OFF for now.)
     fn default() -> Self {
         Self {
+            progress_stale_after: std::time::Duration::from_secs(300),
             stale_after: std::time::Duration::from_secs(1200),
             max_recovery: 3,
         }
@@ -79,52 +88,65 @@ pub enum WatchdogAction {
     Crash,
 }
 
+/// Whether an age is past a window. A negative/future age (clock skew) clamps to
+/// fresh. A pathological (unrepresentable) window → fresh, so a bad config never
+/// falsely escalates live runs.
+fn is_stale(now: DateTime<Utc>, since: DateTime<Utc>, window: std::time::Duration) -> bool {
+    match chrono::Duration::from_std(window) {
+        Ok(w) => (now - since) > w,
+        Err(_) => false,
+    }
+}
+
 /// Decide what the watchdog should do with one run — pure and deterministic.
+/// Two independent liveness signals, both injected so the whole ladder is
+/// testable with fixed inputs:
 ///
-/// `now`, `last_seen` (the run's `heartbeat_at`, or `started_at` when a run has
-/// never heartbeated), `recovery_attempts`, and `cfg` are all injected so the
-/// whole ladder is testable with fixed inputs.
+/// - `last_progress` — the newest **agent-progress** event (or `started_at` when
+///   the run has made none). Drives the *agent-stuck* signal.
+/// - `last_heartbeat` — the run's `heartbeat_at` (or `started_at`). Drives the
+///   *daemon-crash* recovery ladder for an already-`stalled` run.
 ///
 /// Logic:
-/// - **fresh** (`now - last_seen <= cfg.stale_after`, and negative/future
-///   `last_seen` clamped to fresh) → [`WatchdogAction::Healthy`];
-/// - **stale** + `Running` → [`WatchdogAction::Stall`];
-/// - **stale** + `Stalled` → [`WatchdogAction::Recover`] while
-///   `recovery_attempts < cfg.max_recovery`, else [`WatchdogAction::Crash`];
-/// - **stale** + any other status (`Paused` = intentional, `Blocked` =
-///   waiting-on-human, `Done`/`Failed`/`Crashed` = terminal) →
-///   [`WatchdogAction::Healthy`] (nothing to recover).
+/// - `Running` + no progress within `cfg.progress_stale_after` → [`Stall`]
+///   (Jerry: "no update in 5 min" — surface + nudge); else [`Healthy`].
+/// - `Stalled` + heartbeat stale past `cfg.stale_after` → the daemon-crash
+///   ladder: [`Recover`] while `recovery_attempts < max_recovery`, else
+///   [`Crash`]. Heartbeat-fresh (the daemon is still ticking; the agent is just
+///   quiet) → [`Healthy`]: it *stays* stalled, nudgeable, until the agent emits
+///   progress (which revives it via the phase bridge) or a human acts.
+/// - `Paused` (intentional / limit-wait — auto-resumes), `Blocked`
+///   (waiting-on-human), terminal → [`Healthy`].
 pub fn assess_run(
     status: RelayRunStatus,
-    last_seen: DateTime<Utc>,
+    last_progress: DateTime<Utc>,
+    last_heartbeat: DateTime<Utc>,
     now: DateTime<Utc>,
     recovery_attempts: i32,
     cfg: &WatchdogConfig,
 ) -> WatchdogAction {
-    // Heartbeat age. A negative age (last_seen in the future — clock skew) is
-    // clamped to fresh: a run we just heard from (or from the future) is never
-    // stale.
-    let age = now - last_seen;
-    let stale_after = match chrono::Duration::from_std(cfg.stale_after) {
-        Ok(d) => d,
-        // A pathological (unrepresentable) config duration → treat everything as
-        // fresh rather than falsely escalating live runs.
-        Err(_) => return WatchdogAction::Healthy,
-    };
-    if age <= stale_after {
-        return WatchdogAction::Healthy;
-    }
-
-    // Stale. Only running/stalled runs are acted on; every other status is a
-    // deliberate no-op (paused = intentional, blocked = waiting on a human,
-    // done/failed/crashed = terminal, nothing to recover).
     match status {
-        RelayRunStatus::Running => WatchdogAction::Stall,
-        RelayRunStatus::Stalled => {
-            if recovery_attempts < cfg.max_recovery {
-                WatchdogAction::Recover { attempt: recovery_attempts + 1 }
+        // Agent-stuck signal: a running run that hasn't progressed in the window
+        // is a stall (nudgeable). "Progress" excludes the every-tick housekeeping.
+        RelayRunStatus::Running => {
+            if is_stale(now, last_progress, cfg.progress_stale_after) {
+                WatchdogAction::Stall
             } else {
-                WatchdogAction::Crash
+                WatchdogAction::Healthy
+            }
+        }
+        // Daemon-crash ladder: keyed on the heartbeat (which freezes once a run is
+        // stalled, since advance_run stops heartbeating it). A stalled run whose
+        // heartbeat is still fresh is left alone (agent quiet, daemon alive).
+        RelayRunStatus::Stalled => {
+            if is_stale(now, last_heartbeat, cfg.stale_after) {
+                if recovery_attempts < cfg.max_recovery {
+                    WatchdogAction::Recover { attempt: recovery_attempts + 1 }
+                } else {
+                    WatchdogAction::Crash
+                }
+            } else {
+                WatchdogAction::Healthy
             }
         }
         RelayRunStatus::Paused
@@ -145,9 +167,14 @@ mod tests {
         Utc.with_ymd_and_hms(2026, 7, 17, 8, 0, 0).unwrap()
     }
 
-    /// A heartbeat `secs` seconds before `fixed_now()`.
-    fn seen_ago(secs: i64) -> DateTime<Utc> {
+    /// A timestamp `secs` seconds before `fixed_now()`.
+    fn ago(secs: i64) -> DateTime<Utc> {
         fixed_now() - Duration::seconds(secs)
+    }
+
+    /// A just-now timestamp (well inside either window).
+    fn fresh() -> DateTime<Utc> {
+        ago(1)
     }
 
     fn cfg() -> WatchdogConfig {
@@ -155,134 +182,124 @@ mod tests {
     }
 
     #[test]
-    fn default_config_is_20min_stale_and_3_recoveries() {
+    fn default_config_is_5min_progress_20min_stale_3_recoveries() {
         let c = WatchdogConfig::default();
+        assert_eq!(c.progress_stale_after, std::time::Duration::from_secs(300), "5 min");
         assert_eq!(c.stale_after, std::time::Duration::from_secs(1200), "20 min");
         assert_eq!(c.max_recovery, 3);
-        // MUST exceed the 600s drive cap so an in-flight drive is never falsely
-        // stalled.
+        // The stalled-run heartbeat ladder MUST exceed the 600s drive cap so an
+        // in-flight drive step is never escalated mid-step.
         assert!(c.stale_after.as_secs() > 600, "stale_after must exceed DRIVE_TIMEOUT (600s)");
     }
 
-    // ── fresh → Healthy (regardless of status) ──────────────────────────
+    // ── running: gated on PROGRESS age (agent-stuck) ────────────────────
 
     #[test]
-    fn fresh_heartbeat_is_healthy() {
-        // Well within the 20-min window.
-        let seen = seen_ago(60);
-        for status in RelayRunStatus::ALL {
-            assert_eq!(
-                assess_run(status, seen, fixed_now(), 0, &cfg()),
-                WatchdogAction::Healthy,
-                "{status:?} with a fresh heartbeat is healthy"
-            );
-        }
+    fn running_with_fresh_progress_is_healthy() {
+        // Progress fresh; heartbeat age is irrelevant for a running run.
+        assert_eq!(
+            assess_run(RelayRunStatus::Running, fresh(), ago(9999), fixed_now(), 0, &cfg()),
+            WatchdogAction::Healthy
+        );
     }
 
-    // ── running + stale → Stall ─────────────────────────────────────────
-
     #[test]
-    fn running_and_stale_stalls() {
-        // 21 min > 20 min window.
-        let seen = seen_ago(21 * 60);
+    fn running_with_stale_progress_stalls() {
+        // 6 min > 5 min progress window → Stall, even though the heartbeat is
+        // fresh (the daemon is ticking — this is the bug the old heartbeat-only
+        // signal missed).
         assert_eq!(
-            assess_run(RelayRunStatus::Running, seen, fixed_now(), 0, &cfg()),
+            assess_run(RelayRunStatus::Running, ago(6 * 60), fresh(), fixed_now(), 0, &cfg()),
             WatchdogAction::Stall
         );
     }
 
-    // ── stalled + stale → Recover (bounded) → Crash ─────────────────────
+    #[test]
+    fn running_progress_boundary_is_inclusive_fresh() {
+        // Exactly 300s → fresh (check is `>`); 301s → stale.
+        assert_eq!(
+            assess_run(RelayRunStatus::Running, ago(300), fresh(), fixed_now(), 0, &cfg()),
+            WatchdogAction::Healthy,
+            "exact-boundary progress age is still fresh"
+        );
+        assert_eq!(
+            assess_run(RelayRunStatus::Running, ago(301), fresh(), fixed_now(), 0, &cfg()),
+            WatchdogAction::Stall,
+            "one second past the progress window is stale"
+        );
+    }
+
+    // ── stalled: gated on HEARTBEAT age (daemon-crash ladder) ───────────
 
     #[test]
-    fn stalled_and_stale_recovers_while_under_the_cap() {
-        let seen = seen_ago(21 * 60);
-        // attempts 0/1/2 (max 3) → Recover with the incremented attempt 1/2/3.
+    fn stalled_with_fresh_heartbeat_stays_stalled() {
+        // Agent quiet (progress a day old) but the daemon is alive (heartbeat
+        // fresh) → leave it stalled + nudgeable; do NOT recover/crash.
         assert_eq!(
-            assess_run(RelayRunStatus::Stalled, seen, fixed_now(), 0, &cfg()),
+            assess_run(RelayRunStatus::Stalled, ago(86_400), fresh(), fixed_now(), 0, &cfg()),
+            WatchdogAction::Healthy
+        );
+    }
+
+    #[test]
+    fn stalled_and_heartbeat_stale_recovers_while_under_the_cap() {
+        let hb = ago(21 * 60); // 21 min > 20 min heartbeat window
+        assert_eq!(
+            assess_run(RelayRunStatus::Stalled, ago(86_400), hb, fixed_now(), 0, &cfg()),
             WatchdogAction::Recover { attempt: 1 }
         );
         assert_eq!(
-            assess_run(RelayRunStatus::Stalled, seen, fixed_now(), 1, &cfg()),
-            WatchdogAction::Recover { attempt: 2 }
-        );
-        assert_eq!(
-            assess_run(RelayRunStatus::Stalled, seen, fixed_now(), 2, &cfg()),
+            assess_run(RelayRunStatus::Stalled, ago(86_400), hb, fixed_now(), 2, &cfg()),
             WatchdogAction::Recover { attempt: 3 }
         );
     }
 
     #[test]
-    fn stalled_and_stale_crashes_at_and_over_the_cap() {
-        let seen = seen_ago(21 * 60);
-        // attempts == max (3) → Crash.
+    fn stalled_and_heartbeat_stale_crashes_at_and_over_the_cap() {
+        let hb = ago(21 * 60);
         assert_eq!(
-            assess_run(RelayRunStatus::Stalled, seen, fixed_now(), 3, &cfg()),
+            assess_run(RelayRunStatus::Stalled, ago(86_400), hb, fixed_now(), 3, &cfg()),
             WatchdogAction::Crash
         );
-        // attempts over the cap (4) → still Crash (never a negative-attempt
-        // Recover).
         assert_eq!(
-            assess_run(RelayRunStatus::Stalled, seen, fixed_now(), 4, &cfg()),
+            assess_run(RelayRunStatus::Stalled, ago(86_400), hb, fixed_now(), 4, &cfg()),
             WatchdogAction::Crash
         );
     }
 
-    // ── non-acted statuses + stale → Healthy ────────────────────────────
+    // ── non-acted statuses → Healthy (both signals stale) ───────────────
 
     #[test]
     fn paused_blocked_terminal_are_healthy_even_when_stale() {
-        let seen = seen_ago(24 * 60 * 60); // a full day stale
+        let old = ago(24 * 60 * 60); // a full day stale on both signals
         for status in [
-            RelayRunStatus::Paused,   // intentional pause — not a stall
+            RelayRunStatus::Paused,   // intentional / limit-wait — auto-resumes
             RelayRunStatus::Blocked,  // waiting on a human — not a stall
-            RelayRunStatus::Done,     // terminal — nothing to do
-            RelayRunStatus::Failed,   // terminal — nothing to do
-            RelayRunStatus::Crashed,  // terminal — already given up
+            RelayRunStatus::Done,
+            RelayRunStatus::Failed,
+            RelayRunStatus::Crashed,
         ] {
             assert_eq!(
-                assess_run(status, seen, fixed_now(), 0, &cfg()),
+                assess_run(status, old, old, fixed_now(), 0, &cfg()),
                 WatchdogAction::Healthy,
                 "{status:?} is never escalated by the watchdog"
             );
         }
     }
 
-    // ── boundary + clock-skew edges ─────────────────────────────────────
+    // ── clock-skew edges ────────────────────────────────────────────────
 
     #[test]
-    fn exactly_at_the_boundary_is_healthy() {
-        // now - last_seen == stale_after exactly → fresh (the check is `<=`).
-        let seen = seen_ago(20 * 60); // exactly 1200s
+    fn future_timestamps_are_healthy() {
+        let future = fixed_now() + Duration::hours(1);
+        // Future progress (skew) → running never stalls.
         assert_eq!(
-            assess_run(RelayRunStatus::Running, seen, fixed_now(), 0, &cfg()),
-            WatchdogAction::Healthy,
-            "exact-boundary age is still fresh"
+            assess_run(RelayRunStatus::Running, future, fresh(), fixed_now(), 0, &cfg()),
+            WatchdogAction::Healthy
         );
-    }
-
-    #[test]
-    fn one_second_past_the_boundary_is_stale() {
-        let seen = seen_ago(20 * 60 + 1); // 1201s
+        // Future heartbeat (skew) → stalled never recovers off skew.
         assert_eq!(
-            assess_run(RelayRunStatus::Running, seen, fixed_now(), 0, &cfg()),
-            WatchdogAction::Stall,
-            "one second past the window is stale"
-        );
-    }
-
-    #[test]
-    fn future_last_seen_is_healthy() {
-        // last_seen in the future (negative age — clock skew) clamps to fresh.
-        let seen = fixed_now() + Duration::hours(1);
-        assert_eq!(
-            assess_run(RelayRunStatus::Running, seen, fixed_now(), 0, &cfg()),
-            WatchdogAction::Healthy,
-            "a future heartbeat is never stale"
-        );
-        // Even a stalled run with a future heartbeat is healthy (never recovers
-        // off clock skew).
-        assert_eq!(
-            assess_run(RelayRunStatus::Stalled, seen, fixed_now(), 0, &cfg()),
+            assess_run(RelayRunStatus::Stalled, ago(86_400), future, fixed_now(), 0, &cfg()),
             WatchdogAction::Healthy
         );
     }

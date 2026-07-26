@@ -28,12 +28,16 @@ use crate::api::handlers::gateway_chains;
 use crate::api::handlers::gateway_image;
 use crate::api::handlers::model_provisioning;
 use crate::api::handlers::knowledge;
+use crate::api::handlers::planner;
+use crate::api::handlers::checker;
 use crate::api::handlers::dojo;
 use crate::api::handlers::preferences;
 use crate::api::handlers::share_review;
 use crate::api::handlers::upgrades;
 use crate::api::handlers::corrections;
 use crate::api::handlers::runs;
+use crate::api::handlers::identity;
+use crate::api::handlers::stance;
 use crate::api::handlers::playbook;
 
 pub fn create_router(state: AppState) -> Router {
@@ -86,6 +90,13 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/projects/{id}/repos/{repo_id}", delete(observatory::remove_solution_repo))
         .route("/api/projects/{id}/tags", post(observatory::add_solution_tag))
         .route("/api/projects/{id}/tags/{tag}", delete(observatory::remove_solution_tag))
+        // Git author identity for a folder + its owning project (MCP
+        // get_user_for_project) — who is doing the work, resolved local→global.
+        .route("/api/user", get(identity::get_user))
+        // Effective behavioural stance for a folder (autonomy · sharing · review)
+        // — HOW a run behaves, resolved on the sensei.scopes ladder for the git
+        // user. Complements /api/knowledge/rules (WHAT a run may do).
+        .route("/api/stance", get(stance::get_stance))
         // Project detail endpoints (multi-window)
         .route("/api/projects/{id}/ftr",             get(project_detail::get_project_ftr))
         .route("/api/projects/{id}/icon",            get(project_detail::get_project_icon))
@@ -223,7 +234,15 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/sessions/{id}/replay", get(sessions::get_session_replay))
         // Relay runs (P3.2 observability + P3.8 run-control create)
         .route("/api/runs", get(runs::list_runs).post(runs::create_run))
+        // Static segments before the `{id}` route so they aren't swallowed as an id.
+        .route("/api/runs/pause", post(runs::pause_run))
+        .route("/api/runs/plan", post(runs::register_plan))
         .route("/api/runs/{id}", get(runs::get_run))
+        // Automated-run coordinator contract (AR-3): flip a task's state, mark the
+        // run terminal. More specific than `/api/runs/{id}`, so ordering is safe.
+        .route("/api/runs/{id}/tasks/{task_id}", post(runs::update_task_status))
+        .route("/api/runs/{id}/outcome", post(runs::report_run_outcome))
+        .route("/api/runs/{id}/nudges", get(runs::get_pending_nudges))
         // Front-door intake: axes -> playbook recommendation
         .route("/api/playbook/guide", get(playbook::get_intake_guide))
         .route("/api/playbook/recommend", post(playbook::recommend_playbook))
@@ -279,7 +298,10 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/knowledge/proposals/{id}/reject",   post(knowledge::reject_proposal))
         .route("/api/knowledge/outcomes",                post(knowledge::record_outcomes))
         .route("/api/knowledge/context",                 get(knowledge::get_context))
+        .route("/api/planner/generate",                  post(planner::generate_plan))
+        .route("/api/checkers/run",                      post(checker::run_checkers))
         .route("/api/knowledge/rules",                   get(knowledge::get_rules))
+        .route("/api/knowledge/constitution",            get(knowledge::get_constitution))
         .route("/api/knowledge/rules/materialize",       post(knowledge::materialize_rules))
         .route("/api/knowledge/rules/consolidate",       post(knowledge::consolidate_rules))
         .route("/api/knowledge/rules/consolidated",      get(knowledge::get_consolidated))
@@ -370,6 +392,73 @@ mod tests {
         });
         let router = create_router(state.clone());
         (router, state)
+    }
+
+    /// Send one request through the real router; returns `(status, json_body)`.
+    async fn req(app: Router, method: &str, uri: &str, body: Option<serde_json::Value>) -> (StatusCode, serde_json::Value) {
+        let builder = Request::builder().method(method).uri(uri);
+        let request = match body {
+            Some(v) => builder.header("content-type", "application/json").body(Body::from(v.to_string())).unwrap(),
+            None => builder.body(Body::empty()).unwrap(),
+        };
+        let resp = app.oneshot(request).await.unwrap();
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+        (status, json)
+    }
+
+    /// End-to-end automated-run flow through the REAL router against sensei_test:
+    /// register a plan graph, flip both tasks, read nudges, mark the run done.
+    /// Proves the AR routes dispatch to their handlers — including the static
+    /// `/api/runs/plan` (must win over `/{id}`) and the two-param
+    /// `/api/runs/{id}/tasks/{task_id}` — and that the stored graph reflects the flips.
+    #[tokio::test]
+    async fn automated_run_flow_through_the_router() {
+        let (app, state) = test_app().await;
+        let plan = serde_json::json!({
+            "goal": "smoke the automated-run path",
+            "plan": { "phases": [{ "title": "Build", "tasks": [
+                { "id": "t1", "title": "one", "agent": "general-purpose", "model": "sonnet" },
+                { "id": "t2", "title": "two", "model": "opus", "deps": ["t1"] }
+            ]}]}
+        });
+
+        // register_plan → 201 + a running run (the static /plan route beats /{id}).
+        let (st, body) = req(app.clone(), "POST", "/api/runs/plan", Some(plan)).await;
+        assert_eq!(st, StatusCode::CREATED, "register_plan routed + created: {body}");
+        assert_eq!(body["run"]["status"], "running");
+        let run_id = body["run"]["id"].as_str().unwrap().to_string();
+
+        // GET the run resolves (not swallowed by a static route).
+        let (st, _) = req(app.clone(), "GET", &format!("/api/runs/{run_id}"), None).await;
+        assert_eq!(st, StatusCode::OK, "GET /api/runs/{{id}} routed");
+
+        // Flip both tasks done via the two-param /tasks/{task_id} route.
+        let (st, _) = req(app.clone(), "POST", &format!("/api/runs/{run_id}/tasks/t1"), Some(serde_json::json!({ "state": "done" }))).await;
+        assert_eq!(st, StatusCode::OK, "update_task_status routed (t1)");
+        let (st, ok) = req(app.clone(), "POST", &format!("/api/runs/{run_id}/tasks/t2"), Some(serde_json::json!({ "state": "done" }))).await;
+        assert_eq!(st, StatusCode::OK);
+        assert_eq!(ok["state"], "done");
+
+        // nudges → 200 with an empty list (no enrolled dojo in the test DB).
+        let (st, nj) = req(app.clone(), "GET", &format!("/api/runs/{run_id}/nudges"), None).await;
+        assert_eq!(st, StatusCode::OK);
+        assert_eq!(nj["nudges"], serde_json::json!([]));
+
+        // The stored plan graph reflects both flips (the authored-run source of truth).
+        let rid = uuid::Uuid::parse_str(&run_id).unwrap();
+        let g = state.pg.run_plan_graph(&rid).await.unwrap().unwrap();
+        assert_eq!(g["phases"][0]["tasks"][0]["state"], "done");
+        assert_eq!(g["phases"][0]["tasks"][1]["state"], "done");
+
+        // report_run_outcome → terminal done.
+        let (st, body) = req(app.clone(), "POST", &format!("/api/runs/{run_id}/outcome"), Some(serde_json::json!({ "outcome": "done", "summary": "smoke ok" }))).await;
+        assert_eq!(st, StatusCode::OK);
+        assert_eq!(body["run"]["status"], "done");
+
+        sqlx_core::query::query("DELETE FROM activity.runs WHERE id = $1")
+            .bind(rid).execute(state.pg.pool()).await.unwrap();
     }
 
     #[tokio::test]

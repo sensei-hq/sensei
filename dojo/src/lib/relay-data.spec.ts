@@ -44,11 +44,14 @@ describe('relay-data', () => {
 		const fetch = vi.fn(async (url: string) => {
 			seenUrl = url;
 			return jsonResponse({
-				segments: [{ id: 's0', parent_id: null, seq: 0, title: 'Phase 1', summary: null, detail: null, state: 'active', is_gate: false, gate_severity: null, response_verdict: null, response_note: null, submitted_at: null }]
+				segments: [{ id: 's0', parent_id: null, seq: 0, title: 'Phase 1', summary: null, detail: null, agent: 'coder', model: 'gemma4', spec_ref: 'docs/spec.md#api', state: 'active', is_gate: false, gate_severity: null, response_verdict: null, response_note: null, submitted_at: null }]
 			});
 		}) as unknown as typeof globalThis.fetch;
 		const segs = await getSegments('personal/jerry', 'run 1', { fetch });
 		expect(segs[0].title).toBe('Phase 1');
+		expect(segs[0].agent).toBe('coder');
+		expect(segs[0].model).toBe('gemma4');
+		expect(segs[0].spec_ref).toBe('docs/spec.md#api');
 		expect(seenUrl).toContain('run_id=run%201');
 	});
 

@@ -311,3 +311,167 @@ export async function recordRulesAudit(
 		console.error(`rules audit write failed (${action} ${target}): ${error.message}`);
 	}
 }
+
+// ── Rule-pack resolution (adopt → govern) ────────────────────────────────────
+// A namespace that ADOPTS a rule pack inherits the pack's rules. Resolution
+// unions, for a set of namespaces, every adopted pack's rules — applying the
+// adoption's optional tier override. This is the payoff for the rule_packs DDL:
+// an org adopting "Auth boundary guards" makes those rules resolve for its repos
+// (and, via the daemon's `/v1/.../rules` federation pull → local memories →
+// resolve_rules_raw, flow through the SessionStart/PreCompact push).
+
+/** Enforcement tiers weakest→strongest — mirrors `sensei.enforcement`. */
+export const ENFORCEMENT_ORDER = ['advisory', 'recommended', 'required', 'mandatory'] as const;
+
+/** The stronger of two tiers. Unknown tiers rank lowest. Pure. */
+export function maxTier(a: string, b: string): string {
+	const ia = ENFORCEMENT_ORDER.indexOf(a as (typeof ENFORCEMENT_ORDER)[number]);
+	const ib = ENFORCEMENT_ORDER.indexOf(b as (typeof ENFORCEMENT_ORDER)[number]);
+	return ib > ia ? b : a;
+}
+
+/**
+ * The effective tier of a pack rule under an adoption: the rule's own tier,
+ * RAISED (never lowered) by the adoption's optional override — so an org can
+ * adopt an advisory pack as `required`, but can never weaken a rule below its
+ * intrinsic tier (mandatory stays mandatory). Pure.
+ */
+export function effectivePackRuleTier(ruleTier: string, adoptionOverride: string | null): string {
+	return adoptionOverride ? maxTier(ruleTier, adoptionOverride) : ruleTier;
+}
+
+/** Parse the `?ns=organization:acme,stack:react` query into (scope_key, slug)
+ *  pairs — how the daemon names its repo's namespaces cross-DB (the stable key,
+ *  not the dojo-side uuid). Malformed segments are dropped. Pure. */
+export function parseNamespacePairs(raw: string | null): Array<{ scope_key: string; slug: string }> {
+	return (raw ?? '')
+		.split(',')
+		.map((s) => s.trim())
+		.filter(Boolean)
+		.map((s) => {
+			const i = s.indexOf(':');
+			return i < 0
+				? { scope_key: '', slug: '' } // no colon → dropped by the filter
+				: { scope_key: s.slice(0, i), slug: s.slice(i + 1) };
+		})
+		.filter((p) => p.scope_key && p.slug);
+}
+
+/** Resolve (scope_key, slug) namespace pairs to their `sensei.namespaces` ids —
+ *  the stable identity across the daemon/dojo DB split. Unknown pairs are
+ *  dropped; a query error logs and yields `[]` (never silent). */
+export async function resolveNamespaceIds(
+	db: DojoClient,
+	pairs: Array<{ scope_key: string; slug: string }>
+): Promise<string[]> {
+	if (pairs.length === 0) return [];
+	const slugs = [...new Set(pairs.map((p) => p.slug))];
+	const { data, error } = await db
+		.schema('sensei')
+		.from('namespaces')
+		.select('id, scope_key, slug')
+		.in('slug', slugs);
+	if (error) {
+		console.error(`namespace resolve failed: ${error.message}`);
+		return [];
+	}
+	const want = new Set(pairs.map((p) => `${p.scope_key} ${p.slug}`));
+	return ((data ?? []) as Array<{ id: string; scope_key: string; slug: string }>)
+		.filter((n) => want.has(`${n.scope_key} ${n.slug}`))
+		.map((n) => n.id);
+}
+
+/** A pack rule resolved for a namespace — the rule's full shape + its pack's
+ *  provenance, with the effective (override-applied) enforcement tier. */
+export interface ResolvedPackRule {
+	pack_id: string;
+	rule_id: string;
+	ordinal: number;
+	statement: string;
+	body: string;
+	rationale: string | null;
+	enforcement: string; // effective, after the adoption override
+	verification: string;
+	checker_ref: string | null;
+	remediation: string | null;
+	skill_ref: string | null;
+	applies_to: unknown;
+	source: string; // from the pack
+	area: string; // from the pack
+}
+
+/**
+ * Resolve the rules of every pack ADOPTED at any of `namespaceIds`, with each
+ * rule's tier raised by the strongest adoption override for its pack among those
+ * namespaces. A pack-resolution error is logged and yields `[]` (packs are
+ * additive — a hiccup must not break the base rules pull), never silent.
+ */
+export async function resolveAdoptedPackRules(
+	db: DojoClient,
+	namespaceIds: string[]
+): Promise<ResolvedPackRule[]> {
+	if (namespaceIds.length === 0) return [];
+
+	const { data: adoptions, error: aErr } = await db
+		.schema('sensei')
+		.from('rule_pack_adoptions')
+		.select('pack_id, enforcement')
+		.in('namespace_id', namespaceIds);
+	if (aErr) {
+		console.error(`rule-pack adoption resolve failed: ${aErr.message}`);
+		return [];
+	}
+	if (!adoptions || adoptions.length === 0) return [];
+
+	// Strongest tier override per pack across the adopting namespaces.
+	const overrideByPack = new Map<string, string | null>();
+	for (const a of adoptions as Array<{ pack_id: string; enforcement: string | null }>) {
+		const prev = overrideByPack.get(a.pack_id);
+		if (prev === undefined) overrideByPack.set(a.pack_id, a.enforcement);
+		else if (a.enforcement && prev) overrideByPack.set(a.pack_id, maxTier(prev, a.enforcement));
+		else overrideByPack.set(a.pack_id, a.enforcement ?? prev ?? null);
+	}
+	const packIds = [...overrideByPack.keys()];
+
+	const [{ data: packs, error: pErr }, { data: rules, error: rErr }] = await Promise.all([
+		db.schema('sensei').from('rule_packs').select('id, area, source').in('id', packIds),
+		db
+			.schema('sensei')
+			.from('rule_pack_rules')
+			.select(
+				'id, pack_id, ordinal, statement, body, rationale, enforcement, verification, checker_ref, remediation, skill_ref, applies_to'
+			)
+			.in('pack_id', packIds)
+			.order('ordinal', { ascending: true })
+	]);
+	if (pErr || rErr) {
+		console.error(`rule-pack rule resolve failed: ${(pErr ?? rErr)?.message}`);
+		return [];
+	}
+
+	const meta = new Map(
+		((packs ?? []) as Array<{ id: string; area: string; source: string }>).map((p) => [p.id, p])
+	);
+	return ((rules ?? []) as Array<Record<string, unknown>>).map((r) => {
+		const m = meta.get(r.pack_id as string);
+		return {
+			pack_id: r.pack_id as string,
+			rule_id: r.id as string,
+			ordinal: r.ordinal as number,
+			statement: r.statement as string,
+			body: r.body as string,
+			rationale: (r.rationale as string | null) ?? null,
+			enforcement: effectivePackRuleTier(
+				r.enforcement as string,
+				overrideByPack.get(r.pack_id as string) ?? null
+			),
+			verification: r.verification as string,
+			checker_ref: (r.checker_ref as string | null) ?? null,
+			remediation: (r.remediation as string | null) ?? null,
+			skill_ref: (r.skill_ref as string | null) ?? null,
+			applies_to: r.applies_to,
+			source: m?.source ?? '',
+			area: m?.area ?? ''
+		};
+	});
+}

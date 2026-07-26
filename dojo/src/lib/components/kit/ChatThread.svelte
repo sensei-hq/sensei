@@ -1,5 +1,6 @@
 <script lang="ts">
 	import KanjiToken from './KanjiToken.svelte';
+	import { getInitials } from './initials';
 	import type { KitChatTurn, KitMe } from './types';
 
 	// A chat thread (kit K2ChatThread) — sensei speaks rarely; the viewer replies.
@@ -9,15 +10,7 @@
 	// viewer for the byline + monogram.
 	let { thread = [], me }: { thread?: KitChatTurn[]; me?: KitMe } = $props();
 
-	const initials = $derived(
-		(me?.name ?? 'You')
-			.replace(/\([^)]*\)/g, ' ')
-			.split(/\s+/)
-			.filter((w) => /^[\p{L}\p{N}]/u.test(w))
-			.slice(0, 2)
-			.map((w) => w[0].toUpperCase())
-			.join('')
-	);
+	const initials = $derived(getInitials(me?.name));
 </script>
 
 <div class="flex flex-col" style="gap: 16px">

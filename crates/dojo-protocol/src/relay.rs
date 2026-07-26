@@ -279,6 +279,12 @@ pub struct RelaySessionUpdate {
     /// backs the watchdog's `stalled` status the bridge also publishes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub heartbeat_at: Option<String>,
+    /// The slug of the run's project namespace (`sensei.namespaces` scope=project).
+    /// Lets the Worker open/refresh the caller's billing seat on this project —
+    /// proof the user is actively using sensei there (only such users are billed).
+    /// Optional + backward-compatible: absent → no seat is touched.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_slug: Option<String>,
 }
 
 /// One node of the phone-renderable outline — mirrors `dojo.relay_segments`. A
@@ -307,6 +313,18 @@ pub struct RelaySegment {
     pub response_verdict: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub response_note: Option<String>,
+    /// The subagent role this task is dispatched to — plan-authored, label only.
+    /// Set only for segments authored from a registered plan; None otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+    /// The model assigned to this task — plan-authored, label only. Recorded for
+    /// Dōjō visibility + phase-2 routing; phase-1 execution runs Claude subagents.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// Path#anchor to the task's detailed spec — a reference, never the body
+    /// (zero-knowledge D10). Plan-authored; None otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spec_ref: Option<String>,
 }
 
 /// A durable live-interaction row — mirrors `dojo.relay_inbox`. `payload` is the
@@ -495,6 +513,7 @@ mod tests {
             paused_until: Some("2026-07-16T11:29:00Z".into()),
             pause_reason: Some("weekly cap".into()),
             heartbeat_at: Some("2026-07-16T10:04:30Z".into()),
+            project_slug: None,
         };
         let js = serde_json::to_string(&u).unwrap();
         let back: RelaySessionUpdate = serde_json::from_str(&js).unwrap();
@@ -504,6 +523,12 @@ mod tests {
         assert_eq!(v["heartbeat_at"], json!("2026-07-16T10:04:30Z"));
         assert!(v.get("goal").is_none(), "None fields are omitted");
         assert!(v.get("current_feature").is_none());
+        assert!(v.get("project_slug").is_none(), "None project_slug is omitted");
+
+        // With a project set, the slug rides the wire (drives seat attribution).
+        let seated = RelaySessionUpdate { project_slug: Some("my-proj".into()), ..u };
+        let jv: serde_json::Value = serde_json::from_str(&serde_json::to_string(&seated).unwrap()).unwrap();
+        assert_eq!(jv["project_slug"], json!("my-proj"));
     }
 
     #[test]
@@ -520,6 +545,9 @@ mod tests {
             gate_severity: Some(GateSeverity::Blocking),
             response_verdict: None,
             response_note: None,
+            agent: None,
+            model: None,
+            spec_ref: None,
         };
         let js = serde_json::to_string(&phase).unwrap();
         let back: RelaySegment = serde_json::from_str(&js).unwrap();
@@ -528,6 +556,42 @@ mod tests {
         assert_eq!(v["state"], json!("active"));
         assert_eq!(v["gate_severity"], json!("blocking"));
         assert_eq!(v["is_gate"], json!(true));
+    }
+
+    #[test]
+    fn segment_carries_plan_metadata_and_omits_none() {
+        // A plan-authored task node: agent/model/spec_ref ride the wire (labels only).
+        let task = RelaySegment {
+            id: None,
+            parent_id: Some("22222222-2222-2222-2222-222222222222".into()),
+            seq: 3,
+            title: "Add register_plan handler".into(),
+            summary: None,
+            detail: None,
+            state: SegmentState::Pending,
+            is_gate: false,
+            gate_severity: None,
+            response_verdict: None,
+            response_note: None,
+            agent: Some("general-purpose".into()),
+            model: Some("sonnet".into()),
+            spec_ref: Some("docs/plan/2026-07-26-automated-run/tasks/register-plan.md".into()),
+        };
+        let js = serde_json::to_string(&task).unwrap();
+        let back: RelaySegment = serde_json::from_str(&js).unwrap();
+        assert_eq!(back, task);
+        let v: serde_json::Value = serde_json::from_str(&js).unwrap();
+        assert_eq!(v["agent"], json!("general-purpose"));
+        assert_eq!(v["model"], json!("sonnet"));
+        assert_eq!(v["spec_ref"], json!("docs/plan/2026-07-26-automated-run/tasks/register-plan.md"));
+
+        // Unset plan fields are omitted from the wire — backward-compatible with the
+        // cadence-derived + TodoWrite segments that never author them.
+        let bare = RelaySegment { agent: None, model: None, spec_ref: None, ..task };
+        let bj: serde_json::Value = serde_json::from_str(&serde_json::to_string(&bare).unwrap()).unwrap();
+        assert!(bj.get("agent").is_none(), "None agent omitted");
+        assert!(bj.get("model").is_none(), "None model omitted");
+        assert!(bj.get("spec_ref").is_none(), "None spec_ref omitted");
     }
 
     #[test]
@@ -639,6 +703,9 @@ mod tests {
                 gate_severity: None,
                 response_verdict: None,
                 response_note: None,
+                agent: None,
+                model: None,
+                spec_ref: None,
             }],
         };
         let js = serde_json::to_string(&p).unwrap();

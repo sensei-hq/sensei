@@ -103,6 +103,9 @@ pub fn run_to_session_update(
         paused_until: run.paused_until.clone(),
         pause_reason: run.pause_reason.clone(),
         heartbeat_at: run.heartbeat_at.clone(),
+        // Set by the impure federation path (publish_run) from the run's project;
+        // the pure projection has no DB to resolve the namespace slug.
+        project_slug: None,
     }
 }
 
@@ -166,6 +169,9 @@ pub fn plan_events_to_segments(events: &[RunEvent]) -> Vec<RelaySegment> {
                 gate_severity: None,
                 response_verdict: None,
                 response_note: None,
+                agent: None,
+                model: None,
+                spec_ref: None,
             }
         })
         .collect()

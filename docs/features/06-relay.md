@@ -12,6 +12,12 @@ they watch, approve the gates that matter, and steer from their phone. Code and
 transcripts never leave the machine — only status, and the decisions the user is
 asked to make.
 
+> **Status of record → [`coverage-map.md`](coverage-map.md).** P0–P4 + seat
+> attribution shipped on `develop` (drive/gate flags OFF, not merged to `main`).
+> The status table below predates that; see the coverage map §C for the
+> authoritative relay built-vs-pending, and `docs/design/agentic-execution-team.md`
+> for how relay becomes the execution substrate for the planned agentic team.
+
 ## Flows
 
 1. **Plan.** Write a deep, phased plan (or use the planner); mark which steps

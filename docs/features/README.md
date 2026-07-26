@@ -1,6 +1,6 @@
 ---
 name: Features — sensei
-updated: 2026-07-20
+updated: 2026-07-25
 ---
 
 # Features
@@ -9,6 +9,13 @@ The feature index for sensei. Each bullet below becomes its own feature doc
 (`docs/features/<name>/` — a question-headed story + tests + decisions +
 mockup-ref; the cross-feature modules & layers live in [`../design/`](../design/)).
 Who each feature serves is in [`../personas/`](../personas/).
+
+> **Current status of record → [`coverage-map.md`](coverage-map.md).** The `[x]/[~]/[ ]`
+> markers below and the per-feature status tables predate the 2026-07-24/25 build wave
+> (governance injection, rule packs + ponytail pack, stance + autonomy gate, Tier-3
+> billing + seats + console wire, the coverage audit, and the D-EXEC-TEAM design). The
+> coverage map is the authoritative built-vs-pending snapshot across mockups, journeys,
+> docs, and code; treat it as the source of truth where this index disagrees.
 
 - [Setup](01-setup.md)
 - [Configuration](02-config.md)
