@@ -40,6 +40,11 @@ export default {
 	rules: [
 		{ path: '/', public: true },
 		{ path: '/signin', public: true },
+		// The served logout page (src/routes/logout/+page.svelte) runs the client
+		// signOut() then redirects to /signin. Public so the guard lets it render
+		// even when the session is already partly cleared; the pinned kavach does
+		// not serve `routes.logout` itself, so a bare /logout would otherwise 404.
+		{ path: '/logout', public: true },
 		// Build-time version stamp (GET /version → src/lib/version.ts). Must be
 		// reachable unauthenticated so `curl .../version` confirms the live deploy.
 		// Unmatched paths fall through to the sentry guard's 401→/signin redirect,
