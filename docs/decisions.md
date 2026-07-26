@@ -62,3 +62,17 @@ variants (sharing-review, mcp-replay-insights, the multi-option learnings/projec
 libraries/nav files); decide whether dojo2 ports the richer **extension governance**
 (personas/hooks/plugins + org→team→project scoping + adoption tracking) from
 `dojo-extensions.jsx`.
+
+---
+
+## 2026-07-26 — Automated runs, phase 1 (Claude-CLI-driven)
+
+The phase-1 bootstrap of D-EXEC-TEAM: Claude Code owns planning + execution, the daemon is the
+durable spine. Full design: [`design/automated-run.md`](design/automated-run.md).
+
+| Decision | Locked answer | Why / rejected |
+|---|---|---|
+| **AR-1 (packaging)** | Autonomous-run capability lives in **skills** (`planner`/`analyzer`/`executor`); the `/sensei:plan` + `/sensei:analyze` commands invoke them and **preserve their existing human-pipeline behavior** (no forked commands). `init` **dropped**. | Injection is already automatic (D-INJECT); a 4th initializer duplicates `sensei init` + `sensei scaffold`. `analyze` skill name is taken (health-check) → new skill is `analyzer`. |
+| **AR-2 (plan store)** | Register the plan by **authoring `dojo.relay_segments`** (+3 cols `agent`/`model`/`spec_ref`) via a new `register_plan` MCP verb, reusing `publish_run`. Plan files live self-contained under `docs/plan/<plan-id>/` (`plan.md` + `tasks/<task-id>.md`); `spec_ref` points into `tasks/`. | Reuses shipped federation; whole plan visible in Dōjō (with models) before execution. Rejected: new `sensei.plans` tables (reverses D-PLANNER's stateless YAGNI, no consumer yet). |
+| **AR-3 (exec MCP)** | **Minimal 4-verb contract:** `register_plan`, `update_task_status`, `report_run_outcome`, `get_pending_nudges` (agent-pull). Keep-alive feeds the **progress clock via `update_phase`, never `heartbeat_at`**. Drive stays **OFF**; do NOT add `update_run_phase` (the phase bridge already exists). | Smallest surface that makes the loop observable + steerable. Full claim/heartbeat/task-DDL contract is the deferred D-EXEC-TEAM coordinator. |
+| **AR-4 (models)** | Phase-1 execution dispatches **Claude subagents only**; `model` (incl. local qwen/qwythos/gemma4) is **recorded** per task for Dōjō + phase-2 routing, local models used only for bounded gateway sub-steps (`infer`/`consensus`). | CC subagents are Claude-only. Recorded assignment seeds the phase-2 tier-router + the inference-usage ledger (#49). Rejected: wiring local models as autonomous workers now (that IS the deferred daemon executor). |

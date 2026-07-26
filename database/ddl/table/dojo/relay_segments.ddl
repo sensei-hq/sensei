@@ -9,6 +9,12 @@ create table if not exists dojo.relay_segments (
 , summary          text
 , detail           text
 , state            dojo.segment_state not null default 'pending'
+-- Plan-authored task metadata (labels only — zero-knowledge D10). Set when a run
+-- is seeded from a registered plan (register_plan); NULL for cadence-derived and
+-- TodoWrite segments.
+, agent            text
+, model            text
+, spec_ref         text
 , is_gate          boolean            not null default false
 , gate_severity    dojo.gate_severity
 , response_verdict text
