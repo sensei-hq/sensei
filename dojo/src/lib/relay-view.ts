@@ -136,5 +136,5 @@ export function blockedSummary(gates: RelayGate[]): {
  * grows one. Mirrors RelayGateCard's runHref.
  */
 export function gateHref(gate: RelayGate): string | null {
-	return gate.run_id && gate.run_id !== ZERO_UUID ? `/console/relay/${gate.run_id}` : null;
+	return gate.run_id && gate.run_id !== ZERO_UUID ? `/you/runs/${gate.run_id}` : null;
 }
