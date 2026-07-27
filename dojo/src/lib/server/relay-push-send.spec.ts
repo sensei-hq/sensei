@@ -161,8 +161,8 @@ describe('buildRelayPushPayload (zero-knowledge)', () => {
 		const p = buildRelayPushPayload(APPROVAL, 'Round-trip', 'run-42');
 		expect(p.title).toBe('Dōjō Relay');
 		expect(p.body).toBe('needs you on Round-trip');
-		expect(p.url).toBe('/console/relay/run-42');
-		expect(p.tag).toBe('/console/relay/run-42');
+		expect(p.url).toBe('/you/runs/run-42');
+		expect(p.tag).toBe('/you/runs/run-42');
 	});
 
 	it('labels each signal type', () => {
@@ -294,7 +294,7 @@ describe('sendRelayPush (flow)', () => {
 		expect(sender).toHaveBeenCalledTimes(2);
 		// The sender received the zero-knowledge payload.
 		const [, payload] = sender.mock.calls[0];
-		expect(payload).toMatchObject({ title: 'Dōjō Relay', body: 'needs you on R', url: '/console/relay/r' });
+		expect(payload).toMatchObject({ title: 'Dōjō Relay', body: 'needs you on R', url: '/you/runs/r' });
 	});
 
 	it('disables a subscription on 404/410 (expired endpoint)', async () => {
