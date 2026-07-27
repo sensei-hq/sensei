@@ -1,7 +1,7 @@
 // Pure presentation helpers for the maintainer triage console (ScrTriage,
 // mockup). Side-effect-free (data in → display value out) so the grouping, the
 // impact tone, and the second-approval rule unit-test without a DOM, and the
-// selection rune store (`dojo2-triage-state.svelte.ts`) stays a thin wrapper.
+// selection rune store (`triage-state.svelte.ts`) stays a thin wrapper.
 //
 // Colour is a named-token utility CLASS (`text-accent` · `bg-danger-soft` · …)
 // per the design system — never a raw oklch. This is the token-native port of

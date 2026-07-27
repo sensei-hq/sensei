@@ -1,5 +1,5 @@
-// dojo2 component kit — the reusable foundation every dojo2 screen composes
-// from (ported from docs/mockups/Sensei/lib/dojo2/dojo2-kit.jsx). Chrome +
+// dojo component kit — the reusable foundation every dojo screen composes
+// from (ported from docs/mockups/Sensei/lib/dojo/dojo2-kit.jsx). Chrome +
 // generic primitives + the DOMAIN components (governance: ladder / rule /
 // conflict / stance; relay: run / gate / needs / decision / chat).
 //
