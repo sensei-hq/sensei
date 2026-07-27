@@ -33,6 +33,27 @@ pub(crate) fn json_uuid(v: &serde_json::Value) -> Option<uuid::Uuid> {
     v.as_str().and_then(|s| uuid::Uuid::parse_str(s).ok())
 }
 
+/// Read one optional string-enum field from a request body: absent/null takes
+/// `default`; a present value must be a string and a member of `allowed`
+/// (validated via [`require_member_of`], so the message is identical everywhere).
+/// Shared by the collective-preferences and stance validators — one parser for
+/// "optional enum field, default when absent".
+pub(crate) fn parse_enum_field(
+    body: &serde_json::Value,
+    field: &str,
+    allowed: &[&str],
+    default: &str,
+) -> Result<String, String> {
+    match body.get(field) {
+        None | Some(serde_json::Value::Null) => Ok(default.to_string()),
+        Some(v) => {
+            let s = v.as_str().ok_or_else(|| format!("{field} must be a string"))?;
+            require_member_of(s, allowed, field)?;
+            Ok(s.to_string())
+        }
+    }
+}
+
 /// Resolve `id` (from a path segment) as either a project UUID or a
 /// project *name* → project UUID. Every `GET /api/projects/{id}/...`
 /// endpoint should reach for this so an MCP caller passing `sensei`
