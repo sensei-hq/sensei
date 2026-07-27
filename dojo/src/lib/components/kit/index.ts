@@ -11,6 +11,7 @@
 export * from './vocab';
 export * from './types';
 export * from './needs';
+export * from './plan';
 
 // Primitives.
 export { default as Icon } from './Icon.svelte';
@@ -28,6 +29,10 @@ export { default as Btn } from './Btn.svelte';
 export { default as ListSection } from './ListSection.svelte';
 export { default as ProjectRow } from './ProjectRow.svelte';
 export { default as MyDojoRow } from './MyDojoRow.svelte';
+
+// Plan / run-detail visualizers (ported from dojo2-kit.jsx K2Plan*).
+export { default as PlanBar } from './PlanBar.svelte';
+export { default as PlanPips } from './PlanPips.svelte';
 
 // Reused shipped primitives, re-exported as thin kit wrappers (Spark / EnsoRing
 // / Confidence live once in ../).
