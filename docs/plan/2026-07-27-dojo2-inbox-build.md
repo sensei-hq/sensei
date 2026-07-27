@@ -6,7 +6,7 @@ status: plan
 created: 2026-07-27
 depends_on:
   - docs/analysis/2026-07-27-mock-vs-impl-gap-analysis.md
-related_issues: [103, 104, 105, 106, 107, 108]
+related_issues: [103, 110, 104, 105, 106, 107, 108]
 references:
   - dojo/src/lib/dojo2-nav.ts
   - dojo/src/lib/components/kit/
@@ -29,8 +29,19 @@ designer track and are out of scope here except where a state is trivially built
 component.
 
 **Layers (dōjō web, D18 analog):** Worker `/v1` route → client data layer (`relay-data.ts`)
-→ mapper (`dojo2-*-map.ts`) → view/vocab logic (`kit/vocab.ts`, `*-view.ts`) → kit component
+→ mapper (`*-map.ts`) → view/vocab logic (`kit/vocab.ts`, `*-view.ts`) → kit component
 (`kit/*.svelte`) → route (`+page.svelte`/`.ts`) → test (vitest + Playwright).
+
+**Two corrections (2026-07-27, from Jerry):**
+1. **No `dojo2*` names.** The app isn't released, so there's no compat burden — drop the
+   migration label. Rename `(dojo2)`→`(app)`, `dojo2-*.ts`→ drop the prefix, and
+   `lib/components/dojo2/`→`lib/components/screens/`, done **early** (F1a below) so F2+ build on
+   clean names. (`K2_`/`k2` kit-vocab prefix left for a later pass.)
+2. **Verify against real data, never a test DB.** Pointing the daemon at a test DB makes every
+   project/graph/run fabricated and feeds Claude fake data. Verification uses the **real daemon +
+   real `sensei` DB + real user `hi@sensei-hq.com`**; only the local dōjō + its Supabase are
+   seeded for this identity, showing a **real** federated run (see F6). This makes F4 (drop
+   fixtures) central, not deferred.
 
 ## Features
 
@@ -48,6 +59,21 @@ component.
   - Given an authored plan with two phases (one parallel, one sequential), When `planProgress` runs, Then it reports the right done/total/pct and current stage name.
   - Given a phase with a `failed` and a `done` task, When `stageState` runs, Then it returns `failed` (most-urgent wins).
   - Given a legacy stage array, When `phases` normalizes it, Then states map via `STATE_ALIAS`.
+
+### Feature 1a: De-`dojo2` rename (clean names before building more)
+- **Issue:** #110
+- **Layers:** route group + file/dir renames → import updates → tests
+- **Depends on:** none (mechanical; do before F2 so new work uses clean names)
+- **Acceptance criteria:**
+  - `(dojo2)` route group → `(app)`; `dojo2-*.ts`/`.spec.ts` → drop the `dojo2-` prefix;
+    `lib/components/dojo2/` → `lib/components/screens/`. All 81 `dojo2` references updated.
+  - No file, dir, route, or import references `dojo2`; `svelte-check` + `vitest` green (pure
+    rename — no behaviour change, test count unchanged).
+  - `K2_`/`k2` kit-vocab prefix untouched (separate, optional later pass).
+- **Test scenarios:**
+  - Given the rename, When `grep -r dojo2 dojo/src` runs, Then it returns nothing.
+  - Given `bun run check` + `bun run test`, When run after the rename, Then both are green with
+    the same test count as before.
 
 ### Feature 2: Inbox list + personal IA re-shape
 - **Issue:** #104
@@ -110,17 +136,21 @@ component.
   - Given a legacy `/console/relay/<id>` URL, When visited, Then it redirects to `/you/runs/<id>`.
   - Given the build, When `vite build` + `svelte-check` run, Then both pass with zero unresolved-import or unused-export warnings.
 
-### Feature 6: Playwright verify + patch release
+### Feature 6: Real-data Playwright verify + patch release
 - **Issue:** #108
-- **Layers:** e2e harness (wrangler + Playwright) → verification (check/test/build) → release (bump + merge)
+- **Layers:** real daemon + real DB → real federated run → local dōjō (real Supabase) → Playwright → release
 - **Depends on:** Features 1–5
+- **Real-data verification (no test DB, no fabricated data):**
+  - Keep the **real sensei daemon on the real `sensei` DB**; identity is `hi@sensei-hq.com` (MCP/daemon `/api/user` for the `sensei` repo). Never point the daemon at a test DB.
+  - The daemon already federates to a **local dōjō** (membership `http://localhost:5173`, tenant `personal/jerry`). Run the local dōjō (`CF_PAGES=1 bun run build` → `wrangler dev --port 5173`) with its Supabase seeded with a membership for **`hi@sensei-hq.com`** under `personal/jerry`.
+  - Start a **real** relay run via the daemon (`start_run` for the `sensei` project) so real segments/plan federate to the local dōjō.
 - **Acceptance criteria:**
-  - Playwright (dōjō local recipe: `bun run build` → `wrangler dev` → magic-link `relay-jerry@local.test`) walks: sign-in → the Inbox renders real runs → open a run → the plan outline + activity render → a gate is answerable. Screenshots captured.
+  - Playwright signs in as `hi@sensei-hq.com` and walks: Inbox shows the **real** in-flight run → open it → the plan outline + activity render from the **real** federated segments → a real gate is answerable. Screenshots captured. No `relay-jerry@local.test`, no fixture rows.
   - `bun run check` + `bun run test` + `bun run build` in `dojo/` all green (zero-errors policy).
   - `make bump v=patch` bumps `VERSION` + manifests + tag.
   - `develop` merges to `main` and is pushed.
 - **Test scenarios:**
-  - Given the local dōjō is up, When Playwright signs in and opens a seeded run, Then the inbox row, the plan outline, and the activity feed are all visible and the run detail matches the mock's structure.
+  - Given the real daemon federating a real run to the local dōjō, When Playwright signs in as `hi@sensei-hq.com`, Then the Inbox row, the plan outline, and the activity feed show that run's **real** data (matching what the MCP reports for the run).
   - Given all checks pass, When `make bump v=patch` runs, Then the version increments and the tag is created before the merge to `main`.
 
 ## Dependency graph
