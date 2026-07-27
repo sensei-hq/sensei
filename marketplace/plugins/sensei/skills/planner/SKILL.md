@@ -111,11 +111,18 @@ register_plan(
 
 The daemon **validates** the graph (unique ids, deps resolve, DAG — a bad graph is rejected),
 stores it, and authors the Dōjō outline from it, so the whole plan (with assigned models) is
-visible on the phone **before** execution. It returns the `run_id`.
+visible on the phone **before** execution. It returns the `run_id` and a **`track_url`** — the
+auth-gated Dōjō link to watch this plan/run.
 
 Only labels cross to Dōjō (agent/model/`spec_ref` path, titles, status) — never spec bodies,
 code, or diffs (zero-knowledge).
 
 ## Handoff
 
-Report the `run_id` and the plan folder, then hand to `/sensei:execute` to drive the graph.
+Report the `run_id`, the plan folder, and the **Dōjō plan URL** so the human can watch it:
+
+> **Track your plan:** print `track_url` from the `register_plan` response verbatim — the
+> auth-gated Dōjō view of active plans/runs (sign in to open it). If `track_url` is null (no Dōjō
+> connected), say the plan is local-only and skip the link — never fabricate a URL.
+
+Then hand to `/sensei:execute` to drive the graph.
