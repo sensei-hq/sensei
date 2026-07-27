@@ -64,11 +64,9 @@ export { default as RuleEditor } from './RuleEditor.svelte';
 export { default as ConflictCard } from './ConflictCard.svelte';
 export { default as StanceDial } from './StanceDial.svelte';
 
-// Relay — live runs · gates · needs-you · decisions · chat.
-export { default as RunCard } from './RunCard.svelte';
+// Relay — needs-you · chat.
 export { default as NeedsYouBand } from './NeedsYouBand.svelte';
 export { default as NeedsRow } from './NeedsRow.svelte';
 export { default as NeedsActions } from './NeedsActions.svelte';
 export { default as NeedsResolved } from './NeedsResolved.svelte';
-export { default as DecisionCard } from './DecisionCard.svelte';
 export { default as ChatThread } from './ChatThread.svelte';

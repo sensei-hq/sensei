@@ -1,52 +1,15 @@
 import { render, cleanup, fireEvent } from '@testing-library/svelte';
 import { afterEach, describe, expect, it } from 'vitest';
 import ChatThread from './ChatThread.svelte';
-import RunCardHarness from './RunCard.harness.svelte';
-import DecisionCardHarness from './DecisionCard.harness.svelte';
 import NeedsYouBandHarness from './NeedsYouBand.harness.svelte';
-import { runs, chat, me, needsYou } from './fixtures';
+import { chat, me, needsYou } from './fixtures';
 
-// Render smoke tests for the relay-plane domain components (run / gate / needs /
-// decision / chat). Each mounts with a fixture, asserts key content + variants,
-// and — critically — that the needs-you band's per-kind action set fires the
-// right callback and that resolved / empty states render.
+// Render smoke tests for the surviving relay-plane kit components (needs-you band
+// + chat thread). Each mounts with a fixture, asserts key content, and — critically
+// — that the needs-you band's per-kind action set fires the right callback and that
+// resolved / empty states render.
 describe('kit relay components render', () => {
 	afterEach(cleanup);
-
-	it('RunCard shows the task, session meta, status and gate chip', () => {
-		const { getByText } = render(RunCardHarness, { run: runs[0] });
-		expect(getByText('refactor refresh-token rotation')).toBeTruthy();
-		expect(getByText(/s-2891/)).toBeTruthy();
-		expect(getByText('running')).toBeTruthy();
-		expect(getByText('gate waiting')).toBeTruthy();
-		expect(getByText(/12 edits/)).toBeTruthy();
-	});
-
-	it('RunCard shows the waiting status for a non-running run', () => {
-		const { getByText } = render(RunCardHarness, { run: runs[1] });
-		expect(getByText('waiting')).toBeTruthy();
-	});
-
-	it('RunCard fires onOpen when clicked', async () => {
-		const { getByText, getByTestId } = render(RunCardHarness, { run: runs[0] });
-		await fireEvent.click(getByText('refactor refresh-token rotation'));
-		expect(getByTestId('opens').textContent).toBe('1');
-	});
-
-	it('RunCard stacked variant renders the phone layout', () => {
-		const { getByText } = render(RunCardHarness, { run: runs[0], stacked: true });
-		expect(getByText('refactor refresh-token rotation')).toBeTruthy();
-		// the stacked gate chip reads just "gate".
-		expect(getByText('gate')).toBeTruthy();
-	});
-
-	it('DecisionCard shows the title, context, options and forwards the choice', async () => {
-		const { getByText, getByTestId } = render(DecisionCardHarness, {});
-		expect(getByText('adopt ‘verify webhook signature’ as a client guard')).toBeTruthy();
-		expect(getByText(/4 sessions · dereferenced · confidence 0.91/)).toBeTruthy();
-		await fireEvent.click(getByText('adopt to Client rung'));
-		expect(getByTestId('chosen').textContent).toBe('adopt to Client rung');
-	});
 
 	it('ChatThread renders sensei + viewer turns with their bylines', () => {
 		const { getByText, getAllByText } = render(ChatThread, { thread: chat, me });

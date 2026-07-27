@@ -44,7 +44,7 @@ function payloadStr(payload: Record<string, unknown>, key: string): string {
 	return typeof v === 'string' ? v : '';
 }
 
-/** A run's live-vs-waiting state for the kit RunCard. `paused`/`blocked`/`stalled`
+/** A run's live-vs-waiting state (status pill / inbox row). `paused`/`blocked`/`stalled`
  *  read as "waiting" (the human is the blocker); everything else in flight is
  *  "running"; terminal states (done/failed/crashed) fall through to their name. */
 export function runState(status: RelayRunStatus): string {
