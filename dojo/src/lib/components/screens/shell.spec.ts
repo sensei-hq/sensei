@@ -45,12 +45,14 @@ describe('dojo shell — nav groups render per context + role rank', () => {
 
 	it('personal context renders the NAV_YOU groups', () => {
 		const { getByText, getAllByText } = render(AppShellHarness, {
-			props: { context: 'you', nav: navGroupsFor(null), active: 'work' }
+			props: { context: 'you', nav: navGroupsFor(null), active: 'inbox' }
 		});
-		for (const group of ['Work', 'Govern', 'Relay', 'Dōjōs']) {
+		// The inbox model: Work · Govern · Dōjōs (no separate Relay group).
+		for (const group of ['Work', 'Govern', 'Dōjōs']) {
 			expect(getByText(group)).toBeTruthy();
 		}
-		// "Your work" appears both as the nav landing item and the switcher trigger.
+		expect(getByText('Inbox')).toBeTruthy(); // the nav landing item
+		// "Your work" still labels the personal context switcher.
 		expect(getAllByText('Your work').length).toBeGreaterThan(0);
 	});
 

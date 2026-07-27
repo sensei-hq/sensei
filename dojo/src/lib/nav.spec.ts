@@ -22,14 +22,22 @@ import {
 // role-scoped NAV_ORG (filtered by K2_ROLE_RANK via navForOrg). Kept pure so the
 // grouping, role-gating, and route wiring are unit-tested without rendering.
 
-describe('NAV_YOU — the personal zone', () => {
-	it('keeps the mockup groups in order (Work · Govern · Relay · Dōjōs)', () => {
-		expect(NAV_YOU.map((g) => g.group)).toEqual(['Work', 'Govern', 'Relay', 'Dōjōs']);
+describe('NAV_YOU — the personal zone (inbox model)', () => {
+	it('is the inbox model: Work · Govern · Dōjōs, no separate Relay group', () => {
+		expect(NAV_YOU.map((g) => g.group)).toEqual(['Work', 'Govern', 'Dōjōs']);
 	});
 
-	it('leads with "Your work" as the first item', () => {
-		expect(NAV_YOU[0].items[0].id).toBe('work');
-		expect(NAV_YOU[0].items[0].label).toBe('Your work');
+	it('leads with the Inbox as the first item', () => {
+		expect(NAV_YOU[0].items[0].id).toBe('inbox');
+		expect(NAV_YOU[0].items[0].label).toBe('Inbox');
+	});
+
+	it('has the six inbox-model destinations and none of the retired relay sections', () => {
+		const ids = NAV_YOU.flatMap((g) => g.items.map((it) => it.id));
+		expect(ids).toEqual(['inbox', 'projects', 'rules', 'packs', 'dojos', 'contributions']);
+		for (const gone of ['work', 'runs', 'approve', 'decide', 'chat']) {
+			expect(ids).not.toContain(gone);
+		}
 	});
 
 	it('assigns a unique id to every personal nav item', () => {
@@ -89,9 +97,10 @@ describe('navGroupsFor / tabsFor — context switch', () => {
 });
 
 describe('section reachability — every nav destination is a known section', () => {
-	it('YOU_SECTIONS covers every NAV_YOU item id', () => {
-		const ids = NAV_YOU.flatMap((g) => g.items.map((it) => it.id)).filter((id) => id !== 'work');
+	it('YOU_SECTIONS covers every NAV_YOU item id except the inbox landing', () => {
+		const ids = NAV_YOU.flatMap((g) => g.items.map((it) => it.id)).filter((id) => id !== 'inbox');
 		for (const id of ids) expect(YOU_SECTIONS).toContain(id);
+		expect(YOU_SECTIONS).not.toContain('inbox'); // the landing is not a section
 	});
 
 	it('ORG_SECTIONS covers every NAV_ORG item id', () => {
@@ -105,8 +114,9 @@ describe('section reachability — every nav destination is a known section', ()
 describe('href builders — clean dojo URLs', () => {
 	it('the personal landing is /you; a section is /you/{section}', () => {
 		expect(youHref()).toBe('/you');
-		expect(youHref('work')).toBe('/you');
-		expect(youHref('runs')).toBe('/you/runs');
+		expect(youHref('inbox')).toBe('/you');
+		expect(youHref('projects')).toBe('/you/projects');
+		expect(youHref('runs')).toBe('/you/runs'); // run-detail base still resolves
 	});
 
 	it('an org home is /org/{slug}; a section is /org/{slug}/{section}', () => {
@@ -117,17 +127,23 @@ describe('href builders — clean dojo URLs', () => {
 });
 
 describe('active-section resolution from a URL path', () => {
-	it('maps /you → work (the landing)', () => {
-		expect(sectionFromYouPath('/you')).toBe('work');
-		expect(sectionFromYouPath('/you/')).toBe('work');
+	it('maps /you → inbox (the landing)', () => {
+		expect(sectionFromYouPath('/you')).toBe('inbox');
+		expect(sectionFromYouPath('/you/')).toBe('inbox');
 	});
 
-	it('maps /you/runs → runs', () => {
-		expect(sectionFromYouPath('/you/runs')).toBe('runs');
+	it('maps a real section like /you/projects → projects', () => {
+		expect(sectionFromYouPath('/you/projects')).toBe('projects');
 	});
 
-	it('an unknown you-section falls back to work', () => {
-		expect(sectionFromYouPath('/you/bogus')).toBe('work');
+	it('a retired relay section (approve/decide/chat/runs) falls back to the inbox', () => {
+		for (const gone of ['approve', 'decide', 'chat', 'runs']) {
+			expect(sectionFromYouPath(`/you/${gone}`)).toBe('inbox');
+		}
+	});
+
+	it('an unknown you-section falls back to the inbox', () => {
+		expect(sectionFromYouPath('/you/bogus')).toBe('inbox');
 	});
 
 	it('maps /org/acme → home', () => {
@@ -145,7 +161,7 @@ describe('active-section resolution from a URL path', () => {
 
 describe('labelForSection — placeholder header copy', () => {
 	it('resolves a personal section label from NAV_YOU', () => {
-		expect(labelForSection('runs', 'you')).toBe('Live runs');
+		expect(labelForSection('projects', 'you')).toBe('Projects');
 		expect(labelForSection('contributions', 'you')).toBe('Contributions');
 	});
 

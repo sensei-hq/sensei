@@ -9,7 +9,11 @@ import {
 	toKitDecisions,
 	toKitChatTurn,
 	toKitChatThread,
-	runState
+	runState,
+	inboxStatus,
+	inboxRow,
+	toKitInbox,
+	filterInbox
 } from './relay-map';
 
 // The dojo personal-Relay wire→kit mappers. The screens are presentational off
@@ -216,5 +220,65 @@ describe('toKitChatTurn / toKitChatThread', () => {
 			NOW
 		);
 		expect(thread.map((t) => t.text)).toEqual(['A', 'B']);
+	});
+});
+
+describe('inbox mappers', () => {
+	it('inboxStatus collapses paused→waiting and crashed→failed', () => {
+		expect(inboxStatus('running')).toBe('running');
+		expect(inboxStatus('paused')).toBe('waiting');
+		expect(inboxStatus('crashed')).toBe('failed');
+		expect(inboxStatus('failed')).toBe('failed');
+		expect(inboxStatus('stalled')).toBe('stalled');
+		expect(inboxStatus('done')).toBe('done');
+	});
+
+	it('inboxRow ranks a needs-you run first with attention=gate', () => {
+		const r = inboxRow(run({ status: 'running' }), 2, NOW);
+		expect(r.needs).toBe(2);
+		expect(r.attention).toBe('gate');
+		expect(r.rank).toBe(0);
+		expect(r.run.gate).toBe(true); // KitRun marked as needing you
+		expect(r.run.last).toBe('30m'); // last_event_at 11:30 → now 12:00
+	});
+
+	it('inboxRow attention + rank by status when nothing pends', () => {
+		expect(inboxRow(run({ status: 'stalled' }), 0, NOW)).toMatchObject({ attention: 'stalled', rank: 1, status: 'stalled' });
+		expect(inboxRow(run({ status: 'blocked' }), 0, NOW)).toMatchObject({ attention: 'blocked', rank: 1 });
+		expect(inboxRow(run({ status: 'crashed' }), 0, NOW)).toMatchObject({ attention: 'failed', rank: 1, status: 'failed' });
+		expect(inboxRow(run({ status: 'running' }), 0, NOW)).toMatchObject({ attention: null, rank: 2 });
+		expect(inboxRow(run({ status: 'paused' }), 0, NOW)).toMatchObject({ attention: null, rank: 3, status: 'waiting' });
+		expect(inboxRow(run({ status: 'done' }), 0, NOW)).toMatchObject({ attention: null, rank: 4 });
+	});
+
+	it('toKitInbox counts answerable gates as needs and sorts needs-you first', () => {
+		const runs = [
+			run({ run_id: 'a', status: 'running' }),
+			run({ run_id: 'b', status: 'stalled' }),
+			run({ run_id: 'c', status: 'running' })
+		];
+		const gates = [
+			gate({ run_id: 'c', kind: 'approval' }), // c needs you
+			gate({ run_id: 'c', kind: 'chat' }) // chat does NOT count
+		];
+		const rows = toKitInbox(runs, gates, NOW);
+		expect(rows.map((r) => r.run.id)).toEqual(['c', 'b', 'a']); // needs(0) → stalled(1) → running(2)
+		expect(rows.find((r) => r.run.id === 'c')?.needs).toBe(1); // only the approval, not the chat
+	});
+
+	it('filterInbox splits needs / running / finished / all', () => {
+		const rows = toKitInbox(
+			[
+				run({ run_id: 'a', status: 'running' }),
+				run({ run_id: 'b', status: 'done' }),
+				run({ run_id: 'c', status: 'stalled' })
+			],
+			[gate({ run_id: 'a', kind: 'approval' })],
+			NOW
+		);
+		expect(filterInbox(rows, 'needs').map((r) => r.run.id).sort()).toEqual(['a', 'c']); // a=gate, c=stalled
+		expect(filterInbox(rows, 'running').map((r) => r.run.id)).toEqual(['a']);
+		expect(filterInbox(rows, 'finished').map((r) => r.run.id)).toEqual(['b']);
+		expect(filterInbox(rows, 'all')).toHaveLength(3);
 	});
 });

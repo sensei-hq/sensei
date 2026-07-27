@@ -34,6 +34,10 @@ export { default as MyDojoRow } from './MyDojoRow.svelte';
 export { default as PlanBar } from './PlanBar.svelte';
 export { default as PlanPips } from './PlanPips.svelte';
 
+// Inbox — the one list of in-flight sessions + its filter tabs.
+export { default as SubTabs } from './SubTabs.svelte';
+export { default as InboxRow } from './InboxRow.svelte';
+
 // Reused shipped primitives, re-exported as thin kit wrappers (Spark / EnsoRing
 // / Confidence live once in ../).
 export { default as Spark } from './Spark.svelte';

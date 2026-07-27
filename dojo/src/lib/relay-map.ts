@@ -10,7 +10,7 @@
 
 import type { RelayRun, RelayGate, RelaySegment, RelayRunStatus } from './relay-data';
 import { relativeAge } from './triage-view';
-import type { KitRun, KitGate, KitDecision, KitChatTurn } from './components/kit/types';
+import type { KitRun, KitGate, KitDecision, KitChatTurn, KitInbox } from './components/kit/types';
 
 /** The relay inbox kinds that are a sign-off DECISION (rules to adopt/promote)
  *  rather than a command APPROVAL. `/you/decide` filters gates to these. */
@@ -161,4 +161,97 @@ export function toKitChatTurn(seg: RelaySegment, now: Date = new Date()): KitCha
 /** RelaySegment[] → KitChatTurn[] (outline order = seq, as the API returns it). */
 export function toKitChatThread(segments: RelaySegment[], now: Date = new Date()): KitChatTurn[] {
 	return segments.map((s) => toKitChatTurn(s, now));
+}
+
+/* ── Inbox: one list of in-flight sessions (the /you landing) ───────────────── */
+
+/** RelayRunStatus → the inbox display status (running · waiting · stalled ·
+ *  blocked · done · failed). Collapses `paused`→waiting and `crashed`→failed so
+ *  the badge has a small, stable vocabulary. */
+export function inboxStatus(status: RelayRunStatus): string {
+	switch (status) {
+		case 'running':
+			return 'running';
+		case 'stalled':
+			return 'stalled';
+		case 'blocked':
+			return 'blocked';
+		case 'failed':
+		case 'crashed':
+			return 'failed';
+		case 'paused':
+			return 'waiting';
+		default:
+			return status; // 'done' (and any future terminal) pass through
+	}
+}
+
+/** Gate kinds that DON'T need a human answer — they never count toward "needs you". */
+const NON_ASK_KINDS = new Set(['chat', 'nudge']);
+
+/**
+ * Roll one RelayRun + its pending-ask count into an inbox row: the display
+ * `status`, why it surfaces first (`attention`), and a sort `rank`
+ * (0 = needs-you · 1 = attention: stalled/blocked/failed · 2 = running ·
+ * 3 = other · 4 = done). Pure — `now` feeds the elapsed + last-activity ages.
+ */
+export function inboxRow(run: RelayRun, needs: number, now: Date = new Date()): KitInbox {
+	const status = inboxStatus(run.status);
+	const attention: KitInbox['attention'] =
+		needs > 0
+			? 'gate'
+			: status === 'stalled'
+				? 'stalled'
+				: status === 'blocked'
+					? 'blocked'
+					: status === 'failed'
+						? 'failed'
+						: null;
+	const rank = needs > 0 ? 0 : attention ? 1 : status === 'running' ? 2 : status === 'done' ? 4 : 3;
+	const kitRun: KitRun = {
+		...toKitRun(run, needs > 0 ? new Set([run.run_id]) : new Set<string>(), now),
+		last: age(run.last_event_at, now),
+		stale: run.status === 'stalled'
+	};
+	return {
+		run: kitRun,
+		status,
+		needs,
+		attention,
+		rank,
+		done: run.progress_done,
+		total: run.progress_total
+	};
+}
+
+/**
+ * RelayRun[] + the pending gates → sorted inbox rows. `needs` per run counts the
+ * answerable asks (approvals + decisions + stalls — never chat/nudge). Sorted by
+ * rank so what waits on you sits first. Pure.
+ */
+export function toKitInbox(runs: RelayRun[], gates: RelayGate[], now: Date = new Date()): KitInbox[] {
+	const needsByRun = new Map<string, number>();
+	for (const g of gates) {
+		if (g.run_id && !NON_ASK_KINDS.has(g.kind)) {
+			needsByRun.set(g.run_id, (needsByRun.get(g.run_id) ?? 0) + 1);
+		}
+	}
+	return runs
+		.map((r) => inboxRow(r, needsByRun.get(r.run_id) ?? 0, now))
+		.sort((a, b) => a.rank - b.rank);
+}
+
+/** Filter inbox rows by the SubTabs selection: `needs` (waiting on you) ·
+ *  `running` · `finished` (terminal) · `all`. */
+export function filterInbox(rows: KitInbox[], filter: string): KitInbox[] {
+	switch (filter) {
+		case 'needs':
+			return rows.filter((r) => r.needs > 0 || r.attention !== null);
+		case 'running':
+			return rows.filter((r) => r.status === 'running');
+		case 'finished':
+			return rows.filter((r) => r.status === 'done' || r.status === 'failed');
+		default:
+			return rows; // 'all'
+	}
 }

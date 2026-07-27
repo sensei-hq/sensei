@@ -265,6 +265,9 @@ export interface KitInbox {
 	attention: 'gate' | 'stalled' | 'blocked' | 'failed' | null;
 	/** Sort rank — 0 (needs you) … 4 (done). */
 	rank: number;
+	/** Tasks done / total from the run's progress (the plan pips light in F3). */
+	done: number;
+	total: number;
 }
 
 /** A command awaiting approve/deny (dojo2-data `gates[]`). */
