@@ -12,11 +12,13 @@
 		inbox = [],
 		error = null,
 		mobile = false,
+		selectedId = null,
 		onOpen
 	}: {
 		inbox?: KitInbox[];
 		error?: string | null;
 		mobile?: boolean;
+		selectedId?: string | null;
 		onOpen: (run: KitRun) => void;
 	} = $props();
 
@@ -53,7 +55,7 @@
 	{:else}
 		<div class="bg-paper-soft border-paper-edge overflow-hidden rounded-lg border">
 			{#each shown as row (row.run.id)}
-				<InboxRow {row} {onOpen} />
+				<InboxRow {row} selected={row.run.id === selectedId} {onOpen} />
 			{/each}
 		</div>
 	{/if}
