@@ -175,3 +175,28 @@ export function taskState(state: string | null | undefined): KitTaskState {
 export function nodeTone(state: string | null | undefined): NodeTone {
 	return K2_NODE[taskState(state)];
 }
+
+// ── Inbox run status (the /you inbox row badge) ──────────────────────────────
+
+export interface StatusTone {
+	label: string;
+	/** Foreground text token class. */
+	text: string;
+	/** Solid-fill token class (the status dot). */
+	fill: string;
+}
+
+/** Run status → badge tone for the inbox row (see relay-map `inboxStatus`). */
+export const K2_STATUS: Record<string, StatusTone> = {
+	running: { label: 'running', text: 'text-success', fill: 'bg-success' },
+	waiting: { label: 'waiting', text: 'text-ink-soft', fill: 'bg-ink-soft' },
+	stalled: { label: 'stalled', text: 'text-warning', fill: 'bg-warning' },
+	blocked: { label: 'blocked', text: 'text-warning', fill: 'bg-warning' },
+	failed: { label: 'failed', text: 'text-danger', fill: 'bg-danger' },
+	done: { label: 'done', text: 'text-ink-mute', fill: 'bg-ink-mute' }
+};
+
+/** Look up a run-status tone, defaulting to a neutral waiting-like tone. */
+export function statusTone(status: string | null | undefined): StatusTone {
+	return (status && K2_STATUS[status]) || { label: status ?? '', text: 'text-ink-mute', fill: 'bg-ink-mute' };
+}

@@ -15,15 +15,15 @@ import type { KitNavGroup, KitNavItem } from './components/kit/types';
 
 /* ── personal zone (NAV_YOU) ────────────────────────────────────────────── */
 
-/** The personal nav — every dōjō, across the four planes. The signed-in
- *  landing (`work`) leads; the rest route to `/you/{id}` placeholders this
- *  chunk. Ported 1:1 from the mockup `NAV_YOU`. */
+/** The personal nav. One **Inbox** holds every in-flight session — approve /
+ *  decide / chat are actions inside a session's detail, not surfaces of their
+ *  own. The Inbox is the signed-in landing (`/you`); the rest route to
+ *  `/you/{id}`. */
 export const NAV_YOU: KitNavGroup[] = [
 	{
 		group: 'Work',
 		items: [
-			{ id: 'work', icon: 'widget-4', label: 'Your work' },
-			{ id: 'runs', icon: 'eye', label: 'Live runs' },
+			{ id: 'inbox', icon: 'inbox', label: 'Inbox' },
 			{ id: 'projects', icon: 'folder', label: 'Projects' }
 		]
 	},
@@ -32,14 +32,6 @@ export const NAV_YOU: KitNavGroup[] = [
 		items: [
 			{ id: 'rules', icon: 'scale', label: 'Constitution' },
 			{ id: 'packs', icon: 'box', label: 'Rule packs' }
-		]
-	},
-	{
-		group: 'Relay',
-		items: [
-			{ id: 'approve', icon: 'check-circle', label: 'Approve' },
-			{ id: 'decide', icon: 'checklist-minimalistic', label: 'Decide' },
-			{ id: 'chat', icon: 'chat-round-line', label: 'Chat' }
 		]
 	},
 	{
@@ -135,12 +127,12 @@ export function navGroupsFor(role: string | null | undefined): KitNavGroup[] {
 
 /* ── mobile tabs ────────────────────────────────────────────────────────── */
 
-/** Personal bottom tabs (mockup `TABS_YOU`). */
+/** Personal bottom tabs — Inbox leads (the landing). */
 export const TABS_YOU: KitNavItem[] = [
-	{ id: 'work', icon: 'widget-4', label: 'Work' },
-	{ id: 'runs', icon: 'eye', label: 'Runs' },
-	{ id: 'decide', icon: 'checklist-minimalistic', label: 'Needs' },
-	{ id: 'chat', icon: 'chat-round-line', label: 'Chat' }
+	{ id: 'inbox', icon: 'inbox', label: 'Inbox' },
+	{ id: 'projects', icon: 'folder', label: 'Projects' },
+	{ id: 'rules', icon: 'scale', label: 'Rules' },
+	{ id: 'dojos', icon: 'users-group-two-rounded', label: 'Dōjōs' }
 ];
 
 /** Org bottom tabs (mockup `TABS_ORG`). */
@@ -159,10 +151,10 @@ export function tabsFor(role: string | null | undefined): KitNavItem[] {
 /* ── section reachability + route wiring ─────────────────────────────────── */
 
 /** Every non-landing personal section id — the `[section]` values `/you/…`
- *  serves a placeholder for (the landing `work` is the index, not a section). */
+ *  serves (the landing `inbox` is the index, not a section). */
 export const YOU_SECTIONS: readonly string[] = NAV_YOU.flatMap((g) =>
 	g.items.map((it) => it.id)
-).filter((id) => id !== 'work');
+).filter((id) => id !== 'inbox');
 
 /** Every non-home org section id — the `[section]` values `/org/{slug}/…`
  *  serves a placeholder for (the org home is the index, not a section). Also
@@ -175,9 +167,9 @@ export const ORG_SECTIONS: readonly string[] = NAV_ORG_BASE.flatMap((g) =>
 const YOU_SECTION_SET = new Set(YOU_SECTIONS);
 const ORG_SECTION_SET = new Set(ORG_SECTIONS);
 
-/** The personal landing route (`work`) or a section route `/you/{section}`. */
+/** The personal landing route (`inbox`) or a section route `/you/{section}`. */
 export function youHref(section?: string): string {
-	return !section || section === 'work' ? '/you' : `/you/${section}`;
+	return !section || section === 'inbox' ? '/you' : `/you/${section}`;
 }
 
 /** The org home route (`home`) or a section route `/org/{slug}/{section}`. */
@@ -185,11 +177,11 @@ export function orgHref(slug: string, section?: string): string {
 	return !section || section === 'home' ? `/org/${slug}` : `/org/${slug}/${section}`;
 }
 
-/** The active personal section for a URL pathname — `work` for the landing or
- *  any unknown tail (so nav highlighting degrades to the landing). */
+/** The active personal section for a URL pathname — `inbox` for the landing or
+ *  any unknown tail (so nav highlighting degrades to the Inbox). */
 export function sectionFromYouPath(pathname: string): string {
 	const seg = pathname.replace(/^\/you\/?/, '').split('/')[0];
-	return seg && YOU_SECTION_SET.has(seg) ? seg : 'work';
+	return seg && YOU_SECTION_SET.has(seg) ? seg : 'inbox';
 }
 
 /** The active org section for a URL pathname — `home` for the org index or any
