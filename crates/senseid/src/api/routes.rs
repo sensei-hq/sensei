@@ -96,7 +96,7 @@ pub fn create_router(state: AppState) -> Router {
         // Effective behavioural stance for a folder (autonomy · sharing · review)
         // — HOW a run behaves, resolved on the sensei.scopes ladder for the git
         // user. Complements /api/knowledge/rules (WHAT a run may do).
-        .route("/api/stance", get(stance::get_stance))
+        .route("/api/stance", get(stance::get_stance).post(stance::set_stance))
         // Project detail endpoints (multi-window)
         .route("/api/projects/{id}/ftr",             get(project_detail::get_project_ftr))
         .route("/api/projects/{id}/icon",            get(project_detail::get_project_icon))

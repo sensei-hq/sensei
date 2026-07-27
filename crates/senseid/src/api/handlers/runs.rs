@@ -99,6 +99,29 @@ async fn resolve_project_and_author(
     Ok((project_id, author_name, author_email))
 }
 
+/// Build the run-creation response `{ run, track_url }` (201). `track_url` is the
+/// auth-gated Dōjō run-detail link (`<registry>/you/runs/<id>`) at the dōjō the run
+/// federates to — its bound membership, else the primary enabled one (mirrors
+/// [`crate::tasks::handlers::resolve_run_memberships`] so the link and the
+/// federation always agree). It's the clean "watch your work here" handoff
+/// surfaced at start_run / register_plan. `None` when no dōjō is connected (nothing
+/// to watch remotely yet); a resolve error also yields `None` — the URL is a
+/// courtesy, never a reason to fail run creation.
+async fn run_created_response(
+    state: &AppState,
+    run: crate::runs::Run,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let track_url = crate::tasks::handlers::resolve_run_memberships(&state.pg, &run)
+        .await
+        .unwrap_or_default()
+        .first()
+        .map(|m| crate::dojo::memberships::dojo_run_url(&m.registry_url, &run.id));
+    (
+        StatusCode::CREATED,
+        Json(serde_json::json!({ "run": run, "track_url": track_url })),
+    )
+}
+
 /// POST /api/runs — create a daemon-owned run (P3.8 run-control; the MCP
 /// `start_run` tool and the desktop app kick runs off here). Body:
 /// `{ "goal": string (required, non-empty), "project"?: name-or-uuid,
@@ -146,7 +169,7 @@ pub(crate) async fn create_run(
         }
     };
     match state.pg.get_run(&id).await {
-        Ok(Some(run)) => Ok((StatusCode::CREATED, Json(serde_json::json!({ "run": run })))),
+        Ok(Some(run)) => Ok(run_created_response(&state, run).await),
         // Created then vanished between INSERT and read-back — shouldn't happen.
         Ok(None) => Err(StatusCode::INTERNAL_SERVER_ERROR),
         Err(e) => {
@@ -276,7 +299,7 @@ pub(crate) async fn register_plan(
         }
     };
     match state.pg.get_run(&id).await {
-        Ok(Some(run)) => Ok((StatusCode::CREATED, Json(serde_json::json!({ "run": run })))),
+        Ok(Some(run)) => Ok(run_created_response(&state, run).await),
         _ => Err(StatusCode::INTERNAL_SERVER_ERROR),
     }
 }
@@ -396,6 +419,12 @@ pub(crate) async fn report_run_outcome(
         .pg
         .append_run_event(&run_id, kind, None, None, &serde_json::json!({ "summary": summary, "via": "report_run_outcome" }))
         .await;
+
+    // A terminal run drops out of `list_active_runs`, so the scheduler stops
+    // federating it. Enqueue ONE final PublishRun so the terminal status
+    // (done/failed) reaches Dōjō — otherwise the last-federated "running" stays
+    // stale on the phone/console.
+    crate::tasks::advance_run_scheduler::enqueue_publish_run(&state.task_queue, &run_id).await;
 
     match state.pg.get_run(&run_id).await {
         Ok(Some(run)) => Ok(Json(serde_json::json!({ "run": run }))),
@@ -532,6 +561,9 @@ mod tests {
         assert_eq!(body["run"]["status"], serde_json::json!("running"));
         // No project given → project_id is null (drive will Flag "no cwd").
         assert!(body["run"]["project_id"].is_null());
+        // The response carries the track_url handoff field (a string when a dōjō is
+        // connected, else null — robust to whatever memberships the DB holds).
+        assert!(body.get("track_url").is_some(), "response carries the track_url field");
 
         let id = uuid::Uuid::parse_str(body["run"]["id"].as_str().unwrap()).unwrap();
         del(&state, &id).await;
@@ -592,6 +624,8 @@ mod tests {
         let (status, Json(body)) = register_plan(State(state.clone()), Json(plan)).await.unwrap();
         assert_eq!(status, StatusCode::CREATED);
         assert_eq!(body["run"]["status"], serde_json::json!("running"));
+        // register_plan surfaces the same track_url handoff field as start_run.
+        assert!(body.get("track_url").is_some(), "register_plan response carries the track_url field");
         let id = uuid::Uuid::parse_str(body["run"]["id"].as_str().unwrap()).unwrap();
         // The authored graph is persisted (publish_run will project it), with the
         // default per-task state filled in on normalize.
@@ -656,6 +690,12 @@ mod tests {
             Json(serde_json::json!({ "outcome": "done", "summary": "all green" }))).await.unwrap();
         assert_eq!(body["run"]["status"], serde_json::json!("done"));
         assert!(body["run"]["completed_at"].is_string(), "completed_at stamped");
+        // Terminal runs leave list_active_runs, so completion must enqueue a final
+        // federation push — else dojo keeps the stale "running" status.
+        assert!(
+            state.task_queue.has_pending_kind_path(crate::tasks::TaskKind::PublishRun, &id.to_string()).await,
+            "report_run_outcome enqueues a final PublishRun for the terminal status"
+        );
         del(&state, &id).await;
     }
 

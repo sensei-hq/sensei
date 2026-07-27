@@ -16,7 +16,7 @@ use std::collections::BTreeMap;
 
 use dojo_protocol::AttributionMode;
 
-use crate::api::util::require_member_of;
+use crate::api::util::parse_enum_field;
 use crate::db::pg_store::{CollectivePrefsRow, PgStore};
 
 /// Allowed `destination` values — where insights go (spec Signals: 4 states).
@@ -81,24 +81,6 @@ impl Default for CollectivePreferences {
             categories: default_categories(),
             attribution_default: DEFAULT_ATTRIBUTION.to_string(),
             updated_at: None,
-        }
-    }
-}
-
-/// Read one optional string enum field from the PUT body: absent/null takes
-/// `default`; a present value must be a string and a member of `allowed`.
-fn parse_enum_field(
-    body: &serde_json::Value,
-    field: &str,
-    allowed: &[&str],
-    default: &str,
-) -> Result<String, String> {
-    match body.get(field) {
-        None | Some(serde_json::Value::Null) => Ok(default.to_string()),
-        Some(v) => {
-            let s = v.as_str().ok_or_else(|| format!("{field} must be a string"))?;
-            require_member_of(s, allowed, field)?;
-            Ok(s.to_string())
         }
     }
 }

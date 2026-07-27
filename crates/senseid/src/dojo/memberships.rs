@@ -93,6 +93,14 @@ pub fn derive_dojo_url(registry_url: &str, tenant_key: &str) -> String {
     )
 }
 
+/// The auth-gated Dōjō run-detail URL for a run — `<registry_url>/you/runs/<id>`.
+/// The `/you/*` web routes are guarded by the Dōjō's sign-in (kavach), so the link
+/// is a clean handoff: open it, sign in, watch the run. Pure — same origin the run
+/// federates to (mirrors [`derive_dojo_url`]).
+pub fn dojo_run_url(registry_url: &str, run_id: &uuid::Uuid) -> String {
+    format!("{}/you/runs/{}", registry_url.trim_end_matches('/'), run_id)
+}
+
 /// A validated new connection — everything but the Keychain credential, which
 /// [`register`] mints. All enum-typed fields are already checked.
 #[derive(Debug)]
@@ -373,6 +381,14 @@ mod tests {
     fn derive_dojo_url_joins_registry_and_tenant_without_double_slash() {
         assert_eq!(derive_dojo_url("http://localhost:7755", "github/sensei-hq"), "http://localhost:7755/github/sensei-hq");
         assert_eq!(derive_dojo_url("http://localhost:7755/", "/github/sensei-hq"), "http://localhost:7755/github/sensei-hq");
+    }
+
+    #[test]
+    fn dojo_run_url_builds_the_auth_gated_run_detail_link() {
+        let id = uuid::Uuid::nil();
+        assert_eq!(dojo_run_url("http://localhost:5173", &id), format!("http://localhost:5173/you/runs/{id}"));
+        // trailing slash trimmed (no double slash before /you).
+        assert_eq!(dojo_run_url("https://dojo.sensei-hq.com/", &id), format!("https://dojo.sensei-hq.com/you/runs/{id}"));
     }
 
     #[test]

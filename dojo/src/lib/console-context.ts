@@ -39,6 +39,10 @@ export interface ConsoleContext {
  *  cookie/param. Pure and SSR-safe. */
 export function deriveConsoleContext(input: ConsoleContextInput): ConsoleContext {
 	const hasMembership = input.memberships.length > 0;
-	const tenantKey = resolveTenantKey(input.cookieTenant, input.paramTenant, hasMembership);
+	// Default a member with no explicit cookie/param to their FIRST REAL membership
+	// (already fetched via listUserOrgs), not the dojo-data fixture — otherwise a
+	// real user (e.g. personal/jerry) gets scoped to a fixture tenant that 404s.
+	const memberDefault = input.memberships[0]?.url ?? null;
+	const tenantKey = resolveTenantKey(input.cookieTenant, input.paramTenant, hasMembership, memberDefault);
 	return { hasMembership, tenantKey, memberships: input.memberships, user: input.user };
 }

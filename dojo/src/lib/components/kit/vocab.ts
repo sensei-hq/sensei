@@ -1,4 +1,4 @@
-// dojo2 kit — shared vocabulary maps (ported from dojo2-kit.jsx K2_CLASS /
+// dojo kit — shared vocabulary maps (ported from dojo2-kit.jsx K2_CLASS /
 // K2_PHASE / K2_ROLE / K2_KIND). This is the ONE place tones are decided.
 //
 // Ported faithfully but token-native: the mockup stored raw `var(--*)` strings;
@@ -123,4 +123,80 @@ export function roleTone(role: string | null | undefined): RoleTone | undefined 
 /** Look up a dōjō-kind tone, defaulting to `employer`. */
 export function kindTone(kind: string | null | undefined): KindTone {
 	return (kind && K2_KIND[kind]) || K2_KIND.employer;
+}
+
+// ── Plan task states (ported from dojo2-kit.jsx K2_NODE) ──────────────────────
+
+import type { KitTaskState } from './types';
+
+export interface NodeTone {
+	/** Solar icon name. */
+	icon: string;
+	/** Human label. */
+	label: string;
+	/** Foreground text token class. */
+	text: string;
+	/** Solid-fill token class (pips · dots). */
+	fill: string;
+	/** Soft-tint background token class (node background). */
+	soft: string;
+	/** Border token class. */
+	edge: string;
+	/** Render the node border dashed (pending). */
+	dashed?: boolean;
+}
+
+/** The seven task-node tones — one place decides every plan-state color. */
+export const K2_NODE: Record<KitTaskState, NodeTone> = {
+	done: { icon: 'check-circle', label: 'done', text: 'text-ink-mute', fill: 'bg-ink-mute', soft: 'bg-paper-mute', edge: 'border-paper-edge' },
+	active: { icon: 'play-circle', label: 'active', text: 'text-success', fill: 'bg-success', soft: 'bg-success-soft', edge: 'border-success-soft' },
+	needs_review: { icon: 'shield-warning', label: 'needs review', text: 'text-accent', fill: 'bg-accent', soft: 'bg-accent-soft', edge: 'border-accent-soft' },
+	blocked: { icon: 'lock-keyhole-minimalistic', label: 'blocked', text: 'text-warning', fill: 'bg-warning', soft: 'bg-warning-soft', edge: 'border-warning-soft' },
+	failed: { icon: 'close-circle', label: 'failed', text: 'text-danger', fill: 'bg-danger', soft: 'bg-danger-soft', edge: 'border-danger-edge' },
+	skipped: { icon: 'forward', label: 'skipped', text: 'text-ink-faint', fill: 'bg-ink-faint', soft: 'bg-paper-mute', edge: 'border-paper-edge' },
+	pending: { icon: 'clock-circle', label: 'pending', text: 'text-ink-faint', fill: 'bg-ink-faint', soft: 'bg-transparent', edge: 'border-paper-edge', dashed: true }
+};
+
+/** Legacy authored states → the canonical seven (older plans used these). */
+export const STATE_ALIAS: Record<string, KitTaskState> = {
+	queued: 'pending',
+	running: 'active',
+	gate: 'needs_review'
+};
+
+/** Normalize any state string (incl. legacy aliases) to a `KitTaskState`,
+ * defaulting to `pending`. */
+export function taskState(state: string | null | undefined): KitTaskState {
+	if (!state) return 'pending';
+	return STATE_ALIAS[state] ?? (state in K2_NODE ? (state as KitTaskState) : 'pending');
+}
+
+/** Look up a task-node tone, defaulting to `pending`. */
+export function nodeTone(state: string | null | undefined): NodeTone {
+	return K2_NODE[taskState(state)];
+}
+
+// ── Inbox run status (the /you inbox row badge) ──────────────────────────────
+
+export interface StatusTone {
+	label: string;
+	/** Foreground text token class. */
+	text: string;
+	/** Solid-fill token class (the status dot). */
+	fill: string;
+}
+
+/** Run status → badge tone for the inbox row (see relay-map `inboxStatus`). */
+export const K2_STATUS: Record<string, StatusTone> = {
+	running: { label: 'running', text: 'text-success', fill: 'bg-success' },
+	waiting: { label: 'waiting', text: 'text-ink-soft', fill: 'bg-ink-soft' },
+	stalled: { label: 'stalled', text: 'text-warning', fill: 'bg-warning' },
+	blocked: { label: 'blocked', text: 'text-warning', fill: 'bg-warning' },
+	failed: { label: 'failed', text: 'text-danger', fill: 'bg-danger' },
+	done: { label: 'done', text: 'text-ink-mute', fill: 'bg-ink-mute' }
+};
+
+/** Look up a run-status tone, defaulting to a neutral waiting-like tone. */
+export function statusTone(status: string | null | undefined): StatusTone {
+	return (status && K2_STATUS[status]) || { label: status ?? '', text: 'text-ink-mute', fill: 'bg-ink-mute' };
 }

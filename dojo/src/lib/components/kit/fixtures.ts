@@ -1,4 +1,4 @@
-// Test fixtures for the dojo2 kit specs — lifted from the mockup mock data
+// Test fixtures for the dojo kit specs — lifted from the mockup mock data
 // (docs/mockups/Sensei/lib/data/dojo2-data.js window.DOJO2) so the specs render
 // the components against the exact shapes the screens will bind to.
 
@@ -702,8 +702,8 @@ interface OrgProjectSeed {
 }
 
 // Projects under a dōjō's jurisdiction, keyed by slug (dojo2-data `orgProjects`).
-// A representative single-org fixture (`acme`) is the default any unknown slug
-// falls back to, matching the mockup's `orgProjects[slug] || orgProjects.acme`.
+// Only `acme` is authored; an unknown slug returns empty (no fake fallback) so a
+// real org route renders honestly until its own `/v1` data is wired.
 const orgProjectSeeds: Record<string, OrgProjectSeed[]> = {
 	acme: [
 		{
@@ -755,9 +755,9 @@ const orgProjectSeeds: Record<string, OrgProjectSeed[]> = {
 
 /** The projects in a dōjō's jurisdiction as `KitProject` rows (mockup mapping:
  *  `repo = slug/name`, `note = team · N maintainers`, `lastRun = N/wk`). An
- *  unknown slug falls back to the representative `acme` fixture. */
+ *  unknown slug returns an empty list. */
 export function orgProjectsFor(slug: string): KitProject[] {
-	const seeds = orgProjectSeeds[slug] ?? orgProjectSeeds.acme;
+	const seeds = orgProjectSeeds[slug] ?? [];
 	return seeds.map((p) => ({
 		id: p.id,
 		name: p.name,
@@ -775,8 +775,8 @@ export function orgProjectsFor(slug: string): KitProject[] {
 // The dōjō's OWN authored constitution, by section (dojo2-data
 // `orgConstitution`). A dōjō authors rules at the scopes it owns: company-wide,
 // per team, per stack (stacks also adopt rule packs). This is NOT the resolution
-// ladder — that only appears at project-preview time. Keyed by slug with an
-// `acme` default any unknown slug falls back to.
+// ladder — that only appears at project-preview time. Keyed by slug; only `acme`
+// is authored, and an unknown slug returns empty (no fake fallback).
 const orgConstitutions: Record<string, KitConstitutionSection[]> = {
 	acme: [
 		{
@@ -845,17 +845,17 @@ const orgConstitutions: Record<string, KitConstitutionSection[]> = {
 };
 
 /** The dōjō's authored constitution sections for a slug (dojo2-data
- *  `orgConstitution[slug]`), falling back to the representative `acme` fixture. */
+ *  `orgConstitution[slug]`), returns empty for an unknown slug. */
 export function orgConstitutionFor(slug: string): KitConstitutionSection[] {
-	return orgConstitutions[slug] ?? orgConstitutions.acme;
+	return orgConstitutions[slug] ?? [];
 }
 
 // ── Maintainer + lead consoles (dojo2-data `consoles`) ──────────────────────
 //
 // The role-console fixtures the maintainer (Govern) and lead (Clients) screens
 // bind to. Ported 1:1 from the mockup `consoles` block. As with the org
-// Overview data above, each console is keyed by slug with a representative
-// `acme` default any unknown slug falls back to (matching the mockup's single
+// Overview data above, each console is keyed by slug; only `acme` is authored,
+// and an unknown slug returns empty (no fake fallback, matching the single
 // authored fixture), so a real org route renders without a per-org seed until
 // the `/v1` wiring lands.
 
@@ -949,9 +949,9 @@ const candidateDetail: KitCandidateDetail = {
 };
 
 /** The scope-grouped triage candidates for a slug (dojo2-data
- *  `consoles.triage`), falling back to the representative `acme` fixture. */
+ *  `consoles.triage`), returns empty for an unknown slug. */
 export function triageGroupsFor(slug: string): KitTriageGroup[] {
-	return triageGroups[slug] ?? triageGroups.acme;
+	return triageGroups[slug] ?? [];
 }
 
 /** The selected-candidate detail (dojo2-data `consoles.candidateDetail`). One
@@ -986,9 +986,9 @@ const approvals: Record<string, KitApproval[]> = {
 };
 
 /** The second-approval queue for a slug (dojo2-data `consoles.approvals`),
- *  falling back to the representative `acme` fixture. */
+ *  returns empty for an unknown slug. */
 export function approvalsFor(slug: string): KitApproval[] {
-	return approvals[slug] ?? approvals.acme;
+	return approvals[slug] ?? [];
 }
 
 // 3 · Knowledge — published library + prune policy + extension catalog.
@@ -1035,9 +1035,9 @@ const knowledge: Record<string, KitKnowledge> = {
 };
 
 /** The published-knowledge library for a slug (dojo2-data `consoles.knowledge`),
- *  falling back to the representative `acme` fixture. */
+ *  returns empty for an unknown slug. */
 export function knowledgeFor(slug: string): KitKnowledge {
-	return knowledge[slug] ?? knowledge.acme;
+	return knowledge[slug] ?? { prunePolicy: '', active: [], pending: [], catalog: [] };
 }
 
 // 4 · Engagements — the client register + the confidentiality model.
@@ -1076,9 +1076,9 @@ const confidentiality: KitConfidentiality = {
 };
 
 /** The client engagements for a slug (dojo2-data `consoles.engagements`),
- *  falling back to the representative `acme` fixture. */
+ *  returns empty for an unknown slug. */
 export function engagementsFor(slug: string): KitEngagement[] {
-	return engagements[slug] ?? engagements.acme;
+	return engagements[slug] ?? [];
 }
 
 /** The confidentiality model (dojo2-data `consoles.confidentiality`) — the
@@ -1112,9 +1112,9 @@ const incidents: Record<string, KitIncident[]> = {
 };
 
 /** The confidentiality incidents for a slug (dojo2-data `consoles.incidents`),
- *  falling back to the representative `acme` fixture. */
+ *  returns empty for an unknown slug. */
 export function incidentsFor(slug: string): KitIncident[] {
-	return incidents[slug] ?? incidents.acme;
+	return incidents[slug] ?? [];
 }
 
 // 6 · Client audit — the immutable confidentiality ledger.
@@ -1156,9 +1156,9 @@ const clientAudit: Record<string, KitClientAuditRow[]> = {
 };
 
 /** The immutable client-audit ledger for a slug (dojo2-data
- *  `consoles.clientAudit`), falling back to the representative `acme` fixture. */
+ *  `consoles.clientAudit`), returns empty for an unknown slug. */
 export function clientAuditFor(slug: string): KitClientAuditRow[] {
-	return clientAudit[slug] ?? clientAudit.acme;
+	return clientAudit[slug] ?? [];
 }
 
 // ── Admin consoles (dojo2-data `members` · `roles` · `scopeOwners` ·
@@ -1167,8 +1167,8 @@ export function clientAuditFor(slug: string): KitClientAuditRow[] {
 // The admin-console fixtures the Members & Roles / Policies / Audit surface, the
 // Scopes screen, the Identity & SSO screen, the Health / Monitor screen and the
 // Plan & billing screen bind to. Ported 1:1 from the mockup. The org-scoped
-// consoles (scope owners) are keyed by slug with a representative `acme` default
-// any unknown slug falls back to (matching the mockup's single authored
+// consoles (scope owners) are keyed by slug; only `acme` is authored and an
+// unknown slug returns empty (no fake fallback, matching the single authored
 // fixture); the org-wide fixtures (members, roles, billing, identity, health)
 // are single authored fixtures the accessor returns for any org this chunk. A
 // real per-org lookup lands with the `/v1` wiring.
@@ -1260,10 +1260,10 @@ const scopeOwners: Record<string, KitScopeOwner[]> = {
 	]
 };
 
-/** The scope-ownership rows for a slug (dojo2-data `scopeOwners`), falling back
- *  to the representative `acme` fixture. */
+/** The scope-ownership rows for a slug (dojo2-data `scopeOwners`); returns empty
+ *  for an unknown slug. */
 export function scopeOwnersFor(slug: string): KitScopeOwner[] {
-	return scopeOwners[slug] ?? scopeOwners.acme;
+	return scopeOwners[slug] ?? [];
 }
 
 // Plan & billing — the business model (dojo2-data `billing`).

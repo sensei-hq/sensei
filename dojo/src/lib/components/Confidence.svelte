@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { confidencePct, confidenceToneClass, confidenceWidth } from '$lib/triage-view';
+	import { confidencePct, confidenceToneClass, confidenceWidth } from '$lib/triage/view';
 
 	// Slim confidence bar + value (mockup DojoConsole `Confidence`). The bar fill
 	// and the numeric value are tinted by the value's token tone; geometry

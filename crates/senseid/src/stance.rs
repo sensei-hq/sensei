@@ -17,6 +17,48 @@
 //! sorts enum variants alphabetically, so this code — not the DDL declaration
 //! order — owns the autonomy rank.
 
+/// Allowed `autonomy` values, ascending autonomy — the `sensei.stance_autonomy`
+/// enum variants (single source of truth for the write-path validator; asserted
+/// against the DDL in tests).
+pub const AUTONOMY_VALUES: [&str; 4] =
+    ["ask_always", "ask_on_guarded", "ask_on_risky", "run_freely"];
+/// Allowed `sharing` values, ascending openness — the `sensei.stance_sharing` enum.
+pub const SHARING_VALUES: [&str; 4] =
+    ["private", "patterns", "patterns_prompts", "derived"];
+/// Allowed `review` values, ascending strictness — the `sensei.stance_review` enum.
+pub const REVIEW_VALUES: [&str; 4] =
+    ["me_alone", "one_maintainer", "two_maintainers", "quorum"];
+
+/// A validated stance write: the three dial values a caller wants to set. Parsed
+/// from a request body via [`StanceInput::from_request`] — an absent axis takes
+/// its DDL default (full-replace semantics, mirroring the collective-preferences
+/// PUT); every present axis is validated so no invalid enum literal is ever cast.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StanceInput {
+    pub autonomy: String,
+    pub sharing: String,
+    pub review: String,
+}
+
+impl StanceInput {
+    /// Parse + validate the three dial fields from a JSON body. Absent/null axis
+    /// → its default (from [`ResolvedStance::fallback`]); a present value must be
+    /// a member of its allowed set (`Err` → the handler answers 400). The scope /
+    /// user / folder fields are the handler's concern, not this.
+    pub fn from_request(body: &serde_json::Value) -> Result<Self, String> {
+        if !body.is_object() {
+            return Err("body must be a JSON object".to_string());
+        }
+        let d = ResolvedStance::fallback();
+        use crate::api::util::parse_enum_field;
+        Ok(Self {
+            autonomy: parse_enum_field(body, "autonomy", &AUTONOMY_VALUES, &d.autonomy)?,
+            sharing: parse_enum_field(body, "sharing", &SHARING_VALUES, &d.sharing)?,
+            review: parse_enum_field(body, "review", &REVIEW_VALUES, &d.review)?,
+        })
+    }
+}
+
 /// One stance row in the running for a resolution: its scope level (`None` for
 /// the user's namespace-less default) and the three dial values as their enum
 /// text. Ordered purely by `level` in [`pick_stance`].
@@ -181,5 +223,53 @@ mod tests {
         // unknown / empty → safest (always ask).
         assert!(!autonomy_permits("", Ordinary));
         assert!(!autonomy_permits("bogus", Ordinary));
+    }
+
+    #[test]
+    fn allowed_value_sets_cover_the_fallback_and_the_permit_table() {
+        // The DDL column defaults must be members of their allowed sets.
+        let d = ResolvedStance::fallback();
+        assert!(AUTONOMY_VALUES.contains(&d.autonomy.as_str()));
+        assert!(SHARING_VALUES.contains(&d.sharing.as_str()));
+        assert!(REVIEW_VALUES.contains(&d.review.as_str()));
+        // Every autonomy value the write-path accepts is one the permit table
+        // decides (no value can be stored that the gate then can't read).
+        for a in AUTONOMY_VALUES {
+            let _ = autonomy_permits(a, StepRisk::Guarded);
+        }
+    }
+
+    #[test]
+    fn stance_input_accepts_a_full_body() {
+        let body = serde_json::json!({
+            "autonomy": "run_freely", "sharing": "private", "review": "quorum"
+        });
+        let i = StanceInput::from_request(&body).unwrap();
+        assert_eq!(i, StanceInput {
+            autonomy: "run_freely".into(), sharing: "private".into(), review: "quorum".into(),
+        });
+    }
+
+    #[test]
+    fn stance_input_defaults_absent_axes_to_the_ddl_fallback() {
+        let i = StanceInput::from_request(&serde_json::json!({ "autonomy": "ask_always" })).unwrap();
+        let d = ResolvedStance::fallback();
+        assert_eq!(i.autonomy, "ask_always");
+        assert_eq!(i.sharing, d.sharing, "absent sharing → DDL default");
+        assert_eq!(i.review, d.review, "absent review → DDL default");
+    }
+
+    #[test]
+    fn stance_input_rejects_bad_values_and_non_object() {
+        for (field, body) in [
+            ("autonomy", serde_json::json!({ "autonomy": "yolo" })),
+            ("sharing", serde_json::json!({ "sharing": "everything" })),
+            ("review", serde_json::json!({ "review": "nobody" })),
+        ] {
+            let e = StanceInput::from_request(&body).unwrap_err();
+            assert!(e.contains(field), "error should name {field}: {e}");
+        }
+        assert!(StanceInput::from_request(&serde_json::json!("nope")).is_err());
+        assert!(StanceInput::from_request(&serde_json::json!({ "autonomy": 7 })).is_err());
     }
 }

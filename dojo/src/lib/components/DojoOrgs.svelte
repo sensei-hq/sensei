@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { kindToneClass, type DojoOrg } from '$lib/dojo-data';
-	import DojoChip from './DojoChip.svelte';
+	import { Chip } from '$lib/components/kit';
 
 	// user + orgs come from the page's server load (the signed-in Supabase user and
 	// their real `dojo.memberships` → tenants) — no longer hardcoded mock data.
@@ -71,9 +71,9 @@
 						<div class="min-w-0">
 							<div class="flex flex-wrap items-center gap-2">
 								<span class="display text-lg">{o.name}</span>
-								<DojoChip toneClass={kindToneClass[o.kind]}>{o.kind}</DojoChip>
+								<Chip toneClass={kindToneClass[o.kind]}>{o.kind}</Chip>
 								{#if o.last}
-									<DojoChip toneClass="text-accent">last opened</DojoChip>
+									<Chip toneClass="text-accent">last opened</Chip>
 								{/if}
 							</div>
 							<div class="mt-2 flex flex-wrap items-center gap-3">
@@ -84,9 +84,9 @@
 										<span class="text-ink-faint">sensei-hq.com/</span>{o.url}
 									{/if}
 								</span>
-								<DojoChip toneClass={o.host === 'self' ? 'text-ink-soft' : 'text-ink-mute'}>
+								<Chip toneClass={o.host === 'self' ? 'text-ink-soft' : 'text-ink-mute'}>
 									{o.host === 'self' ? '基 self-hosted' : '雲 SaaS'}
-								</DojoChip>
+								</Chip>
 							</div>
 						</div>
 						<div

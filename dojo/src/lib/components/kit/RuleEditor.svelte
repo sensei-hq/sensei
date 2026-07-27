@@ -2,7 +2,7 @@
 	import { untrack } from 'svelte';
 	import Icon from './Icon.svelte';
 	import Btn from './Btn.svelte';
-	import { RULE_FAMILIES } from '$lib/dojo2-org-ladder-view';
+	import { RULE_FAMILIES } from '$lib/org-ladder-view';
 	import type { KitRule } from './types';
 
 	// The rule add/edit editor (mockup RuleEditor) — an overlay card composed from

@@ -1,5 +1,5 @@
 {
-  "version": "0.6.0",
+  "version": "0.6.1",
   "items": [
     {
       "name": "codebase-indexing",
@@ -72,15 +72,6 @@
       "recommended_for": ["frontend", "mobile"],
       "stage": ["init", "active"],
       "path": "skills/ui-state-pattern/SKILL.md"
-    },
-    {
-      "name": "analyze",
-      "kind": "skill",
-      "description": "Deep analysis of codebase architecture and dependencies",
-      "scope": "project",
-      "recommended_for": ["all"],
-      "stage": ["init", "active"],
-      "path": "skills/analyze/SKILL.md"
     },
     {
       "name": "tauri-playwright-testing",
