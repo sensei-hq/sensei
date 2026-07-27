@@ -132,7 +132,13 @@ pub fn daemon_request_for(
         }
 
         // ── Workflow state ──────────────────────────────────────────────────
+        // `project` pins the workflow state to a specific project instead of the
+        // cwd-resolved one — the escape hatch when the cwd mis-resolves (issue #109:
+        // MCP default cwd = the `sensei-hq` container → wrong project), which
+        // otherwise makes two concurrent sessions clobber one shared state row.
+        // Mirrors start_run/register_plan's `project` handling.
         "update_phase" => {
+            let project = args["project"].as_str().filter(|s| !s.is_empty()).unwrap_or(repo_id);
             let body = json!({
                 "active_phase":   args["phase"].as_str(),
                 "active_task":    args["task"].as_str(),
@@ -141,9 +147,12 @@ pub fn daemon_request_for(
                 "last_checkpoint": args["checkpoint"].as_str(),
                 "project_path":   cwd,
             });
-            Some(DaemonRequest::put_json(format!("/api/state/{repo_id}"), body))
+            Some(DaemonRequest::put_json(format!("/api/state/{project}"), body))
         }
-        "get_workflow_state" => Some(DaemonRequest::get(format!("/api/state/{repo_id}"))),
+        "get_workflow_state" => {
+            let project = args["project"].as_str().filter(|s| !s.is_empty()).unwrap_or(repo_id);
+            Some(DaemonRequest::get(format!("/api/state/{project}")))
+        }
 
         // ── Pattern engine (direct /api/patterns endpoints) ─────────────────
         "match_pattern" => {
@@ -527,8 +536,11 @@ pub fn handle_list_tools() -> Value {
                 ("issue", "string", "GitHub issue number"),
                 ("plan", "string", "Path to active plan doc"),
                 ("checkpoint", "string", "Checkpoint description"),
+                ("project", "string", "Project name or UUID to pin the state to. Defaults to the current (cwd-resolved) project; pass it when concurrent sessions must not share one project's workflow state."),
             ]),
-            tool("get_workflow_state", "Get current workflow state — active phase, task, issue, checkpoint. Call when you need orientation or feel lost.", &[], &[]),
+            tool("get_workflow_state", "Get current workflow state — active phase, task, issue, checkpoint. Call when you need orientation or feel lost.", &[], &[
+                ("project", "string", "Project name or UUID. Defaults to the current (cwd-resolved) project."),
+            ]),
             // Pattern matching
             tool("match_pattern", "Find applicable patterns for a task. Returns detected patterns from the codebase that match the description. Call during the locate step before writing code. MANDATORY in /sensei:build.", &[
                 ("description", "string", "What you're about to build (e.g. 'add SQL parsing', 'new API endpoint')"),
@@ -1498,6 +1510,19 @@ mod tests {
         assert_eq!(body["active_phase"], "build");
         assert_eq!(body["active_issue"], 42, "issue string parses to an integer");
         assert_eq!(body["project_path"], "/proj/cwd", "cwd rides along as project_path");
+
+        // An explicit `project` pins the state to that project (not the cwd-resolved
+        // one) — the escape hatch against cross-session clobber when the cwd
+        // mis-resolves (#109). Both verbs honour it.
+        let pinned_get =
+            daemon_request_for("get_workflow_state", &json!({ "project": "torii" }), "/cwd", Some("sensei")).unwrap();
+        assert_eq!(pinned_get.path, "/api/state/torii", "explicit project overrides the cwd repo");
+        let pinned_put = daemon_request_for(
+            "update_phase",
+            &json!({ "phase": "build", "project": "torii" }),
+            "/cwd", Some("sensei"),
+        ).unwrap();
+        assert_eq!(pinned_put.path, "/api/state/torii", "update_phase honours explicit project");
     }
 
     #[test]
