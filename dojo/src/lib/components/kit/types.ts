@@ -188,11 +188,56 @@ export interface KitStanceDial {
 // ── Relay plane (dojo2-data `runs` · `gates` · `needsYou` · `decisions` · `chat`) ─
 
 /** A live session in progress (dojo2-data `runs[]`). */
+/** The seven task states of a plan node (see kit/vocab `K2_NODE`). */
+export type KitTaskState =
+	| 'done'
+	| 'active'
+	| 'needs_review'
+	| 'blocked'
+	| 'failed'
+	| 'skipped'
+	| 'pending';
+
+/** One task in a plan phase. */
+export interface KitTask {
+	id: string;
+	title: string;
+	state: KitTaskState;
+	agent?: string;
+	model?: string;
+	spec_ref?: string;
+	summary?: string;
+	/** Ids of the tasks this one waits on (empty = runnable now). */
+	deps?: string[];
+	/** This task is a gate — it pauses the run for a human. */
+	is_gate?: boolean;
+	/** advisory · blocking. */
+	gate_severity?: string;
+}
+
+/** One phase (a group of tasks) in a plan. */
+export interface KitPhase {
+	id: string;
+	title: string;
+	tasks: KitTask[];
+	/** Force parallel/sequential; otherwise derived from `deps`. */
+	mode?: 'parallel' | 'sequential';
+}
+
+/** An authored plan — a goal + ordered phases. */
+export interface KitPlanObject {
+	goal?: string;
+	phases: KitPhase[];
+}
+
+/** A plan as authored (goal + phases) or the legacy array-of-phases shape. */
+export type KitPlan = KitPlanObject | KitPhase[];
+
 export interface KitRun {
 	id: string;
 	project: string;
 	assistant: string;
-	/** running · waiting. */
+	/** running · waiting · stalled · done. */
 	state: string;
 	task: string;
 	/** Compact elapsed time (e.g. "38m"). */
@@ -200,6 +245,26 @@ export interface KitRun {
 	edits: number;
 	/** A command is waiting on a gate. */
 	gate?: boolean;
+	/** The run's plan (goal + phases → tasks) — drives progress, pips, outline. */
+	plan?: KitPlan;
+	/** Heartbeat is stale (no recent activity). */
+	stale?: boolean;
+	/** Relative "last activity" label (e.g. "4m ago"). */
+	last?: string;
+}
+
+/** One inbox row — a run rolled up with what it waits on you for. Derivation
+ * (`inboxRow`/`inboxRows`) lands in F2; the type is declared here. */
+export interface KitInbox {
+	run: KitRun;
+	/** running · waiting · stalled · blocked · done · failed. */
+	status: string;
+	/** Count of pending asks/gates for this run. */
+	needs: number;
+	/** Why it surfaces first, or null. */
+	attention: 'gate' | 'stalled' | 'blocked' | 'failed' | null;
+	/** Sort rank — 0 (needs you) … 4 (done). */
+	rank: number;
 }
 
 /** A command awaiting approve/deny (dojo2-data `gates[]`). */
