@@ -681,7 +681,9 @@ pub fn handle_list_tools() -> Value {
                 "Start a daemon-owned autonomous run against a goal (the relay engine). The daemon \
                  tracks it durably (survives restarts), pauses/auto-resumes on provider limits, and \
                  recovers from stalls — watch it with `run_status`. Note: whether it actually drives an \
-                 agent depends on the daemon's OFF-by-default drive switch; creating the run is always safe.",
+                 agent depends on the daemon's OFF-by-default drive switch; creating the run is always safe. \
+                 The response includes `track_url` (when a Dōjō is connected) — the auth-gated link to \
+                 watch this run in the Dōjō; surface it to the user as the handoff.",
                 &[("goal", "string", "What the run should accomplish — the objective it's anchored to")],
                 &[
                     ("project",  "string", "Project name or UUID the run works in. Defaults to the current project."),
@@ -710,7 +712,9 @@ pub fn handle_list_tools() -> Value {
                  graph (unique task ids, deps resolve, no cycles), stores it, and authors the phone \
                  outline from it so the whole plan is watchable before execution. Pass `plan` as a JSON \
                  string: {\"goal\"?, \"phases\":[{\"title\", \"tasks\":[{\"id\", \"title\", \"agent\"?, \
-                 \"model\"?, \"spec_ref\"?, \"deps\"?:[id], \"summary\"?}]}]}. Returns the run.",
+                 \"model\"?, \"spec_ref\"?, \"deps\"?:[id], \"summary\"?}]}]}. Returns the run plus \
+                 `track_url` (when a Dōjō is connected) — the auth-gated link to watch the plan/run in the \
+                 Dōjō; surface it to the user as the handoff.",
                 &[
                     ("goal", "string", "The run's objective — a short label; the plan graph carries the detail"),
                     ("plan", "string", "The plan graph as a JSON string (phases → tasks with agent/model/spec_ref/deps)"),
