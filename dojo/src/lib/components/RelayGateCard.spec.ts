@@ -55,7 +55,7 @@ describe('RelayGateCard', () => {
 		});
 		expect(getByText('Run the prod migration?')).toBeTruthy();
 		const link = getByText('Round-trip').closest('a');
-		expect(link?.getAttribute('href')).toBe('/console/relay/run-1');
+		expect(link?.getAttribute('href')).toBe('/you/runs/run-1');
 	});
 
 	it('falls back to a friendly prompt and drops the run link for the all-zeros uuid', () => {

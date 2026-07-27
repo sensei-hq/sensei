@@ -22,10 +22,6 @@ export interface SoloIdentity {
 	initials: string;
 }
 
-/** The library route the "your own rules · optional" card links to. It arrives
- *  in the next chunk (Constitution Library); the personal home links to it now. */
-export const LIBRARY_HREF = '/console/library';
-
 /** First+last initial of a display name. For an email, derive from the local
  *  part (before @) so `jerry.thomas@…` → "JT", not "JC" (jerry…com). Mirrors the
  *  server-side `initials` helper. */

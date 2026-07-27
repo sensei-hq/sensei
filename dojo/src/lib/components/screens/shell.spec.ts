@@ -2,11 +2,9 @@ import { render, cleanup, fireEvent } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import AppShellHarness from '$lib/components/kit/AppShell.harness.svelte';
 import OrgSwitcher from '$lib/components/kit/OrgSwitcher.svelte';
-import ScrYourWork from './ScrYourWork.svelte';
 import ScrPlaceholder from './ScrPlaceholder.svelte';
 import { navGroupsFor } from '$lib/nav';
 import { toKitDojos, toKitOrg } from '$lib/chrome';
-import { needsYou, runs, projects } from '$lib/components/kit/fixtures';
 import type { DojoOrg } from '$lib/dojo-data';
 
 // Chunk-1 shell + landing wiring. The pure nav/role/chrome logic is unit-tested
@@ -111,58 +109,6 @@ describe('dojo shell — org switcher lists memberships', () => {
 		// clicking navigates (goto is stubbed to a no-op under vitest) — no throw.
 		await fireEvent.click(all);
 		await fireEvent.click(create);
-	});
-});
-
-describe('ScrYourWork — the landing', () => {
-	afterEach(cleanup);
-
-	it('renders the band, live runs, and active projects off fixtures', () => {
-		const { getByText, getAllByText } = render(ScrYourWork, {
-			props: { needsYou, runs, projects }
-		});
-		expect(getByText('Your work')).toBeTruthy();
-		// needs-you band header (default title).
-		expect(getByText('Needs you')).toBeTruthy();
-		// live-runs + active-projects sections.
-		expect(getByText('Live runs')).toBeTruthy();
-		expect(getByText('Active projects')).toBeTruthy();
-		// a fixture run + project row rendered.
-		expect(getByText('lumen-auth')).toBeTruthy();
-		expect(getAllByText(/ledger-core/).length).toBeGreaterThan(0);
-	});
-
-	it('leads with a "start here" banner naming the most-urgent need', () => {
-		const { getByText } = render(ScrYourWork, { props: { needsYou, runs, projects } });
-		// the most-urgent need is the gate (migration) — its title is in the banner.
-		expect(getByText(/^Start here —/)).toBeTruthy();
-	});
-
-	it('sums the week runs from the projects into the stat badge', () => {
-		const { getByText } = render(ScrYourWork, { props: { needsYou, runs, projects } });
-		// 14 + 9 + 3 = 26 (fixture runsWeek).
-		expect(getByText('26')).toBeTruthy();
-		expect(getByText('runs this week')).toBeTruthy();
-	});
-
-	it('fires onOpenRun when a live-run card is clicked (opens the detail)', async () => {
-		const onOpenRun = vi.fn();
-		const { getByText } = render(ScrYourWork, {
-			props: { needsYou, runs, projects, onOpenRun }
-		});
-		await fireEvent.click(getByText('refactor refresh-token rotation').closest('button')!);
-		expect(onOpenRun).toHaveBeenCalledTimes(1);
-		expect(onOpenRun.mock.calls[0][0].id).toBe('s-2891');
-	});
-
-	it('a membership-less landing (no data) shows the honest empty state', () => {
-		const { getByText, queryByText } = render(ScrYourWork, {
-			props: { needsYou: [], runs: [], projects: [] }
-		});
-		expect(getByText('Nothing in flight yet.')).toBeTruthy();
-		// no fabricated sections.
-		expect(queryByText('Live runs')).toBeNull();
-		expect(queryByText('Active projects')).toBeNull();
 	});
 });
 

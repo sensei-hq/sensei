@@ -3,8 +3,7 @@
 // generic primitives + the DOMAIN components (governance: ladder / rule /
 // conflict / stance; relay: run / gate / needs / decision / chat).
 //
-// Namespaced under lib/components/kit/ so they don't collide with the
-// soon-to-be-superseded ConsoleNav / ConsoleTopBar. Import as
+// Namespaced under lib/components/kit/. Import as
 // `import { AppShell, ProjectRow } from '$lib/components/kit'`.
 
 // Vocab + shared types.
@@ -67,7 +66,6 @@ export { default as StanceDial } from './StanceDial.svelte';
 
 // Relay — live runs · gates · needs-you · decisions · chat.
 export { default as RunCard } from './RunCard.svelte';
-export { default as GateCard } from './GateCard.svelte';
 export { default as NeedsYouBand } from './NeedsYouBand.svelte';
 export { default as NeedsRow } from './NeedsRow.svelte';
 export { default as NeedsActions } from './NeedsActions.svelte';

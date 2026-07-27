@@ -156,7 +156,7 @@ export function buildRelayPushPayload(
 ): RelayPushPayload {
 	const label = signalLabel(signal);
 	const run = runTitle && runTitle.trim() ? runTitle.trim() : 'your run';
-	const url = `/console/relay/${runId}`;
+	const url = `/you/runs/${runId}`;
 	return {
 		// Title matches the service worker's default (P4.3) for a consistent surface.
 		title: 'Dōjō Relay',

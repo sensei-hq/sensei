@@ -1,10 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-	personalGreeting,
-	soloIdentity,
-	LIBRARY_HREF,
-	type PersonalUser
-} from '$lib/personal-home-view';
+import { personalGreeting, soloIdentity, type PersonalUser } from '$lib/personal-home-view';
 
 describe('personal-home-view — soloIdentity', () => {
 	it('prefers the display name, falling back to the email local-part, then "you"', () => {
@@ -30,11 +25,5 @@ describe('personal-home-view — greeting', () => {
 
 	it('never crashes on a missing user', () => {
 		expect(typeof personalGreeting(undefined)).toBe('string');
-	});
-});
-
-describe('personal-home-view — library link', () => {
-	it('points at the console library route (arrives in the next chunk)', () => {
-		expect(LIBRARY_HREF).toBe('/console/library');
 	});
 });

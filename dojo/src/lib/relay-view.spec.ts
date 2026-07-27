@@ -224,7 +224,7 @@ describe('relay-view', () => {
 
 	describe('gateHref', () => {
 		it('deep-links to the gate’s run', () => {
-			expect(gateHref(gate({ run_id: 'run-42' }))).toBe('/console/relay/run-42');
+			expect(gateHref(gate({ run_id: 'run-42' }))).toBe('/you/runs/run-42');
 		});
 
 		it('returns null for a missing run id or the all-zeros uuid (no orphan link)', () => {

@@ -22,7 +22,7 @@
 		accessToken,
 		onReplied,
 		onReply,
-		runHrefBase = '/console/relay/'
+		runHrefBase = '/you/runs/'
 	}: {
 		gate: RelayGate;
 		tenantKey: string;

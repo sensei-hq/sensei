@@ -2,16 +2,12 @@ import { render, cleanup, fireEvent } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import ScrProjects from './ScrProjects.svelte';
 import ScrProjectPreview from './ScrProjectPreview.svelte';
-import ScrRelayWatch from './ScrRelayWatch.svelte';
-import ScrRelayApprove from './ScrRelayApprove.svelte';
-import ScrRelayDecide from './ScrRelayDecide.svelte';
-import ScrRelayChat from './ScrRelayChat.svelte';
-import { projects, runs, gates, decisions, ladder, conflicts, chat, me } from '$lib/components/kit/fixtures';
+import { projects, ladder, conflicts } from '$lib/components/kit/fixtures';
 
-// Chunk-2 personal Work + Relay screens. Each renders off the kit fixtures
+// Chunk-2 personal Work screens. Each renders off the kit fixtures
 // (presentational — real /v1 wiring is a later chunk). We assert rows render,
 // empty states degrade honestly, the preview toggle + ladder/conflicts render,
-// relay actions fire callbacks, and the project drill-in opens the preview.
+// and the project drill-in opens the preview.
 
 describe('ScrProjects — the full project list', () => {
 	afterEach(cleanup);
@@ -88,118 +84,5 @@ describe('ScrProjectPreview — the resolved-constitution drill-in', () => {
 		});
 		await fireEvent.click(getByText('Back to projects'));
 		expect(onBack).toHaveBeenCalled();
-	});
-});
-
-describe('ScrRelayWatch — live runs', () => {
-	afterEach(cleanup);
-
-	it('renders a run card per fixture run', () => {
-		const { getByText } = render(ScrRelayWatch, { props: { runs } });
-		expect(getByText('Live runs')).toBeTruthy();
-		expect(getByText('refactor refresh-token rotation')).toBeTruthy();
-	});
-
-	it('shows an honest empty state with no runs', () => {
-		const { getByText } = render(ScrRelayWatch, { props: { runs: [] } });
-		expect(getByText('No sessions running.')).toBeTruthy();
-	});
-
-	it('fires onOpenRun with the run when a card is clicked (opens the detail)', async () => {
-		const onOpenRun = vi.fn();
-		const { getByText } = render(ScrRelayWatch, { props: { runs, onOpenRun } });
-		await fireEvent.click(getByText('refactor refresh-token rotation').closest('button')!);
-		expect(onOpenRun).toHaveBeenCalledTimes(1);
-		expect(onOpenRun.mock.calls[0][0].id).toBe('s-2891');
-	});
-});
-
-describe('ScrRelayApprove — commands awaiting approval', () => {
-	afterEach(cleanup);
-
-	it('renders a gate card per fixture gate', () => {
-		const { getByText } = render(ScrRelayApprove, { props: { gates } });
-		expect(getByText('Commands waiting on you')).toBeTruthy();
-		expect(getByText(/pnpm db:migrate --env=staging/)).toBeTruthy();
-	});
-
-	it('fires onApprove / onDeny with the gate', async () => {
-		const onApprove = vi.fn();
-		const onDeny = vi.fn();
-		const { getAllByText } = render(ScrRelayApprove, { props: { gates, onApprove, onDeny } });
-		await fireEvent.click(getAllByText('Approve once')[0]);
-		expect(onApprove).toHaveBeenCalledWith(gates[0]);
-		await fireEvent.click(getAllByText('Deny')[0]);
-		expect(onDeny).toHaveBeenCalledWith(gates[0]);
-	});
-
-	it('shows an honest empty state with no gates', () => {
-		const { getByText } = render(ScrRelayApprove, { props: { gates: [] } });
-		expect(getByText('Nothing waiting on you.')).toBeTruthy();
-	});
-});
-
-describe('ScrRelayDecide — rules to sign off', () => {
-	afterEach(cleanup);
-
-	it('renders a decision card per fixture decision', () => {
-		const { getByText } = render(ScrRelayDecide, { props: { decisions } });
-		expect(getByText('Rules to sign off')).toBeTruthy();
-		expect(getByText('adopt ‘verify webhook signature’ as a client guard')).toBeTruthy();
-	});
-
-	it('fires onChoose with the decision and the chosen option', async () => {
-		const onChoose = vi.fn();
-		const { getByText } = render(ScrRelayDecide, { props: { decisions, onChoose } });
-		await fireEvent.click(getByText('adopt to Client rung'));
-		expect(onChoose).toHaveBeenCalledWith(decisions[0], 'adopt to Client rung');
-	});
-
-	it('shows the quiet empty banner when nothing is pending', () => {
-		const { getByText } = render(ScrRelayDecide, { props: { decisions: [] } });
-		expect(getByText("That's everything.")).toBeTruthy();
-	});
-});
-
-describe('ScrRelayChat — sensei chat thread', () => {
-	afterEach(cleanup);
-
-	it('renders the thread and a reply input', () => {
-		const { getByText, getByPlaceholderText } = render(ScrRelayChat, {
-			props: { thread: chat, me, project: 'lumen-auth', session: 's-2891' }
-		});
-		expect(getByText(/Noticed the refresh-token rotation touches the logger/)).toBeTruthy();
-		expect(getByPlaceholderText('reply to sensei…')).toBeTruthy();
-	});
-
-	it('fires onSend with the typed reply and clears the input', async () => {
-		const onSend = vi.fn();
-		const { getByPlaceholderText, getByLabelText } = render(ScrRelayChat, {
-			props: { thread: chat, me, onSend }
-		});
-		const input = getByPlaceholderText('reply to sensei…') as HTMLInputElement;
-		await fireEvent.input(input, { target: { value: 'Approving now.' } });
-		await fireEvent.click(getByLabelText('Send reply'));
-		expect(onSend).toHaveBeenCalledWith('Approving now.');
-		expect(input.value).toBe('');
-	});
-
-	it('does not send an empty reply', async () => {
-		const onSend = vi.fn();
-		const { getByLabelText } = render(ScrRelayChat, { props: { thread: chat, me, onSend } });
-		await fireEvent.click(getByLabelText('Send reply'));
-		expect(onSend).not.toHaveBeenCalled();
-	});
-
-	it('renders the shared empty state when there is no active run (no thread)', () => {
-		const { getByText, queryByText, queryByPlaceholderText } = render(ScrRelayChat, {
-			props: { thread: [], me }
-		});
-		// the honest empty state — no fabricated project header + empty thread.
-		expect(getByText('No active session.')).toBeTruthy();
-		expect(getByText(/When a run is in flight you can steer it here/)).toBeTruthy();
-		// no fake project name (the old 'lumen-auth' default) and no reply input.
-		expect(queryByText('lumen-auth')).toBeNull();
-		expect(queryByPlaceholderText('reply to sensei…')).toBeNull();
 	});
 });
