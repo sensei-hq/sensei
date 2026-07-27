@@ -115,8 +115,30 @@ pub fn daemon_request_for(
             Some(DaemonRequest::get("/api/user").with_query("under", under))
         }
 
+        // ── Set the user's behavioural stance (autonomy · sharing · review) ─────
+        // `set_stance` POSTs `/api/stance`; `under` defaults to the MCP cwd (same
+        // folder-scoping + git-identity resolution as `get_user_for_project`).
+        // `scope` picks the rung (omitted → the user's default); each omitted dial
+        // takes its stored default. The daemon validates the dial values.
+        "set_stance" => {
+            let under = args["under"].as_str().filter(|s| !s.is_empty()).unwrap_or(cwd);
+            let mut body = json!({ "under": under });
+            for k in ["user", "scope", "autonomy", "sharing", "review"] {
+                if let Some(v) = args[k].as_str().filter(|s| !s.is_empty()) {
+                    body[k] = json!(v);
+                }
+            }
+            Some(DaemonRequest::post_json("/api/stance", body))
+        }
+
         // ── Workflow state ──────────────────────────────────────────────────
+        // `project` pins the workflow state to a specific project instead of the
+        // cwd-resolved one — the escape hatch when the cwd mis-resolves (issue #109:
+        // MCP default cwd = the `sensei-hq` container → wrong project), which
+        // otherwise makes two concurrent sessions clobber one shared state row.
+        // Mirrors start_run/register_plan's `project` handling.
         "update_phase" => {
+            let project = args["project"].as_str().filter(|s| !s.is_empty()).unwrap_or(repo_id);
             let body = json!({
                 "active_phase":   args["phase"].as_str(),
                 "active_task":    args["task"].as_str(),
@@ -125,9 +147,12 @@ pub fn daemon_request_for(
                 "last_checkpoint": args["checkpoint"].as_str(),
                 "project_path":   cwd,
             });
-            Some(DaemonRequest::put_json(format!("/api/state/{repo_id}"), body))
+            Some(DaemonRequest::put_json(format!("/api/state/{project}"), body))
         }
-        "get_workflow_state" => Some(DaemonRequest::get(format!("/api/state/{repo_id}"))),
+        "get_workflow_state" => {
+            let project = args["project"].as_str().filter(|s| !s.is_empty()).unwrap_or(repo_id);
+            Some(DaemonRequest::get(format!("/api/state/{project}")))
+        }
 
         // ── Pattern engine (direct /api/patterns endpoints) ─────────────────
         "match_pattern" => {
@@ -474,6 +499,14 @@ pub fn handle_list_tools() -> Value {
             tool("get_user_for_project", "Resolve the git author identity — user.name and user.email, using git's own local-over-global precedence (a repo .git/config override wins; otherwise ~/.gitconfig) — for the folder you're working in, plus the sensei project that owns it. This is the same identity as the commit author and the Dōjō sign-in, so it's how a run or plan gets registered to the right person for relay attribution. Defaults to the current working directory when 'under' is omitted.", &[], &[
                 ("under", "string", "Absolute folder path to resolve the identity + owning project for. Defaults to the current working directory."),
             ]),
+            tool("set_stance", "Set the user's behavioural stance — the three dials that govern HOW a run behaves (autonomy: how far it goes before asking · sharing: what surfaces to the dōjō · review: who signs off a rule) — at a scope. Complements the governance rules (WHAT a run may do). User-scoped and daemon-local. Omitting 'scope' sets the user's default across scopes; a scope key (e.g. 'project', 'organization') sets it for that rung and overrides the default there. Each omitted dial keeps its stored default. Defaults 'under' to the current working directory to resolve the git identity + scope namespace.", &[], &[
+                ("autonomy", "string", "How far a run goes before asking: ask_always | ask_on_guarded (default) | ask_on_risky | run_freely."),
+                ("sharing",  "string", "What surfaces to the dōjō: private | patterns (default) | patterns_prompts | derived."),
+                ("review",   "string", "Approvers before a rule adopts: me_alone | one_maintainer (default) | two_maintainers | quorum."),
+                ("scope",    "string", "Scope key to set the stance at (e.g. 'project', 'organization'). Omit for the user's default across scopes."),
+                ("under",    "string", "Absolute folder path — resolves the git identity + the scope's namespace. Defaults to the current working directory."),
+                ("user",     "string", "Explicit user key (git email) to set the stance for. Defaults to the git identity at 'under'."),
+            ]),
             tool("use_project", "Pin the active project so every subsequent tool call resolves to it regardless of the server's working directory. Call this when the user tells you which project they're working on (e.g. use_project 'sensei'). The pin persists until you switch it by calling use_project again; an explicit project= argument on any other tool still overrides it for that one call.", &[
                 ("project", "string", "Project name or UUID to pin as active (e.g. 'sensei')."),
             ], &[]),
@@ -503,8 +536,11 @@ pub fn handle_list_tools() -> Value {
                 ("issue", "string", "GitHub issue number"),
                 ("plan", "string", "Path to active plan doc"),
                 ("checkpoint", "string", "Checkpoint description"),
+                ("project", "string", "Project name or UUID to pin the state to. Defaults to the current (cwd-resolved) project; pass it when concurrent sessions must not share one project's workflow state."),
             ]),
-            tool("get_workflow_state", "Get current workflow state — active phase, task, issue, checkpoint. Call when you need orientation or feel lost.", &[], &[]),
+            tool("get_workflow_state", "Get current workflow state — active phase, task, issue, checkpoint. Call when you need orientation or feel lost.", &[], &[
+                ("project", "string", "Project name or UUID. Defaults to the current (cwd-resolved) project."),
+            ]),
             // Pattern matching
             tool("match_pattern", "Find applicable patterns for a task. Returns detected patterns from the codebase that match the description. Call during the locate step before writing code. MANDATORY in /sensei:build.", &[
                 ("description", "string", "What you're about to build (e.g. 'add SQL parsing', 'new API endpoint')"),
@@ -657,7 +693,9 @@ pub fn handle_list_tools() -> Value {
                 "Start a daemon-owned autonomous run against a goal (the relay engine). The daemon \
                  tracks it durably (survives restarts), pauses/auto-resumes on provider limits, and \
                  recovers from stalls — watch it with `run_status`. Note: whether it actually drives an \
-                 agent depends on the daemon's OFF-by-default drive switch; creating the run is always safe.",
+                 agent depends on the daemon's OFF-by-default drive switch; creating the run is always safe. \
+                 The response includes `track_url` (when a Dōjō is connected) — the auth-gated link to \
+                 watch this run in the Dōjō; surface it to the user as the handoff.",
                 &[("goal", "string", "What the run should accomplish — the objective it's anchored to")],
                 &[
                     ("project",  "string", "Project name or UUID the run works in. Defaults to the current project."),
@@ -686,7 +724,9 @@ pub fn handle_list_tools() -> Value {
                  graph (unique task ids, deps resolve, no cycles), stores it, and authors the phone \
                  outline from it so the whole plan is watchable before execution. Pass `plan` as a JSON \
                  string: {\"goal\"?, \"phases\":[{\"title\", \"tasks\":[{\"id\", \"title\", \"agent\"?, \
-                 \"model\"?, \"spec_ref\"?, \"deps\"?:[id], \"summary\"?}]}]}. Returns the run.",
+                 \"model\"?, \"spec_ref\"?, \"deps\"?:[id], \"summary\"?}]}]}. Returns the run plus \
+                 `track_url` (when a Dōjō is connected) — the auth-gated link to watch the plan/run in the \
+                 Dōjō; surface it to the user as the handoff.",
                 &[
                     ("goal", "string", "The run's objective — a short label; the plan graph carries the detail"),
                     ("plan", "string", "The plan graph as a JSON string (phases → tasks with agent/model/spec_ref/deps)"),
@@ -1108,7 +1148,7 @@ mod tests {
     const EXPECTED_TOOLS: &[&str] = &[
         "search", "context_pack", "get_callers", "get_callees", "get_project_summary",
         "get_lib_docs", "search_lib_docs", "get_communities", "get_patterns",
-        "list_projects", "find_projects", "get_user_for_project", "use_project", "create_session", "update_session", "add_library",
+        "list_projects", "find_projects", "get_user_for_project", "set_stance", "use_project", "create_session", "update_session", "add_library",
         "update_phase", "get_workflow_state", "match_pattern", "get_pattern_for",
         "get_duplicates", "get_project_conventions", "get_rules", "get_commands", "infer", "embed",
         "gateway_status", "consensus", "generate_image", "log_event",
@@ -1470,6 +1510,19 @@ mod tests {
         assert_eq!(body["active_phase"], "build");
         assert_eq!(body["active_issue"], 42, "issue string parses to an integer");
         assert_eq!(body["project_path"], "/proj/cwd", "cwd rides along as project_path");
+
+        // An explicit `project` pins the state to that project (not the cwd-resolved
+        // one) — the escape hatch against cross-session clobber when the cwd
+        // mis-resolves (#109). Both verbs honour it.
+        let pinned_get =
+            daemon_request_for("get_workflow_state", &json!({ "project": "torii" }), "/cwd", Some("sensei")).unwrap();
+        assert_eq!(pinned_get.path, "/api/state/torii", "explicit project overrides the cwd repo");
+        let pinned_put = daemon_request_for(
+            "update_phase",
+            &json!({ "phase": "build", "project": "torii" }),
+            "/cwd", Some("sensei"),
+        ).unwrap();
+        assert_eq!(pinned_put.path, "/api/state/torii", "update_phase honours explicit project");
     }
 
     #[test]
@@ -1676,6 +1729,34 @@ mod tests {
         ).unwrap();
         assert_eq!(req.path, "/api/user");
         assert_eq!(q(&req, "under"), Some("/some/repo"), "explicit `under` overrides cwd");
+    }
+
+    #[test]
+    fn set_stance_posts_dials_and_defaults_under_to_cwd() {
+        // Only-provided dials are sent; `under` defaults to cwd; no scope → default row.
+        let req = daemon_request_for(
+            "set_stance", &json!({ "autonomy": "run_freely" }), "/my/cwd", None,
+        ).unwrap();
+        assert_eq!(req.method, HttpMethod::Post);
+        assert_eq!(req.path, "/api/stance");
+        let body = req.body.unwrap();
+        assert_eq!(body["under"], json!("/my/cwd"), "under defaults to cwd");
+        assert_eq!(body["autonomy"], json!("run_freely"));
+        assert!(body.get("sharing").is_none(), "omitted dials are not sent (daemon keeps stored default)");
+        assert!(body.get("scope").is_none(), "no scope → default row");
+    }
+
+    #[test]
+    fn set_stance_forwards_scope_and_explicit_under() {
+        let req = daemon_request_for(
+            "set_stance",
+            &json!({ "under": "/repo", "scope": "project", "review": "quorum" }),
+            "/my/cwd", None,
+        ).unwrap();
+        let body = req.body.unwrap();
+        assert_eq!(body["under"], json!("/repo"), "explicit under overrides cwd");
+        assert_eq!(body["scope"], json!("project"));
+        assert_eq!(body["review"], json!("quorum"));
     }
 
     #[test]

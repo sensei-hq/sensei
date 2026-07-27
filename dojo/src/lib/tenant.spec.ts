@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { orgs } from '$lib/dojo-data';
-import { orgHref } from '$lib/dojo2-nav';
+import { orgHref } from '$lib/nav';
 import {
 	DEFAULT_TENANT_KEY,
 	TENANT_COOKIE,
@@ -78,27 +78,27 @@ describe('tenantCookieString / enterOrg (the one shared tenant-switch path)', ()
 		expect(cookie).toBe(`${TENANT_COOKIE}=github%2Fglobex; path=/; SameSite=Lax`);
 	});
 
-	it('enterOrg writes the tenant cookie for the picked org then navigates to the console', () => {
+	it('enterOrg writes the tenant cookie for the picked org then navigates to the given href', () => {
 		const setCookie = vi.fn();
 		const navigate = vi.fn();
 		const org = orgs[1]; // Globex → github/globex
 		const landed = enterOrg(org, {
 			setCookie,
 			navigate,
-			consoleHref: '/(console)/console'
+			consoleHref: '/org/globex'
 		});
 		expect(setCookie).toHaveBeenCalledTimes(1);
 		expect(setCookie).toHaveBeenCalledWith(
 			`${TENANT_COOKIE}=${encodeURIComponent(org.url)}; path=/; SameSite=Lax`
 		);
-		expect(navigate).toHaveBeenCalledWith('/(console)/console');
-		expect(landed).toBe('/(console)/console');
+		expect(navigate).toHaveBeenCalledWith('/org/globex');
+		expect(landed).toBe('/org/globex');
 	});
 });
 
-describe('/orgs Enter → dojo2 org context (landing cutover)', () => {
+describe('/orgs Enter → dojo org context (landing cutover)', () => {
 	// The org picker's `enter(org)` composes `enterOrg` with `orgHref(org.id)` — the
-	// landing cutover routes a picked org to the dojo2 ORG route (/org/{slug}), NOT
+	// landing cutover routes a picked org to the dojo ORG route (/org/{slug}), NOT
 	// the old /console. The slug is the org `id`, the SAME value `orgBySlug` and the
 	// /org/[slug] load resolve against, so entering lands on a valid org route.
 	it('navigates to /org/{id} (not /console) and still sets the tenant cookie', () => {
@@ -108,7 +108,7 @@ describe('/orgs Enter → dojo2 org context (landing cutover)', () => {
 
 		enterOrg(org, { setCookie, navigate, consoleHref: orgHref(org.id) });
 
-		// Lands on the dojo2 org context, never the retired /console path.
+		// Lands on the dojo org context, never the retired /console path.
 		expect(navigate).toHaveBeenCalledWith(`/org/${org.id}`);
 		expect(navigate).toHaveBeenCalledWith(expect.stringMatching(/^\/org\//));
 		const dest = navigate.mock.calls[0][0] as string;

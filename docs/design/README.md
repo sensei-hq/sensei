@@ -5,12 +5,15 @@ type: design
 
 Purpose: the design system + cross-cutting UX rules; audience: designer + developer.
 
-This folder does not yet hold consolidated design-system content. Until that
-consolidation happens (incremental), use the canonical sources directly:
+Canonical design sources:
 
+- [`mockup-brief.md`](mockup-brief.md) — how we design mockups: the loop, the guardrails,
+  the component vocabulary, and the designer task template. The live review of outstanding
+  screens is [`../mockups/dojo2-review.md`](../mockups/dojo2-review.md).
 - [`../architecture/frontend-svelte-guidelines.md`](../architecture/frontend-svelte-guidelines.md) —
   the enforced frontend rules: the 24 design tokens, the type scale, and spacing.
-- [`../mockups/STYLING.md`](../mockups/STYLING.md) — the mockup styling drop-in.
+- [`../mockups/Sensei/CLAUDE.md`](../mockups/Sensei/CLAUDE.md) — the same system for
+  claude.ai artifacts (the `.zs` no-rokkit drop-in) plus the pre-delivery self-check.
 
 ## Modules
 
@@ -25,6 +28,7 @@ Each names the code that realises it.
 - [`playbook.md`](playbook.md) — the front-door intake mechanics (classify → recommend → confirm), axes→playbook matrix, learning loop, `playbook_run` contract. Supports [Project · Working style](../features/04-project.md#working-style--the-operation-manual).
 - [`remote.md`](remote.md) — the relay run-engine + hook control-channel + gates/nudges, and the future Planner→Builder→Judge orchestrator (Phase 6).
 - [`governance.md`](governance.md) — dōjō scopes + precedence, rules resolution, promotion, identity/confidentiality, budgets & controls, local-model inclusion.
+- [`instruction-delivery-model.md`](instruction-delivery-model.md) — how rules + capabilities (skills/agents/mindsets) reach and *stick* in a session: the delivery surfaces, the stickiness problem, and the enforcement-tiered push model + rule/rule-pack shape.
 
 **Build order (2026-07-20): analysis first.** The *synthetic analysis*
 capabilities (governance, metrics, document drift, graph) are the foundation —
