@@ -25,7 +25,6 @@
 		createEngagement,
 		DojoApiError
 	} from '$lib/client-data';
-	import { me } from '$lib/components/kit/fixtures';
 	import type { KitProject, KitMember, KitIncident, KitEngagement } from '$lib/components/kit/types';
 
 	// The org-zone section screen. Dispatches to the real screen for every NAV_ORG
@@ -40,6 +39,10 @@
 	// /org/[slug]/projects/[id] (an in-shell route so the URL stays the source of
 	// truth — the shell keeps "Projects" active for the tail).
 	let { data } = $props();
+
+	// The signed-in viewer's real name (from the layout's loadConsoleContext) —
+	// labels "you" in the audit surface. Never a fixture identity (F4).
+	const viewer = $derived(data.user?.name ?? data.user?.email ?? 'You');
 
 	// A live-action error surfaced honestly under the screen (no silent failure).
 	// Cleared before each attempt; set from the API `error` message on a non-2xx.
@@ -126,7 +129,7 @@
 		members={data.members}
 		policies={data.rolePolicies}
 		audit={data.auditLog}
-		me={me.name}
+		me={viewer}
 		onSetRole={setRole}
 	/>
 {:else if data.section === 'scopes'}
