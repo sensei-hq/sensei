@@ -2,7 +2,7 @@
 // mockup `ScrConstitution` · `ScrRulePacks` · `ScrMyDojos` · `ScrContributions`).
 // Kept as a plain module (no Svelte, no `$app/*`) so the grouping, splitting,
 // and tallying unit-test without rendering — the same discipline as
-// `nav.ts` and `dojo2-preview-view.ts`.
+// `nav.ts` and `preview/view.ts`.
 
 import type {
 	KitDojo,

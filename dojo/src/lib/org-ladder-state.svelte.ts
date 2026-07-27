@@ -3,7 +3,7 @@
 // active section, the per-rule include map, the show-excluded toggle, and the
 // RuleEditor open/close) and delegates ALL grouping + include math to the pure
 // `org-ladder-view` module, so the screen stays presentational. Kept as a
-// `.svelte.ts` rune module (like `dojo2-preview-state.svelte.ts`).
+// `.svelte.ts` rune module (like `preview/state.svelte.ts`).
 
 import type { KitConstitutionSection, KitRule } from './components/kit/types';
 import {

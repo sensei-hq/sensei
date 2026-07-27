@@ -7,7 +7,7 @@
 // per the design system — never a raw oklch. This is the token-native port of
 // the mockup's `K2_IMPACT` map.
 
-import type { KitTriageCandidate, KitTriageGroup } from './components/kit/types';
+import type { KitTriageCandidate, KitTriageGroup } from '../components/kit/types';
 
 /** Every candidate across the scope groups, in group order (mockup
  *  `groups.flatMap(g => g.items)`). Backs the default selection + the total. */

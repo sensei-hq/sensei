@@ -27,7 +27,7 @@ import {
 	toKitApprovals,
 	toKitCandidateDetail
 } from '$lib/triage-map';
-import { flattenCandidates } from '$lib/dojo2-triage-view';
+import { flattenCandidates } from '$lib/triage/candidates-view';
 import {
 	toKitMembers,
 	toKitRolePolicies,

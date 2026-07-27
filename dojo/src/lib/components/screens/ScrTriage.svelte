@@ -11,7 +11,7 @@
 		EmptyState
 	} from '$lib/components/kit';
 	import type { KitTriageGroup, KitCandidateDetail } from '$lib/components/kit/types';
-	import { impactTone, needsSecondApproval } from '$lib/dojo2-triage-view';
+	import { impactTone, needsSecondApproval } from '$lib/triage/candidates-view';
 	import { createTriage } from '$lib/triage-state.svelte';
 	import { untrack } from 'svelte';
 

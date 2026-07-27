@@ -1,12 +1,12 @@
 // The reactive selection state for ScrTriage (mockup) — which candidate the
 // desktop detail pane shows. Holds the one bit of UI state (`selected`) as
-// `$state` and delegates the flatten/lookup to the pure `dojo2-triage-view`
+// `$state` and delegates the flatten/lookup to the pure `triage/candidates-view`
 // module, so the screen stays presentational. Kept as a `.svelte.ts` rune
-// module (like `dojo2-preview-state.svelte.ts`); the pure helpers unit-test on
-// their own in `dojo2-triage-view.spec.ts`.
+// module (like `preview/state.svelte.ts`); the pure helpers unit-test on
+// their own in `triage/candidates-view.spec.ts`.
 
 import type { KitTriageCandidate, KitTriageGroup } from './components/kit/types';
-import { flattenCandidates } from './dojo2-triage-view';
+import { flattenCandidates } from './triage/candidates-view';
 
 /** The reactive selection state a ScrTriage binds to. */
 export interface TriageState {

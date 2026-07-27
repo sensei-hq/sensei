@@ -6,7 +6,7 @@ import { orgConstitutionFor } from './components/kit/fixtures';
 // the per-rule include toggles, the show-excluded toggle, and the RuleEditor
 // open/close. Delegates grouping + include math to the pure
 // `org-ladder-view` module; here we prove the UI state reacts. Runs under
-// the .svelte.ts test transform (like dojo2-preview-state.spec.svelte.ts).
+// the .svelte.ts test transform (like preview/state.spec.svelte.ts).
 
 const sections = orgConstitutionFor('acme');
 
