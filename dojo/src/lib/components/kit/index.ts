@@ -33,6 +33,11 @@ export { default as MyDojoRow } from './MyDojoRow.svelte';
 // Plan / run-detail visualizers (ported from dojo2-kit.jsx K2Plan*).
 export { default as PlanBar } from './PlanBar.svelte';
 export { default as PlanPips } from './PlanPips.svelte';
+export { default as PlanNode } from './PlanNode.svelte';
+export { default as PlanStage } from './PlanStage.svelte';
+export { default as PlanGraph } from './PlanGraph.svelte';
+export { default as PlanOutline } from './PlanOutline.svelte';
+export { default as RunActivity } from './RunActivity.svelte';
 
 // Inbox — the one list of in-flight sessions + its filter tabs.
 export { default as SubTabs } from './SubTabs.svelte';

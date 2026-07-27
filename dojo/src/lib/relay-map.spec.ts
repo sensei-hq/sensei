@@ -13,8 +13,11 @@ import {
 	inboxStatus,
 	inboxRow,
 	toKitInbox,
-	filterInbox
+	filterInbox,
+	segmentsToPlan,
+	segmentsToActivity
 } from './relay-map';
+import type { KitPlanObject } from './components/kit/types';
 
 // The dojo personal-Relay wire→kit mappers. The screens are presentational off
 // these shapes, so the mapping is where the /v1 truth meets the kit contract —
@@ -280,5 +283,48 @@ describe('inbox mappers', () => {
 		expect(filterInbox(rows, 'running').map((r) => r.run.id)).toEqual(['a']);
 		expect(filterInbox(rows, 'finished').map((r) => r.run.id)).toEqual(['b']);
 		expect(filterInbox(rows, 'all')).toHaveLength(3);
+	});
+});
+
+describe('segmentsToPlan / segmentsToActivity', () => {
+	it('groups flat segments into phases → tasks by parent_id', () => {
+		const segs = [
+			seg({ id: 'p1', parent_id: null, seq: 1, title: 'Design', state: 'done' }),
+			seg({ id: 't1', parent_id: 'p1', seq: 2, title: 'sketch', state: 'done', agent: 'coder', model: 'opus' }),
+			seg({ id: 't2', parent_id: 'p1', seq: 3, title: 'review', state: 'active' }),
+			seg({ id: 'p2', parent_id: null, seq: 4, title: 'Build', state: 'pending' })
+		];
+		const plan = segmentsToPlan(segs) as KitPlanObject;
+		expect(plan.phases.map((p) => p.id)).toEqual(['p1', 'p2']);
+		expect(plan.phases[0].tasks.map((t) => t.title)).toEqual(['sketch', 'review']);
+		expect(plan.phases[0].tasks[0]).toMatchObject({ state: 'done', agent: 'coder', model: 'opus', deps: [] });
+		expect(plan.phases[1].tasks).toEqual([]); // empty phase
+	});
+
+	it('surfaces an orphan (parent not a phase) as a standalone phase', () => {
+		const plan = segmentsToPlan([seg({ id: 'x', parent_id: 'missing', title: 'orphan' })]) as KitPlanObject;
+		expect(plan.phases.map((p) => p.id)).toEqual(['x']);
+	});
+
+	it('carries the gate flag + severity onto the task', () => {
+		const plan = segmentsToPlan([
+			seg({ id: 'p', parent_id: null, title: 'P' }),
+			seg({ id: 'g', parent_id: 'p', title: 'gate', is_gate: true, gate_severity: 'blocking' })
+		]) as KitPlanObject;
+		expect(plan.phases[0].tasks[0]).toMatchObject({ is_gate: true, gate_severity: 'blocking' });
+	});
+
+	it('builds a newest-first activity feed, omitting unsubmitted segments', () => {
+		const feed = segmentsToActivity(
+			[
+				seg({ id: 'a', title: 'first', state: 'done', submitted_at: '2026-07-23T11:00:00Z' }),
+				seg({ id: 'b', title: 'later', state: 'active', submitted_at: '2026-07-23T11:50:00Z' }),
+				seg({ id: 'c', title: 'not yet', submitted_at: null })
+			],
+			NOW
+		);
+		expect(feed.map((f) => f.text)).toEqual(['later', 'first']); // newest first, 'not yet' omitted
+		expect(feed[0].at).toBe('10m'); // 11:50 → 12:00
+		expect(feed[0].icon).toBeTruthy();
 	});
 });
