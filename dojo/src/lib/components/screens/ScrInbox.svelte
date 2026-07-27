@@ -38,7 +38,7 @@
 	{#if needTotal > 0}<span class="mono text-accent text-xs">{needTotal} need you</span>{/if}
 {/snippet}
 
-<div class="flex flex-col {mobile ? 'p-4 gap-4' : 'p-8 gap-6'}">
+<div class="flex flex-col {mobile ? 'p-4 gap-4' : 'gap-4 px-5 py-6'}">
 	<SectionHead eyebrow="You · in flight" title="Inbox" count={inbox.length} right={needBadge} />
 	<SubTabs tabs={FILTERS} active={filter} onPick={(id) => (filter = id)} />
 
@@ -53,10 +53,13 @@
 	{:else if !shown.length}
 		<EmptyState kanji="空" title="Nothing here.">No session matches that view right now.</EmptyState>
 	{:else}
-		<div class="bg-paper-soft border-paper-edge overflow-hidden rounded-lg border">
+		<div class="border-paper-edge overflow-hidden rounded-lg border">
 			{#each shown as row (row.run.id)}
 				<InboxRow {row} selected={row.run.id === selectedId} {onOpen} />
 			{/each}
 		</div>
+		<p class="mono text-ink-faint text-xs" style="line-height: 1.5">
+			Sorted by what waits on you — then stalled or blocked, then running, then finished.
+		</p>
 	{/if}
 </div>
