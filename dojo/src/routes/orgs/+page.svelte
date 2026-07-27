@@ -2,7 +2,7 @@
 	import { goto } from '$app/navigation';
 	import DojoOrgs from '$lib/components/DojoOrgs.svelte';
 	import type { DojoOrg } from '$lib/dojo-data';
-	import { orgHref } from '$lib/dojo2-nav';
+	import { orgHref } from '$lib/nav';
 	import { enterOrg } from '$lib/tenant';
 	import type { PageData } from './$types';
 
@@ -11,9 +11,9 @@
 	let { data }: { data: PageData } = $props();
 
 	function enter(org: DojoOrg) {
-		// The one shared tenant-switch path (also used by the dojo2 shell's org
+		// The one shared tenant-switch path (also used by the dojo shell's org
 		// switcher): persist the selected org as the `dojo_tenant` session cookie —
-		// read server-side in the shared console loader — then navigate to the dojo2
+		// read server-side in the shared console loader — then navigate to the dojo
 		// ORG context (`/org/{slug}`), not the old `/console`. The slug is the org
 		// `id` — the SAME value `toKitDojo`/`orgBySlug` (the shell + the /org/[slug]
 		// load) resolve against — so entering from /orgs lands on a valid org route.
