@@ -31,8 +31,10 @@
 	// membership guard; this component maps segments → kit shapes + realtime refresh.
 	let { data } = $props();
 
+	// <md the detail is a full pane pushed over the list — back returns to the inbox
+	// list (/you). On md+ both panels show side by side, so the control is hidden.
 	function back() {
-		goto(youHref('runs'));
+		goto(youHref());
 	}
 
 	const goal = $derived(data.run?.goal ?? null);
@@ -76,9 +78,9 @@
 		<button
 			type="button"
 			onclick={back}
-			class="text-ink-mute inline-flex cursor-pointer items-center gap-1 self-start bg-transparent text-sm"
+			class="text-ink-mute inline-flex cursor-pointer items-center gap-1 self-start bg-transparent text-sm md:hidden"
 		>
-			<Icon name="alt-arrow-left" size={15} toneClass="text-ink-mute" /> Back to runs
+			<Icon name="alt-arrow-left" size={15} toneClass="text-ink-mute" /> Back to inbox
 		</button>
 
 		<SectionHead kanji="継" eyebrow="Relay · run" title={data.run?.title ?? 'Run'}>
