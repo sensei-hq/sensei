@@ -86,6 +86,40 @@ impact, enforcement }`. `scope_key` ∈ the ladder scopes (company·client·pers
 - **Tests:** `resolveConstitution` (store), `rulesToLadder`/`rulesToSections` (mapper — scope order,
   enforcement→tone, mandatory lock, empty→[]), screen renders real ladder + honest-empty.
 
+## Constitution slice — confirmed read-path depth (2026-07-27 trace)
+
+Traced end-to-end; the slice is genuine Tier-3 backend work, **not** a loader flip. Facts:
+
+- **Data:** `dojo.shared_rules ⋈ sensei.namespaces`. Rule = `title` · `content` · `enforcement`
+  (advisory·recommended·required·mandatory) · `rule_type` · `impact` · `status`. Namespace =
+  `scope_key` · `slug` · `name`. **`scope_key` is a FK to `sensei.scopes.key`** — a data-driven
+  scopes TABLE (seeded `general` + others), **not a fixed enum**. So the `scope_key`→kit-ladder
+  mapping (Company 社 · Client 客 · Personal 己 · Project 件 · Stack 技; sections group Company/
+  Teams 組/Stacks) must be built against the **confirmed** `sensei.scopes` keys — guessing
+  mislabels the ladder.
+- **The existing `/v1/rules*` routes are the daemon FEDERATION plane** (device-token
+  `resolveApiKeyAccess`; pull-deltas / pack-union), **not** a JWT web read the screen can call.
+- **Tenant's display constitution = rules at the tenant's namespaces**, resolved via the
+  **adoptions model** (`resolveAdoptedPackRules(db, nsIds)` + `effectivePackRuleTier`/`maxTier`).
+  shared_rules is NOT tenant-scoped — the tenant→namespaces resolution is the real work.
+
+**Build-ready steps (do these, in order, next session):**
+1. **Confirm the scope vocabulary** — read `database/ddl/table/sensei/scopes.ddl` + the scopes seed;
+   list the real `key`s → fix the `scope_key`→{label, kanji, group, order} map.
+2. **Tenant→namespaces** — resolve which namespaces are a tenant's constitution (its own
+   `organization:<slug>`/`personal:<user>` namespace + adopted packs); likely a small
+   `constitution-data.ts` store fn composing `resolveNamespaceIds` + `resolveAdoptedPackRules`.
+3. **Web read route** `v1/t/[origin]/[org]/constitution/+server.ts` (`resolveTenantAccess`, member
+   floor) → `{ rules }`.
+4. **Mapper** `constitution-map.ts`: `rulesToLadder` (KitLadderRung[]) + `rulesToSections`
+   (KitConstitutionSection[], grouped Company/Teams/Stacks) — pure, unit-tested (scope order,
+   `enforcement==='mandatory'`→`hard`, empty→[], unknown-scope fallback).
+5. **Flip** the personal `you/[section]` (rules→ladder; `stance: []` honest-empty) + org
+   `org/[slug]/[section]` (rules→sections) loaders; honest-empty + error banner.
+
+Stance stays honest-empty (no `dojo.stance` table; the daemon has the write-path but the web plane
+needs its own source) — a tracked follow-up, not fabricated dials.
+
 ## Guardrails carried from F4/F5
 
 Never fall back to another tenant's or fixture data (the acme-fallback lesson); unknown/empty → honest
