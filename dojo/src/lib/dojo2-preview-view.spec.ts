@@ -10,7 +10,7 @@ import {
 import { ladder, conflicts } from './components/kit/fixtures';
 import type { KitProject } from './components/kit/types';
 
-// Pure derivations behind the dojo2 project-constitution preview (mockup
+// Pure derivations behind the dojo project-constitution preview (mockup
 // ScrProjectPreview `previewRungs` / `showConflicts` / `effective`). Kept as a
 // standalone module (NOT the shipped `preview-view.ts`, which the (console)
 // group owns) so the drill-in resolves off the kit fixtures the mockup used.

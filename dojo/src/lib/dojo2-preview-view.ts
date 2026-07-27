@@ -1,4 +1,4 @@
-// Pure derivations behind the dojo2 project-constitution preview (mockup
+// Pure derivations behind the dojo project-constitution preview (mockup
 // ScrProjectPreview). Ported faithfully from dojo2-app.jsx (`previewRungs` ·
 // the `showConflicts` gate · the `effective` flatten · the lock/discard counts)
 // but resolving off the kit fixtures the mockup used (`ladder` · `conflicts`).

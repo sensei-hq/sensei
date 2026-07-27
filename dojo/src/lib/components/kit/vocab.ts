@@ -1,4 +1,4 @@
-// dojo2 kit — shared vocabulary maps (ported from dojo2-kit.jsx K2_CLASS /
+// dojo kit — shared vocabulary maps (ported from dojo2-kit.jsx K2_CLASS /
 // K2_PHASE / K2_ROLE / K2_KIND). This is the ONE place tones are decided.
 //
 // Ported faithfully but token-native: the mockup stored raw `var(--*)` strings;

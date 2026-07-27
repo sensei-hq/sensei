@@ -1,4 +1,4 @@
-// Test fixtures for the dojo2 kit specs — lifted from the mockup mock data
+// Test fixtures for the dojo kit specs — lifted from the mockup mock data
 // (docs/mockups/Sensei/lib/data/dojo2-data.js window.DOJO2) so the specs render
 // the components against the exact shapes the screens will bind to.
 

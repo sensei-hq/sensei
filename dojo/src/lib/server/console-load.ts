@@ -1,5 +1,5 @@
 // The shared server-load body for every guarded shell (the shipped `(console)`
-// group AND the new `(dojo2)` group). Extracted so the two shells resolve the
+// group AND the new `(app)` group). Extracted so the two shells resolve the
 // exact same tenant + membership + auth surface from ONE place — they can never
 // drift (DRY). The pure decision lives in `deriveConsoleContext`; this helper
 // does only the I/O (Supabase memberships, cookie read, chrome-org lookup).

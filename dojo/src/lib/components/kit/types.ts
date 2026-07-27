@@ -1,4 +1,4 @@
-// Shapes the dojo2 kit rows bind to. Ported from the mockup fixtures
+// Shapes the dojo kit rows bind to. Ported from the mockup fixtures
 // (docs/mockups/Sensei/lib/data/dojo2-data.js) so screens and specs share one
 // self-describing contract. Kept flat and optional-heavy to match the mock; the
 // wire types will refine these when the screens land.
