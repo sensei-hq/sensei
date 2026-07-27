@@ -12,7 +12,7 @@
 // honestly); wiring the audit counts is a follow-on when that panel is real.
 
 import type { Engagement } from './client-data';
-import { relativeAge } from './triage-view';
+import { relativeAge } from './triage/view';
 import type { KitEngagement } from './components/kit/types';
 
 /** The client-engagement glyph (客 — "guest/client"), matching the fixture. */

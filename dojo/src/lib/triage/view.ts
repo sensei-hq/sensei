@@ -5,7 +5,7 @@
 // Colour is expressed as a token utility CLASS name (text-accent / text-success
 // / …) per the console design system — never a raw hex/oklch.
 
-import type { TriageRow } from './triage-data';
+import type { TriageRow } from '../triage-data';
 
 // ── artifact kind → label + kanji (mockup DOJO_TYPE + a per-kind glyph) ───────
 

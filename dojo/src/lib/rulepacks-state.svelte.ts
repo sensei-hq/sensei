@@ -3,7 +3,7 @@
 // (presentational this chunk — a later chunk wires it to a `/v1` mutation). The
 // adopted / available split is derived off the live `adopted` set, so toggling
 // a pack moves it between the two sections. Kept as a `.svelte.ts` rune module
-// (like `dojo2-preview-state.svelte.ts`) so the split is reactive `$state`; the
+// (like `preview/state.svelte.ts`) so the split is reactive `$state`; the
 // pure split lives in `personal-view.ts`.
 
 import type { KitRulePack } from './components/kit/types';

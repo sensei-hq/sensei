@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { SectionHead, Banner, Btn, Chip, KanjiToken, EmptyState } from '$lib/components/kit';
 	import type { KitApproval } from '$lib/components/kit/types';
-	import { impactTone } from '$lib/dojo2-triage-view';
+	import { impactTone } from '$lib/triage/candidates-view';
 
 	// The maintainer second-approval queue (mockup ScrApprovals) — high-impact and
 	// safety-relevant candidates a first maintainer proposed, each awaiting a

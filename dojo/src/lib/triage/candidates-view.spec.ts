@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { flattenCandidates, impactTone, needsSecondApproval } from './dojo2-triage-view';
-import type { KitTriageGroup } from './components/kit/types';
+import { flattenCandidates, impactTone, needsSecondApproval } from './candidates-view';
+import type { KitTriageGroup } from '../components/kit/types';
 
 // Pure presentation helpers for the maintainer triage console (ScrTriage). No
 // DOM, no runes — the selection store composes these so the grouping, the

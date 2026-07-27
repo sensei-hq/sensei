@@ -5,7 +5,7 @@ import { rulePacks } from './components/kit/fixtures';
 // The reactive adopt-toggle state for ScrRulePacks. Delegates the split to the
 // pure `personal-view` module; here we prove toggling moves a pack between
 // adopted and available and never mutates the seed. Runs under the .svelte.ts
-// test transform (like dojo2-preview-state.spec.svelte.ts).
+// test transform (like preview/state.spec.svelte.ts).
 
 // The fixture split — derived so the credible-pack content can grow without
 // re-hardcoding magic tallies in every assertion.

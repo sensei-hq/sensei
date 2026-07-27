@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { createProjectPreview } from './dojo2-preview-state.svelte';
-import { ladder, conflicts } from './components/kit/fixtures';
-import type { KitProject } from './components/kit/types';
+import { createProjectPreview } from './state.svelte';
+import { ladder, conflicts } from '../components/kit/fixtures';
+import type { KitProject } from '../components/kit/types';
 
 // The reactive drill-in state for ScrProjectPreview — the selected rung
 // (`active`) and the by-layer / consolidated `view` toggle. Delegates all
-// resolution to the pure `dojo2-preview-view` module; here we only prove the
+// resolution to the pure `preview/view` module; here we only prove the
 // UI state reacts. Runs under the .svelte.ts test transform (like
 // preview-state.spec.svelte.ts).
 

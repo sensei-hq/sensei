@@ -10,7 +10,7 @@ import {
 	scopeLabel,
 	similarityBand,
 	similarityToneClass
-} from '$lib/triage-view';
+} from '$lib/triage/view';
 import type { TriageRow } from '$lib/triage-data';
 
 // A TriageRow factory with sensible defaults so each test names only what matters.
