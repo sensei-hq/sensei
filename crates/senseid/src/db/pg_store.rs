@@ -7722,6 +7722,50 @@ impl PgStore {
         Ok(crate::stance::pick_stance(&candidates))
     }
 
+    /// Upsert a user's stance at a scope and return the new `updated_at`.
+    /// `namespace_id = None` writes the user's default row (namespace-less);
+    /// `Some(ns)` writes the stance for that scope namespace. The default row and
+    /// the scoped rows have different uniqueness (a partial unique index on
+    /// `user_key` where `namespace_id IS NULL` vs. the `(user_key, namespace_id)`
+    /// composite), so the conflict target differs by branch. Callers validate the
+    /// enum fields first (via [`crate::stance::StanceInput`]).
+    pub async fn upsert_stance(
+        &self,
+        user_key: &str,
+        namespace_id: Option<&uuid::Uuid>,
+        autonomy: &str,
+        sharing: &str,
+        review: &str,
+    ) -> Result<String, String> {
+        let sql = if namespace_id.is_some() {
+            "INSERT INTO sensei.stances (user_key, namespace_id, autonomy, sharing, review, updated_at)
+             VALUES ($1, $2, $3::sensei.stance_autonomy, $4::sensei.stance_sharing, $5::sensei.stance_review, now())
+             ON CONFLICT (user_key, namespace_id) DO UPDATE SET
+                autonomy = EXCLUDED.autonomy, sharing = EXCLUDED.sharing,
+                review = EXCLUDED.review, updated_at = now()
+             RETURNING updated_at::text"
+        } else {
+            // The default row: NULLs are distinct under the composite unique, so
+            // target the partial unique index (user_key where namespace_id IS NULL).
+            "INSERT INTO sensei.stances (user_key, namespace_id, autonomy, sharing, review, updated_at)
+             VALUES ($1, $2, $3::sensei.stance_autonomy, $4::sensei.stance_sharing, $5::sensei.stance_review, now())
+             ON CONFLICT (user_key) WHERE namespace_id IS NULL DO UPDATE SET
+                autonomy = EXCLUDED.autonomy, sharing = EXCLUDED.sharing,
+                review = EXCLUDED.review, updated_at = now()
+             RETURNING updated_at::text"
+        };
+        let (updated_at,): (String,) = sqlx_core::query_as::query_as(sql)
+            .bind(user_key)
+            .bind(namespace_id)
+            .bind(autonomy)
+            .bind(sharing)
+            .bind(review)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(updated_at)
+    }
+
     /// Resolve a repo's namespace at a governance scope — e.g. "this repo's
     /// `project` namespace" or "its `organization` namespace". Used when
     /// authoring a rule so the caller can say "scope this to the project" and we
@@ -12545,6 +12589,68 @@ mod tests {
         // Cleanup.
         sqlx_core::query::query("DELETE FROM sensei.collective_preferences")
             .execute(pg.pool()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn upsert_stance_default_and_scoped_roundtrip() {
+        let Ok(pg) = PgStore::connect_test().await else { return; };
+        // Unique key so parallel tests / lingering rows never collide.
+        let user = format!("stance-upsert-{}@test.local", uuid::Uuid::new_v4());
+
+        // 1. Default row (namespace_id NULL): insert, then re-resolve returns it
+        //    as the "default" source.
+        let ua = pg.upsert_stance(&user, None, "run_freely", "private", "quorum").await.unwrap();
+        assert!(!ua.is_empty(), "upsert returns an updated_at");
+        let r = pg.resolve_stance(&user, None).await.unwrap();
+        assert_eq!((r.autonomy.as_str(), r.sharing.as_str(), r.review.as_str(), r.source.as_str()),
+                   ("run_freely", "private", "quorum", "default"));
+
+        // 2. Re-upsert the default (same partial-index conflict target): updates in
+        //    place, no duplicate default row.
+        pg.upsert_stance(&user, None, "ask_always", "patterns", "me_alone").await.unwrap();
+        let r = pg.resolve_stance(&user, None).await.unwrap();
+        assert_eq!((r.autonomy.as_str(), r.review.as_str()), ("ask_always", "me_alone"), "default row updated");
+        let (n,): (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*) FROM sensei.stances WHERE user_key = $1 AND namespace_id IS NULL")
+            .bind(&user).fetch_one(pg.pool()).await.unwrap();
+        assert_eq!(n, 1, "exactly one default row after re-upsert");
+
+        // 3. Scoped row: seed a throwaway namespace, upsert against it (composite
+        //    conflict target), read it back, then re-upsert to prove update. The
+        //    `project` scope may be absent in an unseeded test DB — seed it idempotently.
+        sqlx_core::query::query(
+            "INSERT INTO sensei.scopes (key, name, level) VALUES ('project', 'Project', 60)
+             ON CONFLICT (key) DO NOTHING")
+            .execute(pg.pool()).await.unwrap();
+        let ns = uuid::Uuid::new_v4();
+        sqlx_core::query::query(
+            "INSERT INTO sensei.namespaces (id, scope_key, name, slug, level)
+             VALUES ($1, 'project', 'stance-test', $2, 60)")
+            .bind(ns).bind(format!("stance-test-{ns}"))
+            .execute(pg.pool()).await.unwrap();
+
+        pg.upsert_stance(&user, Some(&ns), "ask_on_risky", "derived", "two_maintainers").await.unwrap();
+        let (au, sh, rv): (String, String, String) = sqlx_core::query_as::query_as(
+            "SELECT autonomy::text, sharing::text, review::text FROM sensei.stances
+             WHERE user_key = $1 AND namespace_id = $2")
+            .bind(&user).bind(ns).fetch_one(pg.pool()).await.unwrap();
+        assert_eq!((au.as_str(), sh.as_str(), rv.as_str()), ("ask_on_risky", "derived", "two_maintainers"));
+
+        pg.upsert_stance(&user, Some(&ns), "run_freely", "patterns", "quorum").await.unwrap();
+        let (au2,): (String,) = sqlx_core::query_as::query_as(
+            "SELECT autonomy::text FROM sensei.stances WHERE user_key = $1 AND namespace_id = $2")
+            .bind(&user).bind(ns).fetch_one(pg.pool()).await.unwrap();
+        assert_eq!(au2, "run_freely", "scoped row updated via composite conflict target");
+        let (n,): (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*) FROM sensei.stances WHERE user_key = $1")
+            .bind(&user).fetch_one(pg.pool()).await.unwrap();
+        assert_eq!(n, 2, "one default + one scoped row for the user");
+
+        // Cleanup (stances cascade off the namespace delete).
+        sqlx_core::query::query("DELETE FROM sensei.stances WHERE user_key = $1")
+            .bind(&user).execute(pg.pool()).await.ok();
+        sqlx_core::query::query("DELETE FROM sensei.namespaces WHERE id = $1")
+            .bind(ns).execute(pg.pool()).await.ok();
     }
 
     #[tokio::test]
