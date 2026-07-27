@@ -1,12 +1,12 @@
 // The reactive drill-in state for ScrProjectPreview (mockup) — the selected
 // rung (`active`) and the by-layer / consolidated `view` toggle. Delegates ALL
-// resolution to the pure `dojo2-preview-view` module; here we only hold the two
+// resolution to the pure `preview/view` module; here we only hold the two
 // bits of UI state as `$state` so the screen stays presentational. Kept as a
 // `.svelte.ts` rune module (like `preview-state.svelte.ts` and
 // `your-work-view.svelte.ts`); the pure helpers stay unit-testable without a
 // component.
 
-import type { KitConflict, KitLadderRung, KitProject } from './components/kit/types';
+import type { KitConflict, KitLadderRung, KitProject } from '../components/kit/types';
 import {
 	discardedTexts,
 	effectiveRules,
@@ -14,7 +14,7 @@ import {
 	previewRungs,
 	showsConflicts,
 	type EffectiveRule
-} from './dojo2-preview-view';
+} from './view';
 
 /** The by-layer (the ladder rungs) or consolidated (flat rules) view. */
 export type PreviewView = 'layer' | 'consolidated';

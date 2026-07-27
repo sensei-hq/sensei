@@ -16,7 +16,7 @@
 // fields (a per-candidate detail lookup is a follow-on when that route is real).
 
 import type { TriageRow } from './triage-data';
-import { groupByScope, scopeLabel, kindKanji, relativeAge } from './triage-view';
+import { groupByScope, scopeLabel, kindKanji, relativeAge } from './triage/view';
 import type {
 	KitTriageGroup,
 	KitTriageCandidate,

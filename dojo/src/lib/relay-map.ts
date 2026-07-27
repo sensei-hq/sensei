@@ -9,7 +9,7 @@
 // for deterministic elapsed/age.
 
 import type { RelayRun, RelayGate, RelaySegment, RelayRunStatus } from './relay-data';
-import { relativeAge } from './triage-view';
+import { relativeAge } from './triage/view';
 import { nodeTone, taskState } from './components/kit/vocab';
 import type {
 	KitRun,

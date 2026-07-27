@@ -10,7 +10,7 @@
 		ConflictCard
 	} from '$lib/components/kit';
 	import type { KitConflict, KitLadderRung, KitProject } from '$lib/components/kit/types';
-	import { createProjectPreview, type PreviewView } from '$lib/dojo2-preview-state.svelte';
+	import { createProjectPreview, type PreviewView } from '$lib/preview/state.svelte';
 	import { untrack } from 'svelte';
 
 	// The resolved-constitution drill-in for one project (mockup ScrProjectPreview)
@@ -20,7 +20,7 @@
 	// consolidated toggle over the ladder, and (for non-personal work) the
 	// conflicts the ladder discarded. Presentational: the page supplies the project
 	// + the kit ladder / conflicts; the `active` rung + `view` toggle live in the
-	// `dojo2-preview-state` rune store.
+	// `preview/state` rune store.
 	let {
 		project,
 		ladder,

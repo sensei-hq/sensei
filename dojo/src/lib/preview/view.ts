@@ -10,7 +10,7 @@
 // consolidated view is those rungs' rules minus the discarded copy. Pure over
 // plain data so it unit-tests without a DOM.
 
-import type { KitConflict, KitLadderRung, KitProject, KitRule } from './components/kit/types';
+import type { KitConflict, KitLadderRung, KitProject, KitRule } from '../components/kit/types';
 
 /** A rule on the consolidated constitution — a rung rule with the scope it
  *  entered from attached (drives the "by layer" jump + the level chip). */

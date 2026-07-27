@@ -6,9 +6,9 @@ import {
 	showsConflicts,
 	lockCount,
 	scopeIdsFor
-} from './dojo2-preview-view';
-import { ladder, conflicts } from './components/kit/fixtures';
-import type { KitProject } from './components/kit/types';
+} from './view';
+import { ladder, conflicts } from '../components/kit/fixtures';
+import type { KitProject } from '../components/kit/types';
 
 // Pure derivations behind the dojo project-constitution preview (mockup
 // ScrProjectPreview `previewRungs` / `showConflicts` / `effective`). Kept as a

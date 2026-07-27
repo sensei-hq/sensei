@@ -11,7 +11,7 @@
 // back to a stable, honest label (a shortened id) rather than fabricating a name.
 
 import type { Membership, Identity, Policy, AuditEvent, HealthRollup } from './admin-data';
-import { relativeAge } from './triage-view';
+import { relativeAge } from './triage/view';
 import type {
 	KitMember,
 	KitRolePolicy,

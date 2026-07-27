@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { Button } from '@rokkit/ui';
-	import { relativeAge } from '$lib/triage-view';
+	import { relativeAge } from '$lib/triage/view';
 	import { replyToGate, DojoApiError, type RelayGate } from '$lib/relay-data';
 
 	// Relay "needs you" gate card (mockup relay.jsx RelayApprove/RelayRespond +

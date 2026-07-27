@@ -13,7 +13,7 @@
 
 import type { Incident } from './client-data';
 import type { AuditEvent } from './admin-data';
-import { relativeAge } from './triage-view';
+import { relativeAge } from './triage/view';
 import type { KitIncident, KitClientAuditRow } from './components/kit/types';
 
 /** The incident glyph (盾 — "shield"), matching the fixture. */
