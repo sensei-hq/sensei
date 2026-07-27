@@ -28,7 +28,7 @@ interface RelayPushPayload {
 	title?: string;
 	/** One-line logical message, e.g. "cargo test on Round-trip". Never code. */
 	body?: string;
-	/** Deep-link into the run/gate, e.g. "/console/relay/<run_id>". */
+	/** Deep-link into the run/gate, e.g. "/you/runs/<run_id>". */
 	url?: string;
 	/** Opaque grouping tag so repeat gates on one run collapse (optional). */
 	tag?: string;
@@ -51,7 +51,7 @@ sw.addEventListener('push', (event: PushEvent) => {
 	const p = parsePayload(event);
 	const title = p.title?.trim() || 'Dōjō Relay';
 	const body = p.body?.trim() || 'A run needs you.';
-	const url = typeof p.url === 'string' && p.url ? p.url : '/console/relay';
+	const url = typeof p.url === 'string' && p.url ? p.url : '/you';
 	event.waitUntil(
 		sw.registration.showNotification(title, {
 			body,
@@ -68,7 +68,7 @@ sw.addEventListener('push', (event: PushEvent) => {
 sw.addEventListener('notificationclick', (event: NotificationEvent) => {
 	event.notification.close();
 	const data = (event.notification.data ?? {}) as { url?: string };
-	const target = typeof data.url === 'string' && data.url ? data.url : '/console/relay';
+	const target = typeof data.url === 'string' && data.url ? data.url : '/you';
 	event.waitUntil(focusOrOpen(target));
 });
 

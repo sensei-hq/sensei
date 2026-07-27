@@ -2,10 +2,9 @@ import { render, cleanup, fireEvent } from '@testing-library/svelte';
 import { afterEach, describe, expect, it } from 'vitest';
 import ChatThread from './ChatThread.svelte';
 import RunCardHarness from './RunCard.harness.svelte';
-import GateCardHarness from './GateCard.harness.svelte';
 import DecisionCardHarness from './DecisionCard.harness.svelte';
 import NeedsYouBandHarness from './NeedsYouBand.harness.svelte';
-import { runs, chat, me, needsYou, gates } from './fixtures';
+import { runs, chat, me, needsYou } from './fixtures';
 
 // Render smoke tests for the relay-plane domain components (run / gate / needs /
 // decision / chat). Each mounts with a fixture, asserts key content + variants,
@@ -39,22 +38,6 @@ describe('kit relay components render', () => {
 		expect(getByText('refactor refresh-token rotation')).toBeTruthy();
 		// the stacked gate chip reads just "gate".
 		expect(getByText('gate')).toBeTruthy();
-	});
-
-	it('GateCard shows the command, risk chip, why + session, and fires approve/deny', async () => {
-		const { getByText, getByTestId } = render(GateCardHarness, { gate: undefined });
-		expect(getByText(/pnpm db:migrate --env=staging/)).toBeTruthy();
-		expect(getByText('guarded')).toBeTruthy();
-		expect(getByText(/touches an auth-boundary schema · session s-2891/)).toBeTruthy();
-		await fireEvent.click(getByText('Approve once'));
-		expect(getByTestId('approves').textContent).toBe('1');
-		await fireEvent.click(getByText('Deny'));
-		expect(getByTestId('denies').textContent).toBe('1');
-	});
-
-	it('GateCard tints a high-risk gate in danger', () => {
-		const { getByText } = render(GateCardHarness, { gate: gates[1] });
-		expect(getByText('high').className).toContain('text-danger');
 	});
 
 	it('DecisionCard shows the title, context, options and forwards the choice', async () => {

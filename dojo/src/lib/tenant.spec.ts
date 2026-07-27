@@ -78,21 +78,21 @@ describe('tenantCookieString / enterOrg (the one shared tenant-switch path)', ()
 		expect(cookie).toBe(`${TENANT_COOKIE}=github%2Fglobex; path=/; SameSite=Lax`);
 	});
 
-	it('enterOrg writes the tenant cookie for the picked org then navigates to the console', () => {
+	it('enterOrg writes the tenant cookie for the picked org then navigates to the given href', () => {
 		const setCookie = vi.fn();
 		const navigate = vi.fn();
 		const org = orgs[1]; // Globex → github/globex
 		const landed = enterOrg(org, {
 			setCookie,
 			navigate,
-			consoleHref: '/(console)/console'
+			consoleHref: '/org/globex'
 		});
 		expect(setCookie).toHaveBeenCalledTimes(1);
 		expect(setCookie).toHaveBeenCalledWith(
 			`${TENANT_COOKIE}=${encodeURIComponent(org.url)}; path=/; SameSite=Lax`
 		);
-		expect(navigate).toHaveBeenCalledWith('/(console)/console');
-		expect(landed).toBe('/(console)/console');
+		expect(navigate).toHaveBeenCalledWith('/org/globex');
+		expect(landed).toBe('/org/globex');
 	});
 });
 
