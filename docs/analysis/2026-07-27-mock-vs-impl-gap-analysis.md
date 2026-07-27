@@ -168,6 +168,14 @@ in the review), since dojo2 is largely built; treat the dojo2 inbox catch-up as 
   well-specified work.
 - Effort: design-heavy; build spread across planes.
 
+## Decision (2026-07-27)
+
+**Option B chosen.** Build the landed Inbox IA + run-detail now (port the plan-model vocab →
+kit family → re-shape the nav → enrich the run detail); the LLM designer produces the five
+mockup gaps (states, critical paths, honest-data variants) in parallel; wire the fixture
+screens in the next slice. Sequencing dependency stands: **the plan-model vocab ports to the
+kit first.** Carry into `/sensei:plan`.
+
 ## Recommendation
 
 **Option B.** The inbox IA and run-detail are the highest-value change *and* the most
