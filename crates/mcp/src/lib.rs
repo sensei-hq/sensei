@@ -115,6 +115,22 @@ pub fn daemon_request_for(
             Some(DaemonRequest::get("/api/user").with_query("under", under))
         }
 
+        // ── Set the user's behavioural stance (autonomy · sharing · review) ─────
+        // `set_stance` POSTs `/api/stance`; `under` defaults to the MCP cwd (same
+        // folder-scoping + git-identity resolution as `get_user_for_project`).
+        // `scope` picks the rung (omitted → the user's default); each omitted dial
+        // takes its stored default. The daemon validates the dial values.
+        "set_stance" => {
+            let under = args["under"].as_str().filter(|s| !s.is_empty()).unwrap_or(cwd);
+            let mut body = json!({ "under": under });
+            for k in ["user", "scope", "autonomy", "sharing", "review"] {
+                if let Some(v) = args[k].as_str().filter(|s| !s.is_empty()) {
+                    body[k] = json!(v);
+                }
+            }
+            Some(DaemonRequest::post_json("/api/stance", body))
+        }
+
         // ── Workflow state ──────────────────────────────────────────────────
         "update_phase" => {
             let body = json!({
@@ -473,6 +489,14 @@ pub fn handle_list_tools() -> Value {
             ]),
             tool("get_user_for_project", "Resolve the git author identity — user.name and user.email, using git's own local-over-global precedence (a repo .git/config override wins; otherwise ~/.gitconfig) — for the folder you're working in, plus the sensei project that owns it. This is the same identity as the commit author and the Dōjō sign-in, so it's how a run or plan gets registered to the right person for relay attribution. Defaults to the current working directory when 'under' is omitted.", &[], &[
                 ("under", "string", "Absolute folder path to resolve the identity + owning project for. Defaults to the current working directory."),
+            ]),
+            tool("set_stance", "Set the user's behavioural stance — the three dials that govern HOW a run behaves (autonomy: how far it goes before asking · sharing: what surfaces to the dōjō · review: who signs off a rule) — at a scope. Complements the governance rules (WHAT a run may do). User-scoped and daemon-local. Omitting 'scope' sets the user's default across scopes; a scope key (e.g. 'project', 'organization') sets it for that rung and overrides the default there. Each omitted dial keeps its stored default. Defaults 'under' to the current working directory to resolve the git identity + scope namespace.", &[], &[
+                ("autonomy", "string", "How far a run goes before asking: ask_always | ask_on_guarded (default) | ask_on_risky | run_freely."),
+                ("sharing",  "string", "What surfaces to the dōjō: private | patterns (default) | patterns_prompts | derived."),
+                ("review",   "string", "Approvers before a rule adopts: me_alone | one_maintainer (default) | two_maintainers | quorum."),
+                ("scope",    "string", "Scope key to set the stance at (e.g. 'project', 'organization'). Omit for the user's default across scopes."),
+                ("under",    "string", "Absolute folder path — resolves the git identity + the scope's namespace. Defaults to the current working directory."),
+                ("user",     "string", "Explicit user key (git email) to set the stance for. Defaults to the git identity at 'under'."),
             ]),
             tool("use_project", "Pin the active project so every subsequent tool call resolves to it regardless of the server's working directory. Call this when the user tells you which project they're working on (e.g. use_project 'sensei'). The pin persists until you switch it by calling use_project again; an explicit project= argument on any other tool still overrides it for that one call.", &[
                 ("project", "string", "Project name or UUID to pin as active (e.g. 'sensei')."),
@@ -1108,7 +1132,7 @@ mod tests {
     const EXPECTED_TOOLS: &[&str] = &[
         "search", "context_pack", "get_callers", "get_callees", "get_project_summary",
         "get_lib_docs", "search_lib_docs", "get_communities", "get_patterns",
-        "list_projects", "find_projects", "get_user_for_project", "use_project", "create_session", "update_session", "add_library",
+        "list_projects", "find_projects", "get_user_for_project", "set_stance", "use_project", "create_session", "update_session", "add_library",
         "update_phase", "get_workflow_state", "match_pattern", "get_pattern_for",
         "get_duplicates", "get_project_conventions", "get_rules", "get_commands", "infer", "embed",
         "gateway_status", "consensus", "generate_image", "log_event",
@@ -1676,6 +1700,34 @@ mod tests {
         ).unwrap();
         assert_eq!(req.path, "/api/user");
         assert_eq!(q(&req, "under"), Some("/some/repo"), "explicit `under` overrides cwd");
+    }
+
+    #[test]
+    fn set_stance_posts_dials_and_defaults_under_to_cwd() {
+        // Only-provided dials are sent; `under` defaults to cwd; no scope → default row.
+        let req = daemon_request_for(
+            "set_stance", &json!({ "autonomy": "run_freely" }), "/my/cwd", None,
+        ).unwrap();
+        assert_eq!(req.method, HttpMethod::Post);
+        assert_eq!(req.path, "/api/stance");
+        let body = req.body.unwrap();
+        assert_eq!(body["under"], json!("/my/cwd"), "under defaults to cwd");
+        assert_eq!(body["autonomy"], json!("run_freely"));
+        assert!(body.get("sharing").is_none(), "omitted dials are not sent (daemon keeps stored default)");
+        assert!(body.get("scope").is_none(), "no scope → default row");
+    }
+
+    #[test]
+    fn set_stance_forwards_scope_and_explicit_under() {
+        let req = daemon_request_for(
+            "set_stance",
+            &json!({ "under": "/repo", "scope": "project", "review": "quorum" }),
+            "/my/cwd", None,
+        ).unwrap();
+        let body = req.body.unwrap();
+        assert_eq!(body["under"], json!("/repo"), "explicit under overrides cwd");
+        assert_eq!(body["scope"], json!("project"));
+        assert_eq!(body["review"], json!("quorum"));
     }
 
     #[test]
