@@ -1,22 +1,19 @@
 import type { PageLoad } from './$types';
 import { guardTenantScope } from '$lib/org-guard';
 import { listRuns, listGates, DojoApiError, type RelayRun, type RelayGate } from '$lib/relay-data';
-import { toKitRuns } from '$lib/relay-map';
-import { needsYou, projects } from '$lib/components/kit/fixtures';
+import { toKitInbox } from '$lib/relay-map';
 
-// The Your-work landing data. The live-runs strip now loads REAL `/v1` runs (+ the
-// pending gates that mark a run as "needs you") via the SAME console client the
-// shipped `(console)` relay list uses (relay-data.listRuns/listGates), mapped to
-// the kit shape. The needs-you band and active-projects list stay fixture-backed
-// (no single cross-dōjō needs route yet; projects pending its route) and remain
-// gated behind `hasMembership` so a solo viewer sees an honest-empty landing (DJ1).
-// The relay fetch runs behind `guardTenantScope` — a membership-less viewer skips
-// the network; a live-service failure/404 degrades to empty so the page renders.
+// The personal landing is the Inbox — one list of every in-flight session. It
+// loads REAL /v1 runs + their pending gates (the SAME console client the shipped
+// (console) relay list uses) and maps them to sorted inbox rows. The fetch runs
+// behind guardTenantScope: a membership-less viewer skips the network and gets an
+// honest-empty inbox (DJ1); a live-service failure/404 degrades to empty + a
+// surfaced error so the page always renders.
 type RelayLists = { runs: RelayRun[]; gates: RelayGate[] };
 const EMPTY_RELAY: RelayLists = { runs: [], gates: [] };
 
 export const load: PageLoad = async ({ parent, fetch }) => {
-	const { hasMembership, tenantKey, accessToken } = await parent();
+	const { tenantKey, accessToken } = await parent();
 	let relay: RelayLists = EMPTY_RELAY;
 	let error: string | null = null;
 	try {
@@ -33,8 +30,6 @@ export const load: PageLoad = async ({ parent, fetch }) => {
 	}
 	return {
 		error,
-		needsYou: hasMembership ? needsYou : [],
-		runs: toKitRuns(relay.runs, relay.gates),
-		projects: hasMembership ? projects : []
+		inbox: toKitInbox(relay.runs, relay.gates)
 	};
 };
