@@ -21,13 +21,15 @@
 		tenantKey,
 		accessToken,
 		onReplied,
-		onReply
+		onReply,
+		runHrefBase = '/console/relay/'
 	}: {
 		gate: RelayGate;
 		tenantKey: string;
 		accessToken: string | null;
 		onReplied?: () => void;
 		onReply?: (inboxId: string, reply: Record<string, unknown>) => Promise<void>;
+		runHrefBase?: string;
 	} = $props();
 
 	const ZERO_UUID = '00000000-0000-0000-0000-000000000000';
@@ -48,7 +50,7 @@
 
 	// Deep-link to the run only when it's a real run id (not the all-zeros uuid).
 	const runHref = $derived(
-		gate.run_id && gate.run_id !== ZERO_UUID ? `/console/relay/${gate.run_id}` : null
+		gate.run_id && gate.run_id !== ZERO_UUID ? `${runHrefBase}${gate.run_id}` : null
 	);
 
 	let note = $state('');

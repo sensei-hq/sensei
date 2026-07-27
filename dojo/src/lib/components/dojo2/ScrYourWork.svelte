@@ -19,19 +19,22 @@
 	// stat badges, live runs, and active projects. Presentational: it takes the
 	// data as props (the page supplies kit fixtures this chunk) and owns only the
 	// resolve-inline state via `createYourWork`. `onOpenProject` bubbles a project
-	// open; `mobile` switches to the stacked phone layout (no stat row).
+	// open, `onOpenRun` bubbles a live-run open; `mobile` switches to the stacked
+	// phone layout (no stat row).
 	let {
 		needsYou = [],
 		runs = [],
 		projects = [],
 		mobile = false,
-		onOpenProject
+		onOpenProject,
+		onOpenRun
 	}: {
 		needsYou?: KitNeed[];
 		runs?: KitRun[];
 		projects?: KitProject[];
 		mobile?: boolean;
 		onOpenProject?: (p: KitProject) => void;
+		onOpenRun?: (r: KitRun) => void;
 	} = $props();
 
 	// Seed the resolve-inline state ONCE from the page-load props (they don't
@@ -95,7 +98,7 @@
 			countToneClass="text-success"
 		>
 			{#each runs as run (run.id)}
-				<RunCard {run} flat stacked={mobile} />
+				<RunCard {run} flat stacked={mobile} onOpen={onOpenRun} />
 			{/each}
 		</ListSection>
 	{/if}
