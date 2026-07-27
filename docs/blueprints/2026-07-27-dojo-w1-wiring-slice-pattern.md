@@ -106,9 +106,15 @@ Traced end-to-end; the slice is genuine Tier-3 backend work, **not** a loader fl
 **Build-ready steps (do these, in order, next session):**
 1. **Confirm the scope vocabulary** — read `database/ddl/table/sensei/scopes.ddl` + the scopes seed;
    list the real `key`s → fix the `scope_key`→{label, kanji, group, order} map.
-2. **Tenant→namespaces** — resolve which namespaces are a tenant's constitution (its own
-   `organization:<slug>`/`personal:<user>` namespace + adopted packs); likely a small
-   `constitution-data.ts` store fn composing `resolveNamespaceIds` + `resolveAdoptedPackRules`.
+2. **Tenant→namespaces (the real design step — DO NOT shortcut).** Resolve the tenant's FULL
+   namespace set across scopes, not just its org namespace. A constitution spans
+   `(organization, <org>)` + `(team, <team>)` + `(technology, <stack>)` — **different slugs per
+   scope**, not derivable from the org slug alone. Filtering by `slug = <org>` would render ONLY the
+   Company section and silently drop real team/stack rules → a misleadingly-partial constitution
+   (the acme-fallback lesson). Needs the **ownership/adoption lookup** (which namespaces this tenant
+   owns/adopted) — a small `constitution-data.ts` store fn composing that set → `resolveNamespaceIds`
+   + a `shared_rules` read + `resolveAdoptedPackRules`. Best built + **browser-verified against a
+   real seeded dōjō** (the wrangler recipe — F6-adjacent), since a partial read fails silently.
 3. **Web read route** `v1/t/[origin]/[org]/constitution/+server.ts` (`resolveTenantAccess`, member
    floor) → `{ rules }`.
 4. **Mapper** `constitution-map.ts`: `rulesToLadder` (KitLadderRung[]) + `rulesToSections`
