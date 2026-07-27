@@ -17,8 +17,10 @@ Real shapes (from `dojo/src/lib/relay-data.ts`, backed by `dojo.relay_sessions` 
 
 ## Status
 
-The three mock-change asks have landed in the mocks. Remaining work is build-side or
-broader design.
+The three mock-change asks have landed **in the mocks**. The implementation has **not** caught
+up on the inbox model — it still ships the pre-inbox nav (`Live runs · Approve · Decide · Chat`)
+and the plan/inbox visualizer components are unbuilt. Full mock↔impl comparison and the build
+worklist: [`../analysis/2026-07-27-mock-vs-impl-gap-analysis.md`](../analysis/2026-07-27-mock-vs-impl-gap-analysis.md).
 
 | # | Item | Kind | State |
 |---|------|------|-------|
