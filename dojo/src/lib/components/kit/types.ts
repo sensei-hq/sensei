@@ -253,6 +253,18 @@ export interface KitRun {
 	last?: string;
 }
 
+/** One entry in a run's activity feed (a segment's state at a moment). */
+export interface KitActivity {
+	/** Solar icon name (from the task-state vocab). */
+	icon: string;
+	/** Foreground token class tinting the icon. */
+	toneClass: string;
+	/** What happened (the segment title). */
+	text: string;
+	/** Relative "how long ago" (e.g. "4m"). */
+	at: string;
+}
+
 /** One inbox row — a run rolled up with what it waits on you for. Derivation
  * (`inboxRow`/`inboxRows`) lands in F2; the type is declared here. */
 export interface KitInbox {
