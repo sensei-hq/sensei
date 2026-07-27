@@ -62,7 +62,7 @@
 {#if data.section === 'projects'}
 	<ScrProjects projects={data.projects} showDojo={false} onOpenProject={openProject} />
 {:else if data.section === 'runs'}
-	<ScrRelayWatch runs={data.runs} />
+	<ScrRelayWatch runs={data.runs} onOpenRun={(r) => goto(youHref('runs') + '/' + r.id)} />
 {:else if data.section === 'approve'}
 	<ScrRelayApprove
 		gates={data.gates}

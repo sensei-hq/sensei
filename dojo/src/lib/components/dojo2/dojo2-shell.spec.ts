@@ -95,6 +95,21 @@ describe('dojo2 shell — org switcher lists memberships', () => {
 		});
 		expect(getAllByText('Your work').length).toBeGreaterThan(0);
 	});
+
+	it('offers "All organizations" + "Create or join" entries that route to /orgs', async () => {
+		const { getByText, getAllByText } = render(OrgSwitcher, {
+			props: { context: 'you', dojos: toKitDojos([acme]), onpick: vi.fn() }
+		});
+		await fireEvent.click(getAllByText('Your work')[0].closest('button')!);
+		// both /orgs entries render and are live buttons (not dead anchors).
+		const all = getByText('All organizations').closest('button')!;
+		const create = getByText('Create or join a dōjō').closest('button')!;
+		expect(all).toBeTruthy();
+		expect(create).toBeTruthy();
+		// clicking navigates (goto is stubbed to a no-op under vitest) — no throw.
+		await fireEvent.click(all);
+		await fireEvent.click(create);
+	});
 });
 
 describe('ScrYourWork — the landing', () => {
@@ -126,6 +141,16 @@ describe('ScrYourWork — the landing', () => {
 		// 14 + 9 + 3 = 26 (fixture runsWeek).
 		expect(getByText('26')).toBeTruthy();
 		expect(getByText('runs this week')).toBeTruthy();
+	});
+
+	it('fires onOpenRun when a live-run card is clicked (opens the detail)', async () => {
+		const onOpenRun = vi.fn();
+		const { getByText } = render(ScrYourWork, {
+			props: { needsYou, runs, projects, onOpenRun }
+		});
+		await fireEvent.click(getByText('refactor refresh-token rotation').closest('button')!);
+		expect(onOpenRun).toHaveBeenCalledTimes(1);
+		expect(onOpenRun.mock.calls[0][0].id).toBe('s-2891');
 	});
 
 	it('a membership-less landing (no data) shows the honest empty state', () => {

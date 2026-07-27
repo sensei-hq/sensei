@@ -66,13 +66,18 @@ export function tenantKeyOf(org: DojoOrg): string {
 export function resolveTenantKey(
 	cookieValue?: string | null,
 	paramValue?: string | null,
-	hasMembership: boolean = true
+	hasMembership: boolean = true,
+	memberDefault?: string | null
 ): TenantKey {
 	const cookie = cookieValue?.trim();
 	if (cookie) return cookie;
 	const param = paramValue?.trim();
 	if (param) return param;
-	return hasMembership ? DEFAULT_TENANT_KEY : null;
+	// A member with no explicit selection defaults to their FIRST REAL membership
+	// (the caller passes it), NEVER the dojo-data fixture (`orgs[0]`). Falls back to
+	// DEFAULT_TENANT_KEY only when no real default was supplied (dev/test back-compat).
+	if (!hasMembership) return null;
+	return memberDefault?.trim() || DEFAULT_TENANT_KEY;
 }
 
 /**

@@ -18,11 +18,7 @@
 </script>
 
 <div class="flex flex-col {mobile ? 'p-4 gap-4' : 'p-8 gap-6'}">
-	<SectionHead eyebrow="Relay · watch" title="Live runs" count={runs.length}>
-		{#snippet right()}
-			<a href="#session-log" class="mono text-ink-mute text-xs no-underline">session log →</a>
-		{/snippet}
-	</SectionHead>
+	<SectionHead eyebrow="Relay · watch" title="Live runs" count={runs.length} />
 
 	{#if runs.length}
 		<div class="bg-paper-soft border-paper-edge overflow-hidden rounded-lg border">

@@ -13,14 +13,17 @@ describe('deriveConsoleContext — membership surfaced, no fabricated tenant (DJ
 		expect(ctx.memberships).toEqual([]);
 	});
 
-	it('a member with no cookie/param defaults to orgs[0] (unchanged behaviour)', () => {
+	it("a member with no cookie/param defaults to their OWN first membership, not the fixture orgs[0]", () => {
 		const ctx = deriveConsoleContext({
 			memberships: [member],
 			cookieTenant: null,
 			paramTenant: null
 		});
 		expect(ctx.hasMembership).toBe(true);
-		expect(ctx.tenantKey).toBe(DEFAULT_TENANT_KEY);
+		// The real membership (github/globex), NEVER the dojo-data fixture default —
+		// scoping a real user to a fixture tenant makes every /v1/t/… call 404.
+		expect(ctx.tenantKey).toBe(member.url);
+		expect(ctx.tenantKey).not.toBe(DEFAULT_TENANT_KEY);
 	});
 
 	it("a member's persisted cookie is authoritative", () => {
