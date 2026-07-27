@@ -10,7 +10,18 @@
 
 import type { RelayRun, RelayGate, RelaySegment, RelayRunStatus } from './relay-data';
 import { relativeAge } from './triage-view';
-import type { KitRun, KitGate, KitDecision, KitChatTurn, KitInbox } from './components/kit/types';
+import { nodeTone, taskState } from './components/kit/vocab';
+import type {
+	KitRun,
+	KitGate,
+	KitDecision,
+	KitChatTurn,
+	KitInbox,
+	KitPlan,
+	KitPhase,
+	KitTask,
+	KitActivity
+} from './components/kit/types';
 
 /** The relay inbox kinds that are a sign-off DECISION (rules to adopt/promote)
  *  rather than a command APPROVAL. `/you/decide` filters gates to these. */
@@ -239,6 +250,72 @@ export function toKitInbox(runs: RelayRun[], gates: RelayGate[], now: Date = new
 	return runs
 		.map((r) => inboxRow(r, needsByRun.get(r.run_id) ?? 0, now))
 		.sort((a, b) => a.rank - b.rank);
+}
+
+/* ── Run detail: the plan (from segments) + the activity feed ───────────────── */
+
+/** RelaySegment → KitTask. `SegmentState` is already the 7-state `KitTaskState`
+ *  vocabulary, so `taskState` is a safe identity (+ legacy guard). Segments carry
+ *  no `deps` today, so tasks are dep-less (the graph reads sequential until deps
+ *  are federated). */
+function segmentToTask(s: RelaySegment): KitTask {
+	return {
+		id: s.id,
+		title: s.title,
+		state: taskState(s.state),
+		agent: s.agent ?? undefined,
+		model: s.model ?? undefined,
+		spec_ref: s.spec_ref ?? undefined,
+		summary: s.summary ?? undefined,
+		deps: [],
+		is_gate: s.is_gate,
+		gate_severity: s.gate_severity ?? undefined
+	};
+}
+
+/**
+ * The flat, seq-ordered segment list → a KitPlan (phases → tasks). Top-level
+ * segments (`parent_id === null`) are phases; the rest hang under their parent,
+ * keeping seq order. An orphan (a parent that isn't top-level) surfaces as a
+ * standalone phase so nothing is silently dropped — mirroring the console run
+ * view. Pure — the single source of truth the outline + graph both render from.
+ */
+export function segmentsToPlan(segments: RelaySegment[]): KitPlan {
+	const phases: KitPhase[] = [];
+	const byId = new Map<string, KitPhase>();
+	for (const s of segments) {
+		if (s.parent_id === null) {
+			// Segments carry no deps, so a phase is sequential (seq order) until the
+			// daemon federates parallelism — never guess "parallel" from missing deps.
+			const phase: KitPhase = { id: s.id, title: s.title, tasks: [], mode: 'sequential' };
+			phases.push(phase);
+			byId.set(s.id, phase);
+		}
+	}
+	for (const s of segments) {
+		if (s.parent_id === null) continue;
+		const parent = byId.get(s.parent_id);
+		if (parent) parent.tasks.push(segmentToTask(s));
+		else phases.push({ id: s.id, title: s.title, tasks: [], mode: 'sequential' }); // orphan
+	}
+	return { phases };
+}
+
+/**
+ * The run's activity feed — its segments as a chronological "what happened, when"
+ * list, newest first (by `submitted_at`; unsubmitted segments are omitted — an
+ * activity is something that occurred). Complements the structural outline with a
+ * temporal view. Pure; `now` feeds the relative ages.
+ */
+export function segmentsToActivity(segments: RelaySegment[], now: Date = new Date()): KitActivity[] {
+	return segments
+		.filter((s) => !!s.submitted_at)
+		.slice()
+		.sort((a, b) => (b.submitted_at ?? '').localeCompare(a.submitted_at ?? ''))
+		.map((s) => {
+			const tone = nodeTone(s.state);
+			return { icon: tone.icon, toneClass: tone.text, text: s.title, at: age(s.submitted_at, now) };
+		});
 }
 
 /** Filter inbox rows by the SubTabs selection: `needs` (waiting on you) ·
