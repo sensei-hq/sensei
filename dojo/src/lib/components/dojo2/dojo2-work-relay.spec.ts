@@ -104,6 +104,14 @@ describe('ScrRelayWatch — live runs', () => {
 		const { getByText } = render(ScrRelayWatch, { props: { runs: [] } });
 		expect(getByText('No sessions running.')).toBeTruthy();
 	});
+
+	it('fires onOpenRun with the run when a card is clicked (opens the detail)', async () => {
+		const onOpenRun = vi.fn();
+		const { getByText } = render(ScrRelayWatch, { props: { runs, onOpenRun } });
+		await fireEvent.click(getByText('refactor refresh-token rotation').closest('button')!);
+		expect(onOpenRun).toHaveBeenCalledTimes(1);
+		expect(onOpenRun.mock.calls[0][0].id).toBe('s-2891');
+	});
 });
 
 describe('ScrRelayApprove — commands awaiting approval', () => {

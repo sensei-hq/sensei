@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
 	import KanjiToken from './KanjiToken.svelte';
 	import { kindTone } from './vocab';
 	import { K2_ROLE } from './vocab';
@@ -28,6 +29,13 @@
 	function pick(slug: string) {
 		open = false;
 		onpick?.(slug);
+	}
+
+	// "All organizations" / "Create or join" both leave the switcher for the org
+	// index (/orgs) — the picker where a dōjō is browsed, joined, or created.
+	function goOrgs() {
+		open = false;
+		goto('/orgs');
 	}
 </script>
 
@@ -98,6 +106,20 @@
 				{#if isYou}<span class="text-accent text-sm" aria-hidden="true">✓</span>{/if}
 			</button>
 
+			<button
+				type="button"
+				role="menuitem"
+				onclick={goOrgs}
+				class="border-paper-edge flex w-full cursor-pointer items-center gap-3 border-b bg-transparent text-left"
+				style="padding: 12px"
+			>
+				<KanjiToken char="全" size="base" toneClass="text-ink-mute" w={20} />
+				<div class="flex-1" style="min-width: 0">
+					<div class="text-ink text-sm font-medium">All organizations</div>
+					<div class="text-ink-mute text-xs">browse every dōjō you can join</div>
+				</div>
+			</button>
+
 			<div
 				class="text-ink-mute text-xs font-semibold uppercase"
 				style="letter-spacing: 0.18em; padding: 12px 12px 4px"
@@ -138,6 +160,7 @@
 			<button
 				type="button"
 				role="menuitem"
+				onclick={goOrgs}
 				class="border-paper-edge text-ink-soft flex w-full cursor-pointer items-center gap-2 border-t bg-transparent text-left text-sm"
 				style="padding: 12px"
 			>
