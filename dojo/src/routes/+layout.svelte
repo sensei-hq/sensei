@@ -5,6 +5,7 @@
 	import { themable } from '@rokkit/actions';
 	import { setContext, onMount } from 'svelte';
 	import { page } from '$app/stores';
+	import { colorMode, loadColorMode, setColorMode } from '$lib/theme.svelte';
 
 	let { children } = $props();
 
@@ -19,6 +20,8 @@
 	// light-mode only, so pin mode/density to match app.html too.
 	vibe.allowedStyles = ['zen-sumi'];
 	vibe.style = 'zen-sumi';
+	// `light` is only the pre-hydration default (no-JS / SSR); on mount the persisted
+	// or system-derived color mode is applied + kept in sync with the OS (see below).
 	vibe.mode = 'light';
 	vibe.density = 'comfortable';
 
@@ -35,6 +38,12 @@
 
 	const kavach = $state<Record<string, unknown>>({});
 	setContext('kavach', kavach);
+
+	// Apply the persisted / system color mode client-side + follow OS changes.
+	onMount(() => {
+		setColorMode(loadColorMode());
+		return colorMode.listen();
+	});
 
 	onMount(async () => {
 		const { createKavach } = await import('kavach');
