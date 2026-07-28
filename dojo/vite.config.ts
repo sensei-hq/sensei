@@ -4,6 +4,7 @@ import { kavach } from '@kavach/vite';
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
 import UnoCSS from '@unocss/vite';
+import { paraglideVitePlugin } from '@inlang/paraglide-js';
 
 // Build-time version stamp so a deploy is verifiable (dojo v{version} · {sha} in
 // the console footer + GET /version). Computed here in the Node config context
@@ -37,7 +38,16 @@ export default defineConfig({
 		__DOJO_GIT_SHA__: JSON.stringify(gitSha()),
 		__DOJO_BUILD_TIME__: JSON.stringify(new Date().toISOString())
 	},
-	plugins: [kavach(), UnoCSS(), sveltekit()],
+	plugins: [
+		// Compile-time i18n (paraglide/inlang) — generates $lib/paraglide (m.* messages)
+		// from messages/{locale}.json. Runs before sveltekit so the generated module is
+		// present for the app graph. English-only today; add a locale via a new messages
+		// file + project.inlang/settings.json. See docs/spec/dojo-screens/README.md.
+		paraglideVitePlugin({ project: './project.inlang', outdir: './src/lib/paraglide' }),
+		kavach(),
+		UnoCSS(),
+		sveltekit()
+	],
 	optimizeDeps: {
 		exclude: ['@rokkit/app', '@rokkit/ui', '@rokkit/states', '@rokkit/actions']
 	}
