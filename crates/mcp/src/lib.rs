@@ -939,26 +939,50 @@ pub fn read_active_project(path: &Path) -> Option<ActiveProject> {
     }
 }
 
-/// Pure: choose the DEFAULT project name (used when a tool carries no explicit
-/// `project` arg), in precedence order **explicit → pin → cwd → none**:
-///   * `explicit` — the name a non-empty `project=` arg already resolved to;
-///   * `pin`      — the parsed `~/.sensei/active-project` (survives cwd changes);
-///   * `cwd_name` — `resolve_from_cwd_in(...)` ("" when nothing matched).
-///
-/// An empty explicit / empty-name pin is treated as absent. Returns `None` when
-/// none of the three yields a name.
+/// The default-project decision for a project-scoped tool (no explicit `project=`).
+#[derive(Debug, Clone, PartialEq)]
+pub enum ProjectResolution {
+    /// A project was chosen. `source` is how it was picked (`"explicit"` | `"cwd"` | `"pin"`);
+    /// `note` carries a stale-pin warning when a resolved cwd overrode a *conflicting* pin —
+    /// surfaced to the caller so a mis-resolution is never silent.
+    Resolved { name: String, source: &'static str, note: Option<String> },
+    /// No explicit arg, no cwd match, no pin — the caller must name the project.
+    Unresolved,
+}
+
+/// Pure: choose the default project for a project-scoped tool. Precedence:
+///   1. **explicit** — a non-empty `project=` arg (strongest; a per-call override).
+///   2. **cwd** — the project the WORKING DIR resolves to. This **beats a persisted `pin`** when
+///      they disagree: being *in* a repo is a current, per-session signal, whereas the pin file
+///      `~/.sensei/active-project` leaks across sessions/repos — the stale-pin misroute where a
+///      prior `use_project sensei` silently returned sensei's state while working in `torii`.
+///      The override is carried in `note`, never applied silently.
+///   3. **pin** — the fallback when the cwd resolves nothing (e.g. launched from a container dir
+///      that is not itself a project); this is what `use_project` exists for.
+///   4. otherwise **Unresolved** — the caller must pass `project=` or run `use_project`.
 pub fn resolve_default_project(
     explicit: Option<&str>,
     pin: Option<&ActiveProject>,
     cwd_name: &str,
-) -> Option<String> {
+) -> ProjectResolution {
     if let Some(e) = explicit.filter(|s| !s.is_empty()) {
-        return Some(e.to_string());
+        return ProjectResolution::Resolved { name: e.to_string(), source: "explicit", note: None };
     }
-    if let Some(p) = pin.filter(|p| !p.name.is_empty()) {
-        return Some(p.name.clone());
+    let cwd = (!cwd_name.trim().is_empty()).then_some(cwd_name);
+    let pin_name = pin.map(|p| p.name.as_str()).filter(|n| !n.is_empty());
+    match (cwd, pin_name) {
+        (Some(c), Some(p)) if c != p => ProjectResolution::Resolved {
+            name: c.to_string(),
+            source: "cwd",
+            note: Some(format!(
+                "working dir resolves to '{c}' but the pinned project is '{p}' — using '{c}'. \
+                 Run use_project to update the pin, or pass project= to override."
+            )),
+        },
+        (Some(c), _) => ProjectResolution::Resolved { name: c.to_string(), source: "cwd", note: None },
+        (None, Some(p)) => ProjectResolution::Resolved { name: p.to_string(), source: "pin", note: None },
+        (None, None) => ProjectResolution::Unresolved,
     }
-    (!cwd_name.is_empty()).then(|| cwd_name.to_string())
 }
 
 /// Pure: find the project row matching `hint` among `/api/projects` rows.
@@ -1783,21 +1807,40 @@ mod tests {
     }
 
     #[test]
-    fn default_project_precedence_is_explicit_then_pin_then_cwd_then_none() {
+    fn default_project_explicit_then_cwd_beats_pin_then_pin_fallback_then_unresolved() {
+        use ProjectResolution::*;
         let pin = ActiveProject { id: "id".into(), name: "pinned".into() };
-        // explicit wins over pin AND cwd
-        assert_eq!(resolve_default_project(Some("explicit"), Some(&pin), "cwdname"), Some("explicit".into()));
-        // pin wins over cwd when there's no explicit arg
-        assert_eq!(resolve_default_project(None, Some(&pin), "cwdname"), Some("pinned".into()));
-        // cwd used when neither explicit nor pin
-        assert_eq!(resolve_default_project(None, None, "cwdname"), Some("cwdname".into()));
-        // none when nothing resolves
-        assert_eq!(resolve_default_project(None, None, ""), None);
-        // empty explicit is ignored → pin wins
-        assert_eq!(resolve_default_project(Some(""), Some(&pin), "cwd"), Some("pinned".into()));
-        // empty-name pin is treated as absent → falls through to cwd
+        let resolved = |r: ProjectResolution| match r {
+            Resolved { name, source, note } => (name, source, note),
+            Unresolved => ("<unresolved>".into(), "none", None),
+        };
+
+        // explicit wins over pin AND cwd.
+        assert_eq!(resolved(resolve_default_project(Some("explicit"), Some(&pin), "cwdname")).0, "explicit");
+
+        // THE FIX: a resolved cwd beats a CONFLICTING pin (the stale cross-session pin that
+        // returned sensei while working in torii) — and the override is surfaced in `note`,
+        // never silent. (Old behaviour returned the pin here — that test codified the bug.)
+        let (name, source, note) = resolved(resolve_default_project(None, Some(&pin), "torii"));
+        assert_eq!((name.as_str(), source), ("torii", "cwd"));
+        assert!(note.as_deref().unwrap().contains("pinned project is 'pinned'"), "stale-pin override is surfaced");
+
+        // cwd + pin AGREE → cwd, no note (nothing to warn about).
+        let agree = ActiveProject { id: "id".into(), name: "sensei".into() };
+        assert_eq!(resolved(resolve_default_project(None, Some(&agree), "sensei")), ("sensei".into(), "cwd", None));
+
+        // pin is the fallback ONLY when the cwd resolves nothing (e.g. a container dir).
+        assert_eq!(resolved(resolve_default_project(None, Some(&pin), "")), ("pinned".into(), "pin", None));
+
+        // cwd used when there's no pin at all.
+        assert_eq!(resolved(resolve_default_project(None, None, "cwdname")), ("cwdname".into(), "cwd", None));
+
+        // nothing resolves → Unresolved (caller must pass project= / use_project).
+        assert_eq!(resolve_default_project(None, None, "  "), ProjectResolution::Unresolved);
+
+        // empty explicit + empty-name pin are treated as absent.
         let empty = ActiveProject { id: "id".into(), name: String::new() };
-        assert_eq!(resolve_default_project(None, Some(&empty), "cwdname"), Some("cwdname".into()));
+        assert_eq!(resolved(resolve_default_project(Some(""), Some(&empty), "cwdname")), ("cwdname".into(), "cwd", None));
     }
 
     /// A unique temp dir for pin-file tests (no external tempdir dep in this crate).

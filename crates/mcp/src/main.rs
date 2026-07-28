@@ -5,7 +5,16 @@ use sensei_mcp::{
     active_project_path, daemon_request_for, handle_initialize, handle_list_tools,
     read_active_project, resolve_active_project_in, resolve_default_project,
     resolve_from_cwd_in, resolve_project_in, write_active_project, DaemonRequest, HttpMethod,
+    ProjectResolution,
 };
+
+/// Prepend a note (as its own text block) to a tool result's `content` — used to surface a
+/// stale-pin project override so a mis-resolution is visible, not silent.
+fn prepend_note(result: &mut Value, note: &str) {
+    if let Some(arr) = result.get_mut("content").and_then(Value::as_array_mut) {
+        arr.insert(0, json!({ "type": "text", "text": note }));
+    }
+}
 
 fn daemon_url() -> String {
     sensei_bootstrap::daemon_url()
@@ -168,15 +177,24 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
     } else {
         (read_active_project(&pin_path()), resolve_project_from_cwd(cwd, client))
     };
-    let repo_id = resolve_default_project(explicit.as_deref(), pin.as_ref(), &cwd_name)
-        .unwrap_or_default();
+    // A resolved cwd beats a conflicting (stale) pin; the override is surfaced, not silent.
+    let (repo_id, resolution_note) =
+        match resolve_default_project(explicit.as_deref(), pin.as_ref(), &cwd_name) {
+            ProjectResolution::Resolved { name, note, .. } => (name, note),
+            ProjectResolution::Unresolved => (String::new(), None),
+        };
     let resolved = (!repo_id.is_empty()).then_some(repo_id.as_str());
 
     // The library shapes every straightforward daemon call (knowledge / project
     // / patterns / workflow / mcp-proxy). Send it here and pipe through the
-    // standard response conversion.
+    // standard response conversion — prepending a stale-pin note so a mis-resolution
+    // is visible to the caller instead of silently returning the wrong project's state.
     if let Some(req) = daemon_request_for(tool_name, &args, cwd, resolved) {
-        return daemon_result(send_daemon_request(client, &req));
+        let mut result = daemon_result(send_daemon_request(client, &req));
+        if let Some(note) = resolution_note {
+            prepend_note(&mut result, &format!("⟦project: {repo_id} — {note}⟧"));
+        }
+        return result;
     }
 
     // `None` → tools the binary owns because they need a custom HTTP client
