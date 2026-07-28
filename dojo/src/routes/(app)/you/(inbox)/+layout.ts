@@ -1,8 +1,18 @@
 import type { LayoutLoad } from './$types';
+import { loadRelayInbox } from '$lib/relay/relay-inbox';
 
-// The inbox rail is fed by the client-side three-layer state (relay-inbox-state +
-// loadRelayInbox), not a server load — so this layout does no data fetch. Kept as a
-// no-op load. When the real user-wide read lands it goes in loadRelayInbox's body
-// (client-side, membership-scoped), NOT here (a rune singleton must not be populated
-// during SSR). See docs/spec/dojo-screens/inbox.md.
-export const load: LayoutLoad = () => ({});
+// The inbox rail's data. Fans the single-tenant relay API out over the user's
+// memberships (from the (app) layout via parent()) → a user-wide RelaySession[].
+// The client-side state singleton is populated in +layout.svelte's onMount from this
+// `sessions` (a rune singleton must not be written during SSR). Membership-less or a
+// service failure → honest-empty; the rail always renders. See inbox.md.
+export const load: LayoutLoad = async ({ parent, fetch }) => {
+	const { memberships, accessToken, hasMembership } = await parent();
+	if (!hasMembership || !memberships.length) return { sessions: [] };
+	try {
+		const sessions = await loadRelayInbox({ memberships, accessToken, fetch });
+		return { sessions };
+	} catch {
+		return { sessions: [] };
+	}
+};
