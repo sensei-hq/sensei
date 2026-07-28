@@ -18,7 +18,23 @@ fn daemon_result(result: reqwest::Result<reqwest::blocking::Response>) -> Value 
             let data: Value = resp.json().unwrap_or(json!({}));
             json!({"content": [{"type": "text", "text": serde_json::to_string_pretty(&data).unwrap_or_default()}]})
         }
-        Ok(resp) => json!({"content": [{"type": "text", "text": format!("Daemon error: HTTP {}", resp.status())}], "isError": true}),
+        // Non-2xx: surface the daemon's error MESSAGE, not just the status. The daemon
+        // returns `{"error": "..."}` on a 400 (e.g. a bad register_plan graph — "duplicate
+        // task id t1", "task t4 depends on unknown task tX"), so the caller sees WHAT to fix.
+        Ok(resp) => {
+            let status = resp.status();
+            let body = resp.text().unwrap_or_default();
+            let detail = serde_json::from_str::<Value>(&body)
+                .ok()
+                .and_then(|v| v.get("error").and_then(Value::as_str).map(str::to_string))
+                .unwrap_or(body);
+            let text = if detail.trim().is_empty() {
+                format!("Daemon error: HTTP {status}")
+            } else {
+                format!("Daemon error: HTTP {status} — {detail}")
+            };
+            json!({"content": [{"type": "text", "text": text}], "isError": true})
+        }
         Err(e) => json!({"content": [{"type": "text", "text": format!("Cannot reach senseid daemon: {}", e)}], "isError": true}),
     }
 }
