@@ -84,6 +84,7 @@ pub fn acp_update_to_segments(update: &SessionUpdate) -> Vec<RelaySegment> {
             .map(|(i, entry)| RelaySegment {
                 id: None,
                 parent_id: None,
+                parent_seq: None,
                 seq: i as i32,
                 // Only the entry's human-readable `content` crosses — a short
                 // phrase, exactly like a todo's `content`. No _meta, no args.

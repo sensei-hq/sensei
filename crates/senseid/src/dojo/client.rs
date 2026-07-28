@@ -871,6 +871,7 @@ mod tests {
             RelaySegment {
                 id: None,
                 parent_id: None,
+                parent_seq: None,
                 seq: 0,
                 title: "Phase 1".into(),
                 summary: Some("vertical slice".into()),
@@ -887,6 +888,7 @@ mod tests {
             RelaySegment {
                 id: None,
                 parent_id: None,
+                parent_seq: None,
                 seq: 1,
                 title: "Gate".into(),
                 summary: None,
