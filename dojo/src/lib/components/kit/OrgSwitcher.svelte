@@ -51,7 +51,7 @@
 				open = false;
 			}
 		}}
-		class="bg-paper-soft inline-flex cursor-pointer items-center gap-2 rounded-lg border {open
+		class="bg-paper-soft inline-flex cursor-pointer items-center gap-2 rounded border {open
 			? 'border-accent'
 			: 'border-paper-edge'}"
 		style="padding: 4px 12px; min-height: 32px"

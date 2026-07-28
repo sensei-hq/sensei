@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
-	import { AppShell, MobileShell, ContextHeader } from '$lib/components/kit';
+	import { AppShell, MobileShell } from '$lib/components/kit';
 	import {
 		navGroupsFor,
 		tabsFor,
@@ -91,7 +91,6 @@
 			{onnav}
 			{onneeds}
 		>
-			<ContextHeader {context} org={kitOrg} {me} />
 			{@render children()}
 		</AppShell>
 	</div>

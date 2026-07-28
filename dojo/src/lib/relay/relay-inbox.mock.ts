@@ -5,7 +5,9 @@
 // the fixture. NOT random — each row targets a specific state.
 import type { RelaySession, RelayPhase, SegmentState } from './types';
 
-const iso = (min: number) => new Date(Date.UTC(2026, 6, 28, 12, 0) - min * 60_000).toISOString();
+// Ages are relative to real now so the rail reads in live minutes ("2m", "38m")
+// like the mockup — a fixed base would drift to hours as wall-clock moves past it.
+const iso = (min: number) => new Date(Date.now() - min * 60_000).toISOString();
 
 // Build N phases with the given per-phase states (drives the pip strip).
 const phases = (states: SegmentState[]): RelayPhase[] =>
@@ -16,13 +18,20 @@ const phases = (states: SegmentState[]): RelayPhase[] =>
 		tasks: [{ id: `p${i}t0`, title: `task ${i}`, state }]
 	}));
 
-const ask = (id: string, action: RelaySession['asks'][number]['action'], prompt: string, opts: string[]) => ({
+const ask = (
+	id: string,
+	action: RelaySession['asks'][number]['action'],
+	prompt: string,
+	opts: string[],
+	extra: Partial<RelaySession['asks'][number]> = {}
+) => ({
 	id,
 	action,
 	blocking: true,
 	prompt,
 	options: opts,
-	createdAt: iso(3)
+	createdAt: iso(3),
+	...extra
 });
 
 export function relayInboxMock(): RelaySession[] {
@@ -36,14 +45,29 @@ export function relayInboxMock(): RelaySession[] {
 			done: 5,
 			total: 12,
 			phase: 'Implement',
+			model: 'claude-sonnet',
+			startedAt: iso(38),
 			lastEventAt: iso(2),
 			needs: 3,
 			attention: null,
 			plan: { phases: phases(['done', 'done', 'active', 'pending', 'pending']) },
 			asks: [
-				ask('a1', 'approve', 'Run the staging migration?', ['Run it', 'Dry-run first', 'Skip the migration']),
-				ask('a2', 'choose', 'Which redaction sink?', ['Route to sink', 'Delete the lines']),
-				ask('a3', 'chat', 'Confirm the rollout window', [])
+				ask('a1', 'approve', 'Run the staging migration?', ['Run it', 'Dry-run first', 'Skip the migration'], {
+					context:
+						'pnpm db:migrate --env=staging · touches an auth-boundary schema · the company rung requires a human yes',
+					segmentId: 't11',
+					taskTitle: 'Staging migration'
+				}),
+				ask('a2', 'choose', 'Which redaction sink?', ['Route to sink', 'Delete the lines'], {
+					context: 'Two debug lines still print the refresh token.',
+					segmentId: 't8',
+					taskTitle: 'Scrub token logging'
+				}),
+				ask('a3', 'chat', 'Confirm the rollout window', [], {
+					context: 'sensei will ship behind a flag; tell it when to flip.',
+					segmentId: 't12',
+					taskTitle: 'Rollout'
+				})
 			]
 		},
 		{

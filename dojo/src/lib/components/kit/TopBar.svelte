@@ -3,7 +3,7 @@
 	import RoleTag from './RoleTag.svelte';
 	import Icon from './Icon.svelte';
 	import KanjiToken from './KanjiToken.svelte';
-	import LogoutButton from './LogoutButton.svelte';
+	import { createLogout } from './logout.svelte';
 	import { getInitials } from './initials';
 	import type { KitOrg, KitDojo, KitMe } from './types';
 
@@ -39,6 +39,10 @@
 	// Avatar as initials (the kit's window.Avatar) — two-letter monogram, matching
 	// the shipped ConsoleTopBar treatment. Shared: kit/initials.ts.
 	const initials = $derived(getInitials(me?.name));
+
+	// The avatar IS the account/logout control (mockup has no separate Log out
+	// button). Shared action, DRY with the mobile LogoutButton.
+	const logout = createLogout();
 </script>
 
 <div
@@ -76,7 +80,7 @@
 	<span class="flex-1"></span>
 
 	<div
-		class="bg-paper-soft border-paper-edge hidden items-center gap-2 rounded-lg border md:flex"
+		class="bg-paper-soft border-paper-edge hidden items-center gap-2 rounded border md:flex"
 		style="padding: 0 12px; width: 240px; height: 34px"
 	>
 		<KanjiToken char="探" size="sm" toneClass="text-ink-mute" />
@@ -101,13 +105,16 @@
 		{/if}
 	</button>
 
-	<span
-		class="bg-accent-soft text-accent flex flex-shrink-0 items-center justify-center rounded-full text-xs font-semibold"
+	<!-- Avatar = the account/logout control (mockup: no separate Log out button). -->
+	<button
+		type="button"
+		onclick={() => logout.run()}
+		disabled={logout.busy}
+		title="Log out"
+		aria-label="Log out"
+		class="bg-accent-soft text-accent flex flex-shrink-0 cursor-pointer items-center justify-center rounded-full border-none text-xs font-semibold"
 		style="width: 30px; height: 30px"
-		aria-hidden="true">{initials}</span
 	>
-
-	<!-- Log out — shared kit control; client signOut() via the kavach context
-	     (there is no server /logout route; the supabase session is client-managed). -->
-	<LogoutButton />
+		{initials}
+	</button>
 </div>

@@ -12,6 +12,9 @@ import { filterSessions, needsCount } from './relay-inbox-view';
 let sessions = $state<RelaySession[]>([]);
 let filter = $state<RelayFilter>('needs');
 let selectedId = $state<string | null>(null);
+// Per-ask verdicts (askId → the answer text). Mock-phase local echo of the reply;
+// the real write path (POST /relay/reply) swaps in behind answerAsk later.
+let answered = $state<Record<string, string>>({});
 
 const shown = $derived(filterSessions(sessions, filter));
 const needs = $derived(needsCount(sessions));
@@ -39,9 +42,17 @@ export const relayInboxState = {
 	get selected() {
 		return selected;
 	},
+	/** Answered asks (askId → verdict text) — drives the AskCard verdict echo. */
+	get answered() {
+		return answered;
+	},
 
 	load(next: RelaySession[]) {
 		sessions = next;
+	},
+	/** Record a reply to an ask — the mock echoes it locally; the real POST swaps in here. */
+	answerAsk(askId: string, verdict: string) {
+		answered = { ...answered, [askId]: verdict };
 	},
 	select(id: string | null) {
 		selectedId = id;
