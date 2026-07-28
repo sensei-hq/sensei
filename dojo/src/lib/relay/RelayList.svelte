@@ -35,7 +35,7 @@
 	{:else if !st.shown.length}
 		<EmptyState kanji="空" title={m.inbox_empty_title()}>{m.inbox_empty_filter()}</EmptyState>
 	{:else}
-		<div class="border-paper-edge overflow-hidden rounded-lg border">
+		<div class="bg-paper-soft border-paper-edge overflow-hidden rounded-lg border">
 			{#each st.shown as s (s.id)}
 				<RelayCard session={s} selected={s.id === st.selectedId} onopen={(id) => st.select(id)} />
 			{/each}
