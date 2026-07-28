@@ -1,4 +1,25 @@
 {
 	"$schema": "https://inlang.com/schema/inlang-message-format",
-	"inbox_title": "Inbox"
+	"inbox_title": "Inbox",
+	"inbox_eyebrow": "You · in flight",
+	"inbox_needs_badge": "{count} need you",
+	"inbox_sort_hint": "Sorted by what waits on you — then stalled or blocked, then running, then finished.",
+	"inbox_empty_title": "Nothing in flight.",
+	"inbox_empty_body": "Sessions you're running across your dōjōs show up here. When it's quiet, sensei stays quiet.",
+	"inbox_empty_filter": "No session matches that view right now.",
+	"filter_needs": "Needs you",
+	"filter_running": "Running",
+	"filter_finished": "Finished",
+	"filter_all": "All",
+	"card_needs_one": "1 needs you",
+	"card_needs_many": "{count} need you",
+	"card_no_heartbeat": "no heartbeat",
+	"card_blocked": "blocked on a task",
+	"card_failed": "a task failed",
+	"status_running": "running",
+	"status_stalled": "stalled",
+	"status_blocked": "blocked",
+	"status_paused": "paused",
+	"status_done": "done",
+	"status_failed": "failed"
 }
