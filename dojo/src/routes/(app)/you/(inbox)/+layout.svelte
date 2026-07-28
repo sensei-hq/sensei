@@ -3,18 +3,18 @@
 	import RelayList from '$lib/relay/RelayList.svelte';
 	import RelayDetail from '$lib/relay/RelayDetail.svelte';
 	import { relayInboxState } from '$lib/relay/relay-inbox-state.svelte';
-	import { loadRelayInbox } from '$lib/relay/relay-inbox';
 
 	// Inbox zone — two-panel master-detail (mockup ScrInbox). Left = RelayList over
 	// relayInboxState; right = RelayDetail for the selected run (in-page selection),
 	// falling back to the route child (the empty-state page / deep-linked run detail).
-	// Selection is state-driven (state.select), so it works on mock data before the
-	// real user-wide read lands. Mock-first Load, client-side (a rune singleton must
-	// not be populated during SSR). On mount we auto-open the first run so md+ is never
-	// blank (mockup). `md+` shows both panels; `<md` shows the rail until a selection.
-	let { children } = $props();
+	// The real user-wide sessions are fetched in +layout.ts (fan-out over memberships)
+	// and handed to `data.sessions`; we populate the client-side state singleton here in
+	// onMount (a rune singleton must not be written during SSR) and auto-open the first
+	// run so md+ is never blank. `md+` shows both panels; `<md` shows the rail until a
+	// selection.
+	let { data, children } = $props();
 	onMount(() => {
-		relayInboxState.load(loadRelayInbox());
+		relayInboxState.load(data.sessions);
 		relayInboxState.select(relayInboxState.shown[0]?.id ?? null);
 	});
 	const active = $derived(relayInboxState.selectedId);
