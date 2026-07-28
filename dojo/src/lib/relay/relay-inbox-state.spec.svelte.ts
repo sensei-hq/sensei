@@ -60,30 +60,32 @@ describe('relayInboxState', () => {
 
 	it('load → sessions + needsCount; default filter shows only needs/attention', () => {
 		relayInboxState.load(relayInboxMock());
-		expect(relayInboxState.sessions).toHaveLength(4);
-		expect(relayInboxState.needsCount).toBe(2); // run-approve + run-choose
-		// default 'needs' filter: the two gated runs + the stalled run, not the done run
-		expect(relayInboxState.shown.map((x) => x.id)).toEqual(['run-approve', 'run-choose', 'run-stalled']);
+		expect(relayInboxState.sessions).toHaveLength(7);
+		expect(relayInboxState.needsCount).toBe(8); // 3+1+1+2+1 across the five gated runs
+		// 'needs' filter: five gated + the stalled run = 6; the finished run is hidden
+		expect(relayInboxState.shown).toHaveLength(6);
+		expect(relayInboxState.shown[0].id).toBe('run-lumen');
+		expect(relayInboxState.shown.some((x) => x.id === 'run-done')).toBe(false);
 	});
 
 	it('setFilter + select drive shown/selected', () => {
 		relayInboxState.load(relayInboxMock());
 		relayInboxState.setFilter('finished');
 		expect(relayInboxState.shown.map((x) => x.id)).toEqual(['run-done']);
-		relayInboxState.select('run-approve');
-		expect(relayInboxState.selected?.id).toBe('run-approve');
+		relayInboxState.select('run-lumen');
+		expect(relayInboxState.selected?.id).toBe('run-lumen');
 	});
 
 	it('patch upserts (realtime) and remove clears selection', () => {
 		relayInboxState.load(relayInboxMock());
-		relayInboxState.patch(s({ id: 'run-approve', title: 'renamed', needs: 0, status: 'done' }));
-		expect(relayInboxState.sessions.find((x) => x.id === 'run-approve')?.title).toBe('renamed');
-		expect(relayInboxState.needsCount).toBe(1); // one gate answered
+		relayInboxState.patch(s({ id: 'run-lumen', title: 'renamed', needs: 0, status: 'done' }));
+		expect(relayInboxState.sessions.find((x) => x.id === 'run-lumen')?.title).toBe('renamed');
+		expect(relayInboxState.needsCount).toBe(5); // lumen's 3 asks answered → 8 - 3
 		relayInboxState.patch(s({ id: 'run-new', needs: 1 }));
-		expect(relayInboxState.sessions).toHaveLength(5);
+		expect(relayInboxState.sessions).toHaveLength(8);
 		relayInboxState.select('run-new');
 		relayInboxState.remove('run-new');
-		expect(relayInboxState.sessions).toHaveLength(4);
+		expect(relayInboxState.sessions).toHaveLength(7);
 		expect(relayInboxState.selectedId).toBe(null);
 	});
 });
