@@ -297,6 +297,12 @@ pub struct RelaySegment {
     pub id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_id: Option<String>,
+    /// The `seq` of this node's parent phase, when authored (publish-time only —
+    /// the daemon can't set `parent_id` because the Worker assigns ids on upsert).
+    /// The Worker resolves `parent_id` from this after the `(session_id, seq)` upsert
+    /// so Phase/Step nesting survives. None for top-level nodes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_seq: Option<i32>,
     pub seq: i32,
     pub title: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -536,6 +542,7 @@ mod tests {
         let phase = RelaySegment {
             id: Some("22222222-2222-2222-2222-222222222222".into()),
             parent_id: None,
+            parent_seq: None,
             seq: 0,
             title: "Auth".into(),
             summary: Some("wire the join flow".into()),
@@ -564,6 +571,7 @@ mod tests {
         let task = RelaySegment {
             id: None,
             parent_id: Some("22222222-2222-2222-2222-222222222222".into()),
+            parent_seq: None,
             seq: 3,
             title: "Add register_plan handler".into(),
             summary: None,
@@ -694,6 +702,7 @@ mod tests {
             segments: vec![RelaySegment {
                 id: None,
                 parent_id: None,
+                parent_seq: None,
                 seq: 0,
                 title: "Auth".into(),
                 summary: Some("wire join flow".into()),
