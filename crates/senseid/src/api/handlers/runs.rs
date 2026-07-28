@@ -252,19 +252,29 @@ pub(crate) async fn register_plan(
     State(state): State<AppState>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), StatusCode> {
+    // Reject with a MESSAGE (in the 400 body), not a bare status — the caller
+    // (register_plan MCP tool / an executor) needs to know WHAT to fix.
+    let bad = |msg: String| Ok((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": msg }))));
+
     let goal = body["goal"].as_str().map(str::trim).unwrap_or("");
     if goal.is_empty() {
-        return Err(StatusCode::BAD_REQUEST);
+        return bad("goal is required".into());
     }
-    let Some(plan_val) = body.get("plan") else {
-        return Err(StatusCode::BAD_REQUEST);
+    let Some(plan_val) = body.get("plan").filter(|v| !v.is_null()) else {
+        return bad("plan is required and must be a valid JSON object".into());
     };
-    let graph: crate::plan_graph::PlanGraph =
-        serde_json::from_value(plan_val.clone()).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let graph: crate::plan_graph::PlanGraph = match serde_json::from_value(plan_val.clone()) {
+        Ok(g) => g,
+        Err(e) => return bad(format!("invalid plan structure: {e}")),
+    };
     // A plan with no tasks is a no-op; a malformed DAG (dup ids / dangling / cycle)
-    // is a 400 rather than a persisted broken run an executor can't schedule.
-    if graph.task_count() == 0 || crate::plan_graph::validate(&graph).is_err() {
-        return Err(StatusCode::BAD_REQUEST);
+    // is a 400 with the reason rather than a persisted broken run an executor
+    // can't schedule.
+    if graph.task_count() == 0 {
+        return bad("plan has no tasks".into());
+    }
+    if let Err(e) = crate::plan_graph::validate(&graph) {
+        return bad(format!("invalid plan graph: {e}"));
     }
 
     let (project_id, author_name, author_email) =
