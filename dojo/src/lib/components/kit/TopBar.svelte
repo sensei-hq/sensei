@@ -3,8 +3,7 @@
 	import RoleTag from './RoleTag.svelte';
 	import Icon from './Icon.svelte';
 	import KanjiToken from './KanjiToken.svelte';
-	import { createLogout } from './logout.svelte';
-	import { getInitials } from './initials';
+	import AccountMenu from './AccountMenu.svelte';
 	import type { KitOrg, KitDojo, KitMe } from './types';
 
 	// Top bar (kit K2TopBar): brand · org switcher · search affordance · needs-you
@@ -35,14 +34,6 @@
 	} = $props();
 
 	const isOrg = $derived(context === 'org');
-
-	// Avatar as initials (the kit's window.Avatar) — two-letter monogram, matching
-	// the shipped ConsoleTopBar treatment. Shared: kit/initials.ts.
-	const initials = $derived(getInitials(me?.name));
-
-	// The avatar IS the account/logout control (mockup has no separate Log out
-	// button). Shared action, DRY with the mobile LogoutButton.
-	const logout = createLogout();
 </script>
 
 <div
@@ -105,16 +96,6 @@
 		{/if}
 	</button>
 
-	<!-- Avatar = the account/logout control (mockup: no separate Log out button). -->
-	<button
-		type="button"
-		onclick={() => logout.run()}
-		disabled={logout.busy}
-		title="Log out"
-		aria-label="Log out"
-		class="bg-accent-soft text-accent flex flex-shrink-0 cursor-pointer items-center justify-center rounded-full border-none text-xs font-semibold"
-		style="width: 30px; height: 30px"
-	>
-		{initials}
-	</button>
+	<!-- Avatar = the account menu (theme mode + log out). -->
+	<AccountMenu {me} />
 </div>
