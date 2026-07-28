@@ -151,14 +151,14 @@ export default {
 	// utility (the rokkit bare-name-shortcut idiom); override keys are
 	// auto-safelisted by presetRokkit, so Icon.svelte can apply the bare class
 	// dynamically and UnoCSS still generates the CSS — no runtime resolver, no
-	// manual uno.config safelist. `-linear` is a crisp single-tone outline that
-	// tints cleanly with currentColor.
+	// manual uno.config safelist. `-bold-duotone` matches the mockup's K2Icon
+	// (Solar bold-duotone) — a two-tone fill that reads richer than a flat outline.
 	icons: {
 		solar: '@iconify-json/solar/icons.json',
 		// Brand logos for the sign-in providers (GitHub OAuth · Google). Referenced
 		// as `i-simple-icons:{name}` (e.g. the GitHub button in DojoSignIn).
 		'simple-icons': '@iconify-json/simple-icons/icons.json',
-		overrides: Object.fromEntries(ICON_NAMES.map((n) => [n, `i-solar:${n}-linear`]))
+		overrides: Object.fromEntries(ICON_NAMES.map((n) => [n, `i-solar:${n}-bold-duotone`]))
 	},
 	switcher: 'manual',
 	storageKey: 'sensei-dojo-theme'

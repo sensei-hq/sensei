@@ -67,6 +67,10 @@ export interface RelaySession {
 	done: number;
 	total: number;
 	phase: string | null;
+	/** Run model (from the plan graph) — the meta line. */
+	model?: string;
+	/** Run start instant (ISO) — the meta "elapsed". */
+	startedAt?: string;
 	/** Relative "last activity" instant (ISO) — the age label + staleness. */
 	lastEventAt: string | null;
 	/** Count of open asks (drives "N need you" + the needs filter). */

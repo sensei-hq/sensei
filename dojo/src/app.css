@@ -17,4 +17,44 @@ body {
 	color: var(--ink);
 	min-height: 100%;
 	font-family: var(--font-ui);
+	font-weight: 300;
+}
+
+/* Thinner type — shift the whole weight scale down one step (Jerry prefers the
+ * lighter text). Overrides uno's font-* utilities app-wide; app.css is imported
+ * after uno.css so same-specificity rules here win. Inter's floor is 300 (the
+ * weights loaded are 300–600). */
+.font-normal {
+	font-weight: 300;
+}
+.font-medium {
+	font-weight: 400;
+}
+.font-semibold {
+	font-weight: 500;
+}
+
+/* Toggle (rokkit) restyle to match the mockup's tab strip — a transparent group of
+ * separated pills, not a filled segmented track. The default group paints a dark ink
+ * track with tight chips; the mockup wants no track, roomier pills, and a paper-soft
+ * fill on the selected one. Scoped to the group variant so the cycling button variant
+ * is untouched. Tokens keep it dark-mode-correct. */
+[data-toggle][data-toggle-variant='group'] {
+	background: transparent;
+	padding: 0;
+	gap: var(--space-2);
+	border-radius: 0;
+}
+[data-toggle][data-toggle-variant='group'] [data-toggle-option] {
+	height: auto;
+	padding: var(--space-2) var(--space-3);
+	border-radius: 6px;
+	font-size: 13px;
+	font-weight: 400;
+	color: var(--ink-mute);
+	background: transparent;
+}
+[data-toggle][data-toggle-variant='group'] [data-toggle-option][data-selected='true'] {
+	background: var(--paper-soft);
+	color: var(--ink);
 }

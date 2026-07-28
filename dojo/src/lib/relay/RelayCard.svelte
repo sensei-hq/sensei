@@ -84,8 +84,8 @@
 	<button
 		type="button"
 		onclick={() => onopen?.(session.id)}
-		class="grid w-full cursor-pointer items-start gap-3 bg-transparent text-left"
-		style="grid-template-columns: 10px minmax(0, 1fr); padding: var(--space-3) var(--space-4)"
+		class="grid w-full cursor-pointer items-start gap-3 bg-transparent px-4 py-3 text-left"
+		style="grid-template-columns: 10px minmax(0, 1fr)"
 	>
 		<span
 			class="rounded-full {dotClass || 'border-ink-faint border'}"
