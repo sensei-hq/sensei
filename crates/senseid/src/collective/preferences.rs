@@ -33,8 +33,11 @@ const DEFAULT_DESTINATION: &str = "none";
 /// Default cadence — batching is paused until the user triggers it.
 const DEFAULT_CADENCE: &str = "manual";
 /// Default attribution — the safest mode (source stripped). MUST equal
-/// [`AttributionMode::Dereferenced`]`.as_db_str()` (asserted in tests).
-const DEFAULT_ATTRIBUTION: &str = "dereferenced";
+/// [`AttributionMode::Dereferenced`]`.as_db_str()` (asserted in tests). The
+/// single source of truth for the conservative attribution default, shared with
+/// membership creation (`api::handlers::dojo`) so a new membership never
+/// defaults to the least-private `named`.
+pub(crate) const DEFAULT_ATTRIBUTION: &str = "dereferenced";
 /// Default per-category toggle — every category is shareable once a destination
 /// is enabled (`destination = none` already gates all sharing off, so an
 /// all-on default just means "when I do share, share every supported kind").

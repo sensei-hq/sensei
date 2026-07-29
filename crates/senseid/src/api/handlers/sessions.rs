@@ -457,12 +457,18 @@ pub(crate) async fn hook_gate(
             return gate_decision("allow", "gate unavailable — allowed");
         }
     };
+    // Personal beta = one dōjō. Multi-dōjō gating (which phone answers, quorum,
+    // races) is a tracked follow-up (relay-engine.md feature B); until then we
+    // ask the FIRST enabled membership. The gate is fail-OPEN by design, so this
+    // never turns into a cross-tenant *block* — but surface the ambiguity rather
+    // than silently picking, so a multi-dōjō setup is visible in the logs.
+    if memberships.len() > 1 {
+        tracing::warn!(session_id, count = memberships.len(),
+            "hook_gate: multiple enabled memberships — asking the first (multi-dōjō gating deferred)");
+    }
     let Some(membership) = memberships.into_iter().next() else {
         return gate_decision("allow", "no dojo enrolled");
     };
-    // FIRST enabled membership only (personal beta = one). Gating across
-    // multiple memberships (which phone answers, quorum, races) is a tracked
-    // follow-up — see relay-engine.md feature B.
     let client = crate::dojo::client::DojoClient::for_membership(&membership);
 
     // Ensure the cloud session exists so the phone can render the gate in
