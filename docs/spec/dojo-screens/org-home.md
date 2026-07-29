@@ -6,6 +6,9 @@
 - Access axis: tenant-primary — the org console `/org/[slug]/*` is genuinely tenant-scoped (`docs/architecture/entity-access-model.md` §3, row "Org console … → Tenant → tenant_id"). Correct as built.
 - Status: PARTIAL — the real `ScrOrgHome` renders and the org name/slug resolve from real memberships, but every data element is a fixture or a hardcoded 0; the jurisdiction stat row (members, needs) is literally `0` and the project list only populates for slug `acme`.
 
+## ⚠ Fabricated-data debt — MUST fix on build (2026-07-29 fallback audit)
+The live post-auth `(app)` route renders fixtures: org index `(app)/org/[slug]/+page.ts:21` (`orgProjectsFor`) + `:24` (`needsYou`), and `[section]/+page.ts:223` (`orgConstitutionFor`) / `:224` (`orgProjectsFor`). **Impact:** a real member sees fabricated repos, constitution, and a "needs you" band for slug `acme` (other slugs render the fixture-shaped empty), not this jurisdiction's real data. **Fix on build:** drive every field from the real `/v1` read; on a fetch error render an explicit error state — NEVER the fixture; honest-empty only when genuinely empty. (Ties the daemon-side fabrication fixes + the "no fabricated fallbacks" rule.)
+
 ## Elements → data (contract)
 | Element | Mockup field | Source (loader/API/table.field) | Status: have/bind/plumb | Realtime? |
 |---|---|---|---|---|

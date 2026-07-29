@@ -6,6 +6,9 @@
 - Access axis: tenant-primary for the RULES half (`entity-access-model.md` §3 — "Governance: rules · ladder/scopes · rule-packs · constitution → Tenant `tenant_id`"). **Exception:** the STANCE half is **user-scoped, daemon-local** (`sensei.stances.user_key`, DDL: "stance follows the user, not a tenant … NOT tenant-shared"). So this personal-zone screen mixes a user-scoped stance with the user's inherited namespace/tenant governance — it is the *personal projection*, not a tenant surface.
 - Status: PARTIAL — component + `constitution-map.rulesToLadder` mapper built & unit-tested, but the loader feeds **fixtures** (`stance`, `ladder`); the mapper is unwired, there is no `/v1` read endpoint, and the stance dials forward `onChange` to nowhere (the page passes no `onStance`, no write path).
 
+## ⚠ Fabricated-data debt — MUST fix on build (2026-07-29 fallback audit)
+`(app)/you/[section]/+page.ts:5` imports and `:23` returns fixture `stance`/`ladder`/`rulePacks`; `/you/projects/[id]` + `/org/[slug]/projects/[id]` likewise resolve project/ladder/conflicts from fixtures. **Impact:** a real user sees a fabricated personal stance + effective-constitution ladder rather than their resolved governance. **Fix on build:** drive every field from the real read (tenant `/v1` ladder + daemon-local stance); on a fetch error render an explicit error state — NEVER the fixture; honest-empty only when genuinely empty. (Ties the daemon-side fabrication fixes + the "no fabricated fallbacks" rule; the fixture-backing is already noted below — this adds the explicit error-not-fixture bar.)
+
 ## Elements → data (contract)
 | Element | Mockup field | Source (loader/API/table.field) | Status: have/bind/plumb | Realtime? |
 |---|---|---|---|---|
@@ -104,3 +107,23 @@ dial is a sharing *posture*, NOT `attribution_mode` — keep the two vocabularie
 (tenant `/v1` ladder + a daemon-local stance read), or — given the dōjō has no cross-DB link to the
 daemon — should the web screen render **ladder-only** and drop the stance dials until a stance read
 route exists (keeping stance edits desktop/MCP-only)?
+
+## Build notes — rokkit + layout (bake in the inbox lessons, [runbook](./SCREEN-BUILD-RUNBOOK.md))
+
+Reach for the SPECIFIC rokkit component per control — hand-rolling then re-doing it as rokkit was
+our single biggest inbox cycle:
+- **"Rule packs →" nav / any action button** → rokkit `Button` (`@rokkit/ui`, `variant`/`icon`).
+- **Stance dials** (discrete snap across `levels`) → rokkit `Range` (stepped) — or `Toggle`
+  (`variant='group'`) when a dial has ≤4 levels; bind `value`/`onchange` → `constitutionState.setDial`.
+  Restyle to the mock via `[data-*]` overrides in `app.css`, never a rebuild.
+- **Ladder rungs + rules** are rich cards → keep `LadderRung`/`RuleRow` **custom** (a rich card
+  doesn't map to rokkit `List`; reserve `List`/`Table`/`Select`/`Menu` for plain rows/dropdowns).
+- **Empty** → kit `EmptyState`; header eyebrow/title → kit `SectionHead`.
+
+**Layout/scroll** (runbook §8): header + 静 banner + the 3-up dial grid are the **sticky header**
+(`shrink-0`); the ladder is the **scroll body** (`flex-1 overflow-y-auto`) inside a
+`h-full min-h-0 flex-col` — so the dials stay put while the constitution scrolls.
+
+Colors / fonts / spacing / radii are the **configured baseline** (runbook Part A) — inherit them
+via the named tokens + `p-*`/`gap-*` utilities; don't re-tune per screen. **Verify by measuring
+computed styles** against the rendered mock (runbook "verify by measurement"), not by eye.

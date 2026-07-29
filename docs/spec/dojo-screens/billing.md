@@ -6,6 +6,9 @@
 - Access axis: tenant-primary — org-financial data, admin-gated; billing is per-tenant (`docs/architecture/entity-access-model.md` §3, org console → `tenant_id`). Read route is ADMIN-floor.
 - Status: PARTIAL — the **live billable seat count** (`dojo.tenant_seat_usage` model) and, when a `billing_accounts` row exists, the **plan + renewal date** are real; the price-per-seat, the three pricing tiers, the relay free/paid rows, and the invoice history are all illustrative fixtures (D-BILLING = schema + route only; no payment provider wired).
 
+## ⚠ Fabricated-data debt — MUST fix on build (2026-07-29 fallback audit)
+`toKitBilling` (`dojo/src/lib/billing-map.ts:29`) overlays only `seatsActive`/`plan`/`renews`, so **`invoices`, per-seat price, `tiers`, `relayRows`, and `seatsReadonly` stay fixture even on a successful 200**; `(app)/org/[slug]/[section]/+page.ts:205` (`guardedFor('billing', billingFor(slug), …)`) falls back to the FULL fixture catalog on error; `billingError` (`+page.ts:252`) is computed but never surfaced; `ScrBilling.svelte:147` renders fake paid invoices (`$408`/`$396`/`$372` from `fixtures.ts:1326`). **Impact:** an org admin always sees fabricated "paid" invoices + fake per-seat pricing/tiers, and a billing-read outage shows an all-fake screen with no error — money-facing. **Fix on build:** drive every field from the real `/v1` read; on a fetch error render an explicit error state — NEVER the fixture; honest-empty only when genuinely empty. (Ties the daemon-side fabrication fixes + the "no fabricated fallbacks" rule.)
+
 ## Elements → data (contract)
 | Element | Mockup field | Source (loader/API/table.field) | Status: have/bind/plumb | Realtime? |
 |---|---|---|---|---|
