@@ -487,7 +487,18 @@ fn init_user_scope(acp: Option<&str>, _recommended: bool) {
             .send()
         {
             Ok(r) if r.status().is_success() => {
-                let body: serde_json::Value = r.json().unwrap_or_default();
+                // An unreadable 200 is NOT a success. Parsing it to `Null` used to
+                // collapse to "no errors" → print "✓ registered", set any_success,
+                // and persist user_scope_configured=true — so a broken/drifted
+                // configure looked permanently healthy and later inits skipped setup.
+                let body: serde_json::Value = match r.json() {
+                    Ok(v) => v,
+                    Err(e) => {
+                        eprintln!("  ✗ {} — configure returned an unreadable response: {}", acp_id, e);
+                        all_errors.push(format!("{}: unreadable configure response: {}", acp_id, e));
+                        continue;
+                    }
+                };
                 let errors: Vec<String> = body["errors"]
                     .as_array()
                     .map(|arr| {

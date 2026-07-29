@@ -6,6 +6,9 @@
 - Access axis: **tenant-primary** — org-console governance surface. Canonical `docs/architecture/entity-access-model.md` §3: "Governance: rules · ladder/scopes …" and "Org console (`/org/[slug]`) → **Tenant** → `tenant_id`". The endpoint filters `dojo.triage_queue.eq('tenant_id', …)` at the MAINTAINER role floor.
 - Status: **PARTIAL** — the ranked candidate list is REAL (`/v1/.../triage` → `dojo.triage_queue ⋈ dojo.artifacts`); the right-pane candidate detail is a best-effort projection, `conflicts` is always 0, and the Approve/Revise/Decline + "My scopes" affordances are unwired (the decide endpoint + client exist but the screen never calls them).
 
+## ⚠ Fabricated-data debt — MUST fix on build (2026-07-29 fallback audit)
+`(app)/org/[slug]/[section]/+page.ts:129` seeds `candidateDetail = candidateDetailFor(slug)` (fixture), and the catch at `+page.ts:145` sets `triageError` but does **NOT** reset `candidateDetail`. **Impact:** on a triage-fetch error the maintainer sees a fabricated candidate learning + fake evidence in the right pane instead of an error/empty state. **Fix on build:** drive every field from the real `/v1` read; on a fetch error render an explicit error state — NEVER the fixture; honest-empty only when genuinely empty. (Ties the daemon-side fabrication fixes + the "no fabricated fallbacks" rule.)
+
 ## Elements → data (contract)
 | Element | Mockup field | Source (loader/API/table.field) | Status: have/bind/plumb | Realtime? |
 |---|---|---|---|---|

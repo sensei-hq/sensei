@@ -6,6 +6,9 @@
 - Access axis: tenant-primary (`entity-access-model.md` §3 — "Governance: rules · **ladder/scopes** · rule-packs · constitution → Tenant `tenant_id`" and "Org console (`/org/[slug]`) → Tenant"). Clean tenant scope.
 - Status: STUB — component built; loader feeds `scopeOwnersFor(slug)` **fixture** (only `acme` authored → any real org renders the honest-empty state). No scopes/policies endpoint; `onAssign` unwired. Note the mockup's scope-**ownership** model (owner + queue + SLA per scope) has **no backing table** in the DDL; `dojo.policies` (the "& policies" half) is modeled but not rendered.
 
+## ⚠ Fabricated-data debt — MUST fix on build (2026-07-29 fallback audit)
+`(app)/org/[slug]/[section]/+page.ts:246` (`scopeOwnersFor`) + `:234` (`confidentialityFor`) render fabricated scope owners (Keiko Tanaka, Marco Diaz…), queues/SLAs, and a fake confidentiality example. **Impact:** an org admin sees invented scope owners + a fake confidentiality row as if they were real governance state. **Fix on build:** drive every field from the real `/v1` read; on a fetch error render an explicit error state — NEVER the fixture; honest-empty only when genuinely empty. (Ties the daemon-side fabrication fixes + the "no fabricated fallbacks" rule.)
+
 ## Elements → data (contract)
 | Element | Mockup field | Source (loader/API/table.field) | Status: have/bind/plumb | Realtime? |
 |---|---|---|---|---|

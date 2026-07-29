@@ -350,8 +350,10 @@ pub(crate) async fn project_summary(
         return Err(StatusCode::NOT_FOUND);
     }
 
-    // Derive counts across all folders in scope.
-    let counts = state.pg.count_nodes_by_kind_scoped(&ids).await.unwrap_or_default();
+    // Derive counts across all folders in scope. A DB error is a 500 — never
+    // masked as 0 counts (which would read as "this project has no code").
+    let counts = state.pg.count_nodes_by_kind_scoped(&ids).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let fn_count = counts.get("function").copied().unwrap_or(0)
         + counts.get("method").copied().unwrap_or(0);
     let type_count = counts.get("class").copied().unwrap_or(0)
@@ -359,21 +361,37 @@ pub(crate) async fn project_summary(
         + counts.get("interface").copied().unwrap_or(0)
         + counts.get("enum").copied().unwrap_or(0)
         + counts.get("type").copied().unwrap_or(0);
-    let edge_count = state.pg.count_edges_scoped(&ids).await.unwrap_or(0);
+    let edge_count = state.pg.count_edges_scoped(&ids).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let pkg_count = counts.get("package").copied().unwrap_or(0);
     let mod_count = counts.get("module").copied().unwrap_or(0);
 
     // Resolve name/path: prefer project row if repo_id is a project name/UUID,
     // else fall back to the first (root) folder row.
+    // Resolve the REAL project/folder row. `repo_id` may be a project name, a
+    // project UUID, or a repo name. When it's a UUID the two name lookups miss, so
+    // look the project up by id. NEVER fabricate: no returning the UUID as the
+    // name, no hardcoded status — if nothing resolves (the scope came from an
+    // orphaned folder set), 404.
+    let project = match state.pg.get_project_by_name(&repo_id).await {
+        Ok(Some(p)) => Some(p),
+        Ok(None) => match uuid::Uuid::parse_str(&repo_id) {
+            Ok(uuid) => state.pg.get_project(&uuid).await
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+            Err(_) => None,
+        },
+        Err(_) => return Err(StatusCode::INTERNAL_SERVER_ERROR),
+    };
     let (name, path, stack, libs, tags, status, indexed_at) =
-        if let Ok(Some(proj)) = state.pg.get_project_by_name(&repo_id).await {
+        if let Some(proj) = project {
             (
                 proj["name"].clone(),
                 proj.get("path").cloned().unwrap_or(serde_json::Value::Null),
                 proj.get("stack").cloned().unwrap_or(serde_json::json!([])),
                 serde_json::json!([]),
                 proj.get("tags").cloned().unwrap_or(serde_json::json!([])),
-                serde_json::json!("active"),
+                // Real lifecycle (project_maturity), not a hardcoded "active".
+                proj.get("maturity").cloned().unwrap_or(serde_json::Value::Null),
                 serde_json::Value::Null,
             )
         } else if let Ok(Some(folder)) = state.pg.get_repo_by_name(&repo_id).await {
@@ -383,20 +401,12 @@ pub(crate) async fn project_summary(
                 folder.get("stack").cloned().unwrap_or(serde_json::json!([])),
                 folder.get("libs").cloned().unwrap_or(serde_json::json!([])),
                 folder.get("tags").cloned().unwrap_or(serde_json::json!([])),
-                folder.get("status").cloned().unwrap_or(serde_json::json!("active")),
+                // Real folder status, honest-null if unset — not a fabricated "active".
+                folder.get("status").cloned().unwrap_or(serde_json::Value::Null),
                 folder.get("indexed_at").cloned().unwrap_or(serde_json::Value::Null),
             )
         } else {
-            // UUID project lookup
-            (
-                serde_json::Value::String(repo_id.clone()),
-                serde_json::Value::Null,
-                serde_json::json!([]),
-                serde_json::json!([]),
-                serde_json::json!([]),
-                serde_json::json!("active"),
-                serde_json::Value::Null,
-            )
+            return Err(StatusCode::NOT_FOUND);
         };
 
     Ok(Json(serde_json::json!({

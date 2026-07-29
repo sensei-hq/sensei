@@ -203,7 +203,9 @@ pub async fn consolidate_for_project(
         tracing::warn!(project = %project_id, "consolidate: model output did not parse — skipping");
         return Ok(0);
     };
-    let model = resp.model.unwrap_or_else(|| "unknown".to_string());
+    // Record the REAL model provenance, or none — never a fabricated "unknown",
+    // which would misrepresent which model produced this persisted recommendation.
+    let models: Vec<String> = resp.model.into_iter().collect();
 
     // Persist the trace + a linked recommendation.
     let pattern_ids: Vec<String> = findings.iter().map(|f| f.pattern_id.to_string()).collect();
@@ -215,7 +217,7 @@ pub async fn consolidate_for_project(
     let trigger_detail = serde_json::json!({ "signature": signature, "patterns": pattern_ids });
     let trace_id = ctx
         .pg()
-        .insert_reasoning_trace(Some(project_id), "consolidation", &trigger_detail, &[model], &exchanges, &consensus)
+        .insert_reasoning_trace(Some(project_id), "consolidation", &trigger_detail, &models, &exchanges, &consensus)
         .await?;
 
     let based_on = serde_json::json!({ "patterns": pattern_ids });

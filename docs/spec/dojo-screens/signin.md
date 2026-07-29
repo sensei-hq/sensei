@@ -6,6 +6,9 @@
 - Access axis: auth (pre-tenant). This screen establishes the **User** — the Supabase auth subject, which entity-access-model §1 defines as the same identity as the git commit author ("Sensei's subject"). No tenant/membership axis applies until after auth; org selection happens next at `/orgs`.
 - Status: PARTIAL — GitHub OAuth + email magic link are wired live through kavach → Supabase; but the self-host "Connect" button is a dead stub, and the left panel diverges from the mockup (a "Welcome back / Acme Corp" fixture-metrics panel, not the mockup's generic local-first marketing).
 
+## ⚠ Fabricated-data debt — MUST fix on build (2026-07-29 fallback audit)
+`DojoSignIn.svelte:3`/`:10` renders the `metrics` fixture from `dojo/src/lib/dojo-data.ts:17` as a live "shared mind since your last visit" snapshot ("34 lessons shared this week", "Acme Corp"…). **Impact:** the pre-auth splash presents fabricated numbers as real activity to every visitor. **Fix on build:** source real metrics from a real read, or make the panel obviously-static marketing copy — NEVER fabricated live figures presented as real; on a fetch error render an explicit error/empty state, and drop the hardcoded "Acme Corp". (Ties the daemon-side fabrication fixes + the "no fabricated fallbacks" rule.)
+
 ## Elements → data (contract)
 | Element | Mockup field | Source (loader/API/table.field) | Status: have/bind/plumb | Realtime? |
 | --- | --- | --- | --- | --- |

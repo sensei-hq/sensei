@@ -6,6 +6,9 @@
 - Access axis: tenant-primary per `entity-access-model.md` §3 (rule-packs = governance). **Nuance:** the pack LIBRARY (`sensei.rule_packs`) is a *shared-plane* artifact — global (`owner_namespace_id` NULL) or org-authored (`owner_namespace_id → namespaces`); ADOPTION (`sensei.rule_pack_adoptions`) binds a concrete `namespace_id`. A personal `/you/packs` adoption binds the *user's* namespace, an org adoption (on ScrOrgLadder) binds a stack/org namespace — same table, different scope instance.
 - Status: PARTIAL — component + `rulepacks-state` adopt/drop built; loader feeds **fixture** `rulePacks`; adopt/drop is local `$state` only. Full DDL exists (`rule_packs` / `rule_pack_rules` / `rule_pack_adoptions`) and the daemon-facing `GET /v1/.../rules/resolved?ns=` resolves adopted packs — but there is **no list-packs or adopt/drop endpoint** for the dōjō UI.
 
+## ⚠ Fabricated-data debt — MUST fix on build (2026-07-29 fallback audit)
+The `/you` rule-packs list is fixture-backed via the shared constitution loader (`(app)/you/[section]/+page.ts:5` import, `:25` returns `rulePacks`). **Impact:** a real user sees fabricated adopted/available packs, not their real adoptions. **Fix on build:** drive the list from the real `/v1` read; on a fetch error render an explicit error state — NEVER the fixture; honest-empty only when genuinely empty. (Ties the daemon-side fabrication fixes + the "no fabricated fallbacks" rule.)
+
 ## Elements → data (contract)
 | Element | Mockup field | Source (loader/API/table.field) | Status: have/bind/plumb | Realtime? |
 |---|---|---|---|---|
