@@ -137,6 +137,7 @@ pub(crate) async fn get_context(
         .filter(|s| !s.is_empty())
         .ok_or_else(|| err(StatusCode::BAD_REQUEST, "project_id or project required"))?;
     let pid = crate::api::util::resolve_project_uuid(&state, ident).await
+        .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "project lookup failed"))?
         .ok_or_else(|| err(StatusCode::BAD_REQUEST, "bad project_id"))?;
     let tags: Option<Vec<String>> = q.tags.map(|s|
         s.split(',').filter(|t| !t.trim().is_empty()).map(|t| t.trim().to_string()).collect()
@@ -231,7 +232,9 @@ pub(crate) async fn materialize_global_rules(
     // Folded here, not in resolve_global_rules, so the LLM consolidation path
     // (rule_consolidation) keeps operating on learned memories, not curated packs.
     let mut raw = pg.resolve_global_rules().await?;
-    raw.extend(pg.resolve_local_pack_raws(None).await.unwrap_or_default());
+    // Fail closed: a pack-resolution DB error must NOT silently drop adopted
+    // (possibly mandatory) pack rules from the governing set — propagate it.
+    raw.extend(pg.resolve_local_pack_raws(None).await?);
     let ruleset = crate::governance::structure_ruleset(raw);
     // Prefer an approved Tier-2 (LLM-merged) ruleset; fall back to the Tier-1 render.
     let md = match pg.get_consolidated_ruleset("global", Some("approved")).await? {
@@ -1052,6 +1055,7 @@ pub(crate) async fn resolve_folder(
                 .ok_or_else(|| err(StatusCode::BAD_REQUEST, "folder or project required"))?;
             let pid = crate::api::util::resolve_project_uuid(state, project)
                 .await
+                .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "project lookup failed"))?
                 .ok_or_else(|| err(StatusCode::NOT_FOUND, "unknown project"))?;
             let repos = state
                 .pg
@@ -1087,7 +1091,10 @@ async fn resolve_repo_ruleset(
     // sensei.rule_packs replica (offline — bundled/adopted/synced packs) and the
     // remote Dōjō fold-in (a member's live org packs). structure_ruleset dedups by
     // content, so a pack present in both planes surfaces once.
-    raw.extend(state.pg.resolve_local_pack_raws(Some(folder_id)).await.unwrap_or_default());
+    // Fail closed on the LOCAL plane (offline DB): a read error must not silently
+    // weaken governance by dropping adopted pack rules. (The remote Dōjō fold-in
+    // below stays best-effort — a remote hiccup can't fail local governance.)
+    raw.extend(state.pg.resolve_local_pack_raws(Some(folder_id)).await?);
     raw.extend(resolve_adopted_pack_raws(state, folder_id).await);
     Ok(crate::governance::structure_ruleset(raw))
 }
