@@ -14,7 +14,6 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::path::{Path, PathBuf};
 
 /// HTTP method for a shaped daemon request. Mirrors the reqwest verbs the
 /// binary drives; kept dependency-free so the library needs no HTTP client.
@@ -880,63 +879,22 @@ pub fn map_daemon_tool(tool_name: &str) -> &str {
     }
 }
 
-// ── Active-project pin (`~/.sensei/active-project`) ──────────────────────────
+// ── Active-project pin (in-memory, session-scoped) ───────────────────────────
 //
 // The MCP server process's cwd is fixed at launch and is usually NOT the repo,
-// so cwd-based resolution says "no project resolved". `use_project` writes this
-// pin so a chosen project survives across every subsequent tool call regardless
-// of cwd; the default resolver (see `resolve_default_project`) consults it after
-// an explicit `project=` arg but before cwd.
+// so cwd-based resolution can say "no project resolved". `use_project` sets an
+// IN-MEMORY pin (`ACTIVE_PIN` in the binary) so a chosen project survives across
+// every subsequent tool call regardless of cwd; the default resolver
+// (`resolve_default_project`) consults it after an explicit `project=` arg and
+// cwd. The pin is NOT persisted to a file — it lives only for this session (the
+// MCP is one stdio process per session), so it can never leak across
+// sessions/repos: the #109 stale-pin misroute is unrepresentable by design.
 
-/// The pinned active project, persisted as JSON `{"id": "...", "name": "..."}`
-/// to `~/.sensei/active-project`.
+/// The pinned active project (`{id, name}`), held in memory for the session.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ActiveProject {
     pub id: String,
     pub name: String,
-}
-
-/// The pin file path: `<sensei_dir>/active-project`. `sensei_dir` is injected
-/// (the binary passes `sensei_bootstrap::config().sensei_dir()`; a test passes a
-/// temp dir) so the read/write seam is unit-testable without touching `~`.
-pub fn active_project_path(sensei_dir: &Path) -> PathBuf {
-    sensei_dir.join("active-project")
-}
-
-/// Persist the active-project pin, creating the parent dir if missing. The one
-/// side-effecting function in the library.
-pub fn write_active_project(path: &Path, pin: &ActiveProject) -> std::io::Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let json = serde_json::to_string_pretty(pin).unwrap_or_default();
-    std::fs::write(path, json)
-}
-
-/// Read + parse the pin. Returns `None` when the file is absent (the normal
-/// unpinned case) OR unreadable / corrupt / missing a name — a bad pin must
-/// never crash resolution, only fall through to cwd. Corruption is logged to
-/// stderr (never stdout — that's the JSON-RPC channel) so it can be inspected.
-pub fn read_active_project(path: &Path) -> Option<ActiveProject> {
-    let raw = match std::fs::read_to_string(path) {
-        Ok(s) => s,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
-        Err(e) => {
-            eprintln!("sensei-mcp: cannot read active-project pin {}: {e}", path.display());
-            return None;
-        }
-    };
-    match serde_json::from_str::<ActiveProject>(&raw) {
-        Ok(pin) if !pin.name.is_empty() => Some(pin),
-        Ok(_) => {
-            eprintln!("sensei-mcp: active-project pin {} has an empty name; ignoring", path.display());
-            None
-        }
-        Err(e) => {
-            eprintln!("sensei-mcp: active-project pin {} is not valid JSON: {e}", path.display());
-            None
-        }
-    }
 }
 
 /// The default-project decision for a project-scoped tool (no explicit `project=`).
@@ -952,10 +910,10 @@ pub enum ProjectResolution {
 
 /// Pure: choose the default project for a project-scoped tool. Precedence:
 ///   1. **explicit** — a non-empty `project=` arg (strongest; a per-call override).
-///   2. **cwd** — the project the WORKING DIR resolves to. This **beats a persisted `pin`** when
-///      they disagree: being *in* a repo is a current, per-session signal, whereas the pin file
-///      `~/.sensei/active-project` leaks across sessions/repos — the stale-pin misroute where a
-///      prior `use_project sensei` silently returned sensei's state while working in `torii`.
+///   2. **cwd** — the project the WORKING DIR resolves to. This **beats the session `pin`** when
+///      they disagree: being *in* a repo is the strongest current signal. (The pin is now an
+///      in-memory *session* value, so it can no longer be *stale across sessions*; respecting cwd
+///      on a conflict still keeps a mid-session `use_project` from masking the repo you're in.)
 ///      The override is carried in `note`, never applied silently.
 ///   3. **pin** — the fallback when the cwd resolves nothing (e.g. launched from a container dir
 ///      that is not itself a project); this is what `use_project` exists for.
@@ -1843,44 +1801,4 @@ mod tests {
         assert_eq!(resolved(resolve_default_project(Some(""), Some(&empty), "cwdname")), ("cwdname".into(), "cwd", None));
     }
 
-    /// A unique temp dir for pin-file tests (no external tempdir dep in this crate).
-    fn temp_pin_dir(tag: &str) -> PathBuf {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
-        std::env::temp_dir().join(format!("sensei-mcp-test-{}-{tag}-{nanos}", std::process::id()))
-    }
-
-    #[test]
-    fn pin_round_trips_through_the_injected_path() {
-        let dir = temp_pin_dir("roundtrip");
-        let path = active_project_path(&dir);
-        assert_eq!(path.file_name().unwrap(), "active-project");
-        // Absent pin → None (the normal unpinned case), never an error.
-        assert_eq!(read_active_project(&path), None, "absent pin reads as None");
-
-        let pin = ActiveProject {
-            id: "11111111-1111-1111-1111-111111111111".into(),
-            name: "sensei".into(),
-        };
-        write_active_project(&path, &pin).unwrap(); // creates the parent dir
-        assert_eq!(read_active_project(&path), Some(pin), "pin round-trips");
-
-        // The persisted bytes are the documented {id,name} JSON shape.
-        let v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!(v["id"], "11111111-1111-1111-1111-111111111111");
-        assert_eq!(v["name"], "sensei");
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn corrupt_pin_is_ignored_not_fatal() {
-        let dir = temp_pin_dir("corrupt");
-        let path = active_project_path(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(&path, "{ not valid json").unwrap();
-        // A bad pin must be ignored (fall through to cwd), never crash.
-        assert_eq!(read_active_project(&path), None);
-        let _ = std::fs::remove_dir_all(&dir);
-    }
 }

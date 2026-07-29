@@ -249,34 +249,34 @@ pub(crate) async fn update_session_handler(
 /// Returns 200 OK always — hook scripts must not block on errors.
 pub(crate) async fn ingest_hook_event(
     State(state): State<AppState>,
-    Json(payload): Json<serde_json::Value>,
+    Json(mut payload): Json<serde_json::Value>,
 ) -> StatusCode {
-    let event_type       = payload["hook_event_name"].as_str().unwrap_or("unknown");
-    let session_id       = payload["session_id"].as_str().unwrap_or("");
-    let assistant_family = payload["assistant_family"].as_str().unwrap_or("claude");
-    let tool_name        = payload["tool_name"].as_str();
-    let cwd              = payload["cwd"].as_str();
-    let ts               = chrono::Utc::now().timestamp_millis();
-    let success          = payload.get("exit_code")
-        .and_then(|v| v.as_i64())
-        .map(|c| c == 0);
+    // Strip NULs Postgres jsonb can't store, so a stray NUL byte in captured
+    // output doesn't make the insert fail and silently lose the event (the same
+    // hazard the drain quarantines). Do this before mapping so the fields agree.
+    crate::tasks::capture_drain::sanitize_nul(&mut payload);
+    // Same field mapping the capture drain uses when it imports dead-lettered
+    // events from ~/.sensei/events.jsonl, so the live and recovery paths agree
+    // column-for-column (crate::tasks::capture_drain::hook_event_fields).
+    let f  = crate::tasks::capture_drain::hook_event_fields(&payload);
+    let ts = chrono::Utc::now().timestamp_millis();
 
     // Always return 200 so a DB hiccup never blocks the hook — but DON'T
     // swallow the error silently: a failing capture insert is exactly how
     // capture dies invisibly (the bug the capture watchdog exists to catch).
     // Log it so it's inspectable in the daemon log / public.logs.
     if let Err(e) = state.pg.insert_hook_event(
-        session_id, assistant_family, event_type, tool_name, cwd, ts, success, &payload,
+        f.session_id, f.family, f.event_type, f.tool_name, f.cwd, ts, f.success, &payload,
     ).await {
-        tracing::warn!(error = %e, event_type, assistant_family, "ingest_hook_event: insert failed");
+        tracing::warn!(error = %e, event_type = f.event_type, family = f.family, "ingest_hook_event: insert failed");
     }
 
     // Relay segment-publish (A2): a TodoWrite carries the run's todo outline —
     // project it into the relay and push to enrolled dojos. Fire-and-forget so
     // the publish (a DB read + bounded HTTP posts) never blocks the hook.
-    if tool_name == Some("TodoWrite") && !session_id.is_empty() {
+    if f.tool_name == Some("TodoWrite") && !f.session_id.is_empty() {
         let task = crate::tasks::Task::new(
-            crate::tasks::TaskKind::PublishRelaySegments, "", session_id,
+            crate::tasks::TaskKind::PublishRelaySegments, "", f.session_id,
         );
         state.task_queue.enqueue(task).await;
     }
@@ -285,15 +285,15 @@ pub(crate) async fn ingest_hook_event(
     // A session is one assistant session_id, attributed to the indexed folder
     // its cwd resolves to; Stop/SessionEnd marks it completed. Best-effort —
     // events whose cwd is under no indexed folder simply aren't attributed.
-    if !session_id.is_empty()
-        && let Some(cwd) = cwd {
+    if !f.session_id.is_empty()
+        && let Some(cwd) = f.cwd {
             match state.pg.find_folder_for_path(cwd).await {
                 Ok(Some((folder_id, project_id))) => {
-                    let is_end = matches!(event_type, "Stop" | "SessionEnd");
+                    let is_end = matches!(f.event_type, "Stop" | "SessionEnd");
                     if let Err(e) = state.pg.record_session_event(
-                        session_id, &folder_id, project_id.as_ref(), assistant_family, is_end,
+                        f.session_id, &folder_id, project_id.as_ref(), f.family, is_end,
                     ).await {
-                        tracing::warn!(error = %e, event_type, "ingest_hook_event: record_session_event failed");
+                        tracing::warn!(error = %e, event_type = f.event_type, "ingest_hook_event: record_session_event failed");
                     }
                 }
                 Ok(None) => {} // cwd not under any indexed folder — nothing to attribute

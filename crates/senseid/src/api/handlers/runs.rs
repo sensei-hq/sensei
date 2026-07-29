@@ -607,21 +607,24 @@ mod tests {
     #[tokio::test]
     async fn register_plan_rejects_bad_input() {
         let Some(state) = make_state().await else { return; };
+        // Bad input surfaces as `Ok((400, {error}))` — the daemon reports WHY the
+        // graph was rejected in the body (see the sibling success test) — NOT an
+        // `Err(StatusCode)`. Assert the status on the returned tuple.
         // Missing plan → 400.
-        let e = register_plan(State(state.clone()), Json(serde_json::json!({ "goal": "g" })))
-            .await.unwrap_err();
-        assert_eq!(e, StatusCode::BAD_REQUEST);
+        let (status, _) = register_plan(State(state.clone()), Json(serde_json::json!({ "goal": "g" })))
+            .await.unwrap();
+        assert_eq!(status, StatusCode::BAD_REQUEST);
         // Empty goal → 400.
-        let e = register_plan(State(state.clone()), Json(serde_json::json!({ "goal": "  ", "plan": { "phases": [] } })))
-            .await.unwrap_err();
-        assert_eq!(e, StatusCode::BAD_REQUEST);
+        let (status, _) = register_plan(State(state.clone()), Json(serde_json::json!({ "goal": "  ", "plan": { "phases": [] } })))
+            .await.unwrap();
+        assert_eq!(status, StatusCode::BAD_REQUEST);
         // A cyclic graph is rejected (validate gate).
         let cyclic = serde_json::json!({ "goal": "g", "plan": { "phases": [{ "title": "P", "tasks": [
             { "id": "a", "title": "a", "deps": ["b"] },
             { "id": "b", "title": "b", "deps": ["a"] }
         ]}]}});
-        let e = register_plan(State(state), Json(cyclic)).await.unwrap_err();
-        assert_eq!(e, StatusCode::BAD_REQUEST);
+        let (status, _) = register_plan(State(state), Json(cyclic)).await.unwrap();
+        assert_eq!(status, StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]
