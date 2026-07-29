@@ -22,7 +22,7 @@ pub(crate) fn range_to_days(range: Option<&str>) -> Option<i64> {
 pub(crate) async fn get_sessions_stub(
     State(state): State<AppState>,
     Query(q): Query<std::collections::HashMap<String, String>>,
-) -> Json<serde_json::Value> {
+) -> Result<Json<serde_json::Value>, StatusCode> {
     let range_days = range_to_days(q.get("range").map(String::as_str));
     // `?project=<name-or-uuid>` scopes the digest to one project (honours the
     // name-or-UUID contract). An unresolvable name yields None → no scope.
@@ -33,23 +33,25 @@ pub(crate) async fn get_sessions_stub(
     // PgStore uses list_sessions_by_folder(&Uuid, limit) instead of get_sessions(repo_id)
     let sessions = if let Some(folder_str) = q.get("repoId") {
         if let Ok(folder_id) = uuid::Uuid::parse_str(folder_str) {
-            state.pg.list_sessions_by_folder(&folder_id, 50).await.unwrap_or_default()
+            state.pg.list_sessions_by_folder(&folder_id, 50).await
+                .map_err(|e| { tracing::warn!(error = %e, repo_id = %folder_str, "get_sessions_stub: list_sessions_by_folder failed"); StatusCode::INTERNAL_SERVER_ERROR })?
         } else {
             vec![]
         }
     } else {
         // 500 comfortably covers the real corpus within any range window; range +
         // project narrow it. The digest aggregates these client-side per day.
-        state.pg.list_all_sessions(500, range_days, project.as_ref()).await.unwrap_or_default()
+        state.pg.list_all_sessions(500, range_days, project.as_ref()).await
+            .map_err(|e| { tracing::warn!(error = %e, "get_sessions_stub: list_all_sessions failed"); StatusCode::INTERNAL_SERVER_ERROR })?
     };
     let total = sessions.len();
     let completed = sessions.iter().filter(|s| s["outcome"].as_str() == Some("completed")).count();
-    Json(serde_json::json!({
+    Ok(Json(serde_json::json!({
         "stats": { "totalSessions": total, "completed": completed },
         "sessions": sessions,
         "toolUsage": [],
         "benchmarkPairs": []
-    }))
+    })))
 }
 
 pub(crate) async fn create_session(

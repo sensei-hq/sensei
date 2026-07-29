@@ -565,23 +565,24 @@ pub(crate) async fn solution_roles(
 pub(crate) async fn get_metrics(
     State(state): State<AppState>,
     Path(project): Path<String>,
-) -> Json<serde_json::Value> {
+) -> Result<Json<serde_json::Value>, StatusCode> {
     // Metrics are computed from session data in PgStore.
     // Look up folder to get its UUID, then query sessions.
     let folder = state.pg.get_repo_by_name(&project).await.ok().flatten();
     if let Some(folder) = folder
         && let Some(folder_id) = crate::api::util::json_uuid(&folder["id"]) {
-            let sessions = state.pg.list_sessions_by_folder(&folder_id, 100).await.unwrap_or_default();
+            let sessions = state.pg.list_sessions_by_folder(&folder_id, 100).await
+                .map_err(|e| { tracing::warn!(error = %e, project = %project, "get_metrics: list_sessions_by_folder failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
             let session_count = sessions.len();
             let completed = sessions.iter().filter(|s| s["outcome"].as_str() == Some("completed")).count();
-            return Json(serde_json::json!({
+            return Ok(Json(serde_json::json!({
                 "project": project,
                 "sessions": session_count,
                 "completed": completed,
                 "ftr": if session_count > 0 { completed as f64 / session_count as f64 } else { 0.0 },
-            }));
+            })));
         }
-    Json(serde_json::json!({"error": "project not found"}))
+    Ok(Json(serde_json::json!({"error": "project not found"})))
 }
 
 // ── Observatory Chart Data ─────────────────────────────────────────────────
@@ -825,7 +826,8 @@ pub(crate) async fn observatory_today(
 
     let now = chrono::Utc::now();
     let (hero, insights, adopted) = if sig.stage == "mature" {
-        let recs = state.pg.get_pending_recommendations_global(4).await.unwrap_or_default();
+        let recs = state.pg.get_pending_recommendations_global(4).await
+            .map_err(|e| { tracing::warn!(error = %e, "observatory_today: get_pending_recommendations_global failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
         let rec_lite: Vec<home::RecLite> = recs.iter().map(|r| home::RecLite {
             urgency: r["urgency"].as_str().unwrap_or("low").to_string(),
             title:   r["title"].as_str().unwrap_or("").to_string(),
@@ -887,7 +889,8 @@ pub(crate) async fn observatory_today(
                 insights.push(card);
             }
 
-            let mems = state.pg.list_active_memories_global(5).await.unwrap_or_default();
+            let mems = state.pg.list_active_memories_global(5).await
+                .map_err(|e| { tracing::warn!(error = %e, "observatory_today: list_active_memories_global failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
             let adopted: Vec<serde_json::Value> = mems.iter().map(|m| {
                 let when = m["modified_at"].as_str()
                     .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
@@ -1087,7 +1090,7 @@ pub(crate) async fn get_insights(
             seen.insert(pid.to_string());
         }
     }
-    let all_projects = state.pg.list_projects().await.unwrap_or_default();
+    let all_projects = state.pg.list_projects().await.map_err(err("projects"))?;
     let projects: Vec<serde_json::Value> = all_projects.iter().filter_map(|p| {
         let pid = p["id"].as_str()?;
         if !seen.contains(pid) {

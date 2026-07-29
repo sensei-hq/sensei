@@ -184,7 +184,8 @@ pub(crate) async fn get_project_overview(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let sessions_7d = stats["sessions7d"].as_i64().unwrap_or(0);
 
-    let ftr = state.pg.get_project_ftr(&uuid).await.unwrap_or_else(|_| serde_json::json!({}));
+    let ftr = state.pg.get_project_ftr(&uuid).await
+        .map_err(|e| { tracing::warn!(error = %e, project = %uuid, "get_project_overview: get_project_ftr failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
     let ftr_14d = ftr["ftr14d"].as_f64().unwrap_or(0.0);
 
     // The warn rule reads the SAME drift count the stat block displays
@@ -192,7 +193,8 @@ pub(crate) async fn get_project_overview(
     // never disagree with the number the user sees. `get_quality_signals`
     // (a different `status != 'current'` predicate) supplies only the 7-day FTR.
     let open_drift = stats["docDrift"]["open"].as_i64().unwrap_or(0);
-    let signals = state.pg.get_quality_signals(&uuid).await.unwrap_or_else(|_| serde_json::json!({}));
+    let signals = state.pg.get_quality_signals(&uuid).await
+        .map_err(|e| { tracing::warn!(error = %e, project = %uuid, "get_project_overview: get_quality_signals failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
     let ftr_7d = signals["ftr_7d"].as_f64().unwrap_or(0.0);
     let warn = po::is_warn(sessions_7d, open_drift, ftr_7d);
 
@@ -201,7 +203,7 @@ pub(crate) async fn get_project_overview(
     // Multi-repo membership: the project's repo folders (git/standalone), not
     // the thousands of nested dirs. The first repo is flagged primary.
     let mut folders: Vec<serde_json::Value> = state.pg.list_folders_by_project(&uuid).await
-        .unwrap_or_default()
+        .map_err(|e| { tracing::warn!(error = %e, project = %uuid, "get_project_overview: list_folders_by_project failed"); StatusCode::INTERNAL_SERVER_ERROR })?
         .into_iter()
         .filter(|f| matches!(f["kind"].as_str(), Some("git") | Some("standalone")))
         .map(|f| serde_json::json!({ "id": f["id"], "name": f["name"], "role": f["role"] }))
@@ -217,7 +219,8 @@ pub(crate) async fn get_project_overview(
     // routing a teaching where there is no signal is the spec's wrong-gate.
     // `copy_or_warm` is a wire-path cache read (+ a detached background warm on a
     // miss) — this await never blocks on inference. Mirrors `observatory_today`.
-    let top = match state.pg.get_top_recommendation(&uuid).await.unwrap_or(None) {
+    let top = match state.pg.get_top_recommendation(&uuid).await
+        .map_err(|e| { tracing::warn!(error = %e, project = %uuid, "get_project_overview: get_top_recommendation failed"); StatusCode::INTERNAL_SERVER_ERROR })? {
         Some(mut rec) => {
             let facts = serde_json::json!({
                 "title":   rec["title"],
@@ -239,7 +242,8 @@ pub(crate) async fn get_project_overview(
         }
         None => None,
     };
-    let recent = state.pg.list_recent_project_sessions_with_role(&uuid, 4).await.unwrap_or_default();
+    let recent = state.pg.list_recent_project_sessions_with_role(&uuid, 4).await
+        .map_err(|e| { tracing::warn!(error = %e, project = %uuid, "get_project_overview: list_recent_project_sessions_with_role failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
 
     Ok(Json(serde_json::json!({
         "project": {
