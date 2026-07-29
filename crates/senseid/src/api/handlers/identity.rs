@@ -16,6 +16,7 @@ use serde::Deserialize;
 
 use crate::api::state::AppState;
 use crate::git_identity::read_git_user;
+use crate::resolution::Resolution;
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct UserQuery {
@@ -42,19 +43,31 @@ pub(crate) async fn get_user(
 
     let user = read_git_user(std::path::Path::new(&dir));
 
-    // The owning project = the first project whose folders live under `dir` —
-    // the same folder-scoped view `find_projects` returns. Compact to {id,name}.
-    let project = state
-        .pg
-        .list_projects_under(Some(&dir))
-        .await
-        .ok()
-        .and_then(|ps| ps.into_iter().next())
-        .map(|p| serde_json::json!({ "id": p["id"], "name": p["name"] }));
+    // The owning project = the project whose folders live under `dir` — the same
+    // folder-scoped view `find_projects` returns. FAIL CLOSED (issue #109): name
+    // a project only when EXACTLY one resolves. When `dir` is a container of
+    // several projects, don't silently pick the first (that misattributes the
+    // run/plan to the wrong project); surface `project_ambiguous` so the caller
+    // scopes down instead. A DB error degrades to "no project", logged not 500'd.
+    let projects = match state.pg.list_projects_under(Some(&dir)).await {
+        Ok(ps) => ps,
+        Err(e) => {
+            tracing::warn!(error = %e, dir, "get_user: list_projects_under failed");
+            Vec::new()
+        }
+    };
+    let (project, project_ambiguous) = match Resolution::from_unique(projects) {
+        Resolution::Resolved(p) => {
+            (Some(serde_json::json!({ "id": p["id"], "name": p["name"] })), false)
+        }
+        Resolution::Ambiguous { .. } => (None, true),
+        Resolution::Unresolved => (None, false),
+    };
 
     Json(serde_json::json!({
         "dir": dir,
         "user": user,
         "project": project,
+        "project_ambiguous": project_ambiguous,
     }))
 }
