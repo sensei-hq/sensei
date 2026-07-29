@@ -153,6 +153,7 @@ pub(crate) async fn project_binding_suggestion(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     // Name-or-uuid (#100): resolve so a project name works, not only a uuid.
     let project_id = crate::api::util::resolve_project_uuid(&state, id.trim()).await
+        .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "project lookup failed"))?
         .ok_or_else(|| err(StatusCode::NOT_FOUND, "project not found"))?;
     let suggestion = memberships::suggest_binding(&state.pg, &project_id).await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
@@ -177,6 +178,7 @@ pub(crate) async fn bind_project_to_membership(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     // Name-or-uuid (#100): resolve so a project name works, not only a uuid.
     let project_id = crate::api::util::resolve_project_uuid(&state, id.trim()).await
+        .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "project lookup failed"))?
         .ok_or_else(|| err(StatusCode::NOT_FOUND, "project not found"))?;
     let membership_id = uuid::Uuid::parse_str(b.membership_id.trim())
         .map_err(|_| err(StatusCode::BAD_REQUEST, "bad membership_id"))?;

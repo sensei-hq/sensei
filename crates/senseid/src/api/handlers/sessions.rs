@@ -27,7 +27,9 @@ pub(crate) async fn get_sessions_stub(
     // `?project=<name-or-uuid>` scopes the digest to one project (honours the
     // name-or-UUID contract). An unresolvable name yields None → no scope.
     let project = match q.get("project") {
-        Some(p) => crate::api::util::resolve_project_uuid(&state, p).await,
+        // Fail closed on a resolver DB error (→ 500); a genuine unresolvable name
+        // still yields None → no scope (unchanged).
+        Some(p) => crate::api::util::resolve_project_uuid(&state, p).await?,
         None => None,
     };
     // PgStore uses list_sessions_by_folder(&Uuid, limit) instead of get_sessions(repo_id)
@@ -682,11 +684,19 @@ pub(crate) async fn update_workflow_state(
     // (drive stays OFF — this is status only, and it's how the "watch me build
     // through phases" view is fed). Best-effort: a bridge hiccup must never fail
     // the workflow-state write above.
-    if let Some(phase) = body["active_phase"].as_str().filter(|s| !s.is_empty())
-        && let Some(project_id) = super::observatory::resolve_project_uuid(&state, &project).await
-        && let Err(e) = state.pg.advance_run_phase_for_project(&project_id, phase).await
-    {
-        tracing::warn!(project = %project, error = %e, "update_phase: run phase bridge failed");
+    if let Some(phase) = body["active_phase"].as_str().filter(|s| !s.is_empty()) {
+        // Best-effort mirror: a bridge hiccup must never fail the primary write.
+        // But surface (log) a resolver DB error rather than swallow it silently.
+        match crate::api::util::resolve_project_uuid(&state, &project).await {
+            Ok(Some(project_id)) => {
+                if let Err(e) = state.pg.advance_run_phase_for_project(&project_id, phase).await {
+                    tracing::warn!(project = %project, error = %e, "update_phase: run phase bridge failed");
+                }
+            }
+            Ok(None) => {}
+            Err(_) => tracing::warn!(project = %project,
+                "update_phase: run phase bridge skipped — project resolve failed"),
+        }
     }
 
     // Workflow state lives ONLY in Postgres (`sensei.workflow_state`), read back

@@ -385,7 +385,10 @@ pub(crate) async fn update_watch_root(
 
         // Push the resolved absolute prefixes into the live watcher so the change
         // takes effect immediately, not on next daemon restart.
-        let prefixes = state.pg.root_exclusion_prefixes(&root_path).await;
+        // Fail closed: never register the live watcher with an empty exclusion
+        // set on a read error (it would then watch/index the excluded subtree).
+        let prefixes = state.pg.root_exclusion_prefixes(&root_path).await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         let w_mutex = crate::watcher::root_watcher::RootWatcher::instance(state.task_queue.clone());
         match w_mutex.lock() {
             Ok(mut w) => { w.register(std::path::PathBuf::from(&root_path), prefixes); let _ = w.start(); }
