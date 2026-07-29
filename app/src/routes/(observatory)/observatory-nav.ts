@@ -37,7 +37,7 @@ export type NavEntry = NavLink | NavGroup | NavSeparator;
 export interface NavOptions {
   /** Focus mode collapses the rail to anchors + "Needs you". */
   focus: boolean;
-  /** Live project count for the Projects badge (mock until wired). */
+  /** Live project count for the Projects badge (from `appState.projectCount`). */
   projectCount?: number;
 }
 
@@ -48,16 +48,11 @@ const link = (
   extra: Partial<Pick<NavLink, "badge" | "alert">> = {},
 ): NavLink => ({ kanji, text, href, value: href, ...extra });
 
-// MOCK: badge counts are placeholders until wired to the daemon API.
-const MOCK = {
-  insights: "6",
-  memories: "7",
-  impact: "3",
-  traceability: "4",
-  upgrades: "5",
-  sessions: "41",
-  libraries: "14",
-} as const;
+// Badge counts and the Impact alert were hardcoded MOCK placeholders — a
+// fabricated "6 insights / 3 impact / alert" that lied about pending work when
+// nothing was pending (the #109 fabrication audit). Removed until wired to real
+// daemon counts. The only live badge is Projects (`projectCount` from app state);
+// each other rail entry shows its count on its own screen, honestly.
 
 /**
  * Build the rail entries. In Focus mode the Review group, the separator and
@@ -78,13 +73,11 @@ export function buildNavItems({ focus, projectCount }: NavOptions): NavEntry[] {
     {
       text: "Needs you",
       children: [
-        link("今", "Insights", "/insights", { badge: MOCK.insights }),
-        link("覚", "Memories", "/learnings", { badge: MOCK.memories }),
-        link("果", "Impact", "/impact", { badge: MOCK.impact, alert: true }),
-        link("巻", "Traceability", "/traceability", {
-          badge: MOCK.traceability,
-        }),
-        link("贈", "Upgrades", "/upgrades", { badge: MOCK.upgrades }),
+        link("今", "Insights", "/insights"),
+        link("覚", "Memories", "/learnings"),
+        link("果", "Impact", "/impact"),
+        link("巻", "Traceability", "/traceability"),
+        link("贈", "Upgrades", "/upgrades"),
       ],
     },
   ];
@@ -94,8 +87,8 @@ export function buildNavItems({ focus, projectCount }: NavOptions): NavEntry[] {
     entries.push({
       text: "Review",
       children: [
-        link("録", "Sessions", "/sessions", { badge: MOCK.sessions }),
-        link("庫", "Libraries", "/libraries", { badge: MOCK.libraries }),
+        link("録", "Sessions", "/sessions"),
+        link("庫", "Libraries", "/libraries"),
         link("統", "Consolidation", "/consolidation"),
         link("図", "Atlas", "/atlas"),
         link("具", "Instruments", "/instruments"),
