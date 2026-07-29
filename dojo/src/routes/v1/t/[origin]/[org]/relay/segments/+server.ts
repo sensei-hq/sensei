@@ -60,10 +60,13 @@ export const POST: RequestHandler = async ({ params, request }) => {
 			if (typeof s.parent_seq === 'number') parentSeqBySeq.set(seq, s.parent_seq);
 		}
 		if (parentSeqBySeq.size) {
-			const { data: existing } = await db
+			const { data: existing, error: exErr } = await db
 				.from('relay_segments')
 				.select('id, seq')
 				.eq('session_id', sess.id);
+			// Fail CLOSED: a read failure here would silently drop all parent nesting
+			// yet still report success — surface it instead.
+			if (exErr) return apiError(500, exErr.message);
 			const idBySeq = new Map((existing ?? []).map((e) => [e.seq as number, e.id as string]));
 			for (const [seq, parentSeq] of parentSeqBySeq) {
 				const parentId = idBySeq.get(parentSeq);
@@ -90,12 +93,15 @@ export const GET: RequestHandler = async ({ params, request, locals, url }) => {
 		const runId = url.searchParams.get('run_id');
 		if (!runId) return apiError(400, 'run_id query param is required');
 		const db = dojoDb();
-		const { data: sess } = await db
+		const { data: sess, error: sErr } = await db
 			.from('relay_sessions')
 			.select('id')
 			.eq('tenant_id', tenantId)
 			.eq('run_id', runId)
 			.maybeSingle();
+		// Fail CLOSED on a lookup error; only a genuine miss (no session published
+		// yet for this run) is honest-empty.
+		if (sErr) return apiError(500, sErr.message);
 		if (!sess) return Response.json({ segments: [] });
 		const { data, error } = await db
 			.from('relay_segments')

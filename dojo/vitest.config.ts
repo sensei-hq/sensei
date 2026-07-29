@@ -35,6 +35,13 @@ export default defineConfig({
 				'./src/lib/test-stubs/env-dynamic-public.ts',
 				import.meta.url
 			).pathname,
+			// $env/dynamic/private — same reason; server-only modules (dojo-supabase)
+			// read private env at call time, so importing the real module under vitest
+			// needs this stub. Specs mock `dojoDb` itself, so no real key is used.
+			'$env/dynamic/private': new URL(
+				'./src/lib/test-stubs/env-dynamic-private.ts',
+				import.meta.url
+			).pathname,
 			// $app/paths (resolve) likewise isn't generated under vitest; a pass-through
 			// stub lets components that build hrefs (nav, top bar) render in specs.
 			'$app/paths': new URL('./src/lib/test-stubs/app-paths.ts', import.meta.url).pathname,
