@@ -1,7 +1,7 @@
 use axum::{
     extract::{Path, Query, State},
-    http::StatusCode,
-    response::Json,
+    http::{header, StatusCode},
+    response::{IntoResponse, Json, Response},
 };
 use crate::api::state::AppState;
 
@@ -588,13 +588,57 @@ pub(crate) async fn hook_nudge(
 
 // ── Workflow State ──────────────────────────────────────────────────────────
 
+#[derive(serde::Deserialize, Default)]
+pub(crate) struct StateQuery {
+    /// `md` → a plain-text block for the session hooks to inject; default → JSON
+    /// (what the MCP `get_workflow_state`/`update_phase` tools consume).
+    pub format: Option<String>,
+}
+
+/// Render a `workflow_state` row as the plain-text block the session hooks
+/// inject — one `key: value` line per field that is actually set, in a stable
+/// order. Empty string when nothing is set (so the hook injects nothing rather
+/// than a stale mirror). This replaces the per-repo `.sensei/state.yaml`.
+fn workflow_state_md(ws: &serde_json::Value) -> String {
+    const FIELDS: [&str; 6] = [
+        "active_phase", "active_plan", "active_task",
+        "active_issue", "last_checkpoint", "rules_hash",
+    ];
+    let mut out = String::new();
+    for f in FIELDS {
+        let rendered = ws[f]
+            .as_str()
+            .map(str::to_string)
+            .or_else(|| ws[f].as_i64().map(|n| n.to_string()));
+        if let Some(val) = rendered.filter(|s| !s.is_empty()) {
+            out.push_str(f);
+            out.push_str(": ");
+            out.push_str(&val);
+            out.push('\n');
+        }
+    }
+    out
+}
+
 pub(crate) async fn get_workflow_state(
     State(state): State<AppState>,
     Path(project): Path<String>,
-) -> Json<serde_json::Value> {
-    match state.pg.get_workflow_state(&project).await {
-        Ok(Some(ws)) => Json(ws),
-        Ok(None) => Json(serde_json::json!({
+    Query(q): Query<StateQuery>,
+) -> Response {
+    let ws = match state.pg.get_workflow_state(&project).await {
+        Ok(v) => v,
+        Err(e) => return Json(serde_json::json!({"error": e})).into_response(),
+    };
+    // `format=md`: plain text for the SessionStart / PreCompact hooks to inject
+    // verbatim (mirrors `GET /api/knowledge/rules?format=md`). Empty when nothing
+    // is set — the hook then injects no workflow block, never a stale file.
+    if q.format.as_deref() == Some("md") {
+        let body = ws.as_ref().map(workflow_state_md).unwrap_or_default();
+        return ([(header::CONTENT_TYPE, "text/markdown; charset=utf-8")], body).into_response();
+    }
+    match ws {
+        Some(ws) => Json(ws).into_response(),
+        None => Json(serde_json::json!({
             "project": project,
             "active_phase": null,
             "active_plan": null,
@@ -602,8 +646,7 @@ pub(crate) async fn get_workflow_state(
             "active_issue": null,
             "last_checkpoint": null,
             "rules_hash": null,
-        })),
-        Err(e) => Json(serde_json::json!({"error": e})),
+        })).into_response(),
     }
 }
 
@@ -638,35 +681,36 @@ pub(crate) async fn update_workflow_state(
         tracing::warn!(project = %project, error = %e, "update_phase: run phase bridge failed");
     }
 
-    // Sync to .sensei/state.yaml
-    // TODO: Add a lookup for folder abs_path by project name if needed.
-    let project_path = body["project_path"].as_str().map(String::from);
-    if let Some(project_path) = project_path {
-        let sensei_dir = std::path::Path::new(&project_path).join(".sensei");
-        std::fs::create_dir_all(&sensei_dir).ok();
-        let state_file = sensei_dir.join("state.yaml");
-
-        // Read back the state we just wrote to get all fields
-        if let Ok(Some(ws)) = state.pg.get_workflow_state(&project).await {
-            let yaml = format!(
-                "active_phase: {}\nactive_plan: {}\nactive_task: {}\nactive_issue: {}\nlast_checkpoint: {}\nrules_hash: {}\n",
-                ws["active_phase"].as_str().unwrap_or("~"),
-                ws["active_plan"].as_str().unwrap_or("~"),
-                ws["active_task"].as_str().unwrap_or("~"),
-                ws["active_issue"].as_i64().map(|n| n.to_string()).unwrap_or("~".to_string()),
-                ws["last_checkpoint"].as_str().unwrap_or("~"),
-                ws["rules_hash"].as_str().unwrap_or("~"),
-            );
-            std::fs::write(&state_file, yaml).ok();
-        }
-    }
-
+    // Workflow state lives ONLY in Postgres (`sensei.workflow_state`), read back
+    // via `GET /api/state/{project}`. We no longer mirror it to a per-repo
+    // `.sensei/state.yaml`: that file drifted (it was written only when a
+    // `project_path` was supplied, which the MCP update_phase doesn't send), so
+    // the session hooks injected a STALE phase/issue and misdirected the agent.
+    // The hooks + `/sensei:session` now read the daemon (the DB) directly.
     Json(serde_json::json!({"ok": true}))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::range_to_days;
+    use super::{range_to_days, workflow_state_md};
+
+    #[test]
+    fn workflow_state_md_renders_only_set_fields_in_stable_order() {
+        let ws = serde_json::json!({
+            "active_phase": "build",
+            "active_plan": null,      // unset → skipped
+            "active_task": "",        // empty → skipped
+            "active_issue": 108,      // i64 → stringified
+            "last_checkpoint": "ckpt",
+            "rules_hash": null,
+        });
+        assert_eq!(
+            workflow_state_md(&ws),
+            "active_phase: build\nactive_issue: 108\nlast_checkpoint: ckpt\n"
+        );
+        // Nothing set → empty (the hook injects no workflow block, never a stale one).
+        assert_eq!(workflow_state_md(&serde_json::json!({})), "");
+    }
 
     #[test]
     fn range_to_days_maps_known_chips() {
