@@ -34,6 +34,7 @@ pub mod ranking;
 pub mod model_insight;
 pub mod runs;
 pub mod git_identity;
+pub mod resolution;
 pub mod stance;
 pub mod planner;
 pub mod plan_graph;

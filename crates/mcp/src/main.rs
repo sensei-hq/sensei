@@ -2,11 +2,18 @@ use serde_json::{json, Value};
 use std::io::{BufRead, Write};
 
 use sensei_mcp::{
-    active_project_path, daemon_request_for, handle_initialize, handle_list_tools,
-    read_active_project, resolve_active_project_in, resolve_default_project,
-    resolve_from_cwd_in, resolve_project_in, write_active_project, DaemonRequest, HttpMethod,
-    ProjectResolution,
+    daemon_request_for, handle_initialize, handle_list_tools, resolve_active_project_in,
+    resolve_default_project, resolve_from_cwd_in, resolve_project_in, ActiveProject, DaemonRequest,
+    HttpMethod, ProjectResolution,
 };
+
+/// The active-project pin for THIS MCP session, held in memory — NOT a file.
+/// The MCP is one stdio process per Claude session with a single-threaded
+/// request loop, so a process-global is exactly session-scoped: `use_project`
+/// sets it, later tool calls read it, and it vanishes when the session ends.
+/// There is no `~/.sensei/active-project`, so a pin can never leak across
+/// sessions or repos — the #109 stale-pin misroute is unrepresentable.
+static ACTIVE_PIN: std::sync::Mutex<Option<ActiveProject>> = std::sync::Mutex::new(None);
 
 /// Prepend a note (as its own text block) to a tool result's `content` — used to surface a
 /// stale-pin project override so a mis-resolution is visible, not silent.
@@ -153,9 +160,9 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
 
     // Resolve the project for scoping. `repo_id` is the resolved project NAME
     // (or "" when nothing resolved). Precedence: explicit `project=` arg →
-    // pin file (`~/.sensei/active-project`, persists across cwd changes) → cwd
-    // resolution → none. An explicit-but-unresolvable arg errors (it never
-    // silently falls through to the pin/cwd).
+    // cwd resolution → in-memory session pin (set by `use_project`). An
+    // explicit-but-unresolvable arg errors (it never silently falls through to
+    // the pin/cwd).
     let project_hint = args["project"].as_str().unwrap_or("");
     let explicit = if project_hint.is_empty() {
         None
@@ -175,7 +182,7 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
     let (pin, cwd_name) = if explicit.is_some() {
         (None, String::new())
     } else {
-        (read_active_project(&pin_path()), resolve_project_from_cwd(cwd, client))
+        (ACTIVE_PIN.lock().unwrap().clone(), resolve_project_from_cwd(cwd, client))
     };
     // A resolved cwd beats a conflicting (stale) pin; the override is surfaced, not silent.
     let (repo_id, resolution_note) =
@@ -392,16 +399,12 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
     }
 }
 
-/// The pin file path (`~/.sensei/active-project`) under the resolved sensei data
-/// dir. The lib owns the join + read/write; here we only supply the base dir.
-fn pin_path() -> std::path::PathBuf {
-    active_project_path(&sensei_bootstrap::config().sensei_dir())
-}
-
 /// `use_project`: resolve the named project (name or uuid) against the daemon,
-/// then WRITE the `{id,name}` pin to `~/.sensei/active-project` so every later
-/// tool call resolves to it regardless of cwd. The resolve + write logic lives
-/// in the lib (unit-tested); this only drives the daemon fetch and the file IO.
+/// then set the `{id,name}` pin IN MEMORY for this session so every later tool
+/// call resolves to it regardless of cwd. No file is written — the pin is
+/// process-global (this MCP process == one session), so it never outlives the
+/// session or leaks to another repo. The resolve logic lives in the lib
+/// (unit-tested); this only drives the daemon fetch and the in-memory set.
 fn handle_use_project(args: &Value, client: &reqwest::blocking::Client) -> Value {
     let hint = args["project"].as_str().unwrap_or("");
     if hint.is_empty() {
@@ -419,22 +422,12 @@ fn handle_use_project(args: &Value, client: &reqwest::blocking::Client) -> Value
             "isError": true
         });
     };
-    let path = pin_path();
-    match write_active_project(&path, &pin) {
-        Ok(()) => json!({
-            "content": [{"type": "text", "text": format!(
-                "Pinned active project to '{}' ({}). Every tool will now resolve to it regardless of the working directory. Pass project=<other> on a tool to override for one call, or run use_project again to switch.",
-                pin.name, pin.id
-            )}]
-        }),
-        Err(e) => json!({
-            "content": [{"type": "text", "text": format!(
-                "Resolved project '{}' but could not write the pin file {}: {e}",
-                pin.name, path.display()
-            )}],
-            "isError": true
-        }),
-    }
+    let msg = format!(
+        "Pinned active project to '{}' ({}) for this session. Every tool will now resolve to it regardless of the working directory. Pass project=<other> on a tool to override for one call, or run use_project again to switch. (Session-scoped — the pin resets when this session ends.)",
+        pin.name, pin.id
+    );
+    *ACTIVE_PIN.lock().unwrap() = Some(pin);
+    json!({ "content": [{"type": "text", "text": msg}] })
 }
 
 /// Resolve a project name/library name to a project **name** by querying the daemon.

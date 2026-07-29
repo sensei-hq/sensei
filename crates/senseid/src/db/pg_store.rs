@@ -4288,6 +4288,49 @@ impl PgStore {
         Ok(row.0)
     }
 
+    /// Insert a hook event only if an identical one isn't already stored, and
+    /// return the new id (`None` when it was a duplicate). Used by the capture
+    /// drain ([`crate::tasks::capture_drain`]) to import dead-lettered events
+    /// without twinning a row the daemon already committed in the rare
+    /// "curl timed out after the insert succeeded" race. Dedup is on the payload
+    /// (identical on both the live POST and the fallback line) so it holds even
+    /// though the two paths stamp `ts` independently.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn insert_hook_event_if_absent(
+        &self,
+        session_id: &str,
+        assistant_family: &str,
+        event_type: &str,
+        tool_name: Option<&str>,
+        cwd: Option<&str>,
+        ts: i64,
+        success: Option<bool>,
+        payload: &serde_json::Value,
+    ) -> Result<Option<i64>, String> {
+        let row: Option<(i64,)> = sqlx_core::query_as::query_as(
+            "INSERT INTO activity.assistant_events \
+             (session_id, family, event_type, tool_name, cwd, ts, success, payload) \
+             SELECT $1, $2::sensei.assistant_family, $3, $4, $5, $6, $7, $8 \
+             WHERE NOT EXISTS ( \
+               SELECT 1 FROM activity.assistant_events \
+               WHERE session_id = $1 AND event_type = $3 \
+                 AND tool_name IS NOT DISTINCT FROM $4 AND payload = $8 \
+             ) RETURNING id",
+        )
+        .bind(session_id)
+        .bind(assistant_family)
+        .bind(event_type)
+        .bind(tool_name)
+        .bind(cwd)
+        .bind(ts)
+        .bind(success)
+        .bind(payload)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(row.map(|r| r.0))
+    }
+
     /// Newest hook_event timestamp (epoch ms) for an assistant family, or None
     /// when the daemon has never recorded one for it. `assistant_family` is a
     /// Postgres enum, so bind with the explicit cast.

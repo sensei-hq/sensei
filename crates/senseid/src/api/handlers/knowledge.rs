@@ -28,13 +28,32 @@ async fn resolve_target_namespace(
     if let (Some(scope), Some(folder)) =
         (gov_scope.filter(|s| !s.is_empty()), folder.filter(|s| !s.is_empty()))
     {
+        // `general`/`user` are always-on rungs with no namespace row — a NULL
+        // namespace_id is the CORRECT resolution for them.
+        if matches!(scope, "general" | "user") {
+            return Ok(None);
+        }
+        // FAIL CLOSED (issue #109): a *specific* gov_scope was requested but its
+        // namespace can't be resolved from `folder`. Do NOT fall back to NULL —
+        // that silently widens the rule to the always-on `general` rung
+        // (governing every project, at the caller's enforcement — up to
+        // `mandatory`). Error so the caller passes a folder inside the target
+        // repo, or an explicit namespace_id, instead of over-broadening.
         let fid = state.pg.get_repo_by_path(folder).await
             .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
             .and_then(|f| crate::api::util::json_uuid(&f["id"]));
-        return match fid {
-            Some(fid) => state.pg.namespace_for_folder_scope(&fid, scope).await
-                .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e)),
-            None => Ok(None), // unknown repo → unscoped (general)
+        let Some(fid) = fid else {
+            return Err(err(StatusCode::BAD_REQUEST, &format!(
+                "cannot resolve gov_scope '{scope}': folder '{folder}' is not an indexed repo — pass a folder inside the target repo, or an explicit namespace_id"
+            )));
+        };
+        return match state.pg.namespace_for_folder_scope(&fid, scope).await
+            .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
+        {
+            Some(ns) => Ok(Some(ns)),
+            None => Err(err(StatusCode::BAD_REQUEST, &format!(
+                "cannot resolve gov_scope '{scope}': repo at '{folder}' is not a member of any '{scope}'-scoped namespace — bind it to one, or pass an explicit namespace_id"
+            ))),
         };
     }
     Ok(None)
