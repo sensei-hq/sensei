@@ -204,7 +204,9 @@ pub(crate) async fn pause_run(
         Some(id) => Some(id),
         None => match body["project"].as_str().map(str::trim).filter(|s| !s.is_empty()) {
             Some(p) => match crate::api::util::resolve_project_uuid(&state, p).await? {
-                Some(pid) => state.pg.active_run_for_project(&pid).await.ok().flatten().map(|r| r.id),
+                Some(pid) => state.pg.active_run_for_project(&pid).await
+                    .map_err(|e| { tracing::warn!(error = %e, "pause_run: active_run_for_project failed"); StatusCode::INTERNAL_SERVER_ERROR })?
+                    .map(|r| r.id),
                 None => None,
             },
             None => None,
