@@ -89,11 +89,16 @@ export async function resolveTenantAccess(
 	// Resolve the tenant by its `{origin}/{org}` key.
 	const tenantId = await resolveTenantId(db, origin, org);
 
-	// The caller's membership (id + role) in this tenant (active only).
-	const { data: mem } = await db
+	// The caller's membership (id + role) in this tenant (active only). Fail
+	// CLOSED on a lookup error: a DB failure must never be read as "no
+	// membership" and then fall through to the default `member` access (which
+	// would grant a non-member member-level access on any `member`-floor route).
+	// Mirror `resolveApiKeyAccess` below.
+	const { data: mem, error } = await db
 		.from('memberships').select('id, role')
 		.eq('tenant_id', tenantId).eq('user_id', userId).is('disabled_at', null)
 		.maybeSingle();
+	if (error) throw apiError(500, 'membership lookup failed');
 
 	const access = roleToAccess(mem?.role);
 	if (access < floor) throw apiError(403, `${accessLabel(floor)} role required`);
