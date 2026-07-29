@@ -399,28 +399,6 @@ fn mark_user_scope_configured() {
     }
 }
 
-/// Register a project in the sensei data dir (mode-aware) so uninstall can find it later.
-fn register_project(repo_path: &std::path::Path) {
-    let sensei_dir = cfg().sensei_dir();
-    let projects_file = sensei_dir.join("projects.json");
-    let mut projects: Vec<String> = projects_file
-        .exists()
-        .then(|| fs::read_to_string(&projects_file).ok())
-        .flatten()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default();
-
-    let path_str = repo_path.to_string_lossy().to_string();
-    if !projects.contains(&path_str) {
-        projects.push(path_str);
-        fs::create_dir_all(&sensei_dir).ok();
-        fs::write(
-            &projects_file,
-            serde_json::to_string_pretty(&projects).unwrap(),
-        )
-        .ok();
-    }
-}
 
 // ── Init ────────────────────────────────────────────────────────────────────
 
@@ -590,9 +568,6 @@ fn init_project_scope(_recommended: bool) {
     // 1. .sensei/ directory — mindsets, personas, rules
     let sensei_dir = repo_root.join(".sensei");
     fs::create_dir_all(&sensei_dir).ok();
-
-    // Register this project — so uninstall can find it across all repos
-    register_project(&repo_root);
 
     // Rules
     let rules_file = sensei_dir.join("rules.md");

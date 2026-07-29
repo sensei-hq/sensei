@@ -19,12 +19,15 @@ pub fn remove(req: &RemoveRequest) -> RemoveResult {
 
 /// Path-injected core. `run_uninstall` gates the external
 /// `claude plugin uninstall` (skipped in tests so it never touches real config).
+/// `_req.purge` and `_sensei_dir` are currently unused: pre-release there is no
+/// project registry to purge (the daemon owns projects in Postgres), so uninstall
+/// no longer walks a `projects.json` manifest cleaning each repo.
 fn remove_with(
-    req: &RemoveRequest,
+    _req: &RemoveRequest,
     home: &Path,
     plugin: &Path,
     cache: &Path,
-    sensei_dir: &Path,
+    _sensei_dir: &Path,
     run_uninstall: bool,
 ) -> RemoveResult {
     let mut result = RemoveResult {
@@ -38,11 +41,6 @@ fn remove_with(
 
     // 3. Clear marketplace cache
     remove_cache(&mut result, cache);
-
-    // 4. If purge: remove project .sensei/ dirs
-    if req.purge {
-        remove_registered_projects(&mut result, sensei_dir);
-    }
 
     result
 }
@@ -85,102 +83,6 @@ fn remove_cache(result: &mut RemoveResult, cache: &Path) {
         }
         result.cache_cleared = true;
     }
-}
-
-/// Remove .sensei/ dirs from all registered projects.
-fn remove_registered_projects(result: &mut RemoveResult, sensei_dir: &Path) {
-    let projects_file = sensei_dir.join("projects.json");
-    // projects.json stores a root JSON array of path strings (Vec<String>).
-    // Do NOT read it as a serde_json::Value and then index ["projects"] —
-    // that key does not exist and always returns null.
-    let projects: Vec<String> = if projects_file.exists() {
-        match fs::read_to_string(&projects_file) {
-            Ok(s) => match serde_json::from_str::<Vec<String>>(&s) {
-                Ok(v) => v,
-                Err(e) => {
-                    tracing::warn!(error = %e, path = %projects_file.display(), "failed to parse projects.json during purge; skipping project cleanup");
-                    result.errors.push(format!("projects.json parse: {}", e));
-                    Vec::new()
-                }
-            },
-            Err(e) => {
-                tracing::warn!(error = %e, path = %projects_file.display(), "failed to read projects.json during purge; skipping project cleanup");
-                result.errors.push(format!("projects.json read: {}", e));
-                Vec::new()
-            }
-        }
-    } else {
-        Vec::new()
-    };
-
-    for path in &projects {
-        remove_project_scope(path, result);
-    }
-}
-
-/// Remove sensei artifacts from a single project directory.
-fn remove_project_scope(project_path: &str, result: &mut RemoveResult) {
-    let root = std::path::PathBuf::from(project_path);
-    if !root.exists() { return; }
-
-    // .sensei/ directory
-    let sensei = root.join(".sensei");
-    if sensei.exists()
-        && let Err(e) = fs::remove_dir_all(&sensei) {
-            tracing::warn!(error = %e, path = %sensei.display(), "failed to remove project .sensei directory during purge");
-            result.errors.push(format!(".sensei {}: {}", sensei.display(), e));
-        }
-
-    // .claude/commands/, .claude/skills/, .claude/agents/
-    for subdir in &["commands", "skills", "agents"] {
-        let dir = root.join(".claude").join(subdir);
-        if dir.exists() {
-            let count = remove_md_files_in(&dir);
-            match *subdir {
-                "skills" => result.skills_removed += count,
-                "commands" => result.commands_removed += count,
-                "agents" => result.agents_removed += count,
-                _ => {}
-            }
-        }
-    }
-
-    // Remove sensei entry from .mcp.json (preserve other servers)
-    let mcp_file = root.join(".mcp.json");
-    if mcp_file.exists() {
-        match fs::read_to_string(&mcp_file) {
-            Ok(content) => {
-                match serde_json::from_str::<serde_json::Value>(&content) {
-                    Ok(mut config) => {
-                        if let Some(servers) = config
-                            .get_mut("mcpServers")
-                            .and_then(|s| s.as_object_mut())
-                            && servers.remove("sensei").is_some()
-                        {
-                            if servers.is_empty() {
-                                if let Err(e) = fs::remove_file(&mcp_file) {
-                                    tracing::warn!(error = %e, path = %mcp_file.display(), "failed to delete .mcp.json after removing sensei server");
-                                    result.errors.push(format!(".mcp.json delete: {}", e));
-                                }
-                            } else if let Err(e) = fs::write(&mcp_file, serde_json::to_string_pretty(&config).unwrap()) {
-                                tracing::warn!(error = %e, path = %mcp_file.display(), "failed to rewrite .mcp.json after removing sensei server");
-                                result.errors.push(format!(".mcp.json write: {}", e));
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!(error = %e, path = %mcp_file.display(), "failed to parse .mcp.json; leaving sensei server entry in place");
-                    }
-                }
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, path = %mcp_file.display(), "failed to read .mcp.json; leaving sensei server entry in place");
-                result.errors.push(format!(".mcp.json read: {}", e));
-            }
-        }
-    }
-
-    result.projects_cleaned.push(project_path.to_string());
 }
 
 /// Remove all .md files in a directory. Removes the directory if empty afterward.
@@ -394,31 +296,6 @@ mod tests {
         assert!(mcp_file.exists());
         let content = fs::read_to_string(&mcp_file).unwrap();
         assert_eq!(content, original_str);
-    }
-
-    // ── remove_registered_projects — JSON format ─────────────────────
-
-    /// Regression test for B1: projects.json stores a root array, not {"projects":[...]}.
-    /// The old code read v["projects"] which always returned null for a root array.
-    #[test]
-    fn remove_registered_projects_reads_root_array_format() {
-        // Set up a fake sensei_dir via env manipulation is not straightforward,
-        // so we test the fix by verifying the parse path directly:
-        // serde_json::from_str::<Vec<String>> succeeds on a root array.
-        let json = r#"["/home/user/project1", "/home/user/project2"]"#;
-        let result: Option<Vec<String>> = serde_json::from_str::<Vec<String>>(json).ok();
-        assert_eq!(
-            result,
-            Some(vec!["/home/user/project1".to_string(), "/home/user/project2".to_string()]),
-            "projects.json root array must parse to Vec<String>"
-        );
-
-        // Old (broken) path: indexing a root array as an object returns null
-        let as_value: serde_json::Value = serde_json::from_str(json).unwrap();
-        assert!(
-            as_value["projects"].is_null(),
-            "v[\"projects\"] on a root array must be null — confirms the old bug"
-        );
     }
 
     // ── remove (integration-level) ──────────────────────────────────
