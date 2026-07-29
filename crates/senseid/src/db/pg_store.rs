@@ -269,6 +269,21 @@ impl PgStore {
             .max_connections(DB_POOL_MAX_CONNECTIONS)
             .acquire_timeout(Duration::from_secs(DB_POOL_ACQUIRE_TIMEOUT_SECS))
             .idle_timeout(Duration::from_secs(DB_POOL_IDLE_TIMEOUT_SECS))
+            // Put `extensions` on the search_path so unqualified references to
+            // pgvector's `vector` type and operators (`$n::vector`, `<=>`) resolve.
+            // pgvector installs into the `extensions` schema — the Supabase/dbd
+            // convention declared in `database/design.yaml` — which isn't
+            // on Postgres's default path. Every table this code touches is
+            // schema-qualified, so this only affects extension type/operator
+            // resolution (and keeps working if a DB has vector in `public`).
+            .after_connect(|conn, _meta| {
+                Box::pin(async move {
+                    sqlx_core::query::query("SET search_path TO \"$user\", public, extensions")
+                        .execute(&mut *conn)
+                        .await
+                        .map(|_| ())
+                })
+            })
             .connect(database_url)
             .await
             .map_err(|e| format!("PgStore connect: {}", e))?;
