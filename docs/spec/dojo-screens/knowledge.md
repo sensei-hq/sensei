@@ -6,6 +6,9 @@
 - Access axis: **tenant-primary** — org-console governance (the published library the dōjō has adopted). Canonical `docs/architecture/entity-access-model.md` §3 (Governance / Org console → `tenant_id`). The real backing table `dojo.artifacts` is tenant-scoped.
 - Status: **STUB** — 100% fixture. Loader returns `knowledgeFor(slug)` from `components/kit/fixtures.ts` (only `acme` authored; every other slug → empty `{prunePolicy:'', active:[], pending:[], catalog:[]}`). No endpoint, no loader fetch, no mutations. The real source (`dojo.artifacts` via the federation route) exists but is NOT read by this screen.
 
+## ⚠ Fabricated-data debt — MUST fix on build (2026-07-29 fallback audit)
+`(app)/org/[slug]/[section]/+page.ts:230` (`knowledge: knowledgeFor(slug)`) renders a fabricated knowledge library for real users (active/pending/catalog authored only for `acme`). **Impact:** a real maintainer sees an invented published/adopted library as if the dōjō had adopted it. **Fix on build:** drive every field from the real `/v1` read; on a fetch error render an explicit error state — NEVER the fixture; honest-empty only when genuinely empty. (Ties the daemon-side fabrication fixes + the "no fabricated fallbacks" rule.)
+
 ## Elements → data (contract)
 | Element | Mockup field | Source (loader/API/table.field) | Status: have/bind/plumb | Realtime? |
 |---|---|---|---|---|

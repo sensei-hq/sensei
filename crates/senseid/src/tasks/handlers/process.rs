@@ -81,8 +81,11 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
     let (project_id, created) = match ctx.pg().get_or_create_project_by_name(project_name).await {
         Ok((id, created)) => (id.to_string(), created),
         Err(e) => {
-            tracing::error!(project = %project_name, error = %e, "get_or_create_project_by_name failed; using fallback id");
-            (format!("p-{}", project_name), false)
+            // FAIL, don't fabricate: minting a synthetic `p-<name>` id here pushed a
+            // phantom project into UI/SSE state that never matched a real row and
+            // never reconciled. Abort this folder — the scan task retries next tick.
+            tracing::error!(project = %project_name, error = %e, "get_or_create_project_by_name failed — aborting folder (will retry); NOT emitting a phantom project");
+            return Err(e);
         }
     };
     if created {
@@ -112,30 +115,38 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
     // unique on sensei.folders so the row identifies this exact repo
     // (vs name which can collide across roots).
     let folder_by_path = pre_registered;
+    // The folder's REAL DB id, or None when the row isn't registered yet. NEVER
+    // fabricate an `f-<name>` id — that orphaned a folder card in UI state.
     let folder_uuid_str = folder_by_path.as_ref()
-        .and_then(|f| f["id"].as_str().map(|s| s.to_string()))
-        .unwrap_or_else(|| format!("f-{}", folder_name));
+        .and_then(|f| f["id"].as_str().map(|s| s.to_string()));
     // Capture the project-root folder id + watch-root id now (Copy), before
     // `folder_by_path` is moved below; used later to materialize the subfolder
     // tree.
     let project_root_uuid = folder_by_path.as_ref().and_then(|f| crate::api::util::json_uuid(&f["id"]));
     let repo_root_uuid = folder_by_path.as_ref().and_then(|f| crate::api::util::json_uuid(&f["root_id"]));
 
-    emit(crate::api::events::StateEvent::folder_add(crate::api::events::ScanFolder {
-        id: folder_uuid_str.clone(),
-        project_id: project_id.clone(),
-        name: folder_name.to_string(),
-        path: task.path.clone(),
-        kind: if is_quasi {
-            crate::api::events::FolderKind::Standalone
-        } else {
-            crate::api::events::FolderKind::Git
-        },
-        stack: stack.clone(),
-        files_total,
-        files_completed: 0,
-        status: crate::api::events::FolderStatus::Queued,
-    }));
+    // Announce the folder only when we know its real id; otherwise skip the event
+    // (it's picked up once the row is registered) rather than emit a fabricated id.
+    if let Some(folder_uuid_str) = folder_uuid_str {
+        emit(crate::api::events::StateEvent::folder_add(crate::api::events::ScanFolder {
+            id: folder_uuid_str,
+            project_id: project_id.clone(),
+            name: folder_name.to_string(),
+            path: task.path.clone(),
+            kind: if is_quasi {
+                crate::api::events::FolderKind::Standalone
+            } else {
+                crate::api::events::FolderKind::Git
+            },
+            stack: stack.clone(),
+            files_total,
+            files_completed: 0,
+            status: crate::api::events::FolderStatus::Queued,
+        }));
+    } else {
+        tracing::warn!(folder = %folder_name, path = %task.path,
+            "folder not registered at process time — skipping folder_add (no fabricated id)");
+    }
 
     // ── 5. Emit: activity queue ──────────────────────────────────────
     emit(crate::api::events::StateEvent::activity(crate::api::events::ActivityEvent::new(
