@@ -4645,7 +4645,7 @@ impl PgStore {
             };
 
         // G10 command bias: mark the user's preferred tool per capability.
-        let prefs = self.command_preferences("user").await;
+        let prefs = self.command_preferences("user").await?;
         let mut out = rows.into_iter().map(|(id, folder_id, folder_name, raw_name, command_line, category, ecosystem, source_file, discovered_at)| {
             serde_json::json!({
                 "id":            id,
@@ -4682,15 +4682,18 @@ impl PgStore {
     /// User/dojo capability→preferred-tool preferences for a scope, as a
     /// capability→token map. Backs the `get_commands` bias (G10). Fail-open: an
     /// error yields an empty map (no bias) rather than failing the command read.
-    pub async fn command_preferences(&self, scope: &str) -> std::collections::HashMap<String, String> {
+    pub async fn command_preferences(&self, scope: &str) -> Result<std::collections::HashMap<String, String>, String> {
+        // Fail closed: a DB error must not read as an empty preference map — that
+        // would silently ignore the user's real tool bias and fall back to
+        // defaults (a governance fail-open). See the #109 audit.
         let rows: Vec<(String, String)> = sqlx_core::query_as::query_as(
             "SELECT capability, preferred FROM sensei.dojo_preferences WHERE scope = $1",
         )
         .bind(scope)
         .fetch_all(&self.pool)
         .await
-        .unwrap_or_default();
-        rows.into_iter().collect()
+        .map_err(|e| format!("command_preferences: {e}"))?;
+        Ok(rows.into_iter().collect())
     }
 
     /// Upsert a capability→preferred-tool bias for a scope (`user` today; a Dōjō

@@ -163,7 +163,10 @@ pub(crate) async fn refresh(
     let mut project_roots: Vec<(uuid::Uuid, std::path::PathBuf)> = Vec::new();
     for p in projects {
         let Some(pid) = p["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) else { continue };
-        let repos = state.pg.get_project_repos(&pid).await.unwrap_or_default();
+        // Fail closed: a per-project repo read error must not silently drop that
+        // project from the ACP config scan (masking a failure as "no repos").
+        let repos = state.pg.get_project_repos(&pid).await
+            .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
         // First repo's path is the project root.
         if let Some(first) = repos.first()
             && let Some(path) = first["path"].as_str()
