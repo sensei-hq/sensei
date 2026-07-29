@@ -100,21 +100,21 @@ async fn resolve_project_and_author(
 }
 
 /// Build the run-creation response `{ run, track_url }` (201). `track_url` is the
-/// auth-gated Dōjō run-detail link (`<registry>/you/runs/<id>`) at the dōjō the run
-/// federates to — its bound membership, else the primary enabled one (mirrors
-/// [`crate::tasks::handlers::resolve_run_memberships`] so the link and the
-/// federation always agree). It's the clean "watch your work here" handoff
-/// surfaced at start_run / register_plan. `None` when no dōjō is connected (nothing
-/// to watch remotely yet); a resolve error also yields `None` — the URL is a
-/// courtesy, never a reason to fail run creation.
+/// auth-gated Dōjō run-detail link (`<registry>/you/runs/<id>`) at the dōjō the
+/// run federates to — set ONLY when the run resolves to exactly one dōjō (its
+/// bound membership, or a single enabled one). With several enabled dōjōs and no
+/// binding it's ambiguous which to link, so `track_url` is `None` rather than an
+/// arbitrary org's URL. `None` too when no dōjō is connected or a resolve errors —
+/// the URL is a courtesy, never a reason to fail run creation.
 async fn run_created_response(
     state: &AppState,
     run: crate::runs::Run,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    let track_url = crate::tasks::handlers::resolve_run_memberships(&state.pg, &run)
+    let memberships = crate::tasks::handlers::resolve_run_memberships(&state.pg, &run)
         .await
-        .unwrap_or_default()
-        .first()
+        .unwrap_or_default();
+    let track_url = crate::resolution::Resolution::from_unique(memberships.iter())
+        .resolved()
         .map(|m| crate::dojo::memberships::dojo_run_url(&m.registry_url, &run.id));
     (
         StatusCode::CREATED,
@@ -474,8 +474,16 @@ pub(crate) async fn get_pending_nudges(
                 return empty();
             }
         };
-    let Some(m) = memberships.first() else {
-        return empty();
+    // Poll THIS run's dōjō only. Exactly one resolved → use it; ambiguous
+    // (unbound run, several enabled dōjōs) → surface nothing rather than an
+    // arbitrary tenant's inbox.
+    let m = match crate::resolution::Resolution::from_unique(memberships.iter()) {
+        crate::resolution::Resolution::Resolved(m) => m,
+        crate::resolution::Resolution::Ambiguous { count } => {
+            tracing::debug!(run = %id, count, "get_pending_nudges: {count} enabled memberships for an unbound run — no steer surfaced (ambiguous dōjō)");
+            return empty();
+        }
+        crate::resolution::Resolution::Unresolved => return empty(),
     };
     let client = crate::dojo::client::DojoClient::for_membership(m);
     let nudges = match client.poll_inbox(0).await {

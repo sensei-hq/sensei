@@ -97,7 +97,10 @@ pub(crate) async fn create_membership(
         b.org_slugs.as_deref().unwrap_or(&[]),
         b.role.as_deref().unwrap_or("contributor"),
         b.authenticated_via.as_deref().unwrap_or("device_code"),
-        b.attribution_default.as_deref().unwrap_or("named"),
+        // Fail closed on privacy: an omitted attribution defaults to the safest
+        // conservative mode (source-dereferenced), NOT the least-private `named`.
+        // Shared source of truth with collective preferences.
+        b.attribution_default.as_deref().unwrap_or(crate::collective::preferences::DEFAULT_ATTRIBUTION),
         // A fresh pairing is mid-authentication until the first heartbeat.
         "authenticating",
     ).map_err(|e| err(StatusCode::BAD_REQUEST, &e))?;

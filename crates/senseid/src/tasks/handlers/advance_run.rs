@@ -505,11 +505,17 @@ async fn resolve_cwd(ctx: &TaskContext, run: &Run) -> Result<Option<std::path::P
 /// stamped by the caller) and return `Ok(())` — the "can't drive, don't spawn"
 /// terminal for a tick. Status is left as-is (Flagged-but-running), matching
 /// progress-over-asking.
-/// Resolve the behavioural stance the run's author operates under, best-effort:
-/// the git author email (stamped on the run) keyed against the repo at `cwd` on
-/// the scope ladder. Any lookup failure — no author, an un-indexed cwd, or a
-/// missing stances relation — degrades to the fallback stance so the drive gate
-/// fails OPEN (the OFF-by-default master switch already gates activation).
+/// Resolve the behavioural stance the run's author operates under: the git
+/// author email (stamped on the run) keyed against the repo at `cwd` on the
+/// scope ladder.
+///
+/// Fails CLOSED on an UNRESOLVED identity (issue #109 class): if the run has no
+/// attributable author, or the stance lookup errors, we return the STRICTEST
+/// stance ([`ResolvedStance::strict`], `ask_always`) — never the generic
+/// `fallback()` (`ask_on_guarded`), which is more permissive than a cautious
+/// user would choose and would let the drive gate proceed unattended for a run
+/// we can't attribute. A *resolved* author who simply set no stance still gets
+/// their `fallback()` default (that's a known user's absence-of-choice).
 async fn resolve_run_stance(
     ctx: &TaskContext,
     run: &Run,
@@ -522,6 +528,11 @@ async fn resolve_run_stance(
         .ok()
         .and_then(|(_, email)| email)
         .unwrap_or_default();
+    // No attributable author → strict. (resolve_stance("") would match no row
+    // and hand back the permissive fallback(), so short-circuit before that.)
+    if author_email.is_empty() {
+        return crate::stance::ResolvedStance::strict();
+    }
     let folder_id = ctx
         .pg()
         .get_repo_by_path(&cwd.to_string_lossy())
@@ -532,7 +543,7 @@ async fn resolve_run_stance(
     ctx.pg()
         .resolve_stance(&author_email, folder_id.as_ref())
         .await
-        .unwrap_or_else(|_| crate::stance::ResolvedStance::fallback())
+        .unwrap_or_else(|_| crate::stance::ResolvedStance::strict())
 }
 
 async fn flag(ctx: &TaskContext, run: &Run, note: &str) -> Result<(), String> {
@@ -923,6 +934,10 @@ mod tests {
             .create_run(&NewRun {
                 project_id: Some(project_id),
                 goal: Some("drive the next step".into()),
+                // Attributable run → resolves to the permissive fallback stance
+                // (none set). Unattributed runs now fail CLOSED (strict) — see
+                // resolve_run_stance — and would not drive.
+                author_email: Some(format!("drive-stub-{}@test.local", uuid::Uuid::new_v4())),
                 ..Default::default()
             })
             .await
@@ -1063,6 +1078,10 @@ mod tests {
             .create_run(&NewRun {
                 project_id: Some(project_id),
                 goal: Some("drive a failing step".into()),
+                // A driven run must be attributable — an author resolves to a
+                // stance (none set here → the permissive fallback). Without one,
+                // resolve_run_stance now fails CLOSED (strict) and won't drive.
+                author_email: Some(format!("drive-fail-{}@test.local", uuid::Uuid::new_v4())),
                 ..Default::default()
             })
             .await
@@ -1126,6 +1145,9 @@ mod tests {
             .create_run(&NewRun {
                 project_id: Some(project_id),
                 goal: Some("drive the next step".into()),
+                // Attributable run → permissive fallback stance (none set), so the
+                // drive proceeds to the limit path. Unattributed → strict, no drive.
+                author_email: Some(format!("drive-limit-{}@test.local", uuid::Uuid::new_v4())),
                 ..Default::default()
             })
             .await

@@ -177,7 +177,18 @@ pub async fn publish_run(ctx: &TaskContext, task: &Task) -> Result<u32, String> 
 /// logs the surfaced nudges each tick; the run loop's consumer of these is a
 /// later, cursor-backed step. STATUS/steer only.
 async fn surface_run_nudges(run_id: &uuid::Uuid, memberships: &[DojoMembership]) {
-    let Some(m) = memberships.first() else { return };
+    // Steer must come from THIS run's dōjō. A bound run resolves to exactly one
+    // membership; an unbound run with several enabled dōjōs is ambiguous — DON'T
+    // poll an arbitrary tenant's inbox (that could surface another org's message
+    // as this run's steer). Skip on ambiguity; bind the project to scope steer.
+    let m = match crate::resolution::Resolution::from_unique(memberships.iter()) {
+        crate::resolution::Resolution::Resolved(m) => m,
+        crate::resolution::Resolution::Ambiguous { count } => {
+            tracing::debug!(run_id = %run_id, count, "publish_run: {count} enabled memberships for an unbound run — skipping steer poll (ambiguous dōjō)");
+            return;
+        }
+        crate::resolution::Resolution::Unresolved => return,
+    };
     let client = DojoClient::for_membership(m);
     match client.poll_inbox(0).await {
         Ok(pull) => {
