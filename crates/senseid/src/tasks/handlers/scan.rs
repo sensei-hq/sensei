@@ -46,7 +46,8 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     // relative entries resolved to absolute `root/entry` prefixes). Filter the
     // discovered set so excluded subtrees are never classified as projects; the
     // watcher gets the same list so it ignores changes there.
-    let exclusions = ctx.pg().root_exclusion_prefixes(&watch_root_path).await;
+    let exclusions = ctx.pg().root_exclusion_prefixes(&watch_root_path).await
+        .map_err(|e| format!("read exclusions for {watch_root_path}: {e}"))?;
 
     // 1. Find all git folders
     let git_folders: Vec<_> = scan_logic::find_git_folders(root, 3)

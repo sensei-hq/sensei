@@ -338,18 +338,21 @@ impl PgStore {
     /// The absolute-path exclusion prefixes for a watch root — each `excluded`
     /// entry resolved against `root_path` (`root/entry`). Consumed by the scan
     /// (to skip classification) and the watcher (to ignore events).
-    pub async fn root_exclusion_prefixes(&self, root_path: &str) -> Vec<String> {
+    pub async fn root_exclusion_prefixes(&self, root_path: &str) -> Result<Vec<String>, String> {
+        // Fail closed: a DB error must NOT read as "no exclusions" — that would
+        // let the scanner/watcher/grep process folders the user explicitly
+        // excluded (indexing/leaking excluded content). Propagate instead.
         let row: Option<(serde_json::Value,)> = sqlx_core::query_as::query_as(
             "SELECT excluded FROM sensei.folders_to_watch WHERE path = $1"
-        ).bind(root_path).fetch_optional(&self.pool).await.ok().flatten();
+        ).bind(root_path).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
         let root = root_path.trim_end_matches('/');
-        row.and_then(|(v,)| v.as_array().cloned())
+        Ok(row.and_then(|(v,)| v.as_array().cloned())
             .unwrap_or_default()
             .into_iter()
             .filter_map(|e| e.as_str().map(str::to_string))
             .filter(|e| !e.is_empty())
             .map(|e| format!("{root}/{}", e.trim_start_matches('/')))
-            .collect()
+            .collect())
     }
 
     /// Watch root's path + its raw (relative) `excluded` list, by id — for the
@@ -2555,42 +2558,27 @@ impl PgStore {
                   ORDER BY r.measured_at DESC NULLS LAST"
             ).bind(project_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(|(id, title, action_type, status, verdict, baseline, current, props, models, consensus)| {
-            // The reasoning field carries the rich MOE JSON directly to
-            // the UI: `{headline, body, consensus, models: [{name, role,
-            // note}], suggestedRevision}` when measure has populated it,
-            // or null when the rec has no trace yet. The pre-fix wire
-            // was `{models: string[], consensus: unknown}` which lost
-            // the narrative — the panel had nothing to render past the
-            // one-word verdict tag.
+            // The reasoning field carries the honest single-verdict JSON to the
+            // UI: `{headline, body, modelsUsed: string[], suggestedRevision}`
+            // when measure has populated it, or null when the rec has no trace
+            // yet. HONEST SINGLE VERDICT (#109 audit): no fabricated consensus
+            // tally or per-model panelist verdicts — there is one FTR-delta
+            // verdict, and `modelsUsed` lists the models that actually ran.
             let reasoning = consensus.map(|synth| {
-                // Prefer the trace's own models_used array when the synth
-                // JSON lacks a models[] key (older traces written by
-                // consensus reasoning). This keeps the older analyzer's
-                // output rendering the mockup panel with model names,
-                // even before MeasureVerdicts overwrites the trace.
-                if synth.get("models").is_some() && synth.get("headline").is_some() {
-                    // Rich synth — flow straight through.
+                // The honest synth is marked by `headline` — flow it straight through.
+                if synth.get("headline").is_some() {
                     synth
                 } else {
-                    // Old-shape consensus (e.g. `{conclusion}`). Wrap it
-                    // in the panel shape so the UI has something to
-                    // render, even if the narrative is a single line.
+                    // Legacy/old-shape trace (e.g. `{conclusion}` from the retired
+                    // consensus path). Surface the REAL model names from the trace;
+                    // never fabricate per-model roles/notes/verdicts.
                     let conclusion = synth.get("conclusion")
                         .and_then(|v| v.as_str()).unwrap_or("").to_string();
                     let names = models.clone().unwrap_or_default();
-                    let panelists: Vec<serde_json::Value> = names.iter()
-                        .enumerate()
-                        .map(|(i, n)| serde_json::json!({
-                            "name": n,
-                            "role": match i { 0 => "proposer", 1 => "challenger", 2 => "synthesizer", _ => "reviewer" },
-                            "note": "Contributed to the original consensus panel.",
-                        }))
-                        .collect();
                     serde_json::json!({
-                        "headline":          if conclusion.is_empty() { "Consensus captured (no narrative)".into() } else { conclusion },
+                        "headline":          if conclusion.is_empty() { "Reasoning captured (no narrative)".into() } else { conclusion },
                         "body":              serde_json::Value::Null,
-                        "consensus":         serde_json::Value::Null,
-                        "models":            panelists,
+                        "modelsUsed":        names,
                         "suggestedRevision": serde_json::Value::Null,
                     })
                 }
@@ -9688,7 +9676,7 @@ mod tests {
         let uniq = uuid::Uuid::new_v4();
         let root = format!("/_test/exroot/{uniq}");
         let id = s.add_watch_root(&root, "ex", &serde_json::json!(["Code", "archive/old"])).await.unwrap();
-        let mut prefixes = s.root_exclusion_prefixes(&root).await;
+        let mut prefixes = s.root_exclusion_prefixes(&root).await.unwrap();
         prefixes.sort();
         assert_eq!(prefixes, vec![format!("{root}/Code"), format!("{root}/archive/old")]);
         // get_watch_root round-trips the raw relative list.

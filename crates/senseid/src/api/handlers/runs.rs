@@ -80,7 +80,8 @@ async fn resolve_project_and_author(
     body: &serde_json::Value,
 ) -> Result<(Option<uuid::Uuid>, Option<String>, Option<String>), StatusCode> {
     let project_id = match body["project"].as_str().map(str::trim).filter(|s| !s.is_empty()) {
-        Some(p) => match crate::api::util::resolve_project_uuid(state, p).await {
+        // resolve fails closed: a DB error propagates as 500; a genuine miss is a 400.
+        Some(p) => match crate::api::util::resolve_project_uuid(state, p).await? {
             Some(id) => Some(id),
             None => return Err(StatusCode::BAD_REQUEST),
         },
@@ -202,7 +203,7 @@ pub(crate) async fn pause_run(
     let run_id = match body["run_id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) {
         Some(id) => Some(id),
         None => match body["project"].as_str().map(str::trim).filter(|s| !s.is_empty()) {
-            Some(p) => match crate::api::util::resolve_project_uuid(&state, p).await {
+            Some(p) => match crate::api::util::resolve_project_uuid(&state, p).await? {
                 Some(pid) => state.pg.active_run_for_project(&pid).await.ok().flatten().map(|r| r.id),
                 None => None,
             },

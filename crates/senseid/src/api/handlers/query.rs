@@ -328,8 +328,18 @@ async fn grep_context_items(
     let mut grep_roots: Vec<(std::path::PathBuf, Vec<String>)> = Vec::with_capacity(roots.len());
     for r in &roots {
         // Exclusions are keyed by watch-root path; a repo that is also a watch
-        // root contributes its excluded prefixes, otherwise this is empty.
-        let excl = state.pg.root_exclusion_prefixes(r).await;
+        // root contributes its excluded prefixes, otherwise this is empty. Fail
+        // closed: on a read error skip this root rather than grep it with no
+        // exclusions (which could leak excluded-folder content into the context
+        // pack). The grep otherwise stays best-effort.
+        let excl = match state.pg.root_exclusion_prefixes(r).await {
+            Ok(e) => e,
+            Err(e) => {
+                tracing::warn!(error = %e, root = %r,
+                    "context_pack grep: exclusion read failed; skipping root");
+                continue;
+            }
+        };
         grep_roots.push((std::path::PathBuf::from(r), excl));
     }
     let opts = GrepOpts { max_matches: CONTEXT_PACK_GREP_K, ..GrepOpts::default() };

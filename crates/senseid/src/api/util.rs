@@ -64,15 +64,25 @@ pub(crate) fn parse_enum_field(
 /// name shape, so `get_ftr_daily` / `get_quality_signals` /
 /// `get_hotspots` for `project=sensei` came back empty even though the
 /// data was there.
+///
+/// Returns `Ok(Some(uuid))` when resolved, `Ok(None)` on a genuine miss (no such
+/// project — caller 404s/400s), and `Err(500)` when the name lookup itself fails.
+/// Failing closed on the DB error is deliberate: swallowing it (the old
+/// `.ok().flatten()`) turned a transient failure into an indistinguishable
+/// "unknown project", masking outages as 404s. See the #109 fabrication audit.
 pub(crate) async fn resolve_project_uuid(
     state: &crate::api::state::AppState,
     id: &str,
-) -> Option<uuid::Uuid> {
+) -> Result<Option<uuid::Uuid>, axum::http::StatusCode> {
     if let Ok(uuid) = uuid::Uuid::parse_str(id) {
-        return Some(uuid);
+        return Ok(Some(uuid));
     }
-    let row = state.pg.get_project_by_name(id).await.ok().flatten()?;
-    json_uuid(&row["id"])
+    let row = state
+        .pg
+        .get_project_by_name(id)
+        .await
+        .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(row.and_then(|r| json_uuid(&r["id"])))
 }
 
 #[cfg(test)]

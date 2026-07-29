@@ -42,27 +42,25 @@ impl Verdict {
     }
 }
 
-/// Compose the rich reasoning JSON the Observatory Impact panel renders.
+/// Compose the honest reasoning JSON the Observatory Impact panel renders.
 ///
-/// Shape mirrors the mockup:
+/// Shape:
 /// ```json
 /// {
 ///   "headline": "…",
 ///   "body": "…",
-///   "consensus": "3 positive · 0 neutral · 0 negative",
-///   "models": [
-///     { "name": "gemma4:27b", "role": "proposer",   "note": "…" },
-///     { "name": "qwen3:14b",  "role": "challenger", "note": "…" }
-///   ],
+///   "modelsUsed": ["gemma4:27b", "qwen3:14b"],
 ///   "suggestedRevision": null | "…"
 /// }
 /// ```
 ///
-/// Notes rendered per model are deterministic ("participated in the
-/// consensus panel"). We stop short of faking per-model verdicts — the
-/// analyzer runs one FTR calculation, so every model in the panel shares
-/// the same overall verdict. The panel-wide consensus string preserves
-/// the mockup's shape for the reader while staying honest.
+/// HONEST SINGLE VERDICT (the #109 fabrication audit): the analyzer runs ONE
+/// FTR-delta calculation, so there is exactly one verdict — not an N-model vote.
+/// We therefore do NOT synthesize a consensus tally ("3 positive · 0 neutral · …"),
+/// per-model roles (proposer/challenger/synthesizer), per-model notes, or a ">2σ"
+/// claim — none of those were measured. `modelsUsed` lists the real models that
+/// ran in the measured sessions; the single verdict is carried by `headline`/`body`
+/// (and by the recommendation row's own `verdict` field).
 pub fn synthesize_reasoning(
     verdict: Verdict,
     baseline_ftr: f64,
@@ -70,43 +68,12 @@ pub fn synthesize_reasoning(
     models_used: &[String],
 ) -> Value {
     let delta_pp = ((current_ftr - baseline_ftr) * 100.0).round();
-
-    let headline = compose_headline(verdict, delta_pp);
-    let body = compose_body(verdict, baseline_ftr, current_ftr, models_used.len());
-    let consensus_line = compose_consensus_line(verdict, models_used.len());
-
-    let models_json: Vec<Value> = models_used
-        .iter()
-        .enumerate()
-        .map(|(i, name)| {
-            json!({
-                "name": name,
-                "role": panel_role_for(i),
-                "note": compose_model_note(verdict, delta_pp, i),
-            })
-        })
-        .collect();
-
     json!({
-        "headline":          headline,
-        "body":              body,
-        "consensus":         consensus_line,
-        "models":            models_json,
+        "headline":          compose_headline(verdict, delta_pp),
+        "body":              compose_body(verdict, baseline_ftr, current_ftr),
+        "modelsUsed":        models_used,
         "suggestedRevision": suggested_revision(verdict),
     })
-}
-
-/// Panel roles rotate deterministically so the mockup's proposer /
-/// challenger / synthesizer language shows up when the models list has
-/// three or more entries. With 1 model it degrades to "solo", with 2 to
-/// "proposer" + "challenger".
-fn panel_role_for(index: usize) -> &'static str {
-    match index {
-        0 => "proposer",
-        1 => "challenger",
-        2 => "synthesizer",
-        _ => "reviewer",
-    }
 }
 
 fn compose_headline(verdict: Verdict, delta_pp: f64) -> String {
@@ -123,59 +90,28 @@ fn compose_headline(verdict: Verdict, delta_pp: f64) -> String {
     }
 }
 
-fn compose_body(verdict: Verdict, baseline_ftr: f64, current_ftr: f64, model_count: usize) -> String {
+fn compose_body(verdict: Verdict, baseline_ftr: f64, current_ftr: f64) -> String {
     let baseline_pct = (baseline_ftr * 100.0).round() as i64;
     let current_pct  = (current_ftr  * 100.0).round() as i64;
-    let panel_word = match model_count {
-        0 | 1 => "model",
-        _     => "MOE panel",
-    };
+    // Attribute to the FTR measurement itself — NOT a multi-model deliberation
+    // that never happened (there is one FTR-delta calculation).
     match verdict {
         Verdict::Positive => format!(
-            "FTR moved from {}% to {}% across the measurement window. \
-             The {} attributes the shift to the accepted recommendation \
-             — the delta clears the 5-point band that separates signal \
-             from noise. Keep it.",
-            baseline_pct, current_pct, panel_word,
+            "FTR moved from {}% to {}% across the measurement window — the delta \
+             clears the 5-point band that separates signal from noise. Keep it.",
+            baseline_pct, current_pct,
         ),
         Verdict::Negative => format!(
-            "FTR fell from {}% to {}% across the measurement window. \
-             The {} recorded a decline greater than the 5-point noise \
-             floor. Consider rolling back or scoping tighter.",
-            baseline_pct, current_pct, panel_word,
+            "FTR fell from {}% to {}% across the measurement window — a decline \
+             greater than the 5-point noise floor. Consider rolling back or \
+             scoping tighter.",
+            baseline_pct, current_pct,
         ),
         Verdict::Neutral => format!(
-            "FTR shifted from {}% to {}% — within the ±5-point band \
-             the daemon treats as noise. The {} found no measurable \
-             effect. Safe to keep or archive.",
-            baseline_pct, current_pct, panel_word,
+            "FTR shifted from {}% to {}% — within the ±5-point band the daemon \
+             treats as noise. No measurable effect. Safe to keep or archive.",
+            baseline_pct, current_pct,
         ),
-    }
-}
-
-fn compose_consensus_line(verdict: Verdict, model_count: usize) -> String {
-    if model_count == 0 {
-        return format!("1 {}", verdict.as_wire());
-    }
-    match verdict {
-        Verdict::Positive => format!("{} positive · 0 neutral · 0 negative", model_count),
-        Verdict::Neutral  => format!("0 positive · {} neutral · 0 negative", model_count),
-        Verdict::Negative => format!("0 positive · 0 neutral · {} negative", model_count),
-    }
-}
-
-fn compose_model_note(verdict: Verdict, delta_pp: f64, index: usize) -> String {
-    let common = match verdict {
-        Verdict::Positive => "Reads the FTR lift as a real signal, above the ±5pp noise floor.",
-        Verdict::Negative => "Flags the FTR drop as a real regression, past the ±5pp noise floor.",
-        Verdict::Neutral  => "Considers the shift within the ±5pp noise floor; no verdict either way.",
-    };
-    if delta_pp.abs() >= 10.0 && index == 0 {
-        format!("{common} Effect size is >2σ.")
-    } else if index > 0 {
-        format!("{common} Cross-checks the pattern in the {} view.", panel_role_for(index))
-    } else {
-        common.to_string()
     }
 }
 
@@ -184,7 +120,7 @@ fn suggested_revision(verdict: Verdict) -> Value {
         Verdict::Negative => json!(
             "Consider narrowing the scope of the accepted recommendation \
              — e.g. limit it to a specific module or file glob — and \
-             re-accept. The MOE panel can re-measure once ≥3 sessions \
+             re-accept. The daemon can re-measure once ≥3 sessions \
              have landed under the tighter scope."
         ),
         _ => Value::Null,
@@ -205,12 +141,12 @@ mod tests {
     }
 
     #[test]
-    fn synthesize_positive_includes_lift_headline_and_body() {
+    fn synthesize_positive_includes_lift_headline_body_and_real_models() {
         let v = synthesize_reasoning(Verdict::Positive, 0.60, 0.78, &["gemma4:27b".into(), "qwen3:14b".into()]);
         assert_eq!(v["headline"].as_str().unwrap(), "Strong positive impact — FTR +18pp");
         assert!(v["body"].as_str().unwrap().contains("60% to 78%"));
-        assert!(v["body"].as_str().unwrap().contains("MOE panel"));
-        assert_eq!(v["consensus"], "2 positive · 0 neutral · 0 negative");
+        // modelsUsed carries the REAL models that ran — verbatim, no invented order/role.
+        assert_eq!(v["modelsUsed"], json!(["gemma4:27b", "qwen3:14b"]));
         assert!(v["suggestedRevision"].is_null(), "positive never carries a revision");
     }
 
@@ -218,7 +154,7 @@ mod tests {
     fn synthesize_negative_includes_regression_and_revision() {
         let v = synthesize_reasoning(Verdict::Negative, 0.75, 0.60, &["haiku".into(), "qwen".into(), "gemma".into()]);
         assert!(v["headline"].as_str().unwrap().starts_with("Regression"));
-        assert_eq!(v["consensus"], "0 positive · 0 neutral · 3 negative");
+        assert_eq!(v["modelsUsed"], json!(["haiku", "qwen", "gemma"]));
         assert!(!v["suggestedRevision"].is_null(), "negative always carries a suggested revision");
     }
 
@@ -230,28 +166,27 @@ mod tests {
     }
 
     #[test]
-    fn model_roles_rotate_proposer_challenger_synthesizer() {
-        let names = ["a", "b", "c", "d"].into_iter().map(String::from).collect::<Vec<_>>();
-        let v = synthesize_reasoning(Verdict::Positive, 0.5, 0.7, &names);
-        let ms = v["models"].as_array().unwrap();
-        assert_eq!(ms[0]["role"], "proposer");
-        assert_eq!(ms[1]["role"], "challenger");
-        assert_eq!(ms[2]["role"], "synthesizer");
-        assert_eq!(ms[3]["role"], "reviewer");
-    }
-
-    #[test]
-    fn body_word_degrades_when_only_one_model() {
-        let v = synthesize_reasoning(Verdict::Neutral, 0.8, 0.79, &["gemma".into()]);
-        assert!(v["body"].as_str().unwrap().contains("model"),
-                "solo body prefers 'model' over 'MOE panel'");
-        assert!(!v["body"].as_str().unwrap().contains("MOE panel"),
-                "solo body should not read as if a panel exists");
-    }
-
-    #[test]
-    fn consensus_line_falls_back_to_a_single_vote_when_no_models_captured() {
+    fn no_models_captured_yields_an_empty_models_list_not_a_fabricated_vote() {
         let v = synthesize_reasoning(Verdict::Positive, 0.6, 0.7, &[]);
-        assert_eq!(v["consensus"], "1 positive");
+        assert_eq!(v["modelsUsed"], json!([]));
+    }
+
+    /// The #109 audit guard: the synth must NOT fabricate a consensus tally,
+    /// per-model panelist entries, or a ">2σ" effect-size claim — none of those
+    /// were measured (there is one FTR-delta verdict).
+    #[test]
+    fn synth_never_fabricates_a_consensus_panel() {
+        for models in [
+            vec![],
+            vec!["a".to_string()],
+            vec!["a".to_string(), "b".to_string(), "c".to_string(), "d".to_string()],
+        ] {
+            let v = synthesize_reasoning(Verdict::Positive, 0.5, 0.9, &models);
+            assert!(v.get("consensus").is_none(), "no fabricated consensus vote tally");
+            assert!(v.get("models").is_none(), "no fabricated per-model panelist entries");
+            let body = v["body"].as_str().unwrap();
+            assert!(!body.contains("panel"), "body must not imply a multi-model panel");
+            assert!(!body.contains("σ") && !body.contains("2σ"), "no invented effect-size claim");
+        }
     }
 }
