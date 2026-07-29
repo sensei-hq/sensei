@@ -85,8 +85,10 @@ pub(crate) async fn set_command_preference(
 /// `GET /api/preferences/commands` — the user-scope command preferences.
 pub(crate) async fn get_command_preferences(
     State(state): State<AppState>,
-) -> Json<serde_json::Value> {
-    Json(serde_json::json!({ "scope": "user", "preferences": state.pg.command_preferences("user").await }))
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let preferences = state.pg.command_preferences("user").await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(serde_json::json!({ "scope": "user", "preferences": preferences })))
 }
 
 pub(crate) async fn get_project_ftr(
