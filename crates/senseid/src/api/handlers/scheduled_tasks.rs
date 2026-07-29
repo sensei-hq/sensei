@@ -14,7 +14,7 @@
 //! pruners, mcp discovery — they tick on an interval or run at startup, no
 //! persisted cursor) reports `last_run_at: null`.
 
-use axum::{extract::State, response::Json};
+use axum::{extract::State, http::StatusCode, response::Json};
 use crate::api::state::AppState;
 
 /// One scheduled background worker: display name, what it does, and the
@@ -51,11 +51,16 @@ fn watermark_to_rfc3339(raw: Option<String>) -> Option<String> {
 /// GET /api/tasks/scheduled — the background-task registry with last-run times.
 pub(crate) async fn scheduled(
     State(state): State<AppState>,
-) -> Json<serde_json::Value> {
+) -> Result<Json<serde_json::Value>, StatusCode> {
     let mut rows = Vec::with_capacity(TASKS.len());
     for t in TASKS {
+        // Fail closed: a config-read error must not mask as `last_run_at: null`
+        // ("never ran") — that's the exact "is it even running?" ambiguity this
+        // endpoint exists to remove. A genuine absent watermark is still None.
         let last_run_at = match t.watermark_key {
-            Some(key) => watermark_to_rfc3339(state.pg.get_config(key).await.ok().flatten()),
+            Some(key) => watermark_to_rfc3339(
+                state.pg.get_config(key).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+            ),
             None => None,
         };
         rows.push(serde_json::json!({
@@ -71,7 +76,7 @@ pub(crate) async fn scheduled(
             "avg_ms": serde_json::Value::Null,
         }));
     }
-    Json(serde_json::json!({ "tasks": rows }))
+    Ok(Json(serde_json::json!({ "tasks": rows })))
 }
 
 #[cfg(test)]

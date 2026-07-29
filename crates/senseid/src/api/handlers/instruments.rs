@@ -11,16 +11,18 @@ use crate::instruments::{McpEntry, REGISTRY};
 
 /// Per-project stack — `project_count` for each MCP is the number of these
 /// projects whose stack matches any of the MCP's keywords.
-async fn per_project_stacks(state: &AppState) -> Vec<Vec<String>> {
-    let projects = match state.pg.list_projects().await {
-        Ok(p) => p,
-        Err(_) => return vec![],
-    };
+async fn per_project_stacks(state: &AppState) -> Result<Vec<Vec<String>>, StatusCode> {
+    // Fail closed: a DB error must not read as "no projects / no stacks" — that
+    // would silently zero every recommendation + project_count as if the user's
+    // stack matched nothing (the #109 audit).
+    let projects = state.pg.list_projects().await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let mut stacks = Vec::with_capacity(projects.len());
     for project in &projects {
         let Some(pid) = project["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok())
         else { continue };
-        let folders = state.pg.list_folders_by_project(&pid).await.unwrap_or_default();
+        let folders = state.pg.list_folders_by_project(&pid).await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         let mut stack: Vec<String> = vec![];
         for folder in &folders {
             if let Some(s) = folder["stack"].as_array() {
@@ -33,7 +35,7 @@ async fn per_project_stacks(state: &AppState) -> Vec<Vec<String>> {
         }
         stacks.push(stack);
     }
-    stacks
+    Ok(stacks)
 }
 
 /// True when any of this MCP's keywords appears as a substring in any tag
@@ -48,7 +50,7 @@ fn entry_matches_project(entry: &McpEntry, project_stack: &[String]) -> bool {
 pub(crate) async fn list_instruments(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let project_stacks = per_project_stacks(&state).await;
+    let project_stacks = per_project_stacks(&state).await?;
 
     // Flat union of every project's stack, used for the top-level
     // `recommended` flag (a single project that uses Postgres is enough
@@ -62,7 +64,7 @@ pub(crate) async fn list_instruments(
     // stall axum's executor.
     let installed = tokio::task::spawn_blocking(crate::assistants::installed_mcp_keys)
         .await
-        .unwrap_or_default();
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let mut mcps = crate::instruments::list_for_stack(&flat_stack, &installed);
 
