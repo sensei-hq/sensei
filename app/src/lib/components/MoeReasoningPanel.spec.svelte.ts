@@ -10,37 +10,35 @@ afterEach(() => { cleanup.forEach((fn) => fn()); cleanup = []; });
 const reasoning = (over: Partial<ImpactReasoning> = {}): ImpactReasoning => ({
   headline: 'FTR climbed after the agent shipped',
   body: 'Sessions after acceptance corrected less and finished faster.',
-  consensus: '3 positive · 0 neutral · 0 negative',
-  models: [
-    { name: 'gemma4', role: 'proposer', note: 'Contributed to the original consensus panel.' },
-    { name: 'opus-4-8', role: 'reviewer', note: 'Confirmed the sustained lift.' },
-  ],
+  modelsUsed: ['gemma4', 'opus-4-8'],
   suggestedRevision: null,
   ...over,
 });
 
 describe('MoeReasoningPanel', () => {
-  it('renders headline, body, consensus and every model note', () => {
+  it('renders headline, body and the real models used (no fabricated consensus/roles)', () => {
     const m = mountComponent(MoeReasoningPanelHarness, { reasoning: reasoning() });
     cleanup.push(m.destroy);
     expect(m.container.querySelector('[data-testid="impact-moe-headline"]')?.textContent)
       .toContain('FTR climbed');
     expect(m.container.querySelector('[data-testid="impact-moe-body"]')?.textContent)
       .toContain('corrected less');
-    expect(m.container.querySelector('[data-testid="impact-moe-consensus"]')?.textContent)
-      .toContain('3 positive');
+    // No fabricated consensus vote tally is rendered.
+    expect(m.container.querySelector('[data-testid="impact-moe-consensus"]')).toBeNull();
+    // Real model names appear, as plain chips (no proposer/challenger role text).
     expect(m.container.querySelector('[data-testid="impact-moe-model-gemma4"]')).toBeTruthy();
     expect(m.container.querySelector('[data-testid="impact-moe-model-opus-4-8"]')).toBeTruthy();
+    expect(m.container.querySelector('[data-testid="impact-moe-models"]')?.textContent)
+      .not.toContain('proposer');
   });
 
-  it('omits body / consensus / revision when the trace only carries a headline', () => {
+  it('omits body / models / revision when the trace only carries a headline', () => {
     const m = mountComponent(MoeReasoningPanelHarness, {
-      reasoning: reasoning({ body: null, consensus: null, models: [], suggestedRevision: null }),
+      reasoning: reasoning({ body: null, modelsUsed: [], suggestedRevision: null }),
     });
     cleanup.push(m.destroy);
     expect(m.container.querySelector('[data-testid="impact-moe-headline"]')).toBeTruthy();
     expect(m.container.querySelector('[data-testid="impact-moe-body"]')).toBeNull();
-    expect(m.container.querySelector('[data-testid="impact-moe-consensus"]')).toBeNull();
     expect(m.container.querySelector('[data-testid="impact-moe-models"]')).toBeNull();
     expect(m.container.querySelector('[data-testid="impact-moe-revision"]')).toBeNull();
   });

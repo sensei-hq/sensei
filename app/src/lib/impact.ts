@@ -3,26 +3,18 @@
 // measured recommendation after the analyzer's MeasureVerdicts pass records a
 // verdict. Pure functions + types only; no runes.
 
-/** One entry in the MOE reasoning panel — a model plus the role it played and
- *  its per-model note. Written by `verdicts::synthesize_reasoning`. */
-export interface ReasoningModel {
-  name: string;
-  /** proposer / challenger / synthesizer / reviewer, deterministic by the
-   *  model's index in the panel. */
-  role: string;
-  note: string;
-}
-
-/** Rich MOE reasoning JSON attached to a measured recommendation. All fields
- *  are optional on the wire so a legacy `{conclusion}`-only trace still
- *  renders — the UI degrades gracefully to whatever it has. */
+/** Honest reasoning JSON attached to a measured recommendation, written by
+ *  `verdicts::synthesize_reasoning`. There is ONE FTR-delta verdict — not an
+ *  N-model vote — so this carries the verdict narrative (headline/body) plus the
+ *  real models that ran (`modelsUsed`), and NOT a fabricated consensus tally or
+ *  per-model roles/notes (the #109 fabrication audit). Fields are nullable so a
+ *  legacy `{conclusion}`-only trace still renders. */
 export interface ImpactReasoning {
   headline: string | null;
   body: string | null;
-  /** "3 positive · 0 neutral · 0 negative" summary line. Null for legacy
-   *  traces that didn't compose a per-panel breakdown. */
-  consensus: string | null;
-  models: ReasoningModel[];
+  /** The real models that ran in the measured sessions. Empty when none were
+   *  captured — never padded with invented panelists. */
+  modelsUsed: string[];
   /** Populated only when the verdict is negative — an alternate approach the
    *  reader can try before rolling back entirely. */
   suggestedRevision: string | null;
