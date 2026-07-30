@@ -16,7 +16,7 @@ create table if not exists collective_preferences (
 , destination          text        not null default 'none'         -- none | global | dojo | both
 , cadence              text        not null default 'manual'       -- manual | daily | weekly
 , categories           jsonb       not null default '{}'::jsonb     -- per-category share toggles, e.g. {"memory":true,"pattern":true,...}
-, attribution_default  text        not null default 'dereferenced'  -- named | anonymous | dereferenced (dojo.attribution_mode)
+, attribution_default  text        not null default 'anonymous'    -- named | anonymous (dojo.attribution_mode)
 , updated_at           timestamptz not null default now()
 );
 
@@ -26,7 +26,7 @@ the local user. Backs GET/PUT /api/preferences/collective and gates the Dōjō
 contribute loop: destination (none|global|dojo|both), cadence (manual|daily|weekly),
 per-category share toggles (jsonb), and the default attribution mode. When no row
 exists the API returns conservative defaults (destination none, manual, attribution
-dereferenced).';
+anonymous).';
 
 comment on column collective_preferences.singleton
      is 'Fixed true (CHECK) — enforces exactly one row; the upsert keys ON CONFLICT (singleton).';
@@ -37,4 +37,4 @@ comment on column collective_preferences.cadence
 comment on column collective_preferences.categories
      is 'Per-category share toggles as jsonb {category: bool}. Categories: memory, pattern, rule, prompt, guard, skill, agent (spec Purpose list). A false value drops that kind from the next batch.';
 comment on column collective_preferences.attribution_default
-     is 'Default attribution applied when an insight leaves the machine: named | anonymous | dereferenced (mirrors dojo.attribution_mode / dojo_protocol::AttributionMode). Default dereferenced — the safest (source stripped).';
+     is 'Default credit applied when an insight leaves the machine: named | anonymous (mirrors dojo.attribution_mode / dojo_protocol::AttributionMode). Default anonymous — no personal credit. Source-dereference is a separate always-on invariant.';

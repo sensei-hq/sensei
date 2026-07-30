@@ -176,24 +176,23 @@ impl ArtifactStatus {
 }
 
 /// How a contribution is credited when it leaves the machine. Matches the
-/// `dojo.attribution_mode` enum (`named | anonymous | dereferenced`).
+/// `dojo.attribution_mode` enum (`named | anonymous`). Source-dereference is
+/// NOT a mode — it is an always-on transform on the publish path (every
+/// artifact is stripped regardless of credit). This enum is credit only.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AttributionMode {
     /// Public or org-internal credit to the author.
     Named,
-    /// A stable rotated anonymous id (the collective default).
+    /// A stable rotated anonymous id (the collective default). Client work is
+    /// anonymous with no rotating id (no personal credit at all).
     Anonymous,
-    /// Source reference stripped (mandatory for client work — the lesson
-    /// travels, the source never does).
-    Dereferenced,
 }
 
 impl AttributionMode {
-    pub const ALL: [AttributionMode; 3] = [
+    pub const ALL: [AttributionMode; 2] = [
         AttributionMode::Named,
         AttributionMode::Anonymous,
-        AttributionMode::Dereferenced,
     ];
 
     /// The `dojo.attribution_mode` enum string. MUST match `attribution_mode.ddl`.
@@ -201,7 +200,6 @@ impl AttributionMode {
         match self {
             AttributionMode::Named => "named",
             AttributionMode::Anonymous => "anonymous",
-            AttributionMode::Dereferenced => "dereferenced",
         }
     }
 
@@ -211,11 +209,12 @@ impl AttributionMode {
 }
 
 /// Credit metadata for an artifact — the `dojo.artifacts.attribution` jsonb
-/// (`{author, org, dereferenced, anonymous_id}`) plus the resolved
-/// [`AttributionMode`]. Governed by the contributing membership's rules.
+/// (`{author, org, anonymous_id}`) plus the resolved [`AttributionMode`].
+/// Governed by the contributing membership's rules. Source-dereference is a
+/// separate always-on invariant on the publish path, not stored here.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Attribution {
-    /// named | anonymous | dereferenced.
+    /// named | anonymous.
     pub mode: AttributionMode,
     /// Author display name — present for `named`, dropped otherwise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -226,8 +225,6 @@ pub struct Attribution {
     /// Stable rotated anonymous id — present for `anonymous`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub anonymous_id: Option<String>,
-    /// True when the source reference was stripped.
-    pub dereferenced: bool,
 }
 
 /// Scope tag deciding who receives an artifact downstream — the
@@ -435,8 +432,6 @@ pub struct PublishedArtifact {
     #[serde(default)]
     pub scope: ArtifactScope,
     pub attribution: Attribution,
-    /// True when the source reference was stripped (mandatory for client work).
-    pub dereferenced: bool,
     /// Contributor user id, or `None` when anonymised.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub contributed_by: Option<String>,
@@ -543,9 +538,7 @@ mod tests {
                 author: Some("jerry".into()),
                 org: Some("sensei-hq".into()),
                 anonymous_id: None,
-                dereferenced: false,
             },
-            dereferenced: false,
             contributed_by: Some("jerry".into()),
             published_at: Some("2026-07-08T00:00:00Z".into()),
         }
@@ -589,7 +582,7 @@ mod tests {
 
     #[test]
     fn attribution_mode_db_strings_match_ddl() {
-        let expected = ["named", "anonymous", "dereferenced"];
+        let expected = ["named", "anonymous"];
         let got: Vec<&str> = AttributionMode::ALL.iter().map(|m| m.as_db_str()).collect();
         assert_eq!(got, expected);
         for m in AttributionMode::ALL {

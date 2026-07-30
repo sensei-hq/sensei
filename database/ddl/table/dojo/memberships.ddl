@@ -43,7 +43,7 @@ comment on column dojo.memberships.org_slugs
 comment on column dojo.memberships.authenticated_via
      is 'How this membership was paired: sso, github_oauth, or device_code.';
 comment on column dojo.memberships.attribution_default
-     is 'Default attribution for contributions from this membership: named, anonymous, or dereferenced. Client work is always dereferenced regardless.';
+     is 'Default credit for contributions from this membership: named or anonymous. Source-dereference is a separate always-on invariant (client work is anonymous credit + stripped).';
 comment on column dojo.memberships.sync_status
      is 'Last-known connection health (healthy/stale/error/authenticating), mirrored from the daemon for the connections pane.';
 comment on column dojo.memberships.device_key

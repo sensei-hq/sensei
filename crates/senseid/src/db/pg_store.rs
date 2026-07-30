@@ -6982,7 +6982,7 @@ impl PgStore {
             tracing::warn!(error = %e, inbox = %id, "dojo inbox: attribution jsonb parse failed — defaulting");
             dojo_protocol::Attribution {
                 mode: dojo_protocol::AttributionMode::Named,
-                author: None, org: None, anonymous_id: None, dereferenced: false,
+                author: None, org: None, anonymous_id: None,
             }
         });
         crate::collective::inbox::InboxItem {
@@ -9865,7 +9865,7 @@ mod tests {
             dojo_url: "http://localhost:7755/github/acme".into(), kind: "client".into(),
             org_slugs: vec!["acme".into()],
             role: "contributor".into(), authenticated_via: "device_code".into(),
-            attribution_default: "dereferenced".into(),
+            attribution_default: "anonymous".into(),
             credential_ref: format!("dojo-{}", uuid::Uuid::new_v4()), sync_status: "healthy".into(),
         }).await.unwrap();
 
@@ -12546,7 +12546,7 @@ mod tests {
             org_slugs: vec!["acme".into(), "acme-labs".into()],
             role: "contributor".into(),
             authenticated_via: "device_code".into(),
-            attribution_default: "dereferenced".into(),
+            attribution_default: "anonymous".into(),
             credential_ref: format!("dojo-{}", uuid::Uuid::new_v4()),
             sync_status: "authenticating".into(),
         }).await.unwrap();
@@ -12602,7 +12602,7 @@ mod tests {
         let defaults = preferences::get(&pg).await.unwrap();
         assert_eq!(defaults.destination, "none");
         assert_eq!(defaults.cadence, "manual");
-        assert_eq!(defaults.attribution_default, "dereferenced");
+        assert_eq!(defaults.attribution_default, "anonymous");
         assert_eq!(defaults.updated_at, None);
 
         // Upsert a validated body, then read it back.
@@ -12741,7 +12741,7 @@ mod tests {
             dojo_url: "http://localhost:7755/github/acme".into(), kind: "client".into(),
             org_slugs: vec![],
             role: "contributor".into(), authenticated_via: "device_code".into(),
-            attribution_default: "dereferenced".into(),
+            attribution_default: "anonymous".into(),
             credential_ref: format!("dojo-{}", uuid::Uuid::new_v4()), sync_status: "healthy".into(),
         }).await.unwrap();
 
@@ -12779,7 +12779,7 @@ mod tests {
 
         let attribution = dojo_protocol::Attribution {
             mode: dojo_protocol::AttributionMode::Anonymous,
-            author: None, org: None, anonymous_id: Some("anon-1".into()), dereferenced: true,
+            author: None, org: None, anonymous_id: Some("anon-1".into()),
         };
         let row = |sig: &str, title: &str| crate::collective::inbox::InboxRow {
             membership_id: mid, artifact_seq: 3, signature: sig.into(), remote_id: "art-x".into(),

@@ -33,7 +33,7 @@ create table if not exists dojo_inbox (
 , title              text        not null
 , body               text        not null
 , scope              jsonb       not null default '{}'   -- ArtifactScope {company,team,project,stack}
-, attribution        jsonb       not null default '{}'   -- Attribution {mode,author,org,anonymous_id,dereferenced}
+, attribution        jsonb       not null default '{}'   -- Attribution {mode,author,org,anonymous_id}
 , state              text        not null default 'pending'
       check (state in ('pending', 'applied', 'muted', 'pinned'))
 , note               text                    -- reason Apply was deferred / not landed (deferred kind, scope mismatch)
