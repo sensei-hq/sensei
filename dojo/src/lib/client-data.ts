@@ -58,6 +58,10 @@ export interface Engagement {
 	/** ISO-8601 `YYYY-MM-DDTHH:MM:SSZ`. */
 	created_at: string;
 	updated_at: string;
+	/** Per-engagement artifact tally the GET route computes (not a column):
+	 *  published (crossed) vs archived (held back). 0 when none. */
+	lessons_kept: number;
+	stripped: number;
 }
 
 /** An incident severity — `dojo.incident_severity` (api.rs `is_incident_severity`). */
