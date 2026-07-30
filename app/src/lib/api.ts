@@ -363,16 +363,15 @@ export function senseiApi(port: number) {
         verdict: string; baselineFtr: number | null; currentFtr: number | null;
         ftrDelta: number | null;
         props: Record<string, unknown>;
-        // Rich MOE reasoning JSON — `null` when the rec has no trace,
-        // otherwise `{headline, body, consensus, models: [{name, role,
-        // note}], suggestedRevision}`. Legacy `{conclusion}`-shape
-        // traces are shimmed on the daemon side so the reader always
-        // gets the panel shape when reasoning is present at all.
+        // Honest reasoning JSON — `null` when the rec has no trace, otherwise
+        // `{headline, body, modelsUsed: string[], suggestedRevision}`. One
+        // FTR-delta verdict, so no fabricated consensus tally or per-model
+        // roles/notes; `modelsUsed` lists the models that actually ran. Legacy
+        // `{conclusion}`-shape traces are shimmed on the daemon side.
         reasoning: {
           headline: string | null;
           body: string | null;
-          consensus: string | null;
-          models: Array<{ name: string; role: string; note: string }>;
+          modelsUsed: string[];
           suggestedRevision: string | null;
         } | null;
       }>>(`/api/projects/${enc(id)}/impact`, []),

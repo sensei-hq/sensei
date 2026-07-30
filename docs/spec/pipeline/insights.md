@@ -143,7 +143,7 @@ vs FTR-when-absent per memory/pattern/tool — feeds rec ranking + landing-card 
    is shared upstream, the **mentor copy is the safe form**: it summarises
    *structured facts*, not raw transcript, so it carries no client/repo/source
    identifiers. A shared insight is therefore a **new `dojo`-scope, anonymised
-   snapshot** ([[pipeline/collective-intelligence]] — client-strip, dereference),
+   snapshot** ([[pipeline/collective-intelligence]] — source-strip, dereference),
    **distinct** from the local live board. That is where a materialised
    `derived_insights` table would legitimately live.
 

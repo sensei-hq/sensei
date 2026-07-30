@@ -10,67 +10,78 @@ const {
   K2AppShell, K2MobileShell, K2ListSection, K2SectionHead, K2Banner, K2StatBadge,
   K2Btn, K2Chip, K2Icon, K2ClassChip, K2RoleTag, K2PhasePill, K2KanjiToken, K2EmptyState,
   K2MyDojoRow, K2ProjectRow, K2NeedsYouBand, K2RunCard, K2GateCard, K2DecisionCard, K2ChatThread,
+  K2PlanOutline, k2Tasks, K2SubTabs, K2InboxRow, k2InboxRow, k2InboxRows, K2_STATUS,
   K2LadderRung, K2RuleRow, K2ConflictCard, K2StanceDial,
 } = window;
 const D2 = window.DOJO2;
 
 /* ── nav + tab definitions ─────────────────────────────── */
-const NAV_YOU = [
+// Personal nav: one Inbox holds every in-flight session; approve / decide /
+// chat are actions inside a session, not surfaces of their own.
+const navYou = (needs) => [
   { group: "Work", items: [
-    { id: "work", icon: "widget-4", label: "Your work" },
-    { id: "runs", icon: "eye", label: "Live runs", badge: 3 },
+    { id: "inbox", icon: "inbox", label: "Inbox", badge: needs || undefined },
     { id: "projects", icon: "folder", label: "Projects" },
   ]},
   { group: "Govern", items: [
     { id: "rules", icon: "scale", label: "Constitution" },
     { id: "packs", icon: "box", label: "Rule packs" },
   ]},
-  { group: "Relay", items: [
-    { id: "approve", icon: "check-circle", label: "Approve", badge: 2 },
-    { id: "decide", icon: "checklist-minimalistic", label: "Decide", badge: 2 },
-    { id: "chat", icon: "chat-round-line", label: "Chat" },
-  ]},
   { group: "Dōjōs", items: [
     { id: "dojos", icon: "users-group-two-rounded", label: "My dōjōs" },
     { id: "contributions", icon: "upload-square", label: "Contributions", badge: 1 },
   ]},
 ];
-const NAV_ORG_BASE = [
-  { group: "Overview", items: [
-    { id: "home", icon: "buildings-2", label: "Home" },
-    { id: "ladder", icon: "scale", label: "Constitution" },
-    { id: "projects", icon: "folder", label: "Projects", badge: 4 },
+// Org nav: three destinations everyone sees, then one destination per zone of
+// responsibility. Everything that used to be a rail item is a tab inside its
+// zone — one level of nesting instead of fourteen top-level sections.
+const ORG_GROUPS = {
+  governance: { label: "Governance", icon: "scale", role: "maintainer", badge: 7, tabs: [
+    { id: "triage", label: "Triage", icon: "inbox", badge: 5 },
+    { id: "approvals", label: "Approvals", icon: "clipboard-check", badge: 2 },
+    { id: "knowledge", label: "Knowledge", icon: "book-2" },
   ]},
-  { group: "Govern", role: "maintainer", items: [
-    { id: "triage", icon: "inbox", label: "Triage", badge: 5 },
-    { id: "approvals", icon: "clipboard-check", label: "Approvals", badge: 2 },
-    { id: "knowledge", icon: "book-2", label: "Knowledge" },
+  clients: { label: "Clients", icon: "case-round", role: "lead", badge: 1, tabs: [
+    { id: "engagements", label: "Engagements", icon: "case-round" },
+    { id: "incidents", label: "Incidents", icon: "shield-warning", badge: 1 },
+    { id: "clientaudit", label: "Client audit", icon: "document-text" },
   ]},
-  { group: "Clients", role: "lead", items: [
-    { id: "engagements", icon: "case-round", label: "Engagements" },
-    { id: "incidents", icon: "shield-warning", label: "Incidents", badge: 1 },
-    { id: "clientaudit", icon: "document-text", label: "Client audit" },
+  admin: { label: "Admin", icon: "shield-user", role: "admin", tabs: [
+    { id: "members", label: "Members", icon: "users-group-rounded" },
+    { id: "roles", label: "Roles", icon: "shield-check" },
+    { id: "scopes", label: "Scopes", icon: "tuning-2" },
+    { id: "identity", label: "Identity", icon: "key" },
+    { id: "audit", label: "Audit", icon: "clipboard-list" },
+    { id: "health", label: "Health", icon: "pulse" },
+    { id: "billing", label: "Billing", icon: "card" },
   ]},
-  { group: "Admin", role: "admin", items: [
-    { id: "members", icon: "users-group-rounded", label: "Members & Roles" },
-    { id: "scopes", icon: "shield-check", label: "Scopes & policies" },
-    { id: "identity", icon: "key", label: "Identity & SSO" },
-    { id: "audit", icon: "clipboard-list", label: "Audit" },
-    { id: "health", icon: "pulse", label: "Health / Monitor" },
-    { id: "billing", icon: "card", label: "Plan & billing" },
-  ]},
-];
-// Additive role rank — a group shows when the viewer's role reaches its floor.
+};
+// Legacy deep links (a tab id) resolve to their zone.
+const ORG_ZONE_OF = Object.keys(ORG_GROUPS).reduce((m, g) => {
+  ORG_GROUPS[g].tabs.forEach(t => { m[t.id] = g; });
+  return m;
+}, {});
+// Additive role rank — a zone shows when the viewer's role reaches its floor.
 const K2_ROLE_RANK = { developer: 0, maintainer: 1, lead: 2, admin: 3 };
 function navForOrg(org) {
   const rank = K2_ROLE_RANK[org && org.role] != null ? K2_ROLE_RANK[org.role] : 0;
-  return NAV_ORG_BASE.filter(g => !g.role || rank >= K2_ROLE_RANK[g.role]);
+  const zones = Object.keys(ORG_GROUPS)
+    .filter(g => rank >= K2_ROLE_RANK[ORG_GROUPS[g].role])
+    .map(g => ({ id: g, icon: ORG_GROUPS[g].icon, label: ORG_GROUPS[g].label, badge: ORG_GROUPS[g].badge }));
+  return [
+    { group: "Dōjō", items: [
+      { id: "home", icon: "buildings-2", label: "Home" },
+      { id: "ladder", icon: "scale", label: "Constitution" },
+      { id: "projects", icon: "folder", label: "Projects", badge: 4 },
+    ]},
+    ...(zones.length ? [{ group: "Manage", items: zones }] : []),
+  ];
 }
-const TABS_YOU = [
-  { id: "work", icon: "widget-4", label: "Work" },
-  { id: "runs", icon: "eye", label: "Runs", badge: 3 },
-  { id: "inbox", icon: "checklist-minimalistic", label: "Needs", badge: 4 },
-  { id: "chat", icon: "chat-round-line", label: "Chat" },
+const tabsYou = (needs) => [
+  { id: "inbox", icon: "inbox", label: "Inbox", badge: needs || undefined },
+  { id: "projects", icon: "folder", label: "Projects" },
+  { id: "rules", icon: "scale", label: "Rules" },
+  { id: "dojos", icon: "users-group-two-rounded", label: "Dōjōs" },
 ];
 const TABS_ORG = [
   { id: "home", icon: "buildings-2", label: "Home" },
@@ -102,49 +113,6 @@ const K2_URGENCY = { gate: 0, conflict: 1, decision: 2, review: 3 };
 const K2_PRIMARY = { gate: "Approve", conflict: "Settle", decision: "Decide", review: "Approve" };
 function orderNeeds(items) {
   return items.slice().sort((a, b) => (K2_URGENCY[a.kind] - K2_URGENCY[b.kind]) || 0);
-}
-
-// (1) YOUR WORK — needs-you + live runs + active projects.
-function ScrYourWork({ onOpenProject, onAct, resolved = {}, mobile }) {
-  const W = mobile ? BodyM : Body;
-  const runsWeek = D2.projects.reduce((a, p) => a + p.runsWeek, 0);
-  const activeRuns = D2.runs.filter(r => r.state === "running").length;
-  const Div = () => <span style={{ width: 1, height: 34, background: "var(--paper-edge)", flexShrink: 0 }} />;
-  const ordered = orderNeeds(D2.needsYou);
-  const openItems = ordered.filter(it => !resolved[it.id]);
-  const next = openItems[0];
-  return (
-    <W>
-      <K2SectionHead eyebrow="Monday · morning" title="Your work" />
-      {next ? (
-        <K2Banner kanji="即" tone="accent" title={"Start here — " + next.title}
-          right={<K2Btn size="sm" icon={next.kind === "gate" || next.kind === "review" ? "check-circle" : next.kind === "conflict" ? "scale" : "checklist-minimalistic"}
-            onClick={() => onAct && onAct(next, { id: next.kind === "conflict" ? "settle" : next.kind === "decision" ? "decide" : "approve" })}>{K2_PRIMARY[next.kind]}</K2Btn>}>
-          {next.project} · {next.dojo} · {next.why}. {openItems.length - 1 > 0 ? (openItems.length - 1) + " more below." : "Then you're clear."}
-        </K2Banner>
-      ) : (
-        <K2Banner kanji="静" tone="success" title="Nothing needs you.">Sessions are running within the rules you set.</K2Banner>
-      )}
-      {!mobile && (
-        <div className="flex items-center zs-card-flush" style={{ padding: "var(--space-4) var(--space-6)", gap: "var(--space-7)" }}>
-          <K2StatBadge n={runsWeek} label="runs this week" sub="↑ from 9" tone="var(--accent)" />
-          <Div />
-          <K2StatBadge n={openItems.length} label="need you" sub="gates · conflicts · reviews" />
-          <Div />
-          <K2StatBadge n="0" label="incidents" sub="30 days clean" tone="var(--success)" />
-        </div>
-      )}
-      <K2NeedsYouBand items={ordered} onAct={onAct} resolved={resolved} mobile={mobile} />
-      <K2ListSection icon="eye" iconColor="var(--success)" title="Live runs" count={activeRuns + " running"} countTone="var(--success)"
-        right={<a href="#" className="mono text-xs text-ink-mute" style={{ textDecoration: "none" }}>session log →</a>}>
-        {D2.runs.map(r => <K2RunCard key={r.id} run={r} flat stacked={mobile} />)}
-      </K2ListSection>
-      <K2ListSection icon="folder" title="Active projects" count={D2.projects.length}
-        right={<K2Btn size="sm" variant="ghost" icon="tuning-2">Filter</K2Btn>}>
-        {D2.projects.map(p => <K2ProjectRow key={p.id} p={p} onOpen={onOpenProject} showDojo={!mobile} compact={mobile} />)}
-      </K2ListSection>
-    </W>
-  );
 }
 
 // PROJECTS — the full list (personal or org).
@@ -191,19 +159,52 @@ function ScrConstitution({ onGoPacks, mobile }) {
 
 // (2b) RULE PACKS — adoptable rule bundles.
 function PackRow({ pack }) {
+  const [open, setOpen] = React.useState(false);
+  const rules = pack.rules || [];
   return (
-    <div className="flex items-center gap-4 border-b" style={{ padding: "var(--space-3) var(--space-4)" }}>
-      <K2Icon name="box" size={20} color="var(--accent)" style={{ marginTop: 0 }} />
-      <div className="flex-1" style={{ minWidth: 0 }}>
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-ink">{pack.name}</span>
-          <K2Chip mono tone="var(--ink-mute)">{pack.count} rules</K2Chip>
+    <div className="border-b">
+      <div className="flex items-center gap-4" style={{ padding: "var(--space-3) var(--space-4)" }}>
+        <K2Icon name="box" size={20} color="var(--accent)" style={{ marginTop: 0 }} />
+        <div className="flex-1" style={{ minWidth: 0 }}>
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium text-ink">{pack.name}</span>
+            <button
+              onClick={() => setOpen(o => !o)}
+              disabled={!rules.length}
+              title={rules.length ? (open ? "Hide rules" : "Show the rules in this pack") : ""}
+              className="flex items-center gap-1"
+              style={{ background: "none", border: "none", padding: 0, cursor: rules.length ? "pointer" : "default" }}>
+              <K2Chip mono tone={open ? "var(--accent)" : "var(--ink-mute)"}>{pack.count} rules</K2Chip>
+              {rules.length ? (
+                <K2Icon name="alt-arrow-down" size={13} color="var(--ink-mute)"
+                  style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform .18s" }} />
+              ) : null}
+            </button>
+          </div>
+          <div className="zs-meta" style={{ marginTop: 2 }}>by {pack.by} · {pack.note}</div>
         </div>
-        <div className="zs-meta" style={{ marginTop: 2 }}>by {pack.by} · {pack.note}</div>
+        {pack.adopted
+          ? <K2Chip icon="check-circle" tone="var(--success)" soft="var(--success-soft)" edge="var(--success-edge)">adopted</K2Chip>
+          : <K2Btn size="sm" variant="ghost" icon="add-circle">Adopt</K2Btn>}
       </div>
-      {pack.adopted
-        ? <K2Chip icon="check-circle" tone="var(--success)" soft="var(--success-soft)" edge="var(--success-edge)">adopted</K2Chip>
-        : <K2Btn size="sm" variant="ghost" icon="add-circle">Adopt</K2Btn>}
+      {open && rules.length ? (
+        <div className="bg-paper-mute border-t" style={{ padding: "var(--space-2) var(--space-4) var(--space-3)", paddingLeft: "calc(var(--space-4) + 20px + var(--space-4))" }}>
+          <div className="zs-eyebrow text-ink-mute" style={{ marginBottom: "var(--space-2)" }}>What this pack adds</div>
+          <div className="flex" style={{ flexDirection: "column", gap: "var(--space-1)" }}>
+            {rules.map((r, i) => {
+              const guard = r.tone === "guard";
+              return (
+                <div key={i} className="flex items-center gap-3" style={{ padding: "var(--space-1) 0" }}>
+                  <K2Icon name={guard ? "shield-check" : "check-circle"} size={15}
+                    color={guard ? "var(--danger)" : "var(--ink-mute)"} style={{ marginTop: 0, flexShrink: 0 }} />
+                  <span className="text-sm text-ink" style={{ flex: 1, minWidth: 0 }}>{r.title}</span>
+                  {guard ? <K2Chip mono tone="var(--danger)" soft="var(--danger-soft)" edge="var(--danger-edge)">guard</K2Chip> : null}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -305,50 +306,266 @@ function ScrProjectPreview({ project, onBack, mobile }) {
   );
 }
 
-/* ═══ RELAY SCREENS ════════════════════════════════════════ */
+/* ═══ INBOX — every in-flight session, one list ════════════ */
 
-function ScrRelayWatch({ onOpenProject, mobile }) {
-  const W = mobile ? BodyM : Body;
+// What a session is waiting on you for: the asks it raised and can't answer
+// itself. Each names the task it blocks and is answered in the session detail.
+function k2PendingFor(run) {
+  return D2.asks.filter(a => a.run === run.id);
+}
+const K2_ASK = {
+  approval: { kanji: "認", label: "approval" },
+  choice:   { kanji: "岐", label: "decision" },
+  recovery: { kanji: "阻", label: "recovery" },
+  clarification: { kanji: "問", label: "clarification" },
+};
+
+const K2_FILTERS = [
+  { id: "needs", label: "Needs you" },
+  { id: "running", label: "Running" },
+  { id: "done", label: "Finished" },
+  { id: "all", label: "All" },
+];
+
+function ScrInbox({ startRun, answered = {}, onAnswer, mobile }) {
+  const [openId, setOpen] = React.useState(startRun || null);
+  const [filter, setFilter] = React.useState("needs");
+  const answer = (item, verdict) => onAnswer && onAnswer(item, verdict);
+  const pending = (run) => k2PendingFor(run).filter(it => !answered[it.id]);
+  const rows = k2InboxRows(D2.runs, pending);
+  const shown = rows.filter(r =>
+    filter === "all" ? true :
+    filter === "needs" ? (r.needs > 0 || r.attention) :
+    filter === "running" ? r.status === "running" :
+    r.status === "done");
+  const needTotal = rows.reduce((a, r) => a + r.needs, 0);
+
+  // Phone: the list pushes to a detail. Desktop: they sit side by side.
+  if (mobile) {
+    const open = openId && D2.runs.find(r => r.id === openId);
+    if (open) return <RunDetail run={open} onBack={() => setOpen(null)} answered={answered} onAnswer={answer} mobile />;
+    return (
+      <BodyM>
+        <InboxHead needTotal={needTotal} filter={filter} setFilter={setFilter} />
+        <InboxList rows={shown} onOpen={(r) => setOpen(r.id)} mobile />
+      </BodyM>
+    );
+  }
+  const selId = (openId && shown.some(r => r.run.id === openId) ? openId : (shown[0] && shown[0].run.id)) || null;
+  const sel = selId && D2.runs.find(r => r.id === selId);
   return (
-    <W>
-      <K2SectionHead eyebrow="Relay · watch" title="Live runs" count={D2.runs.length}
-        right={<a href="#" className="mono text-xs text-ink-mute" style={{ textDecoration: "none" }}>session log →</a>} />
-      <div className="zs-card-flush" style={{ overflow: "hidden" }}>
-        {D2.runs.map(r => <K2RunCard key={r.id} run={r} flat stacked={mobile} />)}
+    <div style={{ display: "grid", gridTemplateColumns: "minmax(340px, 400px) minmax(0, 1fr)", alignItems: "stretch", minHeight: "100%" }}>
+      <div style={{ borderRight: "var(--hairline)" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)", padding: "var(--space-6) var(--space-5)",
+          position: "sticky", top: 0 }}>
+          <InboxHead needTotal={needTotal} filter={filter} setFilter={setFilter} />
+          <InboxList rows={shown} selId={selId} onOpen={(r) => setOpen(r.id)} compact />
+          <div className="zs-meta">Sorted by what waits on you — then stalled or blocked, then running, then finished.</div>
+        </div>
       </div>
-    </W>
-  );
-}
-function ScrRelayApprove({ mobile }) {
-  const W = mobile ? BodyM : Body;
-  return (
-    <W>
-      <K2SectionHead eyebrow="Relay · approve" title="Commands waiting on you" count={D2.gates.length} />
-      {D2.gates.map(g => <K2GateCard key={g.id} gate={g} />)}
-    </W>
-  );
-}
-function ScrRelayDecide({ mobile }) {
-  const W = mobile ? BodyM : Body;
-  return (
-    <W>
-      <K2SectionHead eyebrow="Relay · decide" title="Rules to sign off" count={D2.decisions.length} />
-      {D2.decisions.map(d => <K2DecisionCard key={d.id} decision={d} />)}
-      <K2Banner kanji="静" tone="neutral" title="That's everything.">When there is nothing to decide, sensei stays quiet.</K2Banner>
-    </W>
-  );
-}
-function ScrRelayChat({ mobile }) {
-  const W = mobile ? BodyM : Body;
-  return (
-    <W>
-      <K2SectionHead eyebrow={"Relay · chat · " + D2.chat.session} title={D2.chat.project} />
-      <div className="zs-card-flush" style={{ padding: "var(--space-5)" }}>
-        <K2ChatThread thread={D2.chat.thread} me={D2.me} />
+      <div style={{ minWidth: 0 }}>
+        {sel
+          ? <RunDetail key={sel.id} run={sel} answered={answered} onAnswer={answer} embedded />
+          : <div style={{ padding: "var(--space-6)" }}><K2EmptyState kanji="空" title="Nothing here.">No session matches that view right now.</K2EmptyState></div>}
       </div>
-      <div className="zs-input" style={{ height: 42 }}>
-        <K2Icon name="chat-round-line" size={16} color="var(--ink-mute)" />
-        <span className="text-ink-faint text-sm">reply to sensei…</span>
+    </div>
+  );
+}
+
+function InboxHead({ needTotal, filter, setFilter }) {
+  return (
+    <React.Fragment>
+      <K2SectionHead eyebrow="You · in flight" title="Inbox" count={D2.runs.length}
+        right={needTotal > 0 ? <span className="mono text-xs text-accent">{needTotal} need you</span> : null} />
+      <K2SubTabs tabs={K2_FILTERS} active={filter} onPick={setFilter} />
+    </React.Fragment>
+  );
+}
+function InboxList({ rows, selId, onOpen, mobile, compact }) {
+  if (!rows.length) return <K2EmptyState kanji="空" title="Nothing here.">No session matches that view right now.</K2EmptyState>;
+  return (
+    <div className="zs-card-flush" style={{ overflow: "hidden" }}>
+      {rows.map(r => <K2InboxRow key={r.run.id} row={r} selected={r.run.id === selId} onOpen={onOpen} />)}
+    </div>
+  );
+}
+
+// One ask, answered the way sensei asks it: numbered options, or type your own.
+function AskCard({ ask: it, run, verdict, onAnswer, onShowInPlan }) {
+  const [reply, setReply] = React.useState("");
+  const k = K2_ASK[it.kind] || K2_ASK.choice;
+  const choices = it.options || [];
+  const n = parseInt(reply.trim(), 10);
+  const picked = String(n) === reply.trim() && n >= 1 && n <= choices.length ? choices[n - 1] : null;
+  const ready = !!reply.trim();
+  const submit = () => { if (ready) onAnswer(it, picked ? "Answered · " + picked : "Answered · “" + reply.trim() + "”"); };
+  if (verdict) return (
+    <div className="zs-card-flush flex items-start gap-3" style={{ padding: "var(--space-4)" }}>
+      <K2KanjiToken char="了" size="lg" tone="var(--success)" w={22} />
+      <div style={{ minWidth: 0, flex: 1 }}>
+        <div className="text-sm text-ink-mute">{it.question}</div>
+        <div className="text-sm text-ink" style={{ marginTop: 2 }}>{verdict}</div>
+        <div className="mono text-xs text-ink-faint" style={{ marginTop: 2 }}>{run.id} resumed from {it.task} · {it.taskTitle}</div>
+      </div>
+    </div>
+  );
+  return (
+    <div className="zs-card-flush" style={{ overflow: "hidden" }}>
+      <div className="flex items-start gap-3" style={{ padding: "var(--space-4)", background: "var(--accent-soft)", borderBottom: "var(--hairline)" }}>
+        <K2KanjiToken char={k.kanji} size="lg" tone="var(--accent)" w={22} />
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
+            <span className="zs-eyebrow font-semibold" style={{ color: "var(--accent)" }}>{k.label}</span>
+            {it.severity === "blocking" && <K2Chip mono tone="var(--accent)" soft="var(--paper)" edge="var(--accent-edge)">blocking</K2Chip>}
+            <span className="flex-1" />
+            <span className="mono text-xs text-ink-faint">{it.age}</span>
+          </div>
+          <div className="text-sm font-medium text-ink" style={{ marginTop: 3, lineHeight: 1.4 }}>{it.question}</div>
+          <div className="zs-body-sm" style={{ marginTop: 2 }}>{it.context}</div>
+          <button onClick={() => onShowInPlan && onShowInPlan(it.task)} className="mono text-xs text-ink-mute"
+            style={{ background: "transparent", marginTop: 4, padding: 0 }}>holds {it.task} · {it.taskTitle} →</button>
+        </div>
+      </div>
+      <div className="flex flex-col" style={{ padding: "var(--space-3) var(--space-4) var(--space-4)", gap: "var(--space-2)" }}>
+        <div className="flex flex-col" style={{ gap: 2 }}>
+          {choices.map((o, i) => {
+            const on = picked === o;
+            return (
+              <button key={o} onClick={() => setReply(String(i + 1))} className="flex items-center gap-3 text-left rounded"
+                style={{ padding: "var(--space-2) var(--space-3)", background: on ? "var(--paper-mute)" : "transparent",
+                  border: "1px solid " + (on ? "var(--accent)" : "transparent") }}>
+                <span className="mono text-xs" style={{ color: on ? "var(--accent)" : "var(--ink-faint)", flexShrink: 0 }}>{i + 1}</span>
+                <span className={"text-sm " + (on ? "text-ink" : "text-ink-soft")}>{o}</span>
+              </button>
+            );
+          })}
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="zs-input" style={{ height: 38, flex: 1, minWidth: 0 }}>
+            <span className="mono text-xs text-ink-faint" style={{ flexShrink: 0 }}>›</span>
+            <input value={reply} onChange={e => setReply(e.target.value)} onKeyDown={e => { if (e.key === "Enter") submit(); }}
+              placeholder={"type 1–" + choices.length + ", or tell sensei what to do instead…"}
+              className="text-sm text-ink" style={{ flex: 1, minWidth: 0, background: "transparent", border: "none", outline: "none" }} />
+          </div>
+          <K2Btn size="sm" icon="check-circle" onClick={submit} style={ready ? null : { opacity: 0.45 }}>Send answer</K2Btn>
+        </div>
+        <span className="zs-meta">{ready
+          ? (picked ? picked + " · " : "Your own instruction · ") + run.id + " resumes from " + it.task + "."
+          : "The run holds here until you answer."}</span>
+      </div>
+    </div>
+  );
+}
+
+// The session detail — two tabs: what needs answering, and the plan. It opens
+// on whichever is true: an ask if the run raised one, the plan if it didn't.
+function RunDetail({ run, onBack, answered = {}, onAnswer, embedded, mobile }) {
+  const W = mobile ? BodyM : Body;
+  const [selTask, setSelTask] = React.useState(null);
+  const pr = k2PlanProgress(run.plan || []);
+  const items = k2PendingFor(run);
+  const openItems = items.filter(it => !answered[it.id]);
+  const [tab, setTab] = React.useState(openItems.length ? "needs" : "plan");
+  React.useEffect(() => { setTab(k2PendingFor(run).filter(it => !answered[it.id]).length ? "needs" : "plan"); setSelTask(null); }, [run.id]);
+  const rowInfo = k2InboxRow(run, openItems.length);
+  const st = K2_STATUS[rowInfo.status] || K2_STATUS.waiting;
+  const tone = openItems.length ? "var(--accent)" : st.tone;
+  const task = k2Tasks(run.plan || []).find(t => t.id === selTask);
+  const thread = D2.chat.session === run.id ? D2.chat.thread : null;
+  const goal = run.plan && !Array.isArray(run.plan) ? run.plan.goal : null;
+  const showInPlan = (id) => { setSelTask(id); setTab("plan"); };
+  const tabs = [
+    { id: "needs", label: "Needs you", icon: "checklist-minimalistic", badge: openItems.length || undefined },
+    { id: "plan", label: "Plan", icon: "layers-minimalistic" },
+  ];
+  return (
+    <W>
+      {!embedded && <BackHead onBack={onBack}>Inbox</BackHead>}
+      <div className="flex items-baseline gap-3">
+        <K2KanjiToken char="観" size="lg" tone={tone} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div className="zs-eyebrow text-ink-mute">Session · {run.id}</div>
+          <div className="zs-h3 text-ink" style={{ marginTop: 2 }}>{run.task}</div>
+          <div className="mono text-xs text-ink-mute" style={{ marginTop: 3 }}>{run.project} · {run.assistant} · {run.elapsed} · {run.edits} edits · last activity {run.last}</div>
+        </div>
+        <K2Chip mono tone={st.tone} soft={st.soft}>{st.label}</K2Chip>
+      </div>
+      <div style={{ maxWidth: mobile ? "100%" : 560 }}>
+        <div className="flex items-center justify-between" style={{ marginBottom: "var(--space-2)" }}>
+          <span className="mono text-xs text-ink-soft">Phase {pr.stage} of {pr.stages} · {pr.stageName}</span>
+          <span className="mono text-xs text-ink-soft">{pr.done}/{pr.total} tasks · {pr.pct}%</span>
+        </div>
+        <K2PlanBar pct={pr.pct} tone={tone} />
+      </div>
+
+      <div className="border-b" style={{ paddingBottom: "var(--space-3)" }}>
+        <K2SubTabs tabs={tabs} active={tab} onPick={setTab} />
+      </div>
+
+      {tab === "needs" ? (
+        items.length ? (
+          <div className="flex flex-col" style={{ gap: "var(--space-3)" }}>
+            {items.map(it => (
+              <AskCard key={it.id} ask={it} run={run} verdict={answered[it.id]} onAnswer={onAnswer} onShowInPlan={showInPlan} />
+            ))}
+          </div>
+        ) : (
+          <K2EmptyState kanji="静" title={
+            rowInfo.attention === "stalled" ? "Quiet for " + run.last + " — no heartbeat."
+              : rowInfo.status === "done" ? "Finished." : "Nothing waits on you."}>
+            {rowInfo.status === "done"
+              ? "The session note is written. Anything worth keeping is offered to your dōjō, never sent."
+              : "sensei keeps going and surfaces only what it can't decide alone."}
+          </K2EmptyState>
+        )
+      ) : (
+        <K2ListSection icon="layers-minimalistic" iconColor="var(--ink-mute)" title="Plan"
+          count={pr.stages + " phases · " + pr.total + " tasks"}
+          right={<span className="mono text-xs text-ink-faint">tap a task for detail</span>}>
+          {goal && <div className="zs-meta border-b" style={{ padding: "var(--space-3) var(--space-4)" }}>Goal · {goal}</div>}
+          <K2PlanOutline plan={run.plan} mobile={mobile} onSelect={t => setSelTask(t.id)} selectedId={selTask} />
+          {task && (
+            <div className="border-t" style={{ padding: "var(--space-3) var(--space-4)", background: "var(--paper)" }}>
+              <div className="flex items-center gap-2">
+                <K2KanjiToken char={task.is_gate ? "認" : task.state === "failed" ? "阻" : "刻"} size="base" tone={task.is_gate || task.state === "failed" ? "var(--accent)" : "var(--ink-mute)"} />
+                <span className="text-sm font-medium text-ink flex-1" style={{ minWidth: 0 }}>{task.title}</span>
+                <span className="mono text-xs text-ink-faint">{task.id}</span>
+              </div>
+              <div className="zs-body-sm" style={{ marginTop: 4 }}>
+                {(K2_NODE[task.state] || {}).label}
+                {task.agent ? " · " + task.agent : ""}{task.model ? " · " + task.model : ""}
+                {task.deps.length ? " · waits on " + task.deps.join(", ") : ""}
+                {task.spec_ref ? " · " + task.spec_ref : ""}
+                {task.summary ? " · " + task.summary : ""}.
+                {items.some(it => it.task === task.id && !answered[it.id])
+                  ? " This task raised a question — answer it in Needs you."
+                  : " Sensei applies the run's constitution to this task on your machine; the dōjō only sees what you let it."}
+              </div>
+            </div>
+          )}
+        </K2ListSection>
+      )}
+
+      <div style={{ display: "grid", gridTemplateColumns: mobile ? "1fr" : "1fr 1fr", gap: "var(--space-4)", alignItems: "start" }}>
+        <K2ListSection icon="history" iconColor="var(--ink-mute)" title="Activity"
+          right={<a href="#" className="mono text-xs text-ink-mute" style={{ textDecoration: "none" }}>full log →</a>}>
+          <K2RunActivity feed={run.feed || []} />
+        </K2ListSection>
+        <K2ListSection icon="chat-round-line" iconColor="var(--ink-mute)" title="Conversation">
+          <div className="zs-card-flush" style={{ padding: "var(--space-4)", display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
+            {thread
+              ? <K2ChatThread thread={thread} me={D2.me} />
+              : <div className="zs-body-sm">Nothing said in this session yet. Ask sensei anything about the plan above.</div>}
+            <div className="zs-input" style={{ height: 42 }}>
+              <K2Icon name="chat-round-line" size={16} color="var(--ink-mute)" />
+              <span className="text-ink-faint text-sm">reply to sensei…</span>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <K2Btn size="sm" variant="ghost" icon="pause">Pause run</K2Btn>
+              <K2Btn size="sm" variant="ghost" icon="eye">Open in Observatory</K2Btn>
+            </div>
+          </div>
+        </K2ListSection>
       </div>
     </W>
   );
@@ -555,7 +772,7 @@ function MemberRow({ m }) {
     </div>
   );
 }
-function ScrRoleSurfaces({ org, tab = "members", mobile }) {
+function ScrRoleSurfaces({ org, tab = "members", hideTabs, mobile }) {
   const W = mobile ? BodyM : Body;
   const tabs = [
     { id: "members", label: "Members & Roles", icon: "users-group-rounded", eyebrow: "admin", title: "Members & Roles" },
@@ -569,15 +786,7 @@ function ScrRoleSurfaces({ org, tab = "members", mobile }) {
     <W>
       <K2SectionHead eyebrow={org.name + " · " + cur.eyebrow} title={cur.title}
         right={<K2Btn size="sm" icon="add-circle">{t === "members" ? "Invite" : t === "policies" ? "New policy" : "Export"}</K2Btn>} />
-      <div className="flex gap-2">
-        {tabs.map(x => (
-          <button key={x.id} onClick={() => setT(x.id)}
-            className={"inline-flex items-center gap-2 rounded text-sm " + (t === x.id ? "bg-paper-soft border-1px text-ink" : "text-ink-mute")}
-            style={{ padding: "var(--space-2) var(--space-3)", border: t === x.id ? undefined : "1px solid transparent" }}>
-            <K2Icon name={x.icon} size={15} color={t === x.id ? "var(--accent)" : "var(--ink-mute)"} />{x.label}
-          </button>
-        ))}
-      </div>
+      {!hideTabs && <K2SubTabs tabs={tabs} active={t} onPick={setT} />}
       {t === "members" && (
         <div className="zs-card-flush" style={{ overflow: "hidden" }}>
           {D2.members.map((m, i) => <MemberRow key={i} m={m} />)}
@@ -1266,7 +1475,7 @@ function ScrMyDojos({ onOpen, mobile }) {
         const items = byKind(k); if (!items.length) return null;
         return (
           <K2ListSection key={k} icon={k === "employer" ? "buildings-2" : k === "client" ? "case-round" : "users-group-two-rounded"} title={lab} count={items.length}>
-            {items.map(d => <K2MyDojoRow key={d.slug} dojo={d} onOpen={onOpen} />)}
+            {items.map(d => <K2MyDojoRow key={d.slug} dojo={d} onOpen={onOpen} mobile={mobile} />)}
           </K2ListSection>
         );
       }) : (
@@ -1280,16 +1489,49 @@ function ScrMyDojos({ onOpen, mobile }) {
   );
 }
 
+/* ═══ ORG ZONES — one destination, tabs inside ═════════════ */
+function ScrOrgZone({ org, zone, tab, onTab, openProject, mobile }) {
+  const g = ORG_GROUPS[zone];
+  const t = tab || g.tabs[0].id;
+  const W = mobile ? BodyM : Body;
+  const screen = ({
+    triage: () => <ScrTriage org={org} mobile={mobile} />,
+    approvals: () => <ScrApprovals org={org} mobile={mobile} />,
+    knowledge: () => <ScrKnowledge org={org} mobile={mobile} />,
+    engagements: () => <ScrEngagements org={org} mobile={mobile} />,
+    incidents: () => <ScrIncidents org={org} mobile={mobile} />,
+    clientaudit: () => <ScrClientAudit org={org} mobile={mobile} />,
+    members: () => <ScrRoleSurfaces org={org} tab="members" hideTabs mobile={mobile} />,
+    roles: () => <ScrRoleSurfaces org={org} tab="policies" hideTabs mobile={mobile} />,
+    audit: () => <ScrRoleSurfaces org={org} tab="audit" hideTabs mobile={mobile} />,
+    scopes: () => <ScrScopes org={org} mobile={mobile} />,
+    identity: () => <ScrIdentity org={org} mobile={mobile} />,
+    health: () => <ScrHealth org={org} mobile={mobile} />,
+    billing: () => <ScrBilling org={org} mobile={mobile} />,
+  })[t];
+  return (
+    <div>
+      <div style={{ padding: mobile ? "var(--space-4) var(--space-4) 0" : "var(--space-6) var(--space-6) 0" }}>
+        <K2SubTabs tabs={g.tabs} active={t} onPick={onTab} />
+      </div>
+      {screen ? screen() : null}
+    </div>
+  );
+}
+
 /* ═══ WIRED APP — desktop ══════════════════════════════════ */
-function DojoApp2({ label, start = "you", startNav, startProject }) {
+function DojoApp2({ label, start = "you", startNav, startProject, startRun }) {
   const [signedIn, setSignedIn] = React.useState(start !== "signin");
   const [ctx, setCtx] = React.useState(start === "you" || start === "signin" ? "you" : start);   // "you" | org slug
   const org = D2.dojos.find(d => d.slug === ctx) || null;
-  const [nav, setNav] = React.useState(startNav || (org ? "home" : "work"));
+  const zoneOf = startNav && ORG_ZONE_OF[startNav];
+  const [nav, setNav] = React.useState(zoneOf || startNav || (org ? "home" : "inbox"));
+  const [zoneTab, setZoneTab] = React.useState(zoneOf ? { [zoneOf]: startNav } : {});
+  const pickTab = (z, id) => setZoneTab(m => ({ ...m, [z]: id }));
   const [proj, setProj] = React.useState(startProject || null);
 
   const onPick = (slug) => {
-    if (slug === "you") { setCtx("you"); setNav("work"); }
+    if (slug === "you") { setCtx("you"); setNav("inbox"); }
     else { setCtx(slug); setNav("home"); }
     setProj(null);
   };
@@ -1297,77 +1539,69 @@ function DojoApp2({ label, start = "you", startNav, startProject }) {
   const back = () => setProj(null);
   const [resolved, setResolved] = React.useState({});
   const onAct = (item, action) => setResolved(r => ({ ...r, [item.id]: action.id === "deny" ? "denied" : action.id === "settle" ? "settled" : action.id === "decide" ? "decided" : "approved" }));
-  const needsCount = D2.needsYou.filter(it => !resolved[it.id]).length;
-  const onNeeds = () => { setProj(null); setNav(org ? "home" : "work"); };
+  const [answered, setAnswered] = React.useState({});
+  const onAnswer = (item, verdict) => setAnswered(a => ({ ...a, [item.id]: verdict }));
+  const inboxNeeds = D2.runs.reduce((n, r) => n + k2PendingFor(r).filter(it => !answered[it.id]).length, 0);
+  const needsCount = org ? D2.needsYou.filter(it => !resolved[it.id]).length : inboxNeeds;
+  const onNeeds = () => { setProj(null); setNav(org ? "home" : "inbox"); };
 
   let body;
-  if (!signedIn) return <ScrSignIn label={label} onContinue={() => { setSignedIn(true); setCtx("you"); setNav("work"); }} />;
+  if (!signedIn) return <ScrSignIn label={label} onContinue={() => { setSignedIn(true); setCtx("you"); setNav("inbox"); }} />;
   if (proj) body = <ScrProjectPreview project={proj} onBack={back} />;
   else if (!org) {
     body = ({
-      work: <ScrYourWork onOpenProject={openProject} onAct={onAct} resolved={resolved} />,
-      runs: <ScrRelayWatch />,
+      inbox: <ScrInbox key={startRun || "inbox"} startRun={startRun} answered={answered} onAnswer={onAnswer} />,
       projects: <ScrProjects projects={D2.projects} onOpenProject={openProject} eyebrow="Everything in flight" title="Your projects" />,
       dojos: <ScrMyDojos onOpen={(d) => onPick(d.slug)} />,
       contributions: <ScrContributions />,
       rules: <ScrConstitution onGoPacks={() => setNav("packs")} />,
       packs: <ScrRulePacks />,
-      approve: <ScrRelayApprove />,
-      decide: <ScrRelayDecide />,
-      chat: <ScrRelayChat />,
-    })[nav] || <ScrYourWork onOpenProject={openProject} onAct={onAct} resolved={resolved} />;
+    })[nav] || <ScrInbox answered={answered} onAnswer={onAnswer} />;
   } else {
     const projs = (D2.orgProjects[org.slug] || D2.orgProjects.acme).map(p => ({ ...p, repo: org.slug + "/" + p.name, note: p.team, lastRun: p.runsWeek + "/wk" }));
-    body = ({
-      home: <ScrOrgHome org={org} onOpenProject={openProject} onAct={onAct} resolved={resolved} />,
-      ladder: <ScrOrgLadder org={org} />,
-      projects: <ScrProjects projects={projs} showDojo={false} onOpenProject={openProject} eyebrow={org.name + " · jurisdiction"} title="Projects" />,
-      triage: <ScrTriage org={org} />,
-      approvals: <ScrApprovals org={org} />,
-      knowledge: <ScrKnowledge org={org} />,
-      engagements: <ScrEngagements org={org} />,
-      incidents: <ScrIncidents org={org} />,
-      clientaudit: <ScrClientAudit org={org} />,
-      members: <ScrRoleSurfaces org={org} tab="members" />,
-      scopes: <ScrScopes org={org} />,
-      identity: <ScrIdentity org={org} />,
-      audit: <ScrRoleSurfaces org={org} tab="audit" />,
-      health: <ScrHealth org={org} />,
-      billing: <ScrBilling org={org} />,
-    })[nav] || <ScrOrgHome org={org} onOpenProject={openProject} onAct={onAct} resolved={resolved} />;
+    body = ORG_GROUPS[nav]
+      ? <ScrOrgZone org={org} zone={nav} tab={zoneTab[nav]} onTab={(id) => pickTab(nav, id)} />
+      : ({
+        home: <ScrOrgHome org={org} onOpenProject={openProject} onAct={onAct} resolved={resolved} />,
+        ladder: <ScrOrgLadder org={org} />,
+        projects: <ScrProjects projects={projs} showDojo={false} onOpenProject={openProject} eyebrow={org.name + " · jurisdiction"} title="Projects" />,
+      })[nav] || <ScrOrgHome org={org} onOpenProject={openProject} onAct={onAct} resolved={resolved} />;
   }
 
   return (
     <K2AppShell label={label} context={org ? "org" : "you"} org={org || D2.dojos[0]} dojos={D2.dojos} me={D2.me}
       needsCount={needsCount} onNeeds={onNeeds}
-      nav={org ? navForOrg(org) : NAV_YOU} active={proj ? null : nav} onNav={(id) => { setProj(null); setNav(id); }} onPick={onPick}>
+      nav={org ? navForOrg(org) : navYou(inboxNeeds)} active={proj ? null : nav} onNav={(id) => { setProj(null); setNav(id); }} onPick={onPick}>
       {body}
     </K2AppShell>
   );
 }
 
 /* ═══ WIRED APP — mobile ═══════════════════════════════════ */
-function DojoApp2Mobile({ label, start = "you", startTab }) {
+function DojoApp2Mobile({ label, start = "you", startTab, startRun }) {
   const [signedIn, setSignedIn] = React.useState(start !== "signin");
   const [ctx, setCtx] = React.useState(start === "you" || start === "signin" ? "you" : start);
   const org = D2.dojos.find(d => d.slug === ctx) || null;
-  const [tab, setTab] = React.useState(startTab || (org ? "home" : "work"));
+  const [tab, setTab] = React.useState(startTab || (org ? "home" : "inbox"));
   const [proj, setProj] = React.useState(null);
   const openProject = (p) => setProj(p);
   const back = () => setProj(null);
   const [resolved, setResolved] = React.useState({});
   const onAct = (item, action) => setResolved(r => ({ ...r, [item.id]: action.id === "deny" ? "denied" : action.id === "settle" ? "settled" : action.id === "decide" ? "decided" : "approved" }));
+  const [answered, setAnswered] = React.useState({});
+  const onAnswer = (item, verdict) => setAnswered(a => ({ ...a, [item.id]: verdict }));
+  const inboxNeeds = D2.runs.reduce((n, r) => n + k2PendingFor(r).filter(it => !answered[it.id]).length, 0);
 
   let body;
-  if (!signedIn) return <ScrSignIn label={label} mobile onContinue={() => { setSignedIn(true); setCtx("you"); setTab("work"); }} />;
+  if (!signedIn) return <ScrSignIn label={label} mobile onContinue={() => { setSignedIn(true); setCtx("you"); setTab("inbox"); }} />;
   if (proj) body = <ScrProjectPreview project={proj} onBack={back} mobile />;
   else if (!org) {
     body = ({
-      work: <ScrYourWork onOpenProject={openProject} onAct={onAct} resolved={resolved} mobile />,
-      runs: <ScrRelayWatch mobile />,
-      inbox: <ScrRelayDecide mobile />,
-      chat: <ScrRelayChat mobile />,
-    })[tab] || <ScrYourWork onOpenProject={openProject} onAct={onAct} resolved={resolved} mobile />;
+      inbox: <ScrInbox key={startRun || "inbox"} startRun={startRun} answered={answered} onAnswer={onAnswer} mobile />,
+      projects: <ScrProjects projects={D2.projects} onOpenProject={openProject} eyebrow="Everything in flight" title="Your projects" mobile />,
+      rules: <ScrConstitution onGoPacks={() => setTab("rules")} mobile />,
+      dojos: <ScrMyDojos onOpen={(d) => { setCtx(d.slug); setTab("home"); }} mobile />,
+    })[tab] || <ScrInbox answered={answered} onAnswer={onAnswer} mobile />;
   } else {
     const projs = (D2.orgProjects[org.slug] || D2.orgProjects.acme).map(p => ({ ...p, repo: org.slug + "/" + p.name, note: p.team, lastRun: p.runsWeek + "/wk" }));
     body = ({
@@ -1380,7 +1614,7 @@ function DojoApp2Mobile({ label, start = "you", startTab }) {
 
   return (
     <K2MobileShell label={label} context={org ? "org" : "you"} org={org || D2.dojos[0]} me={D2.me}
-      tabs={org ? TABS_ORG : TABS_YOU} active={proj ? null : tab} onNav={(id) => { setProj(null); setTab(id); }}>
+      tabs={org ? TABS_ORG : tabsYou(inboxNeeds)} active={proj ? null : tab} onNav={(id) => { setProj(null); setTab(id); }}>
       {body}
     </K2MobileShell>
   );
@@ -1389,7 +1623,7 @@ function DojoApp2Mobile({ label, start = "you", startTab }) {
 Object.assign(window, {
   DojoApp2, DojoApp2Mobile, ScrSignIn, ScrMyDojos, ScrContributions, ScrScopes, ScrBilling,
   ScrTriage, ScrApprovals, ScrKnowledge, ScrEngagements, ScrIncidents, ScrClientAudit, ScrIdentity, ScrHealth,
-  ScrYourWork, ScrProjects, ScrConstitution, ScrRulePacks, ScrProjectPreview,
-  ScrRelayWatch, ScrRelayApprove, ScrRelayDecide, ScrRelayChat,
+  ScrProjects, ScrConstitution, ScrRulePacks, ScrProjectPreview,
+  ScrInbox, RunDetail, k2PendingFor, ScrOrgZone, ORG_GROUPS,
   ScrOrgHome, ScrOrgLadder, ScrRoleSurfaces,
 });

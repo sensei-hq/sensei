@@ -12,14 +12,19 @@ concurrency:
   group: coverage-${{ github.ref }}
   cancel-in-progress: true
 
+# Three INDEPENDENT jobs so one broken suite can't block the others' uploads.
+# (Previously a single sequential job: the app `--coverage` step crashes on the
+# CI linux runner under vitest-4/rolldown — `Could not resolve 'node:module'` —
+# and, with no `if: always()`, aborted the whole job BEFORE any qlty upload ran,
+# so Rust coverage generated but never uploaded and dojo never ran. qlty merges
+# per-commit reports across jobs, so splitting is safe.)
 jobs:
-  coverage:
+  rust:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           persist-credentials: false
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
         with:
           toolchain: stable
@@ -27,37 +32,52 @@ jobs:
       - uses: taiki-e/install-action@c44f6b046f1c29ae5918b1e0bfdbb2f1813836fd # v2
         with:
           tool: cargo-llvm-cov
-
-      # --- Rust ---------------------------------------------------------------
-      # Covers every crate that tests with NO external infra. senseid is
-      # excluded: it needs an external sensei_test with the full schema.
-      # Broadening to it is test-infra work, not just a postgres service.
+      # Covers every crate that tests with NO external infra. senseid is excluded:
+      # it needs an external sensei_test with the full schema (test-infra work).
       # llvm-cov emits absolute paths, so strip the workspace prefix to repo-root.
       - name: Rust coverage (no-DB crates)
         run: cargo llvm-cov -p sensei-bootstrap -p sensei-cli -p sensei-mcp -p sensei-config -p sensei-logger -p dojo-protocol --lcov --output-path target/lcov.info
       - name: Normalize Rust paths to repo root
         run: sed -i "s|^SF:${GITHUB_WORKSPACE}/|SF:|" target/lcov.info
-
-      # --- SvelteKit (app + dojo) --------------------------------------------
-      # vitest v8 emits paths relative to each package (src/...); the upload
-      # steps add the `app` / `dojo` prefix so they resolve to repo-root.
-      - name: app coverage
-        run: cd app && bun install --frozen-lockfile && bun run test:unit --coverage
-      - name: dojo coverage
-        run: cd dojo && bun install --frozen-lockfile && bun run test --coverage
-
-      # --- Upload (3 reports; qlty merges them for the commit) ----------------
       - name: Upload Rust coverage
         uses: qltysh/qlty-action/coverage@08a0a862c159eae9b9003081da6663d96efef637 # v2
         with:
           token: ${{ secrets.QLTY_COVERAGE_TOKEN }}
           files: target/lcov.info
+
+  app:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+      # KNOWN ISSUE: app is on vitest ^4 / vite ^8; `--coverage` runs fine locally
+      # but crashes on the CI linux runner under rolldown-vite (node:module
+      # externalize). `continue-on-error` keeps that from failing the workflow;
+      # `skip-missing-files` lets the upload no-op if no lcov was produced. App
+      # coverage uploads when the run succeeds. FOLLOW-UP: align app to dojo's
+      # stable vitest ^3.2.4, or debug the rolldown crash.
+      - name: app coverage
+        continue-on-error: true
+        run: cd app && bun install --frozen-lockfile && bun run test:unit --coverage
       - name: Upload app coverage
         uses: qltysh/qlty-action/coverage@08a0a862c159eae9b9003081da6663d96efef637 # v2
         with:
           token: ${{ secrets.QLTY_COVERAGE_TOKEN }}
           files: app/coverage/lcov.info
           add-prefix: app
+          skip-missing-files: true
+
+  dojo:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+      - name: dojo coverage
+        run: cd dojo && bun install --frozen-lockfile && bun run test --coverage
       - name: Upload dojo coverage
         uses: qltysh/qlty-action/coverage@08a0a862c159eae9b9003081da6663d96efef637 # v2
         with:

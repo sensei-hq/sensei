@@ -75,10 +75,18 @@ describe("buildNavItems", () => {
     );
   });
 
-  it("flags Impact with an alert", () => {
+  it("does not fabricate an Impact alert or badge (was a hardcoded MOCK)", () => {
     const impact = byHref(buildNavItems({ focus: false }), "/impact");
-    expect(impact?.alert).toBe(true);
     expect(impact?.kanji).toBe("果");
+    expect(impact?.alert).toBeUndefined();
+    expect(impact?.badge).toBeUndefined();
+  });
+
+  it("carries no fabricated badge on any non-Projects rail entry", () => {
+    for (const l of allLinks(buildNavItems({ focus: false }))) {
+      if (l.href === "/projects") continue;
+      expect(l.badge, `${l.href} must not carry a mock badge`).toBeUndefined();
+    }
   });
 
   it("sets each link value equal to its href (for List active matching)", () => {

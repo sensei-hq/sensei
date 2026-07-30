@@ -3,8 +3,7 @@
 	import RoleTag from './RoleTag.svelte';
 	import Icon from './Icon.svelte';
 	import KanjiToken from './KanjiToken.svelte';
-	import LogoutButton from './LogoutButton.svelte';
-	import { getInitials } from './initials';
+	import AccountMenu from './AccountMenu.svelte';
 	import type { KitOrg, KitDojo, KitMe } from './types';
 
 	// Top bar (kit K2TopBar): brand · org switcher · search affordance · needs-you
@@ -35,10 +34,6 @@
 	} = $props();
 
 	const isOrg = $derived(context === 'org');
-
-	// Avatar as initials (the kit's window.Avatar) — two-letter monogram, matching
-	// the shipped ConsoleTopBar treatment. Shared: kit/initials.ts.
-	const initials = $derived(getInitials(me?.name));
 </script>
 
 <div
@@ -76,7 +71,7 @@
 	<span class="flex-1"></span>
 
 	<div
-		class="bg-paper-soft border-paper-edge hidden items-center gap-2 rounded-lg border md:flex"
+		class="bg-paper-soft border-paper-edge hidden items-center gap-2 rounded border md:flex"
 		style="padding: 0 12px; width: 240px; height: 34px"
 	>
 		<KanjiToken char="探" size="sm" toneClass="text-ink-mute" />
@@ -101,13 +96,6 @@
 		{/if}
 	</button>
 
-	<span
-		class="bg-accent-soft text-accent flex flex-shrink-0 items-center justify-center rounded-full text-xs font-semibold"
-		style="width: 30px; height: 30px"
-		aria-hidden="true">{initials}</span
-	>
-
-	<!-- Log out — shared kit control; client signOut() via the kavach context
-	     (there is no server /logout route; the supabase session is client-managed). -->
-	<LogoutButton />
+	<!-- Avatar = the account menu (theme mode + log out). -->
+	<AccountMenu {me} />
 </div>

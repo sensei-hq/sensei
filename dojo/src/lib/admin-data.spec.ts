@@ -165,7 +165,7 @@ describe('policies', () => {
 
 	it('POSTs (upserts) a policy body', async () => {
 		const { fn, calls } = fakeFetch(200, { id: 'p2', scope_key: 'Team · Payments' });
-		const body = { scope_key: 'Team · Payments', attribution_default: 'dereferenced', retention_days: 365 };
+		const body = { scope_key: 'Team · Payments', attribution_default: 'anonymous', retention_days: 365 };
 		await upsertPolicy('t/x', body, { fetch: fn });
 		expect(calls[0].init?.method).toBe('POST');
 		expect(JSON.parse(String(calls[0].init?.body))).toEqual(body);

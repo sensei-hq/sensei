@@ -59,7 +59,7 @@
 						type="button"
 						onclick={() => select(it)}
 						aria-current={on ? 'page' : undefined}
-						class="grid w-full items-center gap-2 rounded-lg text-sm {on
+						class="grid w-full items-center gap-2 rounded text-sm {on
 							? 'bg-paper border-paper-edge text-ink border'
 							: 'text-ink-soft border border-transparent bg-transparent'}"
 						style="grid-template-columns: auto 1fr auto; text-align: left; padding: 8px"

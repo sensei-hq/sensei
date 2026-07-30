@@ -12,9 +12,12 @@ use super::super::executor::TaskContext;
 use super::super::Task;
 
 pub async fn learn_playbooks(ctx: &TaskContext, _task: &Task) -> Result<u32, String> {
-    let attributed = ctx.pg().attribute_playbook_outcomes().await.unwrap_or(0);
-    let stats = ctx.pg().playbook_combo_stats().await.unwrap_or_default();
-    let rules = ctx.pg().list_playbook_rules().await.unwrap_or_default();
+    // Fail closed: a transient DB error on any of these reads aborts the tick
+    // (the scheduler retries next pass) rather than feeding empty stats/rules
+    // into `learn` and persisting spurious reweights/proposals from them.
+    let attributed = ctx.pg().attribute_playbook_outcomes().await?;
+    let stats = ctx.pg().playbook_combo_stats().await?;
+    let rules = ctx.pg().list_playbook_rules().await?;
     let plan = crate::playbook::learn(&stats, &rules);
     let (reweights, proposals) = (plan.reweights.len(), plan.proposals.len());
     if let Err(e) = ctx.pg().apply_learn_plan(&plan).await {

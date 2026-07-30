@@ -85,15 +85,17 @@ pub(crate) async fn set_command_preference(
 /// `GET /api/preferences/commands` — the user-scope command preferences.
 pub(crate) async fn get_command_preferences(
     State(state): State<AppState>,
-) -> Json<serde_json::Value> {
-    Json(serde_json::json!({ "scope": "user", "preferences": state.pg.command_preferences("user").await }))
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let preferences = state.pg.command_preferences("user").await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(serde_json::json!({ "scope": "user", "preferences": preferences })))
 }
 
 pub(crate) async fn get_project_ftr(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let uuid = crate::api::util::resolve_project_uuid(&state, &id).await.ok_or(StatusCode::NOT_FOUND)?;
+    let uuid = crate::api::util::resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
     state.pg.get_project(&uuid).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
@@ -139,7 +141,9 @@ pub(crate) async fn get_project_icon(
 async fn serve_project_icon(state: &AppState, id: &str) -> Option<(&'static str, Vec<u8>)> {
     use crate::analysis::project_icon::{icon_content_type, serve_icon_from_roots};
 
-    let uuid = crate::api::util::resolve_project_uuid(state, id).await?;
+    // This icon helper maps every failure (incl. a resolver DB error) to None →
+    // 404, which is acceptable for a static asset; hence `.ok().flatten()`.
+    let uuid = crate::api::util::resolve_project_uuid(state, id).await.ok().flatten()?;
     let project = state.pg.get_project(&uuid).await.ok().flatten()?;
     let icon = &project["icon"];
     if icon.get("kind").and_then(|v| v.as_str()) != Some("image") {
@@ -173,7 +177,7 @@ pub(crate) async fn get_project_overview(
     use crate::project_overview as po;
     use crate::analysis::insight_copy::{copy_or_warm, CopyLimits, FallbackCopy, InsightKind};
 
-    let uuid = crate::api::util::resolve_project_uuid(&state, &id).await.ok_or(StatusCode::NOT_FOUND)?;
+    let uuid = crate::api::util::resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
     let project = state.pg.get_project(&uuid).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
@@ -184,7 +188,8 @@ pub(crate) async fn get_project_overview(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let sessions_7d = stats["sessions7d"].as_i64().unwrap_or(0);
 
-    let ftr = state.pg.get_project_ftr(&uuid).await.unwrap_or_else(|_| serde_json::json!({}));
+    let ftr = state.pg.get_project_ftr(&uuid).await
+        .map_err(|e| { tracing::warn!(error = %e, project = %uuid, "get_project_overview: get_project_ftr failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
     let ftr_14d = ftr["ftr14d"].as_f64().unwrap_or(0.0);
 
     // The warn rule reads the SAME drift count the stat block displays
@@ -192,7 +197,8 @@ pub(crate) async fn get_project_overview(
     // never disagree with the number the user sees. `get_quality_signals`
     // (a different `status != 'current'` predicate) supplies only the 7-day FTR.
     let open_drift = stats["docDrift"]["open"].as_i64().unwrap_or(0);
-    let signals = state.pg.get_quality_signals(&uuid).await.unwrap_or_else(|_| serde_json::json!({}));
+    let signals = state.pg.get_quality_signals(&uuid).await
+        .map_err(|e| { tracing::warn!(error = %e, project = %uuid, "get_project_overview: get_quality_signals failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
     let ftr_7d = signals["ftr_7d"].as_f64().unwrap_or(0.0);
     let warn = po::is_warn(sessions_7d, open_drift, ftr_7d);
 
@@ -201,7 +207,7 @@ pub(crate) async fn get_project_overview(
     // Multi-repo membership: the project's repo folders (git/standalone), not
     // the thousands of nested dirs. The first repo is flagged primary.
     let mut folders: Vec<serde_json::Value> = state.pg.list_folders_by_project(&uuid).await
-        .unwrap_or_default()
+        .map_err(|e| { tracing::warn!(error = %e, project = %uuid, "get_project_overview: list_folders_by_project failed"); StatusCode::INTERNAL_SERVER_ERROR })?
         .into_iter()
         .filter(|f| matches!(f["kind"].as_str(), Some("git") | Some("standalone")))
         .map(|f| serde_json::json!({ "id": f["id"], "name": f["name"], "role": f["role"] }))
@@ -217,7 +223,8 @@ pub(crate) async fn get_project_overview(
     // routing a teaching where there is no signal is the spec's wrong-gate.
     // `copy_or_warm` is a wire-path cache read (+ a detached background warm on a
     // miss) — this await never blocks on inference. Mirrors `observatory_today`.
-    let top = match state.pg.get_top_recommendation(&uuid).await.unwrap_or(None) {
+    let top = match state.pg.get_top_recommendation(&uuid).await
+        .map_err(|e| { tracing::warn!(error = %e, project = %uuid, "get_project_overview: get_top_recommendation failed"); StatusCode::INTERNAL_SERVER_ERROR })? {
         Some(mut rec) => {
             let facts = serde_json::json!({
                 "title":   rec["title"],
@@ -239,7 +246,8 @@ pub(crate) async fn get_project_overview(
         }
         None => None,
     };
-    let recent = state.pg.list_recent_project_sessions_with_role(&uuid, 4).await.unwrap_or_default();
+    let recent = state.pg.list_recent_project_sessions_with_role(&uuid, 4).await
+        .map_err(|e| { tracing::warn!(error = %e, project = %uuid, "get_project_overview: list_recent_project_sessions_with_role failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
 
     Ok(Json(serde_json::json!({
         "project": {
@@ -263,7 +271,7 @@ pub(crate) async fn get_project_repos(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let uuid = crate::api::util::resolve_project_uuid(&state, &id).await.ok_or(StatusCode::NOT_FOUND)?;
+    let uuid = crate::api::util::resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
     state.pg.get_project(&uuid).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
@@ -276,7 +284,7 @@ pub(crate) async fn get_project_drift(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let uuid = crate::api::util::resolve_project_uuid(&state, &id).await.ok_or(StatusCode::NOT_FOUND)?;
+    let uuid = crate::api::util::resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
     state.pg.get_project(&uuid).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
@@ -289,7 +297,7 @@ pub(crate) async fn get_project_patterns(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let uuid = crate::api::util::resolve_project_uuid(&state, &id).await.ok_or(StatusCode::NOT_FOUND)?;
+    let uuid = crate::api::util::resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
     state.pg.get_project(&uuid).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
@@ -302,7 +310,7 @@ pub(crate) async fn get_project_libraries(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let uuid = crate::api::util::resolve_project_uuid(&state, &id).await.ok_or(StatusCode::NOT_FOUND)?;
+    let uuid = crate::api::util::resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
     state.pg.get_project(&uuid).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
@@ -315,7 +323,7 @@ pub(crate) async fn get_project_instruments(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let uuid = crate::api::util::resolve_project_uuid(&state, &id).await.ok_or(StatusCode::NOT_FOUND)?;
+    let uuid = crate::api::util::resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
     state.pg.get_project(&uuid).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
@@ -332,7 +340,7 @@ pub(crate) async fn get_project_mcp_tool_stats(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let uuid = crate::api::util::resolve_project_uuid(&state, &id).await.ok_or(StatusCode::NOT_FOUND)?;
+    let uuid = crate::api::util::resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
     state.pg.get_project(&uuid).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
@@ -378,7 +386,7 @@ pub(crate) async fn get_project_memories(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let uuid = crate::api::util::resolve_project_uuid(&state, &id).await.ok_or(StatusCode::NOT_FOUND)?;
+    let uuid = crate::api::util::resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
     state.pg.get_project(&uuid).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
@@ -395,7 +403,7 @@ pub(crate) async fn get_project_recommendations(
     use crate::analysis::insight_copy::{copy_or_warm, CopyLimits};
     use crate::insights;
 
-    let uuid = crate::api::util::resolve_project_uuid(&state, &id).await.ok_or(StatusCode::NOT_FOUND)?;
+    let uuid = crate::api::util::resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
     state.pg.get_project(&uuid).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
@@ -429,7 +437,7 @@ pub(crate) async fn get_project_impact(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let uuid = crate::api::util::resolve_project_uuid(&state, &id).await.ok_or(StatusCode::NOT_FOUND)?;
+    let uuid = crate::api::util::resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
     let data = state.pg.get_project_impact(&uuid).await
         .map_err(|e| { tracing::error!(error = %e, project = %uuid, "get_project_impact failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
     Ok(Json(serde_json::json!(data)))
@@ -442,7 +450,7 @@ pub(crate) async fn get_project_library_version_conflicts(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let uuid = crate::api::util::resolve_project_uuid(&state, &id).await.ok_or(StatusCode::NOT_FOUND)?;
+    let uuid = crate::api::util::resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
     state.pg.get_project(&uuid).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
@@ -459,7 +467,7 @@ pub(crate) async fn get_project_project_deps(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let uuid = crate::api::util::resolve_project_uuid(&state, &id).await.ok_or(StatusCode::NOT_FOUND)?;
+    let uuid = crate::api::util::resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
     state.pg.get_project(&uuid).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
@@ -473,7 +481,7 @@ pub(crate) async fn get_project_sessions(
     Path(id): Path<String>,
     Query(q): Query<SessionsQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let uuid = crate::api::util::resolve_project_uuid(&state, &id).await.ok_or(StatusCode::NOT_FOUND)?;
+    let uuid = crate::api::util::resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
     state.pg.get_project(&uuid).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
@@ -542,7 +550,7 @@ pub(crate) async fn scan_project_doc_drift(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let uuid = crate::api::util::resolve_project_uuid(&state, &id).await.ok_or(StatusCode::NOT_FOUND)?;
+    let uuid = crate::api::util::resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
     state.pg.get_project(&uuid).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
@@ -567,7 +575,7 @@ pub(crate) async fn list_project_services(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let uuid = crate::api::util::resolve_project_uuid(&state, &id).await.ok_or(StatusCode::NOT_FOUND)?;
+    let uuid = crate::api::util::resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
     state.pg.get_project(&uuid).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
@@ -586,7 +594,7 @@ pub(crate) async fn set_project_service_scope(
     Path((id, service_id)): Path<(String, String)>,
     Json(body): Json<ServiceScopeBody>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let project_uuid = crate::api::util::resolve_project_uuid(&state, &id).await.ok_or(StatusCode::NOT_FOUND)?;
+    let project_uuid = crate::api::util::resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
     let service_uuid = uuid::Uuid::parse_str(&service_id).map_err(|_| StatusCode::BAD_REQUEST)?;
     state.pg.get_project(&project_uuid).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
@@ -626,7 +634,7 @@ pub(crate) async fn list_memory_share_batches(
     Path(id): Path<String>,
     Query(q): Query<BatchListQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let uuid = crate::api::util::resolve_project_uuid(&state, &id).await.ok_or(StatusCode::NOT_FOUND)?;
+    let uuid = crate::api::util::resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
     state.pg.get_project(&uuid).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
@@ -644,7 +652,7 @@ pub(crate) async fn create_memory_share_batch(
     Path(id): Path<String>,
     Json(body): Json<BatchCreateBody>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let uuid = crate::api::util::resolve_project_uuid(&state, &id).await.ok_or(StatusCode::NOT_FOUND)?;
+    let uuid = crate::api::util::resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
     state.pg.get_project(&uuid).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
@@ -687,7 +695,7 @@ pub(crate) async fn list_impact_verdicts(
     Path(id): Path<String>,
     Query(q): Query<ImpactListQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let uuid = crate::api::util::resolve_project_uuid(&state, &id).await.ok_or(StatusCode::NOT_FOUND)?;
+    let uuid = crate::api::util::resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
     state.pg.get_project(&uuid).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
@@ -705,7 +713,7 @@ pub(crate) async fn create_impact_verdict(
     Path(id): Path<String>,
     Json(body): Json<ImpactCreateBody>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let uuid = crate::api::util::resolve_project_uuid(&state, &id).await.ok_or(StatusCode::NOT_FOUND)?;
+    let uuid = crate::api::util::resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
     state.pg.get_project(&uuid).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
@@ -729,7 +737,7 @@ pub(crate) async fn decide_impact_verdict(
     Path((id, verdict_id)): Path<(String, String)>,
     Json(body): Json<ImpactDecisionBody>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let _project_uuid = crate::api::util::resolve_project_uuid(&state, &id).await.ok_or(StatusCode::NOT_FOUND)?;
+    let _project_uuid = crate::api::util::resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
     let verdict_uuid = uuid::Uuid::parse_str(&verdict_id).map_err(|_| StatusCode::BAD_REQUEST)?;
     state.pg
         .set_impact_verdict_outcome(&verdict_uuid, &body.verdict, body.note.as_deref())
@@ -753,7 +761,7 @@ pub(crate) async fn decide_memory_share_batch(
     Path((id, batch_id)): Path<(String, String)>,
     Json(body): Json<BatchDecisionBody>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let _project_uuid = crate::api::util::resolve_project_uuid(&state, &id).await.ok_or(StatusCode::NOT_FOUND)?;
+    let _project_uuid = crate::api::util::resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
     let batch_uuid = uuid::Uuid::parse_str(&batch_id).map_err(|_| StatusCode::BAD_REQUEST)?;
     state.pg
         .set_memory_share_batch_status(&batch_uuid, &body.status, body.note.as_deref())

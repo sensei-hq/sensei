@@ -14,7 +14,6 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::path::{Path, PathBuf};
 
 /// HTTP method for a shaped daemon request. Mirrors the reqwest verbs the
 /// binary drives; kept dependency-free so the library needs no HTTP client.
@@ -880,85 +879,68 @@ pub fn map_daemon_tool(tool_name: &str) -> &str {
     }
 }
 
-// ── Active-project pin (`~/.sensei/active-project`) ──────────────────────────
+// ── Active-project pin (in-memory, session-scoped) ───────────────────────────
 //
 // The MCP server process's cwd is fixed at launch and is usually NOT the repo,
-// so cwd-based resolution says "no project resolved". `use_project` writes this
-// pin so a chosen project survives across every subsequent tool call regardless
-// of cwd; the default resolver (see `resolve_default_project`) consults it after
-// an explicit `project=` arg but before cwd.
+// so cwd-based resolution can say "no project resolved". `use_project` sets an
+// IN-MEMORY pin (`ACTIVE_PIN` in the binary) so a chosen project survives across
+// every subsequent tool call regardless of cwd; the default resolver
+// (`resolve_default_project`) consults it after an explicit `project=` arg and
+// cwd. The pin is NOT persisted to a file — it lives only for this session (the
+// MCP is one stdio process per session), so it can never leak across
+// sessions/repos: the #109 stale-pin misroute is unrepresentable by design.
 
-/// The pinned active project, persisted as JSON `{"id": "...", "name": "..."}`
-/// to `~/.sensei/active-project`.
+/// The pinned active project (`{id, name}`), held in memory for the session.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ActiveProject {
     pub id: String,
     pub name: String,
 }
 
-/// The pin file path: `<sensei_dir>/active-project`. `sensei_dir` is injected
-/// (the binary passes `sensei_bootstrap::config().sensei_dir()`; a test passes a
-/// temp dir) so the read/write seam is unit-testable without touching `~`.
-pub fn active_project_path(sensei_dir: &Path) -> PathBuf {
-    sensei_dir.join("active-project")
+/// The default-project decision for a project-scoped tool (no explicit `project=`).
+#[derive(Debug, Clone, PartialEq)]
+pub enum ProjectResolution {
+    /// A project was chosen. `source` is how it was picked (`"explicit"` | `"cwd"` | `"pin"`);
+    /// `note` carries a stale-pin warning when a resolved cwd overrode a *conflicting* pin —
+    /// surfaced to the caller so a mis-resolution is never silent.
+    Resolved { name: String, source: &'static str, note: Option<String> },
+    /// No explicit arg, no cwd match, no pin — the caller must name the project.
+    Unresolved,
 }
 
-/// Persist the active-project pin, creating the parent dir if missing. The one
-/// side-effecting function in the library.
-pub fn write_active_project(path: &Path, pin: &ActiveProject) -> std::io::Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let json = serde_json::to_string_pretty(pin).unwrap_or_default();
-    std::fs::write(path, json)
-}
-
-/// Read + parse the pin. Returns `None` when the file is absent (the normal
-/// unpinned case) OR unreadable / corrupt / missing a name — a bad pin must
-/// never crash resolution, only fall through to cwd. Corruption is logged to
-/// stderr (never stdout — that's the JSON-RPC channel) so it can be inspected.
-pub fn read_active_project(path: &Path) -> Option<ActiveProject> {
-    let raw = match std::fs::read_to_string(path) {
-        Ok(s) => s,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
-        Err(e) => {
-            eprintln!("sensei-mcp: cannot read active-project pin {}: {e}", path.display());
-            return None;
-        }
-    };
-    match serde_json::from_str::<ActiveProject>(&raw) {
-        Ok(pin) if !pin.name.is_empty() => Some(pin),
-        Ok(_) => {
-            eprintln!("sensei-mcp: active-project pin {} has an empty name; ignoring", path.display());
-            None
-        }
-        Err(e) => {
-            eprintln!("sensei-mcp: active-project pin {} is not valid JSON: {e}", path.display());
-            None
-        }
-    }
-}
-
-/// Pure: choose the DEFAULT project name (used when a tool carries no explicit
-/// `project` arg), in precedence order **explicit → pin → cwd → none**:
-///   * `explicit` — the name a non-empty `project=` arg already resolved to;
-///   * `pin`      — the parsed `~/.sensei/active-project` (survives cwd changes);
-///   * `cwd_name` — `resolve_from_cwd_in(...)` ("" when nothing matched).
-///
-/// An empty explicit / empty-name pin is treated as absent. Returns `None` when
-/// none of the three yields a name.
+/// Pure: choose the default project for a project-scoped tool. Precedence:
+///   1. **explicit** — a non-empty `project=` arg (strongest; a per-call override).
+///   2. **cwd** — the project the WORKING DIR resolves to. This **beats the session `pin`** when
+///      they disagree: being *in* a repo is the strongest current signal. (The pin is now an
+///      in-memory *session* value, so it can no longer be *stale across sessions*; respecting cwd
+///      on a conflict still keeps a mid-session `use_project` from masking the repo you're in.)
+///      The override is carried in `note`, never applied silently.
+///   3. **pin** — the fallback when the cwd resolves nothing (e.g. launched from a container dir
+///      that is not itself a project); this is what `use_project` exists for.
+///   4. otherwise **Unresolved** — the caller must pass `project=` or run `use_project`.
 pub fn resolve_default_project(
     explicit: Option<&str>,
     pin: Option<&ActiveProject>,
     cwd_name: &str,
-) -> Option<String> {
+) -> ProjectResolution {
     if let Some(e) = explicit.filter(|s| !s.is_empty()) {
-        return Some(e.to_string());
+        return ProjectResolution::Resolved { name: e.to_string(), source: "explicit", note: None };
     }
-    if let Some(p) = pin.filter(|p| !p.name.is_empty()) {
-        return Some(p.name.clone());
+    let cwd = (!cwd_name.trim().is_empty()).then_some(cwd_name);
+    let pin_name = pin.map(|p| p.name.as_str()).filter(|n| !n.is_empty());
+    match (cwd, pin_name) {
+        (Some(c), Some(p)) if c != p => ProjectResolution::Resolved {
+            name: c.to_string(),
+            source: "cwd",
+            note: Some(format!(
+                "working dir resolves to '{c}' but the pinned project is '{p}' — using '{c}'. \
+                 Run use_project to update the pin, or pass project= to override."
+            )),
+        },
+        (Some(c), _) => ProjectResolution::Resolved { name: c.to_string(), source: "cwd", note: None },
+        (None, Some(p)) => ProjectResolution::Resolved { name: p.to_string(), source: "pin", note: None },
+        (None, None) => ProjectResolution::Unresolved,
     }
-    (!cwd_name.is_empty()).then(|| cwd_name.to_string())
 }
 
 /// Pure: find the project row matching `hint` among `/api/projects` rows.
@@ -1783,61 +1765,40 @@ mod tests {
     }
 
     #[test]
-    fn default_project_precedence_is_explicit_then_pin_then_cwd_then_none() {
+    fn default_project_explicit_then_cwd_beats_pin_then_pin_fallback_then_unresolved() {
+        use ProjectResolution::*;
         let pin = ActiveProject { id: "id".into(), name: "pinned".into() };
-        // explicit wins over pin AND cwd
-        assert_eq!(resolve_default_project(Some("explicit"), Some(&pin), "cwdname"), Some("explicit".into()));
-        // pin wins over cwd when there's no explicit arg
-        assert_eq!(resolve_default_project(None, Some(&pin), "cwdname"), Some("pinned".into()));
-        // cwd used when neither explicit nor pin
-        assert_eq!(resolve_default_project(None, None, "cwdname"), Some("cwdname".into()));
-        // none when nothing resolves
-        assert_eq!(resolve_default_project(None, None, ""), None);
-        // empty explicit is ignored → pin wins
-        assert_eq!(resolve_default_project(Some(""), Some(&pin), "cwd"), Some("pinned".into()));
-        // empty-name pin is treated as absent → falls through to cwd
-        let empty = ActiveProject { id: "id".into(), name: String::new() };
-        assert_eq!(resolve_default_project(None, Some(&empty), "cwdname"), Some("cwdname".into()));
-    }
-
-    /// A unique temp dir for pin-file tests (no external tempdir dep in this crate).
-    fn temp_pin_dir(tag: &str) -> PathBuf {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
-        std::env::temp_dir().join(format!("sensei-mcp-test-{}-{tag}-{nanos}", std::process::id()))
-    }
-
-    #[test]
-    fn pin_round_trips_through_the_injected_path() {
-        let dir = temp_pin_dir("roundtrip");
-        let path = active_project_path(&dir);
-        assert_eq!(path.file_name().unwrap(), "active-project");
-        // Absent pin → None (the normal unpinned case), never an error.
-        assert_eq!(read_active_project(&path), None, "absent pin reads as None");
-
-        let pin = ActiveProject {
-            id: "11111111-1111-1111-1111-111111111111".into(),
-            name: "sensei".into(),
+        let resolved = |r: ProjectResolution| match r {
+            Resolved { name, source, note } => (name, source, note),
+            Unresolved => ("<unresolved>".into(), "none", None),
         };
-        write_active_project(&path, &pin).unwrap(); // creates the parent dir
-        assert_eq!(read_active_project(&path), Some(pin), "pin round-trips");
 
-        // The persisted bytes are the documented {id,name} JSON shape.
-        let v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!(v["id"], "11111111-1111-1111-1111-111111111111");
-        assert_eq!(v["name"], "sensei");
+        // explicit wins over pin AND cwd.
+        assert_eq!(resolved(resolve_default_project(Some("explicit"), Some(&pin), "cwdname")).0, "explicit");
 
-        let _ = std::fs::remove_dir_all(&dir);
+        // THE FIX: a resolved cwd beats a CONFLICTING pin (the stale cross-session pin that
+        // returned sensei while working in torii) — and the override is surfaced in `note`,
+        // never silent. (Old behaviour returned the pin here — that test codified the bug.)
+        let (name, source, note) = resolved(resolve_default_project(None, Some(&pin), "torii"));
+        assert_eq!((name.as_str(), source), ("torii", "cwd"));
+        assert!(note.as_deref().unwrap().contains("pinned project is 'pinned'"), "stale-pin override is surfaced");
+
+        // cwd + pin AGREE → cwd, no note (nothing to warn about).
+        let agree = ActiveProject { id: "id".into(), name: "sensei".into() };
+        assert_eq!(resolved(resolve_default_project(None, Some(&agree), "sensei")), ("sensei".into(), "cwd", None));
+
+        // pin is the fallback ONLY when the cwd resolves nothing (e.g. a container dir).
+        assert_eq!(resolved(resolve_default_project(None, Some(&pin), "")), ("pinned".into(), "pin", None));
+
+        // cwd used when there's no pin at all.
+        assert_eq!(resolved(resolve_default_project(None, None, "cwdname")), ("cwdname".into(), "cwd", None));
+
+        // nothing resolves → Unresolved (caller must pass project= / use_project).
+        assert_eq!(resolve_default_project(None, None, "  "), ProjectResolution::Unresolved);
+
+        // empty explicit + empty-name pin are treated as absent.
+        let empty = ActiveProject { id: "id".into(), name: String::new() };
+        assert_eq!(resolved(resolve_default_project(Some(""), Some(&empty), "cwdname")), ("cwdname".into(), "cwd", None));
     }
 
-    #[test]
-    fn corrupt_pin_is_ignored_not_fatal() {
-        let dir = temp_pin_dir("corrupt");
-        let path = active_project_path(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(&path, "{ not valid json").unwrap();
-        // A bad pin must be ignored (fall through to cwd), never crash.
-        assert_eq!(read_active_project(&path), None);
-        let _ = std::fs::remove_dir_all(&dir);
-    }
 }

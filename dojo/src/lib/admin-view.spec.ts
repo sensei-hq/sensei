@@ -50,9 +50,10 @@ describe('providerLabel / providerKanji', () => {
 });
 
 describe('attribution', () => {
-	it('labels + tones each mode (dereferenced reads accent)', () => {
-		expect(attributionLabel('dereferenced')).toBe('Dereferenced');
-		expect(attributionToneClass('dereferenced')).toBe('text-accent');
+	it('labels + tones each mode (anonymous reads accent)', () => {
+		expect(attributionLabel('named')).toBe('Named');
+		expect(attributionLabel('anonymous')).toBe('Anonymous');
+		expect(attributionToneClass('anonymous')).toBe('text-accent');
 		expect(attributionToneClass('named')).toBe('text-ink-soft');
 	});
 });

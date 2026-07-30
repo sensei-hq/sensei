@@ -67,11 +67,10 @@ export type ArtifactStatus = 'submitted' | 'published' | 'archived';
 
 /** `dojo_protocol::Attribution` — the `dojo.artifacts.attribution` jsonb. */
 export interface Attribution {
-	mode: 'named' | 'anonymous' | 'dereferenced';
+	mode: 'named' | 'anonymous';
 	author?: string | null;
 	org?: string | null;
 	anonymous_id?: string | null;
-	dereferenced: boolean;
 }
 
 /** `dojo_protocol::ArtifactScope` — the `dojo.artifacts.scope` jsonb. */
@@ -94,7 +93,6 @@ export interface PublishedArtifact {
 	payload: Record<string, unknown>;
 	scope: ArtifactScope;
 	attribution: Attribution;
-	dereferenced: boolean;
 	/** Client-supplied but IGNORED — attribution (`contributed_by`) is server-controlled. */
 	contributed_by?: string | null;
 	/** Client-supplied but IGNORED — stamped server-side on publish. */
@@ -257,10 +255,9 @@ export function parsePublishedArtifact(body: Record<string, unknown>): Published
 	const attribution = body.attribution;
 	if (typeof attribution !== 'object' || attribution === null) return null;
 	const attr = attribution as Record<string, unknown>;
-	if (attr.mode !== 'named' && attr.mode !== 'anonymous' && attr.mode !== 'dereferenced') {
+	if (attr.mode !== 'named' && attr.mode !== 'anonymous') {
 		return null;
 	}
-	if (typeof attr.dereferenced !== 'boolean') return null;
 
 	const optStr = (v: unknown): string | null => (nonEmptyStr(v) ? v : null);
 	const scope = (typeof body.scope === 'object' && body.scope !== null ? body.scope : {}) as ArtifactScope;
@@ -278,10 +275,8 @@ export function parsePublishedArtifact(body: Record<string, unknown>): Published
 			mode: attr.mode,
 			author: optStr(attr.author),
 			org: optStr(attr.org),
-			anonymous_id: optStr(attr.anonymous_id),
-			dereferenced: attr.dereferenced
-		},
-		dereferenced: body.dereferenced === true
+			anonymous_id: optStr(attr.anonymous_id)
+		}
 	};
 }
 
@@ -317,7 +312,6 @@ export async function publishArtifact(
 			scope: artifact.scope,
 			signature: artifact.signature,
 			attribution: artifact.attribution,
-			dereferenced: artifact.dereferenced,
 			contributed_by: contributedBy
 		})
 		.select('id, seq')
@@ -348,7 +342,6 @@ export interface ArtifactRow {
 	scope: ArtifactScope;
 	signature: string;
 	attribution: Attribution;
-	dereferenced: boolean;
 	contributed_by: string | null;
 	published_at: string | null;
 	tenants: { key: string } | { key: string }[] | null;
@@ -356,7 +349,7 @@ export interface ArtifactRow {
 
 /** The `select` list for the pull join (artifact columns + embedded tenant key). */
 export const ARTIFACT_PULL_SELECT =
-	'id, seq, status, engagement_id, kind, title, body, payload, scope, signature, attribution, dereferenced, contributed_by, published_at, tenants(key)';
+	'id, seq, status, engagement_id, kind, title, body, payload, scope, signature, attribution, contributed_by, published_at, tenants(key)';
 
 /** Normalize PostgREST's embed (object or one-element array) to the single row. */
 function embeddedTenant(t: ArtifactRow['tenants']): { key: string } | null {
@@ -389,7 +382,6 @@ export function shapeArtifactPullResponse(rows: ArtifactRow[], since: number): A
 			payload: r.payload,
 			scope: r.scope,
 			attribution: r.attribution,
-			dereferenced: r.dereferenced,
 			contributed_by: r.contributed_by,
 			published_at: r.published_at
 		};

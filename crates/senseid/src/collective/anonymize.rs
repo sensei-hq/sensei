@@ -168,8 +168,6 @@ pub async fn anonymize_for_global<G: Generalizer>(
         author: None,
         org: None,
         anonymous_id: Some(anon_id.clone()),
-        // Global is stricter than client dereference — the source is stripped.
-        dereferenced: true,
     };
 
     Ok(AnonymizedArtifact {
@@ -349,10 +347,9 @@ mod tests {
         assert_eq!(art.shape.stack, vec!["rust".to_string()]);
         assert_eq!(art.shape.size, Some(SizeBucket::Medium));
 
-        // Attribution is anonymous + dereferenced, with the opaque id (not the
-        // real user key or any real id).
+        // Attribution is anonymous with the opaque id (not the real user key or
+        // any real id). Source-dereference is the always-on invariant on the text.
         assert_eq!(art.attribution.mode, AttributionMode::Anonymous);
-        assert!(art.attribution.dereferenced);
         assert_eq!(art.attribution.author, None);
         assert_eq!(art.attribution.anonymous_id.as_deref(), Some(art.anon_id.as_str()));
         assert!(art.anon_id.starts_with("anon-"));

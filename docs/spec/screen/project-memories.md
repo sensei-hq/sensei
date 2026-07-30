@@ -47,9 +47,10 @@ Same as [[screen/observatory-memories]] plus:
   side-by-side for user confirmation.
 - Widen to `user` scope from this screen honors the
   [[pipeline/memory]] scope contract.
-- Client-project memories default to the `dereferenced` share
-  path when widening beyond project scope (see
-  [[pipeline/dojo-lifecycle]] attribution).
+- Client-project memories default to `anonymous` credit when
+  widening beyond project scope; every shared memory is source-
+  dereferenced regardless (always-on) — see
+  [[pipeline/dojo-lifecycle]].
 
 ## Wrong gate
 

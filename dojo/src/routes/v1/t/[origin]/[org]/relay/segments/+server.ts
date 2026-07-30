@@ -31,10 +31,13 @@ export const POST: RequestHandler = async ({ params, request }) => {
 			.maybeSingle();
 		if (sErr) return apiError(500, sErr.message);
 		if (!sess) return apiError(404, 'no relay session for run_id (POST relay/session first)');
+		// parent_id is NOT taken from the payload — the daemon can't know a phase's
+		// server id (assigned here on upsert), so it carries the child's parent phase
+		// as `parent_seq`. We omit parent_id from the upsert (so a re-publish never
+		// clobbers the resolved nesting) and resolve it below.
 		const rows = segments.map((s) => ({
 			session_id: sess.id,
 			seq: typeof s.seq === 'number' ? s.seq : 0,
-			parent_id: str(s.parent_id),
 			title: str(s.title) ?? '',
 			summary: str(s.summary),
 			detail: str(s.detail),
@@ -48,6 +51,34 @@ export const POST: RequestHandler = async ({ params, request }) => {
 		}));
 		const { error } = await db.from('relay_segments').upsert(rows, { onConflict: 'session_id,seq' });
 		if (error) return apiError(500, error.message);
+
+		// Nesting: now every (session_id, seq) row has an id, resolve parent_id from the
+		// daemon's parent_seq (phase seq → its id). Idempotent across re-publishes.
+		const parentSeqBySeq = new Map<number, number>();
+		for (const s of segments) {
+			const seq = typeof s.seq === 'number' ? s.seq : 0;
+			if (typeof s.parent_seq === 'number') parentSeqBySeq.set(seq, s.parent_seq);
+		}
+		if (parentSeqBySeq.size) {
+			const { data: existing, error: exErr } = await db
+				.from('relay_segments')
+				.select('id, seq')
+				.eq('session_id', sess.id);
+			// Fail CLOSED: a read failure here would silently drop all parent nesting
+			// yet still report success — surface it instead.
+			if (exErr) return apiError(500, exErr.message);
+			const idBySeq = new Map((existing ?? []).map((e) => [e.seq as number, e.id as string]));
+			for (const [seq, parentSeq] of parentSeqBySeq) {
+				const parentId = idBySeq.get(parentSeq);
+				if (parentId) {
+					await db
+						.from('relay_segments')
+						.update({ parent_id: parentId })
+						.eq('session_id', sess.id)
+						.eq('seq', seq);
+				}
+			}
+		}
 		return Response.json({ upserted: rows.length });
 	} catch (e) {
 		if (e instanceof Response) return e;
@@ -62,12 +93,15 @@ export const GET: RequestHandler = async ({ params, request, locals, url }) => {
 		const runId = url.searchParams.get('run_id');
 		if (!runId) return apiError(400, 'run_id query param is required');
 		const db = dojoDb();
-		const { data: sess } = await db
+		const { data: sess, error: sErr } = await db
 			.from('relay_sessions')
 			.select('id')
 			.eq('tenant_id', tenantId)
 			.eq('run_id', runId)
 			.maybeSingle();
+		// Fail CLOSED on a lookup error; only a genuine miss (no session published
+		// yet for this run) is honest-empty.
+		if (sErr) return apiError(500, sErr.message);
 		if (!sess) return Response.json({ segments: [] });
 		const { data, error } = await db
 			.from('relay_segments')

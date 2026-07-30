@@ -7,10 +7,11 @@
 //! relay outline the phone/console render. [`set_task_state`] is the write-back
 //! `update_task_status` applies. No DB, no clock, no env — unit-testable.
 //!
-//! **Phase-1 authors segments FLAT** (`parent_id = None`): the Worker segments
-//! upsert keys on `(session_id, seq)` and cannot honor a client-assigned `id`, so
-//! a child can't reference a not-yet-assigned parent id in one publish. Visual
-//! Phase/Step nesting is deferred to a later Worker change. All per-task labels
+//! **Nesting** is carried as `parent_seq` (the phase's `seq`), not `parent_id`: the
+//! Worker segments upsert keys on `(session_id, seq)` and assigns `id` server-side,
+//! so a child can't reference a not-yet-assigned parent id in one publish. The daemon
+//! authors each task with its phase's `seq`; the Worker resolves `parent_id` from it
+//! after the upsert, so Phase/Step nesting survives. All per-task labels
 //! (`agent`/`model`/`spec_ref`) still cross — zero-knowledge (D10): labels, never
 //! spec bodies.
 
@@ -74,19 +75,22 @@ impl PlanGraph {
     }
 }
 
-/// Project the authored graph into a FLAT relay outline: one segment per phase
-/// (its state rolled up from its tasks), each followed by its task segments in
-/// order. `seq` runs monotonically across the whole list so the Worker's
-/// `(session_id, seq)` upsert is stable across re-publishes (the graph order is
-/// fixed at authoring). Server ids are `None`; `parent_id` is `None` (flat).
+/// Project the authored graph into a relay outline: one segment per phase (its
+/// state rolled up from its tasks), each followed by its task segments in order.
+/// `seq` runs monotonically across the whole list so the Worker's `(session_id,
+/// seq)` upsert is stable across re-publishes (the graph order is fixed at
+/// authoring). Server ids are `None`; tasks carry `parent_seq` = their phase's
+/// `seq` so the Worker can resolve `parent_id` (Phase/Step nesting) post-upsert.
 pub fn plan_to_segments(graph: &PlanGraph) -> Vec<RelaySegment> {
     let mut segs = Vec::with_capacity(graph.phases.len() + graph.task_count());
     let mut seq: i32 = 0;
     for phase in &graph.phases {
+        let phase_seq = seq;
         segs.push(RelaySegment {
             id: None,
             parent_id: None,
-            seq,
+            parent_seq: None,
+            seq: phase_seq,
             title: phase.title.clone(),
             summary: None,
             detail: None,
@@ -104,6 +108,7 @@ pub fn plan_to_segments(graph: &PlanGraph) -> Vec<RelaySegment> {
             segs.push(RelaySegment {
                 id: None,
                 parent_id: None,
+                parent_seq: Some(phase_seq),
                 seq,
                 title: task.title.clone(),
                 summary: task.summary.clone(),
@@ -277,11 +282,17 @@ mod tests {
     }
 
     #[test]
-    fn projects_flat_phase_then_tasks_with_labels_and_seq() {
+    fn projects_phase_then_tasks_with_parent_seq_and_labels() {
         let segs = plan_to_segments(&sample());
-        // Schema(phase) + t1 + t2 + Daemon(phase) + t3 = 5 flat segments.
+        // Schema(phase) + t1 + t2 + Daemon(phase) + t3 = 5 segments.
         assert_eq!(segs.len(), 5);
-        assert!(segs.iter().all(|s| s.parent_id.is_none()), "phase-1 is flat");
+        // parent_id stays None (the Worker assigns it on upsert); nesting rides parent_seq.
+        assert!(segs.iter().all(|s| s.parent_id.is_none()), "parent_id is Worker-assigned");
+        assert_eq!(segs[0].parent_seq, None, "a phase has no parent");
+        assert_eq!(segs[3].parent_seq, None, "a phase has no parent");
+        assert_eq!(segs[1].parent_seq, Some(0), "t1 nests under Schema (seq 0)");
+        assert_eq!(segs[2].parent_seq, Some(0), "t2 nests under Schema (seq 0)");
+        assert_eq!(segs[4].parent_seq, Some(3), "t3 nests under Daemon (seq 3)");
         let seqs: Vec<i32> = segs.iter().map(|s| s.seq).collect();
         assert_eq!(seqs, vec![0, 1, 2, 3, 4], "monotonic seq across phases+tasks");
 

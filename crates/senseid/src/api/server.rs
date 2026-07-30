@@ -284,6 +284,13 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
     // the analyzer has derived its insights.
     crate::tasks::activity_pruner::spawn(Arc::new(state.pg.clone()));
 
+    // Capture-spool drain: hook events that failed to reach the daemon (daemon
+    // down, or a POST slower than the hook's 2s budget) are dead-lettered to
+    // ~/.sensei/events.jsonl by the hook fallback. Import them into
+    // activity.assistant_events so analysis isn't missing them; runs on boot +
+    // every `capture.drain_interval_secs` (default 300s).
+    crate::tasks::capture_drain::spawn(Arc::new(state.pg.clone()), crate::paths::sensei_dir());
+
     // Re-enqueue tasks for folders left in a non-terminal state by a
     // previous daemon session. Must run after workers and the progress
     // emitter are live so resumed tasks get picked up immediately and

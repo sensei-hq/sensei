@@ -116,8 +116,9 @@ scope; widening it would be nonsense.
   maintainer approves; on approval, the memory is published at org
   scope and every matching session downstream picks it up.
 - `org → collective`: same triage step at the collective's level.
-  Attribution rules apply — client-work memories are auto-
-  dereferenced.
+  Attribution rules apply — every shared memory is auto-
+  dereferenced (universal, always-on); client-work credit is
+  `anonymous`.
 
 **Never widen without a signal.** Widening triggers a fresh
 strength calc at the wider scope — the strength doesn't carry.

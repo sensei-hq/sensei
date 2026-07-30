@@ -28,7 +28,7 @@ create table if not exists dojo_memberships (
 , org_slugs            text[]      not null default '{}'   -- git-remote owner slugs this membership covers (lowercased); mirrors dojo.memberships.org_slugs
 , role                 text        not null default 'contributor'   -- contributor | maintainer | lead | admin
 , authenticated_via    text        not null default 'device_code'   -- sso | github_oauth | device_code
-, attribution_default  text        not null default 'named'         -- named | anonymous | dereferenced
+, attribution_default  text        not null default 'named'         -- named | anonymous
 , credential_ref       text        not null      -- Keychain entry id; the device token lives in the OS keychain, never in PG
 , sync_status          text        not null default 'authenticating' -- healthy | stale | error | authenticating
 , last_seq             bigint      not null default 0    -- downstream-artifact pull cursor (C7): the last dojo.artifacts seq mirrored into sensei.dojo_inbox
@@ -51,7 +51,7 @@ sensei.projects.dojo_id points at id. The device token is in the OS Keychain
 comment on column dojo_memberships.id
      is 'The service membership id (dojo.memberships.id), assigned by the Dōjō console at pairing. sensei.projects.dojo_id references this value.';
 comment on column dojo_memberships.kind
-     is 'employer | client | community | personal — drives client-precedence routing (see dojo/routing.rs). client-bound work routes to the client Dōjō and is dereferenced; employer is excluded.';
+     is 'employer | client | community | personal — drives client-precedence routing (see dojo/routing.rs). client-bound work routes to the client Dōjō (credited anonymous); employer is excluded. All shared work is source-dereferenced regardless (always-on invariant).';
 comment on column dojo_memberships.org_slugs
      is 'Git-remote owner slugs this membership covers (lowercased), mirrored from dojo.memberships.org_slugs. dojo/routing.rs::infer_binding matches a project''s repo owner against this set to SUGGEST a binding (confirm-inferred in the About panel) — it never auto-commits.';
 comment on column dojo_memberships.credential_ref

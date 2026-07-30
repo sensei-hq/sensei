@@ -171,14 +171,16 @@ fn default_scope() -> String {
 
 pub(crate) async fn install_all(
     Json(body): Json<InstallBody>,
-) -> Json<crate::installer::InstallResult> {
-    // Run in blocking thread — marketplace download is synchronous
+) -> Result<Json<crate::installer::InstallResult>, StatusCode> {
+    // Run in blocking thread — marketplace download is synchronous. A panic in
+    // that thread is a 500, NOT a default (empty) result that reads as a clean
+    // "0 installed, no errors" no-op and hides the failure.
     let result = tokio::task::spawn_blocking(move || {
         crate::installer::install(&body.acps, &body.scope)
     })
     .await
-    .unwrap_or_default();
-    Json(result)
+    .map_err(|e| { tracing::error!(error = %e, "install_all: installer thread panicked"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    Ok(Json(result))
 }
 
 pub(crate) async fn install_hooks() -> Json<serde_json::Value> {
@@ -296,11 +298,14 @@ pub(crate) async fn set_installed_enabled(
 
 pub(crate) async fn remove_all(
     body: Option<Json<crate::installer::RemoveRequest>>,
-) -> Json<crate::installer::RemoveResult> {
+) -> Result<Json<crate::installer::RemoveResult>, StatusCode> {
+    // An absent body → default request (purge:false) is a genuine default. A
+    // PANIC in the uninstall thread, however, is a 500 — not a default (empty)
+    // result that falsely reports "nothing removed, no errors".
     let req = body.map(|b| b.0).unwrap_or_default();
-    match tokio::task::spawn_blocking(move || crate::installer::remove(&req)).await {
-        Ok(result) => Json(result),
-        Err(_) => Json(crate::installer::RemoveResult::default()),
-    }
+    let result = tokio::task::spawn_blocking(move || crate::installer::remove(&req))
+        .await
+        .map_err(|e| { tracing::error!(error = %e, "remove_all: uninstall thread panicked"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    Ok(Json(result))
 }
 

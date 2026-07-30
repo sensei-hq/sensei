@@ -30,9 +30,10 @@ Kanji is 群 — *collective*.
 - `GET /api/preferences/collective` returns the current mode,
   cadence, and per-category on/off + attribution defaults.
 - `PUT /api/preferences/collective/{key}` updates.
-- Attribution default for personal-closed-source work: `named`
-  when going to Dōjō, `dereferenced` when going to global
-  (default; user can override for their own OSS work).
+- Credit default for personal-closed-source work: `named` when
+  going to a Dōjō, `anonymous` when going to the global collective
+  (default; user can override for their own OSS work). Source-
+  dereference is always-on regardless of credit.
 
 ## Signals shown
 
@@ -41,7 +42,7 @@ Kanji is 群 — *collective*.
 | Destination toggle | 4 states: none · global · dojo · both |
 | Cadence chip strip | daily / weekly / manual |
 | Category toggle grid | 6 rows × 2 columns (global on/off, dojo on/off) |
-| Attribution defaults | small block per destination: `named / dereferenced` |
+| Credit defaults | small block per destination: `named / anonymous` |
 | Preview block | "next batch" preview when non-manual cadence |
 
 ## Done gate

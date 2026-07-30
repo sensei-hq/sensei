@@ -17,11 +17,13 @@ fn daemon_url() -> String {
 }
 
 /// Returns the daemon's full assistant list. Caller receives raw daemon JSON.
+/// Fails closed: a daemon-unreachable or unparseable response is an `Err`, never
+/// an empty list (which would read as "no assistants detected"). See #109 audit.
 #[tauri::command]
-pub fn detect_assistants() -> Vec<Value> {
+pub fn detect_assistants() -> Result<Vec<Value>, String> {
     match ureq::get(&format!("{}/api/assistants/detect", daemon_url())).call() {
-        Ok(resp) => resp.into_json().unwrap_or_default(),
-        Err(_) => vec![],
+        Ok(resp) => resp.into_json().map_err(|e| format!("parse assistants: {e}")),
+        Err(e) => Err(format!("Daemon not available: {e}")),
     }
 }
 
@@ -32,7 +34,10 @@ pub fn configure_mcp(assistants: Vec<String>) -> Result<Vec<String>, String> {
         .send_json(&body)
     {
         Ok(resp) => {
-            let result: Value = resp.into_json().unwrap_or(json!({}));
+            // A malformed 200 body must error, not silently become {} → an empty
+            // "configured nothing, no errors" success (#109 audit).
+            let result: Value = resp.into_json()
+                .map_err(|e| format!("parse configure response: {e}"))?;
             let configured: Vec<String> = result["configured"]
                 .as_array()
                 .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
@@ -52,10 +57,11 @@ pub fn configure_mcp(assistants: Vec<String>) -> Result<Vec<String>, String> {
 }
 
 /// Returns the daemon's full assistant status list. Caller receives raw daemon JSON.
+/// Fails closed like [`detect_assistants`]: unreachable/unparseable → `Err`, not [].
 #[tauri::command]
-pub fn check_assistant_configs() -> Vec<Value> {
+pub fn check_assistant_configs() -> Result<Vec<Value>, String> {
     match ureq::get(&format!("{}/api/assistants/detect", daemon_url())).call() {
-        Ok(resp) => resp.into_json().unwrap_or_default(),
-        Err(_) => vec![],
+        Ok(resp) => resp.into_json().map_err(|e| format!("parse assistant configs: {e}")),
+        Err(e) => Err(format!("Daemon not available: {e}")),
     }
 }

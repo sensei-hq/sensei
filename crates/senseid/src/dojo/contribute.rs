@@ -219,12 +219,15 @@ fn payload_for(kind: ArtifactKind) -> ArtifactPayload {
     }
 }
 
-fn dereferenced_attribution() -> Attribution {
-    Attribution { mode: AttributionMode::Dereferenced, author: None, org: None, anonymous_id: None, dereferenced: true }
+/// Client-work credit: anonymous with no rotating id (no personal credit at
+/// all). The source is stripped by the always-on dereference on the publish
+/// path, independent of this credit posture.
+fn anonymous_attribution() -> Attribution {
+    Attribution { mode: AttributionMode::Anonymous, author: None, org: None, anonymous_id: None }
 }
 
 fn named_attribution() -> Attribution {
-    Attribution { mode: AttributionMode::Named, author: None, org: None, anonymous_id: None, dereferenced: false }
+    Attribution { mode: AttributionMode::Named, author: None, org: None, anonymous_id: None }
 }
 
 /// The plan for one (memory × destination): publish the built artifact, or hold
@@ -265,16 +268,19 @@ async fn build_artifact_for_target<G: Generalizer>(
     };
 
     let global = is_global_dojo(&membership.tenant_key);
-    let (body, attribution, dereferenced) = if dereference {
-        // CLIENT — mandatory dereference. Fail closed: residual risk → held.
+    // Every branch strips the source (the deterministic `Dereferenced::new`, or
+    // the global anonymiser which strips): source-dereference is always-on, not
+    // a stored flag. The branches differ only in CREDIT posture.
+    let (body, attribution) = if dereference {
+        // CLIENT — anonymous credit, no rotating id. Fail closed: residual risk → held.
         match Dereferenced::new(&item.body, ctx) {
-            Ok(d) => (d.into_text(), dereferenced_attribution(), true),
+            Ok(d) => (d.into_text(), anonymous_attribution()),
             Err(_) => return held(),
         }
     } else if global {
         // GLOBAL — anonymise (deterministic strip + optional polish + re-check).
         match anonymize_for_global(&item.body, ctx, shape.clone(), contributor, rotation_bucket, generalizer).await {
-            Ok(a) => (a.text, a.attribution, true),
+            Ok(a) => (a.text, a.attribution),
             Err(_) => return held(),
         }
     } else {
@@ -282,7 +288,7 @@ async fn build_artifact_for_target<G: Generalizer>(
         // memory is already generalised; the strip is a no-op in the happy path,
         // but a surviving raw identifier holds the item rather than shipping it.
         match Dereferenced::new(&item.body, ctx) {
-            Ok(d) => (d.into_text(), named_attribution(), false),
+            Ok(d) => (d.into_text(), named_attribution()),
             Err(_) => return held(),
         }
     };
@@ -299,7 +305,6 @@ async fn build_artifact_for_target<G: Generalizer>(
         payload,
         scope: ArtifactScope { stack: shape.stack.first().cloned(), ..Default::default() },
         attribution,
-        dereferenced,
         contributed_by: None, // the Dōjō stamps the contributor from the auth token
         published_at: None,
     }))
@@ -806,7 +811,7 @@ pub async fn preview_batch(
                                 kind,
                                 title: String::new(),
                                 body: String::new(),
-                                attribution: if will_dereference { dereferenced_attribution() } else { named_attribution() },
+                                attribution: if will_dereference { anonymous_attribution() } else { named_attribution() },
                                 will_dereference,
                                 state: "held",
                             },
@@ -1010,8 +1015,10 @@ mod tests {
         let published = pubr.published();
         assert_eq!(published.len(), 1);
         let art = &published[0];
-        assert!(art.dereferenced, "client work is source-dereferenced");
-        assert_eq!(art.attribution.mode, AttributionMode::Dereferenced);
+        // Client work is anonymous-credit with no rotating id; the source is
+        // STILL stripped (the always-on dereference), proven by no_identifier.
+        assert_eq!(art.attribution.mode, AttributionMode::Anonymous);
+        assert!(art.attribution.anonymous_id.is_none(), "client work carries no rotating id");
         no_identifier(&art.body);
         no_identifier(&art.title);
     }
@@ -1032,7 +1039,6 @@ mod tests {
         let art = &pubr.published()[0];
         assert_eq!(art.attribution.mode, AttributionMode::Anonymous, "global uses anonymous attribution");
         assert!(art.attribution.anonymous_id.is_some(), "global carries a rotating anon id");
-        assert!(art.dereferenced);
         no_identifier(&art.body);
     }
 
@@ -1051,7 +1057,7 @@ mod tests {
         assert_eq!(out.published, 1);
         let art = &pubr.published()[0];
         assert_eq!(art.attribution.mode, AttributionMode::Named);
-        assert!(!art.dereferenced, "employer work is named, not dereferenced");
+        no_identifier(&art.body); // named work is STILL source-stripped (the always-on invariant)
 
         let leaky = loaded(
             membership("employer", "github/acme-corp"),

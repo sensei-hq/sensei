@@ -1,34 +1,15 @@
 <script lang="ts">
-	import { getContext } from 'svelte';
-	import { goto } from '$app/navigation';
+	import { createLogout } from './logout.svelte';
 
-	// Shared logout control (kit) — the symmetric partner to DojoSignIn's
-	// signIn. There is NO server `/logout` route: the supabase session is
-	// client-managed by the browser kavach instance (hydrated in +layout.svelte
-	// and exposed on context), so logging out is a client call — signOut() then
-	// return to the sign-in route. A plain `<a href="/logout">` 404s because
-	// nothing serves that declared path.
+	// Shared logout control (kit) — the symmetric partner to DojoSignIn's signIn.
+	// The logout action itself lives in logout.svelte.ts (also used by the TopBar
+	// avatar); this is just its phone/desktop pill rendering.
 	//
 	// `compact` = the phone treatment (round, icon-only). Default = the desktop
 	// pill (出 + a label that shows from md:).
 	let { compact = false }: { compact?: boolean } = $props();
 
-	const kavach = getContext<Record<string, unknown>>('kavach');
-	let busy = $state(false);
-
-	async function logout() {
-		if (busy) return;
-		busy = true;
-		const signOut = kavach?.signOut as (() => Promise<unknown>) | undefined;
-		try {
-			await signOut?.();
-		} finally {
-			// Return to the kavach auth route; invalidateAll reruns loads so the
-			// sentry guard re-reads the (now cleared) session for every route.
-			await goto('/signin', { invalidateAll: true });
-			busy = false;
-		}
-	}
+	const logout = createLogout();
 
 	const shape = $derived(
 		compact
@@ -39,8 +20,8 @@
 
 <button
 	type="button"
-	onclick={logout}
-	disabled={busy}
+	onclick={() => logout.run()}
+	disabled={logout.busy}
 	title="Log out"
 	aria-label="Log out"
 	class="text-ink-soft hover:text-ink border-paper-edge flex flex-shrink-0 items-center border bg-transparent {shape}"
