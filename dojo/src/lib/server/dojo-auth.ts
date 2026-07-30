@@ -51,6 +51,21 @@ async function resolveTenantId(
 	return tenant.id as string;
 }
 
+/** All membership ids for a tenant — the membership-scoped replacement for the
+ *  dropped relay_* `tenant_id` filter (WS-0 Rule A slice 2). The relay tables key
+ *  on `membership_id` only, so a tenant-wide relay read filters
+ *  `membership_id IN (this tenant's memberships)`. Returns [] for an unknown or
+ *  member-less tenant (a subsequent `.in('membership_id', [])` matches nothing —
+ *  the correct empty result, never a leak). */
+export async function membershipIdsForTenant(
+	db: ReturnType<typeof dojoDb>,
+	tenantId: string
+): Promise<string[]> {
+	const { data, error } = await db.from('memberships').select('id').eq('tenant_id', tenantId);
+	if (error) throw apiError(500, 'membership scope lookup failed');
+	return (data ?? []).map((m) => m.id as string);
+}
+
 /** Extract the Supabase access token: `Authorization: Bearer <jwt>` (API/desktop
  *  plane) or the kavach session's `access_token` (web console). */
 function tokenFrom(request: Request, locals: App.Locals): string | null {
