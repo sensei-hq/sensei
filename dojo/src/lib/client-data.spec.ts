@@ -201,26 +201,11 @@ describe('deleteIncident', () => {
 
 describe('listAuditArtifacts', () => {
 	it('GETs the audit path with the engagement query and returns the bare array', async () => {
-		const rows = [
-			{ id: 'a1', dereferenced: true },
-			{ id: 'a2', dereferenced: false }
-		];
+		const rows = [{ id: 'a1' }, { id: 'a2' }];
 		const { fn, calls } = fakeFetch(200, rows);
 		const out = await listAuditArtifacts('t/x', { fetch: fn, engagement: 'e1' });
 		expect(out).toEqual(rows);
 		expect(calls[0].url).toBe(`${dojoApiUrl}/v1/t/t/x/audit/artifacts?engagement=e1`);
-	});
-
-	it('appends dereferenced=true only when the filter is set', async () => {
-		const filtered = fakeFetch(200, []);
-		await listAuditArtifacts('t/x', { fetch: filtered.fn, engagement: 'e1', dereferenced: true });
-		expect(filtered.calls[0].url).toBe(
-			`${dojoApiUrl}/v1/t/t/x/audit/artifacts?engagement=e1&dereferenced=true`
-		);
-
-		const unfiltered = fakeFetch(200, []);
-		await listAuditArtifacts('t/x', { fetch: unfiltered.fn, engagement: 'e1' });
-		expect(unfiltered.calls[0].url).not.toContain('dereferenced');
 	});
 
 	it('sends the bearer header', async () => {
@@ -242,34 +227,17 @@ describe('exportCompliance', () => {
 	});
 
 	it('GETs json rows when format=json', async () => {
-		const rows = [{ artifact_id: 'a1', client: 'Globex', dereferenced: true }];
+		const rows = [{ artifact_id: 'a1', client: 'Globex' }];
 		const { fn, calls } = fakeFetch(200, { rows });
 		const out = await exportCompliance('t/x', { fetch: fn, engagement: 'e1', format: 'json' });
 		expect(out).toEqual({ format: 'json', rows });
 		expect(calls[0].url).toContain('format=json');
 	});
 
-	it('surfaces the 409 blocked-state (non-dereferenced present) as a ClientApiError — csv', async () => {
-		const { fn } = fakeFetch(409, {
-			error: 'compliance export blocked: non-dereferenced artifacts present',
-			non_dereferenced: 2
-		});
+	it('surfaces a non-2xx error as a ClientApiError', async () => {
+		const { fn } = fakeFetch(500, { error: 'internal error' });
 		await expect(
 			exportCompliance('t/x', { fetch: fn, engagement: 'e1' })
-		).rejects.toMatchObject({
-			name: 'DojoApiError',
-			status: 409,
-			message: 'compliance export blocked: non-dereferenced artifacts present'
-		});
-	});
-
-	it('surfaces the 409 blocked-state as a ClientApiError — json', async () => {
-		const { fn } = fakeFetch(409, {
-			error: 'compliance export blocked: non-dereferenced artifacts present',
-			non_dereferenced: 1
-		});
-		await expect(
-			exportCompliance('t/x', { fetch: fn, engagement: 'e1', format: 'json' })
 		).rejects.toBeInstanceOf(ClientApiError);
 	});
 });

@@ -185,7 +185,7 @@ describe('distinctContributors (count(distinct coalesce(contributed_by, anon_id)
 		scope: {},
 		contributed_by,
 		attribution: anonymous_id
-			? { mode: 'anonymous' as const, dereferenced: true, anonymous_id }
+			? { mode: 'anonymous' as const, anonymous_id }
 			: null,
 		payload: null
 	});
@@ -240,8 +240,7 @@ const ARTIFACT = {
 	body: 'Wrap the vendor SDK behind an adapter.',
 	payload: { kind: 'pattern', family: 'design', pattern_id: 'codebase.adapter', ftr_delta_observed: 0.07 },
 	scope: { stack: 'rust' },
-	attribution: { mode: 'anonymous', anonymous_id: 'anon-1', dereferenced: true },
-	dereferenced: true
+	attribution: { mode: 'anonymous', anonymous_id: 'anon-1' }
 };
 
 describe('parsePublishedArtifact', () => {
@@ -251,7 +250,6 @@ describe('parsePublishedArtifact', () => {
 		expect(a?.kind).toBe('pattern');
 		expect(a?.signature).toBe('a'.repeat(64));
 		expect(a?.attribution.anonymous_id).toBe('anon-1');
-		expect(a?.dereferenced).toBe(true);
 	});
 
 	it('coerces optional fields to null', () => {
@@ -295,10 +293,7 @@ describe('parsePublishedArtifact', () => {
 
 	it('rejects a missing/invalid attribution', () => {
 		expect(parsePublishedArtifact({ ...ARTIFACT, attribution: undefined })).toBeNull();
-		expect(parsePublishedArtifact({ ...ARTIFACT, attribution: { mode: 'bogus', dereferenced: true } })).toBeNull();
-		expect(
-			parsePublishedArtifact({ ...ARTIFACT, attribution: { mode: 'named', dereferenced: 'yes' } })
-		).toBeNull();
+		expect(parsePublishedArtifact({ ...ARTIFACT, attribution: { mode: 'bogus' } })).toBeNull();
 	});
 });
 
@@ -316,8 +311,7 @@ describe('shapeArtifactPullResponse (ArtifactPullResponse wire shape + cursor)',
 		payload: { kind: 'principle' },
 		scope: { stack: 'rust' },
 		signature: 'a'.repeat(64),
-		attribution: { mode: 'anonymous', anonymous_id: 'anon-1', dereferenced: true },
-		dereferenced: true,
+		attribution: { mode: 'anonymous', anonymous_id: 'anon-1' },
 		contributed_by: null,
 		published_at: '2026-07-08T00:00:00Z',
 		tenants: { key: 'github/sensei-hq' }
@@ -417,8 +411,7 @@ describe('pullArtifactsSince', () => {
 					payload: { kind: 'guard', check: 'no unwrap' },
 					scope: {},
 					signature: 'a'.repeat(64),
-					attribution: { mode: 'anonymous', anonymous_id: 'anon-1', dereferenced: true },
-					dereferenced: true,
+					attribution: { mode: 'anonymous', anonymous_id: 'anon-1' },
 					contributed_by: null,
 					published_at: '2026-07-08T00:00:00Z',
 					tenants: { key: 'github/sensei-hq' }
@@ -463,7 +456,7 @@ const clusterMember = (id: string, seq: number, contributed_by: string | null, f
 	seq,
 	scope: { stack: 'rust' },
 	contributed_by,
-	attribution: contributed_by ? null : { mode: 'anonymous', dereferenced: true, anonymous_id: `anon-${id}` },
+	attribution: contributed_by ? null : { mode: 'anonymous', anonymous_id: `anon-${id}` },
 	payload: ftr == null ? { kind: 'pattern' } : { kind: 'pattern', ftr_delta_observed: ftr }
 });
 

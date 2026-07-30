@@ -90,7 +90,7 @@ export interface HealthRollup {
 //    validate first for a clean 400 rather than a 500). ──────────────────────
 const MEMBER_ROLES = ['contributor', 'maintainer', 'lead', 'admin'] as const;
 const AUTH_METHODS = ['sso', 'github_oauth', 'device_code'] as const;
-const ATTRIBUTION_MODES = ['named', 'anonymous', 'dereferenced'] as const;
+const ATTRIBUTION_MODES = ['named', 'anonymous'] as const;
 
 /** A `dojo.member_role`. */
 export type MemberRole = (typeof MEMBER_ROLES)[number];
@@ -368,7 +368,7 @@ export function parseUpsertPolicy(body: Record<string, unknown>): UpsertPolicyIn
 	const out: UpsertPolicyInput = { scope_key: scopeKey };
 	if (body.attribution_default !== undefined) {
 		if (!isAttributionMode(body.attribution_default)) {
-			throw new AdminError(400, 'attribution_default must be named, anonymous, or dereferenced');
+			throw new AdminError(400, 'attribution_default must be named or anonymous');
 		}
 		out.attribution_default = body.attribution_default as string;
 	}
@@ -418,7 +418,7 @@ export function parsePatchPolicy(body: Record<string, unknown>): PatchPolicyInpu
 	const out: PatchPolicyInput = {};
 	if (body.attribution_default !== undefined) {
 		if (!isAttributionMode(body.attribution_default)) {
-			throw new AdminError(400, 'attribution_default must be named, anonymous, or dereferenced');
+			throw new AdminError(400, 'attribution_default must be named or anonymous');
 		}
 		out.attribution_default = body.attribution_default as string;
 	}
