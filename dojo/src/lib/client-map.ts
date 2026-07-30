@@ -48,7 +48,7 @@ export function toKitEngagement(e: Engagement, now: Date = new Date()): KitEngag
 	return {
 		id: e.id,
 		kanji: CLIENT_KANJI,
-		client: e.client,
+		client: e.client_name,
 		projects: bindingsLabel(e.project_bindings),
 		lessons: 0,
 		dropped: 0,
