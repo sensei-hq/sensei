@@ -1,11 +1,12 @@
 // The dojo org lead Incidents + Client-audit wire→kit mappers. Deterministic `now`.
 import { describe, expect, it } from 'vitest';
-import type { Incident } from './client-data';
+import type { Incident, IncidentDetail } from './client-data';
 import type { AuditEvent } from './admin-data';
 import {
 	incidentState,
 	toKitIncident,
 	toKitIncidents,
+	toKitIncidentDetail,
 	entryHeld,
 	toKitClientAuditRow,
 	toKitClientAudit
@@ -65,6 +66,37 @@ describe('toKitIncident / toKitIncidents', () => {
 	it('preserves order', () => {
 		const out = toKitIncidents([inc({ id: 'a' }), inc({ id: 'b' })], NOW);
 		expect(out.map((i) => i.id)).toEqual(['a', 'b']);
+	});
+});
+
+function detail(over: Partial<IncidentDetail> = {}): IncidentDetail {
+	return { ...inc(), owner_name: null, owner_email: null, artifact: null, ...over };
+}
+
+describe('toKitIncidentDetail', () => {
+	it('maps the detail with resolved client, owner, sla, resolution, and linked artifact', () => {
+		const k = toKitIncidentDetail(
+			detail({
+				client_name: 'Globex',
+				owner_name: 'Ada',
+				sla_due_at: '2026-08-01',
+				resolution: 'contained — source stripped before it left',
+				artifact: { id: 'a1', title: 'the pattern', kind: 'pattern', status: 'archived' }
+			}),
+			NOW
+		);
+		expect(k.client).toBe('Globex');
+		expect(k.owner).toBe('Ada');
+		expect(k.state).toBe('contained'); // status investigating
+		expect(k.sla).toBe('2026-08-01');
+		expect(k.resolution).toMatch(/source stripped/);
+		expect(k.artifact).toEqual({ title: 'the pattern', kind: 'pattern', status: 'archived' });
+	});
+	it('falls back owner "—" and artifact null when absent', () => {
+		const k = toKitIncidentDetail(detail(), NOW);
+		expect(k.owner).toBe('—');
+		expect(k.artifact).toBeNull();
+		expect(k.client).toBe('eng-1234'); // short engagement id (no resolved name)
 	});
 });
 

@@ -11,10 +11,10 @@
 // dedicated per-engagement artifact-strip ledger (GET …/audit/artifacts) is a
 // follow-on when that panel's engagement selector is wired.
 
-import type { Incident } from './client-data';
+import type { Incident, IncidentDetail } from './client-data';
 import type { AuditEvent } from './admin-data';
 import { relativeAge } from './triage/view';
-import type { KitIncident, KitClientAuditRow } from './components/kit/types';
+import type { KitIncident, KitIncidentDetail, KitClientAuditRow } from './components/kit/types';
 
 /** The incident glyph (盾 — "shield"), matching the fixture. */
 const INCIDENT_KANJI = '盾';
@@ -51,6 +51,26 @@ export function toKitIncident(i: Incident, now: Date = new Date()): KitIncident 
 /** Incident[] → KitIncident[], preserving the API's worst-first order. Pure. */
 export function toKitIncidents(incidents: Incident[], now: Date = new Date()): KitIncident[] {
 	return incidents.map((i) => toKitIncident(i, now));
+}
+
+/**
+ * IncidentDetail → KitIncidentDetail (the "Open" pane). Reuses the list row's
+ * client fallback + state derivation, plus the resolved owner ("—" when
+ * unassigned/unresolved), SLA/resolution, and the linked artifact. Pure.
+ */
+export function toKitIncidentDetail(d: IncidentDetail, now: Date = new Date()): KitIncidentDetail {
+	return {
+		id: d.id,
+		title: d.title,
+		client: d.client_name ?? (d.engagement_id ? d.engagement_id.slice(0, 8) : '—'),
+		owner: d.owner_name ?? '—',
+		state: incidentState(d),
+		severity: d.severity,
+		opened: relativeAge(d.opened_at, now),
+		sla: d.sla_due_at,
+		resolution: d.resolution,
+		artifact: d.artifact ? { title: d.artifact.title, kind: d.artifact.kind, status: d.artifact.status } : null
+	};
 }
 
 // ── audit events → the client-audit ledger ───────────────────────────────────

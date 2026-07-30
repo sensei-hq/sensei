@@ -6,6 +6,7 @@ import { describe, it, expect } from 'vitest';
 import {
 	shapeIncidents,
 	listIncidents,
+	getIncidentDetail,
 	createIncident,
 	parseNewIncident,
 	updateIncident,
@@ -33,6 +34,66 @@ function inc(over: Partial<Incident> = {}): Incident {
 		...over
 	};
 }
+
+// ── getIncidentDetail: incident + resolved client/owner names + linked artifact ──
+// A table-aware stub: each `.from(table)` returns a FRESH builder (so the parallel
+// resolver/artifact queries don't race on shared state); the terminal (`.in()` for
+// the resolvers, `.maybeSingle()` for incident/artifact) resolves that table's result.
+function makeDetailDb(tables: Record<string, { data: unknown; error: unknown }>) {
+	return {
+		from(table: string) {
+			const res = tables[table] ?? { data: null, error: null };
+			const b: Record<string, unknown> = {};
+			b.select = () => b;
+			b.eq = () => b;
+			b.in = () => Promise.resolve(res);
+			b.maybeSingle = () => Promise.resolve(res);
+			return b;
+		}
+	} as unknown as DojoClient;
+}
+
+describe('getIncidentDetail', () => {
+	it('composes the incident with resolved client name, owner name/email, and linked artifact', async () => {
+		const db = makeDetailDb({
+			incidents: { data: inc({ id: 'i1', engagement_id: 'e1', owner_id: 'u1', artifact_id: 'a1' }), error: null },
+			engagements: { data: [{ id: 'e1', client_name: 'Globex' }], error: null },
+			identities: { data: [{ user_id: 'u1', display_name: 'Ada', email: 'ada@x.co', last_login_at: null }], error: null },
+			artifacts: { data: { id: 'a1', title: 'the pattern', kind: 'pattern', status: 'archived' }, error: null }
+		});
+		const d = await getIncidentDetail(db, 't1', 'i1');
+		expect(d).toMatchObject({
+			id: 'i1',
+			client_name: 'Globex',
+			owner_name: 'Ada',
+			owner_email: 'ada@x.co',
+			artifact: { id: 'a1', title: 'the pattern', kind: 'pattern', status: 'archived' }
+		});
+	});
+	it('leaves client/owner/artifact null when the incident references none (skips those reads)', async () => {
+		const db = makeDetailDb({ incidents: { data: inc({ id: 'i1' }), error: null } });
+		const d = await getIncidentDetail(db, 't1', 'i1');
+		expect(d.client_name).toBeNull();
+		expect(d.owner_name).toBeNull();
+		expect(d.owner_email).toBeNull();
+		expect(d.artifact).toBeNull();
+	});
+	it('404s when no tenant incident matches', async () => {
+		const db = makeDetailDb({ incidents: { data: null, error: null } });
+		await expect(getIncidentDetail(db, 't1', 'ghost')).rejects.toMatchObject({ status: 404 });
+	});
+	it('fails closed (500) on the incident query error', async () => {
+		const db = makeDetailDb({ incidents: { data: null, error: { message: 'boom' } } });
+		await expect(getIncidentDetail(db, 't1', 'i1')).rejects.toMatchObject({ status: 500 });
+	});
+	it('fails closed (500) on the linked-artifact query error', async () => {
+		const db = makeDetailDb({
+			incidents: { data: inc({ id: 'i1', artifact_id: 'a1' }), error: null },
+			artifacts: { data: null, error: { message: 'artifact boom' } }
+		});
+		await expect(getIncidentDetail(db, 't1', 'i1')).rejects.toMatchObject({ status: 500 });
+	});
+});
 
 describe('shapeIncidents', () => {
 	it('orders worst-severity first, then newest-opened', () => {
