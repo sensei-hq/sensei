@@ -94,7 +94,7 @@ describe('listEngagements', () => {
 describe('createEngagement', () => {
 	it('POSTs the engagement body with the bearer + json content-type', async () => {
 		const { fn, calls } = fakeFetch(200, { id: 'e9' });
-		const body = { client: 'Globex', description: 'auth work' };
+		const body = { client_name: 'Globex', description: 'auth work' };
 		const out = await createEngagement('github/globex', body, { fetch: fn, accessToken: 'jwt' });
 		expect(out).toEqual({ id: 'e9' });
 		expect(calls[0].url).toBe(`${dojoApiUrl}/v1/t/github/globex/engagements`);
@@ -104,10 +104,10 @@ describe('createEngagement', () => {
 		expect(JSON.parse(String(calls[0].init?.body))).toEqual(body);
 	});
 
-	it('surfaces the API 400 when the client is missing', async () => {
-		const { fn } = fakeFetch(400, { error: 'client is required' });
+	it('surfaces the API 400 when client_name is missing', async () => {
+		const { fn } = fakeFetch(400, { error: 'client_name is required' });
 		await expect(
-			createEngagement('t/x', { client: '' }, { fetch: fn })
+			createEngagement('t/x', { client_name: '' }, { fetch: fn })
 		).rejects.toBeInstanceOf(ClientApiError);
 	});
 });
