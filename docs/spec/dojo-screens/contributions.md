@@ -57,6 +57,14 @@ Live: `[section]/+page.ts` → `{ contributionsMine: [], contributionsDownstream
 4. "Devs helped (lifetime)" — is there a real downstream-impact metric, or drop it?
 5. Is a cross-dōjō personal contributions view in scope pre-release, or does it stay honest-empty until the contribute pipeline is federated to a dōjō-readable route?
 
+### Resolved design (2026-07-30)
+- **Q1 'mine' source → `dojo.upstream_queue`** (proposed→triaged), user-scoped, carrying `attribution_mode`.
+- **Q2 + (a) 'Approved for you' → FULL dōjō concern:** show the approved-for-you list (from `dojo.artifacts` distributed to the user) AND build the Pin/adopt WRITE — `POST …/contributions/adopt`.
+- **Q3 + (c) (Rule B):** `attribution_mode = named|anonymous`, dereference always-on → the "client shield" becomes an **`anonymous` marker rendered from `upstream_queue.attribution_mode`** (data-driven, not a heuristic); copy stops implying non-client work is un-stripped.
+- **Q4 + (b) 'Devs helped (lifetime)' tile → DROP** (no real metric; no fabricated 0).
+- **Q5 scope → HONEST-EMPTY until federated:** the endpoints/mutation/source are buildable now, but the LIST stays honest-empty until the **contribute pipeline federates** daemon contributions into `dojo.upstream_queue` via a `/v1` route. No fabricated rows in the meantime.
+- **Depends on:** contribute-pipeline federation (daemon → `dojo.upstream_queue`/`/v1`) + WS-0 Rule A (user-wide read) + the adopt mutation endpoint.
+
 ## Components & state (three-layer, per `sensei:ui-state-pattern`)
 
 **DB** `dojo.upstream_queue` (mine: proposed→triaged) · `dojo.artifacts` (approved-for-you:
