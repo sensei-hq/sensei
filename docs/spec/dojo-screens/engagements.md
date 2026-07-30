@@ -48,6 +48,12 @@
 
 ## Open questions (for Jerry)
 - Migrate `engagements.client` → `client_tenant_id` (FK to `dojo.tenants`, nullable) + `client_name` now, or defer past the stable release? (register lists it under Part 1 schema fixes.)
+
+### Resolved design (2026-07-30)
+- **Q1 client split → MIGRATE NOW (WS-0 Rule C, agreed):** `dojo.engagements.client text` → `client_tenant_id uuid` (FK `dojo.tenants`, nullable) + `client_name text not null`. Repoint `client-map.ts`, `engagements/+server.ts` COLS + POST body, `client-data.ts` `Engagement` type.
+- **New-Q kept/stripped → COMPUTE the per-engagement aggregate now:** `lessonsKept = count(dojo.artifacts where engagement_id=x and status='published')`, `stripped = count(... held)` — a small aggregate read alongside `listEngagements`. No hardcoded 0.
+- **Confidentiality panel → tenant `dojo.policies`/`policy_overrides`** (real), NOT the `confidentialityFor(slug)` fixture. Universal dereference is always-on (Rule B): no per-item override, no `dereferenced` mode; `attribution_mode = named | anonymous` (credit only). The panel only DISPLAYS what always crosses.
+- **Depends on:** Rule C schema migration + the per-engagement aggregate read + `dojo.policies` for confidentiality.
 - Where do `lessons kept` / `stripped` counts come from — a live aggregate over `dojo.artifacts` per engagement, or a denormalized counter? Is a per-engagement `…/audit/artifacts` count endpoint in scope for this screen?
 - Is the confidentiality kept/dropped/example panel a fixed product statement (leave static) or should it reflect the tenant's adopted compliance pack (`policy_overrides`)?
 

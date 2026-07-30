@@ -48,6 +48,13 @@
 - Which left-panel design is canonical — the mockup's generic local-first marketing, or the shipped "welcome-back metrics" panel? If metrics: what's the real per-user/per-org source (and drop the "Acme Corp" literal)?
 - Is self-hosted-dōjō sign-in in scope now (wire Connect to a custom-domain auth handshake), or defer and hide the affordance?
 - Confirm the GitHub OAuth provider is enabled/configured on the cloud Supabase project (client id/secret + callback) — without it the button errors at runtime.
+
+### Resolved design (2026-07-30)
+- **Q1 self-host → DEFER + HIDE the Connect affordance** pre-release (hosted GitHub OAuth + email magic-link suffice; no dead stub).
+- **New-Q adapter → kavach-in-component** (auth-only, no data load; the three-layer Load seam adds nothing — no `signin.ts`).
+- **Left panel → drop the `dojo-data.ts` "Acme Corp" fixture-metrics panel; render the mockup's generic local-first feature-card panel** (`SignInPanel`). (fabricated-data debt.)
+- **Config-verify task (Q2, ops):** confirm the GitHub OAuth provider is enabled/configured on the cloud Supabase (client id/secret + callback) — else the button errors at runtime.
+- **Depends on:** kavach/Supabase (live) + hiding self-host + the generic-panel copy + the OAuth provider config verify.
 - Should the sign-in metric copy be reworded to reflect universal (not client-only) dereference per the data-model fix register (Rule B)?
 
 ## Components & state (three-layer, per `sensei:ui-state-pattern`)
