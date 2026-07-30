@@ -86,6 +86,7 @@ const wireAudit: AuditEvent = {
 const wireIncident: Incident = {
 	id: 'i1',
 	engagement_id: 'eng-12345678',
+	client_name: null,
 	artifact_id: null,
 	title: 'Near-leak: client hostname in a shared prompt',
 	description: null,

@@ -74,6 +74,9 @@ export type IncidentStatus = 'open' | 'investigating' | 'resolved';
 export interface Incident {
 	id: string;
 	engagement_id: string | null;
+	/** Resolved client display name (engagement_id → engagements.client_name),
+	 *  or null when unbound/unresolved — the mapper falls back to a short id. */
+	client_name: string | null;
 	artifact_id: string | null;
 	title: string;
 	description: string | null;

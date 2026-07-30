@@ -32,16 +32,16 @@ export function incidentState(i: Incident): string {
 }
 
 /**
- * Incident → KitIncident. `client` falls back to a short engagement id ("—" when
- * unbound — the list route carries no client name, which lives on the
- * engagement); `when` is the relative opened-at age. Pure.
+ * Incident → KitIncident. `client` is the resolved client name (the GET route
+ * joins engagement_id → engagements.client_name), falling back to a short
+ * engagement id, then "—" when unbound; `when` is the relative opened-at age. Pure.
  */
 export function toKitIncident(i: Incident, now: Date = new Date()): KitIncident {
 	return {
 		id: i.id,
 		kanji: INCIDENT_KANJI,
 		title: i.title,
-		client: i.engagement_id ? i.engagement_id.slice(0, 8) : '—',
+		client: i.client_name ?? (i.engagement_id ? i.engagement_id.slice(0, 8) : '—'),
 		state: incidentState(i),
 		when: relativeAge(i.opened_at, now),
 		severity: i.severity
