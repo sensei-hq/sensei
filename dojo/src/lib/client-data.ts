@@ -300,6 +300,31 @@ export async function listIncidents(
 	return { incidents: data.incidents ?? [], open_count: data.open_count ?? 0 };
 }
 
+/** A linked artifact on an incident detail (the near-leak artifact it tracks). */
+export interface IncidentArtifactRef {
+	id: string;
+	title: string;
+	kind: string;
+	status: string;
+}
+
+/** `GET …/incidents/{id}` — the full incident detail: the list row (incl.
+ *  `client_name`) plus the resolved owner name/email and linked artifact. */
+export interface IncidentDetail extends Incident {
+	owner_name: string | null;
+	owner_email: string | null;
+	artifact: IncidentArtifactRef | null;
+}
+
+/** `GET …/incidents/{id}` — one incident's full detail (the "Open" pane). */
+export async function getIncident(
+	tenantKey: string,
+	id: string,
+	opts: DojoCallOpts = {}
+): Promise<IncidentDetail> {
+	return getJson<IncidentDetail>(clientUrl(tenantKey, `/incidents/${encodeURIComponent(id)}`), opts);
+}
+
 /** `POST …/incidents` — open a confidentiality incident (lead). */
 export async function createIncident(
 	tenantKey: string,

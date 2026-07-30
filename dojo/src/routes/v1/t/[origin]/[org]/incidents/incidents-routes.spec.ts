@@ -26,6 +26,7 @@ class IncidentsError extends Error {
 const mocks = vi.hoisted(() => ({
 	resolveTenantAccess: vi.fn(),
 	listIncidents: vi.fn(),
+	getIncidentDetail: vi.fn(),
 	createIncident: vi.fn(),
 	parseNewIncident: vi.fn(),
 	updateIncident: vi.fn(),
@@ -47,6 +48,7 @@ vi.mock('$lib/server/dojo-auth', () => ({
 }));
 vi.mock('$lib/server/incidents-data', () => ({
 	listIncidents: mocks.listIncidents,
+	getIncidentDetail: mocks.getIncidentDetail,
 	createIncident: mocks.createIncident,
 	parseNewIncident: mocks.parseNewIncident,
 	updateIncident: mocks.updateIncident,
@@ -80,6 +82,7 @@ function ev(body?: unknown, params: Record<string, string> = {}) {
 beforeEach(() => {
 	mocks.resolveTenantAccess.mockClear().mockResolvedValue(caller);
 	mocks.listIncidents.mockClear().mockResolvedValue({ incidents: [], open_count: 0 });
+	mocks.getIncidentDetail.mockClear().mockResolvedValue({ id: 'i1', client_name: null, owner_name: null, artifact: null });
 	mocks.createIncident.mockClear().mockResolvedValue({ id: 'i1', severity: 'high' });
 	mocks.parseNewIncident.mockClear().mockReturnValue({ title: 'leak', severity: 'high' });
 	mocks.updateIncident.mockClear().mockResolvedValue({ id: 'i1' });
@@ -122,6 +125,27 @@ describe('GET /incidents', () => {
 		mocks.listIncidents.mockResolvedValueOnce({ incidents: [{ id: 'i1', engagement_id: 'e1' }], open_count: 1 });
 		mocks.resolveEngagementClientNames.mockRejectedValueOnce(new AdminError(500, 'boom'));
 		expect((await list.GET(ev())).status).toBe(500);
+	});
+});
+
+describe('GET /incidents/{id} (detail)', () => {
+	it('returns the incident detail at the lead floor', async () => {
+		mocks.getIncidentDetail.mockResolvedValueOnce({ id: 'i1', client_name: 'Globex', owner_name: 'Ada', artifact: null });
+		const res = await detail.GET(ev(undefined, { id: 'i1' }));
+		expect(await res.json()).toMatchObject({ id: 'i1', client_name: 'Globex', owner_name: 'Ada' });
+		expect(mocks.resolveTenantAccess.mock.calls[0][4]).toBe(2); // ACCESS.lead
+	});
+	it('maps a 404 from the store', async () => {
+		mocks.getIncidentDetail.mockRejectedValueOnce(new IncidentsError(404, 'no such incident'));
+		expect((await detail.GET(ev(undefined, { id: 'ghost' }))).status).toBe(404);
+	});
+	it('maps an AdminError from name resolution to its status (fail-closed)', async () => {
+		mocks.getIncidentDetail.mockRejectedValueOnce(new AdminError(500, 'resolve boom'));
+		expect((await detail.GET(ev(undefined, { id: 'i1' }))).status).toBe(500);
+	});
+	it('propagates a 403 from auth', async () => {
+		mocks.resolveTenantAccess.mockRejectedValueOnce(new Response('{}', { status: 403 }));
+		expect((await detail.GET(ev(undefined, { id: 'i1' }))).status).toBe(403);
 	});
 });
 
