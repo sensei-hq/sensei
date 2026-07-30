@@ -46,7 +46,7 @@ Kanji is 送 — *to send*.
 | Batch header | destination + cadence + next-batch-at + item count |
 | Trigger-now button | fires immediately when cadence is `manual` |
 | Item row | type kanji · title · body preview · scope chip · attribution chip |
-| Attribution chip variants | `named` / `named + internal` / `dereferenced` |
+| Credit chip variants | `named` / `named + internal` / `anonymous` |
 | Actions per item | Hold · Edit · Send now |
 | Bulk actions | Hold all · Send all · Filter by type |
 

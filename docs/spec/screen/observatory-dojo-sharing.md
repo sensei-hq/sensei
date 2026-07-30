@@ -20,8 +20,9 @@ Kanji is 送 — *to send*.
 - `GET /api/dojo/sharing?membership_id=…` returns per-membership
   sharing preferences.
 - Overrides the global settings when a value is set.
-- Client memberships have a locked `dereferenced` attribution
-  that cannot be changed.
+- Client memberships have a locked `anonymous` credit (no personal
+  credit) that cannot be changed. Source-dereference is always-on
+  for every membership regardless.
 
 ## Signals shown
 
@@ -31,8 +32,8 @@ per-membership:
 - Category grid (memory / pattern / rule / prompt / guard / skill
   / agent) with on/off per membership.
 - Cadence chip (daily / weekly / manual) per membership.
-- Attribution default per membership (`named` / `named + internal`
-  / `dereferenced` — client is locked).
+- Credit default per membership (`named` / `named + internal`
+  / `anonymous` — client is locked to anonymous).
 
 ## Done gate
 
@@ -40,14 +41,14 @@ per-membership:
   reachable from a chip strip / rail.
 - Overrides for a specific membership take effect immediately
   and are respected by the loop.
-- Client-membership dereference is locked and shown as such.
+- Client-membership credit is locked to `anonymous` and shown as such.
 - Reverting a specific override falls back to the global
   collective setting.
 
 ## Wrong gate
 
-- **Client attribution can be changed from `dereferenced`.**
-  Confidentiality gate violated.
+- **Client credit can be changed away from `anonymous`.**
+  The client-work credit lock is violated.
 - **Membership override doesn't take effect on next batch.**
 - **Reverting override to default doesn't inherit from global.**
 

@@ -70,8 +70,8 @@ Kanji is 識 — *knowledge / awareness*.
 - **Split loses sessions.** Attribution must be preserved.
 - **Dojo binding change retroactively re-routes past items.**
   Only future items should be affected.
-- **Client binding doesn't lock the attribution to
-  `dereferenced`.** Confidentiality regression.
+- **Client binding doesn't lock the credit to `anonymous`.**
+  Credit regression (source-dereference stays always-on regardless).
 - **Icon picker doesn't show the inferred source.** User can't
   tell why the current icon was chosen.
 - **User name field is blank** despite the profile auto-derive

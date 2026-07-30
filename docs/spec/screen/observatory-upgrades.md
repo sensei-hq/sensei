@@ -28,7 +28,7 @@ Kanji is 贈 — *gift*.
     "artifacts": [
       { "id": "…", "type": "principle|pattern|prompt|guard|skill|agent",
         "title": "…", "body": "…", "scope": {…},
-        "attribution": { "author": "…", "org": "…", "dereferenced": bool },
+        "attribution": { "mode": "named|anonymous", "author": "…", "org": "…", "anonymous_id": "…" },
         "received_at": iso, "state": "pending|applied|muted|pinned" }, …
     ],
     "unread_count": N
@@ -65,8 +65,9 @@ Kanji is 贈 — *gift*.
   - `type = guard` → added to the CI/lint check config
 - Mute / Pin overrides persist across daemon restart and are
   respected by consumers (rules resolver, skill loader).
-- Client-work artifacts carry a `dereferenced: true` badge and
-  no repo identifiers.
+- Client-work artifacts are credited `anonymous` and carry no
+  repo identifiers (every shared artifact is source-dereferenced,
+  always-on).
 - New arrivals bump `unread_count` and land at the top of the
   list; clicking Apply decrements `unread_count` by 1 within
   500ms.
