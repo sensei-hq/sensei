@@ -19,6 +19,8 @@ function engagement(over: Partial<Engagement> = {}): Engagement {
 		ends_on: null,
 		created_at: '2026-01-01T00:00:00Z',
 		updated_at: '2026-07-01T00:00:00Z',
+		lessons_kept: 0,
+		stripped: 0,
 		...over
 	};
 }
@@ -53,10 +55,15 @@ describe('toKitEngagement / toKitEngagements', () => {
 		expect(toKitEngagement(engagement({ starts_on: null, created_at: '2026-07-22T12:00:00Z' }), NOW).since).toBe('1d');
 	});
 
-	it('leaves lessons/dropped at 0 (list route carries no audit counts)', () => {
-		const k = toKitEngagement(engagement(), NOW);
-		expect(k.lessons).toBe(0);
-		expect(k.dropped).toBe(0);
+	it('maps the real kept/stripped artifact counts through', () => {
+		const k = toKitEngagement(engagement({ lessons_kept: 5, stripped: 2 }), NOW);
+		expect(k.lessons).toBe(5);
+		expect(k.dropped).toBe(2);
+	});
+
+	it('carries client_tenant_id for the client link (null when the client is not a known tenant)', () => {
+		expect(toKitEngagement(engagement({ client_tenant_id: null }), NOW).clientTenantId).toBeNull();
+		expect(toKitEngagement(engagement({ client_tenant_id: 'ct-9' }), NOW).clientTenantId).toBe('ct-9');
 	});
 
 	it('toKitEngagements preserves order', () => {

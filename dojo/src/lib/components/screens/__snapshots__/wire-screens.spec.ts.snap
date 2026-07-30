@@ -1,0 +1,359 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`ScrEngagements — wired engagements > matches the rendered engagements register snapshot 1`] = `
+<div>
+  <div
+    class="flex flex-col p-8 gap-6"
+  >
+    <div
+      class="border-paper-edge flex items-baseline gap-3 border-b"
+      style="padding-bottom: 12px"
+    >
+      <!---->
+       
+      <div
+        style="min-width: 0"
+      >
+        <div
+          class="text-ink-mute text-xs font-semibold uppercase"
+          style="letter-spacing: 0.18em; margin-bottom: 4px"
+        >
+          Acme Corp · clients
+        </div>
+        <!---->
+         
+        <h2
+          class="display text-xl font-normal"
+          style="letter-spacing: -0.015em; margin: 0; line-height: 1.1"
+        >
+          Engagements
+        </h2>
+      </div>
+       
+      <span
+        class="mono text-ink-faint text-xs"
+      >
+        1
+      </span>
+      <!---->
+       
+      <span
+        class="flex-1"
+      />
+       
+      <!---->
+      <button
+        class="inline-flex cursor-pointer items-center justify-center gap-2 whitespace-nowrap rounded-lg border font-medium text-xs bg-primary text-on-primary border-primary"
+        style="padding: 6px 12px;"
+        type="button"
+      >
+        <span
+          aria-hidden="true"
+          class="inline-block flex-shrink-0 add-circle text-on-primary"
+          style="width: 15px; height: 15px;"
+        />
+        <!---->
+        <!---->
+        New engagement
+        
+        <!---->
+      </button>
+      
+      <!---->
+    </div>
+    <!---->
+     
+    <div
+      class="flex items-start gap-3 rounded-lg border bg-accent-soft border-accent-soft"
+      style="padding: 12px 16px"
+    >
+      <span
+        class="kanji inline-block flex-shrink-0 text-accent"
+        style="font-size: 17px; line-height: 1;"
+      >
+        盾
+      </span>
+      <!---->
+       
+      <div
+        class="flex-1"
+        style="min-width: 0"
+      >
+        <div
+          class="text-ink text-sm font-medium"
+          style="line-height: 1.3"
+        >
+          Share the lesson, never the source.
+        </div>
+        <!---->
+         
+        <div
+          class="text-ink-soft text-sm"
+          style="line-height: 1.55; margin-top: 2px;"
+        >
+          Findings from a client project are anonymized before they leave the machine — the pattern
+		travels upstream; the client, repo and code never do.
+          <!---->
+        </div>
+        <!---->
+      </div>
+       
+      <!---->
+    </div>
+    <!---->
+     
+    <div>
+      <div
+        class="flex items-center gap-2"
+        style="margin-bottom: 12px"
+      >
+        <span
+          aria-hidden="true"
+          class="inline-block flex-shrink-0 case-round text-accent"
+          style="width: 17px; height: 17px;"
+        />
+        <!---->
+         
+        <span
+          class="text-ink text-xs font-semibold uppercase"
+          style="letter-spacing: 0.18em"
+        >
+          Client engagements
+        </span>
+         
+        <span
+          class="mono text-xs text-ink-faint"
+        >
+          1
+        </span>
+        <!---->
+         
+        <span
+          class="flex-1"
+        />
+         
+        <!---->
+      </div>
+       
+      <div
+        class="bg-paper-soft border-paper-edge overflow-hidden rounded-lg border"
+      >
+        <!---->
+        <!---->
+        <div
+          class="border-paper-edge flex items-center gap-4 border-b"
+          style="padding: 12px 16px"
+        >
+          <span
+            class="kanji inline-block flex-shrink-0 text-accent"
+            style="font-size: 17px; line-height: 1; width: 22px; text-align: center;"
+          >
+            客
+          </span>
+          <!---->
+           
+          <div
+            class="flex-1"
+            style="min-width: 0"
+          >
+            <div
+              class="text-ink text-sm font-medium"
+            >
+              Globex
+            </div>
+             
+            <div
+              class="mono text-ink-faint text-xs"
+              style="margin-top: 1px"
+            >
+              globex-portal · since 7d
+            </div>
+          </div>
+           
+          <div
+            style="text-align: right"
+          >
+            <div
+              class="mono text-ink text-sm"
+            >
+              86
+            </div>
+             
+            <div
+              class="text-ink-faint text-xs"
+            >
+              lessons kept
+            </div>
+          </div>
+           
+          <div
+            style="text-align: right"
+          >
+            <div
+              class="mono text-ink-mute text-sm"
+            >
+              214
+            </div>
+             
+            <div
+              class="text-ink-faint text-xs"
+            >
+              stripped
+            </div>
+          </div>
+           
+          <button
+            class="inline-flex cursor-pointer items-center justify-center gap-2 whitespace-nowrap rounded-lg border font-medium text-xs bg-paper border-paper-edge text-ink"
+            style="padding: 6px 12px;"
+            type="button"
+          >
+            <span
+              aria-hidden="true"
+              class="inline-block flex-shrink-0 document text-accent"
+              style="width: 15px; height: 15px;"
+            />
+            <!---->
+            <!---->
+            Audit
+            
+            <!---->
+          </button>
+          <!---->
+           
+          <!---->
+           
+          <!---->
+        </div>
+        
+        
+        <!---->
+      </div>
+    </div>
+    <!---->
+     
+    <div
+      class="grid gap-4 grid-cols-1 md:grid-cols-2"
+    >
+      <div
+        class="bg-paper-soft border-paper-edge rounded-lg border"
+        style="padding: 16px"
+      >
+        <div
+          class="text-ink-mute text-xs font-semibold uppercase"
+          style="letter-spacing: 0.18em; margin-bottom: 12px"
+        >
+          What crosses the boundary
+        </div>
+         
+        <div
+          class="flex flex-col gap-2"
+        >
+          <div
+            class="text-ink flex items-center gap-2 text-sm"
+          >
+            <span
+              aria-hidden="true"
+              class="inline-block flex-shrink-0 check-circle text-success"
+              style="width: 15px; height: 15px;"
+            />
+            <!---->
+            The lesson — a pattern, a guard, a skill
+          </div>
+          <div
+            class="text-ink flex items-center gap-2 text-sm"
+          >
+            <span
+              aria-hidden="true"
+              class="inline-block flex-shrink-0 check-circle text-success"
+              style="width: 15px; height: 15px;"
+            />
+            <!---->
+            Anonymized code shape
+          </div>
+          <div
+            class="text-ink flex items-center gap-2 text-sm"
+          >
+            <span
+              aria-hidden="true"
+              class="inline-block flex-shrink-0 check-circle text-success"
+              style="width: 15px; height: 15px;"
+            />
+            <!---->
+            Confidence & impact
+          </div>
+          <!---->
+           
+          <div
+            class="text-ink-soft flex items-center gap-2 text-sm"
+          >
+            <span
+              aria-hidden="true"
+              class="inline-block flex-shrink-0 close-circle text-danger"
+              style="width: 15px; height: 15px;"
+            />
+            <!---->
+            Client & repo identifiers
+          </div>
+          <div
+            class="text-ink-soft flex items-center gap-2 text-sm"
+          >
+            <span
+              aria-hidden="true"
+              class="inline-block flex-shrink-0 close-circle text-danger"
+              style="width: 15px; height: 15px;"
+            />
+            <!---->
+            Endpoints, hostnames, secrets
+          </div>
+          <div
+            class="text-ink-soft flex items-center gap-2 text-sm"
+          >
+            <span
+              aria-hidden="true"
+              class="inline-block flex-shrink-0 close-circle text-danger"
+              style="width: 15px; height: 15px;"
+            />
+            <!---->
+            Literal source & data
+          </div>
+          <!---->
+        </div>
+      </div>
+       
+      <div
+        class="bg-paper-soft border-paper-edge rounded-lg border"
+        style="padding: 16px"
+      >
+        <div
+          class="text-ink-mute text-xs font-semibold uppercase"
+          style="letter-spacing: 0.18em; margin-bottom: 12px"
+        >
+          Anonymized before it leaves
+        </div>
+         
+        <div
+          class="bg-paper-mute border-paper-edge text-ink-soft mono rounded-lg border text-xs"
+          style="padding: 12px; text-decoration: line-through"
+        >
+          await stripe.charges.create({ idempotencyKey })
+        </div>
+         
+        <div
+          class="text-ink-faint flex items-center justify-center"
+          style="padding: 4px"
+        >
+          ↓
+        </div>
+         
+        <div
+          class="bg-success-soft border-success-soft text-ink mono rounded-lg border text-xs"
+          style="padding: 12px"
+        >
+          await &lt;payment-sdk&gt;.&lt;mutation&gt;({ idempotencyKey })
+        </div>
+      </div>
+    </div>
+  </div>
+  
+</div>
+`;
