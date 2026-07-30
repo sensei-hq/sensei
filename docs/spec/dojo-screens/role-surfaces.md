@@ -54,6 +54,13 @@
 - Should the **Policies** tab render the tenant's real `dojo.policies` grid (attribution/retention/confidentiality per scope), or stay the read-only additive-ladder explainer with policies living on their own screen?
 - Audit **Export** format — CSV or the compliance-PDF the lead console's done-gate implies (`dojo-lead-console.md`)? Must respect universal dereference on export.
 
+### Resolved design (2026-07-30)
+- **Q1 identity → dedicated `GET /members?embed=identity`** (separate composition joining `dojo.identities`, WS-1). When a user has several identities, prefer the **primary/verified** one (fallback order github > sso > email).
+- **Q2 Policies tab → read-only additive-ladder EXPLAINER.** The editable `dojo.policies` grid lives on the **scopes** screen (no duplication).
+- **Q3 Audit Export → CSV** (source-ref-free; universal always-on dereference respected).
+- **Register fixes ride here:** policy write validators use `named | anonymous` (Rule B — shipped); `addMember` stops writing `dojo_url`, derives `tenant_id → tenants.dojo_url` (Rule C).
+- **Depends on:** WS-1 (`dojo.identities`) + the `?embed=identity` endpoint + WS-0 Rule C (dojo_url derivation).
+
 ## Components & state (three-layer, per `sensei:ui-state-pattern`)
 
 **Domain types** (UI-shaped; the Load layer maps wire → these):
