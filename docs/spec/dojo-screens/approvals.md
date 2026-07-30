@@ -43,6 +43,14 @@
 
 ## Open questions (for Jerry)
 - Is two-maintainer approval a real quorum gate for v1, or does Triage's single Approve suffice and this screen is just a high-impact review list? That decides whether we build the `dojo.decisions` second-signature model or keep this a derived view.
+
+### Resolved design (2026-07-30)
+- **REAL 2-signature quorum.** Build the `dojo.decisions` second-signature model:
+  - **Threshold:** high/safety-impact artifacts (per triage's `dojo.artifacts.impact` field) require **2 signatures**; normal-impact resolves on Triage's single Approve.
+  - **Queue read:** "approved-once, awaiting-second" — `dojo.decisions` rows with exactly one `status='approve'` awaiting a second, for high/safety artifacts.
+  - **2nd-approval write:** a distinct second-signature write that flips `triage_queue.state` → resolved/published **only on the second signature**.
+  - **Real `first` approver:** first `dojo.decisions` row (`maintainer_id` → display name via identity); `when` = first-approval age, not the queue-row age.
+- **Depends on:** triage's impact field (gates which need 2 sigs) + the second-signature model on `dojo.decisions` (threshold + awaiting-second read + 2nd-write) + WS-1 identity (approver name).
 - What routes a candidate to Approvals — confidence ≥0.90 (current proxy), or an explicit "needs 2nd approval" flag set at first-approval time?
 - Should Review open the full Triage candidate detail in place, or a lighter modal? (Depends on the Triage rich-detail read landing.)
 - Confirm the naming split with relay gates stays — this screen is governance-publish approval, `/you` relay gates are live-run approvals. Any desire to unify the "needs you" surfacing across both?

@@ -55,6 +55,12 @@
 - Where does the rich candidate detail (cause · evidence · conflict) come from — a new `GET …/triage/{signature}` cluster read, or fold it into the list `select`? It drives the whole right pane.
 - Should Triage filter to the viewer's **owned** scopes by default (mockup "My scopes"), or show the whole tenant queue? The maintainer-console spec treats cross-scope leakage as a bug.
 - `impact`/second-approval today rides on confidence ≥0.90. Do you want a real impact/safety field on `dojo.artifacts`, or is the confidence proxy acceptable for v1?
+
+### Resolved design (2026-07-30)
+- **Q1 detail → new `GET /v1/…/triage/{signature}`** (per-cluster read): `{ cause, evidence[] (source-dereferenced — universal invariant), conflict{loser,winner}, scopes }`. The list route stays lean.
+- **Q2 impact → a REAL impact/safety field on `dojo.artifacts`** (`normal | high | safety`) that drives the 2-sig second-approval routing — not the `confidence ≥0.90` proxy. Needs a classifier (analyzer/`derive_signals`) to set it + the column.
+- **Build (endpoints exist):** wire Approve/Revise/Decline → `decideTriage(signature,…)` (Approve = distribution-scope picker; Decline = reason — via `@rokkit/forms` so a click can't post an invalid decide; server 400s otherwise) → `invalidateAll`. Real conflict count needs a resolution-ladder read.
+- **Depends on:** the new detail endpoint + the `dojo.artifacts.impact` field/classifier + the decide wiring + a ladder-conflict read.
 - Approve needs a `distribution_scope` payload — what does the picker offer (own scope only, or promote up the ladder like the mockup's Company/Team/Stack)?
 
 ## Components & state (three-layer, per `sensei:ui-state-pattern`)
