@@ -313,14 +313,14 @@ export function parseNewMember(body: Record<string, unknown>): NewMemberInput {
 
 /**
  * Provision a membership (`POST …/members`) — the port of dojo-mind's
- * `add_membership`. `dojo_url` mirrors the tenant key (the daemon derives the
- * dōjō url from the same origin/org); returns `{ id, role }` (the shape
- * `admin-data.ts addMember()` unwraps). A duplicate `(tenant, user)` is a 409.
+ * `add_membership`. Returns `{ id, role }` (the shape `admin-data.ts addMember()`
+ * unwraps). A duplicate `(tenant, user)` is a 409. (Rule C: the dōjō url is
+ * derived from the membership's tenant — `dojo.tenants.dojo_url` — not stored per
+ * membership, so no `dojo_url` argument.)
  */
 export async function addMember(
 	db: DojoClient,
 	tenantId: string,
-	dojoUrl: string,
 	input: NewMemberInput
 ): Promise<{ id: string; role: string }> {
 	const { data, error } = await db
@@ -328,7 +328,6 @@ export async function addMember(
 		.insert({
 			tenant_id: tenantId,
 			user_id: input.user_id,
-			dojo_url: dojoUrl,
 			kind: input.kind,
 			authenticated_via: input.authenticated_via,
 			role: input.role,
