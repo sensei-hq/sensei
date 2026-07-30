@@ -53,6 +53,13 @@ Live: `[section]/+page.ts` → `{ projects: [] }` → `ScrProjects.svelte` (`sho
 3. If federated: what's the dōjō-visible project identity under source-dereference — a stable dereferenced slug (so rows are clickable/consistent) or fully opaque? [JT] federate user's active projects
 4. `KitProject.id` used for the drill-in URL — what is the stable id when the source is `relay_sessions` (no project PK)? A dereferenced project slug? [jt] a project slug
 
+### Resolved design (2026-07-30)
+- **Source of truth:** a **new lightweight `dojo.projects` table** (NOT derive-on-read from `relay_sessions`). Single-owner rows (`personal | org(client|employer)`), user-scoped.
+- **Population seam:** on any project that has a relay run, the **daemon sends the project info alongside the plan payload** — `{ slug (dereferenced), name, classification, phase }` — and the dōjō upserts a `dojo.projects` row. Shares the `project_slug` persistence with `inbox.md` Gap 4.
+- **Read:** `GET /v1/…/projects` selects the user's `dojo.projects` rows (user-wide across the user's memberships — rides **WS-0 Rule A**). Drill-in key = the dereferenced `slug`.
+- **Payload includes `classification` + `phase`** (feeds constitution-ladder-by-classification + phase).
+- **Depends on:** Rule A (user-wide personal read) + the new `dojo.projects` DDL + the daemon plan-payload extension.
+
 ## Components & state (three-layer, per `sensei:ui-state-pattern`)
 
 **DB** `relay_sessions` grouped by `project_slug` (once persisted — see `inbox.md` Gap 4) + published active-user repos; no dōjō projects table, read-only · **API** Load `loadProjects` in `projects.ts` (today `→ []`); would-be `GET /v1/…/projects` (user-wide, `owns_membership`) · **UI** `projectsState` + `ProjectsList`/`ProjectCard` over the `Project` domain type.
@@ -99,6 +106,6 @@ can ride the relay channel. **Test seams:** `projectsState` filter logic (no DOM
 
 **New open question (from this exercise):** the thin relay-derived `Project` (JT: "derive from relay sessions
 + publish active repos") carries no `classification`/`phase` — but `project-detail.md` composes the
-constitution ladder *by classification*. Does the published-repo payload include `classification` + `phase`,
+constitution ladder *by classification*. Does the published-repo payload include `classification` + `phase`, [jt] yes
 or does the drill-in preview degrade/become unreachable for relay-only projects? The shared `Project` type is
-the seam both screens depend on.
+the seam both screens depend on. [jt] any project that has a relay run we can send the info from sensei to dojo along with the plan payload.

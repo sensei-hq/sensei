@@ -54,6 +54,14 @@ Live: `(app)/+layout.server.ts` → `loadConsoleContext` → `listUserOrgs(user.
 4. "Create or join a dōjō" — in scope pre-release? If yes, what's the flow (GitHub-org auto-join vs magic-link invite vs self-serve create)?
 5. Personal-tenant treatment: canon `…rls-membership-function.md` §7 flags personal dōjō as an ad-hoc `origin='org'`. Should the user's own personal dōjō even appear in this list, or is it implicit (the `/you` context itself)?
 
+### Resolved design (2026-07-30)
+- **Q1 (factual):** `dojo.memberships.kind` (enum `membership_kind`) and `dojo.tenants.origin` (enum `tenant_origin`) **both exist** — the read just omits `kind`. Fix = add `memberships.kind` to `TENANT_COLS`, derive the glyph from `kind`. Kills the "everything → Communities" bug. No new schema.
+- **Q2 counts → COMPUTE real counts:** members (per tenant), projects (from `dojo.projects` once it lands), pending (asks per membership). Extra per-tenant queries; no fabricated 0s.
+- **Q3 row click → NAVIGATES into org:** clicking a dōjō row enters that dōjō's org console (`/org/[slug]`) — a nav path alongside the OrgSwitcher.
+- **Q4 create/join → IN SCOPE. ALL THREE flows:** (1) self-serve create (user creates an org/client dōjō, becomes admin), (2) magic-link invite (admin invites via kavach magic link → membership on accept), (3) GitHub-org auto-join (SSO-style auto-provision from GitHub org membership).
+- **Q5 personal dōjō → SHOW it as a row** (a `Personal` group).
+- **Depends on:** WS-0 Rule A (user-wide membership read) + `dojo.projects` (for the projects count) + WS-1 identity (member names, if shown).
+
 ## Components & state (three-layer, per `sensei:ui-state-pattern`)
 
 **DB** `dojo.memberships` ⋈ `dojo.tenants` via `listUserOrgs(user.id)` — needs `kind` added to `TENANT_COLS`;

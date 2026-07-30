@@ -47,10 +47,17 @@ Live: `projects/[id]/+page.ts` → `projects.find(id)`, `ladder`, `conflicts` (A
 5. **Thread `mobile`** or confirm the shell handles the phone layout.
 
 ## Open questions (for Jerry)
-1. Does the dōjō web app render the resolved constitution at all, or is "before you start" a **desktop-app** surface (where the daemon already resolves rules locally)? The dōjō governance screens are tenant-authoring; a per-project *resolution* preview may belong in the app, not the web.
-2. If in the dōjō: one resolve endpoint returning the whole composed ladder, or does the dōjō re-resolve client-side from tenant rules + the user's personal rules + packs (which it would also need to fetch)?
-3. Conflict resolution ("discarded by the ladder") — is the winner/loser decision computed server-side (daemon) and just displayed, or does the dōjō need the resolution algorithm too?
-4. The client banner's dereference wording — reword to the universal invariant, or keep client-specific framing for the engagement context? (Impacts `data-model-fix-impact-register.md` Rule B doc sweep.)
+1. Does the dōjō web app render the resolved constitution at all, or is "before you start" a **desktop-app** surface (where the daemon already resolves rules locally)? The dōjō governance screens are tenant-authoring; a per-project *resolution* preview may belong in the app, not the web. [jt] we have projects page and each project has the detail page in mockup for this sidebar projects and click on project item.
+2. If in the dōjō: one resolve endpoint returning the whole composed ladder, or does the dōjō re-resolve client-side from tenant rules + the user's personal rules + packs (which it would also need to fetch)? [jt] one resolve endpoint. 
+3. Conflict resolution ("discarded by the ladder") — is the winner/loser decision computed server-side (daemon) and just displayed, or does the dōjō need the resolution algorithm too? [jt] server side
+4. The client banner's dereference wording — reword to the universal invariant, or keep client-specific framing for the engagement context? (Impacts `data-model-fix-impact-register.md` Rule B doc sweep.) [jt] reword to universal invariant
+
+### Resolved design (2026-07-30)
+- **Q1 → the dōjō web DOES render the per-project constitution preview:** projects page → sidebar project item → click → this detail page (per mockup). Not app-only.
+- **Q2 → ONE resolve endpoint:** `GET /v1/…/projects/[slug]/constitution` returns the WHOLE composed ladder (rungs by classification + effective rules + ★ locks + discarded conflicts). The dōjō does NOT re-resolve client-side.
+- **Q3 → conflict winner/loser computed SERVER-SIDE** (the daemon's resolution); the dōjō just displays. The dōjō does not carry the resolution algorithm.
+- **Q4 → client banner copy reworded to the universal always-on dereference invariant** (`ScrProjectPreview.svelte` "Client engagement — sources are dereferenced." → universal framing; small copy change).
+- **Depends on:** `dojo.projects` (the slug/classification/phase source) + the daemon exposing per-project constitution resolution to a dōjō-readable `/v1` route (a governance-resolution federation seam) + WS-0 Rule A (user-membership-keyed).
 
 ## Components & state (three-layer, per `sensei:ui-state-pattern`)
 
