@@ -55,6 +55,10 @@ export interface Membership {
 	/** ISO-8601, or null when active. */
 	disabled_at: string | null;
 	created_at: string;
+	/** WS-1: best display name resolved from the member's `dojo.identities` row,
+	 *  or null when they have no named identity (the mapper falls back to a shortId). */
+	display_name: string | null;
+	email: string | null;
 }
 
 /** An identity-provider method — `dojo.auth_method` (api.rs `is_auth_method`). */

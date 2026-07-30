@@ -26,6 +26,8 @@ function member(over: Partial<Membership> = {}): Membership {
 		last_heartbeat_at: '2026-07-23T11:00:00Z',
 		disabled_at: null,
 		created_at: '2026-01-01T00:00:00Z',
+		display_name: null,
+		email: null,
 		...over
 	};
 }
@@ -40,6 +42,9 @@ describe('toKitMember / toKitMembers', () => {
 		expect(k.scopes).toBe('—');
 		expect(k.active).toBe('1h');
 		expect(k.you).toBeUndefined();
+	});
+	it('uses the resolved display name when present (WS-1)', () => {
+		expect(toKitMember(member({ display_name: 'Ada Lovelace' }), { now: NOW }).name).toBe('Ada Lovelace');
 	});
 	it('marks the viewer row with you', () => {
 		const k = toKitMember(member(), { self: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', now: NOW });

@@ -13,6 +13,7 @@
 // health rollup is bare).
 
 import type { dojoDb } from './dojo-supabase';
+import { resolveDisplayNames } from './identity-resolve';
 
 /** The supabase-js client returned by `dojoDb()` (scoped to the `dojo` schema). */
 export type DojoClient = ReturnType<typeof dojoDb>;
@@ -41,6 +42,10 @@ export interface Membership {
 	last_heartbeat_at: string | null;
 	disabled_at: string | null;
 	created_at: string;
+	/** WS-1: best display name resolved from `dojo.identities` (null → the caller
+	 *  falls back to a shortId; never a fabricated name). */
+	display_name: string | null;
+	email: string | null;
 }
 
 /** One identity mapping — the console `Identity`. */
@@ -113,7 +118,9 @@ const POLICY_COLS =
 	'id, scope_key, attribution_default, confidentiality, retention_days, created_at, updated_at';
 const AUDIT_COLS = 'id, ts, actor_id, engagement_id, action, target, detail';
 
-/** List the tenant's memberships, most recent first. */
+/** List the tenant's memberships, most recent first, each enriched with the
+ *  member's display name + email resolved from `dojo.identities` (WS-1). A member
+ *  with no identity row resolves to null/null (the mapper falls back to a shortId). */
 export async function listMembers(db: DojoClient, tenantId: string): Promise<Membership[]> {
 	const { data, error } = await db
 		.from('memberships')
@@ -121,7 +128,16 @@ export async function listMembers(db: DojoClient, tenantId: string): Promise<Mem
 		.eq('tenant_id', tenantId)
 		.order('created_at', { ascending: false });
 	if (error) throw new AdminError(500, error.message);
-	return (data ?? []) as unknown as Membership[];
+	const rows = (data ?? []) as unknown as Membership[];
+	const names = await resolveDisplayNames(
+		db,
+		tenantId,
+		rows.map((r) => r.user_id)
+	);
+	return rows.map((r) => {
+		const n = names.get(r.user_id);
+		return { ...r, display_name: n?.display_name ?? null, email: n?.email ?? null };
+	});
 }
 
 /** List the tenant's identity mappings, most recent first. */
