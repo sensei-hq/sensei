@@ -9,11 +9,13 @@
 // `client_name` required + `client_tenant_id` optional (FK to the client's
 // own tenant, else null). No live Worker/DB — `dojoDb()` is a chainable stub.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { AdminError } from '$lib/server/admin-data';
 
 const caller = { tenantId: 't1', userId: 'lead-uuid', role: 'lead', access: 2, membershipId: 'm1' };
 
 const mocks = vi.hoisted(() => ({
 	resolveTenantAccess: vi.fn(),
+	countEngagementArtifacts: vi.fn(),
 	// terminals the chainable stub resolves to (GET ends on `.order()`, POST on `.single()`)
 	db: { order: { data: [] as unknown, error: null as unknown }, single: { data: { id: 'e9' } as unknown, error: null as unknown } },
 	captured: { insert: undefined as unknown, tenantEq: undefined as unknown }
@@ -43,6 +45,11 @@ vi.mock('$lib/server/dojo-auth', () => ({
 		new Response(JSON.stringify({ error: message }), { status, headers: { 'content-type': 'application/json' } }),
 	ACCESS: { member: 0, contributor: 1, lead: 2, maintainer: 3, admin: 4 }
 }));
+// The per-engagement count aggregate is unit-tested in engagement-artifact-counts.spec;
+// here it's mocked so the route test isolates the GET enrichment shaping.
+vi.mock('$lib/server/engagement-artifact-counts', () => ({
+	countEngagementArtifacts: mocks.countEngagementArtifacts
+}));
 
 const route = await import('./+server');
 
@@ -61,6 +68,7 @@ function ev(method: string, body?: unknown) {
 
 beforeEach(() => {
 	mocks.resolveTenantAccess.mockClear().mockResolvedValue(caller);
+	mocks.countEngagementArtifacts.mockClear().mockResolvedValue(new Map());
 	mocks.db.order = { data: [], error: null };
 	mocks.db.single = { data: { id: 'e9' }, error: null };
 	mocks.captured.insert = undefined;
@@ -71,9 +79,26 @@ describe('GET /engagements', () => {
 	it('returns the tenant engagements at the lead floor, filtered by tenant_id', async () => {
 		mocks.db.order = { data: [{ id: 'e1' }, { id: 'e2' }], error: null };
 		const res = await route.GET(ev('GET'));
-		expect(await res.json()).toEqual({ engagements: [{ id: 'e1' }, { id: 'e2' }] });
+		expect(await res.json()).toEqual({
+			engagements: [
+				{ id: 'e1', lessons_kept: 0, stripped: 0 },
+				{ id: 'e2', lessons_kept: 0, stripped: 0 }
+			]
+		});
 		expect(mocks.captured.tenantEq).toBe('t1');
 		expect(mocks.resolveTenantAccess.mock.calls[0][4]).toBe(2); // ACCESS.lead
+	});
+	it('enriches each engagement with its kept/stripped artifact counts', async () => {
+		mocks.db.order = { data: [{ id: 'e1' }, { id: 'e2' }], error: null };
+		mocks.countEngagementArtifacts.mockResolvedValueOnce(new Map([['e1', { lessonsKept: 3, stripped: 1 }]]));
+		const body = await (await route.GET(ev('GET'))).json();
+		expect(body.engagements[0]).toMatchObject({ id: 'e1', lessons_kept: 3, stripped: 1 });
+		expect(body.engagements[1]).toMatchObject({ id: 'e2', lessons_kept: 0, stripped: 0 }); // no counts → 0
+	});
+	it('surfaces a count-query error as 500 (fail-closed)', async () => {
+		mocks.db.order = { data: [{ id: 'e1' }], error: null };
+		mocks.countEngagementArtifacts.mockRejectedValueOnce(new AdminError(500, 'count boom'));
+		expect((await route.GET(ev('GET'))).status).toBe(500);
 	});
 	it('honest-empty [] when the query returns null data', async () => {
 		mocks.db.order = { data: null, error: null };

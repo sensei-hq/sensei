@@ -482,6 +482,9 @@ export interface KitEngagement {
 	kanji: string;
 	/** The client display name. */
 	client: string;
+	/** FK to the client's own tenant when the client is itself a known dōjō
+	 *  (Rule C), or null — drives the client-name link. */
+	clientTenantId: string | null;
 	/** The projects in the engagement. */
 	projects: string;
 	/** Lessons kept (crossed the boundary anonymized). */
