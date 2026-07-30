@@ -40,7 +40,6 @@ export const POST: RequestHandler = async ({ params, request, platform }) => {
 				{
 					tenant_id: caller.tenantId,
 					membership_id: caller.membershipId,
-					user_id: caller.userId,
 					run_id: runId,
 					title,
 					goal: str(body.goal),

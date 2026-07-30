@@ -67,6 +67,6 @@ create policy relay_segments_select_own
             select 1
             from dojo.relay_sessions s
             where s.id = relay_segments.session_id
-              and s.user_id = auth.uid()
+              and dojo.owns_membership(s.membership_id)
         )
     );
