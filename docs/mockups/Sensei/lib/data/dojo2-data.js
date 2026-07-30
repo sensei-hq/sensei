@@ -83,16 +83,171 @@ window.DOJO2 = {
   ],
 
   /* ── live runs · sessions in progress right now ─────────── */
+  // A run is a *plan graph*: ordered stages, each holding tasks that run either
+  // in parallel (all start together) or in sequence (each waits on the one
+  // before). Node state ∈ done · running · gate · queued · blocked · failed.
+  // A run's plan_graph: { goal, phases: [{ title, tasks: [...] }] }. A task is
+  // { id, title, agent, model, spec_ref, summary, state, deps, is_gate,
+  //   gate_severity }. state ∈ pending · active · done · skipped · failed ·
+  //   blocked · needs_review. deps hold task ids — the ready-set (and therefore
+  //   what runs in parallel) is derived, never authored.
   runs: [
     { id: "s-2891", project: "lumen-auth",   assistant: "claude-sonnet", state: "running",
       task: "refactor refresh-token rotation", elapsed: "38m", edits: 12, gate: true,
-      corrections: 3, kanji: "観" },
+      corrections: 3, kanji: "観", last: "2m",
+      feed: [
+        { icon: "pen-new-square", tone: "var(--ink-mute)", text: "Wrote redaction-sink.ts · 38 lines", at: "14:08" },
+        { icon: "shield-warning", tone: "var(--accent)", text: "Paused for approval · staging migration", at: "14:04" },
+        { icon: "test-tube", tone: "var(--success)", text: "12 tests pass · 0 fail", at: "13:58" },
+        { icon: "document-text", tone: "var(--ink-mute)", text: "Read auth/rotation.ts · 6 call sites", at: "13:41" },
+      ],
+      plan: {
+        goal: "Rotate refresh tokens without leaking them to the logger",
+        phases: [
+          { title: "Survey", tasks: [
+            { id: "t1", title: "Read auth module", agent: "general-purpose", model: "haiku", spec_ref: "specs/auth-rotation.md#surface", summary: "2m", state: "done", deps: [] },
+            { id: "t2", title: "Map refresh call sites", agent: "general-purpose", model: "haiku", spec_ref: "specs/auth-rotation.md#surface", summary: "3m · 14 sites", state: "done", deps: [] },
+          ]},
+          { title: "Plan", tasks: [
+            { id: "t3", title: "Draft rotation strategy", agent: "architect", model: "opus", spec_ref: "specs/auth-rotation.md#strategy", summary: "4m", state: "done", deps: ["t1", "t2"] },
+            { id: "t4", title: "Check against auth guards", agent: "rule-checker", model: "sonnet", spec_ref: "constitution/company.md#auth", summary: "1m · 8 rules", state: "done", deps: ["t3"] },
+          ]},
+          { title: "Implement", tasks: [
+            { id: "t5", title: "Rotate issuer + store", agent: "general-purpose", model: "sonnet", spec_ref: "specs/auth-rotation.md#issuer", summary: "9m · 6 edits", state: "done", deps: ["t4"] },
+            { id: "t6", title: "Route debug line to redaction sink", agent: "general-purpose", model: "sonnet", spec_ref: "specs/auth-rotation.md#logging", summary: "4m · 3 edits", state: "active", deps: ["t4"] },
+            { id: "t7", title: "Update device-code flow", agent: "general-purpose", model: "sonnet", spec_ref: "specs/auth-rotation.md#device-code", summary: "6m · 3 edits", state: "active", deps: ["t4"] },
+          ]},
+          { title: "Verify", tasks: [
+            { id: "t8", title: "Unit tests", agent: "test-runner", model: "haiku", spec_ref: "specs/auth-rotation.md#tests", state: "pending", deps: ["t5", "t6", "t7"] },
+            { id: "t9", title: "Integration test — device code", agent: "test-runner", model: "sonnet", spec_ref: "constitution/project.md#refresh-flow", summary: "project rung asks for it", state: "pending", deps: ["t7"] },
+            { id: "t10", title: "Lint + types", agent: "test-runner", model: "haiku", state: "pending", deps: ["t5", "t6", "t7"] },
+          ]},
+          { title: "Ship", tasks: [
+            { id: "t11", title: "Staging migration", agent: "migrator", model: "sonnet", spec_ref: "specs/auth-rotation.md#migration", summary: "needs your approval", state: "blocked", deps: ["t8", "t9", "t10"], is_gate: true, gate_severity: "blocking" },
+            { id: "t12", title: "Write session note", agent: "scribe", model: "haiku", state: "pending", deps: ["t11"] },
+          ]},
+        ],
+      } },
     { id: "s-2890", project: "agency-monorepo", assistant: "claude-opus", state: "waiting",
       task: "wire initech billing webhook", elapsed: "12m", edits: 4, gate: true,
-      corrections: 0, kanji: "観" },
+      corrections: 0, kanji: "観", last: "9m",
+      feed: [
+        { icon: "shield-warning", tone: "var(--accent)", text: "Signature verification needs client sign-off", at: "11:52" },
+        { icon: "pen-new-square", tone: "var(--ink-mute)", text: "Wrote webhook/receiver.ts · 61 lines", at: "11:47" },
+        { icon: "link-round", tone: "var(--ink-mute)", text: "Read billing adapter · initech scope", at: "11:40" },
+      ],
+      plan: {
+        goal: "Receive Initech billing webhooks safely inside the client scope",
+        phases: [
+          { title: "Survey", tasks: [
+            { id: "t1", title: "Read billing adapter", agent: "general-purpose", model: "haiku", spec_ref: "specs/billing-webhook.md#adapter", summary: "3m", state: "done", deps: [] },
+          ]},
+          { title: "Implement", tasks: [
+            { id: "t2", title: "Webhook receiver", agent: "general-purpose", model: "sonnet", spec_ref: "specs/billing-webhook.md#receiver", summary: "5m · 4 edits", state: "done", deps: ["t1"] },
+            { id: "t3", title: "Signature verification", agent: "general-purpose", model: "opus", spec_ref: "constitution/client.md#webhook-signature", summary: "client guard — needs sign-off", state: "needs_review", deps: ["t1"], is_gate: true, gate_severity: "blocking" },
+            { id: "t4", title: "Retry + backoff", agent: "general-purpose", model: "sonnet", spec_ref: "specs/billing-webhook.md#retry", summary: "waits on signature verification", state: "blocked", deps: ["t3"] },
+          ]},
+          { title: "Verify", tasks: [
+            { id: "t5", title: "Replay fixture suite", agent: "test-runner", model: "haiku", state: "pending", deps: ["t4"] },
+            { id: "t6", title: "Confidentiality check", agent: "rule-checker", model: "sonnet", spec_ref: "constitution/client.md#identifiers", summary: "client scope", state: "pending", deps: ["t4"] },
+          ]},
+        ],
+      } },
     { id: "s-2887", project: "ledger-core",   assistant: "claude-sonnet", state: "running",
       task: "add idempotency keys to ledger writes", elapsed: "1h 4m", edits: 27, gate: false,
-      corrections: 1, kanji: "観" },
+      corrections: 1, kanji: "観", last: "6m",
+      feed: [
+        { icon: "close-circle", tone: "var(--danger)", text: "Retry handler failed · double-submit conflict", at: "14:02" },
+        { icon: "pen-new-square", tone: "var(--ink-mute)", text: "Wrote ledger/refunds.ts · 5 edits", at: "13:55" },
+        { icon: "database", tone: "var(--success)", text: "Backfill complete · 1.2M rows", at: "13:31" },
+        { icon: "database", tone: "var(--ink-mute)", text: "Added idempotency_key column", at: "13:09" },
+      ],
+      plan: {
+        goal: "Every money-moving write carries an idempotency key",
+        phases: [
+          { title: "Survey", tasks: [
+            { id: "t1", title: "Map ledger write paths", agent: "general-purpose", model: "haiku", spec_ref: "specs/idempotency.md#paths", summary: "6m · 9 paths", state: "done", deps: [] },
+            { id: "t2", title: "Read payments pack", agent: "rule-checker", model: "haiku", spec_ref: "packs/payments.md", summary: "2m · 6 rules", state: "done", deps: [] },
+          ]},
+          { title: "Migrate", tasks: [
+            { id: "t3", title: "Add key column", agent: "migrator", model: "sonnet", spec_ref: "specs/idempotency.md#schema", summary: "8m", state: "done", deps: ["t1"] },
+            { id: "t4", title: "Backfill existing rows", agent: "migrator", model: "sonnet", spec_ref: "specs/idempotency.md#backfill", summary: "21m · 1.2M rows", state: "done", deps: ["t3"] },
+            { id: "t5", title: "Add unique constraint", agent: "migrator", model: "sonnet", spec_ref: "specs/idempotency.md#constraint", summary: "4m", state: "done", deps: ["t4"] },
+          ]},
+          { title: "Implement", tasks: [
+            { id: "t6", title: "Write path — charges", agent: "general-purpose", model: "sonnet", spec_ref: "specs/idempotency.md#charges", summary: "11m · 8 edits", state: "done", deps: ["t5"] },
+            { id: "t7", title: "Write path — refunds", agent: "general-purpose", model: "sonnet", spec_ref: "specs/idempotency.md#refunds", summary: "7m · 5 edits", state: "active", deps: ["t5"] },
+            { id: "t8", title: "Retry handler", agent: "general-purpose", model: "sonnet", spec_ref: "specs/idempotency.md#retry", summary: "conflict on double-submit", state: "failed", deps: ["t5"] },
+          ]},
+          { title: "Verify", tasks: [
+            { id: "t9", title: "Ledger reconciliation", agent: "test-runner", model: "sonnet", summary: "waits on retry handler", state: "blocked", deps: ["t8"] },
+            { id: "t10", title: "Load replay", agent: "test-runner", model: "haiku", state: "pending", deps: ["t9"] },
+          ]},
+        ],
+      } },
+    { id: "s-2884", project: "globex-portal", assistant: "claude-sonnet", state: "waiting",
+      task: "harden client webhook intake", elapsed: "2h 11m", edits: 9, gate: false,
+      corrections: 0, kanji: "観", last: "1h",
+      feed: [
+        { icon: "checklist-minimalistic", tone: "var(--accent)", text: "Candidate rule waiting on your sign-off", at: "13:10" },
+        { icon: "pen-new-square", tone: "var(--ink-mute)", text: "Wrote intake/verify.ts · 9 edits", at: "12:58" },
+      ],
+      plan: {
+        goal: "Make the client intake path verify before it parses",
+        phases: [
+          { title: "Survey", tasks: [
+            { id: "t1", title: "Read client rung", agent: "rule-checker", model: "haiku", spec_ref: "constitution/client.md", summary: "2m · 2 rules", state: "done", deps: [] },
+          ]},
+          { title: "Implement", tasks: [
+            { id: "t2", title: "Signature verify helper", agent: "general-purpose", model: "sonnet", spec_ref: "specs/intake.md#verify", summary: "14m · 9 edits", state: "done", deps: ["t1"] },
+            { id: "t3", title: "Intake replay guard", agent: "general-purpose", model: "sonnet", spec_ref: "specs/intake.md#replay", state: "pending", deps: ["t2"] },
+          ]},
+          { title: "Adopt", tasks: [
+            { id: "t4", title: "Promote guard to Client rung", agent: "rule-checker", model: "opus", spec_ref: "constitution/client.md#webhook-signature", summary: "needs your decision", state: "needs_review", deps: ["t2"], is_gate: true, gate_severity: "advisory" },
+          ]},
+        ],
+      } },
+    { id: "s-2882", project: "api-gateway", assistant: "claude-opus", state: "stalled",
+      task: "split rate limiter per tenant", elapsed: "3h 02m", edits: 6, gate: false,
+      corrections: 0, kanji: "観", last: "47m", stale: true,
+      feed: [
+        { icon: "hourglass", tone: "var(--warning)", text: "No heartbeat for 47m — the assistant went quiet", at: "12:20" },
+        { icon: "pen-new-square", tone: "var(--ink-mute)", text: "Wrote gateway/limiter.ts · 6 edits", at: "11:33" },
+      ],
+      plan: {
+        goal: "One rate-limit bucket per tenant, not per gateway",
+        phases: [
+          { title: "Survey", tasks: [
+            { id: "t1", title: "Map limiter call sites", agent: "general-purpose", model: "haiku", spec_ref: "specs/limiter.md#sites", summary: "5m · 7 sites", state: "done", deps: [] },
+            { id: "t2", title: "Read platform pack", agent: "rule-checker", model: "haiku", spec_ref: "packs/platform.md", summary: "2m", state: "done", deps: [] },
+          ]},
+          { title: "Implement", tasks: [
+            { id: "t3", title: "Per-tenant bucket store", agent: "general-purpose", model: "opus", spec_ref: "specs/limiter.md#store", summary: "quiet since 12:20", state: "active", deps: ["t1", "t2"] },
+            { id: "t4", title: "Burst window", agent: "general-purpose", model: "sonnet", spec_ref: "specs/limiter.md#burst", state: "pending", deps: ["t3"] },
+          ]},
+        ],
+      } },
+    { id: "s-2879", project: "acme-web", assistant: "claude-sonnet", state: "done",
+      task: "move settings page to the new form kit", elapsed: "52m", edits: 31, gate: false,
+      corrections: 0, kanji: "観", last: "yesterday",
+      feed: [
+        { icon: "check-circle", tone: "var(--success)", text: "Session note written · 2 learnings offered", at: "17:41" },
+        { icon: "test-tube", tone: "var(--success)", text: "24 tests pass · 0 fail", at: "17:28" },
+      ],
+      plan: {
+        goal: "Settings page runs on the shared form kit",
+        phases: [
+          { title: "Implement", tasks: [
+            { id: "t1", title: "Port settings form", agent: "general-purpose", model: "sonnet", spec_ref: "specs/form-kit.md#settings", summary: "31m · 24 edits", state: "done", deps: [] },
+            { id: "t2", title: "Port validation", agent: "general-purpose", model: "sonnet", spec_ref: "specs/form-kit.md#validation", summary: "9m · 7 edits", state: "done", deps: [] },
+            { id: "t3", title: "Drop legacy field wrapper", agent: "general-purpose", model: "haiku", summary: "superseded by the kit", state: "skipped", deps: ["t1"] },
+          ]},
+          { title: "Verify", tasks: [
+            { id: "t4", title: "Unit tests", agent: "test-runner", model: "haiku", summary: "24 pass", state: "done", deps: ["t1", "t2"] },
+            { id: "t5", title: "Write session note", agent: "scribe", model: "haiku", state: "done", deps: ["t4"] },
+          ]},
+        ],
+      } },
   ],
 
   /* ── governance · the constitution ladder ───────────────── */
@@ -161,15 +316,98 @@ window.DOJO2 = {
   /* ── rule packs · adoptable bundles (NOT ‘library’) ─────── */
   rulePacks: [
     { id: "p1", kanji: "守", name: "Auth boundary guards", by: "Acme · platform",
-      count: 8, adopted: true, note: "token redaction, signature checks, secret scanning" },
+      count: 8, adopted: true, note: "token redaction, signature checks, secret scanning",
+      rules: [
+        { title: "Never log tokens, refresh tokens, or PII", tone: "guard" },
+        { title: "Verify request signatures before handling any payload", tone: "guard" },
+        { title: "Scan diffs for hardcoded secrets before commit", tone: "guard" },
+        { title: "Rotate signing keys on a fixed schedule", tone: "norm" },
+        { title: "Enforce short-lived access tokens with refresh", tone: "norm" },
+        { title: "Reject unsigned or expired webhooks", tone: "guard" },
+        { title: "Redact tokens in error traces and crash reports", tone: "guard" },
+        { title: "Store secrets in the vault, never in env files", tone: "norm" },
+      ] },
     { id: "p2", kanji: "紋", name: "Payments patterns", by: "Acme · payments",
-      count: 6, adopted: true, note: "idempotency, ledger writes, reconciliation" },
+      count: 6, adopted: true, note: "idempotency, ledger writes, reconciliation",
+      rules: [
+        { title: "Require an idempotency key before any retry", tone: "guard" },
+        { title: "Write ledger entries in a single transaction", tone: "guard" },
+        { title: "Reconcile against the processor daily", tone: "norm" },
+        { title: "Never mutate a settled charge — issue a reversal", tone: "guard" },
+        { title: "Record currency and amount in minor units", tone: "norm" },
+        { title: "Emit an audit event on every state change", tone: "norm" },
+      ] },
     { id: "p3", kanji: "技", name: "React · TypeScript baseline", by: "Rust Guild",
-      count: 11, adopted: false, note: "exports, query layer, suspense boundaries" },
+      count: 11, adopted: false, note: "exports, query layer, suspense boundaries",
+      rules: [
+        { title: "Prefer named exports over default exports", tone: "norm" },
+        { title: "No any — narrow or use unknown", tone: "norm" },
+        { title: "Data fetching goes through the query layer", tone: "norm" },
+        { title: "Wrap async views in a suspense boundary", tone: "norm" },
+        { title: "Co-locate types with the component that owns them", tone: "norm" },
+        { title: "No inline styles for theme values — use tokens", tone: "norm" },
+        { title: "Derive state; don't duplicate server data in state", tone: "norm" },
+        { title: "Every effect has a cleanup or a comment why not", tone: "norm" },
+        { title: "Keys on lists are stable ids, never the index", tone: "guard" },
+        { title: "Props are readonly — no mutation in children", tone: "norm" },
+        { title: "Error boundaries wrap every route root", tone: "norm" },
+      ] },
     { id: "p4", kanji: "盾", name: "Client engagement shield", by: "Globex · lead",
-      count: 5, adopted: true, note: "dereferencing, webhook verification, audit trail" },
+      count: 5, adopted: true, note: "dereferencing, webhook verification, audit trail",
+      rules: [
+        { title: "De-reference client PII before it leaves the boundary", tone: "guard" },
+        { title: "Verify inbound webhooks against the shared secret", tone: "guard" },
+        { title: "Keep an append-only audit trail per engagement", tone: "guard" },
+        { title: "Scope credentials to a single client, never shared", tone: "guard" },
+        { title: "Purge client data on engagement close", tone: "norm" },
+      ] },
     { id: "p5", kanji: "理", name: "API compatibility", by: "Acme · platform",
-      count: 4, adopted: false, note: "deprecation windows, versioning, changelog gates" },
+      count: 4, adopted: false, note: "deprecation windows, versioning, changelog gates",
+      rules: [
+        { title: "Ship a 90-day deprecation window on breaking changes", tone: "norm" },
+        { title: "Version the API in the path, never the header only", tone: "norm" },
+        { title: "A changelog entry gates every public-surface change", tone: "guard" },
+        { title: "Additive changes only within a major version", tone: "norm" },
+      ] },
+  ],
+
+  /* ── asks · what a running session can't decide alone ───── */
+  // One per blocking question raised by a run. kind: approval (a guarded
+  // action needs your yes) · choice (a fork the model won't pick) · recovery
+  // (the run stopped and needs a direction). Each names the task it blocks.
+  asks: [
+    { id: "a1", run: "s-2891", task: "t11", taskTitle: "Staging migration", kind: "approval", severity: "blocking", age: "3m",
+      question: "Run the staging migration?",
+      context: "pnpm db:migrate --env=staging · touches an auth-boundary schema · the company rung requires a human yes",
+      options: ["Run it", "Dry-run first", "Skip the migration"] },
+    { id: "a2", run: "s-2891", task: "t6", taskTitle: "Route debug line to redaction sink", kind: "choice", severity: "blocking", age: "11m",
+      question: "Two debug lines still print the refresh token. What should happen to them?",
+      context: "Company rung forbids logging tokens; sensei won't pick between redacting and deleting your logging.",
+      options: ["Route through the redaction sink", "Delete the lines", "Keep them — they are dev-only"] },
+    { id: "a3", run: "s-2890", task: "t3", taskTitle: "Signature verification", kind: "choice", severity: "blocking", age: "9m",
+      question: "Where does the Initech signing secret come from?",
+      context: "No secret is in scope for this repo, and the client rung forbids inventing one.",
+      options: ["Vault · initech/webhook-secret", "Ask the client for it", "Stub it — local only"] },
+    { id: "a4", run: "s-2884", task: "t3", taskTitle: "Intake replay guard", kind: "choice", severity: "advisory", age: "1h",
+      question: "How long should the replay window be?",
+      context: "The client's spec doesn't say. sensei will not guess a security window.",
+      options: ["5 minutes", "1 hour", "Follow the client doc I paste"] },
+    { id: "a5", run: "s-2887", task: "t8", taskTitle: "Retry handler", kind: "recovery", severity: "blocking", age: "6m",
+      question: "The retry handler conflicts on double-submit. How should retries behave?",
+      context: "Two writes with the same idempotency key arrived 40ms apart; both paths are defensible.",
+      options: ["Dedupe on the key", "Fail fast and surface", "Queue and retry later"] },
+    { id: "a6", run: "s-2882", task: "t3", taskTitle: "Per-tenant bucket store", kind: "recovery", severity: "blocking", age: "47m",
+      question: "No heartbeat for 47 minutes. What should sensei do with this run?",
+      context: "The assistant went quiet mid-task; nothing has been written since 12:20.",
+      options: ["Resume where it stopped", "Restart the phase", "Stop the run"] },
+    { id: "a7", run: "s-2891", task: "t7", taskTitle: "Update device-code flow", kind: "clarification", severity: "advisory", age: "18m",
+      question: "Found a second refresh-token store in the device-code flow. Is it in scope?",
+      context: "Undocumented, written by the CLI path, and it rotates on its own schedule — nothing in the plan covers it.",
+      options: ["Include it in this change", "Leave it — open a follow-up", "Stop and let me look"] },
+    { id: "a8", run: "s-2884", task: "t2", taskTitle: "Signature verify helper", kind: "clarification", severity: "advisory", age: "40m",
+      question: "The client sends two signature headers with different algorithms. Which one is authoritative?",
+      context: "Both verify against the shared secret; the docs you gave sensei mention only one.",
+      options: ["The v2 header", "The legacy header", "Accept either for now"] },
   ],
 
   /* ── relay · runs / gates / decisions / chat ────────────── */
@@ -185,11 +423,11 @@ window.DOJO2 = {
     { id: "d1", project: "globex-portal", kanji: "決",
       title: "adopt ‘verify webhook signature’ as a client guard",
       options: ["adopt to Client rung", "keep as project note", "decline"],
-      context: "4 sessions · dereferenced · confidence 0.91", age: "1h" },
+      context: "4 sessions · dereferenced · confidence 0.91", age: "1h", session: "s-2884" },
     { id: "d2", project: "lumen-auth", kanji: "決",
       title: "promote ‘idempotency key’ from Project to Company",
       options: ["promote to Company", "keep at Project", "decline"],
-      context: "adopted in 6 repos · no conflicts", age: "5h" },
+      context: "adopted in 6 repos · no conflicts", age: "5h", session: "s-2891" },
   ],
   chat: {
     project: "lumen-auth", session: "s-2891",
