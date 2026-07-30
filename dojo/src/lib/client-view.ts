@@ -156,42 +156,18 @@ export function isSlaBreached(
 	return due < now.getTime();
 }
 
-// ── artifact audit strip status => the done-gate ─────────────────────────────
+// ── compliance-export columns ────────────────────────────────────────────────
 
-/**
- * The audit-view done-gate: the number of NON-dereferenced rows. `0` passes;
- * anything above renders the red-fail chip and blocks the compliance export
- * (spec: `non_dereferenced == 0`).
- */
-export function nonDereferencedCount(rows: { dereferenced: boolean }[]): number {
-	return rows.filter((r) => r.dereferenced === false).length;
-}
-
-/** Whether the audit view passes the strip gate (no non-dereferenced rows). */
-export function auditPasses(rows: { dereferenced: boolean }[]): boolean {
-	return nonDereferencedCount(rows) === 0;
-}
-
-/** Label for a row's strip status — the pass/red-fail chip text. */
-export function stripStatusLabel(dereferenced: boolean): string {
-	return dereferenced ? 'Stripped' : 'Source not dropped';
-}
-
-/** Token tone for a row's strip status: stripped reads success, else the danger red-fail. */
-export function stripStatusToneClass(dereferenced: boolean): string {
-	return dereferenced ? 'text-success' : 'text-danger';
-}
-
-/** The compliance-export columns the UI surfaces — the source-ref-free subset,
- * mirroring the backend `COMPLIANCE_COLUMNS` (api.rs:1440) exactly and in order.
- * By construction there is no source-reference column here. */
+/** The compliance-export columns the UI surfaces — the source-ref-free subset.
+ * By construction there is no source-reference column here: source-dereference
+ * is always-on, so every exported artifact is stripped and there is no per-row
+ * strip status to audit. */
 export const COMPLIANCE_COLUMNS: readonly string[] = [
 	'artifact_id',
 	'engagement_id',
 	'client',
 	'kind',
 	'title',
-	'dereferenced',
 	'status',
 	'published_at',
 	'created_at'

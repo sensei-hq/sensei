@@ -11,7 +11,7 @@
 //   POST   …/incidents                      → { id, severity }
 //   PATCH  …/incidents/{id}                 → { id }
 //   DELETE …/incidents/{id}                 → { deleted: true }
-//   GET    …/audit/artifacts?engagement=&dereferenced=true → AuditArtifact[] (bare array)
+//   GET    …/audit/artifacts?engagement= → AuditArtifact[] (bare array)
 //   GET    …/compliance/export?engagement=&format=csv|json → CSV text | { rows }
 //
 // Row/response types are DERIVED from the Rust store shapes (store.rs
@@ -90,8 +90,6 @@ export interface AuditArtifact {
 	/** artifact kind — `guard | pattern | principle | prompt | skill | agent | persona | …` */
 	kind: string;
 	title: string;
-	/** the universal strip status — `false` is the red-fail (source not dropped). */
-	dereferenced: boolean;
 	/** the strip verification payload (opaque JSON; what was stripped). */
 	attribution: unknown;
 	status: string;
@@ -109,7 +107,6 @@ export interface ComplianceRow {
 	client: string | null;
 	kind: string;
 	title: string;
-	dereferenced: boolean;
 	status: string;
 	published_at: string | null;
 	created_at: string;
@@ -332,19 +329,17 @@ export async function deleteIncident(
 // artifact audit view + compliance export ────────────────────────────────────
 
 /**
- * `GET …/audit/artifacts?engagement={id}[&dereferenced=true]` — the artifact
- * audit view for an engagement. Returns a BARE JSON ARRAY so the console can
- * compute the done-gate directly (`non_dereferenced == count(dereferenced ==
- * false)`). Pass `dereferenced: true` to filter to only stripped rows; the
- * default (all rows) is what surfaces a non-dereferenced row as a red-fail.
+ * `GET …/audit/artifacts?engagement={id}` — the artifact audit view for an
+ * engagement, a BARE JSON ARRAY of the artifacts that left under it.
+ * Source-dereference is always-on (every artifact is stripped by construction),
+ * so there is no per-row strip status or done-gate.
  */
 export async function listAuditArtifacts(
 	tenantKey: string,
-	opts: DojoCallOpts & { engagement?: string; dereferenced?: boolean } = {}
+	opts: DojoCallOpts & { engagement?: string } = {}
 ): Promise<AuditArtifact[]> {
 	const params = new URLSearchParams();
 	if (opts.engagement) params.set('engagement', opts.engagement);
-	if (opts.dereferenced) params.set('dereferenced', 'true');
 	const qs = params.toString();
 	const path = qs ? `/audit/artifacts?${qs}` : '/audit/artifacts';
 	return getJson<AuditArtifact[]>(clientUrl(tenantKey, path), opts);
@@ -357,10 +352,9 @@ export type ComplianceExport =
 
 /**
  * `GET …/compliance/export?engagement={id}&format=csv|json` — trigger the
- * compliance export for an engagement. BLOCKED with a 409 (surfaced as a
- * {@link DojoApiError} carrying the `non-dereferenced` reason) when any in-scope
- * artifact is non-dereferenced — a broken strip must never be certified. On
- * success returns ONLY the source-ref-free subset (never a source ref).
+ * compliance export for an engagement. Returns ONLY the source-ref-free subset
+ * (never a source ref); source-dereference is always-on, so every exported
+ * artifact is stripped by construction.
  */
 export async function exportCompliance(
 	tenantKey: string,
