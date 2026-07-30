@@ -15,7 +15,6 @@ create table if not exists dojo.artifacts (
 , scope          jsonb                not null default '{}'
 , signature      text                 not null
 , attribution    jsonb                not null default '{}'
-, dereferenced   boolean              not null default false
 , contributed_by uuid
 , approved_by    uuid
 , adopted_count  integer              not null default 0
@@ -42,7 +41,7 @@ membership whose scope matches this artifact''s scope tag.';
 comment on column dojo.artifacts.seq
      is 'Monotonic federation pull cursor, advanced on every write (the service sets seq = nextval on publish; a bigserial-style default alone would only fire on insert). A puller resumes gap-free from the last seq it saw — mirrors dojo.shared_rules.seq.';
 comment on column dojo.artifacts.engagement_id
-     is 'Set when the artifact came from client work under an engagement; such artifacts must have dereferenced=true.';
+     is 'Set when the artifact came from client work under an engagement. Every artifact is source-dereferenced on publish regardless (always-on invariant).';
 comment on column dojo.artifacts.kind
      is 'One of the six primitives: principle, pattern, prompt, guard, skill, agent.';
 comment on column dojo.artifacts.payload
@@ -52,9 +51,7 @@ comment on column dojo.artifacts.scope
 comment on column dojo.artifacts.signature
      is 'Content signature for dedup/clustering — near-identical contributions share a signature and are merged in triage.';
 comment on column dojo.artifacts.attribution
-     is 'Credit metadata: {author, org, dereferenced, anonymous_id}. Governed by the contributing membership''s attribution rules.';
-comment on column dojo.artifacts.dereferenced
-     is 'True when the source reference was stripped (mandatory for client work). The lead audit filters on this.';
+     is 'Credit metadata: {author, org, anonymous_id}. Governed by the contributing membership''s attribution rules. Source-dereference is a separate always-on invariant, not stored here.';
 comment on column dojo.artifacts.contributed_by
      is 'user_id of the contributor (or null when anonymised).';
 comment on column dojo.artifacts.approved_by
