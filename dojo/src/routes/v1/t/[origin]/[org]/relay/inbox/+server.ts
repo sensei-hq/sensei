@@ -45,7 +45,6 @@ export const POST: RequestHandler = async ({ params, request, platform }) => {
 				segment_id: str(body.segment_id),
 				tenant_id: caller.tenantId,
 				membership_id: caller.membershipId,
-				user_id: caller.userId,
 				kind,
 				direction,
 				payload: body.payload ?? {}
