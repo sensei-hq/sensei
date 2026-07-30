@@ -57,7 +57,9 @@ const wireMember: Membership = {
 	attribution_default: 'named',
 	last_heartbeat_at: '2026-07-23T11:00:00Z',
 	disabled_at: null,
-	created_at: '2026-01-01T00:00:00Z'
+	created_at: '2026-01-01T00:00:00Z',
+	display_name: null,
+	email: null
 };
 
 const wireIdentity: Identity = {
