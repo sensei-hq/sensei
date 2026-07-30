@@ -43,11 +43,12 @@ function accessLine(authenticatedVia: string): string {
 }
 
 /**
- * Membership → KitMember. `name` falls back to a short user-id (the list route
- * carries no display name — it lives on the identity row); `git` is the
- * authentication method the role derived from; `scopes` is "—" (per-scope
- * ownership is a separate read); `active` is the relative last-heartbeat; a
- * disabled member reads "disabled". Pure.
+ * Membership → KitMember. `name` is the display name resolved from the member's
+ * identity row (WS-1: `listMembers` enriches each row via `resolveDisplayNames`),
+ * falling back to a short user-id when the member has no named identity (honest
+ * label, never a fabricated name); `git` is the authentication method the role
+ * derived from; `scopes` is "—" (per-scope ownership is a separate read);
+ * `active` is the relative last-heartbeat; a disabled member reads "disabled". Pure.
  */
 export function toKitMember(
 	m: Membership,
@@ -60,7 +61,7 @@ export function toKitMember(
 			? relativeAge(m.last_heartbeat_at, now)
 			: 'never';
 	const member: KitMember = {
-		name: shortId(m.user_id),
+		name: m.display_name ?? shortId(m.user_id),
 		userId: m.user_id,
 		git: accessLine(m.authenticated_via),
 		role: m.role,
