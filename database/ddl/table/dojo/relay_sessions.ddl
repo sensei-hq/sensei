@@ -2,7 +2,6 @@ set search_path to dojo, extensions;
 
 create table if not exists dojo.relay_sessions (
   id             uuid                  primary key default gen_random_uuid()
-, tenant_id      uuid                  not null references dojo.tenants(id)
 , membership_id  uuid                  not null references dojo.memberships(id)
 , run_id         uuid                  not null
 , title          text                  not null default ''
@@ -20,10 +19,9 @@ create table if not exists dojo.relay_sessions (
 , completed_at   timestamptz
 , created_at     timestamptz           not null default now()
 , updated_at     timestamptz           not null default now()
-, constraint relay_sessions_tenant_run_unique unique (tenant_id, run_id)
+, constraint relay_sessions_membership_run_unique unique (membership_id, run_id)
 );
 
-create index if not exists relay_sessions_tenant_idx on dojo.relay_sessions(tenant_id);
 create index if not exists relay_sessions_membership_idx on dojo.relay_sessions(membership_id, started_at desc);
 create index if not exists relay_sessions_run_idx on dojo.relay_sessions(run_id);
 

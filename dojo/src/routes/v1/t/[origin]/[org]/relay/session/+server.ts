@@ -3,7 +3,7 @@
 // phone/console reading it (Supabase-JWT plane). See docs/plan/relay-engine.md §6.
 import type { RequestHandler } from './$types';
 import { dojoDb } from '$lib/server/dojo-supabase';
-import { resolveApiKeyAccess, resolveTenantAccess, apiError, ACCESS } from '$lib/server/dojo-auth';
+import { resolveApiKeyAccess, resolveTenantAccess, membershipIdsForTenant, apiError, ACCESS } from '$lib/server/dojo-auth';
 import { sendRelayPushFromEnv } from '$lib/server/relay-push-env';
 import { resolveProjectNamespaceId, openOrRefreshSeat } from '$lib/server/billing-data';
 
@@ -29,7 +29,7 @@ export const POST: RequestHandler = async ({ params, request, platform }) => {
 		const { data: prior, error: pErr } = await db
 			.from('relay_sessions')
 			.select('status')
-			.eq('tenant_id', caller.tenantId)
+			.eq('membership_id', caller.membershipId)
 			.eq('run_id', runId)
 			.maybeSingle();
 		if (pErr) return apiError(500, pErr.message);
@@ -38,7 +38,6 @@ export const POST: RequestHandler = async ({ params, request, platform }) => {
 			.from('relay_sessions')
 			.upsert(
 				{
-					tenant_id: caller.tenantId,
 					membership_id: caller.membershipId,
 					run_id: runId,
 					title,
@@ -56,7 +55,7 @@ export const POST: RequestHandler = async ({ params, request, platform }) => {
 					heartbeat_at: str(body.heartbeat_at),
 					updated_at: new Date().toISOString()
 				},
-				{ onConflict: 'tenant_id,run_id' }
+				{ onConflict: 'membership_id,run_id' }
 			)
 			.select('id')
 			.single();
@@ -113,10 +112,12 @@ export const POST: RequestHandler = async ({ params, request, platform }) => {
 export const GET: RequestHandler = async ({ params, request, locals, url }) => {
 	try {
 		const { tenantId } = await resolveTenantAccess(params.origin, params.org, request, locals, ACCESS.member);
-		let q = dojoDb()
+		const db = dojoDb();
+		const membershipIds = await membershipIdsForTenant(db, tenantId);
+		let q = db
 			.from('relay_sessions')
 			.select(COLS)
-			.eq('tenant_id', tenantId)
+			.in('membership_id', membershipIds)
 			.order('started_at', { ascending: false });
 		const runId = url.searchParams.get('run_id');
 		if (runId) q = q.eq('run_id', runId);

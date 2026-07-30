@@ -7,7 +7,6 @@ create table if not exists dojo.relay_inbox (
 , seq           bigint                       not null default nextval('dojo.relay_inbox_seq')
 , session_id    uuid                         not null references dojo.relay_sessions(id) on delete cascade
 , segment_id    uuid                         references dojo.relay_segments(id) on delete cascade
-, tenant_id     uuid                         not null references dojo.tenants(id)
 , membership_id uuid                         not null references dojo.memberships(id)
 , kind          dojo.relay_inbox_kind        not null
 , direction     dojo.relay_message_direction not null
