@@ -73,8 +73,7 @@ export const AUTH_METHODS: readonly string[] = ['sso', 'github_oauth', 'device_c
 
 const ATTRIBUTION_LABELS: Record<string, string> = {
 	named: 'Named',
-	anonymous: 'Anonymous',
-	dereferenced: 'Dereferenced'
+	anonymous: 'Anonymous'
 };
 
 /** Human label for a policy attribution mode. */
@@ -82,13 +81,14 @@ export function attributionLabel(mode: string): string {
 	return ATTRIBUTION_LABELS[mode] ?? titleize(mode);
 }
 
-/** Token tone for an attribution mode (dereferenced reads as the accent guard). */
+/** Token tone for an attribution mode (anonymous reads as the accent/privacy mark). */
 export function attributionToneClass(mode: string): string {
-	return mode === 'dereferenced' ? 'text-accent' : 'text-ink-soft';
+	return mode === 'anonymous' ? 'text-accent' : 'text-ink-soft';
 }
 
-/** The three selectable attribution modes (for a policy picker). */
-export const ATTRIBUTION_MODES: readonly string[] = ['named', 'anonymous', 'dereferenced'] as const;
+/** The two selectable attribution modes (for a policy picker). Source-dereference
+ * is always-on and not a mode. */
+export const ATTRIBUTION_MODES: readonly string[] = ['named', 'anonymous'] as const;
 
 /** A retention window in days => compact label (`—` for indefinite/null). */
 export function retentionLabel(days: number | null): string {

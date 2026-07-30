@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-	auditPasses,
 	bindingsSummary,
 	engagementStatusLabel,
 	engagementStatusToneClass,
@@ -8,13 +7,10 @@ import {
 	incidentStatusToneClass,
 	isIncidentOpen,
 	isSlaBreached,
-	nonDereferencedCount,
 	projectBindings,
 	severityLabel,
 	severityRank,
 	severityToneClass,
-	stripStatusLabel,
-	stripStatusToneClass,
 	COMPLIANCE_COLUMNS
 } from '$lib/client-view';
 
@@ -117,32 +113,6 @@ describe('incident status + open/SLA', () => {
 	});
 });
 
-describe('artifact audit strip gate (non_dereferenced == 0)', () => {
-	it('counts non-dereferenced rows as the red-fail count', () => {
-		const rows = [
-			{ dereferenced: true },
-			{ dereferenced: false },
-			{ dereferenced: true },
-			{ dereferenced: false }
-		];
-		expect(nonDereferencedCount(rows)).toBe(2);
-	});
-
-	it('passes only when every row is dereferenced (spec: non_dereferenced == 0)', () => {
-		expect(auditPasses([{ dereferenced: true }, { dereferenced: true }])).toBe(true);
-		expect(auditPasses([])).toBe(true);
-		// a single non-dereferenced row fails the gate
-		expect(auditPasses([{ dereferenced: true }, { dereferenced: false }])).toBe(false);
-	});
-
-	it('labels + tones a stripped row vs a non-dereferenced red-fail', () => {
-		expect(stripStatusLabel(true)).toBe('Stripped');
-		expect(stripStatusToneClass(true)).toBe('text-success');
-		expect(stripStatusLabel(false)).toBe('Source not dropped');
-		expect(stripStatusToneClass(false)).toBe('text-danger');
-	});
-});
-
 describe('compliance export columns are the source-ref-free subset', () => {
 	it('mirrors the backend COMPLIANCE_COLUMNS in order and never names a source ref', () => {
 		expect([...COMPLIANCE_COLUMNS]).toEqual([
@@ -151,7 +121,6 @@ describe('compliance export columns are the source-ref-free subset', () => {
 			'client',
 			'kind',
 			'title',
-			'dereferenced',
 			'status',
 			'published_at',
 			'created_at'
