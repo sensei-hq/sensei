@@ -42,7 +42,7 @@ Kanji is 群 — *collective*.
   `dojo.*` schema.
 - **Opt-in** — the user must explicitly enable "contribute to
   the collective" in Preferences → Sharing. Default off.
-- Anonymisation is **stricter than a client-Dōjō dereference**:
+- Anonymisation is **stricter than the baseline always-on dereference**:
   - Source references stripped.
   - Project names replaced with a project-shape descriptor
     (`{stack: [rust], size: medium, kind: web-service}`) so the
