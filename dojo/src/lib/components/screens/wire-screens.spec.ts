@@ -20,7 +20,8 @@ const NOW = new Date('2026-07-23T12:00:00Z');
 
 const wireEngagement: Engagement = {
 	id: 'e1',
-	client: 'Globex',
+	client_name: 'Globex',
+	client_tenant_id: null,
 	description: null,
 	project_bindings: [{ project_id: 'p1', name: 'globex-portal' }],
 	policy_overrides: {},

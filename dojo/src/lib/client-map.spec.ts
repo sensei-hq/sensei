@@ -9,7 +9,8 @@ const NOW = new Date('2026-07-23T12:00:00Z');
 function engagement(over: Partial<Engagement> = {}): Engagement {
 	return {
 		id: 'e1',
-		client: 'Globex',
+		client_name: 'Globex',
+		client_tenant_id: null,
 		description: 'portal + billing',
 		project_bindings: [{ project_id: 'p1', name: 'globex-portal' }, { project_id: 'p2', name: 'billing' }],
 		policy_overrides: {},
@@ -59,7 +60,7 @@ describe('toKitEngagement / toKitEngagements', () => {
 	});
 
 	it('toKitEngagements preserves order', () => {
-		const rows = toKitEngagements([engagement({ id: 'a', client: 'A' }), engagement({ id: 'b', client: 'B' })], NOW);
+		const rows = toKitEngagements([engagement({ id: 'a', client_name: 'A' }), engagement({ id: 'b', client_name: 'B' })], NOW);
 		expect(rows.map((r) => r.client)).toEqual(['A', 'B']);
 	});
 });

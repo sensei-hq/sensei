@@ -41,7 +41,10 @@ export type EngagementStatus = 'active' | 'ended';
 /** One engagement row — `store.list_engagements` (store.rs:1139). */
 export interface Engagement {
 	id: string;
-	client: string;
+	/** FK to the client's own `dojo.tenants` row, or null when the client isn't a
+	 *  known tenant (Rule C: `client` split into `client_tenant_id` + `client_name`). */
+	client_tenant_id: string | null;
+	client_name: string;
 	description: string | null;
 	/** jsonb array of `{ project_id, name }` bindings (defaults to `[]`). */
 	project_bindings: unknown;
@@ -114,9 +117,11 @@ export interface ComplianceRow {
 
 // ── request bodies (mirror the api.rs Deserialize structs) ───────────────────
 
-/** `POST …/engagements` body — `NewEngagement` (api.rs:1004). `client` required. */
+/** `POST …/engagements` body — `client_name` required, `client_tenant_id` optional
+ *  (Rule C: `client` split). */
 export interface NewEngagementBody {
-	client: string;
+	client_name: string;
+	client_tenant_id?: string | null;
 	description?: string;
 	project_bindings?: unknown;
 	policy_overrides?: unknown;

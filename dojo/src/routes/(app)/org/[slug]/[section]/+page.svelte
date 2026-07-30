@@ -80,7 +80,7 @@
 	const removeIncident = (i: KitIncident) => act(() => deleteIncident(tk(), i.id, opts()));
 
 	// Lead — engagement new / close / delete.
-	const newEngagement = (client: string) => act(() => createEngagement(tk(), { client }, opts()));
+	const newEngagement = (clientName: string) => act(() => createEngagement(tk(), { client_name: clientName }, opts()));
 	const closeEngagement = (e: KitEngagement) => act(() => updateEngagement(tk(), e.id, { status: 'ended' }, opts()));
 	const removeEngagement = (e: KitEngagement) => act(() => deleteEngagement(tk(), e.id, opts()));
 </script>
