@@ -191,7 +191,7 @@ only, **todo** = not started.
 | 03 Observatory | [screen/observatory-traceability.md](screen/observatory-traceability.md) | **draft** | Doc-drift list + Expected-vs-Actual diff |
 | 03 Observatory | [screen/observatory-consolidation.md](screen/observatory-consolidation.md) | **draft** | Merge similar memories/patterns/rules |
 | 03 Observatory | [screen/observatory-logs.md](screen/observatory-logs.md) | **draft** | Operator surface + scheduled-task strip |
-| 03 Observatory | [screen/observatory-share-review.md](screen/observatory-share-review.md) | **draft** | Batch review upstream — client dereference locked |
+| 03 Observatory | [screen/observatory-share-review.md](screen/observatory-share-review.md) | **draft** | Batch review upstream — client credit locked to anonymous |
 | 03 Observatory | [screen/observatory-dojo-connections.md](screen/observatory-dojo-connections.md) | **draft** | Memberships + SSO/OAuth/device-code |
 | 03 Observatory | [screen/observatory-dojo-sharing.md](screen/observatory-dojo-sharing.md) | **draft** | Per-membership sharing overrides |
 | 04 Project window | [screen/project-overview.md](screen/project-overview.md) | **draft** | |
