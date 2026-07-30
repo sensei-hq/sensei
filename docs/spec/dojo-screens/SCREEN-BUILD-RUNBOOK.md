@@ -1,108 +1,110 @@
 # Dōjō screen-build runbook
 
-> What to check when building or reviewing a dōjō screen against its mockup. Distilled
-> from the inbox rebuild — every item here is a mistake we actually made and fixed. Read
-> it before starting a screen and use it as the pre-commit checklist. Canonical styling
+> How to build a dōjō screen against its mockup WITHOUT the cycles we hit on the inbox.
+> Two parts: **(A)** the design-system baseline is configured **once** — you inherit it, you
+> don't re-tune it per screen; **(B)** what to actually do for each screen. Canonical styling
 > rules live in [`../../architecture/frontend-svelte-guidelines.md`](../../architecture/frontend-svelte-guidelines.md)
 > and [`../../mockups/Sensei/CLAUDE.md`](../../mockups/Sensei/CLAUDE.md); this is the
-> operational "how not to get it wrong" layer.
+> operational "how not to repeat the inbox cycles" layer.
 
-## 0. Render the mockup and compare in the browser — don't infer from JSX
+## The #1 discipline: verify by MEASUREMENT, not by eye
 
-- Bring the mockup up **rendered** (a harness that mounts the real component, e.g.
-  `docs/mockups/Sensei/_inbox-harness.html` served over http) and the app side-by-side in
-  two tabs. Eyeballing the `.jsx` is not comparing.
-- For every disagreement, read the **computed** value with DevTools / `browser_evaluate`
-  (`getComputedStyle`) — `font-size`, `font-weight`, `font-family`, `color`,
-  `border-radius`, `padding`/`gap`, `background`. Screenshots alone hide sub-pixel and
-  token drift. Several "fixes" this cycle were wrong because they were guessed from a
-  screenshot, not measured.
-- The mockup preview must load the **real fonts** or it silently falls back to system-ui
-  and reads thinner than the app — an invalid comparison. Force-load if the CSS
-  `@font-face` doesn't register (the harness uses a FontFace-API injection).
+The lesson that cost the most cycles on the inbox: **you cannot tell these differences by
+looking** — 0-spacing vs proper padding, an 8px vs a 12px gap, Inter vs system-ui at the same
+weight, a solid vs a 12%-alpha `accent-soft`, `rounded`(6) vs `rounded-lg`(10). Nearly every
+fix guessed from a screenshot this cycle was **wrong**; the only reliable check was reading the
+numbers. So the loop for every screen is:
 
-## 1. Restart the dev server after config edits
+1. Render the mockup **and** the app **in parallel** — the mockup in a harness that mounts the
+   real component (e.g. `docs/mockups/Sensei/_inbox-harness.html` served over http) in one
+   browser tab, the app in another. Eyeballing the `.jsx` is not comparing.
+2. Drive both with **Playwright** and read the **computed** values via `browser_evaluate` +
+   `getComputedStyle` — `font-size`/`weight`/`family`, `color`, `border-radius`, `padding`/`gap`,
+   `background`, and the `--token` vars. **Diff the numbers**, don't compare screenshots
+   (screenshots hide sub-pixel + token drift, and the spacing/weight diffs are invisible by eye).
+3. Fix at the source, re-measure, repeat until the numbers match.
 
-`rokkit.config.js` and `uno.config.js` are read **once at dev-server startup** — Vite does
-**not** hot-reload them. After editing icons/skin/theme/spacing there, **restart** `vite dev`
-or the change won't show (this is why the icons stayed linear for a whole pass). CSS files
-(`app.css`, `tokens.css`) and `.svelte` files DO hot-reload — no restart.
+Gotcha: the mockup harness must actually **load the fonts** (Inter), or it silently falls back
+to system-ui and reads thinner than the app — an invalid comparison (the harness force-loads
+Inter via the FontFace API).
 
-## 2. Spacing — uno utilities, never `var(--space-N)`
+## Part A — Design-system baseline (configured ONCE — inherit it, don't re-tune per screen)
 
-- Use `p-*` / `px-*` / `py-*` / `gap-*` / `m-*`. **Do not** write `style="padding: var(--space-3)"`
-  in a component: the dōjō never defined the `--space-*` scale, so it collapses to `0`
-  (a `--space-*` shim exists in `tokens.css` only to un-break already-ported kit).
-- uno's scale is `N × 4px`; the mockup's `--space` **jumps** at 5+ (`5`=24, `6`=32, `7`=48).
-  Map by **value ÷ 4**: mockup `space-3`(12)→`p-3`, `space-5`(24)→`p-6`, `space-6`(32)→`p-8`.
-- 4px grid only. "If you need 18px, use 16 or 20."
+These are set for the whole dōjō by the inbox build. A new screen **inherits** them by using the
+named tokens, the `text-*`/`p-*`/`gap-*` utilities, and rokkit components. **Do not re-pick
+colors, fonts, spacing, or radii per screen** — if a value looks off it's a *usage* bug (wrong
+utility/token), not a config gap. Touch these files only if the **design system itself** changes
+— and then restart vite + re-verify **once, globally**, never per screen.
 
-## 3. Radii — pick the right stop, it's usage not override
+| Concern | Configured in | Settled value |
+|---|---|---|
+| Colors / tokens | `rokkit.config.js` `overrides:` + `dojo/src/lib/tokens.css` `:root` | 24 named tokens (paper/ink/accent/…), dual-palette kami/sumi → dark-mode; `--accent-soft` overridden to the mockup's **alpha** accent (light **and** `[data-mode='dark']`) |
+| Fonts | `tokens.css` `@import` + `app.css` | Fraunces (display) · Inter (ui) · JetBrains (mono); weight scale shifted **one step lighter** (`font-normal`=300, `medium`=400, `semibold`=500) |
+| Type scale | `uno.config.js` `theme.fontSize` | 8 stops `text-xs` 11 … `text-4xl` |
+| Spacing | `uno.config.js` (+ a `--space-*` shim in `tokens.css` for the ported kit) | `p-*`/`gap-*` = N×4px; the `--space-*` var scale exists **only** so already-ported kit doesn't render 0 |
+| Radii | `uno.config.js` `theme.borderRadius` | `rounded-sm`=4 · `rounded`=6 · `rounded-lg`=10 · `rounded-full` |
+| Icons | `rokkit.config.js` `icons.overrides` | Solar **bold-duotone** |
+| Rokkit component look | `app.css` `[data-*]` overrides | e.g. `Toggle` restyled to the mockup pill strip |
 
-`rounded-sm`=4 · `rounded`=6 · `rounded-lg`=10 · `rounded-full`. These are correctly defined
-in `uno.config.js`; nothing is overridden. The mockup uses **6px** for pills/switcher/nav
-item/search and **10px** for cards. Measure the element and use the matching stop — don't
-default everything to `rounded-lg`.
+**`rokkit.config.js` and `uno.config.js` are read at dev-server startup — NOT hot-reloaded. If
+you ever change them, RESTART `vite dev`** (CSS files + `.svelte` DO hot-reload — no restart).
 
-## 4. Color — tokens only, tuned in `rokkit.config.js`
+## Part B — Per screen
 
-- Never a hex / `oklch()` / `rgba()` in a component. Reach for a named token
-  (`bg-paper`, `text-ink`, `bg-accent-soft`, `border-paper-edge`, …). rokkit owns the
-  palette via `rokkit.config.js` `overrides:` (dual-palette kami/sumi → dark-mode blocks).
-- Verify the **computed** `--token` value equals the mockup's `tokens.css` value (they must
-  match). Where rokkit's derived token diverges from the mockup — e.g. `--accent-soft` is a
-  **translucent alpha accent** in the mockup (`oklch(0.58 0.15 35 / 0.12)`), not rokkit's
-  solid pale derivative — override the token in `tokens.css` `:root` **and** a
-  `[data-mode='dark']` block, copying the mockup's light + dark values so it flips correctly.
+### B1. Use the tokens + utilities the baseline gives you (don't re-tune)
+- **Color** → named tokens only (`bg-paper`, `text-ink`, `bg-accent-soft`, `border-paper-edge`);
+  never a hex/`oklch()`/`rgba()` in a component.
+- **Spacing** → `p-*`/`gap-*` utilities; **never** `style="padding: var(--space-3)"` in new code
+  (that scale is a compat shim, not for authoring).
+- **Radii** → measure the mock element + pick the stop (`rounded`=6 for pills/nav/search,
+  `rounded-lg`=10 for cards) — don't default everything to `rounded-lg`.
+- **Type** → `text-*` + the named roles (`zs-h1/h2/h3`, `zs-eyebrow`, `zs-body`, `zs-meta`): a
+  detail title is `zs-h3`(17), a section title `text-xl`(22), an eyebrow `text-xs`(11).
+- The point is *using* the baseline correctly, not re-configuring it.
 
-## 5. Components — use rokkit, don't hand-roll
+### B2. Reach for rokkit components — don't hand-roll (our biggest cycle)
+`@rokkit/ui`: `Toggle` (tabs / segmented switch), `Button`, `List`, `Tree`, `Select`,
+`MultiSelect`, `Menu`, `Table`, `Range`, `SearchFilter`, `ChatComposer`. (No `Input`/`TextField`
+— a themed native `<input>` is fine.) Rich cards (dot · pips · why-line) stay **custom**.
+**Each spec's Build-notes maps this screen's controls to the specific component** so no one
+hand-rolls a tab strip / dropdown / list and then re-does it.
 
-`@rokkit/ui` ships `Toggle` (tabs / segmented mode switch), `Button`, `List`, `Tree`,
-`Select`, `MultiSelect`, `Menu`, `Table`, `SearchFilter`, `ChatComposer`, … Reach for these
-before building a bespoke control (there is **no** `Input`/`TextField` — a themed native
-`<input>` is fine, mirroring the mockup's `zs-input`). Customize a rokkit component's look
-with a global CSS override on its **data-attributes** (e.g.
-`[data-toggle][data-toggle-variant='group'] [data-toggle-option][data-selected='true']`) or
-`rokkit.config.js` — not by rebuilding it.
+### B3. Layout & scroll — panels scroll, headers stick
+The shell content is one scroll area, so a full-height screen scrolls as one page. For a
+header+body (or master-detail) panel: `h-full min-h-0 flex flex-col`, header `shrink-0` (never
+scrolls), body `flex-1 overflow-y-auto`; independent panes each get such a column inside a
+`h-full overflow-hidden` grid.
 
-## 6. Type — 8-stop scale + named roles, never a literal `font-size`
+### B4. State — the three-layer pattern (`sensei:ui-state-pattern`)
+Component (pure, reads state, routes intent back) ← State (`<screen>-state.svelte.ts` singleton:
+data + getters + named methods; realtime lives here) ← Load (`<screen>.ts` **mock-first**,
+body-swapped to a real fetch later without touching component or state). Copy is a 4th layer —
+paraglide `m.*()`, **no inline string literals**.
 
-- `text-xs` 11 · `sm` 13 · `base` 15 · `lg` 17 · `xl` 22 · `2xl` 28 · `3xl` 40 · `4xl`.
-- Match the mockup's **named role**: `zs-h1/h2/h3`, `zs-eyebrow`, `zs-body`, `zs-meta`.
-  E.g. a detail title is `zs-h3` = `text-lg` (17px), a section title is `text-xl` (22px), an
-  eyebrow is `text-xs` (11px). Measure per element — a 22 vs 17 title looks wrong instantly.
-- Fonts: Fraunces (display) · Inter (ui) · JetBrains Mono (mono), from the `tokens.css`
-  `@import`. Weight scale is shifted **one step lighter** app-wide (`font-normal`=300,
-  `font-medium`=400, `font-semibold`=500) via `app.css` — keep new code on the `font-*`
-  utilities so it inherits that.
+### B5. Access axis — user/membership-primary
+Personal `/you/*` surfaces are **user-wide across all memberships** (fan-out / `owns_membership`),
+not single-tenant — see [`../../architecture/entity-access-model.md`](../../architecture/entity-access-model.md).
+Honor universal source-dereference on anything crossing the boundary.
 
-## 7. State — the three-layer pattern (`sensei:ui-state-pattern`)
+### B6. Tests — assert the CONTRACT the next layer needs, not the current output
+Every layer gets a test, but the test must assert what the **consumer** requires, not what the
+code happens to emit today:
+- **State/view** (`-state`/`-view` modules) — call methods, assert state values (no DOM).
+- **Components** — render-spec with a mock prop (asserts the mockup wiring: labels, pips, why-line).
+- **Load** — mock → assert the shape.
+- **Mappers / cross-boundary seams** — assert the shape the DOWNSTREAM layer consumes.
 
-Component (pure, reads state, routes intent back) ← State (`<screen>-state.svelte.ts`
-singleton: data + getters + named methods; realtime lives here) ← Load
-(`<screen>.ts`: **mock-first**, hand-crafted data exercising empty/edge/error, body-swapped
-to a real fetch later without touching component or state). Copy is a 4th layer —
-paraglide `m.*()` from `$lib/paraglide/messages`, **no inline string literals**.
+> **The false-green trap (learned this cycle).** The daemon's plan→segment projection emitted
+> `parent_id = null` (flat), and its unit test *asserted* `all(parent_id.is_none())` — it codified
+> the bug as intended, so it stayed green while the UI outline was broken, and only a **visual**
+> check caught it. A test that enshrines the current output is worse than none: it blocks nothing.
+> Write the test against the requirement ("tasks **nest** under their phase") — it fails on the
+> flat impl and forces the fix *before* any visual verification. And when data crosses a boundary
+> (daemon → federation → UI), test the SEAM: the producer's output must carry what the consumer
+> needs (here: the parent linkage the dōjō mapper nests on) — two isolated green tests with
+> mismatched contracts is exactly how this slipped through.
 
-## 8. Layout & scroll — panels scroll, headers stick
-
-The shell content is a single scroll area, so a full-height screen scrolls as one page.
-For a master-detail (or any header+body) panel: make it `h-full min-h-0 flex flex-col`, with
-the header `shrink-0` (never scrolls) and the body `flex-1 overflow-y-auto`. Independent
-panes each get their own such column inside a `h-full overflow-hidden` grid.
-
-## 9. Access axis — user/membership-primary
-
-Personal surfaces (`/you/*`) are **user-wide across all memberships**, not single-tenant —
-see [`../../architecture/entity-access-model.md`](../../architecture/entity-access-model.md).
-The Load layer's real read must honor that (and universal source-dereference on anything
-that crosses the boundary). Don't bake a single `tenantKey` filter into a personal screen.
-
-## 10. Pre-commit gate (zero-errors)
-
-- `bun run check` → **0 errors / 0 warnings**.
-- `bun run test` → green (unit-test the `-view`/`-state` modules; render-spec each component
-  with a mock prop; Load mock → shape).
-- Svelte MCP autofixer on **every** edited `.svelte` file.
-- Dev-env notes: `vite dev` needs `.env.local` (it doesn't read `.dev.vars`); browse via
-  `http://localhost:…`, not `127.0.0.1` (IPv6 binding refuses the latter).
+### B7. Pre-commit gate (zero-errors)
+`bun run check` → **0/0** · `bun run test` → green · Svelte MCP autofixer on **every** edited
+`.svelte`. Dev-env: `vite dev` needs `.env.local` (not `.dev.vars`); browse `http://localhost:…`,
+not `127.0.0.1` (IPv6).

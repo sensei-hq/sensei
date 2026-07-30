@@ -53,9 +53,6 @@ Live: `[section]/+page.ts` → `{ projects: [] }` → `ScrProjects.svelte` (`sho
 3. If federated: what's the dōjō-visible project identity under source-dereference — a stable dereferenced slug (so rows are clickable/consistent) or fully opaque? [JT] federate user's active projects
 4. `KitProject.id` used for the drill-in URL — what is the stable id when the source is `relay_sessions` (no project PK)? A dereferenced project slug? [jt] a project slug
 
-
-[JT] : Components, state and types are missing from this spec
-
 ## Components & state (three-layer, per `sensei:ui-state-pattern`)
 
 **DB** `relay_sessions` grouped by `project_slug` (once persisted — see `inbox.md` Gap 4) + published active-user repos; no dōjō projects table, read-only · **API** Load `loadProjects` in `projects.ts` (today `→ []`); would-be `GET /v1/…/projects` (user-wide, `owns_membership`) · **UI** `projectsState` + `ProjectsList`/`ProjectCard` over the `Project` domain type.

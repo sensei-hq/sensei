@@ -72,19 +72,19 @@
         <DesignCanvas initialZoom={0.42}>
 
           <DCSection id="flow" title="Wired flow — one app, work-first"
-            subtitle="Sign in and you land on YOUR work (projects in flight · a needs-you band · live runs) — a dōjō is optional. The top-bar org switcher steps you into a dōjō's own context (nav + accent rule change; role decided by membership: Acme → admin · Globex → lead · Initech → maintainer). Click any project to preview which ladder levels built its constitution. Two planes throughout: governance (Constitution · Rule packs · ladder) and relay (watch · approve · decide · chat). The boards below drop you at fixed points of this same wired app.">
+            subtitle="Sign in and you land on your Inbox — every in-flight session in one list, sorted by what waits on you. Approve, decide and chat are not surfaces; they are answered inside a session. The top-bar org switcher steps you into a dōjō's own context (nav + accent rule change; role decided by membership: Acme → admin · Globex → lead · Initech → maintainer). Click any project to preview which ladder levels built its constitution. The boards below drop you at fixed points of this same wired app.">
             <DCArtboard id="flow-desktop" label="★ Wired · desktop — sign in, then click the switcher, nav, and project rows" width={W} height={H}>
               <A label="Wired desktop" start="signin" />
             </DCArtboard>
             <DCArtboard id="flow-mobile" label="★ Wired · mobile — sign in, then tap the tabs and cards" width={390} height={844}>
-              <M label="Wired mobile" start="signin" startTab="work" />
+              <M label="Wired mobile" start="signin" startTab="inbox" />
             </DCArtboard>
           </DCSection>
 
           <DCSection id="personal" title="Personal screens — the You context"
-            subtitle="Your own surfaces, composed only from the kit. (1) your work · (2) your constitution + rule packs · (3) a project's effective-constitution preview · (4) relay — watch / approve / decide / chat.">
-            <DCArtboard id="p-signin" label="0 · Sign in — lands on your work" width={W} height={H}><A label="Sign in" start="signin" /></DCArtboard>
-            <DCArtboard id="p-work" label="1 · Your work" width={W} height={H}><A label="Your work" startNav="work" /></DCArtboard>
+            subtitle="Your own surfaces, composed only from the kit. (1) the inbox — one row per in-flight session, needs-you first · (2) your constitution + rule packs · (3) a project's effective-constitution preview · (4) a session detail, where gates and decisions are answered in place.">
+            <DCArtboard id="p-signin" label="0 · Sign in — lands on the inbox" width={W} height={H}><A label="Sign in" start="signin" /></DCArtboard>
+            <DCArtboard id="p-inbox" label="1 · Inbox — every in-flight session, needs-you first" width={W} height={H}><A label="Inbox" startNav="inbox" /></DCArtboard>
             <DCArtboard id="p-projects" label="1b · Your projects (list)" width={W} height={H}><A label="Your projects" startNav="projects" /></DCArtboard>
             <DCArtboard id="p-dojos" label="1c · My dōjōs — register / view memberships" width={W} height={H}><A label="My dōjōs" startNav="dojos" /></DCArtboard>
             <DCArtboard id="p-contrib" label="1d · Contributions — shared upstream + approved for you" width={W} height={H}><A label="Contributions" startNav="contributions" /></DCArtboard>
@@ -92,13 +92,13 @@
             <DCArtboard id="p-packs" label="2b · Rule packs (adopt)" width={W} height={H}><A label="Rule packs" startNav="packs" /></DCArtboard>
             <DCArtboard id="p-preview" label="3 · Project preview · company (lumen-auth)" width={W} height={H}><A label="Preview company" startNav="projects" startProject={authProj} /></DCArtboard>
             <DCArtboard id="p-preview-client" label="3b · Project preview · client (globex-portal) — client rung on" width={W} height={H}><A label="Preview client" startNav="projects" startProject={clientProj} /></DCArtboard>
-            <DCArtboard id="p-approve" label="4a · Relay · approve" width={W} height={H}><A label="Approve" startNav="approve" /></DCArtboard>
-            <DCArtboard id="p-decide" label="4b · Relay · decide" width={W} height={H}><A label="Decide" startNav="decide" /></DCArtboard>
-            <DCArtboard id="p-chat" label="4c · Relay · chat" width={W} height={H}><A label="Chat" startNav="chat" /></DCArtboard>
+            <DCArtboard id="p-run-gate" label="4 · Session detail — plan graph + the gate answered in place" width={W} height={H}><A label="Session · gate" startNav="inbox" startRun="s-2891" /></DCArtboard>
+            <DCArtboard id="p-run-decide" label="4a · Session detail — a rule decision, answered in the session" width={W} height={H}><A label="Session · decide" startNav="inbox" startRun="s-2884" /></DCArtboard>
+            <DCArtboard id="p-run-stalled" label="4b · Session detail — stalled, no heartbeat" width={W} height={H}><A label="Session · stalled" startNav="inbox" startRun="s-2882" /></DCArtboard>
           </DCSection>
 
           <DCSection id="org" title="Org screens — /org/[slug]"
-            subtitle="Step into a dōjō and the shell keeps its shape; nav + accent rule change. (5) org home = projects in jurisdiction · (6) constitution ladder, authored per scope · (7) project → effective-constitution preview · (8) role surfaces — members/roles/policies (admin).">
+            subtitle="Step into a dōjō and the shell keeps its shape; nav + accent rule change. The rail is six destinations at most — Home · Constitution · Projects, then one per zone of responsibility: Governance · Clients · Admin (role-gated, additive). Everything that used to be its own rail item is a tab inside its zone, so nesting stops at one level. The boards below deep-link straight to a tab.">
             <DCArtboard id="o-home" label="5 · Org home · Acme (admin)" width={W} height={H}><A label="Org home" start="acme" startNav="home" /></DCArtboard>
             <DCArtboard id="o-ladder" label="6 · Constitution ladder · author per scope" width={W} height={H}><A label="Org ladder" start="acme" startNav="ladder" /></DCArtboard>
             <DCArtboard id="o-preview" label="7 · Project → effective constitution" width={W} height={H}><A label="Org preview" start="acme" startNav="projects" startProject={authProj} /></DCArtboard>
@@ -119,9 +119,9 @@
 
           <DCSection id="mobile" title="Mobile — both planes, every context"
             subtitle="The same screens folded onto a phone; bottom tabs move between surfaces, a project card drills into the preview with a back gesture.">
-            <DCArtboard id="m-work" label="Your work" width={390} height={844}><M label="m · work" startTab="work" /></DCArtboard>
-            <DCArtboard id="m-decide" label="Relay · needs (decide)" width={390} height={844}><M label="m · decide" startTab="inbox" /></DCArtboard>
-            <DCArtboard id="m-chat" label="Relay · chat" width={390} height={844}><M label="m · chat" startTab="chat" /></DCArtboard>
+            <DCArtboard id="m-inbox" label="Inbox — needs-you first" width={390} height={844}><M label="m · inbox" startTab="inbox" /></DCArtboard>
+            <DCArtboard id="m-run" label="Session detail — gate answered in place" width={390} height={844}><M label="m · session" startTab="inbox" startRun="s-2891" /></DCArtboard>
+            <DCArtboard id="m-projects" label="Your projects" width={390} height={844}><M label="m · projects" startTab="projects" /></DCArtboard>
             <DCArtboard id="m-org" label="Org home · Acme" width={390} height={844}><M label="m · org" start="acme" startTab="home" /></DCArtboard>
             <DCArtboard id="m-ladder" label="Org · constitution ladder" width={390} height={844}><M label="m · ladder" start="acme" startTab="ladder" /></DCArtboard>
           </DCSection>
