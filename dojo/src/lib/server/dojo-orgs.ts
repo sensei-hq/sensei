@@ -4,6 +4,7 @@
 // (routes/(console)/+layout.server.ts) so the mapping lives in one place and the
 // two surfaces can never drift. Never import from client code — uses the
 // service-role client (dojo-supabase.ts).
+import { error } from '@sveltejs/kit';
 import { dojoDb } from './dojo-supabase';
 import type { DojoOrg, OrgKind } from '$lib/dojo-data';
 
@@ -69,15 +70,15 @@ function firstTenant(row: unknown): TenantRow | null {
 
 /** The Dōjōs a user belongs to (active memberships), as DojoOrg records. */
 export async function listUserOrgs(userId: string): Promise<DojoOrg[]> {
-	const { data, error } = await dojoDb()
+	const { data, error: qErr } = await dojoDb()
 		.from('memberships')
 		.select(`role, tenant:tenants(${TENANT_COLS})`)
 		.eq('user_id', userId)
 		.is('disabled_at', null);
-	if (error) {
-		console.warn('listUserOrgs: memberships query failed —', error.message);
-		return [];
-	}
+	// Fail CLOSED: a memberships-query failure must surface as an error, never a
+	// fabricated empty list — an empty list would silently eject a real member to
+	// the solo/personal landing (via `hasMembership`). See the #109 fabrication audit.
+	if (qErr) throw error(500, 'memberships lookup failed');
 	return (data ?? []).flatMap((row) => {
 		const t = firstTenant(row);
 		return t ? [tenantToOrg(t, (row as { role: string }).role)] : [];
@@ -94,10 +95,10 @@ export async function getUserOrg(userId: string, tenantKey: string): Promise<Doj
 		.select(TENANT_COLS)
 		.eq('key', tenantKey)
 		.maybeSingle();
-	if (te || !tenant) {
-		if (te) console.warn('getUserOrg: tenant query failed —', te.message);
-		return undefined;
-	}
+	// Fail CLOSED on a query error (500); a genuine miss (no error, no row) is a
+	// real "no such tenant / not a member" → undefined, never masked by a failure.
+	if (te) throw error(500, 'tenant lookup failed');
+	if (!tenant) return undefined;
 	const { data: membership, error: me } = await db
 		.from('memberships')
 		.select('role')
@@ -105,9 +106,7 @@ export async function getUserOrg(userId: string, tenantKey: string): Promise<Doj
 		.eq('tenant_id', (tenant as TenantRow).id)
 		.is('disabled_at', null)
 		.maybeSingle();
-	if (me || !membership) {
-		if (me) console.warn('getUserOrg: membership query failed —', me.message);
-		return undefined;
-	}
+	if (me) throw error(500, 'membership lookup failed');
+	if (!membership) return undefined;
 	return tenantToOrg(tenant as TenantRow, (membership as { role: string }).role);
 }

@@ -23,6 +23,6 @@ admin + lead consoles.)';
 comment on column dojo.events.actor_id
      is 'user_id of the actor (maintainer/system) that produced the event.';
 comment on column dojo.events.action
-     is 'Event verb (e.g. queued, evaluated, approved, revised, declined, distributed, dereferenced).';
+     is 'Event verb (e.g. queued, evaluated, approved, revised, declined, distributed).';
 comment on column dojo.events.detail
      is 'Structured event context (scope, reason, counts, before/after).';

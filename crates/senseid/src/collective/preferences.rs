@@ -33,8 +33,11 @@ const DEFAULT_DESTINATION: &str = "none";
 /// Default cadence — batching is paused until the user triggers it.
 const DEFAULT_CADENCE: &str = "manual";
 /// Default attribution — the safest mode (source stripped). MUST equal
-/// [`AttributionMode::Dereferenced`]`.as_db_str()` (asserted in tests).
-const DEFAULT_ATTRIBUTION: &str = "dereferenced";
+/// [`AttributionMode::Dereferenced`]`.as_db_str()` (asserted in tests). The
+/// single source of truth for the conservative attribution default, shared with
+/// membership creation (`api::handlers::dojo`) so a new membership never
+/// defaults to the least-private `named`.
+pub(crate) const DEFAULT_ATTRIBUTION: &str = "anonymous";
 /// Default per-category toggle — every category is shareable once a destination
 /// is enabled (`destination = none` already gates all sharing off, so an
 /// all-on default just means "when I do share, share every supported kind").
@@ -186,11 +189,11 @@ mod tests {
         assert_eq!(DESTINATIONS, ["none", "global", "dojo", "both"]);
         assert_eq!(CADENCES, ["manual", "daily", "weekly"]);
         // attribution_default reuses the dojo_protocol AttributionMode values.
-        assert_eq!(attribution_modes(), vec!["named", "anonymous", "dereferenced"]);
+        assert_eq!(attribution_modes(), vec!["named", "anonymous"]);
         // The defaults are themselves valid members of their sets.
         assert!(DESTINATIONS.contains(&DEFAULT_DESTINATION));
         assert!(CADENCES.contains(&DEFAULT_CADENCE));
-        assert_eq!(DEFAULT_ATTRIBUTION, AttributionMode::Dereferenced.as_db_str());
+        assert_eq!(DEFAULT_ATTRIBUTION, AttributionMode::Anonymous.as_db_str());
     }
 
     #[test]
@@ -198,7 +201,7 @@ mod tests {
         let d = CollectivePreferences::default();
         assert_eq!(d.destination, "none");
         assert_eq!(d.cadence, "manual");
-        assert_eq!(d.attribution_default, "dereferenced");
+        assert_eq!(d.attribution_default, "anonymous");
         assert_eq!(d.updated_at, None);
         // Every category is present and on.
         assert_eq!(d.categories.len(), CATEGORIES.len());
@@ -231,7 +234,7 @@ mod tests {
         let p = CollectivePreferences::from_request(&serde_json::json!({})).unwrap();
         assert_eq!(p.destination, "none");
         assert_eq!(p.cadence, "manual");
-        assert_eq!(p.attribution_default, "dereferenced");
+        assert_eq!(p.attribution_default, "anonymous");
         assert_eq!(p.categories.len(), CATEGORIES.len());
     }
 

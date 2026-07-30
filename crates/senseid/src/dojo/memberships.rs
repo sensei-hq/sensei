@@ -148,7 +148,7 @@ impl NewConnection {
         require_member_of(authenticated_via, &AUTH_METHODS, "authenticated_via")?;
         require_member_of(sync_status, &SYNC_STATUSES, "sync_status")?;
         let attribution_default = AttributionMode::from_db_str(attribution_default)
-            .ok_or_else(|| format!("invalid attribution_default: {attribution_default:?} (allowed: named, anonymous, dereferenced)"))?;
+            .ok_or_else(|| format!("invalid attribution_default: {attribution_default:?} (allowed: named, anonymous)"))?;
         Ok(Self {
             membership_id,
             registry_url,
@@ -406,12 +406,12 @@ mod tests {
         let ok = NewConnection::validated(
             id, "http://localhost:7755".into(), "github/acme".into(),
             "http://localhost:7755/github/acme".into(),
-            "client", &["Acme".into(), "acme".into()], "contributor", "device_code", "dereferenced", "authenticating",
+            "client", &["Acme".into(), "acme".into()], "contributor", "device_code", "anonymous", "authenticating",
         );
         assert!(ok.is_ok());
         let c = ok.unwrap();
         assert_eq!(c.kind, MembershipKind::Client);
-        assert_eq!(c.attribution_default, AttributionMode::Dereferenced);
+        assert_eq!(c.attribution_default, AttributionMode::Anonymous);
         assert_eq!(c.org_slugs, vec!["acme".to_string()], "org_slugs normalised (lowercased + deduped)");
 
         // Each bad enum field is rejected with a field-named error.

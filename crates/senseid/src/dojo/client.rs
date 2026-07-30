@@ -520,7 +520,7 @@ mod tests {
             org_slugs: vec![],
             role: "contributor".into(),
             authenticated_via: "device_code".into(),
-            attribution_default: "dereferenced".into(),
+            attribution_default: "anonymous".into(),
             credential_ref: credential_ref.into(),
             sync_status: "authenticating".into(),
             last_seq: 0,
@@ -591,9 +591,7 @@ mod tests {
                     author: None,
                     org: None,
                     anonymous_id: Some("anon-1".into()),
-                    dereferenced: true,
                 },
-                dereferenced: true,
                 contributed_by: None,
                 published_at: None,
             };
@@ -871,6 +869,7 @@ mod tests {
             RelaySegment {
                 id: None,
                 parent_id: None,
+                parent_seq: None,
                 seq: 0,
                 title: "Phase 1".into(),
                 summary: Some("vertical slice".into()),
@@ -887,6 +886,7 @@ mod tests {
             RelaySegment {
                 id: None,
                 parent_id: None,
+                parent_seq: None,
                 seq: 1,
                 title: "Gate".into(),
                 summary: None,

@@ -73,7 +73,7 @@ export interface Identity {
 }
 
 /** An attribution mode — `dojo.attribution_mode` (api.rs `is_attribution_mode`). */
-export type AttributionMode = 'named' | 'anonymous' | 'dereferenced';
+export type AttributionMode = 'named' | 'anonymous';
 
 /** One policy row — `store.list_policies` (store.rs:904). */
 export interface Policy {

@@ -9,19 +9,10 @@ use crate::api::state::AppState;
 
 // Re-use TagBody from workspace
 use super::workspace::TagBody;
-
-/// Resolve `id` as either a project UUID or a project name → project UUID.
-/// Fixes the `get_ftr_daily` / `get_quality_signals` / `get_hotspots` MCP
-/// tools returning empty when the caller passes a project *name* (the
-/// natural shape for AI assistants) — they used to only parse as UUID and
-/// silently 400.
-pub(crate) async fn resolve_project_uuid(state: &AppState, id: &str) -> Option<uuid::Uuid> {
-    if let Ok(uuid) = uuid::Uuid::parse_str(id) {
-        return Some(uuid);
-    }
-    let row = state.pg.get_project_by_name(id).await.ok().flatten()?;
-    crate::api::util::json_uuid(&row["id"])
-}
+// One canonical name-or-uuid resolver (was duplicated here — see the #109 audit).
+// It returns Err(500) on a DB error and Ok(None) on a genuine miss, so callers
+// distinguish an outage from an unknown project instead of masking both as 404.
+use crate::api::util::resolve_project_uuid;
 
 // ── Solutions CRUD ──────────────────────────────────────────────────────────
 
@@ -59,10 +50,15 @@ pub(crate) async fn list_solutions(
         let project_id = project["id"].as_str()
             .and_then(|s| uuid::Uuid::parse_str(s).ok());
         if let Some(pid) = project_id {
+            // Fail closed: a folder-enrichment read error is a 500, not a
+            // silently folder-less project (which reads as "this project has no
+            // repos"). A genuinely empty result stays an empty array.
             let folders = if compact {
-                state.pg.list_root_folders_by_project(&pid).await.unwrap_or_default()
+                state.pg.list_root_folders_by_project(&pid).await
+                    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
             } else {
-                state.pg.list_folders_by_project(&pid).await.unwrap_or_default()
+                state.pg.list_folders_by_project(&pid).await
+                    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
             };
             project["folders"] = serde_json::Value::Array(folders);
         } else {
@@ -136,7 +132,7 @@ pub(crate) async fn update_solution(
 
     // Name-or-uuid: resolve so `PUT /api/projects/sensei` works, not only a uuid
     // (#100). 404 when no such project.
-    let project_id = resolve_project_uuid(&state, &id).await
+    let project_id = resolve_project_uuid(&state, &id).await?
         .ok_or(StatusCode::NOT_FOUND)?;
 
     // Validate the only enum-backed field (maturity) up front → 400, not 500.
@@ -173,7 +169,7 @@ pub(crate) async fn delete_solution(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let project_id = resolve_project_uuid(&state, &id).await
+    let project_id = resolve_project_uuid(&state, &id).await?
         .ok_or(StatusCode::NOT_FOUND)?;
     state.pg.delete_project(&project_id).await
         .map(|_| Json(serde_json::json!({"ok": true})))
@@ -248,7 +244,7 @@ pub(crate) async fn add_solution_repo(
     Path(id): Path<String>,
     Json(body): Json<CreateProjectRepo>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let project_id = resolve_project_uuid(&state, &id).await
+    let project_id = resolve_project_uuid(&state, &id).await?
         .ok_or(StatusCode::NOT_FOUND)?;
 
     // Look up the folder by name (old string repo_id)
@@ -307,7 +303,7 @@ pub(crate) async fn analyze_solution(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let project_id = resolve_project_uuid(&state, &id).await
+    let project_id = resolve_project_uuid(&state, &id).await?
         .ok_or(StatusCode::NOT_FOUND)?;
     let project = state.pg.get_project(&project_id).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
@@ -350,8 +346,10 @@ pub(crate) async fn project_summary(
         return Err(StatusCode::NOT_FOUND);
     }
 
-    // Derive counts across all folders in scope.
-    let counts = state.pg.count_nodes_by_kind_scoped(&ids).await.unwrap_or_default();
+    // Derive counts across all folders in scope. A DB error is a 500 — never
+    // masked as 0 counts (which would read as "this project has no code").
+    let counts = state.pg.count_nodes_by_kind_scoped(&ids).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let fn_count = counts.get("function").copied().unwrap_or(0)
         + counts.get("method").copied().unwrap_or(0);
     let type_count = counts.get("class").copied().unwrap_or(0)
@@ -359,21 +357,37 @@ pub(crate) async fn project_summary(
         + counts.get("interface").copied().unwrap_or(0)
         + counts.get("enum").copied().unwrap_or(0)
         + counts.get("type").copied().unwrap_or(0);
-    let edge_count = state.pg.count_edges_scoped(&ids).await.unwrap_or(0);
+    let edge_count = state.pg.count_edges_scoped(&ids).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let pkg_count = counts.get("package").copied().unwrap_or(0);
     let mod_count = counts.get("module").copied().unwrap_or(0);
 
     // Resolve name/path: prefer project row if repo_id is a project name/UUID,
     // else fall back to the first (root) folder row.
+    // Resolve the REAL project/folder row. `repo_id` may be a project name, a
+    // project UUID, or a repo name. When it's a UUID the two name lookups miss, so
+    // look the project up by id. NEVER fabricate: no returning the UUID as the
+    // name, no hardcoded status — if nothing resolves (the scope came from an
+    // orphaned folder set), 404.
+    let project = match state.pg.get_project_by_name(&repo_id).await {
+        Ok(Some(p)) => Some(p),
+        Ok(None) => match uuid::Uuid::parse_str(&repo_id) {
+            Ok(uuid) => state.pg.get_project(&uuid).await
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+            Err(_) => None,
+        },
+        Err(_) => return Err(StatusCode::INTERNAL_SERVER_ERROR),
+    };
     let (name, path, stack, libs, tags, status, indexed_at) =
-        if let Ok(Some(proj)) = state.pg.get_project_by_name(&repo_id).await {
+        if let Some(proj) = project {
             (
                 proj["name"].clone(),
                 proj.get("path").cloned().unwrap_or(serde_json::Value::Null),
                 proj.get("stack").cloned().unwrap_or(serde_json::json!([])),
                 serde_json::json!([]),
                 proj.get("tags").cloned().unwrap_or(serde_json::json!([])),
-                serde_json::json!("active"),
+                // Real lifecycle (project_maturity), not a hardcoded "active".
+                proj.get("maturity").cloned().unwrap_or(serde_json::Value::Null),
                 serde_json::Value::Null,
             )
         } else if let Ok(Some(folder)) = state.pg.get_repo_by_name(&repo_id).await {
@@ -383,20 +397,12 @@ pub(crate) async fn project_summary(
                 folder.get("stack").cloned().unwrap_or(serde_json::json!([])),
                 folder.get("libs").cloned().unwrap_or(serde_json::json!([])),
                 folder.get("tags").cloned().unwrap_or(serde_json::json!([])),
-                folder.get("status").cloned().unwrap_or(serde_json::json!("active")),
+                // Real folder status, honest-null if unset — not a fabricated "active".
+                folder.get("status").cloned().unwrap_or(serde_json::Value::Null),
                 folder.get("indexed_at").cloned().unwrap_or(serde_json::Value::Null),
             )
         } else {
-            // UUID project lookup
-            (
-                serde_json::Value::String(repo_id.clone()),
-                serde_json::Value::Null,
-                serde_json::json!([]),
-                serde_json::json!([]),
-                serde_json::json!([]),
-                serde_json::json!("active"),
-                serde_json::Value::Null,
-            )
+            return Err(StatusCode::NOT_FOUND);
         };
 
     Ok(Json(serde_json::json!({
@@ -423,7 +429,7 @@ pub(crate) async fn solution_graph(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let project_id = resolve_project_uuid(&state, &id).await
+    let project_id = resolve_project_uuid(&state, &id).await?
         .ok_or(StatusCode::NOT_FOUND)?;
     let project = state.pg.get_project(&project_id).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
@@ -431,8 +437,11 @@ pub(crate) async fn solution_graph(
 
     let project_name = project["name"].as_str().unwrap_or("unknown");
 
-    // Get all repos (folders) and filter those belonging to this project
-    let all_repos = state.pg.list_repositories().await.unwrap_or_default();
+    // Get all repos (folders) and filter those belonging to this project.
+    // Fail closed on a read error (500) — an empty repo list here would render
+    // as an empty solution graph, indistinguishable from a real single-node one.
+    let all_repos = state.pg.list_repositories().await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let project_repos: Vec<&serde_json::Value> = all_repos.iter()
         .filter(|r| r["project_id"].as_str() == Some(&id))
         .collect();
@@ -456,9 +465,13 @@ pub(crate) async fn solution_graph(
         }
     }
 
-    // Fetch nodes and edges in one scoped call each.
-    let scoped_nodes = state.pg.get_nodes_scoped(&folder_ids).await.unwrap_or_default();
-    let scoped_edges = state.pg.get_edges_scoped(&folder_ids, "calls").await.unwrap_or_default();
+    // Fetch nodes and edges in one scoped call each. Fail closed on a read
+    // error (500) — a swallowed error would silently drop nodes/edges and render
+    // a truncated graph as if it were complete.
+    let scoped_nodes = state.pg.get_nodes_scoped(&folder_ids).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let scoped_edges = state.pg.get_edges_scoped(&folder_ids, "calls").await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // Re-annotate nodes with repoId/role from folder metadata.
     // get_nodes_scoped returns folder_id — use it to look up the repo.
@@ -525,15 +538,17 @@ pub(crate) async fn solution_roles(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let project_id = resolve_project_uuid(&state, &id).await
+    let project_id = resolve_project_uuid(&state, &id).await?
         .ok_or(StatusCode::NOT_FOUND)?;
     // Verify project exists
     state.pg.get_project(&project_id).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    // Get repos belonging to this project
-    let all_repos = state.pg.list_repositories().await.unwrap_or_default();
+    // Get repos belonging to this project. Fail closed on a read error (500) —
+    // an empty list would render as "this solution has no repos / roles".
+    let all_repos = state.pg.list_repositories().await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let project_repos: Vec<serde_json::Value> = all_repos.into_iter()
         .filter(|r| r["project_id"].as_str() == Some(&id))
         .collect();
@@ -555,23 +570,27 @@ pub(crate) async fn solution_roles(
 pub(crate) async fn get_metrics(
     State(state): State<AppState>,
     Path(project): Path<String>,
-) -> Json<serde_json::Value> {
-    // Metrics are computed from session data in PgStore.
-    // Look up folder to get its UUID, then query sessions.
-    let folder = state.pg.get_repo_by_name(&project).await.ok().flatten();
-    if let Some(folder) = folder
-        && let Some(folder_id) = crate::api::util::json_uuid(&folder["id"]) {
-            let sessions = state.pg.list_sessions_by_folder(&folder_id, 100).await.unwrap_or_default();
-            let session_count = sessions.len();
-            let completed = sessions.iter().filter(|s| s["outcome"].as_str() == Some("completed")).count();
-            return Json(serde_json::json!({
-                "project": project,
-                "sessions": session_count,
-                "completed": completed,
-                "ftr": if session_count > 0 { completed as f64 / session_count as f64 } else { 0.0 },
-            }));
-        }
-    Json(serde_json::json!({"error": "project not found"}))
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    // Metrics are computed from session data in PgStore. Look up the folder to
+    // get its UUID, then query sessions. Fail closed: a lookup error is a 500
+    // (never masked as a miss); a genuine miss is a 404 — NOT a 200 carrying a
+    // fabricated {"error":"project not found"} body a caller can't distinguish
+    // from real metrics.
+    let folder = state.pg.get_repo_by_name(&project).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let folder_id = crate::api::util::json_uuid(&folder["id"])
+        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+    let sessions = state.pg.list_sessions_by_folder(&folder_id, 100).await
+        .map_err(|e| { tracing::warn!(error = %e, project = %project, "get_metrics: list_sessions_by_folder failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    let session_count = sessions.len();
+    let completed = sessions.iter().filter(|s| s["outcome"].as_str() == Some("completed")).count();
+    Ok(Json(serde_json::json!({
+        "project": project,
+        "sessions": session_count,
+        "completed": completed,
+        "ftr": if session_count > 0 { completed as f64 / session_count as f64 } else { 0.0 },
+    })))
 }
 
 // ── Observatory Chart Data ─────────────────────────────────────────────────
@@ -606,7 +625,7 @@ pub(crate) async fn project_ftr_daily(
     Path(id): Path<String>,
     axum::extract::Query(q): axum::extract::Query<DaysQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let project_id = resolve_project_uuid(&state, &id).await
+    let project_id = resolve_project_uuid(&state, &id).await?
         .ok_or(StatusCode::NOT_FOUND)?;
     let data = state.pg.get_ftr_daily(Some(&project_id), q.days).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -619,7 +638,7 @@ pub(crate) async fn project_hotspots(
     Path(id): Path<String>,
     axum::extract::Query(q): axum::extract::Query<DaysQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let project_id = resolve_project_uuid(&state, &id).await
+    let project_id = resolve_project_uuid(&state, &id).await?
         .ok_or(StatusCode::NOT_FOUND)?;
     let data = state.pg.get_hotspots(&project_id, q.days).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -631,7 +650,7 @@ pub(crate) async fn project_quality_signals(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let project_id = resolve_project_uuid(&state, &id).await
+    let project_id = resolve_project_uuid(&state, &id).await?
         .ok_or(StatusCode::NOT_FOUND)?;
     let data = state.pg.get_quality_signals(&project_id).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -645,7 +664,7 @@ pub(crate) async fn project_maturity(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let project_id = resolve_project_uuid(&state, &id).await
+    let project_id = resolve_project_uuid(&state, &id).await?
         .ok_or(StatusCode::NOT_FOUND)?;
     let (watched, has_insights) = state
         .pg
@@ -753,7 +772,7 @@ pub(crate) async fn project_teachings(
     Path(id): Path<String>,
     axum::extract::Query(q): axum::extract::Query<LimitQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let project_id = resolve_project_uuid(&state, &id).await
+    let project_id = resolve_project_uuid(&state, &id).await?
         .ok_or(StatusCode::NOT_FOUND)?;
     let data = state.pg.get_adopted_teachings(&project_id, q.limit).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -815,7 +834,8 @@ pub(crate) async fn observatory_today(
 
     let now = chrono::Utc::now();
     let (hero, insights, adopted) = if sig.stage == "mature" {
-        let recs = state.pg.get_pending_recommendations_global(4).await.unwrap_or_default();
+        let recs = state.pg.get_pending_recommendations_global(4).await
+            .map_err(|e| { tracing::warn!(error = %e, "observatory_today: get_pending_recommendations_global failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
         let rec_lite: Vec<home::RecLite> = recs.iter().map(|r| home::RecLite {
             urgency: r["urgency"].as_str().unwrap_or("low").to_string(),
             title:   r["title"].as_str().unwrap_or("").to_string(),
@@ -877,7 +897,8 @@ pub(crate) async fn observatory_today(
                 insights.push(card);
             }
 
-            let mems = state.pg.list_active_memories_global(5).await.unwrap_or_default();
+            let mems = state.pg.list_active_memories_global(5).await
+                .map_err(|e| { tracing::warn!(error = %e, "observatory_today: list_active_memories_global failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
             let adopted: Vec<serde_json::Value> = mems.iter().map(|m| {
                 let when = m["modified_at"].as_str()
                     .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
@@ -947,7 +968,7 @@ pub(crate) async fn get_insights(
 
     let project: Option<uuid::Uuid> = match q.project.as_deref() {
         Some(p) if !p.trim().is_empty() => {
-            Some(resolve_project_uuid(&state, p).await.ok_or(StatusCode::NOT_FOUND)?)
+            Some(resolve_project_uuid(&state, p).await?.ok_or(StatusCode::NOT_FOUND)?)
         }
         _ => None,
     };
@@ -1077,7 +1098,7 @@ pub(crate) async fn get_insights(
             seen.insert(pid.to_string());
         }
     }
-    let all_projects = state.pg.list_projects().await.unwrap_or_default();
+    let all_projects = state.pg.list_projects().await.map_err(err("projects"))?;
     let projects: Vec<serde_json::Value> = all_projects.iter().filter_map(|p| {
         let pid = p["id"].as_str()?;
         if !seen.contains(pid) {
