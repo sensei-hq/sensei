@@ -187,19 +187,19 @@ describe('parseNewMember', () => {
 });
 
 describe('addMember', () => {
-	it('inserts the membership with the tenant + dojo_url and returns { id, role }', async () => {
+	it('inserts the membership with the tenant and returns { id, role } (no dojo_url — derived from the tenant)', async () => {
 		const { db, captured } = makeMutDb({ data: { id: 'm1', role: 'contributor' }, error: null });
 		const input = parseNewMember({ user_id: 'u1', kind: 'client', authenticated_via: 'sso' });
-		expect(await addMember(db, 't1', 'github/acme', input)).toEqual({ id: 'm1', role: 'contributor' });
+		expect(await addMember(db, 't1', input)).toEqual({ id: 'm1', role: 'contributor' });
 		const payload = captured.payload as Record<string, unknown>;
 		expect(payload.tenant_id).toBe('t1');
-		expect(payload.dojo_url).toBe('github/acme');
 		expect(payload.user_id).toBe('u1');
+		expect(payload).not.toHaveProperty('dojo_url'); // Rule C: derived from dojo.tenants.dojo_url
 	});
 	it('maps a unique-violation (23505) to 409', async () => {
 		const { db } = makeMutDb({ data: null, error: { code: '23505', message: 'dup' } });
 		const input = parseNewMember({ user_id: 'u1', kind: 'client', authenticated_via: 'sso' });
-		await expect(addMember(db, 't1', 'github/acme', input)).rejects.toMatchObject({ status: 409 });
+		await expect(addMember(db, 't1', input)).rejects.toMatchObject({ status: 409 });
 	});
 });
 

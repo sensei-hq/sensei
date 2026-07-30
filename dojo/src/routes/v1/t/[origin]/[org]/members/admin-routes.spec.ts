@@ -211,8 +211,10 @@ describe('POST /members (provision)', () => {
 	it('provisions, audits, and returns { id, role }', async () => {
 		const res = await members.POST(ev('http://x/', { user_id: 'u1', kind: 'client', authenticated_via: 'sso' }));
 		expect(await res.json()).toEqual({ id: 'm1', role: 'contributor' });
-		// dojo_url derived from origin/org.
-		expect(mocks.addMember.mock.calls[0][2]).toBe('github/acme');
+		// Rule C: no dojo_url arg — the store gets (db, tenantId, input); dōjō url
+		// is derived from the tenant. The parsed member input is forwarded.
+		expect(mocks.addMember.mock.calls[0][1]).toBe('t1');
+		expect(mocks.addMember.mock.calls[0][2]).toMatchObject({ user_id: 'u1', kind: 'client' });
 		expect(mocks.recordAudit.mock.calls[0][3]).toMatchObject({ action: 'member_added' });
 	});
 	it('maps a 409 duplicate from the store', async () => {
