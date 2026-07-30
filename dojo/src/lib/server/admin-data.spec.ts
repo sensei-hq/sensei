@@ -96,6 +96,7 @@ function makeCountDb(results: Terminal[]) {
 describe('getHealth', () => {
 	it('composes the four counts into the rollup', async () => {
 		const db = makeCountDb([
+			{ count: 0, error: null }, // memberships scope fetch (.eq → .then; data unused, ids => [])
 			{ count: 3, error: null }, // connections (.gte heartbeat)
 			{ count: 12, error: null }, // queue_depth (.eq state) — resolves via .then
 			{ count: 5, error: null }, // publish_rate (.gte ts)
