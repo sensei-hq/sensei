@@ -20,12 +20,20 @@
 		createIncident,
 		updateIncident,
 		deleteIncident,
+		getIncident,
 		updateEngagement,
 		deleteEngagement,
 		createEngagement,
 		DojoApiError
 	} from '$lib/client-data';
-	import type { KitProject, KitMember, KitIncident, KitEngagement } from '$lib/components/kit/types';
+	import { toKitIncidentDetail } from '$lib/incidents-map';
+	import type {
+		KitProject,
+		KitMember,
+		KitIncident,
+		KitIncidentDetail,
+		KitEngagement
+	} from '$lib/components/kit/types';
 
 	// The org-zone section screen. Dispatches to the real screen for every NAV_ORG
 	// destination off the kit fixtures the loader supplies: the Overview
@@ -79,6 +87,19 @@
 	const resolveIncident = (i: KitIncident) => act(() => updateIncident(tk(), i.id, { resolved: true }, opts()));
 	const removeIncident = (i: KitIncident) => act(() => deleteIncident(tk(), i.id, opts()));
 
+	// Lead — open an incident's detail pane (GET …/incidents/{id} on demand).
+	// A failed fetch surfaces honestly rather than opening an empty pane.
+	let incidentDetail = $state<KitIncidentDetail | null>(null);
+	async function openIncident(i: KitIncident) {
+		actionError = null;
+		try {
+			incidentDetail = toKitIncidentDetail(await getIncident(tk(), i.id, opts()));
+		} catch (e) {
+			actionError = e instanceof DojoApiError ? e.message : 'could not open that incident';
+		}
+	}
+	const closeIncidentDetail = () => (incidentDetail = null);
+
 	// Lead — engagement new / close / delete.
 	const newEngagement = (clientName: string) => act(() => createEngagement(tk(), { client_name: clientName }, opts()));
 	const closeEngagement = (e: KitEngagement) => act(() => updateEngagement(tk(), e.id, { status: 'ended' }, opts()));
@@ -116,6 +137,9 @@
 	<ScrIncidents
 		orgName={data.orgName}
 		incidents={data.incidents}
+		detail={incidentDetail}
+		onOpen={openIncident}
+		onCloseDetail={closeIncidentDetail}
 		onReport={reportIncident}
 		onResolve={resolveIncident}
 		onDelete={removeIncident}

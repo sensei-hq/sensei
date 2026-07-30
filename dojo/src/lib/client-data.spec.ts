@@ -8,6 +8,7 @@ import {
 	deleteIncident,
 	dojoApiUrl,
 	exportCompliance,
+	getIncident,
 	listAuditArtifacts,
 	listEngagements,
 	listIncidents,
@@ -196,6 +197,21 @@ describe('deleteIncident', () => {
 		const { fn, calls } = fakeFetch(200, { deleted: true });
 		expect(await deleteIncident('t/x', 'i1', { fetch: fn })).toEqual({ deleted: true });
 		expect(calls[0].init?.method).toBe('DELETE');
+	});
+});
+
+describe('getIncident', () => {
+	it('GETs the incident detail path (id encoded) and returns the detail', async () => {
+		const detail = { id: 'i1', client_name: 'Globex', owner_name: 'Ada', artifact: null };
+		const { fn, calls } = fakeFetch(200, detail);
+		const out = await getIncident('t/x', 'i/1', { fetch: fn });
+		expect(out).toEqual(detail);
+		expect(calls[0].url).toBe(`${dojoApiUrl}/v1/t/t/x/incidents/i%2F1`);
+		expect(calls[0].init?.method ?? 'GET').toBe('GET');
+	});
+	it('surfaces a 404 as a ClientApiError', async () => {
+		const { fn } = fakeFetch(404, { error: 'no such incident' });
+		await expect(getIncident('t/x', 'ghost', { fetch: fn })).rejects.toBeInstanceOf(ClientApiError);
 	});
 });
 
