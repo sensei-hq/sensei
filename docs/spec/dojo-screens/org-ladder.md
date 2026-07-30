@@ -46,6 +46,14 @@
 3. `RULE_FAMILIES` (守/紋/理/検/技/盾) — do these map to `shared_rules.rule_type`, and is `rule_type` a free string or a fixed vocabulary? The kit persists only the glyph.
 4. Per-stack "Adopt pack" here vs personal adopt on `/you/packs` both write `rule_pack_adoptions` at different `namespace_id`s (org stack namespace vs user namespace) — confirm the split and which role may adopt at the org scope.
 
+### Resolved design (2026-07-30)
+- **Q1 → dōjō-side authoring IS intended.** maintainer/admin author org rules directly in the console via `POST /v1/…/rules`; the **Worker computes `content_hash`** server-side; the UI picks `namespace` (stack) + `rule_type`. `dojo.shared_rules` gets a dōjō-authored write path alongside daemon-federated rules.
+- **Q2 → include/exclude = per-tenant SOFT-DISABLE flag** (non-destructive; re-includable). NOT a tombstone/delete. Needs a new per-tenant rule-disable mechanism (flag on the adoption / a disable row) — schema addition.
+- **Q3 → `rule_type` = FIXED vocabulary = the 6 RULE_FAMILIES** (守/紋/理/検/技/盾). The editor picks from these; glyph maps to type.
+- **Q4 → org-scope adoption = `maintainer`|`admin`** (same as rule-packs Q3).
+- **New-Q → FIX the seq DDL-trigger:** republish/retract must advance `dojo.shared_rules.seq` so a re-pull reflects the edit (root-cause fix; the `rules-data.ts` divergence). Not an optimistic-local band-aid.
+- **Depends on:** the `/v1/…/rules` author/retract wiring + the soft-disable schema addition + the seq-trigger DDL fix + role checks.
+
 ## Components & state (three-layer, per `sensei:ui-state-pattern`)
 
 Makes the three layers explicit; references the **Elements → data** + **APIs / loaders** sections
