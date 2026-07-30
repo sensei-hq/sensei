@@ -385,7 +385,10 @@ pub(crate) async fn update_watch_root(
 
         // Push the resolved absolute prefixes into the live watcher so the change
         // takes effect immediately, not on next daemon restart.
-        let prefixes = state.pg.root_exclusion_prefixes(&root_path).await;
+        // Fail closed: never register the live watcher with an empty exclusion
+        // set on a read error (it would then watch/index the excluded subtree).
+        let prefixes = state.pg.root_exclusion_prefixes(&root_path).await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         let w_mutex = crate::watcher::root_watcher::RootWatcher::instance(state.task_queue.clone());
         match w_mutex.lock() {
             Ok(mut w) => { w.register(std::path::PathBuf::from(&root_path), prefixes); let _ = w.start(); }
@@ -486,17 +489,19 @@ pub(crate) async fn scan_suggestions(State(state): State<AppState>) -> Json<serd
 }
 
 /// List configured scan roots with their scan status.
-pub(crate) async fn scan_roots(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let mut roots = state.pg.list_watch_roots().await.unwrap_or_else(|e| {
+pub(crate) async fn scan_roots(State(state): State<AppState>) -> Result<Json<serde_json::Value>, StatusCode> {
+    // A DB error is a 500 — never masked as an empty root list (which reads as
+    // "no scan roots configured" and hides the failure).
+    let mut roots = state.pg.list_watch_roots().await.map_err(|e| {
         tracing::warn!(error = %e, "scan_roots: list_watch_roots failed");
-        Vec::new()
-    });
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
     // Enrich with repo count per root
-    let repos = state.pg.list_repositories().await.unwrap_or_else(|e| {
+    let repos = state.pg.list_repositories().await.map_err(|e| {
         tracing::warn!(error = %e, "scan_roots: list_repositories failed");
-        Vec::new()
-    });
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
     for root in &mut roots {
         let root_path = root["path"].as_str().unwrap_or("");
         let count = repos.iter().filter(|r| {
@@ -506,7 +511,7 @@ pub(crate) async fn scan_roots(State(state): State<AppState>) -> Json<serde_json
         root["scanned"] = serde_json::json!(count > 0);
     }
 
-    Json(serde_json::json!(roots))
+    Ok(Json(serde_json::json!(roots)))
 }
 
 // ── Indexing ────────────────────────────────────────────────────────────────

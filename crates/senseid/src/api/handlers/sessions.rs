@@ -1,7 +1,7 @@
 use axum::{
     extract::{Path, Query, State},
-    http::StatusCode,
-    response::Json,
+    http::{header, StatusCode},
+    response::{IntoResponse, Json, Response},
 };
 use crate::api::state::AppState;
 
@@ -22,34 +22,38 @@ pub(crate) fn range_to_days(range: Option<&str>) -> Option<i64> {
 pub(crate) async fn get_sessions_stub(
     State(state): State<AppState>,
     Query(q): Query<std::collections::HashMap<String, String>>,
-) -> Json<serde_json::Value> {
+) -> Result<Json<serde_json::Value>, StatusCode> {
     let range_days = range_to_days(q.get("range").map(String::as_str));
     // `?project=<name-or-uuid>` scopes the digest to one project (honours the
     // name-or-UUID contract). An unresolvable name yields None → no scope.
     let project = match q.get("project") {
-        Some(p) => crate::api::util::resolve_project_uuid(&state, p).await,
+        // Fail closed on a resolver DB error (→ 500); a genuine unresolvable name
+        // still yields None → no scope (unchanged).
+        Some(p) => crate::api::util::resolve_project_uuid(&state, p).await?,
         None => None,
     };
     // PgStore uses list_sessions_by_folder(&Uuid, limit) instead of get_sessions(repo_id)
     let sessions = if let Some(folder_str) = q.get("repoId") {
         if let Ok(folder_id) = uuid::Uuid::parse_str(folder_str) {
-            state.pg.list_sessions_by_folder(&folder_id, 50).await.unwrap_or_default()
+            state.pg.list_sessions_by_folder(&folder_id, 50).await
+                .map_err(|e| { tracing::warn!(error = %e, repo_id = %folder_str, "get_sessions_stub: list_sessions_by_folder failed"); StatusCode::INTERNAL_SERVER_ERROR })?
         } else {
             vec![]
         }
     } else {
         // 500 comfortably covers the real corpus within any range window; range +
         // project narrow it. The digest aggregates these client-side per day.
-        state.pg.list_all_sessions(500, range_days, project.as_ref()).await.unwrap_or_default()
+        state.pg.list_all_sessions(500, range_days, project.as_ref()).await
+            .map_err(|e| { tracing::warn!(error = %e, "get_sessions_stub: list_all_sessions failed"); StatusCode::INTERNAL_SERVER_ERROR })?
     };
     let total = sessions.len();
     let completed = sessions.iter().filter(|s| s["outcome"].as_str() == Some("completed")).count();
-    Json(serde_json::json!({
+    Ok(Json(serde_json::json!({
         "stats": { "totalSessions": total, "completed": completed },
         "sessions": sessions,
         "toolUsage": [],
         "benchmarkPairs": []
-    }))
+    })))
 }
 
 pub(crate) async fn create_session(
@@ -249,34 +253,34 @@ pub(crate) async fn update_session_handler(
 /// Returns 200 OK always — hook scripts must not block on errors.
 pub(crate) async fn ingest_hook_event(
     State(state): State<AppState>,
-    Json(payload): Json<serde_json::Value>,
+    Json(mut payload): Json<serde_json::Value>,
 ) -> StatusCode {
-    let event_type       = payload["hook_event_name"].as_str().unwrap_or("unknown");
-    let session_id       = payload["session_id"].as_str().unwrap_or("");
-    let assistant_family = payload["assistant_family"].as_str().unwrap_or("claude");
-    let tool_name        = payload["tool_name"].as_str();
-    let cwd              = payload["cwd"].as_str();
-    let ts               = chrono::Utc::now().timestamp_millis();
-    let success          = payload.get("exit_code")
-        .and_then(|v| v.as_i64())
-        .map(|c| c == 0);
+    // Strip NULs Postgres jsonb can't store, so a stray NUL byte in captured
+    // output doesn't make the insert fail and silently lose the event (the same
+    // hazard the drain quarantines). Do this before mapping so the fields agree.
+    crate::tasks::capture_drain::sanitize_nul(&mut payload);
+    // Same field mapping the capture drain uses when it imports dead-lettered
+    // events from ~/.sensei/events.jsonl, so the live and recovery paths agree
+    // column-for-column (crate::tasks::capture_drain::hook_event_fields).
+    let f  = crate::tasks::capture_drain::hook_event_fields(&payload);
+    let ts = chrono::Utc::now().timestamp_millis();
 
     // Always return 200 so a DB hiccup never blocks the hook — but DON'T
     // swallow the error silently: a failing capture insert is exactly how
     // capture dies invisibly (the bug the capture watchdog exists to catch).
     // Log it so it's inspectable in the daemon log / public.logs.
     if let Err(e) = state.pg.insert_hook_event(
-        session_id, assistant_family, event_type, tool_name, cwd, ts, success, &payload,
+        f.session_id, f.family, f.event_type, f.tool_name, f.cwd, ts, f.success, &payload,
     ).await {
-        tracing::warn!(error = %e, event_type, assistant_family, "ingest_hook_event: insert failed");
+        tracing::warn!(error = %e, event_type = f.event_type, family = f.family, "ingest_hook_event: insert failed");
     }
 
     // Relay segment-publish (A2): a TodoWrite carries the run's todo outline —
     // project it into the relay and push to enrolled dojos. Fire-and-forget so
     // the publish (a DB read + bounded HTTP posts) never blocks the hook.
-    if tool_name == Some("TodoWrite") && !session_id.is_empty() {
+    if f.tool_name == Some("TodoWrite") && !f.session_id.is_empty() {
         let task = crate::tasks::Task::new(
-            crate::tasks::TaskKind::PublishRelaySegments, "", session_id,
+            crate::tasks::TaskKind::PublishRelaySegments, "", f.session_id,
         );
         state.task_queue.enqueue(task).await;
     }
@@ -285,15 +289,15 @@ pub(crate) async fn ingest_hook_event(
     // A session is one assistant session_id, attributed to the indexed folder
     // its cwd resolves to; Stop/SessionEnd marks it completed. Best-effort —
     // events whose cwd is under no indexed folder simply aren't attributed.
-    if !session_id.is_empty()
-        && let Some(cwd) = cwd {
+    if !f.session_id.is_empty()
+        && let Some(cwd) = f.cwd {
             match state.pg.find_folder_for_path(cwd).await {
                 Ok(Some((folder_id, project_id))) => {
-                    let is_end = matches!(event_type, "Stop" | "SessionEnd");
+                    let is_end = matches!(f.event_type, "Stop" | "SessionEnd");
                     if let Err(e) = state.pg.record_session_event(
-                        session_id, &folder_id, project_id.as_ref(), assistant_family, is_end,
+                        f.session_id, &folder_id, project_id.as_ref(), f.family, is_end,
                     ).await {
-                        tracing::warn!(error = %e, event_type, "ingest_hook_event: record_session_event failed");
+                        tracing::warn!(error = %e, event_type = f.event_type, "ingest_hook_event: record_session_event failed");
                     }
                 }
                 Ok(None) => {} // cwd not under any indexed folder — nothing to attribute
@@ -457,12 +461,18 @@ pub(crate) async fn hook_gate(
             return gate_decision("allow", "gate unavailable — allowed");
         }
     };
+    // Personal beta = one dōjō. Multi-dōjō gating (which phone answers, quorum,
+    // races) is a tracked follow-up (relay-engine.md feature B); until then we
+    // ask the FIRST enabled membership. The gate is fail-OPEN by design, so this
+    // never turns into a cross-tenant *block* — but surface the ambiguity rather
+    // than silently picking, so a multi-dōjō setup is visible in the logs.
+    if memberships.len() > 1 {
+        tracing::warn!(session_id, count = memberships.len(),
+            "hook_gate: multiple enabled memberships — asking the first (multi-dōjō gating deferred)");
+    }
     let Some(membership) = memberships.into_iter().next() else {
         return gate_decision("allow", "no dojo enrolled");
     };
-    // FIRST enabled membership only (personal beta = one). Gating across
-    // multiple memberships (which phone answers, quorum, races) is a tracked
-    // follow-up — see relay-engine.md feature B.
     let client = crate::dojo::client::DojoClient::for_membership(&membership);
 
     // Ensure the cloud session exists so the phone can render the gate in
@@ -588,13 +598,57 @@ pub(crate) async fn hook_nudge(
 
 // ── Workflow State ──────────────────────────────────────────────────────────
 
+#[derive(serde::Deserialize, Default)]
+pub(crate) struct StateQuery {
+    /// `md` → a plain-text block for the session hooks to inject; default → JSON
+    /// (what the MCP `get_workflow_state`/`update_phase` tools consume).
+    pub format: Option<String>,
+}
+
+/// Render a `workflow_state` row as the plain-text block the session hooks
+/// inject — one `key: value` line per field that is actually set, in a stable
+/// order. Empty string when nothing is set (so the hook injects nothing rather
+/// than a stale mirror). This replaces the per-repo `.sensei/state.yaml`.
+fn workflow_state_md(ws: &serde_json::Value) -> String {
+    const FIELDS: [&str; 6] = [
+        "active_phase", "active_plan", "active_task",
+        "active_issue", "last_checkpoint", "rules_hash",
+    ];
+    let mut out = String::new();
+    for f in FIELDS {
+        let rendered = ws[f]
+            .as_str()
+            .map(str::to_string)
+            .or_else(|| ws[f].as_i64().map(|n| n.to_string()));
+        if let Some(val) = rendered.filter(|s| !s.is_empty()) {
+            out.push_str(f);
+            out.push_str(": ");
+            out.push_str(&val);
+            out.push('\n');
+        }
+    }
+    out
+}
+
 pub(crate) async fn get_workflow_state(
     State(state): State<AppState>,
     Path(project): Path<String>,
-) -> Json<serde_json::Value> {
-    match state.pg.get_workflow_state(&project).await {
-        Ok(Some(ws)) => Json(ws),
-        Ok(None) => Json(serde_json::json!({
+    Query(q): Query<StateQuery>,
+) -> Response {
+    let ws = match state.pg.get_workflow_state(&project).await {
+        Ok(v) => v,
+        Err(e) => return Json(serde_json::json!({"error": e})).into_response(),
+    };
+    // `format=md`: plain text for the SessionStart / PreCompact hooks to inject
+    // verbatim (mirrors `GET /api/knowledge/rules?format=md`). Empty when nothing
+    // is set — the hook then injects no workflow block, never a stale file.
+    if q.format.as_deref() == Some("md") {
+        let body = ws.as_ref().map(workflow_state_md).unwrap_or_default();
+        return ([(header::CONTENT_TYPE, "text/markdown; charset=utf-8")], body).into_response();
+    }
+    match ws {
+        Some(ws) => Json(ws).into_response(),
+        None => Json(serde_json::json!({
             "project": project,
             "active_phase": null,
             "active_plan": null,
@@ -602,8 +656,7 @@ pub(crate) async fn get_workflow_state(
             "active_issue": null,
             "last_checkpoint": null,
             "rules_hash": null,
-        })),
-        Err(e) => Json(serde_json::json!({"error": e})),
+        })).into_response(),
     }
 }
 
@@ -631,42 +684,51 @@ pub(crate) async fn update_workflow_state(
     // (drive stays OFF — this is status only, and it's how the "watch me build
     // through phases" view is fed). Best-effort: a bridge hiccup must never fail
     // the workflow-state write above.
-    if let Some(phase) = body["active_phase"].as_str().filter(|s| !s.is_empty())
-        && let Some(project_id) = super::observatory::resolve_project_uuid(&state, &project).await
-        && let Err(e) = state.pg.advance_run_phase_for_project(&project_id, phase).await
-    {
-        tracing::warn!(project = %project, error = %e, "update_phase: run phase bridge failed");
-    }
-
-    // Sync to .sensei/state.yaml
-    // TODO: Add a lookup for folder abs_path by project name if needed.
-    let project_path = body["project_path"].as_str().map(String::from);
-    if let Some(project_path) = project_path {
-        let sensei_dir = std::path::Path::new(&project_path).join(".sensei");
-        std::fs::create_dir_all(&sensei_dir).ok();
-        let state_file = sensei_dir.join("state.yaml");
-
-        // Read back the state we just wrote to get all fields
-        if let Ok(Some(ws)) = state.pg.get_workflow_state(&project).await {
-            let yaml = format!(
-                "active_phase: {}\nactive_plan: {}\nactive_task: {}\nactive_issue: {}\nlast_checkpoint: {}\nrules_hash: {}\n",
-                ws["active_phase"].as_str().unwrap_or("~"),
-                ws["active_plan"].as_str().unwrap_or("~"),
-                ws["active_task"].as_str().unwrap_or("~"),
-                ws["active_issue"].as_i64().map(|n| n.to_string()).unwrap_or("~".to_string()),
-                ws["last_checkpoint"].as_str().unwrap_or("~"),
-                ws["rules_hash"].as_str().unwrap_or("~"),
-            );
-            std::fs::write(&state_file, yaml).ok();
+    if let Some(phase) = body["active_phase"].as_str().filter(|s| !s.is_empty()) {
+        // Best-effort mirror: a bridge hiccup must never fail the primary write.
+        // But surface (log) a resolver DB error rather than swallow it silently.
+        match crate::api::util::resolve_project_uuid(&state, &project).await {
+            Ok(Some(project_id)) => {
+                if let Err(e) = state.pg.advance_run_phase_for_project(&project_id, phase).await {
+                    tracing::warn!(project = %project, error = %e, "update_phase: run phase bridge failed");
+                }
+            }
+            Ok(None) => {}
+            Err(_) => tracing::warn!(project = %project,
+                "update_phase: run phase bridge skipped — project resolve failed"),
         }
     }
 
+    // Workflow state lives ONLY in Postgres (`sensei.workflow_state`), read back
+    // via `GET /api/state/{project}`. We no longer mirror it to a per-repo
+    // `.sensei/state.yaml`: that file drifted (it was written only when a
+    // `project_path` was supplied, which the MCP update_phase doesn't send), so
+    // the session hooks injected a STALE phase/issue and misdirected the agent.
+    // The hooks + `/sensei:session` now read the daemon (the DB) directly.
     Json(serde_json::json!({"ok": true}))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::range_to_days;
+    use super::{range_to_days, workflow_state_md};
+
+    #[test]
+    fn workflow_state_md_renders_only_set_fields_in_stable_order() {
+        let ws = serde_json::json!({
+            "active_phase": "build",
+            "active_plan": null,      // unset → skipped
+            "active_task": "",        // empty → skipped
+            "active_issue": 108,      // i64 → stringified
+            "last_checkpoint": "ckpt",
+            "rules_hash": null,
+        });
+        assert_eq!(
+            workflow_state_md(&ws),
+            "active_phase: build\nactive_issue: 108\nlast_checkpoint: ckpt\n"
+        );
+        // Nothing set → empty (the hook injects no workflow block, never a stale one).
+        assert_eq!(workflow_state_md(&serde_json::json!({})), "");
+    }
 
     #[test]
     fn range_to_days_maps_known_chips() {

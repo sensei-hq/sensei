@@ -269,6 +269,21 @@ impl PgStore {
             .max_connections(DB_POOL_MAX_CONNECTIONS)
             .acquire_timeout(Duration::from_secs(DB_POOL_ACQUIRE_TIMEOUT_SECS))
             .idle_timeout(Duration::from_secs(DB_POOL_IDLE_TIMEOUT_SECS))
+            // Put `extensions` on the search_path so unqualified references to
+            // pgvector's `vector` type and operators (`$n::vector`, `<=>`) resolve.
+            // pgvector installs into the `extensions` schema — the Supabase/dbd
+            // convention declared in `database/design.yaml` — which isn't
+            // on Postgres's default path. Every table this code touches is
+            // schema-qualified, so this only affects extension type/operator
+            // resolution (and keeps working if a DB has vector in `public`).
+            .after_connect(|conn, _meta| {
+                Box::pin(async move {
+                    sqlx_core::query::query("SET search_path TO \"$user\", public, extensions")
+                        .execute(&mut *conn)
+                        .await
+                        .map(|_| ())
+                })
+            })
             .connect(database_url)
             .await
             .map_err(|e| format!("PgStore connect: {}", e))?;
@@ -323,18 +338,21 @@ impl PgStore {
     /// The absolute-path exclusion prefixes for a watch root — each `excluded`
     /// entry resolved against `root_path` (`root/entry`). Consumed by the scan
     /// (to skip classification) and the watcher (to ignore events).
-    pub async fn root_exclusion_prefixes(&self, root_path: &str) -> Vec<String> {
+    pub async fn root_exclusion_prefixes(&self, root_path: &str) -> Result<Vec<String>, String> {
+        // Fail closed: a DB error must NOT read as "no exclusions" — that would
+        // let the scanner/watcher/grep process folders the user explicitly
+        // excluded (indexing/leaking excluded content). Propagate instead.
         let row: Option<(serde_json::Value,)> = sqlx_core::query_as::query_as(
             "SELECT excluded FROM sensei.folders_to_watch WHERE path = $1"
-        ).bind(root_path).fetch_optional(&self.pool).await.ok().flatten();
+        ).bind(root_path).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
         let root = root_path.trim_end_matches('/');
-        row.and_then(|(v,)| v.as_array().cloned())
+        Ok(row.and_then(|(v,)| v.as_array().cloned())
             .unwrap_or_default()
             .into_iter()
             .filter_map(|e| e.as_str().map(str::to_string))
             .filter(|e| !e.is_empty())
             .map(|e| format!("{root}/{}", e.trim_start_matches('/')))
-            .collect()
+            .collect())
     }
 
     /// Watch root's path + its raw (relative) `excluded` list, by id — for the
@@ -2540,42 +2558,27 @@ impl PgStore {
                   ORDER BY r.measured_at DESC NULLS LAST"
             ).bind(project_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(|(id, title, action_type, status, verdict, baseline, current, props, models, consensus)| {
-            // The reasoning field carries the rich MOE JSON directly to
-            // the UI: `{headline, body, consensus, models: [{name, role,
-            // note}], suggestedRevision}` when measure has populated it,
-            // or null when the rec has no trace yet. The pre-fix wire
-            // was `{models: string[], consensus: unknown}` which lost
-            // the narrative — the panel had nothing to render past the
-            // one-word verdict tag.
+            // The reasoning field carries the honest single-verdict JSON to the
+            // UI: `{headline, body, modelsUsed: string[], suggestedRevision}`
+            // when measure has populated it, or null when the rec has no trace
+            // yet. HONEST SINGLE VERDICT (#109 audit): no fabricated consensus
+            // tally or per-model panelist verdicts — there is one FTR-delta
+            // verdict, and `modelsUsed` lists the models that actually ran.
             let reasoning = consensus.map(|synth| {
-                // Prefer the trace's own models_used array when the synth
-                // JSON lacks a models[] key (older traces written by
-                // consensus reasoning). This keeps the older analyzer's
-                // output rendering the mockup panel with model names,
-                // even before MeasureVerdicts overwrites the trace.
-                if synth.get("models").is_some() && synth.get("headline").is_some() {
-                    // Rich synth — flow straight through.
+                // The honest synth is marked by `headline` — flow it straight through.
+                if synth.get("headline").is_some() {
                     synth
                 } else {
-                    // Old-shape consensus (e.g. `{conclusion}`). Wrap it
-                    // in the panel shape so the UI has something to
-                    // render, even if the narrative is a single line.
+                    // Legacy/old-shape trace (e.g. `{conclusion}` from the retired
+                    // consensus path). Surface the REAL model names from the trace;
+                    // never fabricate per-model roles/notes/verdicts.
                     let conclusion = synth.get("conclusion")
                         .and_then(|v| v.as_str()).unwrap_or("").to_string();
                     let names = models.clone().unwrap_or_default();
-                    let panelists: Vec<serde_json::Value> = names.iter()
-                        .enumerate()
-                        .map(|(i, n)| serde_json::json!({
-                            "name": n,
-                            "role": match i { 0 => "proposer", 1 => "challenger", 2 => "synthesizer", _ => "reviewer" },
-                            "note": "Contributed to the original consensus panel.",
-                        }))
-                        .collect();
                     serde_json::json!({
-                        "headline":          if conclusion.is_empty() { "Consensus captured (no narrative)".into() } else { conclusion },
+                        "headline":          if conclusion.is_empty() { "Reasoning captured (no narrative)".into() } else { conclusion },
                         "body":              serde_json::Value::Null,
-                        "consensus":         serde_json::Value::Null,
-                        "models":            panelists,
+                        "modelsUsed":        names,
                         "suggestedRevision": serde_json::Value::Null,
                     })
                 }
@@ -4288,6 +4291,49 @@ impl PgStore {
         Ok(row.0)
     }
 
+    /// Insert a hook event only if an identical one isn't already stored, and
+    /// return the new id (`None` when it was a duplicate). Used by the capture
+    /// drain ([`crate::tasks::capture_drain`]) to import dead-lettered events
+    /// without twinning a row the daemon already committed in the rare
+    /// "curl timed out after the insert succeeded" race. Dedup is on the payload
+    /// (identical on both the live POST and the fallback line) so it holds even
+    /// though the two paths stamp `ts` independently.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn insert_hook_event_if_absent(
+        &self,
+        session_id: &str,
+        assistant_family: &str,
+        event_type: &str,
+        tool_name: Option<&str>,
+        cwd: Option<&str>,
+        ts: i64,
+        success: Option<bool>,
+        payload: &serde_json::Value,
+    ) -> Result<Option<i64>, String> {
+        let row: Option<(i64,)> = sqlx_core::query_as::query_as(
+            "INSERT INTO activity.assistant_events \
+             (session_id, family, event_type, tool_name, cwd, ts, success, payload) \
+             SELECT $1, $2::sensei.assistant_family, $3, $4, $5, $6, $7, $8 \
+             WHERE NOT EXISTS ( \
+               SELECT 1 FROM activity.assistant_events \
+               WHERE session_id = $1 AND event_type = $3 \
+                 AND tool_name IS NOT DISTINCT FROM $4 AND payload = $8 \
+             ) RETURNING id",
+        )
+        .bind(session_id)
+        .bind(assistant_family)
+        .bind(event_type)
+        .bind(tool_name)
+        .bind(cwd)
+        .bind(ts)
+        .bind(success)
+        .bind(payload)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(row.map(|r| r.0))
+    }
+
     /// Newest hook_event timestamp (epoch ms) for an assistant family, or None
     /// when the daemon has never recorded one for it. `assistant_family` is a
     /// Postgres enum, so bind with the explicit cast.
@@ -4599,7 +4645,7 @@ impl PgStore {
             };
 
         // G10 command bias: mark the user's preferred tool per capability.
-        let prefs = self.command_preferences("user").await;
+        let prefs = self.command_preferences("user").await?;
         let mut out = rows.into_iter().map(|(id, folder_id, folder_name, raw_name, command_line, category, ecosystem, source_file, discovered_at)| {
             serde_json::json!({
                 "id":            id,
@@ -4636,15 +4682,18 @@ impl PgStore {
     /// User/dojo capability→preferred-tool preferences for a scope, as a
     /// capability→token map. Backs the `get_commands` bias (G10). Fail-open: an
     /// error yields an empty map (no bias) rather than failing the command read.
-    pub async fn command_preferences(&self, scope: &str) -> std::collections::HashMap<String, String> {
+    pub async fn command_preferences(&self, scope: &str) -> Result<std::collections::HashMap<String, String>, String> {
+        // Fail closed: a DB error must not read as an empty preference map — that
+        // would silently ignore the user's real tool bias and fall back to
+        // defaults (a governance fail-open). See the #109 audit.
         let rows: Vec<(String, String)> = sqlx_core::query_as::query_as(
             "SELECT capability, preferred FROM sensei.dojo_preferences WHERE scope = $1",
         )
         .bind(scope)
         .fetch_all(&self.pool)
         .await
-        .unwrap_or_default();
-        rows.into_iter().collect()
+        .map_err(|e| format!("command_preferences: {e}"))?;
+        Ok(rows.into_iter().collect())
     }
 
     /// Upsert a capability→preferred-tool bias for a scope (`user` today; a Dōjō
@@ -6933,7 +6982,7 @@ impl PgStore {
             tracing::warn!(error = %e, inbox = %id, "dojo inbox: attribution jsonb parse failed — defaulting");
             dojo_protocol::Attribution {
                 mode: dojo_protocol::AttributionMode::Named,
-                author: None, org: None, anonymous_id: None, dereferenced: false,
+                author: None, org: None, anonymous_id: None,
             }
         });
         crate::collective::inbox::InboxItem {
@@ -9630,7 +9679,7 @@ mod tests {
         let uniq = uuid::Uuid::new_v4();
         let root = format!("/_test/exroot/{uniq}");
         let id = s.add_watch_root(&root, "ex", &serde_json::json!(["Code", "archive/old"])).await.unwrap();
-        let mut prefixes = s.root_exclusion_prefixes(&root).await;
+        let mut prefixes = s.root_exclusion_prefixes(&root).await.unwrap();
         prefixes.sort();
         assert_eq!(prefixes, vec![format!("{root}/Code"), format!("{root}/archive/old")]);
         // get_watch_root round-trips the raw relative list.
@@ -9816,7 +9865,7 @@ mod tests {
             dojo_url: "http://localhost:7755/github/acme".into(), kind: "client".into(),
             org_slugs: vec!["acme".into()],
             role: "contributor".into(), authenticated_via: "device_code".into(),
-            attribution_default: "dereferenced".into(),
+            attribution_default: "anonymous".into(),
             credential_ref: format!("dojo-{}", uuid::Uuid::new_v4()), sync_status: "healthy".into(),
         }).await.unwrap();
 
@@ -12497,7 +12546,7 @@ mod tests {
             org_slugs: vec!["acme".into(), "acme-labs".into()],
             role: "contributor".into(),
             authenticated_via: "device_code".into(),
-            attribution_default: "dereferenced".into(),
+            attribution_default: "anonymous".into(),
             credential_ref: format!("dojo-{}", uuid::Uuid::new_v4()),
             sync_status: "authenticating".into(),
         }).await.unwrap();
@@ -12553,7 +12602,7 @@ mod tests {
         let defaults = preferences::get(&pg).await.unwrap();
         assert_eq!(defaults.destination, "none");
         assert_eq!(defaults.cadence, "manual");
-        assert_eq!(defaults.attribution_default, "dereferenced");
+        assert_eq!(defaults.attribution_default, "anonymous");
         assert_eq!(defaults.updated_at, None);
 
         // Upsert a validated body, then read it back.
@@ -12692,7 +12741,7 @@ mod tests {
             dojo_url: "http://localhost:7755/github/acme".into(), kind: "client".into(),
             org_slugs: vec![],
             role: "contributor".into(), authenticated_via: "device_code".into(),
-            attribution_default: "dereferenced".into(),
+            attribution_default: "anonymous".into(),
             credential_ref: format!("dojo-{}", uuid::Uuid::new_v4()), sync_status: "healthy".into(),
         }).await.unwrap();
 
@@ -12730,7 +12779,7 @@ mod tests {
 
         let attribution = dojo_protocol::Attribution {
             mode: dojo_protocol::AttributionMode::Anonymous,
-            author: None, org: None, anonymous_id: Some("anon-1".into()), dereferenced: true,
+            author: None, org: None, anonymous_id: Some("anon-1".into()),
         };
         let row = |sig: &str, title: &str| crate::collective::inbox::InboxRow {
             membership_id: mid, artifact_seq: 3, signature: sig.into(), remote_id: "art-x".into(),

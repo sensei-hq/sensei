@@ -160,6 +160,7 @@ pub fn plan_events_to_segments(events: &[RunEvent]) -> Vec<RelaySegment> {
             RelaySegment {
                 id: None,
                 parent_id: None,
+                parent_seq: None,
                 seq: i as i32,
                 title: phase,
                 summary: None,

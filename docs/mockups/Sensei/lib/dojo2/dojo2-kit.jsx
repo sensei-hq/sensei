@@ -204,23 +204,29 @@ function K2Btn({ variant = "primary", size = "md", kanji, icon, children, onClic
   );
 }
 
-// A dōjō membership row — org identity + your role.
-function K2MyDojoRow({ dojo, onOpen }) {
+// A dōjō membership row — org identity + your role. Same shape on phone and
+// desktop: kanji mark, name + kind, route, then role and what needs you.
+function K2MyDojoRow({ dojo, onOpen, mobile }) {
   const kind = K2_KIND[dojo.kind] || K2_KIND.employer;
   return (
-    <button onClick={() => onOpen && onOpen(dojo)} className="flex items-center gap-4 w-full text-left border-b"
-      style={{ padding: "var(--space-4)", background: "transparent" }}>
-      <span className="kanji" style={{ fontSize: 26, lineHeight: 1, color: kind.tone, width: 34, textAlign: "center", flexShrink: 0 }}>{dojo.kanji}</span>
-      <div className="flex-1" style={{ minWidth: 0 }}>
-        <div className="flex items-center gap-2">
-          <span className="text-base font-medium text-ink">{dojo.name}</span>
-          <K2Chip mono tone="var(--ink-mute)">{dojo.kind}</K2Chip>
-        </div>
-        <div className="mono text-xs text-ink-faint" style={{ marginTop: 2 }}>{dojo.route} · {dojo.members} members · {dojo.projects} projects</div>
-      </div>
-      {dojo.needs > 0 && <K2Chip icon="bell" tone="var(--accent)" soft="var(--accent-soft)" edge="var(--accent-edge)">{dojo.needs} need you</K2Chip>}
-      <K2RoleTag role={dojo.role} />
-      <span className="text-ink-faint" style={{ fontSize: 18 }}>→</span>
+    <button onClick={() => onOpen && onOpen(dojo)} className="w-full text-left border-b"
+      style={{ display: "grid", gridTemplateColumns: "30px minmax(0, 1fr)", gap: "var(--space-3)",
+        padding: "var(--space-3) var(--space-4)", background: "transparent", alignItems: "start" }}>
+      <span className="kanji" style={{ fontSize: 24, lineHeight: 1.1, color: kind.tone, textAlign: "center" }}>{dojo.kanji}</span>
+      <span style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 3 }}>
+        <span className="flex items-baseline gap-2">
+          <span className="text-sm font-medium text-ink" style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{dojo.name}</span>
+          <span className="mono text-xs text-ink-mute">{dojo.kind}</span>
+          <span className="flex-1" />
+          {dojo.needs > 0 && <span className="mono text-xs text-accent font-semibold" style={{ flexShrink: 0 }}>{dojo.needs} need you</span>}
+        </span>
+        <span className="mono text-xs text-ink-faint" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{dojo.route}</span>
+        <span className="flex items-center gap-3" style={{ marginTop: 1 }}>
+          <K2RoleTag role={dojo.role} />
+          <span className="mono text-xs text-ink-faint" style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{dojo.members} members · {dojo.projects} projects</span>
+          {!mobile && <span className="text-ink-faint" style={{ fontSize: 16, marginLeft: "auto" }}>→</span>}
+        </span>
+      </span>
     </button>
   );
 }
@@ -229,15 +235,25 @@ function K2MyDojoRow({ dojo, onOpen }) {
 function K2ProjectRow({ p, onOpen, showDojo = true, compact = false }) {
   if (compact) {
     return (
-      <button onClick={() => onOpen && onOpen(p)} className="flex items-center gap-3 w-full text-left border-b" style={{ padding: "var(--space-3) var(--space-4)", background: "transparent" }}>
-        <K2Icon name="folder" size={18} color="var(--accent)" />
-        <div style={{ minWidth: 0, flex: 1 }}>
-          <div className="text-sm font-medium text-ink" style={{ lineHeight: 1.2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.name}</div>
-          <div className="mono text-xs text-ink-faint" style={{ marginTop: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.repo}</div>
-        </div>
-        {p.needs > 0 && <K2Chip icon="bell" tone="var(--accent)" soft="var(--accent-soft)" edge="var(--accent-edge)">{p.needs}</K2Chip>}
-        <K2PhasePill phase={p.phase} />
-        <span className="mono text-xs text-ink-faint" style={{ width: 34, textAlign: "right", flexShrink: 0 }}>{p.lastRun}</span>
+      <button onClick={() => onOpen && onOpen(p)} className="w-full text-left border-b"
+        style={{ display: "grid", gridTemplateColumns: "22px minmax(0, 1fr)", gap: "var(--space-3)",
+          padding: "var(--space-4)", background: "transparent", alignItems: "start" }}>
+        <K2Icon name="folder" size={18} color="var(--accent)" style={{ marginTop: 2 }} />
+        <span style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
+          <span style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 2 }}>
+            <span className="flex items-baseline gap-2">
+              <span className="text-base font-medium text-ink" style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</span>
+              <span className="flex-1" />
+              {p.needs > 0 && <span className="mono text-xs text-accent font-semibold" style={{ flexShrink: 0 }}>{p.needs} need{p.needs === 1 ? "s" : ""} you</span>}
+            </span>
+            <span className="mono text-xs text-ink-faint" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.repo}</span>
+          </span>
+          <span className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
+            <K2ClassChip kind={p.classification} />
+            <K2PhasePill phase={p.phase} />
+            <span className="mono text-xs text-ink-faint">last run {p.lastRun}</span>
+          </span>
+        </span>
       </button>
     );
   }
@@ -593,48 +609,161 @@ function K2StanceDial({ dial, onChange }) {
 
 /* ═══ RELAY ════════════════════════════════════════════════ */
 
+// In-page tab strip — one level of nesting under a nav destination, so the
+// rail stays short. tabs: [{id, label, icon, badge}].
+function K2SubTabs({ tabs = [], active, onPick }) {
+  return (
+    <div className="flex gap-2" style={{ flexWrap: "wrap" }}>
+      {tabs.map(x => {
+        const on = x.id === active;
+        return (
+          <button key={x.id} onClick={() => onPick && onPick(x.id)}
+            className={"inline-flex items-center gap-2 rounded text-sm " + (on ? "bg-paper-soft border-1px text-ink" : "text-ink-mute")}
+            style={{ padding: "var(--space-2) var(--space-3)", border: on ? undefined : "1px solid transparent" }}>
+            {x.icon && <K2Icon name={x.icon} size={15} color={on ? "var(--accent)" : "var(--ink-mute)"} />}
+            {x.label}
+            {x.badge ? <span className="mono text-xs" style={{ color: on ? "var(--accent)" : "var(--ink-faint)" }}>{x.badge}</span> : null}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 // A live-run card. `flat` drops the card chrome so it reads as a row inside a
 // single flush card (matching the project list) instead of a stack of cards.
-function K2RunCard({ run, onOpen, flat, stacked }) {
-  const live = run.state === "running";
-  const statusPill = (
-    <span className={"inline-flex items-center gap-1 text-xs rounded-full " + (live ? "text-success bg-success-soft" : "text-warning bg-warning-soft")} style={{ border: "1px solid " + (live ? "var(--success-edge)" : "oklch(0.72 0.12 75 / 0.30)"), padding: "3px 10px" }}>
-      <span className="rounded-full" style={{ width: 6, height: 6, background: live ? "var(--success)" : "var(--warning)" }} />{live ? "running" : "waiting"}
+function K2RunCard({ run, onOpen, onAct, flat, stacked, selected }) {
+  const f = k2RunFlag(run);
+  const pr = k2PlanProgress(run.plan || []);
+  const plan = k2Phases(run.plan || []);
+  const tasks = plan.flatMap(s => s.tasks || []);
+  const nowTask = tasks.find(t => t.state === "active")
+    || tasks.find(t => t.is_gate || t.state === "needs_review" || t.state === "failed");
+  const nowLine = (
+    <span className="text-xs text-ink-mute" style={{ display: "block", marginTop: 3 }}>
+      <span style={{ color: f.tone, fontWeight: 600 }}>{f.label}</span>
+      {nowTask ? <span> · Now: {nowTask.title || nowTask.name}</span> : null}
     </span>
   );
+  const meta = <span className="mono text-xs text-ink-faint">{run.project} · {run.id} · {run.elapsed}</span>;
+  const progress = plan.length ? (
+    <span style={{ display: "block" }}>
+      <K2PlanBar pct={pr.pct} tone={f.tone} />
+      <span className="flex items-center gap-2" style={{ marginTop: 5 }}>
+        <span className="mono text-xs text-ink-faint">stage {pr.stage}/{pr.stages} · {pr.pct}%</span>
+        <K2PlanPips plan={plan} showCaption={false} />
+      </span>
+    </span>
+  ) : null;
+  const cta = f.act
+    ? <K2Btn size="sm" variant="primary" onClick={(e) => { e && e.stopPropagation && e.stopPropagation(); onAct ? onAct(run, f) : onOpen && onOpen(run); }}>{f.cta}</K2Btn>
+    : <K2Btn size="sm" variant="ghost" onClick={(e) => { e && e.stopPropagation && e.stopPropagation(); onOpen && onOpen(run); }}>Watch →</K2Btn>;
+
   if (stacked) {
     return (
-      <button onClick={() => onOpen && onOpen(run)} className="flex flex-col w-full text-left border-b" style={{ padding: "var(--space-3) var(--space-4)", gap: "var(--space-2)", background: "transparent" }}>
-        <div className="flex items-center gap-2">
-          <K2Icon name="eye" size={20} color={live ? "var(--success)" : "var(--warning)"} />
-          <span className="text-sm font-medium text-ink flex-1" style={{ lineHeight: 1.3 }}>{run.task}</span>
+      <div className="flex flex-col w-full border-b" style={{ background: selected ? "var(--paper-mute)" : "transparent" }}>
+        <div className="flex" style={{ minWidth: 0 }}>
+          <span style={{ width: 3, flexShrink: 0, background: f.act ? f.tone : "transparent" }} />
+          <button onClick={() => onOpen && onOpen(run)} className="flex flex-col flex-1 text-left"
+            style={{ padding: "var(--space-3) var(--space-4) var(--space-2)", gap: "var(--space-2)", background: "transparent", minWidth: 0 }}>
+            <span style={{ minWidth: 0 }}>
+              <span className="text-sm font-medium text-ink" style={{ display: "block", lineHeight: 1.3 }}>{run.task}</span>
+              {nowLine}
+            </span>
+            {meta}
+            {progress}
+          </button>
         </div>
-        <div className="mono text-xs text-ink-faint">{run.project} · {run.id} · {run.assistant}</div>
-        <div className="flex items-center gap-2">
-          {statusPill}
-          {run.gate && <K2Chip icon="command" tone="var(--accent)" soft="var(--accent-soft)" edge="var(--accent-edge)">gate</K2Chip>}
-          <span className="flex-1" />
-          <span className="mono text-xs text-ink-mute">{run.elapsed} · {run.edits} edits</span>
-        </div>
-      </button>
+        <div className="flex" style={{ padding: "0 var(--space-4) var(--space-3)", paddingLeft: "calc(var(--space-4) + 3px)" }}>{cta}</div>
+      </div>
     );
   }
-  const cls = flat ? "flex items-center gap-4 w-full text-left border-b" : "zs-card-flush flex items-center gap-4 w-full text-left";
+  const cls = flat ? "flex w-full text-left border-b" : "zs-card-flush flex w-full text-left";
   return (
-    <button onClick={() => onOpen && onOpen(run)} className={cls} style={{ padding: flat ? "var(--space-3) var(--space-4)" : "var(--space-4)", background: "transparent" }}>
-      <K2Icon name="eye" size={22} color={live ? "var(--success)" : "var(--warning)"} />
-      <div className="flex-1" style={{ minWidth: 0 }}>
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-ink">{run.task}</span>
-          {run.gate && <K2Chip icon="command" tone="var(--accent)" soft="var(--accent-soft)" edge="var(--accent-edge)">gate waiting</K2Chip>}
-        </div>
-        <div className="mono text-xs text-ink-faint" style={{ marginTop: 2 }}>{run.project} · {run.id} · {run.assistant}</div>
-      </div>
-      <div className="flex flex-col items-end" style={{ gap: 3 }}>
-        {statusPill}
-        <span className="mono text-xs text-ink-mute">{run.elapsed} · {run.edits} edits</span>
-      </div>
-    </button>
+    <div className={cls} style={{ background: selected ? "var(--paper-mute)" : "transparent" }}>
+      <span style={{ width: 3, flexShrink: 0, background: f.act ? f.tone : "transparent" }} />
+      <button onClick={() => onOpen && onOpen(run)} className="flex items-center gap-4 flex-1 text-left"
+        style={{ padding: flat ? "var(--space-3) var(--space-4)" : "var(--space-4)", background: "transparent", minWidth: 0 }}>
+        <K2Icon name="eye" size={22} color={f.tone} />
+        <span className="flex-1" style={{ minWidth: 0 }}>
+          <span className="flex items-center gap-2">
+            <span className="text-sm font-medium text-ink">{run.task}</span>
+            <K2Chip mono tone="var(--ink-mute)">{run.assistant}</K2Chip>
+          </span>
+          {nowLine}
+          <span style={{ display: "block", marginTop: 3 }}>{meta}</span>
+        </span>
+        {progress ? <span style={{ width: 168, flexShrink: 0 }}>{progress}</span> : null}
+      </button>
+      <span className="flex items-center" style={{ paddingRight: "var(--space-4)", flexShrink: 0 }}>{cta}</span>
+    </div>
+  );
+}
+
+// ── inbox ──────────────────────────────────────────────
+// One row per in-flight session. Status, progress, why it's surfaced, and how
+// long since it last said anything. Everything answerable lives in the detail.
+const K2_STATUS = {
+  running: { label: "running", tone: "var(--success)", soft: "var(--success-soft)" },
+  waiting: { label: "waiting", tone: "var(--ink-soft)", soft: "var(--paper-mute)" },
+  paused:  { label: "paused",  tone: "var(--ink-mute)", soft: "var(--paper-mute)" },
+  stalled: { label: "stalled", tone: "var(--warning)", soft: "var(--warning-soft)" },
+  blocked: { label: "blocked", tone: "var(--warning)", soft: "var(--warning-soft)" },
+  failed:  { label: "failed",  tone: "var(--danger)",  soft: "var(--danger-soft)" },
+  done:    { label: "done",    tone: "var(--ink-mute)", soft: "var(--paper-mute)" },
+};
+// Roll a run + its pending items into an inbox row.
+function k2InboxRow(run, needs = 0) {
+  const pr = k2PlanProgress(run.plan || []);
+  const states = k2Tasks(run.plan || []).map(t => t.state);
+  let status = run.state;
+  if (status !== "done" && states.includes("failed")) status = "failed";
+  else if (run.stale) status = "stalled";
+  else if (status !== "done" && !states.includes("active") && states.includes("blocked")) status = "blocked";
+  const attention = needs > 0 ? "gate" : (status === "stalled" || status === "blocked" || status === "failed") ? status : null;
+  const rank = needs > 0 ? 0 : attention ? 1 : status === "running" ? 2 : status === "done" ? 4 : 3;
+  return { run, needs, status, attention, rank, done: pr.done, total: pr.total, pct: pr.pct };
+}
+function k2InboxRows(runs = [], pendingFor) {
+  return runs.map(r => k2InboxRow(r, pendingFor ? pendingFor(r).length : 0))
+    .sort((a, b) => a.rank - b.rank);
+}
+function K2InboxRow({ row, selected, onOpen }) {
+  const s = K2_STATUS[row.status] || K2_STATUS.waiting;
+  const r = row.run;
+  const attn = row.needs > 0 ? "var(--accent)" : row.attention ? s.tone : null;
+  const why = row.needs > 0
+    ? row.needs + (row.needs === 1 ? " needs you" : " need you")
+    : row.attention === "stalled" ? "no heartbeat"
+    : row.attention === "blocked" ? "blocked on a task"
+    : row.attention === "failed" ? "a task failed" : null;
+  return (
+    <div className="border-b" style={{ background: selected ? "var(--paper-mute)" : "transparent" }}>
+      <button onClick={() => onOpen && onOpen(r)} className="w-full text-left"
+        style={{ display: "grid", gridTemplateColumns: "10px minmax(0, 1fr)", gap: "var(--space-3)",
+          padding: "var(--space-3) var(--space-4)", background: "transparent" }}>
+        <span className="rounded-full" style={{ width: 7, height: 7, marginTop: 6,
+          background: attn || (row.status === "running" ? s.tone : "transparent"),
+          border: attn || row.status === "running" ? "none" : "1px solid var(--ink-faint)" }} />
+        <span style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 3 }}>
+          <span className="flex items-baseline gap-2">
+            <span className="mono text-xs text-ink-mute" style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.project}</span>
+            <span className="flex-1" />
+            <span className="mono text-xs text-ink-faint" style={{ flexShrink: 0 }}>{r.last}</span>
+          </span>
+          <span className={"text-sm " + (row.status === "done" ? "text-ink-mute" : "text-ink font-medium")}
+            style={{ lineHeight: 1.35, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{r.task}</span>
+          <span className="flex items-center gap-2" style={{ marginTop: 1 }}>
+            <span className="text-xs" style={{ color: attn || "var(--ink-mute)", fontWeight: attn ? 600 : 400, whiteSpace: "nowrap" }}>
+              {why || s.label}
+            </span>
+            <span className="flex-1" />
+            <K2PlanPips plan={r.plan} showCaption={false} />
+            <span className="mono text-xs text-ink-faint" style={{ flexShrink: 0 }}>{row.done}/{row.total}</span>
+          </span>
+        </span>
+      </button>
+    </div>
   );
 }
 
@@ -792,10 +921,276 @@ function K2ChatThread({ thread = [], me }) {
   );
 }
 
+/* ═══ RELAY · PLAN GRAPH ═══════════════════════════════════ */
+
+// The authored plan is { goal, phases: [{ title, tasks }] }; a task carries
+// id · title · agent · model · spec_ref · summary · state · deps · is_gate.
+// Parallelism is derived from deps (tasks whose deps are all satisfied run
+// together), never authored. These are the seven task states.
+const K2_NODE = {
+  done:         { icon: "check-circle",              label: "done",         tone: "var(--ink-mute)",  bg: "var(--paper-2)",      edge: "var(--paper-edge)" },
+  active:       { icon: "play-circle",               label: "active",       tone: "var(--success)",   bg: "var(--success-soft)", edge: "var(--success-edge)" },
+  needs_review: { icon: "shield-warning",            label: "needs review", tone: "var(--accent)",    bg: "var(--accent-soft)",  edge: "var(--accent-edge)" },
+  blocked:      { icon: "lock-keyhole-minimalistic", label: "blocked",      tone: "var(--warning)",   bg: "var(--warning-soft)", edge: "oklch(0.72 0.12 75 / 0.30)" },
+  failed:       { icon: "close-circle",              label: "failed",       tone: "var(--danger)",    bg: "var(--danger-soft)",  edge: "var(--danger-edge)" },
+  skipped:      { icon: "forward",                   label: "skipped",      tone: "var(--ink-faint)", bg: "var(--paper-2)",      edge: "var(--paper-edge)" },
+  pending:      { icon: "clock-circle",              label: "pending",      tone: "var(--ink-faint)", bg: "transparent",         edge: "var(--paper-edge)", dashed: true },
+};
+// Older authored plans used stage/queued/running/gate — read them too.
+const K2_STATE_ALIAS = { queued: "pending", running: "active", gate: "needs_review" };
+// Normalize any plan into phases of tasks. Accepts the authored object shape
+// and the legacy array-of-stages shape.
+function k2Phases(plan) {
+  const phases = Array.isArray(plan) ? plan : (plan && plan.phases) || [];
+  return phases.map((p, i) => ({
+    id: p.id || "p" + i,
+    title: p.title || p.name || "Phase " + (i + 1),
+    tasks: (p.tasks || []).map(t => ({
+      ...t,
+      title: t.title || t.name,
+      summary: t.summary || t.meta,
+      state: K2_STATE_ALIAS[t.state] || t.state || "pending",
+      deps: t.deps || [],
+    })),
+  }));
+}
+function k2Tasks(plan) { return k2Phases(plan).flatMap(p => p.tasks); }
+// Phase rolls up to the most urgent state among its tasks.
+function k2StageState(stage) {
+  const s = (stage.tasks || []).map(t => K2_STATE_ALIAS[t.state] || t.state);
+  return ["failed", "needs_review", "blocked", "active", "pending"].find(k => s.includes(k)) || "done";
+}
+
+// One task node.
+function K2PlanNode({ task, onSelect, selected }) {
+  const n = K2_NODE[K2_STATE_ALIAS[task.state] || task.state] || K2_NODE.pending;
+  return (
+    <button onClick={() => onSelect && onSelect(task)}
+      className="flex items-start gap-2 w-full text-left rounded"
+      style={{ padding: "var(--space-2) var(--space-3)", background: n.bg,
+        border: (n.dashed ? "1px dashed " : "1px solid ") + (selected ? n.tone : n.edge),
+        boxShadow: selected ? "inset 0 0 0 1px " + n.tone : "none" }}>
+      <K2Icon name={n.icon} size={16} color={n.tone} style={{ marginTop: 1 }} />
+      <span style={{ minWidth: 0, flex: 1 }}>
+        <span className={"text-sm " + (task.state === "pending" ? "text-ink-mute" : "text-ink")}
+          style={{ display: "block", lineHeight: 1.35 }}>{task.title || task.name}</span>
+        {task.summary || task.meta ? <span className="zs-meta" style={{ display: "block", marginTop: 2 }}>{task.summary || task.meta}</span> : null}
+      </span>
+    </button>
+  );
+}
+
+// The stage column: header + its tasks, wired parallel (fan bracket) or
+// sequential (arrow chain).
+function K2PlanStage({ stage, index, onSelect, selectedId }) {
+  const par = stage.mode ? stage.mode === "parallel" : (stage.tasks || []).filter(t => !(t.deps || []).length).length > 1;
+  const st = K2_NODE[k2StageState(stage)] || K2_NODE.pending;
+  const tasks = stage.tasks || [];
+  return (
+    <div className="flex flex-col" style={{ gap: "var(--space-2)", minWidth: 150, flex: "1 1 0" }}>
+      <div className="flex items-center gap-2" style={{ paddingBottom: "var(--space-2)", borderBottom: "var(--hairline)" }}>
+        <span className="mono text-xs text-ink-faint">{String(index + 1).padStart(2, "0")}</span>
+        <span className="text-sm font-medium text-ink flex-1" style={{ minWidth: 0 }}>{stage.title || stage.name}</span>
+        <span className="rounded-full" style={{ width: 6, height: 6, background: st.tone, flexShrink: 0 }} />
+      </div>
+      <div className="flex items-center gap-1" style={{ marginBottom: 2 }}>
+        <K2Icon name={par ? "transfer-horizontal" : "arrow-right"} size={13} color="var(--ink-faint)" />
+        <span className="mono text-xs text-ink-faint">{par ? "parallel · all at once" : "sequential · in order"}</span>
+      </div>
+      {par ? (
+        <div className="flex" style={{ gap: "var(--space-2)" }}>
+          <span style={{ width: 1, background: "var(--paper-edge)", flexShrink: 0, borderRadius: 1 }} />
+          <div className="flex flex-col" style={{ gap: "var(--space-2)", flex: 1, minWidth: 0 }}>
+            {tasks.map(t => <K2PlanNode key={t.id} task={t} onSelect={onSelect} selected={selectedId === t.id} />)}
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-col" style={{ gap: 0 }}>
+          {tasks.map((t, i) => (
+            <React.Fragment key={t.id}>
+              {i > 0 && (
+                <span className="flex items-center" style={{ height: 16, paddingLeft: "var(--space-4)" }}>
+                  <K2Icon name="alt-arrow-down" size={13} color="var(--ink-faint)" />
+                </span>
+              )}
+              <K2PlanNode task={t} onSelect={onSelect} selected={selectedId === t.id} />
+            </React.Fragment>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// The whole plan. Stages flow left→right on desktop (wrapping to a second row
+// rather than scrolling out of sight), top→bottom on mobile.
+function K2PlanGraph({ plan = [], mobile, onSelect, selectedId, legend = true }) {
+  const stages = k2Phases(plan);
+  const arrow = (i) => mobile
+    ? <div key={"a" + i} className="flex justify-center" style={{ padding: "var(--space-1) 0" }}>
+        <K2Icon name="alt-arrow-down" size={16} color="var(--ink-faint)" /></div>
+    : <div key={"a" + i} className="flex items-center" style={{ paddingTop: 30, flexShrink: 0 }}>
+        <K2Icon name="alt-arrow-right" size={16} color="var(--ink-faint)" /></div>;
+  return (
+    <div className="flex flex-col" style={{ gap: "var(--space-4)" }}>
+      <div className={mobile ? "flex flex-col" : "flex flex-wrap"} style={{
+        gap: mobile ? 0 : "var(--space-3)", alignItems: "stretch", rowGap: mobile ? 0 : "var(--space-5)" }}>
+        {stages.map((s, i) => [
+          i > 0 ? arrow(i) : null,
+          <K2PlanStage key={s.id} stage={s} index={i} onSelect={onSelect} selectedId={selectedId} />,
+        ])}
+      </div>
+      {legend && (
+        <div className="flex flex-wrap items-center gap-4" style={{ paddingTop: "var(--space-3)", borderTop: "var(--hairline)" }}>
+          {Object.keys(K2_NODE).map(k => (
+            <span key={k} className="flex items-center gap-1">
+              <K2Icon name={K2_NODE[k].icon} size={13} color={K2_NODE[k].tone} />
+              <span className="mono text-xs text-ink-mute">{K2_NODE[k].label}</span>
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// The plan outline — phases with their tasks, seq-numbered the way the segment
+// projection orders them. Per task: title · state · agent · model · spec_ref.
+function K2PlanOutline({ plan = [], onSelect, selectedId, mobile }) {
+  const phases = k2Phases(plan);
+  return (
+    <div className="flex flex-col">
+      {phases.map((p, pi) => {
+        const st = K2_NODE[k2StageState(p)] || K2_NODE.pending;
+        return (
+          <div key={p.id} className={pi ? "border-t" : ""}>
+            <div className="flex items-center gap-3" style={{ padding: "var(--space-3) var(--space-4)", background: "var(--paper-mute)" }}>
+              <span className="text-sm font-medium text-ink flex-1" style={{ minWidth: 0 }}>{p.title}</span>
+              <span className="mono text-xs" style={{ color: st.tone }}>{st.label}</span>
+              <span className="mono text-xs text-ink-faint">{p.tasks.filter(t => t.state === "done" || t.state === "skipped").length}/{p.tasks.length}</span>
+            </div>
+            {p.tasks.map(t => {
+              const n = K2_NODE[t.state] || K2_NODE.pending;
+              const on = selectedId === t.id;
+              const labels = [t.agent, t.model].filter(Boolean).join(" · ");
+              return (
+                <button key={t.id} onClick={() => onSelect && onSelect(t)}
+                  className={"flex w-full text-left border-t " + (mobile ? "flex-col gap-2" : "items-center gap-3")}
+                  style={{ padding: "var(--space-3) var(--space-4)", paddingLeft: mobile ? "var(--space-4)" : "var(--space-6)",
+                    background: on ? "var(--paper-mute)" : "transparent" }}>
+                  <span className={mobile ? "flex items-center gap-3 w-full" : "flex items-center gap-3 flex-1"} style={{ minWidth: 0 }}>
+                    <K2Icon name={n.icon} size={16} color={n.tone} />
+                    <span style={{ minWidth: 0, flex: 1 }}>
+                      <span className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
+                        <span className={"text-sm " + (t.state === "pending" || t.state === "skipped" ? "text-ink-mute" : "text-ink")}>{t.title}</span>
+                        {t.is_gate && <K2Chip mono tone="var(--accent)" soft="var(--accent-soft)" edge="var(--accent-edge)">{t.gate_severity === "advisory" ? "gate · advisory" : "gate · blocking"}</K2Chip>}
+                      </span>
+                      {(labels || t.spec_ref || t.summary) && (
+                        <span className="mono text-xs text-ink-faint" style={{ display: "block", marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: mobile ? "normal" : "nowrap" }}>
+                          {[labels, t.spec_ref, t.summary].filter(Boolean).join(" · ")}
+                        </span>
+                      )}
+                    </span>
+                  </span>
+                  <span className={mobile ? "flex items-center gap-3" : "flex items-center gap-3"} style={{ flexShrink: 0 }}>
+                    {t.deps.length > 0 && <span className="mono text-xs text-ink-faint">waits on {t.deps.join(", ")}</span>}
+                    <span className="mono text-xs" style={{ color: n.tone, width: mobile ? undefined : 88, textAlign: "right" }}>{n.label}</span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// Roll the plan up into progress: which stage is live, how far along.
+function k2PlanProgress(plan = []) {
+  const phases = k2Phases(plan);
+  const tasks = phases.flatMap(s => s.tasks);
+  const total = tasks.length || 1;
+  const done = tasks.filter(t => t.state === "done" || t.state === "skipped").length;
+  const running = tasks.filter(t => t.state === "active").length;
+  const liveIdx = phases.findIndex(s => k2StageState(s) !== "done");
+  const stage = liveIdx === -1 ? phases.length : liveIdx + 1;
+  return { done, total, running, stage, stages: phases.length,
+    pct: Math.round(((done + running * 0.5) / total) * 100),
+    stageName: (phases[liveIdx] || phases[phases.length - 1] || {}).title || "" };
+}
+
+// What this run wants from you right now — drives stripe, label and CTA.
+function k2RunFlag(run) {
+  const tasks = k2Tasks(run.plan || []);
+  const states = tasks.map(t => t.state);
+  const gated = tasks.some(t => t.is_gate && t.state !== "done" && t.state !== "skipped");
+  if (gated || states.includes("needs_review") || run.gate) return { key: "gate", label: "Needs approval", tone: "var(--accent)", cta: "Approve", act: true };
+  if (states.includes("failed")) return { key: "failed", label: "Task failed", tone: "var(--danger)", cta: "Review", act: true };
+  if (states.includes("blocked")) return { key: "blocked", label: "Blocked", tone: "var(--warning)", cta: "Unblock", act: true };
+  if (run.state === "running") return { key: "running", label: "Running", tone: "var(--success)" };
+  return { key: "waiting", label: "Waiting", tone: "var(--warning)" };
+}
+
+// A thin progress rail.
+function K2PlanBar({ pct, tone = "var(--ink)", style }) {
+  return (
+    <span style={{ display: "block", height: 5, borderRadius: "var(--radius-sm)", background: "var(--paper-mute)", overflow: "hidden", ...style }}>
+      <span style={{ display: "block", width: Math.max(2, pct) + "%", height: "100%", background: tone, borderRadius: "var(--radius-sm)" }} />
+    </span>
+  );
+}
+
+// The run's activity feed — what sensei actually did, newest first.
+function K2RunActivity({ feed = [] }) {
+  return (
+    <div className="zs-card-flush" style={{ overflow: "hidden" }}>
+      {feed.map((e, i) => (
+        <div key={i} className="flex items-center gap-3" style={{ padding: "var(--space-3) var(--space-4)", borderBottom: i < feed.length - 1 ? "var(--hairline)" : "none" }}>
+          <K2Icon name={e.icon} size={16} color={e.tone} />
+          <span className="text-sm text-ink-soft flex-1" style={{ minWidth: 0 }}>{e.text}</span>
+          <span className="mono text-xs text-ink-faint">{e.at}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Compact stage strip for a run row — one segment per stage, tinted by roll-up
+// state, with a task-count caption. Reads as "where in the plan is this run".
+function K2PlanPips({ plan = [], showCaption = true }) {
+  plan = k2Phases(plan);
+  if (!plan.length) return null;
+  const total = plan.reduce((a, s) => a + (s.tasks || []).length, 0);
+  const done = plan.reduce((a, s) => a + (s.tasks || []).filter(t => t.state === "done").length, 0);
+  return (
+    <span className="flex items-center gap-2" style={{ minWidth: 0 }}>
+      <span className="flex items-center" style={{ gap: 3 }}>
+        {plan.map(s => {
+          const n = K2_NODE[k2StageState(s)] || K2_NODE.pending;
+          const par = (s.tasks || []).filter(t => !(t.deps || []).length).length > 1;
+          return (
+            <span key={s.id} title={s.name + " · " + s.mode} className="flex" style={{ gap: 1 }}>
+              {(par ? [0, 1] : [0]).map(k => (
+                <span key={k} className="rounded-full" style={{ width: par ? 5 : 12, height: 5,
+                  background: n.dashed ? "transparent" : n.tone,
+                  border: n.dashed ? "1px solid var(--paper-edge)" : "none" }} />
+              ))}
+            </span>
+          );
+        })}
+      </span>
+      {showCaption && <span className="mono text-xs text-ink-faint">{done}/{total} tasks</span>}
+    </span>
+  );
+}
+
 Object.assign(window, {
-  K2_CLASS, K2_PHASE, K2_ROLE, K2_KIND,
+  K2_CLASS, K2_PHASE, K2_ROLE, K2_KIND, K2_NODE, K2_STATE_ALIAS, k2StageState, k2Phases, k2Tasks,
+  K2PlanGraph, K2PlanStage, K2PlanNode, K2PlanOutline, K2PlanPips, K2PlanBar, K2RunActivity, k2PlanProgress, k2RunFlag,
   K2KanjiToken, K2Icon, K2Chip, K2ClassChip, K2RoleTag, K2PhasePill, K2SectionHead, K2Banner, K2StatBadge, K2Spark, K2Enso, K2ConfidenceBar, K2EmptyState, K2Btn, K2MyDojoRow, K2ProjectRow,
   K2OrgSwitcher, K2TopBar, K2ContextHeader, K2NavPane, K2AppShell, K2TabBar, K2MobileShell, K2ListSection,
   K2LadderRung, K2RuleRow, K2ConflictCard, K2StanceDial,
   K2RunCard, K2GateCard, K2NeedsYouBand, K2NeedsRow, K2DecisionCard, K2ChatThread,
+  K2_STATUS, k2InboxRow, k2InboxRows, K2InboxRow, K2SubTabs,
 });

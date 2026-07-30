@@ -54,6 +54,7 @@ export { default as TopBar } from './TopBar.svelte';
 export { default as ContextHeader } from './ContextHeader.svelte';
 export { default as NavPane } from './NavPane.svelte';
 export { default as AppShell } from './AppShell.svelte';
+export { default as AccountMenu } from './AccountMenu.svelte';
 export { default as TabBar } from './TabBar.svelte';
 export { default as MobileShell } from './MobileShell.svelte';
 

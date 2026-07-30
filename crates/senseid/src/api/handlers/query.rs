@@ -33,34 +33,34 @@ pub(crate) async fn unified_query(
     // Determine query type from keywords
     let result = if q.contains("lib") || q.contains("dependenc") || q.contains("package") {
         // Library query
-        query_libs(&state, &q, &repo_id, &body.solution_id).await
+        query_libs(&state, &q, &repo_id, &body.solution_id).await?
     } else if q.contains("function") || q.contains("method") || q.contains("fn ") || q.contains("def ") {
         // Function search
-        query_functions(&state, &q, &repo_id).await
+        query_functions(&state, &q, &repo_id).await?
     } else if q.contains("type") || q.contains("interface") || q.contains("class") || q.contains("struct") {
         // Type search
-        query_types(&state, &q, &repo_id).await
+        query_types(&state, &q, &repo_id).await?
     } else if q.contains("who calls") || q.contains("callers") || q.contains("called by") {
         // Caller traceability
-        query_callers(&state, &q, &repo_id).await
+        query_callers(&state, &q, &repo_id).await?
     } else if q.contains("calls") || q.contains("callees") || q.contains("depends on") {
         // Callee traceability
-        query_callees(&state, &q, &repo_id).await
+        query_callees(&state, &q, &repo_id).await?
     } else if q.contains("file") || q.contains("component") || q.contains("tagged") || q.contains("framework") {
         // File/tag search
-        query_files(&state, &q, &repo_id).await
+        query_files(&state, &q, &repo_id).await?
     } else if q.contains("pattern") || q.contains("hook") || q.contains("middleware") || q.contains("route") {
         // Pattern search (via tags)
-        query_patterns(&state, &q, &repo_id).await
+        query_patterns(&state, &q, &repo_id).await?
     } else if q.contains("doc") || q.contains("readme") || q.contains("drift") {
         // Doc query
-        query_docs(&state, &q, &repo_id).await
+        query_docs(&state, &q, &repo_id).await?
     } else if q.contains("communit") || q.contains("cluster") || q.contains("module") {
         // Community/architecture query
-        query_communities(&state, &repo_id).await
+        query_communities(&state, &repo_id).await?
     } else {
         // Default: search functions then types then lib docs
-        query_general(&state, &q, &repo_id).await
+        query_general(&state, &q, &repo_id).await?
     };
 
     Ok(Json(result))
@@ -68,20 +68,23 @@ pub(crate) async fn unified_query(
 
 /// Resolve a repo_id / project name / project UUID to a list of folder UUIDs
 /// (project-scoped). Returns an empty Vec if unknown.
-pub(crate) async fn resolve_scope_ids(state: &AppState, repo_id: &str) -> Vec<uuid::Uuid> {
-    if repo_id.is_empty() { return vec![]; }
-    state.pg.scope_folder_ids(repo_id).await.unwrap_or_default()
+pub(crate) async fn resolve_scope_ids(state: &AppState, repo_id: &str) -> Result<Vec<uuid::Uuid>, StatusCode> {
+    if repo_id.is_empty() { return Ok(vec![]); } // genuine: no repo → empty scope
+    // A DB error is NOT an empty scope — propagate it so callers 500 rather than
+    // return "no results" for a repo that in fact has code.
+    state.pg.scope_folder_ids(repo_id).await
+        .map_err(|e| { tracing::warn!(error = %e, repo_id, "resolve_scope_ids: scope_folder_ids failed"); StatusCode::INTERNAL_SERVER_ERROR })
 }
 
 /// Resolve a repo_id string to a single folder UUID.
 /// Kept for callers that still need a single UUID (e.g. session/community ops).
-pub(crate) async fn resolve_folder_id(state: &AppState, repo_id: &str) -> Option<uuid::Uuid> {
-    let ids = resolve_scope_ids(state, repo_id).await;
-    ids.into_iter().next()
+pub(crate) async fn resolve_folder_id(state: &AppState, repo_id: &str) -> Result<Option<uuid::Uuid>, StatusCode> {
+    Ok(resolve_scope_ids(state, repo_id).await?.into_iter().next())
 }
 
-pub(crate) async fn query_libs(state: &AppState, q: &str, repo_id: &str, _solution_id: &Option<String>) -> serde_json::Value {
-    let repos = state.pg.list_repositories().await.unwrap_or_default();
+pub(crate) async fn query_libs(state: &AppState, q: &str, repo_id: &str, _solution_id: &Option<String>) -> Result<serde_json::Value, StatusCode> {
+    let repos = state.pg.list_repositories().await
+        .map_err(|e| { tracing::warn!(error = %e, repo_id = %repo_id, "query_libs: list_repositories failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
 
     let filtered: Vec<&serde_json::Value> = if !repo_id.is_empty() {
         repos.iter().filter(|p| p["name"].as_str() == Some(repo_id)).collect()
@@ -102,118 +105,131 @@ pub(crate) async fn query_libs(state: &AppState, q: &str, repo_id: &str, _soluti
     }
 
     // Also search libraries from PgStore
-    let lib_docs = state.pg.list_libraries().await.unwrap_or_default();
+    let lib_docs = state.pg.list_libraries().await
+        .map_err(|e| { tracing::warn!(error = %e, "query_libs: list_libraries failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
     let _term = extract_search_term(q);
 
-    serde_json::json!({
+    Ok(serde_json::json!({
         "type": "libs",
         "query": q,
         "libs": all_libs,
         "libDocs": lib_docs.iter().take(5).map(|d| serde_json::json!({
             "title": d["name"], "summary": d.get("description").unwrap_or(&serde_json::json!(null)), "url": d.get("url"),
         })).collect::<Vec<_>>(),
-    })
+    }))
 }
 
-pub(crate) async fn query_functions(state: &AppState, q: &str, repo_id: &str) -> serde_json::Value {
+pub(crate) async fn query_functions(state: &AppState, q: &str, repo_id: &str) -> Result<serde_json::Value, StatusCode> {
     let term = extract_search_term(q);
-    let ids = resolve_scope_ids(state, repo_id).await;
+    let ids = resolve_scope_ids(state, repo_id).await?;
     let results = if !ids.is_empty() {
-        let lexical = state.pg.search_functions_scoped(&ids, &term).await.unwrap_or_default();
+        let lexical = state.pg.search_functions_scoped(&ids, &term).await
+            .map_err(|e| { tracing::warn!(error = %e, repo_id = %repo_id, "query_functions: search_functions_scoped failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
         let query_vec = embed_query(state, q).await;
         fuse_semantic(state, query_vec.as_ref(), &ids, lexical, FUNCTION_KINDS, function_hit).await
     } else {
         vec![]
     };
-    serde_json::json!({
+    Ok(serde_json::json!({
         "type": "functions",
         "query": q,
         "results": results,
-    })
+    }))
 }
 
-pub(crate) async fn query_types(state: &AppState, q: &str, repo_id: &str) -> serde_json::Value {
+pub(crate) async fn query_types(state: &AppState, q: &str, repo_id: &str) -> Result<serde_json::Value, StatusCode> {
     let term = extract_search_term(q);
-    let ids = resolve_scope_ids(state, repo_id).await;
+    let ids = resolve_scope_ids(state, repo_id).await?;
     let results = if !ids.is_empty() {
-        let lexical = state.pg.search_types_scoped(&ids, &term).await.unwrap_or_default();
+        let lexical = state.pg.search_types_scoped(&ids, &term).await
+            .map_err(|e| { tracing::warn!(error = %e, repo_id = %repo_id, "query_types: search_types_scoped failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
         let query_vec = embed_query(state, q).await;
         fuse_semantic(state, query_vec.as_ref(), &ids, lexical, TYPE_KINDS, type_hit).await
     } else {
         vec![]
     };
-    serde_json::json!({
+    Ok(serde_json::json!({
         "type": "types",
         "query": q,
         "results": results,
-    })
+    }))
 }
 
-pub(crate) async fn query_callers(state: &AppState, q: &str, repo_id: &str) -> serde_json::Value {
+pub(crate) async fn query_callers(state: &AppState, q: &str, repo_id: &str) -> Result<serde_json::Value, StatusCode> {
     let term = extract_search_term(q);
-    let results = state.pg.get_callers_by_name(repo_id, &term).await.unwrap_or_default();
-    serde_json::json!({
+    let results = state.pg.get_callers_by_name(repo_id, &term).await
+        .map_err(|e| { tracing::warn!(error = %e, repo_id = %repo_id, "query_callers: get_callers_by_name failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    Ok(serde_json::json!({
         "type": "callers",
         "query": q,
         "function": term,
         "results": results,
-    })
+    }))
 }
 
-pub(crate) async fn query_callees(state: &AppState, q: &str, repo_id: &str) -> serde_json::Value {
+pub(crate) async fn query_callees(state: &AppState, q: &str, repo_id: &str) -> Result<serde_json::Value, StatusCode> {
     let term = extract_search_term(q);
-    let results = state.pg.get_callees_by_name(repo_id, &term).await.unwrap_or_default();
-    serde_json::json!({
+    let results = state.pg.get_callees_by_name(repo_id, &term).await
+        .map_err(|e| { tracing::warn!(error = %e, repo_id = %repo_id, "query_callees: get_callees_by_name failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    Ok(serde_json::json!({
         "type": "callees",
         "query": q,
         "function": term,
         "results": results,
-    })
+    }))
 }
 
-pub(crate) async fn query_files(state: &AppState, q: &str, repo_id: &str) -> serde_json::Value {
+pub(crate) async fn query_files(state: &AppState, q: &str, repo_id: &str) -> Result<serde_json::Value, StatusCode> {
     let term = extract_search_term(q);
-    let results = state.pg.get_files_by_tag(repo_id, &term).await.unwrap_or_default();
-    serde_json::json!({ "type": "files", "query": q, "results": results })
+    let results = state.pg.get_files_by_tag(repo_id, &term).await
+        .map_err(|e| { tracing::warn!(error = %e, repo_id = %repo_id, "query_files: get_files_by_tag failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    Ok(serde_json::json!({ "type": "files", "query": q, "results": results }))
 }
 
-pub(crate) async fn query_patterns(state: &AppState, q: &str, repo_id: &str) -> serde_json::Value {
+pub(crate) async fn query_patterns(state: &AppState, q: &str, repo_id: &str) -> Result<serde_json::Value, StatusCode> {
     let tag = if q.contains("hook") { "hook" }
         else if q.contains("middleware") { "middleware" }
         else if q.contains("route") { "route" }
         else if q.contains("handler") { "handler" }
         else if q.contains("component") { "component" }
         else { &extract_search_term(q) };
-    let results = state.pg.get_files_by_tag(repo_id, tag).await.unwrap_or_default();
-    serde_json::json!({ "type": "patterns", "query": q, "pattern": tag, "results": results })
+    let results = state.pg.get_files_by_tag(repo_id, tag).await
+        .map_err(|e| { tracing::warn!(error = %e, repo_id = %repo_id, tag = %tag, "query_patterns: get_files_by_tag failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    Ok(serde_json::json!({ "type": "patterns", "query": q, "pattern": tag, "results": results }))
 }
 
-pub(crate) async fn query_docs(state: &AppState, q: &str, repo_id: &str) -> serde_json::Value {
-    let drifted = state.pg.get_doc_drift(repo_id).await.unwrap_or_default();
-    serde_json::json!({
+pub(crate) async fn query_docs(state: &AppState, q: &str, repo_id: &str) -> Result<serde_json::Value, StatusCode> {
+    let drifted = state.pg.get_doc_drift(repo_id).await
+        .map_err(|e| { tracing::warn!(error = %e, repo_id = %repo_id, "query_docs: get_doc_drift failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    Ok(serde_json::json!({
         "type": "docs",
         "query": q,
         "driftedDocs": drifted,
-    })
+    }))
 }
 
-pub(crate) async fn query_communities(state: &AppState, repo_id: &str) -> serde_json::Value {
+pub(crate) async fn query_communities(state: &AppState, repo_id: &str) -> Result<serde_json::Value, StatusCode> {
     // Communities are stored per-folder; aggregate across all scoped folders.
-    let ids = resolve_scope_ids(state, repo_id).await;
-    let communities = state.pg.list_communities_scoped(&ids).await.unwrap_or_default();
-    serde_json::json!({
+    let ids = resolve_scope_ids(state, repo_id).await?;
+    let communities = state.pg.list_communities_scoped(&ids).await
+        .map_err(|e| { tracing::warn!(error = %e, repo_id = %repo_id, "query_communities: list_communities_scoped failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    Ok(serde_json::json!({
         "type": "communities",
         "results": communities,
-    })
+    }))
 }
 
-pub(crate) async fn query_general(state: &AppState, q: &str, repo_id: &str) -> serde_json::Value {
+pub(crate) async fn query_general(state: &AppState, q: &str, repo_id: &str) -> Result<serde_json::Value, StatusCode> {
     let term = extract_search_term(q);
-    let ids = resolve_scope_ids(state, repo_id).await;
+    let ids = resolve_scope_ids(state, repo_id).await?;
     let (functions, types) = if !ids.is_empty() {
-        let fns_lex = state.pg.search_functions_scoped(&ids, &term).await.unwrap_or_default();
-        let tys_lex = state.pg.search_types_scoped(&ids, &term).await.unwrap_or_default();
+        let fns_lex = state.pg.search_functions_scoped(&ids, &term).await
+            .map_err(|e| { tracing::warn!(error = %e, "query_general: search_functions_scoped failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+        let tys_lex = state.pg.search_types_scoped(&ids, &term).await
+            .map_err(|e| { tracing::warn!(error = %e, "query_general: search_types_scoped failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
         // Embed once, fuse the semantic candidates into both node result sets.
+        // (fuse_semantic/embed_query stay fail-open — a missing embedding degrades
+        // to the lexical order, which is additive, not error-masking.)
         let query_vec = embed_query(state, q).await;
         let fns = fuse_semantic(state, query_vec.as_ref(), &ids, fns_lex, FUNCTION_KINDS, function_hit).await;
         let tys = fuse_semantic(state, query_vec.as_ref(), &ids, tys_lex, TYPE_KINDS, type_hit).await;
@@ -222,9 +238,10 @@ pub(crate) async fn query_general(state: &AppState, q: &str, repo_id: &str) -> s
         (vec![], vec![])
     };
 
-    let lib_docs = state.pg.list_libraries().await.unwrap_or_default();
+    let lib_docs = state.pg.list_libraries().await
+        .map_err(|e| { tracing::warn!(error = %e, "query_general: list_libraries failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
 
-    serde_json::json!({
+    Ok(serde_json::json!({
         "type": "general",
         "query": q,
         "functions": functions,
@@ -232,7 +249,7 @@ pub(crate) async fn query_general(state: &AppState, q: &str, repo_id: &str) -> s
         "libDocs": lib_docs.iter().take(5).map(|d| serde_json::json!({
             "title": d["name"], "summary": d.get("description").unwrap_or(&serde_json::json!(null)),
         })).collect::<Vec<_>>(),
-    })
+    }))
 }
 
 /// `context_pack` — assemble a ready-to-use context bundle for `q`: relevant code
@@ -246,8 +263,8 @@ pub(crate) async fn query_general(state: &AppState, q: &str, repo_id: &str) -> s
 /// indexed as a symbol. Each item is tagged `via: "symbol" | "grep"`. Fail-open:
 /// no repo roots / an empty grep / an unreadable file degrade to the symbol arm
 /// (or an empty snippet), never an error.
-pub(crate) async fn context_pack(state: &AppState, q: &str, repo_id: &str) -> serde_json::Value {
-    let general = query_general(state, q, repo_id).await;
+pub(crate) async fn context_pack(state: &AppState, q: &str, repo_id: &str) -> Result<serde_json::Value, StatusCode> {
+    let general = query_general(state, q, repo_id).await?;
     // Collect top-k symbol ids in ranked order (functions first, then types).
     let mut ordered_ids: Vec<uuid::Uuid> = Vec::new();
     for key in ["functions", "types"] {
@@ -262,7 +279,8 @@ pub(crate) async fn context_pack(state: &AppState, q: &str, repo_id: &str) -> se
         if ordered_ids.len() >= CONTEXT_PACK_K { break; }
     }
 
-    let locs = state.pg.node_locations(&ordered_ids).await.unwrap_or_default();
+    let locs = state.pg.node_locations(&ordered_ids).await
+        .map_err(|e| { tracing::warn!(error = %e, "context_pack: node_locations failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
     let mut items: Vec<serde_json::Value> = Vec::new();
     // Files already packed by the symbol arm — the grep arm skips them so a
     // symbol and a comment in the same file don't produce two near-dupe entries.
@@ -283,7 +301,7 @@ pub(crate) async fn context_pack(state: &AppState, q: &str, repo_id: &str) -> se
     // Content-grep arm: concepts that live only in file content.
     items.extend(grep_context_items(state, repo_id, &extract_search_term(q), &packed_files).await);
 
-    serde_json::json!({ "type": "context_pack", "query": q, "count": items.len(), "items": items })
+    Ok(serde_json::json!({ "type": "context_pack", "query": q, "count": items.len(), "items": items }))
 }
 
 /// The content-grep arm of `context_pack`: up to `CONTEXT_PACK_GREP_K` raw
@@ -297,7 +315,9 @@ async fn grep_context_items(
     term: &str,
     packed_files: &std::collections::HashSet<String>,
 ) -> Vec<serde_json::Value> {
-    let ids = resolve_scope_ids(state, repo_id).await;
+    // Fail-open (supplementary grep arm): a scope-resolution error yields no grep
+    // items rather than 500-ing the whole context_pack.
+    let Ok(ids) = resolve_scope_ids(state, repo_id).await else { return vec![] };
     if ids.is_empty() {
         return vec![];
     }
@@ -308,8 +328,18 @@ async fn grep_context_items(
     let mut grep_roots: Vec<(std::path::PathBuf, Vec<String>)> = Vec::with_capacity(roots.len());
     for r in &roots {
         // Exclusions are keyed by watch-root path; a repo that is also a watch
-        // root contributes its excluded prefixes, otherwise this is empty.
-        let excl = state.pg.root_exclusion_prefixes(r).await;
+        // root contributes its excluded prefixes, otherwise this is empty. Fail
+        // closed: on a read error skip this root rather than grep it with no
+        // exclusions (which could leak excluded-folder content into the context
+        // pack). The grep otherwise stays best-effort.
+        let excl = match state.pg.root_exclusion_prefixes(r).await {
+            Ok(e) => e,
+            Err(e) => {
+                tracing::warn!(error = %e, root = %r,
+                    "context_pack grep: exclusion read failed; skipping root");
+                continue;
+            }
+        };
         grep_roots.push((std::path::PathBuf::from(r), excl));
     }
     let opts = GrepOpts { max_matches: CONTEXT_PACK_GREP_K, ..GrepOpts::default() };

@@ -19,12 +19,15 @@ pub fn remove(req: &RemoveRequest) -> RemoveResult {
 
 /// Path-injected core. `run_uninstall` gates the external
 /// `claude plugin uninstall` (skipped in tests so it never touches real config).
+/// `_req.purge` and `_sensei_dir` are currently unused: pre-release there is no
+/// project registry to purge (the daemon owns projects in Postgres), so uninstall
+/// no longer walks a `projects.json` manifest cleaning each repo.
 fn remove_with(
-    req: &RemoveRequest,
+    _req: &RemoveRequest,
     home: &Path,
     plugin: &Path,
     cache: &Path,
-    sensei_dir: &Path,
+    _sensei_dir: &Path,
     run_uninstall: bool,
 ) -> RemoveResult {
     let mut result = RemoveResult {
@@ -38,11 +41,6 @@ fn remove_with(
 
     // 3. Clear marketplace cache
     remove_cache(&mut result, cache);
-
-    // 4. If purge: remove project .sensei/ dirs
-    if req.purge {
-        remove_registered_projects(&mut result, sensei_dir);
-    }
 
     result
 }
@@ -85,102 +83,6 @@ fn remove_cache(result: &mut RemoveResult, cache: &Path) {
         }
         result.cache_cleared = true;
     }
-}
-
-/// Remove .sensei/ dirs from all registered projects.
-fn remove_registered_projects(result: &mut RemoveResult, sensei_dir: &Path) {
-    let projects_file = sensei_dir.join("projects.json");
-    // projects.json stores a root JSON array of path strings (Vec<String>).
-    // Do NOT read it as a serde_json::Value and then index ["projects"] —
-    // that key does not exist and always returns null.
-    let projects: Vec<String> = if projects_file.exists() {
-        match fs::read_to_string(&projects_file) {
-            Ok(s) => match serde_json::from_str::<Vec<String>>(&s) {
-                Ok(v) => v,
-                Err(e) => {
-                    tracing::warn!(error = %e, path = %projects_file.display(), "failed to parse projects.json during purge; skipping project cleanup");
-                    result.errors.push(format!("projects.json parse: {}", e));
-                    Vec::new()
-                }
-            },
-            Err(e) => {
-                tracing::warn!(error = %e, path = %projects_file.display(), "failed to read projects.json during purge; skipping project cleanup");
-                result.errors.push(format!("projects.json read: {}", e));
-                Vec::new()
-            }
-        }
-    } else {
-        Vec::new()
-    };
-
-    for path in &projects {
-        remove_project_scope(path, result);
-    }
-}
-
-/// Remove sensei artifacts from a single project directory.
-fn remove_project_scope(project_path: &str, result: &mut RemoveResult) {
-    let root = std::path::PathBuf::from(project_path);
-    if !root.exists() { return; }
-
-    // .sensei/ directory
-    let sensei = root.join(".sensei");
-    if sensei.exists()
-        && let Err(e) = fs::remove_dir_all(&sensei) {
-            tracing::warn!(error = %e, path = %sensei.display(), "failed to remove project .sensei directory during purge");
-            result.errors.push(format!(".sensei {}: {}", sensei.display(), e));
-        }
-
-    // .claude/commands/, .claude/skills/, .claude/agents/
-    for subdir in &["commands", "skills", "agents"] {
-        let dir = root.join(".claude").join(subdir);
-        if dir.exists() {
-            let count = remove_md_files_in(&dir);
-            match *subdir {
-                "skills" => result.skills_removed += count,
-                "commands" => result.commands_removed += count,
-                "agents" => result.agents_removed += count,
-                _ => {}
-            }
-        }
-    }
-
-    // Remove sensei entry from .mcp.json (preserve other servers)
-    let mcp_file = root.join(".mcp.json");
-    if mcp_file.exists() {
-        match fs::read_to_string(&mcp_file) {
-            Ok(content) => {
-                match serde_json::from_str::<serde_json::Value>(&content) {
-                    Ok(mut config) => {
-                        if let Some(servers) = config
-                            .get_mut("mcpServers")
-                            .and_then(|s| s.as_object_mut())
-                            && servers.remove("sensei").is_some()
-                        {
-                            if servers.is_empty() {
-                                if let Err(e) = fs::remove_file(&mcp_file) {
-                                    tracing::warn!(error = %e, path = %mcp_file.display(), "failed to delete .mcp.json after removing sensei server");
-                                    result.errors.push(format!(".mcp.json delete: {}", e));
-                                }
-                            } else if let Err(e) = fs::write(&mcp_file, serde_json::to_string_pretty(&config).unwrap()) {
-                                tracing::warn!(error = %e, path = %mcp_file.display(), "failed to rewrite .mcp.json after removing sensei server");
-                                result.errors.push(format!(".mcp.json write: {}", e));
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!(error = %e, path = %mcp_file.display(), "failed to parse .mcp.json; leaving sensei server entry in place");
-                    }
-                }
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, path = %mcp_file.display(), "failed to read .mcp.json; leaving sensei server entry in place");
-                result.errors.push(format!(".mcp.json read: {}", e));
-            }
-        }
-    }
-
-    result.projects_cleaned.push(project_path.to_string());
 }
 
 /// Remove all .md files in a directory. Removes the directory if empty afterward.
@@ -262,165 +164,6 @@ mod tests {
         assert!(!dir.exists());
     }
 
-    // ── remove_project_scope ────────────────────────────────────────
-
-    #[test]
-    fn remove_project_scope_nonexistent_path_is_noop() {
-        let tmp = tempfile::tempdir().unwrap();
-        let missing = tmp.path().join("no_such_project");
-        let mut result = RemoveResult::default();
-        remove_project_scope(missing.to_str().unwrap(), &mut result);
-        // Should not be added to projects_cleaned because path doesn't exist
-        assert!(result.projects_cleaned.is_empty());
-    }
-
-    #[test]
-    fn remove_project_scope_removes_sensei_dir() {
-        let tmp = tempfile::tempdir().unwrap();
-        let project = tmp.path().join("my_project");
-        let sensei = project.join(".sensei");
-        fs::create_dir_all(sensei.join("indexes")).unwrap();
-        fs::write(sensei.join("config.json"), "{}").unwrap();
-
-        let mut result = RemoveResult::default();
-        remove_project_scope(project.to_str().unwrap(), &mut result);
-
-        assert!(!sensei.exists());
-        assert_eq!(result.projects_cleaned, vec![project.to_str().unwrap()]);
-    }
-
-    #[test]
-    fn remove_project_scope_removes_claude_subdirs_md_files() {
-        let tmp = tempfile::tempdir().unwrap();
-        let project = tmp.path().join("proj");
-        let claude = project.join(".claude");
-
-        // Create skills with 2 md files
-        let skills_dir = claude.join("skills");
-        fs::create_dir_all(&skills_dir).unwrap();
-        fs::write(skills_dir.join("a.md"), "skill a").unwrap();
-        fs::write(skills_dir.join("b.md"), "skill b").unwrap();
-
-        // Create commands with 1 md file + 1 non-md
-        let cmds_dir = claude.join("commands");
-        fs::create_dir_all(&cmds_dir).unwrap();
-        fs::write(cmds_dir.join("c.md"), "command c").unwrap();
-        fs::write(cmds_dir.join("keep.txt"), "keep").unwrap();
-
-        // Create agents with 1 md file (agents count is not tracked)
-        let agents_dir = claude.join("agents");
-        fs::create_dir_all(&agents_dir).unwrap();
-        fs::write(agents_dir.join("d.md"), "agent d").unwrap();
-
-        let mut result = RemoveResult::default();
-        remove_project_scope(project.to_str().unwrap(), &mut result);
-
-        assert_eq!(result.skills_removed, 2);
-        assert_eq!(result.commands_removed, 1);
-        // Non-md file is preserved, so commands dir still exists
-        assert!(cmds_dir.join("keep.txt").exists());
-        // Skills dir should be cleaned up (was only md files)
-        assert!(!skills_dir.exists());
-        // Agents dir should be cleaned up
-        assert!(!agents_dir.exists());
-    }
-
-    #[test]
-    fn remove_project_scope_removes_sensei_from_mcp_json() {
-        let tmp = tempfile::tempdir().unwrap();
-        let project = tmp.path().join("proj");
-        fs::create_dir_all(&project).unwrap();
-
-        let mcp_file = project.join(".mcp.json");
-        let config = serde_json::json!({
-            "mcpServers": {
-                "sensei": {"command": "sensei-mcp", "args": []},
-                "other": {"command": "other-mcp", "args": []}
-            }
-        });
-        fs::write(&mcp_file, serde_json::to_string_pretty(&config).unwrap()).unwrap();
-
-        let mut result = RemoveResult::default();
-        remove_project_scope(project.to_str().unwrap(), &mut result);
-
-        // File should still exist with 'other' server preserved
-        assert!(mcp_file.exists());
-        let content: serde_json::Value =
-            serde_json::from_str(&fs::read_to_string(&mcp_file).unwrap()).unwrap();
-        assert!(content["mcpServers"]["sensei"].is_null());
-        assert_eq!(content["mcpServers"]["other"]["command"], "other-mcp");
-    }
-
-    #[test]
-    fn remove_project_scope_deletes_mcp_json_when_sensei_is_only_server() {
-        let tmp = tempfile::tempdir().unwrap();
-        let project = tmp.path().join("proj");
-        fs::create_dir_all(&project).unwrap();
-
-        let mcp_file = project.join(".mcp.json");
-        let config = serde_json::json!({
-            "mcpServers": {
-                "sensei": {"command": "sensei-mcp"}
-            }
-        });
-        fs::write(&mcp_file, serde_json::to_string_pretty(&config).unwrap()).unwrap();
-
-        let mut result = RemoveResult::default();
-        remove_project_scope(project.to_str().unwrap(), &mut result);
-
-        // File should be deleted when sensei was the only server
-        assert!(!mcp_file.exists());
-    }
-
-    #[test]
-    fn remove_project_scope_preserves_mcp_json_without_sensei_key() {
-        let tmp = tempfile::tempdir().unwrap();
-        let project = tmp.path().join("proj");
-        fs::create_dir_all(&project).unwrap();
-
-        let mcp_file = project.join(".mcp.json");
-        let original = serde_json::json!({
-            "mcpServers": {
-                "other": {"command": "other-mcp"}
-            }
-        });
-        let original_str = serde_json::to_string_pretty(&original).unwrap();
-        fs::write(&mcp_file, &original_str).unwrap();
-
-        let mut result = RemoveResult::default();
-        remove_project_scope(project.to_str().unwrap(), &mut result);
-
-        // File should be untouched — no sensei key to remove
-        assert!(mcp_file.exists());
-        let content = fs::read_to_string(&mcp_file).unwrap();
-        assert_eq!(content, original_str);
-    }
-
-    // ── remove_registered_projects — JSON format ─────────────────────
-
-    /// Regression test for B1: projects.json stores a root array, not {"projects":[...]}.
-    /// The old code read v["projects"] which always returned null for a root array.
-    #[test]
-    fn remove_registered_projects_reads_root_array_format() {
-        // Set up a fake sensei_dir via env manipulation is not straightforward,
-        // so we test the fix by verifying the parse path directly:
-        // serde_json::from_str::<Vec<String>> succeeds on a root array.
-        let json = r#"["/home/user/project1", "/home/user/project2"]"#;
-        let result: Option<Vec<String>> = serde_json::from_str::<Vec<String>>(json).ok();
-        assert_eq!(
-            result,
-            Some(vec!["/home/user/project1".to_string(), "/home/user/project2".to_string()]),
-            "projects.json root array must parse to Vec<String>"
-        );
-
-        // Old (broken) path: indexing a root array as an object returns null
-        let as_value: serde_json::Value = serde_json::from_str(json).unwrap();
-        assert!(
-            as_value["projects"].is_null(),
-            "v[\"projects\"] on a root array must be null — confirms the old bug"
-        );
-    }
-
     // ── remove (integration-level) ──────────────────────────────────
 
     #[test]
@@ -495,84 +238,6 @@ mod tests {
         assert_eq!(json["errors"][0], "some error");
     }
 
-    // ── remove_project_scope edge cases ────────────────────────────
-
-    #[test]
-    fn remove_project_scope_handles_invalid_mcp_json() {
-        let tmp = tempfile::tempdir().unwrap();
-        let project = tmp.path().join("proj");
-        fs::create_dir_all(&project).unwrap();
-
-        // Write invalid JSON
-        let mcp_file = project.join(".mcp.json");
-        fs::write(&mcp_file, "not valid json!!!").unwrap();
-
-        let mut result = RemoveResult::default();
-        remove_project_scope(project.to_str().unwrap(), &mut result);
-
-        // Should not panic, file should still exist (couldn't parse it)
-        assert!(mcp_file.exists());
-        assert_eq!(result.projects_cleaned, vec![project.to_str().unwrap()]);
-    }
-
-    #[test]
-    fn remove_project_scope_handles_mcp_json_without_mcp_servers() {
-        let tmp = tempfile::tempdir().unwrap();
-        let project = tmp.path().join("proj");
-        fs::create_dir_all(&project).unwrap();
-
-        let mcp_file = project.join(".mcp.json");
-        fs::write(&mcp_file, r#"{"other_key": "value"}"#).unwrap();
-
-        let mut result = RemoveResult::default();
-        remove_project_scope(project.to_str().unwrap(), &mut result);
-
-        // File untouched, no panic
-        assert!(mcp_file.exists());
-        let content = fs::read_to_string(&mcp_file).unwrap();
-        assert!(content.contains("other_key"));
-    }
-
-    #[test]
-    fn remove_project_scope_full_cleanup() {
-        // Test a project with .sensei, all .claude subdirs, and .mcp.json
-        let tmp = tempfile::tempdir().unwrap();
-        let project = tmp.path().join("proj");
-
-        // .sensei/
-        fs::create_dir_all(project.join(".sensei/indexes")).unwrap();
-        fs::write(project.join(".sensei/config.json"), "{}").unwrap();
-
-        // .claude/skills/, .claude/commands/, .claude/agents/
-        fs::create_dir_all(project.join(".claude/skills")).unwrap();
-        fs::write(project.join(".claude/skills/s1.md"), "s1").unwrap();
-        fs::write(project.join(".claude/skills/s2.md"), "s2").unwrap();
-        fs::create_dir_all(project.join(".claude/commands")).unwrap();
-        fs::write(project.join(".claude/commands/c1.md"), "c1").unwrap();
-        fs::create_dir_all(project.join(".claude/agents")).unwrap();
-        fs::write(project.join(".claude/agents/a1.md"), "a1").unwrap();
-
-        // .mcp.json with sensei as sole server
-        fs::write(
-            project.join(".mcp.json"),
-            r#"{"mcpServers":{"sensei":{"command":"sensei-mcp"}}}"#,
-        )
-        .unwrap();
-
-        let mut result = RemoveResult::default();
-        remove_project_scope(project.to_str().unwrap(), &mut result);
-
-        assert!(!project.join(".sensei").exists());
-        assert!(!project.join(".claude/skills").exists());
-        assert!(!project.join(".claude/commands").exists());
-        assert!(!project.join(".claude/agents").exists());
-        assert!(!project.join(".mcp.json").exists());
-        assert_eq!(result.skills_removed, 2);
-        assert_eq!(result.commands_removed, 1);
-        assert_eq!(result.agents_removed, 1);
-        assert_eq!(result.projects_cleaned, vec![project.to_str().unwrap()]);
-    }
-
     // ── remove_md_files_in edge cases ─────────────────────────────────
 
     #[test]
@@ -612,32 +277,4 @@ mod tests {
         assert!(dir.join("no_ext").exists());
     }
 
-    // ── remove_project_scope accumulation ────────────────────────────
-
-    #[test]
-    fn remove_project_scope_accumulates_counts() {
-        let tmp = tempfile::tempdir().unwrap();
-
-        let p1 = tmp.path().join("p1");
-        fs::create_dir_all(p1.join(".claude/skills")).unwrap();
-        fs::write(p1.join(".claude/skills/a.md"), "a").unwrap();
-        fs::write(p1.join(".claude/skills/b.md"), "b").unwrap();
-        fs::create_dir_all(p1.join(".claude/commands")).unwrap();
-        fs::write(p1.join(".claude/commands/c.md"), "c").unwrap();
-
-        let p2 = tmp.path().join("p2");
-        fs::create_dir_all(p2.join(".claude/skills")).unwrap();
-        fs::write(p2.join(".claude/skills/d.md"), "d").unwrap();
-        fs::create_dir_all(p2.join(".claude/commands")).unwrap();
-        fs::write(p2.join(".claude/commands/e.md"), "e").unwrap();
-        fs::write(p2.join(".claude/commands/f.md"), "f").unwrap();
-
-        let mut result = RemoveResult::default();
-        remove_project_scope(p1.to_str().unwrap(), &mut result);
-        remove_project_scope(p2.to_str().unwrap(), &mut result);
-
-        assert_eq!(result.skills_removed, 3);   // 2 + 1
-        assert_eq!(result.commands_removed, 3);  // 1 + 2
-        assert_eq!(result.projects_cleaned.len(), 2);
-    }
 }

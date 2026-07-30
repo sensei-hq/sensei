@@ -36,7 +36,7 @@ pub(crate) async fn mcp_call_tool(
             // no query embedding it degrades to the lexical order. Previously this
             // arm was lexical-only, so a concept query that didn't share a
             // substring with any symbol name returned nothing (G4).
-            let general = super::query::query_general(&state, query, repo_id).await;
+            let general = super::query::query_general(&state, query, repo_id).await?;
             serde_json::json!({
                 "functions": general.get("functions").cloned().unwrap_or_else(|| serde_json::json!([])),
                 "types":     general.get("types").cloned().unwrap_or_else(|| serde_json::json!([])),
@@ -45,12 +45,12 @@ pub(crate) async fn mcp_call_tool(
         "context_pack" => {
             // Concept-level retrieval in one call: top hybrid hits + their code
             // snippets, so an assistant doesn't need a search then N file reads.
-            super::query::context_pack(&state, query, repo_id).await
+            super::query::context_pack(&state, query, repo_id).await?
         }
         "get_symbol" => {
-            let ids = resolve_scope_ids(&state, repo_id).await;
+            let ids = resolve_scope_ids(&state, repo_id).await?;
             let fns = if !ids.is_empty() {
-                state.pg.search_functions_scoped(&ids, query).await.unwrap_or_else(|e| { tracing::warn!(error = %e, tool, query, "mcp get_symbol: search_functions_scoped failed"); Vec::new() })
+                state.pg.search_functions_scoped(&ids, query).await.map_err(|e| { tracing::warn!(error = %e, tool, query, "mcp get_symbol: search_functions_scoped failed"); StatusCode::INTERNAL_SERVER_ERROR })?
             } else {
                 vec![]
             };
@@ -58,38 +58,38 @@ pub(crate) async fn mcp_call_tool(
         }
         "get_callers" => {
             let name = params["name"].as_str().unwrap_or(query);
-            let callers = state.pg.get_callers_by_name(repo_id, name).await.unwrap_or_else(|e| { tracing::warn!(error = %e, repo_id, name, "mcp get_callers: get_callers_by_name failed"); Vec::new() });
+            let callers = state.pg.get_callers_by_name(repo_id, name).await.map_err(|e| { tracing::warn!(error = %e, repo_id, name, "mcp get_callers: get_callers_by_name failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
             serde_json::json!({"callers": callers})
         }
         "get_callees" => {
             let name = params["name"].as_str().unwrap_or(query);
-            let callees = state.pg.get_callees_by_name(repo_id, name).await.unwrap_or_else(|e| { tracing::warn!(error = %e, repo_id, name, "mcp get_callees: get_callees_by_name failed"); Vec::new() });
+            let callees = state.pg.get_callees_by_name(repo_id, name).await.map_err(|e| { tracing::warn!(error = %e, repo_id, name, "mcp get_callees: get_callees_by_name failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
             serde_json::json!({"callees": callees})
         }
         "get_file_tags" => {
             let tag = params["tag"].as_str().unwrap_or(query);
-            let files = state.pg.get_files_by_tag(repo_id, tag).await.unwrap_or_else(|e| { tracing::warn!(error = %e, repo_id, tag, "mcp get_file_tags: get_files_by_tag failed"); Vec::new() });
+            let files = state.pg.get_files_by_tag(repo_id, tag).await.map_err(|e| { tracing::warn!(error = %e, repo_id, tag, "mcp get_file_tags: get_files_by_tag failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
             serde_json::json!({"files": files})
         }
         "get_communities" => {
             // Communities are stored per-folder; aggregate across ALL scope folders
             // (#G5a — the single-folder resolve_folder_id missed the repo root's).
-            let ids = resolve_scope_ids(&state, repo_id).await;
-            let communities = state.pg.list_communities_scoped(&ids).await.unwrap_or_else(|e| { tracing::warn!(error = %e, repo_id, "mcp get_communities: list_communities_scoped failed"); Vec::new() });
+            let ids = resolve_scope_ids(&state, repo_id).await?;
+            let communities = state.pg.list_communities_scoped(&ids).await.map_err(|e| { tracing::warn!(error = %e, repo_id, "mcp get_communities: list_communities_scoped failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
             serde_json::json!({"communities": communities})
         }
         "get_doc_drift" => {
-            let drift = state.pg.get_doc_drift(repo_id).await.unwrap_or_else(|e| { tracing::warn!(error = %e, repo_id, "mcp get_doc_drift: get_doc_drift failed"); Vec::new() });
+            let drift = state.pg.get_doc_drift(repo_id).await.map_err(|e| { tracing::warn!(error = %e, repo_id, "mcp get_doc_drift: get_doc_drift failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
             serde_json::json!({"drift": drift})
         }
         "search_lib_docs" => {
-            let results = state.pg.search_library_pages(query).await.unwrap_or_else(|e| { tracing::warn!(error = %e, query, "mcp search_lib_docs: search_library_pages failed"); Vec::new() });
+            let results = state.pg.search_library_pages(query).await.map_err(|e| { tracing::warn!(error = %e, query, "mcp search_lib_docs: search_library_pages failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
             serde_json::json!({ "query": query, "results": results })
         }
         "get_lib_docs" => {
             let name = params["name"].as_str().filter(|s| !s.is_empty()).unwrap_or(query);
             let component = params["component"].as_str().filter(|s| !s.is_empty());
-            let pages = state.pg.get_library_pages(name, component).await.unwrap_or_else(|e| { tracing::warn!(error = %e, name, "mcp get_lib_docs: get_library_pages failed"); Vec::new() });
+            let pages = state.pg.get_library_pages(name, component).await.map_err(|e| { tracing::warn!(error = %e, name, "mcp get_lib_docs: get_library_pages failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
             if pages.is_empty() {
                 serde_json::json!({
                     "library": name,
@@ -112,14 +112,14 @@ pub(crate) async fn mcp_call_tool(
             }
         }
         "list_projects" => {
-            let repos = state.pg.list_repositories().await.unwrap_or_else(|e| { tracing::warn!(error = %e, "mcp list_projects: list_repositories failed"); Vec::new() });
+            let repos = state.pg.list_repositories().await.map_err(|e| { tracing::warn!(error = %e, "mcp list_projects: list_repositories failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
             serde_json::json!({"projects": repos})
         }
         "create_session" => {
             let repo_id_str = params["repoId"].as_str().unwrap_or(query);
             let task = params["task"].as_str().unwrap_or("untitled");
             // Look up folder UUID from repo name
-            let folder = state.pg.get_repo_by_name(repo_id_str).await.unwrap_or_else(|e| { tracing::warn!(error = %e, repo_id = repo_id_str, "mcp create_session: get_repo_by_name failed"); None });
+            let folder = state.pg.get_repo_by_name(repo_id_str).await.map_err(|e| { tracing::warn!(error = %e, repo_id = repo_id_str, "mcp create_session: get_repo_by_name failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
             if let Some(folder) = folder {
                 if let Some(folder_id) = json_uuid(&folder["id"]) {
                     match state.pg.create_session(&folder_id, task, None).await {
@@ -140,15 +140,14 @@ pub(crate) async fn mcp_call_tool(
                 let ftr = outcome == "completed";
                 let turns = params["turns"].as_i64().unwrap_or(0) as i32;
                 let corrections = params["corrections"].as_i64().unwrap_or(0) as i32;
-                if let Err(e) = state.pg.complete_session(
+                // A failed write is a 500, not a fabricated `{"ok": true}`.
+                state.pg.complete_session(
                     &session_id,
                     outcome,
                     ftr,
                     turns,
                     corrections,
-                ).await {
-                    tracing::warn!(error = %e, %session_id, outcome, "mcp update_session: complete_session failed");
-                }
+                ).await.map_err(|e| { tracing::warn!(error = %e, %session_id, outcome, "mcp update_session: complete_session failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
                 serde_json::json!({"ok": true})
             } else {
                 serde_json::json!({"error": "invalid sessionId"})
@@ -220,9 +219,9 @@ pub(crate) async fn mcp_call_tool(
             serde_json::json!({"hint": "Use POST /api/query directly"})
         }
         "get_project_summary" => {
-            let ids = resolve_scope_ids(&state, repo_id).await;
+            let ids = resolve_scope_ids(&state, repo_id).await?;
             let (fns, types) = if !ids.is_empty() {
-                let counts = state.pg.count_nodes_by_kind_scoped(&ids).await.unwrap_or_else(|e| { tracing::warn!(error = %e, repo_id, "mcp get_project_summary: count_nodes_by_kind_scoped failed"); Default::default() });
+                let counts = state.pg.count_nodes_by_kind_scoped(&ids).await.map_err(|e| { tracing::warn!(error = %e, repo_id, "mcp get_project_summary: count_nodes_by_kind_scoped failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
                 let f = counts.get("function").copied().unwrap_or(0)
                     + counts.get("method").copied().unwrap_or(0);
                 let t = counts.get("class").copied().unwrap_or(0)
@@ -233,10 +232,12 @@ pub(crate) async fn mcp_call_tool(
                 (0, 0)
             };
             // Prefer project row for name/metadata; fall back to folder row.
-            let project = match state.pg.get_project_by_name(repo_id).await {
-                Ok(Some(proj)) => Some(proj),
-                Ok(None) => state.pg.get_repo_by_name(repo_id).await.unwrap_or_else(|e| { tracing::warn!(error = %e, repo_id, "mcp get_project_summary: get_repo_by_name fallback failed"); None }),
-                Err(e) => { tracing::warn!(error = %e, repo_id, "mcp get_project_summary: get_project_by_name failed"); state.pg.get_repo_by_name(repo_id).await.unwrap_or_else(|e| { tracing::warn!(error = %e, repo_id, "mcp get_project_summary: get_repo_by_name fallback failed"); None }) }
+            let project = match state.pg.get_project_by_name(repo_id).await
+                .map_err(|e| { tracing::warn!(error = %e, repo_id, "mcp get_project_summary: get_project_by_name failed"); StatusCode::INTERNAL_SERVER_ERROR })?
+            {
+                Some(proj) => Some(proj),
+                None => state.pg.get_repo_by_name(repo_id).await
+                    .map_err(|e| { tracing::warn!(error = %e, repo_id, "mcp get_project_summary: get_repo_by_name fallback failed"); StatusCode::INTERNAL_SERVER_ERROR })?,
             };
             serde_json::json!({
                 "project": project,
@@ -245,10 +246,10 @@ pub(crate) async fn mcp_call_tool(
             })
         }
         "get_metrics" => {
-            let folder = state.pg.get_repo_by_name(repo_id).await.unwrap_or_else(|e| { tracing::warn!(error = %e, repo_id, "mcp get_metrics: get_repo_by_name failed"); None });
+            let folder = state.pg.get_repo_by_name(repo_id).await.map_err(|e| { tracing::warn!(error = %e, repo_id, "mcp get_metrics: get_repo_by_name failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
             if let Some(folder) = folder {
                 if let Some(folder_id) = json_uuid(&folder["id"]) {
-                    let sessions = state.pg.list_sessions_by_folder(&folder_id, 100).await.unwrap_or_else(|e| { tracing::warn!(error = %e, %folder_id, "mcp get_metrics: list_sessions_by_folder failed"); Vec::new() });
+                    let sessions = state.pg.list_sessions_by_folder(&folder_id, 100).await.map_err(|e| { tracing::warn!(error = %e, %folder_id, "mcp get_metrics: list_sessions_by_folder failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
                     let session_count = sessions.len();
                     let completed = sessions.iter().filter(|s| s["outcome"].as_str() == Some("completed")).count();
                     serde_json::json!({
@@ -266,22 +267,22 @@ pub(crate) async fn mcp_call_tool(
         }
         "get_ftr_daily" => {
             let days = params["days"].as_i64().unwrap_or(14) as i32;
-            let project_id = resolve_folder_id(&state, repo_id).await;
-            let data = state.pg.get_ftr_daily(project_id.as_ref(), days).await.unwrap_or_else(|e| { tracing::warn!(error = %e, repo_id, days, "mcp get_ftr_daily: get_ftr_daily failed"); Vec::new() });
+            let project_id = resolve_folder_id(&state, repo_id).await?;
+            let data = state.pg.get_ftr_daily(project_id.as_ref(), days).await.map_err(|e| { tracing::warn!(error = %e, repo_id, days, "mcp get_ftr_daily: get_ftr_daily failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
             serde_json::json!({"ftr_daily": data})
         }
         "get_hotspots" => {
             let days = params["days"].as_i64().unwrap_or(7) as i32;
-            if let Some(fid) = resolve_folder_id(&state, repo_id).await {
-                let data = state.pg.get_hotspots(&fid, days).await.unwrap_or_else(|e| { tracing::warn!(error = %e, repo_id, days, "mcp get_hotspots: get_hotspots failed"); Vec::new() });
+            if let Some(fid) = resolve_folder_id(&state, repo_id).await? {
+                let data = state.pg.get_hotspots(&fid, days).await.map_err(|e| { tracing::warn!(error = %e, repo_id, days, "mcp get_hotspots: get_hotspots failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
                 serde_json::json!({"hotspots": data})
             } else {
                 serde_json::json!({"hotspots": []})
             }
         }
         "get_quality_signals" => {
-            if let Some(fid) = resolve_folder_id(&state, repo_id).await {
-                state.pg.get_quality_signals(&fid).await.unwrap_or_else(|e| { tracing::warn!(error = %e, repo_id, "mcp get_quality_signals: get_quality_signals failed"); serde_json::json!({}) })
+            if let Some(fid) = resolve_folder_id(&state, repo_id).await? {
+                state.pg.get_quality_signals(&fid).await.map_err(|e| { tracing::warn!(error = %e, repo_id, "mcp get_quality_signals: get_quality_signals failed"); StatusCode::INTERNAL_SERVER_ERROR })?
             } else {
                 serde_json::json!({"error": "project not found"})
             }

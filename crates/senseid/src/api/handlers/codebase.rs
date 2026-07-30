@@ -6,6 +6,22 @@ use axum::{
 use serde::Deserialize;
 use crate::api::state::AppState;
 
+/// Resolve a repo/project name to its folder UUID, failing closed on a store error.
+///
+/// `Ok(Some(id))` = the name resolves to an indexed folder, `Ok(None)` = the name
+/// genuinely isn't indexed, `Err(500)` = the store read itself failed. A lookup
+/// failure is never masked as a miss (see the #109 fail-closed audit and the
+/// CLAUDE.md "never fabricate on a failure path" rule). This is name-exact via
+/// `get_repo_by_name`; for project-scope (all folders) resolution use
+/// `query::resolve_folder_id`/`resolve_scope_ids`.
+async fn repo_folder_id(state: &AppState, name: &str) -> Result<Option<uuid::Uuid>, StatusCode> {
+    let folder = state.pg.get_repo_by_name(name).await.map_err(|e| {
+        tracing::warn!(error = %e, name = %name, "repo_folder_id: get_repo_by_name failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    Ok(folder.as_ref().and_then(|f| crate::api::util::json_uuid(&f["id"])))
+}
+
 // ── Graph Queries ───────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
@@ -22,12 +38,15 @@ pub(crate) async fn graph_nodes(
     if repo_id.is_empty() {
         return Ok(Json(serde_json::json!({"nodes": [], "edges": []})));
     }
-    let ids = state.pg.scope_folder_ids(&repo_id).await.unwrap_or_default();
+    let ids = state.pg.scope_folder_ids(&repo_id).await
+        .map_err(|e| { tracing::warn!(error = %e, repo_id = %repo_id, "graph_nodes: scope_folder_ids failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
     if ids.is_empty() {
         return Ok(Json(serde_json::json!({"nodes": [], "edges": []})));
     }
-    let nodes = state.pg.get_nodes_scoped(&ids).await.unwrap_or_default();
-    let edges = state.pg.get_edges_scoped(&ids, "calls").await.unwrap_or_default();
+    let nodes = state.pg.get_nodes_scoped(&ids).await
+        .map_err(|e| { tracing::warn!(error = %e, repo_id = %repo_id, "graph_nodes: get_nodes_scoped failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    let edges = state.pg.get_edges_scoped(&ids, "calls").await
+        .map_err(|e| { tracing::warn!(error = %e, repo_id = %repo_id, "graph_nodes: get_edges_scoped failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
     Ok(Json(serde_json::json!({"nodes": nodes, "edges": edges})))
 }
 
@@ -43,11 +62,13 @@ pub(crate) async fn search_functions(
     State(state): State<AppState>,
     Query(q): Query<SymbolQuery>,
 ) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
-    let ids = state.pg.scope_folder_ids(&q.repo_id).await.unwrap_or_default();
+    let ids = state.pg.scope_folder_ids(&q.repo_id).await
+        .map_err(|e| { tracing::warn!(error = %e, repo_id = %q.repo_id, "search_functions: scope_folder_ids failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
     if ids.is_empty() {
         return Ok(Json(vec![]));
     }
-    let results = state.pg.search_functions_scoped(&ids, &q.query).await.unwrap_or_default();
+    let results = state.pg.search_functions_scoped(&ids, &q.query).await
+        .map_err(|e| { tracing::warn!(error = %e, repo_id = %q.repo_id, "search_functions: search_functions_scoped failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
     Ok(Json(results))
 }
 
@@ -55,11 +76,13 @@ pub(crate) async fn search_types(
     State(state): State<AppState>,
     Query(q): Query<SymbolQuery>,
 ) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
-    let ids = state.pg.scope_folder_ids(&q.repo_id).await.unwrap_or_default();
+    let ids = state.pg.scope_folder_ids(&q.repo_id).await
+        .map_err(|e| { tracing::warn!(error = %e, repo_id = %q.repo_id, "search_types: scope_folder_ids failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
     if ids.is_empty() {
         return Ok(Json(vec![]));
     }
-    let results = state.pg.search_types_scoped(&ids, &q.query).await.unwrap_or_default();
+    let results = state.pg.search_types_scoped(&ids, &q.query).await
+        .map_err(|e| { tracing::warn!(error = %e, repo_id = %q.repo_id, "search_types: search_types_scoped failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
     Ok(Json(results))
 }
 
@@ -74,7 +97,8 @@ pub(crate) async fn fn_callers(
     State(state): State<AppState>,
     Query(q): Query<TraceQuery>,
 ) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
-    let results = state.pg.get_callers_by_name(&q.repo_id, &q.name).await.unwrap_or_default();
+    let results = state.pg.get_callers_by_name(&q.repo_id, &q.name).await
+        .map_err(|e| { tracing::warn!(error = %e, repo_id = %q.repo_id, name = %q.name, "fn_callers: get_callers_by_name failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
     Ok(Json(results))
 }
 
@@ -82,7 +106,8 @@ pub(crate) async fn fn_callees(
     State(state): State<AppState>,
     Query(q): Query<TraceQuery>,
 ) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
-    let results = state.pg.get_callees_by_name(&q.repo_id, &q.name).await.unwrap_or_default();
+    let results = state.pg.get_callees_by_name(&q.repo_id, &q.name).await
+        .map_err(|e| { tracing::warn!(error = %e, repo_id = %q.repo_id, name = %q.name, "fn_callees: get_callees_by_name failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
     Ok(Json(results))
 }
 
@@ -97,7 +122,8 @@ pub(crate) async fn files_by_tag(
     State(state): State<AppState>,
     Query(q): Query<TagQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let results = state.pg.get_files_by_tag(&q.repo_id, &q.tag).await.unwrap_or_default();
+    let results = state.pg.get_files_by_tag(&q.repo_id, &q.tag).await
+        .map_err(|e| { tracing::warn!(error = %e, repo_id = %q.repo_id, tag = %q.tag, "files_by_tag: get_files_by_tag failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
     Ok(Json(serde_json::json!(results)))
 }
 
@@ -106,7 +132,8 @@ pub(crate) async fn doc_drift(
     Query(q): Query<GraphQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let repo_id = q.repo_id.unwrap_or_default();
-    let results = state.pg.get_doc_drift(&repo_id).await.unwrap_or_default();
+    let results = state.pg.get_doc_drift(&repo_id).await
+        .map_err(|e| { tracing::warn!(error = %e, repo_id = %repo_id, "doc_drift: get_doc_drift failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
     Ok(Json(serde_json::json!(results)))
 }
 
@@ -115,12 +142,15 @@ pub(crate) async fn call_flow(
     Query(q): Query<GraphQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let repo_id = q.repo_id.unwrap_or_default();
-    let ids = state.pg.scope_folder_ids(&repo_id).await.unwrap_or_default();
+    let ids = state.pg.scope_folder_ids(&repo_id).await
+        .map_err(|e| { tracing::warn!(error = %e, repo_id = %repo_id, "call_flow: scope_folder_ids failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
     if ids.is_empty() {
         return Ok(Json(serde_json::json!({"modules": [], "calls": [], "moduleCount": 0, "exportCount": 0, "callCount": 0})));
     }
-    let edges = state.pg.get_edges_scoped(&ids, "calls").await.unwrap_or_default();
-    let nodes = state.pg.get_nodes_scoped(&ids).await.unwrap_or_default();
+    let edges = state.pg.get_edges_scoped(&ids, "calls").await
+        .map_err(|e| { tracing::warn!(error = %e, repo_id = %repo_id, "call_flow: get_edges_scoped failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    let nodes = state.pg.get_nodes_scoped(&ids).await
+        .map_err(|e| { tracing::warn!(error = %e, repo_id = %repo_id, "call_flow: get_nodes_scoped failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
     let modules: Vec<serde_json::Value> = nodes.iter()
         .filter(|n| n["kind"].as_str() == Some("file"))
         .map(|n| serde_json::json!({
@@ -148,17 +178,16 @@ pub(crate) async fn detect_communities(
     if repo_id.is_empty() {
         return Ok(Json(serde_json::json!({"error": "repoId required"})));
     }
-    let folder = state.pg.get_repo_by_name(&repo_id).await.ok().flatten();
-    if let Some(folder) = folder
-        && let Some(folder_id) = crate::api::util::json_uuid(&folder["id"]) {
-            let communities = state.pg.list_communities(&folder_id).await.unwrap_or_default();
-            let num = communities.len();
-            return Ok(Json(serde_json::json!({
-                "ok": true,
-                "communities": num,
-                "assignments": num,
-            })));
-        }
+    if let Some(folder_id) = repo_folder_id(&state, &repo_id).await? {
+        let communities = state.pg.list_communities(&folder_id).await
+            .map_err(|e| { tracing::warn!(error = %e, repo_id = %repo_id, "detect_communities: list_communities failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+        let num = communities.len();
+        return Ok(Json(serde_json::json!({
+            "ok": true,
+            "communities": num,
+            "assignments": num,
+        })));
+    }
     Ok(Json(serde_json::json!({"ok": false, "error": "project not found"})))
 }
 
@@ -167,12 +196,11 @@ pub(crate) async fn community_info(
     Query(q): Query<GraphQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let repo_id = q.repo_id.unwrap_or_default();
-    let folder = state.pg.get_repo_by_name(&repo_id).await.ok().flatten();
-    if let Some(folder) = folder
-        && let Some(folder_id) = crate::api::util::json_uuid(&folder["id"]) {
-            let communities = state.pg.list_communities(&folder_id).await.unwrap_or_default();
-            return Ok(Json(serde_json::json!(communities)));
-        }
+    if let Some(folder_id) = repo_folder_id(&state, &repo_id).await? {
+        let communities = state.pg.list_communities(&folder_id).await
+            .map_err(|e| { tracing::warn!(error = %e, repo_id = %repo_id, "community_info: list_communities failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+        return Ok(Json(serde_json::json!(communities)));
+    }
     Ok(Json(serde_json::json!([])))
 }
 
@@ -181,28 +209,26 @@ pub(crate) async fn community_info(
 pub(crate) async fn detect_patterns(
     State(state): State<AppState>,
     Path(project): Path<String>,
-) -> Json<serde_json::Value> {
+) -> Result<Json<serde_json::Value>, StatusCode> {
     // Look up folder UUID and query patterns from PgStore
-    let folder = state.pg.get_repo_by_name(&project).await.ok().flatten();
-    if let Some(folder) = folder
-        && let Some(folder_id) = crate::api::util::json_uuid(&folder["id"]) {
-            let patterns = state.pg.list_patterns_by_folder(&folder_id).await.unwrap_or_default();
-            return Json(serde_json::json!({"ok": true, "patterns": patterns, "count": patterns.len()}));
-        }
-    Json(serde_json::json!({"ok": false, "error": "project not found"}))
+    if let Some(folder_id) = repo_folder_id(&state, &project).await? {
+        let patterns = state.pg.list_patterns_by_folder(&folder_id).await
+            .map_err(|e| { tracing::warn!(error = %e, project = %project, "detect_patterns: list_patterns_by_folder failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+        return Ok(Json(serde_json::json!({"ok": true, "patterns": patterns, "count": patterns.len()})));
+    }
+    Ok(Json(serde_json::json!({"ok": false, "error": "project not found"})))
 }
 
 pub(crate) async fn list_patterns(
     State(state): State<AppState>,
     Path(project): Path<String>,
-) -> Json<serde_json::Value> {
-    let folder = state.pg.get_repo_by_name(&project).await.ok().flatten();
-    if let Some(folder) = folder
-        && let Some(folder_id) = crate::api::util::json_uuid(&folder["id"]) {
-            let patterns = state.pg.list_patterns_by_folder(&folder_id).await.unwrap_or_default();
-            return Json(serde_json::json!({"patterns": patterns, "count": patterns.len()}));
-        }
-    Json(serde_json::json!({"patterns": [], "count": 0}))
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    if let Some(folder_id) = repo_folder_id(&state, &project).await? {
+        let patterns = state.pg.list_patterns_by_folder(&folder_id).await
+            .map_err(|e| { tracing::warn!(error = %e, project = %project, "list_patterns: list_patterns_by_folder failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+        return Ok(Json(serde_json::json!({"patterns": patterns, "count": patterns.len()})));
+    }
+    Ok(Json(serde_json::json!({"patterns": [], "count": 0})))
 }
 
 #[derive(Deserialize)]
@@ -214,39 +240,37 @@ pub(crate) async fn match_pattern_handler(
     State(state): State<AppState>,
     Path(project): Path<String>,
     Query(q): Query<MatchQuery>,
-) -> Json<serde_json::Value> {
+) -> Result<Json<serde_json::Value>, StatusCode> {
     let desc = q.description.unwrap_or_default();
     // Search patterns by folder using BM25 ranking
-    let folder = state.pg.get_repo_by_name(&project).await.ok().flatten();
-    if let Some(folder) = folder
-        && let Some(folder_id) = crate::api::util::json_uuid(&folder["id"]) {
-            let ranked = state.pg.rank_bm25(&folder_id, &desc).await.unwrap_or_default();
-            let matches: Vec<serde_json::Value> = ranked.into_iter()
-                .map(|(name, score)| serde_json::json!({"name": name, "score": score}))
-                .collect();
-            return Json(serde_json::json!({"matches": matches, "count": matches.len()}));
-        }
-    Json(serde_json::json!({"matches": [], "count": 0}))
+    if let Some(folder_id) = repo_folder_id(&state, &project).await? {
+        let ranked = state.pg.rank_bm25(&folder_id, &desc).await
+            .map_err(|e| { tracing::warn!(error = %e, project = %project, "match_pattern_handler: rank_bm25 failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+        let matches: Vec<serde_json::Value> = ranked.into_iter()
+            .map(|(name, score)| serde_json::json!({"name": name, "score": score}))
+            .collect();
+        return Ok(Json(serde_json::json!({"matches": matches, "count": matches.len()})));
+    }
+    Ok(Json(serde_json::json!({"matches": [], "count": 0})))
 }
 
 pub(crate) async fn pattern_for_symbol(
     State(state): State<AppState>,
     Path((project, symbol)): Path<(String, String)>,
-) -> Json<serde_json::Value> {
+) -> Result<Json<serde_json::Value>, StatusCode> {
     // Search patterns by folder, then filter by symbol
-    let folder = state.pg.get_repo_by_name(&project).await.ok().flatten();
-    if let Some(folder) = folder
-        && let Some(folder_id) = crate::api::util::json_uuid(&folder["id"]) {
-            let patterns = state.pg.list_patterns_by_folder(&folder_id).await.unwrap_or_default();
-            // Find pattern whose members include this symbol
-            for p in &patterns {
-                if let Some(members) = p.get("members").and_then(|m| m.as_array())
-                    && members.iter().any(|m| m.as_str() == Some(&symbol)) {
-                        return Json(p.clone());
-                    }
-            }
+    if let Some(folder_id) = repo_folder_id(&state, &project).await? {
+        let patterns = state.pg.list_patterns_by_folder(&folder_id).await
+            .map_err(|e| { tracing::warn!(error = %e, project = %project, "pattern_for_symbol: list_patterns_by_folder failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+        // Find pattern whose members include this symbol
+        for p in &patterns {
+            if let Some(members) = p.get("members").and_then(|m| m.as_array())
+                && members.iter().any(|m| m.as_str() == Some(&symbol)) {
+                    return Ok(Json(p.clone()));
+                }
         }
-    Json(serde_json::json!({"pattern": null, "message": "symbol does not belong to any detected pattern"}))
+    }
+    Ok(Json(serde_json::json!({"pattern": null, "message": "symbol does not belong to any detected pattern"})))
 }
 
 #[derive(Deserialize)]
@@ -269,40 +293,38 @@ pub(crate) async fn find_duplicates_handler(
     State(state): State<AppState>,
     Path(project): Path<String>,
     Query(q): Query<DuplicatesQuery>,
-) -> Json<serde_json::Value> {
+) -> Result<Json<serde_json::Value>, StatusCode> {
     let min_similarity = q.min_similarity.unwrap_or(0.92).clamp(0.0, 1.0);
     let limit = q.limit.unwrap_or(50).clamp(1, 500);
 
     // Project scope first — every folder that belongs to the named project.
-    let scope = state.pg.scope_folder_ids(&project).await.unwrap_or_default();
+    let scope = state.pg.scope_folder_ids(&project).await
+        .map_err(|e| { tracing::warn!(error = %e, project = %project, "find_duplicates_handler: scope_folder_ids failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
     if !scope.is_empty() {
-        return match state.pg.find_duplicates_scoped(&scope, min_similarity, limit).await {
-            Ok(dups) => Json(serde_json::json!({
-                "count": dups.len(),
-                "min_similarity": min_similarity,
-                "scope": "project",
-                "folder_count": scope.len(),
-                "duplicates": dups,
-            })),
-            Err(e) => Json(serde_json::json!({ "duplicates": [], "count": 0, "error": e })),
-        };
+        let dups = state.pg.find_duplicates_scoped(&scope, min_similarity, limit).await
+            .map_err(|e| { tracing::warn!(error = %e, project = %project, "find_duplicates_handler: find_duplicates_scoped failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+        return Ok(Json(serde_json::json!({
+            "count": dups.len(),
+            "min_similarity": min_similarity,
+            "scope": "project",
+            "folder_count": scope.len(),
+            "duplicates": dups,
+        })));
     }
 
     // Fall back to a single-folder lookup when the caller passed a repo
     // name (or the project resolution returned nothing).
-    let folder = state.pg.get_repo_by_name(&project).await.ok().flatten();
-    let Some(folder_id) = folder.as_ref().and_then(|f| crate::api::util::json_uuid(&f["id"])) else {
-        return Json(serde_json::json!({ "duplicates": [], "count": 0, "message": "project not indexed" }));
+    let Some(folder_id) = repo_folder_id(&state, &project).await? else {
+        return Ok(Json(serde_json::json!({ "duplicates": [], "count": 0, "message": "project not indexed" })));
     };
-    match state.pg.find_duplicates(&folder_id, min_similarity, limit).await {
-        Ok(dups) => Json(serde_json::json!({
-            "count": dups.len(),
-            "min_similarity": min_similarity,
-            "scope": "folder",
-            "duplicates": dups,
-        })),
-        Err(e) => Json(serde_json::json!({ "duplicates": [], "count": 0, "error": e })),
-    }
+    let dups = state.pg.find_duplicates(&folder_id, min_similarity, limit).await
+        .map_err(|e| { tracing::warn!(error = %e, project = %project, "find_duplicates_handler: find_duplicates failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    Ok(Json(serde_json::json!({
+        "count": dups.len(),
+        "min_similarity": min_similarity,
+        "scope": "folder",
+        "duplicates": dups,
+    })))
 }
 
 // ── Conventions ───────────────────────────────────────────────────────────────
@@ -532,23 +554,26 @@ fn derive_conventions(
 pub(crate) async fn project_conventions_handler(
     State(state): State<AppState>,
     Path(project): Path<String>,
-) -> Json<serde_json::Value> {
-    let ids = state.pg.scope_folder_ids(&project).await.unwrap_or_default();
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let ids = state.pg.scope_folder_ids(&project).await
+        .map_err(|e| { tracing::warn!(error = %e, project = %project, "project_conventions_handler: scope_folder_ids failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
     if ids.is_empty() {
-        return Json(serde_json::json!({
+        return Ok(Json(serde_json::json!({
             "naming": [],
             "structure": {"file_count": 0, "directories": [], "languages": {}},
             "patterns": []
-        }));
+        })));
     }
-    let nodes = state.pg.get_nodes_scoped(&ids).await.unwrap_or_default();
+    let nodes = state.pg.get_nodes_scoped(&ids).await
+        .map_err(|e| { tracing::warn!(error = %e, project = %project, "project_conventions_handler: get_nodes_scoped failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
     // Patterns are still per-folder; aggregate across all folders in scope.
     let mut patterns = Vec::new();
     for fid in &ids {
-        let mut fp = state.pg.list_patterns_by_folder(fid).await.unwrap_or_default();
+        let mut fp = state.pg.list_patterns_by_folder(fid).await
+            .map_err(|e| { tracing::warn!(error = %e, project = %project, "project_conventions_handler: list_patterns_by_folder failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
         patterns.append(&mut fp);
     }
-    Json(derive_conventions(&nodes, &patterns))
+    Ok(Json(derive_conventions(&nodes, &patterns)))
 }
 
 #[cfg(test)]

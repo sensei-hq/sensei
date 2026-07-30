@@ -1,6 +1,6 @@
 //! Front-door intake: axes -> playbook recommendation (§8).
 
-use axum::{extract::State, Json};
+use axum::{extract::State, http::StatusCode, Json};
 
 use crate::api::state::AppState;
 use crate::playbook::{recommend, Axes, Intent, Lifecycle, Risk};
@@ -10,9 +10,15 @@ use crate::playbook::{recommend, Axes, Intent, Lifecycle, Risk};
 /// Serves the grounding frame + per-axis elicitation prompts + the playbook catalog
 /// that `/sensei:intake` uses to run the guided questionnaire. Fetched (not
 /// hardcoded) so the guide stays org-tunable at runtime.
-pub(crate) async fn get_intake_guide(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let guide = state.pg.list_intake_guide().await.unwrap_or_default();
-    let playbooks = state.pg.list_playbooks().await.unwrap_or_default();
+pub(crate) async fn get_intake_guide(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    // Fail closed: a DB error must not read as an empty guide/catalog — that
+    // would present the intake questionnaire as if no playbooks were configured.
+    let guide = state.pg.list_intake_guide().await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let playbooks = state.pg.list_playbooks().await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let frame = guide
         .iter()
         .find(|g| g["kind"] == "frame")
@@ -20,7 +26,7 @@ pub(crate) async fn get_intake_guide(State(state): State<AppState>) -> Json<serd
         .unwrap_or("")
         .to_string();
     let axes: Vec<_> = guide.into_iter().filter(|g| g["kind"] == "axis").collect();
-    Json(serde_json::json!({ "frame": frame, "axes": axes, "playbooks": playbooks }))
+    Ok(Json(serde_json::json!({ "frame": frame, "axes": axes, "playbooks": playbooks })))
 }
 
 /// POST /api/playbook/recommend
@@ -268,8 +274,12 @@ fn should_persist(body: &serde_json::Value) -> bool {
 ///
 /// Pending §9 learned-rule proposals (`source='learned' AND NOT enabled`) — the
 /// accept-path list an operator reviews before promoting one into the resolver.
-pub(crate) async fn list_rule_proposals(State(state): State<AppState>) -> Json<serde_json::Value> {
-    Json(serde_json::json!({ "proposals": state.pg.list_playbook_rule_proposals().await.unwrap_or_default() }))
+pub(crate) async fn list_rule_proposals(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let proposals = state.pg.list_playbook_rule_proposals().await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(serde_json::json!({ "proposals": proposals })))
 }
 
 /// POST /api/playbook/rule/{id}/accept -> { accepted: id } | { error: ... }
@@ -292,8 +302,12 @@ pub(crate) async fn accept_rule(
 /// FTR by `classified_by` (+ `model_fallback`) — measures whether the local
 /// gateway model's chunk classification is actually useful vs. the heuristic
 /// fallback. Dashboard/inspection read; no MCP tool.
-pub(crate) async fn model_stats(State(state): State<AppState>) -> Json<serde_json::Value> {
-    Json(serde_json::json!({ "stats": state.pg.playbook_model_stats().await.unwrap_or_default() }))
+pub(crate) async fn model_stats(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let stats = state.pg.playbook_model_stats().await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(serde_json::json!({ "stats": stats })))
 }
 
 #[cfg(test)]

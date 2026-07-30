@@ -83,3 +83,11 @@ Every deliberate deviation from the established architecture (e.g. not using `se
 
 **Write modular, reusable, fully testable code.**
 Extract shared logic into functions or crates. Prefer pure functions with clear inputs/outputs over side-effecting code. Design for testability: avoid hard-coding paths, environment globals, or network calls that cannot be injected or mocked. If a function cannot be unit-tested, ask whether it should be refactored before writing it.
+
+**Never fabricate data on a failure path. Return an error, not a plausible default.**
+When a fallible read/lookup/parse/RPC fails, the service MUST surface the failure — propagate the error (a 4xx/5xx, an `Err`, or an explicit error state the UI renders) — and MUST NOT substitute a fabricated, dummy, placeholder, or fixture value that a caller can't distinguish from a real result. Forbidden on a failure/miss path:
+- Minting a synthetic identity (a fake project/folder/session id like `format!("p-{name}")`, a made-up uuid, a placeholder record) when a lookup misses. A miss is `None`/404, never an invented row.
+- `.unwrap_or_default()` / `.unwrap_or(<value>)` / `.ok()` / `catch { return fixture }` on a fallible DB/network call in a **read handler or loader**, which turns a failure into an empty-or-zero "success" (200 with `[]`/`0`) — indistinguishable from a genuinely-empty result. The daemon idiom is `.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?`; frontends surface an error state.
+- Persisting a plausible-but-wrong value (a defaulted family/model/timestamp) when the real one is absent, instead of skipping or erroring.
+- Returning a fixture/mock from a shipped code path on error (esp. money-, identity-, or governance-facing screens).
+Honest-empty (`None`, `[]`, `0`) is correct ONLY when the data genuinely is empty — never as a mask for a failure. `#[cfg(test)]`/fixtures used *inside tests* are fine; fixtures reachable in production are not. Fail closed on safety/identity (see the #109 audit + `crates/senseid/src/resolution.rs`). Any deliberate exception must be raised with the user and documented in `docs/backlog.md`, never hidden in a fallback.

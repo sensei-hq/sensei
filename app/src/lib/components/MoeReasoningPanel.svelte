@@ -1,8 +1,10 @@
 <script lang="ts">
-  // MOE reasoning panel — the analyzer's mixture-of-experts trace for a
-  // measured recommendation: headline, body, consensus summary, per-model
-  // notes, and (on a negative verdict) a suggested revision. Shared by the
-  // observatory-wide Impact screen and the project-scoped Impact tab.
+  // Impact reasoning panel — the analyzer's single FTR-delta verdict for a
+  // measured recommendation: headline, body, the real models that ran, and (on
+  // a negative verdict) a suggested revision. There is ONE verdict, not an
+  // N-model vote, so this shows no fabricated consensus tally or per-model
+  // roles/notes (the #109 fabrication audit). Shared by the observatory-wide
+  // Impact screen and the project-scoped Impact tab.
   import type { ImpactReasoning, VerdictTone } from '$lib/impact.js';
 
   let { reasoning, tone = 'ink' }: {
@@ -10,7 +12,7 @@
     tone?: VerdictTone;
   } = $props();
 
-  const models = $derived(reasoning.models ?? []);
+  const modelsUsed = $derived(reasoning.modelsUsed ?? []);
 </script>
 
 <div
@@ -24,16 +26,10 @@
   ]}
   data-testid="impact-moe-panel"
 >
-  <!-- Header row: 議 + eyebrow + consensus summary -->
+  <!-- Header row: 議 + eyebrow -->
   <div class="flex items-center gap-2 mb-2">
     <span class="kanji text-[13px] text-accent">議</span>
-    <span class="text-xs uppercase tracking-wider text-ink-soft">MOE panel reasoning</span>
-    <span class="flex-1"></span>
-    {#if reasoning.consensus}
-      <span class="font-mono text-xs text-ink-soft" data-testid="impact-moe-consensus">
-        {reasoning.consensus}
-      </span>
-    {/if}
+    <span class="text-xs uppercase tracking-wider text-ink-soft">impact reasoning</span>
   </div>
 
   <!-- Headline — the sharpest single sentence -->
@@ -50,18 +46,15 @@
     </p>
   {/if}
 
-  <!-- Per-model breakdown — name + role + note -->
-  {#if models.length > 0}
-    <div class="flex flex-col gap-1 pt-3 border-t border-paper-edge" data-testid="impact-moe-models">
-      {#each models as m (m.name)}
-        <div class="grid grid-cols-[120px_14px_1fr] gap-2 items-start" data-testid={`impact-moe-model-${m.name}`}>
-          <span class="font-mono text-xs text-ink truncate">{m.name}</span>
-          <span class="kanji text-[13px] text-accent mt-1">議</span>
-          <div>
-            <span class="text-xs uppercase tracking-wider text-ink-soft">{m.role}</span>
-            <p class="text-xs text-ink-mute leading-relaxed m-0 mt-0.5">{m.note}</p>
-          </div>
-        </div>
+  <!-- Models used — the real models that ran in the measured sessions. Just
+       the names: there is one verdict, so no per-model role/note breakdown. -->
+  {#if modelsUsed.length > 0}
+    <div class="flex flex-wrap items-center gap-2 pt-3 border-t border-paper-edge" data-testid="impact-moe-models">
+      <span class="text-xs uppercase tracking-wider text-ink-soft">models used</span>
+      {#each modelsUsed as name (name)}
+        <span class="font-mono text-xs text-ink px-1.5 py-0.5 rounded bg-paper border border-paper-edge" data-testid={`impact-moe-model-${name}`}>
+          {name}
+        </span>
       {/each}
     </div>
   {/if}

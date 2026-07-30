@@ -334,16 +334,6 @@ fn delete_legacy_sensei_hook_files(home_dir: &Path) -> Vec<PathBuf> {
     deleted
 }
 
-/// Read the daemon's tracked project list from `~/.sensei/projects.json`.
-/// The file is a JSON array of absolute path strings; missing file,
-/// malformed JSON, or wrong-shaped data all return an empty Vec rather
-/// than an error — the remove flow must not abort on a corrupted index.
-fn read_tracked_projects(projects_json: &Path) -> Vec<PathBuf> {
-    let Ok(s) = std::fs::read_to_string(projects_json) else { return vec![] };
-    let Ok(paths) = serde_json::from_str::<Vec<String>>(&s) else { return vec![] };
-    paths.into_iter().map(PathBuf::from).collect()
-}
-
 pub(crate) struct ClaudeCodeAssistant;
 
 impl Assistant for ClaudeCodeAssistant {
@@ -577,17 +567,6 @@ impl Assistant for ClaudeCodeAssistant {
             info!(removed = ?removed, path = %user_mcp.display(),
                 "remove: cleaned sensei from user mcp.json");
         }
-        let sensei_dir = crate::paths::sensei_dir();
-        for project in read_tracked_projects(&sensei_dir.join("projects.json")) {
-            let project_mcp = project.join(".mcp.json");
-            if let Ok(removed) = clean_sensei_from_mcp_file(&project_mcp)
-                && !removed.is_empty()
-            {
-                info!(removed = ?removed, path = %project_mcp.display(),
-                    "remove: cleaned sensei from project .mcp.json");
-            }
-        }
-
         // Scrub legacy `sensei-hook[-dev].ts` references from settings.json,
         // then delete the dispatcher files themselves. These predate the
         // plugin migration and otherwise keep firing on every Claude session.
@@ -1014,44 +993,6 @@ mod tests {
         let tmp = make_tmp_home();
         let deleted = delete_legacy_sensei_hook_files(tmp.path());
         assert!(deleted.is_empty());
-    }
-
-    // ── read_tracked_projects ──────────────────────────────────────────────
-
-    #[test]
-    fn read_tracked_projects_parses_string_array() {
-        let tmp = make_tmp_home();
-        let f = tmp.path().join("projects.json");
-        std::fs::write(&f, r#"["/path/one","/path/two"]"#).unwrap();
-        let paths = read_tracked_projects(&f);
-        assert_eq!(paths.len(), 2);
-        assert_eq!(paths[0], PathBuf::from("/path/one"));
-        assert_eq!(paths[1], PathBuf::from("/path/two"));
-    }
-
-    #[test]
-    fn read_tracked_projects_empty_when_file_missing() {
-        let tmp = make_tmp_home();
-        let f = tmp.path().join("nope.json");
-        assert!(read_tracked_projects(&f).is_empty());
-    }
-
-    #[test]
-    fn read_tracked_projects_empty_when_wrong_shape() {
-        // projects.json is a root array; reject object shapes silently so
-        // a corrupted index doesn't abort remove().
-        let tmp = make_tmp_home();
-        let f = tmp.path().join("bad.json");
-        std::fs::write(&f, r#"{"projects":["/x"]}"#).unwrap();
-        assert!(read_tracked_projects(&f).is_empty());
-    }
-
-    #[test]
-    fn read_tracked_projects_empty_when_malformed_json() {
-        let tmp = make_tmp_home();
-        let f = tmp.path().join("bad.json");
-        std::fs::write(&f, "{ not even json").unwrap();
-        assert!(read_tracked_projects(&f).is_empty());
     }
 
     // ── config probes ──────────────────────────────────────────────────

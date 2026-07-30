@@ -93,8 +93,8 @@ the runtime:
 - **sensei-devops-sre** — for pipeline specs that involve deployment,
   migrations, or reliability-critical changes (e.g. `pipeline/capture`).
 - **sensei-security-reviewer** — for anything that crosses a trust
-  boundary (Dōjō upstream/downstream, auth, client-work
-  dereferencing).
+  boundary (Dōjō upstream/downstream, auth, source-dereferencing
+  on the publish path).
 - **sensei-performance-engineer** — for pipeline specs with volume
   concerns (`pipeline/analyzer`, `pipeline/capture`).
 

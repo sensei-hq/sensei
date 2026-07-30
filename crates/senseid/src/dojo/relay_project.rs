@@ -61,6 +61,7 @@ pub fn todos_to_segments(todos: &[Todo]) -> Vec<RelaySegment> {
         .map(|(i, t)| RelaySegment {
             id: None,
             parent_id: None,
+            parent_seq: None,
             seq: i as i32,
             title: t.content.clone(),
             summary: None,

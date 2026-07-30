@@ -23,7 +23,7 @@ dojo.engagements.policy_overrides).';
 comment on column dojo.policies.scope_key
      is 'The scope this policy applies to (e.g. all-org, team:mobile, stack:rust).';
 comment on column dojo.policies.attribution_default
-     is 'Default attribution at this scope: named | anonymous | dereferenced.';
+     is 'Default credit at this scope: named | anonymous. Source-dereference is a separate always-on invariant.';
 comment on column dojo.policies.confidentiality
      is 'Confidentiality rules for the scope (dereference requirements, compliance pack e.g. HIPAA/PCI/SOC2).';
 comment on column dojo.policies.retention_days

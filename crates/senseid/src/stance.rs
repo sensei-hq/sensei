@@ -96,6 +96,21 @@ impl ResolvedStance {
             source: "fallback".into(),
         }
     }
+
+    /// The strictest, most-private stance — used when a run's AUTHOR IDENTITY
+    /// cannot be resolved (no attributable user, or a stance-lookup failure).
+    /// Fails CLOSED, not open: `ask_always` so the drive gate never proceeds a
+    /// step unattended, `private` so an unattributable run never shares, `quorum`
+    /// review. Distinct from [`Self::fallback`], which is a KNOWN user's
+    /// "no preference set" default and is deliberately more permissive.
+    pub fn strict() -> Self {
+        Self {
+            autonomy: "ask_always".into(),
+            sharing: "private".into(),
+            review: "quorum".into(),
+            source: "unresolved".into(),
+        }
+    }
 }
 
 /// Pick the effective stance from the candidate rows: the most-specific scoped
@@ -171,6 +186,19 @@ mod tests {
             autonomy: autonomy.into(),
             sharing: "patterns".into(),
             review: "one_maintainer".into(),
+        }
+    }
+
+    #[test]
+    fn strict_fails_closed_on_every_dial() {
+        let s = ResolvedStance::strict();
+        assert_eq!(s.autonomy, "ask_always"); // never proceed unattended
+        assert_eq!(s.sharing, "private"); // never share an unattributable run
+        assert_eq!(s.review, "quorum");
+        assert_eq!(s.source, "unresolved");
+        // The drive gate refuses EVERY risk tier under the strict stance.
+        for r in [StepRisk::Ordinary, StepRisk::Risky, StepRisk::Guarded] {
+            assert!(!autonomy_permits(&s.autonomy, r));
         }
     }
 
