@@ -40,6 +40,12 @@
 ## Open questions (for Jerry)
 - Keep the real four signals (connections / queue depth / published-1h / sync errors) as the shipped set, or invest in the mockup's four (sessions, adoption rate, leak-guard blocks, median queue age)? The latter two need new reads.
 - What is the canonical **leak-guard / containment** event source for the alert feed — a `dojo.audit_events.action` value, a dedicated incidents/containment table, or the confidentiality ledger? This blocks both the alert list and the "Leak-guard blocks" signal.
+
+### Resolved design (2026-07-30)
+- **Q1 signals → BUILD the mockup's four:** sessions · adoption-rate · leak-guard-blocks · median-queue-age. Needs new reads — `sessions` (from `dojo.relay_sessions`), `adoption-rate` + `median-queue-age` (new rollups), `leak-guard-blocks` (from the containment source, Q2). Replaces the interim relabeled real-four.
+- **Q2 alert source → `dojo.audit_events` containment events.** The always-on dereference HOLD path (contribute.rs held) emits hold/containment events to `dojo.audit_events` with a defined `action` (`'contained'`/`'held'`); the alert feed AND the leak-guard-blocks signal read them. (The confidentiality-ledger option is retired — the strip-gate was removed in Rule B.)
+- **Also build:** the contrib-vs-approve weekly chart = a new time-series read (`dojo.artifacts` vs decisions / `audit_events` by ISO week). Renders no bars gracefully until then.
+- **Depends on:** new health reads (adoption-rate, median-queue-age, weekly series) + emitting containment events to `dojo.audit_events` + the alert-feed read.
 - Contrib-vs-approve: bucket by ISO week over `dojo.artifacts` + `dojo.decisions`, or over `audit_events`? Over what window (mockup shows 4 weeks)?
 - Is a live/realtime Health strip in scope, or is a load-time snapshot fine for v1?
 

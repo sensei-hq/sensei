@@ -49,6 +49,11 @@ The live post-auth `(app)` route renders fixtures: org index `(app)/org/[slug]/+
 
 ## Open questions (for Jerry)
 - Is there (or should there be) a single `GET …/summary` (members · projects · needs) for the stat row, or compose it from `/members` + a new `/projects` + `/triage`?
+
+### Resolved design (2026-07-30)
+- **Single `GET /v1/t/[origin]/[org]/summary`** → `{ members, projects, needs }`, server-side rollup in one round-trip. `members` = `count(dojo.memberships where tenant_id=? and disabled_at is null)`; `projects` = jurisdiction projects (via `dojo.projects` once it lands / `sensei.namespaces scope=project`); `needs` = `dojo.triage_queue` count. The members read derives `dojo_url` from `tenant_id → tenants.dojo_url` (register §1C), NOT the dropped `memberships.dojo_url`.
+- **Build constraint (fabricated-data debt):** every stat is a real number — never the hardcoded `0` in `tenantToOrg` nor a fixture length; honest-empty/error, never the `acme` fixture.
+- **Depends on:** the new `/summary` endpoint + `dojo.projects` (project count) + `dojo.triage_queue` (needs).
 - "Need a maintainer" count — define it: unowned scope queues (`scopeOwners` fallback), queued triage rows, or open relay gates? (Mockup conflates all four via `needsYou`.)
 - Jurisdiction "projects in flight" — is the source `sensei.namespaces` bound by `dojo.seats.tenant_id`, or a project↔membership `dojo_id` binding (entity-access-model §Project)? No project-per-tenant list endpoint exists yet.
 
