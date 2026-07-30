@@ -17,6 +17,7 @@ function inc(over: Partial<Incident> = {}): Incident {
 	return {
 		id: 'i1',
 		engagement_id: 'eng-12345678-aaaa',
+		client_name: null,
 		artifact_id: null,
 		title: 'Near-leak: client hostname in a shared prompt',
 		description: null,
@@ -53,7 +54,10 @@ describe('toKitIncident / toKitIncidents', () => {
 		expect(k.severity).toBe('high');
 		expect(k.state).toBe('contained');
 		expect(k.when).toBe('3d');
-		expect(k.client).toBe('eng-1234'); // short engagement id
+		expect(k.client).toBe('eng-1234'); // short engagement id (no resolved name)
+	});
+	it('prefers the resolved client_name over the short engagement id', () => {
+		expect(toKitIncident(inc({ client_name: 'Globex' }), NOW).client).toBe('Globex');
 	});
 	it('client "—" when unbound', () => {
 		expect(toKitIncident(inc({ engagement_id: null }), NOW).client).toBe('—');
