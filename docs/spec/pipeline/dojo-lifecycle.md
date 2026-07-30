@@ -101,7 +101,8 @@ A developer belongs to zero or many Dōjōs. `dojo.memberships`:
   (`contributor | maintainer | admin`), `kind` (`employer |
   client | community | personal`), `authenticated_via`
   (`sso | github_oauth | device_code`), `attribution_default`
-  (`named | anonymous | dereferenced`).
+  (`named | anonymous` — the credit posture; source-dereference is
+  always-on, not a mode).
 
 Every **project** binds to **exactly one** membership through
 `sensei.projects.dojo_id` (fk into `dojo.memberships`). Auto-bound at project detect
@@ -138,10 +139,12 @@ Depends on origin:
 | Personal · open source | Public credit | Nothing | You · communities · any org |
 | Personal · closed source | Named to you, within chosen org | Source & specifics — only the generalized lesson travels | Private by default · opt-in to an org |
 | Employer work | Named to you, org-internal | Stripped only if it leaves the org | Employer Dōjō |
-| Client work | **Source-dereferenced** | Source reference (repo, identifiers, pointer). Learning + cause + context travel. | Shareable anywhere — source dropped, not lesson |
+| Client work | **Anonymous** (no personal credit) | Source reference (repo, identifiers, pointer). Learning + cause + context travel. | Shareable anywhere — source dropped, not lesson |
 
-Dereference for client work is automatic. No per-item review
-required; the universal strip is trusted.
+Source-dereference is universal and automatic for ALL shared work
+(not only client) — every artifact that leaves the machine is stripped
+by construction. No per-item review; the strip is always-on and
+trusted. Credit is a separate axis (`named | anonymous`).
 
 ## Lifecycle
 
@@ -209,9 +212,9 @@ on drop. Payloads signed by the developer's device key
   intent — muted artifacts don't populate the local rule /
   skill surface; pinned ones win against ambiguous local
   alternatives.
-- Client-project artifacts are automatically dereferenced with no
-  per-item review step. Post-approval audit trail carries the
-  dereference confirmation.
+- All shared artifacts are automatically source-dereferenced with no
+  per-item review step (universal, not client-only). Post-approval
+  audit trail carries the dereference confirmation.
 - Federation transport is resilient — a Dōjō outage delays
   contributions but does not lose them; queued-locally
   contributions replay when the connection restores.
