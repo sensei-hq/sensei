@@ -387,7 +387,7 @@ mod tests {
             org_slugs: vec![],
             role: "contributor".into(),
             authenticated_via: "device_code".into(),
-            attribution_default: "dereferenced".into(),
+            attribution_default: "anonymous".into(),
             credential_ref: cref.clone(),
             sync_status: "authenticating".into(),
         })
@@ -480,7 +480,7 @@ mod tests {
             org_slugs: vec![],
             role: "contributor".into(),
             authenticated_via: "device_code".into(),
-            attribution_default: "dereferenced".into(),
+            attribution_default: "anonymous".into(),
             credential_ref: cref.clone(),
             sync_status: "authenticating".into(),
         })

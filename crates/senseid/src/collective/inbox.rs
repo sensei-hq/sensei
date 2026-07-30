@@ -466,7 +466,6 @@ mod tests {
             author: None,
             org: None,
             anonymous_id: Some("anon-1".into()),
-            dereferenced: true,
         }
     }
 
@@ -507,7 +506,6 @@ mod tests {
             payload,
             scope,
             attribution: attribution(),
-            dereferenced: true,
             contributed_by: None,
             published_at: None,
         }
