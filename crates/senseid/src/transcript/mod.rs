@@ -213,12 +213,25 @@ async fn synthesize_session(
             return None;
         }
     }
-    // project mapping: first cwd that is a tracked folder wins.
+    // project mapping: first cwd that is a tracked folder (exact) wins. Both the
+    // exact lookup and the ancestor fallback are alias-aware, so a cwd recorded
+    // under a since-renamed path resolves to the current folder. When no cwd is an
+    // exact folder, fall back to the nearest tracked ANCESTOR — so a subdirectory
+    // cwd (or a subdir of a renamed repo covered by a single root alias) still
+    // attributes to the right project instead of being dropped.
     let mut resolved = None;
     for cwd in &synth.cwds {
         if let Ok(Some((folder_id, project_id))) = pg.get_folder_ids_by_path(cwd).await {
             resolved = Some((cwd.clone(), folder_id, project_id));
             break;
+        }
+    }
+    if resolved.is_none() {
+        for cwd in &synth.cwds {
+            if let Ok(Some((folder_id, project_id))) = pg.find_folder_for_path(cwd).await {
+                resolved = Some((cwd.clone(), folder_id, project_id));
+                break;
+            }
         }
     }
     let Some((cwd, folder_id, project_id)) = resolved else {
