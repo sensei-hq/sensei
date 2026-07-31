@@ -6,6 +6,7 @@ import { dojoDb } from '$lib/server/dojo-supabase';
 import { resolveApiKeyAccess, resolveTenantAccess, membershipIdsForTenant, apiError, ACCESS } from '$lib/server/dojo-auth';
 import { sendRelayPushFromEnv } from '$lib/server/relay-push-env';
 import { resolveProjectNamespaceId, openOrRefreshSeat } from '$lib/server/billing-data';
+import { upsertProjectFromRun } from '$lib/server/projects-data';
 
 const COLS =
 	'id, run_id, title, goal, status, progress_done, progress_total, current_phase, current_feature, last_event_at, paused_until, pause_reason, heartbeat_at, started_at, completed_at';
@@ -99,6 +100,25 @@ export const POST: RequestHandler = async ({ params, request, platform }) => {
 				}
 			})().catch(() => {});
 			if (platform?.context?.waitUntil) platform.context.waitUntil(seatWork);
+		}
+
+		// The run's project → dojo.projects (the display row for the projects
+		// screens). The owner is the AUTHENTICATED caller (never the payload); a
+		// personal project is stored tenant-less. Best-effort + fail-open, like the
+		// seat — a projects-upsert failure must never break relay federation.
+		const project = body.project as Record<string, unknown> | null | undefined;
+		if (project && str(project.slug) && str(project.name)) {
+			const projWork = upsertProjectFromRun(
+				db,
+				{ userId: caller.userId, tenantId: caller.tenantId },
+				{
+					slug: str(project.slug) as string,
+					name: str(project.name) as string,
+					classification: str(project.classification) ?? 'personal',
+					phase: str(project.phase) ?? 'watch'
+				}
+			).catch(() => {});
+			if (platform?.context?.waitUntil) platform.context.waitUntil(projWork);
 		}
 
 		return Response.json({ id: data.id });

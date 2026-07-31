@@ -118,10 +118,36 @@ pub async fn publish_run(ctx: &TaskContext, task: &Task) -> Result<u32, String> 
     // namespace just means no seat is touched; never fail federation over it.
     update.project_slug = ctx.pg().run_project_slug(&run_id).await.ok().flatten();
 
+    // The run's project → the dōjō `dojo.projects` display row (so the user sees
+    // their own projects). Best-effort: a missing project just skips the block,
+    // never fails federation (mirrors project_slug). classification is per-recipient
+    // — the project's BOUND membership gets its kind's classification (an org row,
+    // tenant-scoped); any other recipient (an unbound run fanned out to all the
+    // user's dōjōs) gets `personal` (the dōjō then stores it tenant-less), so the
+    // unique(user_id, slug) row can't race across tenants.
+    let project_info = ctx.pg().run_project_info(&run_id).await.ok().flatten();
+    let bound_membership_id = match run.project_id {
+        Some(pid) => ctx.pg().project_bound_membership(&pid).await.ok().flatten(),
+        None => None,
+    };
+
     let mut published = 0u32;
     // Persist the cloud session id once — from the first membership that acks it.
     let mut persisted = run.dojo_session_id.is_some();
     for m in &memberships {
+        update.project = project_info.as_ref().map(|(slug, name)| {
+            let classification = if Some(m.id) == bound_membership_id {
+                crate::dojo::relay_run_project::kind_to_classification(&m.kind)
+            } else {
+                "personal"
+            };
+            dojo_protocol::relay::RelayProjectInfo {
+                slug: slug.clone(),
+                name: name.clone(),
+                classification: classification.to_string(),
+                phase: "watch".to_string(),
+            }
+        });
         let client = DojoClient::for_membership(m);
         let session_id = match client.publish_session_update_returning_id(&update).await {
             Ok(session_id) => session_id,
