@@ -11,7 +11,7 @@
 // dedicated per-engagement artifact-strip ledger (GET …/audit/artifacts) is a
 // follow-on when that panel's engagement selector is wired.
 
-import type { Incident, IncidentDetail } from './client-data';
+import type { Incident, IncidentDetail, ClientAuditEntry } from './client-data';
 import type { AuditEvent } from './admin-data';
 import { relativeAge } from './triage/view';
 import type { KitIncident, KitIncidentDetail, KitClientAuditRow } from './components/kit/types';
@@ -118,4 +118,49 @@ export function toKitClientAuditRow(e: AuditEvent, now: Date = new Date()): KitC
  *  order. Pure. */
 export function toKitClientAudit(events: AuditEvent[], now: Date = new Date()): KitClientAuditRow[] {
 	return events.map((e) => toKitClientAuditRow(e, now));
+}
+
+// ── confidentiality ledger (the CORRECT client-audit source) ─────────────────
+// A ClientAuditEntry is `dojo.audit_events` pre-filtered to the confidentiality
+// actions (publish / contained / held) with the engagement's client name
+// resolved. Per client-audit.md: every row is confidentiality HOLDING — a publish
+// crossed the boundary source-stripped by construction; a contained/held row is
+// the guard blocking a leak (the guard working). There is no red-fail here, so
+// `ok` is always true; the action drives the event label + glyph.
+
+/** Human event label for a confidentiality action. */
+function ledgerEvent(action: string): string {
+	if (/publish|share|distribut/i.test(action)) return 'Lesson shared upstream';
+	if (/contain/i.test(action)) return 'Near-leak contained';
+	if (/held|hold/i.test(action)) return 'Contribution held';
+	return action;
+}
+
+/** ClientAuditEntry → KitClientAuditRow. `client` is the resolved client name
+ *  (else short engagement id, then "—"); `ok` is always true (see note). Pure. */
+export function toKitClientAuditLedgerRow(e: ClientAuditEntry, now: Date = new Date()): KitClientAuditRow {
+	let detail = e.target ?? '';
+	if (!detail && e.detail && typeof e.detail === 'object') {
+		try {
+			detail = JSON.stringify(e.detail);
+		} catch {
+			detail = '';
+		}
+	}
+	return {
+		t: relativeAge(e.ts, now),
+		kanji: ledgerKanji(e.action),
+		event: ledgerEvent(e.action),
+		detail,
+		client: e.client_name ?? (e.engagement_id ? e.engagement_id.slice(0, 8) : '—'),
+		ok: true
+	};
+}
+
+/** ClientAuditEntry[] → KitClientAuditRow[], preserving order. Pure. */
+export function toKitClientAuditLedger(
+	entries: ClientAuditEntry[],
+	now: Date = new Date()
+): KitClientAuditRow[] {
+	return entries.map((e) => toKitClientAuditLedgerRow(e, now));
 }

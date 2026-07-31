@@ -9,7 +9,9 @@ import {
 	toKitIncidentDetail,
 	entryHeld,
 	toKitClientAuditRow,
-	toKitClientAudit
+	toKitClientAudit,
+	toKitClientAuditLedgerRow,
+	toKitClientAuditLedger
 } from './incidents-map';
 
 const NOW = new Date('2026-07-23T12:00:00Z');
@@ -144,5 +146,39 @@ describe('toKitClientAuditRow / toKitClientAudit', () => {
 	it('preserves order', () => {
 		const out = toKitClientAudit([ev({ id: 1 }), ev({ id: 2 })], NOW);
 		expect(out).toHaveLength(2);
+	});
+});
+
+describe('toKitClientAuditLedger (confidentiality ledger)', () => {
+	function led(over: Partial<import('./client-data').ClientAuditEntry> = {}): import('./client-data').ClientAuditEntry {
+		return {
+			id: 1,
+			ts: '2026-07-23T10:00:00Z',
+			action: 'publish',
+			target: 'idempotency pattern',
+			detail: null,
+			engagement_id: 'eng-12345678',
+			client_name: 'Globex',
+			...over
+		};
+	}
+	it('maps a publish entry: "Lesson shared upstream", real client name, ok=true', () => {
+		const r = toKitClientAuditLedgerRow(led(), NOW);
+		expect(r.event).toBe('Lesson shared upstream');
+		expect(r.client).toBe('Globex'); // resolved client name (Rule C), not a uuid
+		expect(r.ok).toBe(true);
+		expect(r.kanji).toBe('共');
+	});
+	it('maps a contained entry: "Near-leak contained" and still ok=true (the guard working)', () => {
+		const r = toKitClientAuditLedgerRow(led({ action: 'contained', client_name: null }), NOW);
+		expect(r.event).toBe('Near-leak contained');
+		expect(r.ok).toBe(true);
+		expect(r.client).toBe('eng-1234'); // short engagement id when no name resolved
+	});
+	it('falls back to JSON detail when no target', () => {
+		expect(toKitClientAuditLedgerRow(led({ target: null, detail: { held: 1 } }), NOW).detail).toBe('{"held":1}');
+	});
+	it('preserves order', () => {
+		expect(toKitClientAuditLedger([led({ id: 1 }), led({ id: 2 })], NOW)).toHaveLength(2);
 	});
 });

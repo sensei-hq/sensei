@@ -8,10 +8,12 @@ import {
 	listEngagements,
 	listIncidents,
 	getKnowledge,
+	listClientAuditLedger,
 	DojoApiError,
 	type Engagement,
 	type Incident,
-	type KnowledgeLibraryWire
+	type KnowledgeLibraryWire,
+	type ClientAuditEntry
 } from '$lib/client-data';
 import { listTriage, type TriageRow } from '$lib/triage-data';
 import {
@@ -43,7 +45,7 @@ import {
 	toKitIdentity,
 	toKitHealth
 } from '$lib/admin-map';
-import { toKitIncidents, toKitClientAudit } from '$lib/incidents-map';
+import { toKitIncidents, toKitClientAuditLedger } from '$lib/incidents-map';
 import { toKitKnowledge } from '$lib/knowledge-map';
 import type {
 	KitEngagement,
@@ -193,11 +195,14 @@ export const load: PageLoad = async ({ parent, params, fetch }) => {
 	);
 
 	// Client audit (admin — the tenant audit trail projected onto the ledger).
-	const clientAuditRes = await guardedFor<AuditEvent[], KitClientAuditRow[]>(
+	// Client-audit → the CONFIDENTIALITY ledger (audit_events filtered to
+	// publish/contained/held, client-name enriched) — NOT the admin action-audit
+	// (listAudit) the screen was wrongly bound to (client-audit.md resolved design).
+	const clientAuditRes = await guardedFor<ClientAuditEntry[], KitClientAuditRow[]>(
 		'clientaudit',
 		[],
-		(tk) => listAudit(tk, opts),
-		toKitClientAudit
+		(tk) => listClientAuditLedger(tk, opts),
+		toKitClientAuditLedger
 	);
 
 	// Health (admin).
