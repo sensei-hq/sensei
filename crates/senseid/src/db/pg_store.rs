@@ -4167,10 +4167,20 @@ impl PgStore {
     pub async fn find_folder_for_path(
         &self, path: &str,
     ) -> Result<Option<(uuid::Uuid, Option<uuid::Uuid>)>, String> {
+        // Nearest ancestor over current abs_paths AND former paths (aliases), so a
+        // hook cwd recorded under an old path (pre-rename) still attributes to the
+        // current folder. A live abs_path and an alias of equal length tie-break to
+        // the live folder (abs_path row sorts first).
         let row: Option<(uuid::Uuid, Option<uuid::Uuid>)> = sqlx_core::query_as::query_as(
-            "SELECT id, project_id FROM sensei.folders
-             WHERE $1 = abs_path OR $1 LIKE abs_path || '/%'
-             ORDER BY length(abs_path) DESC
+            "SELECT id, project_id FROM (
+                 SELECT id, project_id, abs_path AS p, 1 AS live FROM sensei.folders
+                 UNION ALL
+                 SELECT f.id, f.project_id, a.alias_abs_path AS p, 0 AS live
+                   FROM sensei.folder_path_aliases a
+                   JOIN sensei.folders f ON f.id = a.folder_id
+             ) c
+             WHERE $1 = c.p OR $1 LIKE c.p || '/%'
+             ORDER BY length(c.p) DESC, c.live DESC
              LIMIT 1"
         ).bind(path).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(row)
@@ -5320,12 +5330,44 @@ impl PgStore {
     // ── Historical-bootstrap import (#75) ────────────────────────────────────
 
     /// Resolve `(folder_id, project_id)` for a repo path — the importer's
-    /// project mapping from a transcript's cwd. None if the path isn't a tracked folder.
+    /// project mapping from a transcript's cwd. Matches the folder whose current
+    /// `abs_path` is the path, OR (fallback) whose `folder_path_aliases` includes it
+    /// — so a transcript recorded under an OLD path (before a rename/move) still
+    /// resolves to the current folder + project. A live abs_path match wins over an
+    /// alias. None if the path isn't a tracked folder or a known former path.
     pub async fn get_folder_ids_by_path(&self, abs_path: &str) -> Result<Option<(uuid::Uuid, Option<uuid::Uuid>)>, String> {
         let row: Option<(uuid::Uuid, Option<uuid::Uuid>)> = sqlx_core::query_as::query_as(
-            "SELECT id, project_id FROM sensei.folders WHERE abs_path = $1"
+            "SELECT f.id, f.project_id FROM sensei.folders f
+             WHERE f.abs_path = $1
+                OR f.id = (SELECT folder_id FROM sensei.folder_path_aliases WHERE alias_abs_path = $1)
+             ORDER BY (f.abs_path = $1) DESC
+             LIMIT 1"
         ).bind(abs_path).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(row)
+    }
+
+    /// Register a former absolute path for a folder (`folder_path_aliases`), so a
+    /// transcript/hook cwd recorded at the old path still resolves to this folder +
+    /// its project after a rename/move. Idempotent (re-registering an alias updates
+    /// its reason). `reason` is `rename` (explicit) or `detected` (git-remote match).
+    pub async fn add_folder_path_alias(
+        &self,
+        alias_abs_path: &str,
+        folder_id: &uuid::Uuid,
+        reason: &str,
+    ) -> Result<(), String> {
+        sqlx_core::query::query(
+            "INSERT INTO sensei.folder_path_aliases (alias_abs_path, folder_id, reason)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (alias_abs_path) DO UPDATE SET folder_id = EXCLUDED.folder_id, reason = EXCLUDED.reason",
+        )
+        .bind(alias_abs_path)
+        .bind(folder_id)
+        .bind(reason)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(())
     }
 
     /// True if a session already has captured/imported events — the dedup guard
@@ -11558,6 +11600,29 @@ mod tests {
             .map(|(id, _)| id), Some(fid), "exact path resolves too");
         assert_eq!(s.find_folder_for_path("/_test/nonexistent-xyz/deep").await.unwrap(), None,
             "uncovered path resolves to nothing");
+    }
+
+    #[tokio::test]
+    async fn folder_path_alias_resolves_old_paths_after_a_rename() {
+        // A renamed repo: the folder now lives at the new abs_path, and its OLD
+        // path is registered as an alias. Transcripts/hooks recorded under the old
+        // path (and its subdirs) must still resolve to the folder + project.
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, "alias-new").await; // abs_path /_test/alias-new
+        let old = "/_test/alias-old";
+        s.add_folder_path_alias(old, &fid, "rename").await.unwrap();
+        // exact-match resolver (transcript synthesis) resolves the old path via alias.
+        assert_eq!(s.get_folder_ids_by_path(old).await.unwrap().map(|(id, _)| id), Some(fid),
+            "old exact path resolves via alias");
+        // ancestor resolver (hooks / synth fallback) resolves an old SUBDIR via alias.
+        assert_eq!(s.find_folder_for_path("/_test/alias-old/docs/mockups").await.unwrap()
+            .map(|(id, _)| id), Some(fid), "old subdir resolves to the folder via the alias ancestor");
+        // the current path still resolves (live abs_path unaffected).
+        assert_eq!(s.get_folder_ids_by_path("/_test/alias-new").await.unwrap().map(|(id, _)| id),
+            Some(fid), "current path still resolves");
+        // idempotent re-register.
+        s.add_folder_path_alias(old, &fid, "detected").await.unwrap();
+        assert_eq!(s.get_folder_ids_by_path(old).await.unwrap().map(|(id, _)| id), Some(fid));
     }
 
     #[tokio::test]
