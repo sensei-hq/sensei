@@ -104,8 +104,9 @@ pub fn run_to_session_update(
         pause_reason: run.pause_reason.clone(),
         heartbeat_at: run.heartbeat_at.clone(),
         // Set by the impure federation path (publish_run) from the run's project;
-        // the pure projection has no DB to resolve the namespace slug.
+        // the pure projection has no DB to resolve the namespace slug / project row.
         project_slug: None,
+        project: None,
     }
 }
 
@@ -201,6 +202,19 @@ fn phase_event_state(kind: RunEventKind) -> Option<SegmentState> {
 /// `(done, total)` where `total` = segment count and `done` = count in the
 /// terminal `Done` state. Matches the TodoWrite path's rollup so the phone reads
 /// both run kinds the same way.
+/// Map a dōjō membership `kind` (`employer | client | community | personal`) to a
+/// `dojo.project_classification` (`company | client | personal | community`) for a
+/// project bound to that membership. Only `employer → company` differs; an unknown
+/// / unbound kind falls to `personal` (an unbound project is the user's own). Pure.
+pub fn kind_to_classification(kind: &str) -> &'static str {
+    match kind {
+        "employer" => "company",
+        "client" => "client",
+        "community" => "community",
+        _ => "personal",
+    }
+}
+
 pub fn segment_progress(segments: &[RelaySegment]) -> (i32, i32) {
     let total = segments.len() as i32;
     let done = segments.iter().filter(|s| s.state == SegmentState::Done).count() as i32;
@@ -212,6 +226,20 @@ mod tests {
     use super::*;
     use dojo_protocol::relay::RelayRunStatus;
     use uuid::Uuid;
+
+    #[test]
+    fn kind_to_classification_maps_employer_to_company_else_identity() {
+        assert_eq!(kind_to_classification("employer"), "company");
+        assert_eq!(kind_to_classification("client"), "client");
+        assert_eq!(kind_to_classification("community"), "community");
+        assert_eq!(kind_to_classification("personal"), "personal");
+    }
+
+    #[test]
+    fn kind_to_classification_unknown_falls_to_personal() {
+        assert_eq!(kind_to_classification(""), "personal");
+        assert_eq!(kind_to_classification("bogus"), "personal");
+    }
 
     fn run(over: impl FnOnce(&mut Run)) -> Run {
         let mut r = Run {
