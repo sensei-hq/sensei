@@ -136,8 +136,24 @@ describe('toKitHealth', () => {
 		expect(h.signals[0].n).toBe('3');
 		expect(h.signals[1].n).toBe('12');
 		expect(h.signals[3].tone).toBe('success'); // 0 errors → healthy
-		expect(h.contribVsApprove).toEqual([]);
+		expect(h.contribVsApprove).toEqual([]); // absent series → empty (no bars)
 		expect(h.alerts).toEqual([]);
+	});
+	it('maps the contributions-vs-approvals weekly series when present', () => {
+		const h = toKitHealth({
+			connections: 0,
+			queue_depth: 0,
+			publish_rate_1h: 0,
+			error_rate_1h: 0,
+			contrib_vs_approve: [
+				{ wk: 'W3', c: 4, a: 2 },
+				{ wk: 'W4', c: 6, a: 5 }
+			]
+		});
+		expect(h.contribVsApprove).toEqual([
+			{ wk: 'W3', c: 4, a: 2 },
+			{ wk: 'W4', c: 6, a: 5 }
+		]);
 	});
 	it('flags sync errors as a warning tone', () => {
 		const h = toKitHealth({ connections: 0, queue_depth: 0, publish_rate_1h: 0, error_rate_1h: 2 });
