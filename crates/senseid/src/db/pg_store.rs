@@ -5370,6 +5370,47 @@ impl PgStore {
         Ok(())
     }
 
+    /// Re-attach orphaned sessions: `activity.assistant_events` rows whose session
+    /// no longer has an `activity.sessions` row (its folder was cascade-deleted on a
+    /// repo delete/rename, but the events — session-id-keyed, no FK — survived). For
+    /// each, recreate the session row, resolving `folder_id` from the session's cwd
+    /// via [`find_folder_for_path`] (alias-aware, so a renamed repo's history
+    /// re-attaches to the current folder + project). Sessions whose cwd still doesn't
+    /// resolve (no folder, no alias) are left orphaned. Idempotent — a session that
+    /// already has a row isn't reprocessed. Returns the number repaired.
+    pub async fn repair_orphaned_sessions(&self) -> Result<u32, String> {
+        // Representative cwd per orphaned session = the SHORTEST (most root-like) so
+        // it resolves to the repo root; find_folder_for_path handles subdirs anyway.
+        let orphans: Vec<(String, Option<String>, String)> = sqlx_core::query_as::query_as(
+            "SELECT e.session_id,
+                    (array_agg(e.cwd ORDER BY length(e.cwd)) FILTER (WHERE e.cwd IS NOT NULL))[1] AS cwd,
+                    (array_agg(e.family::text))[1] AS family
+               FROM activity.assistant_events e
+              WHERE e.session_id <> ''
+                AND NOT EXISTS (
+                    SELECT 1 FROM activity.sessions s WHERE s.client_session_id = e.session_id)
+              GROUP BY e.session_id",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        let mut repaired = 0u32;
+        for (session_id, cwd, family) in orphans {
+            let Some(cwd) = cwd else { continue };
+            let Ok(Some((folder_id, project_id))) = self.find_folder_for_path(&cwd).await else {
+                continue; // cwd still doesn't resolve (no folder, no alias) — leave orphaned
+            };
+            if self
+                .record_session_event(&session_id, &folder_id, project_id.as_ref(), &family, true)
+                .await
+                .is_ok()
+            {
+                repaired += 1;
+            }
+        }
+        Ok(repaired)
+    }
+
     /// True if a session already has captured/imported events — the dedup guard
     /// so the importer never double-counts a live-captured (or already-imported) session.
     pub async fn session_has_events(&self, client_session_id: &str) -> Result<bool, String> {
@@ -11600,6 +11641,37 @@ mod tests {
             .map(|(id, _)| id), Some(fid), "exact path resolves too");
         assert_eq!(s.find_folder_for_path("/_test/nonexistent-xyz/deep").await.unwrap(), None,
             "uncovered path resolves to nothing");
+    }
+
+    /// The folder a repaired/created session row points at (test assertion helper).
+    async fn session_row_folder(s: &PgStore, client_session_id: &str) -> Option<uuid::Uuid> {
+        let row: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
+            "SELECT folder_id FROM activity.sessions WHERE client_session_id = $1",
+        )
+        .bind(client_session_id)
+        .fetch_optional(&s.pool)
+        .await
+        .unwrap();
+        row.map(|(f,)| f)
+    }
+
+    #[tokio::test]
+    async fn repair_orphaned_sessions_reattaches_via_alias() {
+        // A session captured under a since-renamed repo: its events survived but the
+        // session row was cascade-deleted. The repair recreates the row, resolving the
+        // folder from the (old) cwd via the alias.
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, "repair-new").await; // /_test/repair-new
+        s.add_folder_path_alias("/_test/repair-old", &fid, "rename").await.unwrap();
+        let sess = "_test-repair-orphan-session";
+        // an orphaned event under the OLD path (a subdir) — no session row.
+        s.insert_hook_event(sess, "claude", "PreToolUse", None, Some("/_test/repair-old/src"), 1_700_000_000, None, &serde_json::json!({}))
+            .await.unwrap();
+        assert_eq!(session_row_folder(&s, sess).await, None, "no session row before repair");
+        let repaired = s.repair_orphaned_sessions().await.unwrap();
+        assert!(repaired >= 1, "at least this orphaned session is re-attached; got {repaired}");
+        assert_eq!(session_row_folder(&s, sess).await, Some(fid),
+            "the session row now exists and points at the current folder (resolved via the alias)");
     }
 
     #[tokio::test]
