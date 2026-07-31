@@ -22,9 +22,8 @@ function ScreenState({
   onRetry,
 }) {
   const Wrap = ({ children }) => (
-    <div style={{ width: "100%", height: "100%", minHeight: 280, display: "flex", flexDirection: "column",
-      alignItems: "center", justifyContent: "center", gap: 14, background: "var(--paper)",
-      padding: "48px 32px", textAlign: "center" }}>
+    <div className="w-full h-full flex flex-col items-center justify-center bg-paper text-center" style={{ minHeight: 280, gap: 14,
+ padding: "48px 32px" }}>
       <style>{`@keyframes ssPulse{0%,100%{opacity:.35}50%{opacity:.9}}@keyframes ssSpin{to{transform:rotate(360deg)}}`}</style>
       {children}
     </div>
@@ -33,15 +32,15 @@ function ScreenState({
   if (state === "loading") {
     return (
       <Wrap>
-        <span style={{ width: 30, height: 30, borderRadius: "50%", border: "2.5px solid var(--paper-3)",
-          borderTopColor: "var(--accent)", animation: "ssSpin 0.8s linear infinite" }} />
-        <div style={{ display: "flex", flexDirection: "column", gap: 9, alignItems: "center", marginTop: 4 }}>
+        <span className="rounded-full" style={{ width: 30, height: 30, border: "2.5px solid var(--paper-3)",
+ borderTopColor: "var(--accent)", animation: "ssSpin 0.8s linear infinite" }} />
+        <div className="flex flex-col items-center" style={{ gap: 9, marginTop: 4 }}>
           {[220, 320, 260].map((w, i) => (
-            <span key={i} style={{ width: w, maxWidth: "60vw", height: 9, borderRadius: 5, background: "var(--paper-3)",
-              animation: "ssPulse 1.4s ease-in-out infinite", animationDelay: i * 0.18 + "s" }} />
+            <span className="bg-paper-3" key={i} style={{ width: w, maxWidth: "60vw", height: 9, borderRadius: 5,
+ animation: "ssPulse 1.4s ease-in-out infinite", animationDelay: i * 0.18 + "s" }} />
           ))}
         </div>
-        <div style={{ fontSize: 13, color: "var(--ink-3)", marginTop: 6, fontStyle: "italic" }}>{loadingLabel}</div>
+        <div className="text-ink-3 italic" style={{ fontSize: 13, marginTop: 6 }}>{loadingLabel}</div>
       </Wrap>
     );
   }
@@ -49,13 +48,12 @@ function ScreenState({
   if (state === "error") {
     return (
       <Wrap>
-        <span className="kanji" style={{ fontSize: 52, color: "var(--warning)", opacity: 0.9, lineHeight: 1 }}>誤</span>
-        <div className="display" style={{ fontSize: 20, fontWeight: 400, color: "var(--ink)", letterSpacing: "-0.01em" }}>{errorTitle}</div>
-        <div style={{ fontSize: 13.5, color: "var(--ink-2)", lineHeight: 1.55, maxWidth: 380 }}>{errorHint}</div>
-        <button onClick={onRetry} style={{ marginTop: 8, display: "inline-flex", alignItems: "center", gap: 8,
-          padding: "12px 16px", borderRadius: 8, border: "none", cursor: "pointer",
-          background: "var(--ink)", color: "var(--paper)", fontSize: 13, fontWeight: 500, fontFamily: "inherit" }}>
-          <span className="kanji" style={{ fontSize: 13, color: "var(--accent)" }}>再</span>{"Retry"}
+        <span className="kanji text-warning" style={{ fontSize: 52, opacity: 0.9, lineHeight: 1 }}>誤</span>
+        <div className="display font-normal text-ink" style={{ fontSize: 20, letterSpacing: "-0.01em" }}>{errorTitle}</div>
+        <div className="text-ink-2" style={{ fontSize: 13.5, lineHeight: 1.55, maxWidth: 380 }}>{errorHint}</div>
+        <button className="inline-flex items-center border-0 cursor-pointer bg-ink text-paper font-medium" onClick={onRetry} style={{ marginTop: 8, gap: 8,
+ padding: "12px 16px", borderRadius: 8, fontSize: 13, fontFamily: "inherit" }}>
+          <span className="kanji text-accent" style={{ fontSize: 13 }}>再</span>{"Retry"}
         </button>
       </Wrap>
     );
@@ -64,9 +62,9 @@ function ScreenState({
   // empty
   return (
     <Wrap>
-      <span className="kanji" style={{ fontSize: 56, color: "var(--ink-4)", lineHeight: 1 }}>{kanji}</span>
-      <div className="display" style={{ fontSize: 20, fontWeight: 400, color: "var(--ink)", letterSpacing: "-0.01em" }}>{emptyTitle}</div>
-      <div style={{ fontSize: 13.5, color: "var(--ink-2)", lineHeight: 1.6, maxWidth: 420 }}>{emptyHint}</div>
+      <span className="kanji text-ink-4" style={{ fontSize: 56, lineHeight: 1 }}>{kanji}</span>
+      <div className="display font-normal text-ink" style={{ fontSize: 20, letterSpacing: "-0.01em" }}>{emptyTitle}</div>
+      <div className="text-ink-2" style={{ fontSize: 13.5, lineHeight: 1.6, maxWidth: 420 }}>{emptyHint}</div>
     </Wrap>
   );
 }

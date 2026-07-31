@@ -135,7 +135,7 @@ function ObsSparkline({ data, width = 120, height = 30, color = 'var(--accent)' 
   ]);
   const d = pts.map((p,i) => (i ? "L" : "M") + p[0].toFixed(1) + " " + p[1].toFixed(1)).join(" ");
   return (
-    <svg width={width} height={height} style={{ color, display: 'block', overflow: 'visible' }}>
+    <svg className="block overflow-visible" width={width} height={height} style={{ color }}>
       <path d={d} className="sparkline-path"/>
       <circle cx={pts[pts.length-1][0]} cy={pts[pts.length-1][1]} r={2.5} fill="currentColor"/>
     </svg>
@@ -150,7 +150,7 @@ function ObsFtrStrip({ data, value, delta, dim = false }) {
   const baseColor = dim ? 'var(--ink-3)' : 'var(--accent)';
   const bgColor   = dim ? 'var(--ink-4)' : 'var(--edge)';
   return (
-    <svg width={w} height={h + 14} style={{ display: 'block', overflow: 'visible' }}>
+    <svg className="block overflow-visible" width={w} height={h + 14} >
       {/* faint baseline rule at 50% to anchor reading */}
       <line x1="0" x2={w} y1={h - h*0.5} y2={h - h*0.5}
             stroke="var(--edge)" strokeDasharray="2 3"/>
@@ -180,23 +180,20 @@ function ObsFtrStrip({ data, value, delta, dim = false }) {
 function ObsHome({ mode, hero, insights, adopted, D }) {
   return (
     <ScreenShell label="Observatory · Today" header={
-      <div style={{ borderBottom: 'var(--hairline)', background: 'var(--paper)', flexShrink: 0 }}
-           className="pt-5 pb-4 px-7" >
+      <div 
+ className="pt-6 pb-4 px-12 border-b bg-paper shrink-0" >
       {/* Greeting strip — pinned */}
-      <div style={{
- display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', maxWidth: 1060
-}} className="mx-auto" >
+      <div style={{ maxWidth: 1060
+ }} className="mx-auto flex items-baseline justify-between" >
         <div>
           <div style={{
- fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
-                         textTransform: 'uppercase'
-}} className="mb-1" >
+ fontSize: 11, letterSpacing: '0.18em' }} className="mb-1 text-ink-3 uppercase" >
             {D.today}
           </div>
-          <h1 className="display m-0" style={{
- fontSize: 28, fontWeight: 400,
-                        letterSpacing: '-0.01em'
-}}>
+          <h1 className="display m-0 font-normal" style={{
+ fontSize: 28,
+ letterSpacing: '-0.01em'
+ }}>
             Good morning, {(() => {
               // Honor whatever name the user committed in the wizard's
               // Preferences stage. Falls back to the prototype's default
@@ -211,24 +208,19 @@ function ObsHome({ mode, hero, insights, adopted, D }) {
           </h1>
         </div>
         <div style={{
- display: 'flex', alignItems: 'flex-end',
-                       color: mode === "early" ? 'var(--ink-3)' : 'var(--ink-2)'
-}} className="gap-5" >
-          <div style={{ textAlign: 'right' }}>
-            <div style={{ fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
-                           textTransform: 'uppercase' }}>
+ color: mode === "early" ? 'var(--ink-3)' : 'var(--ink-2)'
+ }} className="gap-6 flex items-end" >
+          <div className="text-right" >
+            <div className="text-ink-3 uppercase" style={{ fontSize: 11, letterSpacing: '0.18em' }}>
               First-Try-Right · 14d
             </div>
-            <div style={{
- display: 'flex', alignItems: 'baseline',
-                           justifyContent: 'flex-end'
-}} className="gap-2 mt-1" >
-              <span className="display"
-                     style={{ fontSize: 40, fontWeight: 400, lineHeight: 1,
-                               color: mode === "early" ? 'var(--ink-3)' : 'var(--ink)' }}>
+            <div className="gap-2 mt-1 flex items-baseline justify-end" >
+              <span className="display font-normal"
+ style={{ fontSize: 40, lineHeight: 1,
+ color: mode === "early" ? 'var(--ink-3)' : 'var(--ink)' }}>
                 {Math.round(D.ftr.value * 100)}
               </span>
-              <span style={{ fontSize: 13, color: 'var(--ink-3)' }}>%</span>
+              <span className="text-ink-3" style={{ fontSize: 13 }}>%</span>
               <span className="mono ml-1"
                      style={{
  fontSize: 11,
@@ -244,14 +236,13 @@ function ObsHome({ mode, hero, insights, adopted, D }) {
       </div>
       </div>
     }>
-      <div style={{ maxWidth: 1060 }} className="pt-6 pb-7 px-7 mx-auto" >
+      <div style={{ maxWidth: 1060 }} className="pt-8 pb-12 px-12 mx-auto" >
       {/* Hero koan — the one focal thing */}
       <ObsHero hero={hero} mode={mode}/>
 
       {/* Two columns: Insights + Adopted teachings */}
-      <div style={{
- display: 'grid', gridTemplateColumns: '1.4fr 1fr'
-}} className="mt-6 gap-6" >
+      <div style={{ gridTemplateColumns: '1.4fr 1fr'
+ }} className="mt-8 gap-8 grid" >
         <ObsInsights items={insights} mode={mode}/>
         <ObsAdopted items={adopted} mode={mode}/>
       </div>
@@ -265,62 +256,50 @@ function ObsHome({ mode, hero, insights, adopted, D }) {
 
 function ObsHero({ hero, mode }) {
   return (
-    <div style={{
-      position: 'relative',
-      background: 'var(--paper-2)', border: 'var(--hairline)', borderRadius: 12,
-      display: 'grid', gridTemplateColumns: 'auto 1fr'
-}} className="gap-5 py-6 px-6" >
+    <div style={{ borderRadius: 12, gridTemplateColumns: 'auto 1fr'
+ }} className="gap-6 py-8 px-8 relative bg-paper-2 border border-paper-edge grid" >
       {/* Giant kanji — still the focal anchor */}
-      <div style={{ position: 'relative' }}>
-        <div className="kanji" style={{
-          fontSize: 56, color: 'var(--accent)', lineHeight: 1,
-          opacity: mode === "early" ? 0.55 : 1
-        }}>{hero.kanji}</div>
-        <div style={{
-          position: 'absolute', left: -6, top: -4,
-          fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
-          textTransform: 'uppercase', writingMode: 'vertical-rl',
-          transform: 'rotate(180deg)', height: 96
-        }}>
+      <div className="relative" >
+        <div className="kanji text-accent" style={{
+ fontSize: 56, lineHeight: 1,
+ opacity: mode === "early" ? 0.55 : 1
+ }}>{hero.kanji}</div>
+        <div className="absolute text-ink-3 uppercase" style={{ left: -6, top: -4,
+ fontSize: 11, letterSpacing: '0.18em', writingMode: 'vertical-rl',
+ transform: 'rotate(180deg)', height: 96
+ }}>
           {mode === "early" ? "sensei is listening" : "sensei speaks"}
         </div>
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column' }}>
-        <div className="display mb-3" style={{
-          fontSize: 28, fontWeight: 400, letterSpacing: '-0.01em',
-          lineHeight: 1.2, color: 'var(--ink)'
-}}>
+      <div className="flex flex-col" >
+        <div className="display mb-3 font-normal text-ink" style={{
+ fontSize: 28, letterSpacing: '-0.01em',
+ lineHeight: 1.2 }}>
           {hero.koan}
         </div>
         <p style={{
- fontSize: 15, color: 'var(--ink-2)', lineHeight: 1.65, maxWidth: 620
-}} className="mt-0 mb-4" >
+ fontSize: 15, lineHeight: 1.65, maxWidth: 620
+ }} className="mt-0 mb-4 text-ink-2" >
           {hero.body}
         </p>
 
         <div style={{
- display: 'flex', alignItems: 'center', flexWrap: 'wrap',
-                       marginTop: 'auto'
-}} className="gap-4" >
+ marginTop: 'auto'
+ }} className="gap-4 flex items-center flex-wrap" >
           {hero.action && (
             <button style={{
- fontSize: 13, background: 'var(--ink)',
-              color: 'var(--paper)', borderRadius: 6, letterSpacing: 0.2,
-              display: 'inline-flex', alignItems: 'center'
-}} className="py-2 px-4 gap-2" >
+ fontSize: 13, borderRadius: 6, letterSpacing: 0.2 }} className="py-2 px-4 gap-2 bg-ink text-paper inline-flex items-center" >
               {hero.action} →
             </button>
           )}
           <div style={{
- fontSize: 13, color: 'var(--accent)',
-                         display: 'flex', alignItems: 'center'
-}} className="gap-1" >
-            <span style={{ width: 5, height: 5, borderRadius: '50%', background: 'var(--accent)' }}/>
+ fontSize: 13 }} className="gap-1 text-accent flex items-center" >
+            <span className="rounded-full bg-accent" style={{ width: 5, height: 5 }}/>
             {hero.impact}
           </div>
-          <span style={{ flex: 1 }}/>
-          <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+          <span className="flex-1" />
+          <span className="mono text-ink-3" style={{ fontSize: 11 }}>
             {hero.source} · {hero.noticed}
           </span>
         </div>
@@ -332,48 +311,39 @@ function ObsHero({ hero, mode }) {
 function ObsInsights({ items, mode }) {
   return (
     <div>
-      <div style={{
- display: 'flex', alignItems: 'baseline', justifyContent: 'space-between'
-}} className="mb-4" >
-        <h2 className="display m-0" style={{
- fontSize: 17, fontWeight: 400,
-                      letterSpacing: '-0.005em'
-}}>
+      <div className="mb-4 flex items-baseline justify-between" >
+        <h2 className="display m-0 font-normal" style={{
+ fontSize: 17,
+ letterSpacing: '-0.005em'
+ }}>
           {mode === "early" ? "Early signals" : "Also worth noticing"}
         </h2>
-        <button style={{ fontSize: 11, color: 'var(--ink-3)' }}>all insights →</button>
+        <button className="text-ink-3" style={{ fontSize: 11 }}>all insights →</button>
       </div>
-      <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
+      <div className="gap-1 flex flex-col" >
         {items.map((x, i) => {
           const toneColor =
             x.tone === "warn" ? 'var(--warning)' :
             x.tone === "good" ? 'var(--success)'  : 'var(--ink-3)';
           return (
-            <button key={i} style={{
-              display: 'grid', gridTemplateColumns: 'auto 1fr auto',
-              alignItems: 'start', textAlign: 'left',
-              borderRadius: 6, borderBottom: 'var(--hairline)'
-}} className="gap-3 py-3 px-4" >
+            <button key={i} style={{ gridTemplateColumns: 'auto 1fr auto',
+ borderRadius: 6 }} className="gap-3 py-3 px-4 grid items-start text-left border-b" >
               <span className="kanji" style={{ fontSize: 22, color: toneColor,
                             width: 26 }}>{x.kanji}</span>
               <div>
                 <div style={{
- fontSize: 11, letterSpacing: '0.14em',
-                               textTransform: 'uppercase', color: 'var(--ink-3)'
-}} className="mb-1" >
+ fontSize: 11, letterSpacing: '0.14em' }} className="mb-1 uppercase text-ink-3" >
                   {x.label}
                 </div>
-                <div style={{ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.55 }}>
+                <div className="text-ink-2" style={{ fontSize: 13, lineHeight: 1.55 }}>
                   {x.text}
                 </div>
               </div>
-              <span className="mono py-1 px-2" style={{
+              <span className="mono py-1 px-2 whitespace-nowrap" style={{
  fontSize: 11, color: toneColor, borderRadius: 3,
-                            background: x.tone === "warn" ? 'var(--warning-soft)' :
-                                         x.tone === "good" ? 'var(--success-soft)' :
-                                         'var(--paper-3)',
-                            whiteSpace: 'nowrap'
-}}>
+ background: x.tone === "warn" ? 'var(--warning-soft)' :
+ x.tone === "good" ? 'var(--success-soft)' :
+ 'var(--paper-3)' }}>
                 {x.tag}
               </span>
             </button>
@@ -381,10 +351,9 @@ function ObsInsights({ items, mode }) {
         })}
         {items.length === 0 && (
           <div style={{
- fontSize: 13, color: 'var(--ink-4)', fontStyle: 'italic',
-                         textAlign: 'center',
-                         border: '1px dashed var(--edge)', borderRadius: 8
-}} className="p-4" >
+ fontSize: 13,
+ border: '1px dashed var(--edge)', borderRadius: 8
+ }} className="p-4 text-ink-4 italic text-center" >
             Nothing yet. Keep working — sensei watches.
           </div>
         )}
@@ -396,50 +365,44 @@ function ObsInsights({ items, mode }) {
 function ObsAdopted({ items, mode }) {
   return (
     <div>
-      <div style={{
- display: 'flex', alignItems: 'baseline', justifyContent: 'space-between'
-}} className="mb-4" >
-        <h2 className="display m-0" style={{
- fontSize: 17, fontWeight: 400,
-                      letterSpacing: '-0.005em'
-}}>
+      <div className="mb-4 flex items-baseline justify-between" >
+        <h2 className="display m-0 font-normal" style={{
+ fontSize: 17,
+ letterSpacing: '-0.005em'
+ }}>
           System has learned
         </h2>
-        <button style={{ fontSize: 11, color: 'var(--ink-3)' }}>all teachings →</button>
+        <button className="text-ink-3" style={{ fontSize: 11 }}>all teachings →</button>
       </div>
-      <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-2" >
+      <div className="gap-2 flex flex-col" >
         {items.map((x, i) => (
           <div key={i} style={{
  borderRadius: 6,
-            background: 'var(--paper-2)', border: 'var(--hairline)',
-            borderLeft: '2px solid var(--accent)'
-}} className="py-3 px-3" >
-            <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2 mb-1" >
-              <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+ borderLeft: '2px solid var(--accent)'
+ }} className="py-3 px-3 bg-paper-2 border border-paper-edge" >
+            <div className="gap-2 mb-1 flex items-baseline" >
+              <span className="mono text-ink-3" style={{ fontSize: 11 }}>
                 {x.when}
               </span>
-              <span style={{ fontSize: 11, color: 'var(--ink-4)' }}>·</span>
-              <span className="mono" style={{ fontSize: 11, color: 'var(--accent)' }}>
+              <span className="text-ink-4" style={{ fontSize: 11 }}>·</span>
+              <span className="mono text-accent" style={{ fontSize: 11 }}>
                 {x.scope}
               </span>
             </div>
-            <div style={{ fontSize: 13, color: 'var(--ink)', lineHeight: 1.45 }}>
+            <div className="text-ink" style={{ fontSize: 13, lineHeight: 1.45 }}>
               {x.what}
             </div>
-            <div style={{ fontSize: 11, color: 'var(--ink-4)' }} className="mt-1" >
+            <div style={{ fontSize: 11 }} className="mt-1 text-ink-4" >
               {x.source}
             </div>
           </div>
         ))}
         {items.length === 0 && (
           <div style={{
-                         border: '1px dashed var(--edge)', borderRadius: 8,
-                         textAlign: 'center'
-}} className="py-5 px-4" >
-            <div className="kanji mb-2" style={{
- fontSize: 28, color: 'var(--ink-4)'
-}}>空</div>
-            <div style={{ fontSize: 13, color: 'var(--ink-3)', lineHeight: 1.5 }}>
+ border: '1px dashed var(--edge)', borderRadius: 8 }} className="py-6 px-4 text-center" >
+            <div className="kanji mb-2 text-ink-4" style={{
+ fontSize: 28 }}>空</div>
+            <div className="text-ink-3" style={{ fontSize: 13, lineHeight: 1.5 }}>
               No teachings adopted yet.<br/>
               Sensei needs a few more sessions to be confident.
             </div>
@@ -452,39 +415,33 @@ function ObsAdopted({ items, mode }) {
 
 function ObsRecentSessions({ sessions }) {
   return (
-    <div className="mt-6" >
-      <div style={{
- display: 'flex', alignItems: 'baseline', justifyContent: 'space-between'
-}} className="mb-3" >
-        <h2 className="display m-0" style={{ fontSize: 17, fontWeight: 400 }}>
+    <div className="mt-8" >
+      <div className="mb-3 flex items-baseline justify-between" >
+        <h2 className="display m-0 font-normal" style={{ fontSize: 17 }}>
           Recent sessions
         </h2>
-        <button style={{ fontSize: 11, color: 'var(--ink-3)' }}>all sessions →</button>
+        <button className="text-ink-3" style={{ fontSize: 11 }}>all sessions →</button>
       </div>
-      <div style={{ display: 'flex', flexDirection: 'column' }}>
+      <div className="flex flex-col" >
         {sessions.map(s => (
           <button key={s.id} style={{
-            display: 'grid',
-            gridTemplateColumns: 'auto 120px 1fr auto auto auto', alignItems: 'center', textAlign: 'left',
-            borderBottom: 'var(--hairline)'
-}} className="gap-4 py-3 px-1" >
-            <span style={{ width: 8, height: 8, borderRadius: '50%',
-                            background: s.ftr ? 'var(--success)' : 'var(--warning)' }}/>
-            <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+ gridTemplateColumns: 'auto 120px 1fr auto auto auto' }} className="gap-4 py-3 px-1 grid items-center text-left border-b" >
+            <span className="rounded-full" style={{ width: 8, height: 8,
+ background: s.ftr ? 'var(--success)' : 'var(--warning)' }}/>
+            <span className="mono text-ink-3" style={{ fontSize: 11 }}>
               {s.project}
             </span>
-            <span style={{ fontSize: 13, color: 'var(--ink-2)',
-                            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <span className="text-ink-2 overflow-hidden text-ellipsis whitespace-nowrap" style={{ fontSize: 13 }}>
               {s.title}
             </span>
-            <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+            <span className="mono text-ink-3" style={{ fontSize: 11 }}>
               {s.corrections === 0 ? "first-try" : `${s.corrections}×`}
             </span>
-            <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)',
-                          minWidth: 50, textAlign: 'right' }}>
+            <span className="mono text-ink-3 text-right" style={{ fontSize: 11,
+ minWidth: 50 }}>
               {s.duration}
             </span>
-            <span className="mono" style={{ fontSize: 11, color: 'var(--ink-4)' }}>
+            <span className="mono text-ink-4" style={{ fontSize: 11 }}>
               {s.time}
             </span>
           </button>
