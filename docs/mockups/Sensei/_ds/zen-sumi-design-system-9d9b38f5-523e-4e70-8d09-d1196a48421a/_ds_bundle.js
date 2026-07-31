@@ -494,7 +494,7 @@ function HeroKoan({
       display: 'grid',
       gridTemplateColumns: '128px 1fr',
       gap: 32,
-      padding: 'var(--space-7) 0',
+      padding: 'var(--space-12) 0',
       borderTop: 'var(--hairline)',
       borderBottom: 'var(--hairline)'
     }
@@ -967,7 +967,7 @@ function Faq() {
     id: "faq",
     style: {
       borderTop: 'var(--hairline)',
-      padding: 'var(--space-8) var(--space-7)'
+      padding: 'var(--space-16) var(--space-12)'
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
@@ -982,7 +982,7 @@ function Faq() {
       fontSize: 'var(--text-2xl)',
       fontWeight: 400,
       letterSpacing: '-0.015em',
-      margin: '0 0 var(--space-6)'
+      margin: '0 0 var(--space-8)'
     }
   }, "Common questions, plain answers."), /*#__PURE__*/React.createElement("div", null, qs.map((it, i) => /*#__PURE__*/React.createElement("details", {
     key: i,
@@ -1017,7 +1017,7 @@ function Footer() {
   return /*#__PURE__*/React.createElement("footer", {
     style: {
       borderTop: 'var(--hairline)',
-      padding: 'var(--space-6) var(--space-7)',
+      padding: 'var(--space-8) var(--space-12)',
       fontSize: 'var(--text-xs)',
       color: 'var(--ink-3)'
     }
@@ -1049,7 +1049,7 @@ function Footer() {
       marginLeft: 12
     }
   }, "v0.4.2")), /*#__PURE__*/React.createElement("div", {
-    className: "flex gap-5"
+    className: "flex gap-6"
   }, /*#__PURE__*/React.createElement("a", {
     href: "#privacy"
   }, "Privacy"), /*#__PURE__*/React.createElement("a", {
@@ -1245,7 +1245,7 @@ function Nav() {
     style: {
       maxWidth: 1100,
       margin: '0 auto',
-      padding: 'var(--space-6) var(--space-7)',
+      padding: 'var(--space-8) var(--space-12)',
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'space-between'
@@ -1264,7 +1264,7 @@ function Nav() {
       fontSize: 17
     }
   }, "Sensei")), /*#__PURE__*/React.createElement("div", {
-    className: "flex gap-7",
+    className: "flex gap-12",
     style: {
       fontSize: 'var(--text-xs)'
     }
@@ -1324,7 +1324,7 @@ function Section({
     style: {
       borderTop: 'var(--hairline)',
       background: background || 'var(--paper)',
-      padding: 'var(--space-8) var(--space-7)'
+      padding: 'var(--space-16) var(--space-12)'
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
@@ -1332,7 +1332,7 @@ function Section({
       margin: '0 auto',
       display: narrow ? 'block' : 'grid',
       gridTemplateColumns: narrow ? undefined : '1fr 1.4fr',
-      gap: 'var(--space-7)',
+      gap: 'var(--space-12)',
       alignItems: 'start',
       textAlign: narrow ? 'center' : 'left'
     }
@@ -1375,7 +1375,7 @@ function HowItWorks() {
     id: "how",
     style: {
       borderTop: 'var(--hairline)',
-      padding: 'var(--space-8) var(--space-7)'
+      padding: 'var(--space-16) var(--space-12)'
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
@@ -1391,10 +1391,10 @@ function HowItWorks() {
       fontWeight: 300,
       letterSpacing: '-0.02em',
       margin: 0,
-      marginBottom: 'var(--space-7)'
+      marginBottom: 'var(--space-12)'
     }
   }, "\u89B3 \xB7 \u5BDF \xB7 \u899A \u2014 watch, notice, adopt."), /*#__PURE__*/React.createElement("div", {
-    className: "grid grid-cols-3 gap-7"
+    className: "grid grid-cols-3 gap-12"
   }, steps.map((s, i) => /*#__PURE__*/React.createElement("div", {
     key: i
   }, /*#__PURE__*/React.createElement("div", {
@@ -1428,7 +1428,7 @@ function Philosophy() {
     id: "philosophy",
     style: {
       borderTop: 'var(--hairline)',
-      padding: '120px var(--space-7)'
+      padding: '120px var(--space-12)'
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
@@ -1444,7 +1444,7 @@ function Philosophy() {
       lineHeight: 1
     }
   }, "\u9759"), /*#__PURE__*/React.createElement("div", {
-    className: "zs-eyebrow mt-4 mb-5"
+    className: "zs-eyebrow mt-4 mb-6"
   }, "Sei \xB7 stillness"), /*#__PURE__*/React.createElement("h2", {
     style: {
       fontFamily: 'var(--font-display)',
@@ -1452,7 +1452,7 @@ function Philosophy() {
       fontWeight: 300,
       lineHeight: 1.3,
       letterSpacing: '-0.02em',
-      margin: '0 0 var(--space-5)'
+      margin: '0 0 var(--space-6)'
     }
   }, "The master observes for a long time before teaching."), /*#__PURE__*/React.createElement("p", {
     className: "zs-body",
@@ -1480,10 +1480,10 @@ function SiteHero() {
     style: {
       maxWidth: 1100,
       margin: '0 auto',
-      padding: 'var(--space-6) var(--space-7) var(--space-8)'
+      padding: 'var(--space-8) var(--space-12) var(--space-16)'
     }
   }, /*#__PURE__*/React.createElement("div", {
-    className: "flex items-baseline gap-3 mb-5"
+    className: "flex items-baseline gap-3 mb-6"
   }, /*#__PURE__*/React.createElement("span", {
     className: "zs-kanji",
     style: {
@@ -1506,13 +1506,13 @@ function SiteHero() {
   }, "A quiet companion for AI-assisted work."), /*#__PURE__*/React.createElement("p", {
     className: "zs-body",
     style: {
-      marginTop: 'var(--space-5)',
+      marginTop: 'var(--space-6)',
       maxWidth: 560
     }
   }, "Sensei watches your sessions with AI assistants \u2014 then surfaces the patterns you're too close to see. Not a chatbot. Not a copilot. A patient observer."), /*#__PURE__*/React.createElement("div", {
     className: "flex items-center gap-4",
     style: {
-      marginTop: 'var(--space-6)'
+      marginTop: 'var(--space-8)'
     }
   }, /*#__PURE__*/React.createElement(DownloadCTA, {
     size: "lg"
@@ -1526,7 +1526,7 @@ function SiteHero() {
     className: "text-xs text-ink-3 mt-3"
   }, "Free \xB7 Local-first \xB7 No account"), /*#__PURE__*/React.createElement("div", {
     style: {
-      marginTop: 'var(--space-7)',
+      marginTop: 'var(--space-12)',
       display: 'flex',
       justifyContent: 'center'
     }

@@ -295,31 +295,25 @@ function DCViewport({ children, minScale = 0.1, maxScale = 8, style = {} }) {
   const gridSvg = `url("data:image/svg+xml,%3Csvg width='120' height='120' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M120 0H0v120' fill='none' stroke='${encodeURIComponent(DC.grid)}' stroke-width='1'/%3E%3C/svg%3E")`;
   return (
     <div
-      ref={vpRef}
-      className="design-canvas"
-      style={{
-        height: '100vh', width: '100vw',
-        background: DC.bg,
-        overflow: 'hidden',
-        overscrollBehavior: 'none',
-        touchAction: 'none',
-        position: 'relative',
-        fontFamily: DC.font,
-        boxSizing: 'border-box',
-        ...style,
-      }}
-    >
+ ref={vpRef}
+ className="design-canvas overflow-hidden relative"
+ style={{
+ height: '100vh', width: '100vw',
+ background: DC.bg,
+ overscrollBehavior: 'none',
+ touchAction: 'none',
+ fontFamily: DC.font,
+ boxSizing: 'border-box',
+ ...style }}
+ >
       <div
-        ref={worldRef}
-        style={{
-          position: 'absolute', top: 0, left: 0,
-          transformOrigin: '0 0',
-          willChange: 'transform',
-          width: 'max-content', minWidth: '100%',
-          minHeight: '100%',
-}}
-      className="py-8" >
-        <div style={{ position: 'absolute', inset: -6000, backgroundImage: gridSvg, backgroundSize: '120px 120px', pointerEvents: 'none', zIndex: -1 }} />
+ ref={worldRef}
+ style={{ top: 0, left: 0,
+ transformOrigin: '0 0',
+ willChange: 'transform',
+ width: 'max-content' }}
+ className="py-16 absolute min-w-full min-h-full" >
+        <div className="absolute" style={{ inset: -6000, backgroundImage: gridSvg, backgroundSize: '120px 120px', pointerEvents: 'none', zIndex: -1 }} />
         {children}
       </div>
     </div>
@@ -346,14 +340,14 @@ function DCSection({ id, title, subtitle, children, gap = 48 }) {
   const byId = Object.fromEntries(artboards.map((a) => [a.props.id ?? a.props.label, a]));
 
   return (
-    <div data-dc-section={sid} style={{ position: 'relative' }} className="mb-8" >
-      <div className="pt-0 pb-7 px-8" >
+    <div data-dc-section={sid} className="mb-16 relative" >
+      <div className="pt-0 pb-12 px-16" >
         <DCEditable tag="div" value={sec.title ?? title}
           onChange={(v) => ctx && sid && ctx.patchSection(sid, { title: v })}
           style={{ fontSize: 28, fontWeight: 600, color: DC.title, letterSpacing: -0.4, display: 'inline-block' }} className="mb-1" />
         {subtitle && <div style={{ fontSize: 15, color: DC.subtitle }}>{subtitle}</div>}
       </div>
-      <div style={{ display: 'flex', gap, alignItems: 'flex-start', width: 'max-content' }} className="px-8" >
+      <div style={{ gap, width: 'max-content' }} className="px-16 flex items-start" >
         {order.map((k) => (
           <DCArtboardFrame key={k} sectionId={sid} artboard={byId[k]} order={order}
             label={(sec.labels || {})[k] ?? byId[k].props.label}
@@ -438,8 +432,8 @@ function DCArtboardFrame({ sectionId, artboard, label, order, onRename, onReorde
   };
 
   return (
-    <div ref={ref} data-dc-slot={id} style={{ position: 'relative', flexShrink: 0 }}>
-      <div className="dc-labelrow mb-1" style={{ position: 'absolute', bottom: '100%', left: -4, color: DC.label }}>
+    <div className="relative shrink-0" ref={ref} data-dc-slot={id} >
+      <div className="dc-labelrow mb-1 absolute" style={{ bottom: '100%', left: -4, color: DC.label }}>
         <div className="dc-grip" onPointerDown={onGripDown} title="Drag to reorder">
           <svg width="9" height="13" viewBox="0 0 9 13" fill="currentColor"><circle cx="2" cy="2" r="1.1"/><circle cx="7" cy="2" r="1.1"/><circle cx="2" cy="6.5" r="1.1"/><circle cx="7" cy="6.5" r="1.1"/><circle cx="2" cy="11" r="1.1"/><circle cx="7" cy="11" r="1.1"/></svg>
         </div>
@@ -451,9 +445,9 @@ function DCArtboardFrame({ sectionId, artboard, label, order, onRename, onReorde
       <button className="dc-expand" onClick={onFocus} onPointerDown={(e) => e.stopPropagation()} title="Focus">
         <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"><path d="M7 1h4v4M5 11H1V7M11 1L7.5 4.5M1 11l3.5-3.5"/></svg>
       </button>
-      <div className="dc-card"
-        style={{ borderRadius: 2, boxShadow: '0 1px 3px rgba(0,0,0,.08),0 4px 16px rgba(0,0,0,.06)', overflow: 'hidden', width, height, background: '#fff', ...style }}>
-        {children || <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#bbb', fontSize: 13, fontFamily: DC.font }}>{id}</div>}
+      <div className="dc-card overflow-hidden"
+ style={{ borderRadius: 2, boxShadow: '0 1px 3px rgba(0,0,0,.08),0 4px 16px rgba(0,0,0,.06)', width, height, background: '#fff', ...style }}>
+        {children || <div className="h-full flex items-center justify-center" style={{ color: '#bbb', fontSize: 13, fontFamily: DC.font }}>{id}</div>}
       </div>
     </div>
   );
@@ -521,13 +515,11 @@ function DCFocusOverlay({ entry, sectionMeta, sectionOrder }) {
 
   const [ddOpen, setDd] = React.useState(false);
   const Arrow = ({ dir, onClick }) => (
-    <button onClick={(e) => { e.stopPropagation(); onClick(); }}
-      style={{ position: 'absolute', top: '50%', [dir]: 28, transform: 'translateY(-50%)',
-        border: 'none', background: 'rgba(255,255,255,.08)', color: 'rgba(255,255,255,.9)',
-        width: 44, height: 44, borderRadius: 22, fontSize: 17, cursor: 'pointer',
-        display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background .15s' }}
-      onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,.18)')}
-      onMouseLeave={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,.08)')}>
+    <button className="absolute border-0 cursor-pointer flex items-center justify-center" onClick={(e) => { e.stopPropagation(); onClick(); }}
+ style={{ top: '50%', [dir]: 28, transform: 'translateY(-50%)', background: 'rgba(255,255,255,.08)', color: 'rgba(255,255,255,.9)',
+ width: 44, height: 44, borderRadius: 22, fontSize: 17, transition: 'background .15s' }}
+ onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,.18)')}
+ onMouseLeave={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,.08)')}>
       <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
         <path d={dir === 'left' ? 'M11 3L5 9l6 6' : 'M7 3l6 6-6 6'} /></svg>
     </button>
@@ -536,48 +528,45 @@ function DCFocusOverlay({ entry, sectionMeta, sectionOrder }) {
   // Portal to body so position:fixed is the real viewport regardless of any
   // transform on DesignCanvas's ancestors (including the canvas zoom itself).
   return ReactDOM.createPortal(
-    <div onClick={(e) => { if (e.target === e.currentTarget) ctx.setFocus(null); }}
-      style={{ position: 'fixed', inset: 0, zIndex: 100, background: 'rgba(24,20,16,.6)', backdropFilter: 'blur(14px)',
-        fontFamily: DC.font, color: '#fff' }}>
+    <div className="fixed" onClick={(e) => { if (e.target === e.currentTarget) ctx.setFocus(null); }}
+ style={{ inset: 0, zIndex: 100, background: 'rgba(24,20,16,.6)', backdropFilter: 'blur(14px)',
+ fontFamily: DC.font, color: '#fff' }}>
 
       {/* top bar: section dropdown (left) · close (right) */}
       <div onClick={(e) => e.stopPropagation()}
-        style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 72, display: 'flex', alignItems: 'flex-start' }} className="gap-4 pt-4 pb-0 px-4" >
-        <div style={{ position: 'relative' }}>
+ style={{ top: 0, left: 0, right: 0, height: 72 }} className="gap-4 pt-4 pb-0 px-4 absolute flex items-start" >
+        <div className="relative" >
           <button onClick={() => setDd((o) => !o)}
-            style={{
- border: 'none', background: 'transparent', color: '#fff', cursor: 'pointer',
-              borderRadius: 6, textAlign: 'left', fontFamily: 'inherit'
-}} className="py-1 px-2" >
-            <span style={{ display: 'flex', alignItems: 'center' }} className="gap-2" >
-              <span style={{ fontSize: 17, fontWeight: 600, letterSpacing: -0.3 }}>{meta.title}</span>
+ style={{ color: '#fff',
+ borderRadius: 6, fontFamily: 'inherit'
+ }} className="py-1 px-2 border-0 bg-transparent cursor-pointer text-left" >
+            <span className="gap-2 flex items-center" >
+              <span className="font-semibold" style={{ fontSize: 17, letterSpacing: -0.3 }}>{meta.title}</span>
               <svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" style={{ opacity: .7 }}><path d="M2 4l3.5 3.5L9 4"/></svg>
             </span>
-            {meta.subtitle && <span style={{ display: 'block', fontSize: 13, opacity: .6, fontWeight: 400 }} className="mt-1" >{meta.subtitle}</span>}
+            {meta.subtitle && <span style={{ fontSize: 13, opacity: .6 }} className="mt-1 block font-normal" >{meta.subtitle}</span>}
           </button>
           {ddOpen && (
-            <div style={{
- position: 'absolute', top: '100%', left: 0, background: '#2a251f', borderRadius: 8,
-              boxShadow: '0 8px 32px rgba(0,0,0,.4)', minWidth: 200, zIndex: 10
-}} className="mt-1 p-1" >
+            <div style={{ top: '100%', left: 0, background: '#2a251f', borderRadius: 8,
+ boxShadow: '0 8px 32px rgba(0,0,0,.4)', minWidth: 200, zIndex: 10
+ }} className="mt-1 p-1 absolute" >
               {sectionOrder.map((sid) => (
                 <button key={sid} onClick={() => { setDd(false); const f = sectionMeta[sid].slotIds[0]; if (f) ctx.setFocus(`${sid}/${f}`); }}
-                  style={{
- display: 'block', width: '100%', textAlign: 'left', border: 'none', cursor: 'pointer',
-                    background: sid === sectionId ? 'rgba(255,255,255,.1)' : 'transparent', color: '#fff', borderRadius: 5, fontSize: 13, fontWeight: sid === sectionId ? 600 : 400, fontFamily: 'inherit'
-}} className="py-2 px-3" >
+ style={{
+ background: sid === sectionId ? 'rgba(255,255,255,.1)' : 'transparent', color: '#fff', borderRadius: 5, fontSize: 13, fontWeight: sid === sectionId ? 600 : 400, fontFamily: 'inherit'
+ }} className="py-2 px-3 block w-full text-left border-0 cursor-pointer" >
                   {sectionMeta[sid].title}
                 </button>
               ))}
             </div>
           )}
         </div>
-        <div style={{ flex: 1 }} />
-        <button onClick={() => ctx.setFocus(null)}
-          onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,.12)')}
-          onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-          style={{ border: 'none', background: 'transparent', color: 'rgba(255,255,255,.7)', width: 32, height: 32,
-            borderRadius: 16, fontSize: 22, cursor: 'pointer', lineHeight: 1, transition: 'background .12s' }}>×</button>
+        <div className="flex-1" />
+        <button className="border-0 bg-transparent cursor-pointer" onClick={() => ctx.setFocus(null)}
+ onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,.12)')}
+ onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+ style={{ color: 'rgba(255,255,255,.7)', width: 32, height: 32,
+ borderRadius: 16, fontSize: 22, lineHeight: 1, transition: 'background .12s' }}>×</button>
       </div>
 
       {/* card centered, label + index below — only the card itself stops
@@ -586,24 +575,20 @@ function DCFocusOverlay({ entry, sectionMeta, sectionOrder }) {
           For tall artboards we make the centerer scrollable and pin the card
           to the top so users can read top-down. */}
       <div
-        onClick={(e) => { if (e.target === e.currentTarget) ctx.setFocus(null); }}
-        style={{
- position: 'absolute', top: 64, bottom: 56, left: 100, right: 100,
-                  display: 'flex', flexDirection: 'column',
-                  alignItems: 'center',
-                  justifyContent: isTall ? 'flex-start' : 'center',
-                  overflowY: isTall ? 'auto' : 'visible',
-                  overflowX: 'hidden',
-                  paddingTop: isTall ? 12 : 0,
-                  paddingBottom: isTall ? 12 : 0
-}} className="gap-4" >
-        <div onClick={(e) => e.stopPropagation()} style={{ width: width * scale, height: height * scale, position: 'relative', flexShrink: 0 }}>
-          <div style={{ width, height, transform: `scale(${scale})`, transformOrigin: 'top left', background: '#fff', borderRadius: 2, overflow: 'hidden',
-            boxShadow: '0 20px 80px rgba(0,0,0,.4)' }}>
-            {children || <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#bbb' }}>{aid}</div>}
+ onClick={(e) => { if (e.target === e.currentTarget) ctx.setFocus(null); }}
+ style={{ top: 64, bottom: 56, left: 100, right: 100,
+ justifyContent: isTall ? 'flex-start' : 'center',
+ overflowY: isTall ? 'auto' : 'visible',
+ paddingTop: isTall ? 12 : 0,
+ paddingBottom: isTall ? 12 : 0
+ }} className="gap-4 absolute flex flex-col items-center overflow-x-hidden" >
+        <div className="relative shrink-0" onClick={(e) => e.stopPropagation()} style={{ width: width * scale, height: height * scale }}>
+          <div className="overflow-hidden" style={{ width, height, transform: `scale(${scale})`, transformOrigin: 'top left', background: '#fff', borderRadius: 2,
+ boxShadow: '0 20px 80px rgba(0,0,0,.4)' }}>
+            {children || <div className="h-full flex items-center justify-center" style={{ color: '#bbb' }}>{aid}</div>}
           </div>
         </div>
-        <div onClick={(e) => e.stopPropagation()} style={{ fontSize: 13, fontWeight: 500, opacity: .85, textAlign: 'center', flexShrink: 0 }}>
+        <div className="font-medium text-center shrink-0" onClick={(e) => e.stopPropagation()} style={{ fontSize: 13, opacity: .85 }}>
           {(sec.labels || {})[aid] ?? artboard.props.label}
           <span style={{ opacity: .5, fontVariantNumeric: 'tabular-nums' }} className="ml-2" >{idx + 1} / {peers.length}</span>
         </div>
@@ -614,13 +599,12 @@ function DCFocusOverlay({ entry, sectionMeta, sectionOrder }) {
 
       {/* dots */}
       <div onClick={(e) => e.stopPropagation()}
-        style={{ position: 'absolute', bottom: 20, left: '50%', transform: 'translateX(-50%)', display: 'flex' }} className="gap-2" >
+ style={{ bottom: 20, left: '50%', transform: 'translateX(-50%)' }} className="gap-2 absolute flex" >
         {peers.map((p, i) => (
           <button key={p} onClick={() => ctx.setFocus(`${sectionId}/${p}`)}
-            style={{
- border: 'none', cursor: 'pointer', width: 6, height: 6, borderRadius: 3,
-              background: i === idx ? '#fff' : 'rgba(255,255,255,.3)'
-}} className="p-0" />
+ style={{ width: 6, height: 6, borderRadius: 3,
+ background: i === idx ? '#fff' : 'rgba(255,255,255,.3)'
+ }} className="p-0 border-0 cursor-pointer" />
         ))}
       </div>
     </div>,
@@ -633,15 +617,13 @@ function DCFocusOverlay({ entry, sectionMeta, sectionOrder }) {
 // ─────────────────────────────────────────────────────────────
 function DCPostIt({ children, top, left, right, bottom, rotate = -2, width = 180 }) {
   return (
-    <div style={{
-      position: 'absolute', top, left, right, bottom, width,
-      background: DC.postitBg,
-      fontFamily: '"Comic Sans MS", "Marker Felt", "Segoe Print", cursive',
-      fontSize: 13, lineHeight: 1.4, color: DC.postitText,
-      boxShadow: '0 2px 8px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.08)',
-      transform: `rotate(${rotate}deg)`,
-      zIndex: 5,
-}} className="py-3 px-4" >{children}</div>
+    <div style={{ top, left, right, bottom, width,
+ background: DC.postitBg,
+ fontFamily: '"Comic Sans MS", "Marker Felt", "Segoe Print", cursive',
+ fontSize: 13, lineHeight: 1.4, color: DC.postitText,
+ boxShadow: '0 2px 8px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.08)',
+ transform: `rotate(${rotate}deg)`,
+ zIndex: 5 }} className="py-3 px-4 absolute" >{children}</div>
   );
 }
 

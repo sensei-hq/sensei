@@ -101,7 +101,7 @@ Sparing. Modal overlay: `oklch(0.22 0.012 50 / 0.28)` + 1px blur beneath. Soft b
 
 ### Cards
 
-A card is `background: var(--paper-2)` + `border: var(--hairline)` + `border-radius: var(--radius-lg)` + `padding: var(--space-5)`. That is the whole specification. **No shadow. No colored left-borders. No header background fill.**
+A card is `background: var(--paper-2)` + `border: var(--hairline)` + `border-radius: var(--radius-lg)` + `padding: var(--space-6)`. That is the whole specification. **No shadow. No colored left-borders. No header background fill.**
 
 ### Lists, rows, tables
 

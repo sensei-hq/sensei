@@ -111,9 +111,8 @@ function SessionsDigestZen({ initialChart = "trend", projectFilter = null, proje
   };
 
   return (
-    <div className="sensei" data-screen-label="Observatory · Sessions · Digest"
-         style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column',
-                  background: 'var(--paper)', overflow: 'hidden' }}>
+    <div className="sensei w-full h-full flex flex-col bg-paper overflow-hidden" data-screen-label="Observatory · Sessions · Digest"
+ >
       <ZenHero
         totals={totals} range={range} setRange={setRange}
         collapsed={collapsed}
@@ -167,40 +166,36 @@ function ZenScrollLayout({ chart, setChart, chartNode, sessions, days, totals, r
   const totalInsights  = retro.insights.length;
 
   return (
-    <div ref={scrollRef}
-         style={{ flex: 1, overflow: 'auto', minHeight: 0, position: 'relative' }}>
+    <div className="flex-1 overflow-auto min-h-0 relative" ref={scrollRef}
+ >
 
       {/* ── Chart (top of scroll area, fades to 0 when collapsed —
               the mini version lives inside the hero above) ────────── */}
-      <div style={{ overflow: 'hidden',
-                     maxHeight: collapsed ? 0 : 720,
-                     opacity: collapsed ? 0 : 1,
-                     transition: 'max-height 0.32s ease, opacity 0.18s ease',
-                     padding: collapsed ? '0 40px' : '22px 40px 18px' }}>
+      <div className="overflow-hidden" style={{
+ maxHeight: collapsed ? 0 : 720,
+ opacity: collapsed ? 0 : 1,
+ transition: 'max-height 0.32s ease, opacity 0.18s ease',
+ padding: collapsed ? '0 40px' : '22px 40px 18px' }}>
         <ZenChartFrame chart={chart} setChart={setChart}>
           {chartNode}
         </ZenChartFrame>
       </div>
 
       {/* ── Retrospective (below the chart, grows freely) ─────── */}
-      <section style={{ minHeight: 1100 }} className="pt-5 pb-7 px-6" >
-        <div style={{
- display: 'flex', alignItems: 'baseline', borderBottom: 'var(--hairline)'
-}} className="gap-3 mb-3 pb-2" >
-          <span className="kanji" style={{ fontSize: 15, color: 'var(--accent)' }}>省</span>
-          <h3 className="display m-0" style={{
- fontSize: 15, fontWeight: 400,
-                        color: 'var(--ink)'
-}}>Retrospective · last 7 days</h3>
-          <span style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+      <section style={{ minHeight: 1100 }} className="pt-6 pb-12 px-8" >
+        <div className="gap-3 mb-3 pb-2 flex items-baseline border-b" >
+          <span className="kanji text-accent" style={{ fontSize: 15 }}>省</span>
+          <h3 className="display m-0 font-normal text-ink" style={{
+ fontSize: 15 }}>Retrospective · last 7 days</h3>
+          <span className="text-ink-3" style={{ fontSize: 11 }}>
             · what sensei sees across your sessions
           </span>
-          <span style={{ flex: 1 }}/>
-          <span className="mono" style={{ fontSize: 11, color: 'var(--ink-4)' }}>
+          <span className="flex-1" />
+          <span className="mono text-ink-4" style={{ fontSize: 11 }}>
             {totalGoingWell + totalNotGoing + totalInsights} observations
           </span>
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr' }} className="gap-3" >
+        <div style={{ gridTemplateColumns: '1fr 1fr 1fr' }} className="gap-3 grid" >
           <RetroLane title="Going well"     accent="var(--success)"   items={retro.going_well} positive/>
           <RetroLane title="Not going well" accent="var(--accent)"    items={retro.not_going}/>
           <RetroLane title="Insights"       accent="var(--ink-2)" items={retro.insights}/>
@@ -293,8 +288,8 @@ function MiniTrend({ sessions, days, checkpoints = [] }) {
   };
 
   return (
-    <div style={{ position: 'relative', width: W, height: H }}>
-      <svg width={W} height={H} style={{ overflow: 'visible', display: 'block' }}>
+    <div className="relative" style={{ width: W, height: H }}>
+      <svg className="overflow-visible block" width={W} height={H} >
         {/* Sparkline */}
         <path d={areaPath} fill="var(--success)" opacity="0.10"/>
         <path d={path} fill="none" stroke="var(--success)" strokeWidth="1.6"
@@ -325,11 +320,11 @@ function MiniTrend({ sessions, days, checkpoints = [] }) {
           const cx = xAt(c.idx);
           const isHovered = hover?.ck.id === c.id;
           return (
-            <g key={c.id}
-               style={{ cursor: 'pointer' }}
-               onMouseEnter={() => setHover({ ck: c, x: cx })}
-               onMouseLeave={() => setHover(null)}
-               onClick={() => onCkClick(c)}>
+            <g className="cursor-pointer" key={c.id}
+ 
+ onMouseEnter={() => setHover({ ck: c, x: cx })}
+ onMouseLeave={() => setHover(null)}
+ onClick={() => onCkClick(c)}>
               <line x1={cx} x2={cx} y1={padT - 2} y2={H - padB}
                     stroke="var(--ink-2)" strokeWidth={1}
                     strokeDasharray="2 2"
@@ -351,34 +346,28 @@ function MiniTrend({ sessions, days, checkpoints = [] }) {
       {/* Hover tooltip — single detail at a time */}
       {hover && (
         <div style={{
-          position: 'absolute',
-          left: Math.max(0, Math.min(W - 200, hover.x - 100)),
-          bottom: H + 6,
-          width: 200,
-          background: 'var(--paper)',
-          border: 'var(--hairline)',
-          borderRadius: 4,
-          boxShadow: 'var(--shadow)',
-          fontSize: 11, lineHeight: 1.4,
-          pointerEvents: 'none',
-          zIndex: 5
-}} className="py-2 px-2" >
-          <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-1 mb-1" >
-            <span style={{ fontSize: 11, letterSpacing: '0.14em',
-                            textTransform: 'uppercase', color: 'var(--ink-3)' }}>
+ left: Math.max(0, Math.min(W - 200, hover.x - 100)),
+ bottom: H + 6,
+ width: 200,
+ borderRadius: 4,
+ fontSize: 11, lineHeight: 1.4,
+ pointerEvents: 'none',
+ zIndex: 5
+ }} className="py-2 px-2 absolute bg-paper border border-paper-edge shadow" >
+          <div className="gap-1 mb-1 flex items-baseline" >
+            <span className="uppercase text-ink-3" style={{ fontSize: 11, letterSpacing: '0.14em' }}>
               {hover.ck.when}
             </span>
-            <span style={{ fontSize: 11, color: 'var(--accent)',
-                            letterSpacing: '0.1em', textTransform: 'uppercase' }}>
+            <span className="text-accent uppercase" style={{ fontSize: 11,
+ letterSpacing: '0.1em' }}>
               · adopted
             </span>
           </div>
-          <div style={{ color: 'var(--ink)', fontWeight: 500 }}>
+          <div className="text-ink font-medium" >
             {hover.ck.title}
           </div>
           <div style={{
- fontSize: 11, color: 'var(--ink-3)', fontStyle: 'italic'
-}} className="mt-1" >
+ fontSize: 11 }} className="mt-1 text-ink-3 italic" >
             click for memory view →
           </div>
         </div>
@@ -404,7 +393,7 @@ function MiniStream({ sessions, days }) {
   const colors = { good: QUALITY.good.color, bad: QUALITY.bad.color, ugly: QUALITY.ugly.color };
   let baseAcc = days.map(_ => 0);
   return (
-    <svg width={W} height={H} style={{ overflow: 'visible' }}>
+    <svg className="overflow-visible" width={W} height={H} >
       {layers.map(layer => {
         const top = counts.map((c, i) => baseAcc[i] + c[layer]);
         const path = "M " + top.map((v, i) =>
@@ -425,7 +414,7 @@ function MiniConstellation({ sessions, days }) {
   const maxMin = Math.max(60, ...sessions.map(s => s.mins));
   const xStep = days.length > 1 ? W / (days.length - 1) : 0;
   return (
-    <svg width={W} height={H} style={{ overflow: 'visible' }}>
+    <svg className="overflow-visible" width={W} height={H} >
       {sessions.map((s, i) => {
         const di = days.indexOf(s.when);
         if (di < 0) return null;
@@ -452,7 +441,7 @@ function MiniBands({ sessions, days }) {
   });
   const max = Math.max(1, ...counts.map(c => c.good + c.bad + c.ugly));
   return (
-    <svg width={W} height={H} style={{ overflow: 'visible' }}>
+    <svg className="overflow-visible" width={W} height={H} >
       {counts.map((c, i) => {
         const x = i * (bw + 2);
         let yAcc = H;
@@ -477,7 +466,7 @@ function MiniPulse({ sessions, days }) {
   const W = 168, H = 56;
   const xStep = days.length > 1 ? W / (days.length - 1) : 0;
   return (
-    <svg width={W} height={H} style={{ overflow: 'visible' }}>
+    <svg className="overflow-visible" width={W} height={H} >
       <line x1="0" x2={W} y1={H-2} y2={H-2} stroke="var(--edge)" strokeWidth="0.5"/>
       {sessions.map(s => {
         const di = days.indexOf(s.when);
@@ -497,7 +486,7 @@ function MiniPulse({ sessions, days }) {
 // Numbers mode — original 3 dots + median.
 function MiniNumbers({ totals }) {
   return (
-    <div style={{ display: 'flex' }} className="gap-4" >
+    <div className="gap-4 flex" >
       <DotStat dot={QUALITY.good.color} n={totals.good}  l="first-try"/>
       <DotStat dot={QUALITY.bad.color}  n={totals.bad}   l="corrected"/>
       <DotStat dot={QUALITY.ugly.color} n={totals.ugly}  l="abandoned"/>
@@ -537,14 +526,13 @@ function MiniView({ mode, totals, sessions, days, checkpoints = [] }) {
   })();
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center' }} className="gap-3" >
+    <div className="gap-3 flex items-center" >
       <ChartEl sessions={sessions} days={days} checkpoints={checkpoints}/>
       <div style={{ minWidth: 56 }}>
-        <div style={{ fontSize: 17, lineHeight: 1, fontWeight: 300, color: 'var(--ink)',
-                       fontFeatureSettings: '"tnum"' }}>{headline.v}</div>
+        <div className="font-light text-ink" style={{ fontSize: 17, lineHeight: 1,
+ fontFeatureSettings: '"tnum"' }}>{headline.v}</div>
         <div style={{
- fontSize: 11, letterSpacing: '0.12em', color: 'var(--ink-4)', textTransform: 'uppercase'
-}} className="mt-1" >{headline.l}</div>
+ fontSize: 11, letterSpacing: '0.12em' }} className="mt-1 text-ink-4 uppercase" >{headline.l}</div>
       </div>
     </div>
   );
@@ -554,18 +542,14 @@ function MiniView({ mode, totals, sessions, days, checkpoints = [] }) {
 function MiniCycler({ mode, onCycle }) {
   return (
     <button onClick={onCycle} title={`viewing ${mode} · click to cycle`}
-            style={{
- width: 32, height: 32, borderRadius: '50%',
-                      background: 'var(--paper-2)',
-                      border: 'var(--hairline)',
-                      display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                      cursor: 'pointer',
-                      transition: 'background 0.15s'
-}}
-            onMouseEnter={e => e.currentTarget.style.background = 'var(--paper)'}
-            onMouseLeave={e => e.currentTarget.style.background = 'var(--paper-2)'} className="p-0 ml-3" >
-      <span className="kanji" style={{ fontSize: 13, color: 'var(--accent)',
-                                         lineHeight: 1 }}>
+ style={{
+ width: 32, height: 32,
+ transition: 'background 0.15s'
+ }}
+ onMouseEnter={e => e.currentTarget.style.background = 'var(--paper)'}
+ onMouseLeave={e => e.currentTarget.style.background = 'var(--paper-2)'} className="p-0 ml-3 rounded-full bg-paper-2 border border-paper-edge inline-flex items-center justify-center cursor-pointer" >
+      <span className="kanji text-accent" style={{ fontSize: 13,
+ lineHeight: 1 }}>
         {MINI_GLYPH[mode]}
       </span>
     </button>
@@ -596,9 +580,9 @@ function ZenMiniChart({ chart, sessions = [], days = [] }) {
   const latestPct = latest != null ? Math.round(latest * 100) : null;
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center' }} className="gap-3" >
+    <div className="gap-3 flex items-center" >
       {points.length > 0 && (
-        <svg width={W} height={H} style={{ overflow: 'visible' }}>
+        <svg className="overflow-visible" width={W} height={H} >
           <path d={areaPath} fill="var(--success)" opacity="0.12"/>
           <path d={path} fill="none" stroke="var(--success)" strokeWidth="1.4"
                 strokeLinecap="round" strokeLinejoin="round"/>
@@ -610,13 +594,12 @@ function ZenMiniChart({ chart, sessions = [], days = [] }) {
         </svg>
       )}
       <div style={{ minWidth: 56 }}>
-        <div style={{ fontSize: 17, lineHeight: 1, fontWeight: 300, color: 'var(--ink)',
-                       fontFeatureSettings: '"tnum"' }}>
+        <div className="font-light text-ink" style={{ fontSize: 17, lineHeight: 1,
+ fontFeatureSettings: '"tnum"' }}>
           {latestPct != null ? `${latestPct}%` : "—"}
         </div>
         <div style={{
- fontSize: 11, letterSpacing: '0.12em', color: 'var(--ink-4)', textTransform: 'uppercase'
-}} className="mt-1" >
+ fontSize: 11, letterSpacing: '0.12em' }} className="mt-1 text-ink-4 uppercase" >
           first-try · 7d
         </div>
       </div>
@@ -632,16 +615,16 @@ function ZenMiniRetro({ going, notGoing, insights }) {
     { c: 'var(--ink-2)', n: insights, l: "insights" }
   ];
   return (
-    <div style={{ display: 'flex', alignItems: 'center' }} className="gap-4" >
-      <span className="kanji" style={{ fontSize: 22, color: 'var(--accent)',
-                                         lineHeight: 1 }}>省</span>
-      <div style={{ display: 'flex' }} className="gap-4" >
+    <div className="gap-4 flex items-center" >
+      <span className="kanji text-accent" style={{ fontSize: 22,
+ lineHeight: 1 }}>省</span>
+      <div className="gap-4 flex" >
         {dots.map(d => (
-          <div key={d.l} style={{ display: 'flex', alignItems: 'center' }} className="gap-2" >
-            <span style={{ width: 7, height: 7, borderRadius: '50%', background: d.c }}/>
-            <span className="mono" style={{ fontSize: 13, color: 'var(--ink)',
-                          fontFeatureSettings: '"tnum"' }}>{d.n}</span>
-            <span style={{ fontSize: 11, color: 'var(--ink-3)' }}>{d.l}</span>
+          <div key={d.l} className="gap-2 flex items-center" >
+            <span className="rounded-full" style={{ width: 7, height: 7, background: d.c }}/>
+            <span className="mono text-ink" style={{ fontSize: 13,
+ fontFeatureSettings: '"tnum"' }}>{d.n}</span>
+            <span className="text-ink-3" style={{ fontSize: 11 }}>{d.l}</span>
           </div>
         ))}
       </div>
@@ -654,27 +637,22 @@ function ZenHero({ totals, range, setRange,
                    collapsed = false, miniMode = "trend", onCycleMiniMode,
                    sessions = [], days = [], checkpoints = [], projectLabel = null }) {
   return (
-    <div style={{
-                   borderBottom: 'var(--hairline)',
-                   display: 'flex', alignItems: 'center'
-}} className="gap-5 pt-5 pb-4 px-6" >
-      <div className="kanji"
-           style={{ fontSize: 40, color: 'var(--accent)', lineHeight: 1 }}>録</div>
-      <div style={{ flex: 1, minWidth: 0 }}>
+    <div className="gap-6 pt-6 pb-4 px-8 border-b flex items-center" >
+      <div className="kanji text-accent"
+ style={{ fontSize: 40, lineHeight: 1 }}>録</div>
+      <div className="flex-1 min-w-0" >
         <div style={{
- fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
-                       textTransform: 'uppercase'
-}} className="mb-1" >
+ fontSize: 11, letterSpacing: '0.18em' }} className="mb-1 text-ink-3 uppercase" >
           {projectLabel ? `Project · ${projectLabel} · Sessions` : 'Observatory · Sessions'}
         </div>
-        <h1 className="display m-0"
-            style={{ fontSize: 22, fontWeight: 400 }}>
+        <h1 className="display m-0 font-normal"
+ style={{ fontSize: 22 }}>
           {projectLabel ? `Sessions in ${projectLabel}.` : 'The shape of your week.'}
         </h1>
         <p style={{
- fontSize: 13, color: 'var(--ink-2)',
-                     maxWidth: 720, lineHeight: 1.55
-}} className="mt-1 mb-0" >
+ fontSize: 13,
+ maxWidth: 720, lineHeight: 1.55
+ }} className="mt-1 mb-0 text-ink-2" >
           {projectLabel
             ? 'A retrospective scoped to this project. Same shape as the collective view, filtered down.'
             : 'A retrospective. Then one quiet chart — drawn the way you want to read it.'}
@@ -687,9 +665,8 @@ function ZenHero({ totals, range, setRange,
       {/* Right cluster — mini view + floating cycler.
             When not collapsed, shows the original numbers stats; the cycler is
             still there so users can preview different chart styles up here too. */}
-      <div style={{
- display: 'flex', alignItems: 'center', borderLeft: '1px solid var(--edge)'
-}} className="gap-0 pl-5" >
+      <div style={{ borderLeft: '1px solid var(--edge)'
+ }} className="gap-0 pl-6 flex items-center" >
         {collapsed ? (
           <MiniView mode={miniMode} totals={totals} sessions={sessions} days={days}
                      checkpoints={checkpoints}/>
@@ -705,19 +682,18 @@ function ZenHero({ totals, range, setRange,
 }
 function DotStat({ dot, n, l, mono }) {
   return (
-    <div style={{ textAlign: 'center', minWidth: 56 }}>
+    <div className="text-center" style={{ minWidth: 56 }}>
       <div className={(mono ? "mono" : "") + ' gap-1'}
            style={{
  fontSize: 17, lineHeight: 1, fontWeight: 300, color: 'var(--ink)',
                      fontFeatureSettings: '"tnum"',
                      display: 'inline-flex', alignItems: 'center'
 }}>
-        {dot && <span style={{ width: 7, height: 7, borderRadius: '50%', background: dot }}/>}
+        {dot && <span className="rounded-full" style={{ width: 7, height: 7, background: dot }}/>}
         {n}
       </div>
       <div style={{
- fontSize: 11, letterSpacing: '0.12em', color: 'var(--ink-4)', textTransform: 'uppercase'
-}} className="mt-1" >{l}</div>
+ fontSize: 11, letterSpacing: '0.12em' }} className="mt-1 text-ink-4 uppercase" >{l}</div>
     </div>
   );
 }
@@ -726,12 +702,11 @@ function DotStat({ dot, n, l, mono }) {
 function RetroLane({ title, accent, items, positive }) {
   return (
     <div>
-      <div style={{ display: 'flex', alignItems: 'center' }} className="gap-2 mb-2" >
-        <span style={{ width: 8, height: 8, borderRadius: '50%', background: accent }}/>
-        <span style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
-                        textTransform: 'uppercase', fontWeight: 500 }}>{title}</span>
+      <div className="gap-2 mb-2 flex items-center" >
+        <span className="rounded-full" style={{ width: 8, height: 8, background: accent }}/>
+        <span className="text-ink-3 uppercase font-medium" style={{ fontSize: 11, letterSpacing: '0.14em' }}>{title}</span>
       </div>
-      <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-2" >
+      <div className="gap-2 flex flex-col" >
         {items.map(it => <RetroCard key={it.id} item={it} accent={accent} positive={positive}/>)}
       </div>
     </div>
@@ -740,18 +715,16 @@ function RetroLane({ title, accent, items, positive }) {
 function RetroCard({ item, accent, positive }) {
   return (
     <article style={{
- background: 'var(--paper-2)', border: 'var(--hairline)',
-                       borderLeft: `2px solid ${accent}`, borderRadius: 6
-}} className="py-3 px-3" >
-      <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2 mb-1" >
+ borderLeft: `2px solid ${accent}`, borderRadius: 6
+ }} className="py-3 px-3 bg-paper-2 border border-paper-edge" >
+      <div className="gap-2 mb-1 flex items-baseline" >
         <span className="kanji" style={{ fontSize: 13, color: accent }}>{item.kanji}</span>
-        <div style={{ fontSize: 13, color: 'var(--ink)', fontWeight: 500,
-                       lineHeight: 1.4, flex: 1 }}>{item.title}</div>
+        <div className="text-ink font-medium flex-1" style={{ fontSize: 13,
+ lineHeight: 1.4 }}>{item.title}</div>
       </div>
-      <div style={{ fontSize: 11, color: 'var(--ink-2)', lineHeight: 1.55 }}>{item.body}</div>
-      <div style={{
- display: 'flex', alignItems: 'center', borderTop: '1px dashed var(--edge)'
-}} className="gap-2 mt-2 pt-2" >
+      <div className="text-ink-2" style={{ fontSize: 11, lineHeight: 1.55 }}>{item.body}</div>
+      <div style={{ borderTop: '1px dashed var(--edge)'
+ }} className="gap-2 mt-2 pt-2 flex items-center" >
         {item.delta && (
           <span className="mono" style={{ fontSize: 11,
                         color: positive ? 'var(--success)' :
@@ -760,12 +733,12 @@ function RetroCard({ item, accent, positive }) {
             {item.delta}
           </span>
         )}
-        <span className="mono" style={{ fontSize: 11, color: 'var(--ink-4)' }}>
+        <span className="mono text-ink-4" style={{ fontSize: 11 }}>
           {item.evidence.length} session{item.evidence.length === 1 ? "" : "s"}
         </span>
-        <span style={{ flex: 1 }}/>
+        <span className="flex-1" />
         {item.action && (
-          <button style={{ fontSize: 11, color: 'var(--accent)' }}>{item.action} →</button>
+          <button className="text-accent" style={{ fontSize: 11 }}>{item.action} →</button>
         )}
       </div>
     </article>
@@ -784,40 +757,33 @@ function ZenChartFrame({ chart, setChart, children }) {
   const m = meta[chart];
   return (
     <section>
-      <div style={{
- display: 'flex', alignItems: 'baseline', borderBottom: 'var(--hairline)'
-}} className="gap-3 mb-3 pb-2" >
-        <span className="kanji" style={{ fontSize: 15, color: 'var(--accent)' }}>{m.kanji}</span>
-        <h3 className="display m-0" style={{
- fontSize: 15, fontWeight: 400,
-                      color: 'var(--ink)'
-}}>Sessions · {m.label}</h3>
-        <span style={{ fontSize: 11, color: 'var(--ink-3)' }}>· {m.sub}</span>
-        <span style={{ flex: 1 }}/>
+      <div className="gap-3 mb-3 pb-2 flex items-baseline border-b" >
+        <span className="kanji text-accent" style={{ fontSize: 15 }}>{m.kanji}</span>
+        <h3 className="display m-0 font-normal text-ink" style={{
+ fontSize: 15 }}>Sessions · {m.label}</h3>
+        <span className="text-ink-3" style={{ fontSize: 11 }}>· {m.sub}</span>
+        <span className="flex-1" />
 
         {/* Tab switch */}
-        <div style={{
- display: 'flex', background: 'var(--paper-2)',
-                       border: 'var(--hairline)', borderRadius: 6
-}} className="p-1 gap-0" >
+        <div style={{ borderRadius: 6
+ }} className="p-1 gap-0 flex bg-paper-2 border border-paper-edge" >
           {["trend","stream","constellation","bands","pulse"].map(c => (
             <button key={c} onClick={() => setChart(c)}
-                    style={{
+ style={{
  fontSize: 11,
-                              background: chart === c ? 'var(--paper)' : 'transparent',
-                              color: chart === c ? 'var(--ink)' : 'var(--ink-3)',
-                              border: chart === c ? '1px solid var(--edge)' : '1px solid transparent',
-                              borderRadius: 4, cursor: 'pointer', letterSpacing: '0.04em'
-}} className="py-1 px-3" >
+ background: chart === c ? 'var(--paper)' : 'transparent',
+ color: chart === c ? 'var(--ink)' : 'var(--ink-3)',
+ border: chart === c ? '1px solid var(--edge)' : '1px solid transparent',
+ borderRadius: 4, letterSpacing: '0.04em'
+ }} className="py-1 px-3 cursor-pointer" >
               {c}
             </button>
           ))}
         </div>
       </div>
       <div style={{
- background: 'var(--paper-2)', border: 'var(--hairline)',
-                     borderRadius: 10
-}} className="pt-5 pb-4 px-5" >
+ borderRadius: 10
+ }} className="pt-6 pb-4 px-6 bg-paper-2 border border-paper-edge" >
         {children}
       </div>
       <ChartLegend/>
@@ -827,12 +793,9 @@ function ZenChartFrame({ chart, setChart, children }) {
 
 function ChartLegend() {
   return (
-    <div style={{
- display: 'flex', fontSize: 11,
-                   color: 'var(--ink-3)', justifyContent: 'flex-end'
-}} className="gap-4 mt-3" >
+    <div style={{ fontSize: 11 }} className="gap-4 mt-3 flex text-ink-3 justify-end" >
       {Object.entries(QUALITY).map(([k, v]) => (
-        <span key={k} style={{ display: 'inline-flex', alignItems: 'center' }} className="gap-1" >
+        <span key={k} className="gap-1 inline-flex items-center" >
           <span style={{ width: 8, height: 8, borderRadius: 2, background: v.color }}/>
           {v.label}
         </span>
@@ -850,23 +813,22 @@ function RangeFilter({ value, onChange }) {
     { id: "all", label: "all"     }
   ];
   return (
-    <div style={{ display: 'flex', alignItems: 'center' }} className="gap-2" >
-      <span style={{ fontSize: 11, color: 'var(--ink-4)', letterSpacing: '0.14em',
-                       textTransform: 'uppercase' }}>range</span>
+    <div className="gap-2 flex items-center" >
+      <span className="text-ink-4 uppercase" style={{ fontSize: 11, letterSpacing: '0.14em' }}>range</span>
       {opts.map(o => {
         const active = value === o.id;
         return (
           <button key={o.id} onClick={() => onChange(o.id)}
-                  style={{
+ style={{
  fontSize: 11,
-                            background: active ? 'var(--ink)' : 'transparent',
-                            color: active ? 'var(--paper)' : 'var(--ink-2)',
-                            border: active
-                              ? '1px solid var(--ink)'
-                              : '1px solid var(--edge)',
-                            borderRadius: 20, cursor: 'pointer',
-                            fontFamily: 'inherit'
-}} className="py-1 px-2" >
+ background: active ? 'var(--ink)' : 'transparent',
+ color: active ? 'var(--paper)' : 'var(--ink-2)',
+ border: active
+ ? '1px solid var(--ink)'
+ : '1px solid var(--edge)',
+ borderRadius: 20,
+ fontFamily: 'inherit'
+ }} className="py-1 px-2 cursor-pointer" >
             {o.label}
           </button>
         );
@@ -940,7 +902,7 @@ function TrendChart({ sessions, days = DAYS_ORDERED, checkpoints = [] }) {
   });
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: 'block' }}>
+    <svg className="block" viewBox={`0 0 ${W} ${H}`} width="100%" >
       {/* Y grid · 0 / 0.5 / 1.0 */}
       {[0, 0.5, 1].map(t => (
         <g key={t}>
@@ -1086,7 +1048,7 @@ function StreamChart({ sessions, days = DAYS_ORDERED, checkpoints = [] }) {
   const ticks = [0, Math.round(maxTotal/2), maxTotal];
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: 'block' }}>
+    <svg className="block" viewBox={`0 0 ${W} ${H}`} width="100%" >
       {/* Y grid */}
       {ticks.map(t => (
         <g key={t}>
@@ -1173,7 +1135,7 @@ function ConstellationChart({ sessions, days = DAYS_ORDERED }) {
   const badAvg  = avg(sessions.filter(s => s.q !== "good").map(s => s.mins));
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: 'block' }}>
+    <svg className="block" viewBox={`0 0 ${W} ${H}`} width="100%" >
       {/* Y row guides */}
       {dayList.map((d, i) => (
         <g key={d}>
@@ -1262,7 +1224,7 @@ function BandsChart({ sessions, days = DAYS_ORDERED }) {
   const w = (mins) => (mins / maxTotal) * innerW;
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: 'block' }}>
+    <svg className="block" viewBox={`0 0 ${W} ${H}`} width="100%" >
       {/* Caption */}
       <text x={padL} y={14} fontSize={10} fill="var(--ink-4)" fontFamily="Inter">
         each row = one day · widths are minutes spent in each class
@@ -1323,7 +1285,7 @@ function PulseChart({ sessions, days = DAYS_ORDERED }) {
   };
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: 'block' }}>
+    <svg className="block" viewBox={`0 0 ${W} ${H}`} width="100%" >
       {/* Baseline */}
       <line x1={padL} x2={W - padR} y1={padT + innerH} y2={padT + innerH}
             stroke="var(--edge)" strokeWidth={1}/>
@@ -1423,62 +1385,50 @@ function SessionsDigestZenMiniHeaderPreview() {
 
   const Caption = ({ tag, title, body }) => (
     <div className="mb-2" >
-      <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-3" >
-        <span className="mono" style={{ fontSize: 11, color: 'var(--ink-4)',
-                      letterSpacing: '0.14em' }}>{tag}</span>
-        <span style={{ fontSize: 13, color: 'var(--ink)', fontWeight: 500 }}>{title}</span>
+      <div className="gap-3 flex items-baseline" >
+        <span className="mono text-ink-4" style={{ fontSize: 11,
+ letterSpacing: '0.14em' }}>{tag}</span>
+        <span className="text-ink font-medium" style={{ fontSize: 13 }}>{title}</span>
       </div>
       <div style={{
- fontSize: 11, color: 'var(--ink-3)', borderLeft: '2px solid var(--edge)'
-}} className="mt-1 pl-3" >{body}</div>
+ fontSize: 11, borderLeft: '2px solid var(--edge)'
+ }} className="mt-1 pl-3 text-ink-3" >{body}</div>
     </div>
   );
 
   // A framed shell that mimics the artboard chrome around the hero, so
   // it reads as a screenshot of the page.
   const Frame = ({ children }) => (
-    <div style={{ borderRadius: 10, border: 'var(--hairline)',
-                    background: 'var(--paper)',
-                    boxShadow: 'var(--shadow-sm)',
-                    overflow: 'hidden' }}>
+    <div className="border border-paper-edge bg-paper shadow-sm overflow-hidden" style={{ borderRadius: 10 }}>
       {children}
     </div>
   );
 
   return (
-    <div className="sensei" data-screen-label="Observatory · Sessions · Mini header preview"
-         style={{ width: '100%', minHeight: '100%', background: 'var(--paper)',
-                  display: 'flex', flexDirection: 'column' }}>
+    <div className="sensei w-full min-h-full bg-paper flex flex-col" data-screen-label="Observatory · Sessions · Mini header preview"
+ >
 
       {/* Spec hero */}
-      <div style={{
- borderBottom: 'var(--hairline)',
-                     display: 'flex', alignItems: 'baseline'
-}} className="gap-4 pt-5 pb-4 px-6" >
-        <span className="kanji" style={{ fontSize: 28, color: 'var(--accent)' }}>縮</span>
-        <div style={{ flex: 1 }}>
+      <div className="gap-4 pt-6 pb-4 px-8 border-b flex items-baseline" >
+        <span className="kanji text-accent" style={{ fontSize: 28 }}>縮</span>
+        <div className="flex-1" >
           <div style={{
- fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
-                         textTransform: 'uppercase'
-}} className="mb-1" >
+ fontSize: 11, letterSpacing: '0.18em' }} className="mb-1 text-ink-3 uppercase" >
             Spec · header collapse
           </div>
-          <h1 className="display m-0" style={{ fontSize: 22, fontWeight: 400 }}>
+          <h1 className="display m-0 font-normal" style={{ fontSize: 22 }}>
             The mini graph slots into the header.
           </h1>
           <p style={{
- fontSize: 13, color: 'var(--ink-2)',
-                       maxWidth: 760, lineHeight: 1.55
-}} className="mt-1 mb-0" >
+ fontSize: 13,
+ maxWidth: 760, lineHeight: 1.55
+ }} className="mt-1 mb-0 text-ink-2" >
             The header stays full-size on scroll — kanji, title, copy, and range pills all hold their place. Only the right cluster swaps: where 8 / 5 / 2 / 1h 4m normally sits, the mini view takes over, and a small floating icon next to it cycles between the numbers and the different chart styles.
           </p>
         </div>
       </div>
 
-      <div style={{
- flex: 1,
-                     display: 'flex', flexDirection: 'column'
-}} className="gap-6 pt-5 pb-6 px-6" >
+      <div className="gap-8 pt-6 pb-8 px-8 flex-1 flex flex-col" >
 
         {/* BEFORE — expanded */}
         <div>
@@ -1510,21 +1460,15 @@ function SessionsDigestZenMiniHeaderPreview() {
               checkpoints={D.checkpoints}/>
           </Frame>
           <div style={{
- fontSize: 11, color: 'var(--ink-3)',
-                          display: 'flex', alignItems: 'center', flexWrap: 'wrap'
-}} className="mt-2 gap-1" >
+ fontSize: 11 }} className="mt-2 gap-1 text-ink-3 flex items-center flex-wrap" >
             <span className="mr-1" >jump to a mode:</span>
             {MINI_MODES.map(m => (
               <button key={m} onClick={() => setMiniMode(m)}
-                      style={{
+ style={{
  fontSize: 11,
-                                background: miniMode === m ? 'var(--paper-2)' : 'transparent',
-                                border: 'var(--hairline)', borderRadius: 4,
-                                cursor: 'pointer',
-                                color: miniMode === m ? 'var(--ink)' : 'var(--ink-3)',
-                                display: 'inline-flex', alignItems: 'center'
-}} className="py-1 px-2 gap-1" >
-                <span className="kanji" style={{ fontSize: 11, color: 'var(--accent)' }}>
+ background: miniMode === m ? 'var(--paper-2)' : 'transparent', borderRadius: 4,
+ color: miniMode === m ? 'var(--ink)' : 'var(--ink-3)' }} className="py-1 px-2 gap-1 border border-paper-edge cursor-pointer inline-flex items-center" >
+                <span className="kanji text-accent" style={{ fontSize: 11 }}>
                   {MINI_GLYPH[m]}
                 </span>
                 {m}
@@ -1548,20 +1492,16 @@ function SessionsDigestZenMiniHeaderPreview() {
               sessions={enriched}
               days={days}
               checkpoints={D.checkpoints}/>
-            <div className="pt-4 pb-5 px-5" >
-              <div style={{
- display: 'flex', alignItems: 'baseline', borderBottom: 'var(--hairline)'
-}} className="gap-3 mb-3 pb-2" >
-                <span className="kanji" style={{ fontSize: 15, color: 'var(--accent)' }}>省</span>
-                <h3 className="display m-0" style={{
- fontSize: 15, fontWeight: 400,
-                              color: 'var(--ink)'
-}}>Retrospective · last 7 days</h3>
-                <span style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+            <div className="pt-4 pb-6 px-6" >
+              <div className="gap-3 mb-3 pb-2 flex items-baseline border-b" >
+                <span className="kanji text-accent" style={{ fontSize: 15 }}>省</span>
+                <h3 className="display m-0 font-normal text-ink" style={{
+ fontSize: 15 }}>Retrospective · last 7 days</h3>
+                <span className="text-ink-3" style={{ fontSize: 11 }}>
                   · what sensei sees across your sessions
                 </span>
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr' }} className="gap-3" >
+              <div style={{ gridTemplateColumns: '1fr 1fr 1fr' }} className="gap-3 grid" >
                 <RetroLane title="Going well"     accent="var(--success)"   items={D.retro.going_well} positive/>
                 <RetroLane title="Not going well" accent="var(--accent)"    items={D.retro.not_going}/>
                 <RetroLane title="Insights"       accent="var(--ink-2)" items={D.retro.insights}/>

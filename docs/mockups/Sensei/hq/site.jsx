@@ -101,14 +101,14 @@ const INCUBATING = [
 // Sensei brand mark — SVG used as a CSS mask so it fills with any brand color.
 function Enso({ size = 26, stroke = 'var(--accent)' }) {
   return (
-    <span aria-hidden="true"
-          style={{ display: 'block', flexShrink: 0, width: size, height: size,
-                   background: stroke,
-                   WebkitMaskImage: 'url(uploads/sensei.svg?v=3)',
-                   maskImage: 'url(uploads/sensei.svg?v=3)',
-                   WebkitMaskSize: 'contain', maskSize: 'contain',
-                   WebkitMaskRepeat: 'no-repeat', maskRepeat: 'no-repeat',
-                   WebkitMaskPosition: 'center', maskPosition: 'center' }} />
+    <span className="block shrink-0" aria-hidden="true"
+ style={{ width: size, height: size,
+ background: stroke,
+ WebkitMaskImage: 'url(uploads/sensei.svg?v=3)',
+ maskImage: 'url(uploads/sensei.svg?v=3)',
+ WebkitMaskSize: 'contain', maskSize: 'contain',
+ WebkitMaskRepeat: 'no-repeat', maskRepeat: 'no-repeat',
+ WebkitMaskPosition: 'center', maskPosition: 'center' }} />
   );
 }
 
@@ -132,24 +132,23 @@ function Nav() {
     ['#contact', 'Contact'],
   ];
   return (
-    <div style={{ position: 'sticky', top: 0, zIndex: 50,
-                  background: 'color-mix(in oklch, var(--paper) 80%, transparent)',
-                  backdropFilter: 'blur(14px) saturate(150%)',
-                  WebkitBackdropFilter: 'blur(14px) saturate(150%)',
-                  WebkitMaskImage: 'linear-gradient(to bottom, #000 72%, transparent)',
-                  maskImage: 'linear-gradient(to bottom, #000 72%, transparent)',
-                  paddingBottom: 6 }}>
-      <nav style={{ maxWidth: MAXW, display: 'flex', alignItems: 'center',
-                    justifyContent: 'space-between' }}
-           className="mx-auto px-7 py-4">
-        <a href="#top" style={{ display: 'flex', alignItems: 'center' }} className="gap-3">
+    <div className="sticky" style={{ top: 0, zIndex: 50,
+ background: 'color-mix(in oklch, var(--paper) 80%, transparent)',
+ backdropFilter: 'blur(14px) saturate(150%)',
+ WebkitBackdropFilter: 'blur(14px) saturate(150%)',
+ WebkitMaskImage: 'linear-gradient(to bottom, #000 72%, transparent)',
+ maskImage: 'linear-gradient(to bottom, #000 72%, transparent)',
+ paddingBottom: 6 }}>
+      <nav style={{ maxWidth: MAXW }}
+ className="mx-auto px-12 py-4 flex items-center justify-between">
+        <a href="#top" className="gap-3 flex items-center">
           <Enso size={26} stroke="var(--accent)" />
-          <span style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2">
+          <span className="gap-2 flex items-baseline">
             <span className="display text-ink" style={{ fontSize: 18, letterSpacing: '-0.01em' }}>Sensei</span>
             <span className="mono text-ink-mute" style={{ fontSize: 11, letterSpacing: '0.08em' }}>HQ</span>
           </span>
         </a>
-        <div style={{ display: 'flex', alignItems: 'center' }} className="gap-6">
+        <div className="gap-8 flex items-center">
           {links.map(([href, label]) => (
             <a key={href} href={href} className="text-ink-soft text-sm"
                style={{ transition: 'color .15s' }}
@@ -172,34 +171,33 @@ function Nav() {
 // ═══════════════════════════════════════════════════════════════════════
 function Hero() {
   return (
-    <header id="top" style={{ maxWidth: MAXW }} className="mx-auto px-7 pt-7 pb-9">
-      <div style={{ display: 'grid', gridTemplateColumns: '1.55fr 1fr',
-                    alignItems: 'start' }} className="gap-8">
+    <header id="top" style={{ maxWidth: MAXW }} className="mx-auto px-12 pt-12 pb-24">
+      <div style={{ gridTemplateColumns: '1.55fr 1fr' }} className="gap-16 grid items-start">
         {/* Statement */}
         <div>
-          <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-3 mb-5">
+          <div className="gap-3 mb-6 flex items-baseline">
             <span className="kanji text-accent" style={{ fontSize: 44, lineHeight: 1 }}>道</span>
             <Eyebrow>Dō · the way — an independent studio</Eyebrow>
           </div>
-          <h1 className="display text-ink m-0"
-              style={{ fontSize: 60, fontWeight: 300, lineHeight: 1.08,
-                       letterSpacing: '-0.025em', maxWidth: 640 }}>
+          <h1 className="display text-ink m-0 font-light"
+ style={{ fontSize: 60, lineHeight: 1.08,
+ letterSpacing: '-0.025em', maxWidth: 640 }}>
             We build quiet, sharp tools for the people who build software.
           </h1>
-          <p className="text-ink-soft mt-5" style={{ fontSize: 17, lineHeight: 1.6, maxWidth: 540 }}>
+          <p className="text-ink-soft mt-6" style={{ fontSize: 17, lineHeight: 1.6, maxWidth: 540 }}>
             Sensei HQ is a small workshop of developer tools — four instruments,
             one temperament. Restraint over noise, craft over scale, and a deep
             respect for the person on the other side of the screen.
           </p>
-          <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap' }}
-               className="gap-3 mt-6">
+          <div 
+ className="gap-3 mt-8 flex items-center flex-wrap">
             <a href="#products" className="zs-btn zs-btn-primary zs-btn-lg">
-              <span className="kanji" style={{ fontSize: 15, lineHeight: 1, color: 'var(--on-primary)' }}>見</span>
+              <span className="kanji text-on-primary" style={{ fontSize: 15, lineHeight: 1 }}>見</span>
               See the tools
             </a>
             <a href="#approach" className="text-ink-soft text-sm">How we work ↓</a>
           </div>
-          <div style={{ display: 'flex', flexWrap: 'wrap' }} className="gap-4 mt-7">
+          <div className="gap-4 mt-12 flex flex-wrap">
             {['Independent studio', 'Est. 2024', 'Four tools in the workshop'].map((m) => (
               <span key={m} className="mono text-ink-mute" style={{ fontSize: 11 }}>{m}</span>
             ))}
@@ -207,28 +205,27 @@ function Hero() {
         </div>
 
         {/* In the workshop */}
-        <aside className="border-1px border-paper-edge rounded-lg bg-paper-soft"
-               style={{ overflow: 'hidden' }}>
-          <div className="px-5 py-4 border-b border-paper-edge"
-               style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <aside className="border border-paper-edge rounded-lg bg-paper-soft overflow-hidden"
+ >
+          <div className="px-6 py-4 border-b border-paper-edge flex items-center justify-between"
+ >
             <Eyebrow>In the workshop</Eyebrow>
             <span className="mono text-ink-faint" style={{ fontSize: 11 }}>04</span>
           </div>
           <div className="divide-y">
             {PRODUCTS.map((p) => (
               <a key={p.id} href={p.href}
-                 style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto',
-                          alignItems: 'center', '--accent': `var(--acc-${p.id})`,
-                          transition: 'background .15s' }}
-                 className="gap-4 px-5 py-4"
-                 onMouseEnter={(e) => e.currentTarget.style.background = 'var(--paper-mute)'}
-                 onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}>
-                <span className="kanji text-accent" style={{ fontSize: 26, lineHeight: 1, width: 30, textAlign: 'center' }}>{p.kanji}</span>
+ style={{ gridTemplateColumns: 'auto 1fr auto', '--accent': `var(--acc-${p.id})`,
+ transition: 'background .15s' }}
+ className="gap-4 px-6 py-4 grid items-center"
+ onMouseEnter={(e) => e.currentTarget.style.background = 'var(--paper-mute)'}
+ onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}>
+                <span className="kanji text-accent text-center" style={{ fontSize: 26, lineHeight: 1, width: 30 }}>{p.kanji}</span>
                 <span>
                   <span className="display text-ink block" style={{ fontSize: 15 }}>{p.name}</span>
                   <span className="text-ink-mute text-xs">{p.category}</span>
                 </span>
-                <span className="zs-dot" style={{ background: 'var(--accent)' }} />
+                <span className="zs-dot bg-accent" />
               </a>
             ))}
           </div>
@@ -250,10 +247,10 @@ function StatusBadge({ status }) {
 
 function MetaChips({ meta }) {
   return (
-    <div style={{ display: 'flex', flexWrap: 'wrap' }} className="gap-2">
+    <div className="gap-2 flex flex-wrap">
       {meta.map((m) => (
-        <span key={m} className="mono text-ink-mute border-1px border-paper-edge rounded-sm"
-              style={{ fontSize: 10.5, padding: '2px 7px', whiteSpace: 'nowrap' }}>{m}</span>
+        <span key={m} className="mono text-ink-mute border border-paper-edge rounded-sm whitespace-nowrap"
+ style={{ fontSize: 10.5, padding: '2px 7px' }}>{m}</span>
       ))}
     </div>
   );
@@ -262,47 +259,44 @@ function MetaChips({ meta }) {
 function FeaturedCard({ p }) {
   return (
     <a href={p.href}
-       style={{ display: 'grid', gridTemplateColumns: '1.3fr 1fr',
-                '--accent': `var(--acc-${p.id})`, overflow: 'hidden',
-                transition: 'border-color .18s, transform .18s' }}
-       className="zs-card-flush"
-       onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--accent)'; }}
-       onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--paper-edge)'; }}>
-      <div className="p-7">
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }} className="mb-5">
+ style={{ gridTemplateColumns: '1.3fr 1fr',
+ '--accent': `var(--acc-${p.id})`,
+ transition: 'border-color .18s, transform .18s' }}
+ className="zs-card-flush grid overflow-hidden"
+ onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--accent)'; }}
+ onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--paper-edge)'; }}>
+      <div className="p-12">
+        <div className="mb-6 flex items-center justify-between">
           <span className="mono text-ink-faint" style={{ fontSize: 12 }}>{p.index}</span>
           <StatusBadge status={p.status} />
         </div>
-        <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-3 mb-2">
-          <span className="display text-ink" style={{ fontSize: 32, fontWeight: 400, letterSpacing: '-0.02em' }}>{p.name}</span>
+        <div className="gap-3 mb-2 flex items-baseline">
+          <span className="display text-ink font-normal" style={{ fontSize: 32, letterSpacing: '-0.02em' }}>{p.name}</span>
           <span className="zs-eyebrow">{p.category}</span>
         </div>
-        <p className="display text-ink m-0" style={{ fontSize: 22, fontWeight: 300, letterSpacing: '-0.015em', lineHeight: 1.3 }}>
+        <p className="display text-ink m-0 font-light" style={{ fontSize: 22, letterSpacing: '-0.015em', lineHeight: 1.3 }}>
           {p.tagline}
         </p>
         <p className="text-ink-soft mt-3" style={{ fontSize: 14, lineHeight: 1.65, maxWidth: 460 }}>{p.blurb}</p>
-        <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-2 mt-5 mb-6">
+        <div className="gap-2 mt-6 mb-8 flex flex-col">
           {p.highlights.map((h) => (
-            <div key={h} style={{ display: 'flex', alignItems: 'center' }} className="gap-3">
-              <span className="zs-dot" style={{ background: 'var(--accent)' }} />
+            <div key={h} className="gap-3 flex items-center">
+              <span className="zs-dot bg-accent" />
               <span className="text-ink-soft text-sm">{h}</span>
             </div>
           ))}
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap' }} className="gap-4">
+        <div className="gap-4 flex items-center justify-between flex-wrap">
           <MetaChips meta={p.meta} />
-          <span className="text-accent text-sm" style={{ fontWeight: 500 }}>Explore Sensei →</span>
+          <span className="text-accent text-sm font-medium" >Explore Sensei →</span>
         </div>
       </div>
       {/* Kanji panel */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    background: 'var(--paper-mute)', borderLeft: 'var(--hairline)',
-                    position: 'relative', minHeight: 320, overflow: 'hidden' }}>
-        <span className="kanji" style={{ fontSize: 220, lineHeight: 1, color: 'var(--accent)',
-                       opacity: 0.92 }}>{p.kanji}</span>
-        <span className="mono" style={{ position: 'absolute', bottom: 18, right: 20,
-                       fontSize: 10.5, letterSpacing: '0.18em', textTransform: 'uppercase',
-                       color: 'var(--ink-faint)' }}>Kan · to observe</span>
+      <div className="flex items-center justify-center bg-paper-mute border-l relative overflow-hidden" style={{ minHeight: 320 }}>
+        <span className="kanji text-accent" style={{ fontSize: 220, lineHeight: 1,
+ opacity: 0.92 }}>{p.kanji}</span>
+        <span className="mono absolute uppercase text-ink-faint" style={{ bottom: 18, right: 20,
+ fontSize: 10.5, letterSpacing: '0.18em' }}>Kan · to observe</span>
       </div>
     </a>
   );
@@ -311,29 +305,29 @@ function FeaturedCard({ p }) {
 function ProductCard({ p }) {
   return (
     <a href={p.href}
-       style={{ display: 'flex', flexDirection: 'column',
-                '--accent': `var(--acc-${p.id})`,
-                transition: 'border-color .18s, transform .18s' }}
-       className="zs-card p-0"
-       onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--accent)'; e.currentTarget.style.transform = 'translateY(-2px)'; }}
-       onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--paper-edge)'; e.currentTarget.style.transform = 'translateY(0)'; }}>
-      <div className="p-6" style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+ style={{
+ '--accent': `var(--acc-${p.id})`,
+ transition: 'border-color .18s, transform .18s' }}
+ className="zs-card p-0 flex flex-col"
+ onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--accent)'; e.currentTarget.style.transform = 'translateY(-2px)'; }}
+ onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--paper-edge)'; e.currentTarget.style.transform = 'translateY(0)'; }}>
+      <div className="p-8 flex flex-col flex-1" >
+        <div className="flex items-center justify-between" >
           <span className="mono text-ink-faint" style={{ fontSize: 12 }}>{p.index}</span>
           <StatusBadge status={p.status} />
         </div>
         <span className="kanji text-accent" style={{ fontSize: 56, lineHeight: 1, margin: '20px 0 16px' }}>{p.kanji}</span>
-        <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2 mb-1">
-          <span className="display text-ink" style={{ fontSize: 22, fontWeight: 400, letterSpacing: '-0.02em' }}>{p.name}</span>
+        <div className="gap-2 mb-1 flex items-baseline">
+          <span className="display text-ink font-normal" style={{ fontSize: 22, letterSpacing: '-0.02em' }}>{p.name}</span>
         </div>
         <span className="zs-eyebrow mb-3">{p.category}</span>
-        <p className="display text-ink m-0" style={{ fontSize: 17, fontWeight: 400, lineHeight: 1.3 }}>{p.tagline}</p>
+        <p className="display text-ink m-0 font-normal" style={{ fontSize: 17, lineHeight: 1.3 }}>{p.tagline}</p>
         <p className="text-ink-soft mt-2" style={{ fontSize: 13.5, lineHeight: 1.6 }}>{p.blurb}</p>
-        <div style={{ flex: 1 }} />
-        <div className="mt-5 mb-4"><MetaChips meta={p.meta} /></div>
-        <div className="border-t border-paper-edge pt-4"
-             style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <span className="text-accent text-sm" style={{ fontWeight: 500 }}>Explore {p.name} →</span>
+        <div className="flex-1" />
+        <div className="mt-6 mb-4"><MetaChips meta={p.meta} /></div>
+        <div className="border-t border-paper-edge pt-4 flex items-center justify-between"
+ >
+          <span className="text-accent text-sm font-medium" >Explore {p.name} →</span>
         </div>
       </div>
     </a>
@@ -345,12 +339,11 @@ function Portfolio() {
   const rest = PRODUCTS.filter((p) => !p.featured);
   return (
     <section id="products" className="bg-paper-soft">
-      <div style={{ maxWidth: MAXW }} className="mx-auto px-7 sec">
-        <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between',
-                      flexWrap: 'wrap' }} className="gap-4 mb-7">
+      <div style={{ maxWidth: MAXW }} className="mx-auto px-12 sec">
+        <div className="gap-4 mb-12 flex items-end justify-between flex-wrap">
           <div>
             <Eyebrow style={{ marginBottom: 12 }}>The portfolio</Eyebrow>
-            <h2 className="display text-ink m-0" style={{ fontSize: 40, fontWeight: 300, letterSpacing: '-0.02em' }}>
+            <h2 className="display text-ink m-0 font-light" style={{ fontSize: 40, letterSpacing: '-0.02em' }}>
               Four tools, one workshop.
             </h2>
           </div>
@@ -360,9 +353,9 @@ function Portfolio() {
           </p>
         </div>
 
-        <div className="mb-5"><FeaturedCard p={featured} /></div>
+        <div className="mb-6"><FeaturedCard p={featured} /></div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)' }} className="gap-5">
+        <div style={{ gridTemplateColumns: 'repeat(3, 1fr)' }} className="gap-6 grid">
           {rest.map((p) => <ProductCard key={p.id} p={p} />)}
         </div>
       </div>
@@ -375,27 +368,26 @@ function Portfolio() {
 // ═══════════════════════════════════════════════════════════════════════
 function IncubationCard({ p }) {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', flex: 1,
-                  '--accent': `var(--acc-${p.id})`,
-                  background: 'transparent',
-                  transition: 'border-color .18s, background .18s' }}
-         className="zs-card border-dashed p-0"
-         onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--accent)'; e.currentTarget.style.background = 'var(--paper-soft)'; }}
-         onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--paper-edge)'; e.currentTarget.style.background = 'transparent'; }}>
-      <div className="p-6" style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+    <div style={{
+ '--accent': `var(--acc-${p.id})`,
+ transition: 'border-color .18s, background .18s' }}
+ className="zs-card border-dashed p-0 flex flex-col flex-1 bg-transparent"
+ onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--accent)'; e.currentTarget.style.background = 'var(--paper-soft)'; }}
+ onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--paper-edge)'; e.currentTarget.style.background = 'transparent'; }}>
+      <div className="p-8 flex flex-col flex-1" >
+        <div className="flex items-center justify-between" >
           <span className="kanji text-accent" style={{ fontSize: 44, lineHeight: 1 }}>{p.kanji}</span>
-          <span className="zs-badge" style={{ whiteSpace: 'nowrap' }}>
-            <span className="zs-dot" style={{ background: 'var(--accent)', width: 6, height: 6 }} />
+          <span className="zs-badge whitespace-nowrap" >
+            <span className="zs-dot bg-accent" style={{ width: 6, height: 6 }} />
             Incubating
           </span>
         </div>
-        <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2 mt-5 mb-1">
-          <span className="display text-ink" style={{ fontSize: 20, fontWeight: 400, letterSpacing: '-0.02em' }}>{p.name}</span>
-          <span className="mono text-ink-faint" style={{ fontSize: 10.5, whiteSpace: 'nowrap' }}>{p.label}</span>
+        <div className="gap-2 mt-6 mb-1 flex items-baseline">
+          <span className="display text-ink font-normal" style={{ fontSize: 20, letterSpacing: '-0.02em' }}>{p.name}</span>
+          <span className="mono text-ink-faint whitespace-nowrap" style={{ fontSize: 10.5 }}>{p.label}</span>
         </div>
         <span className="zs-eyebrow mb-3">{p.category}</span>
-        <p className="display text-ink m-0" style={{ fontSize: 16, fontWeight: 400, lineHeight: 1.3 }}>{p.tagline}</p>
+        <p className="display text-ink m-0 font-normal" style={{ fontSize: 16, lineHeight: 1.3 }}>{p.tagline}</p>
         <p className="text-ink-soft mt-2" style={{ fontSize: 13.5, lineHeight: 1.6 }}>{p.blurb}</p>
       </div>
     </div>
@@ -404,15 +396,14 @@ function IncubationCard({ p }) {
 
 function Incubation() {
   return (
-    <section id="incubation" style={{ maxWidth: MAXW }} className="mx-auto px-7 sec">
-      <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between',
-                    flexWrap: 'wrap' }} className="gap-4 mb-7">
+    <section id="incubation" style={{ maxWidth: MAXW }} className="mx-auto px-12 sec">
+      <div className="gap-4 mb-12 flex items-end justify-between flex-wrap">
         <div>
-          <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-3 mb-3">
+          <div className="gap-3 mb-3 flex items-baseline">
             <span className="kanji text-accent" style={{ fontSize: 40, lineHeight: 1 }}>育</span>
             <Eyebrow>Iku · to nurture — in incubation</Eyebrow>
           </div>
-          <h2 className="display text-ink m-0" style={{ fontSize: 40, fontWeight: 300, letterSpacing: '-0.02em' }}>
+          <h2 className="display text-ink m-0 font-light" style={{ fontSize: 40, letterSpacing: '-0.02em' }}>
             Still taking shape.
           </h2>
         </div>
@@ -421,7 +412,7 @@ function Incubation() {
           temperament — these may grow into the next tools we ship.
         </p>
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)' }} className="gap-5">
+      <div style={{ gridTemplateColumns: 'repeat(3, 1fr)' }} className="gap-6 grid">
         {INCUBATING.map((p) => <IncubationCard key={p.id} p={p} />)}
       </div>
     </section>
@@ -434,12 +425,11 @@ function Incubation() {
 function Approach() {
   return (
     <section id="approach" className="bg-paper-soft">
-      <div style={{ maxWidth: MAXW }} className="mx-auto px-7 sec">
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.5fr',
-                      alignItems: 'start' }} className="gap-8">
+      <div style={{ maxWidth: MAXW }} className="mx-auto px-12 sec">
+        <div style={{ gridTemplateColumns: '1fr 1.5fr' }} className="gap-16 grid items-start">
           <div>
             <Eyebrow style={{ marginBottom: 12 }}>The approach</Eyebrow>
-            <h2 className="display text-ink m-0" style={{ fontSize: 32, fontWeight: 400, letterSpacing: '-0.015em', lineHeight: 1.25 }}>
+            <h2 className="display text-ink m-0 font-normal" style={{ fontSize: 32, letterSpacing: '-0.015em', lineHeight: 1.25 }}>
               The master observes for a long time before teaching.
             </h2>
             <p className="text-ink-soft mt-4" style={{ fontSize: 14, lineHeight: 1.7, maxWidth: 360 }}>
@@ -448,17 +438,17 @@ function Approach() {
               tools, and what we ask of ourselves while making them.
             </p>
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-0">
+          <div className="gap-0 flex flex-col">
             {PRINCIPLES.map((pr, i) => (
               <div key={pr.title}
-                   style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', alignItems: 'start',
-                            borderTop: i === 0 ? 'none' : 'var(--hairline)' }}
-                   className="gap-5 py-5">
+ style={{ gridTemplateColumns: 'auto 1fr',
+ borderTop: i === 0 ? 'none' : 'var(--hairline)' }}
+ className="gap-6 py-6 grid items-start">
                 <div style={{ width: 56 }}>
                   <span className="kanji text-accent" style={{ fontSize: 40, lineHeight: 1 }}>{pr.kanji}</span>
                 </div>
                 <div>
-                  <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-3 mb-1">
+                  <div className="gap-3 mb-1 flex items-baseline">
                     <span className="display text-ink" style={{ fontSize: 18 }}>{pr.title}</span>
                     <span className="mono text-ink-faint" style={{ fontSize: 11 }}>{pr.label}</span>
                   </div>
@@ -482,32 +472,31 @@ function OpenSource() {
     { name: 'sensei-hq/kavach', dot: 'var(--acc-kavach)', lang: 'TypeScript', note: 'Auth for SvelteKit' },
   ];
   return (
-    <section id="open" style={{ maxWidth: MAXW }} className="mx-auto px-7 sec">
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.2fr',
-                    alignItems: 'center' }} className="gap-8">
+    <section id="open" style={{ maxWidth: MAXW }} className="mx-auto px-12 sec">
+      <div style={{ gridTemplateColumns: '1fr 1.2fr' }} className="gap-16 grid items-center">
         <div>
-          <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-3 mb-4">
+          <div className="gap-3 mb-4 flex items-baseline">
             <span className="kanji text-accent" style={{ fontSize: 40, lineHeight: 1 }}>公</span>
             <Eyebrow>Kō · in the open</Eyebrow>
           </div>
-          <h2 className="display text-ink m-0" style={{ fontSize: 28, fontWeight: 400, letterSpacing: '-0.015em', lineHeight: 1.3 }}>
+          <h2 className="display text-ink m-0 font-normal" style={{ fontSize: 28, letterSpacing: '-0.015em', lineHeight: 1.3 }}>
             Two of our tools are built in the open.
           </h2>
           <p className="text-ink-soft mt-4" style={{ fontSize: 14, lineHeight: 1.7, maxWidth: 420 }}>
             Rokkit and Kavach are MIT-licensed and developed in public. Read the
             source, file an issue, or send a pull request — the workshop door is open.
           </p>
-          <a href="#github" className="zs-btn zs-btn-secondary mt-5">
+          <a href="#github" className="zs-btn zs-btn-secondary mt-6">
             <span className="kanji text-ink-soft" style={{ fontSize: 14, lineHeight: 1 }}>叉</span>
             Browse the repositories
           </a>
         </div>
-        <div className="border-1px border-paper-edge rounded-lg bg-paper" style={{ overflow: 'hidden' }}>
+        <div className="border border-paper-edge rounded-lg bg-paper overflow-hidden" >
           <div className="divide-y">
             {repos.map((r) => (
               <a key={r.name} href="#github"
-                 style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto', alignItems: 'center' }}
-                 className="gap-4 px-5 py-4">
+ style={{ gridTemplateColumns: 'auto 1fr auto' }}
+ className="gap-4 px-6 py-4 grid items-center">
                 <span className="zs-dot" style={{ background: r.dot }} />
                 <span>
                   <span className="mono text-ink block" style={{ fontSize: 13 }}>{r.name}</span>
@@ -529,27 +518,27 @@ function OpenSource() {
 function Contact() {
   return (
     <section id="contact" className="bg-paper-soft">
-      <div style={{ maxWidth: 720, textAlign: 'center' }} className="mx-auto px-7 sec">
-        <div style={{ display: 'flex', justifyContent: 'center' }} className="mb-5">
+      <div style={{ maxWidth: 720 }} className="mx-auto px-12 sec text-center">
+        <div className="mb-6 flex justify-center">
           <Enso size={40} stroke="var(--accent)" width={2.4} />
         </div>
-        <h2 className="display text-ink m-0" style={{ fontSize: 32, fontWeight: 300, letterSpacing: '-0.02em', lineHeight: 1.2 }}>
+        <h2 className="display text-ink m-0 font-light" style={{ fontSize: 32, letterSpacing: '-0.02em', lineHeight: 1.2 }}>
           Building something quiet and sharp?
         </h2>
         <p className="text-ink-soft mt-4" style={{ fontSize: 15, lineHeight: 1.7 }}>
           We like talking to people who care about the craft. Tell us what you
           are working on, or follow along as the workshop grows.
         </p>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap' }}
-             className="gap-3 mt-6">
+        <div 
+ className="gap-3 mt-8 flex items-center justify-center flex-wrap">
           <a href="mailto:hi@sensei-hq.com" className="zs-btn zs-btn-primary zs-btn-lg">
-            <span className="kanji" style={{ fontSize: 15, lineHeight: 1, color: 'var(--on-primary)' }}>文</span>
+            <span className="kanji text-on-primary" style={{ fontSize: 15, lineHeight: 1 }}>文</span>
             Leave a note
           </a>
           <a href="#newsletter" className="zs-btn zs-btn-secondary zs-btn-lg">Join the newsletter</a>
         </div>
-        <a href="mailto:hi@sensei-hq.com" className="mono text-ink-mute mt-4"
-           style={{ display: 'inline-block', fontSize: 12, letterSpacing: '0.02em', whiteSpace: 'nowrap' }}>
+        <a href="mailto:hi@sensei-hq.com" className="mono text-ink-mute mt-4 inline-block whitespace-nowrap"
+ style={{ fontSize: 12, letterSpacing: '0.02em' }}>
           hi@sensei-hq.com
         </a>
       </div>
@@ -565,13 +554,12 @@ function Footer() {
   ];
   return (
     <footer>
-      <div style={{ maxWidth: MAXW }} className="mx-auto px-7 py-8">
-        <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr 1fr 1fr',
-                      alignItems: 'start' }} className="gap-7">
+      <div style={{ maxWidth: MAXW }} className="mx-auto px-12 py-16">
+        <div style={{ gridTemplateColumns: '1.4fr 1fr 1fr 1fr' }} className="gap-12 grid items-start">
           <div>
-            <div style={{ display: 'flex', alignItems: 'center' }} className="gap-3 mb-3">
+            <div className="gap-3 mb-3 flex items-center">
               <Enso size={24} stroke="var(--accent)" />
-              <span style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2">
+              <span className="gap-2 flex items-baseline">
                 <span className="display text-ink" style={{ fontSize: 16 }}>Sensei</span>
                 <span className="mono text-ink-mute" style={{ fontSize: 11, letterSpacing: '0.08em' }}>HQ</span>
               </span>
@@ -583,7 +571,7 @@ function Footer() {
           {cols.map(([title, items]) => (
             <div key={title}>
               <Eyebrow style={{ marginBottom: 14 }}>{title}</Eyebrow>
-              <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-2">
+              <div className="gap-2 flex flex-col">
                 {items.map(([label, href]) => (
                   <a key={label} href={href} className="text-ink-soft text-sm"
                      style={{ transition: 'color .15s' }}
@@ -594,8 +582,8 @@ function Footer() {
             </div>
           ))}
         </div>
-        <div className="border-t border-paper-edge mt-7 pt-5"
-             style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
+        <div className="border-t border-paper-edge mt-12 pt-6 flex items-center justify-between flex-wrap"
+ style={{ gap: 12 }}>
           <span className="mono text-ink-faint" style={{ fontSize: 11 }}>© 2026 Sensei HQ · All rights reserved</span>
           <span className="mono text-ink-faint" style={{ fontSize: 11 }}>道 · the way</span>
         </div>
@@ -630,7 +618,7 @@ function HQSite() {
   const secPad = t.density === 'compact' ? 56 : 92;
 
   return (
-    <div className="sensei" style={{ minHeight: '100%', background: 'var(--paper)', position: 'relative', ...accentVars }}>
+    <div className="sensei min-h-full bg-paper relative" style={{ ...accentVars }}>
       <style>{`
         .sensei .sec{ padding-top:${secPad}px; padding-bottom:${secPad}px; }
         .sensei .display, .sensei .zs-display, .sensei .zs-h1, .sensei .zs-h2,
@@ -641,7 +629,7 @@ function HQSite() {
           font-feature-settings:"ss01" 0;
         }
       `}</style>
-      <div style={{ position: 'relative', zIndex: 1 }}>
+      <div className="relative" style={{ zIndex: 1 }}>
         <Nav />
         <Hero />
         <Portfolio />

@@ -90,22 +90,20 @@ const SOL_NAV = [
 
 function SolChrome({ view }) {
   return (
-    <div style={{ height: 38, background: "var(--paper-2)", borderBottom: "var(--hairline)",
-                  display: "flex", alignItems: "center", flexShrink: 0, position: "relative" }}>
-      <div style={{ display: "flex", position: "absolute", left: 14 }} className="gap-2">
+    <div className="bg-paper-2 border-b flex items-center shrink-0 relative" style={{ height: 38 }}>
+      <div style={{ left: 14 }} className="gap-2 flex absolute">
         {["var(--danger)", "var(--warning)", "var(--success)"].map(c => (
-          <span key={c} style={{ width: 11, height: 11, borderRadius: "50%", background: c }}/>
+          <span className="rounded-full" key={c} style={{ width: 11, height: 11, background: c }}/>
         ))}
       </div>
-      <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center",
-                    justifyContent: "center", pointerEvents: "none" }}>
-        <span style={{ fontSize: 12, color: "var(--ink-2)" }}>
-          <span className="kanji" style={{ color: "var(--accent)" }}>先生</span>
+      <div className="absolute flex items-center justify-center" style={{ inset: 0, pointerEvents: "none" }}>
+        <span className="text-ink-2" style={{ fontSize: 12 }}>
+          <span className="kanji text-accent" >先生</span>
           {"  ·  Solution · " + SOL.name}
-          <span style={{ color: "var(--ink-4)" }}>{"  ·  " + view}</span>
+          <span className="text-ink-4" >{"  ·  " + view}</span>
         </span>
       </div>
-      <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 2, background: "var(--accent)" }}/>
+      <div className="absolute bg-accent" style={{ top: 0, left: 0, right: 0, height: 2 }}/>
     </div>
   );
 }
@@ -113,50 +111,44 @@ function SolChrome({ view }) {
 // slim left rail: the engagement + its member projects
 function SolRail({ view, setView, filter, setFilter }) {
   return (
-    <aside style={{ width: 230, borderRight: "var(--hairline)", background: "var(--paper-2)",
-                    display: "flex", flexDirection: "column", minHeight: 0 }}>
-      <div className="px-5 pt-5 pb-4" style={{ borderBottom: "var(--hairline)" }}>
-        <div style={{ display: "flex", alignItems: "center" }} className="gap-3">
-          <span className="kanji" style={{ fontSize: 26, color: "var(--accent)", lineHeight: 1 }}>{SOL.kanji}</span>
+    <aside className="border-r bg-paper-2 flex flex-col min-h-0" style={{ width: 230 }}>
+      <div className="px-6 pt-6 pb-4 border-b" >
+        <div className="gap-3 flex items-center">
+          <span className="kanji text-accent" style={{ fontSize: 26, lineHeight: 1 }}>{SOL.kanji}</span>
           <div>
-            <div style={{ fontSize: 15, fontWeight: 600, color: "var(--ink)" }}>{SOL.name}</div>
-            <div className="mono" style={{ fontSize: 11, color: "var(--ink-3)" }}>{SOL.client}</div>
+            <div className="font-semibold text-ink" style={{ fontSize: 15 }}>{SOL.name}</div>
+            <div className="mono text-ink-3" style={{ fontSize: 11 }}>{SOL.client}</div>
           </div>
         </div>
       </div>
 
-      <div className="px-3 pt-4" style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+      <div className="px-3 pt-4 flex flex-col" style={{ gap: 2 }}>
         {SOL_NAV.map(n => (
-          <button key={n.id} onClick={() => setView(n.id)} style={{
-            display: "flex", alignItems: "center", width: "100%", textAlign: "left",
-            padding: "8px 12px", borderRadius: 6, border: "none", cursor: "pointer",
-            fontSize: 13.5, fontWeight: view === n.id ? 600 : 400,
-            background: view === n.id ? "var(--paper-3)" : "transparent",
-            color: view === n.id ? "var(--ink)" : "var(--ink-2)",
-          }}>{n.label}</button>
+          <button className="flex items-center w-full text-left border-0 cursor-pointer" key={n.id} onClick={() => setView(n.id)} style={{
+ padding: "8px 12px", borderRadius: 6,
+ fontSize: 13.5, fontWeight: view === n.id ? 600 : 400,
+ background: view === n.id ? "var(--paper-3)" : "transparent",
+ color: view === n.id ? "var(--ink)" : "var(--ink-2)" }}>{n.label}</button>
         ))}
       </div>
 
-      <div className="px-5 pt-6 pb-2" style={{ fontSize: 11, letterSpacing: "0.18em",
-            textTransform: "uppercase", color: "var(--ink-3)" }}>Projects · 3</div>
-      <div className="px-3" style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+      <div className="px-6 pt-8 pb-2 uppercase text-ink-3" style={{ fontSize: 11, letterSpacing: "0.18em" }}>Projects · 3</div>
+      <div className="px-3 flex flex-col" style={{ gap: 2 }}>
         {SOL.projects.map(p => {
           const on = filter === p.id;
           return (
-            <button key={p.id} onClick={() => setFilter && setFilter(on ? "all" : p.id)} style={{
-              display: "flex", alignItems: "center", gap: 10, width: "100%", textAlign: "left",
-              padding: "8px 12px", borderRadius: 6, border: "none", cursor: "pointer",
-              background: on ? "var(--paper-3)" : "transparent",
-            }}>
+            <button className="flex items-center w-full text-left border-0 cursor-pointer" key={p.id} onClick={() => setFilter && setFilter(on ? "all" : p.id)} style={{ gap: 10,
+ padding: "8px 12px", borderRadius: 6,
+ background: on ? "var(--paper-3)" : "transparent" }}>
               <span className="kanji" style={{ fontSize: 16, color: p.warn ? "var(--warning)" : "var(--ink-3)", width: 18 }}>{p.kanji}</span>
-              <span className="mono" style={{ flex: 1, fontSize: 12.5, color: "var(--ink)" }}>{p.name}</span>
+              <span className="mono flex-1 text-ink" style={{ fontSize: 12.5 }}>{p.name}</span>
               <span className="mono" style={{ fontSize: 11, color: p.warn ? "var(--warning)" : "var(--ink-3)" }}>{Math.round(p.ftr*100)}</span>
             </button>
           );
         })}
       </div>
-      <div style={{ flex: 1 }}/>
-      <div className="px-5 py-4" style={{ borderTop: "var(--hairline)", fontSize: 11, color: "var(--ink-4)" }}>
+      <div className="flex-1" />
+      <div className="px-6 py-4 border-t text-ink-4" style={{ fontSize: 11 }}>
         <span className="mono">先生 · sensei</span> watches all three as one.
       </div>
     </aside>
@@ -170,7 +162,7 @@ function MiniStrip({ data, warn }) {
   const w = 118, h = 34, n = data.length, gap = 2, barW = (w - gap*(n-1))/n;
   const col = warn ? "var(--warning)" : "var(--success)";
   return (
-    <svg width={w} height={h} style={{ display: "block", overflow: "visible" }}>
+    <svg className="block overflow-visible" width={w} height={h} >
       {data.map((v, i) => {
         const bh = Math.max(3, v*h), last = i === n-1;
         return <rect key={i} x={i*(barW+gap)} y={h-bh} width={barW} height={bh}
@@ -188,35 +180,33 @@ function SolutionDashboard({ state = "ready" } = {}) {
     onRetry={() => {}} />;
   const Strip = window.ObsFtrStrip;
   return (
-    <div style={{ height: "100%", overflow: "auto", background: "var(--paper)" }}>
+    <div className="h-full overflow-auto bg-paper" >
       {/* aggregate header strip */}
-      <div style={{ borderBottom: "var(--hairline)" }} className="px-7 pt-6 pb-5">
-        <div style={{ maxWidth: 1000, display: "flex", alignItems: "flex-end",
-                      justifyContent: "space-between", flexWrap: "wrap", gap: 24 }} className="mx-auto">
+      <div className="px-12 pt-8 pb-6 border-b">
+        <div style={{ maxWidth: 1000, gap: 24 }} className="mx-auto flex items-end justify-between flex-wrap">
           <div>
-            <div style={{ fontSize: 11, letterSpacing: "0.18em", textTransform: "uppercase",
-                          color: "var(--ink-3)" }} className="mb-1">Solution · aggregate</div>
-            <h1 className="display m-0" style={{ fontSize: 28, fontWeight: 400, letterSpacing: "-0.01em" }}>
+            <div style={{ fontSize: 11, letterSpacing: "0.18em" }} className="mb-1 uppercase text-ink-3">Solution · aggregate</div>
+            <h1 className="display m-0 font-normal" style={{ fontSize: 28, letterSpacing: "-0.01em" }}>
               Three projects, one first-try-right.
             </h1>
-            <p style={{ fontSize: 14, color: "var(--ink-2)", maxWidth: 460, lineHeight: 1.6 }} className="mt-2 mb-0">
+            <p style={{ fontSize: 14, maxWidth: 460, lineHeight: 1.6 }} className="mt-2 mb-0 text-ink-2">
               Sensei rolls the whole engagement into one signal — then shows you which project is pulling it.
             </p>
           </div>
-          <div style={{ textAlign: "right" }}>
-            <div style={{ fontSize: 11, letterSpacing: "0.18em", textTransform: "uppercase", color: "var(--ink-3)" }}>
+          <div className="text-right" >
+            <div className="uppercase text-ink-3" style={{ fontSize: 11, letterSpacing: "0.18em" }}>
               First-Try-Right · 14d
             </div>
-            <div style={{ display: "flex", alignItems: "baseline", justifyContent: "flex-end" }} className="gap-2 mt-1">
-              <span className="display" style={{ fontSize: 40, fontWeight: 400, lineHeight: 1, color: "var(--ink)" }}>
+            <div className="gap-2 mt-1 flex items-baseline justify-end">
+              <span className="display font-normal text-ink" style={{ fontSize: 40, lineHeight: 1 }}>
                 {Math.round(SOL.ftr*100)}
               </span>
-              <span style={{ fontSize: 13, color: "var(--ink-3)" }}>%</span>
+              <span className="text-ink-3" style={{ fontSize: 13 }}>%</span>
               <span className="mono ml-1" style={{ fontSize: 11, color: SOL.delta>=0 ? "var(--success)" : "var(--warning)" }}>
                 {SOL.delta>=0 ? "↑" : "↓"} {Math.abs(Math.round(SOL.delta*100))}%
               </span>
             </div>
-            <div className="mt-2" style={{ display: "flex", justifyContent: "flex-end" }}>
+            <div className="mt-2 flex justify-end" >
               {Strip
                 ? <Strip data={SOL.trend14} value={SOL.ftr} delta={SOL.delta}/>
                 : <MiniStrip data={SOL.trend14}/>}
@@ -225,50 +215,49 @@ function SolutionDashboard({ state = "ready" } = {}) {
         </div>
       </div>
 
-      <div style={{ maxWidth: 1000 }} className="mx-auto px-7 py-7">
+      <div style={{ maxWidth: 1000 }} className="mx-auto px-12 py-12">
         {/* per-project rollup */}
-        <div style={{ fontSize: 11, letterSpacing: "0.18em", textTransform: "uppercase", color: "var(--ink-3)" }} className="mb-4">
+        <div style={{ fontSize: 11, letterSpacing: "0.18em" }} className="mb-4 uppercase text-ink-3">
           Per project
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 }}>
+        <div className="grid" style={{ gridTemplateColumns: "repeat(3, 1fr)", gap: 16 }}>
           {SOL.projects.map(p => (
-            <div key={p.id} style={{ background: "var(--paper-2)", border: "var(--hairline)",
-                  borderRadius: 10, padding: 20 }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <span style={{ display: "inline-flex", alignItems: "center", gap: 9 }}>
+            <div className="bg-paper-2 border border-paper-edge" key={p.id} style={{
+ borderRadius: 10, padding: 20 }}>
+              <div className="flex items-center justify-between" >
+                <span className="inline-flex items-center" style={{ gap: 9 }}>
                   <span className="kanji" style={{ fontSize: 22, color: p.warn ? "var(--warning)" : "var(--ink-3)" }}>{p.kanji}</span>
-                  <span className="mono" style={{ fontSize: 13, color: "var(--ink)" }}>{p.name}</span>
+                  <span className="mono text-ink" style={{ fontSize: 13 }}>{p.name}</span>
                 </span>
-                {p.warn && <span style={{ fontSize: 10.5, letterSpacing: ".08em", textTransform: "uppercase",
-                        color: "var(--warning)", background: "var(--warning-soft)", padding: "4px 8px", borderRadius: 999 }}>needs eyes</span>}
+                {p.warn && <span className="uppercase text-warning bg-warning-soft" style={{ fontSize: 10.5, letterSpacing: ".08em", padding: "4px 8px", borderRadius: 999 }}>needs eyes</span>}
               </div>
-              <div style={{ display: "flex", alignItems: "baseline", gap: 4 }} className="mt-4">
-                <span className="display" style={{ fontSize: 32, fontWeight: 400, lineHeight: 1,
-                      color: p.warn ? "var(--warning)" : "var(--ink)" }}>{Math.round(p.ftr*100)}</span>
-                <span style={{ fontSize: 12, color: "var(--ink-3)" }}>% FTR</span>
+              <div style={{ gap: 4 }} className="mt-4 flex items-baseline">
+                <span className="display font-normal" style={{ fontSize: 32, lineHeight: 1,
+ color: p.warn ? "var(--warning)" : "var(--ink)" }}>{Math.round(p.ftr*100)}</span>
+                <span className="text-ink-3" style={{ fontSize: 12 }}>% FTR</span>
               </div>
               <div className="mt-3"><MiniStrip data={p.trend} warn={p.warn}/></div>
-              <div className="mono mt-3" style={{ fontSize: 11, color: "var(--ink-3)" }}>{p.sessions7d} sessions · 7d</div>
+              <div className="mono mt-3 text-ink-3" style={{ fontSize: 11 }}>{p.sessions7d} sessions · 7d</div>
             </div>
           ))}
         </div>
 
         {/* rollup insights */}
-        <div style={{ fontSize: 11, letterSpacing: "0.18em", textTransform: "uppercase", color: "var(--ink-3)" }} className="mt-7 mb-3">
+        <div style={{ fontSize: 11, letterSpacing: "0.18em" }} className="mt-12 mb-3 uppercase text-ink-3">
           Across the solution
         </div>
-        <div style={{ background: "var(--paper-2)", border: "var(--hairline)", borderRadius: 10 }}>
+        <div className="bg-paper-2 border border-paper-edge" style={{ borderRadius: 10 }}>
           {SOL.insights.map((x, i) => (
-            <div key={i} style={{ display: "grid", gridTemplateColumns: "auto 1fr auto", alignItems: "center",
-                  gap: 14, padding: "16px 16px", borderBottom: i < SOL.insights.length-1 ? "var(--hairline)" : "none" }}>
+            <div className="grid items-center" key={i} style={{ gridTemplateColumns: "auto 1fr auto",
+ gap: 14, padding: "16px 16px", borderBottom: i < SOL.insights.length-1 ? "var(--hairline)" : "none" }}>
               <span className="kanji" style={{ fontSize: 22, color: toneColor(x.tone), width: 26 }}>{x.kanji}</span>
               <div>
-                <div style={{ fontSize: 11, letterSpacing: ".14em", textTransform: "uppercase", color: "var(--ink-3)" }}>
-                  {x.label} <span style={{ color: "var(--ink-4)" }}>· {projName(x.project)}</span>
+                <div className="uppercase text-ink-3" style={{ fontSize: 11, letterSpacing: ".14em" }}>
+                  {x.label} <span className="text-ink-4" >· {projName(x.project)}</span>
                 </div>
-                <div style={{ fontSize: 14, color: "var(--ink)", marginTop: 3 }}>{x.text}</div>
+                <div className="text-ink" style={{ fontSize: 14, marginTop: 3 }}>{x.text}</div>
               </div>
-              <span className="mono" style={{ fontSize: 12, fontWeight: 600, color: toneColor(x.tone), whiteSpace: "nowrap" }}>{x.tag}</span>
+              <span className="mono font-semibold whitespace-nowrap" style={{ fontSize: 12, color: toneColor(x.tone) }}>{x.tag}</span>
             </div>
           ))}
         </div>
@@ -291,53 +280,50 @@ function SolutionArchitecture({ filter, setFilter, state = "ready" }) {
   const focus = filter === "all" ? null : filter;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", background: "var(--paper)" }}>
-      <div style={{ borderBottom: "var(--hairline)", flexShrink: 0 }} className="px-7 pt-5 pb-4">
-        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", flexWrap: "wrap", gap: 16 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <span className="kanji" style={{ fontSize: 30, color: "var(--accent)", lineHeight: 1 }}>図</span>
+    <div className="flex flex-col h-full bg-paper" >
+      <div className="px-12 pt-6 pb-4 border-b shrink-0">
+        <div className="flex items-start justify-between flex-wrap" style={{ gap: 16 }}>
+          <div className="flex items-center" style={{ gap: 12 }}>
+            <span className="kanji text-accent" style={{ fontSize: 30, lineHeight: 1 }}>図</span>
             <div>
-              <div style={{ fontSize: 11, letterSpacing: "0.18em", textTransform: "uppercase", color: "var(--ink-3)" }}>Solution · Architecture</div>
-              <h1 className="display m-0" style={{ fontSize: 22, fontWeight: 400, letterSpacing: "-0.01em" }}>Merged code graph</h1>
+              <div className="uppercase text-ink-3" style={{ fontSize: 11, letterSpacing: "0.18em" }}>Solution · Architecture</div>
+              <h1 className="display m-0 font-normal" style={{ fontSize: 22, letterSpacing: "-0.01em" }}>Merged code graph</h1>
             </div>
           </div>
           {/* project filter chips */}
-          <div style={{ display: "flex", background: "var(--paper-3)", borderRadius: 7, padding: 3, gap: 2 }}>
+          <div className="flex bg-paper-3" style={{ borderRadius: 7, padding: 3, gap: 2 }}>
             {[{ id: "all", label: "All projects" }, ...SOL.projects.map(p => ({ id: p.id, label: p.name }))].map(o => {
               const on = filter === o.id;
               return (
-                <button key={o.id} onClick={() => { setFilter(o.id); setSelected(null); }} style={{
-                  border: "none", cursor: "pointer", borderRadius: 5, padding: "8px 12px",
-                  fontSize: 12, fontWeight: on ? 600 : 400,
-                  background: on ? "var(--paper)" : "transparent",
-                  color: on ? "var(--ink)" : "var(--ink-3)",
-                  boxShadow: on ? "var(--shadow-sm)" : "none",
-                  fontFamily: o.id === "all" ? "var(--font-ui)" : "var(--font-mono)",
-                }}>{o.label}</button>
+                <button className="border-0 cursor-pointer" key={o.id} onClick={() => { setFilter(o.id); setSelected(null); }} style={{ borderRadius: 5, padding: "8px 12px",
+ fontSize: 12, fontWeight: on ? 600 : 400,
+ background: on ? "var(--paper)" : "transparent",
+ color: on ? "var(--ink)" : "var(--ink-3)",
+ boxShadow: on ? "var(--shadow-sm)" : "none",
+ fontFamily: o.id === "all" ? "var(--font-ui)" : "var(--font-mono)" }}>{o.label}</button>
               );
             })}
           </div>
         </div>
-        <div style={{ fontSize: 13, color: "var(--ink-2)", marginTop: 12, maxWidth: 640 }}>
-          Every repo in the engagement on one canvas. <span style={{ color: "var(--ink-3)" }}>Dashed edges cross a project boundary</span> — the seams sensei watches most closely.
+        <div className="text-ink-2" style={{ fontSize: 13, marginTop: 12, maxWidth: 640 }}>
+          Every repo in the engagement on one canvas. <span className="text-ink-3" >Dashed edges cross a project boundary</span> — the seams sensei watches most closely.
         </div>
       </div>
 
-      <div style={{ flex: 1, position: "relative", minHeight: 0, padding: "8px 8px 0" }}>
+      <div className="flex-1 relative min-h-0" style={{ padding: "8px 8px 0" }}>
         {Graph
           ? <Graph graph={SOL_GRAPH} docsOn={false} focus={focus} selected={selected} onSelect={setSelected}/>
-          : <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "var(--ink-3)" }}>graph unavailable</div>}
-        <div style={{ position: "absolute", left: 22, bottom: 16, display: "flex", gap: 16, alignItems: "center",
-              background: "var(--paper-2)", border: "var(--hairline)", borderRadius: 8, padding: "8px 12px" }}>
+          : <div className="flex items-center justify-center h-full text-ink-3" >graph unavailable</div>}
+        <div className="absolute flex items-center bg-paper-2 border border-paper-edge" style={{ left: 22, bottom: 16, gap: 16, borderRadius: 8, padding: "8px 12px" }}>
           {SOL.projects.map(p => (
-            <span key={p.id} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11.5,
-                  color: focus && focus !== p.id ? "var(--ink-4)" : "var(--ink-2)" }}>
+            <span className="inline-flex items-center" key={p.id} style={{ gap: 6, fontSize: 11.5,
+ color: focus && focus !== p.id ? "var(--ink-4)" : "var(--ink-2)" }}>
               <span className="kanji" style={{ fontSize: 14, color: p.warn ? "var(--warning)" : "var(--ink-3)" }}>{p.kanji}</span>
               <span className="mono">{p.name}</span>
             </span>
           ))}
           <span style={{ width: 1, height: 16, background: "var(--edge)" }}/>
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11.5, color: "var(--ink-3)" }}>
+          <span className="inline-flex items-center text-ink-3" style={{ gap: 6, fontSize: 11.5 }}>
             <svg width="22" height="6"><line x1="0" y1="3" x2="22" y2="3" stroke="var(--ink-3)" strokeWidth="1.4" strokeDasharray="5 5"/></svg>
             cross-project
           </span>
@@ -360,27 +346,25 @@ function SolutionSessions({ filter, setFilter, forceEmpty, state = "ready" }) {
   const chips = [{ id: "all", label: "All", kanji: "全" }, ...SOL.projects.map(p => ({ id: p.id, label: p.name, kanji: p.kanji }))];
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", background: "var(--paper)" }}>
-      <div style={{ borderBottom: "var(--hairline)", flexShrink: 0 }} className="px-7 pt-5 pb-4">
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <span className="kanji" style={{ fontSize: 30, color: "var(--accent)", lineHeight: 1 }}>刻</span>
+    <div className="flex flex-col h-full bg-paper" >
+      <div className="px-12 pt-6 pb-4 border-b shrink-0">
+        <div className="flex items-center" style={{ gap: 12 }}>
+          <span className="kanji text-accent" style={{ fontSize: 30, lineHeight: 1 }}>刻</span>
           <div>
-            <div style={{ fontSize: 11, letterSpacing: "0.18em", textTransform: "uppercase", color: "var(--ink-3)" }}>Solution · Sessions</div>
-            <h1 className="display m-0" style={{ fontSize: 22, fontWeight: 400, letterSpacing: "-0.01em" }}>Every session, one stream</h1>
+            <div className="uppercase text-ink-3" style={{ fontSize: 11, letterSpacing: "0.18em" }}>Solution · Sessions</div>
+            <h1 className="display m-0 font-normal" style={{ fontSize: 22, letterSpacing: "-0.01em" }}>Every session, one stream</h1>
           </div>
         </div>
         {/* filter chips */}
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 14 }}>
+        <div className="flex flex-wrap" style={{ gap: 8, marginTop: 14 }}>
           {chips.map(c => {
             const on = filter === c.id;
             return (
-              <button key={c.id} onClick={() => setFilter(c.id)} style={{
-                display: "inline-flex", alignItems: "center", gap: 7, cursor: "pointer",
-                border: on ? "1px solid var(--ink)" : "var(--hairline)", borderRadius: 999,
-                padding: "8px 16px", fontSize: 12.5,
-                background: on ? "var(--ink)" : "transparent",
-                color: on ? "var(--paper)" : "var(--ink-2)",
-              }}>
+              <button className="inline-flex items-center cursor-pointer" key={c.id} onClick={() => setFilter(c.id)} style={{ gap: 7,
+ border: on ? "1px solid var(--ink)" : "var(--hairline)", borderRadius: 999,
+ padding: "8px 16px", fontSize: 12.5,
+ background: on ? "var(--ink)" : "transparent",
+ color: on ? "var(--paper)" : "var(--ink-2)" }}>
                 <span className="kanji" style={{ fontSize: 14, color: on ? "var(--paper)" : "var(--ink-3)" }}>{c.kanji}</span>
                 <span className={c.id === "all" ? "" : "mono"}>{c.label}</span>
               </button>
@@ -389,42 +373,41 @@ function SolutionSessions({ filter, setFilter, forceEmpty, state = "ready" }) {
         </div>
       </div>
 
-      <div style={{ flex: 1, overflow: "auto", minHeight: 0 }}>
+      <div className="flex-1 overflow-auto min-h-0" >
         {rows.length === 0 ? (
-          <div style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center",
-                justifyContent: "center", gap: 12, color: "var(--ink-3)" }}>
-            <span className="kanji" style={{ fontSize: 48, color: "var(--ink-4)" }}>空</span>
-            <div style={{ fontSize: 15, color: "var(--ink-2)" }}>Still listening.</div>
-            <div style={{ fontSize: 13, color: "var(--ink-3)" }}>No sessions in {filter === "all" ? "this solution" : projName(filter)} yet.</div>
+          <div className="h-full flex flex-col items-center justify-center text-ink-3" style={{ gap: 12 }}>
+            <span className="kanji text-ink-4" style={{ fontSize: 48 }}>空</span>
+            <div className="text-ink-2" style={{ fontSize: 15 }}>Still listening.</div>
+            <div className="text-ink-3" style={{ fontSize: 13 }}>No sessions in {filter === "all" ? "this solution" : projName(filter)} yet.</div>
           </div>
         ) : (
           <>
             {/* column header */}
-            <div style={{ display: "grid", gridTemplateColumns: "150px 1fr 120px 90px 90px",
-                  gap: 16, padding: "12px 24px", borderBottom: "var(--hairline)",
-                  fontSize: 11, letterSpacing: "0.14em", textTransform: "uppercase", color: "var(--ink-3)" }}>
+            <div className="grid border-b uppercase text-ink-3" style={{ gridTemplateColumns: "150px 1fr 120px 90px 90px",
+ gap: 16, padding: "12px 24px",
+ fontSize: 11, letterSpacing: "0.14em" }}>
               <span>Project</span><span>Session</span><span>When</span><span>Length</span>
-              <span style={{ textAlign: "right" }}>FTR</span>
+              <span className="text-right" >FTR</span>
             </div>
             {rows.map(s => (
-              <div key={s.id} style={{ display: "grid", gridTemplateColumns: "150px 1fr 120px 90px 90px",
-                    gap: 16, padding: "16px 24px", borderBottom: "var(--hairline)", alignItems: "center" }}>
-                <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-                  <span className="kanji" style={{ fontSize: 15, color: "var(--ink-3)" }}>{projKanji(s.project)}</span>
-                  <span className="mono" style={{ fontSize: 12, color: "var(--ink-2)" }}>{projName(s.project)}</span>
+              <div className="grid border-b items-center" key={s.id} style={{ gridTemplateColumns: "150px 1fr 120px 90px 90px",
+ gap: 16, padding: "16px 24px" }}>
+                <span className="inline-flex items-center" style={{ gap: 8 }}>
+                  <span className="kanji text-ink-3" style={{ fontSize: 15 }}>{projKanji(s.project)}</span>
+                  <span className="mono text-ink-2" style={{ fontSize: 12 }}>{projName(s.project)}</span>
                 </span>
                 <span>
-                  <span style={{ fontSize: 14, color: "var(--ink)" }}>{s.title}</span>
-                  <span className="mono" style={{ fontSize: 11, color: "var(--ink-4)", marginLeft: 8 }}>{s.id}</span>
-                  {s.corrections > 0 && <span className="mono" style={{ fontSize: 11, color: "var(--warning)", marginLeft: 8 }}>· {s.corrections} corrections</span>}
+                  <span className="text-ink" style={{ fontSize: 14 }}>{s.title}</span>
+                  <span className="mono text-ink-4" style={{ fontSize: 11, marginLeft: 8 }}>{s.id}</span>
+                  {s.corrections > 0 && <span className="mono text-warning" style={{ fontSize: 11, marginLeft: 8 }}>· {s.corrections} corrections</span>}
                 </span>
-                <span className="mono" style={{ fontSize: 12, color: "var(--ink-3)" }}>{s.time}</span>
-                <span className="mono" style={{ fontSize: 12, color: "var(--ink-3)" }}>{s.duration}</span>
-                <span style={{ textAlign: "right" }}>
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12,
-                        color: s.ftr ? "var(--success)" : "var(--warning)" }}>
-                    <span style={{ width: 7, height: 7, borderRadius: "50%",
-                          background: s.ftr ? "var(--success)" : "var(--warning)" }}/>
+                <span className="mono text-ink-3" style={{ fontSize: 12 }}>{s.time}</span>
+                <span className="mono text-ink-3" style={{ fontSize: 12 }}>{s.duration}</span>
+                <span className="text-right" >
+                  <span className="inline-flex items-center" style={{ gap: 6, fontSize: 12,
+ color: s.ftr ? "var(--success)" : "var(--warning)" }}>
+                    <span className="rounded-full" style={{ width: 7, height: 7,
+ background: s.ftr ? "var(--success)" : "var(--warning)" }}/>
                     {s.ftr ? "first try" : "corrected"}
                   </span>
                 </span>
@@ -445,12 +428,11 @@ function SolutionWindow({ initial = "dashboard", initialFilter = "all", forceEmp
   const [filter, setFilter] = solS(initialFilter);
   const viewLabel = (SOL_NAV.find(n => n.id === view) || {}).label.toLowerCase();
   return (
-    <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column",
-                  background: "var(--paper)", overflow: "hidden" }}>
+    <div className="w-full h-full flex flex-col bg-paper overflow-hidden" >
       <SolChrome view={viewLabel}/>
-      <div style={{ flex: 1, display: "grid", gridTemplateColumns: "230px 1fr", minHeight: 0 }}>
+      <div className="flex-1 grid min-h-0" style={{ gridTemplateColumns: "230px 1fr" }}>
         <SolRail view={view} setView={setView} filter={filter} setFilter={setFilter}/>
-        <main style={{ minHeight: 0, overflow: "hidden" }}>
+        <main className="min-h-0 overflow-hidden" >
           {view === "dashboard"    && <SolutionDashboard state={state}/>}
           {view === "architecture" && <SolutionArchitecture filter={filter} setFilter={setFilter} state={state}/>}
           {view === "sessions"     && <SolutionSessions filter={filter} setFilter={setFilter} forceEmpty={forceEmpty} state={state}/>}

@@ -24,78 +24,78 @@ function DojoIdentity({ mobile = false }) {
   const [idp, setIdp] = idS("okta");
   const [scim, setScim] = idS(true);
   return (
-    <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", background: "var(--paper)" }}>
+    <div className="w-full h-full flex flex-col overflow-hidden bg-paper" >
       <DojoHead mobile={mobile} kanji="鍵" eyebrow="Org · manage · identity" title="Identity & access"
         sub="Wire single sign-on so nothing is open access, let SCIM provision and deprovision members automatically, and map git access to Dōjō roles. Roles derive from git, then refine here."
         right={<DojoChip tone="var(--success)" soft="var(--success-soft)">● SSO active · Okta</DojoChip>} />
 
-      <div style={{ flex: 1, overflow: "auto", padding: mobile ? "var(--space-4)" : "var(--space-5)", display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>
+      <div className="flex-1 overflow-auto flex flex-col gap-4" style={{ padding: mobile ? "var(--space-4)" : "var(--space-6)" }}>
         {/* SSO provider */}
         <IdPanel title="Single sign-on" note="OIDC / SAML" right={<DojoChip tone="var(--ink-soft)" soft="var(--paper-soft)" border="var(--hairline)">Test connection</DojoChip>}>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: "var(--space-3)", marginBottom: "var(--space-3)" }}>
+          <div className="grid gap-3 mb-3" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))" }}>
             {IDP_PRESETS.map(p => {
               const on = idp === p.id;
               return (
-                <button key={p.id} onClick={() => setIdp(p.id)} style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", textAlign: "left", cursor: "pointer",
-                  background: on ? "var(--paper)" : "transparent", border: on ? "1px solid var(--accent)" : "var(--hairline)", borderRadius: "var(--radius-lg)", padding: "var(--space-3) var(--space-3)", fontFamily: "inherit" }}>
-                  <span className="kanji" style={{ fontSize: "var(--text-lg)", color: on ? "var(--accent)" : "var(--ink-mute)" }}>{p.kanji}</span>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: "var(--text-sm)", color: "var(--ink)", fontWeight: 500 }}>{p.name}</div>
-                    <div className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--ink-faint)", marginTop: "var(--space-1)" }}>{p.proto}</div>
+                <button className="flex items-center gap-2 text-left cursor-pointer rounded-lg py-3 px-3" key={p.id} onClick={() => setIdp(p.id)} style={{
+ background: on ? "var(--paper)" : "transparent", border: on ? "1px solid var(--accent)" : "var(--hairline)", fontFamily: "inherit" }}>
+                  <span className="kanji text-lg" style={{ color: on ? "var(--accent)" : "var(--ink-mute)" }}>{p.kanji}</span>
+                  <div className="flex-1 min-w-0" >
+                    <div className="text-sm text-ink font-medium" >{p.name}</div>
+                    <div className="mono text-xs text-ink-faint mt-1" >{p.proto}</div>
                   </div>
-                  {p.connected && <span style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--success)" }} />}
+                  {p.connected && <span className="rounded-full bg-success" style={{ width: 7, height: 7 }} />}
                 </button>
               );
             })}
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "var(--space-2)" }}>
+          <div className="grid gap-2" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))" }}>
             {[["Metadata URL", "https://acme.okta.com/app/…/sso/saml/metadata"], ["ACS callback", "dojo.acme.internal/auth/saml/callback"]].map(([l, v]) => (
               <div key={l}>
-                <div style={{ fontSize: "var(--text-xs)", letterSpacing: ".1em", textTransform: "uppercase", color: "var(--ink-faint)", fontWeight: 600, marginBottom: "var(--space-1)" }}>{l}</div>
-                <div className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--ink-soft)", background: "var(--paper)", border: "var(--hairline)", borderRadius: "var(--radius-lg)", padding: "var(--space-2) var(--space-3)", wordBreak: "break-all" }}>{v}</div>
+                <div className="text-xs uppercase text-ink-faint font-semibold mb-1" style={{ letterSpacing: ".1em" }}>{l}</div>
+                <div className="mono text-xs text-ink-soft bg-paper border border-paper-edge rounded-lg py-2 px-3" style={{ wordBreak: "break-all" }}>{v}</div>
               </div>
             ))}
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", marginTop: "var(--space-3)", fontSize: "var(--text-xs)", color: "var(--ink-mute)" }}>
-            <span className="kanji" style={{ fontSize: "var(--text-sm)", color: "var(--accent)" }}>試</span>
+          <div className="flex items-center gap-2 mt-3 text-xs text-ink-mute" >
+            <span className="kanji text-sm text-accent" >試</span>
             Run a test sign-in before saving — verified logins are required before SSO is enforced.
           </div>
         </IdPanel>
 
         {/* SCIM */}
         <IdPanel title="SCIM provisioning" note="auto provision · deprovision"
-          right={<span onClick={() => setScim(s => !s)} style={{ display: "inline-flex", alignItems: "center", width: 38, height: 20, borderRadius: "var(--radius-lg)", padding: "var(--space-1)", cursor: "pointer",
-            background: scim ? "var(--accent)" : "var(--paper-mute)", justifyContent: scim ? "flex-end" : "flex-start" }}>
-            <span style={{ width: 16, height: 16, borderRadius: "50%", background: "var(--paper)" }} /></span>}>
-          <div style={{ fontSize: "var(--text-sm)", color: "var(--ink-soft)", lineHeight: 1.55 }}>
+          right={<span className="inline-flex items-center rounded-lg p-1 cursor-pointer" onClick={() => setScim(s => !s)} style={{ width: 38, height: 20,
+ background: scim ? "var(--accent)" : "var(--paper-mute)", justifyContent: scim ? "flex-end" : "flex-start" }}>
+            <span className="rounded-full bg-paper" style={{ width: 16, height: 16 }} /></span>}>
+          <div className="text-sm text-ink-soft" style={{ lineHeight: 1.55 }}>
             {scim
-              ? <span>On — members are created and disabled automatically from your IdP. Last sync <b style={{ fontWeight: 600, color: "var(--ink)" }}>4 min ago</b> · 48 in sync.</span>
+              ? <span>On — members are created and disabled automatically from your IdP. Last sync <b className="font-semibold text-ink" >4 min ago</b> · 48 in sync.</span>
               : <span>Off — where SCIM isn't available, members are provisioned just-in-time on first connect at the git-derived role.</span>}
           </div>
         </IdPanel>
 
         {/* git-role mapping */}
         <IdPanel title="Git access → Dōjō role" note="derive-then-refine">
-          <div style={{ display: "flex", flexDirection: "column" }}>
+          <div className="flex flex-col" >
             {ROLE_MAP.map((r, i) => mobile ? (
-              <div key={r.git} style={{ padding: "var(--space-3) var(--space-1)", borderBottom: i < ROLE_MAP.length - 1 ? "1px solid var(--paper-edge)" : "none" }}>
-                <div className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--ink-mute)" }}>{r.git}</div>
-                <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", marginTop: "var(--space-1)" }}>
-                  <span style={{ fontSize: "var(--text-sm)", color: "var(--ink-faint)" }}>→</span>
-                  <span style={{ fontSize: "var(--text-sm)", color: r.tone, fontWeight: 500 }}>{r.role}</span>
+              <div className="py-3 px-1" key={r.git} style={{ borderBottom: i < ROLE_MAP.length - 1 ? "1px solid var(--paper-edge)" : "none" }}>
+                <div className="mono text-xs text-ink-mute" >{r.git}</div>
+                <div className="flex items-center gap-2 mt-1" >
+                  <span className="text-sm text-ink-faint" >→</span>
+                  <span className="text-sm font-medium" style={{ color: r.tone }}>{r.role}</span>
                 </div>
               </div>
             ) : (
-              <div key={r.git} style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: "var(--space-3)", alignItems: "center", padding: "var(--space-3) var(--space-1)", borderBottom: i < ROLE_MAP.length - 1 ? "1px solid var(--paper-edge)" : "none" }}>
-                <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--ink-mute)" }}>{r.git}</span>
-                <span style={{ fontSize: "var(--text-sm)", color: "var(--ink-faint)" }}>→</span>
-                <span style={{ fontSize: "var(--text-sm)", color: r.tone, fontWeight: 500 }}>{r.role}</span>
+              <div className="grid gap-3 items-center py-3 px-1" key={r.git} style={{ gridTemplateColumns: "1fr auto 1fr", borderBottom: i < ROLE_MAP.length - 1 ? "1px solid var(--paper-edge)" : "none" }}>
+                <span className="mono text-xs text-ink-mute" >{r.git}</span>
+                <span className="text-sm text-ink-faint" >→</span>
+                <span className="text-sm font-medium" style={{ color: r.tone }}>{r.role}</span>
               </div>
             ))}
           </div>
-          <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-2)", marginTop: "var(--space-3)", fontSize: "var(--text-xs)", color: "var(--ink-mute)", lineHeight: 1.5 }}>
-            <span className="kanji" style={{ fontSize: "var(--text-sm)", color: "var(--accent)" }}>任</span>
-            <span>Auto-provisioned members are capped at <b style={{ fontWeight: 600, color: "var(--ink-soft)" }}>Read-only</b> — Maintainer and Org admin are only ever elevated by hand in Members &amp; roles.</span>
+          <div className="flex items-start gap-2 mt-3 text-xs text-ink-mute" style={{ lineHeight: 1.5 }}>
+            <span className="kanji text-sm text-accent" >任</span>
+            <span>Auto-provisioned members are capped at <b className="font-semibold text-ink-soft" >Read-only</b> — Maintainer and Org admin are only ever elevated by hand in Members &amp; roles.</span>
           </div>
         </IdPanel>
       </div>

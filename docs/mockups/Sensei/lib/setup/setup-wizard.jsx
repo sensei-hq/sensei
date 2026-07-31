@@ -136,15 +136,14 @@ function SetupWizard({ onDone, onExit, mode = "setup" }) {
   const saveAndClose = () => { writeSenseiSettings(state.prefs || {}); onDone && onDone(); };
 
   return (
-    <div className="sensei" data-screen-label={isPrefs ? "Preferences" : "Setup Wizard"}
-         style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column',
-                  background: 'var(--paper)', overflow: 'hidden' }}>
+    <div className="sensei w-full h-full flex flex-col bg-paper overflow-hidden" data-screen-label={isPrefs ? "Preferences" : "Setup Wizard"}
+ >
       <TauriChrome title={isPrefs ? "Sensei  先生  ·  preferences" : "Sensei  先生  ·  setup"}/>
-      <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '260px 1fr', minHeight: 0 }}>
+      <div className="flex-1 grid min-h-0" style={{ gridTemplateColumns: '260px 1fr' }}>
         <WizRail stages={stages} stageIdx={stageIdx} setStageIdx={setStageIdx} onExit={onExit}
                  freeNav={isPrefs} railTitle={isPrefs ? "Preferences" : "Setup"}/>
-        <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-          <div style={{ flex: 1, overflow: 'auto' }} className="pt-7 pb-6 px-8" >
+        <div className="flex flex-col min-h-0" >
+          <div className="pt-12 pb-8 px-16 flex-1 overflow-auto" >
             {stage.id === "welcome"    && <WizWelcome/>}
             {stage.id === "components" && <WizComponents state={state} upd={upd}/>}
             {stage.id === "acps"       && <WizAcps state={state} upd={upd}/>}
@@ -184,12 +183,12 @@ function ServicesStatus() {
   });
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center' }} className="gap-2" >
+    <div className="gap-2 flex items-center" >
       <span style={{ width: 7, height: 7, borderRadius: 4,
                       background: anyBad ? 'var(--accent)' : 'var(--success)' }}/>
-      <div style={{ fontSize: 11, color: 'var(--ink-2)', lineHeight: 1.4 }}>
-        <div style={{ letterSpacing: '0.1em', textTransform: 'uppercase',
-                       fontSize: 11, color: 'var(--ink-3)' }}>
+      <div className="text-ink-2" style={{ fontSize: 11, lineHeight: 1.4 }}>
+        <div className="uppercase text-ink-3" style={{ letterSpacing: '0.1em',
+ fontSize: 11 }}>
           Services
         </div>
         <div className="mt-1" >
@@ -221,16 +220,12 @@ function WizRail({ stages, stageIdx, setStageIdx, onExit, freeNav = false, railT
     || (s.sub || "").toLowerCase().includes(ql) || (KW[s.id] || "").includes(ql);
   const anyVisible = stages.some(s => matches(s));
   return (
-    <aside style={{
- borderRight: 'var(--hairline)',
-                    display: 'flex', flexDirection: 'column',
-                    background: 'var(--paper-2)', overflow: 'hidden'
-}} className="py-5 px-5" >
-      <div style={{ display: 'flex', alignItems: 'center' }} className="gap-2 mb-5" >
+    <aside className="py-6 px-6 border-r flex flex-col bg-paper-2 overflow-hidden" >
+      <div className="gap-2 mb-6 flex items-center" >
         <Wordmark size={24}/>
-        <span style={{ flex: 1 }}/>
-        <button onClick={onExit} title="Exit setup"
-                style={{ fontSize: 11, color: 'var(--ink-3)', letterSpacing: '0.1em' }}>
+        <span className="flex-1" />
+        <button className="text-ink-3" onClick={onExit} title="Exit setup"
+ style={{ fontSize: 11, letterSpacing: '0.1em' }}>
           ESC
         </button>
       </div>
@@ -242,22 +237,21 @@ function WizRail({ stages, stageIdx, setStageIdx, onExit, freeNav = false, railT
 
       {freeNav && (
         <>
-          <div style={{ fontSize: 11, color: 'var(--ink-4)', lineHeight: 1.45 }} className="mb-3" >
+          <div style={{ fontSize: 11, lineHeight: 1.45 }} className="mb-3 text-ink-4" >
             Everything Sensei can be told — search or browse.
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'var(--paper)',
-                        border: 'var(--hairline)', borderRadius: 6, padding: '8px 8px' }} className="mb-3" >
-            <span className="kanji" style={{ fontSize: 11, color: 'var(--ink-3)' }}>探</span>
-            <input value={q} onChange={e => setQ(e.target.value)}
-                   placeholder="search settings…"
-                   style={{ border: 'none', outline: 'none', background: 'transparent',
-                            fontSize: 12, flex: 1, color: 'var(--ink)' }}/>
-            {q && <button onClick={() => setQ("")} style={{ fontSize: 12, color: 'var(--ink-4)' }}>×</button>}
+          <div style={{ gap: 6, borderRadius: 6, padding: '8px 8px' }} className="mb-3 flex items-center bg-paper border border-paper-edge" >
+            <span className="kanji text-ink-3" style={{ fontSize: 11 }}>探</span>
+            <input className="border-0 bg-transparent flex-1 text-ink" value={q} onChange={e => setQ(e.target.value)}
+ placeholder="search settings…"
+ style={{ outline: 'none',
+ fontSize: 12 }}/>
+            {q && <button className="text-ink-4" onClick={() => setQ("")} style={{ fontSize: 12 }}>×</button>}
           </div>
         </>
       )}
 
-      <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
+      <div className="gap-1 flex flex-col" >
         {stages.map((s, i) => {
           if (freeNav && !matches(s)) return null;
           const isCur = i === stageIdx;
@@ -265,63 +259,60 @@ function WizRail({ stages, stageIdx, setStageIdx, onExit, freeNav = false, railT
           const locked = !freeNav && i > stageIdx;
           return (
             <button key={s.id}
-                    onClick={() => setStageIdx(i)}
-                    disabled={locked}
-                    style={{
-                      display: 'grid',
-                      gridTemplateColumns: '24px 1fr 14px', alignItems: 'center',
-                      padding: isCur ? '10px 10px' : '7px 10px',
-                      borderRadius: 6, textAlign: 'left',
-                      background: isCur ? 'var(--paper)' : 'transparent',
-                      border: isCur ? 'var(--hairline)' : '1px solid transparent',
-                      color: isCur ? 'var(--ink)' : isDone ? 'var(--ink-2)' : 'var(--ink-4)',
-                      cursor: locked ? 'default' : 'pointer',
-                      transition: 'all .14s'
-}} className="gap-2" >
+ onClick={() => setStageIdx(i)}
+ disabled={locked}
+ style={{
+ gridTemplateColumns: '24px 1fr 14px',
+ padding: isCur ? '10px 10px' : '7px 10px',
+ borderRadius: 6,
+ background: isCur ? 'var(--paper)' : 'transparent',
+ border: isCur ? 'var(--hairline)' : '1px solid transparent',
+ color: isCur ? 'var(--ink)' : isDone ? 'var(--ink-2)' : 'var(--ink-4)',
+ cursor: locked ? 'default' : 'pointer',
+ transition: 'all .14s'
+ }} className="gap-2 grid items-center text-left" >
               {/* Always show the stage's kanji label so re-entering the
                   wizard reads as the same stepper, not a column of ✓s. */}
-              <span className="kanji" style={{
-                fontSize: 13, textAlign: 'center',
-                color: isCur  ? 'var(--accent)'
-                     : isDone ? 'var(--ink-2)'
-                              : 'var(--ink-4)'
-              }}>{s.n}</span>
-              <div style={{ overflow: 'hidden' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span className="kanji text-center" style={{
+ fontSize: 13,
+ color: isCur ? 'var(--accent)'
+ : isDone ? 'var(--ink-2)'
+ : 'var(--ink-4)'
+ }}>{s.n}</span>
+              <div className="overflow-hidden" >
+                <div className="flex items-center" style={{ gap: 6 }}>
                   <span style={{ fontSize: 13 }}>{s.title}</span>
                   {freeNav && !ql && REVIEW.has(s.id) && (
-                    <span className="mono" style={{ fontSize: 9, letterSpacing: '0.06em', textTransform: 'uppercase',
-                          color: 'var(--accent)', background: 'var(--accent-soft)', borderRadius: 10, padding: '4px 8px' }}>review</span>
+                    <span className="mono uppercase text-accent bg-accent-soft" style={{ fontSize: 9, letterSpacing: '0.06em', borderRadius: 10, padding: '4px 8px' }}>review</span>
                   )}
                 </div>
                 {isCur && (
-                  <div className="mono mt-1" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+                  <div className="mono mt-1 text-ink-3" style={{ fontSize: 11 }}>
                     {s.sub}
                   </div>
                 )}
               </div>
               {/* Completion tick lives on the right rail — kanji stays the
                   identity; tick is the status. */}
-              <span style={{
-                fontSize: 11, textAlign: 'center', lineHeight: 1,
-                color: 'var(--success)',
-                opacity: isDone ? 1 : 0,
-                transition: 'opacity .14s'
-              }}>✓</span>
+              <span className="text-center text-success" style={{
+ fontSize: 11, lineHeight: 1,
+ opacity: isDone ? 1 : 0,
+ transition: 'opacity .14s'
+ }}>✓</span>
             </button>
           );
         })}
       </div>
 
       {freeNav && ql && !anyVisible && (
-        <div style={{ fontSize: 12, color: 'var(--ink-4)', fontStyle: 'italic' }} className="py-3 px-2" >
+        <div style={{ fontSize: 12 }} className="py-3 px-2 text-ink-4 italic" >
           No settings match “{q}”.
         </div>
       )}
 
-      <div style={{ flex: 1 }}/>
+      <div className="flex-1" />
 
-      <div style={{ borderTop: 'var(--hairline)' }} className="pt-3" >
+      <div className="pt-3 border-t" >
         <ServicesStatus/>
       </div>
     </aside>
@@ -345,28 +336,21 @@ function WizBottom({ stage, stageIdx, total, back, next, onDone, onSaveClose, mo
   })();
 
   return (
-    <div style={{
- borderTop: 'var(--hairline)',
-                  display: 'flex', alignItems: 'center',
-                  background: 'var(--paper)'
-}} className="gap-4 py-3 px-8" >
-      <div style={{ fontSize: 11, letterSpacing: '0.12em', color: 'var(--ink-3)',
-                    textTransform: 'uppercase' }}>
-        {String(stageIdx + 1).padStart(2, "0")} <span style={{ color: 'var(--ink-4)' }}>/ {total}</span>
+    <div className="gap-4 py-3 px-16 border-t flex items-center bg-paper" >
+      <div className="text-ink-3 uppercase" style={{ fontSize: 11, letterSpacing: '0.12em' }}>
+        {String(stageIdx + 1).padStart(2, "0")} <span className="text-ink-4" >/ {total}</span>
         <span style={{
- color: 'var(--ink-2)', textTransform: 'none',
-                       letterSpacing: 0, fontSize: 13
-}} className="ml-3" >{stage.title}</span>
+ letterSpacing: 0, fontSize: 13
+ }} className="ml-3 text-ink-2 normal-case" >{stage.title}</span>
       </div>
 
       {/* progress ticks */}
-      <div style={{ flex: 1, display: 'flex', alignItems: 'center' }} className="gap-1" >
+      <div className="gap-1 flex-1 flex items-center" >
         {Array.from({ length: total }).map((_, i) => (
-          <span key={i} style={{
-            flex: 1, height: 2, borderRadius: 1,
-            background: i <= stageIdx ? 'var(--ink)' : 'var(--edge)',
-            transition: 'background .2s'
-          }}/>
+          <span className="flex-1" key={i} style={{ height: 2, borderRadius: 1,
+ background: i <= stageIdx ? 'var(--ink)' : 'var(--edge)',
+ transition: 'background .2s'
+ }}/>
         ))}
       </div>
 
@@ -381,24 +365,24 @@ function WizBottom({ stage, stageIdx, total, back, next, onDone, onSaveClose, mo
         <>
           {!isLast && (
             <button onClick={next}
-                    style={{ fontSize: 13, color: 'var(--ink-2)',
-                             border: 'var(--ink-line)', borderRadius: 6 }}
-                    className="py-2 px-4" >
+ style={{ fontSize: 13,
+ border: 'var(--ink-line)', borderRadius: 6 }}
+ className="py-2 px-4 text-ink-2" >
               Next →
             </button>
           )}
           <button onClick={onSaveClose}
-                  style={{
- fontSize: 13, background: 'var(--ink)', color: 'var(--paper)', borderRadius: 6, letterSpacing: 0.2
-}} className="py-2 px-5" >
+ style={{
+ fontSize: 13, borderRadius: 6, letterSpacing: 0.2
+ }} className="py-2 px-6 bg-ink text-paper" >
             Save &amp; close
           </button>
         </>
       ) : isLast ? (
         <button onClick={onDone}
-                style={{
- fontSize: 13, background: 'var(--ink)', color: 'var(--paper)', borderRadius: 6, letterSpacing: 0.2
-}} className="py-2 px-5" >
+ style={{
+ fontSize: 13, borderRadius: 6, letterSpacing: 0.2
+ }} className="py-2 px-6 bg-ink text-paper" >
           Enter observatory →
         </button>
       ) : (
@@ -407,7 +391,7 @@ function WizBottom({ stage, stageIdx, total, back, next, onDone, onSaveClose, mo
  fontSize: 13,
                          background: canAdvance ? 'var(--ink)' : 'var(--edge)',
                          color: canAdvance ? 'var(--paper)' : 'var(--ink-3)', borderRadius: 6, letterSpacing: 0.2
-}} className="py-2 px-5" >
+}} className="py-2 px-6" >
           Continue →
         </button>
       )}
@@ -420,42 +404,38 @@ function WizWelcome() {
   return (
     <div style={{ maxWidth: 680 }} className="mt-2 mb-0 mx-auto" >
       <div style={{
- fontSize: 11, color: 'var(--ink-3)', letterSpacing: '0.12em',
-                    textTransform: 'uppercase'
-}} className="mb-2" >礼 · Welcome</div>
-      <h1 className="display mt-0 mb-6" style={{
- fontSize: 56, fontWeight: 300, lineHeight: 1.08, letterSpacing: '-0.02em'
-}}>
+ fontSize: 11, letterSpacing: '0.12em' }} className="mb-2 text-ink-3 uppercase" >礼 · Welcome</div>
+      <h1 className="display mt-0 mb-8 font-light" style={{
+ fontSize: 56, lineHeight: 1.08, letterSpacing: '-0.02em'
+ }}>
         A teacher does not<br/>
-        <span style={{ color: 'var(--accent)' }}>write the code.</span>
+        <span className="text-accent" >write the code.</span>
       </h1>
 
       <p style={{
- fontSize: 15, color: 'var(--ink-2)', lineHeight: 1.7, maxWidth: 560
-}} className="mt-0 mb-5" >
+ fontSize: 15, lineHeight: 1.7, maxWidth: 560
+ }} className="mt-0 mb-6 text-ink-2" >
         Sensei watches how you and your AI assistants work together — the sessions that
         completed cleanly, the ones that didn't, and the patterns underneath both.
       </p>
 
       <p style={{
- fontSize: 13, color: 'var(--ink-3)', lineHeight: 1.7, maxWidth: 560
-}} className="mt-0 mb-7" >
+ fontSize: 13, lineHeight: 1.7, maxWidth: 560
+ }} className="mt-0 mb-12 text-ink-3" >
         The next few minutes: install the local components, point to your folders, confirm
         what was found. Nothing leaves your machine.
       </p>
 
-      <div style={{
- display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', borderTop: 'var(--hairline)', borderBottom: 'var(--hairline)'
-}} className="gap-4 py-5 px-0" >
+      <div style={{ gridTemplateColumns: '1fr 1fr 1fr' }} className="gap-4 py-6 px-0 grid border-t border-b" >
         {[
           { k: "観", t: "Observe", s: "FTR · turns · corrections" },
           { k: "師", t: "Teach",   s: "patterns · rules · skills" },
           { k: "静", t: "Local",   s: "on your machine" }
         ].map(item => (
           <div key={item.k}>
-            <div className="kanji mb-2" style={{ fontSize: 28, color: 'var(--accent)' }}>{item.k}</div>
+            <div className="kanji mb-2 text-accent" style={{ fontSize: 28 }}>{item.k}</div>
             <div className="display" style={{ fontSize: 22 }}>{item.t}</div>
-            <div style={{ fontSize: 13, color: 'var(--ink-3)' }} className="mt-1" >{item.s}</div>
+            <div style={{ fontSize: 13 }} className="mt-1 text-ink-3" >{item.s}</div>
           </div>
         ))}
       </div>
@@ -498,34 +478,29 @@ function WizComponents({ state, upd }) {
                  tagline={overallReady ? "Everything is in place." : "Detecting, installing, starting. No input needed."}/>
 
       {/* Variant toggle kept only as a subtle demo aid */}
-      <div style={{ display: 'flex', alignItems: 'center' }} className="gap-2 mb-5" >
-        <span style={{ fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
-                        color: 'var(--ink-4)' }}>demo · starting state</span>
+      <div className="gap-2 mb-6 flex items-center" >
+        <span className="uppercase text-ink-4" style={{ fontSize: 11, letterSpacing: '0.14em' }}>demo · starting state</span>
         <div style={{
- display: 'flex', background: 'var(--paper-2)',
-                       borderRadius: 5, border: 'var(--hairline)'
-}} className="p-1 gap-0" >
+ borderRadius: 5 }} className="p-1 gap-0 flex bg-paper-2 border border-paper-edge" >
           {D.componentsVariants.map(v => (
             <button key={v.id}
-                    onClick={() => {
-                      upd({ components: { variant: v.id, acting: {} }});
-                      const nv = D.componentsVariants.find(x => x.id === v.id);
-                      setPhases(nv.components.reduce((a, c) =>
-                        (a[c.id] = c.status === "installed" ? "ready" : "detecting", a), {}));
-                    }}
-                    style={{
+ onClick={() => {
+ upd({ components: { variant: v.id, acting: {} }});
+ const nv = D.componentsVariants.find(x => x.id === v.id);
+ setPhases(nv.components.reduce((a, c) =>
+ (a[c.id] = c.status === "installed" ? "ready" : "detecting", a), {}));
+ }}
+ style={{
  fontSize: 11, borderRadius: 3,
-                             background: state.components.variant === v.id ? 'var(--paper)' : 'transparent',
-                             color: state.components.variant === v.id ? 'var(--ink-2)' : 'var(--ink-3)',
-                             border: 'none'
-}} className="py-1 px-2" >
+ background: state.components.variant === v.id ? 'var(--paper)' : 'transparent',
+ color: state.components.variant === v.id ? 'var(--ink-2)' : 'var(--ink-3)' }} className="py-1 px-2 border-0" >
               {v.label}
             </button>
           ))}
         </div>
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-2" >
+      <div className="gap-2 flex flex-col" >
         {variant.components.map(c => {
           const phase = phases[c.id] || "detecting";
           const isBusy = phase === "installing" || phase === "starting";
@@ -537,43 +512,37 @@ function WizComponents({ state, upd }) {
             phase === "ready" ? 'var(--success)' : 'var(--accent)';
 
           return (
-            <div key={c.id} style={{
-              display: 'grid', gridTemplateColumns: 'auto 1fr auto', border: 'var(--hairline)', borderRadius: 8,
-              background: 'var(--paper-2)', alignItems: 'center',
-              transition: 'all .3s'
-}} className="gap-4 py-4 px-4" >
-              <div style={{ width: 36, height: 36, borderRadius: 6,
-                             background: 'var(--paper)', border: 'var(--hairline)',
-                             display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <span className="mono" style={{ fontSize: 13, color: 'var(--ink-2)' }}>
+            <div key={c.id} style={{ gridTemplateColumns: 'auto 1fr auto', borderRadius: 8,
+ transition: 'all .3s'
+ }} className="gap-4 py-4 px-4 grid border border-paper-edge bg-paper-2 items-center" >
+              <div className="bg-paper border border-paper-edge flex items-center justify-center" style={{ width: 36, height: 36, borderRadius: 6 }}>
+                <span className="mono text-ink-2" style={{ fontSize: 13 }}>
                   {c.id === "cli" ? "$" : c.id === "mcp" ? "⟷" : "◇"}
                 </span>
               </div>
               <div>
                 <div style={{ fontSize: 13 }}>{c.name}</div>
-                <div className="mono mt-1" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+                <div className="mono mt-1 text-ink-3" style={{ fontSize: 11 }}>
                   {statusLabel}
                 </div>
                 {isBusy && (
                   <div style={{
- height: 2, background: 'var(--edge)', borderRadius: 1, overflow: 'hidden'
-}} className="mt-2" >
-                    <div style={{
-                      height: '100%', width: '40%', background: 'var(--accent)',
-                      animation: 'cSlide 1.2s ease-in-out infinite'
-                    }}/>
+ height: 2, background: 'var(--edge)', borderRadius: 1 }} className="mt-2 overflow-hidden" >
+                    <div className="h-full bg-accent" style={{ width: '40%',
+ animation: 'cSlide 1.2s ease-in-out infinite'
+ }}/>
                   </div>
                 )}
               </div>
-              <div style={{ display: 'flex', alignItems: 'center' }} className="gap-2" >
-                <span style={{
-                  width: 8, height: 8, borderRadius: '50%', background: dotColor,
-                  boxShadow: phase !== "ready" ? `0 0 0 4px ${dotColor}22` : 'none',
-                  animation: phase !== "ready" ? "cPulse 1.2s ease-in-out infinite" : 'none'
-                }}/>
-                <span className="mono" style={{ fontSize: 11,
-                               color: phase === "ready" ? 'var(--success)' : 'var(--ink-2)',
-                               letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+              <div className="gap-2 flex items-center" >
+                <span className="rounded-full" style={{
+ width: 8, height: 8, background: dotColor,
+ boxShadow: phase !== "ready" ? `0 0 0 4px ${dotColor}22` : 'none',
+ animation: phase !== "ready" ? "cPulse 1.2s ease-in-out infinite" : 'none'
+ }}/>
+                <span className="mono uppercase" style={{ fontSize: 11,
+ color: phase === "ready" ? 'var(--success)' : 'var(--ink-2)',
+ letterSpacing: '0.06em' }}>
                   {phase === "ready" ? "ready" : phase}
                 </span>
               </div>
@@ -586,7 +555,7 @@ function WizComponents({ state, upd }) {
         `}</style>
       </div>
 
-      <p style={{ fontSize: 13, color: 'var(--ink-3)', lineHeight: 1.7 }} className="mt-4" >
+      <p style={{ fontSize: 13, lineHeight: 1.7 }} className="mt-4 text-ink-3" >
         Nothing leaves <span className="mono">localhost:9823</span>.
       </p>
     </div>
@@ -602,13 +571,13 @@ function StatusDot({ status }) {
   };
   const m = map[status] || map.missing;
   return (
-    <div style={{ display: 'flex', alignItems: 'center' }} className="gap-2" >
-      <span style={{
-        width: 8, height: 8, borderRadius: '50%', background: m.c,
-        boxShadow: status === "working" ? `0 0 0 4px ${m.c}22` : 'none',
-        animation: status === "working" ? "pulse 1.2s ease-in-out infinite" : 'none'
-      }}/>
-      <span className="mono" style={{ fontSize: 11, color: 'var(--ink-2)' }}>{m.l}</span>
+    <div className="gap-2 flex items-center" >
+      <span className="rounded-full" style={{
+ width: 8, height: 8, background: m.c,
+ boxShadow: status === "working" ? `0 0 0 4px ${m.c}22` : 'none',
+ animation: status === "working" ? "pulse 1.2s ease-in-out infinite" : 'none'
+ }}/>
+      <span className="mono text-ink-2" style={{ fontSize: 11 }}>{m.l}</span>
       <style>{`@keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: 0.45 } }`}</style>
     </div>
   );
@@ -733,22 +702,18 @@ function WizFolders({ state, upd }) {
     <div style={{ maxWidth: 820 }} className="mx-auto" >
       <WizHeader n="庵" title="Folders" tagline="Where your work lives. Sensei recurses and finds repos."/>
 
-      <div style={{ display: 'flex' }} className="gap-2 mb-4" >
+      <div className="gap-2 mb-4 flex" >
         <input value={state.newFolder}
-               onChange={e => upd({ newFolder: e.target.value })}
-               onKeyDown={e => e.key === "Enter" && add()}
-               placeholder="~/code/my-project"
-               className="mono py-2 px-3"
-               style={{
-                 flex: 1, fontSize: 13,
-                 background: 'var(--paper-2)', border: 'var(--hairline)', borderRadius: 6,
-                 outline: 'none'
-}}/>
+ onChange={e => upd({ newFolder: e.target.value })}
+ onKeyDown={e => e.key === "Enter" && add()}
+ placeholder="~/code/my-project"
+ className="mono py-2 px-3 flex-1 bg-paper-2 border border-paper-edge"
+ style={{ fontSize: 13, borderRadius: 6,
+ outline: 'none'
+ }}/>
         <button onClick={add}
-                style={{
- fontSize: 13, borderRadius: 6,
-                         background: 'var(--ink)', color: 'var(--paper)'
-}} className="py-2 px-4" >
+ style={{
+ fontSize: 13, borderRadius: 6 }} className="py-2 px-4 bg-ink text-paper" >
           Add
         </button>
         <button style={{
@@ -759,30 +724,26 @@ function WizFolders({ state, upd }) {
         </button>
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
+      <div className="gap-1 flex flex-col" >
         {state.folders.map(f => (
-          <div key={f.id} style={{
-            display: 'grid', gridTemplateColumns: 'auto 1fr auto auto', border: 'var(--hairline)', borderRadius: 6,
-            background: 'var(--paper-2)', alignItems: 'center'
-}} className="gap-3 py-3 px-4" >
-            <span style={{ color: 'var(--ink-3)', fontSize: 13 }}>▸</span>
+          <div key={f.id} style={{ gridTemplateColumns: 'auto 1fr auto auto', borderRadius: 6 }} className="gap-3 py-3 px-4 grid border border-paper-edge bg-paper-2 items-center" >
+            <span className="text-ink-3" style={{ fontSize: 13 }}>▸</span>
             <div>
               <div className="mono" style={{ fontSize: 13 }}>{f.path}</div>
-              <div style={{ fontSize: 11, color: 'var(--ink-3)' }} className="mt-1" >{f.note}</div>
+              <div style={{ fontSize: 11 }} className="mt-1 text-ink-3" >{f.note}</div>
             </div>
-            <span className="mono py-1 px-2" style={{
- fontSize: 11, color: 'var(--ink-3)', background: 'var(--paper)',
-                          borderRadius: 3, border: 'var(--hairline)'
-}}>recursive</span>
+            <span className="mono py-1 px-2 text-ink-3 bg-paper border border-paper-edge" style={{
+ fontSize: 11,
+ borderRadius: 3 }}>recursive</span>
             <button onClick={() => remove(f.id)}
-                    style={{ fontSize: 11, color: 'var(--ink-3)' }} className="py-1 px-2" >
+ style={{ fontSize: 11 }} className="py-1 px-2 text-ink-3" >
               remove
             </button>
           </div>
         ))}
       </div>
 
-      <div style={{ fontSize: 13, color: 'var(--ink-3)', lineHeight: 1.7 }} className="mt-4" >
+      <div style={{ fontSize: 13, lineHeight: 1.7 }} className="mt-4 text-ink-3" >
         You can manage folders and exclusions later from <span className="mono">Settings</span>.
       </div>
     </div>
@@ -889,20 +850,18 @@ function WizScan({ state, upd, context = "setup", onComplete }) {
         <WizHeader n="観" eyebrow={hdr.eyebrow} title={hdr.title} tagline={hdr.tagline}/>
 
         {/* What sensei does with these folders — so the ask is clear up front */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr',
-                      border: 'var(--hairline)', borderRadius: 8, background: 'var(--paper-2)',
-                      overflow: 'hidden' }} className="mb-4" >
+        <div style={{ gridTemplateColumns: '1fr 1fr 1fr', borderRadius: 8 }} className="mb-4 grid border border-paper-edge bg-paper-2 overflow-hidden" >
           {[
             { k: "探", t: "Recurses", s: "walks every subfolder to find each repo" },
             { k: "図", t: "Maps",     s: "extracts the code graph — files, symbols, docs" },
             { k: "観", t: "Watches",  s: "observes future sessions in these folders" },
           ].map((x, i) => (
             <div key={x.k} style={{ borderRight: i < 2 ? 'var(--hairline)' : 'none' }} className="py-3 px-4" >
-              <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2" >
-                <span className="kanji" style={{ fontSize: 15, color: 'var(--accent)' }}>{x.k}</span>
-                <span style={{ fontSize: 13, color: 'var(--ink)', fontWeight: 500 }}>{x.t}</span>
+              <div className="gap-2 flex items-baseline" >
+                <span className="kanji text-accent" style={{ fontSize: 15 }}>{x.k}</span>
+                <span className="text-ink font-medium" style={{ fontSize: 13 }}>{x.t}</span>
               </div>
-              <div style={{ fontSize: 11, color: 'var(--ink-3)', lineHeight: 1.45 }} className="mt-1" >{x.s}</div>
+              <div style={{ fontSize: 11, lineHeight: 1.45 }} className="mt-1 text-ink-3" >{x.s}</div>
             </div>
           ))}
         </div>
@@ -916,73 +875,68 @@ function WizScan({ state, upd, context = "setup", onComplete }) {
             border: `1.5px dashed ${dragActive ? 'var(--accent)' : 'var(--edge)'}`,
             background: dragActive ? 'var(--accent-soft)' : 'var(--paper-2)',
             borderRadius: 10, textAlign: 'center', transition: 'all .15s'
-          }} className={hasRoots ? "py-5 px-6" : "py-8 px-6"} >
-          <div className="kanji" style={{ fontSize: hasRoots ? 30 : 52, color: 'var(--accent)',
-                        opacity: dragActive ? 0.75 : 0.4, lineHeight: 1 }} >庵</div>
-          <div style={{ fontSize: 15, color: 'var(--ink)', fontWeight: 500 }} className="mt-3" >
+          }} className={hasRoots ? "py-6 px-8" : "py-16 px-8"} >
+          <div className="kanji text-accent" style={{ fontSize: hasRoots ? 30 : 52,
+ opacity: dragActive ? 0.75 : 0.4, lineHeight: 1 }} >庵</div>
+          <div style={{ fontSize: 15 }} className="mt-3 text-ink font-medium" >
             {dragActive ? "Drop to add this folder" : "Drag a code folder here"}
           </div>
-          <div style={{ fontSize: 13, color: 'var(--ink-3)', lineHeight: 1.6, maxWidth: 440 }}
-               className="mt-1 mx-auto" >
+          <div style={{ fontSize: 13, lineHeight: 1.6, maxWidth: 440 }}
+ className="mt-1 mx-auto text-ink-3" >
             Add the top-level folders your projects live in — like <span className="mono">~/code</span> or{" "}
             <span className="mono">~/work</span>. Not individual repos; sensei recurses to find them.
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-               className="gap-2 mt-4" >
+          <div 
+ className="gap-2 mt-4 flex items-center justify-center" >
             <button onClick={() => fileInputRef.current && fileInputRef.current.click()}
-                    style={{ fontSize: 13, background: 'var(--ink)', color: 'var(--paper)',
-                             borderRadius: 6 }} className="py-2 px-4" >
+ style={{ fontSize: 13,
+ borderRadius: 6 }} className="py-2 px-4 bg-ink text-paper" >
               Browse…
             </button>
-            <span style={{ fontSize: 11, color: 'var(--ink-4)' }}>or</span>
-            <div style={{ display: 'flex', alignItems: 'center', background: 'var(--paper)',
-                          border: 'var(--hairline)', borderRadius: 6 }} className="gap-1 pl-2 pr-1 py-1" >
+            <span className="text-ink-4" style={{ fontSize: 11 }}>or</span>
+            <div style={{ borderRadius: 6 }} className="gap-1 pl-2 pr-1 py-1 flex items-center bg-paper border border-paper-edge" >
               <input value={state.newFolder}
-                     onChange={e => upd({ newFolder: e.target.value })}
-                     onKeyDown={e => e.key === "Enter" && addRoot(state.newFolder)}
-                     placeholder="paste a path…"
-                     className="mono"
-                     style={{ border: 'none', outline: 'none', background: 'transparent',
-                              fontSize: 12, width: 156, color: 'var(--ink)' }}/>
+ onChange={e => upd({ newFolder: e.target.value })}
+ onKeyDown={e => e.key === "Enter" && addRoot(state.newFolder)}
+ placeholder="paste a path…"
+ className="mono border-0 bg-transparent text-ink"
+ style={{ outline: 'none',
+ fontSize: 12, width: 156 }}/>
               <button onClick={() => addRoot(state.newFolder)}
-                      style={{ fontSize: 11, color: 'var(--ink-2)', border: 'var(--hairline)',
-                               borderRadius: 4 }} className="py-1 px-2" >add</button>
+ style={{ fontSize: 11,
+ borderRadius: 4 }} className="py-1 px-2 text-ink-2 border border-paper-edge" >add</button>
             </div>
           </div>
-          <input ref={fileInputRef} type="file" webkitdirectory="" directory=""
-                 onChange={onBrowse} style={{ display: 'none' }}/>
+          <input className="hidden" ref={fileInputRef} type="file" webkitdirectory="" directory=""
+ onChange={onBrowse} />
         </div>
 
         {/* Added roots */}
         {hasRoots && (
-          <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1 mt-4" >
+          <div className="gap-1 mt-4 flex flex-col" >
             {state.folders.map(f => (
-              <div key={f.id} style={{
-                display: 'grid', gridTemplateColumns: 'auto 1fr auto auto', alignItems: 'center',
-                border: 'var(--hairline)', borderRadius: 6, background: 'var(--paper-2)'
-              }} className="gap-3 py-2 px-3" >
-                <span className="kanji" style={{ fontSize: 13, color: 'var(--accent)' }}>庵</span>
-                <span className="mono" style={{ fontSize: 13, color: 'var(--ink)' }}>{f.path}</span>
-                <span className="mono py-1 px-2" style={{ fontSize: 11, color: 'var(--ink-3)',
-                              background: 'var(--paper)', borderRadius: 3, border: 'var(--hairline)' }}>recursive</span>
+              <div key={f.id} style={{ gridTemplateColumns: 'auto 1fr auto auto', borderRadius: 6 }} className="gap-3 py-2 px-3 grid items-center border border-paper-edge bg-paper-2" >
+                <span className="kanji text-accent" style={{ fontSize: 13 }}>庵</span>
+                <span className="mono text-ink" style={{ fontSize: 13 }}>{f.path}</span>
+                <span className="mono py-1 px-2 text-ink-3 bg-paper border border-paper-edge" style={{ fontSize: 11, borderRadius: 3 }}>recursive</span>
                 <button onClick={() => removeRoot(f.id)}
-                        style={{ fontSize: 11, color: 'var(--ink-4)' }} className="py-1 px-2" >remove</button>
+ style={{ fontSize: 11 }} className="py-1 px-2 text-ink-4" >remove</button>
               </div>
             ))}
           </div>
         )}
 
         {/* Begin — gated on at least one root */}
-        <div style={{ display: 'flex', alignItems: 'center' }} className="gap-3 mt-5" >
+        <div className="gap-3 mt-6 flex items-center" >
           <button onClick={start} disabled={!hasRoots}
                   style={{ fontSize: 13,
                            background: hasRoots ? 'var(--ink)' : 'var(--edge)',
                            color: hasRoots ? 'var(--paper)' : 'var(--ink-4)',
                            borderRadius: 6, cursor: hasRoots ? 'pointer' : 'default' }}
-                  className="py-3 px-5" >
+                  className="py-3 px-6" >
             {isPrefs ? "Re-scan" : "Begin scan"} →
           </button>
-          <span style={{ fontSize: 11, color: 'var(--ink-3)', lineHeight: 1.5 }}>
+          <span className="text-ink-3" style={{ fontSize: 11, lineHeight: 1.5 }}>
             {hasRoots
               ? `Two workers · ~2M files / minute on this machine.${isPrefs ? " Re-scanning picks up new repos." : ""}`
               : "Add at least one folder to begin."}
@@ -990,7 +944,7 @@ function WizScan({ state, upd, context = "setup", onComplete }) {
         </div>
 
         {isFirstRun && (
-          <div style={{ fontSize: 11, color: 'var(--ink-3)', lineHeight: 1.6 }} className="mt-4" >
+          <div style={{ fontSize: 11, lineHeight: 1.6 }} className="mt-4 text-ink-3" >
             Scanning is entirely local — nothing leaves your machine.
           </div>
         )}
@@ -1070,10 +1024,7 @@ function WizScan({ state, upd, context = "setup", onComplete }) {
                  tagline={done ? "The map is drawn." : "Workers recurse. Repos surface."}/>
 
       {/* Stats strip */}
-      <div style={{
- display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)',
-                     border: 'var(--hairline)', borderRadius: 8, background: 'var(--paper-2)', overflow: 'hidden'
-}} className="mb-4 gap-0" >
+      <div style={{ gridTemplateColumns: 'repeat(4, 1fr)', borderRadius: 8 }} className="mb-4 gap-0 grid border border-paper-edge bg-paper-2 overflow-hidden" >
         <ScanStat label="Roots"      value={state.folders.length}/>
         <ScanStat label="Discovered" value={stats.discovered}/>
         <ScanStat label="Queued"     value={stats.queued}/>
@@ -1082,26 +1033,24 @@ function WizScan({ state, upd, context = "setup", onComplete }) {
 
       {/* Progress line */}
       <div style={{
- height: 2, background: 'var(--edge)', borderRadius: 1, overflow: 'hidden'
-}} className="mb-5" >
-        <div style={{ height: '100%', width: `${progress * 100}%`,
-                       background: done ? 'var(--success)' : 'var(--ink)',
-                       transition: 'width 80ms linear' }}/>
+ height: 2, background: 'var(--edge)', borderRadius: 1 }} className="mb-6 overflow-hidden" >
+        <div className="h-full" style={{ width: `${progress * 100}%`,
+ background: done ? 'var(--success)' : 'var(--ink)',
+ transition: 'width 80ms linear' }}/>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', alignItems: 'start' }} className="gap-4" >
+      <div style={{ gridTemplateColumns: '1fr 320px' }} className="gap-4 grid items-start" >
         {/* ─── Left: solutions + repos materializing ─── */}
-        <div style={{ display: 'flex', flexDirection: 'column', minHeight: 360 }} className="gap-3" >
+        <div style={{ minHeight: 360 }} className="gap-3 flex flex-col" >
           {discoveredSolutions.length === 0 && (
             <div style={{
  border: '1px dashed var(--edge)',
-                           borderRadius: 10, textAlign: 'center', color: 'var(--ink-4)',
-                           fontSize: 13, fontStyle: 'italic'
-}} className="p-6" >
-              <div className="kanji mb-2" style={{
- fontSize: 40, color: 'var(--accent)',
-                             opacity: 0.3
-}}>待</div>
+ borderRadius: 10,
+ fontSize: 13 }} className="p-8 text-center text-ink-4 italic" >
+              <div className="kanji mb-2 text-accent" style={{
+ fontSize: 40,
+ opacity: 0.3
+ }}>待</div>
               listening…
             </div>
           )}
@@ -1113,36 +1062,29 @@ function WizScan({ state, upd, context = "setup", onComplete }) {
         </div>
 
         {/* ─── Right: SSE event card ─── */}
-        <div style={{
-          border: 'var(--hairline)', borderRadius: 8, background: 'var(--paper-2)',
-          overflow: 'hidden', position: 'sticky', top: 0
-        }}>
+        <div className="border border-paper-edge bg-paper-2 overflow-hidden sticky" style={{ borderRadius: 8, top: 0
+ }}>
           <div style={{
- borderBottom: 'var(--hairline)',
-                         fontSize: 11, color: 'var(--ink-3)', letterSpacing: '0.12em',
-                         textTransform: 'uppercase', display: 'flex',
-                         alignItems: 'center'
-}} className="py-2 px-3 gap-2" >
-            <span style={{
-              width: 6, height: 6, borderRadius: '50%',
-              background: done ? 'var(--success)' : 'var(--accent)',
-              animation: done ? 'none' : 'pulseSm 1.2s ease-in-out infinite'
-            }}/>
+ fontSize: 11, letterSpacing: '0.12em' }} className="py-2 px-3 gap-2 border-b text-ink-3 uppercase flex items-center" >
+            <span className="rounded-full" style={{
+ width: 6, height: 6,
+ background: done ? 'var(--success)' : 'var(--accent)',
+ animation: done ? 'none' : 'pulseSm 1.2s ease-in-out infinite'
+ }}/>
             <span>SSE · /events</span>
-            <span style={{ flex: 1 }}/>
-            <span className="mono" style={{ textTransform: 'none', letterSpacing: 0 }}>
+            <span className="flex-1" />
+            <span className="mono normal-case" style={{ letterSpacing: 0 }}>
               {(tick/1000).toFixed(1)}s
             </span>
           </div>
-          <div style={{ height: 360, overflow: 'auto' }} className="py-2 px-3" >
+          <div style={{ height: 360 }} className="py-2 px-3 overflow-auto" >
             {events.slice().reverse().map((e, i) => (
-              <div key={e.t} style={{
-                display: 'grid', gridTemplateColumns: '42px 60px 1fr', fontSize: 11,
-                color: i === 0 ? 'var(--ink)' : 'var(--ink-2)',
-                opacity: i === 0 ? 1 : Math.max(0.28, 1 - i * 0.07),
-                animation: i === 0 ? 'eventIn .26s ease-out' : 'none'
-}} className="gap-2 py-1 px-0" >
-                <span className="mono" style={{ color: 'var(--ink-3)' }}>+{(e.t/1000).toFixed(2)}s</span>
+              <div key={e.t} style={{ gridTemplateColumns: '42px 60px 1fr', fontSize: 11,
+ color: i === 0 ? 'var(--ink)' : 'var(--ink-2)',
+ opacity: i === 0 ? 1 : Math.max(0.28, 1 - i * 0.07),
+ animation: i === 0 ? 'eventIn .26s ease-out' : 'none'
+ }} className="gap-2 py-1 px-0 grid" >
+                <span className="mono text-ink-3" >+{(e.t/1000).toFixed(2)}s</span>
                 <span className="mono" style={{
                   color: e.level === "success"  ? 'var(--success)' :
                          e.level === "discover" ? 'var(--accent)'  :
@@ -1151,8 +1093,7 @@ function WizScan({ state, upd, context = "setup", onComplete }) {
                 }}>
                   {e.level}
                 </span>
-                <span className="mono" style={{ overflow: 'hidden',
-                               textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.msg}</span>
+                <span className="mono overflow-hidden text-ellipsis whitespace-nowrap" >{e.msg}</span>
               </div>
             ))}
           </div>
@@ -1168,20 +1109,17 @@ function WizScan({ state, upd, context = "setup", onComplete }) {
 
       {done && (
         <div style={{
- borderRadius: 8,
-                       background: 'var(--success-soft)', fontSize: 13, color: 'var(--ink)',
-                       display: 'flex', alignItems: 'center'
-}} className="mt-4 py-3 px-4 gap-3" >
-          <span className="kanji" style={{ fontSize: 17, color: 'var(--success)' }}>✓</span>
-          <span style={{ flex: 1, lineHeight: 1.5 }}>
+ borderRadius: 8, fontSize: 13 }} className="mt-4 py-3 px-4 gap-3 bg-success-soft text-ink flex items-center" >
+          <span className="kanji text-success" style={{ fontSize: 17 }}>✓</span>
+          <span className="flex-1" style={{ lineHeight: 1.5 }}>
             8 repos indexed across {state.folders.length} {state.folders.length === 1 ? "root" : "roots"} · graph extracted
             {context === "first-run" ? " · your projects are ready." : " · you may continue."}
           </span>
           {context === "first-run" && onComplete && (
             <button onClick={onComplete}
-                    style={{ fontSize: 13, background: 'var(--ink)', color: 'var(--paper)',
-                             borderRadius: 6, letterSpacing: 0.2, whiteSpace: 'nowrap' }}
-                    className="py-2 px-4" >
+ style={{ fontSize: 13,
+ borderRadius: 6, letterSpacing: 0.2 }}
+ className="py-2 px-4 bg-ink text-paper whitespace-nowrap" >
               Open {discoveredSolutions.length} projects →
             </button>
           )}
@@ -1202,34 +1140,32 @@ function ScanSolutionCard({ sol, solState, repoStates }) {
 
   return (
     <div style={{
-      border: allDone ? '1.5px solid var(--ink-2)' : 'var(--hairline)',
-      borderRadius: 10, background: 'var(--paper-2)',
-      animation: 'cardIn .34s ease-out',
-      transition: 'border .3s'
-}} className="py-4 px-4" >
-      <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto', alignItems: 'center' }} className="gap-3" >
-        <div className="kanji" style={{
-          fontSize: 22, width: 38, height: 38, borderRadius: '50%',
-          background: 'var(--paper)', border: 'var(--hairline)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          color: allDone ? 'var(--accent)' : 'var(--ink-3)',
-          transition: 'color .3s'
-        }}>{sol.kanji}</div>
-        <div style={{ minWidth: 0 }}>
+ border: allDone ? '1.5px solid var(--ink-2)' : 'var(--hairline)',
+ borderRadius: 10,
+ animation: 'cardIn .34s ease-out',
+ transition: 'border .3s'
+ }} className="py-4 px-4 bg-paper-2" >
+      <div style={{ gridTemplateColumns: 'auto 1fr auto' }} className="gap-3 grid items-center" >
+        <div className="kanji rounded-full bg-paper border border-paper-edge flex items-center justify-center" style={{
+ fontSize: 22, width: 38, height: 38,
+ color: allDone ? 'var(--accent)' : 'var(--ink-3)',
+ transition: 'color .3s'
+ }}>{sol.kanji}</div>
+        <div className="min-w-0" >
           <div className="display" style={{ fontSize: 17 }}>{sol.name}</div>
-          <div className="mono mt-1" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+          <div className="mono mt-1 text-ink-3" style={{ fontSize: 11 }}>
             {sol.path} · {discoveredRepos.length} {discoveredRepos.length === 1 ? "repo" : "repos"}
             {!allDone && discoveredRepos.length > 0 && ` · ${doneCount} ready`}
           </div>
         </div>
-        <div style={{ textAlign: 'right' }}>
-          <div className="mono" style={{ fontSize: 11,
-                         color: allDone ? 'var(--success)' : 'var(--ink-3)',
-                         letterSpacing: '0.1em', textTransform: 'uppercase' }}>
+        <div className="text-right" >
+          <div className="mono uppercase" style={{ fontSize: 11,
+ color: allDone ? 'var(--success)' : 'var(--ink-3)',
+ letterSpacing: '0.1em' }}>
             {allDone ? "ready" : solState.state}
           </div>
           {totalFiles > 0 && !allDone && (
-            <div className="mono mt-1" style={{ fontSize: 11, color: 'var(--ink-2)' }}>
+            <div className="mono mt-1 text-ink-2" style={{ fontSize: 11 }}>
               {processedFiles.toLocaleString()} / {totalFiles.toLocaleString()}
             </div>
           )}
@@ -1238,51 +1174,43 @@ function ScanSolutionCard({ sol, solState, repoStates }) {
 
       {/* Repos list */}
       {discoveredRepos.length > 0 && (
-        <div style={{
-                       display: 'flex', flexDirection: 'column'
-}} className="mt-3 gap-1 pl-7" >
+        <div className="mt-3 gap-1 pl-12 flex flex-col" >
           {discoveredRepos.map(([p, rs]) => {
             const pct = rs.totalFiles > 0 ? rs.processed / rs.totalFiles : 0;
             const isDone = rs.state === "done";
             const isProcessing = rs.state === "processing";
             return (
-              <div key={p.id} style={{
-                display: 'grid', gridTemplateColumns: '140px 1fr 70px', alignItems: 'center',
-                animation: 'repoIn .26s ease-out'
-}} className="gap-3" >
-                <div style={{ display: 'flex', alignItems: 'center' }} className="gap-1" >
-                  <span style={{
-                    width: 5, height: 5, borderRadius: '50%',
-                    background: isDone ? 'var(--success)' :
-                                isProcessing ? 'var(--accent)' :
-                                rs.state === "queued" ? 'var(--warning)' : 'var(--ink-4)',
-                    animation: isProcessing ? 'pulseSm 1.2s ease-in-out infinite' : 'none'
-                  }}/>
-                  <span className="mono" style={{ fontSize: 11, color: 'var(--ink-2)',
-                                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <div key={p.id} style={{ gridTemplateColumns: '140px 1fr 70px',
+ animation: 'repoIn .26s ease-out'
+ }} className="gap-3 grid items-center" >
+                <div className="gap-1 flex items-center" >
+                  <span className="rounded-full" style={{
+ width: 5, height: 5,
+ background: isDone ? 'var(--success)' :
+ isProcessing ? 'var(--accent)' :
+ rs.state === "queued" ? 'var(--warning)' : 'var(--ink-4)',
+ animation: isProcessing ? 'pulseSm 1.2s ease-in-out infinite' : 'none'
+ }}/>
+                  <span className="mono text-ink-2 overflow-hidden text-ellipsis whitespace-nowrap" style={{ fontSize: 11 }}>
                     {p.name}
                   </span>
                 </div>
                 {/* progress track */}
-                <div style={{ height: 2, background: 'var(--edge)', borderRadius: 1,
-                               overflow: 'hidden', position: 'relative' }}>
-                  <div style={{
-                    position: 'absolute', inset: 0, width: `${pct * 100}%`,
-                    background: isDone ? 'var(--success)' : 'var(--ink)',
-                    transition: 'width .3s ease-out'
-                  }}/>
+                <div className="overflow-hidden relative" style={{ height: 2, background: 'var(--edge)', borderRadius: 1 }}>
+                  <div className="absolute" style={{ inset: 0, width: `${pct * 100}%`,
+ background: isDone ? 'var(--success)' : 'var(--ink)',
+ transition: 'width .3s ease-out'
+ }}/>
                   {isProcessing && (
-                    <div style={{
-                      position: 'absolute', inset: 0, width: `${pct * 100}%`,
-                      background: 'linear-gradient(90deg, transparent, var(--paper) 50%, transparent)',
-                      backgroundSize: '80px 100%',
-                      animation: 'shimmer 1.4s linear infinite',
-                      mixBlendMode: 'overlay'
-                    }}/>
+                    <div className="absolute" style={{ inset: 0, width: `${pct * 100}%`,
+ background: 'linear-gradient(90deg, transparent, var(--paper) 50%, transparent)',
+ backgroundSize: '80px 100%',
+ animation: 'shimmer 1.4s linear infinite',
+ mixBlendMode: 'overlay'
+ }}/>
                   )}
                 </div>
-                <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)',
-                                textAlign: 'right' }}>
+                <span className="mono text-ink-3 text-right" style={{ fontSize: 11 }}>
                   {isDone ? p.lang.split(' ')[0] :
                    rs.state === "queued" ? `${rs.queued}f` :
                    `${rs.processed}/${rs.totalFiles}`}
@@ -1298,13 +1226,11 @@ function ScanSolutionCard({ sol, solState, repoStates }) {
 
 function ScanStat({ label, value, accent }) {
   return (
-    <div style={{ borderRight: 'var(--hairline)' }} className="py-4 px-4" >
-      <div className="display" style={{ fontSize: 28, fontWeight: 400,
-                     color: accent ? 'var(--accent)' : 'var(--ink)' }}>{value}</div>
+    <div className="py-4 px-4 border-r" >
+      <div className="display font-normal" style={{ fontSize: 28,
+ color: accent ? 'var(--accent)' : 'var(--ink)' }}>{value}</div>
       <div style={{
- fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
-                     color: 'var(--ink-3)'
-}} className="mt-1" >{label}</div>
+ fontSize: 11, letterSpacing: '0.14em' }} className="mt-1 uppercase text-ink-3" >{label}</div>
     </div>
   );
 }
@@ -1410,11 +1336,11 @@ function WizProjects({ state, upd }) {
       <WizHeader n="組" title="Projects"
                  tagline="A project has one or more repos. Edit, split, or confirm."/>
 
-      <div style={{ fontSize: 13, color: 'var(--ink-3)' }} className="mb-4" >
+      <div style={{ fontSize: 13 }} className="mb-4 text-ink-3" >
         A single-repo project is the default. Multi-repo projects are auto-grouped from sibling folders and name patterns. Split when they shouldn't be together.
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-3" >
+      <div className="gap-3 flex flex-col" >
         {activeSols.map(s => {
           const isMulti = s.projects.length > 1;
           const isExpanded = selected === s.id;
@@ -1422,41 +1348,30 @@ function WizProjects({ state, upd }) {
           const mergeTargets = sols.filter(x => x.id !== s.id);
           return (
           <div key={s.id} style={{
-            border: 'var(--hairline)',
-            borderRadius: 10, background: s.confirmed ? 'var(--paper-2)' : 'var(--paper)', opacity: s.confirmed ? 1 : 0.55, transition: 'all .2s',
-            position: 'relative'
-}} className="p-4" >
+ borderRadius: 10, background: s.confirmed ? 'var(--paper-2)' : 'var(--paper)', opacity: s.confirmed ? 1 : 0.55, transition: 'all .2s' }} className="p-4 border border-paper-edge relative" >
             <div style={{
- display: 'grid',
-                           gridTemplateColumns: 'auto 1fr auto auto auto auto auto', alignItems: 'center'
-}} className="gap-3" >
-              <div className="kanji" style={{
-                fontSize: 28, color: 'var(--accent)',
-                width: 42, height: 42, borderRadius: '50%',
-                background: 'var(--paper)', border: 'var(--hairline)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center'
-              }}>{s.kanji}</div>
+ gridTemplateColumns: 'auto 1fr auto auto auto auto auto' }} className="gap-3 grid items-center" >
+              <div className="kanji text-accent rounded-full bg-paper border border-paper-edge flex items-center justify-center" style={{
+ fontSize: 28,
+ width: 42, height: 42 }}>{s.kanji}</div>
               <div>
                 <input value={s.renamed ?? s.name}
-                       onChange={e => rename(s.id, e.target.value)}
-                       className="display p-0"
-                       style={{
-                         fontSize: 22, fontWeight: 400, background: 'transparent',
-                         border: 'none', outline: 'none',
-                         borderBottom: '1px dashed transparent', width: '100%'
-}}
-                       onFocus={e => e.target.style.borderBottom = '1px dashed var(--ink-3)'}
-                       onBlur={e => e.target.style.borderBottom = '1px dashed transparent'}/>
-                <div className="mono mt-1" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+ onChange={e => rename(s.id, e.target.value)}
+ className="display p-0 font-normal bg-transparent border-0 w-full"
+ style={{
+ fontSize: 22, outline: 'none',
+ borderBottom: '1px dashed transparent' }}
+ onFocus={e => e.target.style.borderBottom = '1px dashed var(--ink-3)'}
+ onBlur={e => e.target.style.borderBottom = '1px dashed transparent'}/>
+                <div className="mono mt-1 text-ink-3" style={{ fontSize: 11 }}>
                   {s.path} · {s.projects.length} {s.projects.length === 1 ? "repo" : "repos"}
                 </div>
               </div>
               {isMulti ? (
-                <span className="mono py-1 px-2" style={{
- fontSize: 11, color: 'var(--accent)',
-                              letterSpacing: '0.1em', textTransform: 'uppercase', border: '1px solid var(--accent)',
-                              borderRadius: 3, background: 'var(--accent-soft)'
-}}>
+                <span className="mono py-1 px-2 text-accent uppercase bg-accent-soft" style={{
+ fontSize: 11,
+ letterSpacing: '0.1em', border: '1px solid var(--accent)',
+ borderRadius: 3 }}>
                   multi-repo
                 </span>
               ) : <span/>}
@@ -1464,147 +1379,117 @@ function WizProjects({ state, upd }) {
               {/* merge button (only shown when there's another project to merge with) */}
               {mergeTargets.length > 0 ? (
                 <button onClick={() => { setMergeMenu(isMergeOpen ? null : s.id); setRepoMenu(null); }}
-                        style={{
- fontSize: 11, color: 'var(--ink-3)',
-                                  borderRadius: 4
-}} className="py-1 px-2" >
+ style={{
+ fontSize: 11,
+ borderRadius: 4
+ }} className="py-1 px-2 text-ink-3" >
                   merge…
                 </button>
               ) : <span/>}
 
               <button onClick={() => setSelected(isExpanded ? null : s.id)}
-                      style={{
- fontSize: 11, color: 'var(--ink-3)',
-                                borderRadius: 4, display: 'flex', alignItems: 'center'
-}} className="py-1 px-2 gap-1" >
+ style={{
+ fontSize: 11,
+ borderRadius: 4 }} className="py-1 px-2 gap-1 text-ink-3 flex items-center" >
                 {isExpanded ? "hide" : "edit"}
                 <span style={{ fontSize: 11, transform: isExpanded ? 'rotate(180deg)' : 'none',
                                 transition: 'transform .2s' }}>▾</span>
               </button>
               <button onClick={() => exclude(s.id)}
-                      title="Not a project — exclude from scan"
-                      style={{ fontSize: 11, color: 'var(--ink-3)', borderRadius: 4 }}
-                      className="py-1 px-2" >
+ title="Not a project — exclude from scan"
+ style={{ fontSize: 11, borderRadius: 4 }}
+ className="py-1 px-2 text-ink-3" >
                 exclude
               </button>
-              <button onClick={() => toggle(s.id)}
-                      style={{
-                        width: 22, height: 22, borderRadius: 4,
-                        background: s.confirmed ? 'var(--ink)' : 'transparent',
-                        border: s.confirmed ? 'none' : 'var(--ink-line)',
-                        color: 'var(--paper)',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center'
-                      }}>
+              <button className="text-paper flex items-center justify-center" onClick={() => toggle(s.id)}
+ style={{
+ width: 22, height: 22, borderRadius: 4,
+ background: s.confirmed ? 'var(--ink)' : 'transparent',
+ border: s.confirmed ? 'none' : 'var(--ink-line)' }}>
                 {s.confirmed && <svg width="12" height="12" viewBox="0 0 16 16"><path d="M3 8 L7 12 L13 4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>}
               </button>
             </div>
 
             {/* Merge target picker */}
             {isMergeOpen && (
-              <div style={{
-                background: 'var(--paper)', border: 'var(--hairline)', borderRadius: 6,
-                animation: 'expandIn .2s ease-out'
-}} className="mt-3 py-3 px-3 pl-7" >
+              <div style={{ borderRadius: 6,
+ animation: 'expandIn .2s ease-out'
+ }} className="mt-3 py-3 px-3 pl-12 bg-paper border border-paper-edge" >
                 <div style={{
- fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
-                               textTransform: 'uppercase'
-}} className="mb-2" >
+ fontSize: 11, letterSpacing: '0.14em' }} className="mb-2 text-ink-3 uppercase" >
                   Merge {s.renamed ?? s.name} into…
                 </div>
-                <div style={{ display: 'flex', flexWrap: 'wrap' }} className="gap-1" >
+                <div className="gap-1 flex flex-wrap" >
                   {mergeTargets.map(t => (
                     <button key={t.id} onClick={() => mergeInto(s.id, t.id)}
-                            className="mono py-1 px-2 gap-1" style={{
-                              fontSize: 11, borderRadius: 4,
-                              border: 'var(--hairline)', background: 'var(--paper-2)',
-                              color: 'var(--ink-2)', display: 'inline-flex',
-                              alignItems: 'center'
-}}>
-                      <span className="kanji" style={{ color: 'var(--accent)', fontSize: 13 }}>{t.kanji}</span>
+ className="mono py-1 px-2 gap-1 border border-paper-edge bg-paper-2 text-ink-2 inline-flex items-center" style={{
+ fontSize: 11, borderRadius: 4 }}>
+                      <span className="kanji text-accent" style={{ fontSize: 13 }}>{t.kanji}</span>
                       {t.renamed ?? t.name}
-                      <span style={{ color: 'var(--ink-4)', fontSize: 11 }}>({t.projects.length})</span>
+                      <span className="text-ink-4" style={{ fontSize: 11 }}>({t.projects.length})</span>
                     </button>
                   ))}
-                  <button onClick={() => setMergeMenu(null)} className="mono py-1 px-2" style={{
-                    fontSize: 11, color: 'var(--ink-3)'
-}}>cancel</button>
+                  <button onClick={() => setMergeMenu(null)} className="mono py-1 px-2 text-ink-3" style={{
+ fontSize: 11 }}>cancel</button>
                 </div>
               </div>
             )}
 
             {/* Repo chips — compact, always visible */}
-            <div style={{
- display: 'flex', flexWrap: 'wrap'
-}} className="mt-3 gap-1 pl-7" >
+            <div className="mt-3 gap-1 pl-12 flex flex-wrap" >
               {s.projects.map(p => {
                 const role = D.roles.find(r => r.id === state.roles[p.id]);
                 const isOpen = repoMenu && repoMenu.sid === s.id && repoMenu.pid === p.id;
                 const moveTargets = sols.filter(x => x.id !== s.id);
                 return (
-                  <span key={p.id} style={{ position: 'relative', display: 'inline-block' }}>
-                    <span className="mono gap-2 py-1 pl-2 pr-1" style={{
-                      fontSize: 11,
-                      background: 'var(--paper)', border: 'var(--hairline)',
-                      borderRadius: 3, color: 'var(--ink-2)',
-                      display: 'inline-flex', alignItems: 'center'
-}}>
+                  <span className="relative inline-block" key={p.id} >
+                    <span className="mono gap-2 py-1 pl-2 pr-1 bg-paper border border-paper-edge text-ink-2 inline-flex items-center" style={{
+ fontSize: 11,
+ borderRadius: 3 }}>
                       {p.name}
-                      <span style={{ color: 'var(--ink-4)' }}>{p.files}f</span>
+                      <span className="text-ink-4" >{p.files}f</span>
                       {role && (
-                        <span style={{
- color: 'var(--accent)', fontSize: 11,
-                                        borderLeft: '1px solid var(--edge)'
-}} className="pl-2" >
+                        <span style={{ fontSize: 11,
+ borderLeft: '1px solid var(--edge)'
+ }} className="pl-2 text-accent" >
                           {role.label.toLowerCase()}
                         </span>
                       )}
                       <button onClick={(e) => {
-                                e.stopPropagation();
-                                setRepoMenu(isOpen ? null : { sid: s.id, pid: p.id });
-                                setMergeMenu(null);
-                              }}
-                              title="Move this repo"
-                              style={{
- fontSize: 13, color: 'var(--ink-3)',
-                                borderLeft: '1px solid var(--edge)',
-                                lineHeight: 1
-}} className="px-1 ml-1" >
+ e.stopPropagation();
+ setRepoMenu(isOpen ? null : { sid: s.id, pid: p.id });
+ setMergeMenu(null);
+ }}
+ title="Move this repo"
+ style={{
+ fontSize: 13,
+ borderLeft: '1px solid var(--edge)',
+ lineHeight: 1
+ }} className="px-1 ml-1 text-ink-3" >
                         ⋯
                       </button>
                     </span>
                     {isOpen && (
-                      <div style={{
-                        position: 'absolute', top: 'calc(100% + 4px)', left: 0, zIndex: 10,
-                        minWidth: 220,
-                        background: 'var(--paper)', border: 'var(--hairline)', borderRadius: 6,
-                        boxShadow: 'var(--shadow)',
-                        animation: 'expandIn .15s ease-out'
-}} className="p-1" >
+                      <div style={{ top: 'calc(100% + 4px)', left: 0, zIndex: 10,
+ minWidth: 220, borderRadius: 6,
+ animation: 'expandIn .15s ease-out'
+ }} className="p-1 absolute bg-paper border border-paper-edge shadow" >
                         <div style={{
- fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
-                                       textTransform: 'uppercase'
-}} className="py-1 px-2" >
+ fontSize: 11, letterSpacing: '0.14em' }} className="py-1 px-2 text-ink-3 uppercase" >
                           Move {p.name} to…
                         </div>
                         {moveTargets.map(t => (
                           <button key={t.id} onClick={() => moveRepo(s.id, p.id, t.id)}
-                                  className="mono py-2 px-2 gap-2" style={{
-                                    display: 'flex', width: '100%',
-                                    fontSize: 11, color: 'var(--ink-2)', borderRadius: 3,
-                                    alignItems: 'center', textAlign: 'left'
-}}>
-                            <span className="kanji" style={{ color: 'var(--accent)' }}>{t.kanji}</span>
+ className="mono py-2 px-2 gap-2 flex w-full text-ink-2 items-center text-left" style={{
+ fontSize: 11, borderRadius: 3 }}>
+                            <span className="kanji text-accent" >{t.kanji}</span>
                             {t.renamed ?? t.name}
                           </button>
                         ))}
                         {isMulti && (
                           <button onClick={() => moveRepo(s.id, p.id, "__new__")}
-                                  style={{
-                                    display: 'flex', width: '100%',
-                                    fontSize: 11, color: 'var(--ink-3)', borderRadius: 3,
-                                    borderTop: 'var(--hairline)',
-                                    textAlign: 'left'
-}} className="py-2 px-2 mt-1 pt-2" >
+ style={{
+ fontSize: 11, borderRadius: 3 }} className="py-2 px-2 mt-1 pt-2 flex w-full text-ink-3 border-t text-left" >
                             + split out as new project
                           </button>
                         )}
@@ -1614,10 +1499,10 @@ function WizProjects({ state, upd }) {
                 );
               })}
               {isMulti && (
-                <button onClick={() => split(s.id)} className="mono py-1 px-2" style={{
-                  fontSize: 11, color: 'var(--ink-3)',
-                  border: '1px dashed var(--edge)', borderRadius: 3
-}}>
+                <button onClick={() => split(s.id)} className="mono py-1 px-2 text-ink-3" style={{
+ fontSize: 11,
+ border: '1px dashed var(--edge)', borderRadius: 3
+ }}>
                   split all into {s.projects.length} projects
                 </button>
               )}
@@ -1626,30 +1511,22 @@ function WizProjects({ state, upd }) {
             {/* Expanded: rename + role picker per repo */}
             {isExpanded && (
               <div style={{
-                borderTop: 'var(--hairline)',
-                display: 'flex', flexDirection: 'column',
-                animation: 'expandIn .22s ease-out'
-}} className="mt-4 gap-1 pt-3 pl-7" >
+ animation: 'expandIn .22s ease-out'
+ }} className="mt-4 gap-1 pt-3 pl-12 border-t flex flex-col" >
                 <div style={{
- fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
-                               textTransform: 'uppercase'
-}} className="mb-1" >
+ fontSize: 11, letterSpacing: '0.14em' }} className="mb-1 text-ink-3 uppercase" >
                   Repo roles
                 </div>
                 {s.projects.map(p => (
-                  <div key={p.id} style={{
-                    display: 'grid', gridTemplateColumns: '1fr auto', alignItems: 'center'
-}} className="gap-3 py-2 px-0" >
+                  <div key={p.id} style={{ gridTemplateColumns: '1fr auto' }} className="gap-3 py-2 px-0 grid items-center" >
                     <div>
-                      <div className="mono" style={{ fontSize: 13, color: 'var(--ink-2)' }}>{p.name}</div>
-                      <div style={{ fontSize: 11, color: 'var(--ink-3)' }} className="mt-1" >
+                      <div className="mono text-ink-2" style={{ fontSize: 13 }}>{p.name}</div>
+                      <div style={{ fontSize: 11 }} className="mt-1 text-ink-3" >
                         {p.lang} · {p.files} files
                       </div>
                     </div>
-                    <div style={{
- display: 'flex',
-                                   background: 'var(--paper)', borderRadius: 4
-}} className="gap-1 p-1" >
+                    <div style={{ borderRadius: 4
+ }} className="gap-1 p-1 flex bg-paper" >
                       {D.roles.map(r => (
                         <button key={r.id} onClick={() => setRole(p.id, r.id)}
                                 title={r.label}
@@ -1675,36 +1552,33 @@ function WizProjects({ state, upd }) {
       </div>
 
       {excludedSols.length > 0 && (
-        <div className="mt-5" >
-          <div style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
-                         textTransform: 'uppercase' }} className="mb-2" >
+        <div className="mt-6" >
+          <div style={{ fontSize: 11, letterSpacing: '0.14em' }} className="mb-2 text-ink-3 uppercase" >
             Excluded from scan · {excludedSols.length}
           </div>
-          <div style={{ fontSize: 12, color: 'var(--ink-3)', lineHeight: 1.5, maxWidth: 620 }} className="mb-3" >
+          <div style={{ fontSize: 12, lineHeight: 1.5, maxWidth: 620 }} className="mb-3 text-ink-3" >
             These folders sit inside a watched folder but aren't projects. Sensei keeps watching the
             folder and skips them — recorded as exclusions on the folder.
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
+          <div className="gap-1 flex flex-col" >
             {excludedSols.map(s => (
-              <div key={s.id} style={{
-                     display: 'grid', gridTemplateColumns: 'auto 1fr auto', alignItems: 'center',
-                     background: 'var(--paper-2)', border: 'var(--hairline)', borderRadius: 6, opacity: 0.85
-}} className="gap-3 py-2 px-3" >
-                <span className="kanji" style={{ fontSize: 15, color: 'var(--ink-4)' }}>{s.kanji}</span>
+              <div key={s.id} style={{ gridTemplateColumns: 'auto 1fr auto', borderRadius: 6, opacity: 0.85
+ }} className="gap-3 py-2 px-3 grid items-center bg-paper-2 border border-paper-edge" >
+                <span className="kanji text-ink-4" style={{ fontSize: 15 }}>{s.kanji}</span>
                 <div>
-                  <div style={{ fontSize: 13, color: 'var(--ink-2)' }}>{s.renamed ?? s.name}</div>
-                  <div className="mono mt-1" style={{ fontSize: 11, color: 'var(--ink-4)' }}>{s.path}</div>
+                  <div className="text-ink-2" style={{ fontSize: 13 }}>{s.renamed ?? s.name}</div>
+                  <div className="mono mt-1 text-ink-4" style={{ fontSize: 11 }}>{s.path}</div>
                 </div>
                 <button onClick={() => restore(s.id)}
-                        style={{ fontSize: 11, color: 'var(--accent)', borderRadius: 4 }}
-                        className="py-1 px-2" >restore</button>
+ style={{ fontSize: 11, borderRadius: 4 }}
+ className="py-1 px-2 text-accent" >restore</button>
               </div>
             ))}
           </div>
         </div>
       )}
 
-      <div style={{ fontSize: 13, color: 'var(--ink-3)' }} className="mt-4" >
+      <div style={{ fontSize: 13 }} className="mt-4 text-ink-3" >
         More options — external integrations, clients, custom rules — per project later from its Settings.
       </div>
     </div>
@@ -1725,31 +1599,25 @@ function WizMetadata({ state, upd }) {
     <div style={{ maxWidth: 820 }} className="mx-auto" >
       <WizHeader n="七" title="Context" tagline="Optional. Helps sensei tailor its coaching."/>
 
-      <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-4" >
+      <div className="gap-4 flex flex-col" >
         {state.solutions.filter(s => s.confirmed).map(s => (
-          <div key={s.id} style={{
- border: 'var(--hairline)', borderRadius: 10,
-            background: 'var(--paper-2)'
-}} className="p-5" >
-            <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2 mb-4" >
-              <span className="kanji" style={{ fontSize: 22, color: 'var(--accent)' }}>{s.kanji}</span>
+          <div key={s.id} style={{ borderRadius: 10 }} className="p-6 border border-paper-edge bg-paper-2" >
+            <div className="gap-2 mb-4 flex items-baseline" >
+              <span className="kanji text-accent" style={{ fontSize: 22 }}>{s.kanji}</span>
               <span className="display" style={{ fontSize: 22 }}>{s.renamed ?? s.name}</span>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr' }} className="gap-4" >
+            <div style={{ gridTemplateColumns: '1fr 1fr' }} className="gap-4 grid" >
               <MetaField label="Stage">
-                <div style={{
- display: 'flex',
-                               background: 'var(--paper)', borderRadius: 5
-}} className="gap-1 p-1" >
+                <div style={{ borderRadius: 5
+ }} className="gap-1 p-1 flex bg-paper" >
                   {D.metadata.statuses.map(st => (
                     <button key={st.id}
-                            onClick={() => setMeta(s.id, "status", st.id)}
-                            style={{
-                              flex: 1, fontSize: 11, borderRadius: 3,
-                              background: state.metadata[s.id].status === st.id ? 'var(--ink)' : 'transparent',
-                              color: state.metadata[s.id].status === st.id ? 'var(--paper)' : 'var(--ink-3)'
-}} className="py-1 px-2" >
+ onClick={() => setMeta(s.id, "status", st.id)}
+ style={{ fontSize: 11, borderRadius: 3,
+ background: state.metadata[s.id].status === st.id ? 'var(--ink)' : 'transparent',
+ color: state.metadata[s.id].status === st.id ? 'var(--paper)' : 'var(--ink-3)'
+ }} className="py-1 px-2 flex-1" >
                       {st.label}
                     </button>
                   ))}
@@ -1758,25 +1626,21 @@ function WizMetadata({ state, upd }) {
 
               <MetaField label="Client (optional)">
                 <input value={state.metadata[s.id].client}
-                       onChange={e => setMeta(s.id, "client", e.target.value)}
-                       placeholder="e.g. Internal"
-                       style={{
-                         width: '100%', fontSize: 13,
-                         background: 'var(--paper)', border: 'var(--hairline)',
-                         borderRadius: 5, outline: 'none'
-}} className="py-2 px-3" />
+ onChange={e => setMeta(s.id, "client", e.target.value)}
+ placeholder="e.g. Internal"
+ style={{ fontSize: 13,
+ borderRadius: 5, outline: 'none'
+ }} className="py-2 px-3 w-full bg-paper border border-paper-edge" />
               </MetaField>
 
               <div style={{ gridColumn: 'span 2' }}>
                 <MetaField label="Goal">
                   <input value={state.metadata[s.id].goal}
-                         onChange={e => setMeta(s.id, "goal", e.target.value)}
-                         placeholder="One sentence. Why this exists."
-                         style={{
-                           width: '100%', fontSize: 13,
-                           background: 'var(--paper)', border: 'var(--hairline)',
-                           borderRadius: 5, outline: 'none'
-}} className="py-2 px-3" />
+ onChange={e => setMeta(s.id, "goal", e.target.value)}
+ placeholder="One sentence. Why this exists."
+ style={{ fontSize: 13,
+ borderRadius: 5, outline: 'none'
+ }} className="py-2 px-3 w-full bg-paper border border-paper-edge" />
                 </MetaField>
               </div>
             </div>
@@ -1784,7 +1648,7 @@ function WizMetadata({ state, upd }) {
         ))}
       </div>
 
-      <div style={{ fontSize: 13, color: 'var(--ink-3)' }} className="mt-4" >
+      <div style={{ fontSize: 13 }} className="mt-4 text-ink-3" >
         Skip if you like. These can be edited per-solution from the Coaching page.
       </div>
     </div>
@@ -1795,9 +1659,7 @@ function MetaField({ label, children }) {
   return (
     <div>
       <div style={{
- fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
-                     color: 'var(--ink-3)'
-}} className="mb-1" >{label}</div>
+ fontSize: 11, letterSpacing: '0.14em' }} className="mb-1 uppercase text-ink-3" >{label}</div>
       {children}
     </div>
   );
@@ -1835,24 +1697,23 @@ function WizLibraries({ state, upd }) {
                  tagline="Libraries without their own MCP — sensei indexes docs & code and wraps them with its own tools. Anything with a proper MCP (like Postgres or Stripe) comes in the next step."/>
 
       {/* Summary bar */}
-      <div style={{ display: 'flex', alignItems: 'center' }} className="gap-3 mb-4" >
-        <span className="mono py-1 px-2" style={{
- fontSize: 11, color: 'var(--ink-2)', background: 'var(--paper-2)',
-                      border: 'var(--hairline)', borderRadius: 4
-}}>
+      <div className="gap-3 mb-4 flex items-center" >
+        <span className="mono py-1 px-2 text-ink-2 bg-paper-2 border border-paper-edge" style={{
+ fontSize: 11, borderRadius: 4
+ }}>
           {D.detected.length} detected
         </span>
-        <span className="mono py-1 px-2" style={{
- fontSize: 11, color: 'var(--success)', background: 'var(--success-soft)',
-                      borderRadius: 4
-}}>
+        <span className="mono py-1 px-2 text-success bg-success-soft" style={{
+ fontSize: 11,
+ borderRadius: 4
+ }}>
           {activeCount} will be wrapped
         </span>
         {state.libExtras.length > 0 && (
-          <span className="mono py-1 px-2" style={{
- fontSize: 11, color: 'var(--accent)', background: 'var(--accent-soft)',
-                        borderRadius: 4
-}}>
+          <span className="mono py-1 px-2 text-accent bg-accent-soft" style={{
+ fontSize: 11,
+ borderRadius: 4
+ }}>
             {state.libExtras.length} added by you
           </span>
         )}
@@ -1860,48 +1721,39 @@ function WizLibraries({ state, upd }) {
 
       {/* Detected libraries */}
       <div style={{
- fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
-                     textTransform: 'uppercase'
-}} className="mb-2" >
+ fontSize: 11, letterSpacing: '0.14em' }} className="mb-2 text-ink-3 uppercase" >
         Detected · sensei will wrap
       </div>
-      <div style={{
- display: 'flex', flexDirection: 'column',
-                     border: 'var(--hairline)', borderRadius: 6,
-                     background: 'var(--paper-2)'
-}} className="mb-5" >
+      <div style={{ borderRadius: 6 }} className="mb-6 flex flex-col border border-paper-edge bg-paper-2" >
         {D.detected.map((lib, i) => {
           const on = !!state.libraries[lib.id];
           return (
             <div key={lib.id}
-                 style={{
- display: 'grid',
-                           gridTemplateColumns: 'auto 1fr auto auto auto', alignItems: 'center',
-                           borderBottom: i < D.detected.length - 1 ? 'var(--hairline)' : 'none',
-                           opacity: on ? 1 : 0.45
-}} className="gap-3 py-3 px-3" >
-              <button onClick={() => toggle(lib.id)}
-                      style={{ width: 18, height: 18, borderRadius: 3,
-                                border: '1.5px solid ' + (on ? 'var(--accent)' : 'var(--ink-4)'),
-                                background: on ? 'var(--accent)' : 'transparent',
-                                color: 'var(--paper)', fontSize: 11, lineHeight: 1 }}>
+ style={{
+ gridTemplateColumns: 'auto 1fr auto auto auto',
+ borderBottom: i < D.detected.length - 1 ? 'var(--hairline)' : 'none',
+ opacity: on ? 1 : 0.45
+ }} className="gap-3 py-3 px-3 grid items-center" >
+              <button className="text-paper" onClick={() => toggle(lib.id)}
+ style={{ width: 18, height: 18, borderRadius: 3,
+ border: '1.5px solid ' + (on ? 'var(--accent)' : 'var(--ink-4)'),
+ background: on ? 'var(--accent)' : 'transparent', fontSize: 11, lineHeight: 1 }}>
                 {on ? "✓" : ""}
               </button>
               <div>
-                <div style={{ fontSize: 13, color: 'var(--ink)' }}>
+                <div className="text-ink" style={{ fontSize: 13 }}>
                   {lib.name}
-                  <span className="mono ml-2" style={{
- fontSize: 11, color: 'var(--ink-4)'
-}}>{lib.version}</span>
+                  <span className="mono ml-2 text-ink-4" style={{
+ fontSize: 11 }}>{lib.version}</span>
                 </div>
-                <div style={{ fontSize: 11, color: 'var(--ink-3)' }} className="mt-1" >
+                <div style={{ fontSize: 11 }} className="mt-1 text-ink-3" >
                   {lib.why}
                 </div>
               </div>
-              <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+              <span className="mono text-ink-3" style={{ fontSize: 11 }}>
                 {lib.lang}
               </span>
-              <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+              <span className="mono text-ink-3" style={{ fontSize: 11 }}>
                 {lib.usage}× uses
               </span>
               <LibDocChip status={lib.docs}/>
@@ -1914,44 +1766,36 @@ function WizLibraries({ state, upd }) {
       {state.libExtras.length > 0 && (
         <>
           <div style={{
- fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
-                         textTransform: 'uppercase'
-}} className="mb-2" >
+ fontSize: 11, letterSpacing: '0.14em' }} className="mb-2 text-ink-3 uppercase" >
             Added by you
           </div>
-          <div style={{
- display: 'flex', flexDirection: 'column',
-                         border: 'var(--hairline)', borderRadius: 6,
-                         background: 'var(--paper-2)'
-}} className="mb-5" >
+          <div style={{ borderRadius: 6 }} className="mb-6 flex flex-col border border-paper-edge bg-paper-2" >
             {state.libExtras.map((lib, i) => {
               const on = lib.on;
               return (
                 <div key={lib.id}
-                     style={{
- display: 'grid',
-                               gridTemplateColumns: 'auto 1fr auto auto', alignItems: 'center',
-                               borderBottom: i < state.libExtras.length - 1 ? 'var(--hairline)' : 'none',
-                               opacity: on ? 1 : 0.45
-}} className="gap-3 py-3 px-3" >
-                  <button onClick={() => toggleExtra(lib.id)}
-                          style={{ width: 18, height: 18, borderRadius: 3,
-                                    border: '1.5px solid ' + (on ? 'var(--accent)' : 'var(--ink-4)'),
-                                    background: on ? 'var(--accent)' : 'transparent',
-                                    color: 'var(--paper)', fontSize: 11, lineHeight: 1 }}>
+ style={{
+ gridTemplateColumns: 'auto 1fr auto auto',
+ borderBottom: i < state.libExtras.length - 1 ? 'var(--hairline)' : 'none',
+ opacity: on ? 1 : 0.45
+ }} className="gap-3 py-3 px-3 grid items-center" >
+                  <button className="text-paper" onClick={() => toggleExtra(lib.id)}
+ style={{ width: 18, height: 18, borderRadius: 3,
+ border: '1.5px solid ' + (on ? 'var(--accent)' : 'var(--ink-4)'),
+ background: on ? 'var(--accent)' : 'transparent', fontSize: 11, lineHeight: 1 }}>
                     {on ? "✓" : ""}
                   </button>
                   <div>
-                    <div style={{ fontSize: 13, color: 'var(--ink)' }}>{lib.name}</div>
-                    <div className="mono mt-1" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+                    <div className="text-ink" style={{ fontSize: 13 }}>{lib.name}</div>
+                    <div className="mono mt-1 text-ink-3" style={{ fontSize: 11 }}>
                       {lib.url || "no URL"}
                     </div>
                   </div>
-                  <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+                  <span className="mono text-ink-3" style={{ fontSize: 11 }}>
                     {lib.lang}
                   </span>
-                  <button onClick={() => removeExtra(lib.id)}
-                          style={{ fontSize: 11, color: 'var(--ink-4)' }}>remove</button>
+                  <button className="text-ink-4" onClick={() => removeExtra(lib.id)}
+ style={{ fontSize: 11 }}>remove</button>
                 </div>
               );
             })}
@@ -1962,39 +1806,31 @@ function WizLibraries({ state, upd }) {
       {/* Add custom library */}
       {!showAdd ? (
         <button onClick={() => setShowAdd(true)}
-                style={{
+ style={{
  fontSize: 13,
-                          background: 'var(--paper-2)',
-                          border: '1px dashed var(--ink-4)', borderRadius: 6,
-                          color: 'var(--ink-2)'
-}} className="py-2 px-4" >
+ border: '1px dashed var(--ink-4)', borderRadius: 6 }} className="py-2 px-4 bg-paper-2 text-ink-2" >
           + Add a library
         </button>
       ) : (
-        <div style={{
- background: 'var(--paper-2)',
-                       border: 'var(--hairline)', borderRadius: 8,
-                       maxWidth: 640
-}} className="py-4 px-4" >
+        <div style={{ borderRadius: 8,
+ maxWidth: 640
+ }} className="py-4 px-4 bg-paper-2 border border-paper-edge" >
           <div style={{
- fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
-                         textTransform: 'uppercase'
-}} className="mb-3" >
+ fontSize: 11, letterSpacing: '0.14em' }} className="mb-3 text-ink-3 uppercase" >
             Add a library sensei should wrap
           </div>
-          <div style={{
- display: 'grid', gridTemplateColumns: '1.2fr 1fr 0.5fr'
-}} className="gap-2 mb-3" >
+          <div style={{ gridTemplateColumns: '1.2fr 1fr 0.5fr'
+ }} className="gap-2 mb-3 grid" >
             <div>
-              <div style={{ fontSize: 11, color: 'var(--ink-2)' }} className="mb-1" >Name</div>
+              <div style={{ fontSize: 11 }} className="mb-1 text-ink-2" >Name</div>
               <input value={form.name}
                      onChange={e => setForm({ ...form, name: e.target.value })}
                      placeholder="e.g. @internal/fx"
                      style={wizInputStyle} className="mb-1" />
             </div>
             <div>
-              <div style={{ fontSize: 11, color: 'var(--ink-2)' }}>
-                Docs URL <span style={{ color: 'var(--ink-4)' }}>· optional</span>
+              <div className="text-ink-2" style={{ fontSize: 11 }}>
+                Docs URL <span className="text-ink-4" >· optional</span>
               </div>
               <input value={form.url}
                      onChange={e => setForm({ ...form, url: e.target.value })}
@@ -2002,7 +1838,7 @@ function WizLibraries({ state, upd }) {
                      style={wizInputStyle} className="mb-1" />
             </div>
             <div>
-              <div style={{ fontSize: 11, color: 'var(--ink-2)' }}>Lang</div>
+              <div className="text-ink-2" style={{ fontSize: 11 }}>Lang</div>
               <select value={form.lang}
                       onChange={e => setForm({ ...form, lang: e.target.value })}
                       style={wizInputStyle} className="gap-2" >
@@ -2014,7 +1850,7 @@ function WizLibraries({ state, upd }) {
               </select>
             </div>
           </div>
-          <div style={{ display: 'flex' }}>
+          <div className="flex" >
             <button onClick={addExtra} disabled={!form.name.trim()}
                     style={{
  fontSize: 13,
@@ -2025,14 +1861,12 @@ function WizLibraries({ state, upd }) {
               Add
             </button>
             <button onClick={() => setShowAdd(false)}
-                    style={{
- fontSize: 13,
-                              color: 'var(--ink-3)'
-}} className="py-2 px-3" >
+ style={{
+ fontSize: 13 }} className="py-2 px-3 text-ink-3" >
               Cancel
             </button>
-            <span style={{ flex: 1 }}/>
-            <span style={{ fontSize: 11, color: 'var(--ink-3)', alignSelf: 'center' }}>
+            <span className="flex-1" />
+            <span className="text-ink-3 self-center" style={{ fontSize: 11 }}>
               Sensei will index docs and expose tools that answer questions about this library.
             </span>
           </div>
@@ -2062,23 +1896,16 @@ function WizRegistry({ state, upd }) {
                  tagline="Tools sensei can reach for — recommended based on what's in your stack. Each MCP brings its own capabilities, no wrapping needed."/>
 
       {/* Detected stack summary */}
-      <div style={{
- background: 'var(--paper-2)',
-                     border: 'var(--hairline)', borderRadius: 8
-}} className="py-3 px-4 mb-5" >
+      <div style={{ borderRadius: 8
+ }} className="py-3 px-4 mb-6 bg-paper-2 border border-paper-edge" >
         <div style={{
- fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
-                       textTransform: 'uppercase'
-}} className="mb-2" >
+ fontSize: 11, letterSpacing: '0.14em' }} className="mb-2 text-ink-3 uppercase" >
           Detected in your stack
         </div>
-        <div style={{ display: 'flex', flexWrap: 'wrap' }} className="gap-1" >
+        <div className="gap-1 flex flex-wrap" >
           {[...stack.languages, ...stack.frameworks, ...stack.services].map(s => (
-            <span key={s} className="mono py-1 px-2" style={{
- fontSize: 11, background: 'var(--paper)',
-                          border: 'var(--hairline)', borderRadius: 3,
-                          color: 'var(--ink-2)'
-}}>
+            <span key={s} className="mono py-1 px-2 bg-paper border border-paper-edge text-ink-2" style={{
+ fontSize: 11, borderRadius: 3 }}>
               {s}
             </span>
           ))}
@@ -2086,33 +1913,26 @@ function WizRegistry({ state, upd }) {
       </div>
 
       {/* Summary row */}
-      <div style={{ display: 'flex', alignItems: 'center' }} className="gap-3 mb-4" >
-        <span className="mono py-1 px-2" style={{
- fontSize: 11, color: 'var(--success)', background: 'var(--success-soft)',
-                      borderRadius: 4
-}}>
+      <div className="gap-3 mb-4 flex items-center" >
+        <span className="mono py-1 px-2 text-success bg-success-soft" style={{
+ fontSize: 11,
+ borderRadius: 4
+ }}>
           {recommended.length} recommended
         </span>
-        <span className="mono py-1 px-2" style={{
- fontSize: 11, color: 'var(--ink-2)', background: 'var(--paper-2)',
-                      border: 'var(--hairline)', borderRadius: 4
-}}>
+        <span className="mono py-1 px-2 text-ink-2 bg-paper-2 border border-paper-edge" style={{
+ fontSize: 11, borderRadius: 4
+ }}>
           {installCount} will be installed
         </span>
       </div>
 
       {/* Recommended */}
       <div style={{
- fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
-                     textTransform: 'uppercase'
-}} className="mb-2" >
+ fontSize: 11, letterSpacing: '0.14em' }} className="mb-2 text-ink-3 uppercase" >
         Recommended for your stack
       </div>
-      <div style={{
- display: 'flex', flexDirection: 'column',
-                     border: 'var(--hairline)', borderRadius: 6,
-                     background: 'var(--paper-2)'
-}} className="mb-5" >
+      <div style={{ borderRadius: 6 }} className="mb-6 flex flex-col border border-paper-edge bg-paper-2" >
         {recommended.map((mcp, i) => (
           <McpRow key={mcp.id} mcp={mcp} on={!!state.mcps[mcp.id]}
                   onToggle={() => toggle(mcp.id)}
@@ -2122,14 +1942,10 @@ function WizRegistry({ state, upd }) {
 
       {/* Available */}
       <div style={{
- fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
-                     textTransform: 'uppercase'
-}} className="mb-2" >
+ fontSize: 11, letterSpacing: '0.14em' }} className="mb-2 text-ink-3 uppercase" >
         Also available
       </div>
-      <div style={{ display: 'flex', flexDirection: 'column',
-                     border: 'var(--hairline)', borderRadius: 6,
-                     background: 'var(--paper-2)' }}>
+      <div className="flex flex-col border border-paper-edge bg-paper-2" style={{ borderRadius: 6 }}>
         {others.map((mcp, i) => (
           <McpRow key={mcp.id} mcp={mcp} on={!!state.mcps[mcp.id]}
                   onToggle={() => toggle(mcp.id)}
@@ -2143,59 +1959,53 @@ function WizRegistry({ state, upd }) {
 function McpRow({ mcp, on, onToggle, last }) {
   return (
     <div style={{
- display: 'grid',
-                   gridTemplateColumns: 'auto auto 1fr auto auto', alignItems: 'center',
-                   borderBottom: last ? 'none' : 'var(--hairline)',
-                   opacity: on ? 1 : 0.55
-}} className="gap-3 py-3 px-3" >
-      <button onClick={onToggle}
-              style={{ width: 18, height: 18, borderRadius: 3,
-                        border: '1.5px solid ' + (on ? 'var(--accent)' : 'var(--ink-4)'),
-                        background: on ? 'var(--accent)' : 'transparent',
-                        color: 'var(--paper)', fontSize: 11, lineHeight: 1 }}>
+ gridTemplateColumns: 'auto auto 1fr auto auto',
+ borderBottom: last ? 'none' : 'var(--hairline)',
+ opacity: on ? 1 : 0.55
+ }} className="gap-3 py-3 px-3 grid items-center" >
+      <button className="text-paper" onClick={onToggle}
+ style={{ width: 18, height: 18, borderRadius: 3,
+ border: '1.5px solid ' + (on ? 'var(--accent)' : 'var(--ink-4)'),
+ background: on ? 'var(--accent)' : 'transparent', fontSize: 11, lineHeight: 1 }}>
         {on ? "✓" : ""}
       </button>
-      <div style={{ width: 32, height: 32, borderRadius: 6,
-                     background: 'var(--paper-3)', display: 'flex',
-                     alignItems: 'center', justifyContent: 'center' }}>
-        <span className="kanji" style={{ fontSize: 15, color: 'var(--accent)' }}>
+      <div className="bg-paper-3 flex items-center justify-center" style={{ width: 32, height: 32, borderRadius: 6 }}>
+        <span className="kanji text-accent" style={{ fontSize: 15 }}>
           {mcp.kanji}
         </span>
       </div>
       <div>
-        <div style={{ fontSize: 13, color: 'var(--ink)' }}>
+        <div className="text-ink" style={{ fontSize: 13 }}>
           {mcp.name}
-          <span className="mono ml-2" style={{ fontSize: 11, color: 'var(--ink-4)' }}>
+          <span className="mono ml-2 text-ink-4" style={{ fontSize: 11 }}>
             by {mcp.publisher}
           </span>
           {mcp.verified && (
-            <span className="mono ml-2 py-1 px-1" style={{
- fontSize: 11, color: 'var(--success)',
-                          background: 'var(--success-soft)', borderRadius: 3
-}}>
+            <span className="mono ml-2 py-1 px-1 text-success bg-success-soft" style={{
+ fontSize: 11, borderRadius: 3
+ }}>
               verified
             </span>
           )}
         </div>
         <div style={{
- fontSize: 11, color: 'var(--ink-3)',
-                       lineHeight: 1.45
-}} className="mt-1" >
+ fontSize: 11,
+ lineHeight: 1.45
+ }} className="mt-1 text-ink-3" >
           {mcp.summary}
         </div>
       </div>
-      <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+      <span className="mono text-ink-3" style={{ fontSize: 11 }}>
         {mcp.tools} tools
       </span>
       {mcp.trigger && mcp.trigger.length > 0 ? (
-        <span className="mono py-1 px-2" style={{
- fontSize: 11, color: 'var(--success)', background: 'var(--success-soft)',
-                      borderRadius: 3, whiteSpace: 'nowrap'
-}}>
+        <span className="mono py-1 px-2 text-success bg-success-soft whitespace-nowrap" style={{
+ fontSize: 11,
+ borderRadius: 3 }}>
           matches {mcp.trigger[0]}
         </span>
       ) : (
-        <span className="mono" style={{ fontSize: 11, color: 'var(--ink-4)' }}>
+        <span className="mono text-ink-4" style={{ fontSize: 11 }}>
           {mcp.kind}
         </span>
       )}
@@ -2212,10 +2022,9 @@ function LibDocChip({ status }) {
   };
   const m = map[status] || map.none;
   return (
-    <span className="mono py-1 px-2" style={{
+    <span className="mono py-1 px-2 whitespace-nowrap" style={{
  fontSize: 11, borderRadius: 3,
-                background: m.bg, color: m.tone, whiteSpace: 'nowrap'
-}}>
+ background: m.bg, color: m.tone }}>
       {m.label}
     </span>
   );
@@ -2254,77 +2063,64 @@ function WizPreferences({ state, upd }) {
   // whole vertical block. When `right` is provided, the section renders as
   // a single row; `children` is omitted.
   const Section = ({ kanji, title, sub, children, right }) => (
-    <section className="pt-5 pb-1" >
+    <section className="pt-6 pb-1" >
       <header style={{
- display: 'flex', alignItems: 'baseline',
-                        marginBottom: right ? 0 : 14
-}} className="gap-3" >
-        <span className="kanji" style={{ fontSize: 22, color: 'var(--accent)',
-                                           lineHeight: 1, width: 30 }}>{kanji}</span>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <h3 className="display m-0" style={{
- fontSize: 17, fontWeight: 400,
-                          color: 'var(--ink)'
-}}>{title}</h3>
+ marginBottom: right ? 0 : 14
+ }} className="gap-3 flex items-baseline" >
+        <span className="kanji text-accent" style={{ fontSize: 22,
+ lineHeight: 1, width: 30 }}>{kanji}</span>
+        <div className="flex-1 min-w-0" >
+          <h3 className="display m-0 font-normal text-ink" style={{
+ fontSize: 17 }}>{title}</h3>
           {sub && (
             <p style={{
- fontSize: 13, color: 'var(--ink-3)',
-                          maxWidth: 540, lineHeight: 1.5
-}} className="mt-1 mb-0" >{sub}</p>
+ fontSize: 13,
+ maxWidth: 540, lineHeight: 1.5
+ }} className="mt-1 mb-0 text-ink-3" >{sub}</p>
           )}
         </div>
         {right && (
-          <div style={{ flexShrink: 0, alignSelf: 'center', minWidth: 220 }}>
+          <div className="shrink-0 self-center" style={{ minWidth: 220 }}>
             {right}
           </div>
         )}
       </header>
-      {!right && <div className="divide-y pl-7">{children}</div>}
+      {!right && <div className="divide-y pl-12">{children}</div>}
     </section>
   );
   const Row = ({ label, hint, children }) => (
-    <div style={{
- display: 'grid', gridTemplateColumns: '1fr auto',
-                   alignItems: 'center'
-}} className="gap-6 py-3 px-0" >
-      <div style={{ minWidth: 0 }}>
-        <div style={{ fontSize: 13, color: 'var(--ink)' }}>{label}</div>
+    <div style={{ gridTemplateColumns: '1fr auto' }} className="gap-8 py-3 px-0 grid items-center" >
+      <div className="min-w-0" >
+        <div className="text-ink" style={{ fontSize: 13 }}>{label}</div>
         {hint && <div style={{
- fontSize: 11, color: 'var(--ink-3)',
-                                 lineHeight: 1.45, maxWidth: 460
-}} className="mt-1" >{hint}</div>}
+ fontSize: 11,
+ lineHeight: 1.45, maxWidth: 460
+ }} className="mt-1 text-ink-3" >{hint}</div>}
       </div>
-      <div style={{ flexShrink: 0 }}>{children}</div>
+      <div className="shrink-0" >{children}</div>
     </div>
   );
   const Toggle = ({ value, onChange }) => (
     <button onClick={() => onChange(!value)}
-            style={{
+ style={{
  width: 36, height: 20, borderRadius: 999,
-                      background: value ? 'var(--ink)' : 'var(--paper-3)',
-                      position: 'relative', cursor: 'pointer',
-                      transition: 'background 0.15s',
-                      border: 'none'
-}} className="p-0" >
-      <span style={{ position: 'absolute', top: 2, left: value ? 18 : 2,
-                       width: 16, height: 16, borderRadius: '50%',
-                       background: 'var(--paper)',
-                       transition: 'left 0.18s ease',
-                       boxShadow: 'var(--shadow-sm)' }}/>
+ background: value ? 'var(--ink)' : 'var(--paper-3)',
+ transition: 'background 0.15s' }} className="p-0 relative cursor-pointer border-0" >
+      <span className="absolute rounded-full bg-paper shadow-sm" style={{ top: 2, left: value ? 18 : 2,
+ width: 16, height: 16,
+ transition: 'left 0.18s ease' }}/>
     </button>
   );
   const Segment = ({ value, onChange, options }) => (
-    <div style={{ display: 'inline-flex', border: 'var(--hairline)',
-                   borderRadius: 5, overflow: 'hidden' }}>
+    <div className="inline-flex border border-paper-edge overflow-hidden" style={{
+ borderRadius: 5 }}>
       {options.map((opt, i) => (
         <button key={opt.value} onClick={() => onChange(opt.value)}
-                style={{
+ style={{
  fontSize: 11,
-                          borderLeft: i === 0 ? 'none' : 'var(--hairline)',
-                          background: value === opt.value ? 'var(--paper-3)' : 'var(--paper)',
-                          color: value === opt.value ? 'var(--ink)' : 'var(--ink-3)',
-                          cursor: 'pointer'
-}} className="py-1 px-3" >
+ borderLeft: i === 0 ? 'none' : 'var(--hairline)',
+ background: value === opt.value ? 'var(--paper-3)' : 'var(--paper)',
+ color: value === opt.value ? 'var(--ink)' : 'var(--ink-3)' }} className="py-1 px-3 cursor-pointer" >
           {opt.label}
         </button>
       ))}
@@ -2332,12 +2128,11 @@ function WizPreferences({ state, upd }) {
   );
   const Sel = ({ value, onChange, options }) => (
     <select value={value} onChange={e => onChange(e.target.value)}
-            style={{
- fontSize: 13, border: 'var(--hairline)',
-                      borderRadius: 5, background: 'var(--paper)',
-                      color: 'var(--ink)', cursor: 'pointer',
-                      fontFamily: 'inherit'
-}} className="py-1 px-2" >
+ style={{
+ fontSize: 13,
+ borderRadius: 5,
+ fontFamily: 'inherit'
+ }} className="py-1 px-2 border border-paper-edge bg-paper text-ink cursor-pointer" >
       {options.map(o =>
         <option key={o.value} value={o.value}>{o.label}</option>)}
     </select>
@@ -2357,19 +2152,15 @@ function WizPreferences({ state, upd }) {
                sub="Pulled from your home folder. Change it to whatever feels right."
                right={
                  <input
-                   value={p.displayName || ""}
-                   onChange={e => setP({ displayName: e.target.value })}
-                   placeholder={homeBase || "your name"}
-                   style={{
- width: 240, fontSize: 13,
-                             border: 'var(--hairline)', borderRadius: 5,
-                             background: 'var(--paper)', color: 'var(--ink)',
-                             fontFamily: 'inherit', outline: 'none',
-                             textAlign: 'right'
-}}
-                   onFocus={e => e.target.style.borderColor = 'var(--accent)'}
-                   onBlur={e => e.target.style.borderColor = ''}
-                 className="py-2 px-3" />
+ value={p.displayName || ""}
+ onChange={e => setP({ displayName: e.target.value })}
+ placeholder={homeBase || "your name"}
+ style={{
+ width: 240, fontSize: 13, borderRadius: 5,
+ fontFamily: 'inherit', outline: 'none' }}
+ onFocus={e => e.target.style.borderColor = 'var(--accent)'}
+ onBlur={e => e.target.style.borderColor = ''}
+ className="py-2 px-3 border border-paper-edge bg-paper text-ink text-right" />
                }/>
 
       {/* ── Shared learnings ─────────────────────────────────────── */}
@@ -2423,11 +2214,9 @@ function WizPreferences({ state, upd }) {
       </div>
 
       <p style={{
- fontSize: 13, color: 'var(--ink-3)',
-                   fontStyle: 'italic', lineHeight: 1.6, textAlign: 'center'
-}} className="mt-5 mb-0" >
-        Saved when you press <span style={{ color: 'var(--ink-2)' }}>Save &amp; close</span>.
-        Re-open from the sidebar's <span style={{ color: 'var(--ink-2)' }}>調 Preferences</span> link anytime.
+ fontSize: 13, lineHeight: 1.6 }} className="mt-6 mb-0 text-ink-3 italic text-center" >
+        Saved when you press <span className="text-ink-2" >Save &amp; close</span>.
+        Re-open from the sidebar's <span className="text-ink-2" >調 Preferences</span> link anytime.
       </p>
     </div>
   );
@@ -2443,26 +2232,21 @@ function WizDone({ state }) {
   const mcpCount = Object.values(state.mcps || {}).filter(Boolean).length;
 
   return (
-    <div style={{ maxWidth: 680, textAlign: 'center' }} className="mt-4 mb-0 mx-auto" >
-      <div className="kanji mb-2" style={{ fontSize: 56, color: 'var(--accent)' }}>観</div>
-      <h1 className="display mt-0 mb-4" style={{
- fontSize: 40, fontWeight: 300, letterSpacing: '-0.02em'
-}}>
+    <div style={{ maxWidth: 680 }} className="mt-4 mb-0 mx-auto text-center" >
+      <div className="kanji mb-2 text-accent" style={{ fontSize: 56 }}>観</div>
+      <h1 className="display mt-0 mb-4 font-light" style={{
+ fontSize: 40, letterSpacing: '-0.02em'
+ }}>
         The observatory is ready.
       </h1>
       <p style={{
- fontSize: 15, color: 'var(--ink-2)', lineHeight: 1.6, maxWidth: 480
-}} className="mt-0 mb-6 mx-auto" >
+ fontSize: 15, lineHeight: 1.6, maxWidth: 480
+ }} className="mt-0 mb-8 mx-auto text-ink-2" >
         Start a session with your assistant. Sensei will watch in silence for a few days,
         then begin to teach.
       </p>
 
-      <div style={{
- display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)',
-                     border: 'var(--hairline)', borderRadius: 10,
-                     background: 'var(--paper-2)', overflow: 'hidden',
-                     textAlign: 'left'
-}} className="gap-0" >
+      <div style={{ gridTemplateColumns: 'repeat(5, 1fr)', borderRadius: 10 }} className="gap-0 grid border border-paper-edge bg-paper-2 overflow-hidden text-left" >
         <DoneStat label="Projects"   value={confirmedSols.length}/>
         <DoneStat label="Repos"      value={repoCount}/>
         <DoneStat label="Libraries"  value={libCount}/>
@@ -2470,9 +2254,8 @@ function WizDone({ state }) {
         <DoneStat label="Assistants" value={activeAcps} last/>
       </div>
 
-      <p className="mono mt-6" style={{
- fontSize: 11, color: 'var(--ink-3)', fontStyle: 'italic'
-}}>
+      <p className="mono mt-8 text-ink-3 italic" style={{
+ fontSize: 11 }}>
         師 · the first session is always the teacher
       </p>
     </div>
@@ -2482,11 +2265,9 @@ function WizDone({ state }) {
 function DoneStat({ label, value, last }) {
   return (
     <div style={{ borderRight: last ? 'none' : 'var(--hairline)' }} className="py-4 px-4" >
-      <div className="display" style={{ fontSize: 28, fontWeight: 400 }}>{value}</div>
+      <div className="display font-normal" style={{ fontSize: 28 }}>{value}</div>
       <div style={{
- fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
-                     color: 'var(--ink-3)'
-}} className="mt-1" >{label}</div>
+ fontSize: 11, letterSpacing: '0.14em' }} className="mt-1 uppercase text-ink-3" >{label}</div>
     </div>
   );
 }
@@ -2496,12 +2277,8 @@ function WizHeader({ n, title, tagline, eyebrow = "Step" }) {
   // Sticky to the top of the stage's scroll container so the step title +
   // tagline stay anchored as the user scrolls long stages.
   return (
-    <div className="mb-5 pt-1 pb-4"
-         style={{
-           position: 'sticky', top: -44, zIndex: 5,
-           background: 'var(--paper)',
-           borderBottom: 'var(--hairline)',
-}}>
+    <div className="mb-6 pt-1 pb-4 sticky bg-paper border-b"
+ style={{ top: -44, zIndex: 5 }}>
       <KanjiHeader variant="h1" kanji={n} eyebrow={eyebrow} title={title} description={tagline}/>
     </div>
   );
@@ -2512,80 +2289,64 @@ function WizHeader({ n, title, tagline, eyebrow = "Step" }) {
 // No sidebar (nothing to navigate to yet). Center the invitation.
 function EmptyObservatoryApp({ onBeginSetup }) {
   return (
-    <div className="sensei" data-screen-label="Empty Observatory"
-         style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column',
-                  background: 'var(--paper)', overflow: 'hidden' }}>
+    <div className="sensei w-full h-full flex flex-col bg-paper overflow-hidden" data-screen-label="Empty Observatory"
+ >
       <TauriChrome title="Sensei  先生"/>
-      <main style={{
- flex: 1, overflow: 'auto', position: 'relative',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center'
-}} className="py-6 px-8" >
+      <main className="py-8 px-16 flex-1 overflow-auto relative flex items-center justify-center" >
         {/* faint watermark — 空 = emptiness */}
-        <div className="kanji" style={{
-          position: 'absolute', top: '50%', left: '50%',
-          transform: 'translate(-50%, -50%)',
-          fontSize: 56, color: 'var(--accent)', opacity: 0.035,
-          lineHeight: 1, userSelect: 'none', pointerEvents: 'none'
-        }}>空</div>
+        <div className="kanji absolute text-accent" style={{ top: '50%', left: '50%',
+ transform: 'translate(-50%, -50%)',
+ fontSize: 56, opacity: 0.035,
+ lineHeight: 1, userSelect: 'none', pointerEvents: 'none'
+ }}>空</div>
 
         <div style={{
- maxWidth: 680, width: '100%', position: 'relative', zIndex: 1,
-                       display: 'grid', gridTemplateColumns: '1fr 1fr',
-                       alignItems: 'center'
-}} className="gap-7" >
+ maxWidth: 680, zIndex: 1, gridTemplateColumns: '1fr 1fr' }} className="gap-12 w-full relative grid items-center" >
           {/* Left: the invitation */}
           <div>
-            <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2 mb-5" >
-              <span className="kanji" style={{ fontSize: 28, color: 'var(--accent)' }}>先生</span>
-              <span className="display" style={{ fontSize: 22, fontWeight: 400 }}>Sensei</span>
+            <div className="gap-2 mb-6 flex items-baseline" >
+              <span className="kanji text-accent" style={{ fontSize: 28 }}>先生</span>
+              <span className="display font-normal" style={{ fontSize: 22 }}>Sensei</span>
             </div>
             <div style={{
- fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
-                           textTransform: 'uppercase'
-}} className="mb-3" >
+ fontSize: 11, letterSpacing: '0.18em' }} className="mb-3 text-ink-3 uppercase" >
               Welcome
             </div>
-            <h1 className="display mt-0 mb-4" style={{
- fontSize: 56, fontWeight: 300,
-                          letterSpacing: '-0.02em', lineHeight: 1.08
-}}>
+            <h1 className="display mt-0 mb-4 font-light" style={{
+ fontSize: 56,
+ letterSpacing: '-0.02em', lineHeight: 1.08
+ }}>
               A quiet<br/>
-              <span style={{ color: 'var(--accent)' }}>empty room.</span>
+              <span className="text-accent" >empty room.</span>
             </h1>
             <p style={{
- fontSize: 15, color: 'var(--ink-2)', lineHeight: 1.7
-}} className="mt-0 mb-6" >
+ fontSize: 15, lineHeight: 1.7
+ }} className="mt-0 mb-8 text-ink-2" >
               Point sensei at your folders and keep working. It watches in silence, learns
               the shape of each project, and later begins to teach.
             </p>
 
             <button onClick={onBeginSetup}
-                    style={{
- fontSize: 13, background: 'var(--ink)',
-                              color: 'var(--paper)', borderRadius: 6, letterSpacing: 0.2
-}} className="py-3 px-5" >
+ style={{
+ fontSize: 13, borderRadius: 6, letterSpacing: 0.2
+ }} className="py-3 px-6 bg-ink text-paper" >
               Begin setup →
             </button>
 
-            <div style={{ fontSize: 11, color: 'var(--ink-3)' }} className="mt-4" >
+            <div style={{ fontSize: 11 }} className="mt-4 text-ink-3" >
               <span className="mono">~4 minutes</span>
-              <span style={{ color: 'var(--ink-4)' }} className="mx-2" >·</span>
+              <span className="mx-2 text-ink-4" >·</span>
               nothing leaves your machine
             </div>
           </div>
 
           {/* Right: what sensei will do — a real preview, not placeholder stats */}
-          <div style={{
-            border: 'var(--hairline)', borderRadius: 10,
-            background: 'var(--paper-2)'
-}} className="py-5 px-5" >
+          <div style={{ borderRadius: 10 }} className="py-6 px-6 border border-paper-edge bg-paper-2" >
             <div style={{
- fontSize: 11, letterSpacing: '0.16em', color: 'var(--ink-3)',
-                           textTransform: 'uppercase'
-}} className="mb-4" >
+ fontSize: 11, letterSpacing: '0.16em' }} className="mb-4 text-ink-3 uppercase" >
               What sensei does
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-4" >
+            <div className="gap-4 flex flex-col" >
               {[
                 { k: "観", label: "Watches",
                   note: "Every assistant session — prompts, tool calls, diffs." },
@@ -2594,20 +2355,15 @@ function EmptyObservatoryApp({ onBeginSetup }) {
                 { k: "教", label: "Teaches",
                   note: "After ~3 sessions per project, offers concrete suggestions." }
               ].map((x, i) => (
-                <div key={i} style={{
- display: 'grid', gridTemplateColumns: 'auto 1fr', alignItems: 'start'
-}} className="gap-3" >
-                  <div className="kanji" style={{
-                    fontSize: 17, color: 'var(--accent)',
-                    width: 32, height: 32, borderRadius: '50%',
-                    background: 'var(--paper)', border: 'var(--hairline)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center'
-                  }}>{x.k}</div>
+                <div key={i} style={{ gridTemplateColumns: 'auto 1fr' }} className="gap-3 grid items-start" >
+                  <div className="kanji text-accent rounded-full bg-paper border border-paper-edge flex items-center justify-center" style={{
+ fontSize: 17,
+ width: 32, height: 32 }}>{x.k}</div>
                   <div>
-                    <div className="display mb-1" style={{ fontSize: 13, fontWeight: 400 }}>
+                    <div className="display mb-1 font-normal" style={{ fontSize: 13 }}>
                       {x.label}
                     </div>
-                    <div style={{ fontSize: 13, color: 'var(--ink-3)', lineHeight: 1.5 }}>
+                    <div className="text-ink-3" style={{ fontSize: 13, lineHeight: 1.5 }}>
                       {x.note}
                     </div>
                   </div>
@@ -2616,14 +2372,13 @@ function EmptyObservatoryApp({ onBeginSetup }) {
             </div>
 
             <div style={{
- borderTop: 'var(--hairline)',
-                           fontSize: 11, color: 'var(--ink-3)', lineHeight: 1.6
-}} className="mt-4 pt-4" >
+ fontSize: 11, lineHeight: 1.6
+ }} className="mt-4 pt-4 border-t text-ink-3" >
               Works with{' '}
-              <span className="mono" style={{ color: 'var(--ink-2)' }}>claude-code</span>,{' '}
-              <span className="mono" style={{ color: 'var(--ink-2)' }}>cursor</span>,{' '}
-              <span className="mono" style={{ color: 'var(--ink-2)' }}>codex</span>,{' '}
-              <span className="mono" style={{ color: 'var(--ink-2)' }}>aider</span>.
+              <span className="mono text-ink-2" >claude-code</span>,{' '}
+              <span className="mono text-ink-2" >cursor</span>,{' '}
+              <span className="mono text-ink-2" >codex</span>,{' '}
+              <span className="mono text-ink-2" >aider</span>.
             </div>
           </div>
         </div>
@@ -2671,11 +2426,10 @@ function FirstRunScan({ onDone }) {
   // welcome + "defaults live in Preferences" copy, and the only forward action
   // (Open projects) lives in the scan-results banner once the scan completes.
   return (
-    <div className="sensei" data-screen-label="First run · Scan"
-         style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column',
-                  background: 'var(--paper)', overflow: 'hidden' }}>
+    <div className="sensei w-full h-full flex flex-col bg-paper overflow-hidden" data-screen-label="First run · Scan"
+ >
       <TauriChrome title="Sensei  先生  ·  welcome"/>
-      <div style={{ flex: 1, overflow: 'auto' }} className="pt-7 pb-7 px-8" >
+      <div className="pt-12 pb-12 px-16 flex-1 overflow-auto" >
         <WizScan state={state} upd={upd} context="first-run" onComplete={() => onDone && onDone()}/>
       </div>
     </div>

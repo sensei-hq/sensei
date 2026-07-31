@@ -61,17 +61,13 @@ function WizAssignments({ state, upd }) {
 
       <SplitVariant {...props}/>
 
-      <div style={{
- borderTop: 'var(--hairline)',
-                     display: 'flex', justifyContent: 'space-between', alignItems: 'center'
-}} className="mt-4 pt-4" >
-        <div style={{ fontSize: 13, color: 'var(--ink-3)', lineHeight: 1.6 }}>
+      <div className="mt-4 pt-4 border-t flex justify-between items-center" >
+        <div className="text-ink-3" style={{ fontSize: 13, lineHeight: 1.6 }}>
           Voice is optional — if left empty, the observatory voice panel stays hidden.
         </div>
         <button style={{
- fontSize: 13, color: 'var(--ink-2)', border: 'var(--hairline)',
-                         borderRadius: 5, background: 'transparent', cursor: 'pointer'
-}} className="py-2 px-3" >
+ fontSize: 13,
+ borderRadius: 5 }} className="py-2 px-3 text-ink-2 border border-paper-edge bg-transparent cursor-pointer" >
           Use defaults
         </button>
       </div>
@@ -87,8 +83,8 @@ function SplitVariant({ D, priority, move, remove, add }) {
   const role = ROLES_A.find(r => r.id === active);
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '260px 1fr' }} className="gap-4" >
-      <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
+    <div style={{ gridTemplateColumns: '260px 1fr' }} className="gap-4 grid" >
+      <div className="gap-1 flex flex-col" >
         {ROLES_A.map(r => {
           const on = r.id === active;
           const count = (priority[r.id] || []).length;
@@ -96,13 +92,10 @@ function SplitVariant({ D, priority, move, remove, add }) {
           const primaryName = primary && findModel(D, primary)?.model.name;
           return (
             <button key={r.id} onClick={() => setActive(r.id)}
-                    style={{
- display: 'grid', gridTemplateColumns: '28px 1fr auto', alignItems: 'center', borderRadius: 5,
-                             border: on ? 'none' : 'var(--hairline)',
-                             background: on ? 'var(--ink)' : 'var(--paper)',
-                             color: on ? 'var(--paper)' : 'var(--ink)',
-                             cursor: 'pointer', textAlign: 'left'
-}} className="gap-2 py-3 px-3" >
+ style={{ gridTemplateColumns: '28px 1fr auto', borderRadius: 5,
+ border: on ? 'none' : 'var(--hairline)',
+ background: on ? 'var(--ink)' : 'var(--paper)',
+ color: on ? 'var(--paper)' : 'var(--ink)' }} className="gap-2 py-3 px-3 grid items-center cursor-pointer text-left" >
               <span className="kanji" style={{ fontSize: 17,
                                                  color: on ? 'var(--paper)' : 'var(--accent)' }}>
                 {r.kanji}
@@ -110,11 +103,8 @@ function SplitVariant({ D, priority, move, remove, add }) {
               <div>
                 <div style={{ fontSize: 13 }}>{r.label}</div>
                 <div style={{
- fontSize: 11, opacity: 0.65,
-                                overflow: 'hidden', textOverflow: 'ellipsis',
-                                whiteSpace: 'nowrap'
-}} className="mt-1" >
-                  {primaryName || <span style={{ fontStyle: 'italic' }}>— none —</span>}
+ fontSize: 11, opacity: 0.65 }} className="mt-1 overflow-hidden text-ellipsis whitespace-nowrap" >
+                  {primaryName || <span className="italic" >— none —</span>}
                 </div>
               </div>
               <span style={{
@@ -150,30 +140,26 @@ function RoleBoard({ role, D, priority, onMove, onRemove, onAdd }) {
 
   return (
     <div>
-      <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2 mb-1" >
-        <span className="kanji" style={{ fontSize: 22, color: 'var(--accent)' }}>{role.kanji}</span>
+      <div className="gap-2 mb-1 flex items-baseline" >
+        <span className="kanji text-accent" style={{ fontSize: 22 }}>{role.kanji}</span>
         <div className="display" style={{ fontSize: 17 }}>{role.label}</div>
       </div>
-      <div style={{ fontSize: 13, color: 'var(--ink-3)' }} className="mb-4" >
+      <div style={{ fontSize: 13 }} className="mb-4 text-ink-3" >
         {role.hint}
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 280px' }} className="gap-3" >
+      <div style={{ gridTemplateColumns: '1fr 280px' }} className="gap-3 grid" >
         {/* Ordered priority list */}
         <div style={{
- background: 'var(--paper)', border: 'var(--hairline)',
-                       borderRadius: 6, minHeight: 220
-}} className="p-3" >
+ borderRadius: 6, minHeight: 220
+ }} className="p-3 bg-paper border border-paper-edge" >
           <SectionLabel>priority</SectionLabel>
           {assigned.length === 0 ? (
-            <div style={{
- textAlign: 'center',
-                           color: 'var(--ink-4)', fontSize: 13, fontStyle: 'italic'
-}} className="py-4 px-0" >
+            <div style={{ fontSize: 13 }} className="py-4 px-0 text-center text-ink-4 italic" >
               No models assigned — add one from the right →
             </div>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
+            <div className="gap-1 flex flex-col" >
               {assigned.map((mid, i) => {
                 const found = findModel(D, mid);
                 if (!found) return null;
@@ -195,9 +181,8 @@ function RoleBoard({ role, D, priority, onMove, onRemove, onAdd }) {
 
         {/* Available picker */}
         <div style={{
- background: 'var(--paper-2)', border: 'var(--hairline)',
-                       borderRadius: 6, minHeight: 220
-}} className="p-3" >
+ borderRadius: 6, minHeight: 220
+ }} className="p-3 bg-paper-2 border border-paper-edge" >
           <SectionLabel>add model</SectionLabel>
           <AvailableList models={available} onAdd={(mid) => onAdd(role.id, mid)}/>
         </div>
@@ -210,16 +195,14 @@ function PriorityRow({ model, provider, position, canUp, canDown, onUp, onDown, 
   const primary = position === 0;
   return (
     <div style={{
- display: 'grid',
-                   gridTemplateColumns: '22px 28px 1fr auto auto', alignItems: 'center',
-                   background: primary ? 'var(--ink)' : 'var(--paper-2)',
-                   color: primary ? 'var(--paper)' : 'var(--ink)',
-                   border: primary ? 'none' : 'var(--hairline)',
-                   borderRadius: 4
-}} className="gap-2 py-2 px-2" >
-      <span style={{ fontSize: 11, opacity: 0.6,
-                      fontFeatureSettings: '"tnum"',
-                      textAlign: 'center' }}>{position + 1}</span>
+ gridTemplateColumns: '22px 28px 1fr auto auto',
+ background: primary ? 'var(--ink)' : 'var(--paper-2)',
+ color: primary ? 'var(--paper)' : 'var(--ink)',
+ border: primary ? 'none' : 'var(--hairline)',
+ borderRadius: 4
+ }} className="gap-2 py-2 px-2 grid items-center" >
+      <span className="text-center" style={{ fontSize: 11, opacity: 0.6,
+ fontFeatureSettings: '"tnum"' }}>{position + 1}</span>
       <span className="kanji" style={{ fontSize: 13,
                                          color: primary ? 'var(--paper)' : 'var(--accent)' }}>
         {provider.kanji}
@@ -228,14 +211,13 @@ function PriorityRow({ model, provider, position, canUp, canDown, onUp, onDown, 
         <div style={{ fontSize: 13 }}>{model.name}</div>
         <div style={{ fontSize: 11, opacity: 0.65 }}>
           {provider.name}{primary && <span style={{
-                                                      fontSize: 11,
-                                                      letterSpacing: '0.1em',
-                                                      textTransform: 'uppercase',
-                                                      opacity: 0.8
-}} className="ml-2" >primary</span>}
+ fontSize: 11,
+ letterSpacing: '0.1em',
+ opacity: 0.8
+ }} className="ml-2 uppercase" >primary</span>}
         </div>
       </div>
-      <div style={{ display: 'flex' }} className="gap-1" >
+      <div className="gap-1 flex" >
         <IconBtn onClick={onUp} disabled={!canUp} primary={primary}>▲</IconBtn>
         <IconBtn onClick={onDown} disabled={!canDown} primary={primary}>▼</IconBtn>
       </div>
@@ -246,16 +228,14 @@ function PriorityRow({ model, provider, position, canUp, canDown, onUp, onDown, 
 
 function IconBtn({ onClick, disabled, primary, children }) {
   return (
-    <button onClick={onClick} disabled={disabled}
-            style={{ width: 22, height: 22, border: 'none',
-                     background: 'transparent',
-                     color: disabled
-                              ? (primary ? 'var(--on-primary-faint)' : 'var(--ink-4)')
-                              : (primary ? 'var(--paper)' : 'var(--ink-2)'),
-                     fontSize: 11,
-                     cursor: disabled ? 'default' : 'pointer',
-                     borderRadius: 3,
-                     display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+    <button className="border-0 bg-transparent inline-flex items-center justify-center" onClick={onClick} disabled={disabled}
+ style={{ width: 22, height: 22,
+ color: disabled
+ ? (primary ? 'var(--on-primary-faint)' : 'var(--ink-4)')
+ : (primary ? 'var(--paper)' : 'var(--ink-2)'),
+ fontSize: 11,
+ cursor: disabled ? 'default' : 'pointer',
+ borderRadius: 3 }}>
       {children}
     </button>
   );
@@ -264,10 +244,7 @@ function IconBtn({ onClick, disabled, primary, children }) {
 function AvailableList({ models, onAdd }) {
   if (models.length === 0) {
     return (
-      <div style={{
- textAlign: 'center',
-                     color: 'var(--ink-4)', fontSize: 13, fontStyle: 'italic'
-}} className="py-4 px-0" >
+      <div style={{ fontSize: 13 }} className="py-4 px-0 text-center text-ink-4 italic" >
         All models assigned
       </div>
     );
@@ -279,32 +256,25 @@ function AvailableList({ models, onAdd }) {
     return a;
   }, {});
   return (
-    <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-3" >
+    <div className="gap-3 flex flex-col" >
       {Object.entries(byProvider).map(([pid, g]) => (
         <div key={pid}>
-          <div style={{ display: 'flex', alignItems: 'center' }} className="gap-1 mb-1" >
-            <span className="kanji" style={{ fontSize: 13, color: 'var(--accent)' }}>{g.kanji}</span>
-            <span style={{ fontSize: 11, color: 'var(--ink-3)',
-                            letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+          <div className="gap-1 mb-1 flex items-center" >
+            <span className="kanji text-accent" style={{ fontSize: 13 }}>{g.kanji}</span>
+            <span className="text-ink-3 uppercase" style={{ fontSize: 11,
+ letterSpacing: '0.08em' }}>
               {g.name}
             </span>
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
+          <div className="gap-1 flex flex-col" >
             {g.models.map(m => (
               <button key={m.id} onClick={() => onAdd(m.id)}
-                      style={{
- display: 'grid',
-                               gridTemplateColumns: '1fr auto',
-                               alignItems: 'center',
-                               background: 'transparent',
-                               border: 'none', borderRadius: 4,
-                               cursor: 'pointer', textAlign: 'left',
-                               color: 'var(--ink)'
-}}
-                      onMouseEnter={e => e.currentTarget.style.background = 'var(--paper)'}
-                      onMouseLeave={e => e.currentTarget.style.background = 'transparent'} className="gap-1 py-2 px-2" >
+ style={{
+ gridTemplateColumns: '1fr auto', borderRadius: 4 }}
+ onMouseEnter={e => e.currentTarget.style.background = 'var(--paper)'}
+ onMouseLeave={e => e.currentTarget.style.background = 'transparent'} className="gap-1 py-2 px-2 grid items-center bg-transparent border-0 cursor-pointer text-left text-ink" >
                 <span style={{ fontSize: 13 }}>{m.name}</span>
-                <span style={{ fontSize: 13, color: 'var(--ink-3)' }}>+</span>
+                <span className="text-ink-3" style={{ fontSize: 13 }}>+</span>
               </button>
             ))}
           </div>
