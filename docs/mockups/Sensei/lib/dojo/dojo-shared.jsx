@@ -25,10 +25,9 @@ const DOJO_TYPE = {
 
 function DojoChip({ children, tone = "var(--ink-mute)", soft = "var(--paper-mute)", border }) {
   return (
-    <span className="mono text-xs inline-flex items-center gap-1 rounded-full" style={{
-      letterSpacing: ".04em", color: tone, background: soft,
-      border: border || "1px solid transparent", padding: "4px 8px", whiteSpace: "nowrap",
-    }}>{children}</span>
+    <span className="mono text-xs inline-flex items-center gap-1 rounded-full whitespace-nowrap" style={{
+ letterSpacing: ".04em", color: tone, background: soft,
+ border: border || "1px solid transparent", padding: "4px 8px" }}>{children}</span>
   );
 }
 function OriginChip({ origin }) {
@@ -39,8 +38,8 @@ function Confidence({ v, w = 84 }) {
   const tone = v >= 0.85 ? "var(--success)" : v >= 0.7 ? "var(--accent)" : "var(--warning)";
   return (
     <div className="flex items-center gap-2">
-      <div className="bg-paper-mute rounded-full" style={{ width: w, height: 4, overflow: "hidden" }}>
-        <div className="rounded-full" style={{ width: (v * 100) + "%", height: "100%", background: tone }} />
+      <div className="bg-paper-mute rounded-full overflow-hidden" style={{ width: w, height: 4 }}>
+        <div className="rounded-full h-full" style={{ width: (v * 100) + "%", background: tone }} />
       </div>
       <span className="mono text-xs text-ink-soft">{Math.round(v * 100)}</span>
     </div>
@@ -49,14 +48,14 @@ function Confidence({ v, w = 84 }) {
 function DojoHead({ kanji, eyebrow, title, sub, right, mobile = false }) {
   return (
     <div className={"flex items-start border-b " + (mobile ? "flex-wrap gap-3" : "gap-4")}
-         style={{ padding: mobile ? "var(--space-4) var(--space-4) var(--space-3)" : "var(--space-5) var(--space-6) var(--space-4)", flexShrink: 0 }}>
-      <span className="kanji text-accent" style={{ fontSize: mobile ? "var(--text-2xl)" : "var(--text-3xl)", lineHeight: 1, flexShrink: 0 }}>{kanji}</span>
+         style={{ padding: mobile ? "var(--space-4) var(--space-4) var(--space-3)" : "var(--space-6) var(--space-8) var(--space-4)", flexShrink: 0 }}>
+      <span className="kanji text-accent shrink-0" style={{ fontSize: mobile ? "var(--text-2xl)" : "var(--text-3xl)", lineHeight: 1 }}>{kanji}</span>
       <div className="flex-1" style={{ minWidth: mobile ? 180 : 0 }}>
         <div className="zs-eyebrow mb-1">{eyebrow}</div>
         <h1 className={"display font-normal tracking-tight " + (mobile ? "text-lg" : "text-xl")} style={{ margin: 0, lineHeight: 1.15 }}>{title}</h1>
         {sub && <p className="zs-body-sm mt-2 mb-0" style={{ maxWidth: mobile ? "100%" : 680 }}>{sub}</p>}
       </div>
-      {right && <div className="flex flex-wrap gap-2" style={{ flexShrink: 0, width: mobile ? "100%" : "auto" }}>{right}</div>}
+      {right && <div className="flex flex-wrap gap-2 shrink-0" style={{ width: mobile ? "100%" : "auto" }}>{right}</div>}
     </div>
   );
 }
@@ -67,14 +66,14 @@ function DojoTopBar({ org, role, onEnterDojo }) {
   const [swOpen, setSwOpen] = React.useState(false);
   const mem = D.memberships || [];
   return (
-    <div className="flex items-center gap-4 border-b bg-paper px-4" style={{ height: 54, flexShrink: 0 }}>
+    <div className="flex items-center gap-4 border-b bg-paper px-4 shrink-0" style={{ height: 54 }}>
       <div className="flex items-baseline gap-2">
         <span className="kanji text-accent text-xl" style={{ lineHeight: 1 }}>結</span>
         <span className="display text-lg tracking-tight">Dōjō</span>
       </div>
-      <div className="ml-1" style={{ position: "relative" }}>
+      <div className="ml-1 relative" >
         <button onClick={() => setSwOpen(o => !o)}
-          className={"inline-flex items-center gap-2 bg-paper-soft rounded " + (swOpen ? "border-accent" : "border-1px")}
+          className={"inline-flex items-center gap-2 bg-paper-soft rounded " + (swOpen ? "border-accent" : "border border-paper-edge")}
           style={{ padding: "var(--space-1) var(--space-3)", minHeight: 32 }}>
           <span className="kanji text-accent text-sm">{org.kanji}</span>
           <span className="text-sm text-ink">{org.name}</span>
@@ -82,27 +81,27 @@ function DojoTopBar({ org, role, onEnterDojo }) {
           <span className="text-xs text-ink-mute">▾</span>
         </button>
         {swOpen && (
-          <div className="bg-paper border-1px rounded-lg shadow-lg" style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, width: 300, zIndex: 50, overflow: "hidden" }}>
-            <div className="flex items-center gap-2 border-b" style={{ padding: "var(--space-2) var(--space-3)" }}>
+          <div className="bg-paper border border-paper-edge rounded-lg shadow-lg absolute overflow-hidden" style={{ top: "calc(100% + 6px)", left: 0, width: 300, zIndex: 50 }}>
+            <div className="flex items-center gap-2 border-b py-2 px-3" >
               <span className="kanji text-sm text-ink-mute">探</span>
               <span className="flex-1 text-sm text-ink-faint">Switch Dōjō…</span>
               <span className="mono text-xs text-ink-faint bg-paper-mute rounded-sm" style={{ padding: "4px 8px" }}>⌘K</span>
             </div>
-            <button className="flex items-center gap-3 w-full text-left bg-accent-soft border-b" style={{ padding: "var(--space-2) var(--space-3)" }}>
+            <button className="flex items-center gap-3 w-full text-left bg-accent-soft border-b py-2 px-3" >
               <span className="kanji text-accent text-base">場</span>
-              <div className="flex-1" style={{ minWidth: 0 }}>
+              <div className="flex-1 min-w-0" >
                 <div className="text-sm text-ink font-medium">Relay · you</div>
                 <div className="text-xs text-ink-mute">all Dōjōs · no switching needed</div>
               </div>
             </button>
-            <div className="py-1" style={{ maxHeight: 280, overflow: "auto" }}>
+            <div className="py-1 overflow-auto" style={{ maxHeight: 280 }}>
               {mem.map(m => {
                 const on = m.current;
                 return (
                   <button key={m.id} onClick={() => onEnterDojo && onEnterDojo(m)} className={"flex items-center gap-3 w-full text-left " + (on ? "bg-paper-soft" : "")} style={{ padding: "var(--space-2) var(--space-3)" }}>
                     <span className="kanji text-accent text-sm text-center" style={{ width: 18 }}>{m.kanji}</span>
-                    <div className="flex-1" style={{ minWidth: 0 }}>
-                      <div className="text-sm text-ink" style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{m.name}</div>
+                    <div className="flex-1 min-w-0" >
+                      <div className="text-sm text-ink whitespace-nowrap overflow-hidden text-ellipsis" >{m.name}</div>
                       <div className="mono text-xs text-ink-faint">{m.kind || "member"}</div>
                     </div>
                     {on && <span className="text-sm text-accent">✓</span>}
@@ -110,15 +109,15 @@ function DojoTopBar({ org, role, onEnterDojo }) {
                 );
               })}
             </div>
-            <button className="flex items-center gap-3 w-full text-left border-t" style={{ padding: "var(--space-2) var(--space-3)" }}>
+            <button className="flex items-center gap-3 w-full text-left border-t py-2 px-3" >
               <span className="kanji text-sm text-ink-mute text-center" style={{ width: 18 }}>群</span>
-              <div className="flex-1" style={{ minWidth: 0 }}>
+              <div className="flex-1 min-w-0" >
                 <div className="text-sm text-ink">Your Dōjōs</div>
                 <div className="text-xs text-ink-faint">see &amp; manage all</div>
               </div>
               <span className="text-sm text-ink-faint">→</span>
             </button>
-            <button className="flex items-center gap-2 w-full text-left border-t text-sm text-ink-soft" style={{ padding: "var(--space-3)" }}>
+            <button className="flex items-center gap-2 w-full text-left border-t text-sm text-ink-soft p-3" >
               <span className="text-accent">＋</span> Create or join a Dōjō
             </button>
           </div>
@@ -134,7 +133,7 @@ function DojoTopBar({ org, role, onEnterDojo }) {
       </div>
       <span className="zs-meta">{D.org.members} members</span>
       <Avatar name="Keiko" size={28} />
-      <button title="Log out" className="zs-btn zs-btn-sm zs-btn-ghost border-1px">
+      <button title="Log out" className="zs-btn zs-btn-sm zs-btn-ghost border border-paper-edge">
         <span className="kanji text-ink-mute">出</span>Log out
       </button>
     </div>
@@ -144,7 +143,7 @@ function DojoTopBar({ org, role, onEnterDojo }) {
 /* ─── role-scoped left nav (all items live) ─────────────── */
 function DojoRoleNav({ nav, active, setActive, header }) {
   return (
-    <aside className="flex flex-col border-r bg-paper-soft" style={{ width: 218, flexShrink: 0, padding: "var(--space-4) var(--space-3)", overflow: "auto" }}>
+    <aside className="flex flex-col border-r bg-paper-soft shrink-0 py-4 px-3 overflow-auto" style={{ width: 218 }}>
       {header}
       {(() => {
         const renderGroup = grp => (
@@ -155,7 +154,7 @@ function DojoRoleNav({ nav, active, setActive, header }) {
               const on = active === it.id;
               return (
                 <button key={it.id} onClick={() => setActive(it.id)}
-                  className={"w-full text-left rounded text-sm " + (on ? "bg-paper text-ink border-1px" : "text-ink-soft")}
+                  className={"w-full text-left rounded text-sm " + (on ? "bg-paper text-ink border border-paper-edge" : "text-ink-soft")}
                   style={{ display: "grid", gridTemplateColumns: "auto 1fr auto", alignItems: "center",
                            gap: "var(--space-2)", padding: "var(--space-2)",
                            border: on ? undefined : "1px solid transparent" }}>
@@ -182,13 +181,12 @@ function DojoRoleNav({ nav, active, setActive, header }) {
         );
       })()}
       <button onClick={() => setActive && setActive("identity")}
-        className="w-full text-left text-sm text-ink-soft border-t"
-        style={{ display: "grid", gridTemplateColumns: "auto 1fr", alignItems: "center",
-                 gap: "var(--space-2)", padding: "var(--space-3) var(--space-2) var(--space-2)" }}>
+ className="w-full text-left text-sm text-ink-soft border-t grid items-center gap-2"
+ style={{ gridTemplateColumns: "auto 1fr", padding: "var(--space-3) var(--space-2) var(--space-2)" }}>
         <span className="kanji text-sm text-ink-mute text-center" style={{ width: 15 }}>調</span>
         <span>Settings · SSO</span>
       </button>
-      <div className="mono" style={{ padding: "var(--space-2) var(--space-2) 0", fontSize: "var(--text-xs)", color: "var(--ink-faint)", display: "flex", alignItems: "center", gap: "var(--space-1)" }}>
+      <div className="mono text-xs text-ink-faint flex items-center gap-1" style={{ padding: "var(--space-2) var(--space-2) 0" }}>
         <span className="kanji">結</span>Dōjō v0.4.2
       </div>
     </aside>
@@ -200,10 +198,10 @@ function DojoMobileBar({ role, live = true }) {
   const D = window.DOJO;
   const org = D.memberships.find(m => m.current) || D.memberships[0];
   return (
-    <div className="flex items-center gap-3 border-b bg-paper" style={{ flexShrink: 0, padding: "var(--space-3) var(--space-4)" }}>
+    <div className="flex items-center gap-3 border-b bg-paper shrink-0 py-3 px-4" >
       <span className="kanji text-accent text-xl" style={{ lineHeight: 1 }}>結</span>
-      <div className="flex-1" style={{ minWidth: 0 }}>
-        <div className="text-sm text-ink font-semibold" style={{ lineHeight: 1.1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{org.name}</div>
+      <div className="flex-1 min-w-0" >
+        <div className="text-sm text-ink font-semibold whitespace-nowrap overflow-hidden text-ellipsis" style={{ lineHeight: 1.1 }}>{org.name}</div>
         {role && <div className="mono text-xs text-ink-faint" style={{ marginTop: 1 }}>{role.label}</div>}
       </div>
       {live && <DojoLive />}
@@ -225,7 +223,7 @@ const DOJO_MOBILE_TABS = [
 ];
 function DojoTabBar({ tabs, active, onNav }) {
   return (
-    <div className="grid border-t bg-paper" style={{ flexShrink: 0, gridTemplateColumns: `repeat(${tabs.length}, 1fr)` }}>
+    <div className="grid border-t bg-paper shrink-0" style={{ gridTemplateColumns: `repeat(${tabs.length}, 1fr)` }}>
       {tabs.map(it => {
         const on = active === it.id;
         return (
@@ -235,7 +233,7 @@ function DojoTabBar({ tabs, active, onNav }) {
             <span className={"kanji text-lg " + (on ? "text-accent" : "text-ink-mute")}>{it.kanji}</span>
             <span className={"text-xs " + (on ? "font-semibold" : "font-normal")} style={{ whiteSpace: "nowrap" }}>{it.label.split(" ")[0]}</span>
             {it.badge != null && (
-              <span className="mono text-xs font-semibold bg-accent rounded-full" style={{ position: "absolute", top: 5, right: "50%", marginRight: -18, padding: "0 8px", lineHeight: "14px" }}>{it.badge}</span>
+              <span className="mono text-xs font-semibold bg-accent rounded-full absolute" style={{ top: 5, right: "50%", marginRight: -18, padding: "0 8px", lineHeight: "14px" }}>{it.badge}</span>
             )}
           </button>
         );
@@ -248,7 +246,7 @@ function DojoTabBar({ tabs, active, onNav }) {
    lead · admin · identity (replaces three local Panel/IdPanel copies). */
 function DojoPanel({ title, note, right, align = "center", children }) {
   return (
-    <div className="zs-card-flush" style={{ overflow: "hidden" }}>
+    <div className="zs-card-flush overflow-hidden" >
       <div className={"flex gap-3 border-b px-4 py-3 " + (align === "baseline" ? "items-baseline" : "items-center")}>
         <span className="zs-eyebrow font-semibold">{title}</span>
         {note && <span className="zs-meta">{note}</span>}
@@ -277,15 +275,15 @@ function DojoManageBar({ org, role, onExit }) {
   const D = window.DOJO;
   const route = org.url || "sensei-hq.com/" + (org.name || "dojo").toLowerCase().replace(/[^a-z0-9]+/g, "-");
   return (
-    <div className="flex items-center gap-4 border-b bg-paper-soft px-4" style={{ height: 54, flexShrink: 0, borderTop: "2px solid var(--accent)" }}>
-      <button onClick={onExit} className="zs-btn zs-btn-sm zs-btn-ghost border-1px" title="Back to your work">
+    <div className="flex items-center gap-4 border-b bg-paper-soft px-4 shrink-0" style={{ height: 54, borderTop: "2px solid var(--accent)" }}>
+      <button onClick={onExit} className="zs-btn zs-btn-sm zs-btn-ghost border border-paper-edge" title="Back to your work">
         <span className="text-ink-mute">←</span><span className="kanji text-accent">携</span>Your work
       </button>
-      <span style={{ width: 1, height: 24, background: "var(--paper-edge)" }} />
-      <div className="flex items-center gap-2" style={{ minWidth: 0 }}>
+      <span className="bg-paper-edge" style={{ width: 1, height: 24 }} />
+      <div className="flex items-center gap-2 min-w-0" >
         <span className="zs-eyebrow font-semibold text-ink-mute">Managing</span>
         <span className="kanji text-accent text-lg" style={{ lineHeight: 1 }}>{org.kanji}</span>
-        <span className="display text-lg tracking-tight" style={{ whiteSpace: "nowrap" }}>{org.name}</span>
+        <span className="display text-lg tracking-tight whitespace-nowrap" >{org.name}</span>
         <span className="mono text-xs text-ink-mute bg-paper rounded-full" style={{ border: "1px solid var(--paper-edge)", padding: "3px 10px" }}>{route}</span>
       </div>
       {role && (
@@ -294,7 +292,7 @@ function DojoManageBar({ org, role, onExit }) {
       <div className="flex-1" />
       <span className="zs-meta">{D.org.members} members</span>
       <Avatar name="Keiko" size={28} />
-      <button title="Log out" className="zs-btn zs-btn-sm zs-btn-ghost border-1px">
+      <button title="Log out" className="zs-btn zs-btn-sm zs-btn-ghost border border-paper-edge">
         <span className="kanji text-ink-mute">出</span>Log out
       </button>
     </div>
@@ -303,11 +301,11 @@ function DojoManageBar({ org, role, onExit }) {
 function DojoManageNavHeader({ org, role }) {
   return (
     <div className="mb-4">
-      <div className="zs-eyebrow font-semibold text-ink-mute mb-2" style={{ paddingLeft: "var(--space-2)" }}>Dōjō management</div>
-      <div className="flex items-center gap-2 bg-paper border-1px rounded-lg" style={{ padding: "var(--space-2) var(--space-3)" }}>
+      <div className="zs-eyebrow font-semibold text-ink-mute mb-2 pl-2" >Dōjō management</div>
+      <div className="flex items-center gap-2 bg-paper border border-paper-edge rounded-lg py-2 px-3" >
         <span className="kanji text-accent text-base">{org.kanji}</span>
-        <div className="flex-1" style={{ minWidth: 0 }}>
-          <div className="text-sm text-ink font-medium" style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{org.name}</div>
+        <div className="flex-1 min-w-0" >
+          <div className="text-sm text-ink font-medium whitespace-nowrap overflow-hidden text-ellipsis" >{org.name}</div>
           <div className="mono text-xs text-ink-faint">{role.label} · {org.kind || "employer"}</div>
         </div>
       </div>
@@ -331,24 +329,22 @@ function DojoRoleShell({ label, role, nav, active, setActive, children, mobile =
     : children;
   if (mobile) {
     return (
-      <div className="sensei" data-screen-label={label} style={{ width: "100%", height: "100%",
-            display: "flex", flexDirection: "column", overflow: "hidden", background: "var(--paper)" }}>
+      <div className="sensei w-full h-full flex flex-col overflow-hidden bg-paper" data-screen-label={label} >
         <DojoMobileBar role={role} />
-        <div className="flex flex-col" style={{ flex: 1, minHeight: 0, overflow: "auto" }}>{main}</div>
+        <div className="flex flex-col flex-1 min-h-0 overflow-auto" >{main}</div>
         <DojoMobileTabs nav={fullNav} active={activeId} setActive={onNav} />
       </div>
     );
   }
   return (
-    <div className="sensei" data-screen-label={label} style={{ width: "100%", height: "100%",
-          display: "flex", flexDirection: "column", overflow: "hidden", background: "var(--paper)" }}>
+    <div className="sensei w-full h-full flex flex-col overflow-hidden bg-paper" data-screen-label={label} >
       {manage
         ? <DojoManageBar org={org} role={role} onExit={onExit} />
         : <DojoTopBar org={org} role={role} onEnterDojo={onEnterDojo} />}
-      <div className="flex" style={{ flex: 1, minHeight: 0 }}>
+      <div className="flex flex-1 min-h-0" >
         <DojoRoleNav nav={fullNav} active={activeId} setActive={onNav}
           header={manage ? <DojoManageNavHeader org={org} role={role} /> : null} />
-        <div className="flex-1" style={{ minWidth: 0 }}>{main}</div>
+        <div className="flex-1 min-w-0" >{main}</div>
       </div>
     </div>
   );
@@ -356,8 +352,8 @@ function DojoRoleShell({ label, role, nav, active, setActive, children, mobile =
 
 function DojoLive({ label = "live" }) {
   return (
-    <span className="inline-flex items-center gap-1 text-xs text-success bg-success-soft border-1px border-success-edge rounded-full" style={{ padding: "4px 12px" }}>
-      <span className="rounded-full" style={{ width: 6, height: 6, background: "var(--success)" }} />{label}
+    <span className="inline-flex items-center gap-1 text-xs text-success bg-success-soft border border-success-edge rounded-full" style={{ padding: "4px 12px" }}>
+      <span className="rounded-full bg-success" style={{ width: 6, height: 6 }} />{label}
     </span>
   );
 }
@@ -367,7 +363,7 @@ function DojoLive({ label = "live" }) {
 function DojoBtn({ variant = "primary", size = "md", kanji, children, onClick, style }) {
   const cls = "zs-btn "
     + (size === "sm" ? "zs-btn-sm " : "")
-    + (variant === "primary" ? "zs-btn-primary" : variant === "ghost" ? "bg-paper border-1px" : "");
+    + (variant === "primary" ? "zs-btn-primary" : variant === "ghost" ? "bg-paper border border-paper-edge" : "");
   const skin = variant === "danger" ? { background: "var(--danger)", color: "var(--paper)" } : null;
   const kc = variant === "danger" ? "var(--paper)" : "var(--accent)";
   return (
@@ -387,8 +383,8 @@ function DojoKindTag({ p }) {
   const soft = DOJO_KIND_SOFT[p.kind] || "var(--paper-mute)";
   const edge = DOJO_KIND_EDGE[p.kind] || "var(--paper-edge)";
   return (
-    <span className="inline-flex items-center gap-1 text-xs rounded-full" style={{ color: tone,
-      background: soft, border: `1px solid ${edge}`, padding: "4px 8px", whiteSpace: "nowrap" }}>
+    <span className="inline-flex items-center gap-1 text-xs rounded-full whitespace-nowrap" style={{ color: tone,
+ background: soft, border: `1px solid ${edge}`, padding: "4px 8px" }}>
       <span className="kanji text-xs">{DOJO_KIND_KANJI[p.kind] || "結"}</span>{p.dojo}
     </span>
   );

@@ -131,61 +131,49 @@ function PLogActionBadge({ type }) {
   };
   const m = map[type] || map.check;
   return (
-    <span className="mono py-1 px-1" style={{
-      fontSize: 11, fontWeight: 600, letterSpacing: '0.12em', borderRadius: 3, color: m.color, background: m.bg,
-      whiteSpace: 'nowrap'
-}}>{m.label}</span>
+    <span className="mono py-1 px-1 font-semibold whitespace-nowrap" style={{
+ fontSize: 11, letterSpacing: '0.12em', borderRadius: 3, color: m.color, background: m.bg }}>{m.label}</span>
   );
 }
 
 function PLogStatus({ trace }) {
-  if (trace.ok) return <span style={{ color: 'var(--success)', fontSize: 13, lineHeight: 1 }}>✓</span>;
+  if (trace.ok) return <span className="text-success" style={{ fontSize: 13, lineHeight: 1 }}>✓</span>;
   if (trace.fix_ok) return (
-    <span className="mono" style={{ fontSize: 11, color: 'var(--warning)',
-                  fontWeight: 600, letterSpacing: '0.06em' }}>FIXED</span>
+    <span className="mono text-warning font-semibold" style={{ fontSize: 11, letterSpacing: '0.06em' }}>FIXED</span>
   );
-  return <span style={{ color: 'var(--accent)', fontSize: 13, lineHeight: 1 }}>✗</span>;
+  return <span className="text-accent" style={{ fontSize: 13, lineHeight: 1 }}>✗</span>;
 }
 
 // ── A single trace row + its expanded detail block ────────────────────
 function PLogTraceRow({ trace, expanded, onToggle }) {
   const hasDetail = trace.out || trace.err || trace.fix_attempted;
   return (
-    <div style={{ borderBottom: 'var(--hairline)' }}>
+    <div className="border-b" >
       <div onClick={hasDetail ? onToggle : undefined}
-           style={{
-             display: 'grid', gridTemplateColumns: '74px 168px 1fr 60px 40px', alignItems: 'center',
-             cursor: hasDetail ? 'pointer' : 'default'
-}} className="gap-3 py-2 px-0" >
+ style={{ gridTemplateColumns: '74px 168px 1fr 60px 40px',
+ cursor: hasDetail ? 'pointer' : 'default'
+ }} className="gap-3 py-2 px-0 grid items-center" >
         <PLogActionBadge type={trace.action_type}/>
-        <span className="mono" style={{ fontSize: 13, color: 'var(--ink-2)',
-                      overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
+        <span className="mono text-ink-2 overflow-hidden whitespace-nowrap text-ellipsis" style={{ fontSize: 13 }}>
           {trace.step}
         </span>
-        <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)',
-                      overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
+        <span className="mono text-ink-3 overflow-hidden whitespace-nowrap text-ellipsis" style={{ fontSize: 11 }}>
           {anonymize(trace.cmd)}
         </span>
-        <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)',
-                      textAlign: 'right', fontFeatureSettings: '"tnum"' }}>{fmtMs(trace.ms)}</span>
-        <div style={{ textAlign: 'center' }}><PLogStatus trace={trace}/></div>
+        <span className="mono text-ink-3 text-right" style={{ fontSize: 11, fontFeatureSettings: '"tnum"' }}>{fmtMs(trace.ms)}</span>
+        <div className="text-center" ><PLogStatus trace={trace}/></div>
       </div>
 
       {expanded && (
-        <div style={{
-          background: 'var(--paper-2)', borderRadius: 5, border: 'var(--hairline)'
-}} className="mb-3 py-3 px-3 ml-9" >
+        <div style={{ borderRadius: 5 }} className="mb-3 py-3 px-3 ml-24 bg-paper-2 border border-paper-edge" >
           {trace.out && (
             <div style={{ marginBottom: trace.err ? 10 : 0 }}>
               <div style={{
- fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
-                              color: 'var(--ink-4)'
-}} className="mb-1" >stdout</div>
-              <pre className="mono m-0" style={{
- fontSize: 11,
-                              color: 'var(--ink-2)', lineHeight: 1.6,
-                              whiteSpace: 'pre-wrap', wordBreak: 'break-all'
-}}>
+ fontSize: 11, letterSpacing: '0.14em' }} className="mb-1 uppercase text-ink-4" >stdout</div>
+              <pre className="mono m-0 text-ink-2" style={{
+ fontSize: 11, lineHeight: 1.6,
+ whiteSpace: 'pre-wrap', wordBreak: 'break-all'
+ }}>
                 {anonymize(trace.out)}
               </pre>
             </div>
@@ -193,13 +181,10 @@ function PLogTraceRow({ trace, expanded, onToggle }) {
           {trace.err && (
             <div>
               <div style={{
- fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
-                              color: 'var(--accent)'
-}} className="mb-1" >stderr</div>
-              <pre className="mono m-0" style={{
- fontSize: 11,
-                              color: 'var(--accent)', lineHeight: 1.6
-}}>{trace.err}</pre>
+ fontSize: 11, letterSpacing: '0.14em' }} className="mb-1 uppercase text-accent" >stderr</div>
+              <pre className="mono m-0 text-accent" style={{
+ fontSize: 11, lineHeight: 1.6
+ }}>{trace.err}</pre>
             </div>
           )}
           {trace.fix_attempted && (
@@ -209,16 +194,14 @@ function PLogTraceRow({ trace, expanded, onToggle }) {
               borderTop: trace.out || trace.err ? 'var(--hairline)' : 'none'
             }}>
               <div style={{
- fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
-                              color: 'var(--warning)'
-}} className="mb-1" >auto-fix attempted</div>
+ fontSize: 11, letterSpacing: '0.14em' }} className="mb-1 uppercase text-warning" >auto-fix attempted</div>
               <pre className="mono m-0" style={{
  fontSize: 11,
                               color: trace.fix_ok ? 'var(--success)' : 'var(--accent)',
                               lineHeight: 1.6
 }}>
                 $ {trace.fix_approach}{'  '}
-                <span style={{ color: 'var(--ink-4)', fontSize: 11 }}>
+                <span className="text-ink-4" style={{ fontSize: 11 }}>
                   → {trace.fix_ok ? 'succeeded' : 'failed'}
                 </span>
               </pre>
@@ -282,88 +265,67 @@ function PLogIssueModal({ session, project, onClose }) {
   };
 
   return (
-    <div onClick={onClose}
-         style={{ position: 'absolute', inset: 0, background: 'var(--scrim)',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  zIndex: 30, backdropFilter: 'blur(2px)' }}>
-      <div onClick={e => e.stopPropagation()}
-           style={{
-             width: '88%', maxWidth: 980, maxHeight: '90%',
-             background: 'var(--paper)', border: 'var(--hairline)', borderRadius: 12,
-             display: 'flex', flexDirection: 'column',
-             boxShadow: 'var(--shadow-lg)'
-           }}>
+    <div className="absolute flex items-center justify-center" onClick={onClose}
+ style={{ inset: 0, background: 'var(--scrim)',
+ zIndex: 30, backdropFilter: 'blur(2px)' }}>
+      <div className="bg-paper border border-paper-edge flex flex-col shadow-lg" onClick={e => e.stopPropagation()}
+ style={{
+ width: '88%', maxWidth: 980, maxHeight: '90%', borderRadius: 12 }}>
         {/* Header */}
-        <div style={{
-          display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', borderBottom: 'var(--hairline)', flexShrink: 0
-}} className="pt-4 pb-3 px-5" >
+        <div className="pt-4 pb-3 px-6 flex items-start justify-between border-b shrink-0" >
           <div>
-            <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2 mb-1" >
-              <span className="kanji" style={{ fontSize: 22, color: 'var(--accent)' }}>診</span>
-              <h3 className="display m-0" style={{
- fontSize: 22, fontWeight: 400,
-                            letterSpacing: '-0.01em'
-}}>
+            <div className="gap-2 mb-1 flex items-baseline" >
+              <span className="kanji text-accent" style={{ fontSize: 22 }}>診</span>
+              <h3 className="display m-0 font-normal" style={{
+ fontSize: 22,
+ letterSpacing: '-0.01em'
+ }}>
                 Report this session
               </h3>
             </div>
-            <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+            <div className="text-ink-3" style={{ fontSize: 11 }}>
               {session.display_time} · {session.traces.length} traces ·
               {' '}{session.traces.filter(t => t.fix_attempted).length} auto-fixes ·
               {' '}<span className="mono">{session.id}</span>
             </div>
           </div>
           <button onClick={onClose}
-                  style={{
- background: 'transparent', border: 'none', cursor: 'pointer',
-                           color: 'var(--ink-3)', fontSize: 22,
-                           lineHeight: 1
-}} className="px-1" >×</button>
+ style={{ fontSize: 22,
+ lineHeight: 1
+ }} className="px-1 bg-transparent border-0 cursor-pointer text-ink-3" >×</button>
         </div>
 
         {/* Body — two columns */}
-        <div style={{
- flex: 1, overflow: 'auto',
-                       display: 'grid', gridTemplateColumns: '1fr 280px', minHeight: 0
-}} className="gap-5 pt-4 pb-5 px-5" >
+        <div style={{ gridTemplateColumns: '1fr 280px' }} className="gap-6 pt-4 pb-6 px-6 flex-1 overflow-auto grid min-h-0" >
 
           {/* Preview column */}
-          <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0 }} className="gap-2" >
-            <div style={{ fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
-                            color: 'var(--ink-3)' }}>Issue preview · anonymized</div>
+          <div className="gap-2 flex flex-col min-h-0" >
+            <div className="uppercase text-ink-3" style={{ fontSize: 11, letterSpacing: '0.14em' }}>Issue preview · anonymized</div>
 
             {/* Title */}
             <div style={{
- background: 'var(--paper-2)', border: 'var(--hairline)',
-                            borderRadius: 5,
-                            fontSize: 13, color: 'var(--ink)', fontWeight: 500, flexShrink: 0
-}} className="py-2 px-3" >
+ borderRadius: 5,
+ fontSize: 13 }} className="py-2 px-3 bg-paper-2 border border-paper-edge text-ink font-medium shrink-0" >
               {issueTitle}
             </div>
 
             {/* Body */}
-            <pre className="mono py-3 px-4 m-0" style={{
- flex: 1, background: 'var(--paper-2)',
-                              border: 'var(--hairline)', borderRadius: 5,
-                              fontSize: 11, color: 'var(--ink-2)', lineHeight: 1.7,
-                              overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-                              minHeight: 240
-}}>
+            <pre className="mono py-3 px-4 m-0 flex-1 bg-paper-2 border border-paper-edge text-ink-2 overflow-auto" style={{ borderRadius: 5,
+ fontSize: 11, lineHeight: 1.7, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+ minHeight: 240
+ }}>
               {issueBody}
             </pre>
           </div>
 
           {/* Compose column */}
-          <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-3" >
+          <div className="gap-3 flex flex-col" >
             {/* Included summary */}
             <div style={{
- background: 'var(--paper-2)', border: 'var(--hairline)',
-                            borderRadius: 6
-}} className="py-3 px-3" >
+ borderRadius: 6
+ }} className="py-3 px-3 bg-paper-2 border border-paper-edge" >
               <div style={{
- fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
-                              color: 'var(--ink-3)'
-}} className="mb-2" >
+ fontSize: 11, letterSpacing: '0.14em' }} className="mb-2 uppercase text-ink-3" >
                 Included in report
               </div>
               {[
@@ -378,10 +340,9 @@ function PLogIssueModal({ session, project, onClose }) {
                 ['App',     `v${session.app_version}`],
               ].map(([k, v]) => (
                 <div key={k} style={{
- display: 'flex', justifyContent: 'space-between',
-                                       fontSize: 11
-}} className="mb-1" >
-                  <span style={{ color: 'var(--ink-3)' }}>{k}</span>
+ fontSize: 11
+ }} className="mb-1 flex justify-between" >
+                  <span className="text-ink-3" >{k}</span>
                   <span className={['Traces','Fixes','App','RAM','Arch','OS'].includes(k) ? 'mono' : ''}
                          style={{ color: 'var(--ink-2)',
                                    fontSize: ['OS','Arch'].includes(k) ? 10.5 : 11.5,
@@ -396,54 +357,43 @@ function PLogIssueModal({ session, project, onClose }) {
             {/* Compose */}
             <div>
               <div style={{
- fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
-                              color: 'var(--ink-3)'
-}} className="mb-1" >
+ fontSize: 11, letterSpacing: '0.14em' }} className="mb-1 uppercase text-ink-3" >
                 Additional context
               </div>
               <textarea value={context} onChange={e => setContext(e.target.value)}
-                          placeholder="What were you doing? Anything else worth knowing?"
-                          style={{
- width: '100%', height: 96, resize: 'none',
-                                    background: 'var(--paper-2)', border: 'var(--hairline)',
-                                    borderRadius: 5, fontSize: 13, color: 'var(--ink)',
-                                    fontFamily: 'inherit', lineHeight: 1.5
-}} className="py-2 px-2" />
+ placeholder="What were you doing? Anything else worth knowing?"
+ style={{ height: 96, resize: 'none',
+ borderRadius: 5, fontSize: 13,
+ fontFamily: 'inherit', lineHeight: 1.5
+ }} className="py-2 px-2 w-full bg-paper-2 border border-paper-edge text-ink" />
             </div>
 
             {/* Privacy note */}
-            <div style={{ fontSize: 11, color: 'var(--ink-3)', lineHeight: 1.7 }}>
+            <div className="text-ink-3" style={{ fontSize: 11, lineHeight: 1.7 }}>
               Paths like{' '}
-              <code className="mono py-1 px-1" style={{
- background: 'var(--paper-3)', borderRadius: 3, fontSize: 11
-}}>/Users/jerry/</code>
+              <code className="mono py-1 px-1 bg-paper-3" style={{ borderRadius: 3, fontSize: 11
+ }}>/Users/jerry/</code>
               {' '}are replaced with{' '}
-              <code className="mono py-1 px-1" style={{
- background: 'var(--paper-3)', borderRadius: 3, fontSize: 11
-}}>~/</code>.
+              <code className="mono py-1 px-1 bg-paper-3" style={{ borderRadius: 3, fontSize: 11
+ }}>~/</code>.
               No personal data is included.
             </div>
 
-            <div style={{ flex: 1 }}/>
+            <div className="flex-1" />
 
             {/* Actions */}
-            <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-2" >
+            <div className="gap-2 flex flex-col" >
               <button onClick={() => alert('Opens github.com/sensei-hq/app/issues/new')}
-                      style={{
- width: '100%', borderRadius: 5,
-                                fontSize: 13, letterSpacing: '0.04em', border: 'none', cursor: 'pointer',
-                                background: 'var(--ink)', color: 'var(--paper)'
-}} className="py-2 px-4" >
+ style={{ borderRadius: 5,
+ fontSize: 13, letterSpacing: '0.04em' }} className="py-2 px-4 w-full border-0 cursor-pointer bg-ink text-paper" >
                 Submit to GitHub ↗
               </button>
               <button onClick={copy}
-                      style={{
- width: '100%', borderRadius: 5,
-                                fontSize: 13, letterSpacing: '0.04em', cursor: 'pointer',
-                                background: 'transparent', border: 'var(--hairline)',
-                                color: copied ? 'var(--success)' : 'var(--ink-2)',
-                                transition: 'color 0.2s'
-}} className="py-2 px-4" >
+ style={{ borderRadius: 5,
+ fontSize: 13, letterSpacing: '0.04em',
+ color: copied ? 'var(--success)' : 'var(--ink-2)',
+ transition: 'color 0.2s'
+ }} className="py-2 px-4 w-full cursor-pointer bg-transparent border border-paper-edge" >
                 {copied ? 'Copied ✓' : 'Copy markdown'}
               </button>
             </div>
@@ -496,28 +446,25 @@ function ProjLogs({ project, scope = "project", state = "ready" }) {
   ];
 
   return (
-    <div style={{ height: '100%', position: 'relative',
-                   display: 'grid', gridTemplateColumns: '264px 1fr', minHeight: 0 }}>
+    <div className="h-full relative grid min-h-0" style={{ gridTemplateColumns: '264px 1fr' }}>
 
       {/* ── Session list ── */}
-      <aside style={{ borderRight: 'var(--hairline)', background: 'var(--paper-2)',
-                       display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        <div style={{ borderBottom: 'var(--hairline)' }} className="pt-5 pb-3 px-4" >
-          <div style={{ display: 'flex', alignItems: 'center' }} className="gap-2" >
-            <span className="kanji" style={{ fontSize: 17, color: 'var(--accent)' }}>診</span>
-            <span style={{ fontSize: 11, letterSpacing: '0.16em', textTransform: 'uppercase',
-                             color: 'var(--ink-3)' }}>diagnostic logs</span>
+      <aside className="border-r bg-paper-2 flex flex-col overflow-hidden" >
+        <div className="pt-6 pb-3 px-4 border-b" >
+          <div className="gap-2 flex items-center" >
+            <span className="kanji text-accent" style={{ fontSize: 17 }}>診</span>
+            <span className="uppercase text-ink-3" style={{ fontSize: 11, letterSpacing: '0.16em' }}>diagnostic logs</span>
           </div>
-          <div style={{ fontSize: 11, color: 'var(--ink-4)' }} className="mt-1" >
+          <div style={{ fontSize: 11 }} className="mt-1 text-ink-4" >
             {collective ? (
-              <>every session sensei has run · <span className="mono" style={{ color: 'var(--ink-3)' }}>{PLOG_SESSIONS.length} total</span></>
+              <>every session sensei has run · <span className="mono text-ink-3" >{PLOG_SESSIONS.length} total</span></>
             ) : (
-              <>scoped to <span className="mono" style={{ color: 'var(--ink-3)' }}>{project?.name}</span></>
+              <>scoped to <span className="mono text-ink-3" >{project?.name}</span></>
             )}
           </div>
 
           {collective && (
-            <div style={{ display: 'flex', flexWrap: 'wrap' }} className="gap-1 mt-3" >
+            <div className="gap-1 mt-3 flex flex-wrap" >
               {[
                 { id: 'all',       label: 'All' },
                 { id: 'bootstrap', label: 'Bootstrap' },
@@ -527,12 +474,11 @@ function ProjLogs({ project, scope = "project", state = "ready" }) {
                 const on = moduleFilter === f.id;
                 return (
                   <button key={f.id} onClick={() => setModuleFilter(f.id)}
-                          style={{
- borderRadius: 4, cursor: 'pointer',
-                                    border: 'none', fontSize: 11,
-                                    background: on ? 'var(--ink)' : 'var(--paper-3)',
-                                    color: on ? 'var(--paper)' : 'var(--ink-2)'
-}} className="py-1 px-2" >
+ style={{
+ borderRadius: 4, fontSize: 11,
+ background: on ? 'var(--ink)' : 'var(--paper-3)',
+ color: on ? 'var(--paper)' : 'var(--ink-2)'
+ }} className="py-1 px-2 cursor-pointer border-0" >
                     {f.label}
                   </button>
                 );
@@ -541,35 +487,29 @@ function ProjLogs({ project, scope = "project", state = "ready" }) {
           )}
         </div>
 
-        <div style={{ flex: 1, overflowY: 'auto' }} className="py-2 px-0" >
+        <div className="py-2 px-0 flex-1 overflow-y-auto" >
           {dateGroups.map(({ date, groups }) => {
             const open = openDates.has(date);
             return (
               <div key={date}>
                 <div onClick={() => toggleDate(date)}
-                     style={{
- display: 'flex', alignItems: 'center', cursor: 'pointer', userSelect: 'none'
-}} className="gap-1 pt-2 pb-1 px-4" >
-                  <span style={{ fontSize: 11, color: 'var(--ink-4)', lineHeight: 1,
-                                  transform: open ? 'none' : 'rotate(-90deg)',
-                                  display: 'inline-block', transition: 'transform 0.15s' }}>▾</span>
-                  <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.06em',
-                                  textTransform: 'uppercase', color: 'var(--ink-2)' }}>
+ style={{ userSelect: 'none'
+ }} className="gap-1 pt-2 pb-1 px-4 flex items-center cursor-pointer" >
+                  <span className="text-ink-4 inline-block" style={{ fontSize: 11, lineHeight: 1,
+ transform: open ? 'none' : 'rotate(-90deg)', transition: 'transform 0.15s' }}>▾</span>
+                  <span className="font-semibold uppercase text-ink-2" style={{ fontSize: 11, letterSpacing: '0.06em' }}>
                     {date}
                   </span>
                 </div>
 
                 {open && groups.map(({ mod, sessions }) => (
                   <div key={mod}>
-                    <div style={{
- display: 'flex', alignItems: 'center'
-}} className="gap-1 py-1 pl-6 pr-4" >
-                      <span className="kanji" style={{ fontSize: 11, color: 'var(--ink-4)',
-                                    lineHeight: 1 }}>
+                    <div className="gap-1 py-1 pl-8 pr-4 flex items-center" >
+                      <span className="kanji text-ink-4" style={{ fontSize: 11,
+ lineHeight: 1 }}>
                         {PLOG_MODULES[mod]?.kanji ?? '◆'}
                       </span>
-                      <span style={{ fontSize: 11, letterSpacing: '0.14em',
-                                      textTransform: 'uppercase', color: 'var(--ink-4)' }}>
+                      <span className="uppercase text-ink-4" style={{ fontSize: 11, letterSpacing: '0.14em' }}>
                         {PLOG_MODULES[mod]?.label ?? mod}
                       </span>
                     </div>
@@ -579,47 +519,36 @@ function ProjLogs({ project, scope = "project", state = "ready" }) {
                       const isCurrent = s.id === PLOG_SESSIONS[0].id;
                       return (
                         <div key={s.id}
-                             onClick={() => { setSelectedId(s.id); setExpandedTraceId(null); }}
-                             style={{
- cursor: 'pointer',
-                                       background: sel ? 'var(--paper)' : 'transparent',
-                                       borderLeft: sel ? '2px solid var(--accent)' : '2px solid transparent',
-                                       transition: 'background 0.12s'
-}} className="py-2 pl-6 pr-4" >
+ onClick={() => { setSelectedId(s.id); setExpandedTraceId(null); }}
+ style={{
+ background: sel ? 'var(--paper)' : 'transparent',
+ borderLeft: sel ? '2px solid var(--accent)' : '2px solid transparent',
+ transition: 'background 0.12s'
+ }} className="py-2 pl-8 pr-4 cursor-pointer" >
                           {isCurrent && (
                             <div style={{
- fontSize: 11, letterSpacing: '0.16em',
-                                            textTransform: 'uppercase',
-                                            color: 'var(--accent)'
-}} className="mb-1" >current</div>
+ fontSize: 11, letterSpacing: '0.16em' }} className="mb-1 uppercase text-accent" >current</div>
                           )}
-                          <div style={{ display: 'flex', alignItems: 'center' }} className="gap-1 mb-1" >
-                            <span style={{ width: 6, height: 6, borderRadius: '50%', flexShrink: 0,
-                                            background: outcomeTone(s.outcome) }}/>
-                            <span style={{ fontSize: 13, fontWeight: 500,
-                                            color: sel ? 'var(--ink)' : 'var(--ink-2)' }}>
+                          <div className="gap-1 mb-1 flex items-center" >
+                            <span className="rounded-full shrink-0" style={{ width: 6, height: 6,
+ background: outcomeTone(s.outcome) }}/>
+                            <span className="font-medium" style={{ fontSize: 13,
+ color: sel ? 'var(--ink)' : 'var(--ink-2)' }}>
                               {timeKey(s)}
                             </span>
                             {collective && s.project && (
-                              <span style={{
- display: 'inline-flex',
-                                              alignItems: 'center', fontSize: 11,
-                                              color: 'var(--ink-3)'
-}} className="gap-1 ml-auto" >
-                                <span className="kanji" style={{ fontSize: 11, color: 'var(--ink-4)' }}>
+                              <span style={{ fontSize: 11 }} className="gap-1 ml-auto inline-flex items-center text-ink-3" >
+                                <span className="kanji text-ink-4" style={{ fontSize: 11 }}>
                                   {s.project.kanji}
                                 </span>
-                                <span style={{ maxWidth: 80, whiteSpace: 'nowrap',
-                                                overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                <span className="whitespace-nowrap overflow-hidden text-ellipsis" style={{ maxWidth: 80 }}>
                                   {s.project.name}
                                 </span>
                               </span>
                             )}
                           </div>
-                          <div className="mono ml-3" style={{
- fontSize: 11,
-                                          color: 'var(--ink-3)'
-}}>
+                          <div className="mono ml-3 text-ink-3" style={{
+ fontSize: 11 }}>
                             {fmtMs(s.duration_ms)} · {s.traces.length} steps
                             {s.traces.filter(t => t.fix_attempted).length
                               ? ` · ${s.traces.filter(t => t.fix_attempted).length} fix`
@@ -636,37 +565,31 @@ function ProjLogs({ project, scope = "project", state = "ready" }) {
         </div>
 
         <div style={{
- borderTop: 'var(--hairline)',
-                       fontSize: 11, color: 'var(--ink-4)', lineHeight: 1.6
-}} className="py-2 px-4" >
+ fontSize: 11, lineHeight: 1.6
+ }} className="py-2 px-4 border-t text-ink-4" >
           <span className="mono">retention · 30 days</span>
         </div>
       </aside>
 
       {/* ── Trace stream ── */}
-      <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'hidden' }}>
+      <div className="flex flex-col min-w-0 overflow-hidden" >
         {/* Session header */}
-        <div style={{ borderBottom: 'var(--hairline)' }} className="pt-5 pb-4 px-6" >
-          <div style={{
- display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between'
-}} className="gap-4 mb-4" >
-            <div style={{ minWidth: 0, flex: 1 }}>
-              <div style={{ display: 'flex', alignItems: 'center' }} className="gap-2 mb-1" >
-                <span className="kanji" style={{ fontSize: 13, color: 'var(--ink-3)' }}>
+        <div className="pt-6 pb-4 px-8 border-b" >
+          <div className="gap-4 mb-4 flex items-start justify-between" >
+            <div className="min-w-0 flex-1" >
+              <div className="gap-2 mb-1 flex items-center" >
+                <span className="kanji text-ink-3" style={{ fontSize: 13 }}>
                   {PLOG_MODULES[session.module]?.kanji ?? '◆'}
                 </span>
-                <span style={{ fontSize: 11, letterSpacing: '0.16em', textTransform: 'uppercase',
-                                color: 'var(--ink-3)' }}>
+                <span className="uppercase text-ink-3" style={{ fontSize: 11, letterSpacing: '0.16em' }}>
                   {PLOG_MODULES[session.module]?.label ?? session.module} · session
                 </span>
                 {collective && session.project && (
                   <>
-                    <span style={{ color: 'var(--ink-4)', opacity: 0.5 }}>·</span>
+                    <span className="text-ink-4" style={{ opacity: 0.5 }}>·</span>
                     <span style={{
- display: 'inline-flex', alignItems: 'center',
-                                    fontSize: 11, color: 'var(--ink-2)'
-}} className="gap-1" >
-                      <span className="kanji" style={{ fontSize: 13, color: 'var(--accent)' }}>
+ fontSize: 11 }} className="gap-1 inline-flex items-center text-ink-2" >
+                      <span className="kanji text-accent" style={{ fontSize: 13 }}>
                         {session.project.kanji}
                       </span>
                       {session.project.name}
@@ -674,15 +597,13 @@ function ProjLogs({ project, scope = "project", state = "ready" }) {
                   </>
                 )}
               </div>
-              <h2 className="display mt-0 mb-2" style={{
- fontSize: 22, fontWeight: 400, letterSpacing: '-0.01em'
-}}>
+              <h2 className="display mt-0 mb-2 font-normal" style={{
+ fontSize: 22, letterSpacing: '-0.01em'
+ }}>
                 {session.display_time}
               </h2>
               <div style={{
- display: 'flex', flexWrap: 'wrap',
-                             fontSize: 11, color: 'var(--ink-3)'
-}} className="gap-2" >
+ fontSize: 11 }} className="gap-2 flex flex-wrap text-ink-3" >
                 {[session.system_info.os, session.system_info.arch,
                   `${session.system_info.ram_gb} GB`, `${session.system_info.cpu_cores} cores`,
                   `v${session.app_version}`].map((v, i, a) => (
@@ -696,23 +617,19 @@ function ProjLogs({ project, scope = "project", state = "ready" }) {
               </div>
             </div>
             <button onClick={() => setShowReport(true)}
-                    style={{
- flexShrink: 0, borderRadius: 5,
-                              border: 'none', cursor: 'pointer',
-                              background: 'var(--ink)', color: 'var(--paper)',
-                              fontSize: 13, letterSpacing: '0.04em'
-}} className="py-1 px-3" >
+ style={{ borderRadius: 5,
+ fontSize: 13, letterSpacing: '0.04em'
+ }} className="py-1 px-3 shrink-0 border-0 cursor-pointer bg-ink text-paper" >
               Report this session ↗
             </button>
           </div>
 
-          <div style={{ display: 'flex' }} className="gap-5" >
+          <div className="gap-6 flex" >
             {stats.map(st => (
-              <div key={st.label} style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
-                <div style={{ fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
-                                color: 'var(--ink-3)' }}>{st.label}</div>
-                <div className="display" style={{ fontSize: 15, fontWeight: 400,
-                                color: st.color || 'var(--ink)' }}>
+              <div key={st.label} className="gap-1 flex flex-col" >
+                <div className="uppercase text-ink-3" style={{ fontSize: 11, letterSpacing: '0.14em' }}>{st.label}</div>
+                <div className="display font-normal" style={{ fontSize: 15,
+ color: st.color || 'var(--ink)' }}>
                   {st.value}
                 </div>
               </div>
@@ -721,19 +638,15 @@ function ProjLogs({ project, scope = "project", state = "ready" }) {
         </div>
 
         {/* Column headers */}
-        <div style={{
- display: 'grid', gridTemplateColumns: '74px 168px 1fr 60px 40px', background: 'var(--paper-2)',
-                       borderBottom: 'var(--hairline)', flexShrink: 0
-}} className="gap-3 py-2 px-6" >
+        <div style={{ gridTemplateColumns: '74px 168px 1fr 60px 40px' }} className="gap-3 py-2 px-8 grid bg-paper-2 border-b shrink-0" >
           {['action', 'step', 'command', 'duration', ''].map((h, i) => (
-            <div key={i} style={{ fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
-                                    color: 'var(--ink-4)',
-                                    textAlign: i === 3 ? 'right' : 'left' }}>{h}</div>
+            <div className="uppercase text-ink-4" key={i} style={{ fontSize: 11, letterSpacing: '0.14em',
+ textAlign: i === 3 ? 'right' : 'left' }}>{h}</div>
           ))}
         </div>
 
         {/* Trace rows */}
-        <div style={{ flex: 1, overflowY: 'auto' }} className="px-6" >
+        <div className="px-8 flex-1 overflow-y-auto" >
           {session.traces.map(t => (
             <PLogTraceRow key={t.id} trace={t}
                            expanded={expandedTraceId === t.id}
@@ -756,8 +669,8 @@ function ProjLogs({ project, scope = "project", state = "ready" }) {
 // shell. Shows every session sensei has run, tagged by project.
 function ObsLogs() {
   return (
-    <div className="sensei" data-screen-label="Collective · Logs"
-         style={{ width: '100%', height: '100%', overflow: 'hidden' }}>
+    <div className="sensei w-full h-full overflow-hidden" data-screen-label="Collective · Logs"
+ >
       <ProjLogs scope="collective"/>
     </div>
   );
@@ -768,14 +681,13 @@ function ObsLogs() {
 // out-of-context.
 function ProjectLogsPage() {
   return (
-    <div className="sensei" data-screen-label="Collective · Logs"
-         style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column',
-                   background: 'var(--paper)', overflow: 'hidden', position: 'relative' }}>
+    <div className="sensei w-full h-full flex flex-col bg-paper overflow-hidden relative" data-screen-label="Collective · Logs"
+ >
       <PerspectiveChrome
         title="先生  ·  Sensei"
         subtitle="logs · all projects"
         accent="var(--success)"/>
-      <div style={{ flex: 1, minHeight: 0 }}>
+      <div className="flex-1 min-h-0" >
         <ProjLogs scope="collective"/>
       </div>
     </div>
@@ -788,14 +700,13 @@ function ProjectLogsReportPage() {
   const [open, setOpen] = plS(true);
   const session = PLOG_SESSIONS.find(s => s.outcome === 'partial') || PLOG_SESSIONS[1];
   return (
-    <div className="sensei" data-screen-label="Collective · Logs · report"
-         style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column',
-                   background: 'var(--paper)', overflow: 'hidden', position: 'relative' }}>
+    <div className="sensei w-full h-full flex flex-col bg-paper overflow-hidden relative" data-screen-label="Collective · Logs · report"
+ >
       <PerspectiveChrome
         title="先生  ·  Sensei"
         subtitle="logs · report"
         accent="var(--success)"/>
-      <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
+      <div className="flex-1 min-h-0 relative" >
         <ProjLogs scope="collective"/>
         {open && (
           <PLogIssueModal session={session} project={session.project}

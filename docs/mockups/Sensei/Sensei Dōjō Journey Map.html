@@ -5,6 +5,7 @@
 <title>Sensei · Dōjō — Journey Map &amp; Resolutions</title>
 <link rel="stylesheet" href="fonts.css"/>
 <link rel="stylesheet" href="lib/tokens.css"/>
+<script src="lib/unocss.js"></script>
 <style>
   :root{
     --bg:var(--paper-2); --maxw:1240px;
@@ -14,12 +15,12 @@
   *{box-sizing:border-box}
   html,body{margin:0;background:var(--bg);font-family:var(--font-ui);color:var(--ink);
     -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
-  .page{max-width:var(--maxw);margin:0 auto;padding:var(--space-7) var(--space-6) var(--space-9)}
+  .page{max-width:var(--maxw);margin:0 auto;padding:var(--space-12) var(--space-8) var(--space-24)}
   a{color:inherit}
 
   /* ── masthead ── */
-  .mast{display:flex;align-items:flex-end;justify-content:space-between;gap:var(--space-6);
-        border-bottom:1px solid var(--ink);padding-bottom:var(--space-5)}
+  .mast{display:flex;align-items:flex-end;justify-content:space-between;gap:var(--space-8);
+        border-bottom:1px solid var(--ink);padding-bottom:var(--space-6)}
   .mast .lede{display:flex;align-items:flex-start;gap:var(--space-4)}
   .mast .k{font-family:var(--font-kanji);font-size:var(--text-3xl);color:var(--accent);line-height:.9}
   .mast h1{font-family:var(--font-display);font-weight:300;font-size:var(--text-3xl);letter-spacing:-0.02em;margin:0;line-height:1.02}
@@ -29,16 +30,16 @@
   .mast .meta b{color:var(--ink-2);font-weight:500}
 
   /* ── section scaffold ── */
-  .sec{margin-top:var(--space-8)}
+  .sec{margin-top:var(--space-16)}
   .sec-head{display:flex;align-items:baseline;gap:var(--space-3);border-bottom:1px solid var(--paper-edge);
-            padding-bottom:var(--space-3);margin-bottom:var(--space-5)}
+            padding-bottom:var(--space-3);margin-bottom:var(--space-6)}
   .sec-head .num{font-family:var(--font-mono);font-size:var(--text-xs);color:var(--accent);letter-spacing:.06em}
   .sec-head h2{font-family:var(--font-display);font-weight:400;font-size:var(--text-2xl);letter-spacing:-0.015em;margin:0}
   .sec-head .kanji{font-family:var(--font-kanji);font-size:var(--text-xl);color:var(--ink-3);margin-left:auto}
-  .sec-intro{font-size:var(--text-base);line-height:1.7;color:var(--ink-2);max-width:780px;margin:-8px 0 var(--space-6)}
+  .sec-intro{font-size:var(--text-base);line-height:1.7;color:var(--ink-2);max-width:780px;margin:-8px 0 var(--space-8)}
 
   /* ── scorecard ── */
-  .scorecard{display:grid;grid-template-columns:repeat(4,1fr);gap:var(--space-3);margin:var(--space-1) 0 var(--space-6)}
+  .scorecard{display:grid;grid-template-columns:repeat(4,1fr);gap:var(--space-3);margin:var(--space-1) 0 var(--space-8)}
   .score{background:var(--paper);border:1px solid var(--paper-edge);border-radius:12px;padding:var(--space-4) var(--space-4) var(--space-4);
          display:flex;flex-direction:column;gap:var(--space-2);position:relative;overflow:hidden}
   .score::before{content:"";position:absolute;top:0;left:0;width:3px;height:100%}
@@ -50,14 +51,14 @@
 
   /* ── themes ── */
   .themes{display:grid;grid-template-columns:repeat(2,1fr);gap:var(--space-4);margin-bottom:var(--space-3)}
-  .theme{background:var(--paper);border:1px solid var(--paper-edge);border-radius:12px;padding:var(--space-4) var(--space-5);display:flex;gap:var(--space-4)}
+  .theme{background:var(--paper);border:1px solid var(--paper-edge);border-radius:12px;padding:var(--space-4) var(--space-6);display:flex;gap:var(--space-4)}
   .theme .tk{font-family:var(--font-kanji);font-size:var(--text-2xl);color:var(--accent);line-height:1;flex-shrink:0}
   .theme h3{font-family:var(--font-display);font-weight:500;font-size:var(--text-base);margin:0 0 var(--space-1);letter-spacing:-0.01em}
   .theme p{margin:0;font-size:var(--text-sm);line-height:1.6;color:var(--ink-2)}
 
   /* ── headline callout ── */
-  .callout{margin-top:var(--space-6);background:var(--ink);color:var(--paper);border-radius:16px;padding:var(--space-6) var(--space-6);
-           display:flex;gap:var(--space-5);align-items:flex-start}
+  .callout{margin-top:var(--space-8);background:var(--ink);color:var(--paper);border-radius:16px;padding:var(--space-8) var(--space-8);
+           display:flex;gap:var(--space-6);align-items:flex-start}
   .callout .ck{font-family:var(--font-kanji);font-size:var(--text-4xl);line-height:.9;color:var(--accent);flex-shrink:0}
   .callout .eyebrow{color:oklch(0.72 0.13 40)}
   .callout h3{font-family:var(--font-display);font-weight:400;font-size:var(--text-xl);margin:var(--space-2) 0 var(--space-2);letter-spacing:-0.015em;color:var(--paper)}
@@ -68,7 +69,7 @@
   .callout a.jump:hover{background:oklch(0.30 0.012 50)}
 
   /* ── track scaffold (map / role grouping) ── */
-  .trackgrp{margin-top:var(--space-7)}
+  .trackgrp{margin-top:var(--space-12)}
   .trackgrp:first-of-type{margin-top:var(--space-2)}
   .trackgrp .th{display:flex;align-items:baseline;gap:var(--space-3);margin-bottom:var(--space-1)}
   .trackgrp .th .tk{font-family:var(--font-kanji);font-size:var(--text-xl);color:var(--accent);line-height:1}
@@ -89,7 +90,7 @@
   .flow-eyebrow{display:flex;align-items:center;gap:var(--space-2);font-size:var(--text-xs);letter-spacing:.14em;text-transform:uppercase;
         color:var(--ink-4);font-weight:600;margin:var(--space-4) 0 var(--space-2)}
   .flow-eyebrow .fk{font-family:var(--font-kanji);font-size:var(--text-sm);color:var(--accent)}
-  .swim{position:relative;height:178px;margin:0 0 var(--space-5);border:1px solid var(--paper-edge);border-radius:14px;
+  .swim{position:relative;height:178px;margin:0 0 var(--space-6);border:1px solid var(--paper-edge);border-radius:14px;
         background:var(--paper);overflow:hidden}
   .sl-lane{position:absolute;left:0;right:0;height:62px}
   .sl-lane.app{top:14px;background:color-mix(in srgb,var(--accent) 5%,var(--paper))}
@@ -112,7 +113,7 @@
   /* ── stage card ── */
   .stage{margin-top:var(--space-4);background:var(--paper);border:1px solid var(--paper-edge);border-radius:16px;overflow:hidden;
          box-shadow:var(--shadow-sm)}
-  .stage-head{display:flex;align-items:flex-start;gap:var(--space-4);padding:var(--space-5) var(--space-5) var(--space-4);border-bottom:1px solid var(--paper-edge)}
+  .stage-head{display:flex;align-items:flex-start;gap:var(--space-4);padding:var(--space-6) var(--space-6) var(--space-4);border-bottom:1px solid var(--paper-edge)}
   .stage-head .sk{font-family:var(--font-kanji);font-size:var(--text-2xl);color:var(--accent);line-height:1;flex-shrink:0;
         width:50px;height:50px;display:flex;align-items:center;justify-content:center;border-radius:12px;
         background:radial-gradient(120% 120% at 30% 20%, color-mix(in srgb,var(--accent) 12%,var(--paper)) 0%, var(--paper) 75%);
@@ -124,14 +125,14 @@
   .stage-head .settled .v{font-family:var(--font-display);font-size:var(--text-2xl);font-weight:300;line-height:1}
   .stage-head .settled .l{font-size:var(--text-xs);letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);margin-top:var(--space-1)}
 
-  .lenses{padding:var(--space-1) var(--space-5) var(--space-5)}
-  .lens-prose{display:grid;grid-template-columns:1fr 1fr;gap:var(--space-5);padding:var(--space-4) 0 var(--space-4);border-bottom:1px solid var(--paper-edge)}
+  .lenses{padding:var(--space-1) var(--space-6) var(--space-6)}
+  .lens-prose{display:grid;grid-template-columns:1fr 1fr;gap:var(--space-6);padding:var(--space-4) 0 var(--space-4);border-bottom:1px solid var(--paper-edge)}
   .lens-lab{font-size:var(--text-xs);letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3);font-weight:600;
         display:flex;align-items:center;gap:var(--space-1);margin-bottom:var(--space-2)}
   .lens-lab .dot{width:6px;height:6px;border-radius:50%}
   .lens-prose p{margin:0;font-size:var(--text-sm);line-height:1.65;color:var(--ink)}
 
-  .lens-cols{display:grid;grid-template-columns:1fr 1fr 1fr;gap:var(--space-5);padding-top:var(--space-4)}
+  .lens-cols{display:grid;grid-template-columns:1fr 1fr 1fr;gap:var(--space-6);padding-top:var(--space-4)}
   .lens-cols .col-lab{font-size:var(--text-xs);letter-spacing:.14em;text-transform:uppercase;font-weight:600;margin-bottom:var(--space-2);
         display:flex;align-items:center;gap:var(--space-1)}
   .lens-cols .col-lab .dot{width:7px;height:7px;border-radius:50%}
@@ -157,11 +158,11 @@
   .spill.planned{background:var(--paper-3);color:var(--ink-3);border:1px solid var(--paper-edge)}
 
   /* ── status section ── */
-  .legend{display:flex;gap:var(--space-4);flex-wrap:wrap;margin:-10px 0 var(--space-5);font-size:var(--text-xs);color:var(--ink-2)}
+  .legend{display:flex;gap:var(--space-4);flex-wrap:wrap;margin:-10px 0 var(--space-6);font-size:var(--text-xs);color:var(--ink-2)}
   .legend .it{display:flex;align-items:center;gap:var(--space-2)}
   .legend .it b{color:var(--ink);font-weight:600}
 
-  .stable{width:100%;border-collapse:collapse;font-size:var(--text-sm);margin-bottom:var(--space-6);
+  .stable{width:100%;border-collapse:collapse;font-size:var(--text-sm);margin-bottom:var(--space-8);
         background:var(--paper);border:1px solid var(--paper-edge);border-radius:14px;overflow:hidden}
   .stable thead th{text-align:left;font-size:var(--text-xs);letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);
         font-weight:600;padding:var(--space-3) var(--space-4);border-bottom:1px solid var(--paper-edge);background:var(--paper-soft)}
@@ -177,8 +178,8 @@
   .stable .spill{margin-left:0}
   .stnote{font-size:var(--text-xs);color:var(--ink-3);line-height:1.45;margin-top:var(--space-1)}
 
-  .foot{margin-top:var(--space-8);border-top:1px solid var(--paper-edge);padding-top:var(--space-4);
-        display:flex;justify-content:space-between;gap:var(--space-5);font-size:var(--text-xs);color:var(--ink-3);flex-wrap:wrap}
+  .foot{margin-top:var(--space-16);border-top:1px solid var(--paper-edge);padding-top:var(--space-4);
+        display:flex;justify-content:space-between;gap:var(--space-6);font-size:var(--text-xs);color:var(--ink-3);flex-wrap:wrap}
   .foot b{color:var(--ink-2);font-weight:600}
 
   /* ── architecture diagram ── */
@@ -309,7 +310,7 @@
     </div>
     <p class="sec-intro">Two zones, three routes. Signing in lands you on <strong>your work</strong> — never a Dōjō. From there you step into a <strong>Dōjō you belong to</strong> (its own route and shell, role-gated) or open a <strong>project</strong> to see exactly what governs it. No wizard, no gate — every destination is navigable, not a step you're funnelled through.</p>
 
-    <div style="display:flex;flex-direction:column;align-items:center;gap:var(--space-3);margin:var(--space-5) 0 var(--space-4)">
+    <div style="display:flex;flex-direction:column;align-items:center;gap:var(--space-3);margin:var(--space-6) 0 var(--space-4)">
       <div style="display:inline-flex;align-items:center;gap:var(--space-2);background:var(--ink);color:var(--paper);border-radius:var(--radius-lg);padding:var(--space-2) var(--space-4)">
         <span class="kanji" style="color:oklch(0.72 0.13 40)">鍵</span><span style="font-size:var(--text-sm);font-weight:600">Sign in</span>
         <span class="mono" style="font-size:var(--text-xs);opacity:.7">GitHub · magic link · self-hosted URL</span>
@@ -543,7 +544,7 @@
       </div>
     </div>
 
-    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:var(--space-3);margin:var(--space-5) 0 var(--space-5)">
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:var(--space-3);margin:var(--space-6) 0 var(--space-6)">
       <div style="background:var(--paper);border:1px solid var(--paper-edge);border-radius:14px;padding:var(--space-4) var(--space-4) var(--space-4);display:flex;flex-direction:column;gap:var(--space-2)">
         <div style="display:flex;align-items:center;gap:var(--space-2)"><span style="font-family:var(--font-kanji);font-size:var(--text-xl);color:var(--ink-3)">公</span><span style="font-size:var(--text-sm);font-weight:600">Public / OSS</span></div>
         <div style="font-family:var(--font-display);font-size:var(--text-2xl);font-weight:300;letter-spacing:-.02em;line-height:1">Free<span style="font-size:var(--text-sm);color:var(--ink-3)"> · forever</span></div>
@@ -561,7 +562,7 @@
       </div>
     </div>
 
-    <div style="display:flex;align-items:flex-start;gap:var(--space-3);background:var(--paper);border:1px solid var(--paper-edge);border-left:3px solid var(--accent);border-radius:12px;padding:var(--space-4) var(--space-4);margin:0 0 var(--space-5)">
+    <div style="display:flex;align-items:flex-start;gap:var(--space-3);background:var(--paper);border:1px solid var(--paper-edge);border-left:3px solid var(--accent);border-radius:12px;padding:var(--space-4) var(--space-4);margin:0 0 var(--space-6)">
       <span style="font-family:var(--font-kanji);font-size:var(--text-xl);color:var(--accent);line-height:1;flex-shrink:0">携</span>
       <div>
         <div style="font-size:var(--text-sm);font-weight:600;color:var(--ink);margin-bottom:var(--space-1)">Relay is free for individuals — paid only where it's shared</div>

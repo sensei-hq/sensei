@@ -7,19 +7,20 @@
 <title>Sensei · End-to-End Journey — Desktop + Dōjō</title>
 <link rel="stylesheet" href="fonts.css"/>
 <link rel="stylesheet" href="lib/tokens.css"/>
+<script src="lib/unocss.js"></script>
 <style>
   :root{ --bg:var(--paper-2); --maxw:1240px; }
   [data-theme="dark"]{ --bg: oklch(0.170 0.010 50); }
   *{box-sizing:border-box}
   html,body{margin:0;background:var(--bg);font-family:var(--font-ui);color:var(--ink);
     -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
-  .page{max-width:var(--maxw);margin:0 auto;padding:var(--space-7) var(--space-6) var(--space-9)}
+  .page{max-width:var(--maxw);margin:0 auto;padding:var(--space-12) var(--space-8) var(--space-24)}
   a{color:var(--accent);text-decoration:none}
   a:hover{color:var(--ink)}
 
   /* masthead */
-  .mast{display:flex;align-items:flex-end;justify-content:space-between;gap:var(--space-6);
-        border-bottom:1px solid var(--ink);padding-bottom:var(--space-5)}
+  .mast{display:flex;align-items:flex-end;justify-content:space-between;gap:var(--space-8);
+        border-bottom:1px solid var(--ink);padding-bottom:var(--space-6)}
   .mast .lede{display:flex;align-items:flex-start;gap:var(--space-4)}
   .mast .k{font-family:var(--font-kanji);font-size:var(--text-3xl);color:var(--accent);line-height:.9}
   .mast h1{font-family:var(--font-display);font-weight:300;font-size:var(--text-3xl);letter-spacing:-0.02em;margin:0;line-height:1.02}
@@ -29,13 +30,13 @@
   .mast .meta b{color:var(--ink-2);font-weight:500}
 
   /* section scaffold */
-  .sec{margin-top:var(--space-8)}
+  .sec{margin-top:var(--space-16)}
   .sec-head{display:flex;align-items:baseline;gap:var(--space-3);border-bottom:1px solid var(--paper-edge);
-            padding-bottom:var(--space-3);margin-bottom:var(--space-5)}
+            padding-bottom:var(--space-3);margin-bottom:var(--space-6)}
   .sec-head .num{font-family:var(--font-mono);font-size:var(--text-xs);color:var(--accent);letter-spacing:.06em}
   .sec-head h2{font-family:var(--font-display);font-weight:400;font-size:var(--text-2xl);letter-spacing:-0.015em;margin:0}
   .sec-head .kanji{font-family:var(--font-kanji);font-size:var(--text-xl);color:var(--ink-3);margin-left:auto}
-  .sec-intro{font-size:var(--text-base);line-height:1.7;color:var(--ink-2);max-width:820px;margin:-6px 0 var(--space-6)}
+  .sec-intro{font-size:var(--text-base);line-height:1.7;color:var(--ink-2);max-width:820px;margin:-6px 0 var(--space-8)}
 
   /* the loop diagram */
   .loop{display:grid;grid-template-columns:1fr 1fr 1fr;gap:var(--space-4);position:relative;margin-top:var(--space-2)}
@@ -47,7 +48,7 @@
   .zone .node:first-of-type{border-top:none}
   .zone .node .nk{font-family:var(--font-kanji);font-size:var(--text-base);color:var(--ink-3);width:18px;text-align:center;flex-shrink:0}
   .zone .node .sub{color:var(--ink-3);font-size:var(--text-xs);font-family:var(--font-mono);margin-left:auto}
-  .loop-flows{display:flex;gap:var(--space-5);flex-wrap:wrap;margin-top:var(--space-4);justify-content:center}
+  .loop-flows{display:flex;gap:var(--space-6);flex-wrap:wrap;margin-top:var(--space-4);justify-content:center}
   .lf{display:inline-flex;align-items:center;gap:var(--space-2);font-size:var(--text-xs);color:var(--ink-2);
       background:var(--paper);border:1px solid var(--paper-edge);border-radius:20px;padding:var(--space-1) var(--space-3)}
   .lf .d{font-size:var(--text-sm);line-height:1}
@@ -55,7 +56,7 @@
 
   /* persona banner */
   .persona{display:flex;align-items:center;gap:var(--space-3);background:var(--ink);color:var(--paper);border-radius:14px;
-           padding:var(--space-4) var(--space-5);margin-bottom:var(--space-2)}
+           padding:var(--space-4) var(--space-6);margin-bottom:var(--space-2)}
   .persona .pk{font-family:var(--font-kanji);font-size:var(--text-2xl);color:var(--accent);line-height:1;flex-shrink:0}
   .persona h3{font-family:var(--font-display);font-weight:400;font-size:var(--text-xl);margin:0;letter-spacing:-0.01em;color:var(--paper)}
   .persona p{margin:var(--space-1) 0 0;font-size:var(--text-sm);line-height:1.55;color:var(--on-primary-soft);max-width:720px}
@@ -71,7 +72,7 @@
   .stage .body .surf{font-family:var(--font-mono);font-size:var(--text-xs);letter-spacing:.08em;text-transform:uppercase;
         color:var(--ink-3);background:var(--paper-3);border-radius:20px;padding:var(--space-0) var(--space-2)}
   .stage .body h4{font-family:var(--font-display);font-weight:500;font-size:var(--text-lg);margin:var(--space-2) 0 0;letter-spacing:-0.01em}
-  .stage .cols{display:grid;grid-template-columns:1fr 1fr;gap:var(--space-4) var(--space-5);margin-top:var(--space-3)}
+  .stage .cols{display:grid;grid-template-columns:1fr 1fr;gap:var(--space-4) var(--space-6);margin-top:var(--space-3)}
   .stage .blk .lab{font-size:var(--text-xs);letter-spacing:.14em;text-transform:uppercase;font-weight:600;color:var(--ink-3);
         display:flex;align-items:center;gap:var(--space-1);margin-bottom:var(--space-1)}
   .stage .blk .lab .d{width:6px;height:6px;border-radius:50%}
@@ -81,21 +82,21 @@
 
   /* worth-building */
   .vgrid{display:grid;grid-template-columns:repeat(2,1fr);gap:var(--space-4);margin-top:var(--space-1)}
-  .vcard{background:var(--paper);border:1px solid var(--paper-edge);border-radius:14px;padding:var(--space-4) var(--space-5);display:flex;gap:var(--space-4)}
+  .vcard{background:var(--paper);border:1px solid var(--paper-edge);border-radius:14px;padding:var(--space-4) var(--space-6);display:flex;gap:var(--space-4)}
   .vcard .vk{font-family:var(--font-kanji);font-size:var(--text-2xl);color:var(--accent);line-height:1;flex-shrink:0}
   .vcard h3{font-family:var(--font-display);font-weight:500;font-size:var(--text-base);margin:0 0 var(--space-1);letter-spacing:-0.01em}
   .vcard p{margin:0;font-size:var(--text-sm);line-height:1.6;color:var(--ink-2)}
   .vcard ul{margin:var(--space-2) 0 0;padding-left:var(--space-4)}
   .vcard li{font-size:var(--text-xs);line-height:1.55;color:var(--ink-2);margin-bottom:var(--space-1)}
 
-  .verdict{margin-top:var(--space-5);background:var(--ink);color:var(--paper);border-radius:16px;padding:var(--space-6) var(--space-6);display:flex;gap:var(--space-5);align-items:flex-start}
+  .verdict{margin-top:var(--space-6);background:var(--ink);color:var(--paper);border-radius:16px;padding:var(--space-8) var(--space-8);display:flex;gap:var(--space-6);align-items:flex-start}
   .verdict .ck{font-family:var(--font-kanji);font-size:var(--text-4xl);line-height:.9;color:var(--accent);flex-shrink:0}
   .verdict .eyebrow{color:oklch(0.72 0.13 40)}
   .verdict h3{font-family:var(--font-display);font-weight:400;font-size:var(--text-xl);margin:var(--space-2) 0 var(--space-2);letter-spacing:-0.015em;color:var(--paper)}
   .verdict p{margin:0 0 var(--space-2);font-size:var(--text-sm);line-height:1.7;color:var(--on-primary-soft);max-width:760px}
   .verdict .rule{font-family:var(--font-mono);font-size:var(--text-xs);color:oklch(0.72 0.13 40);margin-top:var(--space-1)}
 
-  .foot{margin-top:var(--space-8);border-top:1px solid var(--paper-edge);padding-top:var(--space-4);
+  .foot{margin-top:var(--space-16);border-top:1px solid var(--paper-edge);padding-top:var(--space-4);
         display:flex;justify-content:space-between;font-size:var(--text-xs);color:var(--ink-3);font-family:var(--font-mono)}
 
   @media (max-width:820px){

@@ -146,10 +146,10 @@ function ChipsStates() {
       <div className="flex flex-col gap-4">
         {rows.map(r => (
           <div key={r.s} className="flex items-center" style={{ gap: 14 }}>
-            <div style={{ width: 118, flexShrink: 0 }}><CapChip label="agents" status={r.s}/></div>
-            <div style={{ minWidth: 0 }}>
-              <div className="text-sm text-ink" style={{ whiteSpace: "nowrap" }}>{r.t}</div>
-              <div className="text-xs text-ink-mute" style={{ whiteSpace: "nowrap" }}>{r.d}</div>
+            <div className="shrink-0" style={{ width: 118 }}><CapChip label="agents" status={r.s}/></div>
+            <div className="min-w-0" >
+              <div className="text-sm text-ink whitespace-nowrap" >{r.t}</div>
+              <div className="text-xs text-ink-mute whitespace-nowrap" >{r.d}</div>
             </div>
           </div>
         ))}
@@ -159,7 +159,7 @@ function ChipsStates() {
         <div className="text-xs text-ink-mute mb-2">Brand marks (currentColor — adapt to theme)</div>
         <div className="flex" style={{ gap: 10 }}>
           {["claude", "zed", "opencode", "cursor", "openai"].map(id => (
-            <div key={id} className="flex items-center justify-center border-1px bg-paper text-ink rounded"
+            <div key={id} className="flex items-center justify-center border border-paper-edge bg-paper text-ink rounded"
                  style={{ width: 38, height: 38 }}>
               <BrandMark id={id} size={22}/>
             </div>

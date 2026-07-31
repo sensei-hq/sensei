@@ -13,16 +13,15 @@ const MaApp = () => {
   const sol = data.solutions.find(s => s.id === activeSolution);
 
   return (
-    <div className="sensei" data-screen-label="Ma · Direction 1"
-         style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column',
-                  background: 'var(--paper)', overflow: 'hidden',
-                  fontFamily: 'var(--font-ui)' }}>
+    <div className="sensei w-full h-full flex flex-col bg-paper overflow-hidden" data-screen-label="Ma · Direction 1"
+ style={{
+ fontFamily: 'var(--font-ui)' }}>
       <TauriChrome title="Sensei  先生" />
-      <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
+      <div className="flex-1 flex min-h-0" >
         <MaSidebar page={page} setPage={setPage}
                    solutions={data.solutions}
                    activeSolution={activeSolution} setActiveSolution={setActiveSolution} />
-        <main style={{ flex: 1, overflow: 'auto', position: 'relative' }}>
+        <main className="flex-1 overflow-auto relative" >
           {page === "overview"    && <MaOverview data={data} setPage={setPage} setActiveSolution={setActiveSolution}/>}
           {page === "observatory" && <MaObservatory data={data} sol={sol} setPage={setPage}
                                                    setFocusedSession={setFocusedSession}
@@ -47,33 +46,27 @@ const MaApp = () => {
 function MaSidebar({ page, setPage, solutions, activeSolution, setActiveSolution }) {
   return (
     <aside style={{
-      width: 220, borderRight: 'var(--hairline)',
-      display: 'flex', flexDirection: 'column',
-      background: 'var(--paper)', flexShrink: 0
-}} className="py-5 px-4 gap-5" >
-      <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2" >
-        <span className="kanji" style={{ fontSize: 22, color: 'var(--accent)' }}>先</span>
-        <span className="display" style={{ fontSize: 17, fontWeight: 400 }}>Sensei</span>
+ width: 220 }} className="py-6 px-4 gap-6 border-r flex flex-col bg-paper shrink-0" >
+      <div className="gap-2 flex items-baseline" >
+        <span className="kanji text-accent" style={{ fontSize: 22 }}>先</span>
+        <span className="display font-normal" style={{ fontSize: 17 }}>Sensei</span>
       </div>
 
       <div>
         <div style={{
- fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
-                      textTransform: 'uppercase'
-}} className="mb-2" >Solutions</div>
-        <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
+ fontSize: 11, letterSpacing: '0.14em' }} className="mb-2 text-ink-3 uppercase" >Solutions</div>
+        <div className="gap-1 flex flex-col" >
           {solutions.map(s => (
             <button key={s.id}
-                    onClick={() => setActiveSolution(s.id)}
-                    style={{
-                      display: 'flex', alignItems: 'center', borderRadius: 6, textAlign: 'left',
-                      background: activeSolution === s.id ? 'var(--paper-3)' : 'transparent',
-                      color: activeSolution === s.id ? 'var(--ink)' : 'var(--ink-2)',
-                      fontSize: 13, transition: 'background .12s'
-}} className="gap-2 py-2 px-2" >
+ onClick={() => setActiveSolution(s.id)}
+ style={{ borderRadius: 6,
+ background: activeSolution === s.id ? 'var(--paper-3)' : 'transparent',
+ color: activeSolution === s.id ? 'var(--ink)' : 'var(--ink-2)',
+ fontSize: 13, transition: 'background .12s'
+ }} className="gap-2 py-2 px-2 flex items-center text-left" >
               <span className="kanji" style={{ fontSize: 13, color: activeSolution === s.id ? 'var(--accent)' : 'var(--ink-3)', width: 16 }}>{s.kanji}</span>
-              <span style={{ flex: 1 }}>{s.name}</span>
-              <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>{pct(s.ftr)}</span>
+              <span className="flex-1" >{s.name}</span>
+              <span className="mono text-ink-3" style={{ fontSize: 11 }}>{pct(s.ftr)}</span>
             </button>
           ))}
         </div>
@@ -81,19 +74,16 @@ function MaSidebar({ page, setPage, solutions, activeSolution, setActiveSolution
 
       <div>
         <div style={{
- fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
-                      textTransform: 'uppercase'
-}} className="mb-2" >View</div>
-        <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
+ fontSize: 11, letterSpacing: '0.14em' }} className="mb-2 text-ink-3 uppercase" >View</div>
+        <div className="gap-1 flex flex-col" >
           {PAGES.map(p => (
             <button key={p.id}
-                    onClick={() => setPage(p.id)}
-                    style={{
-                      display: 'flex', alignItems: 'center', borderRadius: 6, textAlign: 'left',
-                      background: page === p.id ? 'var(--ink)' : 'transparent',
-                      color: page === p.id ? 'var(--paper)' : 'var(--ink-2)',
-                      fontSize: 13, transition: 'background .12s'
-}} className="gap-2 py-2 px-2" >
+ onClick={() => setPage(p.id)}
+ style={{ borderRadius: 6,
+ background: page === p.id ? 'var(--ink)' : 'transparent',
+ color: page === p.id ? 'var(--paper)' : 'var(--ink-2)',
+ fontSize: 13, transition: 'background .12s'
+ }} className="gap-2 py-2 px-2 flex items-center text-left" >
               <span className="kanji" style={{ fontSize: 13, width: 14, opacity: 0.7 }}>{p.kanji}</span>
               <span>{p.label}</span>
             </button>
@@ -101,15 +91,15 @@ function MaSidebar({ page, setPage, solutions, activeSolution, setActiveSolution
         </div>
       </div>
 
-      <div style={{ flex: 1 }}/>
+      <div className="flex-1" />
 
-      <div style={{ display: 'flex', alignItems: 'center', fontSize: 13, color: 'var(--ink-3)' }} className="gap-2" >
+      <div style={{ fontSize: 13 }} className="gap-2 flex items-center text-ink-3" >
         <Avatar name="Aiko" size={22}/>
-        <div style={{ flex: 1, overflow: 'hidden' }}>
-          <div style={{ color: 'var(--ink-2)', fontSize: 13 }}>Aiko</div>
+        <div className="flex-1 overflow-hidden" >
+          <div className="text-ink-2" style={{ fontSize: 13 }}>Aiko</div>
           <div style={{ fontSize: 11 }}>daemon · 9823</div>
         </div>
-        <span className="ink-dot" style={{ background: 'var(--success)' }}/>
+        <span className="ink-dot bg-success" />
       </div>
     </aside>
   );
@@ -126,46 +116,40 @@ function MaObservatory({ data, sol, setPage, setFocusedSession, applied, setAppl
   const trendUp = delta >= 0;
 
   return (
-    <div style={{ position: 'relative', maxWidth: 1100 }} className="pt-7 pb-8 px-8" >
+    <div style={{ maxWidth: 1100 }} className="pt-12 pb-16 px-16 relative" >
       {/* Huge kanji watermark */}
-      <div className="kanji" style={{
-        position: 'absolute', top: 40, right: 40, fontSize: 56,
-        color: 'var(--accent)', opacity: 0.05, lineHeight: 1, userSelect: 'none',
-        pointerEvents: 'none'
-      }}>{sol.kanji}</div>
+      <div className="kanji absolute text-accent" style={{ top: 40, right: 40, fontSize: 56, opacity: 0.05, lineHeight: 1, userSelect: 'none',
+ pointerEvents: 'none'
+ }}>{sol.kanji}</div>
 
       {/* Breadcrumb */}
       <div style={{
- fontSize: 11, color: 'var(--ink-3)', letterSpacing: '0.12em',
-                    textTransform: 'uppercase'
-}} className="mb-1" >
+ fontSize: 11, letterSpacing: '0.12em' }} className="mb-1 text-ink-3 uppercase" >
         Observatory · {sol.name}
       </div>
-      <h1 className="display my-1" style={{ fontSize: 40, fontWeight: 300, letterSpacing: '-0.02em' }}>
+      <h1 className="display my-1 font-light" style={{ fontSize: 40, letterSpacing: '-0.02em' }}>
         How am I doing?
       </h1>
-      <div style={{ color: 'var(--ink-3)', fontSize: 13 }} className="mb-7" >
+      <div style={{ fontSize: 13 }} className="mb-12 text-ink-3" >
         The week of April 16 — 22. Three repos, {sol.sessions7d} sessions, {sol.tokens7d}M tokens.
       </div>
 
       {/* Hero FTR number */}
-      <div style={{ display: 'flex', alignItems: 'baseline', position: 'relative' }} className="gap-5 mb-3" >
-        <div className="display" style={{ fontSize: 56, fontWeight: 300, lineHeight: 0.9,
-                                          letterSpacing: '-0.04em', fontFeatureSettings: '"ss01"' }}>
+      <div className="gap-6 mb-3 flex items-baseline relative" >
+        <div className="display font-light" style={{ fontSize: 56, lineHeight: 0.9,
+ letterSpacing: '-0.04em', fontFeatureSettings: '"ss01"' }}>
           {Math.round(sol.ftr * 100)}
-          <span style={{ fontSize: 56, color: 'var(--ink-3)', fontWeight: 300 }} className="ml-1" >%</span>
+          <span style={{ fontSize: 56 }} className="ml-1 text-ink-3 font-light" >%</span>
         </div>
         <div className="pb-4" >
           <div style={{
- fontSize: 11, letterSpacing: '0.12em', textTransform: 'uppercase',
-                        color: 'var(--ink-3)'
-}} className="mb-1" >First try right</div>
-          <div style={{ display: 'flex', alignItems: 'center' }} className="gap-2" >
+ fontSize: 11, letterSpacing: '0.12em' }} className="mb-1 uppercase text-ink-3" >First try right</div>
+          <div className="gap-2 flex items-center" >
             <span className="mono" style={{ fontSize: 13,
                       color: trendUp ? 'var(--success)' : 'var(--accent)' }}>
               {trendUp ? "↗" : "↘"} {delta >= 0 ? "+" : ""}{delta}%
             </span>
-            <span style={{ fontSize: 13, color: 'var(--ink-3)' }}>vs. last week</span>
+            <span className="text-ink-3" style={{ fontSize: 13 }}>vs. last week</span>
           </div>
           <div style={{ color: trendUp ? 'var(--success)' : 'var(--accent)' }} className="mt-3" >
             <Sparkline data={history} width={180} height={38} />
@@ -173,76 +157,71 @@ function MaObservatory({ data, sol, setPage, setFocusedSession, applied, setAppl
         </div>
       </div>
 
-      <hr className="hairline mt-7 mb-6"/>
+      <hr className="hairline mt-12 mb-8"/>
 
       {/* The koan — coaching pulled front & center */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr' }} className="gap-7" >
+      <div style={{ gridTemplateColumns: '1fr 1fr' }} className="gap-12 grid" >
         <div>
           <div style={{
- fontSize: 11, letterSpacing: '0.12em', textTransform: 'uppercase',
-                        color: 'var(--ink-3)'
-}} className="mb-3" >Sensei says</div>
+ fontSize: 11, letterSpacing: '0.12em' }} className="mb-3 uppercase text-ink-3" >Sensei says</div>
           <blockquote className="m-0" >
-            <p className="display m-0" style={{
- fontSize: 28, fontWeight: 300, lineHeight: 1.25, color: 'var(--ink)', textWrap: 'balance'
-}}>
+            <p className="display m-0 font-light text-ink" style={{
+ fontSize: 28, lineHeight: 1.25, textWrap: 'balance'
+ }}>
               {topCoach.koan}
             </p>
             <p style={{
- fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.55,
-                        maxWidth: 420
-}} className="mt-5 mb-0" >{topCoach.body}</p>
+ fontSize: 13, lineHeight: 1.55,
+ maxWidth: 420
+ }} className="mt-6 mb-0 text-ink-2" >{topCoach.body}</p>
           </blockquote>
 
-          <div style={{ display: 'flex', alignItems: 'center' }} className="mt-5 gap-3" >
+          <div className="mt-6 gap-3 flex items-center" >
             <button onClick={() => setApplied({...applied, [topCoach.id]: true})}
-                    style={{
+ style={{
  background: applied[topCoach.id] ? 'var(--success-soft)' : 'var(--ink)',
-                      color: applied[topCoach.id] ? 'var(--success)' : 'var(--paper)',
-                      borderRadius: 999, fontSize: 13, fontWeight: 500,
-                      letterSpacing: '0.01em', transition: 'all .18s'
-}} className="py-2 px-4" >
+ color: applied[topCoach.id] ? 'var(--success)' : 'var(--paper)',
+ borderRadius: 999, fontSize: 13,
+ letterSpacing: '0.01em', transition: 'all .18s'
+ }} className="py-2 px-4 font-medium" >
               {applied[topCoach.id] ? "✓  Applied" : topCoach.action}
             </button>
-            <span style={{ fontSize: 11, color: 'var(--ink-3)' }}>{topCoach.impact}</span>
+            <span className="text-ink-3" style={{ fontSize: 11 }}>{topCoach.impact}</span>
           </div>
         </div>
 
         <div>
           <div style={{
- fontSize: 11, letterSpacing: '0.12em', textTransform: 'uppercase',
-                        color: 'var(--ink-3)'
-}} className="mb-3" >Recent sessions</div>
-          <div style={{ display: 'flex', flexDirection: 'column' }}>
+ fontSize: 11, letterSpacing: '0.12em' }} className="mb-3 uppercase text-ink-3" >Recent sessions</div>
+          <div className="flex flex-col" >
             {solSessions.map((s, i) => (
               <button key={s.id}
-                      onClick={() => { setFocusedSession(s.id); setPage("sessions"); }}
-                      style={{
-                        display: 'grid', gridTemplateColumns: '10px 1fr auto auto', alignItems: 'center', textAlign: 'left',
-                        borderBottom: i < solSessions.length - 1 ? 'var(--hairline)' : 'none'
-}} className="gap-3 py-3 px-0" >
+ onClick={() => { setFocusedSession(s.id); setPage("sessions"); }}
+ style={{ gridTemplateColumns: '10px 1fr auto auto',
+ borderBottom: i < solSessions.length - 1 ? 'var(--hairline)' : 'none'
+ }} className="gap-3 py-3 px-0 grid items-center text-left" >
                 <span className="ink-dot"
                       style={{ background: s.ftr ? 'var(--success)' : 'var(--accent)', width: 6, height: 6 }}/>
                 <div>
-                  <div style={{ fontSize: 13, color: 'var(--ink)', fontWeight: 400 }}>{s.title}</div>
-                  <div className="mono mt-1" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+                  <div className="text-ink font-normal" style={{ fontSize: 13 }}>{s.title}</div>
+                  <div className="mono mt-1 text-ink-3" style={{ fontSize: 11 }}>
                     {s.project} · {s.module}
                   </div>
                 </div>
-                <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+                <span className="mono text-ink-3" style={{ fontSize: 11 }}>
                   {s.turns}t · {s.duration}
                 </span>
-                <span style={{ fontSize: 13, color: 'var(--ink-3)' }}>→</span>
+                <span className="text-ink-3" style={{ fontSize: 13 }}>→</span>
               </button>
             ))}
           </div>
         </div>
       </div>
 
-      <hr className="hairline mt-7 mb-6"/>
+      <hr className="hairline mt-12 mb-8"/>
 
       {/* Quality signals — understated grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)' }} className="gap-6 mb-2" >
+      <div style={{ gridTemplateColumns: 'repeat(4, 1fr)' }} className="gap-8 mb-2 grid" >
         {[
           { label: "Pattern compliance", v: "94%", delta: "+3", good: true },
           { label: "Test coverage Δ",    v: "+2.1%", delta: "", good: true },
@@ -251,10 +230,8 @@ function MaObservatory({ data, sol, setPage, setFocusedSession, applied, setAppl
         ].map(s => (
           <div key={s.label}>
             <div style={{
- fontSize: 11, color: 'var(--ink-3)', letterSpacing: '0.08em',
-                          textTransform: 'uppercase'
-}} className="mb-2" >{s.label}</div>
-            <div className="display" style={{ fontSize: 28, fontWeight: 300, letterSpacing: '-0.02em' }}>{s.v}</div>
+ fontSize: 11, letterSpacing: '0.08em' }} className="mb-2 text-ink-3 uppercase" >{s.label}</div>
+            <div className="display font-light" style={{ fontSize: 28, letterSpacing: '-0.02em' }}>{s.v}</div>
             <div className="mono mt-1" style={{
  fontSize: 11, color: s.good ? 'var(--success)' : 'var(--accent)'
 }}>{s.delta}</div>
@@ -270,62 +247,52 @@ function MaObservatory({ data, sol, setPage, setFocusedSession, applied, setAppl
 // ────────────────────────────────────────────────────────────
 function MaOverview({ data, setPage, setActiveSolution }) {
   return (
-    <div style={{ maxWidth: 1100 }} className="pt-7 pb-8 px-8" >
+    <div style={{ maxWidth: 1100 }} className="pt-12 pb-16 px-16" >
       <div style={{
- fontSize: 11, color: 'var(--ink-3)', letterSpacing: '0.12em',
-                    textTransform: 'uppercase'
-}} className="mb-1" >Overview</div>
-      <h1 className="display mt-0 mb-1" style={{ fontSize: 40, fontWeight: 300, letterSpacing: '-0.02em' }}>
+ fontSize: 11, letterSpacing: '0.12em' }} className="mb-1 text-ink-3 uppercase" >Overview</div>
+      <h1 className="display mt-0 mb-1 font-light" style={{ fontSize: 40, letterSpacing: '-0.02em' }}>
         Three solutions. Eight repos.
       </h1>
-      <div style={{ color: 'var(--ink-3)', fontSize: 13 }} className="mb-7" >
-        Global FTR <span className="mono" style={{ color: 'var(--ink)' }}>78%</span>, week to date.
+      <div style={{ fontSize: 13 }} className="mb-12 text-ink-3" >
+        Global FTR <span className="mono text-ink" >78%</span>, week to date.
       </div>
 
       {/* Global sparkline */}
-      <div className="mb-7" >
-        <div style={{ color: 'var(--accent)' }}>
+      <div className="mb-12" >
+        <div className="text-accent" >
           <Sparkline data={data.ftrHistory} width={800} height={60} />
         </div>
-        <div className="mono mt-1" style={{
- display: 'flex', justifyContent: 'space-between',
-                          fontSize: 11, color: 'var(--ink-3)'
-}}>
+        <div className="mono mt-1 flex justify-between text-ink-3" style={{
+ fontSize: 11 }}>
           <span>Apr 9</span><span>Apr 16</span><span>Apr 22</span>
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)' }} className="gap-5" >
+      <div style={{ gridTemplateColumns: 'repeat(3, 1fr)' }} className="gap-6 grid" >
         {data.solutions.map(s => (
           <button key={s.id}
-                  onClick={() => { setActiveSolution(s.id); setPage("observatory"); }}
-                  style={{
-                    background: 'var(--paper)', border: 'var(--hairline)',
-                    borderRadius: 10, textAlign: 'left',
-                    position: 'relative', overflow: 'hidden',
-                    transition: 'border-color .15s, transform .15s'
-}}
-                  onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--ink-3)'}
-                  onMouseLeave={e => e.currentTarget.style.borderColor = ''} className="py-5 px-5" >
-            <span className="kanji" style={{
-              position: 'absolute', top: -30, right: -20, fontSize: 56,
-              color: 'var(--accent)', opacity: 0.06, lineHeight: 1
-            }}>{s.kanji}</span>
-            <div className="display mb-1" style={{ fontSize: 17, fontWeight: 400 }}>{s.name}</div>
-            <div style={{ fontSize: 11, color: 'var(--ink-3)' }} className="mb-5" >{s.description}</div>
-            <div className="display" style={{ fontSize: 56, fontWeight: 300, letterSpacing: '-0.03em', lineHeight: 1 }}>
-              {Math.round(s.ftr*100)}<span style={{ fontSize: 17, color: 'var(--ink-3)' }}>%</span>
+ onClick={() => { setActiveSolution(s.id); setPage("observatory"); }}
+ style={{
+ borderRadius: 10,
+ transition: 'border-color .15s, transform .15s'
+ }}
+ onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--ink-3)'}
+ onMouseLeave={e => e.currentTarget.style.borderColor = ''} className="py-6 px-6 bg-paper border border-paper-edge text-left relative overflow-hidden" >
+            <span className="kanji absolute text-accent" style={{ top: -30, right: -20, fontSize: 56, opacity: 0.06, lineHeight: 1
+ }}>{s.kanji}</span>
+            <div className="display mb-1 font-normal" style={{ fontSize: 17 }}>{s.name}</div>
+            <div style={{ fontSize: 11 }} className="mb-6 text-ink-3" >{s.description}</div>
+            <div className="display font-light" style={{ fontSize: 56, letterSpacing: '-0.03em', lineHeight: 1 }}>
+              {Math.round(s.ftr*100)}<span className="text-ink-3" style={{ fontSize: 17 }}>%</span>
             </div>
             <div style={{
- fontSize: 11, color: 'var(--ink-3)', letterSpacing: '0.08em',
-                          textTransform: 'uppercase'
-}} className="mt-1" >First try right</div>
+ fontSize: 11, letterSpacing: '0.08em' }} className="mt-1 text-ink-3 uppercase" >First try right</div>
             <div style={{ color: s.ftr >= s.ftrPrev ? 'var(--success)' : 'var(--accent)' }} className="mt-4" >
               <Sparkline data={data.ftrBySolution[s.id]} width={200} height={28}/>
             </div>
             <hr className="hairline mt-4 mb-3"/>
-            <div className="mono" style={{ display: 'flex', justifyContent: 'space-between',
-                          fontSize: 11, color: 'var(--ink-3)' }}>
+            <div className="mono flex justify-between text-ink-3" style={{
+ fontSize: 11 }}>
               <span>{s.repos.length} repos</span>
               <span>{s.sessions7d} sessions</span>
               <span>{s.tokens7d}M tok</span>
@@ -358,59 +325,54 @@ function MaSessions({ data, sol, filter, setFilter, focused, setFocused }) {
   const selectedSession = focused ? data.sessions.find(s => s.id === focused) : null;
 
   return (
-    <div style={{ display: 'flex', height: '100%' }}>
+    <div className="flex h-full" >
       {/* Left list */}
       <div style={{
  flex: selectedSession ? '0 0 380px' : '1',
-                    borderRight: selectedSession ? 'var(--hairline)' : 'none', overflow: 'auto'
-}} className="pt-7 pb-6 px-6" >
+ borderRight: selectedSession ? 'var(--hairline)' : 'none' }} className="pt-12 pb-8 px-8 overflow-auto" >
         <div style={{
- fontSize: 11, color: 'var(--ink-3)', letterSpacing: '0.12em',
-                      textTransform: 'uppercase'
-}} className="mb-1" >Sessions · 刻</div>
-        <h1 className="display mt-0 mb-5" style={{ fontSize: 28, fontWeight: 300 }}>
+ fontSize: 11, letterSpacing: '0.12em' }} className="mb-1 text-ink-3 uppercase" >Sessions · 刻</div>
+        <h1 className="display mt-0 mb-6 font-light" style={{ fontSize: 28 }}>
           Every session is a lesson.
         </h1>
 
-        <div style={{ display: 'flex' }} className="gap-1 mb-5" >
+        <div className="gap-1 mb-6 flex" >
           {filters.map(f => (
             <button key={f.id}
-                    onClick={() => setFilter(f.id)}
-                    style={{
+ onClick={() => setFilter(f.id)}
+ style={{
  borderRadius: 999, fontSize: 11,
-                      border: 'var(--hairline)',
-                      background: filter === f.id ? 'var(--ink)' : 'transparent',
-                      color: filter === f.id ? 'var(--paper)' : 'var(--ink-2)',
-                      transition: 'all .12s'
-}} className="py-1 px-2" >{f.label}</button>
+ background: filter === f.id ? 'var(--ink)' : 'transparent',
+ color: filter === f.id ? 'var(--paper)' : 'var(--ink-2)',
+ transition: 'all .12s'
+ }} className="py-1 px-2 border border-paper-edge" >{f.label}</button>
           ))}
         </div>
 
-        <div style={{ display: 'flex', flexDirection: 'column' }}>
+        <div className="flex flex-col" >
           {sessions.map((s, i) => (
             <button key={s.id}
-                    onClick={() => setFocused(s.id)}
-                    style={{
-                      textAlign: 'left',
-                      borderBottom: i < sessions.length-1 ? 'var(--hairline)' : 'none',
-                      background: focused === s.id ? 'var(--paper-3)' : 'transparent',
-                      paddingLeft: focused === s.id ? 12 : 0,
-                      margin: focused === s.id ? '0 -12px' : 0,
-                      paddingRight: focused === s.id ? 12 : 0,
-                      borderRadius: focused === s.id ? 6 : 0,
-                      transition: 'all .12s'
-}} className="py-3 px-0" >
-              <div style={{ display: 'flex', alignItems: 'center' }} className="gap-2 mb-1" >
+ onClick={() => setFocused(s.id)}
+ style={{
+ borderBottom: i < sessions.length-1 ? 'var(--hairline)' : 'none',
+ background: focused === s.id ? 'var(--paper-3)' : 'transparent',
+ paddingLeft: focused === s.id ? 12 : 0,
+ margin: focused === s.id ? '0 -12px' : 0,
+ paddingRight: focused === s.id ? 12 : 0,
+ borderRadius: focused === s.id ? 6 : 0,
+ transition: 'all .12s'
+ }} className="py-3 px-0 text-left" >
+              <div className="gap-2 mb-1 flex items-center" >
                 <span className="ink-dot" style={{ background: s.ftr ? 'var(--success)' : 'var(--accent)' }}/>
-                <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+                <span className="mono text-ink-3" style={{ fontSize: 11 }}>
                   {s.date} · {s.started}
                 </span>
-                {!s.ftr && <span className="mono" style={{ fontSize: 11, color: 'var(--accent)' }}>
+                {!s.ftr && <span className="mono text-accent" style={{ fontSize: 11 }}>
                   {s.corrections} corrections
                 </span>}
               </div>
-              <div style={{ fontSize: 13, color: 'var(--ink)' }} className="mb-1" >{s.title}</div>
-              <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+              <div style={{ fontSize: 13 }} className="mb-1 text-ink" >{s.title}</div>
+              <div className="mono text-ink-3" style={{ fontSize: 11 }}>
                 {s.project} · {s.turns}t · {s.duration}
               </div>
             </button>
@@ -420,39 +382,31 @@ function MaSessions({ data, sol, filter, setFilter, focused, setFocused }) {
 
       {/* Right detail */}
       {selectedSession && (
-        <div style={{ flex: 1, overflow: 'auto', position: 'relative' }} className="py-7 px-7" >
-          <button onClick={() => setFocused(null)}
-                  style={{ position: 'absolute', top: 22, right: 22, fontSize: 17,
-                           color: 'var(--ink-3)', width: 30, height: 30 }}>×</button>
+        <div className="py-12 px-12 flex-1 overflow-auto relative" >
+          <button className="absolute text-ink-3" onClick={() => setFocused(null)}
+ style={{ top: 22, right: 22, fontSize: 17, width: 30, height: 30 }}>×</button>
           <div style={{
- fontSize: 11, color: 'var(--ink-3)', letterSpacing: '0.12em',
-                        textTransform: 'uppercase'
-}} className="mb-1" >
+ fontSize: 11, letterSpacing: '0.12em' }} className="mb-1 text-ink-3 uppercase" >
             Session {selectedSession.id}
           </div>
-          <h2 className="display mt-0 mb-2" style={{ fontSize: 28, fontWeight: 300, letterSpacing: '-0.01em' }}>
+          <h2 className="display mt-0 mb-2 font-light" style={{ fontSize: 28, letterSpacing: '-0.01em' }}>
             {selectedSession.title}
           </h2>
-          <div className="mono mb-5" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+          <div className="mono mb-6 text-ink-3" style={{ fontSize: 11 }}>
             {selectedSession.project} · {selectedSession.date} {selectedSession.started} · {selectedSession.duration} · {selectedSession.turns} turns · {(selectedSession.tokens/1000).toFixed(1)}k tokens
           </div>
 
           <div style={{
- background: 'var(--paper-2)', border: 'var(--hairline)',
-                        borderRadius: 8,
-                        display: 'flex', alignItems: 'flex-start'
-}} className="py-4 px-4 mb-6 gap-3" >
+ borderRadius: 8 }} className="py-4 px-4 mb-8 gap-3 bg-paper-2 border border-paper-edge flex items-start" >
             <span className="kanji" style={{ fontSize: 22, color: selectedSession.ftr ? 'var(--success)' : 'var(--accent)', lineHeight: 1 }}>
               {selectedSession.ftr ? '一' : '修'}
             </span>
             <div>
               <div style={{
- fontSize: 11, color: 'var(--ink-3)', letterSpacing: '0.08em',
-                            textTransform: 'uppercase'
-}} className="mb-1" >
+ fontSize: 11, letterSpacing: '0.08em' }} className="mb-1 text-ink-3 uppercase" >
                 {selectedSession.ftr ? 'First try right' : `Corrected · ${selectedSession.corrections}`}
               </div>
-              <div style={{ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.55 }}>
+              <div className="text-ink-2" style={{ fontSize: 13, lineHeight: 1.55 }}>
                 {selectedSession.summary}
               </div>
             </div>
@@ -461,26 +415,21 @@ function MaSessions({ data, sol, filter, setFilter, focused, setFocused }) {
           {selectedSession.events && (
             <>
               <div style={{
- fontSize: 11, color: 'var(--ink-3)', letterSpacing: '0.12em',
-                            textTransform: 'uppercase'
-}} className="mb-4" >Event timeline</div>
-              <div style={{ position: 'relative' }} className="pl-5" >
-                <div style={{ position: 'absolute', left: 7, top: 4, bottom: 4, width: 1,
-                              background: 'var(--edge)' }}/>
+ fontSize: 11, letterSpacing: '0.12em' }} className="mb-4 text-ink-3 uppercase" >Event timeline</div>
+              <div className="pl-6 relative" >
+                <div className="absolute" style={{ left: 7, top: 4, bottom: 4, width: 1,
+ background: 'var(--edge)' }}/>
                 {selectedSession.events.map((e, i) => (
-                  <div key={i} style={{
- display: 'flex',
-                                        position: 'relative'
-}} className="gap-3 mb-3" >
-                    <div style={{ position: 'absolute', left: -22, top: 2,
-                                  color: e.kind === 'correction' ? 'var(--accent)'
-                                       : e.kind === 'test' ? 'var(--success)'
-                                       : 'var(--ink-3)' }}>
-                      <div style={{ background: 'var(--paper)' }} className="p-1" >
+                  <div key={i} className="gap-3 mb-3 flex relative" >
+                    <div className="absolute" style={{ left: -22, top: 2,
+ color: e.kind === 'correction' ? 'var(--accent)'
+ : e.kind === 'test' ? 'var(--success)'
+ : 'var(--ink-3)' }}>
+                      <div className="p-1 bg-paper" >
                         <EventGlyph kind={e.kind}/>
                       </div>
                     </div>
-                    <div className="mono pt-1" style={{ fontSize: 11, color: 'var(--ink-3)', width: 42 }}>
+                    <div className="mono pt-1 text-ink-3" style={{ fontSize: 11, width: 42 }}>
                       {e.t}
                     </div>
                     <div style={{ fontSize: 13, color: e.kind === 'correction' ? 'var(--accent)' : 'var(--ink-2)',
@@ -504,40 +453,32 @@ function MaSessions({ data, sol, filter, setFilter, focused, setFocused }) {
 function MaCodebase({ data, sol }) {
   const [selectedRepo, setSelectedRepo] = React.useState(sol.repos[0]);
   return (
-    <div style={{ maxWidth: 1100 }} className="py-7 px-7" >
+    <div style={{ maxWidth: 1100 }} className="py-12 px-12" >
       <div style={{
- fontSize: 11, color: 'var(--ink-3)', letterSpacing: '0.12em',
-                    textTransform: 'uppercase'
-}} className="mb-1" >Codebase · {sol.name}</div>
-      <h1 className="display mt-0 mb-6" style={{ fontSize: 28, fontWeight: 300 }}>
+ fontSize: 11, letterSpacing: '0.12em' }} className="mb-1 text-ink-3 uppercase" >Codebase · {sol.name}</div>
+      <h1 className="display mt-0 mb-8 font-light" style={{ fontSize: 28 }}>
         Where the weight gathers.
       </h1>
 
-      <div style={{ display: 'flex', flexWrap: 'wrap' }} className="gap-1 mb-6" >
+      <div className="gap-1 mb-8 flex flex-wrap" >
         {sol.repos.map(r => (
           <button key={r}
-                  onClick={() => setSelectedRepo(r)}
-                  className="mono py-1 px-3"
-                  style={{
+ onClick={() => setSelectedRepo(r)}
+ className="mono py-1 px-3 border border-paper-edge"
+ style={{
  borderRadius: 999, fontSize: 11,
-                    border: 'var(--hairline)',
-                    background: selectedRepo === r ? 'var(--ink)' : 'transparent',
-                    color: selectedRepo === r ? 'var(--paper)' : 'var(--ink-2)'
-}}>{r}</button>
+ background: selectedRepo === r ? 'var(--ink)' : 'transparent',
+ color: selectedRepo === r ? 'var(--paper)' : 'var(--ink-2)'
+ }}>{r}</button>
         ))}
       </div>
 
       {/* Graph placeholder — abstract constellation */}
       <div style={{
- background: 'var(--paper-2)', border: 'var(--hairline)',
-                    borderRadius: 10, minHeight: 280,
-                    position: 'relative', overflow: 'hidden'
-}} className="p-5 mb-6" >
+ borderRadius: 10, minHeight: 280 }} className="p-6 mb-8 bg-paper-2 border border-paper-edge relative overflow-hidden" >
         <div style={{
- fontSize: 11, color: 'var(--ink-3)', letterSpacing: '0.08em',
-                      textTransform: 'uppercase'
-}} className="mb-1" >Code graph</div>
-        <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+ fontSize: 11, letterSpacing: '0.08em' }} className="mb-1 text-ink-3 uppercase" >Code graph</div>
+        <div className="mono text-ink-3" style={{ fontSize: 11 }}>
           {selectedRepo} · 247 nodes · 4 communities
         </div>
         <svg viewBox="0 0 600 240" width="100%" height="240" className="mt-2" >
@@ -546,8 +487,8 @@ function MaCodebase({ data, sol }) {
             const x = 40 + (i * 37) % 540 + Math.sin(i) * 20;
             const y = 30 + ((i * 53) % 180) + Math.cos(i*0.7) * 10;
             const big = i % 11 === 0;
-            return <circle key={i} cx={x} cy={y} r={big ? 5 : 2} fill="currentColor"
-                           opacity={big ? 0.8 : 0.25} style={{ color: 'var(--ink-2)' }}/>;
+            return <circle className="text-ink-2" key={i} cx={x} cy={y} r={big ? 5 : 2} fill="currentColor"
+ opacity={big ? 0.8 : 0.25} />;
           })}
           {/* a few highlighted god nodes */}
           <circle cx="180" cy="90"  r="12" fill="oklch(0.58 0.15 35 / 0.15)" stroke="var(--accent)" strokeWidth="1.5"/>
@@ -563,24 +504,20 @@ function MaCodebase({ data, sol }) {
         </svg>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr' }} className="gap-7" >
+      <div style={{ gridTemplateColumns: '2fr 1fr' }} className="gap-12 grid" >
         <div>
           <div style={{
- fontSize: 11, color: 'var(--ink-3)', letterSpacing: '0.12em',
-                        textTransform: 'uppercase'
-}} className="mb-3" >Hotspots</div>
+ fontSize: 11, letterSpacing: '0.12em' }} className="mb-3 text-ink-3 uppercase" >Hotspots</div>
           {data.hotspots.map((h, i) => (
             <div key={i} style={{
- borderBottom: i < data.hotspots.length - 1 ? 'var(--hairline)' : 'none',
-                                 display: 'grid', gridTemplateColumns: '14px 1fr auto auto auto', alignItems: 'center'
-}} className="gap-3 py-3 px-0" >
+ borderBottom: i < data.hotspots.length - 1 ? 'var(--hairline)' : 'none', gridTemplateColumns: '14px 1fr auto auto auto' }} className="gap-3 py-3 px-0 grid items-center" >
               <span className="ink-dot" style={{
                 background: h.severity === 'god' ? 'var(--accent)' :
                             h.severity === 'cluster' ? 'var(--warning)' : 'var(--success)'
               }}/>
-              <span className="mono" style={{ fontSize: 13, color: 'var(--ink)' }}>{h.name}</span>
-              <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>in {h.fanIn}</span>
-              <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>out {h.fanOut}</span>
+              <span className="mono text-ink" style={{ fontSize: 13 }}>{h.name}</span>
+              <span className="mono text-ink-3" style={{ fontSize: 11 }}>in {h.fanIn}</span>
+              <span className="mono text-ink-3" style={{ fontSize: 11 }}>out {h.fanOut}</span>
               <span className="mono" style={{ fontSize: 11, color: h.rework > 3 ? 'var(--accent)' : 'var(--ink-3)' }}>
                 ↻{h.rework}
               </span>
@@ -589,19 +526,17 @@ function MaCodebase({ data, sol }) {
         </div>
         <div>
           <div style={{
- fontSize: 11, color: 'var(--ink-3)', letterSpacing: '0.12em',
-                        textTransform: 'uppercase'
-}} className="mb-3" >Health</div>
-          <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-3" >
+ fontSize: 11, letterSpacing: '0.12em' }} className="mb-3 text-ink-3 uppercase" >Health</div>
+          <div className="gap-3 flex flex-col" >
             {[
               { l: "Dead code",      v: "14 exports" },
               { l: "Test ratio",     v: "0.72 : 1" },
               { l: "Largest file",   v: "router.ts · 812 ln" },
               { l: "Last indexed",   v: "2m ago" }
             ].map(r => (
-              <div key={r.l} style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span style={{ fontSize: 13, color: 'var(--ink-3)' }}>{r.l}</span>
-                <span className="mono" style={{ fontSize: 13, color: 'var(--ink)' }}>{r.v}</span>
+              <div className="flex justify-between" key={r.l} >
+                <span className="text-ink-3" style={{ fontSize: 13 }}>{r.l}</span>
+                <span className="mono text-ink" style={{ fontSize: 13 }}>{r.v}</span>
               </div>
             ))}
           </div>
@@ -616,65 +551,59 @@ function MaCodebase({ data, sol }) {
 // ────────────────────────────────────────────────────────────
 function MaCoaching({ data, sol, applied, setApplied }) {
   return (
-    <div style={{ maxWidth: 880 }} className="py-7 px-8" >
+    <div style={{ maxWidth: 880 }} className="py-12 px-16" >
       <div style={{
- fontSize: 11, color: 'var(--ink-3)', letterSpacing: '0.12em',
-                    textTransform: 'uppercase'
-}} className="mb-1" >Coaching · 師</div>
-      <h1 className="display mt-0 mb-1" style={{ fontSize: 28, fontWeight: 300 }}>
+ fontSize: 11, letterSpacing: '0.12em' }} className="mb-1 text-ink-3 uppercase" >Coaching · 師</div>
+      <h1 className="display mt-0 mb-1 font-light" style={{ fontSize: 28 }}>
         What the sessions are teaching.
       </h1>
-      <div style={{ color: 'var(--ink-3)', fontSize: 13 }} className="mb-7" >
+      <div style={{ fontSize: 13 }} className="mb-12 text-ink-3" >
         Three observations, in descending urgency.
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-0" >
+      <div className="gap-0 flex flex-col" >
         {data.coaching.map((c, i) => {
           const isApplied = applied[c.id];
           return (
             <div key={c.id}
-                 style={{
- borderTop: 'var(--hairline)',
-                          borderBottom: i === data.coaching.length - 1 ? 'var(--hairline)' : 'none',
-                          display: 'grid', gridTemplateColumns: '72px 1fr 180px'
-}} className="gap-5 py-6 px-0" >
+ style={{
+ borderBottom: i === data.coaching.length - 1 ? 'var(--hairline)' : 'none', gridTemplateColumns: '72px 1fr 180px'
+ }} className="gap-6 py-8 px-0 border-t grid" >
               <div>
-                <div className="display" style={{ fontSize: 56, fontWeight: 300, color: 'var(--accent)',
-                              opacity: c.urgency === 'high' ? 1 : c.urgency === 'medium' ? 0.5 : 0.25,
-                              lineHeight: 1 }}>
+                <div className="display font-light text-accent" style={{ fontSize: 56,
+ opacity: c.urgency === 'high' ? 1 : c.urgency === 'medium' ? 0.5 : 0.25,
+ lineHeight: 1 }}>
                   0{i+1}
                 </div>
-                <div className="mono mt-1" style={{
- fontSize: 11, color: 'var(--ink-3)',
-                              letterSpacing: '0.12em', textTransform: 'uppercase'
-}}>
+                <div className="mono mt-1 text-ink-3 uppercase" style={{
+ fontSize: 11,
+ letterSpacing: '0.12em' }}>
                   {c.urgency}
                 </div>
               </div>
               <div>
-                <p className="display mt-0 mb-3" style={{ fontSize: 22, fontWeight: 300, lineHeight: 1.3 }}>
+                <p className="display mt-0 mb-3 font-light" style={{ fontSize: 22, lineHeight: 1.3 }}>
                   {c.koan}
                 </p>
-                <p style={{ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.6 }} className="m-0" >
+                <p style={{ fontSize: 13, lineHeight: 1.6 }} className="m-0 text-ink-2" >
                   {c.body}
                 </p>
-                <div className="mono mt-3" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+                <div className="mono mt-3 text-ink-3" style={{ fontSize: 11 }}>
                   module: {c.module}
                 </div>
               </div>
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }} className="gap-2" >
+              <div className="gap-2 flex flex-col items-start" >
                 <button onClick={() => setApplied({...applied, [c.id]: !isApplied})}
-                        style={{
+ style={{
  borderRadius: 999, fontSize: 13,
-                          background: isApplied ? 'var(--success-soft)' : 'var(--ink)',
-                          color: isApplied ? 'var(--success)' : 'var(--paper)',
-                          fontWeight: 500, width: '100%', textAlign: 'center',
-                          transition: 'all .18s'
-}} className="py-2 px-4" >
+ background: isApplied ? 'var(--success-soft)' : 'var(--ink)',
+ color: isApplied ? 'var(--success)' : 'var(--paper)',
+ transition: 'all .18s'
+ }} className="py-2 px-4 font-medium w-full text-center" >
                   {isApplied ? "✓  Applied" : c.action}
                 </button>
-                <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>{c.actionDetail}</div>
-                <div style={{ fontSize: 11, color: 'var(--ink-2)', fontStyle: 'italic' }}>{c.impact}</div>
+                <div className="text-ink-3" style={{ fontSize: 11 }}>{c.actionDetail}</div>
+                <div className="text-ink-2 italic" style={{ fontSize: 11 }}>{c.impact}</div>
               </div>
             </div>
           );
@@ -682,19 +611,15 @@ function MaCoaching({ data, sol, applied, setApplied }) {
       </div>
 
       {/* Personas */}
-      <div className="mt-7" >
+      <div className="mt-12" >
         <div style={{
- fontSize: 11, color: 'var(--ink-3)', letterSpacing: '0.12em',
-                      textTransform: 'uppercase'
-}} className="mb-3" >Active personas</div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)' }} className="gap-2" >
+ fontSize: 11, letterSpacing: '0.12em' }} className="mb-3 text-ink-3 uppercase" >Active personas</div>
+        <div style={{ gridTemplateColumns: 'repeat(2,1fr)' }} className="gap-2 grid" >
           {data.personas.map(p => (
             <div key={p.id} style={{
- border: 'var(--hairline)',
-                          borderRadius: 6, background: 'var(--paper-2)'
-}} className="p-3" >
-              <div style={{ fontSize: 13, color: 'var(--ink)' }}>{p.name}</div>
-              <div className="mono mt-1" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+ borderRadius: 6 }} className="p-3 border border-paper-edge bg-paper-2" >
+              <div className="text-ink" style={{ fontSize: 13 }}>{p.name}</div>
+              <div className="mono mt-1 text-ink-3" style={{ fontSize: 11 }}>
                 {p.triggers}
               </div>
             </div>
@@ -711,16 +636,14 @@ function MaCoaching({ data, sol, applied, setApplied }) {
 function MaConfig({ data }) {
   const [tab, setTab] = React.useState("skills");
   return (
-    <div style={{ maxWidth: 960 }} className="py-7 px-7" >
+    <div style={{ maxWidth: 960 }} className="py-12 px-12" >
       <div style={{
- fontSize: 11, color: 'var(--ink-3)', letterSpacing: '0.12em',
-                    textTransform: 'uppercase'
-}} className="mb-1" >Configuration · 設</div>
-      <h1 className="display mt-0 mb-5" style={{ fontSize: 28, fontWeight: 300 }}>
+ fontSize: 11, letterSpacing: '0.12em' }} className="mb-1 text-ink-3 uppercase" >Configuration · 設</div>
+      <h1 className="display mt-0 mb-6 font-light" style={{ fontSize: 28 }}>
         What sensei is allowed to do.
       </h1>
 
-      <div style={{ display: 'flex', borderBottom: 'var(--hairline)' }} className="gap-4 mb-5" >
+      <div className="gap-4 mb-6 flex border-b" >
         {[
           { id: "skills",    label: "Skills" },
           { id: "libraries", label: "Libraries" },
@@ -739,25 +662,21 @@ function MaConfig({ data }) {
       </div>
 
       {tab === "skills" && (
-        <div style={{ display: 'flex', flexDirection: 'column' }}>
+        <div className="flex flex-col" >
           {data.skills.map((s, i) => (
             <div key={s.id} style={{
- borderBottom: i < data.skills.length-1 ? 'var(--hairline)' : 'none',
-                          display: 'grid', gridTemplateColumns: '1fr auto auto', alignItems: 'center'
-}} className="gap-4 py-3 px-0" >
+ borderBottom: i < data.skills.length-1 ? 'var(--hairline)' : 'none', gridTemplateColumns: '1fr auto auto' }} className="gap-4 py-3 px-0 grid items-center" >
               <div>
-                <div style={{ fontSize: 13, color: 'var(--ink)' }}>{s.name}</div>
-                <div className="mono mt-1" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+                <div className="text-ink" style={{ fontSize: 13 }}>{s.name}</div>
+                <div className="mono mt-1 text-ink-3" style={{ fontSize: 11 }}>
                   {s.solutions.length ? `active in ${s.solutions.join(', ')}` : 'not installed'}
                 </div>
               </div>
-              <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>{s.id}</span>
-              <div style={{ width: 32, height: 18, borderRadius: 999,
-                            background: s.active ? 'var(--accent)' : 'var(--paper-3)',
-                            position: 'relative', transition: 'background .15s' }}>
-                <div style={{ position: 'absolute', top: 2, left: s.active ? 16 : 2,
-                            width: 14, height: 14, background: 'var(--paper)',
-                            borderRadius: '50%', transition: 'left .15s' }}/>
+              <span className="mono text-ink-3" style={{ fontSize: 11 }}>{s.id}</span>
+              <div className="relative" style={{ width: 32, height: 18, borderRadius: 999,
+ background: s.active ? 'var(--accent)' : 'var(--paper-3)', transition: 'background .15s' }}>
+                <div className="absolute bg-paper rounded-full" style={{ top: 2, left: s.active ? 16 : 2,
+ width: 14, height: 14, transition: 'left .15s' }}/>
               </div>
             </div>
           ))}
@@ -765,49 +684,40 @@ function MaConfig({ data }) {
       )}
 
       {tab === "libraries" && (
-        <div style={{ display: 'flex', flexDirection: 'column' }}>
+        <div className="flex flex-col" >
           {data.libraries.map((l, i) => (
             <div key={l.name} style={{
- borderBottom: i < data.libraries.length-1 ? 'var(--hairline)' : 'none',
-                          display: 'grid', gridTemplateColumns: '1fr auto auto auto', alignItems: 'center'
-}} className="gap-4 py-3 px-0" >
-              <div style={{ fontSize: 13, color: 'var(--ink)' }}>{l.name}</div>
-              <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>v{l.version}</span>
-              <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>{l.pages} pages</span>
-              <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>{l.lastIndexed}</span>
+ borderBottom: i < data.libraries.length-1 ? 'var(--hairline)' : 'none', gridTemplateColumns: '1fr auto auto auto' }} className="gap-4 py-3 px-0 grid items-center" >
+              <div className="text-ink" style={{ fontSize: 13 }}>{l.name}</div>
+              <span className="mono text-ink-3" style={{ fontSize: 11 }}>v{l.version}</span>
+              <span className="mono text-ink-3" style={{ fontSize: 11 }}>{l.pages} pages</span>
+              <span className="mono text-ink-3" style={{ fontSize: 11 }}>{l.lastIndexed}</span>
             </div>
           ))}
-          <button style={{
- alignSelf: 'flex-start', borderRadius: 999, fontSize: 13,
-                          border: '1px dashed var(--ink-3)', color: 'var(--ink-2)'
-}} className="mt-4 py-2 px-4" >
+          <button style={{ borderRadius: 999, fontSize: 13,
+ border: '1px dashed var(--ink-3)' }} className="mt-4 py-2 px-4 self-start text-ink-2" >
             + Index a library
           </button>
         </div>
       )}
 
       {tab === "acps" && (
-        <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-3" >
+        <div className="gap-3 flex flex-col" >
           {[
             { name: "Claude Code",  version: "1.8.2", status: "connected" },
             { name: "Cursor",       version: "0.42",  status: "connected" },
             { name: "Zed",          version: "0.148", status: "available" }
           ].map(a => (
-            <div key={a.name} style={{
- border: 'var(--hairline)', borderRadius: 8,
-                        display: 'flex', alignItems: 'center'
-}} className="p-4 gap-4" >
+            <div key={a.name} style={{ borderRadius: 8 }} className="p-4 gap-4 border border-paper-edge flex items-center" >
               <span className="ink-dot" style={{ background: a.status === 'connected' ? 'var(--success)' : 'var(--ink-4)' }}/>
-              <div style={{ flex: 1 }}>
+              <div className="flex-1" >
                 <div style={{ fontSize: 13 }}>{a.name}</div>
-                <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+                <div className="mono text-ink-3" style={{ fontSize: 11 }}>
                   MCP · v{a.version} · {a.status}
                 </div>
               </div>
               <button style={{
- fontSize: 11, borderRadius: 999,
-                              border: 'var(--hairline)', color: 'var(--ink-2)'
-}} className="py-1 px-3" >
+ fontSize: 11, borderRadius: 999 }} className="py-1 px-3 border border-paper-edge text-ink-2" >
                 {a.status === 'connected' ? 'Configure' : 'Connect'}
               </button>
             </div>
@@ -818,27 +728,26 @@ function MaConfig({ data }) {
       {tab === "daemon" && (
         <div>
           <div style={{
- background: 'var(--paper-2)', border: 'var(--hairline)',
-                        borderRadius: 8
-}} className="p-4 mb-4" >
-            <div style={{ display: 'flex', alignItems: 'center' }} className="gap-2 mb-2" >
-              <span className="ink-dot" style={{ background: 'var(--success)' }}/>
+ borderRadius: 8
+ }} className="p-4 mb-4 bg-paper-2 border border-paper-edge" >
+            <div className="gap-2 mb-2 flex items-center" >
+              <span className="ink-dot bg-success" />
               <span style={{ fontSize: 13 }}>Daemon running</span>
-              <span className="mono ml-auto" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+              <span className="mono ml-auto text-ink-3" style={{ fontSize: 11 }}>
                 pid 12492 · uptime 4d 2h
               </span>
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)' }} className="gap-3 mt-4" >
+            <div style={{ gridTemplateColumns: 'repeat(3,1fr)' }} className="gap-3 mt-4 grid" >
               <div>
-                <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>Port</div>
+                <div className="text-ink-3" style={{ fontSize: 11 }}>Port</div>
                 <div className="mono" style={{ fontSize: 13 }}>9823</div>
               </div>
               <div>
-                <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>Events today</div>
+                <div className="text-ink-3" style={{ fontSize: 11 }}>Events today</div>
                 <div className="mono" style={{ fontSize: 13 }}>1,842</div>
               </div>
               <div>
-                <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>Memory</div>
+                <div className="text-ink-3" style={{ fontSize: 11 }}>Memory</div>
                 <div className="mono" style={{ fontSize: 13 }}>42 MB</div>
               </div>
             </div>
@@ -862,54 +771,50 @@ function MaOnboarding() {
   ];
 
   return (
-    <div style={{ maxWidth: 820 }} className="py-8 px-8" >
-      <div className="kanji mb-5" style={{
- fontSize: 56, color: 'var(--accent)', opacity: 0.85, lineHeight: 1
-}}>始</div>
-      <h1 className="display mt-0 mb-3" style={{ fontSize: 40, fontWeight: 300, letterSpacing: '-0.02em' }}>
+    <div style={{ maxWidth: 820 }} className="py-16 px-16" >
+      <div className="kanji mb-6 text-accent" style={{
+ fontSize: 56, opacity: 0.85, lineHeight: 1
+ }}>始</div>
+      <h1 className="display mt-0 mb-3 font-light" style={{ fontSize: 40, letterSpacing: '-0.02em' }}>
         Begin.
       </h1>
-      <p style={{ color: 'var(--ink-2)', fontSize: 15, lineHeight: 1.6, maxWidth: 520 }} className="mb-7" >
+      <p style={{ fontSize: 15, lineHeight: 1.6, maxWidth: 520 }} className="mb-12 text-ink-2" >
         Sensei will watch how you work and, in time, help you work better.
         Four steps, each takes a minute.
       </p>
 
-      <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
+      <div className="gap-1 flex flex-col" >
         {steps.map(s => (
           <button key={s.n}
-                  onClick={() => setStep(s.n)}
-                  style={{
-                    display: 'grid', gridTemplateColumns: '48px 1fr auto', textAlign: 'left', alignItems: 'center',
-                    borderTop: 'var(--hairline)',
-                    borderBottom: s.n === 4 ? 'var(--hairline)' : 'none',
-                    opacity: s.n > step ? 0.4 : 1, transition: 'opacity .2s'
-}} className="gap-4 py-4 px-1" >
-            <div className="display" style={{ fontSize: 28, fontWeight: 300,
-                        color: s.n < step ? 'var(--success)' : s.n === step ? 'var(--accent)' : 'var(--ink-3)',
-                        lineHeight: 1 }}>
+ onClick={() => setStep(s.n)}
+ style={{ gridTemplateColumns: '48px 1fr auto',
+ borderBottom: s.n === 4 ? 'var(--hairline)' : 'none',
+ opacity: s.n > step ? 0.4 : 1, transition: 'opacity .2s'
+ }} className="gap-4 py-4 px-1 grid text-left items-center border-t" >
+            <div className="display font-light" style={{ fontSize: 28,
+ color: s.n < step ? 'var(--success)' : s.n === step ? 'var(--accent)' : 'var(--ink-3)',
+ lineHeight: 1 }}>
               {s.n < step ? '✓' : '0' + s.n}
             </div>
             <div>
-              <div className="display" style={{ fontSize: 22, fontWeight: 300 }}>{s.title}</div>
-              <div style={{ fontSize: 13, color: 'var(--ink-3)' }} className="mt-1" >{s.detail}</div>
+              <div className="display font-light" style={{ fontSize: 22 }}>{s.title}</div>
+              <div style={{ fontSize: 13 }} className="mt-1 text-ink-3" >{s.detail}</div>
             </div>
             {s.n === step && (
-              <span className="mono" style={{ fontSize: 11, color: 'var(--accent)' }}>in progress</span>
+              <span className="mono text-accent" style={{ fontSize: 11 }}>in progress</span>
             )}
-            {s.n < step && <span className="mono" style={{ fontSize: 11, color: 'var(--success)' }}>done</span>}
+            {s.n < step && <span className="mono text-success" style={{ fontSize: 11 }}>done</span>}
           </button>
         ))}
       </div>
 
-      <div style={{ display: 'flex' }} className="gap-2 mt-6" >
+      <div className="gap-2 mt-8 flex" >
         <button onClick={() => setStep(Math.min(4, step+1))}
-                style={{
- background: 'var(--ink)', color: 'var(--paper)',
-                          borderRadius: 999, fontSize: 13, fontWeight: 500
-}} className="py-3 px-5" >
+ style={{
+ borderRadius: 999, fontSize: 13 }} className="py-3 px-6 bg-ink text-paper font-medium" >
           {step === 4 ? "Enter observatory →" : "Continue"}
         </button>
-        <button style={{ color: 'var(--ink-3)', fontSize: 13 }} className="py-3 px-4" >
+        <button style={{ fontSize: 13 }} className="py-3 px-4 text-ink-3" >
           Skip for now
         </button>
       </div>

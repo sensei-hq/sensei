@@ -27,23 +27,22 @@ function groupKeyOf(section) {
 }
 function ObsSubTabs({ group, section, setSection }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '12px 24px',
-                  borderBottom: 'var(--hairline)', background: 'var(--paper)', flexShrink: 0 }}>
+    <div className="flex items-center border-b bg-paper shrink-0" style={{ gap: 6, padding: '12px 24px' }}>
       {group.items.map(([id, label, badge, tone]) => {
         const on = section === id;
         return (
-          <button key={id} onClick={() => setSection(id)}
-                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12,
-                           padding: '8px 12px', borderRadius: 6, border: 'none', cursor: 'pointer',
-                           background: on ? 'var(--ink)' : 'var(--paper-3)',
-                           color: on ? 'var(--paper)' : 'var(--ink-2)', fontFamily: 'inherit' }}>
+          <button className="inline-flex items-center border-0 cursor-pointer" key={id} onClick={() => setSection(id)}
+ style={{ gap: 6, fontSize: 12,
+ padding: '8px 12px', borderRadius: 6,
+ background: on ? 'var(--ink)' : 'var(--paper-3)',
+ color: on ? 'var(--paper)' : 'var(--ink-2)', fontFamily: 'inherit' }}>
             {label}
             {badge != null && (
-              <span className="mono" style={{ fontSize: 10, fontWeight: 600,
-                    color: tone === 'danger' ? (on ? 'var(--paper)' : 'var(--danger)')
-                                             : (on ? 'var(--paper)' : 'var(--ink-3)'),
-                    background: (tone === 'danger' && !on) ? 'var(--danger-soft)' : 'transparent',
-                    borderRadius: 10, padding: tone === 'danger' ? '0 5px' : '0' }}>{badge}</span>
+              <span className="mono font-semibold" style={{ fontSize: 10,
+ color: tone === 'danger' ? (on ? 'var(--paper)' : 'var(--danger)')
+ : (on ? 'var(--paper)' : 'var(--ink-3)'),
+ background: (tone === 'danger' && !on) ? 'var(--danger-soft)' : 'transparent',
+ borderRadius: 10, padding: tone === 'danger' ? '0 5px' : '0' }}>{badge}</span>
             )}
           </button>
         );
@@ -108,17 +107,16 @@ function ObservatoryDaily({ stateMode = "mature", firstEntry = false, initialSec
   }
 
   return (
-    <div className="sensei" data-screen-label="Observatory · Daily"
-         style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column',
-                  background: 'var(--paper)', overflow: 'hidden' }}>
+    <div className="sensei w-full h-full flex flex-col bg-paper overflow-hidden" data-screen-label="Observatory · Daily"
+ >
       <TauriChrome title={`Sensei  先生  ·  observatory`}/>
 
-      <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '240px 1fr', minHeight: 0 }}>
+      <div className="flex-1 grid min-h-0" style={{ gridTemplateColumns: '240px 1fr' }}>
         <ObsSidebar section={section} setSection={setSection}
                     activeProjectId={activeProjectId}
                     onOpenProject={openProject}
                     mode={mode} setMode={setMode}/>
-        <main style={{ overflow: 'hidden', position: 'relative', display: 'flex', flexDirection: 'column' }}>
+        <main className="overflow-hidden relative flex flex-col" >
           {(() => {
             const grp = SUBNAV[groupKeyOf(section)];
             // Instruments keeps its sub-tabs BELOW each screen's header (passed
@@ -126,14 +124,14 @@ function ObservatoryDaily({ stateMode = "mature", firstEntry = false, initialSec
             if (!grp || groupKeyOf(section) === "instruments") return null;
             return <ObsSubTabs group={grp} section={section} setSection={setSection}/>;
           })()}
-          <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
+          <div className="flex-1 min-h-0 relative" >
           {section === "intake"    && <IntakeScreen/>}
           {section === "home"      && <ObsHome mode={mode} hero={hero} insights={insights} adopted={adopted} D={D} onOpenProject={openProject}/>}
           {section === "projects"  && (
-            <div style={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+            <div className="h-full flex flex-col min-h-0" >
               {mode === "early" && <FirstSessionGuide onOpenToday={() => setSection("home")}
                                                       onOpenProject={openProject}/>}
-              <div style={{ flex: 1, minHeight: 0 }}>
+              <div className="flex-1 min-h-0" >
                 <ProjectsIndexA embedded={true} onOpenProject={openProject}/>
               </div>
             </div>
@@ -192,30 +190,27 @@ function ObsSidebar({ section, setSection, activeProjectId, onOpenProject, mode,
   const D = window.OBS_DATA;
   const [focus, setFocus] = oS(false);  // "Focus" collapses the rail to what needs a decision
   const Cluster = ({ label }) => (
-    <div style={{ fontSize: 9.5, letterSpacing: '0.14em', textTransform: 'uppercase',
-                  color: 'var(--ink-4)', fontWeight: 600 }} className="pt-3 pb-1 px-2" >{label}</div>
+    <div style={{ fontSize: 9.5, letterSpacing: '0.14em' }} className="pt-3 pb-1 px-2 uppercase text-ink-4 font-semibold" >{label}</div>
   );
   const NavItem = ({ id, kanji, label, badge, badgeTone, alert, match }) => {
     const active = section === id || (match && match.includes(section));
     return (
     <button onClick={() => setSection(id)}
-            style={{
-              display: 'grid', gridTemplateColumns: 'auto 1fr auto',
-              alignItems: 'center', width: '100%', borderRadius: 6, textAlign: 'left',
-              background: active ? 'var(--paper-3)' : 'transparent',
-              color: active ? 'var(--ink)' : 'var(--ink-2)',
-              fontSize: 13
-}} className="gap-2 py-2 px-2" >
+ style={{ gridTemplateColumns: 'auto 1fr auto', borderRadius: 6,
+ background: active ? 'var(--paper-3)' : 'transparent',
+ color: active ? 'var(--ink)' : 'var(--ink-2)',
+ fontSize: 13
+ }} className="gap-2 py-2 px-2 grid items-center w-full text-left" >
       <span className="kanji" style={{ fontSize: 13, width: 14,
                     color: active ? 'var(--accent)' : 'var(--ink-3)' }}>{kanji}</span>
-      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>{label}
-        {alert && <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--danger)', flexShrink: 0 }} title="needs attention"/>}
+      <span className="inline-flex items-center" style={{ gap: 6 }}>{label}
+        {alert && <span className="rounded-full bg-danger shrink-0" style={{ width: 6, height: 6 }} title="needs attention"/>}
       </span>
       {badge != null && (
         badgeTone
-          ? <span className="mono" style={{ fontSize: 10, fontWeight: 600, color: 'var(--paper)',
-                          background: badgeTone, borderRadius: 10, padding: '0 8px', lineHeight: '16px' }}>{badge}</span>
-          : <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>{badge}</span>
+          ? <span className="mono font-semibold text-paper" style={{ fontSize: 10,
+ background: badgeTone, borderRadius: 10, padding: '0 8px', lineHeight: '16px' }}>{badge}</span>
+          : <span className="mono text-ink-3" style={{ fontSize: 11 }}>{badge}</span>
       )}
     </button>
     );
@@ -230,26 +225,20 @@ function ObsSidebar({ section, setSection, activeProjectId, onOpenProject, mode,
     return (
       <div className="py-1 px-2" >
         <button onClick={() => setOpen(o => !o)}
-                style={{
-                  display: 'grid', gridTemplateColumns: 'auto 1fr auto auto',
-                  alignItems: 'center', width: '100%', textAlign: 'left',
-                  background: 'transparent', color: 'var(--ink-2)', fontSize: 13,
-                  borderRadius: 6
-}} className="gap-2 py-2 px-0" >
-          <span className="kanji" style={{ fontSize: 13, width: 14,
-                        color: 'var(--ink-3)' }}>{kanji}</span>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>{label}
-            {alert && <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--danger)',
-                            flexShrink: 0 }} title="needs attention"/>}
+ style={{ gridTemplateColumns: 'auto 1fr auto auto', fontSize: 13,
+ borderRadius: 6
+ }} className="gap-2 py-2 px-0 grid items-center w-full text-left bg-transparent text-ink-2" >
+          <span className="kanji text-ink-3" style={{ fontSize: 13, width: 14 }}>{kanji}</span>
+          <span className="inline-flex items-center" style={{ gap: 6 }}>{label}
+            {alert && <span className="rounded-full bg-danger shrink-0" style={{ width: 6, height: 6 }} title="needs attention"/>}
           </span>
-          <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>{count}</span>
-          <span style={{ fontSize: 9, color: 'var(--ink-3)', width: 12,
-                         display: 'inline-block', textAlign: 'center',
-                         transform: open ? 'rotate(90deg)' : 'none',
-                         transition: 'transform .15s ease' }}>▶</span>
+          <span className="mono text-ink-3" style={{ fontSize: 11 }}>{count}</span>
+          <span className="text-ink-3 inline-block text-center" style={{ fontSize: 9, width: 12,
+ transform: open ? 'rotate(90deg)' : 'none',
+ transition: 'transform .15s ease' }}>▶</span>
         </button>
         {open && (
-          <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1 pl-5" >
+          <div className="gap-1 pl-6 flex flex-col" >
             {items.map(it => <NavItem key={it.id} {...it}/>)}
           </div>
         )}
@@ -258,36 +247,30 @@ function ObsSidebar({ section, setSection, activeProjectId, onOpenProject, mode,
   };
 
   return (
-    <aside style={{
- borderRight: 'var(--hairline)',
-                     background: 'var(--paper-2)',
-                     display: 'flex', flexDirection: 'column',
-                     overflow: 'auto'
-}} className="py-5 px-3 gap-4" >
+    <aside className="py-6 px-3 gap-4 border-r bg-paper-2 flex flex-col overflow-auto" >
       <div className="px-1" >
         <Wordmark size={22}/>
       </div>
 
       <div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }} className="pt-0 pb-2 px-2" >
-          <span style={{ fontSize: 11, letterSpacing: '0.16em', color: 'var(--ink-3)',
-                         textTransform: 'uppercase' }}>Observatory</span>
-          <span style={{ flex: 1 }}/>
+        <div style={{ gap: 8 }} className="pt-0 pb-2 px-2 flex items-center" >
+          <span className="text-ink-3 uppercase" style={{ fontSize: 11, letterSpacing: '0.16em' }}>Observatory</span>
+          <span className="flex-1" />
           {/* Focus — tame the surface on busy mornings to just what needs a decision */}
-          <div style={{ display: 'flex', background: 'var(--paper-3)', borderRadius: 5, padding: 2 }}>
+          <div className="flex bg-paper-3" style={{ borderRadius: 5, padding: 2 }}>
             {[['all', 'All'], ['focus', 'Focus']].map(([v, l]) => {
               const on = (v === 'focus') === focus;
               return (
-                <button key={v} onClick={() => setFocus(v === 'focus')}
-                        style={{ fontSize: 10, padding: '4px 8px', borderRadius: 3, border: 'none',
-                                 background: on ? 'var(--paper)' : 'transparent',
-                                 color: on ? 'var(--ink)' : 'var(--ink-3)', cursor: 'pointer',
-                                 fontFamily: 'inherit' }}>{l}</button>
+                <button className="border-0 cursor-pointer" key={v} onClick={() => setFocus(v === 'focus')}
+ style={{ fontSize: 10, padding: '4px 8px', borderRadius: 3,
+ background: on ? 'var(--paper)' : 'transparent',
+ color: on ? 'var(--ink)' : 'var(--ink-3)',
+ fontFamily: 'inherit' }}>{l}</button>
               );
             })}
           </div>
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
+        <div className="gap-1 flex flex-col" >
           {/* Anchors — where every day starts */}
           <NavItem id="intake"    kanji="門" label="Intake"/>
           <NavItem id="home"      kanji="家" label="Today"/>
@@ -314,8 +297,8 @@ function ObsSidebar({ section, setSection, activeProjectId, onOpenProject, mode,
           }
           {/* Settings — visited when something needs changing, hidden in Focus */}
           {!focus &&
-            <div style={{ borderTop: 'var(--hairline)' }} className="mt-2 pt-2" >
-              <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
+            <div className="mt-2 pt-2 border-t" >
+              <div className="gap-1 flex flex-col" >
                 <NavItem id="dojo-connections" kanji="結" label="Dōjō"
                          match={["dojo-connections","dojo-sharing"]}/>
                 <NavItem id="configure" kanji="調" label="Preferences"/>
@@ -325,14 +308,13 @@ function ObsSidebar({ section, setSection, activeProjectId, onOpenProject, mode,
         </div>
       </div>
 
-      <div style={{ flex: 1 }}/>
+      <div className="flex-1" />
 
       <div style={{
- borderTop: 'var(--hairline)',
-                     fontSize: 11, color: 'var(--ink-3)', lineHeight: 1.6
-}} className="pt-2 pb-0 px-2" >
+ fontSize: 11, lineHeight: 1.6
+ }} className="pt-2 pb-0 px-2 border-t text-ink-3" >
         <span className="mono">daemon · running</span><br/>
-        <span style={{ color: 'var(--ink-4)' }}>last heartbeat 2s ago</span>
+        <span className="text-ink-4" >last heartbeat 2s ago</span>
       </div>
     </aside>
   );
@@ -349,19 +331,18 @@ function ObsPlaceholder({ section, onBack }) {
   };
   const L = labels[section];
   return (
-    <div style={{ textAlign: 'center', maxWidth: 520 }} className="p-8 mx-auto" >
-      <div className="kanji mb-3" style={{
- fontSize: 56, color: 'var(--accent)', opacity: 0.5
-}}>{L.k}</div>
-      <h1 className="display mt-0 mb-2" style={{ fontSize: 28, fontWeight: 300 }}>
+    <div style={{ maxWidth: 520 }} className="p-16 mx-auto text-center" >
+      <div className="kanji mb-3 text-accent" style={{
+ fontSize: 56, opacity: 0.5
+ }}>{L.k}</div>
+      <h1 className="display mt-0 mb-2 font-light" style={{ fontSize: 28 }}>
         {L.t}
       </h1>
-      <p style={{ fontSize: 13, color: 'var(--ink-3)' }} className="mt-0 mb-5" >{L.s}</p>
+      <p style={{ fontSize: 13 }} className="mt-0 mb-6 text-ink-3" >{L.s}</p>
       <button onClick={onBack}
-              style={{
+ style={{
  fontSize: 13, border: 'var(--ink-line)',
-                        borderRadius: 5, color: 'var(--ink-2)'
-}} className="py-2 px-4" >
+ borderRadius: 5 }} className="py-2 px-4 text-ink-2" >
         ← Today
       </button>
     </div>
@@ -392,16 +373,12 @@ function FirstEntryToast({ onDismiss, mode }) {
   };
 
   return (
-    <div style={{
-      position: 'absolute', top: 24, left: '50%', transform: 'translateX(-50%)',
-      background: 'var(--ink)', color: 'var(--paper)', borderRadius: 10,
-      display: 'flex', alignItems: 'center',
-      boxShadow: 'var(--shadow-lg)', zIndex: 20,
-      animation: 'toast-in .45s ease-out'
-}} className="gap-4 py-3 pl-4 pr-5" >
-      <span className="kanji" style={{ fontSize: 22, color: 'var(--accent)' }}>礼</span>
+    <div style={{ top: 24, left: '50%', transform: 'translateX(-50%)', borderRadius: 10, zIndex: 20,
+ animation: 'toast-in .45s ease-out'
+ }} className="gap-4 py-3 pl-4 pr-6 absolute bg-ink text-paper flex items-center shadow-lg" >
+      <span className="kanji text-accent" style={{ fontSize: 22 }}>礼</span>
       <div>
-        <div className="display mb-1" style={{ fontSize: 13, fontWeight: 400 }}>
+        <div className="display mb-1 font-normal" style={{ fontSize: 13 }}>
           The observatory is open.
         </div>
         <div style={{ fontSize: 11, color: 'var(--edge)', opacity: 0.75 }}>
@@ -411,17 +388,15 @@ function FirstEntryToast({ onDismiss, mode }) {
         </div>
       </div>
       <label style={{
- display: 'flex', alignItems: 'center',
-                       fontSize: 11, color: 'var(--edge)',
-                       opacity: 0.85, cursor: 'pointer', borderLeft: '1px solid var(--on-primary-faint)'
-}} className="gap-1 ml-2 pl-3" >
-        <input type="checkbox" checked={hide} onChange={toggleHide}
-                style={{ accentColor: 'var(--accent)', cursor: 'pointer' }}/>
+ fontSize: 11, color: 'var(--edge)',
+ opacity: 0.85, borderLeft: '1px solid var(--on-primary-faint)'
+ }} className="gap-1 ml-2 pl-3 flex items-center cursor-pointer" >
+        <input className="cursor-pointer" type="checkbox" checked={hide} onChange={toggleHide}
+ style={{ accentColor: 'var(--accent)' }}/>
         Don't show again
       </label>
       <button onClick={onDismiss} style={{
- fontSize: 11, color: 'var(--ink-4)'
-}} className="py-1 px-2 ml-1" >dismiss</button>
+ fontSize: 11 }} className="py-1 px-2 ml-1 text-ink-4" >dismiss</button>
       <style>{`@keyframes toast-in {
         from { opacity: 0; transform: translate(-50%, -12px) }
         to { opacity: 1; transform: translateX(-50%) }
@@ -449,24 +424,21 @@ function FirstSessionGuide({ onOpenToday, onOpenProject }) {
     { n: "場", t: "Pick a project",
       body: (
         <>Any of the {fs.projectsFound} sensei just found.{" "}
-          <button onClick={() => onOpenProject && onOpenProject(fs.suggested.id)}
-                  style={{ color: 'var(--accent)', fontSize: 12, padding: 0,
-                           borderBottom: '1px solid color-mix(in srgb, var(--accent) 40%, transparent)' }}>
+          <button className="text-accent p-0" onClick={() => onOpenProject && onOpenProject(fs.suggested.id)}
+ style={{ fontSize: 12,
+ borderBottom: '1px solid color-mix(in srgb, var(--accent) 40%, transparent)' }}>
             {fs.suggested.name}
           </button>{" "}is the busiest.</>
       ) },
     { n: "連", t: `Open ${fs.assistant}`,
       body: (
-        <div style={{ display: 'flex', alignItems: 'center' }} className="gap-2 mt-1" >
-          <code className="mono" style={{
-            fontSize: 11, color: 'var(--ink-2)', background: 'var(--paper)',
-            border: 'var(--hairline)', borderRadius: 4, padding: '4px 8px',
-            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 230
-          }}>{fs.command}</code>
+        <div className="gap-2 mt-1 flex items-center" >
+          <code className="mono text-ink-2 bg-paper border border-paper-edge whitespace-nowrap overflow-hidden text-ellipsis" style={{
+ fontSize: 11, borderRadius: 4, padding: '4px 8px', maxWidth: 230
+ }}>{fs.command}</code>
           <button onClick={copyCmd}
-                  style={{ fontSize: 11, color: copied ? 'var(--success)' : 'var(--ink-3)',
-                           border: 'var(--hairline)', borderRadius: 4, whiteSpace: 'nowrap' }}
-                  className="py-1 px-2" >
+ style={{ fontSize: 11, color: copied ? 'var(--success)' : 'var(--ink-3)', borderRadius: 4 }}
+ className="py-1 px-2 border border-paper-edge whitespace-nowrap" >
             {copied ? "copied ✓" : "copy"}
           </button>
         </div>
@@ -478,46 +450,40 @@ function FirstSessionGuide({ onOpenToday, onOpenProject }) {
   const ticks = Array.from({ length: fs.target });
 
   return (
-    <div style={{ background: 'var(--accent-soft)', borderBottom: 'var(--hairline)' }}
-         className="py-5 px-7" >
-      <div style={{ display: 'grid', gridTemplateColumns: '300px 1fr 196px',
-                    alignItems: 'start', maxWidth: 1120 }} className="gap-7 mx-auto" >
+    <div 
+ className="py-6 px-12 bg-accent-soft border-b" >
+      <div style={{ gridTemplateColumns: '300px 1fr 196px', maxWidth: 1120 }} className="gap-12 mx-auto grid items-start" >
 
         {/* ── Framing ── */}
         <div>
-          <div style={{ fontSize: 11, letterSpacing: '0.18em', color: 'var(--accent)',
-                        textTransform: 'uppercase' }} className="mb-2" >
+          <div style={{ fontSize: 11, letterSpacing: '0.18em' }} className="mb-2 text-accent uppercase" >
             Your first session
           </div>
-          <div style={{ display: 'flex', alignItems: 'flex-start' }} className="gap-3" >
-            <span className="kanji" style={{ fontSize: 34, color: 'var(--accent)', lineHeight: 1 }}>稽</span>
+          <div className="gap-3 flex items-start" >
+            <span className="kanji text-accent" style={{ fontSize: 34, lineHeight: 1 }}>稽</span>
             <div>
-              <h2 className="display m-0" style={{ fontSize: 20, fontWeight: 400,
-                            letterSpacing: '-0.01em', lineHeight: 1.2 }}>
+              <h2 className="display m-0 font-normal" style={{ fontSize: 20,
+ letterSpacing: '-0.01em', lineHeight: 1.2 }}>
                 Give sensei something<br/>to watch.
               </h2>
             </div>
           </div>
-          <p style={{ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.6 }} className="mt-3 mb-0" >
+          <p style={{ fontSize: 13, lineHeight: 1.6 }} className="mt-3 mb-0 text-ink-2" >
             It learns from how you and your assistant actually work — there's nothing
             to teach yet. Run a few real sessions and the first lesson forms.
           </p>
         </div>
 
         {/* ── The three steps ── */}
-        <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-3" >
+        <div className="gap-3 flex flex-col" >
           {steps.map((s, i) => (
-            <div key={i} style={{ display: 'grid', gridTemplateColumns: 'auto 1fr',
-                                  alignItems: 'start' }} className="gap-3" >
-              <span style={{ width: 26, height: 26, borderRadius: '50%',
-                             background: 'var(--paper)', border: 'var(--hairline)',
-                             display: 'flex', alignItems: 'center', justifyContent: 'center',
-                             flexShrink: 0 }}>
-                <span className="kanji" style={{ fontSize: 14, color: 'var(--accent)', lineHeight: 1 }}>{s.n}</span>
+            <div key={i} style={{ gridTemplateColumns: 'auto 1fr' }} className="gap-3 grid items-start" >
+              <span className="rounded-full bg-paper border border-paper-edge flex items-center justify-center shrink-0" style={{ width: 26, height: 26 }}>
+                <span className="kanji text-accent" style={{ fontSize: 14, lineHeight: 1 }}>{s.n}</span>
               </span>
-              <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 13, color: 'var(--ink)', fontWeight: 500 }}>{s.t}</div>
-                <div style={{ fontSize: 12, color: 'var(--ink-2)', lineHeight: 1.5 }} className="mt-1" >
+              <div className="min-w-0" >
+                <div className="text-ink font-medium" style={{ fontSize: 13 }}>{s.t}</div>
+                <div style={{ fontSize: 12, lineHeight: 1.5 }} className="mt-1 text-ink-2" >
                   {s.body}
                 </div>
               </div>
@@ -526,32 +492,30 @@ function FirstSessionGuide({ onOpenToday, onOpenProject }) {
         </div>
 
         {/* ── Progress toward the first lesson ── */}
-        <div style={{ borderLeft: 'var(--hairline)' }} className="pl-6" >
-          <div style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
-                        textTransform: 'uppercase' }}>
+        <div className="pl-8 border-l" >
+          <div className="text-ink-3 uppercase" style={{ fontSize: 11, letterSpacing: '0.14em' }}>
             Sessions watched
           </div>
-          <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-1 mt-1" >
-            <span className="display" style={{ fontSize: 34, fontWeight: 400, lineHeight: 1,
-                          color: 'var(--ink)' }}>{fs.watched}</span>
-            <span style={{ fontSize: 15, color: 'var(--ink-3)' }}>/ {fs.target}</span>
+          <div className="gap-1 mt-1 flex items-baseline" >
+            <span className="display font-normal text-ink" style={{ fontSize: 34, lineHeight: 1 }}>{fs.watched}</span>
+            <span className="text-ink-3" style={{ fontSize: 15 }}>/ {fs.target}</span>
           </div>
-          <div style={{ display: 'flex' }} className="gap-1 mt-2" >
+          <div className="gap-1 mt-2 flex" >
             {ticks.map((_, i) => (
-              <span key={i} style={{ flex: 1, height: 4, borderRadius: 2,
-                            background: i < fs.watched ? 'var(--accent)' : 'var(--edge)' }}/>
+              <span className="flex-1" key={i} style={{ height: 4, borderRadius: 2,
+ background: i < fs.watched ? 'var(--accent)' : 'var(--edge)' }}/>
             ))}
           </div>
-          <div style={{ fontSize: 11, color: 'var(--ink-3)', lineHeight: 1.5 }} className="mt-2" >
+          <div style={{ fontSize: 11, lineHeight: 1.5 }} className="mt-2 text-ink-3" >
             The first lesson tends to form around the third session.
           </div>
-          <div style={{ display: 'flex', alignItems: 'center' }} className="gap-2 mt-3" >
-            <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--success)',
-                           animation: 'fsPulse 1.6s ease-in-out infinite' }}/>
-            <span className="mono" style={{ fontSize: 11, color: 'var(--ink-2)' }}>daemon listening</span>
+          <div className="gap-2 mt-3 flex items-center" >
+            <span className="rounded-full bg-success" style={{ width: 6, height: 6,
+ animation: 'fsPulse 1.6s ease-in-out infinite' }}/>
+            <span className="mono text-ink-2" style={{ fontSize: 11 }}>daemon listening</span>
           </div>
           <button onClick={onOpenToday}
-                  style={{ fontSize: 11, color: 'var(--ink-3)' }} className="mt-3 p-0" >
+ style={{ fontSize: 11 }} className="mt-3 p-0 text-ink-3" >
             Peek at Today →
           </button>
           <style>{`@keyframes fsPulse { 0%,100% { opacity: 1 } 50% { opacity: 0.3 } }`}</style>
@@ -566,22 +530,19 @@ function FirstSessionGuide({ onOpenToday, onOpenProject }) {
 // addresses the "where did my dashboard go?" risk of landing on Projects.
 function EarlyProjectsNotice({ onOpenToday }) {
   return (
-    <div style={{
-      display: 'flex', alignItems: 'center', gap: 12,
-      background: 'var(--accent-soft)', borderBottom: 'var(--hairline)'
-    }} className="py-3 px-7" >
-      <span className="kanji" style={{ fontSize: 17, color: 'var(--accent)', lineHeight: 1 }}>観</span>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <span style={{ fontSize: 13, color: 'var(--ink)' }}>
+    <div style={{ gap: 12 }} className="py-3 px-12 flex items-center bg-accent-soft border-b" >
+      <span className="kanji text-accent" style={{ fontSize: 17, lineHeight: 1 }}>観</span>
+      <div className="flex-1 min-w-0" >
+        <span className="text-ink" style={{ fontSize: 13 }}>
           Sensei is still listening.
         </span>
-        <span style={{ fontSize: 13, color: 'var(--ink-2)' }} className="ml-2" >
+        <span style={{ fontSize: 13 }} className="ml-2 text-ink-2" >
           Here are the projects it found. Today’s brief opens on its own once the first insights form — a few sessions away.
         </span>
       </div>
       <button onClick={onOpenToday}
-              style={{ fontSize: 11, color: 'var(--ink-2)', border: 'var(--ink-line)',
-                       borderRadius: 5, whiteSpace: 'nowrap' }} className="py-1 px-3" >
+ style={{ fontSize: 11, border: 'var(--ink-line)',
+ borderRadius: 5 }} className="py-1 px-3 text-ink-2 whitespace-nowrap" >
         Peek at Today →
       </button>
     </div>

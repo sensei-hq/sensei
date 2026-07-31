@@ -7,13 +7,10 @@ const { useState: lS } = React;
 // Shared building blocks ──────────────────────────────────────
 function LibIcon({ letter, tone = 'var(--accent)', size = 28 }) {
   return (
-    <div style={{
-      width: size, height: size, borderRadius: 6,
-      background: 'var(--paper-3)', border: 'var(--hairline)',
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-      fontSize: size * 0.45, fontWeight: 600, color: tone,
-      fontFamily: 'var(--font-display)', flexShrink: 0
-    }}>{letter}</div>
+    <div className="bg-paper-3 border border-paper-edge flex items-center justify-center font-semibold shrink-0" style={{
+ width: size, height: size, borderRadius: 6,
+ fontSize: size * 0.45, color: tone,
+ fontFamily: 'var(--font-display)' }}>{letter}</div>
   );
 }
 
@@ -39,20 +36,18 @@ function LibraryDetail({ libId, compact = false }) {
   const [example, setExample] = lS(0);
   const ex = d.mcpExamples[example];
   return (
-    <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-4" >
-      <div style={{ display: 'flex', alignItems: 'flex-start' }} className="gap-3" >
+    <div className="gap-4 flex flex-col" >
+      <div className="gap-3 flex items-start" >
         <LibIcon letter={d.name.charAt(0)} size={40}/>
-        <div style={{ flex: 1 }}>
-          <div className="display" style={{ fontSize: 22, fontWeight: 400, letterSpacing: '-0.01em' }}>
+        <div className="flex-1" >
+          <div className="display font-normal" style={{ fontSize: 22, letterSpacing: '-0.01em' }}>
             {d.name}
           </div>
-          <div style={{ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.55 }} className="mt-1" >
+          <div style={{ fontSize: 13, lineHeight: 1.55 }} className="mt-1 text-ink-2" >
             {d.tagline}
           </div>
           <div style={{
- display: 'flex', alignItems: 'center',
-                         fontSize: 11, color: 'var(--ink-3)'
-}} className="mono gap-2 mt-2">
+ fontSize: 11 }} className="mono gap-2 mt-2 flex items-center text-ink-3">
             <span>v{d.version}</span><span>·</span>
             <span>{d.lang}</span><span>·</span>
             <DocChip status={d.docs}/><span>·</span>
@@ -61,48 +56,38 @@ function LibraryDetail({ libId, compact = false }) {
         </div>
       </div>
 
-      <div style={{
- background: 'var(--paper-2)',
-                     border: 'var(--hairline)', borderRadius: 6,
-                     fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.55
-}} className="py-3 px-3" >
+      <div style={{ borderRadius: 6,
+ fontSize: 13, lineHeight: 1.55
+ }} className="py-3 px-3 bg-paper-2 border border-paper-edge text-ink-2" >
         {d.summary}
       </div>
 
       {/* Usage grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.2fr' }} className="gap-4" >
+      <div style={{ gridTemplateColumns: '1fr 1.2fr' }} className="gap-4 grid" >
         <div>
           <div style={{
- fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
-                         textTransform: 'uppercase'
-}} className="mb-2" >Top symbols</div>
-          <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
+ fontSize: 11, letterSpacing: '0.14em' }} className="mb-2 text-ink-3 uppercase" >Top symbols</div>
+          <div className="gap-1 flex flex-col" >
             {d.usage.topSymbols.map(s => (
               <div key={s.symbol} style={{
- display: 'grid',
-                            gridTemplateColumns: '1fr auto', alignItems: 'baseline', borderBottom: 'var(--hairline)'
-}} className="gap-2 py-1 px-1" >
-                <span className="mono" style={{ fontSize: 11, color: 'var(--ink)' }}>{s.symbol}</span>
-                <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>{s.n}×</span>
+ gridTemplateColumns: '1fr auto' }} className="gap-2 py-1 px-1 grid items-baseline border-b" >
+                <span className="mono text-ink" style={{ fontSize: 11 }}>{s.symbol}</span>
+                <span className="mono text-ink-3" style={{ fontSize: 11 }}>{s.n}×</span>
               </div>
             ))}
           </div>
         </div>
         <div>
           <div style={{
- fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
-                         textTransform: 'uppercase'
-}} className="mb-2" >Used at</div>
-          <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
+ fontSize: 11, letterSpacing: '0.14em' }} className="mb-2 text-ink-3 uppercase" >Used at</div>
+          <div className="gap-1 flex flex-col" >
             {d.usage.places.map((p, i) => (
-              <div key={i} style={{ borderBottom: 'var(--hairline)' }} className="py-2 px-1" >
-                <div className="mono" style={{ fontSize: 11, color: 'var(--ink)' }}>
-                  {p.file}<span style={{ color: 'var(--ink-4)' }}>:{p.line}</span>
+              <div key={i} className="py-2 px-1 border-b" >
+                <div className="mono text-ink" style={{ fontSize: 11 }}>
+                  {p.file}<span className="text-ink-4" >:{p.line}</span>
                 </div>
-                <div className="mono mt-1" style={{
- fontSize: 11, color: 'var(--ink-3)', whiteSpace: 'nowrap', overflow: 'hidden',
-                              textOverflow: 'ellipsis'
-}}>{p.snippet}</div>
+                <div className="mono mt-1 text-ink-3 whitespace-nowrap overflow-hidden text-ellipsis" style={{
+ fontSize: 11 }}>{p.snippet}</div>
               </div>
             ))}
           </div>
@@ -113,18 +98,14 @@ function LibraryDetail({ libId, compact = false }) {
       {d.rules && d.rules.length > 0 && (
         <div>
           <div style={{
- fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
-                         textTransform: 'uppercase'
-}} className="mb-2" >Rules attached</div>
-          <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-2" >
+ fontSize: 11, letterSpacing: '0.14em' }} className="mb-2 text-ink-3 uppercase" >Rules attached</div>
+          <div className="gap-2 flex flex-col" >
             {d.rules.map((r, i) => (
               <div key={i} style={{
  borderRadius: 5,
-                            background: 'var(--paper-2)',
-                            borderLeft: '2px solid var(--accent)', border: 'var(--hairline)'
-}} className="py-2 px-3" >
-                <div style={{ fontSize: 13, color: 'var(--ink)' }}>"{r.rule}"</div>
-                <div className="mono mt-1" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+ borderLeft: '2px solid var(--accent)' }} className="py-2 px-3 bg-paper-2 border border-paper-edge" >
+                <div className="text-ink" style={{ fontSize: 13 }}>"{r.rule}"</div>
+                <div className="mono mt-1 text-ink-3" style={{ fontSize: 11 }}>
                   {r.source}
                 </div>
               </div>
@@ -135,23 +116,21 @@ function LibraryDetail({ libId, compact = false }) {
 
       {/* MCP example interactions — the key insight */}
       <div>
-        <div style={{
- display: 'flex', alignItems: 'baseline', justifyContent: 'space-between'
-}} className="mb-2" >
+        <div className="mb-2 flex items-baseline justify-between" >
           <div>
-            <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2" >
-              <span className="kanji" style={{ fontSize: 15, color: 'var(--accent)' }}>具</span>
-              <div className="display" style={{ fontSize: 15, fontWeight: 400 }}>
+            <div className="gap-2 flex items-baseline" >
+              <span className="kanji text-accent" style={{ fontSize: 15 }}>具</span>
+              <div className="display font-normal" style={{ fontSize: 15 }}>
                 What sensei can do with this library
               </div>
             </div>
-            <div style={{ fontSize: 11, color: 'var(--ink-3)' }} className="mt-1 ml-5" >
+            <div style={{ fontSize: 11 }} className="mt-1 ml-6 text-ink-3" >
               Example MCP interactions · each tool callable by an assistant with sensei attached.
             </div>
           </div>
         </div>
 
-        <div style={{ display: 'flex', flexWrap: 'wrap' }} className="gap-1 mb-3" >
+        <div className="gap-1 mb-3 flex flex-wrap" >
           {d.mcpExamples.map((e, i) => {
             const on = example === i;
             return (
@@ -170,51 +149,40 @@ function LibraryDetail({ libId, compact = false }) {
           })}
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr' }} className="gap-3" >
+        <div style={{ gridTemplateColumns: '1fr 1fr' }} className="gap-3 grid" >
           <div>
             <div style={{
- fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
-                           textTransform: 'uppercase'
-}} className="mb-1" >
+ fontSize: 11, letterSpacing: '0.14em' }} className="mb-1 text-ink-3 uppercase" >
               Intent
             </div>
             <div style={{
- fontSize: 13, color: 'var(--ink)',
-                           fontStyle: 'italic', lineHeight: 1.5
-}} className="mb-3" >
+ fontSize: 13, lineHeight: 1.5
+ }} className="mb-3 text-ink italic" >
               "{ex.intent}"
             </div>
             <div style={{
- fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
-                           textTransform: 'uppercase'
-}} className="mb-1" >
+ fontSize: 11, letterSpacing: '0.14em' }} className="mb-1 text-ink-3 uppercase" >
               Request
             </div>
             <pre style={{
-                           fontFamily: 'var(--font-mono)', fontSize: 11, lineHeight: 1.5,
-                           background: 'var(--paper-2)', border: 'var(--hairline)',
-                           borderRadius: 5, color: 'var(--ink-2)',
-                           whiteSpace: 'pre-wrap', overflow: 'auto'
-}} className="py-2 px-3 m-0" >
+ fontFamily: 'var(--font-mono)', fontSize: 11, lineHeight: 1.5,
+ borderRadius: 5,
+ whiteSpace: 'pre-wrap' }} className="py-2 px-3 m-0 bg-paper-2 border border-paper-edge text-ink-2 overflow-auto" >
               {ex.request}
             </pre>
           </div>
           <div>
             <div style={{
- fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
-                           textTransform: 'uppercase'
-}} className="mb-1" >
+ fontSize: 11, letterSpacing: '0.14em' }} className="mb-1 text-ink-3 uppercase" >
               Response
             </div>
             <pre style={{
-                           fontFamily: 'var(--font-mono)', fontSize: 11, lineHeight: 1.55,
-                           background: 'var(--paper-2)',
-                           borderLeft: '2px solid var(--accent)',
-                           border: 'var(--hairline)',
-                           borderRadius: 5, color: 'var(--ink)',
-                           whiteSpace: 'pre-wrap', overflow: 'auto',
-                           minHeight: 180
-}} className="py-3 px-3 m-0" >
+ fontFamily: 'var(--font-mono)', fontSize: 11, lineHeight: 1.55,
+ borderLeft: '2px solid var(--accent)',
+ borderRadius: 5,
+ whiteSpace: 'pre-wrap',
+ minHeight: 180
+ }} className="py-3 px-3 m-0 bg-paper-2 border border-paper-edge text-ink overflow-auto" >
               {ex.response}
             </pre>
           </div>
@@ -228,31 +196,27 @@ function LibraryDetail({ libId, compact = false }) {
 function LibRow({ item, onClick, active }) {
   return (
     <button onClick={onClick} style={{
-      display: 'grid',
-      gridTemplateColumns: 'auto 1fr auto auto auto', alignItems: 'center', borderRadius: 6,
-      textAlign: 'left',
-      background: active ? 'var(--paper-2)' : 'transparent',
-      borderBottom: 'var(--hairline)'
-}} className="gap-3 py-3 px-3" >
+ gridTemplateColumns: 'auto 1fr auto auto auto', borderRadius: 6,
+ background: active ? 'var(--paper-2)' : 'transparent' }} className="gap-3 py-3 px-3 grid items-center text-left border-b" >
       <LibIcon letter={item.icon}
                tone={item.service ? 'var(--success)' : item.internal ? 'var(--warning)' : 'var(--accent)'}
                size={32}/>
-      <div style={{ minWidth: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2" >
-          <span style={{ fontSize: 13, color: 'var(--ink)' }}>{item.name}</span>
-          <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>v{item.version}</span>
+      <div className="min-w-0" >
+        <div className="gap-2 flex items-baseline" >
+          <span className="text-ink" style={{ fontSize: 13 }}>{item.name}</span>
+          <span className="mono text-ink-3" style={{ fontSize: 11 }}>v{item.version}</span>
         </div>
-        <div style={{ fontSize: 11, color: 'var(--ink-3)' }} className="mt-1" >
+        <div style={{ fontSize: 11 }} className="mt-1 text-ink-3" >
           {item.source}
         </div>
       </div>
       <DocChip status={item.docs}/>
-      <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)',
-                    minWidth: 60, textAlign: 'right' }}>
+      <span className="mono text-ink-3 text-right" style={{ fontSize: 11,
+ minWidth: 60 }}>
         {item.usage}× calls
       </span>
-      <span className="mono" style={{ fontSize: 11, color: 'var(--ink-4)',
-                    minWidth: 70, textAlign: 'right' }}>
+      <span className="mono text-ink-4 text-right" style={{ fontSize: 11,
+ minWidth: 70 }}>
         {item.lastIndexed || "—"}
       </span>
     </button>
@@ -298,9 +262,8 @@ function LibrariesVariantA({ embedded = false, state = "ready" } = {}) {
   }).sort((a, b) => (b.usage || 0) - (a.usage || 0));
 
   return (
-    <div className="sensei" data-screen-label="Libraries · Unified"
-         style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column',
-                  background: 'var(--paper)', overflow: 'hidden' }}>
+    <div className="sensei w-full h-full flex flex-col bg-paper overflow-hidden" data-screen-label="Libraries · Unified"
+ >
       {!embedded && <TauriChrome title="Sensei  先生  ·  libraries"/>}
 
       <ScreenHeader
@@ -309,26 +272,23 @@ function LibrariesVariantA({ embedded = false, state = "ready" } = {}) {
         title="Tools the student uses. Kept close."
         sub="Sensei watches imports and flags docs that drift. Ask it anything about how you actually use each library — through any assistant that speaks MCP."
         right={
-          <button style={{ fontSize: 13, background: 'var(--ink)', color: 'var(--paper)',
-                           borderRadius: 5 }} className="py-2 px-3" >+ add library</button>
+          <button style={{ fontSize: 13,
+ borderRadius: 5 }} className="py-2 px-3 bg-ink text-paper" >+ add library</button>
         }/>
 
       {/* Filter row */}
-      <div style={{
- borderBottom: 'var(--hairline)',
-                     display: 'flex', alignItems: 'center', flexWrap: 'wrap'
-}} className="py-3 px-7 gap-4" >
-        <div style={{ display: 'flex' }} className="gap-1" >
+      <div className="py-3 px-12 gap-4 border-b flex items-center flex-wrap" >
+        <div className="gap-1 flex" >
           {kinds.map(k => {
             const on = kind === k.id;
             return (
               <button key={k.id} onClick={() => setKind(k.id)}
-                      style={{
+ style={{
  fontSize: 11,
-                                borderRadius: 4, display: 'inline-flex', alignItems: 'center',
-                                background: on ? 'var(--ink)' : 'transparent',
-                                color: on ? 'var(--paper)' : 'var(--ink-2)'
-}} className="py-1 px-3 gap-2" >
+ borderRadius: 4,
+ background: on ? 'var(--ink)' : 'transparent',
+ color: on ? 'var(--paper)' : 'var(--ink-2)'
+ }} className="py-1 px-3 gap-2 inline-flex items-center" >
                 <span className="kanji" style={{ fontSize: 11 }}>{k.kanji}</span>
                 {k.label}
                 <span className="mono" style={{ fontSize: 11,
@@ -340,10 +300,9 @@ function LibrariesVariantA({ embedded = false, state = "ready" } = {}) {
           })}
         </div>
         <span style={{ width: 1, height: 18, background: 'var(--edge)' }}/>
-        <div style={{ display: 'flex', alignItems: 'center' }} className="gap-2" >
-          <span style={{ fontSize: 11, color: 'var(--ink-3)', letterSpacing: '0.12em',
-                         textTransform: 'uppercase' }}>Lang</span>
-          <div style={{ display: 'flex' }} className="gap-1" >
+        <div className="gap-2 flex items-center" >
+          <span className="text-ink-3 uppercase" style={{ fontSize: 11, letterSpacing: '0.12em' }}>Lang</span>
+          <div className="gap-1 flex" >
             {langs.map(l => {
               const on = lang === l;
               return (
@@ -360,41 +319,33 @@ function LibrariesVariantA({ embedded = false, state = "ready" } = {}) {
             })}
           </div>
         </div>
-        <span style={{ flex: 1 }}/>
-        <div style={{
- display: 'flex', alignItems: 'center',
-                       background: 'var(--paper-2)', borderRadius: 5, border: 'var(--hairline)', minWidth: 220
-}} className="gap-2 py-1 px-2" >
-          <span className="kanji" style={{ fontSize: 11, color: 'var(--ink-3)' }}>探</span>
-          <input value={query} onChange={e => setQuery(e.target.value)}
-                 placeholder="search libraries…"
-                 style={{ border: 'none', outline: 'none', background: 'transparent',
-                          fontSize: 13, flex: 1, color: 'var(--ink)' }}/>
+        <span className="flex-1" />
+        <div style={{ borderRadius: 5, minWidth: 220
+ }} className="gap-2 py-1 px-2 flex items-center bg-paper-2 border border-paper-edge" >
+          <span className="kanji text-ink-3" style={{ fontSize: 11 }}>探</span>
+          <input className="border-0 bg-transparent flex-1 text-ink" value={query} onChange={e => setQuery(e.target.value)}
+ placeholder="search libraries…"
+ style={{ outline: 'none',
+ fontSize: 13 }}/>
           {query && (
-            <button onClick={() => setQuery("")}
-                    style={{ fontSize: 11, color: 'var(--ink-4)' }}>×</button>
+            <button className="text-ink-4" onClick={() => setQuery("")}
+ style={{ fontSize: 11 }}>×</button>
           )}
         </div>
-        <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+        <span className="mono text-ink-3" style={{ fontSize: 11 }}>
           {filtered.length} of {all.length}
         </span>
       </div>
 
-      <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '1fr 1fr',
-                     minHeight: 0, overflow: 'hidden' }}>
-        <div style={{
- overflow: 'auto',
-                       borderRight: 'var(--hairline)'
-}} className="pt-4 pb-6 px-7" >
+      <div className="flex-1 grid min-h-0 overflow-hidden" style={{ gridTemplateColumns: '1fr 1fr' }}>
+        <div className="pt-4 pb-8 px-12 overflow-auto border-r" >
           {filtered.length === 0 && (
             <div style={{
- textAlign: 'center',
-                           fontSize: 13, color: 'var(--ink-3)'
-}} className="py-6 px-0" >
+ fontSize: 13 }} className="py-8 px-0 text-center text-ink-3" >
               No libraries match.
             </div>
           )}
-          <div style={{ display: 'flex', flexDirection: 'column' }}>
+          <div className="flex flex-col" >
             {filtered.map(x => (
               <LibRow key={x.id} item={x}
                       active={focus === x.id}
@@ -402,7 +353,7 @@ function LibrariesVariantA({ embedded = false, state = "ready" } = {}) {
             ))}
           </div>
         </div>
-        <div style={{ overflow: 'auto', background: 'var(--paper-2)' }} className="py-5 px-6" >
+        <div className="py-6 px-8 overflow-auto bg-paper-2" >
           <LibraryDetail libId={focus}/>
         </div>
       </div>
@@ -420,46 +371,41 @@ function LibrariesVariantB() {
   const group = D.groups.find(g => g.id === tab);
 
   return (
-    <div className="sensei" data-screen-label="Libraries · Workspace"
-         style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column',
-                  background: 'var(--paper)', overflow: 'hidden' }}>
+    <div className="sensei w-full h-full flex flex-col bg-paper overflow-hidden" data-screen-label="Libraries · Workspace"
+ >
       <TauriChrome title="Sensei  先生  ·  libraries · workspace"/>
 
-      <div style={{ borderBottom: 'var(--hairline)' }} className="pt-4 pb-0 px-7" >
-        <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-3 mb-3" >
-          <span className="kanji" style={{ fontSize: 22, color: 'var(--accent)' }}>庫</span>
-          <h1 className="display m-0" style={{ fontSize: 22, fontWeight: 400 }}>
+      <div className="pt-4 pb-0 px-12 border-b" >
+        <div className="gap-3 mb-3 flex items-baseline" >
+          <span className="kanji text-accent" style={{ fontSize: 22 }}>庫</span>
+          <h1 className="display m-0 font-normal" style={{ fontSize: 22 }}>
             Libraries
           </h1>
-          <span style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+          <span className="text-ink-3" style={{ fontSize: 11 }}>
             detected + imported + connected
           </span>
-          <span style={{ flex: 1 }}/>
+          <span className="flex-1" />
+          <button style={{
+ fontSize: 11, border: 'var(--ink-line)',
+ borderRadius: 5
+ }} className="py-2 px-3 text-ink-2" >+ import URL</button>
           <button style={{
  fontSize: 11,
-                            color: 'var(--ink-2)', border: 'var(--ink-line)',
-                            borderRadius: 5
-}} className="py-2 px-3" >+ import URL</button>
-          <button style={{
- fontSize: 11,
-                            background: 'var(--ink)', color: 'var(--paper)',
-                            borderRadius: 5
-}} className="py-2 px-3" >+ register library</button>
+ borderRadius: 5
+ }} className="py-2 px-3 bg-ink text-paper" >+ register library</button>
         </div>
-        <div style={{ display: 'flex' }} className="gap-1" >
+        <div className="gap-1 flex" >
           {D.groups.map(g => {
             const on = tab === g.id;
             return (
               <button key={g.id} onClick={() => setTab(g.id)}
-                      style={{
+ style={{
  fontSize: 13,
-                                borderBottom: on ? '2px solid var(--accent)' : '2px solid transparent',
-                                color: on ? 'var(--ink)' : 'var(--ink-3)', marginBottom: -1,
-                                display: 'inline-flex', alignItems: 'center'
-}} className="py-2 px-3 gap-2" >
+ borderBottom: on ? '2px solid var(--accent)' : '2px solid transparent',
+ color: on ? 'var(--ink)' : 'var(--ink-3)', marginBottom: -1 }} className="py-2 px-3 gap-2 inline-flex items-center" >
                 <span className="kanji" style={{ fontSize: 13 }}>{g.kanji}</span>
                 {g.label}
-                <span className="mono" style={{ fontSize: 11, color: 'var(--ink-4)' }}>
+                <span className="mono text-ink-4" style={{ fontSize: 11 }}>
                   {g.items.length}
                 </span>
               </button>
@@ -468,31 +414,22 @@ function LibrariesVariantB() {
         </div>
       </div>
 
-      <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '320px 1fr',
-                     minHeight: 0, overflow: 'hidden' }}>
-        <div style={{
- overflow: 'auto',
-                       borderRight: 'var(--hairline)', background: 'var(--paper-2)'
-}} className="py-3 px-3" >
-          <div style={{ fontSize: 11, color: 'var(--ink-3)' }} className="pt-1 pb-2 px-2" >
+      <div className="flex-1 grid min-h-0 overflow-hidden" style={{ gridTemplateColumns: '320px 1fr' }}>
+        <div className="py-3 px-3 overflow-auto border-r bg-paper-2" >
+          <div style={{ fontSize: 11 }} className="pt-1 pb-2 px-2 text-ink-3" >
             {group.sub}
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column' }}>
+          <div className="flex flex-col" >
             {group.items.map(x => (
               <button key={x.id} onClick={() => setFocus(x.id)}
-                      style={{
-                        display: 'grid', gridTemplateColumns: 'auto 1fr auto',
-                        alignItems: 'center', borderRadius: 5,
-                        textAlign: 'left',
-                        background: focus === x.id ? 'var(--paper)' : 'transparent',
-                        borderBottom: 'var(--hairline)'
-}} className="gap-2 py-2 px-3" >
+ style={{ gridTemplateColumns: 'auto 1fr auto', borderRadius: 5,
+ background: focus === x.id ? 'var(--paper)' : 'transparent' }} className="gap-2 py-2 px-3 grid items-center text-left border-b" >
                 <LibIcon letter={x.icon}
                          tone={x.service ? 'var(--success)' : x.internal ? 'var(--warning)' : 'var(--accent)'}
                          size={26}/>
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 13, color: 'var(--ink)' }}>{x.name}</div>
-                  <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+                <div className="min-w-0" >
+                  <div className="text-ink" style={{ fontSize: 13 }}>{x.name}</div>
+                  <div className="mono text-ink-3" style={{ fontSize: 11 }}>
                     v{x.version} · {x.usage}× calls
                   </div>
                 </div>
@@ -502,7 +439,7 @@ function LibrariesVariantB() {
           </div>
         </div>
 
-        <div style={{ overflow: 'auto' }} className="py-5 px-7" >
+        <div className="py-6 px-12 overflow-auto" >
           <LibraryDetail libId={focus}/>
         </div>
       </div>
@@ -559,68 +496,57 @@ function MCPPlayground({ activeTab = "playground", onTab = () => {} } = {}) {
                 ? "Sensei exposes these tools over MCP — any assistant with sensei attached can call them. Try any tool here; some take a project, some take a library."
                 : "Installed for this project. Inspect tools and try them the same way you'd try sensei's own."}
               chip={
-                <span className="mono py-1 px-2" style={{
- fontSize: 11, color: 'var(--ink-3)', border: 'var(--hairline)', borderRadius: 3
-}}>
+                <span className="mono py-1 px-2 text-ink-3 border border-paper-edge" style={{
+ fontSize: 11, borderRadius: 3
+ }}>
                   {scopeMcp.tools} tools
                 </span>
               }>
 
       {/* MCP scope selector — horizontal pill row */}
-      <div style={{
- borderBottom: 'var(--hairline)',
-                     display: 'flex', alignItems: 'center',
-                     background: 'var(--paper-2)'
-}} className="py-2 px-7 gap-3" >
-        <span style={{ fontSize: 11, letterSpacing: '0.16em', color: 'var(--ink-3)',
-                        textTransform: 'uppercase' }}>
+      <div className="py-2 px-12 gap-3 border-b flex items-center bg-paper-2" >
+        <span className="text-ink-3 uppercase" style={{ fontSize: 11, letterSpacing: '0.16em' }}>
           MCP
         </span>
-        <div style={{ display: 'flex', flexWrap: 'wrap' }} className="gap-1" >
+        <div className="gap-1 flex flex-wrap" >
           {mcpSources.map(m => {
             const on = scope === m.id;
             return (
               <button key={m.id} onClick={() => setScope(m.id)}
-                      style={{
- display: 'inline-flex', alignItems: 'center', fontSize: 11, borderRadius: 4,
-                                background: on ? 'var(--paper)' : 'transparent',
-                                border: on ? '1px solid var(--ink-4)' : '1px solid transparent',
-                                color: on ? 'var(--ink)' : 'var(--ink-2)'
-}} className="gap-1 py-1 px-2" >
+ style={{ fontSize: 11, borderRadius: 4,
+ background: on ? 'var(--paper)' : 'transparent',
+ border: on ? '1px solid var(--ink-4)' : '1px solid transparent',
+ color: on ? 'var(--ink)' : 'var(--ink-2)'
+ }} className="gap-1 py-1 px-2 inline-flex items-center" >
                 <span className="kanji" style={{ fontSize: 11,
                               color: on ? 'var(--accent)' : 'var(--ink-3)' }}>{m.kanji}</span>
                 <span>{m.name}</span>
-                <span className="mono" style={{ fontSize: 11, color: 'var(--ink-4)' }}>
+                <span className="mono text-ink-4" style={{ fontSize: 11 }}>
                   {m.tools}
                 </span>
               </button>
             );
           })}
         </div>
-        <span style={{ flex: 1 }}/>
-        <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+        <span className="flex-1" />
+        <span className="mono text-ink-3" style={{ fontSize: 11 }}>
           {mcpSources.length} installed
         </span>
       </div>
 
       {!isSensei && (
         <div style={{
-                       background: 'var(--paper-2)',
-                       borderBottom: 'var(--hairline)',
-                       fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.55
-}} className="py-3 px-7" >
-          <span className="kanji mr-2" style={{ color: 'var(--warning)', fontSize: 13 }}>告</span>
+ fontSize: 13, lineHeight: 1.55
+ }} className="py-3 px-12 bg-paper-2 border-b text-ink-2" >
+          <span className="kanji mr-2 text-warning" style={{ fontSize: 13 }}>告</span>
           Third-party MCP. Sensei lists these tools from the server's manifest — you can inspect each,
           but sensei doesn't wrap or index them.
         </div>
       )}
 
       {/* Filter row */}
-      <div style={{
- borderBottom: 'var(--hairline)',
-                     display: 'flex', alignItems: 'center'
-}} className="py-3 px-7 gap-3" >
-        <div style={{ display: 'flex' }} className="gap-1" >
+      <div className="py-3 px-12 gap-3 border-b flex items-center" >
+        <div className="gap-1 flex" >
           <CatChip on={category === "all"} onClick={() => setCategory("all")}
                    kanji="全" label="All" count={T.tools.length}/>
           {T.categories.map(c => (
@@ -630,33 +556,27 @@ function MCPPlayground({ activeTab = "playground", onTab = () => {} } = {}) {
                      count={T.tools.filter(t => t.category === c.id).length}/>
           ))}
         </div>
-        <span style={{ flex: 1 }}/>
-        <div style={{
- display: 'flex', alignItems: 'center',
-                       background: 'var(--paper-2)', borderRadius: 5, border: 'var(--hairline)', minWidth: 240
-}} className="gap-2 py-1 px-2" >
-          <span className="kanji" style={{ fontSize: 11, color: 'var(--ink-3)' }}>探</span>
-          <input value={query} onChange={e => setQuery(e.target.value)}
-                 placeholder="search tools…"
-                 style={{ border: 'none', outline: 'none', background: 'transparent',
-                          fontSize: 13, flex: 1, color: 'var(--ink)' }}/>
+        <span className="flex-1" />
+        <div style={{ borderRadius: 5, minWidth: 240
+ }} className="gap-2 py-1 px-2 flex items-center bg-paper-2 border border-paper-edge" >
+          <span className="kanji text-ink-3" style={{ fontSize: 11 }}>探</span>
+          <input className="border-0 bg-transparent flex-1 text-ink" value={query} onChange={e => setQuery(e.target.value)}
+ placeholder="search tools…"
+ style={{ outline: 'none',
+ fontSize: 13 }}/>
           {query && (
-            <button onClick={() => setQuery("")}
-                    style={{ fontSize: 11, color: 'var(--ink-4)' }}>×</button>
+            <button className="text-ink-4" onClick={() => setQuery("")}
+ style={{ fontSize: 11 }}>×</button>
           )}
         </div>
       </div>
 
       {/* Two-pane */}
-      <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '340px 1fr',
-                     minHeight: 0, overflow: 'hidden' }}>
-        <aside style={{ overflow: 'auto', borderRight: 'var(--hairline)',
-                         background: 'var(--paper-2)' }}>
+      <div className="flex-1 grid min-h-0 overflow-hidden" style={{ gridTemplateColumns: '340px 1fr' }}>
+        <aside className="overflow-auto border-r bg-paper-2" >
           {filtered.length === 0 && (
             <div style={{
- fontSize: 13, color: 'var(--ink-3)',
-                           textAlign: 'center'
-}} className="py-5 px-4" >
+ fontSize: 13 }} className="py-6 px-4 text-ink-3 text-center" >
               No tools match.
             </div>
           )}
@@ -665,17 +585,14 @@ function MCPPlayground({ activeTab = "playground", onTab = () => {} } = {}) {
             if (items.length === 0) return null;
             return (
               <div key={c.id} className="pt-4 pb-1 px-3" >
-                <div style={{
-                               display: 'flex', alignItems: 'baseline'
-}} className="gap-2 pt-0 pb-2 px-2" >
-                  <span className="kanji" style={{ fontSize: 11, color: 'var(--accent)' }}>
+                <div className="gap-2 pt-0 pb-2 px-2 flex items-baseline" >
+                  <span className="kanji text-accent" style={{ fontSize: 11 }}>
                     {c.kanji}
                   </span>
-                  <span style={{ fontSize: 11, letterSpacing: '0.16em',
-                                  color: 'var(--ink-3)', textTransform: 'uppercase' }}>
+                  <span className="text-ink-3 uppercase" style={{ fontSize: 11, letterSpacing: '0.16em' }}>
                     {c.label}
                   </span>
-                  <span className="mono" style={{ fontSize: 11, color: 'var(--ink-4)' }}>
+                  <span className="mono text-ink-4" style={{ fontSize: 11 }}>
                     {items.length}
                   </span>
                 </div>
@@ -689,7 +606,7 @@ function MCPPlayground({ activeTab = "playground", onTab = () => {} } = {}) {
           })}
         </aside>
 
-        <main style={{ overflow: 'auto' }} className="pt-5 pb-6 px-7" >
+        <main className="pt-6 pb-8 px-12 overflow-auto" >
           <ToolDetail tool={focus} cat={cat}/>
         </main>
       </div>
@@ -700,12 +617,12 @@ function MCPPlayground({ activeTab = "playground", onTab = () => {} } = {}) {
 function CatChip({ on, onClick, kanji, label, count }) {
   return (
     <button onClick={onClick}
-            style={{
+ style={{
  fontSize: 11,
-                      borderRadius: 4, display: 'inline-flex', alignItems: 'center',
-                      background: on ? 'var(--ink)' : 'transparent',
-                      color: on ? 'var(--paper)' : 'var(--ink-2)'
-}} className="py-1 px-3 gap-2" >
+ borderRadius: 4,
+ background: on ? 'var(--ink)' : 'transparent',
+ color: on ? 'var(--paper)' : 'var(--ink-2)'
+ }} className="py-1 px-3 gap-2 inline-flex items-center" >
       <span className="kanji" style={{ fontSize: 11 }}>{kanji}</span>
       {label}
       <span className="mono" style={{ fontSize: 11,
@@ -721,21 +638,19 @@ function ToolRow({ tool, active, onClick }) {
   const short = tool.name.split('.').slice(-1)[0];
   return (
     <button onClick={onClick}
-            style={{
-              display: 'block', width: '100%', textAlign: 'left', borderRadius: 5,
-              background: active ? 'var(--paper)' : 'transparent',
-              border: active ? '1px solid var(--edge)' : '1px solid transparent'
-}} className="py-2 px-3 mb-1" >
+ style={{ borderRadius: 5,
+ background: active ? 'var(--paper)' : 'transparent',
+ border: active ? '1px solid var(--edge)' : '1px solid transparent'
+ }} className="py-2 px-3 mb-1 block w-full text-left" >
       <div className="mono" style={{ fontSize: 11,
                     color: active ? 'var(--ink)' : 'var(--ink-2)' }}>
         {tool.name}
       </div>
       <div style={{
- fontSize: 11, color: 'var(--ink-3)',
-                     lineHeight: 1.45,
-                     overflow: 'hidden', display: '-webkit-box',
-                     WebkitLineClamp: 2, WebkitBoxOrient: 'vertical'
-}} className="mt-1" >
+ fontSize: 11,
+ lineHeight: 1.45, display: '-webkit-box',
+ WebkitLineClamp: 2, WebkitBoxOrient: 'vertical'
+ }} className="mt-1 text-ink-3 overflow-hidden" >
         {tool.summary}
       </div>
     </button>
@@ -773,49 +688,44 @@ function ToolDetail({ tool, cat }) {
                     (values[i.key] === "" || values[i.key] == null));
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-5" >
+    <div className="gap-6 flex flex-col" >
       {/* Tool header */}
       <div>
-        <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2 mb-1" >
-          <span className="kanji" style={{ fontSize: 13, color: 'var(--accent)' }}>
+        <div className="gap-2 mb-1 flex items-baseline" >
+          <span className="kanji text-accent" style={{ fontSize: 13 }}>
             {cat.kanji}
           </span>
-          <span style={{ fontSize: 11, letterSpacing: '0.16em', color: 'var(--ink-3)',
-                         textTransform: 'uppercase' }}>
+          <span className="text-ink-3 uppercase" style={{ fontSize: 11, letterSpacing: '0.16em' }}>
             {cat.label}
           </span>
         </div>
-        <div className="mono mb-2" style={{ fontSize: 17, color: 'var(--ink)' }}>
+        <div className="mono mb-2 text-ink" style={{ fontSize: 17 }}>
           {tool.name}
         </div>
-        <div style={{ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.55,
-                       maxWidth: 680 }}>
+        <div className="text-ink-2" style={{ fontSize: 13, lineHeight: 1.55,
+ maxWidth: 680 }}>
           {tool.summary}
         </div>
       </div>
 
       {/* Form */}
-      <div style={{
- background: 'var(--paper-2)',
-                     border: 'var(--hairline)', borderRadius: 8
-}} className="py-4 px-4" >
-        <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2 mb-3" >
-          <span style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
-                         textTransform: 'uppercase' }}>Inputs</span>
-          <span className="mono" style={{ fontSize: 11, color: 'var(--ink-4)' }}>
+      <div style={{ borderRadius: 8
+ }} className="py-4 px-4 bg-paper-2 border border-paper-edge" >
+        <div className="gap-2 mb-3 flex items-baseline" >
+          <span className="text-ink-3 uppercase" style={{ fontSize: 11, letterSpacing: '0.14em' }}>Inputs</span>
+          <span className="mono text-ink-4" style={{ fontSize: 11 }}>
             · {tool.inputs.length}
           </span>
         </div>
-        <div style={{
- display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))'
-}} className="gap-3 mb-4" >
+        <div style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))'
+ }} className="gap-3 mb-4 grid" >
           {tool.inputs.map(input => (
             <InputField key={input.key} input={input}
                         value={values[input.key]}
                         onChange={v => setVal(input.key, v)}/>
           ))}
         </div>
-        <div style={{ display: 'flex', alignItems: 'center' }} className="gap-2" >
+        <div className="gap-2 flex items-center" >
           <button onClick={() => setHasRun(true)}
                   disabled={missing.length > 0}
                   style={{
@@ -828,57 +738,49 @@ function ToolDetail({ tool, cat }) {
             Run tool →
           </button>
           {missing.length > 0 && (
-            <span style={{ fontSize: 11, color: 'var(--warning)' }}>
+            <span className="text-warning" style={{ fontSize: 11 }}>
               required: {missing.map(m => m.label || m.key).join(", ")}
             </span>
           )}
-          <span style={{ flex: 1 }}/>
-          <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+          <span className="flex-1" />
+          <span className="mono text-ink-3" style={{ fontSize: 11 }}>
             callable by any MCP-attached assistant
           </span>
         </div>
       </div>
 
       {/* Request + Response */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.3fr' }} className="gap-4" >
+      <div style={{ gridTemplateColumns: '1fr 1.3fr' }} className="gap-4 grid" >
         <div>
           <div style={{
- fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
-                         textTransform: 'uppercase'
-}} className="mb-2" >
+ fontSize: 11, letterSpacing: '0.14em' }} className="mb-2 text-ink-3 uppercase" >
             Request
           </div>
           <pre style={{
-                         fontFamily: 'var(--font-mono)', fontSize: 11, lineHeight: 1.55,
-                         background: 'var(--paper-2)', border: 'var(--hairline)',
-                         borderRadius: 6, color: 'var(--ink-2)',
-                         whiteSpace: 'pre-wrap'
-}} className="py-3 px-3 m-0" >
+ fontFamily: 'var(--font-mono)', fontSize: 11, lineHeight: 1.55,
+ borderRadius: 6,
+ whiteSpace: 'pre-wrap'
+ }} className="py-3 px-3 m-0 bg-paper-2 border border-paper-edge text-ink-2" >
 {JSON.stringify({ tool: tool.name, args: request }, null, 2)}
           </pre>
         </div>
         <div>
-          <div style={{
- display: 'flex', alignItems: 'baseline', justifyContent: 'space-between'
-}} className="mb-2" >
-            <span style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
-                           textTransform: 'uppercase' }}>
+          <div className="mb-2 flex items-baseline justify-between" >
+            <span className="text-ink-3 uppercase" style={{ fontSize: 11, letterSpacing: '0.14em' }}>
               {hasRun ? "Response" : "Example response"}
             </span>
             {!hasRun && (
-              <span className="mono" style={{ fontSize: 11, color: 'var(--ink-4)' }}>
+              <span className="mono text-ink-4" style={{ fontSize: 11 }}>
                 with example inputs · click Run for live
               </span>
             )}
           </div>
           <pre style={{
-                         fontFamily: 'var(--font-mono)', fontSize: 11, lineHeight: 1.6,
-                         background: 'var(--paper)',
-                         borderLeft: '2px solid var(--accent)',
-                         border: 'var(--hairline)',
-                         borderRadius: 6, color: 'var(--ink)',
-                         whiteSpace: 'pre-wrap', minHeight: 200
-}} className="py-3 px-4 m-0" >
+ fontFamily: 'var(--font-mono)', fontSize: 11, lineHeight: 1.6,
+ borderLeft: '2px solid var(--accent)',
+ borderRadius: 6,
+ whiteSpace: 'pre-wrap', minHeight: 200
+ }} className="py-3 px-4 m-0 bg-paper border border-paper-edge text-ink" >
             {tool.example.response}
           </pre>
         </div>
@@ -890,16 +792,15 @@ function ToolDetail({ tool, cat }) {
 // Input renderers — kind drives the widget.
 function InputField({ input, value, onChange }) {
   const label = (
-    <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-1 mb-1" >
-      <span style={{ fontSize: 11, letterSpacing: '0.1em', color: 'var(--ink-2)',
-                     textTransform: 'uppercase' }}>
+    <div className="gap-1 mb-1 flex items-baseline" >
+      <span className="text-ink-2 uppercase" style={{ fontSize: 11, letterSpacing: '0.1em' }}>
         {input.label || input.key}
       </span>
       {input.required
-        ? <span className="mono" style={{ fontSize: 11, color: 'var(--accent)' }}>required</span>
-        : <span className="mono" style={{ fontSize: 11, color: 'var(--ink-4)' }}>optional</span>}
-      <span style={{ flex: 1 }}/>
-      <span className="mono" style={{ fontSize: 11, color: 'var(--ink-4)' }}>
+        ? <span className="mono text-accent" style={{ fontSize: 11 }}>required</span>
+        : <span className="mono text-ink-4" style={{ fontSize: 11 }}>optional</span>}
+      <span className="flex-1" />
+      <span className="mono text-ink-4" style={{ fontSize: 11 }}>
         {input.kind}
       </span>
     </div>
@@ -958,7 +859,7 @@ function InputField({ input, value, onChange }) {
     return (
       <div>
         {label}
-        <div style={{ display: 'flex' }}>
+        <div className="flex" >
           {opts.map(o => {
             const on = value === o;
             return (

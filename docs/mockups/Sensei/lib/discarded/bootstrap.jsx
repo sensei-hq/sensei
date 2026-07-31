@@ -120,39 +120,34 @@ function Bootstrap({ scenario = "missing-prereqs", onReady, onSkip }) {
   const readyCount = BOOT_GATES.filter(g => statuses[g.id] === "ready").length;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%',
-                   background: 'var(--paper)', color: 'var(--ink)' }}>
+    <div className="flex flex-col h-full bg-paper text-ink" >
       <TauriChrome title="Sensei  先生  ·  bootstrap"/>
 
-      <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '1fr', minHeight: 0,
-                     overflow: 'auto' }}>
+      <div className="flex-1 grid min-h-0 overflow-auto" style={{ gridTemplateColumns: '1fr' }}>
         <div style={{
- maxWidth: 760, width: '100%', display: 'flex',
-                       flexDirection: 'column'
-}} className="gap-6 mx-auto py-7 px-6" >
+ maxWidth: 760 }} className="gap-8 mx-auto py-12 px-8 w-full flex flex-col" >
 
           {/* ── Header ──────────────────────────────── */}
           <div>
-            <div style={{ display: 'flex', alignItems: 'center' }} className="gap-2 mb-3" >
-              <span className="kanji" style={{ fontSize: 22, color: 'var(--accent)' }}>支</span>
-              <span style={{ fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
-                              color: 'var(--ink-3)' }}>
+            <div className="gap-2 mb-3 flex items-center" >
+              <span className="kanji text-accent" style={{ fontSize: 22 }}>支</span>
+              <span className="uppercase text-ink-3" style={{ fontSize: 11, letterSpacing: '0.14em' }}>
                 bootstrap · checking the foundation
               </span>
             </div>
-            <h1 className="display mt-0 mb-3" style={{
- fontSize: 40, fontWeight: 300, lineHeight: 1.12, letterSpacing: '-0.015em'
-}}>
+            <h1 className="display mt-0 mb-3 font-light" style={{
+ fontSize: 40, lineHeight: 1.12, letterSpacing: '-0.015em'
+ }}>
               {allReady
-                ? <>The foundation <span style={{ color: 'var(--success)' }}>holds.</span></>
+                ? <>The foundation <span className="text-success" >holds.</span></>
                 : firstBlockedIdx >= 0
-                  ? <>A few pieces are <span style={{ color: 'var(--accent)' }}>missing.</span></>
+                  ? <>A few pieces are <span className="text-accent" >missing.</span></>
                   : <>Checking the foundation…</>}
             </h1>
             <p style={{
- fontSize: 13, color: 'var(--ink-3)', lineHeight: 1.7,
-                         maxWidth: 540
-}} className="m-0" >
+ fontSize: 13, lineHeight: 1.7,
+ maxWidth: 540
+ }} className="m-0 text-ink-3" >
               {allReady
                 ? "Homebrew, Postgres, Ollama, sensei components, database, and the daemon are all present. Opening the observatory."
                 : firstBlockedIdx >= 0
@@ -162,29 +157,26 @@ function Bootstrap({ scenario = "missing-prereqs", onReady, onSkip }) {
           </div>
 
           {/* ── Progress rail ──────────────────────── */}
-          <div style={{ display: 'flex', alignItems: 'center' }} className="gap-3" >
-            <div style={{ fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
-                           color: 'var(--ink-4)', fontFeatureSettings: '"tnum"' }}>
-              {String(readyCount).padStart(2, "0")} <span style={{ color: 'var(--ink-4)' }}>/ {String(BOOT_GATES.length).padStart(2, "0")} ready</span>
+          <div className="gap-3 flex items-center" >
+            <div className="uppercase text-ink-4" style={{ fontSize: 11, letterSpacing: '0.14em', fontFeatureSettings: '"tnum"' }}>
+              {String(readyCount).padStart(2, "0")} <span className="text-ink-4" >/ {String(BOOT_GATES.length).padStart(2, "0")} ready</span>
             </div>
-            <div style={{ flex: 1, display: 'flex' }} className="gap-1" >
+            <div className="gap-1 flex-1 flex" >
               {BOOT_GATES.map((g, i) => {
                 const s = statuses[g.id];
                 const color = s === "ready" ? 'var(--success)'
                             : s === "checking" || s === "starting" ? 'var(--ink-2)'
                             : s === "missing" || s === "error" ? 'var(--accent)'
                             : 'var(--edge)';
-                return <span key={g.id} style={{
-                  flex: 1, height: 2, borderRadius: 1, background: color,
-                  transition: 'background .3s', opacity: s === "pending" ? 0.5 : 1
-                }}/>;
+                return <span className="flex-1" key={g.id} style={{ height: 2, borderRadius: 1, background: color,
+ transition: 'background .3s', opacity: s === "pending" ? 0.5 : 1
+ }}/>;
               })}
             </div>
           </div>
 
           {/* ── Gate list ─────────────────────────── */}
-          <div style={{ display: 'flex', flexDirection: 'column',
-                         borderTop: 'var(--hairline)' }}>
+          <div className="flex flex-col border-t" >
             {BOOT_GATES.map((gate, i) => {
               const status = statuses[gate.id];
               const showRemedy = i === firstBlockedIdx;
@@ -223,28 +215,22 @@ function Bootstrap({ scenario = "missing-prereqs", onReady, onSkip }) {
           </div>
 
           {/* ── Footer ────────────────────────────── */}
-          <div style={{
- display: 'flex', justifyContent: 'space-between',
-                         alignItems: 'center', borderTop: 'var(--hairline)'
-}} className="gap-4 pt-5" >
-            <div style={{ fontSize: 11, color: 'var(--ink-4)', lineHeight: 1.6 }}>
+          <div className="gap-4 pt-6 flex justify-between items-center border-t" >
+            <div className="text-ink-4" style={{ fontSize: 11, lineHeight: 1.6 }}>
               Bootstrap runs on every launch. Once a gate is green it'll stay that way — the next startup is quick.
             </div>
-            <div style={{ display: 'flex' }} className="gap-2" >
+            <div className="gap-2 flex" >
               {onSkip && (
                 <button onClick={onSkip}
-                        style={{
- fontSize: 13, color: 'var(--ink-3)', border: 'none', background: 'transparent'
-}} className="py-2 px-3" >
+ style={{
+ fontSize: 13 }} className="py-2 px-3 text-ink-3 border-0 bg-transparent" >
                   Quit
                 </button>
               )}
               {allReady && (
                 <button onClick={onReady}
-                        style={{
- fontSize: 13, background: 'var(--ink)', color: 'var(--paper)', borderRadius: 6, letterSpacing: 0.2,
-                                 border: 'none', cursor: 'pointer'
-}} className="py-2 px-5" >
+ style={{
+ fontSize: 13, borderRadius: 6, letterSpacing: 0.2 }} className="py-2 px-6 bg-ink text-paper border-0 cursor-pointer" >
                   Continue →
                 </button>
               )}
@@ -265,32 +251,26 @@ function BootGate({ gate, status, isFirstBlocked, dbUrl, setDbUrl, onRetry }) {
 
   return (
     <div style={{
- borderBottom: 'var(--hairline)',
-                   opacity: isPending ? 0.42 : 1,
-                   transition: 'opacity .3s'
-}} className="py-4 px-0" >
+ opacity: isPending ? 0.42 : 1,
+ transition: 'opacity .3s'
+ }} className="py-4 px-0 border-b" >
       {/* Main row */}
-      <div style={{
- display: 'grid', gridTemplateColumns: '32px 1fr auto',
-                     alignItems: 'center'
-}} className="gap-4" >
-        <div className="kanji" style={{
-          fontSize: 22,
-          color: isReady ? 'var(--success)'
-               : isBlocked ? 'var(--accent)'
-               : isBusy ? 'var(--ink-2)'
-               : 'var(--ink-4)',
-          textAlign: 'center'
-        }}>{gate.n}</div>
+      <div style={{ gridTemplateColumns: '32px 1fr auto' }} className="gap-4 grid items-center" >
+        <div className="kanji text-center" style={{
+ fontSize: 22,
+ color: isReady ? 'var(--success)'
+ : isBlocked ? 'var(--accent)'
+ : isBusy ? 'var(--ink-2)'
+ : 'var(--ink-4)' }}>{gate.n}</div>
 
         <div>
-          <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2" >
-            <div className="display" style={{ fontSize: 17, fontWeight: 400 }}>{gate.name}</div>
-            <div style={{ fontSize: 13, color: 'var(--ink-4)' }}>· {gate.detail}</div>
+          <div className="gap-2 flex items-baseline" >
+            <div className="display font-normal" style={{ fontSize: 17 }}>{gate.name}</div>
+            <div className="text-ink-4" style={{ fontSize: 13 }}>· {gate.detail}</div>
           </div>
           <div style={{
- fontSize: 11, color: 'var(--ink-4)', fontFamily: 'var(--font-mono)'
-}} className="mt-1" >
+ fontSize: 11, fontFamily: 'var(--font-mono)'
+ }} className="mt-1 text-ink-4" >
             {gate.check}
           </div>
         </div>
@@ -300,16 +280,15 @@ function BootGate({ gate, status, isFirstBlocked, dbUrl, setDbUrl, onRetry }) {
 
       {/* Sub-check breakdown — only for sensei-components while busy or blocked */}
       {gate.sub && (isBusy || isBlocked || isReady) && (
-        <div style={{
- display: 'flex', flexDirection: 'column', borderLeft: '1px dashed var(--edge)'
-}} className="mt-3 gap-1 ml-7 pl-3" >
+        <div style={{ borderLeft: '1px dashed var(--edge)'
+ }} className="mt-3 gap-1 ml-12 pl-3 flex flex-col" >
           {gate.sub.map((s, i) => {
             const sStatus = isReady ? "ready" : isBusy ? (i === 0 ? "checking" : "pending") : "missing";
             return (
-              <div key={s.id} style={{ display: 'flex', alignItems: 'center' }} className="gap-2" >
+              <div key={s.id} className="gap-2 flex items-center" >
                 <StatusDot status={sStatus}/>
-                <span style={{ fontSize: 13, color: 'var(--ink-2)' }}>{s.name}</span>
-                <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--ink-4)' }}>
+                <span className="text-ink-2" style={{ fontSize: 13 }}>{s.name}</span>
+                <span className="text-ink-4" style={{ fontSize: 11, fontFamily: 'var(--font-mono)' }}>
                   {s.check}
                 </span>
               </div>
@@ -339,11 +318,10 @@ function StatusPill({ status }) {
   const m = map[status] || map.pending;
   const isBusy = status === "checking" || status === "starting";
   return (
-    <div style={{
- display: 'inline-flex', alignItems: 'center', borderRadius: 4, background: m.bg,
-                   fontSize: 11, letterSpacing: '0.08em', textTransform: 'uppercase',
-                   color: m.color, fontFeatureSettings: '"tnum"'
-}} className="gap-1 py-1 px-2" >
+    <div style={{ borderRadius: 4, background: m.bg,
+ fontSize: 11, letterSpacing: '0.08em',
+ color: m.color, fontFeatureSettings: '"tnum"'
+ }} className="gap-1 py-1 px-2 inline-flex items-center uppercase" >
       {isBusy && <Spinner/>}
       {status === "ready"   && <span style={{ fontSize: 11 }}>✓</span>}
       {(status === "missing" || status === "error") && <span style={{ fontSize: 13 }}>·</span>}
@@ -357,20 +335,17 @@ function StatusDot({ status }) {
               : status === "checking" ? 'var(--ink-2)'
               : status === "missing" ? 'var(--accent)'
               : 'var(--ink-4)';
-  return <span style={{ width: 6, height: 6, borderRadius: 3, background: color,
-                         opacity: status === "pending" ? 0.4 : 1,
-                         display: 'inline-block' }}/>;
+  return <span className="inline-block" style={{ width: 6, height: 6, borderRadius: 3, background: color,
+ opacity: status === "pending" ? 0.4 : 1 }}/>;
 }
 
 // Spinner — two-dot rotation
 function Spinner() {
   return (
-    <span style={{ display: 'inline-block', width: 10, height: 10, position: 'relative' }}>
-      <span style={{
-        position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
-        border: '1.5px solid currentColor', borderTopColor: 'transparent',
-        borderRadius: '50%', animation: 'bs-spin 0.9s linear infinite'
-      }}/>
+    <span className="inline-block relative" style={{ width: 10, height: 10 }}>
+      <span className="absolute rounded-full" style={{ top: 0, left: 0, right: 0, bottom: 0,
+ border: '1.5px solid currentColor', borderTopColor: 'transparent', animation: 'bs-spin 0.9s linear infinite'
+ }}/>
       <style>{`@keyframes bs-spin { to { transform: rotate(360deg); } }`}</style>
     </span>
   );
@@ -385,18 +360,15 @@ function GateRemedy({ gate, dbUrl, setDbUrl, onRetry }) {
     return (
       <RemedyShell title="Install Homebrew" intro="Homebrew is the base that installs everything else. Run the command from the official installer, then return here and retry.">
         <CommandBlock cmd='/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'/>
-        <div style={{ display: 'flex', alignItems: 'center' }} className="gap-2 mt-3" >
+        <div className="gap-2 mt-3 flex items-center" >
           <a href="https://brew.sh" target="_blank" rel="noreferrer"
-             style={{
- fontSize: 13, color: 'var(--ink)', textDecoration: 'none', border: 'var(--hairline)', borderRadius: 5,
-                       display: 'inline-flex', alignItems: 'center'
-}} className="py-2 px-3 gap-1" >
-            Open brew.sh <span style={{ color: 'var(--ink-3)' }}>↗</span>
+ style={{
+ fontSize: 13, borderRadius: 5 }} className="py-2 px-3 gap-1 text-ink no-underline border border-paper-edge inline-flex items-center" >
+            Open brew.sh <span className="text-ink-3" >↗</span>
           </a>
           <button onClick={onRetry}
-                  style={{
- fontSize: 13, background: 'var(--ink)', color: 'var(--paper)', borderRadius: 5, border: 'none', cursor: 'pointer'
-}} className="py-2 px-4" >
+ style={{
+ fontSize: 13, borderRadius: 5 }} className="py-2 px-4 bg-ink text-paper border-0 cursor-pointer" >
             I've installed it — retry
           </button>
         </div>
@@ -421,22 +393,19 @@ function GateRemedy({ gate, dbUrl, setDbUrl, onRetry }) {
               ? "brew install postgresql@16 && brew services start postgresql@16"
               : "brew install ollama && brew services start ollama"
         }/>
-        <div style={{ fontSize: 11, color: 'var(--ink-4)', lineHeight: 1.6 }} className="mt-2" >
+        <div style={{ fontSize: 11, lineHeight: 1.6 }} className="mt-2 text-ink-4" >
           Or install everything sensei needs in one pass:
         </div>
         <CommandBlock cmd="brew bundle --file=$(curl -fsSL https://sensei.dev/Brewfile)" muted/>
-        <div style={{ display: 'flex', alignItems: 'center' }} className="gap-2 mt-3" >
+        <div className="gap-2 mt-3 flex items-center" >
           <a href="https://github.com/sensei-dev/sensei" target="_blank" rel="noreferrer"
-             style={{
- fontSize: 13, color: 'var(--ink)', textDecoration: 'none', border: 'var(--hairline)', borderRadius: 5,
-                       display: 'inline-flex', alignItems: 'center'
-}} className="py-2 px-3 gap-1" >
-            View Brewfile on GitHub <span style={{ color: 'var(--ink-3)' }}>↗</span>
+ style={{
+ fontSize: 13, borderRadius: 5 }} className="py-2 px-3 gap-1 text-ink no-underline border border-paper-edge inline-flex items-center" >
+            View Brewfile on GitHub <span className="text-ink-3" >↗</span>
           </a>
           <button onClick={onRetry}
-                  style={{
- fontSize: 13, background: 'var(--ink)', color: 'var(--paper)', borderRadius: 5, border: 'none', cursor: 'pointer'
-}} className="py-2 px-4" >
+ style={{
+ fontSize: 13, borderRadius: 5 }} className="py-2 px-4 bg-ink text-paper border-0 cursor-pointer" >
             Retry check
           </button>
         </div>
@@ -451,31 +420,21 @@ function GateRemedy({ gate, dbUrl, setDbUrl, onRetry }) {
         title="Could not create the sensei database"
         intro="Postgres is running but sensei couldn't create its database automatically. Either create one manually and paste its URL, or let sensei retry.">
         <div style={{
- fontSize: 11, letterSpacing: '0.1em', textTransform: 'uppercase',
-                       color: 'var(--ink-4)'
-}} className="mb-1" >Manual create</div>
+ fontSize: 11, letterSpacing: '0.1em' }} className="mb-1 uppercase text-ink-4" >Manual create</div>
         <CommandBlock cmd="createdb sensei && psql sensei -c 'CREATE EXTENSION IF NOT EXISTS vector;'"/>
 
         <div style={{
- fontSize: 11, letterSpacing: '0.1em', textTransform: 'uppercase',
-                       color: 'var(--ink-4)'
-}} className="mt-4 mb-1" >Database URL</div>
-        <div style={{ display: 'flex', alignItems: 'center' }} className="gap-2" >
+ fontSize: 11, letterSpacing: '0.1em' }} className="mt-4 mb-1 uppercase text-ink-4" >Database URL</div>
+        <div className="gap-2 flex items-center" >
           <input value={dbUrl} onChange={e => setDbUrl(e.target.value)}
-                 style={{
- flex: 1, fontSize: 13, fontFamily: 'var(--font-mono)', borderRadius: 5,
-                          border: 'var(--hairline)', background: 'var(--paper)',
-                          color: 'var(--ink)'
-}} className="py-2 px-2" />
+ style={{ fontSize: 13, fontFamily: 'var(--font-mono)', borderRadius: 5 }} className="py-2 px-2 flex-1 border border-paper-edge bg-paper text-ink" />
           <button onClick={onRetry}
-                  style={{
- fontSize: 13, background: 'var(--ink)', color: 'var(--paper)', borderRadius: 5, border: 'none', cursor: 'pointer',
-                           whiteSpace: 'nowrap'
-}} className="py-2 px-4" >
+ style={{
+ fontSize: 13, borderRadius: 5 }} className="py-2 px-4 bg-ink text-paper border-0 cursor-pointer whitespace-nowrap" >
             Connect
           </button>
         </div>
-        <div style={{ fontSize: 11, color: 'var(--ink-4)', lineHeight: 1.6 }} className="mt-2" >
+        <div style={{ fontSize: 11, lineHeight: 1.6 }} className="mt-2 text-ink-4" >
           Sensei stores this in <span style={{ fontFamily: 'var(--font-mono)' }}>~/.sensei/config.toml</span>. You can change it later in Settings → Database.
         </div>
       </RemedyShell>
@@ -488,27 +447,22 @@ function GateRemedy({ gate, dbUrl, setDbUrl, onRetry }) {
       <RemedyShell title="Daemon failed to start"
         intro="The database is reachable but the daemon did not come up. Here are the last lines of its log.">
         <div style={{
- background: 'var(--paper-2)', border: 'var(--hairline)',
-                       borderRadius: 5,
-                       fontFamily: 'var(--font-mono)', fontSize: 11,
-                       color: 'var(--ink-2)', lineHeight: 1.7
-}} className="p-3" >
-          <div><span style={{ color: 'var(--ink-4)' }}>10:42:18</span> daemon · starting</div>
-          <div><span style={{ color: 'var(--ink-4)' }}>10:42:18</span> daemon · loading config ~/.sensei/config.toml</div>
-          <div><span style={{ color: 'var(--ink-4)' }}>10:42:19</span> daemon · connecting to postgres</div>
-          <div><span style={{ color: 'var(--accent)' }}>10:42:19 ERR</span> daemon · port 7714 already in use</div>
+ borderRadius: 5,
+ fontFamily: 'var(--font-mono)', fontSize: 11, lineHeight: 1.7
+ }} className="p-3 bg-paper-2 border border-paper-edge text-ink-2" >
+          <div><span className="text-ink-4" >10:42:18</span> daemon · starting</div>
+          <div><span className="text-ink-4" >10:42:18</span> daemon · loading config ~/.sensei/config.toml</div>
+          <div><span className="text-ink-4" >10:42:19</span> daemon · connecting to postgres</div>
+          <div><span className="text-accent" >10:42:19 ERR</span> daemon · port 7714 already in use</div>
         </div>
-        <div style={{ display: 'flex' }} className="gap-2 mt-3" >
+        <div className="gap-2 mt-3 flex" >
           <button onClick={onRetry}
-                  style={{
- fontSize: 13, background: 'var(--ink)', color: 'var(--paper)', borderRadius: 5, border: 'none', cursor: 'pointer'
-}} className="py-2 px-4" >
+ style={{
+ fontSize: 13, borderRadius: 5 }} className="py-2 px-4 bg-ink text-paper border-0 cursor-pointer" >
             Retry
           </button>
           <button style={{
- fontSize: 13, color: 'var(--ink-2)', border: 'var(--hairline)', borderRadius: 5,
-                           background: 'transparent'
-}} className="py-2 px-3" >
+ fontSize: 13, borderRadius: 5 }} className="py-2 px-3 text-ink-2 border border-paper-edge bg-transparent" >
             Change port
           </button>
         </div>
@@ -522,14 +476,13 @@ function GateRemedy({ gate, dbUrl, setDbUrl, onRetry }) {
 function RemedyShell({ title, intro, children }) {
   return (
     <div style={{
-                   background: 'var(--paper-2)', border: 'var(--hairline)',
-                   borderRadius: 6
-}} className="mt-4 py-4 px-4 ml-7" >
+ borderRadius: 6
+ }} className="mt-4 py-4 px-4 ml-12 bg-paper-2 border border-paper-edge" >
       <div className="display mb-1" style={{ fontSize: 15 }}>{title}</div>
       <div style={{
- fontSize: 13, color: 'var(--ink-3)', lineHeight: 1.65,
-                     maxWidth: 580
-}} className="mb-3" >
+ fontSize: 13, lineHeight: 1.65,
+ maxWidth: 580
+ }} className="mb-3 text-ink-3" >
         {intro}
       </div>
       {children}
@@ -546,21 +499,18 @@ function CommandBlock({ cmd, muted }) {
   };
   return (
     <div style={{
- display: 'flex', alignItems: 'center',
-                   background: muted ? 'transparent' : 'var(--paper)',
-                   border: muted ? '1px dashed var(--edge)' : 'var(--hairline)',
-                   borderRadius: 5,
-                   fontFamily: 'var(--font-mono)', fontSize: 13,
-                   color: muted ? 'var(--ink-3)' : 'var(--ink)'
-}} className="gap-2 py-2 px-3" >
-      <span style={{ color: 'var(--ink-4)', userSelect: 'none' }}>$</span>
-      <span style={{ flex: 1, overflow: 'auto', whiteSpace: 'nowrap' }}>{cmd}</span>
+ background: muted ? 'transparent' : 'var(--paper)',
+ border: muted ? '1px dashed var(--edge)' : 'var(--hairline)',
+ borderRadius: 5,
+ fontFamily: 'var(--font-mono)', fontSize: 13,
+ color: muted ? 'var(--ink-3)' : 'var(--ink)'
+ }} className="gap-2 py-2 px-3 flex items-center" >
+      <span className="text-ink-4" style={{ userSelect: 'none' }}>$</span>
+      <span className="flex-1 overflow-auto whitespace-nowrap" >{cmd}</span>
       <button onClick={doCopy}
-              style={{
- fontSize: 11, letterSpacing: '0.1em', textTransform: 'uppercase',
-                       color: copied ? 'var(--success)' : 'var(--ink-3)',
-                       border: 'none', background: 'transparent', cursor: 'pointer'
-}} className="py-1 px-1" >
+ style={{
+ fontSize: 11, letterSpacing: '0.1em',
+ color: copied ? 'var(--success)' : 'var(--ink-3)' }} className="py-1 px-1 uppercase border-0 bg-transparent cursor-pointer" >
         {copied ? "copied" : "copy"}
       </button>
     </div>
@@ -571,30 +521,23 @@ function CommandBlock({ cmd, muted }) {
 function BootstrapDemo() {
   const [scenario, setScenario] = bsUseS("missing-prereqs");
   return (
-    <div style={{ height: '100%', position: 'relative' }}>
+    <div className="h-full relative" >
       <Bootstrap scenario={scenario}
                  onReady={() => {}}
                  onSkip={() => {}}/>
       {/* Scenario picker — floating, demo-only */}
-      <div style={{
- position: 'absolute', top: 52, right: 16, zIndex: 5,
-                     background: 'var(--paper)', border: 'var(--hairline)',
-                     borderRadius: 6, width: 200,
-                     boxShadow: '0 4px 12px rgba(0,0,0,.06)'
-}} className="p-2" >
+      <div style={{ top: 52, right: 16, zIndex: 5,
+ borderRadius: 6, width: 200,
+ boxShadow: '0 4px 12px rgba(0,0,0,.06)'
+ }} className="p-2 absolute bg-paper border border-paper-edge" >
         <div style={{
- fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
-                       color: 'var(--ink-4)'
-}} className="mb-2" >demo · scenario</div>
-        <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
+ fontSize: 11, letterSpacing: '0.14em' }} className="mb-2 uppercase text-ink-4" >demo · scenario</div>
+        <div className="gap-1 flex flex-col" >
           {Object.keys(BOOT_PRESETS).map(k => (
             <button key={k} onClick={() => setScenario(k)}
-                    style={{
- textAlign: 'left', fontSize: 11, borderRadius: 4, border: 'none',
-                             background: scenario === k ? 'var(--paper-2)' : 'transparent',
-                             color: scenario === k ? 'var(--ink)' : 'var(--ink-3)',
-                             cursor: 'pointer'
-}} className="py-1 px-2" >
+ style={{ fontSize: 11, borderRadius: 4,
+ background: scenario === k ? 'var(--paper-2)' : 'transparent',
+ color: scenario === k ? 'var(--ink)' : 'var(--ink-3)' }} className="py-1 px-2 text-left border-0 cursor-pointer" >
               {k.replace(/-/g, ' ')}
             </button>
           ))}

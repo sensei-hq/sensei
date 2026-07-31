@@ -32,115 +32,87 @@ function ObsSharingReview() {
   const included = U.nextBatch.insights.filter(i => !excluded.has(i.id));
 
   return (
-    <div className="sensei" data-screen-label="Observatory · Memories · Next share"
-         style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column',
-                  background: 'var(--paper)', overflow: 'hidden' }}>
+    <div className="sensei w-full h-full flex flex-col bg-paper overflow-hidden" data-screen-label="Observatory · Memories · Next share"
+ >
 
       {/* Hero */}
-      <div style={{
- borderBottom: 'var(--hairline)',
-                     display: 'flex', alignItems: 'center'
-}} className="gap-5 pt-5 pb-4 px-6" >
-        <div className="kanji" style={{ fontSize: 40, color: 'var(--accent)', lineHeight: 1 }}>共</div>
-        <div style={{ flex: 1, minWidth: 0 }}>
+      <div className="gap-6 pt-6 pb-4 px-8 border-b flex items-center" >
+        <div className="kanji text-accent" style={{ fontSize: 40, lineHeight: 1 }}>共</div>
+        <div className="flex-1 min-w-0" >
           <div style={{
- fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
-                         textTransform: 'uppercase'
-}} className="mb-1" >
+ fontSize: 11, letterSpacing: '0.18em' }} className="mb-1 text-ink-3 uppercase" >
             Memories · review before sharing
           </div>
-          <h1 className="display m-0" style={{
- fontSize: 22, fontWeight: 400,
-                                            color: 'var(--ink)'
-}}>
+          <h1 className="display m-0 font-normal text-ink" style={{
+ fontSize: 22 }}>
             The next share will include {included.length} insights.
           </h1>
           <p style={{
- fontSize: 13, color: 'var(--ink-2)',
-                       maxWidth: 720, lineHeight: 1.55
-}} className="mt-1 mb-0" >
-            Scheduled for <span style={{ color: 'var(--ink)' }}>{U.nextBatch.scheduledFor}</span>{" "}
+ fontSize: 13,
+ maxWidth: 720, lineHeight: 1.55
+ }} className="mt-1 mb-0 text-ink-2" >
+            Scheduled for <span className="text-ink" >{U.nextBatch.scheduledFor}</span>{" "}
             ({U.cadence}). Sensei anonymizes paths, project names and identifiers
             before any item leaves your machine. Uncheck anything you'd rather keep private.
           </p>
         </div>
-        <div style={{
- borderLeft: 'var(--hairline)',
-                       display: 'flex'
-}} className="gap-5 pl-5" >
+        <div className="gap-6 pl-6 border-l flex" >
           <UgMini n={included.length} l="will share" accent/>
           <UgMini n={excluded.size} l="excluded"/>
           <UgMini n={U.contribution.streak} l="week streak" mono/>
         </div>
       </div>
 
-      <div style={{
- flex: 1, overflow: 'auto', minHeight: 0, maxWidth: 980, width: '100%'
-}} className="py-5 px-6 mx-auto" >
+      <div style={{ maxWidth: 980 }} className="py-6 px-8 mx-auto flex-1 overflow-auto min-h-0 w-full" >
 
-        <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-2 mb-5" >
+        <div className="gap-2 mb-6 flex flex-col" >
           {U.nextBatch.insights.map(ins => {
             const cm = CAT_META[ins.category] || CAT_META.pattern;
             const out = excluded.has(ins.id);
             return (
               <article key={ins.id}
-                       style={{
- display: 'grid',
-                                 gridTemplateColumns: '24px 1fr auto', alignItems: 'flex-start',
-                                 background: out ? 'transparent' : 'var(--paper-2)',
-                                 border: 'var(--hairline)', borderRadius: 6,
-                                 opacity: out ? 0.5 : 1
-}} className="gap-4 py-4 px-4" >
+ style={{
+ gridTemplateColumns: '24px 1fr auto',
+ background: out ? 'transparent' : 'var(--paper-2)', borderRadius: 6,
+ opacity: out ? 0.5 : 1
+ }} className="gap-4 py-4 px-4 grid items-start border border-paper-edge" >
                 <input type="checkbox" checked={!out}
-                       onChange={() => toggle(ins.id)}
-                       style={{
- accentColor: 'var(--accent)',
-                                 cursor: 'pointer', width: 14, height: 14
-}} className="mt-1" />
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ display: 'flex', alignItems: 'center' }} className="gap-2 mb-1" >
+ onChange={() => toggle(ins.id)}
+ style={{
+ accentColor: 'var(--accent)', width: 14, height: 14
+ }} className="mt-1 cursor-pointer" />
+                <div className="min-w-0" >
+                  <div className="gap-2 mb-1 flex items-center" >
                     <span className="kanji" style={{ fontSize: 13, color: cm.color }}>{cm.glyph}</span>
-                    <span style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
-                                    textTransform: 'uppercase' }}>{cm.label}</span>
+                    <span className="text-ink-3 uppercase" style={{ fontSize: 11, letterSpacing: '0.14em' }}>{cm.label}</span>
                     <Sep/>
-                    <span style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+                    <span className="text-ink-3" style={{ fontSize: 11 }}>
                       {ins.evidence} evidence
                     </span>
                     <Sep/>
-                    <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+                    <span className="mono text-ink-3" style={{ fontSize: 11 }}>
                       conf {Math.round(ins.confidence*100)}%
                     </span>
                   </div>
                   <div style={{
- fontSize: 13, color: 'var(--ink)', lineHeight: 1.4,
-                                 fontWeight: 500
-}} className="mb-1" >{ins.title}</div>
+ fontSize: 13, lineHeight: 1.4 }} className="mb-1 text-ink font-medium" >{ins.title}</div>
                   <div style={{
- fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.55
-}} className="mb-2" >{ins.summary}</div>
+ fontSize: 13, lineHeight: 1.55
+ }} className="mb-2 text-ink-2" >{ins.summary}</div>
                   <div style={{
- display: 'flex', alignItems: 'flex-start',
-                                 fontSize: 11, color: 'var(--ink-3)', lineHeight: 1.5
-}} className="gap-1" >
-                    <span className="kanji mt-1" style={{
- fontSize: 11, color: 'var(--success)'
-}}>匿</span>
-                    <span style={{ fontStyle: 'italic' }}>{ins.anonymizationNote}</span>
+ fontSize: 11, lineHeight: 1.5
+ }} className="gap-1 flex items-start text-ink-3" >
+                    <span className="kanji mt-1 text-success" style={{
+ fontSize: 11 }}>匿</span>
+                    <span className="italic" >{ins.anonymizationNote}</span>
                   </div>
                 </div>
-                <div style={{
- display: 'flex', flexDirection: 'column',
-                               alignItems: 'flex-end'
-}} className="gap-1" >
+                <div className="gap-1 flex flex-col items-end" >
                   <button style={{
- fontSize: 11,
-                                    background: 'transparent',
-                                    border: 'var(--hairline)', borderRadius: 4,
-                                    color: 'var(--ink-2)', cursor: 'pointer'
-}} className="py-1 px-2" >
+ fontSize: 11, borderRadius: 4 }} className="py-1 px-2 bg-transparent border border-paper-edge text-ink-2 cursor-pointer" >
                     view source →
                   </button>
-                  <span className="mono" style={{ fontSize: 11, color: 'var(--ink-4)' }}>
+                  <span className="mono text-ink-4" style={{ fontSize: 11 }}>
                     {ins.sourceId}
                   </span>
                 </div>
@@ -151,16 +123,13 @@ function ObsSharingReview() {
 
         {/* Contribution summary */}
         <div style={{
- background: 'var(--paper-2)', border: 'var(--hairline)',
-                       borderRadius: 8
-}} className="py-4 px-5 mb-5" >
+ borderRadius: 8
+ }} className="py-4 px-6 mb-6 bg-paper-2 border border-paper-edge" >
           <div style={{
- fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
-                         textTransform: 'uppercase'
-}} className="mb-3" >
+ fontSize: 11, letterSpacing: '0.14em' }} className="mb-3 text-ink-3 uppercase" >
             Your contribution to the network
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)' }} className="gap-3" >
+          <div style={{ gridTemplateColumns: 'repeat(4, 1fr)' }} className="gap-3 grid" >
             <ContribStat n={U.contribution.insightsShared} l="insights shared"/>
             <ContribStat n={U.contribution.usersHelped} l="users helped" accent/>
             <ContribStat n={U.contribution.bestCategory} l={`best · ${U.contribution.bestCategoryCount}× · pattern`} mono/>
@@ -169,20 +138,15 @@ function ObsSharingReview() {
         </div>
 
         {/* Footer actions */}
-        <div style={{ display: 'flex', alignItems: 'center' }} className="gap-2" >
+        <div className="gap-2 flex items-center" >
           <button style={{
- fontSize: 13,
-                            background: 'var(--ink)', color: 'var(--paper)',
-                            border: 'none', borderRadius: 6, cursor: 'pointer',
-                            display: 'inline-flex', alignItems: 'center'
-}} className="py-2 px-4 gap-2" >
-            <span className="kanji" style={{ fontSize: 13, color: 'var(--accent)' }}>送</span>
+ fontSize: 13, borderRadius: 6 }} className="py-2 px-4 gap-2 bg-ink text-paper border-0 cursor-pointer inline-flex items-center" >
+            <span className="kanji text-accent" style={{ fontSize: 13 }}>送</span>
             Send {included.length} insights now
           </button>
           <FlatBtn glyph="待" label="Hold this batch"/>
-          <span style={{ flex: 1 }}/>
-          <button style={{ fontSize: 11, color: 'var(--ink-3)',
-                            background: 'transparent', border: 'none', cursor: 'pointer' }}>
+          <span className="flex-1" />
+          <button className="text-ink-3 bg-transparent border-0 cursor-pointer" style={{ fontSize: 11 }}>
             sharing settings →
           </button>
         </div>
@@ -200,9 +164,8 @@ function ContribStat({ n, l, accent, mono }) {
         {n}
       </div>
       <div style={{
- fontSize: 11, color: 'var(--ink-3)',
-                     letterSpacing: '0.1em', textTransform: 'uppercase'
-}} className="mt-1" >{l}</div>
+ fontSize: 11,
+ letterSpacing: '0.1em' }} className="mt-1 text-ink-3 uppercase" >{l}</div>
     </div>
   );
 }

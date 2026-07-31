@@ -12,23 +12,18 @@
 
 function VariantToggle({ variant, onChange, options }) {
   return (
-    <div style={{ flexShrink: 0 }}>
+    <div className="shrink-0" >
       <div style={{
- fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
-                     color: 'var(--ink-4)', textAlign: 'right'
-}} className="mb-1" >variant</div>
+ fontSize: 11, letterSpacing: '0.14em' }} className="mb-1 uppercase text-ink-4 text-right" >variant</div>
       <div style={{
- display: 'flex', background: 'var(--paper-2)',
-                     borderRadius: 5, border: 'var(--hairline)'
-}} className="p-1 gap-0" >
+ borderRadius: 5 }} className="p-1 gap-0 flex bg-paper-2 border border-paper-edge" >
         {options.map(v => (
           <button key={v.id} onClick={() => onChange(v.id)}
-                  style={{
+ style={{
  fontSize: 11, borderRadius: 3,
-                           background: variant === v.id ? 'var(--paper)' : 'transparent',
-                           color: variant === v.id ? 'var(--ink)' : 'var(--ink-3)',
-                           border: 'none', cursor: 'pointer', letterSpacing: '0.04em'
-}} className="py-1 px-3" >
+ background: variant === v.id ? 'var(--paper)' : 'transparent',
+ color: variant === v.id ? 'var(--ink)' : 'var(--ink-3)', letterSpacing: '0.04em'
+ }} className="py-1 px-3 border-0 cursor-pointer" >
             {v.id} · {v.label}
           </button>
         ))}
@@ -44,21 +39,16 @@ function InferenceLadder(s) {
 
   return (
     <>
-      <div style={{
- display: 'flex', alignItems: 'baseline', justifyContent: 'space-between'
-}} className="mb-2" >
-        <h3 className="display m-0" style={{ fontSize: 17, fontWeight: 400 }}>Providers</h3>
+      <div className="mb-2 flex items-baseline justify-between" >
+        <h3 className="display m-0 font-normal" style={{ fontSize: 17 }}>Providers</h3>
         <button onClick={() => setShowAdd(true)}
-                style={{
- fontSize: 11, color: 'var(--ink-2)',
-                         border: 'var(--hairline)', borderRadius: 4,
-                         background: 'var(--paper)', cursor: 'pointer'
-}} className="py-1 px-3" >
+ style={{
+ fontSize: 11, borderRadius: 4 }} className="py-1 px-3 text-ink-2 border border-paper-edge bg-paper cursor-pointer" >
           + Add provider
         </button>
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-2" >
+      <div className="gap-2 flex flex-col" >
         {D.providers.map(p => (
           <ProviderCard key={p.id} provider={p}
                         isConfigured={configured[p.id]}
@@ -89,60 +79,46 @@ function ProviderCard({ provider, isConfigured, onConfigure,
     : (isConfigured ? provider.models.length : 0);
 
   return (
-    <div style={{ background: 'var(--paper)', border: 'var(--hairline)',
-                   borderRadius: 6, overflow: 'hidden' }}>
+    <div className="bg-paper border border-paper-edge overflow-hidden" style={{
+ borderRadius: 6 }}>
       <button onClick={() => setOpen(o => !o)}
-              style={{
- width: '100%', display: 'grid',
-                       gridTemplateColumns: '36px 1fr auto auto',
-                       alignItems: 'center',
-                       background: 'transparent', border: 'none',
-                       cursor: 'pointer', textAlign: 'left'
-}} className="gap-3 py-3 px-4" >
-        <span className="kanji" style={{ fontSize: 22, color: 'var(--accent)',
-                                           textAlign: 'center' }}>{provider.kanji}</span>
+ style={{
+ gridTemplateColumns: '36px 1fr auto auto' }} className="gap-3 py-3 px-4 w-full grid items-center bg-transparent border-0 cursor-pointer text-left" >
+        <span className="kanji text-accent text-center" style={{ fontSize: 22 }}>{provider.kanji}</span>
         <div>
-          <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2" >
+          <div className="gap-2 flex items-baseline" >
             <span className="display" style={{ fontSize: 15 }}>{provider.name}</span>
-            <span style={{ fontSize: 11, letterSpacing: '0.1em', textTransform: 'uppercase',
-                            color: 'var(--ink-4)' }}>
+            <span className="uppercase text-ink-4" style={{ fontSize: 11, letterSpacing: '0.1em' }}>
               {provider.kind === "local" ? "local · ollama" : "cloud"}
             </span>
           </div>
-          <div style={{ fontSize: 11, color: 'var(--ink-3)' }} className="mt-1" >
+          <div style={{ fontSize: 11 }} className="mt-1 text-ink-3" >
             {provider.note}
           </div>
         </div>
         <div>
           {isConfigured ? (
             <span style={{
- fontSize: 11, color: 'var(--success)', borderRadius: 3,
-                            background: 'rgba(122,158,98,.10)',
-                            letterSpacing: '0.08em', textTransform: 'uppercase',
-                            display: 'inline-flex', alignItems: 'center'
-}} className="py-1 px-2 gap-1" >
+ fontSize: 11, borderRadius: 3,
+ background: 'rgba(122,158,98,.10)',
+ letterSpacing: '0.08em' }} className="py-1 px-2 gap-1 text-success uppercase inline-flex items-center" >
               ✓ {availableModels} of {provider.models.length} model{provider.models.length !== 1 && "s"}
             </span>
           ) : (
             <span style={{
- fontSize: 11, color: 'var(--ink-3)', borderRadius: 3,
-                            background: 'var(--paper-2)',
-                            letterSpacing: '0.08em', textTransform: 'uppercase'
-}} className="py-1 px-2" >
+ fontSize: 11, borderRadius: 3,
+ letterSpacing: '0.08em' }} className="py-1 px-2 text-ink-3 bg-paper-2 uppercase" >
               not configured
             </span>
           )}
         </div>
-        <span style={{ fontSize: 11, color: 'var(--ink-4)',
-                        transform: open ? 'rotate(90deg)' : 'none',
-                        transition: 'transform .15s', display: 'inline-block' }}>▶</span>
+        <span className="text-ink-4 inline-block" style={{ fontSize: 11,
+ transform: open ? 'rotate(90deg)' : 'none',
+ transition: 'transform .15s' }}>▶</span>
       </button>
 
       {open && (
-        <div style={{
- borderTop: 'var(--hairline)',
-                       background: 'var(--paper-2)'
-}} className="pt-3 pb-4 px-4" >
+        <div className="pt-3 pb-4 px-4 border-t bg-paper-2" >
           {!isConfigured && provider.envVar && (
             <KeyInput envVar={provider.envVar} value={keyInput} onChange={setKeyInput}
                       onSave={() => onConfigure(keyInput)}/>

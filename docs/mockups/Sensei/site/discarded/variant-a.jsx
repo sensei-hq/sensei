@@ -18,10 +18,8 @@ const { useState: aS, useEffect: aE } = React;
 
 function VariantA() {
   return (
-    <div className="sensei variant-a" style={{
-      background: 'var(--paper)', color: 'var(--ink)',
-      minHeight: '100%', fontFamily: 'var(--font-ui)'
-    }}>
+    <div className="sensei variant-a bg-paper text-ink min-h-full" style={{ fontFamily: 'var(--font-ui)'
+ }}>
       <NavA/>
       <HeroA/>
       <WhatItIsA/>
@@ -42,18 +40,13 @@ function VariantA() {
 function NavA() {
   return (
     <nav style={{
-      maxWidth: 1100,
-      display: 'flex', alignItems: 'center',
-      justifyContent: 'space-between'
-}} className="py-5 px-7 mx-auto" >
-      <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2" >
-        <span className="kanji" style={{ fontSize: 22,
-                       color: 'var(--accent)', letterSpacing: '-0.04em' }}>先生</span>
-        <span className="display" style={{ fontSize: 17,
-                       letterSpacing: '-0.01em',
-                       color: 'var(--ink)' }}>Sensei</span>
+ maxWidth: 1100 }} className="py-6 px-12 mx-auto flex items-center justify-between" >
+      <div className="gap-2 flex items-baseline" >
+        <span className="kanji text-accent" style={{ fontSize: 22, letterSpacing: '-0.04em' }}>先生</span>
+        <span className="display text-ink" style={{ fontSize: 17,
+ letterSpacing: '-0.01em' }}>Sensei</span>
       </div>
-      <div style={{ display: 'flex', fontSize: 13 }} className="gap-5" >
+      <div style={{ fontSize: 13 }} className="gap-6 flex" >
         {[
           ['#how', 'How it works'],
           ['#gallery', 'Screens'],
@@ -61,12 +54,11 @@ function NavA() {
           ['#privacy', 'Privacy'],
           ['#faq', 'FAQ']
         ].map(([href, label]) => (
-          <a key={href} href={href}
-             style={{ color: 'var(--ink-2)',
-                       textDecoration: 'none',
-                       transition: 'color .15s' }}
-             onMouseEnter={(e) => e.currentTarget.style.color = 'var(--ink)'}
-             onMouseLeave={(e) => e.currentTarget.style.color = 'var(--ink-2)'}>
+          <a className="text-ink-2 no-underline" key={href} href={href}
+ style={{
+ transition: 'color .15s' }}
+ onMouseEnter={(e) => e.currentTarget.style.color = 'var(--ink)'}
+ onMouseLeave={(e) => e.currentTarget.style.color = 'var(--ink-2)'}>
             {label}
           </a>
         ))}
@@ -80,57 +72,43 @@ function HeroA() {
   return (
     <section style={{
  maxWidth: 1100
-}} className="mx-auto pt-6 pb-8 px-7" >
-      <div style={{
- display: 'grid', gridTemplateColumns: '1fr', alignItems: 'start'
-}} className="gap-5" >
+}} className="mx-auto pt-8 pb-16 px-12" >
+      <div style={{ gridTemplateColumns: '1fr' }} className="gap-6 grid items-start" >
         <div>
-          <div style={{
- display: 'flex', alignItems: 'baseline'
-}} className="gap-3 mb-5" >
-            <span className="kanji" style={{ fontSize: 56,
-                           color: 'var(--accent)', lineHeight: 1 }}>観</span>
-            <div style={{ fontSize: 11, letterSpacing: '0.22em',
-                           color: 'var(--ink-3)',
-                           textTransform: 'uppercase' }}>
+          <div className="gap-3 mb-6 flex items-baseline" >
+            <span className="kanji text-accent" style={{ fontSize: 56, lineHeight: 1 }}>観</span>
+            <div className="text-ink-3 uppercase" style={{ fontSize: 11, letterSpacing: '0.22em' }}>
               Kan · to observe
             </div>
           </div>
-          <h1 className="display m-0" style={{
-            fontSize: 56, fontWeight: 300, lineHeight: 1.1,
-            letterSpacing: '-0.025em', maxWidth: 820
-}}>
+          <h1 className="display m-0 font-light" style={{
+ fontSize: 56, lineHeight: 1.1,
+ letterSpacing: '-0.025em', maxWidth: 820
+ }}>
             A quiet companion for AI-assisted work.
           </h1>
           <p style={{
- fontSize: 15, color: 'var(--ink-2)',
-                       lineHeight: 1.6, maxWidth: 560
-}} className="mt-5" >
+ fontSize: 15,
+ lineHeight: 1.6, maxWidth: 560
+ }} className="mt-6 text-ink-2" >
             Sensei watches your sessions with AI assistants —
             then surfaces the patterns you're too close to see. Not a
             chatbot. Not a copilot. A patient observer.
           </p>
-          <div style={{
- display: 'flex', alignItems: 'center'
-}} className="gap-3 mt-6" >
+          <div className="gap-3 mt-8 flex items-center" >
             <DownloadCTA/>
-            <a href="#how" style={{ fontSize: 13,
-                           color: 'var(--ink-2)' }}>
+            <a className="text-ink-2" href="#how" style={{ fontSize: 13 }}>
               See how it works ↓
             </a>
           </div>
           <div style={{
- fontSize: 11, color: 'var(--ink-3)'
-}} className="mt-3" >
+ fontSize: 11 }} className="mt-3 text-ink-3" >
             Free · Local-first · No account
           </div>
         </div>
 
         {/* Hero screen — centered, generous margin */}
-        <div style={{
- display: 'flex',
-                       justifyContent: 'center'
-}} className="mt-5" >
+        <div className="mt-6 flex justify-center" >
           <MockToday width={900} height={560}/>
         </div>
       </div>
@@ -151,18 +129,11 @@ function DownloadCTA({ size = "lg" }) {
   const fs = size === "lg" ? 14 : 12;
   return (
     <a href={`#download-${os.toLowerCase()}`}
-       style={{
-        display: 'inline-flex', alignItems: 'center',
-        padding: px,
-        background: 'var(--ink)',
-        color: 'var(--paper)',
-        borderRadius: 6,
-        fontSize: fs,
-        fontWeight: 500,
-        textDecoration: 'none'
-}} className="gap-2" >
-      <span className="kanji" style={{ fontSize: fs + 2,
-                     color: 'var(--accent)' }}>下</span>
+ style={{
+ padding: px,
+ borderRadius: 6,
+ fontSize: fs }} className="gap-2 inline-flex items-center bg-ink text-paper font-medium no-underline" >
+      <span className="kanji text-accent" style={{ fontSize: fs + 2 }}>下</span>
       Download for {os}
     </a>
   );
@@ -171,31 +142,23 @@ function DownloadCTA({ size = "lg" }) {
 // ─── What it is ─────────────────────────────────────────────────
 function WhatItIsA() {
   return (
-    <section style={{
- borderTop: 'var(--hairline)'
-}} className="py-8 px-7" >
+    <section className="py-16 px-12 border-t" >
       <div style={{
  maxWidth: 1100,
-                     display: 'grid',
-                     gridTemplateColumns: '1fr 1.4fr', alignItems: 'start'
-}} className="gap-7 mx-auto" >
+ gridTemplateColumns: '1fr 1.4fr' }} className="gap-12 mx-auto grid items-start" >
         <div>
           <div style={{
- fontSize: 11, letterSpacing: '0.22em',
-                         color: 'var(--ink-3)',
-                         textTransform: 'uppercase'
-}} className="mb-3" >
+ fontSize: 11, letterSpacing: '0.22em' }} className="mb-3 text-ink-3 uppercase" >
             What it is
           </div>
-          <h2 className="display m-0" style={{
- fontSize: 28, fontWeight: 400, letterSpacing: '-0.015em',
-                         lineHeight: 1.25
-}}>
+          <h2 className="display m-0 font-normal" style={{
+ fontSize: 28, letterSpacing: '-0.015em',
+ lineHeight: 1.25
+ }}>
             One desktop app. One quiet promise.
           </h2>
         </div>
-        <div style={{ fontSize: 15, lineHeight: 1.7,
-                       color: 'var(--ink-2)' }}>
+        <div className="text-ink-2" style={{ fontSize: 15, lineHeight: 1.7 }}>
           <p className="mt-0" >
             Sensei runs on your machine and observes your sessions with AI
             assistants. It sends no telemetry; it speaks rarely; it remembers
@@ -228,49 +191,37 @@ function HowItWorksA() {
       sub: "Adopt, refine, or dismiss. Always your call." }
   ];
   return (
-    <section id="how" style={{
- borderTop: 'var(--hairline)'
-}} className="py-8 px-7" >
+    <section id="how" className="py-16 px-12 border-t" >
       <div style={{ maxWidth: 1100 }} className="mx-auto" >
         <div style={{
- fontSize: 11, letterSpacing: '0.22em',
-                       color: 'var(--ink-3)',
-                       textTransform: 'uppercase'
-}} className="mb-3" >
+ fontSize: 11, letterSpacing: '0.22em' }} className="mb-3 text-ink-3 uppercase" >
           How it works
         </div>
-        <h2 className="display mt-0 mb-7" style={{
- fontSize: 40, fontWeight: 300, letterSpacing: '-0.02em'
-}}>
+        <h2 className="display mt-0 mb-12 font-light" style={{
+ fontSize: 40, letterSpacing: '-0.02em'
+ }}>
           観 · 察 · 覚 — watch, notice, adopt.
         </h2>
         <div style={{
- display: 'grid',
-                       gridTemplateColumns: 'repeat(3, 1fr)'
-}} className="gap-7" >
+ gridTemplateColumns: 'repeat(3, 1fr)'
+ }} className="gap-12 grid" >
           {steps.map((s, i) => (
             <div key={i}>
-              <div style={{
- display: 'flex', alignItems: 'baseline'
-}} className="gap-3 mb-4" >
-                <span className="kanji" style={{ fontSize: 40,
-                               color: 'var(--accent)', lineHeight: 1 }}>
+              <div className="gap-3 mb-4 flex items-baseline" >
+                <span className="kanji text-accent" style={{ fontSize: 40, lineHeight: 1 }}>
                   {s.kanji}
                 </span>
-                <div style={{ fontSize: 11, letterSpacing: '0.22em',
-                               color: 'var(--ink-3)',
-                               textTransform: 'uppercase' }}>
+                <div className="text-ink-3 uppercase" style={{ fontSize: 11, letterSpacing: '0.22em' }}>
                   {s.phase}
                 </div>
               </div>
               <div style={{
- fontSize: 13, color: 'var(--ink)',
-                             lineHeight: 1.65
-}} className="mb-3" >
+ fontSize: 13,
+ lineHeight: 1.65
+ }} className="mb-3 text-ink" >
                 {s.text}
               </div>
-              <div style={{ fontSize: 11, color: 'var(--ink-3)',
-                             fontStyle: 'italic' }}>
+              <div className="text-ink-3 italic" style={{ fontSize: 11 }}>
                 {s.sub}
               </div>
             </div>
@@ -301,46 +252,35 @@ function GalleryA() {
       el: <MockInstruments width={780} height={490}/> }
   ];
   return (
-    <section id="gallery" style={{
- borderTop: 'var(--hairline)',
-                                    background: 'var(--paper-2)'
-}} className="pt-8 pb-6" >
-      <div style={{ maxWidth: 1100 }} className="mx-auto px-7" >
+    <section id="gallery" className="pt-16 pb-8 border-t bg-paper-2" >
+      <div style={{ maxWidth: 1100 }} className="mx-auto px-12" >
         <div style={{
- fontSize: 11, letterSpacing: '0.22em',
-                       color: 'var(--ink-3)',
-                       textTransform: 'uppercase'
-}} className="mb-3" >
+ fontSize: 11, letterSpacing: '0.22em' }} className="mb-3 text-ink-3 uppercase" >
           The screens
         </div>
-        <h2 className="display mt-0 mb-3" style={{
- fontSize: 40, fontWeight: 300, letterSpacing: '-0.02em'
-}}>
+        <h2 className="display mt-0 mb-3 font-light" style={{
+ fontSize: 40, letterSpacing: '-0.02em'
+ }}>
           Five surfaces, one rhythm.
         </h2>
         <p style={{
- fontSize: 13, color: 'var(--ink-2)',
-                     maxWidth: 560, lineHeight: 1.6
-}} className="mt-0 mb-7" >
+ fontSize: 13,
+ maxWidth: 560, lineHeight: 1.6
+ }} className="mt-0 mb-12 text-ink-2" >
           Every screen answers one question and stays quiet otherwise.
         </p>
       </div>
       <div style={{
- maxWidth: 1100,
-                     display: 'flex', flexDirection: 'column'
-}} className="gap-8 mx-auto px-7" >
+ maxWidth: 1100 }} className="gap-16 mx-auto px-12 flex flex-col" >
         {screens.map((s, i) => (
           <div key={i} style={{
-            display: 'grid',
-            gridTemplateColumns: i % 2 === 0 ? '1fr 320px' : '320px 1fr', alignItems: 'center'
-}} className="gap-7" >
+ gridTemplateColumns: i % 2 === 0 ? '1fr 320px' : '320px 1fr' }} className="gap-12 grid items-center" >
             <div style={{ order: i % 2 === 0 ? 0 : 1 }}>{s.el}</div>
             <div style={{ order: i % 2 === 0 ? 1 : 0 }}>
-              <div className="display mb-2" style={{
- fontSize: 22, fontWeight: 400
-}}>{s.caption}</div>
-              <div style={{ fontSize: 13, color: 'var(--ink-2)',
-                             lineHeight: 1.65 }}>{s.sub}</div>
+              <div className="display mb-2 font-normal" style={{
+ fontSize: 22 }}>{s.caption}</div>
+              <div className="text-ink-2" style={{ fontSize: 13,
+ lineHeight: 1.65 }}>{s.sub}</div>
             </div>
           </div>
         ))}
@@ -352,38 +292,32 @@ function GalleryA() {
 // ─── Philosophy ─────────────────────────────────────────────────
 function PhilosophyA() {
   return (
-    <section id="philosophy" style={{
- borderTop: 'var(--hairline)'
-}} className="py-9 px-7" >
-      <div style={{ maxWidth: 760, textAlign: 'center' }} className="mx-auto" >
-        <span className="kanji" style={{ fontSize: 56,
-                       color: 'var(--accent)', lineHeight: 1 }}>静</span>
+    <section id="philosophy" className="py-24 px-12 border-t" >
+      <div style={{ maxWidth: 760 }} className="mx-auto text-center" >
+        <span className="kanji text-accent" style={{ fontSize: 56, lineHeight: 1 }}>静</span>
         <div style={{
- fontSize: 11, letterSpacing: '0.22em',
-                       color: 'var(--ink-3)',
-                       textTransform: 'uppercase'
-}} className="mt-3" >
+ fontSize: 11, letterSpacing: '0.22em' }} className="mt-3 text-ink-3 uppercase" >
           Sei · stillness
         </div>
-        <h2 className="display mt-6 mb-5" style={{
- fontSize: 28, fontWeight: 300, letterSpacing: '-0.02em',
-                       lineHeight: 1.3
-}}>
+        <h2 className="display mt-8 mb-6 font-light" style={{
+ fontSize: 28, letterSpacing: '-0.02em',
+ lineHeight: 1.3
+ }}>
           The master observes for a long time before teaching.
         </h2>
         <p style={{
- fontSize: 13, color: 'var(--ink-2)',
-                     lineHeight: 1.75
-}} className="m-0" >
+ fontSize: 13,
+ lineHeight: 1.75
+ }} className="m-0 text-ink-2" >
           AI tools are getting louder. More suggestions, more autocompletes,
           more interrupting. Sensei moves the other way. It speaks rarely,
           and only when it has something specific to say. Most days it is
           completely silent — and that is the feature.
         </p>
         <p style={{
- fontSize: 13, color: 'var(--ink-2)',
-                     lineHeight: 1.75
-}} className="mt-4" >
+ fontSize: 13,
+ lineHeight: 1.75
+ }} className="mt-4 text-ink-2" >
           The kanji throughout the app are not decoration. Each one names
           a phase of practice — observation, recognition, adoption,
           refinement. They are what we ask of the user, and what we ask
@@ -397,33 +331,24 @@ function PhilosophyA() {
 // ─── Privacy ────────────────────────────────────────────────────
 function PrivacyA() {
   return (
-    <section id="privacy" style={{
-      borderTop: 'var(--hairline)',
-      background: 'var(--paper)'
-}} className="py-8 px-7" >
+    <section id="privacy" className="py-16 px-12 border-t bg-paper" >
       <div style={{
  maxWidth: 1100,
-                     display: 'grid',
-                     gridTemplateColumns: '1fr 1.4fr', alignItems: 'start'
-}} className="gap-7 mx-auto" >
+ gridTemplateColumns: '1fr 1.4fr' }} className="gap-12 mx-auto grid items-start" >
         <div>
-          <span className="kanji" style={{ fontSize: 40,
-                         color: 'var(--accent)' }}>蔵</span>
+          <span className="kanji text-accent" style={{ fontSize: 40 }}>蔵</span>
           <div style={{
- fontSize: 11, letterSpacing: '0.22em',
-                         color: 'var(--ink-3)',
-                         textTransform: 'uppercase'
-}} className="mt-3 mb-3" >
+ fontSize: 11, letterSpacing: '0.22em' }} className="mt-3 mb-3 text-ink-3 uppercase" >
             Privacy & local-first
           </div>
-          <h2 className="display m-0" style={{
- fontSize: 28, fontWeight: 400, letterSpacing: '-0.015em',
-                         lineHeight: 1.25
-}}>
+          <h2 className="display m-0 font-normal" style={{
+ fontSize: 28, letterSpacing: '-0.015em',
+ lineHeight: 1.25
+ }}>
             Your sessions stay on your machine.
           </h2>
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-5" >
+        <div className="gap-6 flex flex-col" >
           {[
             { k: "蔵", title: "Local-first storage",
               text: "Transcripts, patterns, and memories live in a local database in ~/.sensei. Nothing leaves your machine without an explicit action you take." },
@@ -433,18 +358,16 @@ function PrivacyA() {
               text: "One folder. Delete it and sensei forgets everything." }
           ].map((it, i) => (
             <div key={i} style={{
- display: 'grid',
-                       gridTemplateColumns: 'auto 1fr',
-                       borderBottom: i < 2 ? 'var(--hairline)' : 'none'
-}} className="gap-4 pb-5" >
-              <span className="kanji" style={{ fontSize: 22,
-                             color: 'var(--ink-2)' }}>{it.k}</span>
+ gridTemplateColumns: 'auto 1fr',
+ borderBottom: i < 2 ? 'var(--hairline)' : 'none'
+ }} className="gap-4 pb-6 grid" >
+              <span className="kanji text-ink-2" style={{ fontSize: 22 }}>{it.k}</span>
               <div>
                 <div className="display mb-1" style={{
  fontSize: 15
 }}>{it.title}</div>
-                <div style={{ fontSize: 13, color: 'var(--ink-2)',
-                               lineHeight: 1.6 }}>{it.text}</div>
+                <div className="text-ink-2" style={{ fontSize: 13,
+ lineHeight: 1.6 }}>{it.text}</div>
               </div>
             </div>
           ))}
@@ -457,32 +380,26 @@ function PrivacyA() {
 // ─── Pricing ────────────────────────────────────────────────────
 function PricingA() {
   return (
-    <section style={{
- borderTop: 'var(--hairline)',
-                       textAlign: 'center'
-}} className="py-8 px-7" >
+    <section className="py-16 px-12 border-t text-center" >
       <div style={{ maxWidth: 720 }} className="mx-auto" >
         <div style={{
- fontSize: 11, letterSpacing: '0.22em',
-                       color: 'var(--ink-3)',
-                       textTransform: 'uppercase'
-}} className="mb-3" >
+ fontSize: 11, letterSpacing: '0.22em' }} className="mb-3 text-ink-3 uppercase" >
           Pricing
         </div>
-        <h2 className="display mt-0 mb-4" style={{
- fontSize: 40, fontWeight: 300, letterSpacing: '-0.02em'
-}}>
+        <h2 className="display mt-0 mb-4 font-light" style={{
+ fontSize: 40, letterSpacing: '-0.02em'
+ }}>
           Free. Pay what feels right.
         </h2>
         <p style={{
- fontSize: 13, color: 'var(--ink-2)',
-                     lineHeight: 1.7
-}} className="m-0" >
+ fontSize: 13,
+ lineHeight: 1.7
+ }} className="m-0 text-ink-2" >
           Sensei is free to download and use forever. If it earns a place
           in your daily practice, you can support development below — but
           there's no nag and no trial while sensei is in preview.
         </p>
-        <div className="mt-6" >
+        <div className="mt-8" >
           <DownloadCTA/>
         </div>
       </div>
@@ -509,41 +426,32 @@ function FaqA() {
       a: "The core promise — quiet, local, observant — never changes, and the app stays free. Teams and orgs pay for a private, shared Dōjō (per active contributor); public, open-source and personal Dōjōs are free forever." }
   ];
   return (
-    <section id="faq" style={{
- borderTop: 'var(--hairline)'
-}} className="py-8 px-7" >
+    <section id="faq" className="py-16 px-12 border-t" >
       <div style={{ maxWidth: 880 }} className="mx-auto" >
         <div style={{
- fontSize: 11, letterSpacing: '0.22em',
-                       color: 'var(--ink-3)',
-                       textTransform: 'uppercase'
-}} className="mb-3" >
+ fontSize: 11, letterSpacing: '0.22em' }} className="mb-3 text-ink-3 uppercase" >
           Frequently asked
         </div>
-        <h2 className="display mt-0 mb-6" style={{
- fontSize: 28, fontWeight: 400, letterSpacing: '-0.015em'
-}}>
+        <h2 className="display mt-0 mb-8 font-normal" style={{
+ fontSize: 28, letterSpacing: '-0.015em'
+ }}>
           Common questions, plain answers.
         </h2>
         <div>
           {qs.map((it, i) => (
             <details key={i} style={{
-              borderTop: 'var(--hairline)',
-              ...(i === qs.length - 1 ? { borderBottom: 'var(--hairline)' } : {})
-}} className="py-4 px-0" >
-              <summary style={{
-                cursor: 'pointer',
-                listStyle: 'none',
-                display: 'flex', justifyContent: 'space-between',
-                fontSize: 13, color: 'var(--ink)'
-              }}>
+ ...(i === qs.length - 1 ? { borderBottom: 'var(--hairline)' } : {})
+ }} className="py-4 px-0 border-t" >
+              <summary className="cursor-pointer flex justify-between text-ink" style={{
+ listStyle: 'none',
+ fontSize: 13 }}>
                 <span>{it.q}</span>
-                <span className="kanji" style={{ color: 'var(--ink-3)' }}>+</span>
+                <span className="kanji text-ink-3" >+</span>
               </summary>
               <div style={{
- fontSize: 13, color: 'var(--ink-2)',
-                             lineHeight: 1.7, maxWidth: 640
-}} className="mt-3" >
+ fontSize: 13,
+ lineHeight: 1.7, maxWidth: 640
+ }} className="mt-3 text-ink-2" >
                 {it.a}
               </div>
             </details>
@@ -557,41 +465,29 @@ function FaqA() {
 // ─── Support development ────────────────────────────────────────
 function SupportA() {
   return (
-    <section style={{
- borderTop: 'var(--hairline)',
-                       background: 'var(--paper-2)',
-                       textAlign: 'center'
-}} className="py-8 px-7" >
+    <section className="py-16 px-12 border-t bg-paper-2 text-center" >
       <div style={{ maxWidth: 640 }} className="mx-auto" >
-        <span className="kanji" style={{ fontSize: 28,
-                       color: 'var(--accent)' }}>志</span>
+        <span className="kanji text-accent" style={{ fontSize: 28 }}>志</span>
         <div style={{
- fontSize: 11, letterSpacing: '0.22em',
-                       color: 'var(--ink-3)',
-                       textTransform: 'uppercase'
-}} className="mt-2 mb-3" >
+ fontSize: 11, letterSpacing: '0.22em' }} className="mt-2 mb-3 text-ink-3 uppercase" >
           Support development
         </div>
-        <h2 className="display mt-0 mb-4" style={{
- fontSize: 22, fontWeight: 400, letterSpacing: '-0.015em',
-                       lineHeight: 1.3
-}}>
+        <h2 className="display mt-0 mb-4 font-normal" style={{
+ fontSize: 22, letterSpacing: '-0.015em',
+ lineHeight: 1.3
+ }}>
           If sensei has earned a place in your practice, you can help keep it growing.
         </h2>
         <p style={{
- fontSize: 13, color: 'var(--ink-2)',
-                     lineHeight: 1.7
-}} className="mt-0 mb-5" >
+ fontSize: 13,
+ lineHeight: 1.7
+ }} className="mt-0 mb-6 text-ink-2" >
           Sensei is built by a small team. GitHub Sponsors keeps the work focused and independent.
         </p>
         <a href="https://github.com/sponsors/sensei-hq" target="_blank" rel="noopener" style={{
-          display: 'inline-flex', alignItems: 'center',
-          border: '1px solid var(--ink)',
-          borderRadius: 6,
-          fontSize: 13,
-          color: 'var(--ink)',
-          textDecoration: 'none'
-}} className="gap-2 py-3 px-5" >
+ border: '1px solid var(--ink)',
+ borderRadius: 6,
+ fontSize: 13 }} className="gap-2 py-3 px-6 inline-flex items-center text-ink no-underline" >
           ♥ Sponsor on GitHub
         </a>
       </div>
@@ -603,24 +499,17 @@ function SupportA() {
 function FooterA() {
   return (
     <footer style={{
- borderTop: 'var(--hairline)',
-                      fontSize: 11, color: 'var(--ink-3)'
-}} className="py-6 px-7" >
+ fontSize: 11 }} className="py-8 px-12 border-t text-ink-3" >
       <div style={{
- maxWidth: 1100,
-                     display: 'flex', alignItems: 'center',
-                     justifyContent: 'space-between'
-}} className="mx-auto" >
-        <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2" >
-          <span className="kanji" style={{ fontSize: 13,
-                         color: 'var(--accent)', letterSpacing: '-0.04em' }}>先生</span>
-          <span className="display" style={{ fontSize: 13,
-                         color: 'var(--ink-2)' }}>Sensei</span>
+ maxWidth: 1100 }} className="mx-auto flex items-center justify-between" >
+        <div className="gap-2 flex items-baseline" >
+          <span className="kanji text-accent" style={{ fontSize: 13, letterSpacing: '-0.04em' }}>先生</span>
+          <span className="display text-ink-2" style={{ fontSize: 13 }}>Sensei</span>
           <span className="mono ml-3" style={{
  fontSize: 11
 }}>{(typeof window !== "undefined" && window.__APP_VERSION__) || "preview"}</span>
         </div>
-        <div style={{ display: 'flex' }} className="gap-5" >
+        <div className="gap-6 flex" >
           <a href="#privacy">Privacy</a>
           <a href="#faq">FAQ</a>
           <a href="#github">GitHub</a>

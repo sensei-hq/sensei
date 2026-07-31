@@ -11,19 +11,17 @@ const { useState: pLS } = React;
 
 function PaneHeader({ kanji, eyebrow, title, accent = "var(--accent)", right }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'flex-end' }} className="gap-4 mb-5" >
+    <div className="gap-4 mb-6 flex items-end" >
       <span className="kanji" style={{ fontSize: 56, color: accent, lineHeight: 1 }}>{kanji}</span>
-      <div style={{ flex: 1 }}>
+      <div className="flex-1" >
         <div style={{
- fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
-                       textTransform: 'uppercase'
-}} className="mb-1" >
+ fontSize: 11, letterSpacing: '0.18em' }} className="mb-1 text-ink-3 uppercase" >
           {eyebrow}
         </div>
-        <h1 className="display m-0" style={{
- fontSize: 28, fontWeight: 400,
-                      letterSpacing: '-0.01em'
-}}>
+        <h1 className="display m-0 font-normal" style={{
+ fontSize: 28,
+ letterSpacing: '-0.01em'
+ }}>
           {title}
         </h1>
       </div>
@@ -34,38 +32,30 @@ function PaneHeader({ kanji, eyebrow, title, accent = "var(--accent)", right }) 
 
 function HeroCard({ kanji, eyebrow, headline, body, action, meta, tone = "var(--accent)" }) {
   return (
-    <div style={{
-      background: 'var(--paper-2)', border: 'var(--hairline)', borderRadius: 10,
-      display: 'grid', gridTemplateColumns: 'auto 1fr'
-}} className="py-5 px-5 mb-5 gap-5" >
+    <div style={{ borderRadius: 10, gridTemplateColumns: 'auto 1fr'
+ }} className="py-6 px-6 mb-6 gap-6 bg-paper-2 border border-paper-edge grid" >
       <div className="kanji" style={{ fontSize: 56, color: tone, lineHeight: 1 }}>{kanji}</div>
       <div>
         <div style={{
- fontSize: 11, letterSpacing: '0.16em', color: 'var(--ink-3)',
-                       textTransform: 'uppercase'
-}} className="mb-1" >
+ fontSize: 11, letterSpacing: '0.16em' }} className="mb-1 text-ink-3 uppercase" >
           {eyebrow}
         </div>
-        <div className="display mb-2" style={{
- fontSize: 22, fontWeight: 400,
-                      letterSpacing: '-0.01em', lineHeight: 1.3,
-                      color: 'var(--ink)'
-}}>
+        <div className="display mb-2 font-normal text-ink" style={{
+ fontSize: 22,
+ letterSpacing: '-0.01em', lineHeight: 1.3 }}>
           {headline}
         </div>
-        <p style={{ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.65 }} className="m-0" >
+        <p style={{ fontSize: 13, lineHeight: 1.65 }} className="m-0 text-ink-2" >
           {body}
         </p>
         {(action || meta) && (
-          <div style={{ display: 'flex', alignItems: 'center' }} className="gap-3 mt-3" >
+          <div className="gap-3 mt-3 flex items-center" >
             {action && (
               <button style={{
- fontSize: 13, background: 'var(--ink)',
-                color: 'var(--paper)', borderRadius: 5, border: 'none', cursor: 'pointer'
-}} className="py-2 px-3" >{action} →</button>
+ fontSize: 13, borderRadius: 5 }} className="py-2 px-3 bg-ink text-paper border-0 cursor-pointer" >{action} →</button>
             )}
             {meta && (
-              <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+              <span className="mono text-ink-3" style={{ fontSize: 11 }}>
                 {meta}
               </span>
             )}
@@ -78,33 +68,27 @@ function HeroCard({ kanji, eyebrow, headline, body, action, meta, tone = "var(--
 
 function StatBlock({ label, value, sub, tone = "var(--ink)" }) {
   return (
-    <div style={{
- background: 'var(--paper-2)',
-                   border: 'var(--hairline)', borderRadius: 8
-}} className="py-3 px-4" >
+    <div style={{ borderRadius: 8
+ }} className="py-3 px-4 bg-paper-2 border border-paper-edge" >
       <div style={{
- fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
-                     textTransform: 'uppercase'
-}} className="mb-1" >
+ fontSize: 11, letterSpacing: '0.14em' }} className="mb-1 text-ink-3 uppercase" >
         {label}
       </div>
-      <div className="display" style={{ fontSize: 28, fontWeight: 400, color: tone, lineHeight: 1 }}>
+      <div className="display font-normal" style={{ fontSize: 28, color: tone, lineHeight: 1 }}>
         {value}
       </div>
-      <div style={{ fontSize: 11, color: 'var(--ink-3)' }} className="mt-1" >{sub}</div>
+      <div style={{ fontSize: 11 }} className="mt-1 text-ink-3" >{sub}</div>
     </div>
   );
 }
 
 function SimpleRow({ left, right, leftSub, rightTone = 'var(--ink-3)' }) {
   return (
-    <div style={{
-      display: 'grid', gridTemplateColumns: '1fr auto', alignItems: 'baseline', borderBottom: 'var(--hairline)'
-}} className="gap-3 py-3 px-1" >
+    <div style={{ gridTemplateColumns: '1fr auto' }} className="gap-3 py-3 px-1 grid items-baseline border-b" >
       <div>
-        <div style={{ fontSize: 13, color: 'var(--ink)' }}>{left}</div>
+        <div className="text-ink" style={{ fontSize: 13 }}>{left}</div>
         {leftSub && (
-          <div className="mono mt-1" style={{ fontSize: 11, color: 'var(--ink-4)' }}>
+          <div className="mono mt-1 text-ink-4" style={{ fontSize: 11 }}>
             {leftSub}
           </div>
         )}
@@ -116,16 +100,12 @@ function SimpleRow({ left, right, leftSub, rightTone = 'var(--ink-3)' }) {
 
 function MiniHeading({ kanji, label, right }) {
   return (
-    <div style={{
- display: 'flex', alignItems: 'baseline', justifyContent: 'space-between'
-}} className="mb-3 mt-0" >
-      <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2" >
-        <span className="kanji" style={{ fontSize: 13, color: 'var(--accent)' }}>{kanji}</span>
-        <h2 className="display m-0" style={{
- fontSize: 13, fontWeight: 400,
-                      letterSpacing: '0.01em', color: 'var(--ink-2)',
-                      textTransform: 'uppercase'
-}}>
+    <div className="mb-3 mt-0 flex items-baseline justify-between" >
+      <div className="gap-2 flex items-baseline" >
+        <span className="kanji text-accent" style={{ fontSize: 13 }}>{kanji}</span>
+        <h2 className="display m-0 font-normal text-ink-2 uppercase" style={{
+ fontSize: 13,
+ letterSpacing: '0.01em' }}>
           {label}
         </h2>
       </div>
@@ -149,19 +129,15 @@ function ProjOverviewLite({ project, openAction }) {
         kanji={project.kanji} eyebrow={`Project · ${project.client || "internal"}`}
         title={project.name}
         right={
-          <div style={{ textAlign: 'right' }}>
-            <div style={{ fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
-                           textTransform: 'uppercase' }}>FTR · 14d</div>
-            <div style={{
- display: 'flex', alignItems: 'baseline',
-                           justifyContent: 'flex-end'
-}} className="gap-1 mt-1" >
-              <span className="display"
-                     style={{ fontSize: 28, fontWeight: 400, lineHeight: 1,
-                               color: project.warn ? 'var(--warning)' : 'var(--ink)' }}>
+          <div className="text-right" >
+            <div className="text-ink-3 uppercase" style={{ fontSize: 11, letterSpacing: '0.18em' }}>FTR · 14d</div>
+            <div className="gap-1 mt-1 flex items-baseline justify-end" >
+              <span className="display font-normal"
+ style={{ fontSize: 28, lineHeight: 1,
+ color: project.warn ? 'var(--warning)' : 'var(--ink)' }}>
                 {Math.round((project.ftr || 0.78) * 100)}
               </span>
-              <span style={{ fontSize: 11, color: 'var(--ink-3)' }}>%</span>
+              <span className="text-ink-3" style={{ fontSize: 11 }}>%</span>
             </div>
           </div>
         }/>
@@ -174,7 +150,7 @@ function ProjOverviewLite({ project, openAction }) {
         meta={topRec ? topRec.evidence.join(" · ") : null}
         tone="var(--accent)"/>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)' }} className="gap-4 mb-5" >
+      <div style={{ gridTemplateColumns: 'repeat(3, 1fr)' }} className="gap-4 mb-6 grid" >
         <StatBlock label="Sessions · 7d" value={project.sessions7d || 28}
                    sub={`${(D.recentSessions || []).filter(s => !s.ftr).length} corrected`}/>
         <StatBlock label="Memories" value="11" sub="2 to share · 1 to merge"/>
@@ -241,24 +217,21 @@ function ProjMemoriesLite({ project, state = "ready" }) {
 
       <div>
         <MiniHeading kanji="覚" label="Active memories"
-          right={<span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+          right={<span className="mono text-ink-3" style={{ fontSize: 11 }}>
             9 active · 2 sharing
           </span>}/>
         {memories.map((m, i) => (
-          <div key={i} style={{
-            background: 'var(--paper-2)', border: 'var(--hairline)', borderRadius: 6,
-            borderLeft: m.status === 'share' ? '2px solid var(--success)' : '2px solid transparent',
-            display: 'grid', gridTemplateColumns: 'auto 1fr auto', alignItems: 'start'
-}} className="py-3 px-3 mb-2 gap-3" >
+          <div key={i} style={{ borderRadius: 6,
+ borderLeft: m.status === 'share' ? '2px solid var(--success)' : '2px solid transparent', gridTemplateColumns: 'auto 1fr auto' }} className="py-3 px-3 mb-2 gap-3 bg-paper-2 border border-paper-edge grid items-start" >
             <span className="kanji" style={{ fontSize: 15,
                   color: m.status === 'share' ? 'var(--success)' : 'var(--accent)' }}>{m.kanji}</span>
             <div>
-              <div style={{ fontSize: 13, color: 'var(--ink)', lineHeight: 1.4 }}>{m.title}</div>
-              <div style={{ fontSize: 11, color: 'var(--ink-3)' }} className="mt-1" >
+              <div className="text-ink" style={{ fontSize: 13, lineHeight: 1.4 }}>{m.title}</div>
+              <div style={{ fontSize: 11 }} className="mt-1 text-ink-3" >
                 {m.kind} · {m.source}
               </div>
             </div>
-            <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+            <span className="mono text-ink-3" style={{ fontSize: 11 }}>
               {m.places}× used
             </span>
           </div>
@@ -302,24 +275,20 @@ function ProjTraceabilityLite({ project }) {
       <div>
         <MiniHeading kanji="巻" label="Drifted documents"/>
         {drift.map((d, i) => (
-          <div key={i} style={{
-            background: 'var(--paper-2)', border: 'var(--hairline)', borderRadius: 6,
-            borderLeft: `2px solid ${d.severity === 'high' ? 'var(--accent)' : 'var(--warning)'}`
-}} className="py-3 px-3 mb-2" >
-            <div style={{
- display: 'flex', justifyContent: 'space-between',
-                           alignItems: 'baseline'
-}} className="mb-1" >
-              <div style={{ fontSize: 13, color: 'var(--ink)' }}>{d.doc}</div>
+          <div key={i} style={{ borderRadius: 6,
+ borderLeft: `2px solid ${d.severity === 'high' ? 'var(--accent)' : 'var(--warning)'}`
+ }} className="py-3 px-3 mb-2 bg-paper-2 border border-paper-edge" >
+            <div className="mb-1 flex justify-between items-baseline" >
+              <div className="text-ink" style={{ fontSize: 13 }}>{d.doc}</div>
               <span className="mono" style={{ fontSize: 11,
                     color: d.lastSync === 'broken' ? 'var(--accent)' : 'var(--ink-3)' }}>
                 {d.lastSync === 'broken' ? '⚠ broken link' : 'synced ' + d.lastSync}
               </span>
             </div>
-            <div className="mono mb-1" style={{ fontSize: 11, color: 'var(--ink-4)' }}>
+            <div className="mono mb-1 text-ink-4" style={{ fontSize: 11 }}>
               ↪ {d.symbol}
             </div>
-            <div style={{ fontSize: 11, color: 'var(--ink-2)', lineHeight: 1.5 }}>
+            <div className="text-ink-2" style={{ fontSize: 11, lineHeight: 1.5 }}>
               {d.note}
             </div>
           </div>
@@ -450,26 +419,22 @@ function ProjImpactLite({ project, state = "ready" }) {
           const tone = v.verdict === 'positive' ? 'var(--success)' :
                        v.verdict === 'negative' ? 'var(--accent)'  : 'var(--ink-3)';
           return (
-            <div key={i} style={{
-              background: 'var(--paper-2)', border: 'var(--hairline)', borderRadius: 6,
-              borderLeft: `2px solid ${tone}`
-}} className="py-3 px-4 mb-2" >
-              <div style={{
- display: 'flex', justifyContent: 'space-between',
-                             alignItems: 'baseline'
-}} className="mb-1" >
-                <div style={{ fontSize: 13, color: 'var(--ink)' }}>{v.title}</div>
-                <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+            <div key={i} style={{ borderRadius: 6,
+ borderLeft: `2px solid ${tone}`
+ }} className="py-3 px-4 mb-2 bg-paper-2 border border-paper-edge" >
+              <div className="mb-1 flex justify-between items-baseline" >
+                <div className="text-ink" style={{ fontSize: 13 }}>{v.title}</div>
+                <span className="mono text-ink-3" style={{ fontSize: 11 }}>
                   accepted {v.acceptedAt}
                 </span>
               </div>
               {v.before && v.after && (
-                <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-4 mb-1" >
-                  <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
-                    {v.before.label} <span style={{ color: 'var(--ink)' }}>{Math.round(v.before.ftr * 100)}%</span>
+                <div className="gap-4 mb-1 flex items-baseline" >
+                  <div className="mono text-ink-3" style={{ fontSize: 11 }}>
+                    {v.before.label} <span className="text-ink" >{Math.round(v.before.ftr * 100)}%</span>
                   </div>
                   <span style={{ fontSize: 13, color: tone }}>→</span>
-                  <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+                  <div className="mono text-ink-3" style={{ fontSize: 11 }}>
                     {v.after.label} <span style={{ color: tone }}>{Math.round(v.after.ftr * 100)}%</span>
                   </div>
                   <span className="mono ml-auto" style={{ fontSize: 11, color: tone }}>
@@ -477,7 +442,7 @@ function ProjImpactLite({ project, state = "ready" }) {
                   </span>
                 </div>
               )}
-              <div style={{ fontSize: 11, color: 'var(--ink-2)', lineHeight: 1.5 }}>
+              <div className="text-ink-2" style={{ fontSize: 11, lineHeight: 1.5 }}>
                 {v.note}
               </div>
             </div>
@@ -495,46 +460,40 @@ function ProjImpactLite({ project, state = "ready" }) {
 function ProjAboutPane({ project }) {
   const [editing, setEditing] = pLS(false);
   return (
-    <div style={{ position: 'relative', width: '100%', height: '100%',
-                  display: 'flex', flexDirection: 'column' }}
-         data-editing={editing ? "true" : "false"}>
+    <div className="relative w-full h-full flex flex-col" 
+ data-editing={editing ? "true" : "false"}>
       {/* Mode bar — minimal, sits above the document */}
       <div style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        borderBottom: 'var(--hairline)',
-        background: editing ? 'var(--paper-2)' : 'var(--paper)'
-}} className="py-3 pl-6 pr-5" >
-        <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-3" >
-          <span className="kanji" style={{ fontSize: 15, color: 'var(--accent)' }}>識</span>
-          <div className="display" style={{ fontSize: 15, color: 'var(--ink)',
-                        letterSpacing: '-0.005em' }}>
+ background: editing ? 'var(--paper-2)' : 'var(--paper)'
+ }} className="py-3 pl-8 pr-6 flex items-center justify-between border-b" >
+        <div className="gap-3 flex items-baseline" >
+          <span className="kanji text-accent" style={{ fontSize: 15 }}>識</span>
+          <div className="display text-ink" style={{ fontSize: 15,
+ letterSpacing: '-0.005em' }}>
             About {project.name}
           </div>
-          <span style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+          <span className="text-ink-3" style={{ fontSize: 11 }}>
             — identity, stack, repos, links, guidelines, backlog
           </span>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center' }} className="gap-3" >
+        <div className="gap-3 flex items-center" >
           {editing && (
-            <span className="mono" style={{ fontSize: 11, color: 'var(--accent)',
-                          letterSpacing: '0.14em', textTransform: 'uppercase' }}>
+            <span className="mono text-accent uppercase" style={{ fontSize: 11,
+ letterSpacing: '0.14em' }}>
               ● editing
             </span>
           )}
           <button onClick={() => setEditing(e => !e)}
-                  style={{
+ style={{
  fontSize: 11, borderRadius: 5,
-                    border: 'var(--hairline)',
-                    background: editing ? 'var(--ink)' : 'transparent',
-                    color: editing ? 'var(--paper)' : 'var(--ink-2)',
-                    cursor: 'pointer'
-}} className="py-1 px-3" >
+ background: editing ? 'var(--ink)' : 'transparent',
+ color: editing ? 'var(--paper)' : 'var(--ink-2)' }} className="py-1 px-3 border border-paper-edge cursor-pointer" >
             {editing ? "✓  Done" : "✎  Edit"}
           </button>
         </div>
       </div>
 
-      <div style={{ flex: 1, overflow: 'hidden' }}>
+      <div className="flex-1 overflow-hidden" >
         <ProjSettingsV2 project={project}/>
       </div>
     </div>

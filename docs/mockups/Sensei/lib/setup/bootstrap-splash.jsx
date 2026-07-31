@@ -156,13 +156,11 @@ function SplashWordmark({ size = 'md' }) {
 
 function SplashSpinner({ size = 10, color = 'currentColor' }) {
   return (
-    <span style={{ display: 'inline-block', width: size, height: size, position: 'relative' }}>
-      <span style={{
-        position: 'absolute', inset: 0,
-        border: `1.5px solid ${color}`, borderTopColor: 'transparent',
-        borderRadius: '50%',
-        animation: 'splashSpin 0.9s linear infinite'
-      }} />
+    <span className="inline-block relative" style={{ width: size, height: size }}>
+      <span className="absolute rounded-full" style={{ inset: 0,
+ border: `1.5px solid ${color}`, borderTopColor: 'transparent',
+ animation: 'splashSpin 0.9s linear infinite'
+ }} />
     </span>);
 
 }
@@ -182,16 +180,13 @@ function SplashStatusDisc({ status, size = 20 }) {
   const stroke = size >= 32 ? 2 : 1.5;
 
   return (
-    <div style={{
-      width: size, height: size, borderRadius: '50%',
-      background: 'var(--paper)',
-      border: `${stroke}px solid ${color}`,
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-      flexShrink: 0,
-      opacity: isPending ? 0.55 : 1,
-      transition: 'opacity .25s, border-color .25s',
-      boxShadow: isBusy ? `0 0 0 ${Math.round(size * 0.18)}px ${color}1f` : 'none'
-    }}>
+    <div className="rounded-full bg-paper flex items-center justify-center shrink-0" style={{
+ width: size, height: size,
+ border: `${stroke}px solid ${color}`,
+ opacity: isPending ? 0.55 : 1,
+ transition: 'opacity .25s, border-color .25s',
+ boxShadow: isBusy ? `0 0 0 ${Math.round(size * 0.18)}px ${color}1f` : 'none'
+ }}>
       {isReady &&
       <svg width={inner} height={inner} viewBox="0 0 10 10" fill="none">
           <path d="M2 5.2 L4.2 7.2 L8 3" stroke={color}
@@ -199,16 +194,15 @@ function SplashStatusDisc({ status, size = 20 }) {
         </svg>
       }
       {isBusy &&
-      <span style={{
-        width: inner, height: inner, borderRadius: '50%',
-        border: `${stroke}px solid ${color}`, borderTopColor: 'transparent',
-        animation: 'splashSpin 0.9s linear infinite'
-      }} />
+      <span className="rounded-full" style={{
+ width: inner, height: inner,
+ border: `${stroke}px solid ${color}`, borderTopColor: 'transparent',
+ animation: 'splashSpin 0.9s linear infinite'
+ }} />
       }
       {isBlocked &&
-      <span className="kanji" style={{
-        fontSize: Math.round(size * 0.6), color, lineHeight: 1, fontWeight: 400
-      }}>?</span>
+      <span className="kanji font-normal" style={{
+ fontSize: Math.round(size * 0.6), color, lineHeight: 1 }}>?</span>
       }
     </div>);
 
@@ -233,12 +227,12 @@ function SplashStatusIndicator({ status }) {
   isBusy ? 'var(--accent)' :
   'var(--ink-4)';
   return (
-    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+    <div className="inline-flex items-center shrink-0" style={{ gap: 8 }}>
       {label &&
-      <span className="mono" style={{
-        fontSize: 10, letterSpacing: '0.12em', textTransform: 'uppercase',
-        color, lineHeight: 1
-      }}>{label}</span>
+      <span className="mono uppercase" style={{
+ fontSize: 10, letterSpacing: '0.12em',
+ color, lineHeight: 1
+ }}>{label}</span>
       }
       <SplashStatusDisc status={status} size={20} />
     </div>);
@@ -275,25 +269,23 @@ function SplashGateRow({ gate, status, delay = 0 }) {
       opacity: isPending ? 0.5 : 1,
       transition: 'opacity .3s'
     }}>
-      <div style={{
-        display: 'grid', gridTemplateColumns: '22px 1fr auto',
-        alignItems: 'center', gap: 12
-      }}>
-        <div className="kanji" style={{
-          fontSize: 18, color: kanjiColor, textAlign: 'center', lineHeight: 1
-        }}>{gate.n}</div>
+      <div className="grid items-center" style={{ gridTemplateColumns: '22px 1fr auto', gap: 12
+ }}>
+        <div className="kanji text-center" style={{
+ fontSize: 18, color: kanjiColor, lineHeight: 1
+ }}>{gate.n}</div>
 
-        <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, flexWrap: 'wrap', lineHeight: 1.15 }}>
-            <span style={{ fontFamily: 'var(--font-ui)', fontSize: 12, fontWeight: 500, color: 'var(--ink)' }}>
+        <div className="min-w-0 flex flex-col" style={{ gap: 4 }}>
+          <div className="flex items-baseline flex-wrap" style={{ gap: 6, lineHeight: 1.15 }}>
+            <span className="font-medium text-ink" style={{ fontFamily: 'var(--font-ui)', fontSize: 12 }}>
               {gate.name}
             </span>
-            <span style={{ fontSize: 10.5, color: 'var(--ink-4)' }}>· {gate.detail}</span>
+            <span className="text-ink-4" style={{ fontSize: 10.5 }}>· {gate.detail}</span>
           </div>
           {gate.why &&
-          <div style={{
-            fontSize: 10.5, color: 'var(--ink-3)', lineHeight: 1.4
-          }}>
+          <div className="text-ink-3" style={{
+ fontSize: 10.5, lineHeight: 1.4
+ }}>
               {gate.why}
             </div>
           }
@@ -322,22 +314,22 @@ function splashCopyFor(state) {
   switch (state) {
     case 'probing':return {
         eyebrow: 'starting',
-        head: <>Checking the <span style={{ color: 'var(--accent)' }}>foundation.</span></>,
+        head: <>Checking the <span className="text-accent" >foundation.</span></>,
         sub: 'A quick health check before opening the observatory.'
       };
     case 'auto-fixing':return {
         eyebrow: 'setting up',
-        head: <>Putting the room <span style={{ color: 'var(--accent)' }}>in order.</span></>,
-        sub: <>Running <span className="mono" style={{ color: 'var(--ink-2)' }}>brew bundle</span> with the manifest from <span className="mono" style={{ color: 'var(--ink-2)' }}>sensei-hq/homebrew-tap</span>. No input needed.</>
+        head: <>Putting the room <span className="text-accent" >in order.</span></>,
+        sub: <>Running <span className="mono text-ink-2" >brew bundle</span> with the manifest from <span className="mono text-ink-2" >sensei-hq/homebrew-tap</span>. No input needed.</>
       };
     case 'manual':return {
         eyebrow: 'needs your hand',
-        head: <>One last <span style={{ color: 'var(--accent)' }}>step.</span></>,
+        head: <>One last <span className="text-accent" >step.</span></>,
         sub: <>Homebrew isn't here yet. Run the script — it installs Homebrew, then everything else.</>
       };
     case 'all-green':return {
         eyebrow: 'ready',
-        head: <>The foundation <span style={{ color: 'var(--success)' }}>holds.</span></>,
+        head: <>The foundation <span className="text-success" >holds.</span></>,
         sub: '12 projects · 1,284 memories · daemon listening. Opening the observatory.'
       };
   }
@@ -353,47 +345,30 @@ function Splash({ state }) {
       <SplashChrome />
 
 
-      <div style={{
-        flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
-        minHeight: 0, padding: 48
-      }}>
-      <div style={{
-          width: '100%', height: '100%',
-          maxWidth: showChecks ? 1000 : 720, maxHeight: 520,
-          display: 'grid',
-          gridTemplateColumns: showChecks ? '1fr 1px 1.05fr' : '1fr',
-          gap: showChecks ? 28 : 0,
-          alignItems: 'stretch',
-          minHeight: 0
-        }}>
+      <div className="flex-1 flex items-center justify-center min-h-0" style={{ padding: 48
+ }}>
+      <div className="w-full h-full grid items-stretch min-h-0" style={{
+ maxWidth: showChecks ? 1000 : 720, maxHeight: 520,
+ gridTemplateColumns: showChecks ? '1fr 1px 1.05fr' : '1fr',
+ gap: showChecks ? 28 : 0 }}>
         {/* ── Left · identity + headline ─── */}
-        <div style={{
-            display: 'flex', flexDirection: 'column',
-            justifyContent: 'space-between',
-            minWidth: 0, minHeight: 0
-          }}>
-          <div className="splash-ink" style={{
-              display: 'flex', flexDirection: 'column',
-              flex: 1, minHeight: 0
-            }}>
+        <div className="flex flex-col justify-between min-w-0 min-h-0" >
+          <div className="splash-ink flex flex-col flex-1 min-h-0" >
             <SplashWordmark size={showChecks ? 'md' : 'lg'} />
-            <div style={{
-                fontSize: 10.5, letterSpacing: '0.22em', color: 'var(--ink-3)',
-                textTransform: 'uppercase', fontWeight: 500, marginTop: showChecks ? 18 : 26
-              }}>
+            <div className="text-ink-3 uppercase font-medium" style={{
+ fontSize: 10.5, letterSpacing: '0.22em', marginTop: showChecks ? 18 : 26
+ }}>
               {c.eyebrow}
             </div>
-            <div className="display" style={{
-                fontSize: showChecks ? 26 : 34,
-                fontWeight: 300, letterSpacing: '-0.02em',
-                color: 'var(--ink)', marginTop: 8, lineHeight: 1.12
-              }}>
+            <div className="display font-light text-ink" style={{
+ fontSize: showChecks ? 26 : 34, letterSpacing: '-0.02em', marginTop: 8, lineHeight: 1.12
+ }}>
               {c.head}
             </div>
-            <div style={{
-                fontSize: 12.5, color: 'var(--ink-3)', lineHeight: 1.6,
-                marginTop: 10, maxWidth: showChecks ? 280 : 360
-              }}>
+            <div className="text-ink-3" style={{
+ fontSize: 12.5, lineHeight: 1.6,
+ marginTop: 10, maxWidth: showChecks ? 280 : 360
+ }}>
               {c.sub}
             </div>
 
@@ -401,28 +376,24 @@ function Splash({ state }) {
                 and what happens if something's missing" while the ledger runs.
                 Fills the otherwise-empty left column in these states. */}
             {state === 'probing' &&
-              <div style={{
-                marginTop: 18, maxWidth: 300,
-                border: '1px solid var(--edge)', borderRadius: 8,
-                padding: '12px 16px', background: 'var(--paper-2)'
-              }}>
-                <div style={{
-                  fontSize: 10, letterSpacing: '0.16em', textTransform: 'uppercase',
-                  color: 'var(--ink-4)', fontWeight: 500, marginBottom: 6
-                }}>
+              <div className="bg-paper-2" style={{
+ marginTop: 18, maxWidth: 300,
+ border: '1px solid var(--edge)', borderRadius: 8,
+ padding: '12px 16px' }}>
+                <div className="uppercase text-ink-4 font-medium" style={{
+ fontSize: 10, letterSpacing: '0.16em', marginBottom: 6
+ }}>
                   What this is
                 </div>
-                <div style={{ fontSize: 11.5, color: 'var(--ink-2)', lineHeight: 1.55 }}>
+                <div className="text-ink-2" style={{ fontSize: 11.5, lineHeight: 1.55 }}>
                   Sensei runs on a small local foundation — a database, a model
                   runtime, and a background watcher. This check confirms each
                   piece is present before opening.
                 </div>
-                <div style={{
-                  display: 'flex', gap: 8, marginTop: 10, paddingTop: 10,
-                  borderTop: '1px solid var(--edge)', alignItems: 'flex-start'
-                }}>
-                  <span className="kanji" style={{ fontSize: 14, color: 'var(--accent)', lineHeight: 1.2 }}>修</span>
-                  <div style={{ fontSize: 11, color: 'var(--ink-3)', lineHeight: 1.5 }}>
+                <div className="flex items-start" style={{ gap: 8, marginTop: 10, paddingTop: 10,
+ borderTop: '1px solid var(--edge)' }}>
+                  <span className="kanji text-accent" style={{ fontSize: 14, lineHeight: 1.2 }}>修</span>
+                  <div className="text-ink-3" style={{ fontSize: 11, lineHeight: 1.5 }}>
                     Anything missing is installed for you — usually automatically,
                     occasionally with one script to paste. Nothing leaves your machine.
                   </div>
@@ -433,32 +404,29 @@ function Splash({ state }) {
             {/* Auto-fixing · progress panel — install cost (time + size) and a
                 live activity line, so a long install reads as motion, not a hang. */}
             {state === 'auto-fixing' &&
-              <div style={{
-                marginTop: 18, maxWidth: 320,
-                border: '1px solid var(--edge)', borderRadius: 8,
-                padding: '16px 16px', background: 'var(--paper-2)'
-              }}>
-                <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 10 }}>
-                  <span style={{ fontSize: 10, letterSpacing: '0.16em', textTransform: 'uppercase',
-                                 color: 'var(--ink-4)', fontWeight: 500 }}>Installing</span>
-                  <span className="mono" style={{ fontSize: 10.5, color: 'var(--ink-3)' }}>≈ 2 min left</span>
+              <div className="bg-paper-2" style={{
+ marginTop: 18, maxWidth: 320,
+ border: '1px solid var(--edge)', borderRadius: 8,
+ padding: '16px 16px' }}>
+                <div className="flex items-baseline justify-between" style={{ marginBottom: 10 }}>
+                  <span className="uppercase text-ink-4 font-medium" style={{ fontSize: 10, letterSpacing: '0.16em' }}>Installing</span>
+                  <span className="mono text-ink-3" style={{ fontSize: 10.5 }}>≈ 2 min left</span>
                 </div>
-                <div style={{ height: 4, borderRadius: 2, background: 'var(--paper-3)', overflow: 'hidden' }}>
-                  <div style={{ width: '58%', height: '100%', background: 'var(--accent)', borderRadius: 2 }} />
+                <div className="bg-paper-3 overflow-hidden" style={{ height: 4, borderRadius: 2 }}>
+                  <div className="h-full bg-accent" style={{ width: '58%', borderRadius: 2 }} />
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6 }}>
-                  <span className="mono" style={{ fontSize: 10, color: 'var(--ink-4)' }}>3 of 6 ready</span>
-                  <span className="mono" style={{ fontSize: 10, color: 'var(--ink-4)' }}>1.4 / 2.1 GB</span>
+                <div className="flex justify-between" style={{ marginTop: 6 }}>
+                  <span className="mono text-ink-4" style={{ fontSize: 10 }}>3 of 6 ready</span>
+                  <span className="mono text-ink-4" style={{ fontSize: 10 }}>1.4 / 2.1 GB</span>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12,
-                              paddingTop: 12, borderTop: '1px solid var(--edge)' }}>
+                <div className="flex items-center" style={{ gap: 8, marginTop: 12,
+ paddingTop: 12, borderTop: '1px solid var(--edge)' }}>
                   <SplashSpinner size={11} color="var(--accent)" />
-                  <span className="mono splash-tickle" style={{ fontSize: 10.5, color: 'var(--ink-2)',
-                                 whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  <span className="mono splash-tickle text-ink-2 whitespace-nowrap overflow-hidden text-ellipsis" style={{ fontSize: 10.5 }}>
                     ==&gt; Pouring ollama--0.5.1.arm64.bottle.tar.gz
                   </span>
                 </div>
-                <div style={{ fontSize: 10.5, color: 'var(--ink-4)', lineHeight: 1.45, marginTop: 10 }}>
+                <div className="text-ink-4" style={{ fontSize: 10.5, lineHeight: 1.45, marginTop: 10 }}>
                   Runs once · future launches skip straight through. Nothing leaves your machine.
                 </div>
               </div>
@@ -467,36 +435,29 @@ function Splash({ state }) {
             {/* Manual state · guided step-by-step — the one hand-run action, then
                 what Sensei does automatically, plus an offline / proxy path. */}
             {state === 'manual' &&
-              <div style={{
-                marginTop: 14, flex: 1, minHeight: 0,
-                display: 'flex', flexDirection: 'column', gap: 10
-              }}>
+              <div className="flex-1 min-h-0 flex flex-col" style={{
+ marginTop: 14, gap: 10
+ }}>
                 {/* Step 1 — the only manual action */}
-                <div style={{ border: '1px solid var(--edge)', borderRadius: 8, overflow: 'hidden' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10,
-                                padding: '12px 16px', borderBottom: '1px solid var(--edge)' }}>
-                    <span style={{ width: 18, height: 18, borderRadius: '50%', background: 'var(--accent)',
-                                   color: 'var(--paper)', fontSize: 11, fontWeight: 600, display: 'flex',
-                                   alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>1</span>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--ink)' }}>Install Homebrew</div>
-                      <div style={{ fontSize: 10.5, color: 'var(--ink-4)' }}>The one thing to run by hand · ~1 min</div>
+                <div className="overflow-hidden" style={{ border: '1px solid var(--edge)', borderRadius: 8 }}>
+                  <div className="flex items-center" style={{ gap: 10,
+ padding: '12px 16px', borderBottom: '1px solid var(--edge)' }}>
+                    <span className="rounded-full bg-accent text-paper font-semibold flex items-center justify-center shrink-0" style={{ width: 18, height: 18, fontSize: 11 }}>1</span>
+                    <div className="flex-1 min-w-0" >
+                      <div className="font-semibold text-ink" style={{ fontSize: 12.5 }}>Install Homebrew</div>
+                      <div className="text-ink-4" style={{ fontSize: 10.5 }}>The one thing to run by hand · ~1 min</div>
                     </div>
-                    <button style={{ fontSize: 11, padding: '8px 12px', background: 'var(--ink)', color: 'var(--paper)',
-                                     border: 'none', borderRadius: 'var(--radius-sm)', cursor: 'pointer', letterSpacing: 0.2 }}>Copy</button>
+                    <button className="bg-ink text-paper border-0 rounded-sm cursor-pointer" style={{ fontSize: 11, padding: '8px 12px', letterSpacing: 0.2 }}>Copy</button>
                   </div>
                   <pre className="splash-script" style={{ borderRadius: 0, padding: '12px 16px', maxHeight: 'none' }}>{`/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"`}</pre>
                 </div>
 
                 {/* Step 2 — automatic */}
-                <div style={{ border: '1px solid var(--edge)', borderRadius: 8, padding: '12px 16px',
-                              display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-                  <span style={{ width: 18, height: 18, borderRadius: '50%', background: 'var(--paper-3)',
-                                 color: 'var(--ink-3)', fontSize: 11, fontWeight: 600, display: 'flex',
-                                 alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>2</span>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--ink)' }}>Sensei takes it from here</div>
-                    <div style={{ fontSize: 10.5, color: 'var(--ink-3)', lineHeight: 1.5, marginTop: 2 }}>
+                <div className="flex items-start" style={{ border: '1px solid var(--edge)', borderRadius: 8, padding: '12px 16px', gap: 10 }}>
+                  <span className="rounded-full bg-paper-3 text-ink-3 font-semibold flex items-center justify-center shrink-0" style={{ width: 18, height: 18, fontSize: 11 }}>2</span>
+                  <div className="flex-1" >
+                    <div className="font-semibold text-ink" style={{ fontSize: 12.5 }}>Sensei takes it from here</div>
+                    <div className="text-ink-3" style={{ fontSize: 10.5, lineHeight: 1.5, marginTop: 2 }}>
                       The moment Homebrew is in, PostgreSQL · Ollama · components · the database · the daemon install on their own. No more commands.
                     </div>
                   </div>
@@ -504,18 +465,16 @@ function Splash({ state }) {
 
                 {/* Offline / proxy path */}
                 <div style={{ border: '1px dashed var(--edge)', borderRadius: 8, padding: '12px 12px' }}>
-                  <div style={{ fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase',
-                                color: 'var(--ink-4)', fontWeight: 500, marginBottom: 5 }}>No internet · behind a proxy</div>
-                  <div style={{ fontSize: 10.5, color: 'var(--ink-3)', lineHeight: 1.5 }}>
-                    Set <span className="mono" style={{ color: 'var(--ink-2)' }}>HTTPS_PROXY</span> first, or grab the offline bundle — both install the same foundation without a live connection.
+                  <div className="uppercase text-ink-4 font-medium" style={{ fontSize: 10, letterSpacing: '0.14em', marginBottom: 5 }}>No internet · behind a proxy</div>
+                  <div className="text-ink-3" style={{ fontSize: 10.5, lineHeight: 1.5 }}>
+                    Set <span className="mono text-ink-2" >HTTPS_PROXY</span> first, or grab the offline bundle — both install the same foundation without a live connection.
                   </div>
-                  <a style={{ fontSize: 10.5, color: 'var(--accent)', cursor: 'pointer', display: 'inline-block', marginTop: 6, textDecoration: 'none' }}>Offline install guide →</a>
+                  <a className="text-accent cursor-pointer inline-block no-underline" style={{ fontSize: 10.5, marginTop: 6 }}>Offline install guide →</a>
                 </div>
 
                 {/* Re-check */}
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, marginTop: 'auto' }}>
-                  <button style={{ fontSize: 11.5, padding: '8px 12px', background: 'var(--accent)', color: 'var(--paper)',
-                                   border: 'none', borderRadius: 'var(--radius-sm)', cursor: 'pointer', letterSpacing: 0.2 }}>
+                <div className="flex items-center justify-end" style={{ gap: 8, marginTop: 'auto' }}>
+                  <button className="bg-accent text-paper border-0 rounded-sm cursor-pointer" style={{ fontSize: 11.5, padding: '8px 12px', letterSpacing: 0.2 }}>
                     I've run it · re-check
                   </button>
                 </div>
@@ -524,51 +483,45 @@ function Splash({ state }) {
 
             {/* All-green · watermark logo fills the empty left-column space */}
             {state === 'all-green' &&
-              <div aria-hidden="true" style={{
-                flex: 1, minHeight: 80, position: 'relative', marginTop: 18
-              }}>
-                <div style={{
-                  position: 'absolute', inset: 0,
-                  background: 'var(--ink)',
-                  WebkitMaskImage: 'url(uploads/sensei.svg?v=3)',
-                  maskImage: 'url(uploads/sensei.svg?v=3)',
-                  WebkitMaskSize: '62%', maskSize: '62%',
-                  WebkitMaskRepeat: 'no-repeat', maskRepeat: 'no-repeat',
-                  WebkitMaskPosition: 'center', maskPosition: 'center',
-                  opacity: 0.08, pointerEvents: 'none', userSelect: 'none'
-                }} />
+              <div className="flex-1 relative" aria-hidden="true" style={{ minHeight: 80, marginTop: 18
+ }}>
+                <div className="absolute bg-ink" style={{ inset: 0,
+ WebkitMaskImage: 'url(uploads/sensei.svg?v=3)',
+ maskImage: 'url(uploads/sensei.svg?v=3)',
+ WebkitMaskSize: '62%', maskSize: '62%',
+ WebkitMaskRepeat: 'no-repeat', maskRepeat: 'no-repeat',
+ WebkitMaskPosition: 'center', maskPosition: 'center',
+ opacity: 0.08, pointerEvents: 'none', userSelect: 'none'
+ }} />
               </div>
               }
 
             {/* compact handoff indicator in the green case */}
             {state === 'all-green' &&
-              <div style={{
-                marginTop: 22, display: 'flex', alignItems: 'center', gap: 10,
-                fontSize: 11, color: 'var(--ink-3)'
-              }}>
-                <div className="splash-tickle" style={{
-                  height: 2, width: 80, background: 'var(--success)', borderRadius: 1
-                }} />
+              <div className="flex items-center text-ink-3" style={{
+ marginTop: 22, gap: 10,
+ fontSize: 11 }}>
+                <div className="splash-tickle bg-success" style={{
+ height: 2, width: 80, borderRadius: 1
+ }} />
                 <span className="mono" style={{ letterSpacing: 0.2 }}>opening…</span>
               </div>
               }
           </div>
 
           {/* footer meta */}
-          <div style={{
-              display: 'flex', alignItems: 'center', gap: 8,
-              fontSize: 10, fontFamily: 'var(--font-mono)',
-              color: 'var(--ink-4)', letterSpacing: 0.3,
-              marginTop: showChecks ? 16 : 28
-            }}>
+          <div className="flex items-center text-ink-4" style={{ gap: 8,
+ fontSize: 10, fontFamily: 'var(--font-mono)', letterSpacing: 0.3,
+ marginTop: showChecks ? 16 : 28
+ }}>
             <span>sensei 0.1.0</span>
-            <span style={{ width: 3, height: 3, borderRadius: '50%', background: 'var(--ink-4)' }} />
+            <span className="rounded-full bg-ink-4" style={{ width: 3, height: 3 }} />
             <span>macOS 14.4 · arm64</span>
-            <span style={{ width: 3, height: 3, borderRadius: '50%', background: 'var(--ink-4)' }} />
+            <span className="rounded-full bg-ink-4" style={{ width: 3, height: 3 }} />
             <span>16gb · 412gb free</span>
             {state === 'all-green' &&
               <>
-                <span style={{ width: 3, height: 3, borderRadius: '50%', background: 'var(--ink-4)' }} />
+                <span className="rounded-full bg-ink-4" style={{ width: 3, height: 3 }} />
                 <span>session 247</span>
               </>
               }
@@ -578,10 +531,7 @@ function Splash({ state }) {
         {showChecks && <div style={{ background: 'var(--edge)' }} />}
 
         {showChecks &&
-          <div className="splash-reveal" style={{
-            display: 'flex', flexDirection: 'column',
-            minWidth: 0, overflow: 'hidden'
-          }}>
+          <div className="splash-reveal flex flex-col min-w-0 overflow-hidden" >
             {/* Hero status — standard KanjiHeader (kanji · eyebrow · title · right) */}
             {(() => {
               const total = SPLASH_GATES.length;
@@ -600,12 +550,12 @@ function Splash({ state }) {
                   eyebrow="foundation"
                   title={title}
                   right={
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                      <button title="Re-run the foundation check and repair anything missing"
-                        style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 10.5,
-                                 fontFamily: 'var(--font-ui)', color: 'var(--ink-3)', background: 'transparent',
-                                 border: '1px solid var(--edge)', borderRadius: 'var(--radius-sm)',
-                                 padding: '4px 12px', cursor: 'pointer', letterSpacing: 0.2 }}>
+                    <div className="flex items-center" style={{ gap: 10 }}>
+                      <button className="inline-flex items-center text-ink-3 bg-transparent rounded-sm cursor-pointer" title="Re-run the foundation check and repair anything missing"
+ style={{ gap: 5, fontSize: 10.5,
+ fontFamily: 'var(--font-ui)',
+ border: '1px solid var(--edge)',
+ padding: '4px 12px', letterSpacing: 0.2 }}>
                         <span style={{ fontSize: 11, lineHeight: 1 }}>↻</span> Re-check
                       </button>
                       <SplashStatusDisc status={o} size={32} />
@@ -615,13 +565,9 @@ function Splash({ state }) {
             })()}
 
             {/* Ledger */}
-            <div style={{
-              display: 'flex', flexDirection: 'column',
-              borderTop: '1px solid var(--edge)',
-              marginTop: 24,
-              overflow: 'auto',
-              minHeight: 0, flex: 1
-            }}>
+            <div className="flex flex-col overflow-auto min-h-0 flex-1" style={{
+ borderTop: '1px solid var(--edge)',
+ marginTop: 24 }}>
               {SPLASH_GATES.map((g, i) =>
               <SplashGateRow key={g.id}
               gate={g}
@@ -631,14 +577,11 @@ function Splash({ state }) {
             </div>
 
             {/* Continue */}
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 14 }}>
-              <button style={{
-                fontSize: 12, padding: '8px 16px',
-                background: 'var(--ink)', color: 'var(--paper)',
-                border: 'none', borderRadius: 'var(--radius-sm)',
-                cursor: 'pointer', letterSpacing: 0.2,
-                fontFamily: 'inherit'
-              }}>Continue →</button>
+            <div className="flex justify-end" style={{ marginTop: 14 }}>
+              <button className="bg-ink text-paper border-0 rounded-sm cursor-pointer" style={{
+ fontSize: 12, padding: '8px 16px', letterSpacing: 0.2,
+ fontFamily: 'inherit'
+ }}>Continue →</button>
             </div>
           </div>
           }
