@@ -358,6 +358,28 @@ export async function getKnowledge(
 	};
 }
 
+/** One confidentiality-ledger row (mirrors the server `ClientAuditEntry`): an
+ *  audit event on the confidentiality plane, with the resolved client name. */
+export interface ClientAuditEntry {
+	id: number;
+	ts: string;
+	action: string;
+	target: string | null;
+	detail: unknown;
+	engagement_id: string | null;
+	client_name: string | null;
+}
+
+/** `GET …/audit/ledger` — the lead confidentiality/containment ledger (the
+ *  correct source for the client-audit screen, NOT the admin action-audit). */
+export async function listClientAuditLedger(
+	tenantKey: string,
+	opts: DojoCallOpts = {}
+): Promise<ClientAuditEntry[]> {
+	const data = await getJson<{ entries?: ClientAuditEntry[] }>(clientUrl(tenantKey, '/audit/ledger'), opts);
+	return data.entries ?? [];
+}
+
 /** `POST …/incidents` — open a confidentiality incident (lead). */
 export async function createIncident(
 	tenantKey: string,
