@@ -48,3 +48,43 @@ export async function countOrgProjects(db: DojoClient, tenantId: string): Promis
 	if (error) throw new AdminError(500, error.message);
 	return count ?? 0;
 }
+
+/** The run's project as the daemon federates it (`RelayProjectInfo`). */
+export interface RunProjectInput {
+	slug: string;
+	name: string;
+	classification: string;
+	phase: string;
+}
+
+/**
+ * Upsert the run's project into `dojo.projects` (the daemon's relay/session POST
+ * carries it) — the write side of the projects screens. The OWNER is the
+ * authenticated caller (`user_id`/`tenant_id` are never taken from the payload); a
+ * `personal` project is tenant-less so an unbound run fanned out to several dōjōs
+ * still resolves to one `unique(user_id, slug)` row. `phase` is intentionally NOT
+ * written: on insert the column default (`watch`) applies, and on conflict the
+ * existing phase is left untouched — a later dōjō-side advance (watch→notice→adopt)
+ * is never clobbered by a run heartbeat. Throws AdminError(500) on a DB error; the
+ * caller runs it fire-and-forget so a failure never breaks relay federation.
+ */
+export async function upsertProjectFromRun(
+	db: DojoClient,
+	caller: { userId: string; tenantId: string },
+	p: RunProjectInput
+): Promise<void> {
+	const nowIso = new Date().toISOString();
+	const { error } = await db.from('projects').upsert(
+		{
+			user_id: caller.userId,
+			tenant_id: p.classification === 'personal' ? null : caller.tenantId,
+			slug: p.slug,
+			name: p.name,
+			classification: p.classification,
+			last_run_at: nowIso,
+			updated_at: nowIso
+		},
+		{ onConflict: 'user_id,slug' }
+	);
+	if (error) throw new AdminError(500, error.message);
+}
