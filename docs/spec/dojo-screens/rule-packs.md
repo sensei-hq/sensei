@@ -44,6 +44,12 @@ The `/you` rule-packs list is fixture-backed via the shared constitution loader 
 2. Visibility filter for the "Available" list — global packs (`owner_namespace_id` NULL) plus packs owned by the user's dōjō namespaces only? Confirm.
 3. This personal adopt vs the org "Adopt pack" on ScrOrgLadder both write `rule_pack_adoptions` at different `namespace_id`s — confirm the two affordances stay distinct (individual vs tenant-wide) and which roles may adopt at an org scope.
 
+### Resolved design (2026-07-30)
+- **Q1 + new-Q → personal adoption = the user's single personal namespace (`scope_key='personal'`); NO scope-picker on `/you/packs`.** The bare toggle becomes real `adopt(userNS)` / `drop` — `POST`/`DELETE` `sensei.rule_pack_adoptions` keyed on the user's personal namespace. The scope-picker is an **org-only** affordance (ScrOrgLadder).
+- **Q2 → Available visibility = global packs (`owner_namespace_id` NULL) + packs owned by the user's dōjō namespaces.**
+- **Q3 → org-scope adoption requires `maintainer` or `admin`;** contributors cannot adopt tenant-wide. Personal adoption (any user, own namespace) stays a **distinct** affordance.
+- **Depends on:** dōjō list-packs + adopt/drop endpoints (`GET /v1/…/packs`, `POST`/`DELETE …/packs/adoptions`) + the user's personal namespace row + WS-0 Rule A/role checks.
+
 ## Components & state (three-layer, per `sensei:ui-state-pattern`)
 
 Makes the three layers explicit; references the **Elements → data** + **APIs / loaders** sections

@@ -108,32 +108,25 @@ window.SESSIONS = (function () {
 // ═══════════════════════════════════════════════════════════════════════
 function SsHero({ totals }) {
   return (
-    <div style={{
- borderBottom: 'var(--hairline)',
-                   display: 'flex', alignItems: 'center', background: 'var(--paper)'
-}} className="gap-5 pt-5 pb-4 px-6" >
-      <div className="kanji" style={{ fontSize: 40, color: 'var(--accent)', lineHeight: 1 }}>録</div>
-      <div style={{ flex: 1, minWidth: 0 }}>
+    <div className="gap-6 pt-6 pb-4 px-8 border-b flex items-center bg-paper" >
+      <div className="kanji text-accent" style={{ fontSize: 40, lineHeight: 1 }}>録</div>
+      <div className="flex-1 min-w-0" >
         <div style={{
- fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
-                       textTransform: 'uppercase'
-}} className="mb-1" >
+ fontSize: 11, letterSpacing: '0.18em' }} className="mb-1 text-ink-3 uppercase" >
           Observatory · Sessions
         </div>
-        <h1 className="display m-0" style={{
- fontSize: 22, fontWeight: 400,
-                                          color: 'var(--ink)'
-}}>
+        <h1 className="display m-0 font-normal text-ink" style={{
+ fontSize: 22 }}>
           Every session sensei has witnessed.
         </h1>
         <p style={{
- fontSize: 13, color: 'var(--ink-2)',
-                     maxWidth: 720, lineHeight: 1.55
-}} className="mt-1 mb-0" >
+ fontSize: 13,
+ maxWidth: 720, lineHeight: 1.55
+ }} className="mt-1 mb-0 text-ink-2" >
           Across every project. Tagged by language and stack. With a retrospective on what's working, what isn't, and what stands out.
         </p>
       </div>
-      <div style={{ display: 'flex', borderLeft: 'var(--hairline)' }} className="gap-5 pl-5" >
+      <div className="gap-6 pl-6 flex border-l" >
         <SsStat n={totals.count} l="sessions · 7d"/>
         <SsStat n={`${Math.round(totals.ftr*100)}%`} l="ftr" mono accent={totals.ftr < 0.7}/>
         <SsStat n={totals.corrections} l="corrections"/>
@@ -144,14 +137,13 @@ function SsHero({ totals }) {
 }
 function SsStat({ n, l, mono, accent }) {
   return (
-    <div style={{ textAlign: 'center' }}>
+    <div className="text-center" >
       <div className={mono ? "mono" : ""}
            style={{ fontSize: 17, lineHeight: 1, fontWeight: 300,
                      color: accent ? 'var(--accent)' : 'var(--ink)',
                      fontFeatureSettings: '"tnum"' }}>{n}</div>
       <div style={{
- fontSize: 11, letterSpacing: '0.12em', color: 'var(--ink-4)', textTransform: 'uppercase'
-}} className="mt-1" >{l}</div>
+ fontSize: 11, letterSpacing: '0.12em' }} className="mt-1 text-ink-4 uppercase" >{l}</div>
     </div>
   );
 }
@@ -169,26 +161,20 @@ function SessionTags({ project }) {
   if (!meta) return null;
   const lang = LANG_TONE[meta.lang] || { color: 'var(--ink-3)' };
   return (
-    <div style={{ display: 'inline-flex', alignItems: 'center', flexWrap: 'wrap' }} className="gap-1" >
+    <div className="gap-1 inline-flex items-center flex-wrap" >
       <span style={{
- fontSize: 11, borderRadius: 10,
-                      background: 'var(--paper)', border: 'var(--hairline)',
-                      color: 'var(--ink-2)'
-}} className="py-1 px-2" >
-        <span className="kanji mr-1" style={{ color: 'var(--accent)' }}>{meta.kanji}</span>
+ fontSize: 11, borderRadius: 10 }} className="py-1 px-2 bg-paper border border-paper-edge text-ink-2" >
+        <span className="kanji mr-1 text-accent" >{meta.kanji}</span>
         {meta.name}
       </span>
-      <span className="mono py-1 px-2" style={{
+      <span className="mono py-1 px-2 bg-paper border border-paper-edge" style={{
  fontSize: 11, borderRadius: 10,
-                      background: 'var(--paper)', border: 'var(--hairline)',
-                      color: lang.color
-}}>{meta.lang}</span>
+ color: lang.color
+ }}>{meta.lang}</span>
       {meta.stack.slice(0, 2).map(s => (
-        <span key={s} className="mono py-1 px-2" style={{
+        <span key={s} className="mono py-1 px-2 bg-paper border border-paper-edge text-ink-3" style={{
  fontSize: 11,
-                      borderRadius: 10, background: 'var(--paper)', border: 'var(--hairline)',
-                      color: 'var(--ink-3)'
-}}>{s}</span>
+ borderRadius: 10 }}>{s}</span>
       ))}
     </div>
   );
@@ -225,31 +211,23 @@ function SessionsDigest() {
   const langs = ["all", ...new Set(Object.values(D.projects).map(p => p.lang))];
 
   return (
-    <div className="sensei" data-screen-label="Observatory · Sessions · Digest"
-         style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column',
-                  background: 'var(--paper)', overflow: 'hidden' }}>
+    <div className="sensei w-full h-full flex flex-col bg-paper overflow-hidden" data-screen-label="Observatory · Sessions · Digest"
+ >
       <SsHero totals={totals}/>
 
-      <div style={{
- flex: 1, overflow: 'auto', minHeight: 0, display: 'flex',
-                     flexDirection: 'column'
-}} className="gap-5 pt-4 pb-6 px-6" >
+      <div className="gap-6 pt-4 pb-8 px-8 flex-1 overflow-auto min-h-0 flex flex-col" >
 
         {/* Retrospective — three lanes */}
         <section>
-          <div style={{
- display: 'flex', alignItems: 'baseline', borderBottom: 'var(--hairline)'
-}} className="gap-3 mb-3 pb-2" >
-            <span className="kanji" style={{ fontSize: 15, color: 'var(--accent)' }}>省</span>
-            <h3 className="display m-0" style={{
- fontSize: 15, fontWeight: 400,
-                          color: 'var(--ink)'
-}}>Retrospective · last 7 days</h3>
-            <span style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+          <div className="gap-3 mb-3 pb-2 flex items-baseline border-b" >
+            <span className="kanji text-accent" style={{ fontSize: 15 }}>省</span>
+            <h3 className="display m-0 font-normal text-ink" style={{
+ fontSize: 15 }}>Retrospective · last 7 days</h3>
+            <span className="text-ink-3" style={{ fontSize: 11 }}>
               · what sensei sees across your sessions
             </span>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr' }} className="gap-3" >
+          <div style={{ gridTemplateColumns: '1fr 1fr 1fr' }} className="gap-3 grid" >
             <RetroLane title="Going well"   accent="var(--success)"  items={D.retro.going_well} positive/>
             <RetroLane title="Not going well" accent="var(--accent)"   items={D.retro.not_going}/>
             <RetroLane title="Insights"     accent="var(--ink-2)" items={D.retro.insights}/>
@@ -258,26 +236,21 @@ function SessionsDigest() {
 
         {/* Filter row */}
         <section>
-          <div style={{
- display: 'flex', alignItems: 'center', flexWrap: 'wrap'
-}} className="gap-4 mb-3" >
+          <div className="gap-4 mb-3 flex items-center flex-wrap" >
             <ProjectFilter value={project} onChange={setProject} projects={D.projects}/>
             <FilterChips label="language" value={lang} setValue={setLang} options={langs}/>
             <FilterChips label="outcome"  value={outcome} setValue={setOutcome}
                           options={["all","shipped","corrected","abandoned"]}/>
-            <span style={{ flex: 1 }}/>
-            <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+            <span className="flex-1" />
+            <span className="mono text-ink-3" style={{ fontSize: 11 }}>
               {filtered.length} of {D.sessions.length}
             </span>
           </div>
 
-          <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
+          <div className="gap-1 flex flex-col" >
             {filtered.map(s => <SessionRow key={s.id} session={s}/>)}
             {filtered.length === 0 &&
-              <div style={{
- textAlign: 'center', fontSize: 13,
-                             color: 'var(--ink-4)'
-}} className="p-6" >no sessions match.</div>}
+              <div style={{ fontSize: 13 }} className="p-8 text-center text-ink-4" >no sessions match.</div>}
           </div>
         </section>
       </div>
@@ -288,12 +261,11 @@ function SessionsDigest() {
 function RetroLane({ title, accent, items, positive }) {
   return (
     <div>
-      <div style={{ display: 'flex', alignItems: 'center' }} className="gap-2 mb-2" >
-        <span style={{ width: 8, height: 8, borderRadius: '50%', background: accent }}/>
-        <span style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
-                        textTransform: 'uppercase', fontWeight: 500 }}>{title}</span>
+      <div className="gap-2 mb-2 flex items-center" >
+        <span className="rounded-full" style={{ width: 8, height: 8, background: accent }}/>
+        <span className="text-ink-3 uppercase font-medium" style={{ fontSize: 11, letterSpacing: '0.14em' }}>{title}</span>
       </div>
-      <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-2" >
+      <div className="gap-2 flex flex-col" >
         {items.map(it => <RetroCard key={it.id} item={it} accent={accent} positive={positive}/>)}
       </div>
     </div>
@@ -303,20 +275,18 @@ function RetroLane({ title, accent, items, positive }) {
 function RetroCard({ item, accent, positive }) {
   return (
     <article style={{
- background: 'var(--paper-2)', border: 'var(--hairline)',
-                       borderLeft: `2px solid ${accent}`, borderRadius: 6
-}} className="py-3 px-3" >
-      <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2 mb-1" >
+ borderLeft: `2px solid ${accent}`, borderRadius: 6
+ }} className="py-3 px-3 bg-paper-2 border border-paper-edge" >
+      <div className="gap-2 mb-1 flex items-baseline" >
         <span className="kanji" style={{ fontSize: 13, color: accent }}>{item.kanji}</span>
-        <div style={{ fontSize: 13, color: 'var(--ink)', fontWeight: 500,
-                       lineHeight: 1.4, flex: 1 }}>{item.title}</div>
+        <div className="text-ink font-medium flex-1" style={{ fontSize: 13,
+ lineHeight: 1.4 }}>{item.title}</div>
       </div>
-      <div style={{ fontSize: 11, color: 'var(--ink-2)', lineHeight: 1.55 }}>
+      <div className="text-ink-2" style={{ fontSize: 11, lineHeight: 1.55 }}>
         {item.body}
       </div>
-      <div style={{
- display: 'flex', alignItems: 'center', borderTop: '1px dashed var(--edge)'
-}} className="gap-2 mt-2 pt-2" >
+      <div style={{ borderTop: '1px dashed var(--edge)'
+ }} className="gap-2 mt-2 pt-2 flex items-center" >
         {item.delta && (
           <span className="mono" style={{ fontSize: 11,
                         color: positive ? 'var(--success)' : item.delta.startsWith('−') || item.delta.startsWith('-') ? 'var(--accent)' :
@@ -324,12 +294,12 @@ function RetroCard({ item, accent, positive }) {
             {item.delta}
           </span>
         )}
-        <span className="mono" style={{ fontSize: 11, color: 'var(--ink-4)' }}>
+        <span className="mono text-ink-4" style={{ fontSize: 11 }}>
           {item.evidence.length} session{item.evidence.length === 1 ? "" : "s"}
         </span>
-        <span style={{ flex: 1 }}/>
+        <span className="flex-1" />
         {item.action && (
-          <button style={{ fontSize: 11, color: 'var(--accent)' }}>{item.action} →</button>
+          <button className="text-accent" style={{ fontSize: 11 }}>{item.action} →</button>
         )}
       </div>
     </article>
@@ -338,20 +308,17 @@ function RetroCard({ item, accent, positive }) {
 
 function FilterChips({ label, value, setValue, options, render }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center' }} className="gap-1" >
+    <div className="gap-1 flex items-center" >
       <span style={{
- fontSize: 11, color: 'var(--ink-4)', letterSpacing: '0.14em',
-                      textTransform: 'uppercase'
-}} className="mr-1" >{label}</span>
+ fontSize: 11, letterSpacing: '0.14em' }} className="mr-1 text-ink-4 uppercase" >{label}</span>
       {options.map(o => (
         <button key={o} onClick={() => setValue(o)}
-                style={{
+ style={{
  fontSize: 11,
-                          background: value === o ? 'var(--ink)' : 'transparent',
-                          color: value === o ? 'var(--paper)' : 'var(--ink-2)',
-                          border: value === o ? '1px solid var(--ink)' : '1px solid var(--edge)',
-                          borderRadius: 20, cursor: 'pointer'
-}} className="py-1 px-2" >
+ background: value === o ? 'var(--ink)' : 'transparent',
+ color: value === o ? 'var(--paper)' : 'var(--ink-2)',
+ border: value === o ? '1px solid var(--ink)' : '1px solid var(--edge)',
+ borderRadius: 20 }} className="py-1 px-2 cursor-pointer" >
           {render ? render(o) : o}
         </button>
       ))}
@@ -363,29 +330,24 @@ function SessionRow({ session }) {
   const meta = window.SESSIONS.projects[session.project];
   return (
     <article style={{
- display: 'grid',
-                       gridTemplateColumns: '8px 88px 1fr auto auto', alignItems: 'center',
-                       background: 'var(--paper-2)',
-                       border: 'var(--hairline)', borderRadius: 5
-}} className="gap-3 py-3 px-3" >
-      <span style={{ width: 7, height: 7, borderRadius: '50%',
-                      background: session.ftr ? 'var(--success)' :
-                                  session.outcome === "abandoned" ? 'var(--ink-3)' :
-                                  'var(--warning)' }}/>
-      <span className="mono" style={{ fontSize: 11, color: 'var(--ink-4)' }}>
+ gridTemplateColumns: '8px 88px 1fr auto auto', borderRadius: 5
+ }} className="gap-3 py-3 px-3 grid items-center bg-paper-2 border border-paper-edge" >
+      <span className="rounded-full" style={{ width: 7, height: 7,
+ background: session.ftr ? 'var(--success)' :
+ session.outcome === "abandoned" ? 'var(--ink-3)' :
+ 'var(--warning)' }}/>
+      <span className="mono text-ink-4" style={{ fontSize: 11 }}>
         {session.id}
       </span>
-      <div style={{ minWidth: 0 }}>
+      <div className="min-w-0" >
         <div style={{
- fontSize: 13, color: 'var(--ink)', lineHeight: 1.4,
-                       fontWeight: 500
-}} className="mb-1" >
+ fontSize: 13, lineHeight: 1.4 }} className="mb-1 text-ink font-medium" >
           {session.title}
         </div>
         <SessionTags project={session.project}/>
       </div>
-      <div style={{ textAlign: 'right' }}>
-        <div className="mono" style={{ fontSize: 11, color: 'var(--ink-2)' }}>
+      <div className="text-right" >
+        <div className="mono text-ink-2" style={{ fontSize: 11 }}>
           {session.duration}
         </div>
         <div className="mono mt-1" style={{
@@ -395,11 +357,11 @@ function SessionRow({ session }) {
           {session.corrections === 0 ? "first-try" : `${session.corrections}× corr.`}
         </div>
       </div>
-      <div style={{ textAlign: 'right', minWidth: 80 }}>
-        <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+      <div className="text-right" style={{ minWidth: 80 }}>
+        <div className="mono text-ink-3" style={{ fontSize: 11 }}>
           {session.when}
         </div>
-        <div className="mono mt-1" style={{ fontSize: 11, color: 'var(--ink-4)' }}>
+        <div className="mono mt-1 text-ink-4" style={{ fontSize: 11 }}>
           {session.time}
         </div>
       </div>
@@ -427,21 +389,17 @@ function SessionsTimeline() {
   const dayKeys = orderedKeys.filter(k => groups[k]);
 
   return (
-    <div className="sensei" data-screen-label="Observatory · Sessions · Timeline"
-         style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column',
-                  background: 'var(--paper)', overflow: 'hidden' }}>
+    <div className="sensei w-full h-full flex flex-col bg-paper overflow-hidden" data-screen-label="Observatory · Sessions · Timeline"
+ >
       <SsHero totals={totals}/>
 
-      <div style={{
- flex: 1, overflow: 'auto', minHeight: 0, display: 'flex',
-                     flexDirection: 'column'
-}} className="gap-5 pt-4 pb-6 px-6" >
+      <div className="gap-6 pt-4 pb-8 px-8 flex-1 overflow-auto min-h-0 flex flex-col" >
 
         {/* Activity heatmap by project × day */}
         <ActivityMatrix sessions={D.sessions}/>
 
         {/* Compact retro strip */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr' }} className="gap-3" >
+        <div style={{ gridTemplateColumns: '1fr 1fr 1fr' }} className="gap-3 grid" >
           <RetroSummary kanji="昇" tone="var(--success)" label="Going well"
                          items={D.retro.going_well}/>
           <RetroSummary kanji="破" tone="var(--accent)"  label="Not going well"
@@ -454,9 +412,9 @@ function SessionsTimeline() {
         <ProjectFilter value={project} onChange={setProject} projects={D.projects}/>
 
         {/* Timeline */}
-        <div style={{ position: 'relative' }} className="pl-9" >
-          <div style={{ position: 'absolute', left: 86, top: 4, bottom: 4,
-                         width: 1, background: 'var(--edge)' }}/>
+        <div className="pl-24 relative" >
+          <div className="absolute" style={{ left: 86, top: 4, bottom: 4,
+ width: 1, background: 'var(--edge)' }}/>
           {dayKeys.map(day => (
             <DayGroup key={day} when={day} sessions={groups[day]}/>
           ))}
@@ -469,20 +427,18 @@ function SessionsTimeline() {
 function DayGroup({ when, sessions }) {
   const ftr = sessions.filter(s => s.ftr).length;
   return (
-    <div style={{ position: 'relative' }} className="mb-4" >
-      <div style={{ position: 'absolute', left: -90, top: 0, width: 76,
-                     textAlign: 'right' }}>
-        <div className="mono" style={{ fontSize: 11, color: 'var(--ink-2)' }}>
+    <div className="mb-4 relative" >
+      <div className="absolute text-right" style={{ left: -90, top: 0, width: 76 }}>
+        <div className="mono text-ink-2" style={{ fontSize: 11 }}>
           {when}
         </div>
-        <div className="mono mt-1" style={{ fontSize: 11, color: 'var(--ink-4)' }}>
+        <div className="mono mt-1 text-ink-4" style={{ fontSize: 11 }}>
           {sessions.length}× · ftr {ftr}/{sessions.length}
         </div>
       </div>
-      <span style={{ position: 'absolute', left: -8, top: 5,
-                      width: 9, height: 9, borderRadius: '50%',
-                      background: 'var(--paper)', border: '1.5px solid var(--accent)' }}/>
-      <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
+      <span className="absolute rounded-full bg-paper" style={{ left: -8, top: 5,
+ width: 9, height: 9, border: '1.5px solid var(--accent)' }}/>
+      <div className="gap-1 flex flex-col" >
         {sessions.map(s => <SessionRow key={s.id} session={s}/>)}
       </div>
     </div>
@@ -492,32 +448,25 @@ function DayGroup({ when, sessions }) {
 function RetroSummary({ kanji, tone, label, items }) {
   return (
     <section style={{
- background: 'var(--paper-2)', border: 'var(--hairline)',
-                       borderLeft: `2px solid ${tone}`,
-                       borderRadius: 6
-}} className="py-3 px-3" >
-      <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2 mb-2" >
+ borderLeft: `2px solid ${tone}`,
+ borderRadius: 6
+ }} className="py-3 px-3 bg-paper-2 border border-paper-edge" >
+      <div className="gap-2 mb-2 flex items-baseline" >
         <span className="kanji" style={{ fontSize: 13, color: tone }}>{kanji}</span>
-        <span style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
-                        textTransform: 'uppercase' }}>{label}</span>
-        <span style={{ flex: 1 }}/>
-        <span className="mono" style={{ fontSize: 11, color: 'var(--ink-4)' }}>{items.length}</span>
+        <span className="text-ink-3 uppercase" style={{ fontSize: 11, letterSpacing: '0.14em' }}>{label}</span>
+        <span className="flex-1" />
+        <span className="mono text-ink-4" style={{ fontSize: 11 }}>{items.length}</span>
       </div>
       <ul style={{
- listStyle: 'none',
-                    display: 'flex', flexDirection: 'column'
-}} className="p-0 gap-1 m-0" >
+ listStyle: 'none' }} className="p-0 gap-1 m-0 flex flex-col" >
         {items.map(it => (
           <li key={it.id} style={{
- fontSize: 11, color: 'var(--ink)', lineHeight: 1.5, position: 'relative'
-}} className="pl-3" >
-            <span style={{ position: 'absolute', left: 0, top: 7, width: 4, height: 4,
-                            borderRadius: '50%', background: tone }}/>
+ fontSize: 11, lineHeight: 1.5 }} className="pl-3 text-ink relative" >
+            <span className="absolute rounded-full" style={{ left: 0, top: 7, width: 4, height: 4, background: tone }}/>
             {it.title}
             {it.delta && (
-              <span className="mono ml-1" style={{
- fontSize: 11, color: 'var(--ink-3)'
-}}>{it.delta}</span>
+              <span className="mono ml-1 text-ink-3" style={{
+ fontSize: 11 }}>{it.delta}</span>
             )}
           </li>
         ))}
@@ -544,27 +493,23 @@ function ActivityMatrix({ sessions }) {
 
   return (
     <section style={{
- background: 'var(--paper-2)', border: 'var(--hairline)',
-                       borderRadius: 8
-}} className="py-4 px-4" >
-      <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2 mb-3" >
-        <span className="kanji" style={{ fontSize: 13, color: 'var(--accent)' }}>表</span>
-        <span style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
-                        textTransform: 'uppercase' }}>activity · 7d</span>
-        <span style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+ borderRadius: 8
+ }} className="py-4 px-4 bg-paper-2 border border-paper-edge" >
+      <div className="gap-2 mb-3 flex items-baseline" >
+        <span className="kanji text-accent" style={{ fontSize: 13 }}>表</span>
+        <span className="text-ink-3 uppercase" style={{ fontSize: 11, letterSpacing: '0.14em' }}>activity · 7d</span>
+        <span className="text-ink-3" style={{ fontSize: 11 }}>
           · projects × days · area = sessions · color = first-try-right rate
         </span>
       </div>
 
       <div style={{
- display: 'grid',
-                     gridTemplateColumns: `160px repeat(${days.length}, 1fr)`, alignItems: 'center'
-}} className="gap-1 gap-1" >
+ gridTemplateColumns: `160px repeat(${days.length}, 1fr)` }} className="gap-1 gap-1 grid items-center" >
         {/* Header row */}
         <div/>
         {days.map(d => (
-          <div key={d} className="mono"
-               style={{ fontSize: 11, color: 'var(--ink-4)', textAlign: 'center' }}>
+          <div key={d} className="mono text-ink-4 text-center"
+ style={{ fontSize: 11 }}>
             {dayShort[d]}
           </div>
         ))}
@@ -574,32 +519,25 @@ function ActivityMatrix({ sessions }) {
           return (
             <React.Fragment key={p}>
               <div style={{
- display: 'flex', alignItems: 'center',
-                             fontSize: 11, color: 'var(--ink-2)'
-}} className="gap-2" >
-                <span className="kanji" style={{ color: 'var(--accent)' }}>{meta.kanji}</span>
-                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis',
-                                whiteSpace: 'nowrap' }}>{meta.name}</span>
-                <span className="mono" style={{ fontSize: 11, color: 'var(--ink-4)' }}>{meta.lang}</span>
+ fontSize: 11 }} className="gap-2 flex items-center text-ink-2" >
+                <span className="kanji text-accent" >{meta.kanji}</span>
+                <span className="overflow-hidden text-ellipsis whitespace-nowrap" >{meta.name}</span>
+                <span className="mono text-ink-4" style={{ fontSize: 11 }}>{meta.lang}</span>
               </div>
               {days.map(d => {
                 const c = cell(p, d);
                 if (!c) {
-                  return <div key={d} style={{ height: 22, opacity: 0.35,
-                                  background: 'var(--paper)', borderRadius: 3 }}/>;
+                  return <div className="bg-paper" key={d} style={{ height: 22, opacity: 0.35, borderRadius: 3 }}/>;
                 }
                 const size = Math.min(22, 8 + c.count * 5);
                 const color = c.ftr === 1 ? 'var(--success)' :
                               c.ftr >= 0.5 ? 'var(--warning)' : 'var(--accent)';
                 return (
-                  <div key={d} style={{ height: 22, display: 'flex',
-                                  alignItems: 'center', justifyContent: 'center' }}>
-                    <div title={`${c.count} session(s) · FTR ${Math.round(c.ftr*100)}%`}
-                         style={{ width: size, height: size, borderRadius: 4,
-                                   background: color, opacity: 0.7 + c.ftr * 0.3,
-                                   display: 'flex', alignItems: 'center',
-                                   justifyContent: 'center', color: 'var(--paper)',
-                                   fontSize: 11, fontFamily: 'JetBrains Mono', fontWeight: 500 }}>
+                  <div className="flex items-center justify-center" key={d} style={{ height: 22 }}>
+                    <div className="flex items-center justify-center text-paper font-medium" title={`${c.count} session(s) · FTR ${Math.round(c.ftr*100)}%`}
+ style={{ width: size, height: size, borderRadius: 4,
+ background: color, opacity: 0.7 + c.ftr * 0.3,
+ fontSize: 11, fontFamily: 'JetBrains Mono' }}>
                       {c.count}
                     </div>
                   </div>
@@ -610,20 +548,17 @@ function ActivityMatrix({ sessions }) {
         })}
       </div>
 
-      <div style={{
- display: 'flex', fontSize: 11,
-                     color: 'var(--ink-4)'
-}} className="gap-3 mt-3" >
-        <span style={{ display: 'inline-flex', alignItems: 'center' }} className="gap-1" >
-          <span style={{ width: 9, height: 9, borderRadius: 2, background: 'var(--success)' }}/>
+      <div style={{ fontSize: 11 }} className="gap-3 mt-3 flex text-ink-4" >
+        <span className="gap-1 inline-flex items-center" >
+          <span className="bg-success" style={{ width: 9, height: 9, borderRadius: 2 }}/>
           first-try
         </span>
-        <span style={{ display: 'inline-flex', alignItems: 'center' }} className="gap-1" >
-          <span style={{ width: 9, height: 9, borderRadius: 2, background: 'var(--warning)' }}/>
+        <span className="gap-1 inline-flex items-center" >
+          <span className="bg-warning" style={{ width: 9, height: 9, borderRadius: 2 }}/>
           some corrections
         </span>
-        <span style={{ display: 'inline-flex', alignItems: 'center' }} className="gap-1" >
-          <span style={{ width: 9, height: 9, borderRadius: 2, background: 'var(--accent)' }}/>
+        <span className="gap-1 inline-flex items-center" >
+          <span className="bg-accent" style={{ width: 9, height: 9, borderRadius: 2 }}/>
           rework
         </span>
       </div>

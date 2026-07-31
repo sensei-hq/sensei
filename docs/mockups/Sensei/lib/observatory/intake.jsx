@@ -90,25 +90,25 @@ function AxisChip({ axis, value, onChange }) {
   const [open, setOpen] = ikS(false);
   const high = axis.key === "risk" && value === "high";
   const skin = high
-    ? "text-warning bg-warning-soft border-1px border-warning-edge"
-    : "text-ink-soft bg-paper border-1px";
+    ? "text-warning bg-warning-soft border border-warning-edge"
+    : "text-ink-soft bg-paper border border-paper-edge";
   return (
-    <span style={{ position: "relative", display: "inline-flex" }}>
+    <span className="relative inline-flex" >
       <button onClick={() => setOpen(o => !o)}
         className={"inline-flex items-center mono text-xs rounded-full " + skin}
         style={{ gap: 6, padding: "4px 8px 4px 10px", cursor: "pointer", whiteSpace: "nowrap" }}
         title={"sensei's read — click to correct"}>
         <span className="text-ink-faint" style={{ letterSpacing: ".04em" }}>{axis.label.toLowerCase()}</span>
-        <span style={{ fontWeight: 600 }}>{value}</span>
+        <span className="font-semibold" >{value}</span>
         <svg width="9" height="9" viewBox="0 0 16 16" style={{ opacity: 0.5 }}>
           <path d="M4 6 L8 10 L12 6" fill="none" stroke="currentColor" strokeWidth="2"
                 strokeLinecap="round" strokeLinejoin="round"/>
         </svg>
       </button>
       {open && (
-        <div className="bg-paper border-1px rounded shadow-lg"
-             style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, zIndex: 20,
-                      minWidth: 130, padding: 4, display: "flex", flexDirection: "column", gap: 2 }}>
+        <div className="bg-paper border border-paper-edge rounded shadow-lg absolute flex flex-col"
+ style={{ top: "calc(100% + 4px)", left: 0, zIndex: 20,
+ minWidth: 130, padding: 4, gap: 2 }}>
           {axis.values.map(v => (
             <button key={v} onClick={() => { onChange(v); setOpen(false); }}
               className={"mono text-xs rounded " + (v === value ? "text-accent bg-paper-mute" : "text-ink-soft")}
@@ -131,25 +131,25 @@ function RecommendationCard({ rec, recorded, onAxisChange, onConfirm, onReset })
   const auto = rec.auto_select && !highRisk;
 
   return (
-    <div className={"flex flex-col gap-4 rounded-lg border-1px "
+    <div className={"flex flex-col gap-4 rounded-lg border border-paper-edge "
                     + (highRisk ? "bg-warning-soft border-warning-edge" : "bg-paper-soft")}
-         style={{ padding: "var(--space-5)", animation: "ikRise var(--dur-slow) var(--ease) both" }}>
+         style={{ padding: "var(--space-6)", animation: "ikRise var(--dur-slow) var(--ease) both" }}>
 
       {/* Header — playbook identity + trust/auto badges */}
       <div className="flex items-start gap-3">
-        <span className="kanji text-accent" style={{ fontSize: 28, lineHeight: 1, width: 32, flexShrink: 0 }}>{pb.kanji}</span>
-        <div className="flex-1" style={{ minWidth: 0 }}>
-          <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
+        <span className="kanji text-accent shrink-0" style={{ fontSize: 28, lineHeight: 1, width: 32 }}>{pb.kanji}</span>
+        <div className="flex-1 min-w-0" >
+          <div className="flex items-center gap-2 flex-wrap" >
             <span className="text-lg font-semibold text-ink">{pb.title}</span>
             <span className="mono text-xs text-ink-faint">{pb.name}</span>
             {trusted && (
-              <span className="mono text-xs rounded-full text-success bg-success-soft border-1px border-success-edge"
-                    style={{ padding: "2px 9px", whiteSpace: "nowrap" }}>
+              <span className="mono text-xs rounded-full text-success bg-success-soft border border-success-edge whitespace-nowrap"
+ style={{ padding: "2px 9px" }}>
                 FTR {rec.trust.ftr.toFixed(2)} · {rec.trust.n} runs
               </span>
             )}
             {auto && (
-              <span className="mono text-xs rounded-full text-accent bg-paper-mute border-1px"
+              <span className="mono text-xs rounded-full text-accent bg-paper-mute border border-paper-edge"
                     style={{ padding: "2px 9px" }}>auto-selected</span>
             )}
           </div>
@@ -159,9 +159,8 @@ function RecommendationCard({ rec, recorded, onAxisChange, onConfirm, onReset })
 
       {/* Sensei's read — the three axes, challengeable */}
       <div>
-        <div className="text-xs text-ink-faint" style={{ letterSpacing: ".14em", textTransform: "uppercase",
-                       marginBottom: "var(--space-2)" }}>sensei read</div>
-        <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
+        <div className="text-xs text-ink-faint uppercase mb-2" style={{ letterSpacing: ".14em" }}>sensei read</div>
+        <div className="flex items-center gap-2 flex-wrap" >
           {AXES.map(ax => (
             <AxisChip key={ax.key} axis={ax} value={rec[ax.key]}
                       onChange={recorded ? () => {} : (v) => onAxisChange(ax.key, v)}/>
@@ -170,16 +169,16 @@ function RecommendationCard({ rec, recorded, onAxisChange, onConfirm, onReset })
       </div>
 
       {/* Opening tone — the posture sensei adopts once chosen */}
-      <div className="flex items-start gap-2" style={{ borderTop: "var(--hairline)", paddingTop: "var(--space-3)" }}>
-        <span className="kanji text-ink-faint" style={{ fontSize: 13, lineHeight: 1.4, flexShrink: 0 }}>静</span>
-        <span className="text-sm text-ink-mute" style={{ fontStyle: "italic", lineHeight: 1.5 }}>“{pb.tone}”</span>
+      <div className="flex items-start gap-2 border-t pt-3" >
+        <span className="kanji text-ink-faint shrink-0" style={{ fontSize: 13, lineHeight: 1.4 }}>静</span>
+        <span className="text-sm text-ink-mute italic" style={{ lineHeight: 1.5 }}>“{pb.tone}”</span>
       </div>
 
       {/* Confirm / recorded footer */}
       {recorded ? (
-        <div className="flex items-center gap-2" style={{ borderTop: "var(--hairline)", paddingTop: "var(--space-4)" }}>
-          <span className="inline-flex items-center justify-center rounded-full text-success bg-success-soft border-1px border-success-edge"
-                style={{ width: 22, height: 22, flexShrink: 0 }}>
+        <div className="flex items-center gap-2 border-t pt-4" >
+          <span className="inline-flex items-center justify-center rounded-full text-success bg-success-soft border border-success-edge shrink-0"
+ style={{ width: 22, height: 22 }}>
             <svg width="12" height="12" viewBox="0 0 16 16"><path d="M3.5 8.5 L6.5 11.5 L12.5 4.5"
               fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"/></svg>
           </span>
@@ -189,7 +188,7 @@ function RecommendationCard({ rec, recorded, onAxisChange, onConfirm, onReset })
           <button onClick={onReset} className="zs-btn zs-btn-ghost zs-btn-sm">New intake</button>
         </div>
       ) : (
-        <div className="flex flex-col gap-2" style={{ borderTop: "var(--hairline)", paddingTop: "var(--space-4)" }}>
+        <div className="flex flex-col gap-2 border-t pt-4" >
           {highRisk && (
             <div className="text-sm text-warning" style={{ lineHeight: 1.45 }}>
               High blast-radius — sensei won’t auto-select this. Confirm to proceed.
@@ -238,10 +237,10 @@ function IntakeStart() {
   const reset = () => { setPhase("describe"); setText(""); setRec(null); setErr(null); };
 
   return (
-    <div style={{ maxWidth: 720, margin: "0 auto", width: "100%" }} className="flex flex-col gap-5">
+    <div style={{ maxWidth: 720 }} className="flex flex-col gap-6 mx-auto w-full">
       {/* Frame — the grounding prompt */}
       <div className="flex items-start gap-3">
-        <span className="kanji text-accent" style={{ fontSize: 22, lineHeight: 1.2, flexShrink: 0 }}>門</span>
+        <span className="kanji text-accent shrink-0" style={{ fontSize: 22, lineHeight: 1.2 }}>門</span>
         <div>
           <div className="text-base text-ink">Describe the work you’re about to start.</div>
           <div className="text-sm text-ink-mute" style={{ marginTop: 2 }}>
@@ -253,22 +252,22 @@ function IntakeStart() {
       {/* Freeform input */}
       <div className="flex flex-col gap-3">
         <textarea
-          value={text}
-          onChange={e => setText(e.target.value)}
-          disabled={phase === "loading"}
-          placeholder="e.g. fix the crash when the token refreshes…"
-          className="text-base text-ink bg-paper border-1px rounded-lg"
-          style={{ width: "100%", minHeight: 96, resize: "vertical", padding: "var(--space-4)",
-                   lineHeight: 1.5, fontFamily: "inherit", outline: "none" }}/>
+ value={text}
+ onChange={e => setText(e.target.value)}
+ disabled={phase === "loading"}
+ placeholder="e.g. fix the crash when the token refreshes…"
+ className="text-base text-ink bg-paper border border-paper-edge rounded-lg w-full p-4"
+ style={{ minHeight: 96, resize: "vertical",
+ lineHeight: 1.5, fontFamily: "inherit", outline: "none" }}/>
 
         {/* Example chunks — quick fills that show different reads */}
         {(phase === "describe") && (
-          <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
+          <div className="flex items-center gap-2 flex-wrap" >
             <span className="text-xs text-ink-faint" style={{ marginRight: 2 }}>try:</span>
             {EXAMPLES.map(ex => (
               <button key={ex.text} onClick={() => setText(ex.text)}
-                className="text-xs text-ink-soft bg-paper-soft border-1px rounded-full"
-                style={{ padding: "5px 12px", cursor: "pointer", textAlign: "left" }}>
+ className="text-xs text-ink-soft bg-paper-soft border border-paper-edge rounded-full cursor-pointer text-left"
+ style={{ padding: "5px 12px" }}>
                 {ex.text.length > 42 ? ex.text.slice(0, 40) + "…" : ex.text}
               </button>
             ))}
@@ -291,7 +290,7 @@ function IntakeStart() {
               : "Recommend a playbook"}
           </button>
           {phase === "loading" &&
-            <span className="text-sm text-ink-mute" style={{ fontStyle: "italic" }}>Still listening.</span>}
+            <span className="text-sm text-ink-mute italic" >Still listening.</span>}
         </div>
       </div>
 
@@ -305,9 +304,9 @@ function IntakeStart() {
 
       {/* Error — actionable */}
       {phase === "error" && (
-        <div className="flex items-start gap-3 rounded-lg bg-danger-soft border-1px border-danger-edge"
-             style={{ padding: "var(--space-4)" }}>
-          <span className="text-danger" style={{ flexShrink: 0, marginTop: 1 }}>
+        <div className="flex items-start gap-3 rounded-lg bg-danger-soft border border-danger-edge p-4"
+ >
+          <span className="text-danger shrink-0" style={{ marginTop: 1 }}>
             <svg width="14" height="14" viewBox="0 0 16 16"><path d="M4.5 4.5 L11.5 11.5 M11.5 4.5 L4.5 11.5"
               fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"/></svg>
           </span>
@@ -324,22 +323,21 @@ function IntakeStart() {
 // ── Playbooks tab (S2) — browse the six methods ────────────────────────
 function IntakePlaybooks() {
   return (
-    <div style={{ maxWidth: 860, margin: "0 auto", width: "100%" }} className="flex flex-col gap-4">
+    <div style={{ maxWidth: 860 }} className="flex flex-col gap-4 mx-auto w-full">
       <div className="text-sm text-ink-mute" style={{ lineHeight: 1.5 }}>
         The ways of working sensei can pick from. Depth follows risk — the catalog grows over time.
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--space-4)" }}>
+      <div className="grid gap-4" style={{ gridTemplateColumns: "1fr 1fr" }}>
         {PLAYBOOKS.map(pb => (
-          <div key={pb.name} className="flex flex-col gap-3 rounded-lg border-1px bg-paper-soft"
-               style={{ padding: "var(--space-5)" }}>
+          <div key={pb.name} className="flex flex-col gap-3 rounded-lg border border-paper-edge bg-paper-soft p-6"
+ >
             <div className="flex items-center gap-3">
-              <span className="kanji text-accent" style={{ fontSize: 24, lineHeight: 1, width: 28, flexShrink: 0 }}>{pb.kanji}</span>
+              <span className="kanji text-accent shrink-0" style={{ fontSize: 24, lineHeight: 1, width: 28 }}>{pb.kanji}</span>
               <span className="text-base font-semibold text-ink flex-1">{pb.title}</span>
               <span className="mono text-xs text-ink-faint">{pb.name}</span>
             </div>
             <div className="text-sm text-ink-soft" style={{ lineHeight: 1.5 }}>{pb.when}</div>
-            <div className="text-sm text-ink-mute" style={{ fontStyle: "italic", lineHeight: 1.5,
-                 borderTop: "var(--hairline)", paddingTop: "var(--space-3)" }}>“{pb.tone}”</div>
+            <div className="text-sm text-ink-mute italic border-t pt-3" style={{ lineHeight: 1.5 }}>“{pb.tone}”</div>
           </div>
         ))}
       </div>
@@ -365,13 +363,13 @@ function IntakeHistory() {
     if (h.ftr === 1) combos[k].landed++;
   });
   return (
-    <div style={{ maxWidth: 820, margin: "0 auto", width: "100%" }} className="flex flex-col gap-5">
+    <div style={{ maxWidth: 820 }} className="flex flex-col gap-6 mx-auto w-full">
       {/* per-playbook FTR (your own) */}
       <div className="flex flex-col gap-2">
-        <div className="text-xs text-ink-faint" style={{ letterSpacing: ".14em", textTransform: "uppercase" }}>your reliability</div>
-        <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
+        <div className="text-xs text-ink-faint uppercase" style={{ letterSpacing: ".14em" }}>your reliability</div>
+        <div className="flex items-center gap-2 flex-wrap" >
           {Object.entries(combos).map(([name, c]) => (
-            <span key={name} className="inline-flex items-center gap-2 mono text-xs bg-paper-soft border-1px rounded-full"
+            <span key={name} className="inline-flex items-center gap-2 mono text-xs bg-paper-soft border border-paper-edge rounded-full"
                   style={{ padding: "5px 12px" }}>
               <span className="kanji text-accent" style={{ fontSize: 12 }}>{PB[name].kanji}</span>
               <span className="text-ink-soft">{PB[name].title}</span>
@@ -385,20 +383,20 @@ function IntakeHistory() {
       </div>
 
       {/* recorded chunks */}
-      <div className="rounded-lg border-1px bg-paper-soft" style={{ overflow: "hidden" }}>
+      <div className="rounded-lg border border-paper-edge bg-paper-soft overflow-hidden" >
         {IK_HISTORY.map((h, i) => (
-          <div key={i} className="flex items-center gap-3"
-               style={{ padding: "var(--space-3) var(--space-4)",
-                        borderBottom: i < IK_HISTORY.length - 1 ? "var(--hairline)" : "none" }}>
-            <span className="kanji text-accent" style={{ fontSize: 15, width: 18, flexShrink: 0 }}>{PB[h.pb].kanji}</span>
-            <div className="flex-1" style={{ minWidth: 0 }}>
-              <div className="text-sm text-ink" style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{h.chunk}</div>
+          <div key={i} className="flex items-center gap-3 py-3 px-4"
+ style={{
+ borderBottom: i < IK_HISTORY.length - 1 ? "var(--hairline)" : "none" }}>
+            <span className="kanji text-accent shrink-0" style={{ fontSize: 15, width: 18 }}>{PB[h.pb].kanji}</span>
+            <div className="flex-1 min-w-0" >
+              <div className="text-sm text-ink whitespace-nowrap overflow-hidden text-ellipsis" >{h.chunk}</div>
               <div className="mono text-xs text-ink-faint">
                 {PB[h.pb].title} · {h.lifecycle} · {h.intent} · {h.risk}
               </div>
             </div>
-            <span className="mono text-xs text-ink-faint" style={{ flexShrink: 0 }}>{h.when}</span>
-            <span style={{ flexShrink: 0, width: 74, textAlign: "right" }}>
+            <span className="mono text-xs text-ink-faint shrink-0" >{h.when}</span>
+            <span className="shrink-0 text-right" style={{ width: 74 }}>
               {h.ftr == null
                 ? <span className="mono text-xs text-ink-faint">pending</span>
                 : h.ftr === 1
@@ -417,19 +415,17 @@ const IK_TABS = [["start", "Start"], ["playbooks", "Playbooks"], ["history", "Hi
 function IntakeScreen() {
   const [tab, setTab] = ikS("start");
   return (
-    <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column",
-                  overflow: "hidden", background: "var(--paper)" }}>
+    <div className="w-full h-full flex flex-col overflow-hidden bg-paper" >
       {/* header */}
-      <div style={{ borderBottom: "var(--hairline)", padding: "var(--space-5) var(--space-6) var(--space-4)", flexShrink: 0 }}>
-        <div className="text-xs text-ink-faint" style={{ letterSpacing: ".18em", textTransform: "uppercase" }}>先生 · front door</div>
+      <div className="border-b shrink-0" style={{ padding: "var(--space-6) var(--space-8) var(--space-4)" }}>
+        <div className="text-xs text-ink-faint uppercase" style={{ letterSpacing: ".18em" }}>先生 · front door</div>
         <div className="flex items-baseline gap-3" style={{ marginTop: 4 }}>
-          <span className="zs-h2 text-ink" style={{ margin: 0 }}>Start a chunk</span>
+          <span className="zs-h2 text-ink m-0" >Start a chunk</span>
           <span className="text-sm text-ink-mute">sensei recommends a way of working — proportional to the risk.</span>
         </div>
       </div>
       {/* tab strip — SUBNAV pattern */}
-      <div className="flex items-center gap-1" style={{ padding: "var(--space-3) var(--space-6)",
-           borderBottom: "var(--hairline)", background: "var(--paper)", flexShrink: 0 }}>
+      <div className="flex items-center gap-1 py-3 px-8 border-b bg-paper shrink-0" >
         {IK_TABS.map(([id, label]) => {
           const on = tab === id;
           return (
@@ -444,7 +440,7 @@ function IntakeScreen() {
         })}
       </div>
       {/* body */}
-      <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: "var(--space-6)" }}>
+      <div className="flex-1 min-h-0 overflow-auto p-8" >
         {tab === "start"     && <IntakeStart/>}
         {tab === "playbooks" && <IntakePlaybooks/>}
         {tab === "history"   && <IntakeHistory/>}

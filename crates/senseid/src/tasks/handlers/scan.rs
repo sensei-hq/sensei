@@ -111,6 +111,17 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
                 } else if let Err(e) = ctx.pg().untag_folder(&fid, "needs-review").await {
                     tracing::warn!(error = %e, folder_id = %fid, "scan_root: untag_folder needs-review failed");
                 }
+                // Capture the git root's remotes so a future rename can be auto-detected
+                // by shared remote (reconcile_roots → find_live_root_by_remote). Only
+                // write when we actually read some, so a transient git failure never
+                // clobbers a previously-captured set with an empty one.
+                if f.kind == FolderKind::Git {
+                    let remotes = read_git_remotes(&path_str);
+                    if !remotes.is_empty()
+                        && let Err(e) = ctx.pg().update_folder_remotes(&fid, &serde_json::Value::Array(remotes)).await {
+                        tracing::warn!(error = %e, folder_id = %fid, "scan_root: update_folder_remotes failed");
+                    }
+                }
             }
             Err(e) => tracing::warn!(error = %e, path = %path_str, "scan_root: upsert_repo_kind failed"),
         }
@@ -129,7 +140,7 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
         .unwrap_or_else(|e| { tracing::warn!(error = %e, "scan_root: heal_nested_standalone_roots failed"); 0 });
     let live: std::collections::HashSet<std::path::PathBuf> =
         classified.iter().map(|f| f.path.clone()).collect();
-    let (removed, marked) = reconcile_roots(ctx.pg(), &root_id, &live).await;
+    let ReconcileRootsOutcome { removed, marked, remapped, archived } = reconcile_roots(ctx.pg(), &root_id, &live).await;
     // Then prune ghost folder subtrees whose directory was deleted/moved on disk
     // (e.g. a renamed sub-crate). `reconcile_roots` only prunes project ROOTS and
     // `prune_vanished` only reconciles files *within* an indexed folder, so nothing
@@ -156,13 +167,13 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     if reabsorbed > 0 {
         tracing::info!("scan_root reconcile: re-absorbed {reabsorbed} nested standalone root(s) into their enclosing repo's project");
     }
-    if removed > 0 || marked > 0 || ghosts > 0 || deduped > 0 || pruned_projects > 0 {
+    if removed > 0 || marked > 0 || remapped > 0 || archived > 0 || ghosts > 0 || deduped > 0 || pruned_projects > 0 {
         emit(StateEvent::activity(ActivityEvent::new(
             ActivityLevel::Info,
-            &format!("reconcile · {removed} stale roots removed · {ghosts} ghost folders pruned · {deduped} duplicate nodes deduped · {pruned_projects} empty projects purged · {marked} flagged stale · {orphaned} projects re-tagged"),
+            &format!("reconcile · {removed} stale roots removed · {remapped} moved roots remapped · {archived} vanished roots archived · {ghosts} ghost folders pruned · {deduped} duplicate nodes deduped · {pruned_projects} empty projects purged · {marked} flagged stale · {orphaned} projects re-tagged"),
             start.elapsed().as_secs_f64(),
         )));
-        tracing::info!("scan_root reconcile: removed={removed} ghost_folders={ghosts} deduped_nodes={deduped} empty_projects_purged={pruned_projects} marked={marked} orphaned_retagged={orphaned}");
+        tracing::info!("scan_root reconcile: removed={removed} remapped={remapped} archived={archived} ghost_folders={ghosts} deduped_nodes={deduped} empty_projects_purged={pruned_projects} marked={marked} orphaned_retagged={orphaned}");
     }
 
     // 5. Register watcher
@@ -196,18 +207,44 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
 /// provably-dead roots are deleted (cascading nodes + subtree); ambiguous ones
 /// (real content, no live owner) are tagged `stale` for the user to triage.
 /// Returns `(removed, marked)`.
+/// Tally of what [`reconcile_roots`] did this pass. `remapped` + `archived` are the
+/// deletion-avoidance outcomes (a renamed root re-pointed / a history-bearing root
+/// retained) that would previously have been silent hard-deletes.
+#[derive(Debug, Default, Clone, Copy)]
+pub(crate) struct ReconcileRootsOutcome {
+    pub removed: u32,
+    pub marked: u32,
+    pub remapped: u32,
+    pub archived: u32,
+}
+
+/// Extract the `url` strings from a folder's `remote_urls` JSON (`[{name,url}]`).
+fn remote_urls_of(v: &serde_json::Value) -> Vec<String> {
+    v.get("remote_urls")
+        .and_then(|r| r.as_array())
+        .map(|arr| arr.iter().filter_map(|e| e.get("url").and_then(|u| u.as_str()).map(String::from)).collect())
+        .unwrap_or_default()
+}
+
 async fn reconcile_roots(
     pg: &crate::db::pg_store::PgStore,
     root_id: &uuid::Uuid,
     live: &std::collections::HashSet<std::path::PathBuf>,
-) -> (u32, u32) {
-    use scan_logic::StaleAction;
+) -> ReconcileRootsOutcome {
+    use scan_logic::{StaleAction, StaleDisposition};
     let recorded = pg.list_folders_by_root(root_id).await.unwrap_or_else(|e| { tracing::warn!(error = %e, root_id = %root_id, "reconcile_roots: list_folders_by_root failed, skipping reconcile"); Vec::new() });
-    let (mut removed, mut marked) = (0u32, 0u32);
+    // Live root paths as strings — the candidate set a renamed root can remap onto.
+    let live_abs: Vec<String> = live.iter().filter_map(|p| p.to_str().map(String::from)).collect();
+    let mut out = ReconcileRootsOutcome::default();
     for r in &recorded {
         // Only project roots are reconciled here; kind=folder rows are owned by
         // their root and re-materialised when it is processed.
         if !matches!(r["kind"].as_str().unwrap_or(""), "git" | "standalone" | "subtree") {
+            continue;
+        }
+        // An already-archived root is deliberately retained (its dir is gone but its
+        // history is kept) — never re-delete or re-touch it.
+        if r["status"].as_str() == Some("archived") {
             continue;
         }
         let abs = r["abs_path"].as_str().unwrap_or("");
@@ -221,23 +258,57 @@ async fn reconcile_roots(
         let Some(id) = crate::api::util::json_uuid(&r["id"]) else { continue };
         let exists = p.exists();
         let has_content = exists && scan_logic::dir_has_indexable_content(&p);
-        match scan_logic::classify_stale_root(&p, live, exists, has_content) {
-            StaleAction::Keep => {}
-            StaleAction::Remove => {
+        let base = scan_logic::classify_stale_root(&p, live, exists, has_content);
+
+        // Only a Remove candidate (path gone) is eligible for remap/archive; resolve
+        // the two impure signals lazily. On a lookup ERROR, fail safe — skip the row
+        // (keep it this pass) rather than fall through to a delete on uncertainty.
+        let (remote_match, has_history) = if base == StaleAction::Remove {
+            let remotes = remote_urls_of(r);
+            let remote_match = match pg.find_live_root_by_remote(&remotes, &live_abs).await {
+                Ok(m) => m,
+                Err(e) => { tracing::warn!(error = %e, path = %abs, "reconcile: find_live_root_by_remote failed, keeping root this pass"); continue; }
+            };
+            let has_history = if remote_match.is_none() {
+                match pg.folder_has_sessions(&id).await {
+                    Ok(h) => h,
+                    Err(e) => { tracing::warn!(error = %e, path = %abs, "reconcile: folder_has_sessions failed, keeping root this pass"); continue; }
+                }
+            } else { false };
+            (remote_match, has_history)
+        } else {
+            (None, false)
+        };
+
+        match scan_logic::decide_stale_root(base, remote_match, has_history) {
+            StaleDisposition::Keep => {}
+            StaleDisposition::Remap(to) => {
+                match pg.remap_folder(&id, abs, &to).await {
+                    Ok(_) => { out.remapped += 1; tracing::info!("reconcile: remapped moved root {abs} → {to} (git remote match)"); }
+                    Err(e) => tracing::warn!(error = %e, path = %abs, "reconcile: remap_folder failed"),
+                }
+            }
+            StaleDisposition::Archive => {
+                match pg.archive_folder(&id).await {
+                    Ok(_) => { out.archived += 1; tracing::info!("reconcile: archived vanished history-bearing root {abs}"); }
+                    Err(e) => tracing::warn!(error = %e, path = %abs, "reconcile: archive_folder failed"),
+                }
+            }
+            StaleDisposition::Remove => {
                 match pg.delete_folder_tree(&id).await {
-                    Ok(_) => { removed += 1; tracing::info!("reconcile: removed stale root {abs}"); }
+                    Ok(_) => { out.removed += 1; tracing::info!("reconcile: removed stale root {abs}"); }
                     Err(e) => tracing::warn!(error = %e, path = %abs, "reconcile: delete_folder_tree failed"),
                 }
             }
-            StaleAction::MarkStale => {
+            StaleDisposition::MarkStale => {
                 match pg.tag_folder(&id, "stale").await {
-                    Ok(_) => { marked += 1; tracing::info!("reconcile: flagged stale root {abs}"); }
+                    Ok(_) => { out.marked += 1; tracing::info!("reconcile: flagged stale root {abs}"); }
                     Err(e) => tracing::warn!(error = %e, path = %abs, "reconcile: tag_folder stale failed"),
                 }
             }
         }
     }
-    (removed, marked)
+    out
 }
 
 /// Prune ghost folder subtrees the scan can never re-materialise: a non-root
@@ -422,6 +493,43 @@ fn _detect_current_branch(repo_path: &str) -> Option<String> {
     }
 }
 
+/// Parse `git config --get-regexp '^remote\..*\.url$'` stdout into `[{name,url}]`.
+/// Pure over the captured text so it's unit-testable without a git subprocess.
+/// Each line is `remote.<name>.url <url>`; blank urls and unparseable lines drop.
+fn parse_git_remote_config(stdout: &str) -> Vec<serde_json::Value> {
+    stdout
+        .lines()
+        .filter_map(|line| {
+            let (key, url) = line.split_once(char::is_whitespace)?;
+            let name = key.strip_prefix("remote.")?.strip_suffix(".url")?;
+            let url = url.trim();
+            if name.is_empty() || url.is_empty() {
+                return None;
+            }
+            Some(serde_json::json!({ "name": name, "url": url }))
+        })
+        .collect()
+}
+
+/// Best-effort read of a git repo's configured remotes as `[{name,url}]` for
+/// `folders.remote_urls` — the producing half of git-remote rename detection.
+/// Shells out to `git config` (the codebase carries no git2 dep). Empty on any
+/// failure or a repo with no remote: an honest "no remote", never a fabricated
+/// one — a remote-less repo simply can't be rename-detected by remote.
+fn read_git_remotes(repo_path: &str) -> Vec<serde_json::Value> {
+    let Ok(output) = std::process::Command::new("git")
+        .args(["config", "--get-regexp", r"^remote\..*\.url$"])
+        .current_dir(repo_path)
+        .output()
+    else {
+        return Vec::new();
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
+    parse_git_remote_config(&String::from_utf8_lossy(&output.stdout))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -430,6 +538,22 @@ mod tests {
     use crate::tasks::Task;
     use crate::api::state::SharedState;
     use super::super::super::executor::TaskContext;
+
+    #[test]
+    fn parse_git_remote_config_extracts_name_url_pairs() {
+        let out = "remote.origin.url git@github.com:sensei-hq/sensei.git\n\
+                   remote.upstream.url https://github.com/acme/sensei.git\n";
+        let got = parse_git_remote_config(out);
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[0]["name"], "origin");
+        assert_eq!(got[0]["url"], "git@github.com:sensei-hq/sensei.git");
+        assert_eq!(got[1]["name"], "upstream");
+        assert_eq!(got[1]["url"], "https://github.com/acme/sensei.git");
+        // Empty input (no remotes) → no pairs, never a fabricated entry.
+        assert!(parse_git_remote_config("").is_empty());
+        // A malformed line (no url) is dropped, not half-parsed.
+        assert!(parse_git_remote_config("remote.origin.url \n").is_empty());
+    }
 
     async fn make_ctx() -> Arc<TaskContext> {
         let queue = Arc::new(TaskQueue::new());

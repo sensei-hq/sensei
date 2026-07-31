@@ -5,11 +5,11 @@
 // dojo ScrEngagements already declares. Side-effect-free so it's DRY + unit-
 // tested once; `now` is injected for a deterministic "since".
 //
-// On lessons/dropped: the engagements LIST route carries no kept-vs-dropped
-// artifact counts — those live on GET …/audit/artifacts (per engagement), a
-// separate call the console engagements list does not make. Rather than fake a
-// number, the mapper leaves both 0 (the row reads "0 lessons kept · 0 stripped"
-// honestly); wiring the audit counts is a follow-on when that panel is real.
+// On lessons/dropped: the engagements GET route now enriches each row with its
+// real per-engagement artifact counts (published → lessons kept, archived →
+// stripped/held-back), computed by `engagement-artifact-counts.ts`. The mapper
+// passes them straight through; an engagement with no counted artifacts reads
+// "0 lessons kept · 0 stripped" honestly (a true zero, not a placeholder).
 
 import type { Engagement } from './client-data';
 import { relativeAge } from './triage/view';
@@ -38,20 +38,21 @@ export function bindingsLabel(projectBindings: unknown): string {
 }
 
 /**
- * Engagement → KitEngagement. The kit row wants: id, kanji, client, projects,
- * lessons, dropped, since, status. `since` is how long the engagement has run —
- * from `starts_on` when set, else the `created_at` — as a compact relative age.
- * `lessons`/`dropped` are 0 (the list route carries no audit counts; see the
- * module note). Pure.
+ * Engagement → KitEngagement. The kit row wants: id, kanji, client, clientTenantId,
+ * projects, lessons, dropped, since, status. `since` is how long the engagement has
+ * run — from `starts_on` when set, else the `created_at` — as a compact relative age.
+ * `lessons`/`dropped` are the real per-engagement kept (`published`) / stripped
+ * (`archived`) artifact counts the GET route now computes. Pure.
  */
 export function toKitEngagement(e: Engagement, now: Date = new Date()): KitEngagement {
 	return {
 		id: e.id,
 		kanji: CLIENT_KANJI,
-		client: e.client,
+		client: e.client_name,
+		clientTenantId: e.client_tenant_id,
 		projects: bindingsLabel(e.project_bindings),
-		lessons: 0,
-		dropped: 0,
+		lessons: e.lessons_kept,
+		dropped: e.stripped,
 		since: relativeAge(e.starts_on ?? e.created_at, now),
 		status: e.status
 	};

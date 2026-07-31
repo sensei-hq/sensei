@@ -41,10 +41,9 @@ export const POST: RequestHandler = async ({ params, request, locals }) => {
 		const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
 		const input = parseNewMember(body);
 		const db = dojoDb();
-		// `dojo_url` mirrors the tenant key (origin/org) — the daemon derives the
-		// dōjō url from the same pair.
-		const dojoUrl = `${params.origin}/${params.org}`;
-		const result = await addMember(db, caller.tenantId, dojoUrl, input);
+		// Rule C: the dōjō url is derived from the membership's tenant
+		// (`dojo.tenants.dojo_url`), not stored per membership.
+		const result = await addMember(db, caller.tenantId, input);
 		await recordAudit(db, caller.tenantId, caller.userId, {
 			action: 'member_added',
 			target: input.user_id,

@@ -65,13 +65,12 @@ function ProjectFilter({
   const showPopover = focused && ql.length > 0;
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap' }} className="gap-2" >
+    <div className="gap-2 flex items-center flex-wrap" >
       {label && (
-        <span style={{ fontSize: 11, color: 'var(--ink-4)', letterSpacing: '0.14em',
-                        textTransform: 'uppercase' }}>{label}</span>
+        <span className="text-ink-4 uppercase" style={{ fontSize: 11, letterSpacing: '0.14em' }}>{label}</span>
       )}
 
-      <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap' }} className="gap-1" >
+      <div className="gap-1 flex items-center flex-wrap" >
         <PfChip active={value === "all"} onClick={() => onChange("all")}>all</PfChip>
         {inlineKeys.map(k => (
           <PfChip key={k} active={value === k} onClick={() => onChange(k)}>
@@ -80,55 +79,40 @@ function ProjectFilter({
         ))}
       </div>
 
-      <span style={{ flex: 1, minWidth: 8 }}/>
+      <span className="flex-1" style={{ minWidth: 8 }}/>
 
       {/* Search input — to the right */}
-      <div style={{ position: 'relative' }} ref={popRef}>
-        <div style={{
- display: 'flex', alignItems: 'center',
-                       background: 'var(--paper-2)',
-                       border: 'var(--hairline)', borderRadius: 16,
-                       minWidth: 170
-}} className="gap-1 py-1 px-2" >
-          <svg width="11" height="11" viewBox="0 0 16 16" fill="none"
-               style={{ flexShrink: 0, opacity: 0.55 }}>
+      <div className="relative" ref={popRef}>
+        <div style={{ borderRadius: 16,
+ minWidth: 170
+ }} className="gap-1 py-1 px-2 flex items-center bg-paper-2 border border-paper-edge" >
+          <svg className="shrink-0" width="11" height="11" viewBox="0 0 16 16" fill="none"
+ style={{ opacity: 0.55 }}>
             <circle cx="7" cy="7" r="5" stroke="currentColor" strokeWidth="1.3"/>
             <line x1="11" y1="11" x2="14" y2="14"
                   stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/>
           </svg>
           <input value={query}
-                 onChange={e => setQuery(e.target.value)}
-                 onFocus={() => setFocused(true)}
-                 placeholder="search projects…"
-                 style={{
- flex: 1, fontSize: 11,
-                           background: 'transparent', border: 'none',
-                           color: 'var(--ink)', fontFamily: 'inherit',
-                           outline: 'none', minWidth: 0
-}} className="p-0" />
+ onChange={e => setQuery(e.target.value)}
+ onFocus={() => setFocused(true)}
+ placeholder="search projects…"
+ style={{ fontSize: 11, fontFamily: 'inherit',
+ outline: 'none' }} className="p-0 flex-1 bg-transparent border-0 text-ink min-w-0" />
           {query && (
             <button onClick={() => setQuery("")}
-                    style={{
- background: 'transparent', border: 'none',
-                              color: 'var(--ink-4)', cursor: 'pointer', fontSize: 13, lineHeight: 1,
-                              fontFamily: 'inherit'
-}} className="p-0" >×</button>
+ style={{ fontSize: 13, lineHeight: 1,
+ fontFamily: 'inherit'
+ }} className="p-0 bg-transparent border-0 text-ink-4 cursor-pointer" >×</button>
           )}
         </div>
 
         {showPopover && (
-          <div style={{
-            position: 'absolute', top: 'calc(100% + 4px)',
-            [align === 'right' ? 'right' : 'left']: 0,
-            width: 240, background: 'var(--paper)',
-            border: 'var(--hairline)', borderRadius: 6,
-            boxShadow: 'var(--shadow)', zIndex: 30, maxHeight: 240, overflow: 'auto'
-}} className="p-1" >
+          <div style={{ top: 'calc(100% + 4px)',
+ [align === 'right' ? 'right' : 'left']: 0,
+ width: 240, borderRadius: 6, zIndex: 30, maxHeight: 240 }} className="p-1 absolute bg-paper border border-paper-edge shadow overflow-auto" >
             {matches.length === 0 && (
               <div style={{
- fontSize: 11,
-                              color: 'var(--ink-4)', textAlign: 'center'
-}} className="py-2 px-2" >
+ fontSize: 11 }} className="py-2 px-2 text-ink-4 text-center" >
                 no matches
               </div>
             )}
@@ -136,27 +120,21 @@ function ProjectFilter({
               const active = value === k;
               return (
                 <button key={k}
-                        onClick={() => {
-                          onChange(k); setQuery(""); setFocused(false);
-                        }}
-                        style={{
- width: '100%', textAlign: 'left', fontSize: 11,
-                                  background: active ? 'var(--paper-2)' : 'transparent',
-                                  border: 'none', borderRadius: 4,
-                                  color: active ? 'var(--ink)' : 'var(--ink-2)',
-                                  cursor: 'pointer',
-                                  display: 'flex', alignItems: 'center'
-}} className="py-1 px-2 gap-2" >
+ onClick={() => {
+ onChange(k); setQuery(""); setFocused(false);
+ }}
+ style={{ fontSize: 11,
+ background: active ? 'var(--paper-2)' : 'transparent', borderRadius: 4,
+ color: active ? 'var(--ink)' : 'var(--ink-2)' }} className="py-1 px-2 gap-2 w-full text-left border-0 cursor-pointer flex items-center" >
                   {all[k]?.kanji && (
-                    <span className="kanji" style={{ fontSize: 13, color: 'var(--accent)' }}>
+                    <span className="kanji text-accent" style={{ fontSize: 13 }}>
                       {all[k].kanji}
                     </span>
                   )}
-                  <span style={{ flex: 1 }}>{fullName(k)}</span>
+                  <span className="flex-1" >{fullName(k)}</span>
                   {all[k]?.client && (
-                    <span style={{ fontSize: 11, color: 'var(--ink-4)',
-                                     letterSpacing: '0.1em',
-                                     textTransform: 'uppercase' }}>
+                    <span className="text-ink-4 uppercase" style={{ fontSize: 11,
+ letterSpacing: '0.1em' }}>
                       {all[k].client}
                     </span>
                   )}
@@ -173,16 +151,15 @@ function ProjectFilter({
 function PfChip({ active, onClick, children }) {
   return (
     <button onClick={onClick}
-            style={{
+ style={{
  fontSize: 11,
-                      background: active ? 'var(--ink)' : 'transparent',
-                      color: active ? 'var(--paper)' : 'var(--ink-2)',
-                      border: active
-                        ? '1px solid var(--ink)'
-                        : '1px solid var(--edge)',
-                      borderRadius: 20, cursor: 'pointer',
-                      fontFamily: 'inherit', whiteSpace: 'nowrap'
-}} className="py-1 px-2" >
+ background: active ? 'var(--ink)' : 'transparent',
+ color: active ? 'var(--paper)' : 'var(--ink-2)',
+ border: active
+ ? '1px solid var(--ink)'
+ : '1px solid var(--edge)',
+ borderRadius: 20,
+ fontFamily: 'inherit' }} className="py-1 px-2 cursor-pointer whitespace-nowrap" >
       {children}
     </button>
   );

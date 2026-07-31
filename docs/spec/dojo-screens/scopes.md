@@ -40,6 +40,13 @@
 ## Open questions (for Jerry)
 1. Scope ownership (owner, queue depth, SLA, assign) is absent from the schema. New table, or derive from triage-queue routing (`triage` + `memberships`)? This screen cannot be real without a source.
 2. Should this screen also surface the `dojo.policies` grid (attribution / confidentiality / retention per scope)? The title says "& policies" but the mockup renders only ownership.
+
+### Resolved design (2026-07-30)
+- **Q1 ownership → NEW `dojo.scope_owner` table** `{ tenant_id, scope_key|namespace_id, owner_membership_id, sla }`; **queue depth derived from triage routing**; assign/reassign writes this table. WS-3 schema addition.
+- **Q2 → render BOTH ownership + the `dojo.policies` grid** (attribution / confidentiality / retention per scope) — the full "Scopes & policies" screen.
+- **New-Q state → SPLIT into two states/loads:** the **policies** grid ships NOW (backed by the existing `dojo.policies`); **ownership** is a separate state/load that ships later once `scope_owner` lands — honest-empty until then (NO fabricated owners).
+- **Build constraint (fabricated-data debt):** owner/queue/SLA are pure fixtures today — render honest-empty (not the `acme` fixture) until real; error state on fetch failure.
+- **Depends on:** new `dojo.scope_owner` DDL (WS-3) + a policies CRUD endpoint over `dojo.policies` + triage-routing queue derivation + role checks (admin).
 3. Confirm the policies UI (if added) drops the `dereferenced` attribution option (canon: `named|anonymous`) and shows dereference as always-on — and confirm the enum/comment fix in `attribution_mode.ddl` + `policies.ddl` is in scope for this work.
 
 ## Components & state (three-layer, per `sensei:ui-state-pattern`)

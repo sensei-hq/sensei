@@ -5,18 +5,19 @@
 <title>Sensei · Dōjō app — journey audit</title>
 <meta name="viewport" content="width=1280"/>
 <link rel="stylesheet" href="lib/tokens.css"/>
+<script src="lib/unocss.js"></script>
 <link rel="stylesheet" href="fonts.css"/>
 <style>
   html,body{margin:0;padding:0;background:var(--paper-2);color:var(--ink);
     font-family:var(--font-ui,'Inter',system-ui,sans-serif);-webkit-font-smoothing:antialiased}
   *{box-sizing:border-box}
   .kanji,.k{font-family:var(--font-kanji,serif)}
-  .wrap{max-width:1180px;margin:0 auto;padding:var(--space-8) var(--space-7) var(--space-9)}
+  .wrap{max-width:1180px;margin:0 auto;padding:var(--space-16) var(--space-12) var(--space-24)}
   a{color:var(--accent);text-decoration:none} a:hover{text-decoration:underline}
 
   /* masthead */
-  .mast{display:flex;align-items:flex-end;justify-content:space-between;gap:var(--space-6);
-    border-bottom:1px solid var(--ink);padding-bottom:var(--space-5)}
+  .mast{display:flex;align-items:flex-end;justify-content:space-between;gap:var(--space-8);
+    border-bottom:1px solid var(--ink);padding-bottom:var(--space-6)}
   .mast .lede{display:flex;align-items:flex-start;gap:var(--space-4)}
   .mast .mk{font-family:var(--font-kanji);font-size:var(--text-4xl);color:var(--accent);line-height:.85}
   .eyebrow{font-size:var(--text-xs);letter-spacing:.2em;text-transform:uppercase;color:var(--ink-3);font-weight:600}
@@ -25,14 +26,14 @@
   .meta{text-align:right;font-size:var(--text-xs);color:var(--ink-3);line-height:1.9;font-family:var(--font-mono);flex-shrink:0}
   .meta b{color:var(--ink);font-weight:600}
 
-  .sec{margin-top:var(--space-8)}
-  .sec-head{display:flex;align-items:baseline;gap:var(--space-3);border-bottom:1px solid var(--edge);padding-bottom:var(--space-3);margin-bottom:var(--space-5)}
+  .sec{margin-top:var(--space-16)}
+  .sec-head{display:flex;align-items:baseline;gap:var(--space-3);border-bottom:1px solid var(--edge);padding-bottom:var(--space-3);margin-bottom:var(--space-6)}
   .sec-head .num{font-family:var(--font-mono);font-size:var(--text-xs);color:var(--accent);letter-spacing:.06em}
   .sec-head h2{font-family:var(--font-display);font-weight:400;font-size:var(--text-2xl);letter-spacing:-0.02em;margin:0}
   .sec-head .hint{margin-left:auto;font-size:var(--text-xs);color:var(--ink-3)}
 
   /* scorecard */
-  .scorecard{display:grid;grid-template-columns:repeat(4,1fr);gap:var(--space-3);margin-bottom:var(--space-6)}
+  .scorecard{display:grid;grid-template-columns:repeat(4,1fr);gap:var(--space-3);margin-bottom:var(--space-8)}
   .score{background:var(--paper);border:1px solid var(--edge);border-radius:var(--radius-lg);padding:var(--space-4);position:relative;overflow:hidden}
   .score::before{content:"";position:absolute;top:0;left:0;width:3px;height:100%}
   .score.strong::before{background:var(--success)} .score.partial::before{background:var(--warning)} .score.weak::before{background:var(--accent)}
@@ -41,7 +42,7 @@
   .score .sub{font-size:var(--text-xs);color:var(--ink-3);margin-top:var(--space-1);line-height:1.4}
 
   /* emotion curve */
-  .curve{background:var(--paper);border:1px solid var(--edge);border-radius:var(--radius-lg);padding:var(--space-5) var(--space-5) var(--space-4);margin-bottom:var(--space-3)}
+  .curve{background:var(--paper);border:1px solid var(--edge);border-radius:var(--radius-lg);padding:var(--space-6) var(--space-6) var(--space-4);margin-bottom:var(--space-3)}
   .curve svg{display:block;width:100%;height:190px;overflow:visible}
   .curve .cx{font-family:var(--font-kanji);font-size:15px;fill:var(--accent)}
   .curve .cl{font-size:11px;fill:var(--ink-3);font-family:var(--font-ui,'Inter',sans-serif)}
@@ -50,13 +51,13 @@
 
   /* themes */
   .themes{display:grid;grid-template-columns:repeat(2,1fr);gap:var(--space-3)}
-  .theme{background:var(--paper);border:1px solid var(--edge);border-radius:var(--radius-lg);padding:var(--space-4) var(--space-5);display:flex;gap:var(--space-4)}
+  .theme{background:var(--paper);border:1px solid var(--edge);border-radius:var(--radius-lg);padding:var(--space-4) var(--space-6);display:flex;gap:var(--space-4)}
   .theme .tk{font-family:var(--font-kanji);font-size:var(--text-2xl);color:var(--accent);line-height:1;flex-shrink:0}
   .theme h3{font-family:var(--font-display);font-weight:500;font-size:var(--text-base);margin:0 0 var(--space-1);letter-spacing:-0.01em}
   .theme p{margin:0;font-size:var(--text-xs);color:var(--ink-2);line-height:1.6}
 
   /* callout */
-  .callout{margin-top:var(--space-6);background:var(--ink);color:var(--paper);border-radius:var(--radius-lg);padding:var(--space-6);display:flex;gap:var(--space-5);align-items:flex-start}
+  .callout{margin-top:var(--space-8);background:var(--ink);color:var(--paper);border-radius:var(--radius-lg);padding:var(--space-8);display:flex;gap:var(--space-6);align-items:flex-start}
   .callout .ck{font-family:var(--font-kanji);font-size:var(--text-4xl);line-height:.9;color:var(--accent);flex-shrink:0}
   .callout .eyebrow{color:oklch(0.78 0.13 40)}
   .callout h3{font-family:var(--font-display);font-weight:400;font-size:var(--text-xl);margin:var(--space-2) 0;letter-spacing:-0.015em;color:var(--paper)}
@@ -64,7 +65,7 @@
 
   /* stage card */
   .stage{background:var(--paper);border:1px solid var(--edge);border-radius:var(--radius-lg);overflow:hidden;margin-bottom:var(--space-4)}
-  .stage-head{display:flex;align-items:flex-start;gap:var(--space-4);padding:var(--space-5) var(--space-5) var(--space-4);border-bottom:1px solid var(--edge)}
+  .stage-head{display:flex;align-items:flex-start;gap:var(--space-4);padding:var(--space-6) var(--space-6) var(--space-4);border-bottom:1px solid var(--edge)}
   .stage-head .sk{font-family:var(--font-kanji);font-size:var(--text-2xl);color:var(--accent);line-height:1;flex-shrink:0;width:48px;height:48px;
     display:flex;align-items:center;justify-content:center;border-radius:var(--radius);background:var(--accent-soft);border:1px solid var(--accent-edge)}
   .stage-head .n{font-family:var(--font-mono);font-size:var(--text-xs);color:var(--ink-4);letter-spacing:.06em}
@@ -81,10 +82,10 @@
   .pill.partial{background:var(--warning-soft);color:oklch(0.52 0.13 60);border:1px solid var(--warning-edge)}
   .pill.weak{background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent-edge)}
 
-  .does{padding:var(--space-4) var(--space-5);border-bottom:1px solid var(--edge);font-size:var(--text-sm);color:var(--ink-2);line-height:1.65}
+  .does{padding:var(--space-4) var(--space-6);border-bottom:1px solid var(--edge);font-size:var(--text-sm);color:var(--ink-2);line-height:1.65}
   .does b{color:var(--ink);font-weight:600}
   .lenses{display:grid;grid-template-columns:1fr 1fr 1fr;gap:0}
-  .lens{padding:var(--space-4) var(--space-5);border-right:1px solid var(--edge)}
+  .lens{padding:var(--space-4) var(--space-6);border-right:1px solid var(--edge)}
   .lens:last-child{border-right:none}
   .lens .ll{font-size:var(--text-xs);letter-spacing:.13em;text-transform:uppercase;font-weight:700;margin-bottom:var(--space-3);display:flex;align-items:center;gap:var(--space-2)}
   .lens .ll .dot{width:7px;height:7px;border-radius:50%}
@@ -95,7 +96,7 @@
   .lens li{font-size:var(--text-xs);line-height:1.55;color:var(--ink-2);padding-left:var(--space-3);position:relative}
   .lens li::before{content:"";position:absolute;left:0;top:7px;width:4px;height:4px;border-radius:50%;background:var(--ink-4)}
   .lens.op li::before{background:var(--accent)}
-  .resolve{padding:var(--space-3) var(--space-5);background:var(--accent-soft);border-top:1px solid var(--accent-edge);display:flex;gap:var(--space-3);align-items:baseline}
+  .resolve{padding:var(--space-3) var(--space-6);background:var(--accent-soft);border-top:1px solid var(--accent-edge);display:flex;gap:var(--space-3);align-items:baseline}
   .resolve .rl{font-size:var(--text-xs);letter-spacing:.13em;text-transform:uppercase;font-weight:700;color:var(--accent);flex-shrink:0}
   .resolve p{margin:0;font-size:var(--text-sm);line-height:1.6;color:var(--ink)}
 
@@ -112,7 +113,7 @@
   .prio.next{background:var(--warning-soft);color:oklch(0.52 0.13 60);border:1px solid var(--warning-edge)}
   .prio.later{background:var(--paper-3);color:var(--ink-3);border:1px solid var(--edge)}
 
-  .foot{margin-top:var(--space-8);border-top:1px solid var(--edge);padding-top:var(--space-4);display:flex;justify-content:space-between;gap:var(--space-5);font-size:var(--text-xs);color:var(--ink-3);flex-wrap:wrap}
+  .foot{margin-top:var(--space-16);border-top:1px solid var(--edge);padding-top:var(--space-4);display:flex;justify-content:space-between;gap:var(--space-6);font-size:var(--text-xs);color:var(--ink-3);flex-wrap:wrap}
   .foot .fk{font-family:var(--font-kanji);color:var(--accent)}
 
   #theme-tweak{position:fixed;top:14px;right:14px;z-index:99;display:inline-flex;align-items:center;gap:var(--space-2);
@@ -302,7 +303,7 @@
   html += `<div class="sec"><div class="sec-head"><span class="num">§3</span><h2>The journey, stage by stage</h2><span class="hint">friction · gaps · opportunity · resolution</span></div>`;
   let act='';
   STAGES.forEach(s=>{
-    if(s.seg!==act){ act=s.seg; html+=`<div style="font-size:var(--text-xs);letter-spacing:.16em;text-transform:uppercase;color:var(--ink-3);font-weight:700;margin:var(--space-5) 0 var(--space-3)">${act}</div>`; }
+    if(s.seg!==act){ act=s.seg; html+=`<div style="font-size:var(--text-xs);letter-spacing:.16em;text-transform:uppercase;color:var(--ink-3);font-weight:700;margin:var(--space-6) 0 var(--space-3)">${act}</div>`; }
     html += `<div class="stage">
       <div class="stage-head">
         <div class="sk">${s.k}</div>

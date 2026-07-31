@@ -50,6 +50,14 @@
 - Does Catalog (skills/agents/commands) come from `dojo.artifacts` of those kinds, or from the marketplace subtree? They may be different libraries.
 - Edit/Keep — are these v1, or is Knowledge a read-only library for now (matching how thin the real data is)?
 
+### Resolved design (2026-07-30)
+- **Q1 read → new JWT-plane `GET /v1/t/{tenant}/knowledge`** (Supabase-session plane, matching the other console screens) reading `dojo.artifacts`. NOT the device-token daemon-plane `/artifacts` pull.
+- **Q2 prune signal → "unused" = no downstream adoption/pull within `dojo.policies.retention_days`** (retention_days is the window). Telemetry-light; reuses the retention policy.
+- **Q3 Catalog → `dojo.artifacts` where `kind ∈ {skill, agent, prompt}`** (the tenant's federated library), NOT the marketplace subtree.
+- **Q4 mutations → READ-ONLY library for v1.** No Edit/Keep writes; edits happen via triage/authoring.
+- **Build constraint:** drop the `acme` fixture; drive from the real `/knowledge` read; honest-empty (not fixture) for other slugs; error state on failure.
+- **Depends on:** the new JWT-plane `/knowledge` endpoint over `dojo.artifacts` + the retention_days prune computation.
+
 ## Components & state (three-layer, per `sensei:ui-state-pattern`)
 
 **DB** (reference §Elements→data): real source = `dojo.artifacts` (tenant-scoped) — published/adopted → Active, unused-past-prune → Pending, `kind ∈ {agent,command,skill}` → Catalog; prune window = `dojo.policies.retention_days`. STUB today (`knowledgeFor(slug)` fixture, only `acme` authored).

@@ -25,68 +25,52 @@ function ObsImpact({ state = "ready" } = {}) {
   const r = reports.find(x => x.id === openId) || reports[0];
 
   return (
-    <div className="sensei" data-screen-label="Observatory · Change impact"
-         style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column',
-                  background: 'var(--paper)', overflow: 'hidden' }}>
+    <div className="sensei w-full h-full flex flex-col bg-paper overflow-hidden" data-screen-label="Observatory · Change impact"
+ >
 
-      <div style={{
- borderBottom: 'var(--hairline)',
-                     display: 'flex', alignItems: 'center'
-}} className="gap-5 pt-5 pb-4 px-6" >
-        <div className="kanji" style={{ fontSize: 40, color: 'var(--accent)', lineHeight: 1 }}>果</div>
-        <div style={{ flex: 1, minWidth: 0 }}>
+      <div className="gap-6 pt-6 pb-4 px-8 border-b flex items-center" >
+        <div className="kanji text-accent" style={{ fontSize: 40, lineHeight: 1 }}>果</div>
+        <div className="flex-1 min-w-0" >
           <div style={{
- fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
-                         textTransform: 'uppercase'
-}} className="mb-1" >
+ fontSize: 11, letterSpacing: '0.18em' }} className="mb-1 text-ink-3 uppercase" >
             Observatory · Change impact
           </div>
-          <h1 className="display m-0" style={{
- fontSize: 22, fontWeight: 400,
-                                            color: 'var(--ink)'
-}}>
+          <h1 className="display m-0 font-normal text-ink" style={{
+ fontSize: 22 }}>
             Did sensei's advice actually work?
           </h1>
           <p style={{
- fontSize: 13, color: 'var(--ink-2)',
-                       maxWidth: 720, lineHeight: 1.55
-}} className="mt-1 mb-0" >
+ fontSize: 13,
+ maxWidth: 720, lineHeight: 1.55
+ }} className="mt-1 mb-0 text-ink-2" >
             Each accepted recommendation gets a measurement window. FTR,
             corrections, tool usage and session duration are compared
             before vs after. The MOE panel writes the reasoning.
           </p>
         </div>
-        <div style={{
- borderLeft: 'var(--hairline)',
-                       display: 'flex'
-}} className="gap-5 pl-5" >
+        <div className="gap-6 pl-6 border-l flex" >
           <UgMini n={reports.filter(r => r.verdict === "positive").length} l="positive" accent/>
           <UgMini n={reports.filter(r => r.verdict === "neutral").length} l="neutral"/>
           <UgMini n={reports.filter(r => r.verdict === "negative").length} l="negative"/>
         </div>
       </div>
 
-      <div style={{ flex: 1, display: 'grid',
-                     gridTemplateColumns: '300px 1fr',
-                     minHeight: 0 }}>
-        <aside style={{ borderRight: 'var(--hairline)', overflow: 'auto' }} className="py-2 px-0" >
+      <div className="flex-1 grid min-h-0" style={{
+ gridTemplateColumns: '300px 1fr' }}>
+        <aside className="py-2 px-0 border-r overflow-auto" >
           {reports.map(rr => {
             const vm = VERDICT_META[rr.verdict];
             const open = openId === rr.id;
             return (
               <button key={rr.id} onClick={() => setOpen(rr.id)}
-                      style={{
- width: '100%', textAlign: 'left',
-                                background: open ? 'var(--paper-2)' : 'transparent',
-                                borderLeft: open ? `2px solid ${vm.color}`
-                                                  : '2px solid transparent',
-                                cursor: 'pointer'
-}} className="py-3 px-4" >
-                <div style={{ display: 'flex', alignItems: 'center' }} className="gap-2" >
+ style={{
+ background: open ? 'var(--paper-2)' : 'transparent',
+ borderLeft: open ? `2px solid ${vm.color}`
+ : '2px solid transparent' }} className="py-3 px-4 w-full text-left cursor-pointer" >
+                <div className="gap-2 flex items-center" >
                   <span className="kanji" style={{ fontSize: 13, color: vm.color }}>{vm.glyph}</span>
-                  <span style={{ fontSize: 11, letterSpacing: '0.14em', color: vm.color,
-                                  textTransform: 'uppercase' }}>{rr.verdict}</span>
-                  <span style={{ flex: 1 }}/>
+                  <span className="uppercase" style={{ fontSize: 11, letterSpacing: '0.14em', color: vm.color }}>{rr.verdict}</span>
+                  <span className="flex-1" />
                   <span className="mono" style={{ fontSize: 11,
                                 color: rr.ftrDelta >= 0 ? 'var(--success)' : 'var(--accent)' }}>
                     {rr.ftrDelta >= 0 ? "+" : ""}{Math.round(rr.ftrDelta*100)}%
@@ -94,14 +78,12 @@ function ObsImpact({ state = "ready" } = {}) {
                 </div>
                 <div style={{
  fontSize: 13,
-                               color: open ? 'var(--ink)' : 'var(--ink-2)',
-                               lineHeight: 1.4, fontWeight: 500
-}} className="mt-1" >
+ color: open ? 'var(--ink)' : 'var(--ink-2)',
+ lineHeight: 1.4 }} className="mt-1 font-medium" >
                   {rr.title}
                 </div>
-                <div className="mono mt-1" style={{
- fontSize: 11, color: 'var(--ink-4)'
-}}>
+                <div className="mono mt-1 text-ink-4" style={{
+ fontSize: 11 }}>
                   {rr.window}
                 </div>
               </button>
@@ -109,7 +91,7 @@ function ObsImpact({ state = "ready" } = {}) {
           })}
         </aside>
 
-        <main style={{ overflow: 'auto' }} className="pt-5 pb-6 px-7" >
+        <main className="pt-6 pb-8 px-12 overflow-auto" >
           <ImpactDetail r={r}/>
         </main>
       </div>
@@ -124,10 +106,7 @@ function ImpactDetail({ r }) {
     <div style={{ maxWidth: 800 }}>
       {/* Eyebrow */}
       <div style={{
- display: 'flex', alignItems: 'center',
-                     fontSize: 11, color: 'var(--ink-3)', letterSpacing: '0.12em',
-                     textTransform: 'uppercase'
-}} className="gap-3 mb-3" >
+ fontSize: 11, letterSpacing: '0.12em' }} className="gap-3 mb-3 flex items-center text-ink-3 uppercase" >
         <span className="mono" style={{ letterSpacing: 0 }}>{r.recId}</span>
         <Sep/>
         <span className="mono" style={{ letterSpacing: 0 }}>{r.project}</span>
@@ -137,38 +116,31 @@ function ImpactDetail({ r }) {
         <span>measured {r.measured}</span>
       </div>
 
-      <h2 className="display mt-0 mb-4" style={{
- fontSize: 28, fontWeight: 300,
-                                        lineHeight: 1.2, letterSpacing: '-0.015em', color: 'var(--ink)'
-}}>
+      <h2 className="display mt-0 mb-4 font-light text-ink" style={{
+ fontSize: 28,
+ lineHeight: 1.2, letterSpacing: '-0.015em' }}>
         {r.title}
       </h2>
 
       {/* Verdict pill + window */}
-      <div style={{
- display: 'flex', alignItems: 'center'
-}} className="gap-3 mb-5" >
+      <div className="gap-3 mb-6 flex items-center" >
         <div style={{
- display: 'inline-flex', alignItems: 'center',
-                       background: `color-mix(in oklab, ${vm.color}, transparent 85%)`,
-                       borderRadius: 18,
-                       border: `1px solid color-mix(in oklab, ${vm.color}, transparent 70%)`
-}} className="gap-2 py-1 px-3" >
+ background: `color-mix(in oklab, ${vm.color}, transparent 85%)`,
+ borderRadius: 18,
+ border: `1px solid color-mix(in oklab, ${vm.color}, transparent 70%)`
+ }} className="gap-2 py-1 px-3 inline-flex items-center" >
           <span className="kanji" style={{ fontSize: 13, color: vm.color }}>{vm.glyph}</span>
-          <span style={{ fontSize: 11, color: vm.color,
-                          letterSpacing: '0.14em', textTransform: 'uppercase',
-                          fontWeight: 500 }}>{vm.label}</span>
+          <span className="uppercase font-medium" style={{ fontSize: 11, color: vm.color,
+ letterSpacing: '0.14em' }}>{vm.label}</span>
         </div>
-        <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+        <span className="mono text-ink-3" style={{ fontSize: 11 }}>
           {r.window}
         </span>
       </div>
 
       {/* Before / after metric grid */}
-      <div style={{
- display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', background: 'var(--edge)',
-                     borderRadius: 6, overflow: 'hidden'
-}} className="gap-1 mb-5" >
+      <div style={{ gridTemplateColumns: 'repeat(4, 1fr)', background: 'var(--edge)',
+ borderRadius: 6 }} className="gap-1 mb-6 grid overflow-hidden" >
         <BeforeAfter label="First-Try-Right"
                      before={`${Math.round(r.baselineFtr*100)}%`}
                      after={`${Math.round(r.currentFtr*100)}%`}
@@ -194,24 +166,18 @@ function ImpactDetail({ r }) {
 
       {/* Tool usage detail */}
       {Object.keys(r.toolUsageDelta).length > 0 && (
-        <div className="mb-5" >
+        <div className="mb-6" >
           <div style={{
- fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
-                         textTransform: 'uppercase'
-}} className="mb-2" >Tool usage delta</div>
-          <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
+ fontSize: 11, letterSpacing: '0.14em' }} className="mb-2 text-ink-3 uppercase" >Tool usage delta</div>
+          <div className="gap-1 flex flex-col" >
             {Object.entries(r.toolUsageDelta).map(([tool, d]) => (
-              <div key={tool} style={{
- display: 'flex', alignItems: 'center',
-                                        background: 'var(--paper-2)',
-                                        border: 'var(--hairline)', borderRadius: 4
-}} className="gap-2 py-1 px-2" >
-                <span className="mono" style={{ fontSize: 11, color: 'var(--ink)',
-                              flex: 1 }}>{tool}</span>
+              <div key={tool} style={{ borderRadius: 4
+ }} className="gap-2 py-1 px-2 flex items-center bg-paper-2 border border-paper-edge" >
+                <span className="mono text-ink flex-1" style={{ fontSize: 11 }}>{tool}</span>
                 <ToolBar value={d}/>
-                <span className="mono" style={{ fontSize: 11,
-                              color: d >= 0 ? 'var(--success)' : 'var(--accent)',
-                              minWidth: 48, textAlign: 'right' }}>
+                <span className="mono text-right" style={{ fontSize: 11,
+ color: d >= 0 ? 'var(--success)' : 'var(--accent)',
+ minWidth: 48 }}>
                   {d >= 0 ? "+" : ""}{d}%
                 </span>
               </div>
@@ -222,47 +188,39 @@ function ImpactDetail({ r }) {
 
       {/* MOE panel */}
       <div style={{
- background: 'var(--paper-2)', border: 'var(--hairline)',
-                     borderLeft: `2px solid ${vm.color}`,
-                     borderRadius: 6
-}} className="py-4 px-5 mb-5" >
-        <div style={{ display: 'flex', alignItems: 'center' }} className="gap-2 mb-2" >
-          <span className="kanji" style={{ fontSize: 13, color: 'var(--accent)' }}>議</span>
-          <span style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
-                          textTransform: 'uppercase' }}>MOE panel reasoning</span>
-          <span style={{ flex: 1 }}/>
-          <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+ borderLeft: `2px solid ${vm.color}`,
+ borderRadius: 6
+ }} className="py-4 px-6 mb-6 bg-paper-2 border border-paper-edge" >
+        <div className="gap-2 mb-2 flex items-center" >
+          <span className="kanji text-accent" style={{ fontSize: 13 }}>議</span>
+          <span className="text-ink-3 uppercase" style={{ fontSize: 11, letterSpacing: '0.14em' }}>MOE panel reasoning</span>
+          <span className="flex-1" />
+          <span className="mono text-ink-3" style={{ fontSize: 11 }}>
             {r.moeReasoning.consensus}
           </span>
         </div>
         <div style={{
- fontSize: 13, color: 'var(--ink)', lineHeight: 1.5,
-                       fontWeight: 500
-}} className="mb-2" >
+ fontSize: 13, lineHeight: 1.5 }} className="mb-2 text-ink font-medium" >
           {r.moeReasoning.headline}
         </div>
         <p style={{
- fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.65
-}} className="mt-0 mb-3" >{r.moeReasoning.body}</p>
+ fontSize: 13, lineHeight: 1.65
+ }} className="mt-0 mb-3 text-ink-2" >{r.moeReasoning.body}</p>
 
         {/* Per-model votes */}
-        <div style={{
- display: 'flex', flexDirection: 'column', borderTop: 'var(--hairline)'
-}} className="gap-1 pt-3" >
+        <div className="gap-1 pt-3 flex flex-col border-t" >
           {r.moeReasoning.models.map((m, i) => {
             const mv = VERDICT_META[m.verdict];
             return (
               <div key={i} style={{
- display: 'grid',
-                                     gridTemplateColumns: '120px 14px 1fr', alignItems: 'flex-start'
-}} className="gap-2" >
-                <span className="mono" style={{ fontSize: 11, color: 'var(--ink)' }}>
+ gridTemplateColumns: '120px 14px 1fr' }} className="gap-2 grid items-start" >
+                <span className="mono text-ink" style={{ fontSize: 11 }}>
                   {m.name}
                 </span>
                 <span className="kanji mt-1" style={{
  fontSize: 13, color: mv.color
 }}>{mv.glyph}</span>
-                <span style={{ fontSize: 11, color: 'var(--ink-2)', lineHeight: 1.5 }}>
+                <span className="text-ink-2" style={{ fontSize: 11, lineHeight: 1.5 }}>
                   {m.note}
                 </span>
               </div>
@@ -271,17 +229,12 @@ function ImpactDetail({ r }) {
         </div>
 
         {r.moeReasoning.suggestedRevision && (
-          <div style={{
-                         background: 'var(--paper)', borderRadius: 4,
-                         border: 'var(--hairline)'
-}} className="mt-3 py-2 px-3" >
+          <div style={{ borderRadius: 4 }} className="mt-3 py-2 px-3 bg-paper border border-paper-edge" >
             <div style={{
- fontSize: 11, letterSpacing: '0.14em', color: 'var(--accent)',
-                           textTransform: 'uppercase'
-}} className="mb-1" >
+ fontSize: 11, letterSpacing: '0.14em' }} className="mb-1 text-accent uppercase" >
               Suggested revision
             </div>
-            <div style={{ fontSize: 13, color: 'var(--ink)', lineHeight: 1.55 }}>
+            <div className="text-ink" style={{ fontSize: 13, lineHeight: 1.55 }}>
               {r.moeReasoning.suggestedRevision}
             </div>
           </div>
@@ -289,16 +242,12 @@ function ImpactDetail({ r }) {
       </div>
 
       {/* Actions */}
-      <div style={{ display: 'flex', alignItems: 'center' }} className="gap-2 pt-1" >
+      <div className="gap-2 pt-1 flex items-center" >
         {r.verdict === "negative" ? (
           <>
             <button style={{
- fontSize: 13,
-                              background: 'var(--ink)', color: 'var(--paper)',
-                              border: 'none', borderRadius: 6, cursor: 'pointer',
-                              display: 'inline-flex', alignItems: 'center'
-}} className="py-2 px-4 gap-2" >
-              <span className="kanji" style={{ fontSize: 13, color: 'var(--accent)' }}>戻</span>
+ fontSize: 13, borderRadius: 6 }} className="py-2 px-4 gap-2 bg-ink text-paper border-0 cursor-pointer inline-flex items-center" >
+              <span className="kanji text-accent" style={{ fontSize: 13 }}>戻</span>
               Revert change
             </button>
             <FlatBtn glyph="改" label="Revise the rule"/>
@@ -307,7 +256,7 @@ function ImpactDetail({ r }) {
           <FlatBtn glyph="改" label="Revise"/>
         )}
         <FlatBtn glyph="観" label="Keep monitoring"/>
-        <span style={{ flex: 1 }}/>
+        <span className="flex-1" />
         <FlatBtn glyph="納" label="Dismiss" subtle/>
       </div>
     </div>
@@ -316,17 +265,14 @@ function ImpactDetail({ r }) {
 
 function BeforeAfter({ label, before, after, delta, positive }) {
   return (
-    <div style={{ background: 'var(--paper-2)' }} className="py-3 px-4" >
+    <div className="py-3 px-4 bg-paper-2" >
       <div style={{
- fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-4)',
-                     textTransform: 'uppercase'
-}} className="mb-2" >{label}</div>
-      <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2" >
-        <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>{before}</span>
-        {after && <span style={{ fontSize: 11, color: 'var(--ink-4)' }}>→</span>}
+ fontSize: 11, letterSpacing: '0.14em' }} className="mb-2 text-ink-4 uppercase" >{label}</div>
+      <div className="gap-2 flex items-baseline" >
+        <span className="mono text-ink-3" style={{ fontSize: 11 }}>{before}</span>
+        {after && <span className="text-ink-4" style={{ fontSize: 11 }}>→</span>}
         {after && (
-          <span className="display" style={{ fontSize: 17, fontWeight: 400,
-                        color: 'var(--ink)' }}>{after}</span>
+          <span className="display font-normal text-ink" style={{ fontSize: 17 }}>{after}</span>
         )}
       </div>
       {delta && (
@@ -361,59 +307,46 @@ function ObsNegativeAlert() {
   const r = reports.find(x => x.verdict === "negative") || reports[0];
 
   return (
-    <div className="sensei" data-screen-label="Observatory · Negative impact alert"
-         style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column',
-                  background: 'var(--paper)', overflow: 'hidden' }}>
+    <div className="sensei w-full h-full flex flex-col bg-paper overflow-hidden" data-screen-label="Observatory · Negative impact alert"
+ >
 
       {/* The alert banner */}
-      <div style={{
- background: 'var(--accent)',
-                     display: 'flex', alignItems: 'center',
-                     color: 'var(--paper)'
-}} className="py-3 px-6 gap-3" >
+      <div className="py-3 px-8 gap-3 bg-accent flex items-center text-paper" >
         <span className="kanji" style={{ fontSize: 22 }}>警</span>
-        <div style={{ flex: 1 }}>
-          <div style={{ fontSize: 11, letterSpacing: '0.18em', textTransform: 'uppercase',
-                         opacity: 0.8 }}>regression detected</div>
-          <div style={{ fontSize: 13, fontWeight: 500 }}>
+        <div className="flex-1" >
+          <div className="uppercase" style={{ fontSize: 11, letterSpacing: '0.18em',
+ opacity: 0.8 }}>regression detected</div>
+          <div className="font-medium" style={{ fontSize: 13 }}>
             A change you accepted on {r.acted} is hurting your FTR.
             Sensei surfaced this for review.
           </div>
         </div>
         <button style={{
- fontSize: 11, color: 'var(--paper)',
-                          background: 'var(--on-primary-faint)', border: 'none', borderRadius: 4, cursor: 'pointer'
-}} className="py-1 px-3" >
+ fontSize: 11, borderRadius: 4 }} className="py-1 px-3 text-paper bg-on-primary-faint border-0 cursor-pointer" >
           dismiss
         </button>
       </div>
 
       <div style={{
- flex: 1, overflow: 'auto',
-                     maxWidth: 920, width: '100%'
-}} className="py-6 px-8 mx-auto" >
+ maxWidth: 920 }} className="py-8 px-16 mx-auto flex-1 overflow-auto w-full" >
 
         {/* Headline */}
         <div style={{
- fontSize: 11, color: 'var(--accent)', letterSpacing: '0.14em',
-                       textTransform: 'uppercase', fontWeight: 500
-}} className="mb-2" >
+ fontSize: 11, letterSpacing: '0.14em' }} className="mb-2 text-accent uppercase font-medium" >
           Negative impact · {r.window}
         </div>
-        <h1 className="display mt-0 mb-3" style={{
- fontSize: 28, fontWeight: 300, lineHeight: 1.2,
-                                          letterSpacing: '-0.015em', color: 'var(--ink)'
-}}>
+        <h1 className="display mt-0 mb-3 font-light text-ink" style={{
+ fontSize: 28, lineHeight: 1.2,
+ letterSpacing: '-0.015em' }}>
           {r.title}
         </h1>
-        <p style={{ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.65 }} className="mt-0 mb-5" >
+        <p style={{ fontSize: 13, lineHeight: 1.65 }} className="mt-0 mb-6 text-ink-2" >
           {r.moeReasoning.headline}
         </p>
 
         {/* The two big deltas */}
-        <div style={{
- display: 'grid', gridTemplateColumns: '1fr 1fr'
-}} className="gap-3 mb-5" >
+        <div style={{ gridTemplateColumns: '1fr 1fr'
+ }} className="gap-3 mb-6 grid" >
           <DeltaCard label="First-Try-Right"
                      before={`${Math.round(r.baselineFtr*100)}%`}
                      after={`${Math.round(r.currentFtr*100)}%`}
@@ -428,36 +361,30 @@ function ObsNegativeAlert() {
 
         {/* Why — MOE reasoning */}
         <div style={{
- background: 'var(--paper-2)', border: 'var(--hairline)',
-                       borderRadius: 6
-}} className="py-4 px-5 mb-5" >
-          <div style={{ display: 'flex', alignItems: 'center' }} className="gap-2 mb-3" >
-            <span className="kanji" style={{ fontSize: 13, color: 'var(--accent)' }}>議</span>
-            <span style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
-                            textTransform: 'uppercase' }}>Why · MOE panel</span>
-            <span style={{ flex: 1 }}/>
-            <span className="mono" style={{ fontSize: 11, color: 'var(--accent)' }}>
+ borderRadius: 6
+ }} className="py-4 px-6 mb-6 bg-paper-2 border border-paper-edge" >
+          <div className="gap-2 mb-3 flex items-center" >
+            <span className="kanji text-accent" style={{ fontSize: 13 }}>議</span>
+            <span className="text-ink-3 uppercase" style={{ fontSize: 11, letterSpacing: '0.14em' }}>Why · MOE panel</span>
+            <span className="flex-1" />
+            <span className="mono text-accent" style={{ fontSize: 11 }}>
               {r.moeReasoning.consensus}
             </span>
           </div>
           <p style={{
- fontSize: 13, color: 'var(--ink)', lineHeight: 1.7
-}} className="mt-0 mb-4" >{r.moeReasoning.body}</p>
-          <div style={{
- display: 'flex', flexDirection: 'column', borderTop: 'var(--hairline)'
-}} className="gap-2 pt-3" >
+ fontSize: 13, lineHeight: 1.7
+ }} className="mt-0 mb-4 text-ink" >{r.moeReasoning.body}</p>
+          <div className="gap-2 pt-3 flex flex-col border-t" >
             {r.moeReasoning.models.map((m, i) => {
               const mv = VERDICT_META[m.verdict];
               return (
                 <div key={i} style={{
- display: 'grid',
-                                       gridTemplateColumns: '130px 14px 1fr', alignItems: 'flex-start'
-}} className="gap-3" >
-                  <span className="mono" style={{ fontSize: 11, color: 'var(--ink)' }}>
+ gridTemplateColumns: '130px 14px 1fr' }} className="gap-3 grid items-start" >
+                  <span className="mono text-ink" style={{ fontSize: 11 }}>
                     {m.name}
                   </span>
                   <span className="kanji" style={{ fontSize: 13, color: mv.color }}>{mv.glyph}</span>
-                  <span style={{ fontSize: 11, color: 'var(--ink-2)', lineHeight: 1.55 }}>
+                  <span className="text-ink-2" style={{ fontSize: 11, lineHeight: 1.55 }}>
                     {m.note}
                   </span>
                 </div>
@@ -468,45 +395,35 @@ function ObsNegativeAlert() {
 
         {/* Suggested revision */}
         {r.moeReasoning.suggestedRevision && (
-          <div style={{
- background: 'var(--paper)', border: '1px solid var(--accent)',
-                         borderRadius: 6
-}} className="py-4 px-4 mb-5" >
-            <div style={{ display: 'flex', alignItems: 'center' }} className="gap-2 mb-2" >
-              <span className="kanji" style={{ fontSize: 13, color: 'var(--accent)' }}>改</span>
-              <span style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--accent)',
-                              textTransform: 'uppercase', fontWeight: 500 }}>
+          <div style={{ border: '1px solid var(--accent)',
+ borderRadius: 6
+ }} className="py-4 px-4 mb-6 bg-paper" >
+            <div className="gap-2 mb-2 flex items-center" >
+              <span className="kanji text-accent" style={{ fontSize: 13 }}>改</span>
+              <span className="text-accent uppercase font-medium" style={{ fontSize: 11, letterSpacing: '0.14em' }}>
                 Recommended fix
               </span>
             </div>
-            <div style={{ fontSize: 13, color: 'var(--ink)', lineHeight: 1.6 }}>
+            <div className="text-ink" style={{ fontSize: 13, lineHeight: 1.6 }}>
               {r.moeReasoning.suggestedRevision}
             </div>
           </div>
         )}
 
         {/* Actions */}
-        <div style={{ display: 'flex', alignItems: 'center' }} className="gap-2" >
+        <div className="gap-2 flex items-center" >
           <button style={{
- fontSize: 13,
-                            background: 'var(--ink)', color: 'var(--paper)',
-                            border: 'none', borderRadius: 6, cursor: 'pointer',
-                            display: 'inline-flex', alignItems: 'center'
-}} className="py-2 px-4 gap-2" >
-            <span className="kanji" style={{ fontSize: 13, color: 'var(--accent)' }}>戻</span>
+ fontSize: 13, borderRadius: 6 }} className="py-2 px-4 gap-2 bg-ink text-paper border-0 cursor-pointer inline-flex items-center" >
+            <span className="kanji text-accent" style={{ fontSize: 13 }}>戻</span>
             Revert change
           </button>
           <button style={{
- fontSize: 13,
-                            background: 'var(--paper-2)', color: 'var(--ink)',
-                            border: 'var(--hairline)', borderRadius: 6, cursor: 'pointer',
-                            display: 'inline-flex', alignItems: 'center'
-}} className="py-2 px-4 gap-2" >
-            <span className="kanji" style={{ fontSize: 13, color: 'var(--accent)' }}>改</span>
+ fontSize: 13, borderRadius: 6 }} className="py-2 px-4 gap-2 bg-paper-2 text-ink border border-paper-edge cursor-pointer inline-flex items-center" >
+            <span className="kanji text-accent" style={{ fontSize: 13 }}>改</span>
             Revise the rule
           </button>
           <FlatBtn glyph="観" label="Keep monitoring"/>
-          <span style={{ flex: 1 }}/>
+          <span className="flex-1" />
           <FlatBtn glyph="納" label="Dismiss" subtle/>
         </div>
       </div>
@@ -517,26 +434,20 @@ function ObsNegativeAlert() {
 function DeltaCard({ label, before, after, delta, dir, bad }) {
   return (
     <div style={{
- background: 'var(--paper-2)', border: 'var(--hairline)',
-                   borderRadius: 6
-}} className="py-4 px-5" >
+ borderRadius: 6
+ }} className="py-4 px-6 bg-paper-2 border border-paper-edge" >
       <div style={{
- fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
-                     textTransform: 'uppercase'
-}} className="mb-3" >{label}</div>
-      <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-3" >
-        <span className="display" style={{ fontSize: 28, fontWeight: 300, color: 'var(--ink-3)',
-                      lineHeight: 1 }}>{before}</span>
-        <span style={{ fontSize: 13, color: 'var(--ink-4)' }}>→</span>
-        <span className="display" style={{ fontSize: 40, fontWeight: 300,
-                      color: bad ? 'var(--accent)' : 'var(--success)',
-                      lineHeight: 1 }}>{after}</span>
-        <span style={{ flex: 1 }}/>
+ fontSize: 11, letterSpacing: '0.14em' }} className="mb-3 text-ink-3 uppercase" >{label}</div>
+      <div className="gap-3 flex items-baseline" >
+        <span className="display font-light text-ink-3" style={{ fontSize: 28,
+ lineHeight: 1 }}>{before}</span>
+        <span className="text-ink-4" style={{ fontSize: 13 }}>→</span>
+        <span className="display font-light" style={{ fontSize: 40,
+ color: bad ? 'var(--accent)' : 'var(--success)',
+ lineHeight: 1 }}>{after}</span>
+        <span className="flex-1" />
         <div style={{
- display: 'inline-flex', alignItems: 'center',
-                       fontSize: 13, color: bad ? 'var(--accent)' : 'var(--success)',
-                       fontWeight: 500
-}} className="gap-1" >
+ fontSize: 13, color: bad ? 'var(--accent)' : 'var(--success)' }} className="gap-1 inline-flex items-center font-medium" >
           <span style={{ fontSize: 13 }}>{dir === "down" ? "↓" : "↑"}</span>
           <span className="mono">{delta}</span>
         </div>

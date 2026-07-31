@@ -194,7 +194,7 @@ function Kanji({ size = 'base', color = 'var(--accent)', children, className = '
 function KanjiHeader({ variant = 'h1', kanji, eyebrow, title, description, right,
                        accent = 'var(--accent)', className = '', style }) {
   const spec = {
-    h1: { k: '3xl', t: 28, w: 400, mb: 4, g: 'gap-5' },
+    h1: { k: '3xl', t: 28, w: 400, mb: 4, g: 'gap-6' },
     h2: { k: '2xl', t: 17, w: 400, mb: 4, g: 'gap-4' },
     h3: { k: 'xl',  t: 15, w: 400, mb: 4, g: 'gap-3' },
   }[variant] || { k: '2xl', t: 17, w: 400, mb: 4, g: 'gap-4' };
@@ -238,7 +238,7 @@ function ScreenHeader({ kanji, eyebrow, title, sub, right, below,
     <div style={{ borderBottom: 'var(--hairline)', display: 'flex',
                   alignItems: 'center', background: 'var(--paper)',
                   flexShrink: 0, ...style }}
-         className={'gap-5 pt-5 pb-4 px-7 ' + className}>
+         className={'gap-6 pt-6 pb-4 px-12 ' + className}>
       {kanji && (
         <span className="kanji" style={{ fontSize: 40, color: accent,
                       lineHeight: 1, flexShrink: 0 }}>{kanji}</span>

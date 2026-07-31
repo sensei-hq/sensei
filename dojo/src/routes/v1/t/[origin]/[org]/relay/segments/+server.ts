@@ -5,7 +5,7 @@
 // touched by the daemon publish. See docs/plan/relay-engine.md §6.
 import type { RequestHandler } from './$types';
 import { dojoDb } from '$lib/server/dojo-supabase';
-import { resolveApiKeyAccess, resolveTenantAccess, apiError, ACCESS } from '$lib/server/dojo-auth';
+import { resolveApiKeyAccess, resolveTenantAccess, membershipIdsForTenant, apiError, ACCESS } from '$lib/server/dojo-auth';
 
 const COLS =
 	'id, session_id, parent_id, seq, title, summary, detail, agent, model, spec_ref, state, is_gate, gate_severity, response_verdict, response_note, submitted_at';
@@ -26,7 +26,7 @@ export const POST: RequestHandler = async ({ params, request }) => {
 		const { data: sess, error: sErr } = await db
 			.from('relay_sessions')
 			.select('id')
-			.eq('tenant_id', caller.tenantId)
+			.eq('membership_id', caller.membershipId)
 			.eq('run_id', runId)
 			.maybeSingle();
 		if (sErr) return apiError(500, sErr.message);
@@ -93,10 +93,11 @@ export const GET: RequestHandler = async ({ params, request, locals, url }) => {
 		const runId = url.searchParams.get('run_id');
 		if (!runId) return apiError(400, 'run_id query param is required');
 		const db = dojoDb();
+		const membershipIds = await membershipIdsForTenant(db, tenantId);
 		const { data: sess, error: sErr } = await db
 			.from('relay_sessions')
 			.select('id')
-			.eq('tenant_id', tenantId)
+			.in('membership_id', membershipIds)
 			.eq('run_id', runId)
 			.maybeSingle();
 		// Fail CLOSED on a lookup error; only a genuine miss (no session published

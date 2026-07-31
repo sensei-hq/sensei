@@ -20,7 +20,8 @@ const NOW = new Date('2026-07-23T12:00:00Z');
 
 const wireEngagement: Engagement = {
 	id: 'e1',
-	client: 'Globex',
+	client_name: 'Globex',
+	client_tenant_id: null,
 	description: null,
 	project_bindings: [{ project_id: 'p1', name: 'globex-portal' }],
 	policy_overrides: {},
@@ -28,7 +29,9 @@ const wireEngagement: Engagement = {
 	starts_on: '2026-07-16',
 	ends_on: null,
 	created_at: '2026-01-01T00:00:00Z',
-	updated_at: '2026-07-01T00:00:00Z'
+	updated_at: '2026-07-01T00:00:00Z',
+	lessons_kept: 0,
+	stripped: 0
 };
 
 const wireOrg: DojoOrg = {
@@ -56,6 +59,23 @@ describe('ScrEngagements — wired engagements', () => {
 		expect(getByText(/globex-portal/)).toBeTruthy();
 		// the confidentiality panel (still fixture-backed) renders alongside.
 		expect(getByText('What crosses the boundary')).toBeTruthy();
+	});
+
+	it('renders the real per-engagement kept/stripped counts (was hardcoded 0)', () => {
+		const engagements = toKitEngagements([{ ...wireEngagement, lessons_kept: 86, stripped: 214 }], NOW);
+		const { getByText } = render(ScrEngagements, {
+			props: { orgName: 'Acme Corp', engagements, confidentiality: confidentialityFor('acme') }
+		});
+		expect(getByText('86')).toBeTruthy(); // lessons kept (published)
+		expect(getByText('214')).toBeTruthy(); // stripped (archived)
+	});
+
+	it('matches the rendered engagements register snapshot', () => {
+		const engagements = toKitEngagements([{ ...wireEngagement, lessons_kept: 86, stripped: 214 }], NOW);
+		const { container } = render(ScrEngagements, {
+			props: { orgName: 'Acme Corp', engagements, confidentiality: confidentialityFor('acme') }
+		});
+		expect(container).toMatchSnapshot();
 	});
 
 	it('renders an empty register (count 0) when the client returns none', () => {

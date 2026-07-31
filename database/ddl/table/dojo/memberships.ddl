@@ -4,7 +4,6 @@ create table if not exists dojo.memberships (
   id                   uuid                  primary key default gen_random_uuid()
 , tenant_id            uuid                  not null references dojo.tenants(id)
 , user_id              uuid                  not null
-, dojo_url             text                  not null
 , role                 dojo.member_role      not null default 'contributor'
 , kind                 dojo.membership_kind  not null
 , org_slugs            text[]                not null default '{}'

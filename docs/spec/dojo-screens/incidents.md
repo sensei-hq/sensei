@@ -50,6 +50,13 @@
 - Are retention + client read-access real per-tenant policy values (surface from `dojo.policies`/`policy_overrides`) or fixed display copy?
 - SLA breach alerting — in scope here, or a separate Health/monitor concern?
 
+### Resolved design (2026-07-30)
+- **Q1 client name → join `engagement_id → dojo.engagements.client_name`** (Rule C, agreed); short-id/`'—'` until `client_name` lands.
+- **Q2 detail view → IN SCOPE:** build the incident detail pane (owner / SLA / resolution / linked artifact) via a detail read.
+- **Q3 retention + client read-access chips → REAL from `dojo.policies`/`policy_overrides`** (per-tenant values), not hardcoded copy.
+- **Q4 SLA-breach alerting → a HEALTH concern.** This screen shows per-incident SLA + breach state (`isSlaBreached`, already computed); proactive SLA-breach ALERTING lives on the Health alert feed.
+- **Depends on:** Rule C (`client_name`) + an incident detail read + `dojo.policies` (chips) + WS-1 (owner name).
+
 ## Components & state (three-layer, per `sensei:ui-state-pattern`)
 
 **DB** — `dojo.incidents` (tenant-scoped; cols in *Elements → data* / *APIs* above — not restated). Client name resolves via `engagement_id → dojo.engagements.client_name` (depends on the Rule C column, register 1C — until it lands the row keeps the honest short-id / `'—'`). Retention + client-read-access footers come from `dojo.policies`/`policy_overrides`, not literals. Tenant-scoped `tenant_id`; an incident logs that a near-leak was *held* — the underlying artifact strip is the always-on universal dereference (canon §5), never a per-incident toggle.

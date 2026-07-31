@@ -5,7 +5,7 @@
 // resolve run_id → session under the caller's tenant first). See relay-engine §6.
 import type { RequestHandler } from './$types';
 import { dojoDb } from '$lib/server/dojo-supabase';
-import { resolveTenantAccess, apiError, ACCESS } from '$lib/server/dojo-auth';
+import { resolveTenantAccess, membershipIdsForTenant, apiError, ACCESS } from '$lib/server/dojo-auth';
 
 export const POST: RequestHandler = async ({ params, request, locals }) => {
 	try {
@@ -15,10 +15,11 @@ export const POST: RequestHandler = async ({ params, request, locals }) => {
 		const reviews = Array.isArray(body.reviews) ? (body.reviews as Record<string, unknown>[]) : null;
 		if (!runId || !reviews) return apiError(400, 'run_id and reviews are required');
 		const db = dojoDb();
+		const membershipIds = await membershipIdsForTenant(db, tenantId);
 		const { data: sess, error: sErr } = await db
 			.from('relay_sessions')
 			.select('id')
-			.eq('tenant_id', tenantId)
+			.in('membership_id', membershipIds)
 			.eq('run_id', runId)
 			.maybeSingle();
 		if (sErr) return apiError(500, sErr.message);

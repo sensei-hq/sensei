@@ -39,28 +39,23 @@ function ProjectPageTopTabs({ embedded = false, onBack, projectId } = {}) {
   const { drawer, openAction, close } = useActionDrawer();
 
   return (
-    <div className="sensei" data-screen-label="Project · Top tabs"
-         style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column',
-                  background: 'var(--paper)', overflow: 'hidden', position: 'relative' }}>
+    <div className="sensei w-full h-full flex flex-col bg-paper overflow-hidden relative" data-screen-label="Project · Top tabs"
+ >
       {!embedded && <TauriChrome title={`Sensei  先生  ·  ${project.name}`}/>}
       <ProjHeader project={project} onBack={onBack || (() => {})} showBack={!!embedded && !!onBack}/>
 
       {/* Tab bar */}
-      <div style={{
- borderBottom: 'var(--hairline)',
-                    display: 'flex', background: 'var(--paper)'
-}} className="gap-1 px-7" >
+      <div className="gap-1 px-12 border-b flex bg-paper" >
         {PROJ_SECTIONS.map(s => {
           const on = sec === s.id;
           return (
             <button key={s.id} onClick={() => setSec(s.id)}
-                    style={{
+ style={{
  fontSize: 13,
-                      display: 'inline-flex', alignItems: 'center',
-                      borderBottom: on ? '2px solid var(--accent)' : '2px solid transparent',
-                      color: on ? 'var(--ink)' : 'var(--ink-3)',
-                      marginBottom: -1
-}} className="gap-2 py-3 px-4" >
+ borderBottom: on ? '2px solid var(--accent)' : '2px solid transparent',
+ color: on ? 'var(--ink)' : 'var(--ink-3)',
+ marginBottom: -1
+ }} className="gap-2 py-3 px-4 inline-flex items-center" >
               <span className="kanji" style={{ fontSize: 13,
                             color: on ? 'var(--accent)' : 'var(--ink-4)' }}>{s.kanji}</span>
               {s.label}
@@ -69,7 +64,7 @@ function ProjectPageTopTabs({ embedded = false, onBack, projectId } = {}) {
         })}
       </div>
 
-      <main style={{ flex: 1, overflow: 'auto' }}>
+      <main className="flex-1 overflow-auto" >
         {renderSection(sec, project, openAction)}
       </main>
 
@@ -87,34 +82,25 @@ function ProjectPageLeftRail() {
   const { drawer, openAction, close } = useActionDrawer();
 
   return (
-    <div className="sensei" data-screen-label="Project · Left rail"
-         style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column',
-                  background: 'var(--paper)', overflow: 'hidden', position: 'relative' }}>
+    <div className="sensei w-full h-full flex flex-col bg-paper overflow-hidden relative" data-screen-label="Project · Left rail"
+ >
       <TauriChrome title={`Sensei  先生  ·  ${project.name}`}/>
       <ProjHeader project={project} onBack={() => {}}/>
 
-      <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '180px 1fr', minHeight: 0 }}>
-        <aside style={{
- borderRight: 'var(--hairline)',
-                         background: 'var(--paper-2)', display: 'flex', flexDirection: 'column'
-}} className="py-5 px-3 gap-1" >
+      <div className="flex-1 grid min-h-0" style={{ gridTemplateColumns: '180px 1fr' }}>
+        <aside className="py-6 px-3 gap-1 border-r bg-paper-2 flex flex-col" >
           <div style={{
- fontSize: 11, letterSpacing: '0.16em', color: 'var(--ink-3)',
-                         textTransform: 'uppercase'
-}} className="pt-0 pb-2 px-2" >
+ fontSize: 11, letterSpacing: '0.16em' }} className="pt-0 pb-2 px-2 text-ink-3 uppercase" >
             This project
           </div>
           {PROJ_SECTIONS.map(s => {
             const on = sec === s.id;
             return (
               <button key={s.id} onClick={() => setSec(s.id)}
-                      style={{
-                        display: 'grid', gridTemplateColumns: 'auto 1fr',
-                        alignItems: 'center', borderRadius: 5,
-                        textAlign: 'left',
-                        background: on ? 'var(--paper)' : 'transparent',
-                        color: on ? 'var(--ink)' : 'var(--ink-2)', fontSize: 13
-}} className="gap-2 py-2 px-2" >
+ style={{ gridTemplateColumns: 'auto 1fr', borderRadius: 5,
+ background: on ? 'var(--paper)' : 'transparent',
+ color: on ? 'var(--ink)' : 'var(--ink-2)', fontSize: 13
+ }} className="gap-2 py-2 px-2 grid items-center text-left" >
                 <span className="kanji" style={{ fontSize: 13, width: 14,
                               color: on ? 'var(--accent)' : 'var(--ink-3)' }}>{s.kanji}</span>
                 <span>{s.label}</span>
@@ -123,24 +109,16 @@ function ProjectPageLeftRail() {
           })}
           <div style={{ height: 12 }}/>
           <div style={{
- fontSize: 11, letterSpacing: '0.16em', color: 'var(--ink-3)',
-                         textTransform: 'uppercase'
-}} className="pt-0 pb-2 px-2" >Quick</div>
+ fontSize: 11, letterSpacing: '0.16em' }} className="pt-0 pb-2 px-2 text-ink-3 uppercase" >Quick</div>
           <button style={{
- fontSize: 13, textAlign: 'left',
-                            color: 'var(--ink-2)'
-}} className="py-2 px-2" >◌ open in terminal</button>
+ fontSize: 13 }} className="py-2 px-2 text-left text-ink-2" >◌ open in terminal</button>
           <button style={{
- fontSize: 13, textAlign: 'left',
-                            color: 'var(--ink-2)'
-}} className="py-2 px-2" >◌ start session</button>
+ fontSize: 13 }} className="py-2 px-2 text-left text-ink-2" >◌ start session</button>
           <button style={{
- fontSize: 13, textAlign: 'left',
-                            color: 'var(--ink-2)'
-}} className="py-2 px-2" >◌ scan now</button>
+ fontSize: 13 }} className="py-2 px-2 text-left text-ink-2" >◌ scan now</button>
         </aside>
 
-        <main style={{ overflow: 'auto' }}>
+        <main className="overflow-auto" >
           {renderSection(sec, project, openAction)}
         </main>
       </div>
@@ -181,25 +159,23 @@ function ProjectPageLongScroll() {
   };
 
   return (
-    <div className="sensei" data-screen-label="Project · Long scroll"
-         style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column',
-                  background: 'var(--paper)', overflow: 'hidden', position: 'relative' }}>
+    <div className="sensei w-full h-full flex flex-col bg-paper overflow-hidden relative" data-screen-label="Project · Long scroll"
+ >
       <TauriChrome title={`Sensei  先生  ·  ${project.name}`}/>
       <ProjHeader project={project} onBack={() => {}}/>
 
-      <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '1fr 180px', minHeight: 0 }}>
-        <main ref={scrollRef} style={{ overflow: 'auto', scrollBehavior: 'smooth' }}>
+      <div className="flex-1 grid min-h-0" style={{ gridTemplateColumns: '1fr 180px' }}>
+        <main className="overflow-auto" ref={scrollRef} style={{ scrollBehavior: 'smooth' }}>
           {PROJ_SECTIONS.map(s => (
             <section key={s.id} ref={refs[s.id]}>
               <div style={{
-                             display: 'flex', alignItems: 'baseline',
-                             borderTop: s.id !== "overview" ? 'var(--hairline)' : 'none',
-                             marginTop: s.id !== "overview" ? 6 : 0
-}} className="gap-3 pt-6 pb-0 px-7" >
-                <span className="kanji" style={{ fontSize: 22, color: 'var(--accent)' }}>{s.kanji}</span>
-                <h2 className="display m-0" style={{
- fontSize: 22, fontWeight: 400, letterSpacing: '-0.01em'
-}}>{s.label}</h2>
+ borderTop: s.id !== "overview" ? 'var(--hairline)' : 'none',
+ marginTop: s.id !== "overview" ? 6 : 0
+ }} className="gap-3 pt-8 pb-0 px-12 flex items-baseline" >
+                <span className="kanji text-accent" style={{ fontSize: 22 }}>{s.kanji}</span>
+                <h2 className="display m-0 font-normal" style={{
+ fontSize: 22, letterSpacing: '-0.01em'
+ }}>{s.label}</h2>
               </div>
               {renderSection(s.id, project, openAction)}
             </section>
@@ -207,26 +183,19 @@ function ProjectPageLongScroll() {
           <div style={{ height: 60 }}/>
         </main>
 
-        <aside style={{
- borderLeft: 'var(--hairline)',
-                         background: 'var(--paper-2)',
-                         display: 'flex', flexDirection: 'column',
-                         position: 'sticky', top: 0, alignSelf: 'start'
-}} className="py-5 px-4 gap-1" >
+        <aside style={{ top: 0, alignSelf: 'start'
+ }} className="py-6 px-4 gap-1 border-l bg-paper-2 flex flex-col sticky" >
           <div style={{
- fontSize: 11, letterSpacing: '0.16em', color: 'var(--ink-3)',
-                         textTransform: 'uppercase'
-}} className="pt-0 pb-3 px-2" >On this page</div>
+ fontSize: 11, letterSpacing: '0.16em' }} className="pt-0 pb-3 px-2 text-ink-3 uppercase" >On this page</div>
           {PROJ_SECTIONS.map(s => {
             const on = active === s.id;
             return (
               <button key={s.id} onClick={() => goto(s.id)}
-                      style={{
- fontSize: 13, textAlign: 'left',
-                        display: 'grid', gridTemplateColumns: 'auto 1fr', alignItems: 'center',
-                        color: on ? 'var(--ink)' : 'var(--ink-3)',
-                        borderLeft: on ? '2px solid var(--accent)' : '2px solid transparent'
-}} className="py-2 px-2 gap-2 pl-3" >
+ style={{
+ fontSize: 13, gridTemplateColumns: 'auto 1fr',
+ color: on ? 'var(--ink)' : 'var(--ink-3)',
+ borderLeft: on ? '2px solid var(--accent)' : '2px solid transparent'
+ }} className="py-2 px-2 gap-2 pl-3 text-left grid items-center" >
                 <span className="kanji" style={{ fontSize: 13, width: 12,
                               color: on ? 'var(--accent)' : 'var(--ink-4)' }}>{s.kanji}</span>
                 <span>{s.label}</span>
@@ -283,9 +252,8 @@ function ProjectPageSidebar({ initialSection = "overview", embedded = false, onB
   };
 
   return (
-    <div className="sensei" data-screen-label="Project · Sidebar"
-         style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column',
-                  background: 'var(--paper)', overflow: 'hidden', position: 'relative' }}>
+    <div className="sensei w-full h-full flex flex-col bg-paper overflow-hidden relative" data-screen-label="Project · Sidebar"
+ >
       {!embedded && (
         <PerspectiveChrome
           title={`先生  ·  ${project.name}`}
@@ -293,12 +261,12 @@ function ProjectPageSidebar({ initialSection = "overview", embedded = false, onB
           accent="var(--accent)"/>
       )}
 
-      <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '220px 1fr', minHeight: 0 }}>
+      <div className="flex-1 grid min-h-0" style={{ gridTemplateColumns: '220px 1fr' }}>
         {/* The same sidebar used in the perspective-split — drives section selection */}
         <ProjectSidebarRouted project={project} active={sec} onChange={setSec}
                               onSwitchProject={onSwitchProject}/>
 
-        <main style={{ overflow: 'auto', position: 'relative' }}>
+        <main className="overflow-auto relative" >
           {renderProjectSection(sec)}
         </main>
       </div>
@@ -314,32 +282,24 @@ function ProjectSidebarRouted({ project, active, onChange, onSwitchProject }) {
   // The sidebar sections list is defined in perspective-split.jsx as
   // PROJ_SIDEBAR_SECTIONS; we re-render it here with click-handlers wired.
   return (
-    <aside style={{
- borderRight: 'var(--hairline)',
-                     background: 'var(--paper-2)',
-                     display: 'flex', flexDirection: 'column',
-                     overflow: 'auto', height: '100%', boxSizing: 'border-box'
-}} className="py-5 px-3 gap-4" >
+    <aside style={{ boxSizing: 'border-box'
+ }} className="py-6 px-3 gap-4 border-r bg-paper-2 flex flex-col overflow-auto h-full" >
       <div className="px-1" >
         <KanjiHeader variant="h2" kanji={project.kanji} eyebrow="Project" title={project.name}/>
-        <div className="mono mt-2" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+        <div className="mono mt-2 text-ink-3" style={{ fontSize: 11 }}>
           {project.client || "lumen-systems"}
         </div>
         <button onClick={onSwitchProject}
-                style={{
- fontSize: 11, color: 'var(--ink-3)', border: 'var(--hairline)', borderRadius: 4,
-                          background: 'transparent', cursor: 'pointer'
-}} className="mt-2 py-1 px-2" >
+ style={{
+ fontSize: 11, borderRadius: 4 }} className="mt-2 py-1 px-2 text-ink-3 border border-paper-edge bg-transparent cursor-pointer" >
           ⇆ switch project
         </button>
       </div>
 
       <div>
         <div style={{
- fontSize: 11, letterSpacing: '0.16em', color: 'var(--ink-3)',
-                       textTransform: 'uppercase'
-}} className="pt-0 pb-2 px-2" >This project</div>
-        <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
+ fontSize: 11, letterSpacing: '0.16em' }} className="pt-0 pb-2 px-2 text-ink-3 uppercase" >This project</div>
+        <div className="gap-1 flex flex-col" >
           {[
             { id: "overview",     kanji: "全", label: "Overview"    },
             { id: "sessions",     kanji: "録", label: "Sessions",     badge: "28" },
@@ -352,18 +312,15 @@ function ProjectSidebarRouted({ project, active, onChange, onSwitchProject }) {
             { id: "about",        kanji: "識", label: "About"      },
           ].map(s => (
             <button key={s.id} onClick={() => onChange(s.id)}
-                    style={{
-                      display: 'grid', gridTemplateColumns: 'auto 1fr auto',
-                      alignItems: 'center', width: '100%', borderRadius: 6, textAlign: 'left',
-                      background: s.id === active ? 'var(--paper-3)' : 'transparent',
-                      color: s.id === active ? 'var(--ink)' : 'var(--ink-2)',
-                      fontSize: 13, cursor: 'pointer', border: 'none'
-}} className="gap-2 py-2 px-2" >
+ style={{ gridTemplateColumns: 'auto 1fr auto', borderRadius: 6,
+ background: s.id === active ? 'var(--paper-3)' : 'transparent',
+ color: s.id === active ? 'var(--ink)' : 'var(--ink-2)',
+ fontSize: 13 }} className="gap-2 py-2 px-2 grid items-center w-full text-left cursor-pointer border-0" >
               <span className="kanji" style={{ fontSize: 13, width: 14,
                             color: s.id === active ? 'var(--accent)' : 'var(--ink-3)' }}>{s.kanji}</span>
               <span>{s.label}</span>
               {s.badge != null && (
-                <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>{s.badge}</span>
+                <span className="mono text-ink-3" style={{ fontSize: 11 }}>{s.badge}</span>
               )}
             </button>
           ))}
@@ -372,36 +329,31 @@ function ProjectSidebarRouted({ project, active, onChange, onSwitchProject }) {
 
       <div>
         <div style={{
- fontSize: 11, letterSpacing: '0.16em', color: 'var(--ink-3)',
-                       textTransform: 'uppercase'
-}} className="pt-0 pb-2 px-2" >Health</div>
+ fontSize: 11, letterSpacing: '0.16em' }} className="pt-0 pb-2 px-2 text-ink-3 uppercase" >Health</div>
         <div style={{
- fontSize: 11, color: 'var(--ink-3)',
-                       display: 'flex', flexDirection: 'column'
-}} className="gap-1 px-2" >
-          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+ fontSize: 11 }} className="gap-1 px-2 text-ink-3 flex flex-col" >
+          <div className="flex justify-between" >
             <span>FTR · 14d</span>
             <span className="mono" style={{ color: project.warn ? 'var(--warning)' : 'var(--ink)' }}>
               {Math.round((project.ftr || 0.78) * 100)}%
             </span>
           </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+          <div className="flex justify-between" >
             <span>Sessions · 7d</span>
-            <span className="mono" style={{ color: 'var(--ink-2)' }}>{project.sessions7d || 28}</span>
+            <span className="mono text-ink-2" >{project.sessions7d || 28}</span>
           </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+          <div className="flex justify-between" >
             <span>Drift watch</span>
-            <span className="mono" style={{ color: 'var(--warning)' }}>3 docs</span>
+            <span className="mono text-warning" >3 docs</span>
           </div>
         </div>
       </div>
 
-      <div style={{ flex: 1 }}/>
+      <div className="flex-1" />
 
       <div style={{
- borderTop: 'var(--hairline)',
-                     fontSize: 11, color: 'var(--ink-3)', lineHeight: 1.6
-}} className="pt-2 pb-0 px-2" >
+ fontSize: 11, lineHeight: 1.6
+ }} className="pt-2 pb-0 px-2 border-t text-ink-3" >
         <span className="mono">scoped to this project</span>
       </div>
     </aside>
@@ -415,26 +367,21 @@ function ProjectSidebarRouted({ project, active, onChange, onSwitchProject }) {
 function ProjectSettingsV1Page() {
   const project = window.PROJECT_DATA.projects[window.PROJECT_DATA.active];
   return (
-    <div className="sensei" data-screen-label="Project · Settings A"
-         style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column',
-                  background: 'var(--paper)', overflow: 'hidden', position: 'relative' }}>
+    <div className="sensei w-full h-full flex flex-col bg-paper overflow-hidden relative" data-screen-label="Project · Settings A"
+ >
       <TauriChrome title={`Sensei  先生  ·  ${project.name} · settings`}/>
       <ProjHeader project={project} onBack={() => {}}/>
-      <div style={{
- borderBottom: 'var(--hairline)',
-                     display: 'flex', background: 'var(--paper)'
-}} className="gap-1 px-7" >
+      <div className="gap-1 px-12 border-b flex bg-paper" >
         {PROJ_SECTIONS.map(s => {
           const on = s.id === "settings";
           return (
             <div key={s.id}
-                 style={{
+ style={{
  fontSize: 13,
-                           display: 'inline-flex', alignItems: 'center',
-                           borderBottom: on ? '2px solid var(--accent)' : '2px solid transparent',
-                           color: on ? 'var(--ink)' : 'var(--ink-3)',
-                           marginBottom: -1
-}} className="gap-2 py-3 px-4" >
+ borderBottom: on ? '2px solid var(--accent)' : '2px solid transparent',
+ color: on ? 'var(--ink)' : 'var(--ink-3)',
+ marginBottom: -1
+ }} className="gap-2 py-3 px-4 inline-flex items-center" >
               <span className="kanji" style={{ fontSize: 13,
                             color: on ? 'var(--accent)' : 'var(--ink-4)' }}>{s.kanji}</span>
               {s.label}
@@ -442,7 +389,7 @@ function ProjectSettingsV1Page() {
           );
         })}
       </div>
-      <main style={{ flex: 1, overflow: 'auto' }}>
+      <main className="flex-1 overflow-auto" >
         <ProjSettings project={project}/>
       </main>
     </div>
@@ -452,26 +399,21 @@ function ProjectSettingsV1Page() {
 function ProjectSettingsV2Page() {
   const project = window.PROJECT_DATA.projects[window.PROJECT_DATA.active];
   return (
-    <div className="sensei" data-screen-label="Project · Settings B"
-         style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column',
-                  background: 'var(--paper)', overflow: 'hidden', position: 'relative' }}>
+    <div className="sensei w-full h-full flex flex-col bg-paper overflow-hidden relative" data-screen-label="Project · Settings B"
+ >
       <TauriChrome title={`Sensei  先生  ·  ${project.name} · settings`}/>
       <ProjHeader project={project} onBack={() => {}}/>
-      <div style={{
- borderBottom: 'var(--hairline)',
-                     display: 'flex', background: 'var(--paper)'
-}} className="gap-1 px-7" >
+      <div className="gap-1 px-12 border-b flex bg-paper" >
         {PROJ_SECTIONS.map(s => {
           const on = s.id === "settings";
           return (
             <div key={s.id}
-                 style={{
+ style={{
  fontSize: 13,
-                           display: 'inline-flex', alignItems: 'center',
-                           borderBottom: on ? '2px solid var(--accent)' : '2px solid transparent',
-                           color: on ? 'var(--ink)' : 'var(--ink-3)',
-                           marginBottom: -1
-}} className="gap-2 py-3 px-4" >
+ borderBottom: on ? '2px solid var(--accent)' : '2px solid transparent',
+ color: on ? 'var(--ink)' : 'var(--ink-3)',
+ marginBottom: -1
+ }} className="gap-2 py-3 px-4 inline-flex items-center" >
               <span className="kanji" style={{ fontSize: 13,
                             color: on ? 'var(--accent)' : 'var(--ink-4)' }}>{s.kanji}</span>
               {s.label}
@@ -479,7 +421,7 @@ function ProjectSettingsV2Page() {
           );
         })}
       </div>
-      <main style={{ flex: 1, overflow: 'hidden' }}>
+      <main className="flex-1 overflow-hidden" >
         <ProjSettingsV2 project={project}/>
       </main>
     </div>

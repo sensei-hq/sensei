@@ -9,6 +9,8 @@
 // `open_count = count(resolved_at is null)`.
 
 import type { dojoDb } from './dojo-supabase';
+import { resolveDisplayNames, type ResolvedName } from './identity-resolve';
+import { resolveEngagementClientNames } from './engagement-client-names';
 
 /** The supabase-js client returned by `dojoDb()` (scoped to the `dojo` schema). */
 export type DojoClient = ReturnType<typeof dojoDb>;
@@ -45,6 +47,24 @@ export interface IncidentList {
 	open_count: number;
 }
 
+/** The linked artifact on an incident detail (the near-leak artifact it tracks). */
+export interface IncidentArtifactRef {
+	id: string;
+	title: string;
+	kind: string;
+	status: string;
+}
+
+/** The full incident detail (`GET …/incidents/{id}`): the row plus its resolved
+ *  client name (engagement → client_name), owner name/email (WS-1), and linked
+ *  artifact. */
+export interface IncidentDetail extends Incident {
+	client_name: string | null;
+	owner_name: string | null;
+	owner_email: string | null;
+	artifact: IncidentArtifactRef | null;
+}
+
 const INCIDENT_COLS =
 	'id, engagement_id, artifact_id, title, description, severity, status, owner_id, sla_due_at, resolution, opened_at, resolved_at';
 
@@ -79,6 +99,68 @@ export async function listIncidents(db: DojoClient, tenantId: string): Promise<I
 		.order('opened_at', { ascending: false });
 	if (error) throw new IncidentsError(500, error.message);
 	return shapeIncidents((data ?? []) as unknown as Incident[]);
+}
+
+const INCIDENT_ARTIFACT_COLS = 'id, title, kind, status';
+
+/** Fetch the linked artifact for an incident detail (or null when unlinked).
+ *  Fail-closed on a query error. */
+async function fetchIncidentArtifact(
+	db: DojoClient,
+	tenantId: string,
+	artifactId: string | null
+): Promise<IncidentArtifactRef | null> {
+	if (!artifactId) return null;
+	const { data, error } = await db
+		.from('artifacts')
+		.select(INCIDENT_ARTIFACT_COLS)
+		.eq('tenant_id', tenantId)
+		.eq('id', artifactId)
+		.maybeSingle();
+	if (error) throw new IncidentsError(500, error.message);
+	return data ? (data as unknown as IncidentArtifactRef) : null;
+}
+
+/**
+ * Fetch one incident (tenant-scoped) with its resolved client name (engagement →
+ * `client_name`), owner name/email (WS-1 `resolveDisplayNames`), and linked
+ * artifact — the `GET …/incidents/{id}` detail pane read. Throws
+ * IncidentsError(404) when the incident doesn't exist; fails closed on any
+ * resolve error (never a fabricated name/artifact).
+ */
+export async function getIncidentDetail(
+	db: DojoClient,
+	tenantId: string,
+	id: string
+): Promise<IncidentDetail> {
+	const { data, error } = await db
+		.from('incidents')
+		.select(INCIDENT_COLS)
+		.eq('tenant_id', tenantId)
+		.eq('id', id)
+		.maybeSingle();
+	if (error) throw new IncidentsError(500, error.message);
+	if (!data) throw new IncidentsError(404, 'no such incident');
+	const incident = data as unknown as Incident;
+
+	const [clientNames, ownerNames, artifact] = await Promise.all([
+		incident.engagement_id
+			? resolveEngagementClientNames(db, tenantId, [incident.engagement_id])
+			: Promise.resolve(new Map<string, string>()),
+		incident.owner_id
+			? resolveDisplayNames(db, tenantId, [incident.owner_id])
+			: Promise.resolve(new Map<string, ResolvedName>()),
+		fetchIncidentArtifact(db, tenantId, incident.artifact_id)
+	]);
+
+	const owner = incident.owner_id ? ownerNames.get(incident.owner_id) : undefined;
+	return {
+		...incident,
+		client_name: incident.engagement_id ? (clientNames.get(incident.engagement_id) ?? null) : null,
+		owner_name: owner?.display_name ?? null,
+		owner_email: owner?.email ?? null,
+		artifact
+	};
 }
 
 // ════════════════════════════════════════════════════════════════════════════

@@ -56,7 +56,7 @@
    left-border. No header fill. That is the whole specification. */
 .zs-card {
   background: var(--paper-2); border: 1px solid var(--edge);
-  border-radius: var(--radius-lg); padding: var(--space-5);
+  border-radius: var(--radius-lg); padding: var(--space-6);
 }
 .zs-card-flush { background: var(--paper-2); border: 1px solid var(--edge); border-radius: var(--radius-lg); }
 

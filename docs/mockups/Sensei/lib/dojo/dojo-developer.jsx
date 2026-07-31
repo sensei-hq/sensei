@@ -37,38 +37,37 @@ function DojoDevTeams({ go, mobile = false }) {
   const D = window.DOJO;
   const kindTone = { employer: "var(--ink-soft)", client: "var(--accent)", community: "var(--success)", personal: "var(--ink-mute)" };
   return (
-    <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", background: "var(--paper)" }}>
+    <div className="w-full h-full flex flex-col overflow-hidden bg-paper" >
       <DojoHead mobile={mobile} kanji="群" eyebrow="You · memberships" title="Your teams & orgs"
         sub="One login, every Dōjō you belong to. A project routes only to the membership it's bound to — findings never cross into an unrelated hive-mind."
         right={<DojoChip tone="var(--ink-soft)" soft="var(--paper-soft)" border="var(--hairline)">{D.memberships.length} memberships</DojoChip>} />
-      <div style={{ flex: 1, overflow: "auto", padding: mobile ? "var(--space-4)" : "var(--space-5)" }}>
-        <div style={{ display: "grid", gridTemplateColumns: mobile ? "1fr" : "repeat(2, 1fr)", gap: "var(--space-3)" }}>
+      <div className="flex-1 overflow-auto" style={{ padding: mobile ? "var(--space-4)" : "var(--space-6)" }}>
+        <div className="grid gap-3" style={{ gridTemplateColumns: mobile ? "1fr" : "repeat(2, 1fr)" }}>
           {D.memberships.map(m => (
-            <div key={m.id} style={{ background: "var(--paper-soft)", border: "var(--hairline)",
-                  borderLeft: `3px solid ${kindTone[m.kind]}`, borderRadius: "var(--radius-lg)", padding: "var(--space-4) var(--space-4)" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)" }}>
-                <span className="kanji" style={{ fontSize: "var(--text-xl)", color: kindTone[m.kind], lineHeight: 1 }}>{m.kanji}</span>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: "var(--text-base)", color: "var(--ink)", display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
+            <div className="bg-paper-soft border border-paper-edge rounded-lg py-4 px-4" key={m.id} style={{
+ borderLeft: `3px solid ${kindTone[m.kind]}` }}>
+              <div className="flex items-center gap-3" >
+                <span className="kanji text-xl" style={{ color: kindTone[m.kind], lineHeight: 1 }}>{m.kanji}</span>
+                <div className="flex-1 min-w-0" >
+                  <div className="text-base text-ink flex items-center gap-2" >
                     {m.name}{m.current && <DojoChip tone="var(--accent)" soft="var(--accent-soft)">active</DojoChip>}
                   </div>
-                  <div className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--ink-faint)", textTransform: "uppercase", letterSpacing: ".06em", marginTop: "var(--space-1)" }}>{m.kind}</div>
+                  <div className="mono text-xs text-ink-faint uppercase mt-1" style={{ letterSpacing: ".06em" }}>{m.kind}</div>
                 </div>
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: "var(--space-2) var(--space-3)", marginTop: "var(--space-3)", fontSize: "var(--text-sm)" }}>
-                <span style={{ color: "var(--ink-faint)" }}>Role</span>
-                <span style={{ color: "var(--ink)" }}>{DEV_ROLE_BY_KIND[m.kind]}</span>
-                <span style={{ color: "var(--ink-faint)" }}>Following</span>
-                <span style={{ color: "var(--ink-soft)" }}>{DEV_FOLLOWS[m.id]}</span>
+              <div className="grid mt-3 text-sm" style={{ gridTemplateColumns: "auto 1fr", gap: "var(--space-2) var(--space-3)" }}>
+                <span className="text-ink-faint" >Role</span>
+                <span className="text-ink" >{DEV_ROLE_BY_KIND[m.kind]}</span>
+                <span className="text-ink-faint" >Following</span>
+                <span className="text-ink-soft" >{DEV_FOLLOWS[m.id]}</span>
               </div>
             </div>
           ))}
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", marginTop: "var(--space-4)", padding: "var(--space-3) var(--space-4)",
-                      background: "var(--paper-soft)", border: "var(--hairline)", borderRadius: "var(--radius-lg)" }}>
-          <span className="kanji" style={{ fontSize: "var(--text-base)", color: "var(--accent)" }}>客</span>
-          <span style={{ fontSize: "var(--text-sm)", color: "var(--ink-soft)", lineHeight: 1.5, flex: 1 }}>
-            On <b style={{ fontWeight: 600, color: "var(--ink)" }}>client</b> memberships your contributions are automatically anonymized — the lesson travels, the client and repo never do.
+        <div className="flex items-center gap-2 mt-4 py-3 px-4 bg-paper-soft border border-paper-edge rounded-lg" >
+          <span className="kanji text-base text-accent" >客</span>
+          <span className="text-sm text-ink-soft flex-1" style={{ lineHeight: 1.5 }}>
+            On <b className="font-semibold text-ink" >client</b> memberships your contributions are automatically anonymized — the lesson travels, the client and repo never do.
           </span>
         </div>
       </div>
@@ -90,40 +89,38 @@ function DojoDevContributions({ mobile = false }) {
     declined: { tone: "var(--danger)",  soft: "var(--danger-soft)", label: "declined" },
   };
   return (
-    <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", background: "var(--paper)" }}>
+    <div className="w-full h-full flex flex-col overflow-hidden bg-paper" >
       <DojoHead mobile={mobile} kanji="共" eyebrow="You · upstream" title="What you've shared"
         sub="Lessons you sent up to a Dōjō, and where each one stands. You propose; a maintainer decides — nothing publishes without their named approval."
-        right={<div style={{ textAlign: "right", fontSize: "var(--text-xs)", fontFamily: "var(--font-mono)", color: "var(--ink-mute)", lineHeight: 1.7 }}>
-          <div><b style={{ color: "var(--success)" }}>2</b> approved · <b style={{ color: "var(--accent)" }}>1</b> pending</div>
+        right={<div className="text-right text-xs text-ink-mute" style={{ fontFamily: "var(--font-mono)", lineHeight: 1.7 }}>
+          <div><b className="text-success" >2</b> approved · <b className="text-accent" >1</b> pending</div>
           <div>612 devs helped · lifetime</div>
         </div>} />
-      <div style={{ flex: 1, overflow: "auto", padding: mobile ? "var(--space-4)" : "var(--space-5)" }}>
-        <div style={{ background: "var(--paper-soft)", border: "var(--hairline)", borderRadius: "var(--radius-lg)", overflow: "hidden" }}>
+      <div className="flex-1 overflow-auto" style={{ padding: mobile ? "var(--space-4)" : "var(--space-6)" }}>
+        <div className="bg-paper-soft border border-paper-edge rounded-lg overflow-hidden" >
           {mine.map((c, i) => {
             const sm = statusMeta[c.status];
             return (
-              <div key={i} style={{ display: "grid", gridTemplateColumns: mobile ? "auto 1fr" : "auto 1fr auto auto", gap: "var(--space-3)", alignItems: "center",
-                    padding: "var(--space-3) var(--space-4)", borderBottom: i < mine.length - 1 ? "1px solid var(--paper-edge)" : "none" }}>
-                <span className="kanji" style={{ fontSize: "var(--text-lg)", color: "var(--accent)", width: 22, textAlign: "center" }}>{c.k}</span>
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: "var(--text-sm)", color: "var(--ink)" }}>{c.title}</div>
-                  <div style={{ display: "flex", gap: "var(--space-2)", marginTop: "var(--space-1)", alignItems: "center", flexWrap: "wrap" }}>
+              <div className="grid gap-3 items-center py-3 px-4" key={i} style={{ gridTemplateColumns: mobile ? "auto 1fr" : "auto 1fr auto auto", borderBottom: i < mine.length - 1 ? "1px solid var(--paper-edge)" : "none" }}>
+                <span className="kanji text-lg text-accent text-center" style={{ width: 22 }}>{c.k}</span>
+                <div className="min-w-0" >
+                  <div className="text-sm text-ink" >{c.title}</div>
+                  <div className="flex gap-2 mt-1 items-center flex-wrap" >
                     <DojoChip tone={c.client ? "var(--accent)" : "var(--ink-soft)"} soft={c.client ? "var(--accent-soft)" : "var(--paper-mute)"}>{c.client && "盾 "}{c.dest}</DojoChip>
                     {mobile && <DojoChip tone={sm.tone} soft={sm.soft}>{sm.label}</DojoChip>}
-                    <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--ink-faint)" }}>{c.scope} · {c.note}{mobile ? " · " + c.when : ""}</span>
+                    <span className="mono text-xs text-ink-faint" >{c.scope} · {c.note}{mobile ? " · " + c.when : ""}</span>
                   </div>
                 </div>
                 {!mobile && <DojoChip tone={sm.tone} soft={sm.soft}>{sm.label}</DojoChip>}
-                {!mobile && <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--ink-faint)", width: 28, textAlign: "right" }}>{c.when}</span>}
+                {!mobile && <span className="mono text-xs text-ink-faint text-right" style={{ width: 28 }}>{c.when}</span>}
               </div>
             );
           })}
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", marginTop: "var(--space-4)", padding: "var(--space-3) var(--space-4)",
-                      background: "var(--paper-soft)", border: "var(--hairline)", borderRadius: "var(--radius-lg)" }}>
-          <span className="kanji" style={{ fontSize: "var(--text-base)", color: "var(--accent)" }}>芽</span>
-          <span style={{ fontSize: "var(--text-sm)", color: "var(--ink-soft)", lineHeight: 1.5, flex: 1 }}>
-            You share from the Observatory's <b style={{ fontWeight: 600, color: "var(--ink)" }}>ready-to-share</b> lane; it lands in the bound Dōjō's triage queue. Track the outcome here.
+        <div className="flex items-center gap-2 mt-4 py-3 px-4 bg-paper-soft border border-paper-edge rounded-lg" >
+          <span className="kanji text-base text-accent" >芽</span>
+          <span className="text-sm text-ink-soft flex-1" style={{ lineHeight: 1.5 }}>
+            You share from the Observatory's <b className="font-semibold text-ink" >ready-to-share</b> lane; it lands in the bound Dōjō's triage queue. Track the outcome here.
           </span>
         </div>
       </div>
@@ -139,28 +136,27 @@ function DojoDevDownstream({ mobile = false }) {
     { k: "技", title: "Skill: explain a slow query plan", from: "Rust Guild", scope: "Stack · Postgres", when: "1d", adopted: false, kind: "skill" },
   ];
   return (
-    <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", background: "var(--paper)" }}>
+    <div className="w-full h-full flex flex-col overflow-hidden bg-paper" >
       <DojoHead mobile={mobile} kanji="贈" eyebrow="You · downstream" title="Approved for you"
         sub="Practice your teams approved, distributed to every scope you're in. It arrives in your Observatory's Today & Upgrades — mute or pin anything that doesn't fit your work."
         right={<DojoChip tone="var(--ink-soft)" soft="var(--paper-soft)" border="var(--hairline)">across 4 memberships</DojoChip>} />
-      <div style={{ flex: 1, overflow: "auto", padding: mobile ? "var(--space-4)" : "var(--space-5)" }}>
-        <div style={{ background: "var(--paper-soft)", border: "var(--hairline)", borderRadius: "var(--radius-lg)", overflow: "hidden" }}>
+      <div className="flex-1 overflow-auto" style={{ padding: mobile ? "var(--space-4)" : "var(--space-6)" }}>
+        <div className="bg-paper-soft border border-paper-edge rounded-lg overflow-hidden" >
           {items.map((it, i) => (
-            <div key={i} style={{ display: "grid", gridTemplateColumns: mobile ? "auto 1fr" : "auto 1fr auto auto", gap: "var(--space-3)", alignItems: "center",
-                  padding: "var(--space-3) var(--space-4)", borderBottom: i < items.length - 1 ? "1px solid var(--paper-edge)" : "none" }}>
-              <span className="kanji" style={{ fontSize: "var(--text-lg)", color: "var(--accent)", width: 22, textAlign: "center" }}>{it.k}</span>
-              <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: "var(--text-sm)", color: "var(--ink)" }}>{it.title}</div>
-                <div style={{ display: "flex", gap: "var(--space-2)", marginTop: "var(--space-1)", alignItems: "center", flexWrap: "wrap" }}>
+            <div className="grid gap-3 items-center py-3 px-4" key={i} style={{ gridTemplateColumns: mobile ? "auto 1fr" : "auto 1fr auto auto", borderBottom: i < items.length - 1 ? "1px solid var(--paper-edge)" : "none" }}>
+              <span className="kanji text-lg text-accent text-center" style={{ width: 22 }}>{it.k}</span>
+              <div className="min-w-0" >
+                <div className="text-sm text-ink" >{it.title}</div>
+                <div className="flex gap-2 mt-1 items-center flex-wrap" >
                   <DojoChip tone="var(--ink-soft)">{it.from}</DojoChip>
                   {mobile && (it.adopted
                     ? <DojoChip tone="var(--success)" soft="var(--success-soft)">✓ adopted</DojoChip>
                     : <DojoChip tone="var(--accent)" soft="var(--accent-soft)">new</DojoChip>)}
-                  <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--ink-faint)" }}>{it.scope} · {it.when} ago</span>
+                  <span className="mono text-xs text-ink-faint" >{it.scope} · {it.when} ago</span>
                   {mobile && (
-                    <span style={{ display: "inline-flex", gap: "var(--space-2)" }}>
-                      <button className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--ink-mute)", background: "none", border: "var(--hairline)", borderRadius: "var(--radius)", padding: "var(--space-1) var(--space-2)", cursor: "pointer" }}>mute</button>
-                      <button className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--accent)", background: "none", border: "1px solid var(--accent-edge)", borderRadius: "var(--radius)", padding: "var(--space-1) var(--space-2)", cursor: "pointer" }}>pin</button>
+                    <span className="inline-flex gap-2" >
+                      <button className="mono text-xs text-ink-mute border border-paper-edge rounded py-1 px-2 cursor-pointer" style={{ background: "none" }}>mute</button>
+                      <button className="mono text-xs text-accent rounded py-1 px-2 cursor-pointer" style={{ background: "none", border: "1px solid var(--accent-edge)" }}>pin</button>
                     </span>
                   )}
                 </div>
@@ -168,9 +164,9 @@ function DojoDevDownstream({ mobile = false }) {
               {!mobile && (it.adopted
                 ? <DojoChip tone="var(--success)" soft="var(--success-soft)">✓ adopted</DojoChip>
                 : <DojoChip tone="var(--accent)" soft="var(--accent-soft)">new</DojoChip>)}
-              {!mobile && <div style={{ display: "flex", gap: "var(--space-2)" }}>
-                <button className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--ink-mute)", background: "none", border: "var(--hairline)", borderRadius: "var(--radius)", padding: "var(--space-1) var(--space-2)", cursor: "pointer" }}>mute</button>
-                <button className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--accent)", background: "none", border: "1px solid var(--accent-edge)", borderRadius: "var(--radius)", padding: "var(--space-1) var(--space-2)", cursor: "pointer" }}>pin</button>
+              {!mobile && <div className="flex gap-2" >
+                <button className="mono text-xs text-ink-mute border border-paper-edge rounded py-1 px-2 cursor-pointer" style={{ background: "none" }}>mute</button>
+                <button className="mono text-xs text-accent rounded py-1 px-2 cursor-pointer" style={{ background: "none", border: "1px solid var(--accent-edge)" }}>pin</button>
               </div>}
             </div>
           ))}

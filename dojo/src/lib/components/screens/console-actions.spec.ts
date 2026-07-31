@@ -37,6 +37,7 @@ const engagement = (over: Partial<KitEngagement> = {}): KitEngagement => ({
 	id: 'e1',
 	kanji: '客',
 	client: 'Acme',
+	clientTenantId: null,
 	projects: '—',
 	lessons: 0,
 	dropped: 0,

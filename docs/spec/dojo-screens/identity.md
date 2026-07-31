@@ -46,6 +46,11 @@
 - The mockup's "identity mapping" (GitHub org → auto-join role) is a **provisioning rule**, distinct from `dojo.identities` (per-user subject rows). Do we model mapping rules separately, or keep this screen as the per-provider identity census?
 - Should Add/Edit/Delete mapping be wired now (endpoints exist) or wait on the IdP-settings decision above?
 
+### Resolved design (2026-07-30)
+- **Q1 → ADD a tenant IdP/SCIM-settings table (WS-3).** New `dojo.idp_settings { tenant_id, protocol, domain, status, scim_enabled, … }` (+ a connection/health check) so the IdP card + SCIM toggle are truthful. Stop synthesizing protocol/status/domain from mere identity-existence; drop the hardcoded `scim=false`. Until it lands, render honestly ("inferred from N mapped identities"), never a fake Okta/OIDC/domain.
+- **Q2 → wire the per-user mapping CRUD now** via the existing `dojo.identities` POST/PATCH/DELETE (Add/Edit/Delete mapping through `@rokkit/forms`).
+- **Depends on:** new `dojo.idp_settings` DDL + a settings read/write endpoint (WS-3) + the existing `identities` CRUD + WS-1 (`dojo.identities`).
+
 ## Components & state (three-layer, per `sensei:ui-state-pattern`)
 
 **Domain types** (UI-shaped; the Load layer maps wire → these):

@@ -49,6 +49,12 @@
 ## Open questions (for Jerry)
 - Where does the pricing catalog live — a `dojo` table, a Worker constant, or the marketing site's source of truth? Until decided, tiers/perSeat/relayRows stay fixture.
 - Payment provider (Stripe?) — is invoice history in scope for this pass, or does the screen stay "seat count + plan is real, pricing is illustrative" until a provider is wired?
+
+### Resolved design (2026-07-30)
+- **Q1 pricing catalog → a versioned Worker PRODUCT CONFIG/constant** (the real price list — `tiers`, `perSeat`, `relayRows` read from it). NOT a DB table, NOT fabricated; keep in sync with the marketing site.
+- **Q2 payment provider → DEFER (no Stripe this pass).** REAL: live seat count (`dojo.tenant_seat_usage`) + plan/renewal (`dojo.billing_accounts`) + catalog pricing (from Q1). **Invoices → honest-empty** — DROP the fabricated `$408/$396/$372` fixture invoices (no invoice table / provider yet). Billing/portal CTAs inert until a provider.
+- **Build constraint (money-facing fabrication debt):** drive every field from the real read; on a billing-read error render an explicit ERROR state — NEVER the fixture catalog; honest-empty invoices, never fabricated "paid" rows.
+- **Depends on:** the Worker pricing config + existing ADMIN `GET …/billing` (seat usage + `billing_accounts`) + `refreshSeatsUsed` POST (exists). Provider/invoices = deferred follow-on.
 - Should the seat card link to the per-user `billable_users` breakdown (defensible count), or is the aggregate enough for the admin view?
 
 ## Components & state (three-layer, per `sensei:ui-state-pattern`)

@@ -1,0 +1,101 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`IncidentDetailPane > matches snapshot 1`] = `
+<div>
+  <!---->
+  <div
+    class="bg-paper-soft border-paper-edge rounded-lg border"
+    style="padding: 16px"
+  >
+    <div
+      class="flex items-center gap-3"
+      style="margin-bottom: 12px"
+    >
+      <div
+        class="text-ink-mute flex-1 text-xs font-semibold uppercase"
+        style="letter-spacing: 0.18em"
+      >
+        Incident detail
+      </div>
+       
+      <!---->
+    </div>
+     
+    <div
+      class="text-ink text-sm font-medium"
+    >
+      Near-leak: client hostname in a shared prompt
+    </div>
+     
+    <div
+      class="flex flex-wrap items-center gap-2"
+      style="margin-top: 6px"
+    >
+      <span
+        class="inline-flex items-center gap-1 whitespace-nowrap rounded-full border text-xs text-danger bg-danger-soft border-danger-soft "
+        style="padding: 3px 9px;"
+      >
+        <!---->
+        <!---->
+        <!---->
+        high
+        
+        <!---->
+      </span>
+      <!---->
+       
+      <span
+        class="text-ink-faint mono text-xs"
+      >
+        Globex · contained · opened 3d
+      </span>
+    </div>
+     
+    <div
+      class="flex flex-col gap-2"
+      style="margin-top: 12px"
+    >
+      <div
+        class="text-ink-soft text-sm"
+      >
+        Owner · Ada Lovelace
+      </div>
+       
+      <div
+        class="text-ink-soft text-sm"
+      >
+        SLA due · 2026-08-01
+      </div>
+      <!---->
+       
+      <div
+        class="text-ink-soft flex items-center gap-2 text-sm"
+      >
+        <span
+          aria-hidden="true"
+          class="inline-block flex-shrink-0 check-circle text-success"
+          style="width: 15px; height: 15px;"
+        />
+        <!---->
+        contained — source stripped before it left
+      </div>
+      <!---->
+       
+      <div
+        class="text-ink-soft flex items-center gap-2 text-sm"
+      >
+        <span
+          aria-hidden="true"
+          class="inline-block flex-shrink-0 document text-ink-mute"
+          style="width: 15px; height: 15px;"
+        />
+        <!---->
+         the auth pattern · pattern · archived
+      </div>
+      <!---->
+    </div>
+  </div>
+  
+  
+</div>
+`;

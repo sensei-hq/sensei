@@ -4,7 +4,7 @@
 // `?since=<cursor>` poll re-surfaces the now-answered row and consumes the reply.
 import type { RequestHandler } from './$types';
 import { dojoDb } from '$lib/server/dojo-supabase';
-import { resolveTenantAccess, apiError, ACCESS } from '$lib/server/dojo-auth';
+import { resolveTenantAccess, membershipIdsForTenant, apiError, ACCESS } from '$lib/server/dojo-auth';
 
 export const POST: RequestHandler = async ({ params, request, locals }) => {
 	try {
@@ -13,7 +13,9 @@ export const POST: RequestHandler = async ({ params, request, locals }) => {
 		const inboxId = typeof body.inbox_id === 'string' ? body.inbox_id : '';
 		if (!inboxId) return apiError(400, 'inbox_id is required');
 		if (body.reply === undefined) return apiError(400, 'reply is required');
-		const { data, error } = await dojoDb()
+		const db = dojoDb();
+		const membershipIds = await membershipIdsForTenant(db, tenantId);
+		const { data, error } = await db
 			.from('relay_inbox')
 			.update({
 				reply: body.reply,
@@ -21,10 +23,10 @@ export const POST: RequestHandler = async ({ params, request, locals }) => {
 				answered_at: new Date().toISOString()
 			})
 			.eq('id', inboxId)
-			.eq('tenant_id', tenantId)
+			.in('membership_id', membershipIds)
 			// A reply answers an agent-raised gate only — never a human_to_agent
-			// nudge/chat row (those aren't awaiting a human answer). Scoped by tenant
-			// too, so this can't touch another tenant's rows.
+			// nudge/chat row (those aren't awaiting a human answer). Scoped by the
+			// tenant's memberships, so this can't touch another tenant's rows.
 			.eq('direction', 'agent_to_human')
 			.select('id, seq')
 			.maybeSingle();

@@ -329,7 +329,12 @@ pub(crate) async fn analyze_solution(
 /// is safe to call repeatedly; only changed transcripts do work.
 pub(crate) async fn backfill_transcripts(State(state): State<AppState>) -> Json<serde_json::Value> {
     let (files_seen, enqueued) = crate::transcript::dispatch(&state.task_queue).await;
-    Json(serde_json::json!({ "ok": true, "files_seen": files_seen, "enqueued": enqueued }))
+    // Re-attach sessions orphaned by a repo delete/rename (events survived, the
+    // session row was cascade-deleted) — resolved via each session's cwd, now
+    // alias-aware. Runs here (the trigger path) since the BackfillTranscripts TASK
+    // isn't scheduled; idempotent + cheap (only sessions with no row are touched).
+    let repaired = state.pg.repair_orphaned_sessions().await.unwrap_or(0);
+    Json(serde_json::json!({ "ok": true, "files_seen": files_seen, "enqueued": enqueued, "sessions_repaired": repaired }))
 }
 
 // ── Per-Repo Summary ────────────────────────────────────────────────────────

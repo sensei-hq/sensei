@@ -2,9 +2,7 @@ set search_path to dojo, extensions;
 
 create table if not exists dojo.relay_sessions (
   id             uuid                  primary key default gen_random_uuid()
-, tenant_id      uuid                  not null references dojo.tenants(id)
 , membership_id  uuid                  not null references dojo.memberships(id)
-, user_id        uuid                  not null
 , run_id         uuid                  not null
 , title          text                  not null default ''
 , goal           text
@@ -21,11 +19,10 @@ create table if not exists dojo.relay_sessions (
 , completed_at   timestamptz
 , created_at     timestamptz           not null default now()
 , updated_at     timestamptz           not null default now()
-, constraint relay_sessions_tenant_run_unique unique (tenant_id, run_id)
+, constraint relay_sessions_membership_run_unique unique (membership_id, run_id)
 );
 
-create index if not exists relay_sessions_tenant_idx on dojo.relay_sessions(tenant_id);
-create index if not exists relay_sessions_user_idx on dojo.relay_sessions(user_id, started_at desc);
+create index if not exists relay_sessions_membership_idx on dojo.relay_sessions(membership_id, started_at desc);
 create index if not exists relay_sessions_run_idx on dojo.relay_sessions(run_id);
 
 comment on table dojo.relay_sessions is
@@ -52,9 +49,10 @@ comment on column dojo.relay_sessions.heartbeat_at
 -- writes are unaffected. SELECT-only policy: the phone only reads; every write
 -- stays on the service-role path.
 --
--- P4 model = own-rows-only: a user sees a run only if it is THEIR run
--- (user_id = auth.uid()). Team-wide visibility (all members of the run's tenant
--- see it, via a dojo.memberships join) is a deliberate P6 extension — NOT P4.
+-- P4 model = own-rows-only: a user sees a run only if it is THEIR run — derived
+-- from membership_id via dojo.owns_membership() (NOT a denormalized user_id copy,
+-- which goes stale on re-ownership — WS-0 Rule A). Team-wide visibility (all
+-- members of the run's tenant see it) is a deliberate P6 extension — NOT P4.
 --
 -- Idempotent: the pre-release deploy re-applies every DDL file declaratively on
 -- each deploy (dbd `Current`/`Fresh` strategy re-runs ApplyEntity → re-executes
@@ -75,4 +73,4 @@ create policy relay_sessions_select_own
     on dojo.relay_sessions
     for select
     to authenticated
-    using (user_id = auth.uid());
+    using (dojo.owns_membership(membership_id));

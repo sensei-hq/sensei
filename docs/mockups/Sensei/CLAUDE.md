@@ -1,6 +1,23 @@
 # Sensei — design-system conventions
 
-The visual system lives in **`lib/tokens.css`** (the published copy is `site/tokens.css` — keep them in sync). Every screen is wrapped in a `.sensei` (or `.zs` / `.artboard-shell`) scope, which is what activates the utility classes below.
+The visual system lives in **`lib/tokens.css`** (the published copy is `site/tokens.css` — keep them in sync). It owns the tokens, the reset, the named type roles and the `zs-*` components. **Utilities come from UnoCSS**, loaded by `lib/unocss.js` — add both to every page:
+
+```html
+<link rel="stylesheet" href="lib/tokens.css"/>
+<script src="lib/unocss.js"></script>
+```
+
+`lib/unocss.js` maps the tokens into Uno's theme, so `bg-paper-soft`, `text-ink-mute`, `border-paper-edge`, `text-sm`, `rounded-lg` resolve to the same values they always did (and dark mode still flips for free). It uses the **Wind preset**, so every class name is the Tailwind vocabulary a dev agent already knows — `md:`, `hover:`, arbitrary values included.
+
+Crucially the theme sections are **replaced, not extended**: `bg-red-500`, `text-4.5xl` and `rounded-2xl` generate *nothing at all*. Reaching past the system fails visibly instead of quietly shipping off-brand. There is no hand-rolled utility layer any more — that duplication is what used to make mock classes and app classes two different vocabularies.
+
+**The app's build-time twin is `handoff/uno.config.ts`.** It is the same theme, same keys, same token references. If the two disagree, the mock is wrong — fix the mock.
+
+Every screen is wrapped in a `.sensei` (or `.zs` / `.artboard-shell`) scope, which is what activates the type roles and components below.
+
+### Cascade layers — do not remove
+
+`tokens.css` puts its reset in `@layer zs-base` and its type roles + components in `@layer zs-components`. Uno's utilities are unlayered (runtime) or in `uno-utilities` (build), and **unlayered CSS outranks every layer**, so a utility always beats a component default. Without this, `.zs-card`'s padding silently wins over `p-4` and "reach for a utility first" is a lie. The `:root` token blocks stay unlayered on purpose.
 
 The rule for all UI code: **reach for a semantic token or utility class first.** Inline `style={{…}}` is only for geometry the system doesn't model (fixed control dimensions, asymmetric padding, absolute offsets, transitions, opacity). Never hand-write a hex/oklch color or a raw `font-size` in component code.
 
@@ -41,7 +58,11 @@ Never put a literal `fontSize` in JSX — snap to a scale stop or a type class.
 
 ## Spacing
 
-4px base scale via `gap-N` / `p*-N` / `m*-N`, N=0–9 (`1`=4 `2`=8 `3`=12 `4`=16 `5`=24 `6`=32 `7`=48 `8`=64 `9`=96). Lay rows/groups out with `flex`/`grid` + `gap-*`, not per-child margins.
+**Tailwind/Uno's default scale** — 4px × n, via `gap-N` / `p*-N` / `m*-N` / `space-*`. The stops the system uses: `1`=4 `2`=8 `3`=12 `4`=16 `6`=24 `8`=32 `12`=48 `16`=64 `24`=96. Any stop on the 4px grid is legal, but prefer those; don't reach for `p-7` when `p-6` or `p-8` will do.
+
+The `--space-N` tokens use the **same numbering**, so a token and its utility always agree: `var(--space-6)` is `p-6` is 24px. Use the token for inline geometry, the class everywhere else. Lay rows/groups out with `flex`/`grid` + `gap-*`, not per-child margins.
+
+Responsive: `md:` / `lg:` are real viewport variants. For a fixed-width artboard, reach for container queries instead (`@container` on the frame) — a 390px phone board and a 1600px desktop board share one viewport, so `md:` would style both alike.
 
 ## Components
 
@@ -110,11 +131,11 @@ write per-mode colors in the markup.
 labels `.zs-eyebrow` (uppercase, tracked); `.zs-kanji` for CJK glyphs (accent-colored).
 Weights: `font-light/normal/medium/semibold` only.
 
-## Spacing — 4px grid, never a literal px
+## Spacing — Tailwind's default 4px scale, never a literal px
 
-`p-N` `px-N` `py-N` `gap-N` `mt-N` `mb-N`, `N ∈ 1..8` (`1`=4 `2`=8 `3`=12 `4`=16 `5`=24
-`6`=32 `7`=48 `8`=64px). Radii: `rounded-sm` 4 · `rounded` 6 · `rounded-lg` 10 ·
-`rounded-full`. "If you need 18px, use 16 or 20." Don't invent a stop.
+`p-N` `px-N` `py-N` `gap-N` `mt-N` `mb-N` on Tailwind's stops (`1`=4 `2`=8 `3`=12 `4`=16
+`6`=24 `8`=32 `12`=48 `16`=64 `24`=96px). Radii: `rounded-sm` 4 · `rounded` 6 · `rounded-lg` 10 ·
+`rounded-full`. "If you need 18px, use 16 or 20."
 
 ## Component shapes (mirror rokkit's)
 
@@ -153,8 +174,9 @@ These rules exist so no audit/correct cycle is needed. Follow them **while autho
 they are the exact things a review keeps catching. Each design file must satisfy all of
 them before it's considered done.
 
-1. **Link the tokens; never redefine them.** Every standalone file links the canonical
-   stylesheet (`site/tokens.css` or `lib/tokens.css`) in `<head>`. Never open a local
+1. **Link the tokens and UnoCSS; never redefine either.** Every standalone file links the
+   canonical stylesheet (`site/tokens.css` or `lib/tokens.css`) **and** `lib/unocss.js` in
+   `<head>`. Never open a local
    `:root{}` that re-declares `--paper` / `--ink` / `--accent` (etc.) as hex — that drift
    is the single most common bug. If a file wants its own short var names (a deck's
    `--disp`, `--kanji`), **alias them onto the tokens** (`--disp: var(--font-display)`),
@@ -172,13 +194,16 @@ them before it's considered done.
    roles `zs-h1/2/3`, `zs-hero`, `zs-body`, `zs-meta`, `zs-eyebrow`). Floor is `xs` (11px) —
    never smaller, never a literal `font-size`. Weights: `font-light/normal/medium/semibold` only.
 
-4. **Spacing = the 4px, 9-stop grid only.** Use `--space-0…9` (or `p-*/px-*/py-*/m-*/gap-*`).
-   No `18px`, `26px`, `5px`. Lay groups out with flex/grid + `gap-*`, not per-child margins.
+4. **Spacing = the default 4px scale.** Use `p-*/px-*/py-*/m-*/gap-*` or the matching
+   `--space-N` token (same numbering: `var(--space-6)` = `p-6` = 24px). Prefer the stops the
+   system uses — 1 2 3 4 6 8 12 16 24. Lay groups out with flex/grid + `gap-*`, not per-child
+   margins.
 
 5. **Prefer utility classes over custom-class + `var()`.** Wrap the root in `class="zs"`
-   (or `.sensei`) and build with the utilities (`flex`, `grid`, `gap-4`, `p-5`, `text-sm`,
-   `text-ink-2`, `bg-paper-soft`, `border-b`, `rounded-lg`) — this is what translates cleanly
-   to implementation. Reserve a custom `<style>` rule **only** for geometry the system
+   (or `.sensei`) and build with utilities (`flex`, `grid`, `gap-4`, `p-6`, `text-sm`,
+   `text-ink-mute`, `bg-paper-soft`, `border-b`, `rounded-lg`) — this is what translates cleanly
+   to implementation, because the app generates the same classes from the same config.
+   Reserve a custom `<style>` rule **only** for geometry the system
    doesn't model: specific `grid-template-columns`, `aspect-ratio`, `::before` accent bars,
    absolutely-positioned diagram/timeline nodes. Those custom rules still use `var(--*)` for
    every color, size, and space value.

@@ -27,10 +27,10 @@ const _XFADE = "color var(--dur) var(--ease), background var(--dur) var(--ease),
 
 // Per-status presentation: chip skin classes + glyph.
 const CHIP_SKIN = {
-  idle:        "text-ink-faint border-1px border-dashed border-ink-faint",
-  configuring: "text-accent bg-paper-mute border-1px",
-  done:        "text-success bg-success-soft border-1px border-success-edge",
-  error:       "text-danger bg-danger-soft border-1px border-danger-edge",
+  idle:        "text-ink-faint border border-paper-edge border-dashed border-ink-faint",
+  configuring: "text-accent bg-paper-mute border border-paper-edge",
+  done:        "text-success bg-success-soft border border-success-edge",
+  error:       "text-danger bg-danger-soft border border-danger-edge",
 };
 const STATUS_TEXT = {
   configuring: "text-accent",
@@ -67,7 +67,7 @@ function ASpinner({ size = 11 }) {
 // ── One status-only capability chip ───────────────────────────
 function CapChip({ status = "idle", label }) {
   const icon = {
-    idle:        <span className="rounded-full border-1px border-ink-faint" style={{ width: 8, height: 8 }}/>,
+    idle:        <span className="rounded-full border border-ink-faint" style={{ width: 8, height: 8 }}/>,
     configuring: <ASpinner size={11}/>,
     done:        <ACheck size={11}/>,
     error:       <ACross size={11}/>,
@@ -85,7 +85,7 @@ function CapChip({ status = "idle", label }) {
 function headerStatus({ found, enabled, parts }) {
   const geo = { whiteSpace: "nowrap", flexShrink: 0 };
   if (!found)
-    return <span className="inline-flex items-center gap-1 text-xs text-ink-mute" style={{ ...geo, fontStyle: "italic" }}>not found</span>;
+    return <span className="inline-flex items-center gap-1 text-xs text-ink-mute italic" style={{ ...geo }}>not found</span>;
   if (!enabled)
     return <span className="mono inline-flex items-center gap-1 text-xs text-ink-mute" style={geo}>off</span>;
   if (parts.some(p => p.status === "configuring"))
@@ -106,12 +106,12 @@ function AssistantCard({
   const showError = enabled && !!error && !busy;
 
   return (
-    <div className={"flex flex-col gap-3 p-4 rounded-lg border-1px "
+    <div className={"flex flex-col gap-3 p-4 rounded-lg border border-paper-edge "
                     + (found ? "bg-paper-soft" : "")}
          style={{ opacity: found ? 1 : 0.6 }}>
       {/* Header row: icon · title · status · switch */}
       <div className="flex items-center gap-3">
-        <div className={"flex items-center justify-center border-1px bg-paper rounded "
+        <div className={"flex items-center justify-center border border-paper-edge bg-paper rounded "
                         + (enabled ? "text-accent" : (found ? "text-ink" : "text-ink-faint"))}
              style={{ width: 34, height: 34, flexShrink: 0 }}>
           <BrandMark id={logoId} letter={(name || "?")[0]} size={21}/>
@@ -123,15 +123,15 @@ function AssistantCard({
           {headerStatus({ found, enabled, parts })}
           <button onClick={onToggle} disabled={!found || busy}
             role="switch" aria-checked={enabled} aria-label={"Enable " + name}
-            className={"rounded-full " + (enabled ? "bg-accent" : "bg-paper-mute border-1px")}
+            className={"rounded-full " + (enabled ? "bg-accent" : "bg-paper-mute border border-paper-edge")}
             style={{
               width: 38, height: 22, flexShrink: 0, padding: 0,
               position: "relative", cursor: found && !busy ? "pointer" : "default",
               opacity: busy ? 0.6 : 1, transition: "background var(--dur) var(--ease)",
             }}>
-            <span className="rounded-full bg-paper shadow-sm"
-                  style={{ position: "absolute", top: 3, left: enabled ? 19 : 3,
-                           width: 16, height: 16, transition: "left var(--dur) var(--ease)" }}/>
+            <span className="rounded-full bg-paper shadow-sm absolute"
+ style={{ top: 3, left: enabled ? 19 : 3,
+ width: 16, height: 16, transition: "left var(--dur) var(--ease)" }}/>
           </button>
         </div>
       </div>
@@ -145,14 +145,14 @@ function AssistantCard({
 
       {/* One consolidated error — chips stay above so you can see which failed */}
       {showError && (
-        <div className="flex items-start gap-2 px-3 py-2 rounded bg-danger-soft border-1px border-danger-edge">
-          <span className="text-danger" style={{ marginTop: 1, flexShrink: 0 }}><ACross size={11}/></span>
-          <div className="flex-1 text-sm text-ink-soft" style={{ minWidth: 0, lineHeight: 1.45 }}>
+        <div className="flex items-start gap-2 px-3 py-2 rounded bg-danger-soft border border-danger-edge">
+          <span className="text-danger shrink-0" style={{ marginTop: 1 }}><ACross size={11}/></span>
+          <div className="flex-1 text-sm text-ink-soft min-w-0" style={{ lineHeight: 1.45 }}>
             Couldn’t configure {name} — <span className="mono text-danger">{error}</span>
           </div>
           {onRetry && (
-            <button onClick={onRetry} className="mono text-xs text-accent"
-                    style={{ cursor: "pointer", flexShrink: 0, marginTop: 1 }}>
+            <button onClick={onRetry} className="mono text-xs text-accent cursor-pointer shrink-0"
+ style={{ marginTop: 1 }}>
               Retry →
             </button>
           )}

@@ -482,6 +482,9 @@ export interface KitEngagement {
 	kanji: string;
 	/** The client display name. */
 	client: string;
+	/** FK to the client's own tenant when the client is itself a known dōjō
+	 *  (Rule C), or null — drives the client-name link. */
+	clientTenantId: string | null;
 	/** The projects in the engagement. */
 	projects: string;
 	/** Lessons kept (crossed the boundary anonymized). */
@@ -518,6 +521,29 @@ export interface KitIncident {
 	when: string;
 	/** high · medium — drives the severity chip tone. */
 	severity: string;
+}
+
+/** One incident's full detail for the "Open" pane (`GET …/incidents/{id}`) —
+ *  beyond the list row: the resolved owner, SLA, resolution, and linked artifact. */
+export interface KitIncidentDetail {
+	id: string;
+	title: string;
+	/** Resolved client name (else short engagement id / "—"). */
+	client: string;
+	/** Resolved owner display name, or "—" when unassigned/unresolved. */
+	owner: string;
+	/** contained · resolved · open. */
+	state: string;
+	/** high · medium · … */
+	severity: string;
+	/** Relative opened age (e.g. "3d"). */
+	opened: string;
+	/** SLA due (raw ISO) or null. */
+	sla: string | null;
+	/** The resolution note, or null while unresolved. */
+	resolution: string | null;
+	/** The linked near-leak artifact, or null when unlinked. */
+	artifact: { title: string; kind: string; status: string } | null;
 }
 
 /** An immutable client-audit ledger entry (dojo2-data `consoles.clientAudit[]`).

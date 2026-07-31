@@ -9,8 +9,34 @@
 import type { RequestHandler } from './$types';
 import { dojoDb } from '$lib/server/dojo-supabase';
 import { resolveTenantAccess, apiError, ACCESS } from '$lib/server/dojo-auth';
-import { updateIncident, deleteIncident, parsePatchIncident, IncidentsError } from '$lib/server/incidents-data';
+import {
+	getIncidentDetail,
+	updateIncident,
+	deleteIncident,
+	parsePatchIncident,
+	IncidentsError
+} from '$lib/server/incidents-data';
+import { AdminError } from '$lib/server/admin-data';
 import { recordAudit } from '$lib/server/audit';
+
+export const GET: RequestHandler = async ({ params, request, locals }) => {
+	try {
+		const { tenantId } = await resolveTenantAccess(
+			params.origin,
+			params.org,
+			request,
+			locals,
+			ACCESS.lead
+		);
+		const detail = await getIncidentDetail(dojoDb(), tenantId, params.id);
+		return Response.json(detail);
+	} catch (e) {
+		if (e instanceof Response) return e;
+		if (e instanceof IncidentsError) return apiError(e.status, e.message);
+		if (e instanceof AdminError) return apiError(e.status, e.message);
+		throw e;
+	}
+};
 
 export const PATCH: RequestHandler = async ({ params, request, locals }) => {
 	try {

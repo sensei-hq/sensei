@@ -32,7 +32,7 @@ export const POST: RequestHandler = async ({ params, request, platform }) => {
 		const { data: sess, error: sErr } = await db
 			.from('relay_sessions')
 			.select('id, title')
-			.eq('tenant_id', caller.tenantId)
+			.eq('membership_id', caller.membershipId)
 			.eq('run_id', runId)
 			.maybeSingle();
 		if (sErr) return apiError(500, sErr.message);
@@ -43,9 +43,7 @@ export const POST: RequestHandler = async ({ params, request, platform }) => {
 			.insert({
 				session_id: sess.id,
 				segment_id: str(body.segment_id),
-				tenant_id: caller.tenantId,
 				membership_id: caller.membershipId,
-				user_id: caller.userId,
 				kind,
 				direction,
 				payload: body.payload ?? {}
@@ -93,7 +91,7 @@ export const GET: RequestHandler = async ({ params, request, url }) => {
 		const { data, error } = await db
 			.from('relay_inbox')
 			.select(COLS)
-			.eq('tenant_id', caller.tenantId)
+			.eq('membership_id', caller.membershipId)
 			.gt('seq', since)
 			.order('seq', { ascending: true });
 		if (error) return apiError(500, error.message);

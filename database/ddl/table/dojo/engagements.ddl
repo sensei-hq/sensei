@@ -3,7 +3,8 @@ set search_path to dojo, extensions;
 create table if not exists dojo.engagements (
   id               uuid                    primary key default gen_random_uuid()
 , tenant_id        uuid                    not null references dojo.tenants(id)
-, client           text                    not null
+, client_tenant_id uuid                    references dojo.tenants(id)
+, client_name      text                    not null
 , description      text
 , project_bindings jsonb                   not null default '[]'
 , policy_overrides jsonb                   not null default '{}'
@@ -22,8 +23,10 @@ projects so it routes correctly. Every artifact shared under an engagement is
 source-dereferenced on publish (the always-on invariant) — the lead cannot
 per-item override the strip; they audit that it held.';
 
-comment on column dojo.engagements.client
-     is 'Client / engagement name.';
+comment on column dojo.engagements.client_name
+     is 'Client / engagement display name (always set).';
+comment on column dojo.engagements.client_tenant_id
+     is 'Optional FK to the client''s own dojo.tenants row when the client is itself a known tenant; null otherwise.';
 comment on column dojo.engagements.project_bindings
      is 'Daemon-side project references routed to this engagement: [{project_id, name}]. Advisory (projects live in the daemon DB, Fork 1).';
 comment on column dojo.engagements.policy_overrides

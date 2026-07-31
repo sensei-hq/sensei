@@ -23,7 +23,7 @@ export const POST: RequestHandler = async ({ params, request, locals }) => {
 		const { data: sess, error: sErr } = await db
 			.from('relay_sessions')
 			.select('id')
-			.eq('tenant_id', caller.tenantId)
+			.eq('membership_id', caller.membershipId)
 			.eq('run_id', runId)
 			.maybeSingle();
 		if (sErr) return apiError(500, sErr.message);
@@ -32,9 +32,7 @@ export const POST: RequestHandler = async ({ params, request, locals }) => {
 			.from('relay_inbox')
 			.insert({
 				session_id: sess.id,
-				tenant_id: caller.tenantId,
 				membership_id: caller.membershipId,
-				user_id: caller.userId,
 				kind,
 				direction: 'human_to_agent',
 				payload: { text }

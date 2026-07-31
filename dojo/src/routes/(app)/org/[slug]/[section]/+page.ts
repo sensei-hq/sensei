@@ -4,7 +4,19 @@ import { ORG_SECTIONS, labelForSection } from '$lib/nav';
 import { orgBySlug } from '$lib/chrome';
 import { tabForSection } from '$lib/role-surfaces-view';
 import { guardTenantScope } from '$lib/org-guard';
-import { listEngagements, listIncidents, DojoApiError, type Engagement, type Incident } from '$lib/client-data';
+import {
+	listEngagements,
+	listIncidents,
+	getKnowledge,
+	listClientAuditLedger,
+	listProjects,
+	DojoApiError,
+	type Engagement,
+	type Incident,
+	type KnowledgeLibraryWire,
+	type ClientAuditEntry,
+	type ProjectRow
+} from '$lib/client-data';
 import { listTriage, type TriageRow } from '$lib/triage-data';
 import {
 	listMembers,
@@ -35,7 +47,9 @@ import {
 	toKitIdentity,
 	toKitHealth
 } from '$lib/admin-map';
-import { toKitIncidents, toKitClientAudit } from '$lib/incidents-map';
+import { toKitIncidents, toKitClientAuditLedger } from '$lib/incidents-map';
+import { toKitKnowledge } from '$lib/knowledge-map';
+import { toKitProjects } from '$lib/projects-map';
 import type {
 	KitEngagement,
 	KitTriageGroup,
@@ -44,6 +58,8 @@ import type {
 	KitMember,
 	KitRolePolicy,
 	KitChatTurn,
+	KitKnowledge,
+	KitProject,
 	KitIdentity,
 	KitIncident,
 	KitClientAuditRow,
@@ -51,10 +67,8 @@ import type {
 	KitBilling
 } from '$lib/components/kit/types';
 import {
-	orgProjectsFor,
 	orgConstitutionFor,
 	candidateDetailFor,
-	knowledgeFor,
 	confidentialityFor,
 	scopeOwnersFor,
 	billingFor
@@ -86,7 +100,7 @@ import {
 // scopes) still render off kit fixtures — their routes aren't built (Tier 3:
 // scopes/projects/stance need further wiring).
 export const load: PageLoad = async ({ parent, params, fetch }) => {
-	const { memberships, accessToken } = await parent();
+	const { memberships, accessToken, user } = await parent();
 	const org = orgBySlug(memberships, params.slug);
 	if (!org) redirect(307, '/you');
 	if (!ORG_SECTIONS.includes(params.section)) redirect(307, `/org/${params.slug}`);
@@ -159,7 +173,7 @@ export const load: PageLoad = async ({ parent, params, fetch }) => {
 				guardTenantScope<Policy[]>(tenantKey, [], (tk) => listPolicies(tk, opts)),
 				guardTenantScope<AuditEvent[]>(tenantKey, [], (tk) => listAudit(tk, opts))
 			]);
-			members = toKitMembers(m.value, { self: undefined });
+			members = toKitMembers(m.value, { self: user?.id ?? undefined });
 			rolePolicies = toKitRolePolicies(p.value);
 			auditLog = toKitAuditThread(a.value);
 		} catch (e) {
@@ -184,11 +198,14 @@ export const load: PageLoad = async ({ parent, params, fetch }) => {
 	);
 
 	// Client audit (admin — the tenant audit trail projected onto the ledger).
-	const clientAuditRes = await guardedFor<AuditEvent[], KitClientAuditRow[]>(
+	// Client-audit → the CONFIDENTIALITY ledger (audit_events filtered to
+	// publish/contained/held, client-name enriched) — NOT the admin action-audit
+	// (listAudit) the screen was wrongly bound to (client-audit.md resolved design).
+	const clientAuditRes = await guardedFor<ClientAuditEntry[], KitClientAuditRow[]>(
 		'clientaudit',
 		[],
-		(tk) => listAudit(tk, opts),
-		toKitClientAudit
+		(tk) => listClientAuditLedger(tk, opts),
+		toKitClientAuditLedger
 	);
 
 	// Health (admin).
@@ -209,6 +226,25 @@ export const load: PageLoad = async ({ parent, params, fetch }) => {
 		(res) => toKitBilling(billingFor(slug), res)
 	);
 
+	// Projects (org) — the tenant's dojo.projects (daemon-populated on relay runs).
+	// Real read; honest-empty until populated — NOT the orgProjectsFor(slug) fixture.
+	const projectsRes = await guardedFor<ProjectRow[], KitProject[]>(
+		'projects',
+		[],
+		(tk) => listProjects(tk, opts),
+		toKitProjects
+	);
+
+	// Knowledge (maintainer) — the tenant's published library over dojo.artifacts
+	// (active / pending-prune / catalog). Real read; honest-empty on miss, error
+	// state on failure — NOT the old knowledgeFor(slug) fixture (fabricated-data fix).
+	const knowledgeRes = await guardedFor<KnowledgeLibraryWire, KitKnowledge>(
+		'knowledge',
+		{ prunePolicy: '', active: [], pending: [], catalog: [] },
+		(tk) => getKnowledge(tk, opts),
+		toKitKnowledge
+	);
+
 	return {
 		slug,
 		orgName: org.name,
@@ -221,13 +257,15 @@ export const load: PageLoad = async ({ parent, params, fetch }) => {
 		accessToken,
 		// Overview-section data (fixtures — Tier 3, needs DDL).
 		sections: orgConstitutionFor(slug),
-		projects: orgProjectsFor(slug),
+		projects: projectsRes.value,
+		projectsError: projectsRes.error,
 		// Maintainer Govern consoles.
 		triage,
 		candidateDetail,
 		approvals,
 		triageError,
-		knowledge: knowledgeFor(slug),
+		knowledge: knowledgeRes.value,
+		knowledgeError: knowledgeRes.error,
 		// Lead Clients consoles.
 		engagements: engagementsRes.value,
 		engagementsError: engagementsRes.error,

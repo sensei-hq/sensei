@@ -11,13 +11,12 @@ const ShojiApp = () => {
   const sol = data.solutions.find(s => s.id === activeSolution);
 
   return (
-    <div className="sensei" data-screen-label="Shoji · Direction 3"
-         style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column',
-                  background: 'var(--paper)', overflow: 'hidden' }}>
+    <div className="sensei w-full h-full flex flex-col bg-paper overflow-hidden" data-screen-label="Shoji · Direction 3"
+ >
       <TauriChrome title="Sensei · 障子"/>
       <ShojiTopbar page={page} setPage={setPage} solutions={data.solutions}
                    activeSolution={activeSolution} setActiveSolution={setActiveSolution}/>
-      <main style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
+      <main className="flex-1 overflow-auto min-h-0" >
         {page === "overview"    && <ShojiOverview data={data} setPage={setPage} setActiveSolution={setActiveSolution}/>}
         {page === "observatory" && <ShojiObservatory data={data} sol={sol} setPage={setPage}
                                                      setFocusedSession={setFocusedSession}
@@ -39,32 +38,27 @@ const ShojiApp = () => {
 function ShojiTopbar({ page, setPage, solutions, activeSolution, setActiveSolution }) {
   const sol = solutions.find(s => s.id === activeSolution);
   return (
-    <div style={{
- display: 'flex', alignItems: 'center',
-                  borderBottom: 'var(--hairline)', flexShrink: 0, background: 'var(--paper)'
-}} className="gap-4 py-2 px-4" >
-      <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2" >
-        <span className="kanji" style={{ fontSize: 17, color: 'var(--accent)' }}>先</span>
-        <span className="display" style={{ fontSize: 13, fontWeight: 500 }}>Sensei</span>
+    <div className="gap-4 py-2 px-4 flex items-center border-b shrink-0 bg-paper" >
+      <div className="gap-2 flex items-baseline" >
+        <span className="kanji text-accent" style={{ fontSize: 17 }}>先</span>
+        <span className="display font-medium" style={{ fontSize: 13 }}>Sensei</span>
       </div>
 
       <div style={{ width: 1, height: 20, background: 'var(--edge)' }}/>
 
       {/* Solution switcher pill */}
       <div style={{
- display: 'flex', background: 'var(--paper-3)',
-                    borderRadius: 8
-}} className="gap-1 p-1" >
+ borderRadius: 8
+ }} className="gap-1 p-1 flex bg-paper-3" >
         {solutions.map(s => (
           <button key={s.id} onClick={() => setActiveSolution(s.id)}
-                  style={{
+ style={{
  borderRadius: 6, fontSize: 13,
-                            display: 'flex', alignItems: 'center',
-                            background: activeSolution === s.id ? 'var(--paper)' : 'transparent',
-                            color: activeSolution === s.id ? 'var(--ink)' : 'var(--ink-2)',
-                            boxShadow: activeSolution === s.id ? '0 1px 2px rgba(0,0,0,0.04)' : '',
-                            transition: 'all .14s'
-}} className="py-1 px-3 gap-1" >
+ background: activeSolution === s.id ? 'var(--paper)' : 'transparent',
+ color: activeSolution === s.id ? 'var(--ink)' : 'var(--ink-2)',
+ boxShadow: activeSolution === s.id ? '0 1px 2px rgba(0,0,0,0.04)' : '',
+ transition: 'all .14s'
+ }} className="py-1 px-3 gap-1 flex items-center" >
             <span className="kanji" style={{ fontSize: 11,
                           color: activeSolution === s.id ? 'var(--accent)' : 'var(--ink-3)' }}>{s.kanji}</span>
             {s.name}
@@ -73,7 +67,7 @@ function ShojiTopbar({ page, setPage, solutions, activeSolution, setActiveSoluti
       </div>
 
       {/* Primary nav */}
-      <nav style={{ display: 'flex' }} className="gap-0 ml-2" >
+      <nav className="gap-0 ml-2 flex" >
         {PAGES.map(p => (
           <button key={p.id} onClick={() => setPage(p.id)}
                   style={{
@@ -87,14 +81,11 @@ function ShojiTopbar({ page, setPage, solutions, activeSolution, setActiveSoluti
         ))}
       </nav>
 
-      <div style={{ flex: 1 }}/>
+      <div className="flex-1" />
 
-      <div style={{
- display: 'flex', alignItems: 'center', fontSize: 11,
-                    color: 'var(--ink-3)'
-}} className="gap-3" >
+      <div style={{ fontSize: 11 }} className="gap-3 flex items-center text-ink-3" >
         <span className="mono">daemon · 9823</span>
-        <span className="ink-dot" style={{ background: 'var(--success)' }}/>
+        <span className="ink-dot bg-success" />
         <Avatar name="Aiko" size={22}/>
       </div>
     </div>
@@ -112,18 +103,17 @@ function ShojiObservatory({ data, sol, setPage, setFocusedSession, applied, setA
 
   return (
     <div style={{
- display: 'grid', height: '100%',
-                  gridTemplateColumns: 'repeat(12, 1fr)',
-                  gridTemplateRows: 'auto auto auto auto',
-                  gridAutoFlow: 'dense'
-}} className="p-4 gap-3" >
+ gridTemplateColumns: 'repeat(12, 1fr)',
+ gridTemplateRows: 'auto auto auto auto',
+ gridAutoFlow: 'dense'
+ }} className="p-4 gap-3 grid h-full" >
       {/* FTR — hero pane */}
       <Pane title="First Try Right" kanji="一" span={{ col: 'span 5', row: 'span 2' }}>
-        <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-3" >
-          <span className="display" style={{ fontSize: 56, fontWeight: 300, lineHeight: 0.9, letterSpacing: '-0.03em' }}>
+        <div className="gap-3 flex items-baseline" >
+          <span className="display font-light" style={{ fontSize: 56, lineHeight: 0.9, letterSpacing: '-0.03em' }}>
             {Math.round(sol.ftr * 100)}
           </span>
-          <span style={{ fontSize: 22, color: 'var(--ink-3)' }}>%</span>
+          <span className="text-ink-3" style={{ fontSize: 22 }}>%</span>
           <span className="mono ml-auto" style={{
  fontSize: 13,
                         color: delta >= 0 ? 'var(--success)' : 'var(--accent)'
@@ -134,10 +124,8 @@ function ShojiObservatory({ data, sol, setPage, setFocusedSession, applied, setA
         <div style={{ color: delta >= 0 ? 'var(--success)' : 'var(--accent)' }} className="mt-3" >
           <Sparkline data={history} width={380} height={50} fill="currentColor" />
         </div>
-        <div className="mono mt-1" style={{
- display: 'flex', justifyContent: 'space-between',
-                      fontSize: 11, color: 'var(--ink-3)'
-}}>
+        <div className="mono mt-1 flex justify-between text-ink-3" style={{
+ fontSize: 11 }}>
           <span>14d ago</span>
           <span>7d ago</span>
           <span>today</span>
@@ -147,50 +135,48 @@ function ShojiObservatory({ data, sol, setPage, setFocusedSession, applied, setA
       {/* Sensei says — coaching pane */}
       <Pane title="Sensei says" kanji="師" span={{ col: 'span 4', row: 'span 2' }}
             accent>
-        <p className="display mt-1 mb-2" style={{
- fontSize: 22, fontWeight: 300, lineHeight: 1.3, textWrap: 'balance'
-}}>
+        <p className="display mt-1 mb-2 font-light" style={{
+ fontSize: 22, lineHeight: 1.3, textWrap: 'balance'
+ }}>
           {topCoach.koan}
         </p>
-        <p style={{ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.55 }} className="mb-4" >
+        <p style={{ fontSize: 13, lineHeight: 1.55 }} className="mb-4 text-ink-2" >
           {topCoach.body}
         </p>
         <button onClick={() => setApplied({...applied, [topCoach.id]: true})}
-                style={{
+ style={{
  borderRadius: 6, fontSize: 13,
-                          background: applied[topCoach.id] ? 'var(--success-soft)' : 'var(--accent)',
-                          color: applied[topCoach.id] ? 'var(--success)' : 'var(--paper)',
-                          fontWeight: 500
-}} className="py-2 px-3" >
+ background: applied[topCoach.id] ? 'var(--success-soft)' : 'var(--accent)',
+ color: applied[topCoach.id] ? 'var(--success)' : 'var(--paper)' }} className="py-2 px-3 font-medium" >
           {applied[topCoach.id] ? '✓ Applied' : topCoach.action}
         </button>
-        <div className="mono mt-2" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+        <div className="mono mt-2 text-ink-3" style={{ fontSize: 11 }}>
           {topCoach.impact}
         </div>
       </Pane>
 
       {/* Counter stats */}
       <Pane title="Sessions" kanji="刻" span={{ col: 'span 3', row: 'span 1' }}>
-        <div className="display" style={{ fontSize: 40, fontWeight: 300, lineHeight: 1 }}>
+        <div className="display font-light" style={{ fontSize: 40, lineHeight: 1 }}>
           {sol.sessions7d}
         </div>
-        <div className="mono mt-1" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+        <div className="mono mt-1 text-ink-3" style={{ fontSize: 11 }}>
           7d · {sol.tokens7d}M tokens
         </div>
       </Pane>
 
       <Pane title="Skills active" kanji="技" span={{ col: 'span 3', row: 'span 1' }}>
-        <div className="display" style={{ fontSize: 40, fontWeight: 300, lineHeight: 1 }}>
+        <div className="display font-light" style={{ fontSize: 40, lineHeight: 1 }}>
           {sol.activeSkills}
         </div>
-        <div className="mono mt-1" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+        <div className="mono mt-1 text-ink-3" style={{ fontSize: 11 }}>
           of {data.skills.length} installed
         </div>
       </Pane>
 
       {/* Quality signals */}
       <Pane title="Quality signals" kanji="質" span={{ col: 'span 6', row: 'span 1' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)' }} className="gap-3" >
+        <div style={{ gridTemplateColumns: 'repeat(4, 1fr)' }} className="gap-3 grid" >
           {[
             { k: "Pattern compliance", v: "94%",     d: "+3",      good: true },
             { k: "Test coverage Δ",    v: "+2.1%",   d: "this wk", good: true },
@@ -198,8 +184,8 @@ function ShojiObservatory({ data, sol, setPage, setFocusedSession, applied, setA
             { k: "Tokens / session",   v: "14.2k",   d: "−1.8k",   good: true },
           ].map(s => (
             <div key={s.k}>
-              <div style={{ fontSize: 11, color: 'var(--ink-3)', letterSpacing: '0.05em' }}>{s.k}</div>
-              <div className="display mt-1" style={{ fontSize: 22, fontWeight: 400 }}>{s.v}</div>
+              <div className="text-ink-3" style={{ fontSize: 11, letterSpacing: '0.05em' }}>{s.k}</div>
+              <div className="display mt-1 font-normal" style={{ fontSize: 22 }}>{s.v}</div>
               <div className="mono" style={{ fontSize: 11,
                             color: s.good ? 'var(--success)' : 'var(--accent)' }}>{s.d}</div>
             </div>
@@ -209,31 +195,23 @@ function ShojiObservatory({ data, sol, setPage, setFocusedSession, applied, setA
 
       {/* Recent sessions table */}
       <Pane title="Recent sessions" kanji="刻" span={{ col: 'span 8', row: 'span 2' }}
-            action={<button onClick={() => setPage("sessions")}
-                            style={{ fontSize: 11, color: 'var(--ink-3)' }}>all →</button>}>
+            action={<button className="text-ink-3" onClick={() => setPage("sessions")}
+ style={{ fontSize: 11 }}>all →</button>}>
         <div>
-          <div className="mono gap-2 py-1 px-0" style={{
- display: 'grid',
-                        gridTemplateColumns: '12px 60px 1fr 120px 60px 60px', fontSize: 11,
-                        color: 'var(--ink-3)', letterSpacing: '0.06em',
-                        borderBottom: 'var(--hairline)', textTransform: 'uppercase'
-}}>
+          <div className="mono gap-2 py-1 px-0 grid text-ink-3 border-b uppercase" style={{
+ gridTemplateColumns: '12px 60px 1fr 120px 60px 60px', fontSize: 11, letterSpacing: '0.06em' }}>
             <span/><span>id</span><span>title</span><span>module</span><span>turns</span><span>dur</span>
           </div>
           {solSessions.map(s => (
             <button key={s.id} onClick={() => { setFocusedSession(s.id); setPage("sessions"); }}
-                    style={{
- display: 'grid',
-                              gridTemplateColumns: '12px 60px 1fr 120px 60px 60px', alignItems: 'center',
-                              borderBottom: 'var(--hairline)', width: '100%', textAlign: 'left',
-                              background: 'transparent'
-}} className="gap-2 py-2 px-0" >
+ style={{
+ gridTemplateColumns: '12px 60px 1fr 120px 60px 60px' }} className="gap-2 py-2 px-0 grid items-center border-b w-full text-left bg-transparent" >
               <span className="ink-dot" style={{ background: s.ftr ? 'var(--success)' : 'var(--accent)' }}/>
-              <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>{s.id}</span>
-              <span style={{ fontSize: 13, color: 'var(--ink)' }}>{s.title}</span>
-              <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>{s.module}</span>
-              <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>{s.turns}</span>
-              <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>{s.duration}</span>
+              <span className="mono text-ink-3" style={{ fontSize: 11 }}>{s.id}</span>
+              <span className="text-ink" style={{ fontSize: 13 }}>{s.title}</span>
+              <span className="mono text-ink-3" style={{ fontSize: 11 }}>{s.module}</span>
+              <span className="mono text-ink-3" style={{ fontSize: 11 }}>{s.turns}</span>
+              <span className="mono text-ink-3" style={{ fontSize: 11 }}>{s.duration}</span>
             </button>
           ))}
         </div>
@@ -243,14 +221,14 @@ function ShojiObservatory({ data, sol, setPage, setFocusedSession, applied, setA
       <Pane title="Hotspots" kanji="熱" span={{ col: 'span 4', row: 'span 2' }}>
         {data.hotspots.map((h, i) => (
           <div key={i} style={{ borderBottom: i < data.hotspots.length-1 ? 'var(--hairline)' : 'none' }} className="py-2 px-0" >
-            <div style={{ display: 'flex', alignItems: 'center' }} className="gap-2 mb-1" >
+            <div className="gap-2 mb-1 flex items-center" >
               <span className="ink-dot" style={{
                 background: h.severity === 'god' ? 'var(--accent)' :
                             h.severity === 'cluster' ? 'var(--warning)' : 'var(--success)'
               }}/>
-              <span className="mono" style={{ fontSize: 11, color: 'var(--ink)' }}>{h.name.split('/').pop()}</span>
+              <span className="mono text-ink" style={{ fontSize: 11 }}>{h.name.split('/').pop()}</span>
             </div>
-            <div className="mono pl-3" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+            <div className="mono pl-3 text-ink-3" style={{ fontSize: 11 }}>
               in {h.fanIn} · out {h.fanOut} · <span style={{ color: h.rework > 3 ? 'var(--accent)' : 'var(--ink-3)' }}>↻ {h.rework}</span>
             </div>
           </div>
@@ -264,19 +242,15 @@ function ShojiObservatory({ data, sol, setPage, setFocusedSession, applied, setA
 function Pane({ title, kanji, span, children, action, accent }) {
   return (
     <section style={{
-      gridColumn: span.col, gridRow: span.row,
-      background: accent ? 'var(--paper-2)' : 'var(--paper)',
-      border: 'var(--hairline)', borderRadius: 10, display: 'flex', flexDirection: 'column', minWidth: 0,
-      position: 'relative', overflow: 'hidden'
-}} className="p-4" >
-      <header style={{ display: 'flex', alignItems: 'center' }} className="gap-2 mb-3" >
+ gridColumn: span.col, gridRow: span.row,
+ background: accent ? 'var(--paper-2)' : 'var(--paper)', borderRadius: 10 }} className="p-4 border border-paper-edge flex flex-col min-w-0 relative overflow-hidden" >
+      <header className="gap-2 mb-3 flex items-center" >
         <span className="kanji" style={{ fontSize: 11, color: accent ? 'var(--accent)' : 'var(--ink-3)' }}>{kanji}</span>
-        <span style={{ fontSize: 11, color: 'var(--ink-3)', letterSpacing: '0.1em',
-                        textTransform: 'uppercase', fontWeight: 500 }}>{title}</span>
-        <div style={{ flex: 1 }}/>
+        <span className="text-ink-3 uppercase font-medium" style={{ fontSize: 11, letterSpacing: '0.1em' }}>{title}</span>
+        <div className="flex-1" />
         {action}
       </header>
-      <div style={{ flex: 1, minHeight: 0 }}>{children}</div>
+      <div className="flex-1 min-h-0" >{children}</div>
     </section>
   );
 }
@@ -287,26 +261,22 @@ function Pane({ title, kanji, span, children, action, accent }) {
 function ShojiOverview({ data, setPage, setActiveSolution }) {
   return (
     <div style={{
- display: 'grid',
-                  gridTemplateColumns: 'repeat(3, 1fr)'
-}} className="p-5 gap-3" >
+ gridTemplateColumns: 'repeat(3, 1fr)'
+ }} className="p-6 gap-3 grid" >
       <section style={{
- gridColumn: 'span 3', border: 'var(--hairline)', borderRadius: 10, background: 'var(--paper-2)'
-}} className="p-5" >
+ gridColumn: 'span 3', borderRadius: 10 }} className="p-6 border border-paper-edge bg-paper-2" >
         <div style={{
- fontSize: 11, color: 'var(--ink-3)', letterSpacing: '0.1em',
-                      textTransform: 'uppercase'
-}} className="mb-1" >全 · Global</div>
-        <div style={{ display: 'flex', alignItems: 'center' }} className="gap-6" >
+ fontSize: 11, letterSpacing: '0.1em' }} className="mb-1 text-ink-3 uppercase" >全 · Global</div>
+        <div className="gap-8 flex items-center" >
           <div>
-            <div className="display" style={{ fontSize: 56, fontWeight: 300, lineHeight: 1 }}>
-              78<span style={{ fontSize: 22, color: 'var(--ink-3)' }}>%</span>
+            <div className="display font-light" style={{ fontSize: 56, lineHeight: 1 }}>
+              78<span className="text-ink-3" style={{ fontSize: 22 }}>%</span>
             </div>
-            <div className="mono mt-1" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+            <div className="mono mt-1 text-ink-3" style={{ fontSize: 11 }}>
               first try right · 14d
             </div>
           </div>
-          <div style={{ flex: 1, color: 'var(--accent)' }}>
+          <div className="flex-1 text-accent" >
             <Sparkline data={data.ftrHistory} width={720} height={54} fill="var(--accent-soft)" showDots/>
           </div>
         </div>
@@ -314,37 +284,31 @@ function ShojiOverview({ data, setPage, setActiveSolution }) {
 
       {data.solutions.map(s => (
         <button key={s.id}
-                onClick={() => { setActiveSolution(s.id); setPage("observatory"); }}
-                style={{
- border: 'var(--hairline)', borderRadius: 10,
-                          background: 'var(--paper)', textAlign: 'left', cursor: 'pointer',
-                          display: 'flex', flexDirection: 'column',
-                          transition: 'border-color .12s'
-}}
-                onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--ink-3)'}
-                onMouseLeave={e => e.currentTarget.style.borderColor = ''} className="p-5 gap-2" >
-          <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2" >
-            <span className="kanji" style={{ fontSize: 13, color: 'var(--accent)' }}>{s.kanji}</span>
-            <span className="display" style={{ fontSize: 17, fontWeight: 500 }}>{s.name}</span>
-            {s.warning && <span className="mono py-1 px-2 ml-auto" style={{
- fontSize: 11, borderRadius: 4, background: 'var(--accent-soft)',
-                          color: 'var(--accent)'
-}}>attention</span>}
+ onClick={() => { setActiveSolution(s.id); setPage("observatory"); }}
+ style={{ borderRadius: 10,
+ transition: 'border-color .12s'
+ }}
+ onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--ink-3)'}
+ onMouseLeave={e => e.currentTarget.style.borderColor = ''} className="p-6 gap-2 border border-paper-edge bg-paper text-left cursor-pointer flex flex-col" >
+          <div className="gap-2 flex items-baseline" >
+            <span className="kanji text-accent" style={{ fontSize: 13 }}>{s.kanji}</span>
+            <span className="display font-medium" style={{ fontSize: 17 }}>{s.name}</span>
+            {s.warning && <span className="mono py-1 px-2 ml-auto bg-accent-soft text-accent" style={{
+ fontSize: 11, borderRadius: 4 }}>attention</span>}
           </div>
-          <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>{s.description}</div>
-          <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-3 mt-1" >
-            <span className="display" style={{ fontSize: 28, fontWeight: 300 }}>{Math.round(s.ftr*100)}%</span>
+          <div className="text-ink-3" style={{ fontSize: 11 }}>{s.description}</div>
+          <div className="gap-3 mt-1 flex items-baseline" >
+            <span className="display font-light" style={{ fontSize: 28 }}>{Math.round(s.ftr*100)}%</span>
             <span className="mono" style={{ fontSize: 11,
                           color: s.ftr >= s.ftrPrev ? 'var(--success)' : 'var(--accent)' }}>
               {s.ftr >= s.ftrPrev ? '+' : ''}{Math.round((s.ftr - s.ftrPrev)*100)}%
             </span>
-            <div style={{ flex: 1, color: s.ftr >= s.ftrPrev ? 'var(--success)' : 'var(--accent)' }}>
+            <div className="flex-1" style={{ color: s.ftr >= s.ftrPrev ? 'var(--success)' : 'var(--accent)' }}>
               <Sparkline data={data.ftrBySolution[s.id]} width={140} height={24}/>
             </div>
           </div>
           <hr className="hairline"/>
-          <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)',
-                        display: 'flex', justifyContent: 'space-between' }}>
+          <div className="mono text-ink-3 flex justify-between" style={{ fontSize: 11 }}>
             <span>{s.repos.length} repos</span>
             <span>{s.sessions7d} sessions</span>
             <span>{s.tokens7d}M</span>
@@ -370,16 +334,16 @@ function ShojiSessions({ data, sol, focused, setFocused }) {
   });
 
   return (
-    <div className="p-5" >
-      <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-4 mb-4" >
-        <h1 className="display m-0" style={{ fontSize: 22, fontWeight: 400 }}>
+    <div className="p-6" >
+      <div className="gap-4 mb-4 flex items-baseline" >
+        <h1 className="display m-0 font-normal" style={{ fontSize: 22 }}>
           刻 · Sessions
         </h1>
-        <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+        <div className="mono text-ink-3" style={{ fontSize: 11 }}>
           {sessions.length} records
         </div>
-        <div style={{ flex: 1 }}/>
-        <div style={{ display: 'flex', background: 'var(--paper-3)', borderRadius: 6 }} className="gap-1 p-1" >
+        <div className="flex-1" />
+        <div style={{ borderRadius: 6 }} className="gap-1 p-1 flex bg-paper-3" >
           {["all","first-try","corrected"].map(f => (
             <button key={f} onClick={() => setFilter(f)}
                     style={{
@@ -392,66 +356,54 @@ function ShojiSessions({ data, sol, focused, setFocused }) {
           ))}
         </div>
         <select value={moduleFilter} onChange={e => setModuleFilter(e.target.value)}
-                className="mono py-1 px-2"
-                style={{
- fontSize: 11, border: 'var(--hairline)',
-                          borderRadius: 6, background: 'var(--paper)', color: 'var(--ink)'
-}}>
+ className="mono py-1 px-2 border border-paper-edge bg-paper text-ink"
+ style={{
+ fontSize: 11,
+ borderRadius: 6 }}>
           {modules.map(m => <option key={m}>{m}</option>)}
         </select>
       </div>
 
-      <div style={{ border: 'var(--hairline)', borderRadius: 10, overflow: 'hidden' }}>
-        <div className="mono gap-3 py-2 px-4" style={{
- display: 'grid',
-                      gridTemplateColumns: '14px 70px 2fr 1fr 100px 70px 70px 70px', fontSize: 11, letterSpacing: '0.06em',
-                      color: 'var(--ink-3)', textTransform: 'uppercase',
-                      borderBottom: 'var(--hairline)', background: 'var(--paper-3)'
-}}>
+      <div className="border border-paper-edge overflow-hidden" style={{ borderRadius: 10 }}>
+        <div className="mono gap-3 py-2 px-4 grid text-ink-3 uppercase border-b bg-paper-3" style={{
+ gridTemplateColumns: '14px 70px 2fr 1fr 100px 70px 70px 70px', fontSize: 11, letterSpacing: '0.06em' }}>
           <span/><span>id</span><span>title</span><span>module</span>
-          <span>date</span><span style={{ textAlign: 'right' }}>turns</span>
-          <span style={{ textAlign: 'right' }}>tokens</span><span style={{ textAlign: 'right' }}>dur</span>
+          <span>date</span><span className="text-right" >turns</span>
+          <span className="text-right" >tokens</span><span className="text-right" >dur</span>
         </div>
         {sessions.map(s => (
           <React.Fragment key={s.id}>
             <button onClick={() => setFocused(focused === s.id ? null : s.id)}
-                    style={{
- display: 'grid',
-                              gridTemplateColumns: '14px 70px 2fr 1fr 100px 70px 70px 70px', alignItems: 'center',
-                              borderBottom: 'var(--hairline)', width: '100%', textAlign: 'left',
-                              background: focused === s.id ? 'var(--paper-3)' : 'transparent',
-                              transition: 'background .12s'
-}} className="gap-3 py-3 px-4" >
+ style={{
+ gridTemplateColumns: '14px 70px 2fr 1fr 100px 70px 70px 70px',
+ background: focused === s.id ? 'var(--paper-3)' : 'transparent',
+ transition: 'background .12s'
+ }} className="gap-3 py-3 px-4 grid items-center border-b w-full text-left" >
               <span className="ink-dot" style={{ background: s.ftr ? 'var(--success)' : 'var(--accent)' }}/>
-              <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>{s.id}</span>
-              <span style={{ fontSize: 13, color: 'var(--ink)' }}>{s.title}</span>
-              <span className="mono" style={{ fontSize: 11, color: 'var(--ink-2)' }}>{s.module}</span>
-              <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>{s.date} {s.started.split(' ').pop()}</span>
-              <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', textAlign: 'right' }}>{s.turns}</span>
-              <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', textAlign: 'right' }}>{(s.tokens/1000).toFixed(1)}k</span>
-              <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', textAlign: 'right' }}>{s.duration}</span>
+              <span className="mono text-ink-3" style={{ fontSize: 11 }}>{s.id}</span>
+              <span className="text-ink" style={{ fontSize: 13 }}>{s.title}</span>
+              <span className="mono text-ink-2" style={{ fontSize: 11 }}>{s.module}</span>
+              <span className="mono text-ink-3" style={{ fontSize: 11 }}>{s.date} {s.started.split(' ').pop()}</span>
+              <span className="mono text-ink-3 text-right" style={{ fontSize: 11 }}>{s.turns}</span>
+              <span className="mono text-ink-3 text-right" style={{ fontSize: 11 }}>{(s.tokens/1000).toFixed(1)}k</span>
+              <span className="mono text-ink-3 text-right" style={{ fontSize: 11 }}>{s.duration}</span>
             </button>
             {focused === s.id && (
-              <div style={{
- background: 'var(--paper-2)',
-                            borderBottom: 'var(--hairline)'
-}} className="pt-4 pb-5 pl-9 pr-4" >
+              <div className="pt-4 pb-6 pl-24 pr-4 bg-paper-2 border-b" >
                 <div style={{
- fontSize: 13, color: 'var(--ink-2)', fontStyle: 'italic', maxWidth: 680, lineHeight: 1.55
-}} className="mb-3" >
+ fontSize: 13, maxWidth: 680, lineHeight: 1.55
+ }} className="mb-3 text-ink-2 italic" >
                   {s.summary}
                 </div>
                 {s.events && (
-                  <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
+                  <div className="gap-1 flex flex-col" >
                     {s.events.map((e, i) => (
-                      <div key={i} style={{
- display: 'grid', gridTemplateColumns: '14px 50px 1fr', alignItems: 'center'
-}} className="gap-3" >
+                      <div key={i} style={{ gridTemplateColumns: '14px 50px 1fr' }} className="gap-3 grid items-center" >
                         <span style={{ color: e.kind === 'correction' ? 'var(--accent)' :
                                               e.kind === 'test' ? 'var(--success)' : 'var(--ink-3)' }}>
                           <EventGlyph kind={e.kind} size={12}/>
                         </span>
-                        <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>{e.t}</span>
+                        <span className="mono text-ink-3" style={{ fontSize: 11 }}>{e.t}</span>
                         <span style={{ fontSize: 13, color: e.kind === 'correction' ? 'var(--accent)' : 'var(--ink-2)' }}>
                           {e.text}
                         </span>
@@ -475,13 +427,12 @@ function ShojiCodebase({ data, sol }) {
   const [repo, setRepo] = React.useState(sol.repos[0]);
   return (
     <div style={{
- display: 'grid',
-                  gridTemplateColumns: 'repeat(12, 1fr)',
-                  gridAutoRows: 'min-content'
-}} className="p-5 gap-3" >
-      <section style={{ gridColumn: 'span 12', display: 'flex', alignItems: 'center' }} className="gap-3" >
-        <h1 className="display m-0" style={{ fontSize: 22, fontWeight: 400 }}>構 · {sol.name}</h1>
-        <div style={{ display: 'flex', background: 'var(--paper-3)', borderRadius: 6 }} className="gap-1 p-1" >
+ gridTemplateColumns: 'repeat(12, 1fr)',
+ gridAutoRows: 'min-content'
+ }} className="p-6 gap-3 grid" >
+      <section style={{ gridColumn: 'span 12' }} className="gap-3 flex items-center" >
+        <h1 className="display m-0 font-normal" style={{ fontSize: 22 }}>構 · {sol.name}</h1>
+        <div style={{ borderRadius: 6 }} className="gap-1 p-1 flex bg-paper-3" >
           {sol.repos.map(r => (
             <button key={r} onClick={() => setRepo(r)}
                     className="mono py-1 px-2"
@@ -494,8 +445,8 @@ function ShojiCodebase({ data, sol }) {
             </button>
           ))}
         </div>
-        <div style={{ flex: 1 }}/>
-        <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>247 nodes · 4 communities · indexed 2m ago</span>
+        <div className="flex-1" />
+        <span className="mono text-ink-3" style={{ fontSize: 11 }}>247 nodes · 4 communities · indexed 2m ago</span>
       </section>
 
       <Pane title="Graph" kanji="網" span={{ col: 'span 8', row: 'span 1' }}>
@@ -550,42 +501,36 @@ function ShojiCodebase({ data, sol }) {
           { name: "utils", nodes: 8,  color: 'var(--ink-3)' },
         ].map((c, i) => (
           <div key={c.name} style={{
- display: 'flex', alignItems: 'center',
-                        borderBottom: i < 3 ? 'var(--hairline)' : 'none'
-}} className="gap-2 py-1 px-0" >
+ borderBottom: i < 3 ? 'var(--hairline)' : 'none'
+ }} className="gap-2 py-1 px-0 flex items-center" >
             <span className="ink-dot" style={{ background: c.color }}/>
-            <span style={{ flex: 1, fontSize: 13 }}>{c.name}</span>
-            <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>{c.nodes} nodes</span>
+            <span className="flex-1" style={{ fontSize: 13 }}>{c.name}</span>
+            <span className="mono text-ink-3" style={{ fontSize: 11 }}>{c.nodes} nodes</span>
           </div>
         ))}
       </Pane>
 
       <Pane title="Hotspots" kanji="熱" span={{ col: 'span 8', row: 'span 1' }}>
-        <div className="mono gap-3 py-1 px-0" style={{
- display: 'grid',
-                      gridTemplateColumns: '14px 2fr 70px 70px 70px', fontSize: 11,
-                      color: 'var(--ink-3)', letterSpacing: '0.06em',
-                      borderBottom: 'var(--hairline)', textTransform: 'uppercase'
-}}>
+        <div className="mono gap-3 py-1 px-0 grid text-ink-3 border-b uppercase" style={{
+ gridTemplateColumns: '14px 2fr 70px 70px 70px', fontSize: 11, letterSpacing: '0.06em' }}>
           <span/><span>path</span>
-          <span style={{ textAlign: 'right' }}>fan in</span>
-          <span style={{ textAlign: 'right' }}>fan out</span>
-          <span style={{ textAlign: 'right' }}>rework</span>
+          <span className="text-right" >fan in</span>
+          <span className="text-right" >fan out</span>
+          <span className="text-right" >rework</span>
         </div>
         {data.hotspots.map((h, i) => (
           <div key={i} style={{
- display: 'grid',
-                        gridTemplateColumns: '14px 2fr 70px 70px 70px', alignItems: 'center',
-                        borderBottom: i < data.hotspots.length - 1 ? 'var(--hairline)' : 'none'
-}} className="gap-3 py-2 px-0" >
+ gridTemplateColumns: '14px 2fr 70px 70px 70px',
+ borderBottom: i < data.hotspots.length - 1 ? 'var(--hairline)' : 'none'
+ }} className="gap-3 py-2 px-0 grid items-center" >
             <span className="ink-dot" style={{
               background: h.severity === 'god' ? 'var(--accent)' :
                           h.severity === 'cluster' ? 'var(--warning)' : 'var(--success)'
             }}/>
-            <span className="mono" style={{ fontSize: 13, color: 'var(--ink)' }}>{h.name}</span>
-            <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', textAlign: 'right' }}>{h.fanIn}</span>
-            <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', textAlign: 'right' }}>{h.fanOut}</span>
-            <span className="mono" style={{ fontSize: 11, color: h.rework > 3 ? 'var(--accent)' : 'var(--ink-3)', textAlign: 'right' }}>
+            <span className="mono text-ink" style={{ fontSize: 13 }}>{h.name}</span>
+            <span className="mono text-ink-3 text-right" style={{ fontSize: 11 }}>{h.fanIn}</span>
+            <span className="mono text-ink-3 text-right" style={{ fontSize: 11 }}>{h.fanOut}</span>
+            <span className="mono text-right" style={{ fontSize: 11, color: h.rework > 3 ? 'var(--accent)' : 'var(--ink-3)' }}>
               ↻ {h.rework}
             </span>
           </div>
@@ -593,7 +538,7 @@ function ShojiCodebase({ data, sol }) {
       </Pane>
 
       <Pane title="Health" kanji="健" span={{ col: 'span 4', row: 'span 1' }}>
-        <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-3" >
+        <div className="gap-3 flex flex-col" >
           {[
             { l: "Dead code",     v: "14 exports" },
             { l: "Test ratio",    v: "0.72 : 1" },
@@ -601,8 +546,8 @@ function ShojiCodebase({ data, sol }) {
             { l: "Median LOC",    v: "68 lines" },
             { l: "Last indexed",  v: "2m ago" }
           ].map(r => (
-            <div key={r.l} style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <span style={{ fontSize: 13, color: 'var(--ink-3)' }}>{r.l}</span>
+            <div className="flex justify-between" key={r.l} >
+              <span className="text-ink-3" style={{ fontSize: 13 }}>{r.l}</span>
               <span className="mono" style={{ fontSize: 11 }}>{r.v}</span>
             </div>
           ))}
@@ -618,14 +563,13 @@ function ShojiCodebase({ data, sol }) {
 function ShojiCoaching({ data, applied, setApplied }) {
   return (
     <div style={{
- display: 'grid',
-                  gridTemplateColumns: 'repeat(12, 1fr)'
-}} className="p-5 gap-3" >
+ gridTemplateColumns: 'repeat(12, 1fr)'
+ }} className="p-6 gap-3 grid" >
       <section style={{ gridColumn: 'span 12' }}>
-        <h1 className="display m-0" style={{ fontSize: 22, fontWeight: 400 }}>
+        <h1 className="display m-0 font-normal" style={{ fontSize: 22 }}>
           師 · Coaching
         </h1>
-        <div style={{ fontSize: 13, color: 'var(--ink-3)' }} className="mt-1" >
+        <div style={{ fontSize: 13 }} className="mt-1 text-ink-3" >
           Three observations. Apply to improve the week.
         </div>
       </section>
@@ -636,40 +580,36 @@ function ShojiCoaching({ data, applied, setApplied }) {
                              c.urgency === 'medium' ? 'var(--warning)' : 'var(--ink-3)';
         return (
           <section key={c.id} style={{
- gridColumn: 'span 4', border: 'var(--hairline)',
-                        borderRadius: 10, background: 'var(--paper)',
-                        display: 'flex', flexDirection: 'column'
-}} className="p-4 gap-3" >
-            <div style={{ display: 'flex', alignItems: 'center' }} className="gap-2" >
+ gridColumn: 'span 4',
+ borderRadius: 10 }} className="p-4 gap-3 border border-paper-edge bg-paper flex flex-col" >
+            <div className="gap-2 flex items-center" >
               <span style={{ width: 6, height: 22, borderRadius: 2, background: urgencyColor }}/>
-              <span className="mono" style={{ fontSize: 11, color: urgencyColor,
-                            letterSpacing: '0.12em', textTransform: 'uppercase' }}>{c.urgency}</span>
-              <span className="mono ml-auto" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+              <span className="mono uppercase" style={{ fontSize: 11, color: urgencyColor,
+ letterSpacing: '0.12em' }}>{c.urgency}</span>
+              <span className="mono ml-auto text-ink-3" style={{ fontSize: 11 }}>
                 {c.module}
               </span>
             </div>
-            <p className="display m-0" style={{ fontSize: 17, fontWeight: 400, lineHeight: 1.3 }}>
+            <p className="display m-0 font-normal" style={{ fontSize: 17, lineHeight: 1.3 }}>
               {c.koan}
             </p>
-            <p style={{ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.55, flex: 1 }} className="m-0" >
+            <p style={{ fontSize: 13, lineHeight: 1.55 }} className="m-0 text-ink-2 flex-1" >
               {c.body}
             </p>
             <hr className="hairline"/>
-            <div style={{ display: 'flex', alignItems: 'center' }} className="gap-2" >
+            <div className="gap-2 flex items-center" >
               <button onClick={() => setApplied({...applied, [c.id]: !isApplied})}
-                      style={{
+ style={{
  borderRadius: 6, fontSize: 11,
-                                background: isApplied ? 'var(--success-soft)' : 'var(--ink)',
-                                color: isApplied ? 'var(--success)' : 'var(--paper)',
-                                fontWeight: 500
-}} className="py-2 px-3" >
+ background: isApplied ? 'var(--success-soft)' : 'var(--ink)',
+ color: isApplied ? 'var(--success)' : 'var(--paper)' }} className="py-2 px-3 font-medium" >
                 {isApplied ? "✓ Applied" : c.action}
               </button>
-              <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+              <span className="mono text-ink-3" style={{ fontSize: 11 }}>
                 {c.actionDetail}
               </span>
             </div>
-            <div style={{ fontSize: 11, color: 'var(--ink-2)', fontStyle: 'italic' }}>
+            <div className="text-ink-2 italic" style={{ fontSize: 11 }}>
               → {c.impact}
             </div>
           </section>
@@ -678,17 +618,12 @@ function ShojiCoaching({ data, applied, setApplied }) {
 
       <section style={{ gridColumn: 'span 12' }} className="mt-2" >
         <div style={{
- fontSize: 11, color: 'var(--ink-3)', letterSpacing: '0.12em',
-                      textTransform: 'uppercase'
-}} className="mb-2" >Active personas</div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)' }} className="gap-2" >
+ fontSize: 11, letterSpacing: '0.12em' }} className="mb-2 text-ink-3 uppercase" >Active personas</div>
+        <div style={{ gridTemplateColumns: 'repeat(4, 1fr)' }} className="gap-2 grid" >
           {data.personas.map(p => (
-            <div key={p.id} style={{
- border: 'var(--hairline)', borderRadius: 8,
-                          background: 'var(--paper)'
-}} className="p-3" >
+            <div key={p.id} style={{ borderRadius: 8 }} className="p-3 border border-paper-edge bg-paper" >
               <div style={{ fontSize: 13 }}>{p.name}</div>
-              <div className="mono mt-1" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+              <div className="mono mt-1 text-ink-3" style={{ fontSize: 11 }}>
                 {p.triggers}
               </div>
             </div>
@@ -705,29 +640,25 @@ function ShojiCoaching({ data, applied, setApplied }) {
 function ShojiConfig({ data }) {
   return (
     <div style={{
- display: 'grid',
-                  gridTemplateColumns: 'repeat(12, 1fr)'
-}} className="p-5 gap-3" >
+ gridTemplateColumns: 'repeat(12, 1fr)'
+ }} className="p-6 gap-3 grid" >
       <Pane title="Skills" kanji="技" span={{ col: 'span 7', row: 'span 1' }}>
         {data.skills.map((s, i) => (
-          <div key={s.id} style={{
- display: 'grid', gridTemplateColumns: '14px 1fr auto auto', alignItems: 'center',
-                        borderBottom: i < data.skills.length-1 ? 'var(--hairline)' : 'none'
-}} className="gap-3 py-2 px-0" >
+          <div key={s.id} style={{ gridTemplateColumns: '14px 1fr auto auto',
+ borderBottom: i < data.skills.length-1 ? 'var(--hairline)' : 'none'
+ }} className="gap-3 py-2 px-0 grid items-center" >
             <span className="ink-dot" style={{ background: s.active ? 'var(--success)' : 'var(--ink-4)' }}/>
             <div>
               <div style={{ fontSize: 13 }}>{s.name}</div>
-              <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+              <div className="mono text-ink-3" style={{ fontSize: 11 }}>
                 {s.solutions.length ? s.solutions.join(' · ') : 'not installed'}
               </div>
             </div>
-            <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>{s.id}</span>
-            <div style={{ width: 28, height: 16, borderRadius: 999,
-                          background: s.active ? 'var(--accent)' : 'var(--paper-3)',
-                          position: 'relative' }}>
-              <div style={{ position: 'absolute', top: 2, left: s.active ? 14 : 2,
-                            width: 12, height: 12, background: 'var(--paper)',
-                            borderRadius: '50%', transition: 'left .15s' }}/>
+            <span className="mono text-ink-3" style={{ fontSize: 11 }}>{s.id}</span>
+            <div className="relative" style={{ width: 28, height: 16, borderRadius: 999,
+ background: s.active ? 'var(--accent)' : 'var(--paper-3)' }}>
+              <div className="absolute bg-paper rounded-full" style={{ top: 2, left: s.active ? 14 : 2,
+ width: 12, height: 12, transition: 'left .15s' }}/>
             </div>
           </div>
         ))}
@@ -735,19 +666,15 @@ function ShojiConfig({ data }) {
 
       <Pane title="Libraries" kanji="書" span={{ col: 'span 5', row: 'span 1' }}>
         {data.libraries.map((l, i) => (
-          <div key={l.name} style={{
- display: 'grid', gridTemplateColumns: '1fr auto auto', alignItems: 'center',
-                        borderBottom: 'var(--hairline)'
-}} className="gap-3 py-2 px-0" >
-            <div style={{ fontSize: 13 }}>{l.name} <span className="mono" style={{ color: 'var(--ink-3)', fontSize: 11 }}>v{l.version}</span></div>
-            <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>{l.pages}p</span>
-            <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>{l.lastIndexed}</span>
+          <div key={l.name} style={{ gridTemplateColumns: '1fr auto auto' }} className="gap-3 py-2 px-0 grid items-center border-b" >
+            <div style={{ fontSize: 13 }}>{l.name} <span className="mono text-ink-3" style={{ fontSize: 11 }}>v{l.version}</span></div>
+            <span className="mono text-ink-3" style={{ fontSize: 11 }}>{l.pages}p</span>
+            <span className="mono text-ink-3" style={{ fontSize: 11 }}>{l.lastIndexed}</span>
           </div>
         ))}
         <button style={{
  borderRadius: 6, fontSize: 11,
-                      border: '1px dashed var(--ink-3)', color: 'var(--ink-2)'
-}} className="mt-3 py-2 px-3" >
+ border: '1px dashed var(--ink-3)' }} className="mt-3 py-2 px-3 text-ink-2" >
           + Index a library
         </button>
       </Pane>
@@ -758,20 +685,17 @@ function ShojiConfig({ data }) {
           { name: "Cursor",      version: "0.42",  status: "connected" },
           { name: "Zed",         version: "0.148", status: "available" }
         ].map((a, i, arr) => (
-          <div key={a.name} style={{
- display: 'grid', gridTemplateColumns: '14px 1fr auto auto', alignItems: 'center',
-                        borderBottom: i < arr.length-1 ? 'var(--hairline)' : 'none'
-}} className="gap-3 py-2 px-0" >
+          <div key={a.name} style={{ gridTemplateColumns: '14px 1fr auto auto',
+ borderBottom: i < arr.length-1 ? 'var(--hairline)' : 'none'
+ }} className="gap-3 py-2 px-0 grid items-center" >
             <span className="ink-dot" style={{ background: a.status === 'connected' ? 'var(--success)' : 'var(--ink-4)' }}/>
             <div>
               <div style={{ fontSize: 13 }}>{a.name}</div>
-              <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>MCP · v{a.version} · {a.status}</div>
+              <div className="mono text-ink-3" style={{ fontSize: 11 }}>MCP · v{a.version} · {a.status}</div>
             </div>
-            <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>{a.status}</span>
+            <span className="mono text-ink-3" style={{ fontSize: 11 }}>{a.status}</span>
             <button style={{
- fontSize: 11, borderRadius: 5,
-                          border: 'var(--hairline)', color: 'var(--ink-2)'
-}} className="py-1 px-2" >
+ fontSize: 11, borderRadius: 5 }} className="py-1 px-2 border border-paper-edge text-ink-2" >
               {a.status === 'connected' ? 'Configure' : 'Connect'}
             </button>
           </div>
@@ -779,11 +703,11 @@ function ShojiConfig({ data }) {
       </Pane>
 
       <Pane title="Daemon" kanji="守" span={{ col: 'span 5', row: 'span 1' }}>
-        <div style={{ display: 'flex', alignItems: 'center' }} className="gap-2 mb-3" >
-          <span className="ink-dot" style={{ background: 'var(--success)' }}/>
+        <div className="gap-2 mb-3 flex items-center" >
+          <span className="ink-dot bg-success" />
           <span style={{ fontSize: 13 }}>running</span>
-          <span style={{ flex: 1 }}/>
-          <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>pid 12492</span>
+          <span className="flex-1" />
+          <span className="mono text-ink-3" style={{ fontSize: 11 }}>pid 12492</span>
         </div>
         {[
           ["Port",           "9823"],
@@ -791,8 +715,8 @@ function ShojiConfig({ data }) {
           ["Events / day",   "1,842"],
           ["Memory",         "42 MB"],
         ].map(([l,v]) => (
-          <div key={l} style={{ display: 'flex', justifyContent: 'space-between' }} className="py-1 px-0" >
-            <span style={{ fontSize: 13, color: 'var(--ink-3)' }}>{l}</span>
+          <div key={l} className="py-1 px-0 flex justify-between" >
+            <span className="text-ink-3" style={{ fontSize: 13 }}>{l}</span>
             <span className="mono" style={{ fontSize: 11 }}>{v}</span>
           </div>
         ))}
@@ -814,44 +738,40 @@ function ShojiOnboarding() {
   ];
   return (
     <div style={{
- display: 'grid',
-                  gridTemplateColumns: 'repeat(4, 1fr)', maxWidth: 1100
-}} className="p-6 gap-4" >
+ gridTemplateColumns: 'repeat(4, 1fr)', maxWidth: 1100
+ }} className="p-8 gap-4 grid" >
       <section style={{ gridColumn: 'span 4' }}>
-        <div className="kanji" style={{ fontSize: 40, color: 'var(--accent)' }}>始</div>
-        <h1 className="display mt-2 mb-1" style={{ fontSize: 28, fontWeight: 300 }}>Begin.</h1>
-        <div style={{ fontSize: 13, color: 'var(--ink-3)' }}>Four panes, four strokes.</div>
+        <div className="kanji text-accent" style={{ fontSize: 40 }}>始</div>
+        <h1 className="display mt-2 mb-1 font-light" style={{ fontSize: 28 }}>Begin.</h1>
+        <div className="text-ink-3" style={{ fontSize: 13 }}>Four panes, four strokes.</div>
       </section>
 
       {steps.map(s => (
         <section key={s.n}
-                 onClick={() => setStep(s.n)}
-                 style={{
- border: 'var(--hairline)', borderRadius: 10,
-                          background: s.n === step ? 'var(--paper-2)' : 'var(--paper)',
-                          opacity: s.n > step ? 0.5 : 1,
-                          borderColor: s.n === step ? 'var(--accent)' : '',
-                          cursor: 'pointer', minHeight: 160
-}} className="p-5" >
-          <div className="display" style={{ fontSize: 56, fontWeight: 300,
-                        color: s.n < step ? 'var(--success)' : s.n === step ? 'var(--accent)' : 'var(--ink-3)',
-                        lineHeight: 1 }}>
+ onClick={() => setStep(s.n)}
+ style={{ borderRadius: 10,
+ background: s.n === step ? 'var(--paper-2)' : 'var(--paper)',
+ opacity: s.n > step ? 0.5 : 1,
+ borderColor: s.n === step ? 'var(--accent)' : '', minHeight: 160
+ }} className="p-6 border border-paper-edge cursor-pointer" >
+          <div className="display font-light" style={{ fontSize: 56,
+ color: s.n < step ? 'var(--success)' : s.n === step ? 'var(--accent)' : 'var(--ink-3)',
+ lineHeight: 1 }}>
             {s.n < step ? '✓' : '0' + s.n}
           </div>
-          <div className="display mt-3" style={{ fontSize: 17, fontWeight: 500 }}>{s.t}</div>
-          <div style={{ fontSize: 11, color: 'var(--ink-3)' }} className="mt-1" >{s.d}</div>
+          <div className="display mt-3 font-medium" style={{ fontSize: 17 }}>{s.t}</div>
+          <div style={{ fontSize: 11 }} className="mt-1 text-ink-3" >{s.d}</div>
         </section>
       ))}
 
-      <section style={{ gridColumn: 'span 4', display: 'flex' }} className="gap-2 mt-1" >
+      <section style={{ gridColumn: 'span 4' }} className="gap-2 mt-1 flex" >
         <button onClick={() => setStep(Math.min(4, step+1))}
-                style={{
- background: 'var(--ink)', color: 'var(--paper)',
-                          borderRadius: 6, fontSize: 13
-}} className="py-2 px-4" >
+ style={{
+ borderRadius: 6, fontSize: 13
+ }} className="py-2 px-4 bg-ink text-paper" >
           {step === 4 ? "Enter observatory →" : "Continue"}
         </button>
-        <button style={{ color: 'var(--ink-3)', fontSize: 13 }} className="py-2 px-4" >Skip</button>
+        <button style={{ fontSize: 13 }} className="py-2 px-4 text-ink-3" >Skip</button>
       </section>
     </div>
   );
