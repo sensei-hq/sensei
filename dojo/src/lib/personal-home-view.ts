@@ -12,6 +12,9 @@
 
 /** The minimal identity the personal home needs (from the layout's `user`). */
 export interface PersonalUser {
+	/** The signed-in user's stable id (Supabase auth uid) — used to resolve the
+	 *  "you" chip against membership `user_id`s. Null when unauthenticated. */
+	id?: string | null;
 	name?: string | null;
 	email?: string | null;
 }

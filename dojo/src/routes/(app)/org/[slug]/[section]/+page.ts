@@ -86,7 +86,7 @@ import {
 // scopes) still render off kit fixtures — their routes aren't built (Tier 3:
 // scopes/projects/stance need further wiring).
 export const load: PageLoad = async ({ parent, params, fetch }) => {
-	const { memberships, accessToken } = await parent();
+	const { memberships, accessToken, user } = await parent();
 	const org = orgBySlug(memberships, params.slug);
 	if (!org) redirect(307, '/you');
 	if (!ORG_SECTIONS.includes(params.section)) redirect(307, `/org/${params.slug}`);
@@ -159,7 +159,7 @@ export const load: PageLoad = async ({ parent, params, fetch }) => {
 				guardTenantScope<Policy[]>(tenantKey, [], (tk) => listPolicies(tk, opts)),
 				guardTenantScope<AuditEvent[]>(tenantKey, [], (tk) => listAudit(tk, opts))
 			]);
-			members = toKitMembers(m.value, { self: undefined });
+			members = toKitMembers(m.value, { self: user?.id ?? undefined });
 			rolePolicies = toKitRolePolicies(p.value);
 			auditLog = toKitAuditThread(a.value);
 		} catch (e) {
