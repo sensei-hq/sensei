@@ -9,11 +9,13 @@ import {
 	listIncidents,
 	getKnowledge,
 	listClientAuditLedger,
+	listProjects,
 	DojoApiError,
 	type Engagement,
 	type Incident,
 	type KnowledgeLibraryWire,
-	type ClientAuditEntry
+	type ClientAuditEntry,
+	type ProjectRow
 } from '$lib/client-data';
 import { listTriage, type TriageRow } from '$lib/triage-data';
 import {
@@ -47,6 +49,7 @@ import {
 } from '$lib/admin-map';
 import { toKitIncidents, toKitClientAuditLedger } from '$lib/incidents-map';
 import { toKitKnowledge } from '$lib/knowledge-map';
+import { toKitProjects } from '$lib/projects-map';
 import type {
 	KitEngagement,
 	KitTriageGroup,
@@ -56,6 +59,7 @@ import type {
 	KitRolePolicy,
 	KitChatTurn,
 	KitKnowledge,
+	KitProject,
 	KitIdentity,
 	KitIncident,
 	KitClientAuditRow,
@@ -63,7 +67,6 @@ import type {
 	KitBilling
 } from '$lib/components/kit/types';
 import {
-	orgProjectsFor,
 	orgConstitutionFor,
 	candidateDetailFor,
 	confidentialityFor,
@@ -223,6 +226,15 @@ export const load: PageLoad = async ({ parent, params, fetch }) => {
 		(res) => toKitBilling(billingFor(slug), res)
 	);
 
+	// Projects (org) — the tenant's dojo.projects (daemon-populated on relay runs).
+	// Real read; honest-empty until populated — NOT the orgProjectsFor(slug) fixture.
+	const projectsRes = await guardedFor<ProjectRow[], KitProject[]>(
+		'projects',
+		[],
+		(tk) => listProjects(tk, opts),
+		toKitProjects
+	);
+
 	// Knowledge (maintainer) — the tenant's published library over dojo.artifacts
 	// (active / pending-prune / catalog). Real read; honest-empty on miss, error
 	// state on failure — NOT the old knowledgeFor(slug) fixture (fabricated-data fix).
@@ -245,7 +257,8 @@ export const load: PageLoad = async ({ parent, params, fetch }) => {
 		accessToken,
 		// Overview-section data (fixtures — Tier 3, needs DDL).
 		sections: orgConstitutionFor(slug),
-		projects: orgProjectsFor(slug),
+		projects: projectsRes.value,
+		projectsError: projectsRes.error,
 		// Maintainer Govern consoles.
 		triage,
 		candidateDetail,
