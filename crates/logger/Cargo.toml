@@ -1,6 +1,6 @@
 [package]
 name = "sensei-logger"
-version = "0.6.1"
+version = "0.6.2"
 edition = "2024"
 description = "Structured logger — kavach pattern (level, running_on, context, data, error)"
 
