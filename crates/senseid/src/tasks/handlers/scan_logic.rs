@@ -640,6 +640,53 @@ pub fn classify_stale_root(
     StaleAction::MarkStale
 }
 
+/// The final fate of a stale root once the deletion-avoidance signals are folded
+/// into [`classify_stale_root`]'s base verdict. Returned by [`decide_stale_root`].
+#[derive(Debug, Clone, PartialEq)]
+pub enum StaleDisposition {
+    /// Re-discovered this scan — leave it.
+    Keep,
+    /// A live root shares this (now-gone) root's git remote: the repo was renamed
+    /// or moved. Re-point its history to that folder (the payload) rather than
+    /// deleting — the transcript mappings must not dangle.
+    Remap(uuid::Uuid),
+    /// Gone with no live twin, but it carries history (sessions/transcripts) worth
+    /// keeping: retain it as `archived` instead of a hard delete.
+    Archive,
+    /// Provably dead AND history-free — safe to delete (cascading nodes + subtree).
+    Remove,
+    /// Still on disk with real content, no live owner — user triages.
+    MarkStale,
+}
+
+/// Fold the two deletion-avoidance signals into [`classify_stale_root`]'s verdict.
+/// Pure so the policy is unit-testable; the impure facts (`remote_match`,
+/// `has_history`) are injected by [`super::scan::reconcile_roots`].
+///
+/// A remote match and history only ever *upgrade* a `Remove` (the path is gone):
+/// - a live root with the same git remote ⇒ the repo moved ⇒ **remap** its history;
+/// - else if it has sessions/transcripts ⇒ **archive** (retain) rather than delete;
+/// - else ⇒ **remove** as before.
+///
+/// `Keep` and `MarkStale` are never overridden: `Keep` means it's still live, and
+/// `MarkStale` means the old path still exists with content — a same-remote clone
+/// there is a duplicate to triage, not a rename to auto-absorb.
+pub fn decide_stale_root(
+    base: StaleAction,
+    remote_match: Option<uuid::Uuid>,
+    has_history: bool,
+) -> StaleDisposition {
+    match base {
+        StaleAction::Keep => StaleDisposition::Keep,
+        StaleAction::MarkStale => StaleDisposition::MarkStale,
+        StaleAction::Remove => match remote_match {
+            Some(to) => StaleDisposition::Remap(to),
+            None if has_history => StaleDisposition::Archive,
+            None => StaleDisposition::Remove,
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1405,6 +1452,49 @@ mod tests {
             classify_stale_root(Path::new("/dev/archive"), &roots, true, true),
             StaleAction::MarkStale
         );
+    }
+
+    // ── decide_stale_root (deletion-avoidance policy) ────────────────────
+    #[test]
+    fn decide_remaps_a_gone_root_whose_remote_lives_elsewhere() {
+        // Remove base + a live root with the same git remote = a rename/move.
+        let to = uuid::Uuid::from_u128(0x42);
+        assert_eq!(
+            decide_stale_root(StaleAction::Remove, Some(to), false),
+            StaleDisposition::Remap(to),
+            "a moved repo re-points its history, never deletes"
+        );
+        // remote match wins even when it ALSO has history (remap subsumes archive).
+        assert_eq!(decide_stale_root(StaleAction::Remove, Some(to), true), StaleDisposition::Remap(to));
+    }
+
+    #[test]
+    fn decide_archives_a_gone_history_bearing_root_with_no_twin() {
+        assert_eq!(
+            decide_stale_root(StaleAction::Remove, None, true),
+            StaleDisposition::Archive,
+            "gone but carries sessions/transcripts → retain as archived, don't hard-delete"
+        );
+    }
+
+    #[test]
+    fn decide_removes_a_gone_history_free_root() {
+        assert_eq!(
+            decide_stale_root(StaleAction::Remove, None, false),
+            StaleDisposition::Remove,
+            "gone with nothing worth keeping → the existing hard-delete path"
+        );
+    }
+
+    #[test]
+    fn decide_never_overrides_keep_or_markstale() {
+        let to = uuid::Uuid::from_u128(0x7);
+        // Keep = still live; a remote match cannot demote it.
+        assert_eq!(decide_stale_root(StaleAction::Keep, Some(to), true), StaleDisposition::Keep);
+        // MarkStale = old path still exists with content; a same-remote clone there
+        // is a duplicate to triage, not a rename to absorb.
+        assert_eq!(decide_stale_root(StaleAction::MarkStale, Some(to), true), StaleDisposition::MarkStale);
+        assert_eq!(decide_stale_root(StaleAction::MarkStale, None, false), StaleDisposition::MarkStale);
     }
 
     #[test]
