@@ -33,6 +33,7 @@ use crate::api::handlers::checker;
 use crate::api::handlers::dojo;
 use crate::api::handlers::preferences;
 use crate::api::handlers::share_review;
+use crate::api::handlers::review;
 use crate::api::handlers::upgrades;
 use crate::api::handlers::corrections;
 use crate::api::handlers::runs;
@@ -183,6 +184,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/folders/{id}", put(workspace::update_folder))
         // Manual rename repair — `sensei folder remap <old> <new>`
         .route("/api/folders/remap", post(workspace::remap_folder_endpoint))
+        // Review-depth gate (E1) — classify a change's required review depth
+        .route("/api/review/risk-class", post(review::risk_class))
         // Libraries
         .route("/api/libs", get(libraries::list_libs))
         .route("/api/libs/index", post(libraries::index_lib))
@@ -581,6 +584,22 @@ mod tests {
         let new_id = state.pg.folder_id_by_abs_path("/_test/remap-ep-new").await.unwrap().unwrap();
         let resolved = state.pg.get_folder_ids_by_path("/_test/remap-ep-old").await.unwrap();
         assert_eq!(resolved.map(|(f, _)| f), Some(new_id), "the old path resolves to the new folder via the alias");
+    }
+
+    #[tokio::test]
+    async fn risk_class_endpoint_classifies_by_path() {
+        let (app, _) = test_app().await;
+        let resp = app.oneshot(
+            Request::builder().method("POST").uri("/api/review/risk-class")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"paths":["database/ddl/x.ddl","docs/y.md"],"task":"tweak schema"}"#)).unwrap()
+        ).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["class"], "approve", "a DDL change requires approve");
+        assert!(json["reasons"].as_array().unwrap().iter().any(|r| r.as_str().unwrap_or("").contains(".ddl")),
+            "reasons name the DDL driver: {:?}", json["reasons"]);
     }
 
     #[tokio::test]
