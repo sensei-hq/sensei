@@ -50,7 +50,7 @@ export async function loadConsoleContext({
 		memberships,
 		cookieTenant: cookies.get(TENANT_COOKIE),
 		paramTenant: url.searchParams.get(TENANT_PARAM),
-		user: { name: profile.name, email: profile.handle }
+		user: { id: su?.id ?? null, name: profile.name, email: profile.handle }
 	});
 	// Resolve the chrome org only when there's a tenant to resolve (a member with
 	// a selection); a membership-less user has no tenant, so no lookup is made.
