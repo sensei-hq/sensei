@@ -111,6 +111,17 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
                 } else if let Err(e) = ctx.pg().untag_folder(&fid, "needs-review").await {
                     tracing::warn!(error = %e, folder_id = %fid, "scan_root: untag_folder needs-review failed");
                 }
+                // Capture the git root's remotes so a future rename can be auto-detected
+                // by shared remote (reconcile_roots → find_live_root_by_remote). Only
+                // write when we actually read some, so a transient git failure never
+                // clobbers a previously-captured set with an empty one.
+                if f.kind == FolderKind::Git {
+                    let remotes = read_git_remotes(&path_str);
+                    if !remotes.is_empty()
+                        && let Err(e) = ctx.pg().update_folder_remotes(&fid, &serde_json::Value::Array(remotes)).await {
+                        tracing::warn!(error = %e, folder_id = %fid, "scan_root: update_folder_remotes failed");
+                    }
+                }
             }
             Err(e) => tracing::warn!(error = %e, path = %path_str, "scan_root: upsert_repo_kind failed"),
         }
@@ -482,6 +493,43 @@ fn _detect_current_branch(repo_path: &str) -> Option<String> {
     }
 }
 
+/// Parse `git config --get-regexp '^remote\..*\.url$'` stdout into `[{name,url}]`.
+/// Pure over the captured text so it's unit-testable without a git subprocess.
+/// Each line is `remote.<name>.url <url>`; blank urls and unparseable lines drop.
+fn parse_git_remote_config(stdout: &str) -> Vec<serde_json::Value> {
+    stdout
+        .lines()
+        .filter_map(|line| {
+            let (key, url) = line.split_once(char::is_whitespace)?;
+            let name = key.strip_prefix("remote.")?.strip_suffix(".url")?;
+            let url = url.trim();
+            if name.is_empty() || url.is_empty() {
+                return None;
+            }
+            Some(serde_json::json!({ "name": name, "url": url }))
+        })
+        .collect()
+}
+
+/// Best-effort read of a git repo's configured remotes as `[{name,url}]` for
+/// `folders.remote_urls` — the producing half of git-remote rename detection.
+/// Shells out to `git config` (the codebase carries no git2 dep). Empty on any
+/// failure or a repo with no remote: an honest "no remote", never a fabricated
+/// one — a remote-less repo simply can't be rename-detected by remote.
+fn read_git_remotes(repo_path: &str) -> Vec<serde_json::Value> {
+    let Ok(output) = std::process::Command::new("git")
+        .args(["config", "--get-regexp", r"^remote\..*\.url$"])
+        .current_dir(repo_path)
+        .output()
+    else {
+        return Vec::new();
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
+    parse_git_remote_config(&String::from_utf8_lossy(&output.stdout))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -490,6 +538,22 @@ mod tests {
     use crate::tasks::Task;
     use crate::api::state::SharedState;
     use super::super::super::executor::TaskContext;
+
+    #[test]
+    fn parse_git_remote_config_extracts_name_url_pairs() {
+        let out = "remote.origin.url git@github.com:sensei-hq/sensei.git\n\
+                   remote.upstream.url https://github.com/acme/sensei.git\n";
+        let got = parse_git_remote_config(out);
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[0]["name"], "origin");
+        assert_eq!(got[0]["url"], "git@github.com:sensei-hq/sensei.git");
+        assert_eq!(got[1]["name"], "upstream");
+        assert_eq!(got[1]["url"], "https://github.com/acme/sensei.git");
+        // Empty input (no remotes) → no pairs, never a fabricated entry.
+        assert!(parse_git_remote_config("").is_empty());
+        // A malformed line (no url) is dropped, not half-parsed.
+        assert!(parse_git_remote_config("remote.origin.url \n").is_empty());
+    }
 
     async fn make_ctx() -> Arc<TaskContext> {
         let queue = Arc::new(TaskQueue::new());
