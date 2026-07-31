@@ -165,6 +165,16 @@ pub fn daemon_request_for(
         "get_duplicates" => Some(DaemonRequest::get(format!("/api/patterns/{repo_id}/duplicates"))),
         "get_project_conventions" => Some(DaemonRequest::get(format!("/api/patterns/{repo_id}/conventions"))),
 
+        // ── Review-depth gate (E1) ──────────────────────────────────────────
+        "resolve_risk_class" => {
+            let paths = args.get("paths").cloned().unwrap_or_else(|| serde_json::json!([]));
+            let mut body = serde_json::json!({ "paths": paths });
+            if let Some(t) = args.get("task").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
+                body["task"] = serde_json::json!(t);
+            }
+            Some(DaemonRequest::post_json("/api/review/risk-class", body))
+        }
+
         // ── Governance rules ────────────────────────────────────────────────
         "get_rules" => {
             let (key, val) = rules_query_param(repo_id, cwd);
@@ -549,6 +559,11 @@ pub fn handle_list_tools() -> Value {
             ], &[]),
             tool("get_duplicates", "Find duplicate or very similar functions across different files. Use during /sensei:review to catch code duplication.", &[], &[]),
             tool("get_project_conventions", "Analyze project conventions — naming patterns, directory structure, design patterns. Use to understand how this project is structured.", &[], &[]),
+            tool("resolve_risk_class", "Classify how hard a change must be reviewed (auto | review | approve) from its changed file paths. Call FIRST in /sensei:review to set the depth: 'approve' (identity/auth/money/secrets/schema/governance) demands the full adversarial review + human sign-off; 'review' is a standard review; 'auto' can skip the heavy pass. Returns {class, reasons}.", &[
+                ("paths", "array", "Changed file paths (repo-relative or absolute)."),
+            ], &[
+                ("task", "string", "Optional task description; a sensitive/destructive task escalates an otherwise-low change."),
+            ]),
             tool("get_rules", "Get the governance rules that apply to this repository, resolved across its scopes (organization / project / technology / …) and ranked by enforcement. Rules flagged mandatory are non-negotiable and cannot be overridden. Call at the start of a task to learn the constraints you must obey.", &[], &[]),
             tool("get_commands", "List the discoverable commands for this project — the actual `test` / `build` / `lint` / `e2e` invocations, derived from each folder's manifest (package.json scripts, etc.). Call when you need to know how to run tests, build, or lint here without guessing. Optionally filter by canonical category verb.", &[], &[
                 ("project",  "string", "Project name. Defaults to current project."),
@@ -1132,7 +1147,7 @@ mod tests {
         "get_lib_docs", "search_lib_docs", "get_communities", "get_patterns",
         "list_projects", "find_projects", "get_user_for_project", "set_stance", "use_project", "create_session", "update_session", "add_library",
         "update_phase", "get_workflow_state", "match_pattern", "get_pattern_for",
-        "get_duplicates", "get_project_conventions", "get_rules", "get_commands", "infer", "embed",
+        "get_duplicates", "get_project_conventions", "resolve_risk_class", "get_rules", "get_commands", "infer", "embed",
         "gateway_status", "consensus", "generate_image", "log_event",
         "propose_memory", "save_memory", "promote_memory", "accept_proposal",
         "reject_proposal", "record_outcome", "get_layered_context",
