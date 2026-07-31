@@ -313,6 +313,14 @@ pub async fn backfill_all(
 /// race-safe). Returns the number of files enqueued.
 pub async fn run_backfill(ctx: &TaskContext, _task: &Task) -> Result<u32, String> {
     let (_seen, enqueued) = dispatch(&ctx.queue).await;
+    // Re-attach sessions orphaned by a repo delete/rename (events survived, the
+    // session row was cascade-deleted) — resolves each via its cwd, now alias-aware.
+    // Idempotent + cheap (only sessions with no row are touched); logged, never fatal.
+    match ctx.pg().repair_orphaned_sessions().await {
+        Ok(n) if n > 0 => tracing::info!(repaired = n, "run_backfill: re-attached orphaned sessions"),
+        Ok(_) => {}
+        Err(e) => tracing::warn!(error = %e, "run_backfill: repair_orphaned_sessions failed"),
+    }
     Ok(enqueued)
 }
 
