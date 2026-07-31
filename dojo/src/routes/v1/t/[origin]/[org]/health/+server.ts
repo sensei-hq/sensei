@@ -9,6 +9,7 @@ import type { RequestHandler } from './$types';
 import { dojoDb } from '$lib/server/dojo-supabase';
 import { resolveTenantAccess, apiError, ACCESS } from '$lib/server/dojo-auth';
 import { getHealth, AdminError } from '$lib/server/admin-data';
+import { getContribVsApprove } from '$lib/server/health-series';
 
 export const GET: RequestHandler = async ({ params, request, locals }) => {
 	try {
@@ -19,8 +20,14 @@ export const GET: RequestHandler = async ({ params, request, locals }) => {
 			locals,
 			ACCESS.admin
 		);
-		const rollup = await getHealth(dojoDb(), tenantId);
-		return Response.json(rollup);
+		const db = dojoDb();
+		// The 4-count rollup + the contributions-vs-approvals weekly series (was an
+		// empty chart). Independent reads composed into one response.
+		const [rollup, contrib_vs_approve] = await Promise.all([
+			getHealth(db, tenantId),
+			getContribVsApprove(db, tenantId)
+		]);
+		return Response.json({ ...rollup, contrib_vs_approve });
 	} catch (e) {
 		if (e instanceof Response) return e;
 		if (e instanceof AdminError) return apiError(e.status, e.message);

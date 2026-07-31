@@ -41,7 +41,10 @@ export type EngagementStatus = 'active' | 'ended';
 /** One engagement row — `store.list_engagements` (store.rs:1139). */
 export interface Engagement {
 	id: string;
-	client: string;
+	/** FK to the client's own `dojo.tenants` row, or null when the client isn't a
+	 *  known tenant (Rule C: `client` split into `client_tenant_id` + `client_name`). */
+	client_tenant_id: string | null;
+	client_name: string;
 	description: string | null;
 	/** jsonb array of `{ project_id, name }` bindings (defaults to `[]`). */
 	project_bindings: unknown;
@@ -55,6 +58,10 @@ export interface Engagement {
 	/** ISO-8601 `YYYY-MM-DDTHH:MM:SSZ`. */
 	created_at: string;
 	updated_at: string;
+	/** Per-engagement artifact tally the GET route computes (not a column):
+	 *  published (crossed) vs archived (held back). 0 when none. */
+	lessons_kept: number;
+	stripped: number;
 }
 
 /** An incident severity — `dojo.incident_severity` (api.rs `is_incident_severity`). */
@@ -67,6 +74,9 @@ export type IncidentStatus = 'open' | 'investigating' | 'resolved';
 export interface Incident {
 	id: string;
 	engagement_id: string | null;
+	/** Resolved client display name (engagement_id → engagements.client_name),
+	 *  or null when unbound/unresolved — the mapper falls back to a short id. */
+	client_name: string | null;
 	artifact_id: string | null;
 	title: string;
 	description: string | null;
@@ -114,9 +124,11 @@ export interface ComplianceRow {
 
 // ── request bodies (mirror the api.rs Deserialize structs) ───────────────────
 
-/** `POST …/engagements` body — `NewEngagement` (api.rs:1004). `client` required. */
+/** `POST …/engagements` body — `client_name` required, `client_tenant_id` optional
+ *  (Rule C: `client` split). */
 export interface NewEngagementBody {
-	client: string;
+	client_name: string;
+	client_tenant_id?: string | null;
 	description?: string;
 	project_bindings?: unknown;
 	policy_overrides?: unknown;
@@ -286,6 +298,104 @@ export async function listIncidents(
 		opts
 	);
 	return { incidents: data.incidents ?? [], open_count: data.open_count ?? 0 };
+}
+
+/** A linked artifact on an incident detail (the near-leak artifact it tracks). */
+export interface IncidentArtifactRef {
+	id: string;
+	title: string;
+	kind: string;
+	status: string;
+}
+
+/** `GET …/incidents/{id}` — the full incident detail: the list row (incl.
+ *  `client_name`) plus the resolved owner name/email and linked artifact. */
+export interface IncidentDetail extends Incident {
+	owner_name: string | null;
+	owner_email: string | null;
+	artifact: IncidentArtifactRef | null;
+}
+
+/** `GET …/incidents/{id}` — one incident's full detail (the "Open" pane). */
+export async function getIncident(
+	tenantKey: string,
+	id: string,
+	opts: DojoCallOpts = {}
+): Promise<IncidentDetail> {
+	return getJson<IncidentDetail>(clientUrl(tenantKey, `/incidents/${encodeURIComponent(id)}`), opts);
+}
+
+/** One published artifact row in the Knowledge library (mirrors the server
+ *  `knowledge-data.ts` KnowledgeArtifact). `scope` is `dojo.artifacts.scope` jsonb. */
+export interface KnowledgeArtifactWire {
+	id: string;
+	kind: string;
+	title: string;
+	scope: unknown;
+	adopted_count: number;
+	created_at: string;
+}
+
+/** `GET …/knowledge` — the tenant's published library, partitioned. */
+export interface KnowledgeLibraryWire {
+	retention_days: number | null;
+	active: KnowledgeArtifactWire[];
+	pending: KnowledgeArtifactWire[];
+	catalog: KnowledgeArtifactWire[];
+}
+
+/** `GET …/knowledge` — the maintainer library over `dojo.artifacts` (read-only). */
+export async function getKnowledge(
+	tenantKey: string,
+	opts: DojoCallOpts = {}
+): Promise<KnowledgeLibraryWire> {
+	const data = await getJson<Partial<KnowledgeLibraryWire>>(clientUrl(tenantKey, '/knowledge'), opts);
+	return {
+		retention_days: data.retention_days ?? null,
+		active: data.active ?? [],
+		pending: data.pending ?? [],
+		catalog: data.catalog ?? []
+	};
+}
+
+/** One confidentiality-ledger row (mirrors the server `ClientAuditEntry`): an
+ *  audit event on the confidentiality plane, with the resolved client name. */
+export interface ClientAuditEntry {
+	id: number;
+	ts: string;
+	action: string;
+	target: string | null;
+	detail: unknown;
+	engagement_id: string | null;
+	client_name: string | null;
+}
+
+/** `GET …/audit/ledger` — the lead confidentiality/containment ledger (the
+ *  correct source for the client-audit screen, NOT the admin action-audit). */
+export async function listClientAuditLedger(
+	tenantKey: string,
+	opts: DojoCallOpts = {}
+): Promise<ClientAuditEntry[]> {
+	const data = await getJson<{ entries?: ClientAuditEntry[] }>(clientUrl(tenantKey, '/audit/ledger'), opts);
+	return data.entries ?? [];
+}
+
+/** One project row (mirrors the server `ProjectRow`). `slug` is the dereferenced
+ *  project identity (the drill-in key). */
+export interface ProjectRow {
+	id: string;
+	slug: string;
+	name: string;
+	classification: string;
+	phase: string;
+	last_run_at: string | null;
+	runs_week: number;
+}
+
+/** `GET …/projects` — the org's projects (dojo.projects, tenant-scoped). */
+export async function listProjects(tenantKey: string, opts: DojoCallOpts = {}): Promise<ProjectRow[]> {
+	const data = await getJson<{ projects?: ProjectRow[] }>(clientUrl(tenantKey, '/projects'), opts);
+	return data.projects ?? [];
 }
 
 /** `POST …/incidents` — open a confidentiality incident (lead). */

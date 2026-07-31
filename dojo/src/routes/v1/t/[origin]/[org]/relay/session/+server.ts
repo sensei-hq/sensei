@@ -3,9 +3,10 @@
 // phone/console reading it (Supabase-JWT plane). See docs/plan/relay-engine.md §6.
 import type { RequestHandler } from './$types';
 import { dojoDb } from '$lib/server/dojo-supabase';
-import { resolveApiKeyAccess, resolveTenantAccess, apiError, ACCESS } from '$lib/server/dojo-auth';
+import { resolveApiKeyAccess, resolveTenantAccess, membershipIdsForTenant, apiError, ACCESS } from '$lib/server/dojo-auth';
 import { sendRelayPushFromEnv } from '$lib/server/relay-push-env';
 import { resolveProjectNamespaceId, openOrRefreshSeat } from '$lib/server/billing-data';
+import { upsertProjectFromRun } from '$lib/server/projects-data';
 
 const COLS =
 	'id, run_id, title, goal, status, progress_done, progress_total, current_phase, current_feature, last_event_at, paused_until, pause_reason, heartbeat_at, started_at, completed_at';
@@ -29,7 +30,7 @@ export const POST: RequestHandler = async ({ params, request, platform }) => {
 		const { data: prior, error: pErr } = await db
 			.from('relay_sessions')
 			.select('status')
-			.eq('tenant_id', caller.tenantId)
+			.eq('membership_id', caller.membershipId)
 			.eq('run_id', runId)
 			.maybeSingle();
 		if (pErr) return apiError(500, pErr.message);
@@ -38,9 +39,7 @@ export const POST: RequestHandler = async ({ params, request, platform }) => {
 			.from('relay_sessions')
 			.upsert(
 				{
-					tenant_id: caller.tenantId,
 					membership_id: caller.membershipId,
-					user_id: caller.userId,
 					run_id: runId,
 					title,
 					goal: str(body.goal),
@@ -57,7 +56,7 @@ export const POST: RequestHandler = async ({ params, request, platform }) => {
 					heartbeat_at: str(body.heartbeat_at),
 					updated_at: new Date().toISOString()
 				},
-				{ onConflict: 'tenant_id,run_id' }
+				{ onConflict: 'membership_id,run_id' }
 			)
 			.select('id')
 			.single();
@@ -103,6 +102,25 @@ export const POST: RequestHandler = async ({ params, request, platform }) => {
 			if (platform?.context?.waitUntil) platform.context.waitUntil(seatWork);
 		}
 
+		// The run's project → dojo.projects (the display row for the projects
+		// screens). The owner is the AUTHENTICATED caller (never the payload); a
+		// personal project is stored tenant-less. Best-effort + fail-open, like the
+		// seat — a projects-upsert failure must never break relay federation.
+		const project = body.project as Record<string, unknown> | null | undefined;
+		if (project && str(project.slug) && str(project.name)) {
+			const projWork = upsertProjectFromRun(
+				db,
+				{ userId: caller.userId, tenantId: caller.tenantId },
+				{
+					slug: str(project.slug) as string,
+					name: str(project.name) as string,
+					classification: str(project.classification) ?? 'personal',
+					phase: str(project.phase) ?? 'watch'
+				}
+			).catch(() => {});
+			if (platform?.context?.waitUntil) platform.context.waitUntil(projWork);
+		}
+
 		return Response.json({ id: data.id });
 	} catch (e) {
 		if (e instanceof Response) return e;
@@ -114,10 +132,12 @@ export const POST: RequestHandler = async ({ params, request, platform }) => {
 export const GET: RequestHandler = async ({ params, request, locals, url }) => {
 	try {
 		const { tenantId } = await resolveTenantAccess(params.origin, params.org, request, locals, ACCESS.member);
-		let q = dojoDb()
+		const db = dojoDb();
+		const membershipIds = await membershipIdsForTenant(db, tenantId);
+		let q = db
 			.from('relay_sessions')
 			.select(COLS)
-			.eq('tenant_id', tenantId)
+			.in('membership_id', membershipIds)
 			.order('started_at', { ascending: false });
 		const runId = url.searchParams.get('run_id');
 		if (runId) q = q.eq('run_id', runId);

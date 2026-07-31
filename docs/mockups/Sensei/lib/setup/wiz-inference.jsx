@@ -81,17 +81,13 @@ function WizInference({ state, upd }) {
 
       <InferenceSplit {...s}/>
 
-      <div style={{
- borderTop: 'var(--hairline)',
-                     display: 'flex', justifyContent: 'space-between', alignItems: 'center'
-}} className="mt-4 pt-4" >
-        <div style={{ fontSize: 13, color: 'var(--ink-3)', lineHeight: 1.6 }}>
+      <div className="mt-4 pt-4 border-t flex justify-between items-center" >
+        <div className="text-ink-3" style={{ fontSize: 13, lineHeight: 1.6 }}>
           Role assignments come next — decide which models handle inference, consolidation, embedding, voice, and image.
         </div>
         <button style={{
- fontSize: 13, color: 'var(--ink-2)', border: 'var(--hairline)',
-                         borderRadius: 5, background: 'transparent', cursor: 'pointer'
-}} className="py-2 px-3" >
+ fontSize: 13,
+ borderRadius: 5 }} className="py-2 px-3 text-ink-2 border border-paper-edge bg-transparent cursor-pointer" >
           Defer · configure later
         </button>
       </div>
@@ -106,16 +102,12 @@ function WizInference({ state, upd }) {
 function SystemStrip({ sys }) {
   return (
     <div style={{
-                   background: 'var(--paper-2)', border: 'var(--hairline)',
-                   borderRadius: 6,
-                   display: 'flex', alignItems: 'center', flexWrap: 'wrap'
-}} className="mb-5 py-3 px-4 gap-5" >
-      <div style={{ fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
-                     color: 'var(--ink-4)' }}>this machine</div>
+ borderRadius: 6 }} className="mb-6 py-3 px-4 gap-6 bg-paper-2 border border-paper-edge flex items-center flex-wrap" >
+      <div className="uppercase text-ink-4" style={{ fontSize: 11, letterSpacing: '0.14em' }}>this machine</div>
       {[sys.chip, sys.ram, sys.cores.split('·')[1]?.trim() || sys.cores, sys.os].map((v, i, arr) => (
         <React.Fragment key={i}>
-          <div style={{ fontSize: 13, color: 'var(--ink-2)' }}>{v}</div>
-          {i < arr.length - 1 && <span style={{ color: 'var(--ink-4)' }}>·</span>}
+          <div className="text-ink-2" style={{ fontSize: 13 }}>{v}</div>
+          {i < arr.length - 1 && <span className="text-ink-4" >·</span>}
         </React.Fragment>
       ))}
     </div>
@@ -125,25 +117,21 @@ function SystemStrip({ sys }) {
 function KeyInput({ envVar, value, onChange, onSave }) {
   return (
     <div className="mb-3" >
-      <div style={{ fontSize: 11, color: 'var(--ink-3)' }} className="mb-1" >
+      <div style={{ fontSize: 11 }} className="mb-1 text-ink-3" >
         Paste your API key (or export <span style={{ fontFamily: 'var(--font-mono)' }}>{envVar}</span> in your shell):
       </div>
-      <div style={{ display: 'flex' }} className="gap-2" >
+      <div className="gap-2 flex" >
         <input type="password" value={value}
-               onChange={e => onChange(e.target.value)}
-               placeholder={envVar.toLowerCase()}
-               style={{
- flex: 1, fontSize: 13, fontFamily: 'var(--font-mono)', borderRadius: 4,
-                        border: 'var(--hairline)', background: 'var(--paper)',
-                        color: 'var(--ink)'
-}} className="py-2 px-2" />
+ onChange={e => onChange(e.target.value)}
+ placeholder={envVar.toLowerCase()}
+ style={{ fontSize: 13, fontFamily: 'var(--font-mono)', borderRadius: 4 }} className="py-2 px-2 flex-1 border border-paper-edge bg-paper text-ink" />
         <button onClick={onSave} disabled={!value}
-                style={{
- fontSize: 13, borderRadius: 4, border: 'none',
-                         background: value ? 'var(--ink)' : 'var(--edge)',
-                         color: value ? 'var(--paper)' : 'var(--ink-3)',
-                         cursor: value ? 'pointer' : 'default'
-}} className="py-2 px-3" >
+ style={{
+ fontSize: 13, borderRadius: 4,
+ background: value ? 'var(--ink)' : 'var(--edge)',
+ color: value ? 'var(--paper)' : 'var(--ink-3)',
+ cursor: value ? 'pointer' : 'default'
+ }} className="py-2 px-3 border-0" >
           Configure
         </button>
       </div>
@@ -161,7 +149,7 @@ function OllamaModelTable({ models, progress, pullQueue, setPullQueue }) {
       {recs.length > 0 && (
         <>
           <SectionLabel>recommended for this machine</SectionLabel>
-          <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1 mb-3" >
+          <div className="gap-1 mb-3 flex flex-col" >
             {recs.map(m => <OllamaRow key={m.id} m={m} progress={progress}
                                        pullQueue={pullQueue} setPullQueue={setPullQueue}/>)}
           </div>
@@ -170,7 +158,7 @@ function OllamaModelTable({ models, progress, pullQueue, setPullQueue }) {
       {rest.length > 0 && (
         <>
           <SectionLabel>also available</SectionLabel>
-          <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
+          <div className="gap-1 flex flex-col" >
             {rest.map(m => <OllamaRow key={m.id} m={m} progress={progress}
                                         pullQueue={pullQueue} setPullQueue={setPullQueue}/>)}
           </div>
@@ -183,9 +171,7 @@ function OllamaModelTable({ models, progress, pullQueue, setPullQueue }) {
 function SectionLabel({ children }) {
   return (
     <div style={{
- fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
-                   color: 'var(--ink-4)'
-}} className="mb-2" >{children}</div>
+ fontSize: 11, letterSpacing: '0.14em' }} className="mb-2 uppercase text-ink-4" >{children}</div>
   );
 }
 
@@ -200,64 +186,51 @@ function OllamaRow({ m, progress, pullQueue, setPullQueue }) {
   //   pulling  → spinner + % (ghost, disabled)
   //   pulled   → checkbox-style ✓ (subtle matcha)
   const ctrl = done ? (
-    <span title="pulled"
-          style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                    width: 22, height: 22, borderRadius: 4,
-                    background: 'var(--success-soft)',
-                    color: 'var(--success)', fontSize: 13 }}>✓</span>
+    <span className="inline-flex items-center justify-center bg-success-soft text-success" title="pulled"
+ style={{
+ width: 22, height: 22, borderRadius: 4, fontSize: 13 }}>✓</span>
   ) : active ? (
     <span style={{
- display: 'inline-flex', alignItems: 'center',
-                    fontSize: 11, color: 'var(--ink-3)',
-                    fontFeatureSettings: '"tnum"',
-                    letterSpacing: '0.04em'
-}} className="gap-1" >
+ fontSize: 11,
+ fontFeatureSettings: '"tnum"',
+ letterSpacing: '0.04em'
+ }} className="gap-1 inline-flex items-center text-ink-3" >
       <Spinner/>
       {Math.round(prog)}%
     </span>
   ) : (
     <button onClick={() => setPullQueue(q => ({ ...q, [m.id]: !q[m.id] }))}
-            style={{
+ style={{
  fontSize: 11, borderRadius: 3,
-                     border: 'none', background: 'transparent',
-                     color: 'var(--ink-2)',
-                     letterSpacing: '0.04em',
-                     cursor: 'pointer'
-}}
-            onMouseEnter={e => e.currentTarget.style.color = 'var(--ink)'}
-            onMouseLeave={e => e.currentTarget.style.color = 'var(--ink-2)'} className="py-1 px-3" >
+ letterSpacing: '0.04em' }}
+ onMouseEnter={e => e.currentTarget.style.color = 'var(--ink)'}
+ onMouseLeave={e => e.currentTarget.style.color = 'var(--ink-2)'} className="py-1 px-3 border-0 bg-transparent text-ink-2 cursor-pointer" >
       pull
     </button>
   );
 
   return (
-    <div style={{
- display: 'grid', gridTemplateColumns: '1fr auto auto',
-                   alignItems: 'center',
-                   background: 'var(--paper-2)',
-                   borderRadius: 4,
-                   position: 'relative'
-}} className="gap-3 py-2 px-3" >
+    <div style={{ gridTemplateColumns: '1fr auto auto',
+ borderRadius: 4 }} className="gap-3 py-2 px-3 grid items-center bg-paper-2 relative" >
       {m.recommended && <RecommendedBadge/>}
       <div style={{ paddingLeft: m.recommended ? 10 : 0 }}>
-        <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2" >
+        <div className="gap-2 flex items-baseline" >
           <span style={{ fontSize: 13 }}>{m.name}</span>
         </div>
-        {m.note && <div style={{ fontSize: 11, color: 'var(--ink-4)' }} className="mt-1" >{m.note}</div>}
+        {m.note && <div style={{ fontSize: 11 }} className="mt-1 text-ink-4" >{m.note}</div>}
         {active && (
           <div className="mt-1" >
-            <div style={{ height: 2, background: 'var(--edge)',
-                           borderRadius: 1, overflow: 'hidden', maxWidth: 240 }}>
-              <div style={{ width: `${prog}%`, height: '100%', background: 'var(--success)',
-                             transition: 'width .22s linear' }}/>
+            <div className="overflow-hidden" style={{ height: 2, background: 'var(--edge)',
+ borderRadius: 1, maxWidth: 240 }}>
+              <div className="h-full bg-success" style={{ width: `${prog}%`,
+ transition: 'width .22s linear' }}/>
             </div>
           </div>
         )}
       </div>
-      <div style={{ fontSize: 11, color: 'var(--ink-4)',
-                     whiteSpace: 'nowrap',
-                     letterSpacing: '0.06em',
-                     fontFeatureSettings: '"tnum"' }}>
+      <div className="text-ink-4 whitespace-nowrap" style={{ fontSize: 11,
+ letterSpacing: '0.06em',
+ fontFeatureSettings: '"tnum"' }}>
         {m.sizeGB.toFixed(1)} GB
       </div>
       {ctrl}
@@ -267,22 +240,21 @@ function OllamaRow({ m, progress, pullQueue, setPullQueue }) {
 
 function Spinner() {
   return (
-    <span style={{ display: 'inline-block', width: 10, height: 10,
-                    border: '1.5px solid var(--edge)',
-                    borderTopColor: 'var(--ink-2)',
-                    borderRadius: '50%',
-                    animation: 'senseiSpin 0.8s linear infinite' }}/>
+    <span className="inline-block rounded-full" style={{ width: 10, height: 10,
+ border: '1.5px solid var(--edge)',
+ borderTopColor: 'var(--ink-2)',
+ animation: 'senseiSpin 0.8s linear infinite' }}/>
   );
 }
 
 function RecommendedBadge() {
   // subtle corner badge — a small notch, not a pill
   return (
-    <span title="Recommended for this machine"
-          style={{ position: 'absolute', top: 0, left: 0,
-                    width: 0, height: 0,
-                    borderTop: '18px solid var(--accent)',
-                    borderRight: '18px solid transparent' }}/>
+    <span className="absolute" title="Recommended for this machine"
+ style={{ top: 0, left: 0,
+ width: 0, height: 0,
+ borderTop: '18px solid var(--accent)',
+ borderRight: '18px solid transparent' }}/>
   );
 }
 
@@ -290,28 +262,25 @@ function CloudModelTable({ models, isConfigured }) {
   return (
     <>
       <SectionLabel>models</SectionLabel>
-      <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
+      <div className="gap-1 flex flex-col" >
         {models.map(m => (
-          <div key={m.id} style={{
-                 display: 'grid', gridTemplateColumns: '1fr auto',
-                 alignItems: 'center',
-                 background: 'var(--paper-2)', borderRadius: 4,
-                 opacity: isConfigured ? 1 : 0.5
-}} className="gap-3 py-2 px-3" >
+          <div key={m.id} style={{ gridTemplateColumns: '1fr auto', borderRadius: 4,
+ opacity: isConfigured ? 1 : 0.5
+ }} className="gap-3 py-2 px-3 grid items-center bg-paper-2" >
             <div>
-              <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2" >
+              <div className="gap-2 flex items-baseline" >
                 <span style={{ fontSize: 13 }}>{m.name}</span>
-                {m.context && <span style={{ fontSize: 11, color: 'var(--ink-4)' }}>{m.context}</span>}
+                {m.context && <span className="text-ink-4" style={{ fontSize: 11 }}>{m.context}</span>}
               </div>
               {m.cost && (
                 <div style={{
- fontSize: 11, color: 'var(--ink-4)',
-                               fontFamily: 'var(--font-mono)'
-}} className="mt-1" >{m.cost}</div>
+ fontSize: 11,
+ fontFamily: 'var(--font-mono)'
+ }} className="mt-1 text-ink-4" >{m.cost}</div>
               )}
             </div>
-            <span style={{ fontSize: 11, color: isConfigured ? 'var(--success)' : 'var(--ink-4)',
-                            letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+            <span className="uppercase" style={{ fontSize: 11, color: isConfigured ? 'var(--success)' : 'var(--ink-4)',
+ letterSpacing: '0.08em' }}>
               {isConfigured ? "available" : "needs key"}
             </span>
           </div>
@@ -332,24 +301,18 @@ function InferenceSplit(s) {
 
   return (
     <>
-      <div style={{
- display: 'grid', gridTemplateColumns: '280px 1fr',
-                     minHeight: 380
-}} className="gap-3" >
+      <div style={{ gridTemplateColumns: '280px 1fr',
+ minHeight: 380
+ }} className="gap-3 grid" >
         {/* Left list */}
         <div>
-          <div style={{
- display: 'flex', alignItems: 'center', justifyContent: 'space-between'
-}} className="mb-2" >
+          <div className="mb-2 flex items-center justify-between" >
             <SectionLabel>routers</SectionLabel>
             <button onClick={() => setShowAdd(true)}
-                    style={{
- fontSize: 11, color: 'var(--ink-2)',
-                             border: 'var(--hairline)', borderRadius: 3,
-                             background: 'var(--paper)', cursor: 'pointer'
-}} className="py-1 px-2" >+ add</button>
+ style={{
+ fontSize: 11, borderRadius: 3 }} className="py-1 px-2 text-ink-2 border border-paper-edge bg-paper cursor-pointer" >+ add</button>
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
+          <div className="gap-1 flex flex-col" >
             {D.providers.map(p => {
               const active = p.id === focusId;
               const cfg = configured[p.id];
@@ -358,15 +321,11 @@ function InferenceSplit(s) {
                 : (cfg ? p.models.length : 0);
               return (
                 <button key={p.id} onClick={() => setFocusId(p.id)}
-                        style={{
- display: 'grid',
-                                 gridTemplateColumns: '24px 1fr auto',
-                                 alignItems: 'center', borderRadius: 5,
-                                 border: active ? 'none' : 'var(--hairline)',
-                                 background: active ? 'var(--ink)' : 'var(--paper)',
-                                 color: active ? 'var(--paper)' : 'var(--ink)',
-                                 cursor: 'pointer', textAlign: 'left'
-}} className="gap-2 py-2 px-3" >
+ style={{
+ gridTemplateColumns: '24px 1fr auto', borderRadius: 5,
+ border: active ? 'none' : 'var(--hairline)',
+ background: active ? 'var(--ink)' : 'var(--paper)',
+ color: active ? 'var(--paper)' : 'var(--ink)' }} className="gap-2 py-2 px-3 grid items-center cursor-pointer text-left" >
                   <span className="kanji" style={{ fontSize: 15,
                                                      color: active ? 'var(--paper)' : 'var(--accent)' }}>
                     {p.kanji}
@@ -377,11 +336,10 @@ function InferenceSplit(s) {
                       {p.kind === "local" ? "local" : "cloud"}
                     </div>
                   </div>
-                  <span style={{ fontSize: 11, letterSpacing: '0.08em',
-                                  textTransform: 'uppercase',
-                                  color: cfg
-                                    ? (active ? 'var(--paper)' : 'var(--success)')
-                                    : (active ? 'var(--paper)' : 'var(--ink-4)') }}>
+                  <span className="uppercase" style={{ fontSize: 11, letterSpacing: '0.08em',
+ color: cfg
+ ? (active ? 'var(--paper)' : 'var(--success)')
+ : (active ? 'var(--paper)' : 'var(--ink-4)') }}>
                     {cfg ? `${count}` : "—"}
                   </span>
                 </button>
@@ -392,20 +350,16 @@ function InferenceSplit(s) {
 
         {/* Right detail */}
         <div style={{
- background: 'var(--paper)', border: 'var(--hairline)',
-                       borderRadius: 6
-}} className="py-4 px-4" >
-          <div style={{
- display: 'flex', alignItems: 'baseline'
-}} className="gap-2 mb-1" >
-            <span className="kanji" style={{ fontSize: 22, color: 'var(--accent)' }}>{focus.kanji}</span>
+ borderRadius: 6
+ }} className="py-4 px-4 bg-paper border border-paper-edge" >
+          <div className="gap-2 mb-1 flex items-baseline" >
+            <span className="kanji text-accent" style={{ fontSize: 22 }}>{focus.kanji}</span>
             <div className="display" style={{ fontSize: 17 }}>{focus.name}</div>
-            <span style={{ fontSize: 11, letterSpacing: '0.1em', textTransform: 'uppercase',
-                            color: 'var(--ink-4)' }}>
+            <span className="uppercase text-ink-4" style={{ fontSize: 11, letterSpacing: '0.1em' }}>
               {focus.kind === "local" ? "local" : "cloud"}
             </span>
           </div>
-          <div style={{ fontSize: 13, color: 'var(--ink-3)' }} className="mb-3" >
+          <div style={{ fontSize: 13 }} className="mb-3 text-ink-3" >
             {focus.note}
           </div>
 
@@ -438,9 +392,8 @@ function InferenceSplit(s) {
 function SplitKeyInput(p) {
   return (
     <div style={{
-                   background: 'var(--paper-2)', border: 'var(--hairline)',
-                   borderRadius: 5
-}} className="mb-3 p-3" >
+ borderRadius: 5
+ }} className="mb-3 p-3 bg-paper-2 border border-paper-edge" >
       <KeyInput {...p}/>
     </div>
   );
@@ -451,41 +404,30 @@ function SplitKeyInput(p) {
 // ═══════════════════════════════════════════════════════════════
 function AddProviderModal({ D, onAdd, onClose }) {
   return (
-    <div onClick={onClose}
-         style={{ position: 'absolute', inset: 0, background: 'var(--scrim)',
-                   display: 'grid', placeItems: 'center', zIndex: 20 }}>
+    <div className="absolute grid" onClick={onClose}
+ style={{ inset: 0, background: 'var(--scrim)', placeItems: 'center', zIndex: 20 }}>
       <div onClick={e => e.stopPropagation()}
-           style={{
- background: 'var(--paper)', border: 'var(--hairline)',
-                     borderRadius: 8, width: 420,
-                     boxShadow: 'var(--shadow-lg)'
-}} className="p-5" >
+ style={{
+ borderRadius: 8, width: 420 }} className="p-6 bg-paper border border-paper-edge shadow-lg" >
         <div className="display mb-1" style={{ fontSize: 15 }}>Add router</div>
-        <div style={{ fontSize: 13, color: 'var(--ink-3)' }} className="mb-4" >
+        <div style={{ fontSize: 13 }} className="mb-4 text-ink-3" >
           Pick a router; paste a key on the next step.
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
+        <div className="gap-1 flex flex-col" >
           {D.addable.map(p => (
             <button key={p.id} onClick={() => onAdd(p.id)}
-                    style={{
- display: 'flex', alignItems: 'center', borderRadius: 4,
-                             border: 'var(--hairline)', background: 'var(--paper)',
-                             cursor: 'pointer', textAlign: 'left'
-}} className="gap-3 py-2 px-3" >
-              <span className="kanji" style={{ fontSize: 17, color: 'var(--accent)' }}>{p.kanji}</span>
-              <span style={{ flex: 1, fontSize: 13 }}>{p.name}</span>
-              <span style={{ fontSize: 11, color: 'var(--ink-4)',
-                              letterSpacing: '0.08em', textTransform: 'uppercase' }}>{p.kind}</span>
+ style={{ borderRadius: 4 }} className="gap-3 py-2 px-3 flex items-center border border-paper-edge bg-paper cursor-pointer text-left" >
+              <span className="kanji text-accent" style={{ fontSize: 17 }}>{p.kanji}</span>
+              <span className="flex-1" style={{ fontSize: 13 }}>{p.name}</span>
+              <span className="text-ink-4 uppercase" style={{ fontSize: 11,
+ letterSpacing: '0.08em' }}>{p.kind}</span>
             </button>
           ))}
         </div>
-        <div style={{ textAlign: 'right' }} className="mt-3" >
+        <div className="mt-3 text-right" >
           <button onClick={onClose}
-                  style={{
- fontSize: 13, color: 'var(--ink-3)',
-                           border: 'none', background: 'transparent',
-                           cursor: 'pointer'
-}} className="py-1 px-2" >Cancel</button>
+ style={{
+ fontSize: 13 }} className="py-1 px-2 text-ink-3 border-0 bg-transparent cursor-pointer" >Cancel</button>
         </div>
       </div>
     </div>

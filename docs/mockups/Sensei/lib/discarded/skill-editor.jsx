@@ -30,54 +30,38 @@ const monoBox = {
 // ─── Shared bits ───────────────────────────────────────────
 function SkHero({ skill, layout }) {
   return (
-    <div style={{
- borderBottom: 'var(--hairline)',
-                   display: 'flex', alignItems: 'center'
-}} className="gap-5 pt-5 pb-4 px-6" >
-      <div className="kanji" style={{ fontSize: 40, color: 'var(--accent)', lineHeight: 1 }}>技</div>
-      <div style={{ flex: 1, minWidth: 0 }}>
+    <div className="gap-6 pt-6 pb-4 px-8 border-b flex items-center" >
+      <div className="kanji text-accent" style={{ fontSize: 40, lineHeight: 1 }}>技</div>
+      <div className="flex-1 min-w-0" >
         <div style={{
- fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
-                       textTransform: 'uppercase'
-}} className="mb-1" >
+ fontSize: 11, letterSpacing: '0.18em' }} className="mb-1 text-ink-3 uppercase" >
           Skill editor  ·  {layout === "form" ? "anatomy view" : "document view"}
         </div>
-        <h1 className="display m-0" style={{
- fontSize: 22, fontWeight: 400,
-                                          color: 'var(--ink)'
-}}>
+        <h1 className="display m-0 font-normal text-ink" style={{
+ fontSize: 22 }}>
           {skill.name}
         </h1>
         <p style={{
- fontSize: 13, color: 'var(--ink-2)',
-                     maxWidth: 720, lineHeight: 1.55
-}} className="mt-1 mb-0" >
+ fontSize: 13,
+ maxWidth: 720, lineHeight: 1.55
+ }} className="mt-1 mb-0 text-ink-2" >
           {skill.description}
         </p>
       </div>
-      <div style={{
- borderLeft: 'var(--hairline)',
-                     display: 'flex', alignItems: 'flex-start'
-}} className="gap-5 pl-5" >
-        <div style={{ textAlign: 'right' }}>
-          <div className="mono" style={{ fontSize: 13, color: 'var(--ink)' }}>v{skill.version}</div>
+      <div className="gap-6 pl-6 border-l flex items-start" >
+        <div className="text-right" >
+          <div className="mono text-ink" style={{ fontSize: 13 }}>v{skill.version}</div>
           <div style={{
- fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-4)',
-                         textTransform: 'uppercase'
-}} className="mt-1" >version</div>
+ fontSize: 11, letterSpacing: '0.14em' }} className="mt-1 text-ink-4 uppercase" >version</div>
         </div>
-        <div style={{ textAlign: 'right' }}>
-          <div style={{ fontSize: 13, color: 'var(--accent)' }}>{skill.evidence.required ? "required" : "optional"}</div>
+        <div className="text-right" >
+          <div className="text-accent" style={{ fontSize: 13 }}>{skill.evidence.required ? "required" : "optional"}</div>
           <div style={{
- fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-4)',
-                         textTransform: 'uppercase'
-}} className="mt-1" >evidence</div>
+ fontSize: 11, letterSpacing: '0.14em' }} className="mt-1 text-ink-4 uppercase" >evidence</div>
         </div>
         <button style={{
- fontSize: 13, background: 'var(--ink)',
-          color: 'var(--paper)', borderRadius: 5, border: 'none',
-          cursor: 'pointer', alignSelf: 'center', fontFamily: 'var(--font-ui)'
-}} className="py-2 px-4" >Save · v{skill.version.split(/[.-]/).slice(0,2).join('.')}.{Number(skill.version.split('.')[2].split('-')[0])+1}</button>
+ fontSize: 13, borderRadius: 5, fontFamily: 'var(--font-ui)'
+ }} className="py-2 px-4 bg-ink text-paper border-0 cursor-pointer self-center" >Save · v{skill.version.split(/[.-]/).slice(0,2).join('.')}.{Number(skill.version.split('.')[2].split('-')[0])+1}</button>
       </div>
     </div>
   );
@@ -88,36 +72,26 @@ function SkAssembledPreview({ skill }) {
   const a = skill.assembled;
   return (
     <div style={{
- background: 'var(--paper-2)',
-                   borderRadius: 6, border: 'var(--hairline)'
-}} className="py-4 px-5" >
+ borderRadius: 6 }} className="py-4 px-6 bg-paper-2 border border-paper-edge" >
       <div style={{
- fontSize: 11, letterSpacing: '0.16em', color: 'var(--ink-4)',
-                     textTransform: 'uppercase'
-}} className="mb-3" >
+ fontSize: 11, letterSpacing: '0.16em' }} className="mb-3 text-ink-4 uppercase" >
         Assembled context  ·  what sensei sees on trigger
       </div>
-      <pre className="mono m-0" style={{
- fontSize: 11, color: 'var(--ink-2)',
-        background: 'transparent', lineHeight: 1.65, whiteSpace: 'pre-wrap'
-}}>
+      <pre className="mono m-0 text-ink-2 bg-transparent" style={{
+ fontSize: 11, lineHeight: 1.65, whiteSpace: 'pre-wrap'
+ }}>
 {`# system\n${a.systemSnippet}\n\n# memory\n${a.memorySnippet}\n\n# tools available\n${a.toolList.map(t => `  · ${t}`).join('\n')}`}
       </pre>
       <div style={{
- borderTop: 'var(--hairline)',
-                     display: 'flex', justifyContent: 'space-between',
-                     fontSize: 11, color: 'var(--ink-3)'
-}} className="mt-3 pt-2" >
+ fontSize: 11 }} className="mt-3 pt-2 border-t flex justify-between text-ink-3" >
         <span>Token estimate</span>
-        <span className="mono" style={{ color: 'var(--ink-2)' }}>
+        <span className="mono text-ink-2" >
           {a.tokenEstimate.toLocaleString()} / {skill.maxTokens.toLocaleString()}
         </span>
       </div>
       <div style={{
- height: 4, background: 'var(--edge)', borderRadius: 2, overflow: 'hidden'
-}} className="mt-1" >
-        <div style={{ width: `${100 * a.tokenEstimate / skill.maxTokens}%`,
-                       height: '100%', background: 'var(--accent)' }}/>
+ height: 4, background: 'var(--edge)', borderRadius: 2 }} className="mt-1 overflow-hidden" >
+        <div className="h-full bg-accent" style={{ width: `${100 * a.tokenEstimate / skill.maxTokens}%` }}/>
       </div>
     </div>
   );
@@ -126,15 +100,11 @@ function SkAssembledPreview({ skill }) {
 // ─── Trigger row ───────────────────────────────────────────
 function SkTriggerRow({ t }) {
   return (
-    <div style={{
- display: 'grid', gridTemplateColumns: '110px 70px 1fr auto', alignItems: 'center', borderRadius: 4,
-                   background: 'var(--paper-2)', border: 'var(--hairline)'
-}} className="gap-2 py-2 px-3" >
-      <span className="mono" style={{ fontSize: 11, color: 'var(--accent)' }}>{t.kind}</span>
-      <span style={{ fontSize: 11, color: 'var(--ink-3)' }}>{t.op}</span>
-      <span className="mono" style={{ fontSize: 13, color: 'var(--ink)' }}>{t.value}</span>
-      <button style={{ fontSize: 13, color: 'var(--ink-4)', background: 'transparent',
-        border: 'none', cursor: 'pointer' }}>×</button>
+    <div style={{ gridTemplateColumns: '110px 70px 1fr auto', borderRadius: 4 }} className="gap-2 py-2 px-3 grid items-center bg-paper-2 border border-paper-edge" >
+      <span className="mono text-accent" style={{ fontSize: 11 }}>{t.kind}</span>
+      <span className="text-ink-3" style={{ fontSize: 11 }}>{t.op}</span>
+      <span className="mono text-ink" style={{ fontSize: 13 }}>{t.value}</span>
+      <button className="text-ink-4 bg-transparent border-0 cursor-pointer" style={{ fontSize: 13 }}>×</button>
     </div>
   );
 }
@@ -142,23 +112,18 @@ function SkTriggerRow({ t }) {
 // ─── Tool checkbox row ─────────────────────────────────────
 function SkToolRow({ tool }) {
   return (
-    <label style={{
- display: 'grid', gridTemplateColumns: '20px 1fr auto', alignItems: 'center',
-                     borderRadius: 4, cursor: 'pointer',
-                     background: tool.allowed ? 'var(--paper-2)' : 'transparent',
-                     border: 'var(--hairline)'
-}} className="gap-2 py-2 px-3" >
-      <span style={{
-        width: 14, height: 14, borderRadius: 3,
-        border: '1px solid ' + (tool.allowed ? 'var(--accent)' : 'var(--ink-4)'),
-        background: tool.allowed ? 'var(--accent)' : 'transparent',
-        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-        color: 'var(--paper)', fontSize: 11
-      }}>{tool.allowed ? '✓' : ''}</span>
+    <label style={{ gridTemplateColumns: '20px 1fr auto',
+ borderRadius: 4,
+ background: tool.allowed ? 'var(--paper-2)' : 'transparent' }} className="gap-2 py-2 px-3 grid items-center cursor-pointer border border-paper-edge" >
+      <span className="inline-flex items-center justify-center text-paper" style={{
+ width: 14, height: 14, borderRadius: 3,
+ border: '1px solid ' + (tool.allowed ? 'var(--accent)' : 'var(--ink-4)'),
+ background: tool.allowed ? 'var(--accent)' : 'transparent', fontSize: 11
+ }}>{tool.allowed ? '✓' : ''}</span>
       <span className="mono" style={{ fontSize: 13,
         color: tool.allowed ? 'var(--ink)' : 'var(--ink-3)' }}>{tool.label}</span>
-      <span style={{ fontSize: 11, color: tool.allowed ? 'var(--success)' : 'var(--ink-4)',
-                      letterSpacing: '0.12em', textTransform: 'uppercase' }}>
+      <span className="uppercase" style={{ fontSize: 11, color: tool.allowed ? 'var(--success)' : 'var(--ink-4)',
+ letterSpacing: '0.12em' }}>
         {tool.allowed ? 'allowed' : 'denied'}
       </span>
     </label>
@@ -170,19 +135,17 @@ function SkillEditorFormStyle() {
   const skill = window.EXT_DATA.exampleSkill;
 
   return (
-    <div className="sensei" data-screen-label="Skill editor · Form layout"
-         style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column',
-                  background: 'var(--paper)', overflow: 'hidden' }}>
+    <div className="sensei w-full h-full flex flex-col bg-paper overflow-hidden" data-screen-label="Skill editor · Form layout"
+ >
       <SkHero skill={skill} layout="form"/>
 
       <div style={{
- flex: 1, minHeight: 0, display: 'grid',
-                     gridTemplateColumns: '1.4fr 1fr'
-}} className="gap-0" >
+ gridTemplateColumns: '1.4fr 1fr'
+ }} className="gap-0 flex-1 min-h-0 grid" >
         {/* Left: anatomy form */}
-        <div style={{ overflow: 'auto', borderRight: 'var(--hairline)' }} className="py-5 px-6" >
+        <div className="py-6 px-8 overflow-auto border-r" >
           <SkSection title="Identity">
-            <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr' }} className="gap-3" >
+            <div style={{ gridTemplateColumns: '1.4fr 1fr' }} className="gap-3 grid" >
               <SkField label="Name"><input style={fieldBox} defaultValue={skill.name}/></SkField>
               <SkField label="ID"><input style={monoBox} defaultValue={skill.id} readOnly/></SkField>
             </div>
@@ -190,7 +153,7 @@ function SkillEditorFormStyle() {
               <textarea style={{ ...fieldBox, minHeight: 64, resize: 'vertical',
                 lineHeight: 1.5 }} defaultValue={skill.description}/>
             </SkField>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr' }} className="gap-3" >
+            <div style={{ gridTemplateColumns: '1fr 1fr 1fr' }} className="gap-3 grid" >
               <SkField label="Author"><input style={fieldBox} defaultValue={skill.author} className="gap-1" /></SkField>
               <SkField label="Version"><input style={monoBox} defaultValue={skill.version}/></SkField>
               <SkField label="Scope">
@@ -202,68 +165,53 @@ function SkillEditorFormStyle() {
               </SkField>
             </div>
             <SkField label="Tags">
-              <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center' }}>
+              <div className="flex flex-wrap items-center" >
                 {skill.tags.map(t => (
                   <span key={t} style={{
- fontSize: 11, color: 'var(--ink-2)',
-                    background: 'var(--paper-3)', borderRadius: 3,
-                    fontFamily: 'var(--font-mono)'
-}} className="py-1 px-2" >{t} <span style={{ color: 'var(--ink-4)' }} className="ml-1" >×</span></span>
+ fontSize: 11, borderRadius: 3,
+ fontFamily: 'var(--font-mono)'
+ }} className="py-1 px-2 text-ink-2 bg-paper-3" >{t} <span className="ml-1 text-ink-4" >×</span></span>
                 ))}
                 <button style={{
- fontSize: 11, color: 'var(--ink-3)', background: 'transparent',
-                  border: 'var(--hairline)', borderRadius: 3,
-                  cursor: 'pointer'
-}} className="py-1 px-2" >+ tag</button>
+ fontSize: 11, borderRadius: 3 }} className="py-1 px-2 text-ink-3 bg-transparent border border-paper-edge cursor-pointer" >+ tag</button>
               </div>
             </SkField>
           </SkSection>
 
           <SkSection title="Triggers" subtitle="When sensei should reach for this skill — all clauses ANDed">
-            <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
+            <div className="gap-1 flex flex-col" >
               {skill.triggers.map((t, i) => <SkTriggerRow key={i} t={t}/>)}
               <button style={{
- fontSize: 11, color: 'var(--ink-3)',
-                background: 'transparent', border: '1px dashed var(--edge)',
-                borderRadius: 4, cursor: 'pointer', textAlign: 'center'
-}} className="p-2" >
+ fontSize: 11, border: '1px dashed var(--edge)',
+ borderRadius: 4 }} className="p-2 text-ink-3 bg-transparent cursor-pointer text-center" >
                 + add clause
               </button>
             </div>
           </SkSection>
 
           <SkSection title="Tool access" subtitle="Which MCPs and tools the skill can call">
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr' }} className="gap-1" >
+            <div style={{ gridTemplateColumns: '1fr 1fr' }} className="gap-1 grid" >
               {skill.tools.map(t => <SkToolRow key={t.id} tool={t}/>)}
             </div>
           </SkSection>
 
           <SkSection title="Examples" subtitle="Input → output pairs · drive evals + behavior">
-            <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-3" >
+            <div className="gap-3 flex flex-col" >
               {skill.examples.map((ex, i) => (
-                <div key={i} style={{
- border: 'var(--hairline)', borderRadius: 6,
-                  background: 'var(--paper-2)'
-}} className="py-3 px-3" >
+                <div key={i} style={{ borderRadius: 6 }} className="py-3 px-3 border border-paper-edge bg-paper-2" >
                   <div style={{
- fontSize: 11, color: 'var(--ink-4)', letterSpacing: '0.14em',
-                                 textTransform: 'uppercase'
-}} className="mb-1" >Input</div>
+ fontSize: 11, letterSpacing: '0.14em' }} className="mb-1 text-ink-4 uppercase" >Input</div>
                   <div style={{
- fontSize: 13, color: 'var(--ink)', lineHeight: 1.55
-}} className="mb-2" >{ex.in}</div>
+ fontSize: 13, lineHeight: 1.55
+ }} className="mb-2 text-ink" >{ex.in}</div>
                   <div style={{
- fontSize: 11, color: 'var(--accent)', letterSpacing: '0.14em',
-                                 textTransform: 'uppercase'
-}} className="mb-1" >Sensei's response</div>
-                  <div style={{ fontSize: 13, color: 'var(--ink)', lineHeight: 1.55 }}>{ex.out}</div>
+ fontSize: 11, letterSpacing: '0.14em' }} className="mb-1 text-accent uppercase" >Sensei's response</div>
+                  <div className="text-ink" style={{ fontSize: 13, lineHeight: 1.55 }}>{ex.out}</div>
                 </div>
               ))}
               <button style={{
- fontSize: 11, color: 'var(--ink-3)',
-                background: 'transparent', border: '1px dashed var(--edge)',
-                borderRadius: 4, cursor: 'pointer', textAlign: 'center'
-}} className="p-2" >
+ fontSize: 11, border: '1px dashed var(--edge)',
+ borderRadius: 4 }} className="p-2 text-ink-3 bg-transparent cursor-pointer text-center" >
                 + example pair
               </button>
             </div>
@@ -274,24 +222,22 @@ function SkillEditorFormStyle() {
             <SkField label="Required signal">
               <input style={fieldBox} defaultValue={skill.evidence.signal} className="gap-3" />
             </SkField>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr' }}>
+            <div className="grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
               <SkField label="Sources">
-                <div style={{ display: 'flex', flexWrap: 'wrap' }} className="gap-1" >
+                <div className="gap-1 flex flex-wrap" >
                   {skill.evidence.sources.map(s => (
-                    <span key={s} className="mono py-1 px-2" style={{
- fontSize: 11,
-                      color: 'var(--ink-2)', background: 'var(--paper-3)', borderRadius: 3
-}}>{s}</span>
+                    <span key={s} className="mono py-1 px-2 text-ink-2 bg-paper-3" style={{
+ fontSize: 11, borderRadius: 3
+ }}>{s}</span>
                   ))}
                 </div>
               </SkField>
               <SkField label="Memory refs">
-                <div style={{ display: 'flex', flexWrap: 'wrap' }} className="gap-1" >
+                <div className="gap-1 flex flex-wrap" >
                   {skill.evidence.memoryRefs.map(m => (
-                    <span key={m} className="mono py-1 px-2" style={{
- fontSize: 11,
-                      color: 'var(--accent)', background: 'var(--paper-3)', borderRadius: 3
-}}>{m}</span>
+                    <span key={m} className="mono py-1 px-2 text-accent bg-paper-3" style={{
+ fontSize: 11, borderRadius: 3
+ }}>{m}</span>
                   ))}
                 </div>
               </SkField>
@@ -299,9 +245,9 @@ function SkillEditorFormStyle() {
           </SkSection>
 
           <SkSection title="Token budget">
-            <div style={{ display: 'flex', alignItems: 'center' }} className="gap-3" >
+            <div className="gap-3 flex items-center" >
               <input style={{ ...monoBox, width: 120 }} defaultValue={skill.maxTokens}/>
-              <span style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+              <span className="text-ink-3" style={{ fontSize: 11 }}>
                 ceiling for assembled context · current estimate {skill.assembled.tokenEstimate.toLocaleString()}
               </span>
             </div>
@@ -314,22 +260,15 @@ function SkillEditorFormStyle() {
         </div>
 
         {/* Right: live preview */}
-        <div style={{
- overflow: 'auto',
-                       background: 'var(--paper)'
-}} className="py-5 px-5" >
-          <div style={{ position: 'sticky', top: 0 }}>
+        <div className="py-6 px-6 overflow-auto bg-paper" >
+          <div className="sticky" style={{ top: 0 }}>
             <SkAssembledPreview skill={skill}/>
 
             {/* Validation panel */}
             <div style={{
- borderRadius: 6,
-                           border: 'var(--hairline)'
-}} className="mt-4 py-4 px-4" >
+ borderRadius: 6 }} className="mt-4 py-4 px-4 border border-paper-edge" >
               <div style={{
- fontSize: 11, letterSpacing: '0.16em', color: 'var(--ink-4)',
-                             textTransform: 'uppercase'
-}} className="mb-3" >
+ fontSize: 11, letterSpacing: '0.16em' }} className="mb-3 text-ink-4 uppercase" >
                 Health check
               </div>
               {[
@@ -339,11 +278,10 @@ function SkillEditorFormStyle() {
                 { ok: false, label: "Body references a tool not in whitelist (`fs-write`)." },
                 { ok: true,  label: "Evidence requirement is testable." },
               ].map((c, i) => (
-                <div key={i} style={{
- display: 'grid', gridTemplateColumns: '14px 1fr', alignItems: 'center',
-                                       fontSize: 13, color: c.ok ? 'var(--ink-2)' : 'var(--warning)'
-}} className="gap-2 py-1 px-0" >
-                  <span style={{ width: 14, textAlign: 'center', fontSize: 13 }}>
+                <div key={i} style={{ gridTemplateColumns: '14px 1fr',
+ fontSize: 13, color: c.ok ? 'var(--ink-2)' : 'var(--warning)'
+ }} className="gap-2 py-1 px-0 grid items-center" >
+                  <span className="text-center" style={{ width: 14, fontSize: 13 }}>
                     {c.ok ? "✓" : "!"}
                   </span>
                   <span>{c.label}</span>
@@ -353,13 +291,9 @@ function SkillEditorFormStyle() {
 
             {/* Test panel */}
             <div style={{
- borderRadius: 6,
-                           border: 'var(--hairline)', background: 'var(--paper-2)'
-}} className="mt-4 py-4 px-4" >
+ borderRadius: 6 }} className="mt-4 py-4 px-4 border border-paper-edge bg-paper-2" >
               <div style={{
- fontSize: 11, letterSpacing: '0.16em', color: 'var(--ink-4)',
-                             textTransform: 'uppercase'
-}} className="mb-2" >
+ fontSize: 11, letterSpacing: '0.16em' }} className="mb-2 text-ink-4 uppercase" >
                 Try it · against past session
               </div>
               <select style={{ ...fieldBox }} className="mb-2" >
@@ -367,10 +301,8 @@ function SkillEditorFormStyle() {
                 <option>lumen-canvas · 2025-09-30 trait-leak</option>
               </select>
               <button style={{
- fontSize: 13, background: 'var(--ink)',
-                color: 'var(--paper)', borderRadius: 5, border: 'none',
-                cursor: 'pointer', width: '100%', fontFamily: 'var(--font-ui)'
-}} className="py-2 px-3" >Replay  →</button>
+ fontSize: 13, borderRadius: 5, fontFamily: 'var(--font-ui)'
+ }} className="py-2 px-3 bg-ink text-paper border-0 cursor-pointer w-full" >Replay  →</button>
             </div>
           </div>
         </div>
@@ -407,82 +339,67 @@ max_tokens: ${skill.maxTokens}
 `;
 
   return (
-    <div className="sensei" data-screen-label="Skill editor · Code layout"
-         style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column',
-                  background: 'var(--paper)', overflow: 'hidden' }}>
+    <div className="sensei w-full h-full flex flex-col bg-paper overflow-hidden" data-screen-label="Skill editor · Code layout"
+ >
       <SkHero skill={skill} layout="code"/>
 
-      <div style={{ flex: 1, minHeight: 0, display: 'grid',
-                     gridTemplateColumns: '1.6fr 1fr' }}>
+      <div className="flex-1 min-h-0 grid" style={{
+ gridTemplateColumns: '1.6fr 1fr' }}>
         {/* Left: code document */}
-        <div style={{ borderRight: 'var(--hairline)', display: 'flex',
-                       flexDirection: 'column', minWidth: 0 }}>
+        <div className="border-r flex flex-col min-w-0" >
           {/* tab strip */}
-          <div style={{ display: 'flex', borderBottom: 'var(--hairline)',
-                         background: 'var(--paper-2)' }}>
+          <div className="flex border-b bg-paper-2" >
             {["skill.md", "examples.json", "evals.log"].map((t, i) => (
               <button key={t} style={{
  fontSize: 13,
-                background: i === 0 ? 'var(--paper)' : 'transparent',
-                borderRight: 'var(--hairline)',
-                borderBottom: i === 0 ? 'none' : 'var(--hairline)',
-                marginBottom: i === 0 ? -1 : 0,
-                color: i === 0 ? 'var(--ink)' : 'var(--ink-3)',
-                fontFamily: 'var(--font-mono)', cursor: 'pointer', border: 'none'
-}} className="py-2 px-4" >{t}</button>
+ background: i === 0 ? 'var(--paper)' : 'transparent',
+ borderBottom: i === 0 ? 'none' : 'var(--hairline)',
+ marginBottom: i === 0 ? -1 : 0,
+ color: i === 0 ? 'var(--ink)' : 'var(--ink-3)',
+ fontFamily: 'var(--font-mono)' }} className="py-2 px-4 border-r cursor-pointer border-0" >{t}</button>
             ))}
-            <span style={{ flex: 1 }}/>
-            <span className="mono py-3 px-4" style={{
- fontSize: 11, color: 'var(--ink-4)'
-}}>
+            <span className="flex-1" />
+            <span className="mono py-3 px-4 text-ink-4" style={{
+ fontSize: 11 }}>
               utf-8 · markdown · ~{(frontmatter.length + skill.body.length) | 0} chars
             </span>
           </div>
 
           {/* code body */}
-          <div style={{ flex: 1, overflow: 'auto', display: 'grid',
-                         gridTemplateColumns: '40px 1fr' }}>
+          <div className="flex-1 overflow-auto grid" style={{
+ gridTemplateColumns: '40px 1fr' }}>
             <div style={{
- background: 'var(--paper-2)', borderRight: 'var(--hairline)', textAlign: 'right',
-                           fontFamily: 'var(--font-mono)', fontSize: 11,
-                           color: 'var(--ink-4)', lineHeight: 1.65,
-                           userSelect: 'none'
-}} className="py-3 px-0" >
+ fontFamily: 'var(--font-mono)', fontSize: 11, lineHeight: 1.65,
+ userSelect: 'none'
+ }} className="py-3 px-0 bg-paper-2 border-r text-right text-ink-4" >
               {Array.from({ length: (frontmatter + skill.body).split('\n').length }, (_, i) => (
                 <div key={i} className="pr-2" >{i + 1}</div>
               ))}
             </div>
             <pre style={{
-                           fontFamily: 'var(--font-mono)', fontSize: 13,
-                           color: 'var(--ink)', lineHeight: 1.65,
-                           whiteSpace: 'pre-wrap'
-}} className="py-3 px-4 m-0" >
-              <span style={{ color: 'var(--accent)' }}>{frontmatter}</span>
+ fontFamily: 'var(--font-mono)', fontSize: 13, lineHeight: 1.65,
+ whiteSpace: 'pre-wrap'
+ }} className="py-3 px-4 m-0 text-ink" >
+              <span className="text-accent" >{frontmatter}</span>
               <span>{skill.body}</span>
             </pre>
           </div>
 
           {/* status bar */}
-          <div style={{
- display: 'flex', alignItems: 'center', borderTop: 'var(--hairline)',
-                         background: 'var(--paper-2)', fontSize: 11,
-                         color: 'var(--ink-3)', fontFamily: 'var(--font-mono)'
-}} className="gap-4 py-1 px-4" >
+          <div style={{ fontSize: 11, fontFamily: 'var(--font-mono)'
+ }} className="gap-4 py-1 px-4 flex items-center border-t bg-paper-2 text-ink-3" >
             <span>Ln 24, Col 1</span>
             <span>·</span>
-            <span style={{ color: 'var(--success)' }}>● parsed</span>
+            <span className="text-success" >● parsed</span>
             <span>·</span>
             <span>{skill.evidence.required ? "evidence required" : "evidence optional"}</span>
-            <span style={{ flex: 1 }}/>
+            <span className="flex-1" />
             <span>scope: {skill.scope}</span>
           </div>
         </div>
 
         {/* Right: inspector */}
-        <div style={{
- overflow: 'auto',
-                       display: 'flex', flexDirection: 'column'
-}} className="py-4 px-5 gap-3" >
+        <div className="py-4 px-6 gap-3 overflow-auto flex flex-col" >
           <InspectorChip k="Identity" rows={[
             ['name', skill.name],
             ['id', skill.id],
@@ -515,19 +432,15 @@ max_tokens: ${skill.maxTokens}
 
 function InspectorChip({ k, rows }) {
   return (
-    <div style={{
- border: 'var(--hairline)', borderRadius: 5, background: 'var(--paper)'
-}} className="py-3 px-3" >
+    <div style={{ borderRadius: 5 }} className="py-3 px-3 border border-paper-edge bg-paper" >
       <div style={{
- fontSize: 11, letterSpacing: '0.16em', color: 'var(--ink-4)',
-                     textTransform: 'uppercase'
-}} className="mb-2" >{k}</div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '4px 12px',
-                     fontSize: 11 }}>
+ fontSize: 11, letterSpacing: '0.16em' }} className="mb-2 text-ink-4 uppercase" >{k}</div>
+      <div className="grid" style={{ gridTemplateColumns: 'auto 1fr', gap: '4px 12px',
+ fontSize: 11 }}>
         {rows.map(([l, v], i) => (
           <React.Fragment key={i}>
-            <span className="mono" style={{ color: 'var(--ink-3)' }}>{l}</span>
-            <span style={{ color: 'var(--ink)', wordBreak: 'break-word' }}>{v}</span>
+            <span className="mono text-ink-3" >{l}</span>
+            <span className="text-ink" style={{ wordBreak: 'break-word' }}>{v}</span>
           </React.Fragment>
         ))}
       </div>
@@ -547,14 +460,12 @@ function SkField({ label, children }) {
 
 function SkSection({ title, subtitle, children }) {
   return (
-    <section className="mb-5">
+    <section className="mb-6">
       <div className="mb-3">
-        <h3 className="display m-0" style={{
- fontSize: 15, fontWeight: 400,
-                                          color: 'var(--ink)'
-}}>{title}</h3>
+        <h3 className="display m-0 font-normal text-ink" style={{
+ fontSize: 15 }}>{title}</h3>
         {subtitle && (
-          <div className="mt-1" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+          <div className="mt-1 text-ink-3" style={{ fontSize: 11 }}>
             {subtitle}
           </div>
         )}

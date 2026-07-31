@@ -55,6 +55,10 @@ export interface Membership {
 	/** ISO-8601, or null when active. */
 	disabled_at: string | null;
 	created_at: string;
+	/** WS-1: best display name resolved from the member's `dojo.identities` row,
+	 *  or null when they have no named identity (the mapper falls back to a shortId). */
+	display_name: string | null;
+	email: string | null;
 }
 
 /** An identity-provider method — `dojo.auth_method` (api.rs `is_auth_method`). */
@@ -98,6 +102,17 @@ export interface HealthRollup {
 	publish_rate_1h: number;
 	/** error events in the last hour. */
 	error_rate_1h: number;
+	/** Contributions-vs-approvals by week (last 4) for the bar chart — computed by
+	 *  the health route over `dojo.audit_events`. Absent on older responses. */
+	contrib_vs_approve?: HealthWeek[];
+}
+
+/** One week's contributions/approvals pair (mirrors the server `HealthWeek`;
+ *  maps 1:1 onto the presentational `KitHealthWeek`). */
+export interface HealthWeek {
+	wk: string;
+	c: number;
+	a: number;
 }
 
 /** One audit event — `store.list_audit_events` (store.rs:1086). */

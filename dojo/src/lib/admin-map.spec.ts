@@ -26,6 +26,8 @@ function member(over: Partial<Membership> = {}): Membership {
 		last_heartbeat_at: '2026-07-23T11:00:00Z',
 		disabled_at: null,
 		created_at: '2026-01-01T00:00:00Z',
+		display_name: null,
+		email: null,
 		...over
 	};
 }
@@ -40,6 +42,9 @@ describe('toKitMember / toKitMembers', () => {
 		expect(k.scopes).toBe('—');
 		expect(k.active).toBe('1h');
 		expect(k.you).toBeUndefined();
+	});
+	it('uses the resolved display name when present (WS-1)', () => {
+		expect(toKitMember(member({ display_name: 'Ada Lovelace' }), { now: NOW }).name).toBe('Ada Lovelace');
 	});
 	it('marks the viewer row with you', () => {
 		const k = toKitMember(member(), { self: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', now: NOW });
@@ -131,8 +136,24 @@ describe('toKitHealth', () => {
 		expect(h.signals[0].n).toBe('3');
 		expect(h.signals[1].n).toBe('12');
 		expect(h.signals[3].tone).toBe('success'); // 0 errors → healthy
-		expect(h.contribVsApprove).toEqual([]);
+		expect(h.contribVsApprove).toEqual([]); // absent series → empty (no bars)
 		expect(h.alerts).toEqual([]);
+	});
+	it('maps the contributions-vs-approvals weekly series when present', () => {
+		const h = toKitHealth({
+			connections: 0,
+			queue_depth: 0,
+			publish_rate_1h: 0,
+			error_rate_1h: 0,
+			contrib_vs_approve: [
+				{ wk: 'W3', c: 4, a: 2 },
+				{ wk: 'W4', c: 6, a: 5 }
+			]
+		});
+		expect(h.contribVsApprove).toEqual([
+			{ wk: 'W3', c: 4, a: 2 },
+			{ wk: 'W4', c: 6, a: 5 }
+		]);
 	});
 	it('flags sync errors as a warning tone', () => {
 		const h = toKitHealth({ connections: 0, queue_depth: 0, publish_rate_1h: 0, error_rate_1h: 2 });

@@ -21,18 +21,15 @@
 function IOSStatusBar({ dark = false, time = '9:41' }) {
   const c = dark ? '#fff' : '#000';
   return (
-    <div style={{
-      display: 'flex', gap: 154, alignItems: 'center', justifyContent: 'center',
-      padding: '21px 24px 19px', boxSizing: 'border-box',
-      position: 'relative', zIndex: 20, width: '100%',
-    }}>
-      <div style={{ flex: 1, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center', paddingTop: 1.5 }}>
+    <div className="flex items-center justify-center relative w-full" style={{ gap: 154,
+ padding: '21px 24px 19px', boxSizing: 'border-box', zIndex: 20 }}>
+      <div className="flex-1 flex items-center justify-center" style={{ height: 22, paddingTop: 1.5 }}>
         <span style={{
           fontFamily: '-apple-system, "SF Pro", system-ui', fontWeight: 590,
           fontSize: 17, lineHeight: '22px', color: c,
         }}>{time}</span>
       </div>
-      <div style={{ flex: 1, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, paddingTop: 1, paddingRight: 1 }}>
+      <div className="flex-1 flex items-center justify-center" style={{ height: 22, gap: 7, paddingTop: 1, paddingRight: 1 }}>
         <svg width="19" height="12" viewBox="0 0 19 12">
           <rect x="0" y="7.5" width="3.2" height="4.5" rx="0.7" fill={c}/>
           <rect x="4.8" y="5" width="3.2" height="7" rx="0.7" fill={c}/>
@@ -59,31 +56,24 @@ function IOSStatusBar({ dark = false, time = '9:41' }) {
 // ─────────────────────────────────────────────────────────────
 function IOSGlassPill({ children, dark = false, style = {} }) {
   return (
-    <div style={{
-      height: 44, minWidth: 44, borderRadius: 9999,
-      position: 'relative', overflow: 'hidden',
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-      boxShadow: dark
-        ? '0 2px 6px rgba(0,0,0,0.35), 0 6px 16px rgba(0,0,0,0.2)'
-        : '0 1px 3px rgba(0,0,0,0.07), 0 3px 10px rgba(0,0,0,0.06)',
-      ...style,
-    }}>
+    <div className="relative overflow-hidden flex items-center justify-center" style={{
+ height: 44, minWidth: 44, borderRadius: 9999,
+ boxShadow: dark
+ ? '0 2px 6px rgba(0,0,0,0.35), 0 6px 16px rgba(0,0,0,0.2)'
+ : '0 1px 3px rgba(0,0,0,0.07), 0 3px 10px rgba(0,0,0,0.06)',
+ ...style }}>
       {/* blur + tint */}
-      <div style={{
-        position: 'absolute', inset: 0, borderRadius: 9999,
-        backdropFilter: 'blur(12px) saturate(180%)',
-        WebkitBackdropFilter: 'blur(12px) saturate(180%)',
-        background: dark ? 'rgba(120,120,128,0.28)' : 'rgba(255,255,255,0.5)',
-      }} />
+      <div className="absolute" style={{ inset: 0, borderRadius: 9999,
+ backdropFilter: 'blur(12px) saturate(180%)',
+ WebkitBackdropFilter: 'blur(12px) saturate(180%)',
+ background: dark ? 'rgba(120,120,128,0.28)' : 'rgba(255,255,255,0.5)' }} />
       {/* shine */}
-      <div style={{
-        position: 'absolute', inset: 0, borderRadius: 9999,
-        boxShadow: dark
-          ? 'inset 1.5px 1.5px 1px rgba(255,255,255,0.15), inset -1px -1px 1px rgba(255,255,255,0.08)'
-          : 'inset 1.5px 1.5px 1px rgba(255,255,255,0.7), inset -1px -1px 1px rgba(255,255,255,0.4)',
-        border: dark ? '0.5px solid rgba(255,255,255,0.15)' : '0.5px solid rgba(0,0,0,0.06)',
-      }} />
-      <div style={{ position: 'relative', zIndex: 1, display: 'flex', alignItems: 'center', padding: '0 4px' }}>
+      <div className="absolute" style={{ inset: 0, borderRadius: 9999,
+ boxShadow: dark
+ ? 'inset 1.5px 1.5px 1px rgba(255,255,255,0.15), inset -1px -1px 1px rgba(255,255,255,0.08)'
+ : 'inset 1.5px 1.5px 1px rgba(255,255,255,0.7), inset -1px -1px 1px rgba(255,255,255,0.4)',
+ border: dark ? '0.5px solid rgba(255,255,255,0.15)' : '0.5px solid rgba(0,0,0,0.06)' }} />
+      <div className="relative flex items-center" style={{ zIndex: 1, padding: '0 4px' }}>
         {children}
       </div>
     </div>
@@ -98,20 +88,16 @@ function IOSNavBar({ title = 'Title', dark = false, trailingIcon = true }) {
   const text = dark ? '#fff' : '#000';
   const pillIcon = (content) => (
     <IOSGlassPill dark={dark}>
-      <div style={{ width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div className="flex items-center justify-center" style={{ width: 36, height: 36 }}>
         {content}
       </div>
     </IOSGlassPill>
   );
   return (
-    <div style={{
-      display: 'flex', flexDirection: 'column', gap: 10,
-      paddingTop: 62, paddingBottom: 10, position: 'relative', zIndex: 5,
-    }}>
-      <div style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        padding: '0 16px',
-      }}>
+    <div className="flex flex-col relative" style={{ gap: 10,
+ paddingTop: 62, paddingBottom: 10, zIndex: 5 }}>
+      <div className="flex items-center justify-between" style={{
+ padding: '0 16px' }}>
         {/* back chevron */}
         {pillIcon(
           <svg width="12" height="20" viewBox="0 0 12 20" fill="none" style={{ marginLeft: -1 }}>
@@ -147,30 +133,25 @@ function IOSListRow({ title, detail, icon, chevron = true, isLast = false, dark 
   const ter = dark ? 'rgba(235,235,245,0.3)' : 'rgba(60,60,67,0.3)';
   const sep = dark ? 'rgba(84,84,88,0.65)' : 'rgba(60,60,67,0.12)';
   return (
-    <div style={{
-      display: 'flex', alignItems: 'center', minHeight: 52,
-      padding: '0 16px', position: 'relative',
-      fontFamily: '-apple-system, system-ui', fontSize: 17,
-      letterSpacing: -0.43,
-    }}>
+    <div className="flex items-center relative" style={{ minHeight: 52,
+ padding: '0 16px',
+ fontFamily: '-apple-system, system-ui', fontSize: 17,
+ letterSpacing: -0.43 }}>
       {icon && (
-        <div style={{
-          width: 30, height: 30, borderRadius: 7, background: icon,
-          marginRight: 12, flexShrink: 0,
-        }} />
+        <div className="shrink-0" style={{
+ width: 30, height: 30, borderRadius: 7, background: icon,
+ marginRight: 12 }} />
       )}
-      <div style={{ flex: 1, color: text }}>{title}</div>
+      <div className="flex-1" style={{ color: text }}>{title}</div>
       {detail && <span style={{ color: sec, marginRight: 6 }}>{detail}</span>}
       {chevron && (
-        <svg width="8" height="14" viewBox="0 0 8 14" style={{ flexShrink: 0 }}>
+        <svg className="shrink-0" width="8" height="14" viewBox="0 0 8 14" >
           <path d="M1 1l6 6-6 6" stroke={ter} strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
         </svg>
       )}
       {!isLast && (
-        <div style={{
-          position: 'absolute', bottom: 0, right: 0,
-          left: icon ? 58 : 16, height: 0.5, background: sep,
-        }} />
+        <div className="absolute" style={{ bottom: 0, right: 0,
+ left: icon ? 58 : 16, height: 0.5, background: sep }} />
       )}
     </div>
   );
@@ -182,16 +163,14 @@ function IOSList({ header, children, dark = false }) {
   return (
     <div>
       {header && (
-        <div style={{
-          fontFamily: '-apple-system, system-ui', fontSize: 13,
-          color: hc, textTransform: 'uppercase',
-          padding: '8px 36px 6px', letterSpacing: -0.08,
-        }}>{header}</div>
+        <div className="uppercase" style={{
+ fontFamily: '-apple-system, system-ui', fontSize: 13,
+ color: hc,
+ padding: '8px 36px 6px', letterSpacing: -0.08 }}>{header}</div>
       )}
-      <div style={{
-        background: bg, borderRadius: 26,
-        margin: '0 16px', overflow: 'hidden',
-      }}>{children}</div>
+      <div className="overflow-hidden" style={{
+ background: bg, borderRadius: 26,
+ margin: '0 16px' }}>{children}</div>
     </div>
   );
 }
@@ -204,34 +183,28 @@ function IOSDevice({
   title, keyboard = false,
 }) {
   return (
-    <div style={{
-      width, height, borderRadius: 48, overflow: 'hidden',
-      position: 'relative', background: dark ? '#000' : '#F2F2F7',
-      boxShadow: '0 40px 80px rgba(0,0,0,0.18), 0 0 0 1px rgba(0,0,0,0.12)',
-      fontFamily: '-apple-system, system-ui, sans-serif',
-      WebkitFontSmoothing: 'antialiased',
-    }}>
+    <div className="overflow-hidden relative" style={{
+ width, height, borderRadius: 48, background: dark ? '#000' : '#F2F2F7',
+ boxShadow: '0 40px 80px rgba(0,0,0,0.18), 0 0 0 1px rgba(0,0,0,0.12)',
+ fontFamily: '-apple-system, system-ui, sans-serif',
+ WebkitFontSmoothing: 'antialiased' }}>
       {/* dynamic island */}
-      <div style={{
-        position: 'absolute', top: 11, left: '50%', transform: 'translateX(-50%)',
-        width: 126, height: 37, borderRadius: 24, background: '#000', zIndex: 50,
-      }} />
+      <div className="absolute" style={{ top: 11, left: '50%', transform: 'translateX(-50%)',
+ width: 126, height: 37, borderRadius: 24, background: '#000', zIndex: 50 }} />
       {/* status bar (absolute) */}
-      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 10 }}>
+      <div className="absolute" style={{ top: 0, left: 0, right: 0, zIndex: 10 }}>
         <IOSStatusBar dark={dark} />
       </div>
       {/* nav + content */}
-      <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+      <div className="h-full flex flex-col" >
         {title !== undefined && <IOSNavBar title={title} dark={dark} />}
-        <div style={{ flex: 1, overflow: 'auto' }}>{children}</div>
+        <div className="flex-1 overflow-auto" >{children}</div>
         {keyboard && <IOSKeyboard dark={dark} />}
       </div>
       {/* home indicator — always on top */}
-      <div style={{
-        position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 60,
-        height: 34, display: 'flex', justifyContent: 'center', alignItems: 'flex-end',
-        paddingBottom: 8, pointerEvents: 'none',
-      }}>
+      <div className="absolute flex justify-center items-end" style={{ bottom: 0, left: 0, right: 0, zIndex: 60,
+ height: 34,
+ paddingBottom: 8, pointerEvents: 'none' }}>
         <div style={{
           width: 139, height: 5, borderRadius: 100,
           background: dark ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.25)',
@@ -257,82 +230,65 @@ function IOSKeyboard({ dark = false }) {
   };
 
   const key = (content, { w, flex, ret, fs = 25, k } = {}) => (
-    <div key={k} style={{
-      height: 42, borderRadius: 8.5,
-      flex: flex ? 1 : undefined, width: w, minWidth: 0,
-      background: ret ? '#08f' : keyBg,
-      boxShadow: '0 1px 0 rgba(0,0,0,0.075)',
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-      fontFamily: '-apple-system, "SF Compact", system-ui',
-      fontSize: fs, fontWeight: 458, color: ret ? '#fff' : glyph,
-    }}>{content}</div>
+    <div className="min-w-0 flex items-center justify-center" key={k} style={{
+ height: 42, borderRadius: 8.5,
+ flex: flex ? 1 : undefined, width: w,
+ background: ret ? '#08f' : keyBg,
+ boxShadow: '0 1px 0 rgba(0,0,0,0.075)',
+ fontFamily: '-apple-system, "SF Compact", system-ui',
+ fontSize: fs, fontWeight: 458, color: ret ? '#fff' : glyph }}>{content}</div>
   );
 
   const row = (keys, pad = 0) => (
-    <div style={{ display: 'flex', gap: 6.5, justifyContent: 'center', padding: `0 ${pad}px` }}>
+    <div className="flex justify-center" style={{ gap: 6.5, padding: `0 ${pad}px` }}>
       {keys.map(l => key(l, { flex: true, k: l }))}
     </div>
   );
 
   return (
-    <div style={{
-      position: 'relative', zIndex: 15, borderRadius: 27, overflow: 'hidden',
-      padding: '11px 0 2px',
-      display: 'flex', flexDirection: 'column', alignItems: 'center',
-      boxShadow: dark
-        ? '0 -2px 20px rgba(0,0,0,0.09)'
-        : '0 -1px 6px rgba(0,0,0,0.018), 0 -3px 20px rgba(0,0,0,0.012)',
-    }}>
+    <div className="relative overflow-hidden flex flex-col items-center" style={{ zIndex: 15, borderRadius: 27,
+ padding: '11px 0 2px',
+ boxShadow: dark
+ ? '0 -2px 20px rgba(0,0,0,0.09)'
+ : '0 -1px 6px rgba(0,0,0,0.018), 0 -3px 20px rgba(0,0,0,0.012)' }}>
       {/* liquid glass bg — same recipe as nav pills */}
-      <div style={{
-        position: 'absolute', inset: 0, borderRadius: 27,
-        backdropFilter: 'blur(12px) saturate(180%)',
-        WebkitBackdropFilter: 'blur(12px) saturate(180%)',
-        background: dark ? 'rgba(120,120,128,0.14)' : 'rgba(255,255,255,0.25)',
-      }} />
-      <div style={{
-        position: 'absolute', inset: 0, borderRadius: 27,
-        boxShadow: dark
-          ? 'inset 1.5px 1.5px 1px rgba(255,255,255,0.15)'
-          : 'inset 1.5px 1.5px 1px rgba(255,255,255,0.7), inset -1px -1px 1px rgba(255,255,255,0.4)',
-        border: dark ? '0.5px solid rgba(255,255,255,0.15)' : '0.5px solid rgba(0,0,0,0.06)',
-        pointerEvents: 'none',
-      }} />
+      <div className="absolute" style={{ inset: 0, borderRadius: 27,
+ backdropFilter: 'blur(12px) saturate(180%)',
+ WebkitBackdropFilter: 'blur(12px) saturate(180%)',
+ background: dark ? 'rgba(120,120,128,0.14)' : 'rgba(255,255,255,0.25)' }} />
+      <div className="absolute" style={{ inset: 0, borderRadius: 27,
+ boxShadow: dark
+ ? 'inset 1.5px 1.5px 1px rgba(255,255,255,0.15)'
+ : 'inset 1.5px 1.5px 1px rgba(255,255,255,0.7), inset -1px -1px 1px rgba(255,255,255,0.4)',
+ border: dark ? '0.5px solid rgba(255,255,255,0.15)' : '0.5px solid rgba(0,0,0,0.06)',
+ pointerEvents: 'none' }} />
 
       {/* autocorrect bar */}
-      <div style={{
-        display: 'flex', gap: 20, alignItems: 'center',
-        padding: '8px 22px 13px', width: '100%', boxSizing: 'border-box',
-        position: 'relative',
-      }}>
+      <div className="flex items-center w-full relative" style={{ gap: 20,
+ padding: '8px 22px 13px', boxSizing: 'border-box' }}>
         {['"The"', 'the', 'to'].map((w, i) => (
           <React.Fragment key={i}>
             {i > 0 && <div style={{ width: 1, height: 25, background: '#ccc', opacity: 0.3 }} />}
-            <div style={{
-              flex: 1, textAlign: 'center',
-              fontFamily: '-apple-system, system-ui', fontSize: 17,
-              color: sugg, letterSpacing: -0.43, lineHeight: '22px',
-            }}>{w}</div>
+            <div className="flex-1 text-center" style={{
+ fontFamily: '-apple-system, system-ui', fontSize: 17,
+ color: sugg, letterSpacing: -0.43, lineHeight: '22px' }}>{w}</div>
           </React.Fragment>
         ))}
       </div>
 
       {/* key layout */}
-      <div style={{
-        display: 'flex', flexDirection: 'column', gap: 13,
-        padding: '0 6.5px', width: '100%', boxSizing: 'border-box',
-        position: 'relative',
-      }}>
+      <div className="flex flex-col w-full relative" style={{ gap: 13,
+ padding: '0 6.5px', boxSizing: 'border-box' }}>
         {row(['q','w','e','r','t','y','u','i','o','p'])}
         {row(['a','s','d','f','g','h','j','k','l'], 20)}
-        <div style={{ display: 'flex', gap: 14.25, alignItems: 'center' }}>
+        <div className="flex items-center" style={{ gap: 14.25 }}>
           {key(icons.shift, { w: 45, k: 'shift' })}
-          <div style={{ display: 'flex', gap: 6.5, flex: 1 }}>
+          <div className="flex flex-1" style={{ gap: 6.5 }}>
             {['z','x','c','v','b','n','m'].map(l => key(l, { flex: true, k: l }))}
           </div>
           {key(icons.del, { w: 45, k: 'del' })}
         </div>
-        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+        <div className="flex items-center" style={{ gap: 6 }}>
           {key('ABC', { w: 92.25, fs: 18, k: 'abc' })}
           {key('', { flex: true, k: 'space' })}
           {key(icons.ret, { w: 92.25, ret: true, k: 'ret' })}
@@ -340,7 +296,7 @@ function IOSKeyboard({ dark = false }) {
       </div>
 
       {/* bottom spacer (emoji+mic area, icons omitted) */}
-      <div style={{ height: 56, width: '100%', position: 'relative' }} />
+      <div className="w-full relative" style={{ height: 56 }} />
     </div>
   );
 }

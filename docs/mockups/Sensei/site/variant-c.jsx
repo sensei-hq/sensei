@@ -21,10 +21,8 @@ const { useState: cS, useEffect: cE } = React;
 
 function VariantC() {
   return (
-    <div className="sensei variant-c" style={{
-      background: 'var(--paper)', color: 'var(--ink)',
-      minHeight: '100%', fontFamily: 'var(--font-ui)'
-    }}>
+    <div className="sensei variant-c bg-paper text-ink min-h-full" style={{ fontFamily: 'var(--font-ui)'
+ }}>
       <NavC/>
       <HeroC/>
       <LogoStripC/>
@@ -43,28 +41,17 @@ function VariantC() {
 
 function NavC() {
   return (
-    <nav style={{
-      position: 'sticky', top: 0, zIndex: 10,
-      backdropFilter: 'blur(20px)',
-      background: 'oklch(0.975 0.008 85 / 0.85)',
-      borderBottom: 'var(--hairline)'
-    }}>
+    <nav className="sticky border-b" style={{ top: 0, zIndex: 10,
+ backdropFilter: 'blur(20px)',
+ background: 'oklch(0.975 0.008 85 / 0.85)' }}>
       <div style={{
- maxWidth: 1280,
-                     display: 'flex', alignItems: 'center',
-                     justifyContent: 'space-between'
-}} className="py-4 px-7 mx-auto" >
-        <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2" >
-          <span className="kanji" style={{ fontSize: 22,
-                         color: 'var(--accent)', letterSpacing: '-0.04em' }}>先生</span>
-          <span className="display" style={{ fontSize: 17,
-                         letterSpacing: '-0.01em',
-                         color: 'var(--ink)' }}>Sensei</span>
+ maxWidth: 1280 }} className="py-4 px-12 mx-auto flex items-center justify-between" >
+        <div className="gap-2 flex items-baseline" >
+          <span className="kanji text-accent" style={{ fontSize: 22, letterSpacing: '-0.04em' }}>先生</span>
+          <span className="display text-ink" style={{ fontSize: 17,
+ letterSpacing: '-0.01em' }}>Sensei</span>
         </div>
-        <div style={{
- display: 'flex', fontSize: 13,
-                       alignItems: 'center'
-}} className="gap-5" >
+        <div style={{ fontSize: 13 }} className="gap-6 flex items-center" >
           {[
             ['#how', 'How'],
             ['#gallery', 'Screens'],
@@ -72,12 +59,11 @@ function NavC() {
             ['#privacy', 'Privacy'],
             ['#faq', 'FAQ']
           ].map(([href, label]) => (
-            <a key={href} href={href}
-               style={{ color: 'var(--ink-2)',
-                         textDecoration: 'none',
-                         transition: 'color .15s' }}
-               onMouseEnter={(e) => e.currentTarget.style.color = 'var(--ink)'}
-               onMouseLeave={(e) => e.currentTarget.style.color = 'var(--ink-2)'}>
+            <a className="text-ink-2 no-underline" key={href} href={href}
+ style={{
+ transition: 'color .15s' }}
+ onMouseEnter={(e) => e.currentTarget.style.color = 'var(--ink)'}
+ onMouseLeave={(e) => e.currentTarget.style.color = 'var(--ink-2)'}>
               {label}
             </a>
           ))}
@@ -90,33 +76,24 @@ function NavC() {
 function HeroC() {
   return (
     <section style={{
-      position: 'relative',
-      overflow: 'hidden',
-      background: `radial-gradient(ellipse at 70% 20%, oklch(0.58 0.15 35 / 0.10) 0%, transparent 55%),
-                    radial-gradient(ellipse at 20% 80%, oklch(0.62 0.08 160 / 0.08) 0%, transparent 50%),
-                    var(--paper)`
-}} className="pt-8 pb-0 px-7" >
+ background: `radial-gradient(ellipse at 70% 20%, oklch(0.58 0.15 35 / 0.10) 0%, transparent 55%),
+ radial-gradient(ellipse at 20% 80%, oklch(0.62 0.08 160 / 0.08) 0%, transparent 50%),
+ var(--paper)`
+ }} className="pt-16 pb-0 px-12 relative overflow-hidden" >
       <div style={{
  maxWidth: 1280,
-                     display: 'grid',
-                     gridTemplateColumns: '1.1fr 1fr', alignItems: 'center'
-}} className="gap-8 mx-auto pb-9" >
-        <div style={{ position: 'relative' }}>
+ gridTemplateColumns: '1.1fr 1fr' }} className="gap-16 mx-auto pb-24 grid items-center" >
+        <div className="relative" >
           <div style={{
-            display: 'inline-flex', alignItems: 'center',
-            background: 'var(--paper-2)',
-            border: 'var(--hairline)',
-            borderRadius: 999,
-            fontSize: 11, color: 'var(--ink-2)'
-}} className="gap-2 py-1 px-3 mb-5" >
-            <span className="ink-dot" style={{
-              background: 'var(--success)', width: 6, height: 6 }}/>
+ borderRadius: 999,
+ fontSize: 11 }} className="gap-2 py-1 px-3 mb-6 inline-flex items-center bg-paper-2 border border-paper-edge text-ink-2" >
+            <span className="ink-dot bg-success" style={{ width: 6, height: 6 }}/>
             v0.4.2 · now in public preview
           </div>
-          <h1 className="display m-0" style={{
-            fontSize: 56, fontWeight: 300, lineHeight: 1.02,
-            letterSpacing: '-0.03em'
-}}>
+          <h1 className="display m-0 font-light" style={{
+ fontSize: 56, lineHeight: 1.02,
+ letterSpacing: '-0.03em'
+ }}>
             A quiet companion for{' '}
             <span style={{
               background: 'linear-gradient(95deg, var(--accent) 0%, oklch(0.66 0.15 60) 100%)',
@@ -126,33 +103,24 @@ function HeroC() {
             }}>AI-assisted work</span>.
           </h1>
           <p style={{
- fontSize: 17, color: 'var(--ink-2)',
-                       lineHeight: 1.6, maxWidth: 520
-}} className="mt-5" >
+ fontSize: 17,
+ lineHeight: 1.6, maxWidth: 520
+ }} className="mt-6 text-ink-2" >
             Sensei observes your sessions with AI assistants —
             then surfaces the patterns you're too close to see. Not a
             chatbot. Not a copilot. <em>A patient observer.</em>
           </p>
-          <div style={{
- display: 'flex', alignItems: 'center'
-}} className="gap-3 mt-6" >
+          <div className="gap-3 mt-8 flex items-center" >
             <DownloadCTAC size="lg"/>
             <a href="#how" style={{
-              display: 'inline-flex', alignItems: 'center',
-              border: '1px solid var(--edge)',
-              borderRadius: 8,
-              fontSize: 13,
-              color: 'var(--ink)',
-              background: 'var(--paper)',
-              textDecoration: 'none'
-}} className="gap-2 py-3 px-5" >
+ border: '1px solid var(--edge)',
+ borderRadius: 8,
+ fontSize: 13 }} className="gap-2 py-3 px-6 inline-flex items-center text-ink bg-paper no-underline" >
               How it works ↓
             </a>
           </div>
           <div style={{
- display: 'flex',
-                         fontSize: 11, color: 'var(--ink-3)'
-}} className="gap-4 mt-5" >
+ fontSize: 11 }} className="gap-4 mt-6 flex text-ink-3" >
             <span>✓ Free</span>
             <span>✓ Local-first</span>
             <span>✓ No account</span>
@@ -160,28 +128,24 @@ function HeroC() {
         </div>
 
         {/* Floating screenshot stack */}
-        <div style={{ position: 'relative', height: 540 }}>
-          <div style={{
-            position: 'absolute', right: -40, top: 0,
-            transform: 'rotate(2deg)',
-            opacity: 0.95
-          }}>
+        <div className="relative" style={{ height: 540 }}>
+          <div className="absolute" style={{ right: -40, top: 0,
+ transform: 'rotate(2deg)',
+ opacity: 0.95
+ }}>
             <MockSessions width={620} height={400}/>
           </div>
-          <div style={{
-            position: 'absolute', left: -40, bottom: 0,
-            transform: 'rotate(-2deg)'
-          }}>
+          <div className="absolute" style={{ left: -40, bottom: 0,
+ transform: 'rotate(-2deg)'
+ }}>
             <MockToday width={620} height={400}/>
           </div>
           {/* Big floating kanji as art object */}
-          <div style={{
-            position: 'absolute', right: -120, top: -60,
-            fontSize: 56, lineHeight: 1,
-            color: 'var(--accent)', opacity: 0.08,
-            pointerEvents: 'none',
-            letterSpacing: '-0.04em'
-          }} className="kanji">先生</div>
+          <div style={{ right: -120, top: -60,
+ fontSize: 56, lineHeight: 1, opacity: 0.08,
+ pointerEvents: 'none',
+ letterSpacing: '-0.04em'
+ }} className="kanji absolute text-accent">先生</div>
         </div>
       </div>
     </section>
@@ -200,19 +164,14 @@ function DownloadCTAC({ size = "lg" }) {
   const fs = size === "lg" ? 14 : 12;
   return (
     <a href={`#download-${os.toLowerCase()}`}
-       style={{
-        display: 'inline-flex', alignItems: 'center',
-        padding: px,
-        background: 'linear-gradient(180deg, var(--ink) 0%, oklch(0.18 0.012 50) 100%)',
-        color: 'var(--paper)',
-        borderRadius: 8,
-        fontSize: fs,
-        fontWeight: 500,
-        textDecoration: 'none',
-        boxShadow: '0 8px 24px -8px rgba(20,18,14,0.5), inset 0 1px 0 rgba(255,255,255,0.08)'
-}} className="gap-2" >
-      <span className="kanji" style={{ fontSize: fs + 3,
-                     color: 'var(--accent)' }}>下</span>
+ style={{
+ padding: px,
+ background: 'linear-gradient(180deg, var(--ink) 0%, oklch(0.18 0.012 50) 100%)',
+ borderRadius: 8,
+ fontSize: fs,
+ boxShadow: '0 8px 24px -8px rgba(20,18,14,0.5), inset 0 1px 0 rgba(255,255,255,0.08)'
+ }} className="gap-2 inline-flex items-center text-paper font-medium no-underline" >
+      <span className="kanji text-accent" style={{ fontSize: fs + 3 }}>下</span>
       Download for {os}
     </a>
   );
@@ -222,28 +181,15 @@ function DownloadCTAC({ size = "lg" }) {
 function LogoStripC() {
   const items = ["MCP", "AI assistants", "MCP-compatible tools", "Tauri", "SQLite"];
   return (
-    <section style={{
- borderTop: 'var(--hairline)',
-                       borderBottom: 'var(--hairline)',
-                       background: 'var(--paper-2)'
-}} className="py-5 px-7" >
+    <section className="py-6 px-12 border-t border-b bg-paper-2" >
       <div style={{
  maxWidth: 1280,
-                     display: 'flex',
-                     alignItems: 'center',
-                     justifyContent: 'space-between',
-                     fontSize: 11, color: 'var(--ink-3)',
-                     letterSpacing: '0.12em',
-                     textTransform: 'uppercase'
-}} className="mx-auto" >
-        <span style={{ flexShrink: 0 }}>Works alongside</span>
+ fontSize: 11,
+ letterSpacing: '0.12em' }} className="mx-auto flex items-center justify-between text-ink-3 uppercase" >
+        <span className="shrink-0" >Works alongside</span>
         <div style={{
- display: 'flex',
-                       fontSize: 13, fontFamily: 'var(--font-display)',
-                       letterSpacing: '-0.01em',
-                       textTransform: 'none',
-                       color: 'var(--ink-2)'
-}} className="gap-6" >
+ fontSize: 13, fontFamily: 'var(--font-display)',
+ letterSpacing: '-0.01em' }} className="gap-8 flex normal-case text-ink-2" >
           {items.map((l, i) => <span key={i}>{l}</span>)}
         </div>
       </div>
@@ -253,28 +199,23 @@ function LogoStripC() {
 
 function WhatItIsC() {
   return (
-    <section className="py-9 px-7" >
+    <section className="py-24 px-12" >
       <div style={{ maxWidth: 1280 }} className="mx-auto" >
-        <div style={{ textAlign: 'center' }} className="mb-8" >
+        <div className="mb-16 text-center" >
           <div style={{
- fontSize: 11, letterSpacing: '0.22em',
-                         color: 'var(--accent)',
-                         textTransform: 'uppercase',
-                         fontWeight: 500
-}} className="mb-4" >
+ fontSize: 11, letterSpacing: '0.22em' }} className="mb-4 text-accent uppercase font-medium" >
             What it is
           </div>
-          <h2 className="display mx-auto" style={{
- fontSize: 56, fontWeight: 300, letterSpacing: '-0.025em',
-                         lineHeight: 1.1, maxWidth: 780
-}}>
+          <h2 className="display mx-auto font-light" style={{
+ fontSize: 56, letterSpacing: '-0.025em',
+ lineHeight: 1.1, maxWidth: 780
+ }}>
             One desktop app. One quiet promise.
           </h2>
         </div>
         <div style={{
- display: 'grid',
-                       gridTemplateColumns: 'repeat(3, 1fr)'
-}} className="gap-5" >
+ gridTemplateColumns: 'repeat(3, 1fr)'
+ }} className="gap-6 grid" >
           {[
             { k: "観", title: "Observes",
               text: "Sensei watches your sessions with AI tools — locally, in real time. Nothing leaves your machine.",
@@ -287,33 +228,25 @@ function WhatItIsC() {
               tone: 'amber' }
           ].map((f, i) => (
             <div key={i} style={{
-              background: 'var(--paper-2)',
-              border: 'var(--hairline)',
-              borderRadius: 16,
-              position: 'relative',
-              overflow: 'hidden'
-}} className="py-6 px-5" >
-              <div style={{
-                position: 'absolute', right: -12, top: -16,
-                fontSize: 56, lineHeight: 1,
-                color: `var(--${f.tone}-soft)`,
-                pointerEvents: 'none'
-              }} className="kanji">{f.k}</div>
-              <div className="kanji mb-4" style={{
+ borderRadius: 16 }} className="py-8 px-6 bg-paper-2 border border-paper-edge relative overflow-hidden" >
+              <div style={{ right: -12, top: -16,
+ fontSize: 56, lineHeight: 1,
+ color: `var(--${f.tone}-soft)`,
+ pointerEvents: 'none'
+ }} className="kanji absolute">{f.k}</div>
+              <div className="kanji mb-4 relative" style={{
  fontSize: 28,
-                             color: `var(--${f.tone})`, position: 'relative'
-}}>
+ color: `var(--${f.tone})` }}>
                 {f.k}
               </div>
-              <h3 className="display mt-0 mb-3" style={{
+              <h3 className="display mt-0 mb-3 font-normal" style={{
  fontSize: 22,
-                             fontWeight: 400,
-                             letterSpacing: '-0.01em'
-}}>
+ letterSpacing: '-0.01em'
+ }}>
                 {f.title}
               </h3>
-              <div style={{ fontSize: 13, color: 'var(--ink-2)',
-                             lineHeight: 1.65 }}>
+              <div className="text-ink-2" style={{ fontSize: 13,
+ lineHeight: 1.65 }}>
                 {f.text}
               </div>
             </div>
@@ -344,49 +277,34 @@ function HowItWorksC() {
   ];
   return (
     <section id="how" style={{
-      borderTop: 'var(--hairline)',
-      borderBottom: 'var(--hairline)',
-      background: `linear-gradient(180deg, var(--paper) 0%, var(--paper-2) 100%)`
-}} className="py-9 px-7" >
+ background: `linear-gradient(180deg, var(--paper) 0%, var(--paper-2) 100%)`
+ }} className="py-24 px-12 border-t border-b" >
       <div style={{ maxWidth: 1280 }} className="mx-auto" >
-        <div style={{ textAlign: 'center' }} className="mb-8" >
+        <div className="mb-16 text-center" >
           <div style={{
- fontSize: 11, letterSpacing: '0.22em',
-                         color: 'var(--accent)',
-                         textTransform: 'uppercase',
-                         fontWeight: 500
-}} className="mb-4" >
+ fontSize: 11, letterSpacing: '0.22em' }} className="mb-4 text-accent uppercase font-medium" >
             How it works
           </div>
-          <h2 className="display m-0" style={{
- fontSize: 56, fontWeight: 300, letterSpacing: '-0.025em',
-                         lineHeight: 1.1
-}}>
+          <h2 className="display m-0 font-light" style={{
+ fontSize: 56, letterSpacing: '-0.025em',
+ lineHeight: 1.1
+ }}>
             Watch → Notice → Adopt
           </h2>
         </div>
         <div style={{
- display: 'grid',
-                       gridTemplateColumns: 'repeat(3, 1fr)', position: 'relative'
-}} className="gap-5" >
+ gridTemplateColumns: 'repeat(3, 1fr)' }} className="gap-6 grid relative" >
           {/* connecting line */}
-          <div style={{ position: 'absolute', top: 60,
-                         left: '16%', right: '16%', height: 1,
-                         background: 'var(--edge)',
-                         pointerEvents: 'none' }}/>
+          <div className="absolute" style={{ top: 60,
+ left: '16%', right: '16%', height: 1,
+ background: 'var(--edge)',
+ pointerEvents: 'none' }}/>
           {steps.map((s, i) => (
             <div key={i} style={{
-              background: 'var(--paper)',
-              border: 'var(--hairline)',
-              borderRadius: 16,
-              position: 'relative'
-}} className="py-6 px-6" >
+ borderRadius: 16 }} className="py-8 px-8 bg-paper border border-paper-edge relative" >
               <div style={{
-                width: 64, height: 64,
-                borderRadius: '50%',
-                background: `var(--${s.tone}-soft)`,
-                display: 'flex', alignItems: 'center', justifyContent: 'center'
-}} className="mb-5" >
+ width: 64, height: 64,
+ background: `var(--${s.tone}-soft)` }} className="mb-6 rounded-full flex items-center justify-center" >
                 <span className="kanji" style={{ fontSize: 28,
                                color: `var(--${s.tone})` }}>{s.kanji}</span>
               </div>
@@ -394,21 +312,18 @@ function HowItWorksC() {
  fontSize: 11,
                              color: `var(--${s.tone})`
 }}>{s.phase}</div>
-              <h3 className="display mt-0 mb-3" style={{
+              <h3 className="display mt-0 mb-3 font-normal" style={{
  fontSize: 22,
-                             fontWeight: 400,
-                             letterSpacing: '-0.01em'
-}}>{s.title}</h3>
+ letterSpacing: '-0.01em'
+ }}>{s.title}</h3>
               <div style={{
- fontSize: 13, color: 'var(--ink-2)',
-                             lineHeight: 1.65
-}} className="mb-4" >
+ fontSize: 13,
+ lineHeight: 1.65
+ }} className="mb-4 text-ink-2" >
                 {s.text}
               </div>
               <div style={{
- fontSize: 11, color: 'var(--ink-3)',
-                             borderTop: 'var(--hairline)'
-}} className="pt-3" >
+ fontSize: 11 }} className="pt-3 text-ink-3 border-t" >
                 {s.sub}
               </div>
             </div>
@@ -443,42 +358,33 @@ function GalleryC() {
       el: <MockInstruments width={920} height={580}/> }
   ];
   return (
-    <section id="gallery" className="pt-9 pb-8 px-7" >
+    <section id="gallery" className="pt-24 pb-16 px-12" >
       <div style={{ maxWidth: 1280 }} className="mx-auto" >
-        <div style={{ textAlign: 'center' }} className="mb-8" >
+        <div className="mb-16 text-center" >
           <div style={{
- fontSize: 11, letterSpacing: '0.22em',
-                         color: 'var(--accent)',
-                         textTransform: 'uppercase',
-                         fontWeight: 500
-}} className="mb-4" >
+ fontSize: 11, letterSpacing: '0.22em' }} className="mb-4 text-accent uppercase font-medium" >
             The screens
           </div>
-          <h2 className="display m-0" style={{
- fontSize: 56, fontWeight: 300, letterSpacing: '-0.025em',
-                         lineHeight: 1.1
-}}>
+          <h2 className="display m-0 font-light" style={{
+ fontSize: 56, letterSpacing: '-0.025em',
+ lineHeight: 1.1
+ }}>
             Five surfaces, one rhythm.
           </h2>
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 96 }}>
+        <div className="flex flex-col" style={{ gap: 96 }}>
           {screens.map((s, i) => (
             <div key={i} style={{
-              display: 'grid',
-              gridTemplateColumns: i % 2 === 0 ? '1fr 360px' : '360px 1fr', alignItems: 'center'
-}} className="gap-8" >
-              <div style={{
-                order: i % 2 === 0 ? 0 : 1,
-                position: 'relative'
-              }}>
-                <div style={{
-                  position: 'absolute',
-                  inset: -32,
-                  background: `radial-gradient(ellipse at center, var(--${s.tone}-soft) 0%, transparent 65%)`,
-                  pointerEvents: 'none',
-                  zIndex: 0
-                }}/>
-                <div style={{ position: 'relative', zIndex: 1 }}>{s.el}</div>
+ gridTemplateColumns: i % 2 === 0 ? '1fr 360px' : '360px 1fr' }} className="gap-16 grid items-center" >
+              <div className="relative" style={{
+ order: i % 2 === 0 ? 0 : 1 }}>
+                <div className="absolute" style={{
+ inset: -32,
+ background: `radial-gradient(ellipse at center, var(--${s.tone}-soft) 0%, transparent 65%)`,
+ pointerEvents: 'none',
+ zIndex: 0
+ }}/>
+                <div className="relative" style={{ zIndex: 1 }}>{s.el}</div>
               </div>
               <div style={{ order: i % 2 === 0 ? 1 : 0 }}>
                 <div className="mono mb-2" style={{
@@ -488,13 +394,12 @@ function GalleryC() {
 }}>
                   0{i + 1} / 05
                 </div>
-                <div className="display mb-4" style={{
+                <div className="display mb-4 font-normal" style={{
  fontSize: 40,
-                               fontWeight: 400,
-                               letterSpacing: '-0.02em'
-}}>{s.caption}</div>
-                <div style={{ fontSize: 15, color: 'var(--ink-2)',
-                               lineHeight: 1.65 }}>{s.sub}</div>
+ letterSpacing: '-0.02em'
+ }}>{s.caption}</div>
+                <div className="text-ink-2" style={{ fontSize: 15,
+ lineHeight: 1.65 }}>{s.sub}</div>
               </div>
             </div>
           ))}
@@ -507,40 +412,28 @@ function GalleryC() {
 function PhilosophyC() {
   return (
     <section id="philosophy" style={{
-      background: `linear-gradient(180deg, oklch(0.22 0.012 50) 0%, oklch(0.18 0.010 50) 100%)`,
-      color: 'var(--paper)',
-      position: 'relative',
-      overflow: 'hidden'
-}} className="py-9 px-7" >
+ background: `linear-gradient(180deg, oklch(0.22 0.012 50) 0%, oklch(0.18 0.010 50) 100%)` }} className="py-24 px-12 text-paper relative overflow-hidden" >
+      <div style={{ left: '50%', top: '50%',
+ transform: 'translate(-50%, -50%)',
+ fontSize: 56, lineHeight: 1,
+ color: 'oklch(0.58 0.15 35 / 0.08)',
+ pointerEvents: 'none'
+ }} className="kanji absolute">静</div>
       <div style={{
-        position: 'absolute', left: '50%', top: '50%',
-        transform: 'translate(-50%, -50%)',
-        fontSize: 56, lineHeight: 1,
-        color: 'oklch(0.58 0.15 35 / 0.08)',
-        pointerEvents: 'none'
-      }} className="kanji">静</div>
-      <div style={{
- maxWidth: 820,
-                     textAlign: 'center', position: 'relative'
-}} className="mx-auto" >
+ maxWidth: 820 }} className="mx-auto text-center relative" >
         <div style={{
- fontSize: 11, letterSpacing: '0.22em',
-                       color: 'var(--accent)',
-                       textTransform: 'uppercase',
-                       fontWeight: 500
-}} className="mb-5" >
+ fontSize: 11, letterSpacing: '0.22em' }} className="mb-6 text-accent uppercase font-medium" >
           Sei · stillness
         </div>
-        <h2 className="display mt-0 mb-6" style={{
- fontSize: 56, fontWeight: 300, letterSpacing: '-0.025em',
-                       lineHeight: 1.18, color: 'var(--paper)'
-}}>
+        <h2 className="display mt-0 mb-8 font-light text-paper" style={{
+ fontSize: 56, letterSpacing: '-0.025em',
+ lineHeight: 1.18 }}>
           The master observes for a long time before teaching.
         </h2>
         <p style={{
  fontSize: 17, color: 'oklch(0.78 0.008 85)',
                      lineHeight: 1.7
-}} className="mt-0 mb-5" >
+}} className="mt-0 mb-6" >
           AI tools are getting louder. More suggestions, more autocompletes,
           more interrupting. Sensei moves the other way. It speaks rarely,
           and only when it has something specific to say. Most days it is
@@ -561,32 +454,24 @@ function PhilosophyC() {
 
 function PrivacyC() {
   return (
-    <section id="privacy" style={{
-      background: 'var(--paper)'
-}} className="py-9 px-7" >
+    <section id="privacy" className="py-24 px-12 bg-paper" >
       <div style={{ maxWidth: 1280 }} className="mx-auto" >
-        <div style={{ textAlign: 'center' }} className="mb-8" >
-          <span className="kanji" style={{ fontSize: 56,
-                         color: 'var(--accent)' }}>蔵</span>
+        <div className="mb-16 text-center" >
+          <span className="kanji text-accent" style={{ fontSize: 56 }}>蔵</span>
           <div style={{
- fontSize: 11, letterSpacing: '0.22em',
-                         color: 'var(--accent)',
-                         textTransform: 'uppercase',
-                         fontWeight: 500
-}} className="mt-3 mb-4" >
+ fontSize: 11, letterSpacing: '0.22em' }} className="mt-3 mb-4 text-accent uppercase font-medium" >
             Privacy & local-first
           </div>
-          <h2 className="display m-0 ml-auto mr-auto" style={{
- fontSize: 56, fontWeight: 300, letterSpacing: '-0.025em',
-                         lineHeight: 1.1, maxWidth: 720
-}}>
+          <h2 className="display m-0 ml-auto mr-auto font-light" style={{
+ fontSize: 56, letterSpacing: '-0.025em',
+ lineHeight: 1.1, maxWidth: 720
+ }}>
             Your sessions stay on your machine.
           </h2>
         </div>
         <div style={{
- display: 'grid',
-                       gridTemplateColumns: 'repeat(3, 1fr)'
-}} className="gap-5" >
+ gridTemplateColumns: 'repeat(3, 1fr)'
+ }} className="gap-6 grid" >
           {[
             { k: "蔵", title: "Local storage only",
               text: "Transcripts, patterns, memories — all in a SQLite file under your home directory. No outbound network requests, ever." },
@@ -596,18 +481,15 @@ function PrivacyC() {
               text: "One folder. Delete it and sensei forgets everything. Export to JSON anytime." }
           ].map((it, i) => (
             <div key={i} style={{
-              background: 'var(--paper-2)',
-              border: 'var(--hairline)',
-              borderRadius: 12
-}} className="py-5 px-5" >
-              <span className="kanji" style={{ fontSize: 28,
-                             color: 'var(--ink-2)' }}>{it.k}</span>
+ borderRadius: 12
+ }} className="py-6 px-6 bg-paper-2 border border-paper-edge" >
+              <span className="kanji text-ink-2" style={{ fontSize: 28 }}>{it.k}</span>
               <div className="display mt-3 mb-2" style={{
  fontSize: 17,
                              letterSpacing: '-0.01em'
 }}>{it.title}</div>
-              <div style={{ fontSize: 13, color: 'var(--ink-2)',
-                             lineHeight: 1.65 }}>{it.text}</div>
+              <div className="text-ink-2" style={{ fontSize: 13,
+ lineHeight: 1.65 }}>{it.text}</div>
             </div>
           ))}
         </div>
@@ -619,24 +501,16 @@ function PrivacyC() {
 function PricingC() {
   return (
     <section style={{
-      background: `radial-gradient(ellipse at center, oklch(0.58 0.15 35 / 0.08) 0%, transparent 60%), var(--paper)`,
-      borderTop: 'var(--hairline)',
-      borderBottom: 'var(--hairline)',
-      textAlign: 'center'
-}} className="py-9 px-7" >
+ background: `radial-gradient(ellipse at center, oklch(0.58 0.15 35 / 0.08) 0%, transparent 60%), var(--paper)` }} className="py-24 px-12 border-t border-b text-center" >
       <div style={{ maxWidth: 760 }} className="mx-auto" >
         <div style={{
- fontSize: 11, letterSpacing: '0.22em',
-                       color: 'var(--accent)',
-                       textTransform: 'uppercase',
-                       fontWeight: 500
-}} className="mb-4" >
+ fontSize: 11, letterSpacing: '0.22em' }} className="mb-4 text-accent uppercase font-medium" >
           Pricing
         </div>
-        <h2 className="display mt-0 mb-5" style={{
- fontSize: 56, fontWeight: 300, letterSpacing: '-0.03em',
-                       lineHeight: 1
-}}>
+        <h2 className="display mt-0 mb-6 font-light" style={{
+ fontSize: 56, letterSpacing: '-0.03em',
+ lineHeight: 1
+ }}>
           Free.<br/>
           <span style={{
             background: 'linear-gradient(95deg, var(--accent) 0%, oklch(0.66 0.15 60) 100%)',
@@ -647,14 +521,14 @@ function PricingC() {
           </span>
         </h2>
         <p style={{
- fontSize: 17, color: 'var(--ink-2)',
-                     lineHeight: 1.65
-}} className="m-0" >
+ fontSize: 17,
+ lineHeight: 1.65
+ }} className="m-0 text-ink-2" >
           Sensei is free to download and use forever. If it earns a place
           in your daily practice, you can support development below — but
           there's no nag, no trial, no upgrade prompt. Ever.
         </p>
-        <div className="mt-7" >
+        <div className="mt-12" >
           <DownloadCTAC size="lg"/>
         </div>
       </div>
@@ -676,45 +550,36 @@ function FaqC() {
       a: "Sensei stays local-first and free. We may add an optional paid tier later for cross-machine sync, but the core promise — quiet, local, observant — never changes." }
   ];
   return (
-    <section id="faq" className="py-9 px-7" >
+    <section id="faq" className="py-24 px-12" >
       <div style={{ maxWidth: 960 }} className="mx-auto" >
-        <div style={{ textAlign: 'center' }} className="mb-8" >
+        <div className="mb-16 text-center" >
           <div style={{
- fontSize: 11, letterSpacing: '0.22em',
-                         color: 'var(--accent)',
-                         textTransform: 'uppercase',
-                         fontWeight: 500
-}} className="mb-4" >
+ fontSize: 11, letterSpacing: '0.22em' }} className="mb-4 text-accent uppercase font-medium" >
             Frequently asked
           </div>
-          <h2 className="display m-0" style={{
- fontSize: 56, fontWeight: 300, letterSpacing: '-0.025em',
-                         lineHeight: 1.1
-}}>
+          <h2 className="display m-0 font-light" style={{
+ fontSize: 56, letterSpacing: '-0.025em',
+ lineHeight: 1.1
+ }}>
             Common questions, plain answers.
           </h2>
         </div>
         <div>
           {qs.map((it, i) => (
             <details key={i} style={{
-              background: 'var(--paper-2)',
-              border: 'var(--hairline)',
-              borderRadius: 10
-}} className="mb-3 py-4 px-5" >
-              <summary style={{
-                cursor: 'pointer',
-                listStyle: 'none',
-                display: 'flex', justifyContent: 'space-between',
-                fontSize: 15, color: 'var(--ink)',
-                fontFamily: 'var(--font-display)', fontWeight: 400
-              }}>
+ borderRadius: 10
+ }} className="mb-3 py-4 px-6 bg-paper-2 border border-paper-edge" >
+              <summary className="cursor-pointer flex justify-between text-ink font-normal" style={{
+ listStyle: 'none',
+ fontSize: 15,
+ fontFamily: 'var(--font-display)' }}>
                 <span>{it.q}</span>
-                <span className="kanji" style={{ color: 'var(--accent)' }}>+</span>
+                <span className="kanji text-accent" >+</span>
               </summary>
               <div style={{
- fontSize: 13, color: 'var(--ink-2)',
-                             lineHeight: 1.7
-}} className="mt-3" >
+ fontSize: 13,
+ lineHeight: 1.7
+ }} className="mt-3 text-ink-2" >
                 {it.a}
               </div>
             </details>
@@ -728,47 +593,35 @@ function FaqC() {
 function SupportC() {
   return (
     <section style={{
-      background: `linear-gradient(180deg, var(--paper) 0%, var(--paper-2) 100%)`,
-      borderTop: 'var(--hairline)',
-      textAlign: 'center'
-}} className="py-9 px-7" >
+ background: `linear-gradient(180deg, var(--paper) 0%, var(--paper-2) 100%)` }} className="py-24 px-12 border-t text-center" >
       <div style={{
  maxWidth: 720,
-                     background: 'var(--paper)',
-                     border: 'var(--hairline)',
-                     borderRadius: 16,
-                     boxShadow: '0 20px 50px -20px rgba(20,18,14,0.15)'
-}} className="mx-auto py-7 px-6" >
-        <span className="kanji" style={{ fontSize: 56,
-                       color: 'var(--accent)' }}>志</span>
+ borderRadius: 16,
+ boxShadow: '0 20px 50px -20px rgba(20,18,14,0.15)'
+ }} className="mx-auto py-12 px-8 bg-paper border border-paper-edge" >
+        <span className="kanji text-accent" style={{ fontSize: 56 }}>志</span>
         <div style={{
- fontSize: 11, letterSpacing: '0.22em',
-                       color: 'var(--ink-3)',
-                       textTransform: 'uppercase'
-}} className="mt-3 mb-3" >
+ fontSize: 11, letterSpacing: '0.22em' }} className="mt-3 mb-3 text-ink-3 uppercase" >
           Support development
         </div>
-        <h2 className="display mt-0 mb-4" style={{
- fontSize: 28, fontWeight: 400, letterSpacing: '-0.015em',
-                       lineHeight: 1.3
-}}>
+        <h2 className="display mt-0 mb-4 font-normal" style={{
+ fontSize: 28, letterSpacing: '-0.015em',
+ lineHeight: 1.3
+ }}>
           If sensei has earned a place in your practice, help keep it growing.
         </h2>
         <p style={{
- fontSize: 13, color: 'var(--ink-2)',
-                     lineHeight: 1.7
-}} className="mt-0 mb-5" >
+ fontSize: 13,
+ lineHeight: 1.7
+ }} className="mt-0 mb-6 text-ink-2" >
           Built by a small team. GitHub Sponsors keeps the work focused and independent.
         </p>
         <a href="https://github.com/sponsors/sensei-hq" target="_blank" rel="noopener" style={{
-          display: 'inline-flex', alignItems: 'center',
-          background: 'linear-gradient(180deg, var(--accent) 0%, oklch(0.52 0.16 30) 100%)',
-          color: 'var(--paper)',
-          borderRadius: 8,
-          fontSize: 13, fontWeight: 500,
-          textDecoration: 'none',
-          boxShadow: '0 8px 20px -8px var(--accent)'
-}} className="gap-2 py-3 px-5" >
+ background: 'linear-gradient(180deg, var(--accent) 0%, oklch(0.52 0.16 30) 100%)',
+ borderRadius: 8,
+ fontSize: 13,
+ boxShadow: '0 8px 20px -8px var(--accent)'
+ }} className="gap-2 py-3 px-6 inline-flex items-center text-paper font-medium no-underline" >
           ♥ Sponsor on GitHub
         </a>
       </div>
@@ -782,21 +635,13 @@ function FooterC() {
       background: 'oklch(0.20 0.010 50)',
       color: 'oklch(0.62 0.010 85)',
       fontSize: 13
-}} className="pt-8 pb-7 px-7" >
+}} className="pt-16 pb-12 px-12" >
       <div style={{
- maxWidth: 1280,
-                     display: 'flex', alignItems: 'flex-start',
-                     justifyContent: 'space-between',
-                     flexWrap: 'wrap'
-}} className="gap-8 mx-auto" >
+ maxWidth: 1280 }} className="gap-16 mx-auto flex items-start justify-between flex-wrap" >
         <div style={{ maxWidth: 320 }}>
-          <div style={{
- display: 'flex', alignItems: 'baseline'
-}} className="gap-2 mb-3" >
-            <span className="kanji" style={{ fontSize: 22,
-                           color: 'var(--accent)', letterSpacing: '-0.04em' }}>先生</span>
-            <span className="display" style={{ fontSize: 17,
-                           color: 'var(--paper)' }}>Sensei</span>
+          <div className="gap-2 mb-3 flex items-baseline" >
+            <span className="kanji text-accent" style={{ fontSize: 22, letterSpacing: '-0.04em' }}>先生</span>
+            <span className="display text-paper" style={{ fontSize: 17 }}>Sensei</span>
           </div>
           <div style={{ lineHeight: 1.6 }}>
             A patient observer for AI-assisted work. Built quietly,
@@ -808,7 +653,7 @@ function FooterC() {
             v0.4.2
           </div>
         </div>
-        <div style={{ display: 'flex', flexWrap: 'wrap' }} className="gap-7" >
+        <div className="gap-12 flex flex-wrap" >
           <FooterColC title="Product"
             links={["Download", "Privacy", "FAQ", "Changelog"]}/>
           <FooterColC title="Source"
@@ -819,10 +664,8 @@ function FooterC() {
       </div>
       <div style={{
  maxWidth: 1280,
-                     borderTop: '1px solid oklch(0.32 0.010 50)',
-                     fontSize: 11, opacity: 0.6,
-                     textAlign: 'center'
-}} className="mt-6 mb-0 mx-auto pt-5" >
+ borderTop: '1px solid oklch(0.32 0.010 50)',
+ fontSize: 11, opacity: 0.6 }} className="mt-8 mb-0 mx-auto pt-6 text-center" >
         © 2025 Sensei. Made with restraint.
       </div>
     </footer>
@@ -833,11 +676,8 @@ function FooterColC({ title, links }) {
   return (
     <div>
       <div style={{
- fontSize: 11, letterSpacing: '0.22em',
-                     color: 'var(--accent)',
-                     textTransform: 'uppercase', fontWeight: 500
-}} className="mb-3" >{title}</div>
-      <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-2" >
+ fontSize: 11, letterSpacing: '0.22em' }} className="mb-3 text-accent uppercase font-medium" >{title}</div>
+      <div className="gap-2 flex flex-col" >
         {links.map((l, i) => (
           <a key={i} href={`#${l.toLowerCase()}`}
              style={{ fontSize: 13,

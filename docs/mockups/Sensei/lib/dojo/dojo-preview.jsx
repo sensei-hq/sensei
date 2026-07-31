@@ -139,19 +139,18 @@ function pvConflicts(proj) {
 function PvRuleRow({ r, last }) {
   const tone = PV_TONE[r.k] || "var(--ink-soft)";
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "auto 1fr auto", gap: "var(--space-3)", alignItems: "center",
-      padding: "var(--space-2) 0", borderBottom: last ? "none" : "1px solid var(--paper-edge)" }}>
-      <span className="kanji" style={{ fontSize: "var(--text-base)", color: tone, width: 20, textAlign: "center" }}>{r.k}</span>
-      <span style={{ fontSize: "var(--text-sm)", color: r.relax ? "var(--ink-faint)" : "var(--ink)", textDecoration: r.relax ? "line-through" : "none", lineHeight: 1.4 }}>
+    <div className="grid gap-3 items-center py-2 px-0" style={{ gridTemplateColumns: "auto 1fr auto", borderBottom: last ? "none" : "1px solid var(--paper-edge)" }}>
+      <span className="kanji text-base text-center" style={{ color: tone, width: 20 }}>{r.k}</span>
+      <span className="text-sm" style={{ color: r.relax ? "var(--ink-faint)" : "var(--ink)", textDecoration: r.relax ? "line-through" : "none", lineHeight: 1.4 }}>
         {r.t}
       </span>
-      <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-2)", justifySelf: "end", flexShrink: 0 }}>
+      <span className="inline-flex items-center gap-2 shrink-0" style={{ justifySelf: "end" }}>
         {r.src === "compliance" && <DojoChip tone="var(--accent)" soft="var(--accent-soft)" border="1px solid var(--accent-edge)">法</DojoChip>}
         {r.relax
-          ? <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--warning)" }}>overridden ↑</span>
+          ? <span className="mono text-xs text-warning" >overridden ↑</span>
           : r.hard
-            ? <span style={{ display: "inline-flex", alignItems: "center", gap: "3px", fontSize: "var(--text-xs)", color: "var(--warning)" }}>★ non-negotiable</span>
-            : <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--ink-faint)" }}>negotiable</span>}
+            ? <span className="inline-flex items-center text-xs text-warning" style={{ gap: "3px" }}>★ non-negotiable</span>
+            : <span className="mono text-xs text-ink-faint" >negotiable</span>}
       </span>
     </div>
   );
@@ -174,13 +173,13 @@ function DojoRulePreview({ mobile = false, initial = "globex", onOpenLibrary, on
   const openLibrary = (rungId, scope) => { setLibFor(rungId); if (onOpenLibrary) onOpenLibrary(rungId, scope); };
 
   return (
-    <div className="sensei" data-screen-label="Dōjō · effective-constitution preview" style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", background: "var(--paper)" }}>
+    <div className="sensei w-full h-full flex flex-col overflow-hidden bg-paper" data-screen-label="Dōjō · effective-constitution preview" >
       {onExit && (
-        <div style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: "var(--space-2)", padding: "var(--space-2) var(--space-4)", borderBottom: "var(--hairline)", background: "var(--paper-soft)" }}>
-          <button onClick={onExit} className="zs-btn zs-btn-sm zs-btn-ghost border-1px" title="Back to your work">
+        <div className="shrink-0 flex items-center gap-2 py-2 px-4 border-b bg-paper-soft" >
+          <button onClick={onExit} className="zs-btn zs-btn-sm zs-btn-ghost border border-paper-edge" title="Back to your work">
             <span className="text-ink-mute">←</span><span className="kanji text-accent">携</span>Your work
           </button>
-          <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--ink-faint)" }}>you · project rules</span>
+          <span className="mono text-xs text-ink-faint" >you · project rules</span>
         </div>
       )}
       <DojoHead mobile={mobile} kanji="序" eyebrow="Project · effective constitution" title="What governs this project"
@@ -191,15 +190,15 @@ function DojoRulePreview({ mobile = false, initial = "globex", onOpenLibrary, on
         </React.Fragment>} />
 
       {/* project picker */}
-      <div style={{ flexShrink: 0, display: "flex", gap: "var(--space-2)", flexWrap: "wrap", padding: mobile ? "var(--space-3) var(--space-4)" : "var(--space-3) var(--space-5)", borderBottom: "var(--hairline)", background: "var(--paper-soft)" }}>
+      <div className="shrink-0 flex gap-2 flex-wrap border-b bg-paper-soft" style={{ padding: mobile ? "var(--space-3) var(--space-4)" : "var(--space-3) var(--space-6)" }}>
         {PV_PROJECTS.map(p => {
           const on = p.id === pid;
           const kindTone = p.kind === "client" ? "var(--accent)" : p.kind === "personal" ? "var(--ink-mute)" : "var(--ink-soft)";
           return (
-            <button key={p.id} onClick={() => setPid(p.id)} style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-2)", cursor: "pointer", fontFamily: "inherit",
-              background: on ? "var(--paper)" : "transparent", border: on ? "1px solid var(--accent)" : "var(--hairline)", borderRadius: "var(--radius-lg)", padding: "var(--space-2) var(--space-3)" }}>
-              <span className="kanji" style={{ fontSize: "var(--text-base)", color: kindTone }}>{p.kanji}</span>
-              <span className="mono" style={{ fontSize: "var(--text-sm)", color: on ? "var(--ink)" : "var(--ink-soft)" }}>{p.name}</span>
+            <button className="inline-flex items-center gap-2 cursor-pointer rounded-lg py-2 px-3" key={p.id} onClick={() => setPid(p.id)} style={{ fontFamily: "inherit",
+ background: on ? "var(--paper)" : "transparent", border: on ? "1px solid var(--accent)" : "var(--hairline)" }}>
+              <span className="kanji text-base" style={{ color: kindTone }}>{p.kanji}</span>
+              <span className="mono text-sm" style={{ color: on ? "var(--ink)" : "var(--ink-soft)" }}>{p.name}</span>
               <DojoChip tone={kindTone} soft={p.kind === "client" ? "var(--accent-soft)" : "var(--paper-mute)"}>
                 {p.kind === "company" ? "社 company" : p.kind === "client" ? "客 client" : "己 personal"}
               </DojoChip>
@@ -209,87 +208,85 @@ function DojoRulePreview({ mobile = false, initial = "globex", onOpenLibrary, on
       </div>
 
       {/* why this classification + override */}
-      <div style={{ flexShrink: 0, display: "flex", flexDirection: "column", gap: "var(--space-2)", padding: mobile ? "var(--space-3) var(--space-4)" : "var(--space-3) var(--space-5)",
-        background: proj.kind === "client" ? "var(--accent-soft)" : "var(--paper)", borderBottom: "var(--hairline)" }}>
-        <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-2)" }}>
-          <span className="kanji" style={{ fontSize: "var(--text-base)", color: proj.kind === "client" ? "var(--accent)" : "var(--ink-mute)", flexShrink: 0 }}>問</span>
-          <span style={{ fontSize: "var(--text-xs)", color: proj.kind === "client" ? "var(--ink-soft)" : "var(--ink-mute)", lineHeight: 1.5 }}>
-            <b style={{ fontWeight: 600, color: "var(--ink)" }} className="mono">{proj.repo}</b> — {proj.why}
+      <div className="shrink-0 flex flex-col gap-2 border-b" style={{ padding: mobile ? "var(--space-3) var(--space-4)" : "var(--space-3) var(--space-6)",
+ background: proj.kind === "client" ? "var(--accent-soft)" : "var(--paper)" }}>
+        <div className="flex items-start gap-2" >
+          <span className="kanji text-base shrink-0" style={{ color: proj.kind === "client" ? "var(--accent)" : "var(--ink-mute)" }}>問</span>
+          <span className="text-xs" style={{ color: proj.kind === "client" ? "var(--ink-soft)" : "var(--ink-mute)", lineHeight: 1.5 }}>
+            <b className="mono font-semibold text-ink">{proj.repo}</b> — {proj.why}
           </span>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", flexWrap: "wrap", paddingLeft: "calc(var(--text-base) + var(--space-2))" }}>
-          <span style={{ fontSize: "var(--text-xs)", color: "var(--ink-mute)" }}>Classified</span>
+        <div className="flex items-center gap-2 flex-wrap" style={{ paddingLeft: "calc(var(--text-base) + var(--space-2))" }}>
+          <span className="text-xs text-ink-mute" >Classified</span>
           <DojoChip tone={effKind === "client" ? "var(--accent)" : effKind === "personal" ? "var(--ink-mute)" : "var(--ink-soft)"} soft={effKind === "client" ? "var(--accent-soft)" : "var(--paper-mute)"}>
             {effKind === "company" ? "社 company" : effKind === "client" ? "客 client" : "己 personal"}
           </DojoChip>
-          {isOverridden && <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--warning)" }}>overridden</span>}
+          {isOverridden && <span className="mono text-xs text-warning" >overridden</span>}
           {baseProj.dojo ? (
             <React.Fragment>
-              <span style={{ fontSize: "var(--text-xs)", color: "var(--ink-faint)" }}>· not right?</span>
+              <span className="text-xs text-ink-faint" >· not right?</span>
               {["client", "company"].map(k => (
-                <button key={k} onClick={() => chooseKind(k)}
-                  style={{ cursor: "pointer", fontFamily: "inherit", fontSize: "var(--text-xs)", borderRadius: "var(--radius)", padding: "2px var(--space-2)",
-                    border: effKind === k ? "1px solid var(--accent)" : "var(--hairline)", background: effKind === k ? "var(--paper)" : "transparent", color: effKind === k ? "var(--ink)" : "var(--ink-soft)" }}>
+                <button className="cursor-pointer text-xs rounded" key={k} onClick={() => chooseKind(k)}
+ style={{ fontFamily: "inherit", padding: "2px var(--space-2)",
+ border: effKind === k ? "1px solid var(--accent)" : "var(--hairline)", background: effKind === k ? "var(--paper)" : "transparent", color: effKind === k ? "var(--ink)" : "var(--ink-soft)" }}>
                   {k === "client" ? "Client" : "Company"}
                 </button>
               ))}
-              {isOverridden && <button onClick={() => setOverride(o => { const n = { ...o }; delete n[baseProj.id]; return n; })}
-                style={{ cursor: "pointer", fontFamily: "inherit", fontSize: "var(--text-xs)", border: "none", background: "none", color: "var(--ink-faint)", textDecoration: "underline" }}>reset</button>}
+              {isOverridden && <button className="cursor-pointer text-xs border-0 text-ink-faint underline" onClick={() => setOverride(o => { const n = { ...o }; delete n[baseProj.id]; return n; })}
+ style={{ fontFamily: "inherit", background: "none" }}>reset</button>}
             </React.Fragment>
           ) : (
-            <span style={{ fontSize: "var(--text-xs)", color: "var(--ink-faint)" }}>· bind a Dōjō to govern this as company or client work</span>
+            <span className="text-xs text-ink-faint" >· bind a Dōjō to govern this as company or client work</span>
           )}
         </div>
       </div>
 
       <div style={mobile ? { flex: 1, display: "flex", flexDirection: "column", minHeight: 0, overflow: "auto" } : { flex: 1, display: "grid", gridTemplateColumns: "minmax(0,0.92fr) minmax(0,1.08fr)", minHeight: 0 }}>
         {/* left · the ladder */}
-        <div style={{ borderRight: mobile ? "none" : "var(--hairline)", borderBottom: mobile ? "var(--hairline)" : "none", overflow: "auto", padding: mobile ? "var(--space-4)" : "var(--space-5)" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", marginBottom: "var(--space-1)" }}>
-            <span style={{ fontSize: "var(--text-xs)", letterSpacing: ".14em", textTransform: "uppercase", color: "var(--ink-mute)", fontWeight: 600 }}>The ladder</span>
-            <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--ink-faint)" }}>{rungs.length} scopes</span>
+        <div className="overflow-auto" style={{ borderRight: mobile ? "none" : "var(--hairline)", borderBottom: mobile ? "var(--hairline)" : "none", padding: mobile ? "var(--space-4)" : "var(--space-6)" }}>
+          <div className="flex items-center gap-2 mb-1" >
+            <span className="text-xs uppercase text-ink-mute font-semibold" style={{ letterSpacing: ".14em" }}>The ladder</span>
+            <span className="mono text-xs text-ink-faint" >{rungs.length} scopes</span>
           </div>
-          <p style={{ fontSize: "var(--text-xs)", color: "var(--ink-mute)", lineHeight: 1.5, margin: "0 0 var(--space-3)" }}>Numbered <b style={{ fontWeight: 600, color: "var(--ink)" }}>broadest (1) → most specific</b>. Each rung <b style={{ fontWeight: 600, color: "var(--ink)" }}>refines the one above</b>; a ★ non-negotiable locks so no narrower rung can relax it. On a client engagement <b style={{ fontWeight: 600, color: "var(--accent)" }}>Company and Client both apply</b> — the client rung sits on top of your company base.</p>
-          <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
+          <p className="text-xs text-ink-mute" style={{ lineHeight: 1.5, margin: "0 0 var(--space-3)" }}>Numbered <b className="font-semibold text-ink" >broadest (1) → most specific</b>. Each rung <b className="font-semibold text-ink" >refines the one above</b>; a ★ non-negotiable locks so no narrower rung can relax it. On a client engagement <b className="font-semibold text-accent" >Company and Client both apply</b> — the client rung sits on top of your company base.</p>
+          <div className="flex flex-col gap-2" >
             {rungs.map((rg, i) => (
-              <div key={rg.id} style={{ position: "relative", background: "var(--paper-soft)", border: "var(--hairline)", borderLeft: "3px solid " + rg.tone,
-                borderRadius: "var(--radius-lg)", padding: "var(--space-3) var(--space-4)", marginLeft: 0 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", flexWrap: "wrap", marginBottom: "var(--space-2)" }}>
-                  <span className="mono" style={{ flexShrink: 0, width: 20, height: 20, borderRadius: "var(--radius-full)", background: "var(--paper-mute)", color: "var(--ink-mute)", fontSize: "var(--text-xs)", display: "inline-flex", alignItems: "center", justifyContent: "center" }}>{i + 1}</span>
-                  <span className="kanji" style={{ fontSize: "var(--text-lg)", color: rg.tone }}>{rg.kanji}</span>
-                  <span style={{ fontSize: "var(--text-sm)", color: "var(--ink)", fontWeight: 600 }}>{rg.name}</span>
-                  <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--ink-soft)" }}>{rg.scope}</span>
+              <div className="relative bg-paper-soft border border-paper-edge rounded-lg py-3 px-4 ml-0" key={rg.id} style={{ borderLeft: "3px solid " + rg.tone }}>
+                <div className="flex items-center gap-2 flex-wrap mb-2" >
+                  <span className="mono shrink-0 rounded-full bg-paper-mute text-ink-mute text-xs inline-flex items-center justify-center" style={{ width: 20, height: 20 }}>{i + 1}</span>
+                  <span className="kanji text-lg" style={{ color: rg.tone }}>{rg.kanji}</span>
+                  <span className="text-sm text-ink font-semibold" >{rg.name}</span>
+                  <span className="mono text-xs text-ink-soft" >{rg.scope}</span>
                   {rg.free && <DojoChip tone="var(--success)" soft="var(--success-soft)">free</DojoChip>}
                   {rg.id === "personal" && <DojoChip tone="var(--ink-mute)" soft="var(--paper-mute)">yours · editable</DojoChip>}
-                  <span style={{ flex: 1 }} />
+                  <span className="flex-1" />
                   {(rg.id === "personal" || rg.id === "project") && (
-                    <button onClick={() => openLibrary(rg.id, rg.scope)} title="Add rules from the library" style={{ cursor: "pointer", fontFamily: "inherit", fontSize: "var(--text-xs)", color: libFor === rg.id ? "var(--ink)" : "var(--ink-soft)",
-                      background: "var(--paper)", border: "var(--hairline)", borderRadius: "var(--radius)", padding: "2px var(--space-2)", display: "inline-flex", alignItems: "center", gap: "3px", whiteSpace: "nowrap" }}>
-                      <span style={{ color: "var(--accent)" }}>＋</span> library
+                    <button className="cursor-pointer text-xs bg-paper border border-paper-edge rounded inline-flex items-center whitespace-nowrap" onClick={() => openLibrary(rg.id, rg.scope)} title="Add rules from the library" style={{ fontFamily: "inherit", color: libFor === rg.id ? "var(--ink)" : "var(--ink-soft)", padding: "2px var(--space-2)", gap: "3px" }}>
+                      <span className="text-accent" >＋</span> library
                     </button>
                   )}
-                  <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--ink-faint)" }}>{rg.caption}</span>
+                  <span className="mono text-xs text-ink-faint" >{rg.caption}</span>
                 </div>
                 {libFor === rg.id && (
-                  <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", marginBottom: "var(--space-2)", fontSize: "var(--text-xs)", color: "var(--ink-soft)", background: "var(--accent-soft)", border: "1px solid var(--accent-edge)", borderRadius: "var(--radius)", padding: "var(--space-2) var(--space-3)" }}>
-                    <span className="kanji" style={{ color: "var(--accent)", flexShrink: 0 }}>庫</span>
-                    <span style={{ lineHeight: 1.5 }}>Library open — pick packs to add to <b className="mono" style={{ fontWeight: 600 }}>{rg.scope}</b>.</span>
-                    <span style={{ flex: 1 }} />
-                    <button onClick={() => setLibFor(null)} style={{ cursor: "pointer", fontFamily: "inherit", fontSize: "var(--text-xs)", border: "none", background: "none", color: "var(--ink-faint)", textDecoration: "underline" }}>close</button>
+                  <div className="flex items-center gap-2 mb-2 text-xs text-ink-soft bg-accent-soft rounded py-2 px-3" style={{ border: "1px solid var(--accent-edge)" }}>
+                    <span className="kanji text-accent shrink-0" >庫</span>
+                    <span style={{ lineHeight: 1.5 }}>Library open — pick packs to add to <b className="mono font-semibold" >{rg.scope}</b>.</span>
+                    <span className="flex-1" />
+                    <button className="cursor-pointer text-xs border-0 text-ink-faint underline" onClick={() => setLibFor(null)} style={{ fontFamily: "inherit", background: "none" }}>close</button>
                   </div>
                 )}
                 {rg.checkers && (
-                  <div style={{ display: "flex", alignItems: "center", gap: "var(--space-1)", flexWrap: "wrap", marginBottom: "var(--space-2)" }}>
-                    <span style={{ fontSize: "var(--text-xs)", color: "var(--ink-mute)" }}>caught by</span>
+                  <div className="flex items-center gap-1 flex-wrap mb-2" >
+                    <span className="text-xs text-ink-mute" >caught by</span>
                     {rg.checkers.map(c => (
-                      <span key={c} className="mono" style={{ display: "inline-flex", alignItems: "center", gap: "3px", fontSize: "var(--text-xs)", color: "var(--ink-soft)", background: "var(--paper)", border: "var(--hairline)", borderRadius: "var(--radius-full)", padding: "1px var(--space-2)" }}>
-                        <span style={{ width: 5, height: 5, borderRadius: "50%", background: "var(--success)" }} />{c}
+                      <span key={c} className="mono inline-flex items-center text-xs text-ink-soft bg-paper border border-paper-edge rounded-full" style={{ gap: "3px", padding: "1px var(--space-2)" }}>
+                        <span className="rounded-full bg-success" style={{ width: 5, height: 5 }} />{c}
                       </span>
                     ))}
-                    <span style={{ fontSize: "var(--text-xs)", color: "var(--ink-faint)" }}>→ surfaced in your review lane</span>
+                    <span className="text-xs text-ink-faint" >→ surfaced in your review lane</span>
                   </div>
                 )}
-                <div style={{ background: "var(--paper)", border: "var(--hairline)", borderRadius: "var(--radius)", padding: "0 var(--space-3)" }}>
+                <div className="bg-paper border border-paper-edge rounded py-0 px-3" >
                   {rg.rules.map((r, j) => <PvRuleRow key={j} r={r} last={j === rg.rules.length - 1} />)}
                 </div>
               </div>
@@ -298,60 +295,60 @@ function DojoRulePreview({ mobile = false, initial = "globex", onOpenLibrary, on
         </div>
 
         {/* right · resolved constitution + conflicts */}
-        <div style={{ overflow: "auto", padding: mobile ? "var(--space-4)" : "var(--space-5)", background: "var(--paper)" }}>
+        <div className="overflow-auto bg-paper" style={{ padding: mobile ? "var(--space-4)" : "var(--space-6)" }}>
           {/* conflict resolution */}
-          <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", marginBottom: "var(--space-3)" }}>
-            <span className="kanji" style={{ fontSize: "var(--text-sm)", color: "var(--warning)" }}>衝</span>
-            <span style={{ fontSize: "var(--text-xs)", letterSpacing: ".14em", textTransform: "uppercase", color: "var(--ink-mute)", fontWeight: 600 }}>Conflicts, resolved</span>
-            <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--ink-faint)" }}>{conflicts.length}</span>
+          <div className="flex items-center gap-2 mb-3" >
+            <span className="kanji text-sm text-warning" >衝</span>
+            <span className="text-xs uppercase text-ink-mute font-semibold" style={{ letterSpacing: ".14em" }}>Conflicts, resolved</span>
+            <span className="mono text-xs text-ink-faint" >{conflicts.length}</span>
           </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)", marginBottom: "var(--space-5)" }}>
+          <div className="flex flex-col gap-2 mb-6" >
             {conflicts.map((c, i) => (
-              <div key={i} style={{ background: "var(--paper-soft)", border: "var(--hairline)", borderLeft: "3px solid var(--warning)", borderRadius: "var(--radius-lg)", padding: "var(--space-3) var(--space-4)" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", flexWrap: "wrap", marginBottom: "var(--space-1)" }}>
-                  <span style={{ fontSize: "var(--text-sm)", color: "var(--ink)", fontWeight: 600 }}>{c.topic}</span>
-                  <span style={{ flex: 1 }} />
+              <div className="bg-paper-soft border border-paper-edge rounded-lg py-3 px-4" key={i} style={{ borderLeft: "3px solid var(--warning)" }}>
+                <div className="flex items-center gap-2 flex-wrap mb-1" >
+                  <span className="text-sm text-ink font-semibold" >{c.topic}</span>
+                  <span className="flex-1" />
                   <DojoChip tone="var(--success)" soft="var(--success-soft)" border="1px solid var(--success-edge)">{c.winScope || c.winner} wins</DojoChip>
                 </div>
-                {c.lost && <div style={{ fontSize: "var(--text-xs)", color: "var(--ink-faint)", marginBottom: "var(--space-1)" }}>over <span style={{ textDecoration: "line-through" }}>{c.lost}</span></div>}
-                <div style={{ fontSize: "var(--text-xs)", color: "var(--ink-mute)", lineHeight: 1.5 }}>{c.detail}</div>
+                {c.lost && <div className="text-xs text-ink-faint mb-1" >over <span style={{ textDecoration: "line-through" }}>{c.lost}</span></div>}
+                <div className="text-xs text-ink-mute" style={{ lineHeight: 1.5 }}>{c.detail}</div>
               </div>
             ))}
           </div>
 
           {/* the resolution rule */}
-          <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-1)", background: "var(--paper-soft)", border: "var(--hairline)", borderRadius: "var(--radius-lg)", padding: "var(--space-4)", marginBottom: "var(--space-5)" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", marginBottom: "var(--space-1)" }}>
-              <span className="kanji" style={{ fontSize: "var(--text-sm)", color: "var(--accent)" }}>序</span>
-              <span style={{ fontSize: "var(--text-xs)", letterSpacing: ".14em", textTransform: "uppercase", color: "var(--ink-mute)", fontWeight: 600 }}>How it resolves</span>
+          <div className="flex flex-col gap-1 bg-paper-soft border border-paper-edge rounded-lg p-4 mb-6" >
+            <div className="flex items-center gap-2 mb-1" >
+              <span className="kanji text-sm text-accent" >序</span>
+              <span className="text-xs uppercase text-ink-mute font-semibold" style={{ letterSpacing: ".14em" }}>How it resolves</span>
             </div>
             {[
               "Everything sensei records is derived and anonymous, and stays on your machine — so classification changes which rules apply, never what leaves.",
               "A non-negotiable (★) locks — no narrower scope can relax it.",
               "Otherwise the more specific scope refines the broader (Stack → Project → Personal → Client → Company).",
             ].map((t, i) => (
-              <div key={i} style={{ display: "flex", gap: "var(--space-2)", fontSize: "var(--text-xs)", color: "var(--ink-soft)", lineHeight: 1.5 }}>
-                <span className="mono" style={{ color: "var(--ink-faint)", flexShrink: 0 }}>{i + 1}</span>{t}
+              <div className="flex gap-2 text-xs text-ink-soft" key={i} style={{ lineHeight: 1.5 }}>
+                <span className="mono text-ink-faint shrink-0" >{i + 1}</span>{t}
               </div>
             ))}
           </div>
 
           {/* what a developer starts with */}
-          <div style={{ background: "var(--ink)", borderRadius: "var(--radius-lg)", padding: mobile ? "var(--space-4)" : "var(--space-5)" }}>
-            <div style={{ display: "flex", alignItems: "baseline", gap: "var(--space-2)", marginBottom: "var(--space-2)" }}>
-              <span className="display" style={{ fontSize: "var(--text-3xl)", fontWeight: 300, color: "var(--paper)", lineHeight: 1 }}>{total}</span>
-              <span style={{ fontSize: "var(--text-sm)", color: "var(--on-primary-soft, rgba(255,255,255,0.72))" }}>rules govern this project on day one</span>
+          <div className="bg-ink rounded-lg" style={{ padding: mobile ? "var(--space-4)" : "var(--space-6)" }}>
+            <div className="flex items-baseline gap-2 mb-2" >
+              <span className="display text-3xl font-light text-paper" style={{ lineHeight: 1 }}>{total}</span>
+              <span className="text-sm" style={{ color: "var(--on-primary-soft, rgba(255,255,255,0.72))" }}>rules govern this project on day one</span>
             </div>
-            <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap", marginBottom: "var(--space-3)" }}>
-              <span style={{ display: "inline-flex", alignItems: "center", gap: "3px", fontSize: "var(--text-xs)", color: "var(--warning)", background: "rgba(255,255,255,0.06)", borderRadius: "var(--radius-full)", padding: "2px var(--space-2)" }}>★ {locked} non-negotiable</span>
-              <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--accent)", background: "rgba(255,255,255,0.06)", borderRadius: "var(--radius-full)", padding: "2px var(--space-2)" }}>盾 derived · anonymous · stays on your machine</span>
-              <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--on-primary-mute, rgba(255,255,255,0.5))", background: "rgba(255,255,255,0.06)", borderRadius: "var(--radius-full)", padding: "2px var(--space-2)" }}>{rungs.length} scopes composed</span>
+            <div className="flex gap-2 flex-wrap mb-3" >
+              <span className="inline-flex items-center text-xs text-warning rounded-full" style={{ gap: "3px", background: "rgba(255,255,255,0.06)", padding: "2px var(--space-2)" }}>★ {locked} non-negotiable</span>
+              <span className="mono text-xs text-accent rounded-full" style={{ background: "rgba(255,255,255,0.06)", padding: "2px var(--space-2)" }}>盾 derived · anonymous · stays on your machine</span>
+              <span className="mono text-xs rounded-full" style={{ color: "var(--on-primary-mute, rgba(255,255,255,0.5))", background: "rgba(255,255,255,0.06)", padding: "2px var(--space-2)" }}>{rungs.length} scopes composed</span>
             </div>
-            <div style={{ fontSize: "var(--text-xs)", color: "var(--on-primary-soft, rgba(255,255,255,0.72))", lineHeight: 1.55 }}>
-              Inherited automatically — nothing to copy in. Sensei enforces the locked rules, the reviewers catch style and complexity mechanically, and the rest guide as you go. <span style={{ fontStyle: "italic" }}>Still listening.</span>
+            <div className="text-xs" style={{ color: "var(--on-primary-soft, rgba(255,255,255,0.72))", lineHeight: 1.55 }}>
+              Inherited automatically — nothing to copy in. Sensei enforces the locked rules, the reviewers catch style and complexity mechanically, and the rest guide as you go. <span className="italic" >Still listening.</span>
             </div>
-            <div style={{ marginTop: "var(--space-3)", paddingTop: "var(--space-3)", borderTop: "1px solid rgba(255,255,255,0.1)", fontSize: "var(--text-xs)", color: "var(--on-primary-mute, rgba(255,255,255,0.5))", lineHeight: 1.5 }}>
-              This is the same view a teammate sees when they join a Dōjō — <span style={{ fontStyle: "italic" }}>here's what you'll follow.</span>
+            <div className="mt-3 pt-3 text-xs" style={{ borderTop: "1px solid rgba(255,255,255,0.1)", color: "var(--on-primary-mute, rgba(255,255,255,0.5))", lineHeight: 1.5 }}>
+              This is the same view a teammate sees when they join a Dōjō — <span className="italic" >here's what you'll follow.</span>
             </div>
           </div>
         </div>

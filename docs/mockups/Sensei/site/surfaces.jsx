@@ -16,35 +16,35 @@ const SURF_sub     = { fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-
 // note on the right, then the mechanic spanning full width beneath.
 function SurfaceBlock({ n, kanji, name, role, headline, lead, why, children }) {
   return (
-    <div style={{ borderTop: 'var(--hairline)' }} className="pt-8 pb-8" >
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.25fr', alignItems: 'start' }} className="gap-8" >
+    <div className="pt-16 pb-16 border-t" >
+      <div style={{ gridTemplateColumns: '1fr 1.25fr' }} className="gap-16 grid items-start" >
         {/* identity */}
         <div>
-          <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-3 mb-4" >
-            <span className="mono" style={{ fontSize: 12, color: 'var(--accent)', letterSpacing: '0.06em' }}>{n}</span>
-            <span className="kanji" style={{ fontSize: 34, color: 'var(--accent)', lineHeight: 1 }}>{kanji}</span>
-            <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
-              <span className="display" style={{ fontSize: 28, fontWeight: 400, letterSpacing: '-0.015em', lineHeight: 1 }}>{name}</span>
-              <span style={{ fontSize: 9.5, letterSpacing: '0.16em', textTransform: 'uppercase', color: 'var(--ink-3)', fontWeight: 600 }}>{role}</span>
+          <div className="gap-3 mb-4 flex items-baseline" >
+            <span className="mono text-accent" style={{ fontSize: 12, letterSpacing: '0.06em' }}>{n}</span>
+            <span className="kanji text-accent" style={{ fontSize: 34, lineHeight: 1 }}>{kanji}</span>
+            <div className="gap-1 flex flex-col" >
+              <span className="display font-normal" style={{ fontSize: 28, letterSpacing: '-0.015em', lineHeight: 1 }}>{name}</span>
+              <span className="uppercase text-ink-3 font-semibold" style={{ fontSize: 9.5, letterSpacing: '0.16em' }}>{role}</span>
             </div>
           </div>
-          <h3 className="display m-0" style={{ fontSize: 22, fontWeight: 300, letterSpacing: '-0.01em', lineHeight: 1.25, color: 'var(--ink)', maxWidth: 380 }}>
+          <h3 className="display m-0 font-light text-ink" style={{ fontSize: 22, letterSpacing: '-0.01em', lineHeight: 1.25, maxWidth: 380 }}>
             {headline}
           </h3>
         </div>
         {/* rationale */}
         <div>
-          <p style={{ fontSize: 15, color: 'var(--ink-2)', lineHeight: 1.65, fontFamily: 'var(--font-display)', fontWeight: 300 }} className="mt-0 mb-4" >
+          <p style={{ fontSize: 15, lineHeight: 1.65, fontFamily: 'var(--font-display)' }} className="mt-0 mb-4 text-ink-2 font-light" >
             {lead}
           </p>
-          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, borderLeft: '2px solid var(--accent-soft)' }} className="pl-3" >
+          <div style={{ gap: 10, borderLeft: '2px solid var(--accent-soft)' }} className="pl-3 flex items-start" >
             <span style={SURF_sub}>Why</span>
-            <span style={{ fontSize: 12.5, color: 'var(--ink-2)', lineHeight: 1.55, fontStyle: 'italic' }}>{why}</span>
+            <span className="text-ink-2 italic" style={{ fontSize: 12.5, lineHeight: 1.55 }}>{why}</span>
           </div>
         </div>
       </div>
       {/* mechanic */}
-      <div className="mt-7" >{children}</div>
+      <div className="mt-12" >{children}</div>
     </div>
   );
 }
@@ -56,15 +56,15 @@ function SurfMechLabel({ children }) {
 // Horizontal flow of steps with → connectors (the Dōjō "loop" motif).
 function SurfFlow({ steps }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'stretch', gap: 0 }}>
+    <div className="flex items-stretch gap-0" >
       {steps.map(([t, who, d], i) => (
         <React.Fragment key={t}>
-          {i > 0 && <div style={{ display: 'flex', alignItems: 'center', padding: '0 6px', color: 'var(--accent)', fontFamily: 'var(--font-mono)', fontSize: 13 }}>→</div>}
-          <div style={{ flex: 1, background: 'var(--paper)', border: 'var(--hairline)', borderRadius: 12, display: 'flex', flexDirection: 'column', gap: 5 }} className="py-4 px-4" >
-            <span className="mono" style={{ fontSize: 10, color: 'var(--accent)', letterSpacing: '0.06em' }}>{String(i + 1).padStart(2, '0')}</span>
-            <span className="display" style={{ fontSize: 16, fontWeight: 500, letterSpacing: '-0.01em', color: 'var(--ink)' }}>{t}</span>
-            <span style={{ fontSize: 9.5, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--ink-3)', fontWeight: 600 }}>{who}</span>
-            <span style={{ fontSize: 11.5, color: 'var(--ink-2)', lineHeight: 1.5 }}>{d}</span>
+          {i > 0 && <div className="flex items-center text-accent" style={{ padding: '0 6px', fontFamily: 'var(--font-mono)', fontSize: 13 }}>→</div>}
+          <div style={{ borderRadius: 12, gap: 5 }} className="py-4 px-4 flex-1 bg-paper border border-paper-edge flex flex-col" >
+            <span className="mono text-accent" style={{ fontSize: 10, letterSpacing: '0.06em' }}>{String(i + 1).padStart(2, '0')}</span>
+            <span className="display font-medium text-ink" style={{ fontSize: 16, letterSpacing: '-0.01em' }}>{t}</span>
+            <span className="uppercase text-ink-3 font-semibold" style={{ fontSize: 9.5, letterSpacing: '0.1em' }}>{who}</span>
+            <span className="text-ink-2" style={{ fontSize: 11.5, lineHeight: 1.5 }}>{d}</span>
           </div>
         </React.Fragment>
       ))}
@@ -85,19 +85,18 @@ function SurfaceToday() {
     <SurfaceBlock
       n="01" kanji="観" name="Today" role="家 · the morning brief"
       headline="One thing worth your attention. The rest stays silent."
-      lead={<>Out of everything sensei watched overnight, Today elevates a <span style={{ color: 'var(--ink)' }}>single</span> focal observation and keeps the rest out of sight. Most mornings it is nearly empty — that emptiness is earned, and it is the point.</>}
+      lead={<>Out of everything sensei watched overnight, Today elevates a <span className="text-ink" >single</span> focal observation and keeps the rest out of sight. Most mornings it is nearly empty — that emptiness is earned, and it is the point.</>}
       why="A dashboard of twelve widgets teaches you to ignore all twelve. One ranked item forces a decision and respects a morning.">
       <SurfMechLabel>What it surfaces · in priority order</SurfMechLabel>
-      <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-2" >
+      <div className="gap-2 flex flex-col" >
         {anatomy.map(([k, label, p, d]) => (
-          <div key={label} style={{ display: 'grid', gridTemplateColumns: 'auto 200px 1fr', alignItems: 'baseline',
-                        background: 'var(--paper)', border: 'var(--hairline)', borderRadius: 10 }} className="gap-4 py-3 px-4" >
-            <span className="kanji" style={{ fontSize: 18, color: 'var(--accent)', width: 22 }}>{k}</span>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-              <span className="mono" style={{ fontSize: 9, fontWeight: 600, color: ptone[p] }}>{p}</span>
-              <span className="display" style={{ fontSize: 15, fontWeight: 500, color: 'var(--ink)', letterSpacing: '-0.005em' }}>{label}</span>
+          <div key={label} style={{ gridTemplateColumns: 'auto 200px 1fr', borderRadius: 10 }} className="gap-4 py-3 px-4 grid items-baseline bg-paper border border-paper-edge" >
+            <span className="kanji text-accent" style={{ fontSize: 18, width: 22 }}>{k}</span>
+            <div className="flex items-baseline" style={{ gap: 8 }}>
+              <span className="mono font-semibold" style={{ fontSize: 9, color: ptone[p] }}>{p}</span>
+              <span className="display font-medium text-ink" style={{ fontSize: 15, letterSpacing: '-0.005em' }}>{label}</span>
             </div>
-            <span style={{ fontSize: 12.5, color: 'var(--ink-2)', lineHeight: 1.5 }}>{d}</span>
+            <span className="text-ink-2" style={{ fontSize: 12.5, lineHeight: 1.5 }}>{d}</span>
           </div>
         ))}
       </div>
@@ -122,31 +121,30 @@ function SurfaceSessions() {
       lead={<>Every session sensei witnessed, digested into a retrospective you didn't have to run. Not a log to scroll — a verdict, in plain language, with the trend underneath.</>}
       why="Charts you have to decode get ignored. Three lanes and a single trend line don't.">
       <SurfMechLabel>The retro · three lanes</SurfMechLabel>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)' }} className="gap-3 mb-5" >
+      <div style={{ gridTemplateColumns: 'repeat(3, 1fr)' }} className="gap-3 mb-6 grid" >
         {lanes.map(l => (
-          <div key={l.title} style={{ background: 'var(--paper)', border: 'var(--hairline)', borderRadius: 10,
-                        borderTop: `2px solid ${l.accent}` }} className="py-4 px-4" >
-            <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2 mb-2" >
+          <div key={l.title} style={{ borderRadius: 10,
+ borderTop: `2px solid ${l.accent}` }} className="py-4 px-4 bg-paper border border-paper-edge" >
+            <div className="gap-2 mb-2 flex items-baseline" >
               <span className="kanji" style={{ fontSize: 16, color: l.accent }}>{l.k}</span>
-              <span style={{ fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--ink-3)', fontWeight: 600 }}>{l.title}</span>
+              <span className="uppercase text-ink-3 font-semibold" style={{ fontSize: 11, letterSpacing: '0.14em' }}>{l.title}</span>
             </div>
-            <div style={{ fontSize: 12.5, color: 'var(--ink-2)', lineHeight: 1.55 }}>{l.d}</div>
+            <div className="text-ink-2" style={{ fontSize: 12.5, lineHeight: 1.55 }}>{l.d}</div>
           </div>
         ))}
       </div>
       <SurfMechLabel>How a session is read</SurfMechLabel>
-      <div style={{ display: 'flex', flexWrap: 'wrap' }} className="gap-2" >
+      <div className="gap-2 flex flex-wrap" >
         {[
           ["録", "Captured", "every turn, edit, test and correction"],
           ["診", "Scored", "first-try-right, or corrected — and how many times"],
           ["印", "Checkpointed", "marks where an adopted rule changed the trajectory"],
         ].map(([k, t, d]) => (
-          <div key={t} style={{ flex: '1 1 220px', display: 'flex', alignItems: 'flex-start', gap: 10,
-                        background: 'var(--paper)', border: 'var(--hairline)', borderRadius: 10 }} className="py-3 px-4" >
-            <span className="kanji" style={{ fontSize: 15, color: 'var(--accent)', lineHeight: 1.2 }}>{k}</span>
+          <div key={t} style={{ flex: '1 1 220px', gap: 10, borderRadius: 10 }} className="py-3 px-4 flex items-start bg-paper border border-paper-edge" >
+            <span className="kanji text-accent" style={{ fontSize: 15, lineHeight: 1.2 }}>{k}</span>
             <div>
-              <div className="display" style={{ fontSize: 14, fontWeight: 500, color: 'var(--ink)' }}>{t}</div>
-              <div style={{ fontSize: 11.5, color: 'var(--ink-3)', lineHeight: 1.45 }} className="mt-1" >{d}</div>
+              <div className="display font-medium text-ink" style={{ fontSize: 14 }}>{t}</div>
+              <div style={{ fontSize: 11.5, lineHeight: 1.45 }} className="mt-1 text-ink-3" >{d}</div>
             </div>
           </div>
         ))}
@@ -189,23 +187,22 @@ function SurfaceMemories() {
       lead={<>An adopted memory is a small, named lesson sensei applies to future matching sessions — with your blessing. Every one is auditable down to the moments that formed it.</>}
       why="A learning system you can't inspect is a liability. Every memory shows its receipts, and every adoption is reversible.">
       <SurfMechLabel>Anatomy of a memory</SurfMechLabel>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)' }} className="gap-3 mb-5" >
+      <div style={{ gridTemplateColumns: 'repeat(3, 1fr)' }} className="gap-3 mb-6 grid" >
         {anatomy.map(([t, d]) => (
-          <div key={t} style={{ background: 'var(--paper)', border: 'var(--hairline)', borderRadius: 10 }} className="py-4 px-4" >
-            <div className="display" style={{ fontSize: 14.5, fontWeight: 500, color: 'var(--ink)', letterSpacing: '-0.005em' }}>{t}</div>
-            <div style={{ fontSize: 11.5, color: 'var(--ink-3)', lineHeight: 1.5 }} className="mt-2" >{d}</div>
+          <div key={t} style={{ borderRadius: 10 }} className="py-4 px-4 bg-paper border border-paper-edge" >
+            <div className="display font-medium text-ink" style={{ fontSize: 14.5, letterSpacing: '-0.005em' }}>{t}</div>
+            <div style={{ fontSize: 11.5, lineHeight: 1.5 }} className="mt-2 text-ink-3" >{d}</div>
           </div>
         ))}
       </div>
       <SurfMechLabel>Always your call</SurfMechLabel>
-      <div style={{ display: 'flex', flexWrap: 'wrap' }} className="gap-2" >
+      <div className="gap-2 flex flex-wrap" >
         {acts.map(([k, n]) => (
-          <span key={n} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 12.5, color: 'var(--ink-2)',
-                        background: 'var(--paper)', border: 'var(--hairline)', borderRadius: 20 }} className="py-2 px-4" >
-            <span className="kanji" style={{ color: 'var(--accent)', fontSize: 14 }}>{k}</span>{n}
+          <span key={n} style={{ gap: 7, fontSize: 12.5, borderRadius: 20 }} className="py-2 px-4 inline-flex items-center text-ink-2 bg-paper border border-paper-edge" >
+            <span className="kanji text-accent" style={{ fontSize: 14 }}>{k}</span>{n}
           </span>
         ))}
-        <span style={{ display: 'inline-flex', alignItems: 'center', fontSize: 11.5, color: 'var(--ink-3)', fontStyle: 'italic' }} className="pl-2" >
+        <span style={{ fontSize: 11.5 }} className="pl-2 inline-flex items-center text-ink-3 italic" >
           adopt, refine, or dismiss — nothing is permanent.
         </span>
       </div>
@@ -226,12 +223,12 @@ function SurfaceInstruments() {
       lead={<>An assistant is only as good as the instruments it can reach. Instruments lets you exercise each MCP tool in isolation and replay exactly what was called during a session.</>}
       why="When a session goes wrong, the tool is as likely a culprit as the model. You can't trust what you can't watch.">
       <SurfMechLabel>Two ways to look · one toolset</SurfMechLabel>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)' }} className="gap-3" >
+      <div style={{ gridTemplateColumns: 'repeat(3, 1fr)' }} className="gap-3 grid" >
         {modes.map(m => (
-          <div key={m.t} style={{ background: 'var(--paper)', border: 'var(--hairline)', borderRadius: 10 }} className="py-5 px-4" >
-            <div className="kanji" style={{ fontSize: 28, color: 'var(--accent)', lineHeight: 1 }}>{m.k}</div>
-            <div className="display mt-3" style={{ fontSize: 16, fontWeight: 500, color: 'var(--ink)', letterSpacing: '-0.01em' }}>{m.t}</div>
-            <div style={{ fontSize: 12, color: 'var(--ink-2)', lineHeight: 1.55 }} className="mt-2" >{m.d}</div>
+          <div key={m.t} style={{ borderRadius: 10 }} className="py-6 px-4 bg-paper border border-paper-edge" >
+            <div className="kanji text-accent" style={{ fontSize: 28, lineHeight: 1 }}>{m.k}</div>
+            <div className="display mt-3 font-medium text-ink" style={{ fontSize: 16, letterSpacing: '-0.01em' }}>{m.t}</div>
+            <div style={{ fontSize: 12, lineHeight: 1.55 }} className="mt-2 text-ink-2" >{m.d}</div>
           </div>
         ))}
       </div>
@@ -250,58 +247,56 @@ function HeroBrief() {
     ["探", "Drift detected", "brand-tokens README is 47 days old", "low", 'var(--ink-3)'],
   ];
   return (
-    <div style={{
-      width: '100%', maxWidth: 920,
-      background: 'var(--paper-2)', border: 'var(--hairline)', borderRadius: 16,
-      boxShadow: '0 30px 60px -28px rgba(20,18,14,0.18)'
-    }} className="py-7 px-8" >
+    <div style={{ maxWidth: 920, borderRadius: 16,
+ boxShadow: '0 30px 60px -28px rgba(20,18,14,0.18)'
+ }} className="py-12 px-16 w-full bg-paper-2 border border-paper-edge" >
       {/* meta row */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }} className="mb-5" >
-        <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', letterSpacing: '0.04em' }}>
+      <div className="mb-6 flex items-center justify-between" >
+        <span className="mono text-ink-3" style={{ fontSize: 11, letterSpacing: '0.04em' }}>
           sensei speaks · 09:12
         </span>
-        <span style={{ fontSize: 10, letterSpacing: '0.16em', textTransform: 'uppercase', color: 'var(--ink-4)', fontWeight: 600 }}>
+        <span className="uppercase text-ink-4 font-semibold" style={{ fontSize: 10, letterSpacing: '0.16em' }}>
           an example morning
         </span>
       </div>
 
       {/* the focal teaching */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', alignItems: 'start' }} className="gap-6" >
-        <div className="kanji" style={{ fontSize: 72, color: 'var(--accent)', lineHeight: 0.9 }}>聴</div>
+      <div style={{ gridTemplateColumns: 'auto 1fr' }} className="gap-8 grid items-start" >
+        <div className="kanji text-accent" style={{ fontSize: 72, lineHeight: 0.9 }}>聴</div>
         <div>
-          <div style={{ fontSize: 11, letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--ink-3)' }} className="mb-2" >
+          <div style={{ fontSize: 11, letterSpacing: '0.18em' }} className="mb-2 uppercase text-ink-3" >
             The one thing worth noticing
           </div>
-          <div className="display" style={{ fontSize: 32, fontWeight: 300, letterSpacing: '-0.02em', lineHeight: 1.15, color: 'var(--ink)' }}>
+          <div className="display font-light text-ink" style={{ fontSize: 32, letterSpacing: '-0.02em', lineHeight: 1.15 }}>
             The AI does not know your auth.
           </div>
-          <p style={{ fontSize: 15, color: 'var(--ink-2)', lineHeight: 1.6, maxWidth: 560 }} className="mt-3 mb-4" >
+          <p style={{ fontSize: 15, lineHeight: 1.6, maxWidth: 560 }} className="mt-3 mb-4 text-ink-2" >
             Three sessions corrected this week in <span className="mono" style={{ fontSize: 13 }}>lumen-auth</span> —
             all touched refresh or device flow. There's no integration-test persona for this module yet.
           </p>
-          <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap' }} className="gap-4" >
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 13, color: 'var(--accent)' }}>
-              <span style={{ width: 5, height: 5, borderRadius: '50%', background: 'var(--accent)' }}/>
+          <div className="gap-4 flex items-center flex-wrap" >
+            <span className="inline-flex items-center text-accent" style={{ gap: 7, fontSize: 13 }}>
+              <span className="rounded-full bg-accent" style={{ width: 5, height: 5 }}/>
               Projected First-Try-Right +14% in Lumen Cloud
             </span>
-            <span style={{ flex: 1 }}/>
-            <span className="mono" style={{ fontSize: 11, color: 'var(--ink-4)' }}>from s-2891 · s-2889 · s-2886</span>
+            <span className="flex-1" />
+            <span className="mono text-ink-4" style={{ fontSize: 11 }}>from s-2891 · s-2889 · s-2886</span>
           </div>
         </div>
       </div>
 
       {/* what stays out of sight */}
-      <div style={{ borderTop: 'var(--hairline)' }} className="mt-6 pt-5" >
-        <div style={{ fontSize: 10, letterSpacing: '0.16em', textTransform: 'uppercase', color: 'var(--ink-4)', fontWeight: 600 }} className="mb-3" >
+      <div className="mt-8 pt-6 border-t" >
+        <div style={{ fontSize: 10, letterSpacing: '0.16em' }} className="mb-3 uppercase text-ink-4 font-semibold" >
           And quietly, today — kept out of the way
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)' }} className="gap-3" >
+        <div style={{ gridTemplateColumns: 'repeat(3, 1fr)' }} className="gap-3 grid" >
           {secondary.map(([k, label, text, tag, tone]) => (
-            <div key={label} style={{ display: 'flex', alignItems: 'flex-start', gap: 9, opacity: 0.78 }}>
+            <div className="flex items-start" key={label} style={{ gap: 9, opacity: 0.78 }}>
               <span className="kanji" style={{ fontSize: 15, color: tone, lineHeight: 1.2 }}>{k}</span>
-              <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 10.5, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--ink-3)' }}>{label}</div>
-                <div style={{ fontSize: 12, color: 'var(--ink-2)', lineHeight: 1.4 }} className="mt-1" >{text}</div>
+              <div className="min-w-0" >
+                <div className="uppercase text-ink-3" style={{ fontSize: 10.5, letterSpacing: '0.1em' }}>{label}</div>
+                <div style={{ fontSize: 12, lineHeight: 1.4 }} className="mt-1 text-ink-2" >{text}</div>
                 <span className="mono" style={{ fontSize: 10, color: tone }}>{tag}</span>
               </div>
             </div>
@@ -314,19 +309,19 @@ function HeroBrief() {
 
 function Surfaces() {
   return (
-    <section id="gallery" className="pt-9 pb-8 px-7" >
+    <section id="gallery" className="pt-24 pb-16 px-12" >
       <div style={{ maxWidth: 1200 }} className="mx-auto" >
         <div style={SURF_eyebrow} className="mb-4" >The screens · 面</div>
-        <h2 className="display mt-0 mb-4" style={{ fontSize: 56, fontWeight: 300, letterSpacing: '-0.025em', lineHeight: 1.05 }}>
+        <h2 className="display mt-0 mb-4 font-light" style={{ fontSize: 56, letterSpacing: '-0.025em', lineHeight: 1.05 }}>
           Five surfaces,<br/>one rhythm.
         </h2>
-        <p style={{ fontSize: 17, color: 'var(--ink-2)', maxWidth: 640, lineHeight: 1.6,
-                     fontFamily: 'var(--font-display)', fontWeight: 300 }} className="mt-0 mb-2" >
+        <p style={{ fontSize: 17, maxWidth: 640, lineHeight: 1.6,
+ fontFamily: 'var(--font-display)' }} className="mt-0 mb-2 text-ink-2 font-light" >
           Each surface answers one question and stays quiet otherwise. The pixels will keep
           changing; what they're <em>for</em> won't. So here is what each one does, why it's
           shaped that way, and how its flow moves.
         </p>
-        <div className="mt-6" >
+        <div className="mt-8" >
           <SurfaceToday/>
           <SurfaceSessions/>
           <SurfaceInsights/>

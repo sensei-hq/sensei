@@ -181,6 +181,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/projects/{id}/roles", get(observatory::solution_roles))
         // Folder mutations (setup wizard — Projects stage)
         .route("/api/folders/{id}", put(workspace::update_folder))
+        // Manual rename repair — `sensei folder remap <old> <new>`
+        .route("/api/folders/remap", post(workspace::remap_folder_endpoint))
         // Libraries
         .route("/api/libs", get(libraries::list_libs))
         .route("/api/libs/index", post(libraries::index_lib))
@@ -534,6 +536,51 @@ mod tests {
         assert!(json["nested_standalone"].is_number());
         assert!(json["duplicate_name_projects"].is_number());
         assert!(json["samples"].is_object());
+    }
+
+    #[tokio::test]
+    async fn folder_remap_endpoint_404_when_new_path_not_indexed() {
+        let (app, _) = test_app().await;
+        let resp = app.oneshot(
+            Request::builder().method("POST").uri("/api/folders/remap")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"old":"/_test/remap-ep-gone","new":"/_test/remap-ep-never-indexed"}"#)).unwrap()
+        ).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND, "the rename destination must be an indexed folder");
+    }
+
+    #[tokio::test]
+    async fn folder_remap_endpoint_aliases_old_and_reattaches_sessions() {
+        let (app, state) = test_app().await;
+        // The rename destination must be an indexed folder.
+        state.pg.execute_raw(
+            "INSERT INTO sensei.folders_to_watch(id, path, name, status) VALUES('00000000-0000-0000-0000-000000000001','/_test','_test','watching'::sensei.watch_status) ON CONFLICT DO NOTHING"
+        ).await.unwrap();
+        state.pg.execute_raw(
+            "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path) VALUES('00000000-0000-0000-0000-000000000001','git'::sensei.folder_kind,'remap-ep-new','remap-ep-new','/_test/remap-ep-new') ON CONFLICT(abs_path) DO NOTHING"
+        ).await.unwrap();
+        // Start clean, then leave an orphaned event captured under the OLD (renamed) path.
+        state.pg.execute_raw("DELETE FROM activity.sessions WHERE client_session_id = '_test-remap-ep-session'").await.unwrap();
+        state.pg.execute_raw("DELETE FROM activity.assistant_events WHERE session_id = '_test-remap-ep-session'").await.unwrap();
+        state.pg.insert_hook_event("_test-remap-ep-session", "claude", "PreToolUse", None, Some("/_test/remap-ep-old"), 1_700_000_500, None, &serde_json::json!({})).await.unwrap();
+
+        let resp = app.oneshot(
+            Request::builder().method("POST").uri("/api/folders/remap")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"old":"/_test/remap-ep-old","new":"/_test/remap-ep-new"}"#)).unwrap()
+        ).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["remapped"], false, "old had no folder row → alias-only");
+        assert_eq!(json["aliased"], true);
+        assert!(json["sessions_repaired"].as_u64().unwrap() >= 1, "the orphaned session under old is re-attached");
+
+        // The old path now aliases forward to the new folder.
+        let new_id = state.pg.folder_id_by_abs_path("/_test/remap-ep-new").await.unwrap().unwrap();
+        let resolved = state.pg.get_folder_ids_by_path("/_test/remap-ep-old").await.unwrap();
+        assert_eq!(resolved.map(|(f, _)| f), Some(new_id), "the old path resolves to the new folder via the alias");
     }
 
     #[tokio::test]

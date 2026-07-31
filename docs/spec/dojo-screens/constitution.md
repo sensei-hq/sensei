@@ -41,6 +41,13 @@
 2. `/you/rules` shows the user's effective constitution — but the user can span several dōjōs. Which tenant's governance resolves here, and via which endpoint (daemon-resolved vs a new tenant `/v1/rules/resolved` for the user's namespaces)?
 3. Confirm the canonical rung-id vocabulary so `personalRungs` matches `rulesToLadder` output (`personal|stack` vs `user|technology`). Fix one side.
 
+### Resolved design (2026-07-30)
+- **Q1 stance → FEDERATE (read + write seam).** Stance dials live on the dōjō web. Build a daemon↔dōjō stance federation (read + write) across the cross-DB boundary — the daemon already owns the stance write API (`POST /api/stance` + MCP `set_stance`/`upsert_stance`, `fb63720f`); the seam mirrors/pushes user-scoped stance to the dōjō and writes back. NOT ladder-only.
+- **Q2 ladder → dōjō `GET /v1/…/rules/resolved`.** The governance rules live in the dōjō (namespaces/scopes/packs), so the dōjō resolves the user's **personal-namespace** ladder itself. No daemon dependency for the ladder.
+- **Q3 rung vocab (factually resolved):** canonical = `sensei.scopes.key` = **`company | client | personal | project | stack`** (per `LadderRung.level` project-detail.md + `namespaces → scopes(key)` FK). Fix BOTH `personalRungs` (view, drop the hardcoded `personal|stack`) and `rulesToLadder` (mapper) to this vocabulary; `/you` personal constitution = the personal-classification composition `[personal, project, stack]`.
+- **Build constraint (fabricated-data debt):** drive every field from the real read; on a fetch error render an explicit error state — NEVER the fixture; honest-empty only when genuinely empty.
+- **Depends on:** the stance federation seam (read+write) + dōjō `/v1/rules/resolved` + the scope-vocab fix + WS-0 Rule A (user-keyed).
+
 ## Components & state (three-layer, per `sensei:ui-state-pattern`)
 
 Makes the three layers explicit; references the **Elements → data** + **APIs / loaders**
