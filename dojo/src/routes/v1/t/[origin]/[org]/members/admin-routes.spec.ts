@@ -29,6 +29,7 @@ const mocks = vi.hoisted(() => ({
 	listIdentities: vi.fn(),
 	listAudit: vi.fn(),
 	getHealth: vi.fn(),
+	getContribVsApprove: vi.fn(),
 	setMemberRole: vi.fn(),
 	addMember: vi.fn(),
 	parseNewMember: vi.fn(),
@@ -76,6 +77,7 @@ vi.mock('$lib/server/admin-data', () => ({
 	deleteIdentity: mocks.deleteIdentity,
 	AdminError
 }));
+vi.mock('$lib/server/health-series', () => ({ getContribVsApprove: mocks.getContribVsApprove }));
 vi.mock('$lib/server/audit', () => ({ recordAudit: mocks.recordAudit }));
 
 const members = await import('./+server');
@@ -107,6 +109,7 @@ beforeEach(() => {
 	mocks.listIdentities.mockClear().mockResolvedValue([]);
 	mocks.listAudit.mockClear().mockResolvedValue([]);
 	mocks.getHealth.mockClear().mockResolvedValue({ connections: 0, queue_depth: 0, publish_rate_1h: 0, error_rate_1h: 0 });
+	mocks.getContribVsApprove.mockClear().mockResolvedValue([]);
 	mocks.setMemberRole.mockClear().mockResolvedValue({ user_id: 'u1', role: 'lead' });
 	mocks.addMember.mockClear().mockResolvedValue({ id: 'm1', role: 'contributor' });
 	mocks.parseNewMember.mockClear().mockReturnValue({ user_id: 'u1', kind: 'client', authenticated_via: 'sso', role: 'contributor' });
@@ -174,9 +177,16 @@ describe('GET /audit', () => {
 });
 
 describe('GET /health', () => {
-	it('returns the bare rollup', async () => {
+	it('returns the rollup plus the contrib-vs-approve weekly series', async () => {
 		mocks.getHealth.mockResolvedValueOnce({ connections: 3, queue_depth: 12, publish_rate_1h: 5, error_rate_1h: 1 });
-		expect(await (await health.GET(ev())).json()).toEqual({ connections: 3, queue_depth: 12, publish_rate_1h: 5, error_rate_1h: 1 });
+		mocks.getContribVsApprove.mockResolvedValueOnce([{ wk: 'W4', c: 2, a: 1 }]);
+		expect(await (await health.GET(ev())).json()).toEqual({
+			connections: 3,
+			queue_depth: 12,
+			publish_rate_1h: 5,
+			error_rate_1h: 1,
+			contrib_vs_approve: [{ wk: 'W4', c: 2, a: 1 }]
+		});
 	});
 	it('auths at the admin floor', async () => {
 		await health.GET(ev());

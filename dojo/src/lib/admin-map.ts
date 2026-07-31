@@ -19,7 +19,8 @@ import type {
 	KitIdentity,
 	KitIdentityMapping,
 	KitHealth,
-	KitHealthSignal
+	KitHealthSignal,
+	KitHealthWeek
 } from './components/kit/types';
 
 /** A short, stable display handle for a bare uuid (first 8 chars). */
@@ -185,9 +186,9 @@ export function toKitIdentity(identities: Identity[]): KitIdentity {
 
 /**
  * HealthRollup → KitHealth. Projects the four rollup counts onto the signal
- * cards the screen shows. The rollup carries no contributions-vs-approvals series
- * or anomaly alerts (those are a richer read), so those render empty (the screen
- * degrades gracefully — an empty bar chart + no alerts). Pure.
+ * cards, plus the real contributions-vs-approvals weekly series (from the health
+ * route's `dojo.audit_events` bucketing; an empty series renders no bars). Anomaly
+ * alerts still wait on the containment seam, so those render empty. Pure.
  */
 export function toKitHealth(rollup: HealthRollup): KitHealth {
 	const signals: KitHealthSignal[] = [
@@ -208,5 +209,10 @@ export function toKitHealth(rollup: HealthRollup): KitHealth {
 			tone: rollup.error_rate_1h > 0 ? 'warning' : 'success'
 		}
 	];
-	return { signals, contribVsApprove: [], alerts: [] };
+	const contribVsApprove: KitHealthWeek[] = (rollup.contrib_vs_approve ?? []).map((w) => ({
+		wk: w.wk,
+		c: w.c,
+		a: w.a
+	}));
+	return { signals, contribVsApprove, alerts: [] };
 }
