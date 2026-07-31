@@ -380,6 +380,24 @@ export async function listClientAuditLedger(
 	return data.entries ?? [];
 }
 
+/** One project row (mirrors the server `ProjectRow`). `slug` is the dereferenced
+ *  project identity (the drill-in key). */
+export interface ProjectRow {
+	id: string;
+	slug: string;
+	name: string;
+	classification: string;
+	phase: string;
+	last_run_at: string | null;
+	runs_week: number;
+}
+
+/** `GET …/projects` — the org's projects (dojo.projects, tenant-scoped). */
+export async function listProjects(tenantKey: string, opts: DojoCallOpts = {}): Promise<ProjectRow[]> {
+	const data = await getJson<{ projects?: ProjectRow[] }>(clientUrl(tenantKey, '/projects'), opts);
+	return data.projects ?? [];
+}
+
 /** `POST …/incidents` — open a confidentiality incident (lead). */
 export async function createIncident(
 	tenantKey: string,
