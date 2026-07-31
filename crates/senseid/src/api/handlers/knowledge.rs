@@ -387,6 +387,17 @@ async fn insert_with_status(
     if body.content.trim().is_empty() {
         return Err(err(StatusCode::BAD_REQUEST, "content must not be empty"));
     }
+    // C4: never persist a secret into the shared memory / governance store. Fail
+    // closed — reject the write, surfacing only the secret KIND, never the value.
+    let hits = crate::secret_scan::scan(&format!("{}\n{}", body.title, body.content));
+    if !hits.is_empty() {
+        let kinds: Vec<&str> = hits.iter().map(|h| h.kind).collect();
+        tracing::warn!(kinds = ?kinds, "rejected a memory write carrying a secret");
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            &format!("content appears to contain a secret ({}) — not saved; remove it and retry", kinds.join(", ")),
+        ));
+    }
     if body.scope == "stack" && body.scope_filter.as_deref().unwrap_or("").is_empty() {
         return Err(err(StatusCode::BAD_REQUEST, "scope_filter required for scope='stack'"));
     }
