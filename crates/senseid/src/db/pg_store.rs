@@ -2157,6 +2157,20 @@ impl PgStore {
         Ok(row.map(|(id,)| id))
     }
 
+    /// Write a git root's remotes (`[{name,url}]`) into `folders.remote_urls` — the
+    /// producing half of git-remote rename detection, called during scan. Without
+    /// this the column stays `'[]'` and [`Self::find_live_root_by_remote`] can never
+    /// match, so auto-remap is inert (that was the pre-existing prod state).
+    pub async fn update_folder_remotes(&self, folder_id: &uuid::Uuid, remotes: &serde_json::Value) -> Result<(), String> {
+        sqlx_core::query::query("UPDATE sensei.folders SET remote_urls = $2 WHERE id = $1")
+            .bind(folder_id)
+            .bind(remotes)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     /// List folders that were registered by a scan but never finished
     /// indexing — i.e. status is `discovered` (scan ran, ProcessGitFolder
     /// hadn't started) or `queued` (mid-flight when the daemon stopped).
@@ -11876,6 +11890,20 @@ mod tests {
         let (status,): (String,) = sqlx_core::query_as::query_as("SELECT status::text FROM sensei.folders WHERE id = $1")
             .bind(fid).fetch_one(&s.pool).await.unwrap();
         assert_eq!(status, "archived", "the vanished history-bearing root is retained as archived");
+    }
+
+    #[tokio::test]
+    async fn update_folder_remotes_populates_and_is_matchable() {
+        let s = pg_store().await;
+        let url = "git@github.com:sensei-hq/populate-probe.git";
+        let fid = create_test_folder(&s, "populate-remotes").await; // /_test/populate-remotes
+        s.update_folder_remotes(&fid, &serde_json::json!([{"name":"origin","url":url}])).await.unwrap();
+        // Round-trips into remote_urls AND is now findable as a live-root remote match.
+        assert_eq!(
+            s.find_live_root_by_remote(&[url.to_string()], &["/_test/populate-remotes".to_string()]).await.unwrap(),
+            Some(fid),
+            "the written remote is what makes auto-remap able to fire"
+        );
     }
 
     #[tokio::test]
