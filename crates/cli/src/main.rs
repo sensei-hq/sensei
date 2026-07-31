@@ -10,6 +10,7 @@ use sensei_bootstrap::{
 };
 
 mod doctor;
+mod managed;
 mod scaffold;
 
 fn cfg() -> &'static SenseiConfig {
@@ -678,6 +679,19 @@ fn init_project_scope(_recommended: bool) {
             println!(
                 "\n  [cleaned] .claude/settings.local.json — removed stale hooks (handled by global plugin)"
             );
+        }
+    }
+
+    // 4. Managed "load governance first" directive (idempotent) into CLAUDE.md +
+    //    AGENTS.md — the durable pull-first fallback to the SessionStart/PreCompact
+    //    hooks, and the only governance signal non-Claude assistants get.
+    println!();
+    for name in ["CLAUDE.md", "AGENTS.md"] {
+        match managed::write_directive(&repo_root.join(name)) {
+            Ok(managed::Change::Created) => println!("  [created] {name} — sensei governance directive"),
+            Ok(managed::Change::Updated) => println!("  [updated] {name} — sensei governance directive"),
+            Ok(managed::Change::Unchanged) => println!("  [ok]      {name} — governance directive current"),
+            Err(e) => eprintln!("  [failed]  {name} — {e}"),
         }
     }
 
