@@ -25,6 +25,7 @@ pub(crate) mod checker;
 pub(crate) mod dojo;
 pub(crate) mod preferences;
 pub(crate) mod share_review;
+pub(crate) mod review;
 pub(crate) mod upgrades;
 pub(crate) mod corrections;
 pub(crate) mod verdicts;
