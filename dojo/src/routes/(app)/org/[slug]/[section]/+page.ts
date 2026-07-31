@@ -4,7 +4,15 @@ import { ORG_SECTIONS, labelForSection } from '$lib/nav';
 import { orgBySlug } from '$lib/chrome';
 import { tabForSection } from '$lib/role-surfaces-view';
 import { guardTenantScope } from '$lib/org-guard';
-import { listEngagements, listIncidents, DojoApiError, type Engagement, type Incident } from '$lib/client-data';
+import {
+	listEngagements,
+	listIncidents,
+	getKnowledge,
+	DojoApiError,
+	type Engagement,
+	type Incident,
+	type KnowledgeLibraryWire
+} from '$lib/client-data';
 import { listTriage, type TriageRow } from '$lib/triage-data';
 import {
 	listMembers,
@@ -36,6 +44,7 @@ import {
 	toKitHealth
 } from '$lib/admin-map';
 import { toKitIncidents, toKitClientAudit } from '$lib/incidents-map';
+import { toKitKnowledge } from '$lib/knowledge-map';
 import type {
 	KitEngagement,
 	KitTriageGroup,
@@ -44,6 +53,7 @@ import type {
 	KitMember,
 	KitRolePolicy,
 	KitChatTurn,
+	KitKnowledge,
 	KitIdentity,
 	KitIncident,
 	KitClientAuditRow,
@@ -54,7 +64,6 @@ import {
 	orgProjectsFor,
 	orgConstitutionFor,
 	candidateDetailFor,
-	knowledgeFor,
 	confidentialityFor,
 	scopeOwnersFor,
 	billingFor
@@ -209,6 +218,16 @@ export const load: PageLoad = async ({ parent, params, fetch }) => {
 		(res) => toKitBilling(billingFor(slug), res)
 	);
 
+	// Knowledge (maintainer) — the tenant's published library over dojo.artifacts
+	// (active / pending-prune / catalog). Real read; honest-empty on miss, error
+	// state on failure — NOT the old knowledgeFor(slug) fixture (fabricated-data fix).
+	const knowledgeRes = await guardedFor<KnowledgeLibraryWire, KitKnowledge>(
+		'knowledge',
+		{ prunePolicy: '', active: [], pending: [], catalog: [] },
+		(tk) => getKnowledge(tk, opts),
+		toKitKnowledge
+	);
+
 	return {
 		slug,
 		orgName: org.name,
@@ -227,7 +246,8 @@ export const load: PageLoad = async ({ parent, params, fetch }) => {
 		candidateDetail,
 		approvals,
 		triageError,
-		knowledge: knowledgeFor(slug),
+		knowledge: knowledgeRes.value,
+		knowledgeError: knowledgeRes.error,
 		// Lead Clients consoles.
 		engagements: engagementsRes.value,
 		engagementsError: engagementsRes.error,
