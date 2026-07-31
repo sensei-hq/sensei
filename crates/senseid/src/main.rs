@@ -11,6 +11,7 @@ mod api;
 mod tasks;
 mod transcript;
 mod governance;
+mod review;
 pub mod assistants;
 pub mod instruments;
 pub mod installer;
