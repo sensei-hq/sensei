@@ -325,6 +325,39 @@ export async function getIncident(
 	return getJson<IncidentDetail>(clientUrl(tenantKey, `/incidents/${encodeURIComponent(id)}`), opts);
 }
 
+/** One published artifact row in the Knowledge library (mirrors the server
+ *  `knowledge-data.ts` KnowledgeArtifact). `scope` is `dojo.artifacts.scope` jsonb. */
+export interface KnowledgeArtifactWire {
+	id: string;
+	kind: string;
+	title: string;
+	scope: unknown;
+	adopted_count: number;
+	created_at: string;
+}
+
+/** `GET …/knowledge` — the tenant's published library, partitioned. */
+export interface KnowledgeLibraryWire {
+	retention_days: number | null;
+	active: KnowledgeArtifactWire[];
+	pending: KnowledgeArtifactWire[];
+	catalog: KnowledgeArtifactWire[];
+}
+
+/** `GET …/knowledge` — the maintainer library over `dojo.artifacts` (read-only). */
+export async function getKnowledge(
+	tenantKey: string,
+	opts: DojoCallOpts = {}
+): Promise<KnowledgeLibraryWire> {
+	const data = await getJson<Partial<KnowledgeLibraryWire>>(clientUrl(tenantKey, '/knowledge'), opts);
+	return {
+		retention_days: data.retention_days ?? null,
+		active: data.active ?? [],
+		pending: data.pending ?? [],
+		catalog: data.catalog ?? []
+	};
+}
+
 /** `POST …/incidents` — open a confidentiality incident (lead). */
 export async function createIncident(
 	tenantKey: string,
