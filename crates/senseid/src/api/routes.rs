@@ -587,6 +587,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn save_memory_rejects_a_secret_and_does_not_leak_it() {
+        let (app, _) = test_app().await;
+        // Token built at runtime (split parts) so no secret-format literal is in the source.
+        let token = format!("ghp_{}", "b".repeat(38));
+        let body = format!(
+            r#"{{"scope":"project","type":"convention","title":"note","content":"the token is {token}"}}"#
+        );
+        let resp = app.oneshot(
+            Request::builder().method("POST").uri("/api/knowledge/memories")
+                .header("content-type", "application/json")
+                .body(Body::from(body)).unwrap()
+        ).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "a memory carrying a secret is rejected (fail closed)");
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let text = String::from_utf8_lossy(&bytes);
+        assert!(text.contains("secret") && text.contains("github token"), "the error names the kind: {text}");
+        assert!(!text.contains(&token), "the secret value is never echoed back: {text}");
+    }
+
+    #[tokio::test]
     async fn risk_class_endpoint_classifies_by_path() {
         let (app, _) = test_app().await;
         let resp = app.oneshot(
