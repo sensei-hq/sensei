@@ -56,4 +56,13 @@ describe('deriveConsoleContext — membership surfaced, no fabricated tenant (DJ
 		});
 		expect(ctx.user).toEqual({ name: 'Rin Saito', email: 'rin@x.dev' });
 	});
+	it('carries the user id through — the "you" chip resolves against membership user_ids', () => {
+		const ctx = deriveConsoleContext({
+			memberships: [],
+			cookieTenant: null,
+			paramTenant: null,
+			user: { id: 'auth-uid-1', name: 'Rin Saito', email: 'rin@x.dev' }
+		});
+		expect(ctx.user?.id).toBe('auth-uid-1');
+	});
 });

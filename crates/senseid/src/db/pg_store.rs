@@ -2046,11 +2046,11 @@ impl PgStore {
     }
 
     pub async fn list_folders_by_root(&self, root_id: &uuid::Uuid) -> Result<Vec<serde_json::Value>, String> {
-        let rows: Vec<(uuid::Uuid, String, String, String, String, Option<uuid::Uuid>)> = sqlx_core::query_as::query_as(
-            "SELECT id, kind::text, name, path, abs_path, project_id FROM sensei.folders WHERE root_id = $1 ORDER BY path"
+        let rows: Vec<(uuid::Uuid, String, String, String, String, Option<uuid::Uuid>, serde_json::Value, String)> = sqlx_core::query_as::query_as(
+            "SELECT id, kind::text, name, path, abs_path, project_id, remote_urls, status::text FROM sensei.folders WHERE root_id = $1 ORDER BY path"
         ).bind(root_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
-        Ok(rows.into_iter().map(|(id, kind, name, path, abs, pid)| {
-            serde_json::json!({ "id": id, "kind": kind, "name": name, "path": path, "abs_path": abs, "project_id": pid })
+        Ok(rows.into_iter().map(|(id, kind, name, path, abs, pid, remotes, status)| {
+            serde_json::json!({ "id": id, "kind": kind, "name": name, "path": path, "abs_path": abs, "project_id": pid, "remote_urls": remotes, "status": status })
         }).collect())
     }
 
@@ -2058,6 +2058,116 @@ impl PgStore {
         // CASCADE will handle children via parent_id FK
         sqlx_core::query::query("DELETE FROM sensei.folders WHERE id = $1")
             .bind(folder_id).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// A live project root that shares a git remote URL with `remotes` — the signal
+    /// that a since-vanished root was RENAMED/MOVED rather than deleted. Restricted
+    /// to project-root kinds whose `abs_path` is in `live_abs` (the paths this scan
+    /// just discovered) so we only ever remap onto a freshly-confirmed folder.
+    /// Returns the first match's id, or `None`. Empty `remotes` → `None` (a folder
+    /// with no remote can't be remote-matched). DB-only; pure lookup.
+    pub async fn find_live_root_by_remote(
+        &self,
+        remotes: &[String],
+        live_abs: &[String],
+    ) -> Result<Option<uuid::Uuid>, String> {
+        if remotes.is_empty() || live_abs.is_empty() {
+            return Ok(None);
+        }
+        let row: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
+            "SELECT f.id FROM sensei.folders f \
+             WHERE f.abs_path = ANY($2) \
+               AND f.kind IN ('git'::sensei.folder_kind, 'standalone'::sensei.folder_kind, 'subtree'::sensei.folder_kind) \
+               AND EXISTS (SELECT 1 FROM jsonb_array_elements(f.remote_urls) e WHERE e->>'url' = ANY($1)) \
+             LIMIT 1",
+        )
+        .bind(remotes)
+        .bind(live_abs)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(row.map(|(id,)| id))
+    }
+
+    /// Whether a folder carries history worth keeping — i.e. any `activity.sessions`
+    /// row is attached to it. Drives archive-not-delete on a vanished root.
+    pub async fn folder_has_sessions(&self, folder_id: &uuid::Uuid) -> Result<bool, String> {
+        let row: Option<(i32,)> = sqlx_core::query_as::query_as(
+            "SELECT 1 FROM activity.sessions WHERE folder_id = $1 LIMIT 1",
+        )
+        .bind(folder_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(row.is_some())
+    }
+
+    /// Re-point a renamed/moved root's history onto its new folder, then drop the
+    /// now-empty old row. Order matters: (1) record the old path as an alias of the
+    /// new folder so future events under old paths resolve forward; (2) move the
+    /// old folder's sessions to the new folder BEFORE deleting (delete_folder_tree
+    /// cascades sessions, so this must precede it); (3) delete the old husk. The
+    /// alias is the durable mapping — even if a session slips through, the orphan
+    /// repair re-attaches it via the alias.
+    pub async fn remap_folder(
+        &self,
+        old_folder_id: &uuid::Uuid,
+        old_abs_path: &str,
+        new_folder_id: &uuid::Uuid,
+    ) -> Result<(), String> {
+        self.add_folder_path_alias(old_abs_path, new_folder_id, "rename").await?;
+        sqlx_core::query::query(
+            "UPDATE activity.sessions SET folder_id = $2 WHERE folder_id = $1",
+        )
+        .bind(old_folder_id)
+        .bind(new_folder_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        self.delete_folder_tree(old_folder_id).await
+    }
+
+    /// Retain a vanished, history-bearing root as `archived` instead of deleting it:
+    /// its directory is gone but its sessions/transcripts stay attached. The vanish
+    /// prune and reconcile skip `archived` folders thereafter.
+    pub async fn archive_folder(&self, folder_id: &uuid::Uuid) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE sensei.folders SET status = 'archived'::sensei.folder_status WHERE id = $1",
+        )
+        .bind(folder_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// The folder registered at EXACTLY this absolute path (no alias resolution),
+    /// or `None`. Distinct from [`Self::get_folder_ids_by_path`], which also follows
+    /// aliases — the manual `remap` needs to know whether `old` is itself a real
+    /// folder row (to re-point) versus already gone (alias-only).
+    pub async fn folder_id_by_abs_path(&self, abs_path: &str) -> Result<Option<uuid::Uuid>, String> {
+        let row: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
+            "SELECT id FROM sensei.folders WHERE abs_path = $1 LIMIT 1",
+        )
+        .bind(abs_path)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(row.map(|(id,)| id))
+    }
+
+    /// Write a git root's remotes (`[{name,url}]`) into `folders.remote_urls` — the
+    /// producing half of git-remote rename detection, called during scan. Without
+    /// this the column stays `'[]'` and [`Self::find_live_root_by_remote`] can never
+    /// match, so auto-remap is inert (that was the pre-existing prod state).
+    pub async fn update_folder_remotes(&self, folder_id: &uuid::Uuid, remotes: &serde_json::Value) -> Result<(), String> {
+        sqlx_core::query::query("UPDATE sensei.folders SET remote_urls = $2 WHERE id = $1")
+            .bind(folder_id)
+            .bind(remotes)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
         Ok(())
     }
 
@@ -4167,10 +4277,20 @@ impl PgStore {
     pub async fn find_folder_for_path(
         &self, path: &str,
     ) -> Result<Option<(uuid::Uuid, Option<uuid::Uuid>)>, String> {
+        // Nearest ancestor over current abs_paths AND former paths (aliases), so a
+        // hook cwd recorded under an old path (pre-rename) still attributes to the
+        // current folder. A live abs_path and an alias of equal length tie-break to
+        // the live folder (abs_path row sorts first).
         let row: Option<(uuid::Uuid, Option<uuid::Uuid>)> = sqlx_core::query_as::query_as(
-            "SELECT id, project_id FROM sensei.folders
-             WHERE $1 = abs_path OR $1 LIKE abs_path || '/%'
-             ORDER BY length(abs_path) DESC
+            "SELECT id, project_id FROM (
+                 SELECT id, project_id, abs_path AS p, 1 AS live FROM sensei.folders
+                 UNION ALL
+                 SELECT f.id, f.project_id, a.alias_abs_path AS p, 0 AS live
+                   FROM sensei.folder_path_aliases a
+                   JOIN sensei.folders f ON f.id = a.folder_id
+             ) c
+             WHERE $1 = c.p OR $1 LIKE c.p || '/%'
+             ORDER BY length(c.p) DESC, c.live DESC
              LIMIT 1"
         ).bind(path).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(row)
@@ -5320,12 +5440,95 @@ impl PgStore {
     // ── Historical-bootstrap import (#75) ────────────────────────────────────
 
     /// Resolve `(folder_id, project_id)` for a repo path — the importer's
-    /// project mapping from a transcript's cwd. None if the path isn't a tracked folder.
+    /// project mapping from a transcript's cwd. Matches the folder whose current
+    /// `abs_path` is the path, OR (fallback) whose `folder_path_aliases` includes it
+    /// — so a transcript recorded under an OLD path (before a rename/move) still
+    /// resolves to the current folder + project. A live abs_path match wins over an
+    /// alias. None if the path isn't a tracked folder or a known former path.
     pub async fn get_folder_ids_by_path(&self, abs_path: &str) -> Result<Option<(uuid::Uuid, Option<uuid::Uuid>)>, String> {
         let row: Option<(uuid::Uuid, Option<uuid::Uuid>)> = sqlx_core::query_as::query_as(
-            "SELECT id, project_id FROM sensei.folders WHERE abs_path = $1"
+            "SELECT f.id, f.project_id FROM sensei.folders f
+             WHERE f.abs_path = $1
+                OR f.id = (SELECT folder_id FROM sensei.folder_path_aliases WHERE alias_abs_path = $1)
+             ORDER BY (f.abs_path = $1) DESC
+             LIMIT 1"
         ).bind(abs_path).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(row)
+    }
+
+    /// Register a former absolute path for a folder (`folder_path_aliases`), so a
+    /// transcript/hook cwd recorded at the old path still resolves to this folder +
+    /// its project after a rename/move. Idempotent (re-registering an alias updates
+    /// its reason). `reason` is `rename` (explicit) or `detected` (git-remote match).
+    pub async fn add_folder_path_alias(
+        &self,
+        alias_abs_path: &str,
+        folder_id: &uuid::Uuid,
+        reason: &str,
+    ) -> Result<(), String> {
+        sqlx_core::query::query(
+            "INSERT INTO sensei.folder_path_aliases (alias_abs_path, folder_id, reason)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (alias_abs_path) DO UPDATE SET folder_id = EXCLUDED.folder_id, reason = EXCLUDED.reason",
+        )
+        .bind(alias_abs_path)
+        .bind(folder_id)
+        .bind(reason)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Re-attach orphaned sessions: `activity.assistant_events` rows whose session
+    /// no longer has an `activity.sessions` row (its folder was cascade-deleted on a
+    /// repo delete/rename, but the events — session-id-keyed, no FK — survived). For
+    /// each, recreate the session row, resolving `folder_id` from the session's cwd
+    /// via [`find_folder_for_path`] (alias-aware, so a renamed repo's history
+    /// re-attaches to the current folder + project). Sessions whose cwd still doesn't
+    /// resolve (no folder, no alias) are left orphaned. Idempotent — a session that
+    /// already has a row isn't reprocessed. Returns the number repaired.
+    pub async fn repair_orphaned_sessions(&self) -> Result<u32, String> {
+        // All distinct cwds per orphaned session. We try them MOST-SPECIFIC (longest)
+        // first: a renamed subdir (`…/monorepo/docs`, aliased to the new repo) is a
+        // deeper — and thus stronger — signal than a still-live parent (`…/strategos`)
+        // that would otherwise shadow it and misattribute. find_folder_for_path is
+        // alias-aware, so the longest matching path wins via its alias.
+        let orphans: Vec<(String, Vec<String>, String)> = sqlx_core::query_as::query_as(
+            "SELECT e.session_id,
+                    COALESCE(array_agg(DISTINCT e.cwd) FILTER (WHERE e.cwd IS NOT NULL), '{}') AS cwds,
+                    (array_agg(e.family::text))[1] AS family
+               FROM activity.assistant_events e
+              WHERE e.session_id <> ''
+                AND NOT EXISTS (
+                    SELECT 1 FROM activity.sessions s WHERE s.client_session_id = e.session_id)
+              GROUP BY e.session_id",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        let mut repaired = 0u32;
+        for (session_id, mut cwds, family) in orphans {
+            cwds.sort_by_key(|c| std::cmp::Reverse(c.len())); // most-specific first
+            let mut resolved = None;
+            for cwd in &cwds {
+                if let Ok(Some(fp)) = self.find_folder_for_path(cwd).await {
+                    resolved = Some(fp);
+                    break;
+                }
+            }
+            let Some((folder_id, project_id)) = resolved else {
+                continue; // no cwd resolves (no folder, no alias) — leave orphaned
+            };
+            if self
+                .record_session_event(&session_id, &folder_id, project_id.as_ref(), &family, true)
+                .await
+                .is_ok()
+            {
+                repaired += 1;
+            }
+        }
+        Ok(repaired)
     }
 
     /// True if a session already has captured/imported events — the dedup guard
@@ -7892,6 +8095,31 @@ impl PgStore {
         .await
         .map_err(|e| e.to_string())?;
         Ok(row.map(|(slug,)| slug))
+    }
+
+    /// The run's project as `(slug, name)` for the dōjō `dojo.projects` display row:
+    /// the project-scope namespace slug (as [`run_project_slug`]) plus the project's
+    /// display name (`sensei.projects.name`). Both are the user's own project
+    /// metadata, federated as-is. `None` when the run has no bound project namespace.
+    pub async fn run_project_info(
+        &self,
+        run_id: &uuid::Uuid,
+    ) -> Result<Option<(String, String)>, String> {
+        let row: Option<(String, String)> = sqlx_core::query_as::query_as(
+            "SELECT n.slug, p.name
+               FROM activity.runs r
+               JOIN sensei.projects p ON p.id = r.project_id
+               JOIN sensei.folders f ON f.project_id = r.project_id
+               JOIN sensei.folder_namespaces fn ON fn.folder_id = f.id
+               JOIN sensei.namespaces n ON n.id = fn.namespace_id
+              WHERE r.id = $1 AND n.scope_key = 'project'
+              LIMIT 1",
+        )
+        .bind(run_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(row)
     }
 
     /// The global, repo-independent ruleset: rules at the always-on `general`
@@ -11533,6 +11761,184 @@ mod tests {
             .map(|(id, _)| id), Some(fid), "exact path resolves too");
         assert_eq!(s.find_folder_for_path("/_test/nonexistent-xyz/deep").await.unwrap(), None,
             "uncovered path resolves to nothing");
+    }
+
+    /// The folder a repaired/created session row points at (test assertion helper).
+    async fn session_row_folder(s: &PgStore, client_session_id: &str) -> Option<uuid::Uuid> {
+        let row: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
+            "SELECT folder_id FROM activity.sessions WHERE client_session_id = $1",
+        )
+        .bind(client_session_id)
+        .fetch_optional(&s.pool)
+        .await
+        .unwrap();
+        row.map(|(f,)| f)
+    }
+
+    // The repair operates on ALL orphaned sessions in the DB, and sensei_test is
+    // persistent + tests run in parallel, so a prior run's rows can linger. Each repair
+    // test clears its OWN session first, then asserts only the (deterministic) folder its
+    // session resolves to after repair — never a global "no row exists" precondition.
+    async fn clear_test_session(s: &PgStore, sid: &str) {
+        sqlx_core::query::query("DELETE FROM activity.sessions WHERE client_session_id = $1")
+            .bind(sid).execute(&s.pool).await.unwrap();
+        sqlx_core::query::query("DELETE FROM activity.assistant_events WHERE session_id = $1")
+            .bind(sid).execute(&s.pool).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn repair_orphaned_sessions_reattaches_via_alias() {
+        // A session captured under a since-renamed repo: its events survived but the
+        // session row was cascade-deleted. The repair recreates the row, resolving the
+        // folder from the (old) cwd via the alias.
+        let s = pg_store().await;
+        let sess = "_test-repair-orphan-session";
+        clear_test_session(&s, sess).await;
+        let fid = create_test_folder(&s, "repair-new").await; // /_test/repair-new
+        s.add_folder_path_alias("/_test/repair-old", &fid, "rename").await.unwrap();
+        // an orphaned event under the OLD path (a subdir) — no session row.
+        s.insert_hook_event(sess, "claude", "PreToolUse", None, Some("/_test/repair-old/src"), 1_700_000_000, None, &serde_json::json!({}))
+            .await.unwrap();
+        let repaired = s.repair_orphaned_sessions().await.unwrap();
+        assert!(repaired >= 1, "at least this orphaned session is re-attached; got {repaired}");
+        assert_eq!(session_row_folder(&s, sess).await, Some(fid),
+            "the session row now exists and points at the current folder (resolved via the alias)");
+    }
+
+    #[tokio::test]
+    async fn repair_prefers_the_renamed_subdir_over_a_live_parent() {
+        // The defect this guards: a session with events under BOTH a still-live parent
+        // (`/_test/shadow-parent`) AND a renamed subdir aliased to a different folder
+        // (`/_test/shadow-parent/sub` → new folder). Most-specific-first must attribute
+        // it to the renamed subdir's folder, not the shadowing parent.
+        let s = pg_store().await;
+        let sess = "_test-shadow-session";
+        clear_test_session(&s, sess).await;
+        let parent = create_test_folder(&s, "shadow-parent").await; // live /_test/shadow-parent
+        let moved = create_test_folder(&s, "shadow-moved").await; // the renamed subdir's new home
+        s.add_folder_path_alias("/_test/shadow-parent/sub", &moved, "rename").await.unwrap();
+        // events under BOTH the live parent and the renamed subdir.
+        s.insert_hook_event(sess, "claude", "PreToolUse", None, Some("/_test/shadow-parent"), 1_700_000_100, None, &serde_json::json!({})).await.unwrap();
+        s.insert_hook_event(sess, "claude", "PreToolUse", None, Some("/_test/shadow-parent/sub/x"), 1_700_000_200, None, &serde_json::json!({})).await.unwrap();
+        s.repair_orphaned_sessions().await.unwrap();
+        assert_eq!(session_row_folder(&s, sess).await, Some(moved),
+            "attributes to the renamed subdir (via its alias), NOT the shadowing live parent");
+        assert_ne!(session_row_folder(&s, sess).await, Some(parent));
+    }
+
+    async fn set_folder_remotes(s: &PgStore, id: &uuid::Uuid, urls: &[&str]) {
+        let json = serde_json::Value::Array(
+            urls.iter().map(|u| serde_json::json!({"name": "origin", "url": u})).collect(),
+        );
+        sqlx_core::query::query("UPDATE sensei.folders SET remote_urls = $2 WHERE id = $1")
+            .bind(id).bind(&json).execute(&s.pool).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn find_live_root_by_remote_matches_only_a_live_path_sharing_a_url() {
+        let s = pg_store().await;
+        let url = "git@github.com:sensei-hq/remote-probe.git";
+        let live = create_test_folder(&s, "remote-live").await; // /_test/remote-live
+        set_folder_remotes(&s, &live, &[url]).await;
+        let live_abs = vec!["/_test/remote-live".to_string()];
+
+        assert_eq!(s.find_live_root_by_remote(&[url.to_string()], &live_abs).await.unwrap(), Some(live),
+            "a live root sharing the git remote is the remap target");
+        assert_eq!(s.find_live_root_by_remote(&["git@github.com:other/x.git".to_string()], &live_abs).await.unwrap(), None,
+            "a non-matching remote finds nothing");
+        assert_eq!(s.find_live_root_by_remote(&[], &live_abs).await.unwrap(), None,
+            "no remote to match on → None (a remote-less folder can't be remapped)");
+        assert_eq!(s.find_live_root_by_remote(&[url.to_string()], &["/_test/not-live".to_string()]).await.unwrap(), None,
+            "the matching folder is not in the live set → not a remap target");
+    }
+
+    #[tokio::test]
+    async fn folder_has_sessions_reflects_attached_history() {
+        let s = pg_store().await;
+        let sess = "_test-hasshist-session";
+        clear_test_session(&s, sess).await;
+        let fid = create_test_folder(&s, "hashist").await;
+        assert!(!s.folder_has_sessions(&fid).await.unwrap(), "no sessions yet");
+        s.record_session_event(sess, &fid, None, "claude", true).await.unwrap();
+        assert!(s.folder_has_sessions(&fid).await.unwrap(), "session attached → has history");
+    }
+
+    #[tokio::test]
+    async fn remap_folder_moves_sessions_aliases_old_path_and_drops_old_row() {
+        let s = pg_store().await;
+        let sess = "_test-remap-session";
+        clear_test_session(&s, sess).await;
+        let old = create_test_folder(&s, "remap-old").await; // /_test/remap-old
+        let new = create_test_folder(&s, "remap-new").await; // /_test/remap-new
+        s.record_session_event(sess, &old, None, "claude", true).await.unwrap();
+
+        s.remap_folder(&old, "/_test/remap-old", &new).await.unwrap();
+
+        assert_eq!(session_row_folder(&s, sess).await, Some(new), "history moved onto the new folder");
+        assert_eq!(s.find_folder_for_path("/_test/remap-old").await.unwrap().map(|(f, _)| f), Some(new),
+            "the old path now aliases forward to the new folder");
+        let old_still_there: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as("SELECT id FROM sensei.folders WHERE id = $1")
+            .bind(old).fetch_optional(&s.pool).await.unwrap();
+        assert!(old_still_there.is_none(), "the old husk row is dropped");
+    }
+
+    #[tokio::test]
+    async fn archive_folder_sets_archived_status() {
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, "to-archive").await;
+        s.archive_folder(&fid).await.unwrap();
+        let (status,): (String,) = sqlx_core::query_as::query_as("SELECT status::text FROM sensei.folders WHERE id = $1")
+            .bind(fid).fetch_one(&s.pool).await.unwrap();
+        assert_eq!(status, "archived", "the vanished history-bearing root is retained as archived");
+    }
+
+    #[tokio::test]
+    async fn update_folder_remotes_populates_and_is_matchable() {
+        let s = pg_store().await;
+        let url = "git@github.com:sensei-hq/populate-probe.git";
+        let fid = create_test_folder(&s, "populate-remotes").await; // /_test/populate-remotes
+        s.update_folder_remotes(&fid, &serde_json::json!([{"name":"origin","url":url}])).await.unwrap();
+        // Round-trips into remote_urls AND is now findable as a live-root remote match.
+        assert_eq!(
+            s.find_live_root_by_remote(&[url.to_string()], &["/_test/populate-remotes".to_string()]).await.unwrap(),
+            Some(fid),
+            "the written remote is what makes auto-remap able to fire"
+        );
+    }
+
+    #[tokio::test]
+    async fn folder_id_by_abs_path_is_exact_and_never_follows_aliases() {
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, "exact-path").await; // /_test/exact-path
+        s.add_folder_path_alias("/_test/exact-old", &fid, "rename").await.unwrap();
+        assert_eq!(s.folder_id_by_abs_path("/_test/exact-path").await.unwrap(), Some(fid),
+            "exact abs_path resolves to the folder");
+        assert_eq!(s.folder_id_by_abs_path("/_test/exact-old").await.unwrap(), None,
+            "an aliased path is NOT a real folder row — exact lookup returns None");
+        assert_eq!(s.folder_id_by_abs_path("/_test/never").await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn folder_path_alias_resolves_old_paths_after_a_rename() {
+        // A renamed repo: the folder now lives at the new abs_path, and its OLD
+        // path is registered as an alias. Transcripts/hooks recorded under the old
+        // path (and its subdirs) must still resolve to the folder + project.
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, "alias-new").await; // abs_path /_test/alias-new
+        let old = "/_test/alias-old";
+        s.add_folder_path_alias(old, &fid, "rename").await.unwrap();
+        // exact-match resolver (transcript synthesis) resolves the old path via alias.
+        assert_eq!(s.get_folder_ids_by_path(old).await.unwrap().map(|(id, _)| id), Some(fid),
+            "old exact path resolves via alias");
+        // ancestor resolver (hooks / synth fallback) resolves an old SUBDIR via alias.
+        assert_eq!(s.find_folder_for_path("/_test/alias-old/docs/mockups").await.unwrap()
+            .map(|(id, _)| id), Some(fid), "old subdir resolves to the folder via the alias ancestor");
+        // the current path still resolves (live abs_path unaffected).
+        assert_eq!(s.get_folder_ids_by_path("/_test/alias-new").await.unwrap().map(|(id, _)| id),
+            Some(fid), "current path still resolves");
+        // idempotent re-register.
+        s.add_folder_path_alias(old, &fid, "detected").await.unwrap();
+        assert_eq!(s.get_folder_ids_by_path(old).await.unwrap().map(|(id, _)| id), Some(fid));
     }
 
     #[tokio::test]

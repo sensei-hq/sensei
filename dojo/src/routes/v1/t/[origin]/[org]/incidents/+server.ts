@@ -9,6 +9,8 @@ import type { RequestHandler } from './$types';
 import { dojoDb } from '$lib/server/dojo-supabase';
 import { resolveTenantAccess, apiError, ACCESS } from '$lib/server/dojo-auth';
 import { listIncidents, createIncident, parseNewIncident, IncidentsError } from '$lib/server/incidents-data';
+import { resolveEngagementClientNames } from '$lib/server/engagement-client-names';
+import { AdminError } from '$lib/server/admin-data';
 import { recordAudit } from '$lib/server/audit';
 
 export const GET: RequestHandler = async ({ params, request, locals }) => {
@@ -20,11 +22,24 @@ export const GET: RequestHandler = async ({ params, request, locals }) => {
 			locals,
 			ACCESS.lead
 		);
-		const { incidents, open_count } = await listIncidents(dojoDb(), tenantId);
-		return Response.json({ incidents, open_count });
+		const db = dojoDb();
+		const { incidents, open_count } = await listIncidents(db, tenantId);
+		// Resolve each incident's engagement → client name (Rule C); the row
+		// otherwise carries only the engagement uuid (rendered as a short id).
+		const names = await resolveEngagementClientNames(
+			db,
+			tenantId,
+			incidents.map((i) => i.engagement_id).filter((x): x is string => typeof x === 'string')
+		);
+		const enriched = incidents.map((i) => ({
+			...i,
+			client_name: i.engagement_id ? (names.get(i.engagement_id) ?? null) : null
+		}));
+		return Response.json({ incidents: enriched, open_count });
 	} catch (e) {
 		if (e instanceof Response) return e;
 		if (e instanceof IncidentsError) return apiError(e.status, e.message);
+		if (e instanceof AdminError) return apiError(e.status, e.message);
 		throw e;
 	}
 };

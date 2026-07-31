@@ -46,6 +46,13 @@
 - Is this screen the **artifact-strip ledger** (`dojo.artifacts` / `…/audit/artifacts`, per the lead-console spec + mockup copy) or the **tenant action-audit** (`dojo.audit_events`)? The two are conflated today — pick one and align the copy + source.
 - If the artifact ledger: does it need an engagement selector, or list all engagements' artifacts for the tenant?
 - Export format (CSV / JSON / PDF) and the exact strip-covered column subset — confirm before wiring `compliance/export`.
+
+### Resolved design (2026-07-30)
+- **Source → CONFIDENTIALITY/CONTAINMENT LEDGER** over `dojo.audit_events` filtered to `{published/shared, contained/held}` events, **per engagement** (engagement selector = yes). NOT the general action-audit; NOT the retired artifact-strip ledger.
+- **Rule B reframe:** the old `…/audit/artifacts?dereferenced=true` source + `AuditArtifact.dereferenced` red-fail are RETIRED (removed in `a7140fbf`; the `dereferenced` column is dropped). Rebind to the audit-event filter. Semantics flip: `published` = crossed (source-stripped **by construction**, always-on); `held/contained` = the guard blocked it (the containment events defined on the **health** screen, `action='contained'/'held'`). Drop the "dereferenced=false = broken strip red-fail" framing — a held row is the guard WORKING, not a failure.
+- **`held` domain field** = "was this a contained/held event" (guard blocked) vs published (crossed) — a reframed observed result, not the old per-artifact strip verdict.
+- **Export → CSV** (source-ref-free subset; universal dereference respected; consistent with role-surfaces audit export).
+- **Depends on:** the containment events on `dojo.audit_events` (health-screen seam) + a per-engagement audit-event filter/read + CSV export. Copy reworded (no "broken strip" / "distinct from admin action-audit" theater).
 - Retention (7 yr) + client read-access — real `dojo.policies` values, or display copy for now?
 
 ## Components & state (three-layer, per `sensei:ui-state-pattern`)

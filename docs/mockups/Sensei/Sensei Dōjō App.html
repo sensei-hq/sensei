@@ -5,6 +5,7 @@
   <title>Sensei · Dōjō — app (work-first)</title>
   <meta name="viewport" content="width=1600"/>
   <link rel="stylesheet" href="lib/tokens.css"/>
+  <script src="lib/unocss.js"></script>
   <link rel="stylesheet" href="fonts.css"/>
   <script>
     (function(){
@@ -57,6 +58,7 @@
   <script type="text/babel" src="lib/shared/design-canvas.jsx"></script>
   <script type="text/babel" src="lib/shared/primitives.jsx"></script>
   <script src="lib/data/dojo2-data.js"></script>
+  <script src="lib/data/dojo2-api.js"></script>
   <script type="text/babel" src="lib/dojo2/dojo2-kit.jsx"></script>
   <script type="text/babel" src="lib/dojo2/dojo2-app.jsx"></script>
 
@@ -102,6 +104,10 @@
             <DCArtboard id="o-home" label="5 · Org home · Acme (admin)" width={W} height={H}><A label="Org home" start="acme" startNav="home" /></DCArtboard>
             <DCArtboard id="o-ladder" label="6 · Constitution ladder · author per scope" width={W} height={H}><A label="Org ladder" start="acme" startNav="ladder" /></DCArtboard>
             <DCArtboard id="o-preview" label="7 · Project → effective constitution" width={W} height={H}><A label="Org preview" start="acme" startNav="projects" startProject={authProj} /></DCArtboard>
+            <DCArtboard id="o-teams" label="T1 · Teams — collective metrics, one row per team" width={W} height={H}><A label="Teams" start="acme" startNav="teams" /></DCArtboard>
+            <DCArtboard id="o-team" label="T2 · Team detail — metrics · by developer · shared memory · inflow" width={W} height={H}><A label="Team" start="acme" startNav="teams" startTeam="payments" /></DCArtboard>
+            <DCArtboard id="o-person" label="T3 · Developer drill-down — counts, never transcripts" width={W} height={H}><A label="Developer" start="acme" startNav="teams" startTeam="payments" startPerson="Aiko Nakamura" /></DCArtboard>
+            <DCArtboard id="o-inflow" label="T4 · Inflow — what each local sensei sends up" width={W} height={H}><A label="Inflow" start="acme" startNav="teams" startTeamTab="inflow" /></DCArtboard>
             <DCArtboard id="o-members" label="8 · Role surfaces · members/roles/policies (admin)" width={W} height={H}><A label="Members" start="acme" startNav="members" /></DCArtboard>
             <DCArtboard id="o-triage" label="G1 · Triage (maintainer) — candidate queue + detail" width={W} height={H}><A label="Triage" start="acme" startNav="triage" /></DCArtboard>
             <DCArtboard id="o-approvals" label="G2 · Approvals (maintainer) — second sign-off" width={W} height={H}><A label="Approvals" start="acme" startNav="approvals" /></DCArtboard>
@@ -122,6 +128,8 @@
             <DCArtboard id="m-inbox" label="Inbox — needs-you first" width={390} height={844}><M label="m · inbox" startTab="inbox" /></DCArtboard>
             <DCArtboard id="m-run" label="Session detail — gate answered in place" width={390} height={844}><M label="m · session" startTab="inbox" startRun="s-2891" /></DCArtboard>
             <DCArtboard id="m-projects" label="Your projects" width={390} height={844}><M label="m · projects" startTab="projects" /></DCArtboard>
+            <DCArtboard id="m-teams" label="Teams — collective, stacked" width={390} height={844}><M label="m · teams" start="acme" startTab="teams" /></DCArtboard>
+            <DCArtboard id="m-team" label="Team detail · Payments" width={390} height={844}><M label="m · team" start="acme" startTab="teams" startTeam="payments" /></DCArtboard>
             <DCArtboard id="m-org" label="Org home · Acme" width={390} height={844}><M label="m · org" start="acme" startTab="home" /></DCArtboard>
             <DCArtboard id="m-ladder" label="Org · constitution ladder" width={390} height={844}><M label="m · ladder" start="acme" startTab="ladder" /></DCArtboard>
           </DCSection>

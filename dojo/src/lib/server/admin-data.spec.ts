@@ -47,18 +47,54 @@ function makeListDb(result: Terminal) {
 	return { db: b as unknown as DojoClient, captured };
 }
 
-describe('listMembers / listIdentities / listPolicies', () => {
+describe('listIdentities / listPolicies', () => {
 	it('returns the rows on success', async () => {
 		const rows = [{ id: 'm1' }];
-		expect(await listMembers(makeListDb({ data: rows, error: null }).db, 't1')).toEqual(rows);
 		expect(await listIdentities(makeListDb({ data: rows, error: null }).db, 't1')).toEqual(rows);
 		expect(await listPolicies(makeListDb({ data: rows, error: null }).db, 't1')).toEqual(rows);
 	});
 	it('returns [] when data is null', async () => {
-		expect(await listMembers(makeListDb({ data: null, error: null }).db, 't1')).toEqual([]);
+		expect(await listIdentities(makeListDb({ data: null, error: null }).db, 't1')).toEqual([]);
 	});
 	it('throws AdminError(500) on a query error', async () => {
-		await expect(listMembers(makeListDb({ data: null, error: { message: 'boom' } }).db, 't1')).rejects.toThrow(AdminError);
+		await expect(listIdentities(makeListDb({ data: null, error: { message: 'boom' } }).db, 't1')).rejects.toThrow(AdminError);
+	});
+});
+
+// ── listMembers: memberships query + WS-1 identity enrichment (a second query) ──
+// listMembers issues TWO queries: memberships (terminal `.order()`) then
+// dojo.identities via resolveDisplayNames (terminal `.in()`).
+function makeMembersDb(members: Terminal, identities: { data?: unknown; error: unknown }) {
+	const b: Record<string, unknown> = {};
+	b.from = () => b;
+	b.select = () => b;
+	b.eq = () => b;
+	b.order = () => Promise.resolve(members);
+	b.in = () => Promise.resolve(identities);
+	return b as unknown as DojoClient;
+}
+
+describe('listMembers (WS-1 identity enrichment)', () => {
+	it('enriches each member with the display name + email resolved from identities', async () => {
+		const db = makeMembersDb(
+			{ data: [{ id: 'm1', user_id: 'u1' }, { id: 'm2', user_id: 'u2' }], error: null },
+			{ data: [{ user_id: 'u1', display_name: 'Ada', email: 'ada@x.co', last_login_at: null }], error: null }
+		);
+		const out = await listMembers(db, 't1');
+		expect(out[0]).toMatchObject({ id: 'm1', display_name: 'Ada', email: 'ada@x.co' });
+		expect(out[1]).toMatchObject({ id: 'm2', display_name: null, email: null }); // no identity → shortId fallback
+	});
+	it('returns [] (and skips the identity query) when there are no members', async () => {
+		const db = makeMembersDb({ data: null, error: null }, { data: [], error: null });
+		expect(await listMembers(db, 't1')).toEqual([]);
+	});
+	it('throws AdminError(500) when the memberships query errors', async () => {
+		const db = makeMembersDb({ data: null, error: { message: 'boom' } }, { data: [], error: null });
+		await expect(listMembers(db, 't1')).rejects.toThrow(AdminError);
+	});
+	it('throws AdminError(500) when the identity-enrichment query errors (fail-closed)', async () => {
+		const db = makeMembersDb({ data: [{ id: 'm1', user_id: 'u1' }], error: null }, { data: null, error: { message: 'id boom' } });
+		await expect(listMembers(db, 't1')).rejects.toThrow(AdminError);
 	});
 });
 
@@ -96,6 +132,7 @@ function makeCountDb(results: Terminal[]) {
 describe('getHealth', () => {
 	it('composes the four counts into the rollup', async () => {
 		const db = makeCountDb([
+			{ count: 0, error: null }, // memberships scope fetch (.eq → .then; data unused, ids => [])
 			{ count: 3, error: null }, // connections (.gte heartbeat)
 			{ count: 12, error: null }, // queue_depth (.eq state) — resolves via .then
 			{ count: 5, error: null }, // publish_rate (.gte ts)
@@ -186,19 +223,19 @@ describe('parseNewMember', () => {
 });
 
 describe('addMember', () => {
-	it('inserts the membership with the tenant + dojo_url and returns { id, role }', async () => {
+	it('inserts the membership with the tenant and returns { id, role } (no dojo_url — derived from the tenant)', async () => {
 		const { db, captured } = makeMutDb({ data: { id: 'm1', role: 'contributor' }, error: null });
 		const input = parseNewMember({ user_id: 'u1', kind: 'client', authenticated_via: 'sso' });
-		expect(await addMember(db, 't1', 'github/acme', input)).toEqual({ id: 'm1', role: 'contributor' });
+		expect(await addMember(db, 't1', input)).toEqual({ id: 'm1', role: 'contributor' });
 		const payload = captured.payload as Record<string, unknown>;
 		expect(payload.tenant_id).toBe('t1');
-		expect(payload.dojo_url).toBe('github/acme');
 		expect(payload.user_id).toBe('u1');
+		expect(payload).not.toHaveProperty('dojo_url'); // Rule C: derived from dojo.tenants.dojo_url
 	});
 	it('maps a unique-violation (23505) to 409', async () => {
 		const { db } = makeMutDb({ data: null, error: { code: '23505', message: 'dup' } });
 		const input = parseNewMember({ user_id: 'u1', kind: 'client', authenticated_via: 'sso' });
-		await expect(addMember(db, 't1', 'github/acme', input)).rejects.toMatchObject({ status: 409 });
+		await expect(addMember(db, 't1', input)).rejects.toMatchObject({ status: 409 });
 	});
 });
 

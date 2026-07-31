@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { SectionHead, Banner, Btn, Chip, ListSection, KanjiToken, EmptyState } from '$lib/components/kit';
-	import type { KitIncident } from '$lib/components/kit/types';
+	import type { KitIncident, KitIncidentDetail } from '$lib/components/kit/types';
 	import { severityTone, stateToneClass } from '$lib/incidents-view';
+	import IncidentDetailPane from './IncidentDetailPane.svelte';
 
 	// The lead confidentiality-incidents list (mockup ScrIncidents) — near-leaks
 	// leak-guard held before client source could leave, one row each (client ·
@@ -12,16 +13,22 @@
 	let {
 		orgName,
 		incidents = [],
+		detail = null,
 		mobile = false,
 		onOpen,
+		onCloseDetail,
 		onReport,
 		onResolve,
 		onDelete
 	}: {
 		orgName: string;
 		incidents?: KitIncident[];
+		/** The loaded detail for the "Open" pane, or null when none is open. */
+		detail?: KitIncidentDetail | null;
 		mobile?: boolean;
 		onOpen?: (i: KitIncident) => void;
+		/** Dismiss the open detail pane. */
+		onCloseDetail?: () => void;
 		/** Report (open) a new incident (lead) — prompts for a title. Absent =
 		 *  read-only. */
 		onReport?: (title: string) => void;
@@ -90,6 +97,8 @@
 			{/each}
 		</ListSection>
 	{/if}
+
+	<IncidentDetailPane {detail} onClose={onCloseDetail} />
 
 	<div class="flex flex-wrap gap-2">
 		<Chip icon="lock-keyhole" toneClass="text-ink-mute">Retention · 1 year</Chip>

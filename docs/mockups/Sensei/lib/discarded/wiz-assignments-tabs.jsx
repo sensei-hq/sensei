@@ -12,23 +12,18 @@
 
 function AsgToggle({ variant, onChange }) {
   return (
-    <div style={{ flexShrink: 0 }}>
+    <div className="shrink-0" >
       <div style={{
- fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
-                     color: 'var(--ink-4)', textAlign: 'right'
-}} className="mb-1" >variant</div>
+ fontSize: 11, letterSpacing: '0.14em' }} className="mb-1 uppercase text-ink-4 text-right" >variant</div>
       <div style={{
- display: 'flex', background: 'var(--paper-2)',
-                     borderRadius: 5, border: 'var(--hairline)'
-}} className="p-1 gap-0" >
+ borderRadius: 5 }} className="p-1 gap-0 flex bg-paper-2 border border-paper-edge" >
         {[{ id: "A", label: "Tabs" }, { id: "B", label: "Split" }].map(v => (
           <button key={v.id} onClick={() => onChange(v.id)}
-                  style={{
+ style={{
  fontSize: 11, borderRadius: 3,
-                           background: variant === v.id ? 'var(--paper)' : 'transparent',
-                           color: variant === v.id ? 'var(--ink)' : 'var(--ink-3)',
-                           border: 'none', cursor: 'pointer', letterSpacing: '0.04em'
-}} className="py-1 px-3" >
+ background: variant === v.id ? 'var(--paper)' : 'transparent',
+ color: variant === v.id ? 'var(--ink)' : 'var(--ink-3)', letterSpacing: '0.04em'
+ }} className="py-1 px-3 border-0 cursor-pointer" >
             {v.id} · {v.label}
           </button>
         ))}
@@ -44,33 +39,26 @@ function TabsVariant({ D, priority, move, remove, add }) {
 
   return (
     <>
-      <div style={{
- display: 'flex', borderBottom: 'var(--hairline)'
-}} className="mb-4 gap-0" >
+      <div className="mb-4 gap-0 flex border-b" >
         {ROLES_A.map(r => {
           const on = r.id === active;
           const count = (priority[r.id] || []).length;
           return (
             <button key={r.id} onClick={() => setActive(r.id)}
-                    style={{
- position: 'relative',
-                             display: 'flex', alignItems: 'center',
-                             background: 'transparent', border: 'none',
-                             borderBottom: on ? '2px solid var(--ink)' : '2px solid transparent',
-                             marginBottom: -1,
-                             color: on ? 'var(--ink)' : 'var(--ink-3)',
-                             cursor: 'pointer'
-}} className="gap-2 py-3 px-4" >
+ style={{
+ borderBottom: on ? '2px solid var(--ink)' : '2px solid transparent',
+ marginBottom: -1,
+ color: on ? 'var(--ink)' : 'var(--ink-3)' }} className="gap-2 py-3 px-4 relative flex items-center bg-transparent border-0 cursor-pointer" >
               <span className="kanji" style={{ fontSize: 15,
                                                  color: on ? 'var(--accent)' : 'var(--ink-3)' }}>
                 {r.kanji}
               </span>
               <span className="display" style={{ fontSize: 13 }}>{r.label}</span>
               <span style={{
- fontSize: 11, color: 'var(--ink-4)',
-                              fontFeatureSettings: '"tnum"', borderRadius: 3,
-                              background: on ? 'var(--paper-2)' : 'transparent'
-}} className="py-1 px-1" >
+ fontSize: 11,
+ fontFeatureSettings: '"tnum"', borderRadius: 3,
+ background: on ? 'var(--paper-2)' : 'transparent'
+ }} className="py-1 px-1 text-ink-4" >
                 {count}
               </span>
             </button>

@@ -5,6 +5,7 @@
   <title>Sensei · Dōjō — console (site design)</title>
   <meta name="viewport" content="width=1600"/>
   <link rel="stylesheet" href="lib/tokens.css"/>
+  <script src="lib/unocss.js"></script>
   <link rel="stylesheet" href="fonts.css"/>
   <script>
     (function(){
@@ -135,7 +136,7 @@
                      subtitle="Every functional kanji in the console, decoded. Kanji sit beside a text label in the UI — never as the sole marker of a state — so this is a reference, not a decoder ring.">
             <DCArtboard id="kanji-legend" label="Kanji marks · glossary" width={W} height={620}>
               <div className="sensei bg-paper" style={{ width: "100%", height: "100%", overflow: "auto" }}>
-                <div className="p-6" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)" }}>
+                <div className="p-8" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)" }}>
                   {[["結","Dōjō / team"],["社","Org / company"],["組","Team"],["件","Project"],["技","Stack / skill"],["己","Personal"],["群","Community / collective"],["客","Client"],
                     ["掟","Governance rules"],["問","Agents & personas"],["令","Commands"],["庫","Catalog / library"],["蔵","Knowledge"],["門","Triage"],["承","Second approval"],["検","Review gate"],
                     ["携","Relay"],["場","Projects"],["決","Decision / inbox"],["話","Chat"],["録","Session log / audit"],["観","Monitor / observe"],["盾","Anonymize / confidentiality"],["守","Guard"],

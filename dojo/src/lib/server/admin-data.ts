@@ -13,6 +13,7 @@
 // health rollup is bare).
 
 import type { dojoDb } from './dojo-supabase';
+import { resolveDisplayNames } from './identity-resolve';
 
 /** The supabase-js client returned by `dojoDb()` (scoped to the `dojo` schema). */
 export type DojoClient = ReturnType<typeof dojoDb>;
@@ -41,6 +42,10 @@ export interface Membership {
 	last_heartbeat_at: string | null;
 	disabled_at: string | null;
 	created_at: string;
+	/** WS-1: best display name resolved from `dojo.identities` (null → the caller
+	 *  falls back to a shortId; never a fabricated name). */
+	display_name: string | null;
+	email: string | null;
 }
 
 /** One identity mapping — the console `Identity`. */
@@ -113,7 +118,9 @@ const POLICY_COLS =
 	'id, scope_key, attribution_default, confidentiality, retention_days, created_at, updated_at';
 const AUDIT_COLS = 'id, ts, actor_id, engagement_id, action, target, detail';
 
-/** List the tenant's memberships, most recent first. */
+/** List the tenant's memberships, most recent first, each enriched with the
+ *  member's display name + email resolved from `dojo.identities` (WS-1). A member
+ *  with no identity row resolves to null/null (the mapper falls back to a shortId). */
 export async function listMembers(db: DojoClient, tenantId: string): Promise<Membership[]> {
 	const { data, error } = await db
 		.from('memberships')
@@ -121,7 +128,16 @@ export async function listMembers(db: DojoClient, tenantId: string): Promise<Mem
 		.eq('tenant_id', tenantId)
 		.order('created_at', { ascending: false });
 	if (error) throw new AdminError(500, error.message);
-	return (data ?? []) as unknown as Membership[];
+	const rows = (data ?? []) as unknown as Membership[];
+	const names = await resolveDisplayNames(
+		db,
+		tenantId,
+		rows.map((r) => r.user_id)
+	);
+	return rows.map((r) => {
+		const n = names.get(r.user_id);
+		return { ...r, display_name: n?.display_name ?? null, email: n?.email ?? null };
+	});
 }
 
 /** List the tenant's identity mappings, most recent first. */
@@ -183,11 +199,17 @@ export async function getHealth(db: DojoClient, tenantId: string): Promise<Healt
 	const fiveMinAgo = new Date(now - 5 * 60_000).toISOString();
 	const oneHourAgo = new Date(now - 60 * 60_000).toISOString();
 
+	// relay_* tables key on membership_id (WS-0 Rule A) — scope the tenant's live
+	// sessions via its memberships, not a dropped tenant_id column.
+	const mem = await db.from('memberships').select('id').eq('tenant_id', tenantId);
+	if (mem.error) throw new AdminError(500, mem.error.message);
+	const membershipIds = (mem.data ?? []).map((m) => m.id as string);
+
 	// connections — live relay sessions (heartbeat within 5 min).
 	const conn = await db
 		.from('relay_sessions')
 		.select('id', { count: 'exact', head: true })
-		.eq('tenant_id', tenantId)
+		.in('membership_id', membershipIds)
 		.gte('heartbeat_at', fiveMinAgo);
 	if (conn.error) throw new AdminError(500, conn.error.message);
 
@@ -307,14 +329,14 @@ export function parseNewMember(body: Record<string, unknown>): NewMemberInput {
 
 /**
  * Provision a membership (`POST …/members`) — the port of dojo-mind's
- * `add_membership`. `dojo_url` mirrors the tenant key (the daemon derives the
- * dōjō url from the same origin/org); returns `{ id, role }` (the shape
- * `admin-data.ts addMember()` unwraps). A duplicate `(tenant, user)` is a 409.
+ * `add_membership`. Returns `{ id, role }` (the shape `admin-data.ts addMember()`
+ * unwraps). A duplicate `(tenant, user)` is a 409. (Rule C: the dōjō url is
+ * derived from the membership's tenant — `dojo.tenants.dojo_url` — not stored per
+ * membership, so no `dojo_url` argument.)
  */
 export async function addMember(
 	db: DojoClient,
 	tenantId: string,
-	dojoUrl: string,
 	input: NewMemberInput
 ): Promise<{ id: string; role: string }> {
 	const { data, error } = await db
@@ -322,7 +344,6 @@ export async function addMember(
 		.insert({
 			tenant_id: tenantId,
 			user_id: input.user_id,
-			dojo_url: dojoUrl,
 			kind: input.kind,
 			authenticated_via: input.authenticated_via,
 			role: input.role,

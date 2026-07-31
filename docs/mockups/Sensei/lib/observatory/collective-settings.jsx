@@ -48,42 +48,31 @@ function ObsCollectiveSettings({ state = "ready" } = {}) {
     setCats(cats.map(c => c.id === id ? { ...c, enabled: !c.enabled } : c));
 
   return (
-    <div className="sensei" data-screen-label="Observatory · Settings · Collective intelligence"
-         style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column',
-                  background: 'var(--paper)', overflow: 'hidden' }}>
+    <div className="sensei w-full h-full flex flex-col bg-paper overflow-hidden" data-screen-label="Observatory · Settings · Collective intelligence"
+ >
 
       {/* Hero */}
-      <div style={{
- borderBottom: 'var(--hairline)',
-                     display: 'flex', alignItems: 'center'
-}} className="gap-5 pt-5 pb-4 px-6" >
-        <div className="kanji" style={{ fontSize: 40, color: 'var(--accent)', lineHeight: 1 }}>群</div>
-        <div style={{ flex: 1, minWidth: 0 }}>
+      <div className="gap-6 pt-6 pb-4 px-8 border-b flex items-center" >
+        <div className="kanji text-accent" style={{ fontSize: 40, lineHeight: 1 }}>群</div>
+        <div className="flex-1 min-w-0" >
           <div style={{
- fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
-                         textTransform: 'uppercase'
-}} className="mb-1" >
+ fontSize: 11, letterSpacing: '0.18em' }} className="mb-1 text-ink-3 uppercase" >
             Settings · Collective intelligence
           </div>
-          <h1 className="display m-0" style={{
- fontSize: 22, fontWeight: 400,
-                                            color: 'var(--ink)'
-}}>
+          <h1 className="display m-0 font-normal text-ink" style={{
+ fontSize: 22 }}>
             What sensei shares with the network.
           </h1>
           <p style={{
- fontSize: 13, color: 'var(--ink-2)',
-                       maxWidth: 720, lineHeight: 1.55
-}} className="mt-1 mb-0" >
+ fontSize: 13,
+ maxWidth: 720, lineHeight: 1.55
+ }} className="mt-1 mb-0 text-ink-2" >
             You agreed to share anonymized insights at setup. This is where
             you change how, what, and how often. Source code, prompts, file
             paths and project names never leave your machine.
           </p>
         </div>
-        <div style={{
- borderLeft: 'var(--hairline)',
-                       display: 'flex'
-}} className="gap-5 pl-5" >
+        <div className="gap-6 pl-6 border-l flex" >
           <UgMini n={U.contribution.insightsShared} l="lifetime"/>
           <UgMini n={U.contribution.usersHelped} l="users helped" accent/>
           <UgMini n={U.contribution.streak} l="week streak" mono/>
@@ -91,40 +80,33 @@ function ObsCollectiveSettings({ state = "ready" } = {}) {
       </div>
 
       <div style={{
- flex: 1, overflow: 'auto',
-                     maxWidth: 980, width: '100%'
-}} className="pt-6 pb-7 px-8 mx-auto" >
+ maxWidth: 980 }} className="pt-8 pb-12 px-16 mx-auto flex-1 overflow-auto w-full" >
 
         {/* Mode picker */}
         <Section title="Sharing mode"
                  sub="Choose how anonymized insights leave your machine.">
-          <div style={{
- display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)'
-}} className="gap-2" >
+          <div style={{ gridTemplateColumns: 'repeat(3, 1fr)'
+ }} className="gap-2 grid" >
             {Object.entries(MODE_META).map(([k, m]) => {
               const on = mode === k;
               return (
                 <button key={k} onClick={() => setMode(k)}
-                        style={{
- textAlign: 'left',
-                                  background: on ? 'var(--paper)' : 'var(--paper-2)',
-                                  border: on ? '1px solid var(--accent)' : 'var(--hairline)',
-                                  borderRadius: 6, cursor: 'pointer'
-}} className="py-4 px-4" >
-                  <div style={{
- display: 'flex', alignItems: 'center'
-}} className="gap-2 mb-2" >
+ style={{
+ background: on ? 'var(--paper)' : 'var(--paper-2)',
+ border: on ? '1px solid var(--accent)' : 'var(--hairline)',
+ borderRadius: 6 }} className="py-4 px-4 text-left cursor-pointer" >
+                  <div className="gap-2 mb-2 flex items-center" >
                     <span className="kanji" style={{ fontSize: 17,
                                   color: on ? 'var(--accent)' : 'var(--ink-3)' }}>{m.glyph}</span>
-                    <span className="display" style={{ fontSize: 15, fontWeight: 400,
-                                  color: on ? 'var(--ink)' : 'var(--ink-2)' }}>{m.label}</span>
-                    <span style={{ flex: 1 }}/>
-                    <span style={{ width: 14, height: 14, borderRadius: '50%',
-                                    border: '1.5px solid',
-                                    borderColor: on ? 'var(--accent)' : 'var(--ink-4)',
-                                    background: on ? 'var(--accent)' : 'transparent' }}/>
+                    <span className="display font-normal" style={{ fontSize: 15,
+ color: on ? 'var(--ink)' : 'var(--ink-2)' }}>{m.label}</span>
+                    <span className="flex-1" />
+                    <span className="rounded-full" style={{ width: 14, height: 14,
+ border: '1.5px solid',
+ borderColor: on ? 'var(--accent)' : 'var(--ink-4)',
+ background: on ? 'var(--accent)' : 'transparent' }}/>
                   </div>
-                  <div style={{ fontSize: 11, color: 'var(--ink-2)', lineHeight: 1.55 }}>
+                  <div className="text-ink-2" style={{ fontSize: 11, lineHeight: 1.55 }}>
                     {m.blurb}
                   </div>
                 </button>
@@ -133,11 +115,9 @@ function ObsCollectiveSettings({ state = "ready" } = {}) {
           </div>
 
           {mode !== "off" && (
-            <div style={{
- display: 'flex', alignItems: 'center', borderTop: 'var(--hairline)'
-}} className="gap-2 mt-3 pt-3" >
-              <span style={{ fontSize: 11, color: 'var(--ink-3)',
-                              letterSpacing: '0.12em', textTransform: 'uppercase' }}>
+            <div className="gap-2 mt-3 pt-3 flex items-center border-t" >
+              <span className="text-ink-3 uppercase" style={{ fontSize: 11,
+ letterSpacing: '0.12em' }}>
                 Cadence
               </span>
               {["daily", "weekly", "monthly"].map(c => (
@@ -145,10 +125,9 @@ function ObsCollectiveSettings({ state = "ready" } = {}) {
                   {c}
                 </UgChip>
               ))}
-              <span style={{ flex: 1 }}/>
+              <span className="flex-1" />
               {mode === "review" && (
-                <button style={{ fontSize: 11, color: 'var(--accent)',
-                                  background: 'transparent', border: 'none', cursor: 'pointer' }}>
+                <button className="text-accent bg-transparent border-0 cursor-pointer" style={{ fontSize: 11 }}>
                   Review next batch ({U.nextBatch.insights.length} insights) →
                 </button>
               )}
@@ -160,17 +139,12 @@ function ObsCollectiveSettings({ state = "ready" } = {}) {
         <Section title="What gets shared"
                  sub="Each category corresponds to one inference.insights type. Disable any you'd rather keep private."
                  dim={mode === "off"}>
-          <div style={{
- display: 'grid', gridTemplateColumns: '1fr 1fr',
-                         background: 'var(--edge)',
-                         borderRadius: 6, overflow: 'hidden'
-}} className="gap-1" >
+          <div style={{ gridTemplateColumns: '1fr 1fr',
+ background: 'var(--edge)',
+ borderRadius: 6 }} className="gap-1 grid overflow-hidden" >
             {cats.map(c => (
               <label key={c.id}
-                     style={{
- display: 'flex', alignItems: 'flex-start', cursor: 'pointer',
-                               background: 'var(--paper-2)'
-}} className="gap-3 py-3 px-4" >
+ className="gap-3 py-3 px-4 flex items-start cursor-pointer bg-paper-2" >
                 <input type="checkbox" checked={c.enabled}
                        onChange={() => toggleCat(c.id)}
                        disabled={mode === "off"}
@@ -181,13 +155,11 @@ function ObsCollectiveSettings({ state = "ready" } = {}) {
                 <span className="kanji" style={{ fontSize: 15,
                               color: c.enabled ? 'var(--accent)' : 'var(--ink-4)',
                               marginTop: -1 }}>{c.glyph}</span>
-                <div style={{ flex: 1, minWidth: 0 }}>
+                <div className="flex-1 min-w-0" >
                   <div style={{
- fontSize: 13, color: 'var(--ink)',
-                                 fontWeight: 500
-}} className="mb-1" >{c.label}</div>
-                  <div style={{ fontSize: 11, color: 'var(--ink-2)',
-                                 lineHeight: 1.5 }}>{c.blurb}</div>
+ fontSize: 13 }} className="mb-1 text-ink font-medium" >{c.label}</div>
+                  <div className="text-ink-2" style={{ fontSize: 11,
+ lineHeight: 1.5 }}>{c.blurb}</div>
                 </div>
               </label>
             ))}
@@ -197,40 +169,31 @@ function ObsCollectiveSettings({ state = "ready" } = {}) {
         {/* Sharing history */}
         <Section title="Sharing history"
                  sub="Every batch sensei has shipped on your behalf. Click any to see what was in it.">
-          <div style={{ display: 'flex', flexDirection: 'column' }}>
+          <div className="flex flex-col" >
             {U.sharingHistory.map(b => (
               <button key={b.id}
-                      style={{
- display: 'grid',
-                                gridTemplateColumns: '90px 60px 1fr auto', alignItems: 'center', textAlign: 'left',
-                                borderBottom: 'var(--hairline)',
-                                background: 'transparent', cursor: 'pointer'
-}} className="gap-4 py-3 px-2" >
-                <span className="mono" style={{ fontSize: 11, color: 'var(--ink-2)' }}>
+ style={{
+ gridTemplateColumns: '90px 60px 1fr auto' }} className="gap-4 py-3 px-2 grid items-center text-left border-b bg-transparent cursor-pointer" >
+                <span className="mono text-ink-2" style={{ fontSize: 11 }}>
                   {b.date}
                 </span>
-                <span className="display" style={{ fontSize: 15, fontWeight: 400,
-                              color: 'var(--ink)' }}>{b.insights}</span>
-                <span style={{ display: 'flex', flexWrap: 'wrap' }} className="gap-1" >
+                <span className="display font-normal text-ink" style={{ fontSize: 15 }}>{b.insights}</span>
+                <span className="gap-1 flex flex-wrap" >
                   {b.categories.map(cat => {
                     const m = SHARE_CATEGORIES.find(x => x.id === cat) ||
                               { glyph: "?", label: cat };
                     return (
-                      <span key={cat} className="mono py-1 px-2 gap-1"
-                            style={{
+                      <span key={cat} className="mono py-1 px-2 gap-1 bg-paper-2 text-ink-3 inline-flex items-center"
+ style={{
  fontSize: 11,
-                                      borderRadius: 3, background: 'var(--paper-2)',
-                                      color: 'var(--ink-3)',
-                                      display: 'inline-flex', alignItems: 'center'
-}}>
-                        <span className="kanji" style={{ fontSize: 11,
-                                      color: 'var(--accent)' }}>{m.glyph}</span>
+ borderRadius: 3 }}>
+                        <span className="kanji text-accent" style={{ fontSize: 11 }}>{m.glyph}</span>
                         {m.label.toLowerCase()}
                       </span>
                     );
                   })}
                 </span>
-                <span className="mono" style={{ fontSize: 11, color: 'var(--success)' }}>
+                <span className="mono text-success" style={{ fontSize: 11 }}>
                   helped {b.helpedUsers}
                 </span>
               </button>
@@ -242,23 +205,18 @@ function ObsCollectiveSettings({ state = "ready" } = {}) {
         <Section title="Lifetime contribution"
                  sub="Aggregate signal across every batch you've shipped.">
           <div style={{
- background: 'var(--paper-2)', border: 'var(--hairline)',
-                         borderRadius: 8,
-                         display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)'
-}} className="py-5 px-5 gap-5" >
+ borderRadius: 8, gridTemplateColumns: 'repeat(4, 1fr)'
+ }} className="py-6 px-6 gap-6 bg-paper-2 border border-paper-edge grid" >
             <BigStat n={U.contribution.insightsShared} l="insights shared"/>
             <BigStat n={U.contribution.usersHelped} l="users helped" accent/>
             <BigStat n={U.contribution.streak} l="weekly streak" mono/>
             <BigStat n={U.contribution.rank} l="contributor rank" mono accent/>
           </div>
           <div style={{
- fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.6,
-                         background: 'var(--success-soft)', borderRadius: 6,
-                         display: 'flex', alignItems: 'flex-start'
-}} className="mt-4 py-3 px-4 gap-2" >
-            <span className="kanji" style={{ fontSize: 13, color: 'var(--success)' }}>礼</span>
+ fontSize: 13, lineHeight: 1.6, borderRadius: 6 }} className="mt-4 py-3 px-4 gap-2 text-ink-2 bg-success-soft flex items-start" >
+            <span className="kanji text-success" style={{ fontSize: 13 }}>礼</span>
             <span>
-              Your <span style={{ fontWeight: 500 }}>{U.contribution.bestCategory}</span>{" "}
+              Your <span className="font-medium" >{U.contribution.bestCategory}</span>{" "}
               insights have been your strongest contribution
               ({U.contribution.bestCategoryCount} shared).
               The {U.contribution.usersHelped} senseis who used them are anonymous to you,
@@ -269,7 +227,7 @@ function ObsCollectiveSettings({ state = "ready" } = {}) {
 
         {/* Danger / privacy zone */}
         <Section title="Privacy controls" sub="">
-          <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
+          <div className="gap-1 flex flex-col" >
             <PrivacyRow glyph="覗" label="Audit what's anonymized"
                         sub="Show the redaction transforms applied before any insight leaves the machine."/>
             <PrivacyRow glyph="戻" label="Recall a previous batch"
@@ -286,17 +244,16 @@ function ObsCollectiveSettings({ state = "ready" } = {}) {
 
 function Section({ title, sub, children, dim }) {
   return (
-    <section style={{ opacity: dim ? 0.4 : 1 }} className="mb-6" >
+    <section style={{ opacity: dim ? 0.4 : 1 }} className="mb-8" >
       <div className="mb-3" >
-        <h2 className="display m-0" style={{
- fontSize: 15, fontWeight: 500,
-                      color: 'var(--ink)', letterSpacing: '-0.005em'
-}}>{title}</h2>
+        <h2 className="display m-0 font-medium text-ink" style={{
+ fontSize: 15, letterSpacing: '-0.005em'
+ }}>{title}</h2>
         {sub && (
           <p style={{
- fontSize: 13, color: 'var(--ink-2)',
-                       lineHeight: 1.55, maxWidth: 720
-}} className="mt-1 mb-0" >{sub}</p>
+ fontSize: 13,
+ lineHeight: 1.55, maxWidth: 720
+ }} className="mt-1 mb-0 text-ink-2" >{sub}</p>
         )}
       </div>
       {children}
@@ -311,9 +268,8 @@ function BigStat({ n, l, accent, mono }) {
            style={{ fontSize: mono ? 22 : 28, fontWeight: 300, lineHeight: 1.1,
                      color: accent ? 'var(--success)' : 'var(--ink)' }}>{n}</div>
       <div style={{
- fontSize: 11, color: 'var(--ink-3)',
-                     letterSpacing: '0.12em', textTransform: 'uppercase'
-}} className="mt-1" >{l}</div>
+ fontSize: 11,
+ letterSpacing: '0.12em' }} className="mt-1 text-ink-3 uppercase" >{l}</div>
     </div>
   );
 }
@@ -321,22 +277,17 @@ function BigStat({ n, l, accent, mono }) {
 function PrivacyRow({ glyph, label, sub, danger }) {
   return (
     <button style={{
- display: 'grid',
-                      gridTemplateColumns: 'auto 1fr auto',
-                      alignItems: 'center',
-                      background: 'var(--paper-2)', border: 'var(--hairline)',
-                      borderRadius: 6, cursor: 'pointer', textAlign: 'left'
-}} className="gap-3 py-3 px-4" >
+ gridTemplateColumns: 'auto 1fr auto',
+ borderRadius: 6 }} className="gap-3 py-3 px-4 grid items-center bg-paper-2 border border-paper-edge cursor-pointer text-left" >
       <span className="kanji" style={{ fontSize: 17,
                     color: danger ? 'var(--accent)' : 'var(--ink-3)' }}>{glyph}</span>
       <div>
-        <div style={{ fontSize: 13, color: danger ? 'var(--accent)' : 'var(--ink)',
-                       fontWeight: 500 }}>{label}</div>
+        <div className="font-medium" style={{ fontSize: 13, color: danger ? 'var(--accent)' : 'var(--ink)' }}>{label}</div>
         <div style={{
- fontSize: 11, color: 'var(--ink-2)', lineHeight: 1.5
-}} className="mt-1" >{sub}</div>
+ fontSize: 11, lineHeight: 1.5
+ }} className="mt-1 text-ink-2" >{sub}</div>
       </div>
-      <span style={{ fontSize: 13, color: 'var(--ink-3)' }}>→</span>
+      <span className="text-ink-3" style={{ fontSize: 13 }}>→</span>
     </button>
   );
 }

@@ -7,9 +7,7 @@ create table if not exists dojo.relay_inbox (
 , seq           bigint                       not null default nextval('dojo.relay_inbox_seq')
 , session_id    uuid                         not null references dojo.relay_sessions(id) on delete cascade
 , segment_id    uuid                         references dojo.relay_segments(id) on delete cascade
-, tenant_id     uuid                         not null references dojo.tenants(id)
 , membership_id uuid                         not null references dojo.memberships(id)
-, user_id       uuid                         not null
 , kind          dojo.relay_inbox_kind        not null
 , direction     dojo.relay_message_direction not null
 , status        dojo.relay_inbox_status      not null default 'pending'
@@ -21,7 +19,7 @@ create table if not exists dojo.relay_inbox (
 
 create index if not exists relay_inbox_seq_idx on dojo.relay_inbox(seq);
 create index if not exists relay_inbox_session_idx on dojo.relay_inbox(session_id, created_at desc);
-create index if not exists relay_inbox_user_pending_idx on dojo.relay_inbox(user_id) where status = 'pending';
+create index if not exists relay_inbox_membership_pending_idx on dojo.relay_inbox(membership_id) where status = 'pending';
 create index if not exists relay_inbox_segment_idx on dojo.relay_inbox(segment_id) where segment_id is not null;
 
 comment on table dojo.relay_inbox is
@@ -45,8 +43,9 @@ comment on column dojo.relay_inbox.segment_id
      is 'The outline segment this row gates/annotates (null for a free-standing chat/nudge).';
 
 -- Row-Level Security (P4.1) — see the note on dojo.relay_sessions. Own-rows-only:
--- a user reads/subscribes only their own inbox rows (user_id = auth.uid()). The
--- Worker's service_role writes bypass RLS. SELECT-only; team-wide visibility is P6.
+-- a user reads/subscribes only their own inbox rows — ownership derived from
+-- membership_id via dojo.owns_membership() (no stale user_id copy — WS-0 Rule A).
+-- The Worker's service_role writes bypass RLS. SELECT-only; team-wide visibility is P6.
 -- Idempotent (drop-if-exists) because the deploy re-applies this file each time.
 alter table dojo.relay_inbox enable row level security;
 
@@ -59,4 +58,4 @@ create policy relay_inbox_select_own
     on dojo.relay_inbox
     for select
     to authenticated
-    using (user_id = auth.uid());
+    using (dojo.owns_membership(membership_id));

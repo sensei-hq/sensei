@@ -213,12 +213,25 @@ async fn synthesize_session(
             return None;
         }
     }
-    // project mapping: first cwd that is a tracked folder wins.
+    // project mapping: first cwd that is a tracked folder (exact) wins. Both the
+    // exact lookup and the ancestor fallback are alias-aware, so a cwd recorded
+    // under a since-renamed path resolves to the current folder. When no cwd is an
+    // exact folder, fall back to the nearest tracked ANCESTOR — so a subdirectory
+    // cwd (or a subdir of a renamed repo covered by a single root alias) still
+    // attributes to the right project instead of being dropped.
     let mut resolved = None;
     for cwd in &synth.cwds {
         if let Ok(Some((folder_id, project_id))) = pg.get_folder_ids_by_path(cwd).await {
             resolved = Some((cwd.clone(), folder_id, project_id));
             break;
+        }
+    }
+    if resolved.is_none() {
+        for cwd in &synth.cwds {
+            if let Ok(Some((folder_id, project_id))) = pg.find_folder_for_path(cwd).await {
+                resolved = Some((cwd.clone(), folder_id, project_id));
+                break;
+            }
         }
     }
     let Some((cwd, folder_id, project_id)) = resolved else {
@@ -300,6 +313,14 @@ pub async fn backfill_all(
 /// race-safe). Returns the number of files enqueued.
 pub async fn run_backfill(ctx: &TaskContext, _task: &Task) -> Result<u32, String> {
     let (_seen, enqueued) = dispatch(&ctx.queue).await;
+    // Re-attach sessions orphaned by a repo delete/rename (events survived, the
+    // session row was cascade-deleted) — resolves each via its cwd, now alias-aware.
+    // Idempotent + cheap (only sessions with no row are touched); logged, never fatal.
+    match ctx.pg().repair_orphaned_sessions().await {
+        Ok(n) if n > 0 => tracing::info!(repaired = n, "run_backfill: re-attached orphaned sessions"),
+        Ok(_) => {}
+        Err(e) => tracing::warn!(error = %e, "run_backfill: repair_orphaned_sessions failed"),
+    }
     Ok(enqueued)
 }
 

@@ -21,40 +21,30 @@ const { useState: mUseState } = React;
 function AppFrame({ children, title = "Sensei", width, height,
                     radius = 12, shadow = true, style = {} }) {
   return (
-    <div style={{
-      width, height,
-      borderRadius: radius,
-      background: 'var(--paper)',
-      border: 'var(--hairline)',
-      overflow: 'hidden',
-      display: 'flex', flexDirection: 'column',
-      boxShadow: shadow
-        ? '0 30px 60px -20px rgba(20,18,14,0.18), 0 12px 24px -12px rgba(20,18,14,0.10)'
-        : 'none',
-      ...style
-    }}>
+    <div className="bg-paper border border-paper-edge overflow-hidden flex flex-col" style={{
+ width, height,
+ borderRadius: radius,
+ boxShadow: shadow
+ ? '0 30px 60px -20px rgba(20,18,14,0.18), 0 12px 24px -12px rgba(20,18,14,0.10)'
+ : 'none',
+ ...style
+ }}>
       <div style={{
-        height: 32,
-        display: 'flex', alignItems: 'center',
-        borderBottom: 'var(--hairline)',
-        background: 'var(--paper)',
-        flexShrink: 0
-}} className="gap-2 px-3" >
-        <span style={{ display: 'flex' }} className="gap-1" >
-          <span style={{ width: 10, height: 10, borderRadius: '50%',
-                          background: 'oklch(0.72 0.14 28)' }}/>
-          <span style={{ width: 10, height: 10, borderRadius: '50%',
-                          background: 'oklch(0.82 0.13 85)' }}/>
-          <span style={{ width: 10, height: 10, borderRadius: '50%',
-                          background: 'oklch(0.72 0.11 145)' }}/>
+ height: 32 }} className="gap-2 px-3 flex items-center border-b bg-paper shrink-0" >
+        <span className="gap-1 flex" >
+          <span className="rounded-full" style={{ width: 10, height: 10,
+ background: 'oklch(0.72 0.14 28)' }}/>
+          <span className="rounded-full" style={{ width: 10, height: 10,
+ background: 'oklch(0.82 0.13 85)' }}/>
+          <span className="rounded-full" style={{ width: 10, height: 10,
+ background: 'oklch(0.72 0.11 145)' }}/>
         </span>
-        <div style={{ flex: 1, textAlign: 'center', fontSize: 11,
-                       color: 'var(--ink-3)', letterSpacing: '0.02em' }}>
+        <div className="flex-1 text-center text-ink-3" style={{ fontSize: 11, letterSpacing: '0.02em' }}>
           {title}
         </div>
         <span style={{ width: 30 }}/>
       </div>
-      <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>{children}</div>
+      <div className="flex-1 min-h-0 flex" >{children}</div>
     </div>
   );
 }
@@ -71,36 +61,34 @@ function MockSidebar({ active = "home" }) {
   const Row = (it) => {
     const [id, kanji, label, badge] = it;
     return (
-      <div key={id} style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto', alignItems: 'center',
-            borderRadius: 5, background: active === id ? 'var(--paper-3)' : 'transparent', fontSize: 11 }} className="gap-2 py-1 px-2" >
+      <div key={id} style={{ gridTemplateColumns: 'auto 1fr auto',
+ borderRadius: 5, background: active === id ? 'var(--paper-3)' : 'transparent', fontSize: 11 }} className="gap-2 py-1 px-2 grid items-center" >
         <span className="kanji" style={{ fontSize: 11, color: active === id ? 'var(--accent)' : 'var(--ink-3)' }}>{kanji}</span>
-        <span style={{ color: active === id ? 'var(--ink)' : 'var(--ink-2)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{label}</span>
-        {badge != null && <span className="mono" style={{ fontSize: 10, color: 'var(--ink-4)' }}>{badge}</span>}
+        <span className="whitespace-nowrap overflow-hidden text-ellipsis" style={{ color: active === id ? 'var(--ink)' : 'var(--ink-2)' }}>{label}</span>
+        {badge != null && <span className="mono text-ink-4" style={{ fontSize: 10 }}>{badge}</span>}
       </div>
     );
   };
   return (
-    <aside style={{ width: 178, background: 'var(--paper-2)', borderRight: 'var(--hairline)',
-                    display: 'flex', flexDirection: 'column', overflow: 'hidden' }} className="py-4 px-2 gap-2" >
-      <div style={{ display: 'flex', alignItems: 'center' }} className="gap-2 px-1 mb-1" >
-        <span style={{ display: 'inline-block', width: 18, height: 18, background: 'var(--accent)',
-                       WebkitMaskImage: 'url(uploads/sensei.svg?v=3)', maskImage: 'url(uploads/sensei.svg?v=3)',
-                       WebkitMaskSize: 'contain', maskSize: 'contain', WebkitMaskRepeat: 'no-repeat', maskRepeat: 'no-repeat',
-                       WebkitMaskPosition: 'center', maskPosition: 'center', flexShrink: 0 }} />
+    <aside style={{ width: 178 }} className="py-4 px-2 gap-2 bg-paper-2 border-r flex flex-col overflow-hidden" >
+      <div className="gap-2 px-1 mb-1 flex items-center" >
+        <span className="inline-block bg-accent shrink-0" style={{ width: 18, height: 18,
+ WebkitMaskImage: 'url(uploads/sensei.svg?v=3)', maskImage: 'url(uploads/sensei.svg?v=3)',
+ WebkitMaskSize: 'contain', maskSize: 'contain', WebkitMaskRepeat: 'no-repeat', maskRepeat: 'no-repeat',
+ WebkitMaskPosition: 'center', maskPosition: 'center' }} />
         <span className="display" style={{ fontSize: 14, lineHeight: 1 }}>Sensei</span>
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }} className="px-2" >
-        <span style={{ fontSize: 9, letterSpacing: '0.16em', color: 'var(--ink-3)', textTransform: 'uppercase' }}>Observatory</span>
-        <span style={{ display: 'flex', background: 'var(--paper-3)', borderRadius: 4, padding: 2, fontSize: 8.5 }}>
-          <span style={{ padding: '1px 6px', borderRadius: 3, background: 'var(--paper)', color: 'var(--ink)' }}>All</span>
-          <span style={{ padding: '1px 6px', color: 'var(--ink-3)' }}>Focus</span>
+      <div className="px-2 flex items-center justify-between" >
+        <span className="text-ink-3 uppercase" style={{ fontSize: 9, letterSpacing: '0.16em' }}>Observatory</span>
+        <span className="flex bg-paper-3" style={{ borderRadius: 4, padding: 2, fontSize: 8.5 }}>
+          <span className="bg-paper text-ink" style={{ padding: '1px 6px', borderRadius: 3 }}>All</span>
+          <span className="text-ink-3" style={{ padding: '1px 6px' }}>Focus</span>
         </span>
       </div>
-      <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-2" >
+      <div className="gap-2 flex flex-col" >
         {clusters.map((c, ci) => (
-          <div key={ci} style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
-            {c.label && <div style={{ fontSize: 8.5, letterSpacing: '0.12em', color: 'var(--ink-4)',
-                          textTransform: 'uppercase', fontWeight: 600 }} className="px-2" >{c.label}</div>}
+          <div key={ci} className="gap-1 flex flex-col" >
+            {c.label && <div style={{ fontSize: 8.5, letterSpacing: '0.12em' }} className="px-2 text-ink-4 uppercase font-semibold" >{c.label}</div>}
             {c.items.map(Row)}
           </div>
         ))}
@@ -114,104 +102,72 @@ function MockToday({ width = 720, height = 460, name = "Aiko" }) {
   return (
     <AppFrame title="Sensei · Today" width={width} height={height}>
       <MockSidebar active="home"/>
-      <main style={{
- flex: 1, overflow: 'hidden',
-                       background: 'var(--paper)'
-}} className="py-5 px-6" >
-        <div style={{ fontSize: 11, letterSpacing: '0.18em',
-                       color: 'var(--ink-3)', textTransform: 'uppercase' }}>
+      <main className="py-6 px-8 flex-1 overflow-hidden bg-paper" >
+        <div className="text-ink-3 uppercase" style={{ fontSize: 11, letterSpacing: '0.18em' }}>
           Tuesday, March 12
         </div>
-        <h1 className="display mt-1 mb-4" style={{
- fontSize: 22, fontWeight: 400, letterSpacing: '-0.01em'
-}}>
+        <h1 className="display mt-1 mb-4 font-normal" style={{
+ fontSize: 22, letterSpacing: '-0.01em'
+ }}>
           Good morning, {name}.
         </h1>
 
         {/* Hero observation */}
-        <div style={{
- display: 'grid', gridTemplateColumns: '1fr auto', alignItems: 'start', borderBottom: 'var(--hairline)'
-}} className="gap-5 pb-4" >
+        <div style={{ gridTemplateColumns: '1fr auto' }} className="gap-6 pb-4 grid items-start border-b" >
           <div>
-            <div style={{
- display: 'flex', alignItems: 'baseline'
-}} className="gap-2 mb-1" >
-              <span className="kanji" style={{ fontSize: 22,
-                             color: 'var(--accent)' }}>繰</span>
-              <span style={{ fontSize: 11, letterSpacing: '0.18em',
-                             color: 'var(--ink-3)',
-                             textTransform: 'uppercase' }}>
+            <div className="gap-2 mb-1 flex items-baseline" >
+              <span className="kanji text-accent" style={{ fontSize: 22 }}>繰</span>
+              <span className="text-ink-3 uppercase" style={{ fontSize: 11, letterSpacing: '0.18em' }}>
                 Pattern recurring
               </span>
             </div>
-            <div className="display" style={{ fontSize: 17, lineHeight: 1.4,
-                           color: 'var(--ink)', maxWidth: 380 }}>
+            <div className="display text-ink" style={{ fontSize: 17, lineHeight: 1.4, maxWidth: 380 }}>
               You've reached for <em>useEffect</em> three times this week
               when state could've stayed local. Worth a closer look?
             </div>
           </div>
-          <div style={{
- display: 'flex', flexDirection: 'column',
-                         alignItems: 'flex-end',
-                         color: 'var(--ink-3)', fontSize: 11
-}} className="gap-1" >
-            <div className="mono" style={{ fontSize: 17,
-                           color: 'var(--ink)' }}>3×</div>
+          <div style={{ fontSize: 11
+ }} className="gap-1 flex flex-col items-end text-ink-3" >
+            <div className="mono text-ink" style={{ fontSize: 17 }}>3×</div>
             <div>this week</div>
           </div>
         </div>
 
         {/* Two columns: insights + adopted */}
-        <div style={{
- display: 'grid', gridTemplateColumns: '1.4fr 1fr'
-}} className="gap-5 mt-5" >
+        <div style={{ gridTemplateColumns: '1.4fr 1fr'
+ }} className="gap-6 mt-6 grid" >
           <div>
             <div style={{
- fontSize: 11, letterSpacing: '0.18em',
-                           color: 'var(--ink-3)',
-                           textTransform: 'uppercase'
-}} className="mb-2" >
+ fontSize: 11, letterSpacing: '0.18em' }} className="mb-2 text-ink-3 uppercase" >
               Also worth noticing
             </div>
-            <div style={{
- display: 'flex', flexDirection: 'column'
-}} className="gap-2" >
+            <div className="gap-2 flex flex-col" >
               {[
                 { k: "結", l: "Refactor compounding well",     d: "kazoku-app" },
                 { k: "問", l: "Tests skipped 4 sessions",       d: "shoji-ui" },
                 { k: "灯", l: "New idiom emerging in shoji-ui", d: "shoji-ui" }
               ].map((it, i) => (
                 <div key={i} style={{
- display: 'grid',
-                       gridTemplateColumns: 'auto 1fr auto', alignItems: 'baseline', borderBottom:
-                         i < 2 ? 'var(--ink-line)' : 'none'
-}} className="gap-2 py-2 px-0" >
-                  <span className="kanji" style={{ fontSize: 13,
-                                 color: 'var(--ink-2)' }}>{it.k}</span>
-                  <span style={{ fontSize: 11,
-                                 color: 'var(--ink)' }}>{it.l}</span>
-                  <span className="mono" style={{ fontSize: 11,
-                                 color: 'var(--ink-3)' }}>{it.d}</span>
+ gridTemplateColumns: 'auto 1fr auto', borderBottom:
+ i < 2 ? 'var(--ink-line)' : 'none'
+ }} className="gap-2 py-2 px-0 grid items-baseline" >
+                  <span className="kanji text-ink-2" style={{ fontSize: 13 }}>{it.k}</span>
+                  <span className="text-ink" style={{ fontSize: 11 }}>{it.l}</span>
+                  <span className="mono text-ink-3" style={{ fontSize: 11 }}>{it.d}</span>
                 </div>
               ))}
             </div>
           </div>
           <div>
             <div style={{
- fontSize: 11, letterSpacing: '0.18em',
-                           color: 'var(--ink-3)',
-                           textTransform: 'uppercase'
-}} className="mb-2" >
+ fontSize: 11, letterSpacing: '0.18em' }} className="mb-2 text-ink-3 uppercase" >
               Adopted teachings
             </div>
-            <div style={{
- display: 'flex', flexDirection: 'column', fontSize: 11,
-                           color: 'var(--ink-2)'
-}} className="gap-2" >
+            <div style={{ fontSize: 11 }} className="gap-2 flex flex-col text-ink-2" >
               <div>· Prefer local state</div>
               <div>· Co-locate tests</div>
               <div>· Keep async at edges</div>
-              <div style={{ color: 'var(--ink-4)' }}>+ 21 more</div>
+              <div className="text-ink-4" >+ 21 more</div>
             </div>
           </div>
         </div>
@@ -225,30 +181,20 @@ function MockSessions({ width = 720, height = 460 }) {
   return (
     <AppFrame title="Sensei · Sessions" width={width} height={height}>
       <MockSidebar active="sessions"/>
-      <main style={{
- flex: 1, overflow: 'hidden',
-                       background: 'var(--paper)'
-}} className="py-5 px-6" >
-        <div style={{
- display: 'flex', alignItems: 'baseline',
-                       justifyContent: 'space-between'
-}} className="mb-4" >
+      <main className="py-6 px-8 flex-1 overflow-hidden bg-paper" >
+        <div className="mb-4 flex items-baseline justify-between" >
           <div>
-            <div style={{ fontSize: 11, letterSpacing: '0.18em',
-                           color: 'var(--ink-3)',
-                           textTransform: 'uppercase' }}>Sessions · 録</div>
-            <h1 className="display mt-1 mb-0" style={{
- fontSize: 22, fontWeight: 400
-}}>The week in review</h1>
+            <div className="text-ink-3 uppercase" style={{ fontSize: 11, letterSpacing: '0.18em' }}>Sessions · 録</div>
+            <h1 className="display mt-1 mb-0 font-normal" style={{
+ fontSize: 22 }}>The week in review</h1>
           </div>
-          <div className="mono" style={{ fontSize: 11,
-                           color: 'var(--ink-3)' }}>8 · 5 · 2 · 1h 4m</div>
+          <div className="mono text-ink-3" style={{ fontSize: 11 }}>8 · 5 · 2 · 1h 4m</div>
         </div>
 
         {/* Sparkline trend */}
-        <div style={{ height: 60, position: 'relative' }} className="mb-5" >
-          <svg viewBox="0 0 600 60" preserveAspectRatio="none"
-                style={{ width: '100%', height: '100%' }}>
+        <div style={{ height: 60 }} className="mb-6 relative" >
+          <svg className="w-full h-full" viewBox="0 0 600 60" preserveAspectRatio="none"
+ >
             <path d="M 0 42 L 60 38 L 120 30 L 180 32 L 240 24 L 300 26 L 360 18 L 420 22 L 480 14 L 540 12 L 600 10"
                   fill="none" stroke="var(--success)" strokeWidth="1.5"
                   strokeLinecap="round"/>
@@ -258,9 +204,8 @@ function MockSessions({ width = 720, height = 460 }) {
         </div>
 
         {/* Retro lanes */}
-        <div style={{
- display: 'grid', gridTemplateColumns: '1fr 1fr 1fr'
-}} className="gap-4" >
+        <div style={{ gridTemplateColumns: '1fr 1fr 1fr'
+ }} className="gap-4 grid" >
           {[
             { kanji: "良", title: "Going well",    accent: 'var(--success)',
               items: ["Compound refactors", "Naming consistent",
@@ -274,21 +219,14 @@ function MockSessions({ width = 720, height = 460 }) {
                       "Tea-ceremony slower start"] }
           ].map((lane, i) => (
             <div key={i}>
-              <div style={{
- display: 'flex', alignItems: 'baseline'
-}} className="gap-2 mb-2" >
+              <div className="gap-2 mb-2 flex items-baseline" >
                 <span className="kanji" style={{ fontSize: 13,
                                color: lane.accent }}>{lane.kanji}</span>
-                <span style={{ fontSize: 11, letterSpacing: '0.16em',
-                               color: 'var(--ink-3)',
-                               textTransform: 'uppercase' }}>
+                <span className="text-ink-3 uppercase" style={{ fontSize: 11, letterSpacing: '0.16em' }}>
                   {lane.title}
                 </span>
               </div>
-              <div style={{
- display: 'flex', flexDirection: 'column', fontSize: 11,
-                             color: 'var(--ink-2)'
-}} className="gap-1" >
+              <div style={{ fontSize: 11 }} className="gap-1 flex flex-col text-ink-2" >
                 {lane.items.map((t, j) => (
                   <div key={j} style={{
                                  borderLeft: `2px solid ${lane.accent}33`
@@ -320,50 +258,34 @@ function MockInsights({ width = 720, height = 460 }) {
   return (
     <AppFrame title="Sensei · Insights" width={width} height={height}>
       <MockSidebar active="insights"/>
-      <main style={{
- flex: 1, overflow: 'hidden',
-                       background: 'var(--paper)'
-}} className="py-5 px-6" >
+      <main className="py-6 px-8 flex-1 overflow-hidden bg-paper" >
         <div className="mb-4" >
-          <div style={{ fontSize: 11, letterSpacing: '0.18em',
-                         color: 'var(--ink-3)',
-                         textTransform: 'uppercase' }}>Insights · 今</div>
-          <h1 className="display mt-1 mb-0" style={{
- fontSize: 22, fontWeight: 400
-}}>
+          <div className="text-ink-3 uppercase" style={{ fontSize: 11, letterSpacing: '0.18em' }}>Insights · 今</div>
+          <h1 className="display mt-1 mb-0 font-normal" style={{
+ fontSize: 22 }}>
             What sensei has noticed
           </h1>
         </div>
-        <div style={{
- display: 'grid', gridTemplateColumns: '1fr 1fr'
-}} className="gap-3" >
+        <div style={{ gridTemplateColumns: '1fr 1fr'
+ }} className="gap-3 grid" >
           {cards.map((c, i) => (
             <div key={i} style={{
-              background: 'var(--paper-2)',
-              border: 'var(--hairline)',
-              borderRadius: 8,
-              display: 'flex', flexDirection: 'column'
-}} className="py-3 px-4 gap-2" >
-              <div style={{
- display: 'flex', alignItems: 'baseline'
-}} className="gap-2" >
-                <span className="kanji" style={{ fontSize: 17,
-                               color: 'var(--accent)' }}>{c.kanji}</span>
-                <span className="display" style={{ fontSize: 13,
-                               color: 'var(--ink)', flex: 1 }}>
+ borderRadius: 8 }} className="py-3 px-4 gap-2 bg-paper-2 border border-paper-edge flex flex-col" >
+              <div className="gap-2 flex items-baseline" >
+                <span className="kanji text-accent" style={{ fontSize: 17 }}>{c.kanji}</span>
+                <span className="display text-ink flex-1" style={{ fontSize: 13 }}>
                   {c.title}
                 </span>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between',
-                             fontSize: 11, color: 'var(--ink-3)' }}>
+              <div className="flex justify-between text-ink-3" style={{
+ fontSize: 11 }}>
                 <span className="mono">{Math.round(c.conf * 100)}% confident</span>
                 <span>{c.projects} projects · {c.ages}</span>
               </div>
               {/* tiny confidence bar */}
-              <div style={{ height: 2, background: 'var(--paper-3)',
-                             borderRadius: 1, overflow: 'hidden' }}>
-                <div style={{ height: '100%', width: `${c.conf * 100}%`,
-                               background: 'var(--accent)' }}/>
+              <div className="bg-paper-3 overflow-hidden" style={{ height: 2,
+ borderRadius: 1 }}>
+                <div className="h-full bg-accent" style={{ width: `${c.conf * 100}%` }}/>
               </div>
             </div>
           ))}
@@ -378,85 +300,60 @@ function MockMemory({ width = 720, height = 460 }) {
   return (
     <AppFrame title="Sensei · Memory" width={width} height={height}>
       <MockSidebar active="memories"/>
-      <main style={{
- flex: 1, overflow: 'hidden',
-                       background: 'var(--paper)'
-}} className="py-5 px-6" >
-        <div style={{
- display: 'flex', alignItems: 'baseline'
-}} className="gap-2 mb-1" >
-          <span className="kanji" style={{ fontSize: 22,
-                         color: 'var(--accent)' }}>覚</span>
-          <span style={{ fontSize: 11, letterSpacing: '0.18em',
-                         color: 'var(--ink-3)',
-                         textTransform: 'uppercase' }}>
+      <main className="py-6 px-8 flex-1 overflow-hidden bg-paper" >
+        <div className="gap-2 mb-1 flex items-baseline" >
+          <span className="kanji text-accent" style={{ fontSize: 22 }}>覚</span>
+          <span className="text-ink-3 uppercase" style={{ fontSize: 11, letterSpacing: '0.18em' }}>
             Memory · adopted
           </span>
         </div>
-        <h1 className="display mt-0 mb-4" style={{
- fontSize: 22, fontWeight: 400, letterSpacing: '-0.01em'
-}}>
+        <h1 className="display mt-0 mb-4 font-normal" style={{
+ fontSize: 22, letterSpacing: '-0.01em'
+ }}>
           Prefer local component state to lifted state
         </h1>
 
-        <div style={{
- display: 'grid', gridTemplateColumns: '1.5fr 1fr'
-}} className="gap-5" >
+        <div style={{ gridTemplateColumns: '1.5fr 1fr'
+ }} className="gap-6 grid" >
           <div>
             <div style={{
- fontSize: 11, letterSpacing: '0.18em',
-                           color: 'var(--ink-3)',
-                           textTransform: 'uppercase'
-}} className="mb-2" >
+ fontSize: 11, letterSpacing: '0.18em' }} className="mb-2 text-ink-3 uppercase" >
               When to apply
             </div>
             <div style={{
- fontSize: 13, color: 'var(--ink)',
-                           lineHeight: 1.65
-}} className="mb-3" >
+ fontSize: 13,
+ lineHeight: 1.65
+ }} className="mb-3 text-ink" >
               When state is read by a single component and its direct children,
               keep it local. Lift only when a sibling needs it. Premature
               lifting creates effect chains that are hard to reason about.
             </div>
             <div style={{
- fontSize: 11, letterSpacing: '0.18em',
-                           color: 'var(--ink-3)',
-                           textTransform: 'uppercase'
-}} className="mb-2" >
+ fontSize: 11, letterSpacing: '0.18em' }} className="mb-2 text-ink-3 uppercase" >
               Examples sensei watched
             </div>
-            <div style={{
- display: 'flex', flexDirection: 'column', fontSize: 11, color: 'var(--ink-2)'
-}} className="gap-1" >
+            <div style={{ fontSize: 11 }} className="gap-1 flex flex-col text-ink-2" >
               <div>· kazoku-app · Mar 8 · accordion state</div>
               <div>· shoji-ui · Mar 5 · panel collapse</div>
               <div>· tea-ceremony · Feb 28 · form draft</div>
             </div>
           </div>
-          <aside style={{
-                           borderLeft: 'var(--hairline)'
-}} className="pl-4" >
+          <aside className="pl-4 border-l" >
             <div style={{
- fontSize: 11, letterSpacing: '0.18em',
-                           color: 'var(--ink-3)',
-                           textTransform: 'uppercase'
-}} className="mb-2" >
+ fontSize: 11, letterSpacing: '0.18em' }} className="mb-2 text-ink-3 uppercase" >
               Provenance
             </div>
-            <div style={{
- display: 'flex', flexDirection: 'column', fontSize: 11,
-                           color: 'var(--ink-2)'
-}} className="gap-2" >
-              <div><span className="mono" style={{ color: 'var(--ink-3)' }}>seen</span> 17 sessions</div>
-              <div><span className="mono" style={{ color: 'var(--ink-3)' }}>first</span> Feb 14</div>
-              <div><span className="mono" style={{ color: 'var(--ink-3)' }}>conf</span> 91%</div>
-              <div><span className="mono" style={{ color: 'var(--ink-3)' }}>by</span> you</div>
+            <div style={{ fontSize: 11 }} className="gap-2 flex flex-col text-ink-2" >
+              <div><span className="mono text-ink-3" >seen</span> 17 sessions</div>
+              <div><span className="mono text-ink-3" >first</span> Feb 14</div>
+              <div><span className="mono text-ink-3" >conf</span> 91%</div>
+              <div><span className="mono text-ink-3" >by</span> you</div>
             </div>
             <div style={{
  height: 1, background: 'var(--edge)'
 }} className="my-3 mx-0" />
-            <div style={{ fontSize: 11, color: 'var(--ink-2)',
-                           lineHeight: 1.5 }}>
+            <div className="text-ink-2" style={{ fontSize: 11,
+ lineHeight: 1.5 }}>
               Adopted into 4 projects. Sensei surfaces it when local
               state could replace a useEffect chain.
             </div>
@@ -482,23 +379,18 @@ function MockInstruments({ width = 720, height = 460 }) {
   return (
     <AppFrame title="Sensei · Instruments" width={width} height={height}>
       <MockSidebar active="instruments"/>
-      <main style={{ flex: 1, display: 'flex', flexDirection: 'column',
-                      overflow: 'hidden', background: 'var(--paper)' }}>
+      <main className="flex-1 flex flex-col overflow-hidden bg-paper" >
         {/* Tabs */}
-        <div style={{
- display: 'flex',
-                       borderBottom: 'var(--hairline)'
-}} className="gap-0 pt-3 pb-0 px-5" >
+        <div className="gap-0 pt-3 pb-0 px-6 flex border-b" >
           {[
             { k: "具", l: "Playground", on: true  },
             { k: "録", l: "Replay",     on: false },
             { k: "健", l: "Health",     on: false }
           ].map((t, i) => (
-            <div key={i} style={{
- display: 'flex', alignItems: 'baseline', borderBottom: t.on
-                ? '1.5px solid var(--accent)' : '1.5px solid transparent',
-              marginBottom: -1
-}} className="py-2 px-4 gap-1" >
+            <div key={i} style={{ borderBottom: t.on
+ ? '1.5px solid var(--accent)' : '1.5px solid transparent',
+ marginBottom: -1
+ }} className="py-2 px-4 gap-1 flex items-baseline" >
               <span className="kanji" style={{ fontSize: 13,
                              color: t.on ? 'var(--accent)' : 'var(--ink-3)' }}>
                 {t.k}
@@ -511,9 +403,9 @@ function MockInstruments({ width = 720, height = 460 }) {
           ))}
         </div>
 
-        <div style={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: '208px 1fr' }}>
+        <div className="flex-1 min-h-0 grid" style={{ gridTemplateColumns: '208px 1fr' }}>
           {/* tree of MCP groups → tools */}
-          <div style={{ borderRight: 'var(--hairline)', overflow: 'hidden' }} className="py-3 px-3" >
+          <div className="py-3 px-3 border-r overflow-hidden" >
             {[
               ["filesystem", [["fs.read","query"],["fs.write","action"]]],
               ["git",        [["git.log","query"],["git.diff","query"]]],
@@ -522,17 +414,17 @@ function MockInstruments({ width = 720, height = 460 }) {
               ["sensei",     [["pattern.promote","action"]]],
             ].map(([grp, gtools]) => (
               <div key={grp} className="mb-2" >
-                <div style={{ display: 'flex', alignItems: 'center' }} className="gap-2 mb-1" >
-                  <span style={{ fontSize: 8, color: 'var(--ink-4)' }}>▾</span>
-                  <span className="mono" style={{ fontSize: 11, color: 'var(--ink-2)' }}>{grp}</span>
-                  <span className="mono" style={{ fontSize: 9, color: 'var(--ink-4)', marginLeft: 'auto' }}>{gtools.length}</span>
+                <div className="gap-2 mb-1 flex items-center" >
+                  <span className="text-ink-4" style={{ fontSize: 8 }}>▾</span>
+                  <span className="mono text-ink-2" style={{ fontSize: 11 }}>{grp}</span>
+                  <span className="mono text-ink-4" style={{ fontSize: 9, marginLeft: 'auto' }}>{gtools.length}</span>
                 </div>
                 {gtools.map(([name, kind]) => {
                   const sel = name === "git.diff";
                   return (
-                    <div key={name} style={{ display: 'flex', alignItems: 'center', borderRadius: 4,
-                          background: sel ? 'var(--paper-3)' : 'transparent' }} className="gap-2 py-1 px-2 ml-3" >
-                      <span style={{ width: 5, height: 5, borderRadius: 1, background: kind === 'action' ? 'var(--accent)' : 'var(--ink-4)', flexShrink: 0 }}/>
+                    <div key={name} style={{ borderRadius: 4,
+ background: sel ? 'var(--paper-3)' : 'transparent' }} className="gap-2 py-1 px-2 ml-3 flex items-center" >
+                      <span className="shrink-0" style={{ width: 5, height: 5, borderRadius: 1, background: kind === 'action' ? 'var(--accent)' : 'var(--ink-4)' }}/>
                       <span className="mono" style={{ fontSize: 11, color: sel ? 'var(--ink)' : 'var(--ink-2)' }}>{name}</span>
                     </div>
                   );
@@ -541,27 +433,26 @@ function MockInstruments({ width = 720, height = 460 }) {
             ))}
           </div>
           {/* playground for the selected tool */}
-          <div style={{ overflow: 'hidden', display: 'flex', flexDirection: 'column' }} className="py-3 px-4 gap-3" >
-            <div style={{ display: 'flex', alignItems: 'center' }} className="gap-2" >
-              <span className="mono" style={{ fontSize: 12, color: 'var(--ink)' }}>git.diff</span>
-              <span className="mono" style={{ fontSize: 9, padding: '1px 6px', borderRadius: 3, background: 'var(--paper-3)',
-                            color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>query</span>
-              <span style={{ flex: 1 }}/>
-              <span style={{ fontSize: 11, padding: '4px 13px', borderRadius: 5, background: 'var(--ink)', color: 'var(--paper)' }}>Run</span>
+          <div className="py-3 px-4 gap-3 overflow-hidden flex flex-col" >
+            <div className="gap-2 flex items-center" >
+              <span className="mono text-ink" style={{ fontSize: 12 }}>git.diff</span>
+              <span className="mono bg-paper-3 text-ink-3 uppercase" style={{ fontSize: 9, padding: '1px 6px', borderRadius: 3, letterSpacing: '0.08em' }}>query</span>
+              <span className="flex-1" />
+              <span className="bg-ink text-paper" style={{ fontSize: 11, padding: '4px 13px', borderRadius: 5 }}>Run</span>
             </div>
-            <div style={{ fontSize: 10.5, color: 'var(--ink-3)', lineHeight: 1.5 }}>
+            <div className="text-ink-3" style={{ fontSize: 10.5, lineHeight: 1.5 }}>
               Diff a file against HEAD. Run a tool in isolation; sensei watches every call to learn which ones work.
             </div>
             <div>
-              <div style={{ fontSize: 8.5, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--ink-4)', fontWeight: 600 }} className="mb-1" >Arguments</div>
-              <div style={{ background: 'var(--paper-2)', border: 'var(--hairline)', borderRadius: 6, fontSize: 10.5, color: 'var(--ink-2)' }} className="mono py-2 px-3" >{`{ "path": "src/auth/refresh.ts" }`}</div>
+              <div style={{ fontSize: 8.5, letterSpacing: '0.12em' }} className="mb-1 uppercase text-ink-4 font-semibold" >Arguments</div>
+              <div style={{ borderRadius: 6, fontSize: 10.5 }} className="mono py-2 px-3 bg-paper-2 border border-paper-edge text-ink-2" >{`{ "path": "src/auth/refresh.ts" }`}</div>
             </div>
-            <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-              <div style={{ fontSize: 8.5, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--ink-4)', fontWeight: 600 }} className="mb-1" >Result · 18ms</div>
-              <div style={{ background: 'var(--paper-2)', border: 'var(--hairline)', borderRadius: 6, fontSize: 10, lineHeight: 1.6, flex: 1, overflow: 'hidden' }} className="mono py-2 px-3" >
-                <div style={{ color: 'var(--ink-3)' }}>@@ -12,7 +12,9 @@ refreshToken()</div>
-                <div style={{ color: 'var(--accent)' }}>- if (token.expired)</div>
-                <div style={{ color: 'var(--success)' }}>+ if (token.expired &amp;&amp; !token.revoked)</div>
+            <div className="flex-1 min-h-0 flex flex-col" >
+              <div style={{ fontSize: 8.5, letterSpacing: '0.12em' }} className="mb-1 uppercase text-ink-4 font-semibold" >Result · 18ms</div>
+              <div style={{ borderRadius: 6, fontSize: 10, lineHeight: 1.6 }} className="mono py-2 px-3 bg-paper-2 border border-paper-edge flex-1 overflow-hidden" >
+                <div className="text-ink-3" >@@ -12,7 +12,9 @@ refreshToken()</div>
+                <div className="text-accent" >- if (token.expired)</div>
+                <div className="text-success" >+ if (token.expired &amp;&amp; !token.revoked)</div>
               </div>
             </div>
           </div>

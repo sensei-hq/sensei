@@ -33,20 +33,18 @@ function Shell({ id, bg, top, bottom, style, inner, children }) {
       background: bg,
       borderTop: top ? 'var(--hairline)' : undefined,
       borderBottom: bottom ? 'var(--hairline)' : undefined,
-      padding: bp.sm ? 'var(--space-7) var(--space-5)' : 'var(--space-9) var(--space-7)',
+      padding: bp.sm ? 'var(--space-12) var(--space-6)' : 'var(--space-24) var(--space-12)',
       ...style,
     }}>
-      <div style={{ maxWidth: 1200, margin: '0 auto', ...inner }}>{children}</div>
+      <div className="mx-auto" style={{ maxWidth: 1200, ...inner }}>{children}</div>
     </section>
   );
 }
 
 function VariantB() {
   return (
-    <div className="sensei variant-b" style={{
-      background: 'var(--paper)', color: 'var(--ink)',
-      minHeight: '100%', fontFamily: 'var(--font-ui)'
-    }}>
+    <div className="sensei variant-b bg-paper text-ink min-h-full" style={{ fontFamily: 'var(--font-ui)'
+ }}>
       <NavB/>
       <HeroB/>
       <TrustStripB/>
@@ -83,24 +81,24 @@ function NavB() {
   const [open, setOpen] = bS(false);
   bE(() => { if (!bp.md && open) setOpen(false); }, [bp.md, open]);
   return (
-    <nav style={{ position: 'sticky', top: 0, zIndex: 40, background: 'var(--paper)', borderBottom: 'var(--hairline)' }}>
-      <div style={{ maxWidth: 1200, margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
-           className="py-4 px-7">
-        <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2">
-          <span style={{ display: 'inline-block', width: 26, height: 26, background: 'var(--accent)',
-                         WebkitMaskImage: 'url(uploads/sensei.svg?v=3)', maskImage: 'url(uploads/sensei.svg?v=3)',
-                         WebkitMaskSize: 'contain', maskSize: 'contain', WebkitMaskRepeat: 'no-repeat', maskRepeat: 'no-repeat',
-                         WebkitMaskPosition: 'center', maskPosition: 'center', alignSelf: 'center', flexShrink: 0 }} />
-          <span className="display" style={{ fontSize: 'var(--text-xl)', letterSpacing: '-0.01em', color: 'var(--ink)' }}>Sensei</span>
+    <nav className="sticky bg-paper border-b" style={{ top: 0, zIndex: 40 }}>
+      <div style={{ maxWidth: 1200 }}
+ className="py-4 px-12 mx-auto flex items-center justify-between">
+        <div className="gap-2 flex items-baseline">
+          <span className="inline-block bg-accent self-center shrink-0" style={{ width: 26, height: 26,
+ WebkitMaskImage: 'url(uploads/sensei.svg?v=3)', maskImage: 'url(uploads/sensei.svg?v=3)',
+ WebkitMaskSize: 'contain', maskSize: 'contain', WebkitMaskRepeat: 'no-repeat', maskRepeat: 'no-repeat',
+ WebkitMaskPosition: 'center', maskPosition: 'center' }} />
+          <span className="display text-xl text-ink" style={{ letterSpacing: '-0.01em' }}>Sensei</span>
         </div>
 
         {!bp.md && (
-          <div style={{ display: 'flex', alignItems: 'center' }} className="gap-6">
+          <div className="gap-8 flex items-center">
             {NAV_LINKS.map(([href, label]) => (
-              <a key={href} href={href}
-                 style={{ fontSize: 'var(--text-sm)', color: 'var(--ink-soft)', textDecoration: 'none', transition: 'color .15s' }}
-                 onMouseEnter={(e) => e.currentTarget.style.color = 'var(--ink)'}
-                 onMouseLeave={(e) => e.currentTarget.style.color = 'var(--ink-soft)'}>
+              <a className="text-sm text-ink-soft no-underline" key={href} href={href}
+ style={{ transition: 'color .15s' }}
+ onMouseEnter={(e) => e.currentTarget.style.color = 'var(--ink)'}
+ onMouseLeave={(e) => e.currentTarget.style.color = 'var(--ink-soft)'}>
                 {label}
               </a>
             ))}
@@ -109,19 +107,19 @@ function NavB() {
         )}
 
         {bp.md && (
-          <button onClick={() => setOpen(o => !o)} aria-label="Menu"
-            style={{ display: 'inline-flex', flexDirection: 'column', gap: 4, background: 'none', border: 'none', cursor: 'pointer', padding: 6 }}>
-            {[0, 1, 2].map(i => <span key={i} style={{ width: 22, height: 2, background: 'var(--ink)', borderRadius: 2 }} />)}
+          <button className="inline-flex flex-col border-0 cursor-pointer" onClick={() => setOpen(o => !o)} aria-label="Menu"
+ style={{ gap: 4, background: 'none', padding: 6 }}>
+            {[0, 1, 2].map(i => <span className="bg-ink" key={i} style={{ width: 22, height: 2, borderRadius: 2 }} />)}
           </button>
         )}
       </div>
 
       {bp.md && open && (
-        <div style={{ borderTop: 'var(--hairline)', background: 'var(--paper)' }} className="px-7 py-5">
-          <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-4">
+        <div className="px-12 py-6 border-t bg-paper">
+          <div className="gap-4 flex flex-col">
             {NAV_LINKS.map(([href, label]) => (
-              <a key={href} href={href} onClick={() => setOpen(false)}
-                 style={{ fontSize: 'var(--text-lg)', color: 'var(--ink-soft)', textDecoration: 'none' }}>{label}</a>
+              <a className="text-lg text-ink-soft no-underline" key={href} href={href} onClick={() => setOpen(false)}
+ >{label}</a>
             ))}
             <div className="mt-2"><DownloadCTAB size="lg"/></div>
           </div>
@@ -134,34 +132,33 @@ function NavB() {
 function HeroB() {
   const bp = useBP();
   return (
-    <Shell top={false} bottom={false} style={{ position: 'relative', paddingBottom: 'var(--space-8)' }}>
+    <Shell top={false} bottom={false} style={{ position: 'relative', paddingBottom: 'var(--space-16)' }}>
       {!bp.md && (
-        <div style={{ position: 'absolute', right: 56, top: 24, fontSize: 'var(--text-4xl)', lineHeight: 1,
-                       color: 'var(--accent-soft)', pointerEvents: 'none' }} className="kanji">観</div>
+        <div style={{ right: 56, top: 24, lineHeight: 1, pointerEvents: 'none' }} className="kanji absolute text-4xl text-accent-soft">観</div>
       )}
-      <div style={{ position: 'relative' }}>
-        <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-3 mb-5">
-          <span className="ink-dot" style={{ background: 'var(--accent)', width: 8, height: 8 }}/>
+      <div className="relative" >
+        <div className="gap-3 mb-6 flex items-baseline">
+          <span className="ink-dot bg-accent" style={{ width: 8, height: 8 }}/>
           <div className="zs-eyebrow">Sensei · the patient observer</div>
         </div>
-        <h1 className="display m-0" style={{
-          fontSize: bp.sm ? 'var(--text-3xl)' : 'var(--text-4xl)', fontWeight: 300, lineHeight: 1.02,
-          letterSpacing: '-0.03em', maxWidth: 920 }}>
+        <h1 className="display m-0 font-light" style={{
+ fontSize: bp.sm ? 'var(--text-3xl)' : 'var(--text-4xl)', lineHeight: 1.02,
+ letterSpacing: '-0.03em', maxWidth: 920 }}>
           A quiet companion<br/>
-          for AI-assisted <em style={{ color: 'var(--accent)', fontStyle: 'normal' }}>work</em>.
+          for AI-assisted <em className="text-accent not-italic" >work</em>.
         </h1>
-        <p style={{ fontSize: bp.sm ? 'var(--text-lg)' : 'var(--text-xl)', color: 'var(--ink-soft)',
-                     lineHeight: 1.55, maxWidth: 640, fontFamily: 'var(--font-display)', fontWeight: 300 }} className="mt-6">
+        <p style={{ fontSize: bp.sm ? 'var(--text-lg)' : 'var(--text-xl)',
+ lineHeight: 1.55, maxWidth: 640, fontFamily: 'var(--font-display)' }} className="mt-8 text-ink-soft font-light">
           Sensei watches your sessions with AI assistants — then surfaces the patterns you're too close to
           see. Not a chatbot. Not a copilot. A patient observer.
         </p>
-        <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap' }} className="gap-4 mt-6">
+        <div className="gap-4 mt-8 flex items-center flex-wrap">
           <DownloadCTAB size="lg"/>
-          <a href="#how" style={{ fontSize: 'var(--text-sm)', color: 'var(--ink-soft)' }}>See how it works ↓</a>
+          <a className="text-sm text-ink-soft" href="#how" >See how it works ↓</a>
         </div>
         <div className="zs-meta mt-4">Free · Local-first · No account required</div>
       </div>
-      <div style={{ display: 'flex', justifyContent: 'center', position: 'relative' }} className="mt-8">
+      <div className="mt-16 flex justify-center relative">
         <HeroBrief/>
       </div>
     </Shell>
@@ -176,14 +173,12 @@ function DownloadCTAB({ size = "lg" }) {
     else if (/Linux/.test(ua))  setOs("Linux");
     else if (/Mac/.test(ua))    setOs("macOS");
   }, []);
-  const px = size === "lg" ? 'var(--space-4) var(--space-6)' : 'var(--space-2) var(--space-4)';
+  const px = size === "lg" ? 'var(--space-4) var(--space-8)' : 'var(--space-2) var(--space-4)';
   const fs = size === "lg" ? 'var(--text-base)' : 'var(--text-sm)';
   return (
     <a href={`#download-${os.toLowerCase()}`}
-       style={{ display: 'inline-flex', alignItems: 'center', padding: px, background: 'var(--ink)',
-        color: 'var(--paper)', borderRadius: 'var(--radius-lg)', fontSize: fs, fontWeight: 500,
-        textDecoration: 'none', boxShadow: 'var(--shadow-cta)' }} className="gap-3">
-      <span className="kanji" style={{ color: 'var(--accent)' }}>下</span>
+ style={{ padding: px, fontSize: fs }} className="gap-3 inline-flex items-center bg-ink text-paper rounded-lg font-medium no-underline shadow-cta">
+      <span className="kanji text-accent" >下</span>
       Download for {os}
     </a>
   );
@@ -193,14 +188,13 @@ function DownloadCTAB({ size = "lg" }) {
 function TrustStripB() {
   const items = ['Speaks MCP', 'Claude', 'GPT-4o', 'Gemma', 'Ollama', 'Tauri · <60MB'];
   return (
-    <section style={{ borderBottom: 'var(--hairline)', background: 'var(--paper)' }} className="py-4 px-7">
-      <div style={{ maxWidth: 1200, margin: '0 auto', display: 'flex', flexWrap: 'wrap', alignItems: 'center',
-                     justifyContent: 'center' }} className="gap-2">
-        <span className="zs-eyebrow" style={{ marginRight: 'var(--space-2)' }}>Works with</span>
+    <section className="py-4 px-12 border-b bg-paper">
+      <div style={{ maxWidth: 1200 }} className="gap-2 mx-auto flex flex-wrap items-center justify-center">
+        <span className="zs-eyebrow mr-2" >Works with</span>
         {items.map((t, i) => (
           <React.Fragment key={t}>
-            {i > 0 && <span style={{ color: 'var(--ink-faint)' }}>·</span>}
-            <span className="mono" style={{ fontSize: 'var(--text-sm)', color: 'var(--ink-soft)' }}>{t}</span>
+            {i > 0 && <span className="text-ink-faint" >·</span>}
+            <span className="mono text-sm text-ink-soft" >{t}</span>
           </React.Fragment>
         ))}
       </div>
@@ -217,13 +211,13 @@ function StatsB() {
     { v: "Free", k: "during preview" },
   ];
   return (
-    <section style={{ borderTop: 'var(--hairline)', borderBottom: 'var(--hairline)', background: 'var(--paper-soft)' }}
-             className="py-6 px-7">
-      <div style={{ maxWidth: 1200, margin: '0 auto', display: 'grid',
-                     gridTemplateColumns: bp.sm ? '1fr' : bp.md ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)' }} className="gap-6">
+    <section 
+ className="py-8 px-12 border-t border-b bg-paper-soft">
+      <div style={{ maxWidth: 1200,
+ gridTemplateColumns: bp.sm ? '1fr' : bp.md ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)' }} className="gap-8 mx-auto grid">
         {stats.map((s, i) => (
-          <div key={i} style={{ textAlign: 'center' }}>
-            <div className="display" style={{ fontSize: 'var(--text-2xl)', fontWeight: 400, color: 'var(--ink)' }}>{s.v}</div>
+          <div className="text-center" key={i} >
+            <div className="display text-2xl font-normal text-ink" >{s.v}</div>
             <div className="zs-eyebrow mt-1">{s.k}</div>
           </div>
         ))}
@@ -236,17 +230,17 @@ function WhatItIsB() {
   const bp = useBP();
   return (
     <Shell>
-      <div style={{ display: 'grid', gridTemplateColumns: bp.md ? '1fr' : '1fr 1.6fr', alignItems: 'start' }} className="gap-8">
+      <div style={{ gridTemplateColumns: bp.md ? '1fr' : '1fr 1.6fr' }} className="gap-16 grid items-start">
         <div>
           <div className="zs-eyebrow mb-4">What it is</div>
           <h2 className="zs-display-lg m-0">One desktop app.<br/>One quiet promise.</h2>
         </div>
-        <div style={{ fontFamily: 'var(--font-display)', fontWeight: 300 }}>
-          <p className="zs-body mt-1" style={{ fontSize: 'var(--text-lg)', lineHeight: 1.65 }}>
+        <div className="font-light" style={{ fontFamily: 'var(--font-display)' }}>
+          <p className="zs-body mt-1 text-lg" style={{ lineHeight: 1.65 }}>
             Sensei runs on your machine and observes your sessions with AI assistants. It sends no telemetry;
             it speaks rarely; it remembers what you've actually done.
           </p>
-          <p className="zs-body" style={{ fontSize: 'var(--text-lg)', lineHeight: 1.65 }}>
+          <p className="zs-body text-lg" style={{ lineHeight: 1.65 }}>
             Over weeks, it begins to recognize your patterns — the idioms you gravitate toward, the workarounds
             you've adopted, the friction points that keep recurring. When something looks worth noticing, it
             tells you. The rest of the time, it stays out of the way.
@@ -273,19 +267,19 @@ function HowItWorksB() {
   return (
     <Shell id="how" top bottom bg="var(--paper-soft)">
       <div className="zs-eyebrow mb-4">How it works</div>
-      <h2 className="zs-display-lg mt-0 mb-8">
-        <span style={{ color: 'var(--accent)' }}>観 · 察 · 覚</span><br/>Watch, notice, adopt.
+      <h2 className="zs-display-lg mt-0 mb-16">
+        <span className="text-accent" >観 · 察 · 覚</span><br/>Watch, notice, adopt.
       </h2>
-      <div style={{ display: 'grid', gridTemplateColumns: bp.md ? '1fr' : 'repeat(3, 1fr)' }} className="gap-8">
+      <div style={{ gridTemplateColumns: bp.md ? '1fr' : 'repeat(3, 1fr)' }} className="gap-16 grid">
         {steps.map((s, i) => (
-          <div key={i} style={{ background: 'var(--paper)', border: 'var(--hairline)', borderRadius: 'var(--radius-lg)' }}
-               className="py-6 px-5">
-            <div className="kanji mb-4" style={{ fontSize: 'var(--text-4xl)', color: 'var(--accent)', lineHeight: 1 }}>{s.kanji}</div>
+          <div key={i} 
+ className="py-8 px-6 bg-paper border border-paper-edge rounded-lg">
+            <div className="kanji mb-4 text-4xl text-accent" style={{ lineHeight: 1 }}>{s.kanji}</div>
             <div className="zs-eyebrow mb-2">{s.phase}</div>
             <h3 className="zs-h2 mt-0 mb-4">{s.title}</h3>
             <div className="zs-body-sm mb-4" style={{ lineHeight: 1.65 }}>{s.text}</div>
-            <div style={{ fontSize: 'var(--text-xs)', color: 'var(--ink-mute)', fontStyle: 'italic', borderTop: 'var(--hairline)' }}
-                 className="pt-3">{s.sub}</div>
+            <div 
+ className="pt-3 text-xs text-ink-mute italic border-t">{s.sub}</div>
           </div>
         ))}
       </div>
@@ -303,14 +297,11 @@ function CopyRow({ label, cmd }) {
   return (
     <div>
       <div className="zs-eyebrow mb-2">{label}</div>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-3)',
-                     background: 'var(--paper)', border: 'var(--hairline)', borderRadius: 'var(--radius)',
-                     padding: 'var(--space-3) var(--space-4)' }}>
-        <code className="mono" style={{ fontSize: 'var(--text-sm)', color: 'var(--ink)', overflowX: 'auto', whiteSpace: 'nowrap' }}>
-          <span style={{ color: 'var(--ink-faint)' }}>$ </span>{cmd}
+      <div className="flex items-center justify-between gap-3 bg-paper border border-paper-edge rounded py-3 px-4" >
+        <code className="mono text-sm text-ink overflow-x-auto whitespace-nowrap" >
+          <span className="text-ink-faint" >$ </span>{cmd}
         </code>
-        <button onClick={copy} style={{ flexShrink: 0, background: 'none', border: 'none', cursor: 'pointer',
-                       fontSize: 'var(--text-xs)', color: copied ? 'var(--success)' : 'var(--accent)', fontFamily: 'var(--font-mono)' }}>
+        <button className="shrink-0 border-0 cursor-pointer text-xs" onClick={copy} style={{ background: 'none', color: copied ? 'var(--success)' : 'var(--accent)', fontFamily: 'var(--font-mono)' }}>
           {copied ? '✓ copied' : 'copy'}
         </button>
       </div>
@@ -322,20 +313,19 @@ function InstallB() {
   const bp = useBP();
   return (
     <Shell id="install" top>
-      <div style={{ display: 'grid', gridTemplateColumns: bp.md ? '1fr' : '1fr 1.3fr', alignItems: 'start' }} className="gap-8">
+      <div style={{ gridTemplateColumns: bp.md ? '1fr' : '1fr 1.3fr' }} className="gap-16 grid items-start">
         <div>
           <div className="zs-eyebrow mb-4">Quickstart</div>
           <h2 className="zs-display-lg m-0">Up and observing<br/>in one command.</h2>
-          <p className="zs-body mt-5" style={{ maxWidth: 380 }}>
+          <p className="zs-body mt-6" style={{ maxWidth: 380 }}>
             Install the desktop app, or drop the daemon into an existing setup. No account, no config —
             it starts listening the moment it's open.
           </p>
-          <a href="#docs" style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-2)',
-                       fontSize: 'var(--text-sm)', color: 'var(--accent)', textDecoration: 'none' }} className="mt-5">
+          <a href="#docs" className="mt-6 inline-flex items-center gap-2 text-sm text-accent no-underline">
             Read the docs →
           </a>
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-4">
+        <div className="gap-4 flex flex-col">
           <CopyRow label="macOS · Homebrew" cmd="brew install --cask sensei" />
           <CopyRow label="Linux · install script" cmd="curl -fsSL sensei.sh/install | sh" />
           <CopyRow label="Any editor · MCP daemon" cmd="npx @sensei/daemon start" />
@@ -357,15 +347,15 @@ function RelayB() {
     <Shell id="relay" top bg="var(--paper-soft)" inner={{ maxWidth: 1100 }}>
       <div className="zs-eyebrow mb-4">Relay · away from keyboard</div>
       <h2 className="zs-display-lg mt-0 mb-4">Work continues while you're away.<br/>You stay the one who decides.</h2>
-      <p className="zs-body mt-0 mb-7" style={{ maxWidth: 640 }}>
+      <p className="zs-body mt-0 mb-12" style={{ maxWidth: 640 }}>
         Your machine holds a live line to your Dōjō — so from a phone or any browser you can reach a running
         session. No pairing, no separate app to install. Free on your own projects.
       </p>
-      <div style={{ display: 'grid', gridTemplateColumns: bp.sm ? '1fr' : 'repeat(auto-fit, minmax(230px, 1fr))', gap: 'var(--space-3)' }}>
+      <div className="grid gap-3" style={{ gridTemplateColumns: bp.sm ? '1fr' : 'repeat(auto-fit, minmax(230px, 1fr))' }}>
         {acts.map(a => (
-          <div key={a.t} style={{ background: 'var(--paper)', border: 'var(--hairline)', borderRadius: 'var(--radius-lg)' }} className="p-5">
-            <span className="kanji" style={{ fontSize: 'var(--text-2xl)', color: 'var(--accent)' }}>{a.k}</span>
-            <div className="zs-h3 mt-3 mb-1" style={{ fontWeight: 600 }}>{a.t}</div>
+          <div key={a.t} className="p-6 bg-paper border border-paper-edge rounded-lg">
+            <span className="kanji text-2xl text-accent" >{a.k}</span>
+            <div className="zs-h3 mt-3 mb-1 font-semibold" >{a.t}</div>
             <p className="zs-body-sm m-0" style={{ lineHeight: 1.6 }}>{a.d}</p>
           </div>
         ))}
@@ -378,15 +368,14 @@ function PhilosophyB() {
   return (
     <Shell id="philosophy" top bottom bg="var(--paper-soft)" style={{ position: 'relative', overflow: 'hidden' }}
            inner={{ maxWidth: 760, textAlign: 'center', position: 'relative' }}>
-      <div style={{ position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%, -50%)',
-                     fontSize: 'var(--text-4xl)', lineHeight: 1, color: 'var(--accent-soft)', pointerEvents: 'none' }}
-           className="kanji">静</div>
-      <div style={{ position: 'relative' }}>
-        <div className="zs-eyebrow mb-5">Sei · stillness</div>
-        <h2 className="zs-display-lg mt-0 mb-6" style={{ lineHeight: 1.18 }}>
+      <div style={{ left: '50%', top: '50%', transform: 'translate(-50%, -50%)', lineHeight: 1, pointerEvents: 'none' }}
+ className="kanji absolute text-4xl text-accent-soft">静</div>
+      <div className="relative" >
+        <div className="zs-eyebrow mb-6">Sei · stillness</div>
+        <h2 className="zs-display-lg mt-0 mb-8" style={{ lineHeight: 1.18 }}>
           The master observes for a long time before teaching.
         </h2>
-        <p className="zs-body mt-0 mb-5" style={{ fontSize: 'var(--text-lg)', fontFamily: 'var(--font-display)', fontWeight: 300, lineHeight: 1.7 }}>
+        <p className="zs-body mt-0 mb-6 text-lg font-light" style={{ fontFamily: 'var(--font-display)', lineHeight: 1.7 }}>
           AI tools are getting louder. More suggestions, more autocompletes, more interrupting. Sensei moves the
           other way. It speaks rarely, and only when it has something specific to say. Most days it is completely
           silent — and that is the feature.
@@ -413,17 +402,17 @@ function PrivacyB() {
   ];
   return (
     <Shell id="privacy" bg="var(--paper)">
-      <div style={{ display: 'grid', gridTemplateColumns: bp.md ? '1fr' : '1fr 1.5fr', alignItems: 'start' }} className="gap-8">
+      <div style={{ gridTemplateColumns: bp.md ? '1fr' : '1fr 1.5fr' }} className="gap-16 grid items-start">
         <div>
-          <span className="kanji" style={{ fontSize: 'var(--text-4xl)', color: 'var(--accent)' }}>蔵</span>
+          <span className="kanji text-4xl text-accent" >蔵</span>
           <div className="zs-eyebrow mt-4 mb-4">Privacy &amp; local-first</div>
           <h2 className="zs-display-lg m-0" style={{ lineHeight: 1.15 }}>Your sessions stay on your machine.</h2>
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-6">
+        <div className="gap-8 flex flex-col">
           {items.map((it, i) => (
-            <div key={i} style={{ display: 'grid', gridTemplateColumns: 'auto 1fr',
-                       borderBottom: i < 2 ? 'var(--hairline)' : 'none' }} className="gap-5 pb-6">
-              <span className="kanji" style={{ fontSize: 'var(--text-2xl)', color: 'var(--ink-soft)' }}>{it.k}</span>
+            <div key={i} style={{ gridTemplateColumns: 'auto 1fr',
+ borderBottom: i < 2 ? 'var(--hairline)' : 'none' }} className="gap-6 pb-8 grid">
+              <span className="kanji text-2xl text-ink-soft" >{it.k}</span>
               <div>
                 <div className="zs-h2 mb-2">{it.title}</div>
                 <div className="zs-body" style={{ lineHeight: 1.65 }}>{it.text}</div>
@@ -440,20 +429,18 @@ function PricingB() {
   return (
     <Shell id="pricing" top bottom bg="var(--paper-soft)" inner={{ maxWidth: 760, textAlign: 'center' }}>
       <div className="zs-eyebrow mb-4">Pricing</div>
-      <h2 className="zs-display-lg mt-0 mb-5">Free during preview.<br/>Pay what feels right.</h2>
-      <p className="zs-body m-0" style={{ fontSize: 'var(--text-lg)', fontFamily: 'var(--font-display)', fontWeight: 300, lineHeight: 1.65, maxWidth: 620, marginInline: 'auto' }}>
+      <h2 className="zs-display-lg mt-0 mb-6">Free during preview.<br/>Pay what feels right.</h2>
+      <p className="zs-body m-0 text-lg font-light" style={{ fontFamily: 'var(--font-display)', lineHeight: 1.65, maxWidth: 620, marginInline: 'auto' }}>
         The desktop app is free while sensei is in preview. If it earns a place in your daily practice, you can
         support development through sponsorship — that's what keeps the work independent.
       </p>
-      <p className="zs-body-sm mt-4" style={{ color: 'var(--ink-mute)', maxWidth: 560, marginInline: 'auto' }}>
-        A paid team tier for a private, shared Dōjō is on the <a href="#roadmap" style={{ color: 'var(--accent)' }}>roadmap</a> — not a live product yet.
+      <p className="zs-body-sm mt-4 text-ink-mute" style={{ maxWidth: 560, marginInline: 'auto' }}>
+        A paid team tier for a private, shared Dōjō is on the <a className="text-accent" href="#roadmap" >roadmap</a> — not a live product yet.
       </p>
-      <div className="mt-7" style={{ display: 'flex', gap: 'var(--space-3)', justifyContent: 'center', flexWrap: 'wrap' }}>
+      <div className="mt-12 flex gap-3 justify-center flex-wrap" >
         <DownloadCTAB size="lg"/>
-        <a href="https://github.com/sponsors/sensei-hq" target="_blank" rel="noopener" style={{
-          display: 'inline-flex', alignItems: 'center', gap: 'var(--space-2)', padding: 'var(--space-4) var(--space-6)',
-          border: '1px solid var(--ink)', color: 'var(--ink)', borderRadius: 'var(--radius-lg)',
-          fontSize: 'var(--text-base)', fontWeight: 500, textDecoration: 'none' }}>♥ Sponsor</a>
+        <a className="inline-flex items-center gap-2 py-4 px-8 text-ink rounded-lg text-base font-medium no-underline" href="https://github.com/sponsors/sensei-hq" target="_blank" rel="noopener" style={{
+ border: '1px solid var(--ink)' }}>♥ Sponsor</a>
       </div>
     </Shell>
   );
@@ -475,10 +462,10 @@ function StatusBadge({ status }) {
   const meta = (R && R.statusMeta[status]) || { label: status, tone: 'later' };
   const t = STATUS_TONE[meta.tone] || STATUS_TONE.later;
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-1)', flexShrink: 0,
-      fontFamily: 'var(--font-mono)', fontSize: 'var(--text-xs)', color: t.color, background: t.bg,
-      border: '1px solid ' + t.border, borderRadius: 'var(--radius-full)', padding: '2px 10px' }}>
-      <span style={{ width: 5, height: 5, borderRadius: '50%', background: t.color }} />{meta.label}
+    <span className="inline-flex items-center gap-1 shrink-0 text-xs rounded-full" style={{
+ fontFamily: 'var(--font-mono)', color: t.color, background: t.bg,
+ border: '1px solid ' + t.border, padding: '2px 10px' }}>
+      <span className="rounded-full" style={{ width: 5, height: 5, background: t.color }} />{meta.label}
     </span>
   );
 }
@@ -503,33 +490,31 @@ function WaitlistForm({ interests }) {
   };
   if (state === 'done') {
     return (
-      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', background: 'var(--success-soft)',
-        border: '1px solid var(--success-edge)', borderRadius: 'var(--radius-lg)', padding: 'var(--space-4) var(--space-5)' }}>
-        <span className="kanji" style={{ color: 'var(--success)' }}>心</span>
-        <span className="zs-body-sm" style={{ color: 'var(--ink)' }}>You're on the list. We'll write once — when it's ready, not before.</span>
+      <div className="flex items-center gap-2 bg-success-soft rounded-lg py-4 px-6" style={{
+ border: '1px solid var(--success-edge)' }}>
+        <span className="kanji text-success" >心</span>
+        <span className="zs-body-sm text-ink" >You're on the list. We'll write once — when it's ready, not before.</span>
       </div>
     );
   }
   return (
-    <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-2)' }}>
-        <select value={interest} onChange={e => setInterest(e.target.value)} className="zs-input"
-          style={{ width: 'auto', flex: '1 1 200px', cursor: 'pointer' }}>
+    <form className="flex flex-col gap-3" onSubmit={submit} >
+      <div className="flex flex-wrap gap-2" >
+        <select value={interest} onChange={e => setInterest(e.target.value)} className="zs-input w-auto cursor-pointer"
+ style={{ flex: '1 1 200px' }}>
           {interests.map(it => <option key={it.id} value={it.id}>{it.name}</option>)}
         </select>
         <input type="email" required value={email} onChange={e => setEmail(e.target.value)}
-          placeholder="you@work.com" className="zs-input" style={{ flex: '2 1 220px', width: 'auto' }} />
+ placeholder="you@work.com" className="zs-input w-auto" style={{ flex: '2 1 220px' }} />
         {/* honeypot — hidden from humans */}
-        <input type="text" tabIndex={-1} autoComplete="off" value={hp} onChange={e => setHp(e.target.value)}
-          aria-hidden="true" style={{ position: 'absolute', left: '-9999px', width: 1, height: 1, opacity: 0 }} />
-        <button type="submit" style={{ flex: '0 0 auto', display: 'inline-flex', alignItems: 'center', gap: 'var(--space-2)',
-          padding: 'var(--space-2) var(--space-5)', background: 'var(--ink)', color: 'var(--paper)', border: 'none',
-          borderRadius: 'var(--radius)', fontSize: 'var(--text-sm)', fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit' }}>
+        <input className="absolute" type="text" tabIndex={-1} autoComplete="off" value={hp} onChange={e => setHp(e.target.value)}
+ aria-hidden="true" style={{ left: '-9999px', width: 1, height: 1, opacity: 0 }} />
+        <button className="inline-flex items-center gap-2 py-2 px-6 bg-ink text-paper border-0 rounded text-sm font-medium cursor-pointer" type="submit" style={{ flex: '0 0 auto', fontFamily: 'inherit' }}>
           {state === 'sending' ? 'Sending…' : 'Request early access'}
         </button>
       </div>
-      {state === 'error' && <div style={{ fontSize: 'var(--text-xs)', color: 'var(--danger)' }}>Enter a valid email address.</div>}
-      <div style={{ fontSize: 'var(--text-xs)', color: 'var(--ink-mute)', lineHeight: 1.5 }}>
+      {state === 'error' && <div className="text-xs text-danger" >Enter a valid email address.</div>}
+      <div className="text-xs text-ink-mute" style={{ lineHeight: 1.5 }}>
         One email per feature, only when it ships. No marketing list, no sharing — delete anytime.
       </div>
     </form>
@@ -550,27 +535,27 @@ function RoadmapB() {
     <Shell id="roadmap" top bottom bg="var(--paper)" inner={{ maxWidth: 1000 }}>
       <div className="zs-eyebrow mb-4">Roadmap · 道 the way ahead</div>
       <h2 className="zs-display-lg mt-0 mb-4">Built in the open,<br/>shipped when it's true.</h2>
-      <p className="zs-body mt-0 mb-8" style={{ maxWidth: 620 }}>
+      <p className="zs-body mt-0 mb-16" style={{ maxWidth: 620 }}>
         The local loop is available today. Everything below is labeled honestly — in progress, in beta, or
         planned. Nothing here is available yet; ask to be notified and we'll write the day it ships.
       </p>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-7)' }}>
+      <div className="flex flex-col gap-12" >
         {byPhase.map(({ phase, items }) => (
           <div key={phase.id}>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 'var(--space-3)', flexWrap: 'wrap', borderBottom: 'var(--hairline)' }} className="pb-3 mb-4">
+            <div className="pb-3 mb-4 flex items-baseline gap-3 flex-wrap border-b">
               <h3 className="zs-h2 m-0">{phase.label}</h3>
-              <span className="zs-body-sm" style={{ color: 'var(--ink-mute)' }}>{phase.blurb}</span>
+              <span className="zs-body-sm text-ink-mute" >{phase.blurb}</span>
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: bp.md ? '1fr' : 'repeat(2, 1fr)', gap: 'var(--space-3)' }}>
+            <div className="grid gap-3" style={{ gridTemplateColumns: bp.md ? '1fr' : 'repeat(2, 1fr)' }}>
               {items.map(f => (
-                <div key={f.id} style={{ background: 'var(--paper-soft)', border: 'var(--hairline)', borderRadius: 'var(--radius-lg)' }} className="p-5">
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }} className="mb-2">
-                    <span className="zs-h3 m-0" style={{ flex: 1 }}>{f.name}</span>
+                <div key={f.id} className="p-6 bg-paper-soft border border-paper-edge rounded-lg">
+                  <div className="mb-2 flex items-center gap-3">
+                    <span className="zs-h3 m-0 flex-1" >{f.name}</span>
                     <StatusBadge status={f.status} />
                   </div>
                   <p className="zs-body-sm m-0" style={{ lineHeight: 1.6 }}>{f.blurb}</p>
-                  <div className="zs-meta mt-3" style={{ color: 'var(--ink-faint)' }}>{R.surfaceMeta[f.surface].label}</div>
+                  <div className="zs-meta mt-3 text-ink-faint" >{R.surfaceMeta[f.surface].label}</div>
                 </div>
               ))}
             </div>
@@ -578,9 +563,9 @@ function RoadmapB() {
         ))}
       </div>
 
-      <div style={{ background: 'var(--paper-soft)', border: 'var(--hairline)', borderRadius: 'var(--radius-lg)' }} className="mt-8 p-6">
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 'var(--space-3)', flexWrap: 'wrap' }} className="mb-4">
-          <span className="kanji" style={{ fontSize: 'var(--text-2xl)', color: 'var(--accent)' }}>待</span>
+      <div className="mt-16 p-8 bg-paper-soft border border-paper-edge rounded-lg">
+        <div className="mb-4 flex items-baseline gap-3 flex-wrap">
+          <span className="kanji text-2xl text-accent" >待</span>
           <h3 className="zs-h2 m-0">Notify me when it's ready</h3>
         </div>
         <WaitlistForm interests={waitlistItems} />
@@ -609,15 +594,14 @@ function FaqB() {
   return (
     <Shell id="faq" inner={{ maxWidth: 960 }}>
       <div className="zs-eyebrow mb-4">Frequently asked</div>
-      <h2 className="zs-display-lg mt-0 mb-7">Common questions,<br/>plain answers.</h2>
+      <h2 className="zs-display-lg mt-0 mb-12">Common questions,<br/>plain answers.</h2>
       <div>
         {qs.map((it, i) => (
-          <details key={i} style={{ borderTop: 'var(--hairline)', ...(i === qs.length - 1 ? { borderBottom: 'var(--hairline)' } : {}) }}
-                   className="py-5 px-0">
-            <summary style={{ cursor: 'pointer', listStyle: 'none', display: 'flex', justifyContent: 'space-between',
-                       gap: 'var(--space-4)', fontSize: 'var(--text-lg)', color: 'var(--ink)', fontFamily: 'var(--font-display)', fontWeight: 400 }}>
+          <details key={i} style={{ ...(i === qs.length - 1 ? { borderBottom: 'var(--hairline)' } : {}) }}
+ className="py-6 px-0 border-t">
+            <summary className="cursor-pointer flex justify-between gap-4 text-lg text-ink font-normal" style={{ listStyle: 'none', fontFamily: 'var(--font-display)' }}>
               <span>{it.q}</span>
-              <span className="kanji" style={{ color: 'var(--ink-mute)' }}>+</span>
+              <span className="kanji text-ink-mute" >+</span>
             </summary>
             <div className="zs-body-sm mt-4" style={{ lineHeight: 1.7, maxWidth: 720 }}>{it.a}</div>
           </details>
@@ -630,17 +614,15 @@ function FaqB() {
 function SupportB() {
   return (
     <Shell top bg="var(--paper-soft)" inner={{ maxWidth: 720, textAlign: 'center' }}>
-      <span className="kanji" style={{ fontSize: 'var(--text-4xl)', color: 'var(--accent)' }}>志</span>
+      <span className="kanji text-4xl text-accent" >志</span>
       <div className="zs-eyebrow mt-3 mb-3">Support development · shi</div>
-      <h2 className="zs-h1 mt-0 mb-5" style={{ fontWeight: 300, lineHeight: 1.25 }}>
+      <h2 className="zs-h1 mt-0 mb-6 font-light" style={{ lineHeight: 1.25 }}>
         If sensei has earned a place in your practice, you can help keep it growing.
       </h2>
-      <p className="zs-body-sm mt-0 mb-6" style={{ lineHeight: 1.7 }}>
+      <p className="zs-body-sm mt-0 mb-8" style={{ lineHeight: 1.7 }}>
         Sensei is built by a small team. GitHub Sponsors keeps the work focused and independent.
       </p>
-      <a href="https://github.com/sponsors/sensei-hq" target="_blank" rel="noopener" style={{
-        display: 'inline-flex', alignItems: 'center', background: 'var(--accent)', color: 'var(--paper)',
-        borderRadius: 'var(--radius-lg)', fontSize: 'var(--text-sm)', fontWeight: 500, textDecoration: 'none' }} className="gap-2 py-3 px-5">
+      <a href="https://github.com/sponsors/sensei-hq" target="_blank" rel="noopener" className="gap-2 py-3 px-6 inline-flex items-center bg-accent text-paper rounded-lg text-sm font-medium no-underline">
         ♥ Sponsor on GitHub
       </a>
     </Shell>
@@ -650,23 +632,22 @@ function SupportB() {
 function FooterB() {
   const bp = useBP();
   return (
-    <footer style={{ borderTop: 'var(--hairline)', color: 'var(--ink-mute)' }} className="py-7 px-7">
-      <div style={{ maxWidth: 1200, margin: '0 auto', display: 'flex', flexDirection: bp.md ? 'column' : 'row',
-                     alignItems: 'flex-start', justifyContent: 'space-between' }} className="gap-8">
+    <footer className="py-12 px-12 border-t text-ink-mute">
+      <div style={{ maxWidth: 1200, flexDirection: bp.md ? 'column' : 'row' }} className="gap-16 mx-auto flex items-start justify-between">
         <div>
-          <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2 mb-3">
-            <span style={{ display: 'inline-block', width: 22, height: 22, background: 'var(--accent)',
-                           WebkitMaskImage: 'url(uploads/sensei.svg?v=3)', maskImage: 'url(uploads/sensei.svg?v=3)',
-                           WebkitMaskSize: 'contain', maskSize: 'contain', WebkitMaskRepeat: 'no-repeat', maskRepeat: 'no-repeat',
-                           WebkitMaskPosition: 'center', maskPosition: 'center', alignSelf: 'center', flexShrink: 0 }} />
-            <span className="display" style={{ fontSize: 'var(--text-base)', color: 'var(--ink-soft)' }}>Sensei</span>
+          <div className="gap-2 mb-3 flex items-baseline">
+            <span className="inline-block bg-accent self-center shrink-0" style={{ width: 22, height: 22,
+ WebkitMaskImage: 'url(uploads/sensei.svg?v=3)', maskImage: 'url(uploads/sensei.svg?v=3)',
+ WebkitMaskSize: 'contain', maskSize: 'contain', WebkitMaskRepeat: 'no-repeat', maskRepeat: 'no-repeat',
+ WebkitMaskPosition: 'center', maskPosition: 'center' }} />
+            <span className="display text-base text-ink-soft" >Sensei</span>
           </div>
-          <div style={{ fontSize: 'var(--text-xs)', color: 'var(--ink-mute)', maxWidth: 280, lineHeight: 1.6 }}>
+          <div className="text-xs text-ink-mute" style={{ maxWidth: 280, lineHeight: 1.6 }}>
             A patient observer for AI-assisted work. Built quietly, shipped slowly.
           </div>
-          <div className="mono mt-3" style={{ fontSize: 'var(--text-xs)', color: 'var(--ink-faint)' }}>{(typeof window !== 'undefined' && window.__APP_VERSION__) || 'preview'}</div>
+          <div className="mono mt-3 text-xs text-ink-faint" >{(typeof window !== 'undefined' && window.__APP_VERSION__) || 'preview'}</div>
         </div>
-        <div style={{ display: 'flex', flexWrap: 'wrap' }} className="gap-7">
+        <div className="gap-12 flex flex-wrap">
           <FooterCol title="Product" links={["Download", "Pricing", "Privacy", "FAQ", "Changelog"]}/>
           <FooterCol title="Source" links={["GitHub", "Docs", "MCP", "Roadmap", "Issues"]}/>
           <FooterCol title="Connect" links={["Twitter", "Mastodon", "Email", "RSS"]}/>
@@ -679,10 +660,10 @@ function FooterB() {
 function FooterCol({ title, links }) {
   return (
     <div>
-      <div className="zs-eyebrow mb-3" style={{ color: 'var(--ink-faint)' }}>{title}</div>
-      <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-2">
+      <div className="zs-eyebrow mb-3 text-ink-faint" >{title}</div>
+      <div className="gap-2 flex flex-col">
         {links.map((l, i) => (
-          <a key={i} href={`#${l.toLowerCase()}`} style={{ fontSize: 'var(--text-sm)', color: 'var(--ink-soft)' }}>{l}</a>
+          <a className="text-sm text-ink-soft" key={i} href={`#${l.toLowerCase()}`} >{l}</a>
         ))}
       </div>
     </div>

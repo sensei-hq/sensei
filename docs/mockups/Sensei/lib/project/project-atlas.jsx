@@ -190,8 +190,8 @@ function AtlasGraph({ graph, docsOn, focus, selected, onSelect }) {
   }
 
   return (
-    <svg viewBox="0 0 780 520" preserveAspectRatio="xMidYMid meet"
-         style={{ width: "100%", height: "100%", display: "block" }}>
+    <svg className="w-full h-full block" viewBox="0 0 780 520" preserveAspectRatio="xMidYMid meet"
+ >
       <defs>
         <marker id="atlas-arrow" markerWidth="9" markerHeight="9" refX="7" refY="4.5"
                 orient="auto">
@@ -233,8 +233,8 @@ function AtlasGraph({ graph, docsOn, focus, selected, onSelect }) {
         const stroke = d.status === "broken" ? "var(--danger)" : "var(--warning)";
         const sel = selected === d.id;
         return (
-          <g key={d.id} opacity={op} style={{ cursor: "pointer" }}
-             onClick={() => onSelect(d.id)}>
+          <g className="cursor-pointer" key={d.id} opacity={op} 
+ onClick={() => onSelect(d.id)}>
             <rect x={d.x - 13} y={d.y - 13} width={26} height={26} rx={5}
                   fill="var(--paper)" stroke={stroke}
                   strokeWidth={sel ? 2.4 : 1.4} strokeDasharray="3 2"/>
@@ -254,8 +254,8 @@ function AtlasGraph({ graph, docsOn, focus, selected, onSelect }) {
         const sel = selected === n.id;
         const fill = atlasFill(n.kind);
         return (
-          <g key={n.id} opacity={op} style={{ cursor: "pointer" }}
-             onClick={() => onSelect(n.id)}>
+          <g className="cursor-pointer" key={n.id} opacity={op} 
+ onClick={() => onSelect(n.id)}>
             {sel && (
               <circle cx={n.x} cy={n.y} r={n.r + 6} fill="none"
                       stroke="var(--accent)" strokeWidth={2}/>
@@ -294,21 +294,21 @@ function AtlasInspector({ graph, selectedId, docsOn, onDrill }) {
   if (!node) {
     const drift = (graph.docs || []).filter(d => d.status !== "ok").length;
     return (
-      <div className="py-5 px-4" style={{ color: "var(--ink-3)" }}>
-        <div style={{ fontSize: 11, letterSpacing: "0.16em", textTransform: "uppercase" }}
-             className="mb-3">This view</div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr auto", rowGap: 8 }}
-             className="mb-4">
+      <div className="py-6 px-4 text-ink-3" >
+        <div style={{ fontSize: 11, letterSpacing: "0.16em" }}
+ className="mb-3 uppercase">This view</div>
+        <div style={{ gridTemplateColumns: "1fr auto", rowGap: 8 }}
+ className="mb-4 grid">
           <span style={{ fontSize: 12.5 }}>Nodes</span>
-          <span className="mono" style={{ fontSize: 12.5, color: "var(--ink)" }}>{graph.nodes.length}</span>
+          <span className="mono text-ink" style={{ fontSize: 12.5 }}>{graph.nodes.length}</span>
           <span style={{ fontSize: 12.5 }}>Relations</span>
-          <span className="mono" style={{ fontSize: 12.5, color: "var(--ink)" }}>{graph.edges.length}</span>
+          <span className="mono text-ink" style={{ fontSize: 12.5 }}>{graph.edges.length}</span>
           <span style={{ fontSize: 12.5 }}>Docs linked</span>
-          <span className="mono" style={{ fontSize: 12.5, color: "var(--ink)" }}>{(graph.docs || []).length}</span>
+          <span className="mono text-ink" style={{ fontSize: 12.5 }}>{(graph.docs || []).length}</span>
           {docsOn && drift > 0 && (
             <React.Fragment>
-              <span style={{ fontSize: 12.5, color: "var(--warning)" }}>Doc drift</span>
-              <span className="mono" style={{ fontSize: 12.5, color: "var(--warning)" }}>{drift}</span>
+              <span className="text-warning" style={{ fontSize: 12.5 }}>Doc drift</span>
+              <span className="mono text-warning" style={{ fontSize: 12.5 }}>{drift}</span>
             </React.Fragment>
           )}
         </div>
@@ -326,29 +326,26 @@ function AtlasInspector({ graph, selectedId, docsOn, onDrill }) {
   const fill = atlasFill(node.kind, node.status);
 
   return (
-    <div className="py-5 px-4">
+    <div className="py-6 px-4">
       {/* identity */}
-      <div style={{ display: "flex", alignItems: "center" }} className="gap-3 mb-1">
-        <span style={{
-          width: 34, height: 34, borderRadius: node.kind === "doc" ? 6 : "50%",
-          background: node.kind === "doc" ? "var(--paper)" : fill,
-          border: node.kind === "doc" ? `1.4px dashed ${fill}` : "none",
-          display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
-        }}>
+      <div className="gap-3 mb-1 flex items-center">
+        <span className="flex items-center justify-center shrink-0" style={{
+ width: 34, height: 34, borderRadius: node.kind === "doc" ? 6 : "50%",
+ background: node.kind === "doc" ? "var(--paper)" : fill,
+ border: node.kind === "doc" ? `1.4px dashed ${fill}` : "none" }}>
           <span className="kanji" style={{ fontSize: 17,
                 color: node.kind === "doc" ? fill : atlasText(node.kind) }}>
             {node.kind === "doc" ? "¶" : node.kanji}
           </span>
         </span>
-        <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 11, letterSpacing: "0.12em", textTransform: "uppercase",
-                        color: "var(--ink-3)" }}>{KIND_LABEL[node.kind]}</div>
-          <div className="mono" style={{ fontSize: 14, color: "var(--ink)", fontWeight: 600 }}>
+        <div className="min-w-0" >
+          <div className="uppercase text-ink-3" style={{ fontSize: 11, letterSpacing: "0.12em" }}>{KIND_LABEL[node.kind]}</div>
+          <div className="mono text-ink font-semibold" style={{ fontSize: 14 }}>
             {node.label}
           </div>
         </div>
       </div>
-      <div style={{ fontSize: 12, color: "var(--ink-3)" }} className="mb-4 mt-1">{node.sub}</div>
+      <div style={{ fontSize: 12 }} className="mb-4 mt-1 text-ink-3">{node.sub}</div>
 
       {node.kind === "doc" && (
         <div className="mb-4 py-2 px-3" style={{
@@ -371,13 +368,11 @@ function AtlasInspector({ graph, selectedId, docsOn, onDrill }) {
 
       {docs.length > 0 && (
         <div className="mb-3">
-          <div style={{ fontSize: 11, letterSpacing: "0.14em", textTransform: "uppercase",
-                        color: "var(--ink-3)" }} className="mb-2">Linked docs</div>
-          <div style={{ display: "flex", flexDirection: "column" }} className="gap-1">
+          <div style={{ fontSize: 11, letterSpacing: "0.14em" }} className="mb-2 uppercase text-ink-3">Linked docs</div>
+          <div className="gap-1 flex flex-col">
             {docs.map(d => (
-              <div key={d.id} style={{ display: "flex", justifyContent: "space-between",
-                                       alignItems: "center", fontSize: 12 }}>
-                <span style={{ color: "var(--ink-2)" }}>{d.label}</span>
+              <div className="flex justify-between items-center" key={d.id} style={{ fontSize: 12 }}>
+                <span className="text-ink-2" >{d.label}</span>
                 <span className="mono" style={{ fontSize: 10.5,
                       color: d.status === "ok" ? "var(--success)"
                            : d.status === "broken" ? "var(--danger)" : "var(--warning)" }}>
@@ -390,13 +385,13 @@ function AtlasInspector({ graph, selectedId, docsOn, onDrill }) {
       )}
 
       {node.children ? (
-        <button onClick={() => onDrill(node.id)} className="zs-btn zs-btn-primary zs-btn-sm mt-2"
-                style={{ width: "100%", justifyContent: "center" }}>
+        <button onClick={() => onDrill(node.id)} className="zs-btn zs-btn-primary zs-btn-sm mt-2 w-full justify-center"
+ >
           Open {node.label} →
         </button>
       ) : node.kind !== "doc" ? (
-        <button className="zs-btn zs-btn-secondary zs-btn-sm mt-2"
-                style={{ width: "100%", justifyContent: "center" }}>
+        <button className="zs-btn zs-btn-secondary zs-btn-sm mt-2 w-full justify-center"
+ >
           Reveal in editor
         </button>
       ) : null}
@@ -407,17 +402,15 @@ function AtlasInspector({ graph, selectedId, docsOn, onDrill }) {
 function AtlasRelist({ title, ids, graph, onDrill }) {
   return (
     <div className="mb-3">
-      <div style={{ fontSize: 11, letterSpacing: "0.14em", textTransform: "uppercase",
-                    color: "var(--ink-3)" }} className="mb-2">{title}</div>
-      <div style={{ display: "flex", flexWrap: "wrap" }} className="gap-1">
+      <div style={{ fontSize: 11, letterSpacing: "0.14em" }} className="mb-2 uppercase text-ink-3">{title}</div>
+      <div className="gap-1 flex flex-wrap">
         {ids.map(id => {
           const n = graph.nodes.find(x => x.id === id);
           return (
             <span key={id} onClick={() => onDrill && n && onDrill(id, true)}
-                  className="mono" style={{
-                    fontSize: 11, color: "var(--ink-2)", cursor: "pointer",
-                    border: "1px solid var(--edge)", borderRadius: 4, padding: "4px 8px",
-                  }}>
+ className="mono text-ink-2 cursor-pointer" style={{
+ fontSize: 11,
+ border: "1px solid var(--edge)", borderRadius: 4, padding: "4px 8px" }}>
               {n ? n.label : id}
             </span>
           );
@@ -436,25 +429,22 @@ function AtlasLegend({ docsOn }) {
     { c: "var(--paper-3)", t: "module", ring: true },
   ];
   return (
-    <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap" }} className="gap-4">
+    <div className="gap-4 flex items-center flex-wrap">
       {items.map((it, i) => (
-        <span key={i} style={{ display: "flex", alignItems: "center", fontSize: 11,
-                               color: "var(--ink-3)" }} className="gap-2">
-          <span style={{ width: 11, height: 11, borderRadius: "50%", background: it.c,
-                         border: it.ring ? "1px solid var(--ink-3)" : "none" }}/>
+        <span key={i} style={{ fontSize: 11 }} className="gap-2 flex items-center text-ink-3">
+          <span className="rounded-full" style={{ width: 11, height: 11, background: it.c,
+ border: it.ring ? "1px solid var(--ink-3)" : "none" }}/>
           {it.t}
         </span>
       ))}
-      <span style={{ display: "flex", alignItems: "center", fontSize: 11,
-                     color: "var(--ink-3)" }} className="gap-2">
+      <span style={{ fontSize: 11 }} className="gap-2 flex items-center text-ink-3">
         <span style={{ width: 18, borderTop: "1.5px dashed var(--ink-3)" }}/>
         cross-language
       </span>
       {docsOn && (
-        <span style={{ display: "flex", alignItems: "center", fontSize: 11,
-                       color: "var(--warning)" }} className="gap-2">
-          <span style={{ width: 11, height: 11, borderRadius: 3, background: "var(--paper)",
-                         border: "1.3px dashed var(--warning)" }}/>
+        <span style={{ fontSize: 11 }} className="gap-2 flex items-center text-warning">
+          <span className="bg-paper" style={{ width: 11, height: 11, borderRadius: 3,
+ border: "1.3px dashed var(--warning)" }}/>
           doc (drift)
         </span>
       )}
@@ -521,29 +511,23 @@ function ProjectAtlas() {
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%",
-                  background: "var(--paper)" }}>
+    <div className="flex flex-col h-full bg-paper" >
       {/* header */}
-      <div style={{ borderBottom: "var(--hairline)", flexShrink: 0 }} className="pt-5 px-6 pb-4">
-        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}
-             className="gap-4">
-          <div style={{ display: "flex", alignItems: "center" }} className="gap-3">
-            <span className="kanji" style={{ fontSize: 30, color: "var(--accent)", lineHeight: 1 }}>図</span>
+      <div className="pt-6 px-8 pb-4 border-b shrink-0">
+        <div 
+ className="gap-4 flex items-start justify-between">
+          <div className="gap-3 flex items-center">
+            <span className="kanji text-accent" style={{ fontSize: 30, lineHeight: 1 }}>図</span>
             <div>
-              <div style={{ fontSize: 11, letterSpacing: "0.18em", textTransform: "uppercase",
-                            color: "var(--ink-3)" }}>Project · Atlas</div>
-              <h1 className="display m-0" style={{ fontSize: 22, fontWeight: 400, letterSpacing: "-0.01em" }}>
+              <div className="uppercase text-ink-3" style={{ fontSize: 11, letterSpacing: "0.18em" }}>Project · Atlas</div>
+              <h1 className="display m-0 font-normal" style={{ fontSize: 22, letterSpacing: "-0.01em" }}>
                 Code graph
               </h1>
             </div>
           </div>
           {/* docs toggle */}
-          <button onClick={() => setDocsOn(v => !v)} style={{
-            display: "flex", alignItems: "center", gap: 8, cursor: "pointer",
-            border: "var(--hairline)", borderRadius: 6, background: docsOn ? "var(--warning-soft)" : "transparent",
-            padding: "8px 12px", fontSize: 12, color: docsOn ? "var(--warning)" : "var(--ink-3)",
-            whiteSpace: "nowrap",
-          }}>
+          <button className="flex items-center cursor-pointer border border-paper-edge whitespace-nowrap" onClick={() => setDocsOn(v => !v)} style={{ gap: 8, borderRadius: 6, background: docsOn ? "var(--warning-soft)" : "transparent",
+ padding: "8px 12px", fontSize: 12, color: docsOn ? "var(--warning)" : "var(--ink-3)" }}>
             <span style={{ width: 10, height: 10, borderRadius: 3,
                            background: docsOn ? "var(--warning)" : "transparent",
                            border: docsOn ? "none" : "1.3px solid var(--ink-3)" }}/>
@@ -552,46 +536,41 @@ function ProjectAtlas() {
         </div>
 
         {/* breadcrumb + granularity */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
-                      flexWrap: "wrap" }} className="gap-3 mt-4">
-          <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap" }} className="gap-1">
+        <div className="gap-3 mt-4 flex items-center justify-between flex-wrap">
+          <div className="gap-1 flex items-center flex-wrap">
             {crumbs.map((c, i) => (
               <React.Fragment key={i}>
-                {i > 0 && <span style={{ color: "var(--ink-4)", fontSize: 12 }}>›</span>}
-                <button onClick={() => gotoCrumb(i)} className="mono" style={{
-                  background: "none", border: "none", cursor: "pointer", fontSize: 12,
-                  color: i === crumbs.length - 1 ? "var(--ink)" : "var(--ink-3)",
-                  fontWeight: i === crumbs.length - 1 ? 600 : 400, padding: "4px 4px",
-                }}>{c.label}</button>
+                {i > 0 && <span className="text-ink-4" style={{ fontSize: 12 }}>›</span>}
+                <button onClick={() => gotoCrumb(i)} className="mono border-0 cursor-pointer" style={{
+ background: "none", fontSize: 12,
+ color: i === crumbs.length - 1 ? "var(--ink)" : "var(--ink-3)",
+ fontWeight: i === crumbs.length - 1 ? 600 : 400, padding: "4px 4px" }}>{c.label}</button>
               </React.Fragment>
             ))}
           </div>
           {/* segmented granularity */}
-          <div style={{ display: "flex", background: "var(--paper-3)", borderRadius: 7, padding: 3 }}>
+          <div className="flex bg-paper-3" style={{ borderRadius: 7, padding: 3 }}>
             {ATLAS_LEVELS.map(l => (
-              <button key={l.id} onClick={() => goLevel(l.id)} style={{
-                border: "none", cursor: "pointer", borderRadius: 5, padding: "8px 12px",
-                fontSize: 12, fontWeight: level === l.id ? 600 : 400,
-                background: level === l.id ? "var(--paper)" : "transparent",
-                color: level === l.id ? "var(--ink)" : "var(--ink-3)",
-                boxShadow: level === l.id ? "var(--shadow-sm)" : "none",
-              }}>{l.label}</button>
+              <button className="border-0 cursor-pointer" key={l.id} onClick={() => goLevel(l.id)} style={{ borderRadius: 5, padding: "8px 12px",
+ fontSize: 12, fontWeight: level === l.id ? 600 : 400,
+ background: level === l.id ? "var(--paper)" : "transparent",
+ color: level === l.id ? "var(--ink)" : "var(--ink-3)",
+ boxShadow: level === l.id ? "var(--shadow-sm)" : "none" }}>{l.label}</button>
             ))}
           </div>
         </div>
       </div>
 
       {/* body: graph + inspector */}
-      <div style={{ flex: 1, display: "grid", gridTemplateColumns: "1fr 290px", minHeight: 0 }}>
-        <div style={{ position: "relative", minHeight: 0, padding: "8px 8px 0" }}>
+      <div className="flex-1 grid min-h-0" style={{ gridTemplateColumns: "1fr 290px" }}>
+        <div className="relative min-h-0" style={{ padding: "8px 8px 0" }}>
           <AtlasGraph graph={graph} docsOn={docsOn} focus={focus}
                       selected={selected} onSelect={onSelect}/>
-          <div style={{ position: "absolute", left: 20, bottom: 14 }}>
+          <div className="absolute" style={{ left: 20, bottom: 14 }}>
             <AtlasLegend docsOn={docsOn}/>
           </div>
         </div>
-        <div style={{ borderLeft: "var(--hairline)", background: "var(--paper-2)",
-                      overflow: "auto", minHeight: 0 }}>
+        <div className="border-l bg-paper-2 overflow-auto min-h-0" >
           <AtlasInspector graph={graph} selectedId={selected} docsOn={docsOn} onDrill={(id) => {
             const node = graph.nodes.find(n => n.id === id);
             if (node && node.children) drill(id); else setSelected(id);
@@ -608,32 +587,28 @@ function ProjectAtlasWindow() {
   const project = (D && D.projects.active.find(p => p.id === "lumen-cloud")) ||
                   (D && D.projects.active[0]) || { name: "Lumen Cloud", kanji: "雲", client: "lumen-systems" };
   return (
-    <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column",
-                  background: "var(--paper)", overflow: "hidden" }}>
-      <div style={{ height: 38, background: "var(--paper-2)", borderBottom: "var(--hairline)",
-                    display: "flex", alignItems: "center", flexShrink: 0, position: "relative" }}>
-        <div style={{ display: "flex", position: "absolute", left: 14 }} className="gap-2">
+    <div className="w-full h-full flex flex-col bg-paper overflow-hidden" >
+      <div className="bg-paper-2 border-b flex items-center shrink-0 relative" style={{ height: 38 }}>
+        <div style={{ left: 14 }} className="gap-2 flex absolute">
           {["var(--danger)", "var(--warning)", "var(--success)"].map(c => (
-            <span key={c} style={{ width: 11, height: 11, borderRadius: "50%", background: c }}/>
+            <span className="rounded-full" key={c} style={{ width: 11, height: 11, background: c }}/>
           ))}
         </div>
-        <div style={{ position: "absolute", left: 0, right: 0, top: 0, bottom: 0,
-                      display: "flex", alignItems: "center", justifyContent: "center",
-                      pointerEvents: "none" }}>
-          <span style={{ fontSize: 12, color: "var(--ink-2)" }}>
-            <span className="kanji" style={{ color: "var(--accent)" }}>先生</span>
+        <div className="absolute flex items-center justify-center" style={{ left: 0, right: 0, top: 0, bottom: 0,
+ pointerEvents: "none" }}>
+          <span className="text-ink-2" style={{ fontSize: 12 }}>
+            <span className="kanji text-accent" >先生</span>
             {"  ·  " + project.name}
-            <span style={{ color: "var(--ink-4)" }}>{"  ·  atlas"}</span>
+            <span className="text-ink-4" >{"  ·  atlas"}</span>
           </span>
         </div>
-        <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 2,
-                      background: "var(--accent)" }}/>
+        <div className="absolute bg-accent" style={{ top: 0, left: 0, right: 0, height: 2 }}/>
       </div>
-      <div style={{ flex: 1, display: "grid", gridTemplateColumns: "230px 1fr", minHeight: 0 }}>
+      <div className="flex-1 grid min-h-0" style={{ gridTemplateColumns: "230px 1fr" }}>
         {window.ProjectSidebar
           ? <window.ProjectSidebar project={project} active="atlas"/>
           : <div/>}
-        <main style={{ minHeight: 0, overflow: "hidden" }}>
+        <main className="min-h-0 overflow-hidden" >
           <ProjectAtlas/>
         </main>
       </div>

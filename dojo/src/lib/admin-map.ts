@@ -19,7 +19,8 @@ import type {
 	KitIdentity,
 	KitIdentityMapping,
 	KitHealth,
-	KitHealthSignal
+	KitHealthSignal,
+	KitHealthWeek
 } from './components/kit/types';
 
 /** A short, stable display handle for a bare uuid (first 8 chars). */
@@ -43,11 +44,12 @@ function accessLine(authenticatedVia: string): string {
 }
 
 /**
- * Membership → KitMember. `name` falls back to a short user-id (the list route
- * carries no display name — it lives on the identity row); `git` is the
- * authentication method the role derived from; `scopes` is "—" (per-scope
- * ownership is a separate read); `active` is the relative last-heartbeat; a
- * disabled member reads "disabled". Pure.
+ * Membership → KitMember. `name` is the display name resolved from the member's
+ * identity row (WS-1: `listMembers` enriches each row via `resolveDisplayNames`),
+ * falling back to a short user-id when the member has no named identity (honest
+ * label, never a fabricated name); `git` is the authentication method the role
+ * derived from; `scopes` is "—" (per-scope ownership is a separate read);
+ * `active` is the relative last-heartbeat; a disabled member reads "disabled". Pure.
  */
 export function toKitMember(
 	m: Membership,
@@ -60,7 +62,7 @@ export function toKitMember(
 			? relativeAge(m.last_heartbeat_at, now)
 			: 'never';
 	const member: KitMember = {
-		name: shortId(m.user_id),
+		name: m.display_name ?? shortId(m.user_id),
 		userId: m.user_id,
 		git: accessLine(m.authenticated_via),
 		role: m.role,
@@ -184,9 +186,9 @@ export function toKitIdentity(identities: Identity[]): KitIdentity {
 
 /**
  * HealthRollup → KitHealth. Projects the four rollup counts onto the signal
- * cards the screen shows. The rollup carries no contributions-vs-approvals series
- * or anomaly alerts (those are a richer read), so those render empty (the screen
- * degrades gracefully — an empty bar chart + no alerts). Pure.
+ * cards, plus the real contributions-vs-approvals weekly series (from the health
+ * route's `dojo.audit_events` bucketing; an empty series renders no bars). Anomaly
+ * alerts still wait on the containment seam, so those render empty. Pure.
  */
 export function toKitHealth(rollup: HealthRollup): KitHealth {
 	const signals: KitHealthSignal[] = [
@@ -207,5 +209,10 @@ export function toKitHealth(rollup: HealthRollup): KitHealth {
 			tone: rollup.error_rate_1h > 0 ? 'warning' : 'success'
 		}
 	];
-	return { signals, contribVsApprove: [], alerts: [] };
+	const contribVsApprove: KitHealthWeek[] = (rollup.contrib_vs_approve ?? []).map((w) => ({
+		wk: w.wk,
+		c: w.c,
+		a: w.a
+	}));
+	return { signals, contribVsApprove, alerts: [] };
 }

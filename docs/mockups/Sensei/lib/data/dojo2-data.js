@@ -486,6 +486,96 @@ window.DOJO2 = {
     ],
   },
 
+  /* ── org · teams · the collective view ───────────────────
+     A team is a group of developers working the same projects. Each dev runs
+     sensei locally; what they SEND up (learnings · project memory · instruments
+     · first-try counts) is what the dōjō can see. Metrics roll up per team and
+     drill down per person. Nothing arrives that a developer didn't send. */
+  teams: {
+    acme: [
+      { id: "payments", kanji: "組", name: "Payments", caption: "lumen-auth · ledger-core",
+        lead: "Marco Diaz", members: 9, projects: 2,
+        ftr: 78, ftrDelta: 6, sessions: 41, corrections: 1.4, correctionsDelta: -0.3, governed: 92,
+        spark: [58, 61, 64, 62, 69, 71, 74, 78],
+        memory: { learnings: 34, memories: 118, rules: 12, instruments: 6 },
+        inflow: { sent: 23, triage: 4, adopted: 17, declined: 2 },
+        people: [
+          { name: "Marco Diaz",    role: "maintainer", sessions: 11, ftr: 84, corrections: 0.9, sent: 7, adopted: 6, last: "12m" },
+          { name: "Rin Saito",     role: "maintainer", sessions: 9,  ftr: 81, corrections: 1.1, sent: 5, adopted: 4, last: "now", you: true },
+          { name: "Aiko Nakamura", role: "developer",  sessions: 8,  ftr: 76, corrections: 1.5, sent: 6, adopted: 4, last: "1h" },
+          { name: "Ben Osei",      role: "developer",  sessions: 7,  ftr: 71, corrections: 1.9, sent: 3, adopted: 2, last: "4h" },
+          { name: "Tom Becker",    role: "developer",  sessions: 6,  ftr: 68, corrections: 2.2, sent: 2, adopted: 1, last: "5d" },
+        ] },
+      { id: "platform", kanji: "組", name: "Platform", caption: "api-gateway · shared infra",
+        lead: "Sven Karlsson", members: 7, projects: 1,
+        ftr: 71, ftrDelta: 2, sessions: 28, corrections: 1.8, correctionsDelta: -0.1, governed: 74,
+        spark: [64, 62, 66, 65, 68, 67, 70, 71],
+        memory: { learnings: 21, memories: 74, rules: 9, instruments: 4 },
+        inflow: { sent: 14, triage: 3, adopted: 9, declined: 2 },
+        people: [
+          { name: "Sven Karlsson", role: "maintainer", sessions: 9, ftr: 79, corrections: 1.2, sent: 6, adopted: 5, last: "3h" },
+          { name: "Priya Raman",   role: "developer",  sessions: 8, ftr: 73, corrections: 1.6, sent: 4, adopted: 3, last: "2h" },
+          { name: "Jonas Weber",   role: "developer",  sessions: 6, ftr: 66, corrections: 2.3, sent: 3, adopted: 1, last: "1d" },
+          { name: "Lena Fischer",  role: "developer",  sessions: 5, ftr: 64, corrections: 2.4, sent: 1, adopted: 0, last: "2d" },
+        ] },
+      { id: "web", kanji: "組", name: "Web", caption: "acme-web",
+        lead: "Rin Saito", members: 5, projects: 1,
+        ftr: 83, ftrDelta: 9, sessions: 22, corrections: 0.8, correctionsDelta: -0.6, governed: 96,
+        spark: [66, 68, 71, 74, 76, 79, 81, 83],
+        memory: { learnings: 27, memories: 91, rules: 7, instruments: 8 },
+        inflow: { sent: 19, triage: 1, adopted: 16, declined: 2 },
+        people: [
+          { name: "Rin Saito",   role: "maintainer", sessions: 8, ftr: 88, corrections: 0.5, sent: 8, adopted: 7, last: "now", you: true },
+          { name: "Hana Kim",    role: "developer",  sessions: 7, ftr: 84, corrections: 0.7, sent: 6, adopted: 5, last: "40m" },
+          { name: "Diego Ortiz", role: "developer",  sessions: 7, ftr: 78, corrections: 1.2, sent: 5, adopted: 4, last: "6h" },
+        ] },
+      { id: "data", kanji: "組", name: "Data", caption: "no project bound yet",
+        lead: null, members: 4, projects: 0,
+        ftr: null, ftrDelta: null, sessions: 0, corrections: null, correctionsDelta: null, governed: 0,
+        spark: null,
+        memory: { learnings: 0, memories: 0, rules: 0, instruments: 0 },
+        inflow: { sent: 0, triage: 0, adopted: 0, declined: 0 },
+        people: [] },
+    ],
+  },
+
+  /* ── org · what arrived from local sensei installs ────────
+     kind: learning (a noticed pattern, as a candidate rule) · memory (a
+     decision or gotcha kept with the repo) · instrument (a skill, agent or
+     command a dev built) · metric (counts only — never code or prompts). */
+  teamInflow: [
+    { id: "f1", kanji: "紋", kind: "learning", team: "Payments", project: "ledger-core",
+      title: "Every money-moving mutation carries an idempotency key", by: "Marco Diaz",
+      state: "adopted", when: "2h", note: "seen in 6 sessions · now a Payments rule" },
+    { id: "f2", kanji: "覚", kind: "memory", team: "Payments", project: "lumen-auth",
+      title: "Refresh tokens rotate on the CLI path too — undocumented store", by: "Rin Saito",
+      state: "triage", when: "3h", note: "kept with the repo · offered to the team" },
+    { id: "f3", kanji: "具", kind: "instrument", team: "Web", project: "acme-web",
+      title: "Skill · port a form to the shared form kit", by: "Hana Kim",
+      state: "adopted", when: "1d", note: "used 14 times since · +9pp first-try" },
+    { id: "f4", kanji: "盾", kind: "learning", team: "Platform", project: "api-gateway",
+      title: "Rate-limit at the gateway, never in the service", by: "Sven Karlsson",
+      state: "triage", when: "5h", note: "conflicts with one Platform rule · owner Sven K." },
+    { id: "f5", kanji: "数", kind: "metric", team: "Payments", project: "—",
+      title: "First-try counts · 41 sessions this week", by: "9 developers",
+      state: "counted", when: "live", note: "counts only · no code, prompts or diffs leave the machine" },
+    { id: "f6", kanji: "紋", kind: "learning", team: "Platform", project: "api-gateway",
+      title: "Prefer a bucket store per tenant over a global limiter", by: "Priya Raman",
+      state: "declined", when: "2d", note: "already covered by an adopted pack" },
+    { id: "f7", kanji: "覚", kind: "memory", team: "Web", project: "acme-web",
+      title: "Legacy field wrapper is superseded — do not extend it", by: "Diego Ortiz",
+      state: "adopted", when: "1d", note: "kept with the repo · 5 devs read it" },
+  ],
+
+  /* ── what a local sensei sends up (the developer's switch) ── */
+  teamSharing: [
+    { kanji: "紋", label: "Learnings", note: "patterns sensei noticed, as candidate rules", on: true },
+    { kanji: "覚", label: "Project memory", note: "decisions and gotchas kept with the repo", on: true },
+    { kanji: "具", label: "Instruments", note: "skills, agents and commands you built", on: true },
+    { kanji: "数", label: "First-try counts", note: "counts only — never code, prompts or diffs", on: true },
+    { kanji: "刻", label: "Session transcripts", note: "the full conversation — off by default, always", on: false },
+  ],
+
   /* ── org · members / roles for the admin surface ────────── */
   members: [
     { name: "Keiko Tanaka",  git: "Org owner",   role: "admin",      scopes: "all",              active: "now" },
