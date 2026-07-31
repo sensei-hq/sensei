@@ -343,7 +343,7 @@ leverage / lowest risk first, front-loading the review-rigor concern:
 
 | # | Item | Part | Effort | Risk | Why here |
 |---|---|---|---|---|---|
-| 1 | Risk-class gate (`resolve_risk_class`) | E4 | M | L | Decides review depth; unblocks the rest of E |
+| 1 | ✅ Risk-class gate (`resolve_risk_class`) | E4 | M | L | **DONE `0ec738d2`** — pure classifier + endpoint + MCP tool + `/sensei:review` Step 0; installed + smoked live |
 | 2 | Review agents verify + test-intent audit + dry-check | E1/E2/E3 | M | L | The core "reviews gloss over" fix |
 | 3 | Playwright-mandatory + adversarial framing | E5/E6 | S | L | Closes the UI-verification hole |
 | 4 | Managed first-message + compaction directive | A | M | L | Cheap, high-leverage; belt-and-suspenders governance |
