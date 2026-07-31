@@ -5379,11 +5379,14 @@ impl PgStore {
     /// resolve (no folder, no alias) are left orphaned. Idempotent — a session that
     /// already has a row isn't reprocessed. Returns the number repaired.
     pub async fn repair_orphaned_sessions(&self) -> Result<u32, String> {
-        // Representative cwd per orphaned session = the SHORTEST (most root-like) so
-        // it resolves to the repo root; find_folder_for_path handles subdirs anyway.
-        let orphans: Vec<(String, Option<String>, String)> = sqlx_core::query_as::query_as(
+        // All distinct cwds per orphaned session. We try them MOST-SPECIFIC (longest)
+        // first: a renamed subdir (`…/monorepo/docs`, aliased to the new repo) is a
+        // deeper — and thus stronger — signal than a still-live parent (`…/strategos`)
+        // that would otherwise shadow it and misattribute. find_folder_for_path is
+        // alias-aware, so the longest matching path wins via its alias.
+        let orphans: Vec<(String, Vec<String>, String)> = sqlx_core::query_as::query_as(
             "SELECT e.session_id,
-                    (array_agg(e.cwd ORDER BY length(e.cwd)) FILTER (WHERE e.cwd IS NOT NULL))[1] AS cwd,
+                    COALESCE(array_agg(DISTINCT e.cwd) FILTER (WHERE e.cwd IS NOT NULL), '{}') AS cwds,
                     (array_agg(e.family::text))[1] AS family
                FROM activity.assistant_events e
               WHERE e.session_id <> ''
@@ -5395,10 +5398,17 @@ impl PgStore {
         .await
         .map_err(|e| e.to_string())?;
         let mut repaired = 0u32;
-        for (session_id, cwd, family) in orphans {
-            let Some(cwd) = cwd else { continue };
-            let Ok(Some((folder_id, project_id))) = self.find_folder_for_path(&cwd).await else {
-                continue; // cwd still doesn't resolve (no folder, no alias) — leave orphaned
+        for (session_id, mut cwds, family) in orphans {
+            cwds.sort_by_key(|c| std::cmp::Reverse(c.len())); // most-specific first
+            let mut resolved = None;
+            for cwd in &cwds {
+                if let Ok(Some(fp)) = self.find_folder_for_path(cwd).await {
+                    resolved = Some(fp);
+                    break;
+                }
+            }
+            let Some((folder_id, project_id)) = resolved else {
+                continue; // no cwd resolves (no folder, no alias) — leave orphaned
             };
             if self
                 .record_session_event(&session_id, &folder_id, project_id.as_ref(), &family, true)
@@ -11655,23 +11665,55 @@ mod tests {
         row.map(|(f,)| f)
     }
 
+    // The repair operates on ALL orphaned sessions in the DB, and sensei_test is
+    // persistent + tests run in parallel, so a prior run's rows can linger. Each repair
+    // test clears its OWN session first, then asserts only the (deterministic) folder its
+    // session resolves to after repair — never a global "no row exists" precondition.
+    async fn clear_test_session(s: &PgStore, sid: &str) {
+        sqlx_core::query::query("DELETE FROM activity.sessions WHERE client_session_id = $1")
+            .bind(sid).execute(&s.pool).await.unwrap();
+        sqlx_core::query::query("DELETE FROM activity.assistant_events WHERE session_id = $1")
+            .bind(sid).execute(&s.pool).await.unwrap();
+    }
+
     #[tokio::test]
     async fn repair_orphaned_sessions_reattaches_via_alias() {
         // A session captured under a since-renamed repo: its events survived but the
         // session row was cascade-deleted. The repair recreates the row, resolving the
         // folder from the (old) cwd via the alias.
         let s = pg_store().await;
+        let sess = "_test-repair-orphan-session";
+        clear_test_session(&s, sess).await;
         let fid = create_test_folder(&s, "repair-new").await; // /_test/repair-new
         s.add_folder_path_alias("/_test/repair-old", &fid, "rename").await.unwrap();
-        let sess = "_test-repair-orphan-session";
         // an orphaned event under the OLD path (a subdir) — no session row.
         s.insert_hook_event(sess, "claude", "PreToolUse", None, Some("/_test/repair-old/src"), 1_700_000_000, None, &serde_json::json!({}))
             .await.unwrap();
-        assert_eq!(session_row_folder(&s, sess).await, None, "no session row before repair");
         let repaired = s.repair_orphaned_sessions().await.unwrap();
         assert!(repaired >= 1, "at least this orphaned session is re-attached; got {repaired}");
         assert_eq!(session_row_folder(&s, sess).await, Some(fid),
             "the session row now exists and points at the current folder (resolved via the alias)");
+    }
+
+    #[tokio::test]
+    async fn repair_prefers_the_renamed_subdir_over_a_live_parent() {
+        // The defect this guards: a session with events under BOTH a still-live parent
+        // (`/_test/shadow-parent`) AND a renamed subdir aliased to a different folder
+        // (`/_test/shadow-parent/sub` → new folder). Most-specific-first must attribute
+        // it to the renamed subdir's folder, not the shadowing parent.
+        let s = pg_store().await;
+        let sess = "_test-shadow-session";
+        clear_test_session(&s, sess).await;
+        let parent = create_test_folder(&s, "shadow-parent").await; // live /_test/shadow-parent
+        let moved = create_test_folder(&s, "shadow-moved").await; // the renamed subdir's new home
+        s.add_folder_path_alias("/_test/shadow-parent/sub", &moved, "rename").await.unwrap();
+        // events under BOTH the live parent and the renamed subdir.
+        s.insert_hook_event(sess, "claude", "PreToolUse", None, Some("/_test/shadow-parent"), 1_700_000_100, None, &serde_json::json!({})).await.unwrap();
+        s.insert_hook_event(sess, "claude", "PreToolUse", None, Some("/_test/shadow-parent/sub/x"), 1_700_000_200, None, &serde_json::json!({})).await.unwrap();
+        s.repair_orphaned_sessions().await.unwrap();
+        assert_eq!(session_row_folder(&s, sess).await, Some(moved),
+            "attributes to the renamed subdir (via its alias), NOT the shadowing live parent");
+        assert_ne!(session_row_folder(&s, sess).await, Some(parent));
     }
 
     #[tokio::test]
