@@ -344,8 +344,8 @@ leverage / lowest risk first, front-loading the review-rigor concern:
 | # | Item | Part | Effort | Risk | Why here |
 |---|---|---|---|---|---|
 | 1 | ✅ Risk-class gate (`resolve_risk_class`) | E4 | M | L | **DONE `0ec738d2`** — pure classifier + endpoint + MCP tool + `/sensei:review` Step 0; installed + smoked live |
-| 2 | Review agents verify + test-intent audit + dry-check | E1/E2/E3 | M | L | The core "reviews gloss over" fix |
-| 3 | Playwright-mandatory + adversarial framing | E5/E6 | S | L | Closes the UI-verification hole |
+| 2 | ✅ Review agents verify + test-intent audit + dry-check | E1b/E2/E3 | M | L | **DONE `5c58b899`** — 5 agents evidence-mandatory; `sensei-test-reviewer` (mutation spot-check) wired into review Check 4; `dry-check` skill wired into build Step 3 + review Check 2 |
+| 3 | Playwright-mandatory + adversarial framing | E5/E6 | S | L | **PARTIAL** — review Step 0 (approve depth) + agent evidence blocks already require Playwright for UI diffs + adversarial refutation; remaining: wire `/sensei:validate` to hard-require the Playwright suite on a UI diff |
 | 4 | Managed first-message + compaction directive | A | M | L | Cheap, high-leverage; belt-and-suspenders governance |
 | 5 | Command collapse + skill cluster cleanup + help fix | C1/C2/C3 | M | L | Surface simplification; no behavior loss |
 | 6 | Evidence + secret/PII gate on save/promote | C4 | M | M | Hardens the capture path (port) |
