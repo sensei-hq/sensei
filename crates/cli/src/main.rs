@@ -103,6 +103,12 @@ enum Commands {
         cmd: IndexCommands,
     },
 
+    /// Manage indexed folders (e.g. repair a rename the auto-detect missed)
+    Folder {
+        #[command(subcommand)]
+        cmd: FolderCommands,
+    },
+
     /// Manage local model provisioning — pull a chat model from Hugging Face on
     /// demand and check what's been pulled.
     Models {
@@ -162,6 +168,20 @@ enum IndexCommands {
     Doctor,
 }
 
+/// `sensei folder <cmd>` — indexed-folder maintenance.
+#[derive(Subcommand)]
+enum FolderCommands {
+    /// Re-point a renamed/moved repo's history onto its new path — the manual
+    /// repair for a rename the scan's git-remote auto-detect couldn't catch.
+    /// Aliases the old path forward and re-attaches sessions captured under it.
+    Remap {
+        /// The old (vanished) absolute path.
+        old: String,
+        /// The new absolute path — must already be indexed (scan it first).
+        new: String,
+    },
+}
+
 /// `sensei models <cmd>` — on-demand local model provisioning via the daemon.
 #[derive(Subcommand)]
 enum ModelsCommands {
@@ -218,6 +238,9 @@ fn main() -> ExitCode {
         Some(Commands::Scaffold { what, path }) => scaffold_cmd(what, path.as_deref()),
         Some(Commands::Index { cmd }) => match cmd {
             IndexCommands::Doctor => index_doctor(),
+        },
+        Some(Commands::Folder { cmd }) => match cmd {
+            FolderCommands::Remap { old, new } => folder_remap(&old, &new),
         },
         Some(Commands::Models { cmd }) => match cmd {
             ModelsCommands::Pull { id } => models_pull(&id),
@@ -1130,6 +1153,32 @@ fn print_index_doctor(r: &serde_json::Value) {
                 println!("      - {s}");
             }
         }
+    }
+}
+
+/// `sensei folder remap <old> <new>` — POST the daemon's manual rename-repair
+/// route and print what it did. `new` must already be an indexed folder.
+fn folder_remap(old: &str, new: &str) {
+    ensure_daemon();
+    match client()
+        .post(format!("{}/api/folders/remap", daemon_url()))
+        .json(&serde_json::json!({"old": old, "new": new}))
+        .send()
+    {
+        Ok(r) if r.status().is_success() => {
+            let d: serde_json::Value = r.json().unwrap_or_default();
+            let action = if d["remapped"].as_bool() == Some(true) { "re-pointed history and aliased" } else { "aliased" };
+            println!(
+                "Remapped {old} → {new}: {action}; {} session(s) re-attached.",
+                d["sessions_repaired"].as_u64().unwrap_or(0)
+            );
+        }
+        Ok(r) if r.status().as_u16() == 404 => {
+            eprintln!("remap failed: '{new}' is not an indexed folder — run `sensei scan` on it first.");
+            std::process::exit(1);
+        }
+        Ok(r) => { eprintln!("remap failed: HTTP {}", r.status()); std::process::exit(1); }
+        Err(e) => { eprintln!("remap failed: {e}"); std::process::exit(1); }
     }
 }
 

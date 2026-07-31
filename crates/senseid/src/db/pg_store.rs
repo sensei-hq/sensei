@@ -2142,6 +2142,21 @@ impl PgStore {
         Ok(())
     }
 
+    /// The folder registered at EXACTLY this absolute path (no alias resolution),
+    /// or `None`. Distinct from [`Self::get_folder_ids_by_path`], which also follows
+    /// aliases — the manual `remap` needs to know whether `old` is itself a real
+    /// folder row (to re-point) versus already gone (alias-only).
+    pub async fn folder_id_by_abs_path(&self, abs_path: &str) -> Result<Option<uuid::Uuid>, String> {
+        let row: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
+            "SELECT id FROM sensei.folders WHERE abs_path = $1 LIMIT 1",
+        )
+        .bind(abs_path)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(row.map(|(id,)| id))
+    }
+
     /// List folders that were registered by a scan but never finished
     /// indexing — i.e. status is `discovered` (scan ran, ProcessGitFolder
     /// hadn't started) or `queued` (mid-flight when the daemon stopped).
@@ -11861,6 +11876,18 @@ mod tests {
         let (status,): (String,) = sqlx_core::query_as::query_as("SELECT status::text FROM sensei.folders WHERE id = $1")
             .bind(fid).fetch_one(&s.pool).await.unwrap();
         assert_eq!(status, "archived", "the vanished history-bearing root is retained as archived");
+    }
+
+    #[tokio::test]
+    async fn folder_id_by_abs_path_is_exact_and_never_follows_aliases() {
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, "exact-path").await; // /_test/exact-path
+        s.add_folder_path_alias("/_test/exact-old", &fid, "rename").await.unwrap();
+        assert_eq!(s.folder_id_by_abs_path("/_test/exact-path").await.unwrap(), Some(fid),
+            "exact abs_path resolves to the folder");
+        assert_eq!(s.folder_id_by_abs_path("/_test/exact-old").await.unwrap(), None,
+            "an aliased path is NOT a real folder row — exact lookup returns None");
+        assert_eq!(s.folder_id_by_abs_path("/_test/never").await.unwrap(), None);
     }
 
     #[tokio::test]
