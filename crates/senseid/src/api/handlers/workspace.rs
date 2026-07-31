@@ -108,6 +108,61 @@ pub(crate) async fn update_folder(
     Ok(Json(serde_json::json!({"ok": true})))
 }
 
+#[derive(Deserialize)]
+pub(crate) struct RemapFolderBody {
+    pub old: String,
+    pub new: String,
+}
+
+/// Manual repair for a repo rename/move the auto-detect (git-remote match) couldn't
+/// catch — `POST /api/folders/remap { old, new }`, backing `sensei folder remap`.
+/// `new` must be an indexed folder (the rename's destination); `old` is the vanished
+/// path. If `old` still has a stale folder row it is re-pointed onto `new` (history
+/// moved, old path aliased forward, husk dropped); if it's already gone we just
+/// record the forward alias. Either way orphaned sessions captured under `old` are
+/// re-attached. 404 if `new` isn't indexed (scan it first); 400 on empty/identical.
+pub(crate) async fn remap_folder_endpoint(
+    State(state): State<AppState>,
+    Json(body): Json<RemapFolderBody>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let old = body.old.trim();
+    let new = body.new.trim();
+    if old.is_empty() || new.is_empty() || old == new {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    // `new` must be a real, indexed folder — the destination we attribute history to.
+    let new_id = state.pg.folder_id_by_abs_path(new).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    // `old` may still carry a stale husk row (re-point it) or be already gone (alias only).
+    let old_id = state.pg.folder_id_by_abs_path(old).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if old_id == Some(new_id) {
+        return Err(StatusCode::BAD_REQUEST); // old and new are the same folder
+    }
+    let remapped = match old_id {
+        Some(oid) => {
+            state.pg.remap_folder(&oid, old, &new_id).await
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            true
+        }
+        None => {
+            state.pg.add_folder_path_alias(old, &new_id, "manual").await
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            false
+        }
+    };
+    let sessions_repaired = state.pg.repair_orphaned_sessions().await.unwrap_or(0);
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "old": old,
+        "new": new,
+        "remapped": remapped,
+        "aliased": true,
+        "sessions_repaired": sessions_repaired,
+    })))
+}
+
 // ── Exclude / Exclusions ────────────────────────────────────────────────────
 
 pub(crate) async fn exclude_project(
