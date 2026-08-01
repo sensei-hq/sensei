@@ -175,6 +175,21 @@ pub fn daemon_request_for(
             Some(DaemonRequest::post_json("/api/review/risk-class", body))
         }
 
+        // ── Library-provided capabilities (workstream D) ────────────────────
+        "list_library_skills" => {
+            let name = args["name"].as_str().unwrap_or("");
+            Some(DaemonRequest::get(format!("/api/libs/{name}/skills")))
+        }
+        "get_library_skill" => {
+            let name = args["name"].as_str().unwrap_or("");
+            let focus = args["focus"].as_str().unwrap_or("");
+            Some(DaemonRequest::get(format!("/api/libs/{name}/skills/{focus}")))
+        }
+        "list_library_agents" => {
+            let name = args["name"].as_str().unwrap_or("");
+            Some(DaemonRequest::get(format!("/api/libs/{name}/agents")))
+        }
+
         // ── Governance rules ────────────────────────────────────────────────
         "get_rules" => {
             let (key, val) = rules_query_param(repo_id, cwd);
@@ -492,6 +507,16 @@ pub fn handle_list_tools() -> Value {
             ]),
             tool("search_lib_docs", "Search across all indexed library documentation. Use when looking for how to use a feature.", &[
                 ("query", "string", "What to search for in library docs"),
+            ], &[]),
+            tool("list_library_skills", "List the focused skills a library provides (declared in its sensei.library.json manifest, or generated). Call when working with a library to see what curated how-to skills exist for it.", &[
+                ("name", "string", "Library name (e.g. 'rokkit')"),
+            ], &[]),
+            tool("get_library_skill", "Get one library-provided skill by its topic focus (e.g. 'styling'). Returns the skill body to load. Use after list_library_skills.", &[
+                ("name", "string", "Library name (e.g. 'rokkit')"),
+                ("focus", "string", "Topic focus of the skill (e.g. 'styling')"),
+            ], &[]),
+            tool("list_library_agents", "List the review agents a library provides (declared in its sensei.library.json manifest) — e.g. a config/pattern reviewer for that library. Use during /sensei:review when the project depends on the library.", &[
+                ("name", "string", "Library name (e.g. 'rokkit')"),
             ], &[]),
             tool("get_communities", "Get code architecture — clusters of related functions detected by community analysis.", &[], &[
                 ("project", "string", "Project name. Defaults to current project."),
@@ -1146,7 +1171,7 @@ mod tests {
     /// advertised but untested, an extra entry means it's tested but unadvertised.
     const EXPECTED_TOOLS: &[&str] = &[
         "search", "context_pack", "get_callers", "get_callees", "get_project_summary",
-        "get_lib_docs", "search_lib_docs", "get_communities", "get_patterns",
+        "get_lib_docs", "search_lib_docs", "list_library_skills", "get_library_skill", "list_library_agents", "get_communities", "get_patterns",
         "list_projects", "find_projects", "get_user_for_project", "set_stance", "use_project", "create_session", "update_session", "add_library",
         "update_phase", "get_workflow_state", "match_pattern", "get_pattern_for",
         "get_duplicates", "get_project_conventions", "resolve_risk_class", "get_rules", "get_commands", "infer", "embed",
