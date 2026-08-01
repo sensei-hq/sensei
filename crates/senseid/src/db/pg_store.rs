@@ -12056,6 +12056,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn list_project_library_capabilities_suggests_from_a_projects_deps() {
+        use crate::libraries::manifest::ProvidedSkill;
+        let s = pg_store().await;
+        let pid = s.create_project(&format!("_libcap_{}", uuid::Uuid::new_v4()), None, None).await.unwrap();
+        let lib = format!("_libcapdep_{}", uuid::Uuid::new_v4());
+        let lid = s.upsert_library(&lib, "npm", Some("1"), None, None, None).await.unwrap();
+        s.replace_library_capabilities(&lid, "manifest", Some("1"),
+            &[ProvidedSkill { name: "semantic-styles-rokkit".into(), focus: "styling".into(), path: Some("p".into()), body: Some("b".into()) }],
+            &[]).await.unwrap();
+        // The project depends on the library.
+        s.execute_raw(&format!(
+            "INSERT INTO sensei.project_libraries(library_id, project_id, enabled) VALUES('{lid}','{pid}',true) ON CONFLICT DO NOTHING"
+        )).await.unwrap();
+
+        let caps = s.list_project_library_capabilities(&pid).await.unwrap();
+        let skills = caps["suggested_skills"].as_array().unwrap();
+        assert!(skills.iter().any(|x| x["name"] == "semantic-styles-rokkit" && x["library"] == lib.as_str()),
+            "the project's dependency contributes its skill: {caps:?}");
+    }
+
+    #[tokio::test]
     async fn folder_id_by_abs_path_is_exact_and_never_follows_aliases() {
         let s = pg_store().await;
         let fid = create_test_folder(&s, "exact-path").await; // /_test/exact-path
