@@ -1,6 +1,6 @@
 [package]
 name = "sensei-bootstrap"
-version = "0.6.2"
+version = "0.6.3"
 edition = "2024"
 description = "Prerequisite detection, installation, and hardware profiling for sensei"
 
