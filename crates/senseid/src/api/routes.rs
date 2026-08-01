@@ -191,6 +191,10 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/libs/index", post(libraries::index_lib))
         .route("/api/libs/docs", get(libraries::search_lib_docs))
         .route("/api/libs/{name}/docs", get(libraries::get_lib_docs))
+        // Library-provided capabilities (workstream D)
+        .route("/api/libs/{name}/skills", get(libraries::list_library_skills))
+        .route("/api/libs/{name}/skills/{focus}", get(libraries::get_library_skill))
+        .route("/api/libs/{name}/agents", get(libraries::list_library_agents))
         .route("/api/libs/versions", get(libraries::get_dep_versions))
         // Instruments (MCP registry — setup wizard Instruments stage)
         .route("/api/instruments", get(instruments::list_instruments))
@@ -629,6 +633,34 @@ mod tests {
         let ev = detail["evidence"].as_array().expect("evidence array");
         assert!(ev.iter().any(|e| e["note"] == "crates/senseid/src/x.rs:42" && e["session_id"].is_null()),
             "the save-time source note is surfaced with a null session_id: {:?}", ev);
+    }
+
+    #[tokio::test]
+    async fn library_skills_endpoints_serve_capabilities() {
+        use crate::libraries::manifest::ProvidedSkill;
+        let (app, state) = test_app().await;
+        let lib = format!("_libep_{}", uuid::Uuid::new_v4());
+        let lid = state.pg.upsert_library(&lib, "npm", Some("1"), None, None, None).await.unwrap();
+        state.pg.replace_library_capabilities(&lid, "manifest", Some("1"),
+            &[ProvidedSkill { name: "semantic-styles-rokkit".into(), focus: "styling".into(), path: Some("p.md".into()), body: Some("# body".into()) }],
+            &[]).await.unwrap();
+
+        let list = app.clone().oneshot(Request::builder().uri(format!("/api/libs/{lib}/skills")).body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(list.status(), StatusCode::OK);
+        let lb = axum::body::to_bytes(list.into_body(), usize::MAX).await.unwrap();
+        let arr: serde_json::Value = serde_json::from_slice(&lb).unwrap();
+        assert_eq!(arr.as_array().unwrap().len(), 1);
+        assert_eq!(arr[0]["focus"], "styling");
+
+        let get = app.clone().oneshot(Request::builder().uri(format!("/api/libs/{lib}/skills/styling")).body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(get.status(), StatusCode::OK);
+        let gb = axum::body::to_bytes(get.into_body(), usize::MAX).await.unwrap();
+        let one: serde_json::Value = serde_json::from_slice(&gb).unwrap();
+        assert_eq!(one["name"], "semantic-styles-rokkit");
+        assert_eq!(one["body"], "# body");
+
+        let miss = app.oneshot(Request::builder().uri(format!("/api/libs/{lib}/skills/nope")).body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(miss.status(), StatusCode::NOT_FOUND, "unknown focus → 404, not a fabricated empty");
     }
 
     #[tokio::test]
