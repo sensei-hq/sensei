@@ -193,6 +193,19 @@ pub async fn index_library(ctx: &TaskContext, task: &Task) -> Result<u32, String
         tracing::warn!(error = %e, lib = %lib_name, "index_library: update_library_page_count failed");
     }
 
+    // Workstream D: ingest the library's own sensei.library.json (local sources only
+    // in v1 — a manifest read needs the files on disk) so its declared skills/agents
+    // become associable capabilities. Non-fatal: a bad/absent manifest never fails
+    // the doc index. Manifest-authoritative — removed entries disappear on re-index.
+    if let LibSource::LocalDir(p) = &source
+        && let Some((version, skills, agents)) = crate::libraries::load_manifest_from_root(std::path::Path::new(p))
+    {
+        match ctx.pg().replace_library_capabilities(&lib_id, "manifest", Some(&version), &skills, &agents).await {
+            Ok((ns, na)) => tracing::info!("index_library: {lib_name} sensei.library.json → {ns} skill(s), {na} agent(s)"),
+            Err(e) => tracing::warn!(error = %e, lib = %lib_name, "index_library: replace_library_capabilities failed"),
+        }
+    }
+
     tracing::info!(
         "index_library: {} — {} pages stored ({} components) from {}",
         lib_name,
