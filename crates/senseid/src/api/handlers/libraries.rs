@@ -100,6 +100,39 @@ pub(crate) async fn get_lib_docs(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
+// ── Library capabilities (workstream D) — skills/agents a library provides ──
+
+/// GET /api/libs/{name}/skills — skills the library declares/generates.
+pub(crate) async fn list_library_skills(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
+    state.pg.list_library_skills(&name).await
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+/// GET /api/libs/{name}/skills/{focus} — one skill by topic. 404 on genuine miss.
+pub(crate) async fn get_library_skill(
+    State(state): State<AppState>,
+    Path((name, focus)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    state.pg.get_library_skill(&name, &focus).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .map(Json)
+        .ok_or(StatusCode::NOT_FOUND)
+}
+
+/// GET /api/libs/{name}/agents — review agents the library provides.
+pub(crate) async fn list_library_agents(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
+    state.pg.list_library_agents(&name).await
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
 #[derive(Deserialize)]
 pub(crate) struct DepVersionsQuery {
     #[serde(rename = "repoId")]
