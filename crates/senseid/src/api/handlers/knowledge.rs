@@ -93,6 +93,8 @@ pub(crate) async fn get_memory(
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let mid = uuid::Uuid::parse_str(&id).map_err(|_| err(StatusCode::BAD_REQUEST, "bad id"))?;
+    // get_memory_detail already surfaces `evidence` (session rows + save-time source
+    // notes, nullable session_id) — no extra merge needed here.
     let detail = state.pg.get_memory_detail(mid).await
         .map_err(|e| {
             if e.contains("not found") { err(StatusCode::NOT_FOUND, "memory not found") }
@@ -352,6 +354,9 @@ pub(crate) struct MemoryBody {
     pub title:         String,
     pub content:       String,
     pub impact:        Option<String>,
+    /// Optional save-time source evidence (a file:line, test name, run id) — stored
+    /// as a session-less `memory_evidence` row so the memory carries its provenance.
+    pub evidence:      Option<String>,
     #[serde(default)]
     pub tags:          Vec<String>,
     pub triage_signal: Option<String>,
@@ -441,6 +446,13 @@ async fn insert_with_status(
         spine_slot:    body.spine_slot.filter(|s| !s.is_empty()),
         feature:       body.feature.filter(|s| !s.is_empty()),
     }).await.map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+    // Record save-time source evidence (session-less) so the memory carries its
+    // provenance. Non-fatal: the memory is saved even if the evidence note fails.
+    if let Some(note) = body.evidence.as_deref().map(str::trim).filter(|s| !s.is_empty())
+        && let Err(e) = state.pg.add_memory_evidence(&id, None, Some(note)).await
+    {
+        tracing::warn!(memory_id = %id, error = %e, "failed to record save-time evidence note");
+    }
     Ok(Json(serde_json::json!({ "id": id, "status": status })))
 }
 
