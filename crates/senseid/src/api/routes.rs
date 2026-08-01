@@ -607,6 +607,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn save_memory_records_and_surfaces_evidence() {
+        let (app, _) = test_app().await;
+        let body = r#"{"scope":"global","type":"convention","title":"ev-note","content":"reuse the shared helper","evidence":"crates/senseid/src/x.rs:42"}"#;
+        let resp = app.clone().oneshot(
+            Request::builder().method("POST").uri("/api/knowledge/memories")
+                .header("content-type", "application/json")
+                .body(Body::from(body)).unwrap()
+        ).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let saved: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let id = saved["id"].as_str().expect("id");
+        // The read surfaces the save-time source note as evidence.
+        let get = app.oneshot(
+            Request::builder().uri(format!("/api/knowledge/memories/{id}")).body(Body::empty()).unwrap()
+        ).await.unwrap();
+        assert_eq!(get.status(), StatusCode::OK);
+        let gb = axum::body::to_bytes(get.into_body(), usize::MAX).await.unwrap();
+        let detail: serde_json::Value = serde_json::from_slice(&gb).unwrap();
+        let ev = detail["evidence"].as_array().expect("evidence array");
+        assert!(ev.iter().any(|e| e["note"] == "crates/senseid/src/x.rs:42" && e["session_id"].is_null()),
+            "the save-time source note is surfaced with a null session_id: {:?}", ev);
+    }
+
+    #[tokio::test]
     async fn risk_class_endpoint_classifies_by_path() {
         let (app, _) = test_app().await;
         let resp = app.oneshot(
