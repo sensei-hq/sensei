@@ -382,6 +382,12 @@ pub fn daemon_request_for(
                     body[k] = serde_json::json!(v);
                 }
             }
+            // Forward the project (explicit arg, else the cwd-resolved one) so the
+            // daemon can suggest the skills/agents provided by libraries it depends on.
+            let project = args["project"].as_str().filter(|s| !s.is_empty()).unwrap_or(repo_id);
+            if !project.is_empty() {
+                body["project"] = serde_json::json!(project);
+            }
             Some(DaemonRequest::post_json("/api/playbook/recommend", body))
         }
 
@@ -820,6 +826,7 @@ pub fn handle_list_tools() -> Value {
                     ("session_id", "string", "session UUID to attribute the run to"),
                     ("feature",    "string", "feature slug when the chunk maps to a dossier"),
                     ("confirm",    "string", "true to record the run as confirmed"),
+                    ("project",    "string", "project name or UUID — enables suggested_skills/agents from the libraries it uses (defaults to the cwd-resolved project)"),
                 ]),
             // ── §9 learning loop: accept path ─────────────────────────────────
             tool("list_playbook_rule_proposals",

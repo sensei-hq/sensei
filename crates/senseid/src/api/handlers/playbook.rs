@@ -116,7 +116,12 @@ pub(crate) async fn recommend_playbook(
         }
     } else { (false, 0, 0.0) };
 
-    Json(serde_json::json!({
+    // Workstream D: suggest the skills/agents provided by the libraries this project
+    // uses ("this repo uses rokkit → load its styling skill / config reviewer"). FAIL
+    // CLOSED — on an unresolved project or a query error, OMIT the keys entirely; an
+    // empty `[]` (present keys) means "resolved, genuinely none", never a masked
+    // failure. (Deliberately NOT the `.ok().flatten()` masking used for the tone read.)
+    let mut resp = serde_json::json!({
         "playbook": rec.playbook,
         "rationale": rec.rationale,
         "lifecycle": axes.lifecycle.as_str(),
@@ -128,7 +133,22 @@ pub(crate) async fn recommend_playbook(
         "when_to_use": when_to_use,
         "auto_select": auto_select,
         "trust": { "n": trust_n, "ftr": trust_ftr },
-    }))
+    });
+    let project_ident = body["project"].as_str().or_else(|| body["project_id"].as_str()).filter(|s| !s.is_empty());
+    if let Some(ident) = project_ident
+        && let Ok(Some(pid)) = crate::api::util::resolve_project_uuid(&state, ident).await
+    {
+        match state.pg.list_project_library_capabilities(&pid).await {
+            Ok(caps) => {
+                if let Some(obj) = resp.as_object_mut() {
+                    obj.insert("suggested_skills".into(), caps["suggested_skills"].clone());
+                    obj.insert("suggested_agents".into(), caps["suggested_agents"].clone());
+                }
+            }
+            Err(e) => tracing::warn!(error = %e, "recommend_playbook: library-capability suggestion failed — omitting"),
+        }
+    }
+    Json(resp)
 }
 
 /// Deterministic fallback — also the classifier when the gateway is unavailable.
