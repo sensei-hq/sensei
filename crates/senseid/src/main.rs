@@ -12,6 +12,8 @@ mod tasks;
 mod transcript;
 mod governance;
 mod review;
+mod secret_scan;
+mod libraries;
 pub mod assistants;
 pub mod instruments;
 pub mod installer;

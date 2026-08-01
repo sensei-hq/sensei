@@ -345,14 +345,47 @@ leverage / lowest risk first, front-loading the review-rigor concern:
 |---|---|---|---|---|---|
 | 1 | ✅ Risk-class gate (`resolve_risk_class`) | E4 | M | L | **DONE `0ec738d2`** — pure classifier + endpoint + MCP tool + `/sensei:review` Step 0; installed + smoked live |
 | 2 | ✅ Review agents verify + test-intent audit + dry-check | E1b/E2/E3 | M | L | **DONE `5c58b899`** — 5 agents evidence-mandatory; `sensei-test-reviewer` (mutation spot-check) wired into review Check 4; `dry-check` skill wired into build Step 3 + review Check 2 |
-| 3 | Playwright-mandatory + adversarial framing | E5/E6 | S | L | **PARTIAL** — review Step 0 (approve depth) + agent evidence blocks already require Playwright for UI diffs + adversarial refutation; remaining: wire `/sensei:validate` to hard-require the Playwright suite on a UI diff |
-| 4 | Managed first-message + compaction directive | A | M | L | Cheap, high-leverage; belt-and-suspenders governance |
-| 5 | Command collapse + skill cluster cleanup + help fix | C1/C2/C3 | M | L | Surface simplification; no behavior loss |
-| 6 | Evidence + secret/PII gate on save/promote | C4 | M | M | Hardens the capture path (port) |
-| 7 | Library manifest + recommender + relocate rokkit skill | D1/D2/D4 | L | M | Library→skill association foundation |
-| 8 | Per-library review agents + session-start inject | D3/D5 | L | M | Depends on #7 |
+| 3 | ✅ Playwright-mandatory + adversarial framing | E5/E6 | S | L | **DONE `933bd15d`** — `/sensei:validate` hard-requires the Playwright/component suite on a UI diff; adversarial refutation in review Step 0 approve-depth + agent evidence blocks |
+| 4 | ✅ Managed first-message + compaction directive | A | M | L | **DONE `933bd15d`** — `sensei init` writes the idempotent "load governance first" block into CLAUDE.md/AGENTS.md (managed.rs, 6 tests). Remaining sub-item: `get_rules` `conflicts[]` array |
+| 5 | Command collapse + skill cluster cleanup + help fix | C1/C2/C3 | M | L | **C3 DONE `3d7adc69`**. C1/C2 **grounded-out**: the commands aren't redundant wrappers (patterns/docs/spec are substantive; the 5 doc commands are distinct phase flows; `plan-depth-review` is planner-wired, not a dup) — collapsing destroys value. Real "fewer commands" = a deliberate workflow-UX redesign, not a dedup. Not doing it. |
+| 6 | Evidence + secret/PII gate on save/promote | C4 | M | M | **secret guard DONE `ccb7d356`** + **evidence DONE `90935401`** (reused `memory_evidence`, session-nullable; save-time source note). Remaining (deliberate, not quick): a hard evidence *gate* (needs the internal-caller carve-out) + PII flag (no consumer yet). **C is substantively complete.** |
+| 7 | Library manifest + recommender + relocate rokkit skill | D1/D2/D4 | L | M | **D1+D2 DONE `eeb7b312`** (design-workflow blueprint, skeptic-verified): `sensei.library.json` manifest, `library_skills`/`library_agents` tables, `index_library` ingestion (LocalDir v1), `list/get_library_skill(s)`+`list_library_agents` MCP tools, recommender `suggested_skills/agents` (fail-closed). **D4 pending user** (outward): file the rokkit issue (below) + delete sensei's stale `semantic-styles-rokkit` fork once rokkit ships its manifest. |
+| 8 | Per-library review agents + session-start inject | D3/D5 | L | M | **D3 ingestion side DONE** (`library_agents` + `list_library_agents` receive a library's declared agent). Remaining: rokkit authors `rokkit-styles-reviewer` (via the issue); **D5 auto-inject-on-heavy-use deferred** (recommender surfaces at intake now). |
+
+### D4 — rokkit issue (FILED: jerrythomas/rokkit#142)
+
+Remaining D4: once rokkit acts on #142 (ships its `sensei.library.json` + agent), sensei
+ingests rokkit's skill/agent → **then** delete sensei's stale `semantic-styles-rokkit` fork
+(`marketplace/plugins/sensei/skills/semantic-styles-rokkit/`) + `make marketplace-push`.
+
+**Title:** Own `semantic-styles-rokkit` as the sole source of truth + ship a config/pattern review agent + declare `sensei.library.json`
+
+**Body:** sensei is retiring its stale in-marketplace fork of `semantic-styles-rokkit` (teaches the old `-z`-only vocabulary); rokkit already ships the canonical newer copy at `packages/cli/skills/semantic-styles-rokkit/SKILL.md`. Going forward rokkit is the single owner and sensei *ingests* rokkit's skills/agents. Asks: (1) keep the skill canonical in rokkit; (2) add a per-library review agent `packages/cli/agents/rokkit-styles-reviewer.md` (sensei agent format: reviews a consuming app's `rokkit.config.js`/token usage before coding, verifies with `bun run build` + Playwright snapshots after) + a `rokkit agents add` command mirroring `rokkit skills add`; (3) commit a root `sensei.library.json`: `{"library":"rokkit","version":">=1.3","skills":[{"name":"semantic-styles-rokkit","focus":"styling","path":"packages/cli/skills/semantic-styles-rokkit/SKILL.md"}],"agents":[{"name":"rokkit-styles-reviewer","focus":"styling-review","path":"packages/cli/agents/rokkit-styles-reviewer.md"}]}` so sensei's D1 ingestion associates them to any rokkit-using project and auto-recommends them (D2). Non-goal: no change to the skill's teaching content.
 | 9 | Library-update scheduler + apply policy | F1/F2/F3 | L | M | Automation; depends on version model |
 | 10 | MCP naming (docs-only; rename deferred) | B | S | L | Low value; do the doc clarity, hold the rename |
+
+---
+
+## Part E follow-up — review findings (approve-class adversarial pass)
+
+Whole-repo adversarial review of the E workstream at `5c58b899`, run via the risk-class gate.
+Verified live: `make test-fast` green (165+10 Rust bootstrap · 1279 app unit); MCP 51+7 green;
+full senseid suite green with `--test-threads=1` (1817 passed). Findings and the plan to close
+them:
+
+| # | Finding | Severity | Plan |
+|---|---|---|---|
+| F1 | **Risk-class gate under-escalates identity files** — `dojo/client.rs` (device tokens), `gateway_config_loader.rs` (Bearer/api_key), `jwt.rs`/`tokens.rs`/`saml.rs`/`mfa.rs`/`signing.rs`, `relay/auth.rs` all classify `review` (the `/auth/` needle only matches a directory, so `auth.rs` slips). Latent: `is_test_or_doc` matches any segment ending `test/` → `latest/`/`contest/` dirs classify `auto`. | HIGH | Add high-signal needles to `crates/senseid/src/review.rs:55-85` (`auth.rs`, `jwt`, `saml`, `mfa`, `session_store`, `device_token`, `signing`) + tighten the `test/` substring to exact segments. Add regression cases. |
+| F2 | **Full suite red under parallel DB tests** — 4 senseid tests fail on the shared `sensei_test` DB when run in parallel (all pass alone; 1817 green serial). `test-fast` doesn't cover them, so `make test` can stay red silently. | MED | Serialize the DB-backed tests (marker or `--test-threads=1` profile) so `make test` is reliable. |
+| F3 | **Wrong-target / vacuous tests** — `languages/common.rs:207-211` zero assertions; `tests/e2e_index.rs:15-66` never touches the real indexer, lines 88-121 compute-but-never-assert signals. | MED | Rewrite against the real indexer API or delete; add real assertions on computed signals. |
+| F4 | **Dojo fixture remnants on identity-adjacent screens** — `org/[slug]/+page.ts` (needsYou from kit fixtures), `you/[section]/+page.ts:5` (stance/ladder/rulePacks fixtures), `org/[slug]/[section]/+page.ts:143` (`candidateDetailFor` fixture). | MED | Replace with daemon reads (honest-empty) per the no-fixtures rule. |
+| F5 | **Marketplace/doc drift** — `help.md` stale (lists nonexistent `analyze`, omits ~9 skills); catalog `pre/post-tool` hook paths resolve to nothing (catalog.json:457-476); sensei-mcp base-path wrong at :160; 4 near-duplicate skill clusters + 5 near-identical doc-authoring commands. | LOW | Fold into C1/C3 backlog rows (surface simplification). |
+| F6 | `transcript/mod.rs:163` `unwrap_or(true)` masks a DB error as "has events" (self-correcting). | LOW | Prefer propagating the error; note as accepted if kept. |
+
+**Acceptance criteria for closing:** `review.rs` classifies every credential/identity/session file
+`approve` (unit test enumerates the list above); `make test` green in default parallel mode; the
+two vacuous/wrong-target tests gone or asserting real behavior; no kit-fixture imports on
+identity-adjacent dojo screens; catalog/help in sync.
 
 ---
 
