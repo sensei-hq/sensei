@@ -175,6 +175,21 @@ pub fn daemon_request_for(
             Some(DaemonRequest::post_json("/api/review/risk-class", body))
         }
 
+        // ── Library-provided capabilities (workstream D) ────────────────────
+        "list_library_skills" => {
+            let name = args["name"].as_str().unwrap_or("");
+            Some(DaemonRequest::get(format!("/api/libs/{name}/skills")))
+        }
+        "get_library_skill" => {
+            let name = args["name"].as_str().unwrap_or("");
+            let focus = args["focus"].as_str().unwrap_or("");
+            Some(DaemonRequest::get(format!("/api/libs/{name}/skills/{focus}")))
+        }
+        "list_library_agents" => {
+            let name = args["name"].as_str().unwrap_or("");
+            Some(DaemonRequest::get(format!("/api/libs/{name}/agents")))
+        }
+
         // ── Governance rules ────────────────────────────────────────────────
         "get_rules" => {
             let (key, val) = rules_query_param(repo_id, cwd);
@@ -367,6 +382,12 @@ pub fn daemon_request_for(
                     body[k] = serde_json::json!(v);
                 }
             }
+            // Forward the project (explicit arg, else the cwd-resolved one) so the
+            // daemon can suggest the skills/agents provided by libraries it depends on.
+            let project = args["project"].as_str().filter(|s| !s.is_empty()).unwrap_or(repo_id);
+            if !project.is_empty() {
+                body["project"] = serde_json::json!(project);
+            }
             Some(DaemonRequest::post_json("/api/playbook/recommend", body))
         }
 
@@ -413,7 +434,7 @@ fn build_memory_body(args: &Value, cwd: &str, repo_id: &str) -> Value {
     });
     for (arg_key, body_key) in [
         ("scope_filter", "scope_filter"), ("impact", "impact"), ("triage_signal", "triage_signal"),
-        ("spine_slot", "spine_slot"), ("feature", "feature"),
+        ("spine_slot", "spine_slot"), ("feature", "feature"), ("evidence", "evidence"),
     ] {
         if let Some(v) = args[arg_key].as_str().filter(|s| !s.is_empty()) {
             body[body_key] = json!(v);
@@ -492,6 +513,16 @@ pub fn handle_list_tools() -> Value {
             ]),
             tool("search_lib_docs", "Search across all indexed library documentation. Use when looking for how to use a feature.", &[
                 ("query", "string", "What to search for in library docs"),
+            ], &[]),
+            tool("list_library_skills", "List the focused skills a library provides (declared in its sensei.library.json manifest, or generated). Call when working with a library to see what curated how-to skills exist for it.", &[
+                ("name", "string", "Library name (e.g. 'rokkit')"),
+            ], &[]),
+            tool("get_library_skill", "Get one library-provided skill by its topic focus (e.g. 'styling'). Returns the skill body to load. Use after list_library_skills.", &[
+                ("name", "string", "Library name (e.g. 'rokkit')"),
+                ("focus", "string", "Topic focus of the skill (e.g. 'styling')"),
+            ], &[]),
+            tool("list_library_agents", "List the review agents a library provides (declared in its sensei.library.json manifest) — e.g. a config/pattern reviewer for that library. Use during /sensei:review when the project depends on the library.", &[
+                ("name", "string", "Library name (e.g. 'rokkit')"),
             ], &[]),
             tool("get_communities", "Get code architecture — clusters of related functions detected by community analysis.", &[], &[
                 ("project", "string", "Project name. Defaults to current project."),
@@ -631,6 +662,7 @@ pub fn handle_list_tools() -> Value {
                     ("enforcement",  "string", "Authority: advisory|recommended|required|mandatory (default recommended; mandatory = non-overridable)"),
                     ("spine_slot",   "string", "spine slot to anchor to: vision|personas|journeys|roadmap|design|mockups|decisions|brief|plan|tests"),
                     ("feature",      "string", "feature name — required for feature-scope slots (brief/plan/tests)"),
+                    ("evidence",     "string", "Optional source evidence — a file:line, test name, or run id — recorded as the memory's provenance"),
                 ]),
             tool("save_memory",
                 "Explicit memory save — used when the user runs /save. Goes straight into active state. \
@@ -650,6 +682,7 @@ pub fn handle_list_tools() -> Value {
                     ("enforcement",  "string", "Authority: advisory|recommended|required|mandatory (default recommended; mandatory = non-overridable)"),
                     ("spine_slot",   "string", "spine slot to anchor to: vision|personas|journeys|roadmap|design|mockups|decisions|brief|plan|tests"),
                     ("feature",      "string", "feature name — required for feature-scope slots (brief/plan/tests)"),
+                    ("evidence",     "string", "Optional source evidence — a file:line, test name, or run id — recorded as the memory's provenance"),
                 ]),
             tool("promote_memory",
                 "Promote a proven (battle-tested) rule to a broader governance scope, e.g. project → organization. \
@@ -793,6 +826,7 @@ pub fn handle_list_tools() -> Value {
                     ("session_id", "string", "session UUID to attribute the run to"),
                     ("feature",    "string", "feature slug when the chunk maps to a dossier"),
                     ("confirm",    "string", "true to record the run as confirmed"),
+                    ("project",    "string", "project name or UUID — enables suggested_skills/agents from the libraries it uses (defaults to the cwd-resolved project)"),
                 ]),
             // ── §9 learning loop: accept path ─────────────────────────────────
             tool("list_playbook_rule_proposals",
@@ -1144,7 +1178,7 @@ mod tests {
     /// advertised but untested, an extra entry means it's tested but unadvertised.
     const EXPECTED_TOOLS: &[&str] = &[
         "search", "context_pack", "get_callers", "get_callees", "get_project_summary",
-        "get_lib_docs", "search_lib_docs", "get_communities", "get_patterns",
+        "get_lib_docs", "search_lib_docs", "list_library_skills", "get_library_skill", "list_library_agents", "get_communities", "get_patterns",
         "list_projects", "find_projects", "get_user_for_project", "set_stance", "use_project", "create_session", "update_session", "add_library",
         "update_phase", "get_workflow_state", "match_pattern", "get_pattern_for",
         "get_duplicates", "get_project_conventions", "resolve_risk_class", "get_rules", "get_commands", "infer", "embed",
