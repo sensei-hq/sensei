@@ -3733,6 +3733,120 @@ impl PgStore {
         Ok(row.0)
     }
 
+    // ── Library capabilities (workstream D): skills/agents a library provides ──
+    // Two writers coexist in one table, keyed by `source` ('manifest' | 'generated').
+
+    /// Manifest-authoritative replace of a library's `source`-scoped capabilities:
+    /// delete this library's rows for `source`, then re-insert — so a skill/agent
+    /// REMOVED from a manifest disappears on re-ingest. One transaction. Mirrors
+    /// [`Self::replace_folder_commands`]. `version_range` is the manifest's applies-to
+    /// range (same for all rows). Only entries with a resolved `body` are persisted
+    /// (a path/body-less entry is dropped upstream at ingest — no fabrication).
+    /// Returns (skills, agents) written.
+    pub async fn replace_library_capabilities(
+        &self,
+        library_id: &uuid::Uuid,
+        source: &str,
+        version_range: Option<&str>,
+        skills: &[crate::libraries::manifest::ProvidedSkill],
+        agents: &[crate::libraries::manifest::ProvidedAgent],
+    ) -> Result<(u32, u32), String> {
+        let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
+        sqlx_core::query::query("DELETE FROM sensei.library_skills WHERE library_id = $1 AND source = $2")
+            .bind(library_id).bind(source).execute(&mut *tx).await.map_err(|e| e.to_string())?;
+        sqlx_core::query::query("DELETE FROM sensei.library_agents WHERE library_id = $1 AND source = $2")
+            .bind(library_id).bind(source).execute(&mut *tx).await.map_err(|e| e.to_string())?;
+        let mut ns = 0u32;
+        for s in skills.iter().filter(|s| s.body.is_some()) {
+            sqlx_core::query::query(
+                "INSERT INTO sensei.library_skills(library_id, name, focus, body, source, source_path, version_range)
+                 VALUES($1,$2,$3,$4,$5,$6,$7)
+                 ON CONFLICT(library_id, name) DO UPDATE SET
+                   focus=EXCLUDED.focus, body=EXCLUDED.body, source=EXCLUDED.source,
+                   source_path=EXCLUDED.source_path, version_range=EXCLUDED.version_range, modified_at=now()"
+            ).bind(library_id).bind(&s.name).bind(&s.focus).bind(s.body.as_deref()).bind(source).bind(s.path.as_deref()).bind(version_range)
+                .execute(&mut *tx).await.map_err(|e| e.to_string())?;
+            ns += 1;
+        }
+        let mut na = 0u32;
+        for a in agents.iter().filter(|a| a.body.is_some()) {
+            sqlx_core::query::query(
+                "INSERT INTO sensei.library_agents(library_id, name, focus, body, source, source_path, version_range)
+                 VALUES($1,$2,$3,$4,$5,$6,$7)
+                 ON CONFLICT(library_id, name) DO UPDATE SET
+                   focus=EXCLUDED.focus, body=EXCLUDED.body, source=EXCLUDED.source,
+                   source_path=EXCLUDED.source_path, version_range=EXCLUDED.version_range, modified_at=now()"
+            ).bind(library_id).bind(&a.name).bind(&a.focus).bind(a.body.as_deref()).bind(source).bind(a.path.as_deref()).bind(version_range)
+                .execute(&mut *tx).await.map_err(|e| e.to_string())?;
+            na += 1;
+        }
+        tx.commit().await.map_err(|e| e.to_string())?;
+        Ok((ns, na))
+    }
+
+    /// Skills a library provides, by library NAME. Enum-free; errors propagate.
+    pub async fn list_library_skills(&self, library: &str) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(String, String, Option<String>, String, Option<String>)> = sqlx_core::query_as::query_as(
+            "SELECT s.name, s.focus, s.body, s.source, s.version_range
+               FROM sensei.library_skills s JOIN sensei.libraries l ON l.id = s.library_id
+              WHERE l.name = $1 ORDER BY s.focus"
+        ).bind(library).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(name, focus, body, source, vr)| {
+            serde_json::json!({ "name": name, "focus": focus, "body": body, "source": source, "version_range": vr })
+        }).collect())
+    }
+
+    /// One skill of a library by `focus`. `focus` is NOT unique (uniqueness is on
+    /// name), so this takes the most-recent match via `LIMIT 1` — never a multi-row
+    /// error. `None` on a genuine miss (handler → 404), `Err` on failure.
+    pub async fn get_library_skill(&self, library: &str, focus: &str) -> Result<Option<serde_json::Value>, String> {
+        let row: Option<(String, String, Option<String>, String, Option<String>)> = sqlx_core::query_as::query_as(
+            "SELECT s.name, s.focus, s.body, s.source, s.version_range
+               FROM sensei.library_skills s JOIN sensei.libraries l ON l.id = s.library_id
+              WHERE l.name = $1 AND s.focus = $2 ORDER BY s.modified_at DESC LIMIT 1"
+        ).bind(library).bind(focus).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.map(|(name, focus, body, source, vr)| {
+            serde_json::json!({ "name": name, "focus": focus, "body": body, "source": source, "version_range": vr })
+        }))
+    }
+
+    /// Review agents a library provides, by library NAME.
+    pub async fn list_library_agents(&self, library: &str) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(String, String, Option<String>, String, Option<String>)> = sqlx_core::query_as::query_as(
+            "SELECT a.name, a.focus, a.body, a.source, a.version_range
+               FROM sensei.library_agents a JOIN sensei.libraries l ON l.id = a.library_id
+              WHERE l.name = $1 ORDER BY a.focus"
+        ).bind(library).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(name, focus, body, source, vr)| {
+            serde_json::json!({ "name": name, "focus": focus, "body": body, "source": source, "version_range": vr })
+        }).collect())
+    }
+
+    /// The library skills/agents to SUGGEST for a project, from the libraries it
+    /// depends on — REUSES `project_libraries_resolved` (the same view
+    /// [`Self::get_project_libraries`] reads) joined to the capability tables. Backs
+    /// the recommender enrichment. Returns `{suggested_skills, suggested_agents}`.
+    pub async fn list_project_library_capabilities(&self, project_id: &uuid::Uuid) -> Result<serde_json::Value, String> {
+        let skills: Vec<(String, String, String)> = sqlx_core::query_as::query_as(
+            "SELECT pl.name, s.name, s.focus
+               FROM sensei.project_libraries_resolved pl
+               JOIN sensei.library_skills s ON s.library_id = pl.id
+              WHERE (pl.scoped_project_id = $1 OR pl.scoped_project_id IS NULL) AND pl.enabled = true
+              ORDER BY pl.name, s.focus"
+        ).bind(project_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        let agents: Vec<(String, String, String)> = sqlx_core::query_as::query_as(
+            "SELECT pl.name, a.name, a.focus
+               FROM sensei.project_libraries_resolved pl
+               JOIN sensei.library_agents a ON a.library_id = pl.id
+              WHERE (pl.scoped_project_id = $1 OR pl.scoped_project_id IS NULL) AND pl.enabled = true
+              ORDER BY pl.name, a.focus"
+        ).bind(project_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(serde_json::json!({
+            "suggested_skills": skills.into_iter().map(|(lib, name, focus)| serde_json::json!({ "library": lib, "name": name, "focus": focus })).collect::<Vec<_>>(),
+            "suggested_agents": agents.into_iter().map(|(lib, name, focus)| serde_json::json!({ "library": lib, "name": name, "focus": focus })).collect::<Vec<_>>(),
+        }))
+    }
+
     pub async fn get_library(&self, id: &uuid::Uuid) -> Result<Option<serde_json::Value>, String> {
         let row: Option<(uuid::Uuid, String, String, Option<String>, Option<String>, i32, chrono::DateTime<chrono::Utc>)> =
             sqlx_core::query_as::query_as(
@@ -11911,6 +12025,34 @@ mod tests {
             Some(fid),
             "the written remote is what makes auto-remap able to fire"
         );
+    }
+
+    #[tokio::test]
+    async fn replace_library_capabilities_is_manifest_authoritative() {
+        use crate::libraries::manifest::{ProvidedAgent, ProvidedSkill};
+        let s = pg_store().await;
+        let lib = format!("_testlib_{}", uuid::Uuid::new_v4());
+        let lid = s.upsert_library(&lib, "npm", Some(">=1.0"), None, None, None).await.unwrap();
+        let sk = |n: &str, f: &str| ProvidedSkill { name: n.into(), focus: f.into(), path: Some(format!("p/{n}.md")), body: Some(format!("# {n}")) };
+        let ag = ProvidedAgent { name: "rev".into(), focus: "review".into(), path: Some("a/rev.md".into()), body: Some("# rev".into()) };
+
+        let (ns, na) = s.replace_library_capabilities(&lid, "manifest", Some(">=1.0"), &[sk("styling", "styling"), sk("a11y", "accessibility")], &[ag]).await.unwrap();
+        assert_eq!((ns, na), (2, 1));
+        assert_eq!(s.list_library_skills(&lib).await.unwrap().len(), 2);
+        assert_eq!(s.list_library_agents(&lib).await.unwrap().len(), 1);
+        assert!(s.get_library_skill(&lib, "styling").await.unwrap().is_some(), "focus lookup finds it");
+        assert!(s.get_library_skill(&lib, "nope").await.unwrap().is_none(), "genuine miss → None (not an error)");
+
+        // Re-ingest a manifest that now declares only 1 skill → the removed one disappears.
+        let (ns2, _) = s.replace_library_capabilities(&lid, "manifest", Some(">=1.0"), &[sk("styling", "styling")], &[]).await.unwrap();
+        assert_eq!(ns2, 1);
+        assert_eq!(s.list_library_skills(&lib).await.unwrap().len(), 1, "the dropped skill is gone (manifest-authoritative)");
+        assert_eq!(s.list_library_agents(&lib).await.unwrap().len(), 0);
+
+        // A path/body-less entry is not persisted (no fabricated body).
+        let bodyless = ProvidedSkill { name: "x".into(), focus: "x".into(), path: None, body: None };
+        let (ns3, _) = s.replace_library_capabilities(&lid, "manifest", None, &[sk("styling", "styling"), bodyless], &[]).await.unwrap();
+        assert_eq!(ns3, 1, "the body-less entry is skipped");
     }
 
     #[tokio::test]
