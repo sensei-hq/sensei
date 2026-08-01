@@ -114,9 +114,12 @@ nothing. agent-context's managed CLAUDE.md directive is the missing belt-and-sus
 3. Reconcile with the existing hook: hook = push for Claude; directive = pull fallback for
    all ACPs + the explicit compaction re-fetch instruction (sensei already re-pushes at
    PreCompact for Claude; the directive generalizes it).
-4. Add a `conflicts[]` array to `get_rules` output (mandatory rule vs a more-specific
-   override that illegally tries to weaken it) so the directive's "halt on conflict" has
-   real data — mirrors agent-context's `non_overridable`-misuse detection.
+4. Add a `conflicts[]` array to `get_rules` output. **Decision (Jerry, 2026-08-01): a conflict
+   is a SEMANTIC CONTRADICTION between resolved rules** — NOT the structural "a narrow scope
+   illegitimately claims `mandatory`" check. Approach: judge rule PAIRS for contradiction via
+   sensei's own gateway (the `infer`/`consensus` LLM path), computed on rule-set change /
+   `materialize` (not per `get_rules` call) and cached, so the directive's "halt on conflict"
+   has real data. Not yet built — after F.
 
 **Owner files:** `crates/cli` (init/scaffold), `marketplace/plugins/sensei/hooks/`,
 `crates/mcp` (`get_rules` conflicts), `crates/senseid` `/api/knowledge/rules`.
