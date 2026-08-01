@@ -3847,6 +3847,71 @@ impl PgStore {
         }))
     }
 
+    // ── Library update detection (workstream F, v0) ────────────────────────────
+
+    /// Library pins per project, for the update scheduler: joins referenced_libraries
+    /// (the folder's pinned `version_used`) → folders (project) → libraries. Returns
+    /// `(library_id, name, ecosystem, local_path, project_id, version_used)`; only
+    /// rows with a project and a non-empty pin.
+    pub async fn list_library_project_pins(
+        &self,
+    ) -> Result<Vec<(uuid::Uuid, String, String, Option<String>, uuid::Uuid, String)>, String> {
+        let rows = sqlx_core::query_as::query_as(
+            "SELECT l.id, l.name, l.ecosystem::text, l.local_path, f.project_id, rl.version_used
+               FROM sensei.referenced_libraries rl
+               JOIN sensei.libraries l ON l.id = rl.library_id
+               JOIN sensei.folders f ON f.id = rl.folder_id
+              WHERE f.project_id IS NOT NULL AND rl.version_used IS NOT NULL AND rl.version_used <> ''",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(rows)
+    }
+
+    /// Cache the latest-known version + check time for a library in `libraries.props`
+    /// (the TTL guard against re-hitting registries every tick). No schema change.
+    pub async fn set_library_latest_cache(&self, library_id: &uuid::Uuid, latest: &str, checked_at_unix: i64) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE sensei.libraries
+                SET props = coalesce(props, '{}'::jsonb)
+                          || jsonb_build_object('latest_version', $2::text, 'latest_checked_at', $3::bigint)
+              WHERE id = $1",
+        )
+        .bind(library_id).bind(latest).bind(checked_at_unix)
+        .execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// The cached `(latest_version, latest_checked_at_unix)` from `libraries.props`,
+    /// if both are present.
+    pub async fn get_library_latest_cache(&self, library_id: &uuid::Uuid) -> Result<Option<(String, i64)>, String> {
+        let row: Option<(Option<String>, Option<i64>)> = sqlx_core::query_as::query_as(
+            "SELECT props->>'latest_version', (props->>'latest_checked_at')::bigint FROM sensei.libraries WHERE id = $1",
+        )
+        .bind(library_id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.and_then(|(v, t)| match (v, t) {
+            (Some(v), Some(t)) => Some((v, t)),
+            _ => None,
+        }))
+    }
+
+    /// True if a recommendation already flags this project's update of `library_id`
+    /// to `to_version` (any status — so a dismissed one isn't re-created). The
+    /// scheduler's idempotency guard; mirrors [`Self::recommendation_exists_for_pattern`],
+    /// keyed on the library payload in `based_on`.
+    pub async fn pending_library_update_exists(&self, project_id: &uuid::Uuid, library_id: &uuid::Uuid, to_version: &str) -> Result<bool, String> {
+        let row: (bool,) = sqlx_core::query_as::query_as(
+            "SELECT EXISTS(
+               SELECT 1 FROM inference.recommendations
+                WHERE project_id = $1 AND action_type = 'library_update'
+                  AND based_on->'library_update' @> jsonb_build_object('library_id', $2::text, 'to_version', $3::text))",
+        )
+        .bind(project_id).bind(library_id.to_string()).bind(to_version)
+        .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.0)
+    }
+
     pub async fn get_library(&self, id: &uuid::Uuid) -> Result<Option<serde_json::Value>, String> {
         let row: Option<(uuid::Uuid, String, String, Option<String>, Option<String>, i32, chrono::DateTime<chrono::Utc>)> =
             sqlx_core::query_as::query_as(

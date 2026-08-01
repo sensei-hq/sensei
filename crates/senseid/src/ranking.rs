@@ -44,6 +44,7 @@ pub fn action_weight(action_type: &str) -> f64 {
         "enrich_memory" => 0.6,
         "cross_project" => 0.6,
         "archive_memory" => 0.4,
+        "library_update" => 0.55,
         "audit_stale" => 0.25,
         _ => 0.5,
     }
