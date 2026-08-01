@@ -16,6 +16,7 @@ pub mod watchdog_scheduler;
 pub mod contribute_scheduler;
 pub mod log_pruner;
 pub mod activity_pruner;
+pub mod library_update_scheduler;
 pub mod capture_drain;
 pub mod reconcile_scheduler;
 pub mod index_audit;

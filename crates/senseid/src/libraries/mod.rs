@@ -7,6 +7,8 @@
 //! HTTP handlers) and `crate::adapters::manifest` (per-ecosystem dependency parsing).
 
 pub mod manifest;
+pub mod version;
+pub mod registry;
 
 use std::path::Path;
 

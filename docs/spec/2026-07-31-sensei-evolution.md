@@ -114,9 +114,12 @@ nothing. agent-context's managed CLAUDE.md directive is the missing belt-and-sus
 3. Reconcile with the existing hook: hook = push for Claude; directive = pull fallback for
    all ACPs + the explicit compaction re-fetch instruction (sensei already re-pushes at
    PreCompact for Claude; the directive generalizes it).
-4. Add a `conflicts[]` array to `get_rules` output (mandatory rule vs a more-specific
-   override that illegally tries to weaken it) so the directive's "halt on conflict" has
-   real data — mirrors agent-context's `non_overridable`-misuse detection.
+4. Add a `conflicts[]` array to `get_rules` output. **Decision (Jerry, 2026-08-01): a conflict
+   is a SEMANTIC CONTRADICTION between resolved rules** — NOT the structural "a narrow scope
+   illegitimately claims `mandatory`" check. Approach: judge rule PAIRS for contradiction via
+   sensei's own gateway (the `infer`/`consensus` LLM path), computed on rule-set change /
+   `materialize` (not per `get_rules` call) and cached, so the directive's "halt on conflict"
+   has real data. Not yet built — after F.
 
 **Owner files:** `crates/cli` (init/scaffold), `marketplace/plugins/sensei/hooks/`,
 `crates/mcp` (`get_rules` conflicts), `crates/senseid` `/api/knowledge/rules`.
@@ -361,7 +364,7 @@ ingests rokkit's skill/agent → **then** delete sensei's stale `semantic-styles
 **Title:** Own `semantic-styles-rokkit` as the sole source of truth + ship a config/pattern review agent + declare `sensei.library.json`
 
 **Body:** sensei is retiring its stale in-marketplace fork of `semantic-styles-rokkit` (teaches the old `-z`-only vocabulary); rokkit already ships the canonical newer copy at `packages/cli/skills/semantic-styles-rokkit/SKILL.md`. Going forward rokkit is the single owner and sensei *ingests* rokkit's skills/agents. Asks: (1) keep the skill canonical in rokkit; (2) add a per-library review agent `packages/cli/agents/rokkit-styles-reviewer.md` (sensei agent format: reviews a consuming app's `rokkit.config.js`/token usage before coding, verifies with `bun run build` + Playwright snapshots after) + a `rokkit agents add` command mirroring `rokkit skills add`; (3) commit a root `sensei.library.json`: `{"library":"rokkit","version":">=1.3","skills":[{"name":"semantic-styles-rokkit","focus":"styling","path":"packages/cli/skills/semantic-styles-rokkit/SKILL.md"}],"agents":[{"name":"rokkit-styles-reviewer","focus":"styling-review","path":"packages/cli/agents/rokkit-styles-reviewer.md"}]}` so sensei's D1 ingestion associates them to any rokkit-using project and auto-recommends them (D2). Non-goal: no change to the skill's teaching content.
-| 9 | Library-update scheduler + apply policy | F1/F2/F3 | L | M | Automation; depends on version model |
+| 9 | Library-update scheduler + apply policy | F1/F2/F3 | L | M | **F v0 DONE `8e78c344`** (ultracode design workflow, skeptic sound=true): pure semver policy core (`version.rs`) + per-source detection (`registry.rs`, npm/pypi/cargo/go/local) + `library_update_scheduler` (detect→`library_update` recommendation on the existing Insights surface, ZERO DDL, fail-closed on range-pins). **v1 (auto-apply patch, compat-check minor) + v2 (security scan) DEFERRED** — the pure `update_action`/`is_security` contract is built + tested; no apply/advisory code stubbed (per no-fabrication). |
 | 10 | MCP naming (docs-only; rename deferred) | B | S | L | Low value; do the doc clarity, hold the rename |
 
 ---
