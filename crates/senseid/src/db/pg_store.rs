@@ -2350,7 +2350,10 @@ impl PgStore {
 
     // ── Memory Evidence ──────────────────────────────────────────────
 
-    pub async fn add_memory_evidence(&self, memory_id: &uuid::Uuid, session_id: &uuid::Uuid, note: Option<&str>) -> Result<uuid::Uuid, String> {
+    /// Attach one piece of evidence to a memory: a session where it was learned/
+    /// confirmed (`session_id = Some`), OR a save-time source note (`session_id =
+    /// None`, e.g. a file:line / test / run ref supplied with the memory).
+    pub async fn add_memory_evidence(&self, memory_id: &uuid::Uuid, session_id: Option<&uuid::Uuid>, note: Option<&str>) -> Result<uuid::Uuid, String> {
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.memory_evidence(memory_id, session_id, note) VALUES($1, $2, $3) RETURNING id"
         ).bind(memory_id).bind(session_id).bind(note)
@@ -2359,8 +2362,8 @@ impl PgStore {
     }
 
     pub async fn list_memory_evidence(&self, memory_id: &uuid::Uuid) -> Result<Vec<serde_json::Value>, String> {
-        let rows: Vec<(uuid::Uuid, uuid::Uuid, Option<String>, chrono::DateTime<chrono::Utc>)> = sqlx_core::query_as::query_as(
-            "SELECT id, session_id, note, modified_at FROM sensei.memory_evidence WHERE memory_id = $1"
+        let rows: Vec<(uuid::Uuid, Option<uuid::Uuid>, Option<String>, chrono::DateTime<chrono::Utc>)> = sqlx_core::query_as::query_as(
+            "SELECT id, session_id, note, modified_at FROM sensei.memory_evidence WHERE memory_id = $1 ORDER BY modified_at"
         ).bind(memory_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(|(id, sid, note, modified)| {
             serde_json::json!({ "id": id, "session_id": sid, "note": note, "modified_at": modified.to_rfc3339() })
@@ -10491,9 +10494,13 @@ mod tests {
         let fid = create_test_folder(&s, &format!("mem_ev_{}", uuid::Uuid::new_v4())).await;
         let sid = s.create_session(&fid, "test", None).await.unwrap();
         let mid = s.create_memory(None, "global", None, "decision", "_test:mem_ev", "rule", None, None, None, None).await.unwrap();
-        s.add_memory_evidence(&mid, &sid, Some("user corrected twice")).await.unwrap();
+        s.add_memory_evidence(&mid, Some(&sid), Some("user corrected twice")).await.unwrap();
+        // A save-time source note carries no session_id (nullable).
+        s.add_memory_evidence(&mid, None, Some("crates/x.rs:42")).await.unwrap();
         let evidence = s.list_memory_evidence(&mid).await.unwrap();
-        assert_eq!(evidence.len(), 1);
+        assert_eq!(evidence.len(), 2);
+        assert!(evidence.iter().any(|e| e["session_id"].is_null() && e["note"] == "crates/x.rs:42"),
+            "the session-less source note round-trips with a null session_id");
         assert_eq!(evidence[0]["note"], "user corrected twice");
         sqlx_core::query::query("DELETE FROM sensei.memories WHERE id = $1").bind(mid).execute(s.pool()).await.unwrap();
     }

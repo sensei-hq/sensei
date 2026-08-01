@@ -413,7 +413,7 @@ fn build_memory_body(args: &Value, cwd: &str, repo_id: &str) -> Value {
     });
     for (arg_key, body_key) in [
         ("scope_filter", "scope_filter"), ("impact", "impact"), ("triage_signal", "triage_signal"),
-        ("spine_slot", "spine_slot"), ("feature", "feature"),
+        ("spine_slot", "spine_slot"), ("feature", "feature"), ("evidence", "evidence"),
     ] {
         if let Some(v) = args[arg_key].as_str().filter(|s| !s.is_empty()) {
             body[body_key] = json!(v);
@@ -631,6 +631,7 @@ pub fn handle_list_tools() -> Value {
                     ("enforcement",  "string", "Authority: advisory|recommended|required|mandatory (default recommended; mandatory = non-overridable)"),
                     ("spine_slot",   "string", "spine slot to anchor to: vision|personas|journeys|roadmap|design|mockups|decisions|brief|plan|tests"),
                     ("feature",      "string", "feature name — required for feature-scope slots (brief/plan/tests)"),
+                    ("evidence",     "string", "Optional source evidence — a file:line, test name, or run id — recorded as the memory's provenance"),
                 ]),
             tool("save_memory",
                 "Explicit memory save — used when the user runs /save. Goes straight into active state. \
@@ -650,6 +651,7 @@ pub fn handle_list_tools() -> Value {
                     ("enforcement",  "string", "Authority: advisory|recommended|required|mandatory (default recommended; mandatory = non-overridable)"),
                     ("spine_slot",   "string", "spine slot to anchor to: vision|personas|journeys|roadmap|design|mockups|decisions|brief|plan|tests"),
                     ("feature",      "string", "feature name — required for feature-scope slots (brief/plan/tests)"),
+                    ("evidence",     "string", "Optional source evidence — a file:line, test name, or run id — recorded as the memory's provenance"),
                 ]),
             tool("promote_memory",
                 "Promote a proven (battle-tested) rule to a broader governance scope, e.g. project → organization. \
