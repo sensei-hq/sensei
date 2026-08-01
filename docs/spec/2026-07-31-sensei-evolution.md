@@ -352,7 +352,11 @@ leverage / lowest risk first, front-loading the review-rigor concern:
 | 7 | Library manifest + recommender + relocate rokkit skill | D1/D2/D4 | L | M | **D1+D2 DONE `eeb7b312`** (design-workflow blueprint, skeptic-verified): `sensei.library.json` manifest, `library_skills`/`library_agents` tables, `index_library` ingestion (LocalDir v1), `list/get_library_skill(s)`+`list_library_agents` MCP tools, recommender `suggested_skills/agents` (fail-closed). **D4 pending user** (outward): file the rokkit issue (below) + delete sensei's stale `semantic-styles-rokkit` fork once rokkit ships its manifest. |
 | 8 | Per-library review agents + session-start inject | D3/D5 | L | M | **D3 ingestion side DONE** (`library_agents` + `list_library_agents` receive a library's declared agent). Remaining: rokkit authors `rokkit-styles-reviewer` (via the issue); **D5 auto-inject-on-heavy-use deferred** (recommender surfaces at intake now). |
 
-### D4 — ready-to-file rokkit issue
+### D4 — rokkit issue (FILED: jerrythomas/rokkit#142)
+
+Remaining D4: once rokkit acts on #142 (ships its `sensei.library.json` + agent), sensei
+ingests rokkit's skill/agent → **then** delete sensei's stale `semantic-styles-rokkit` fork
+(`marketplace/plugins/sensei/skills/semantic-styles-rokkit/`) + `make marketplace-push`.
 
 **Title:** Own `semantic-styles-rokkit` as the sole source of truth + ship a config/pattern review agent + declare `sensei.library.json`
 
