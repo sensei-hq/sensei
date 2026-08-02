@@ -182,10 +182,10 @@ pub(crate) async fn stamp_docs_applied_if_indexed(
     if pages_stored == 0 {
         return;
     }
-    if let Some((latest, _)) = pg.get_library_latest_cache(lib_id).await.ok().flatten() {
-        if let Err(e) = pg.set_library_docs_applied(lib_id, &latest, now_unix).await {
-            tracing::warn!(error = %e, %lib_id, "index_library: set_library_docs_applied failed");
-        }
+    if let Some((latest, _)) = pg.get_library_latest_cache(lib_id).await.ok().flatten()
+        && let Err(e) = pg.set_library_docs_applied(lib_id, &latest, now_unix).await
+    {
+        tracing::warn!(error = %e, %lib_id, "index_library: set_library_docs_applied failed");
     }
 }
 

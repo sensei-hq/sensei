@@ -88,7 +88,9 @@ pub fn scan(text: &str) -> Vec<SecretFinding> {
 }
 
 /// True if `text` carries at least one secret. Consistent with [`scan`] (applies the
-/// same env-var-name exclusion).
+/// same env-var-name exclusion). Public boolean entrypoint for callers that only
+/// need presence; the memory guard uses [`scan`] directly (it surfaces the kinds).
+#[allow(dead_code)]
 pub fn has_secret(text: &str) -> bool {
     !scan(text).is_empty()
 }

@@ -155,10 +155,10 @@ pub fn security_verdict(advisories: &[Advisory], current: &str, available: &str)
     };
     for adv in advisories.iter().filter(|a| a.high) {
         for range in &adv.ranges {
-            if let Some(fixed) = range_affects(range, &cur) {
-                if *fixed <= avail {
-                    return SecurityVerdict { is_security: true, top: Some(adv.id.clone()) };
-                }
+            if let Some(fixed) = range_affects(range, &cur)
+                && *fixed <= avail
+            {
+                return SecurityVerdict { is_security: true, top: Some(adv.id.clone()) };
             }
         }
     }
