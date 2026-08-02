@@ -9,6 +9,7 @@
 pub mod manifest;
 pub mod version;
 pub mod registry;
+pub mod advisory;
 
 use std::path::Path;
 
