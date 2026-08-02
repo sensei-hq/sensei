@@ -8,7 +8,7 @@
 //! logs and never fabricates a "newer version available". No apply, no DDL, no worker
 //! task in v0 — detect+notify runs inline in the tick.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -16,6 +16,55 @@ use crate::db::pg_store::PgStore;
 use crate::libraries::registry::{HttpVersionSource, VersionSource};
 use crate::libraries::version::{classify_bump, update_action, Bump, UpdateAction};
 use super::queue::TaskQueue;
+use super::{Task, TaskKind};
+
+/// True iff the docs still need a re-index for `latest` — the applied marker is
+/// absent or stale. Equal marker ⇒ `index_library` already stamped a confirmed,
+/// non-empty re-index at `latest`, so the scheduler skips (and records the
+/// auto-applied audit instead of re-enqueuing).
+fn should_reindex(applied: Option<&str>, latest: &str) -> bool {
+    applied != Some(latest)
+}
+
+/// One project × library update fact, shared by the notify writers.
+struct PendingUpdate<'a> {
+    project_id: &'a uuid::Uuid,
+    lib_id: &'a uuid::Uuid,
+    name: &'a str,
+    ecosystem: &'a str,
+    from: &'a str,
+    to: &'a str,
+    bump_str: &'a str,
+}
+
+/// Write a `library_update` recommendation for `pu` at the given `mode`
+/// (`notify` | `auto_applied` | `notify_no_source`), deduped per (project,
+/// library, to_version) at the non-security tier. The single writer onto the
+/// Insights surface — no new channel.
+async fn write_update_rec(pg: &PgStore, pu: &PendingUpdate<'_>, mode: &str, urgency: &str) {
+    match pg.pending_library_update_exists(pu.project_id, pu.lib_id, pu.to, false).await {
+        Ok(true) => return, // already flagged this exact update
+        Ok(false) => {}
+        Err(e) => {
+            tracing::warn!(error = %e, "library_update_scheduler: dedup check failed — skip");
+            return;
+        }
+    }
+    let title = format!("Update {} {} → {} ({})", pu.name, pu.from, pu.to, pu.bump_str);
+    let why = match mode {
+        "auto_applied" => format!("Auto-refreshed {} docs/skills for {} to {}.", pu.ecosystem, pu.name, pu.to),
+        "notify_no_source" => format!("A newer {} version of {} is available (no indexable source to auto-refresh).", pu.ecosystem, pu.name),
+        _ => format!("A newer {} version of {} is available.", pu.ecosystem, pu.name),
+    };
+    let based_on = serde_json::json!({ "library_update": {
+        "library_id": pu.lib_id.to_string(), "ecosystem": pu.ecosystem, "name": pu.name,
+        "from_version": pu.from, "to_version": pu.to, "bump": pu.bump_str,
+        "mode": mode, "is_security": false,
+    }});
+    if let Err(e) = pg.create_recommendation_full(pu.project_id, &title, &why, None, "library_update", urgency, &based_on, None, None).await {
+        tracing::warn!(error = %e, lib = %pu.name, "library_update_scheduler: create recommendation failed");
+    }
+}
 
 const DEFAULT_INTERVAL_SECS: u64 = 86_400; // daily
 const DEFAULT_CHECK_TTL_SECS: i64 = 82_800; // ~23h — reuse a lib's cached latest if newer
@@ -46,7 +95,7 @@ async fn run(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
 
 /// One pass. Testable with a stub [`VersionSource`]. Never panics; every failure is
 /// skip + log (fail-closed).
-pub(crate) async fn tick(pg: &PgStore, _queue: &TaskQueue, src: &impl VersionSource) {
+pub(crate) async fn tick(pg: &PgStore, queue: &TaskQueue, src: &impl VersionSource) {
     let ttl = parse_ttl(pg.get_config("library.check_ttl_secs").await.ok().flatten());
     let now = chrono::Utc::now().timestamp();
 
@@ -84,20 +133,15 @@ pub(crate) async fn tick(pg: &PgStore, _queue: &TaskQueue, src: &impl VersionSou
         latest_by_lib.insert(*lib_id, latest);
     }
 
-    // Compare each project pin to the latest and notify on a real, actionable bump.
-    for (lib_id, name, ecosystem, _lp, project_id, version_used, _burl, _stype) in &pins {
+    // Dispatch each project pin by the policy action. PATCH auto-applies (re-index
+    // sensei's OWN docs/skills — never the user's code); MINOR/MAJOR notify.
+    let mut enqueued: HashSet<uuid::Uuid> = HashSet::new();
+    for (lib_id, name, ecosystem, local_path, project_id, version_used, base_url, _stype) in &pins {
         let Some(Some(latest)) = latest_by_lib.get(lib_id) else { continue };
         let bump = classify_bump(version_used, latest);
-        if update_action(bump, false) == UpdateAction::Ignore {
+        let action = update_action(bump, false);
+        if action == UpdateAction::Ignore {
             continue; // None/Unknown (incl. range pins) — no notice
-        }
-        match pg.pending_library_update_exists(project_id, lib_id, latest, false).await {
-            Ok(true) => continue, // already flagged this exact update
-            Ok(false) => {}
-            Err(e) => {
-                tracing::warn!(error = %e, "library_update_scheduler: dedup check failed — skip");
-                continue;
-            }
         }
         let bump_str = match bump {
             Bump::Patch => "patch",
@@ -105,16 +149,38 @@ pub(crate) async fn tick(pg: &PgStore, _queue: &TaskQueue, src: &impl VersionSou
             Bump::Major => "major",
             _ => "update",
         };
-        let urgency = if bump == Bump::Major { "medium" } else { "low" };
-        let title = format!("Update {name} {version_used} → {latest} ({bump_str})");
-        let why = format!("A newer {ecosystem} version of {name} is available.");
-        let based_on = serde_json::json!({ "library_update": {
-            "library_id": lib_id.to_string(), "ecosystem": ecosystem, "name": name,
-            "from_version": version_used, "to_version": latest, "bump": bump_str,
-        }});
-        if let Err(e) = pg.create_recommendation_full(project_id, &title, &why, None, "library_update", urgency, &based_on, None, None).await {
-            tracing::warn!(error = %e, lib = %name, "library_update_scheduler: create recommendation failed");
+        let pu = PendingUpdate { project_id, lib_id, name, ecosystem, from: version_used, to: latest, bump_str };
+
+        if action == UpdateAction::AutoApply {
+            // PATCH auto-apply (v1a). Already caught up? record the audit, don't re-run.
+            let applied = pg.get_library_docs_applied(lib_id).await.ok().flatten();
+            if !should_reindex(applied.as_deref(), latest) {
+                write_update_rec(pg, &pu, "auto_applied", "low").await;
+                continue;
+            }
+            // Needs a refresh. No indexable source → surface a notify instead of
+            // fabricating a url (base_url for remote, local_path for a local lib).
+            let Some(url) = base_url.clone().or_else(|| local_path.clone()) else {
+                write_update_rec(pg, &pu, "notify_no_source", "low").await;
+                continue;
+            };
+            // Enqueue at most once per lib: within this tick (`enqueued`) and across
+            // ticks (in-flight guard on the lib id). The applied audit is written on
+            // a LATER tick once index_library flips the marker — never at enqueue.
+            if enqueued.contains(lib_id)
+                || queue.has_pending_kind_folder(TaskKind::IndexLibrary, &lib_id.to_string()).await
+            {
+                continue;
+            }
+            queue.enqueue(Task::new(TaskKind::IndexLibrary, &lib_id.to_string(), name).with_url(&url)).await;
+            enqueued.insert(*lib_id);
+            tracing::info!(lib = %name, %latest, "library_update_scheduler: auto-apply patch → enqueued re-index");
+            continue;
         }
+
+        // MINOR / MAJOR → notify (v1 conservative; the compat gate is unbuilt).
+        let urgency = if bump == Bump::Major { "medium" } else { "low" };
+        write_update_rec(pg, &pu, "notify", urgency).await;
     }
 }
 
@@ -228,5 +294,72 @@ mod tests {
         let row = pins.iter().find(|p| p.0 == lid).expect("seeded pin present");
         assert_eq!(row.6.as_deref(), Some("https://x/llms.txt"), "base_url in pins");
         assert_eq!(row.7.as_deref(), Some("llms.txt"), "source_type in pins");
+    }
+
+    // ── Step-3: F-v1a auto-apply PATCH ────────────────────────────────
+
+    #[test]
+    fn should_reindex_gate() {
+        assert!(should_reindex(None, "1.2.4"), "no marker → needs reindex");
+        assert!(should_reindex(Some("1.2.3"), "1.2.4"), "stale marker → needs reindex");
+        assert!(!should_reindex(Some("1.2.4"), "1.2.4"), "marker == latest → already applied");
+    }
+
+    async fn set_pin_source(s: &PgStore, lid: &uuid::Uuid) {
+        s.update_library_source(lid, "llms.txt", Some("https://x/llms.txt")).await.unwrap();
+    }
+
+    /// The `mode` of the (single) library_update rec for `pid`/`to`, if any.
+    async fn rec_mode(s: &PgStore, pid: &uuid::Uuid, to: &str) -> Option<String> {
+        let row: Option<(Option<String>,)> = sqlx_core::query_as::query_as(
+            "SELECT based_on->'library_update'->>'mode' FROM inference.recommendations \
+               WHERE project_id=$1 AND action_type='library_update' AND based_on->'library_update'->>'to_version'=$2 LIMIT 1")
+            .bind(pid).bind(to).fetch_optional(s.pool()).await.unwrap();
+        row.and_then(|(m,)| m)
+    }
+
+    #[tokio::test]
+    async fn patch_bump_enqueues_reindex_not_a_rec() {
+        let Ok(s) = PgStore::connect_test().await else { return };
+        let q = TaskQueue::new();
+        let (pid, lid) = seed_pin(&s, "1.0.0").await;
+        set_pin_source(&s, &lid).await;
+        tick(&s, &q, &Stub(Some("1.0.5".into()))).await; // patch bump
+        assert!(q.has_pending_kind_folder(TaskKind::IndexLibrary, &lid.to_string()).await,
+            "a patch auto-applies: an IndexLibrary re-index is enqueued for the lib");
+        assert!(!s.pending_library_update_exists(&pid, &lid, "1.0.5", false).await.unwrap(),
+            "no recommendation is written at enqueue time (audit waits for confirmed success)");
+        // Re-tick while the task is still in-flight → no duplicate enqueue.
+        tick(&s, &q, &Stub(Some("1.0.5".into()))).await;
+        let n = q.snapshot().await.into_iter()
+            .filter(|(k, f, _)| *k == TaskKind::IndexLibrary && f == &lid.to_string()).count();
+        assert_eq!(n, 1, "the in-flight guard prevents a duplicate re-index");
+    }
+
+    #[tokio::test]
+    async fn patch_already_applied_writes_auto_applied_audit() {
+        let Ok(s) = PgStore::connect_test().await else { return };
+        let q = TaskQueue::new();
+        let (pid, lid) = seed_pin(&s, "1.0.0").await;
+        set_pin_source(&s, &lid).await;
+        // Marker already at latest ⇒ index_library confirmed the re-index.
+        s.set_library_docs_applied(&lid, "1.0.5", 1).await.unwrap();
+        tick(&s, &q, &Stub(Some("1.0.5".into()))).await;
+        assert!(!q.has_pending_kind_folder(TaskKind::IndexLibrary, &lid.to_string()).await,
+            "already applied → no re-index enqueued");
+        assert_eq!(rec_mode(&s, &pid, "1.0.5").await.as_deref(), Some("auto_applied"),
+            "an auto_applied audit is recorded once the marker has caught up");
+    }
+
+    #[tokio::test]
+    async fn patch_without_source_falls_back_to_notify() {
+        let Ok(s) = PgStore::connect_test().await else { return };
+        let q = TaskQueue::new();
+        let (pid, lid) = seed_pin(&s, "1.0.0").await; // no source set
+        tick(&s, &q, &Stub(Some("1.0.5".into()))).await;
+        assert!(!q.has_pending_kind_folder(TaskKind::IndexLibrary, &lid.to_string()).await,
+            "no indexable source → nothing enqueued (never fabricate a url)");
+        assert_eq!(rec_mode(&s, &pid, "1.0.5").await.as_deref(), Some("notify_no_source"),
+            "a no-source patch surfaces a notify instead");
     }
 }
