@@ -131,6 +131,43 @@ pub async fn import_lib(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
 
 // ── Index Library ──────────────────────────────────────────────────────────
 
+/// Resolve the library row an `index_library` task targets, then refresh its
+/// source pointer.
+///
+/// The `IndexLibrary` enqueue passes the library UUID in `task.folder_path` (see
+/// `add_library` in `mcp.rs`), so a re-index resolves the EXISTING row by that id
+/// and keeps its real `ecosystem`. It must NOT re-upsert by `(name, "npm")`:
+/// [`PgStore::upsert_library`]'s `ON CONFLICT(ecosystem, name)` would then INSERT
+/// a phantom `(npm, name)` row for any cargo/pypi/go library — orphaning the real
+/// row and its docs, stamping progress on the phantom, and re-enqueuing forever.
+///
+/// Fallback (`folder_path` is not a resolvable uuid) = first-index of a
+/// genuinely-new library: upsert by name. (The `"npm"` default there is the
+/// separate `add_library` D1 ticket, not this fix.) A uuid that no longer
+/// resolves fails closed rather than fabricating a new row.
+async fn resolve_index_library_id(
+    pg: &crate::db::pg_store::PgStore,
+    folder_path: &str,
+    lib_name: &str,
+    source_type: &str,
+    base_url: Option<&str>,
+) -> Result<uuid::Uuid, String> {
+    if let Ok(id) = uuid::Uuid::parse_str(folder_path) {
+        return match pg.get_library(&id).await? {
+            Some(_) => {
+                pg.update_library_source(&id, source_type, base_url).await?;
+                Ok(id)
+            }
+            None => Err(format!(
+                "index_library: library {id} not found (removed between enqueue and run)"
+            )),
+        };
+    }
+    pg.upsert_library(lib_name, "npm", None, None, Some(source_type), base_url)
+        .await
+        .map_err(|e| format!("upsert_library failed: {}", e))
+}
+
 /// Fetch a library's llms docs, split into PER-COMPONENT pages, and store each.
 ///
 /// `task.url` may be a local directory, a `github.com/.../tree/...` URL, or a
@@ -149,16 +186,15 @@ pub async fn index_library(ctx: &TaskContext, task: &Task) -> Result<u32, String
 
     let source = detect_lib_source(url);
 
-    // Upsert the library record with the correct enum source_type + base_url.
+    // Resolve the library row this task targets + refresh its source pointer.
     let (base_source_type, base_url): (&str, Option<&str>) = match &source {
         LibSource::LocalDir(p) => ("local", Some(p.as_str())),
         LibSource::GitHubTree { .. } => ("http", Some(url)),
         LibSource::Website(u) => ("llms.txt", Some(u.as_str())),
     };
-    let lib_id = ctx.pg()
-        .upsert_library(lib_name, "npm", None, None, Some(base_source_type), base_url)
-        .await
-        .map_err(|e| format!("upsert_library failed: {}", e))?;
+    let lib_id = resolve_index_library_id(
+        ctx.pg(), &task.folder_path, lib_name, base_source_type, base_url,
+    ).await?;
 
     // Resolve the source into per-component pages (fetch + parse).
     let pages = resolve_library_pages(&source, lib_name).await
@@ -646,5 +682,83 @@ mod tests {
         assert_eq!(eco("example.com/mod"), Some("go"));
         assert_eq!(eco("com.example:core"), Some("maven"));
         assert_eq!(eco("MyLib"), Some("nuget"));
+    }
+
+    // ── resolve_index_library_id (F v1 prereq: resolve BY lib_id) ─────
+    //
+    // The IndexLibrary enqueue passes the library UUID in `task.folder_path`
+    // (mcp.rs `add_library`). A re-index must resolve THAT row and keep its real
+    // ecosystem — never re-upsert by `(name, "npm")`, which
+    // `ON CONFLICT(ecosystem, name)` turns into a phantom `(npm, name)` row for a
+    // cargo/pypi/go library, orphaning the real row + its docs.
+
+    use crate::db::pg_store::PgStore;
+
+    async fn npm_row_exists(pg: &PgStore, name: &str) -> bool {
+        let n: (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*) FROM sensei.libraries \
+               WHERE ecosystem = 'npm'::sensei.library_ecosystem AND name = $1",
+        )
+        .bind(name)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        n.0 > 0
+    }
+
+    #[tokio::test]
+    async fn resolve_by_lib_id_preserves_ecosystem_and_creates_no_phantom() {
+        let Ok(pg) = PgStore::connect_test().await else { return };
+        let name = format!("_fidxlib_{}", uuid::Uuid::new_v4());
+        // A cargo library, exactly as the dependency-extraction path creates it.
+        let real_id = pg
+            .upsert_library(&name, "cargo", Some("1.0.0"), None, Some("local"), Some("/x"))
+            .await
+            .unwrap();
+
+        let resolved =
+            resolve_index_library_id(&pg, &real_id.to_string(), &name, "local", Some("/x/docs"))
+                .await
+                .unwrap();
+
+        assert_eq!(resolved, real_id, "resolves the EXISTING row by its lib_id");
+        let lib = pg.get_library(&real_id).await.unwrap().expect("cargo row still exists");
+        assert_eq!(
+            lib["ecosystem"].as_str(),
+            Some("cargo"),
+            "ecosystem is NOT clobbered to npm"
+        );
+        assert!(
+            !npm_row_exists(&pg, &name).await,
+            "no phantom (npm, name) row is created for a cargo library"
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_non_uuid_folder_path_first_indexes_by_name() {
+        let Ok(pg) = PgStore::connect_test().await else { return };
+        let name = format!("_fidxnew_{}", uuid::Uuid::new_v4());
+        // Not a uuid → genuinely-new library first-index (upsert by name).
+        let id =
+            resolve_index_library_id(&pg, "/some/repo/path", &name, "llms.txt", Some("https://x/llms.txt"))
+                .await
+                .unwrap();
+        let lib = pg.get_library(&id).await.unwrap().expect("first-index created the row");
+        assert_eq!(lib["name"].as_str(), Some(name.as_str()));
+    }
+
+    #[tokio::test]
+    async fn resolve_unknown_uuid_fails_closed() {
+        let Ok(pg) = PgStore::connect_test().await else { return };
+        let ghost = uuid::Uuid::new_v4();
+        let name = format!("_fidxghost_{}", uuid::Uuid::new_v4());
+        // A uuid that no longer resolves → error, never a fabricated fallback row.
+        let r =
+            resolve_index_library_id(&pg, &ghost.to_string(), &name, "local", Some("/x")).await;
+        assert!(r.is_err(), "an unresolvable lib_id fails closed");
+        assert!(
+            !npm_row_exists(&pg, &name).await,
+            "and creates no fallback (npm, name) row"
+        );
     }
 }
