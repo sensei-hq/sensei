@@ -33,13 +33,6 @@ impl RiskClass {
             Self::Approve => 2,
         }
     }
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Auto => "auto",
-            Self::Review => "review",
-            Self::Approve => "approve",
-        }
-    }
 }
 
 /// The gate's decision: the class + the human-readable reasons that drove it.
@@ -175,11 +168,12 @@ pub fn resolve_risk_class(paths: &[String], task: Option<&str>) -> RiskAssessmen
         reasons.push(format!("{source_count} production source file(s) → review"));
     }
 
-    if let Some(t) = task {
-        if class == RiskClass::Auto && task_is_sensitive(t) {
-            class = RiskClass::Review;
-            reasons.push("task describes a sensitive/destructive operation → escalated to review".into());
-        }
+    if let Some(t) = task
+        && class == RiskClass::Auto
+        && task_is_sensitive(t)
+    {
+        class = RiskClass::Review;
+        reasons.push("task describes a sensitive/destructive operation → escalated to review".into());
     }
 
     if reasons.is_empty() {
