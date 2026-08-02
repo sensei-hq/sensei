@@ -3872,13 +3872,14 @@ impl PgStore {
 
     /// Library pins per project, for the update scheduler: joins referenced_libraries
     /// (the folder's pinned `version_used`) → folders (project) → libraries. Returns
-    /// `(library_id, name, ecosystem, local_path, project_id, version_used)`; only
-    /// rows with a project and a non-empty pin.
+    /// `(library_id, name, ecosystem, local_path, project_id, version_used, base_url,
+    /// source_type)`; only rows with a project and a non-empty pin. `base_url` +
+    /// `source_type` let the apply arm rebuild the re-index `task.url` fail-closed.
     pub async fn list_library_project_pins(
         &self,
-    ) -> Result<Vec<(uuid::Uuid, String, String, Option<String>, uuid::Uuid, String)>, String> {
+    ) -> Result<Vec<(uuid::Uuid, String, String, Option<String>, uuid::Uuid, String, Option<String>, Option<String>)>, String> {
         let rows = sqlx_core::query_as::query_as(
-            "SELECT l.id, l.name, l.ecosystem::text, l.local_path, f.project_id, rl.version_used
+            "SELECT l.id, l.name, l.ecosystem::text, l.local_path, f.project_id, rl.version_used, l.base_url, l.source_type::text
                FROM sensei.referenced_libraries rl
                JOIN sensei.libraries l ON l.id = rl.library_id
                JOIN sensei.folders f ON f.id = rl.folder_id
@@ -3917,18 +3918,51 @@ impl PgStore {
         }))
     }
 
+    /// Stamp the "docs applied at version" marker in `libraries.props` after a
+    /// CONFIRMED, non-empty re-index (F v1 auto-apply). Mirrors
+    /// [`Self::set_library_latest_cache`]'s single-statement jsonb merge — no
+    /// schema change. Only ever written on success, so it never fabricates
+    /// "applied".
+    pub async fn set_library_docs_applied(&self, library_id: &uuid::Uuid, version: &str, applied_at_unix: i64) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE sensei.libraries
+                SET props = coalesce(props, '{}'::jsonb)
+                          || jsonb_build_object('docs_applied_version', $2::text, 'docs_applied_at', $3::bigint)
+              WHERE id = $1",
+        )
+        .bind(library_id).bind(version).bind(applied_at_unix)
+        .execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// The `docs_applied_version` marker from `libraries.props`, if present — the
+    /// gate that stops the scheduler re-applying an already-applied version.
+    pub async fn get_library_docs_applied(&self, library_id: &uuid::Uuid) -> Result<Option<String>, String> {
+        let row: Option<(Option<String>,)> = sqlx_core::query_as::query_as(
+            "SELECT props->>'docs_applied_version' FROM sensei.libraries WHERE id = $1",
+        )
+        .bind(library_id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.and_then(|(v,)| v))
+    }
+
     /// True if a recommendation already flags this project's update of `library_id`
-    /// to `to_version` (any status — so a dismissed one isn't re-created). The
-    /// scheduler's idempotency guard; mirrors [`Self::recommendation_exists_for_pattern`],
+    /// to `to_version` at the given security tier. `is_security` discriminates the
+    /// tier so a prior/dismissed non-security notify can't suppress a later security
+    /// flag (and vice-versa). Mirrors [`Self::recommendation_exists_for_pattern`],
     /// keyed on the library payload in `based_on`.
-    pub async fn pending_library_update_exists(&self, project_id: &uuid::Uuid, library_id: &uuid::Uuid, to_version: &str) -> Result<bool, String> {
+    pub async fn pending_library_update_exists(&self, project_id: &uuid::Uuid, library_id: &uuid::Uuid, to_version: &str, is_security: bool) -> Result<bool, String> {
+        // The is_security discriminator: a row's tier is `based_on.is_security`
+        // (absent/false = non-security). COALESCE the missing key to false so a
+        // legacy notify (no key) reads as non-security, and only a same-tier row
+        // matches — a non-security notify can't dedup-suppress a security flag.
         let row: (bool,) = sqlx_core::query_as::query_as(
             "SELECT EXISTS(
                SELECT 1 FROM inference.recommendations
                 WHERE project_id = $1 AND action_type = 'library_update'
-                  AND based_on->'library_update' @> jsonb_build_object('library_id', $2::text, 'to_version', $3::text))",
+                  AND based_on->'library_update' @> jsonb_build_object('library_id', $2::text, 'to_version', $3::text)
+                  AND COALESCE((based_on->'library_update'->>'is_security')::boolean, false) = $4)",
         )
-        .bind(project_id).bind(library_id.to_string()).bind(to_version)
+        .bind(project_id).bind(library_id.to_string()).bind(to_version).bind(is_security)
         .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(row.0)
     }

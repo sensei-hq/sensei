@@ -15,6 +15,7 @@ use std::time::Duration;
 use crate::db::pg_store::PgStore;
 use crate::libraries::registry::{HttpVersionSource, VersionSource};
 use crate::libraries::version::{classify_bump, update_action, Bump, UpdateAction};
+use super::queue::TaskQueue;
 
 const DEFAULT_INTERVAL_SECS: u64 = 86_400; // daily
 const DEFAULT_CHECK_TTL_SECS: i64 = 82_800; // ~23h — reuse a lib's cached latest if newer
@@ -26,24 +27,26 @@ fn parse_ttl(cfg: Option<String>) -> i64 {
     cfg.and_then(|s| s.trim().parse::<i64>().ok()).filter(|n| *n > 0).unwrap_or(DEFAULT_CHECK_TTL_SECS)
 }
 
-/// Spawn the scheduler for the daemon's lifetime.
-pub fn spawn(pg: Arc<PgStore>) {
-    tokio::spawn(run(pg));
+/// Spawn the scheduler for the daemon's lifetime. `queue` lets the apply arm
+/// (F v1, step 3) enqueue an `IndexLibrary` re-index; threaded now like the
+/// sibling schedulers (`reconcile_scheduler::spawn(queue, pg)`).
+pub fn spawn(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
+    tokio::spawn(run(queue, pg));
 }
 
-async fn run(pg: Arc<PgStore>) {
+async fn run(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
     let secs = parse_interval(pg.get_config("library.update_interval_secs").await.ok().flatten());
     let mut ticker = tokio::time::interval(Duration::from_secs(secs));
     let src = HttpVersionSource;
     loop {
         ticker.tick().await; // first tick fires immediately → a boot pass
-        tick(&pg, &src).await;
+        tick(&pg, &queue, &src).await;
     }
 }
 
 /// One pass. Testable with a stub [`VersionSource`]. Never panics; every failure is
 /// skip + log (fail-closed).
-pub(crate) async fn tick(pg: &PgStore, src: &impl VersionSource) {
+pub(crate) async fn tick(pg: &PgStore, _queue: &TaskQueue, src: &impl VersionSource) {
     let ttl = parse_ttl(pg.get_config("library.check_ttl_secs").await.ok().flatten());
     let now = chrono::Utc::now().timestamp();
 
@@ -57,7 +60,7 @@ pub(crate) async fn tick(pg: &PgStore, src: &impl VersionSource) {
 
     // Resolve the latest version once per DISTINCT library, TTL-gated + props-cached.
     let mut latest_by_lib: HashMap<uuid::Uuid, Option<String>> = HashMap::new();
-    for (lib_id, name, ecosystem, local_path, _pid, _vu) in &pins {
+    for (lib_id, name, ecosystem, local_path, _pid, _vu, _burl, _stype) in &pins {
         if latest_by_lib.contains_key(lib_id) {
             continue;
         }
@@ -82,13 +85,13 @@ pub(crate) async fn tick(pg: &PgStore, src: &impl VersionSource) {
     }
 
     // Compare each project pin to the latest and notify on a real, actionable bump.
-    for (lib_id, name, ecosystem, _lp, project_id, version_used) in &pins {
+    for (lib_id, name, ecosystem, _lp, project_id, version_used, _burl, _stype) in &pins {
         let Some(Some(latest)) = latest_by_lib.get(lib_id) else { continue };
         let bump = classify_bump(version_used, latest);
         if update_action(bump, false) == UpdateAction::Ignore {
             continue; // None/Unknown (incl. range pins) — no notice
         }
-        match pg.pending_library_update_exists(project_id, lib_id, latest).await {
+        match pg.pending_library_update_exists(project_id, lib_id, latest, false).await {
             Ok(true) => continue, // already flagged this exact update
             Ok(false) => {}
             Err(e) => {
@@ -155,12 +158,13 @@ mod tests {
     #[tokio::test]
     async fn tick_notifies_a_real_bump_and_dedupes() {
         let Ok(s) = PgStore::connect_test().await else { return };
+        let q = TaskQueue::new();
         let (pid, lid) = seed_pin(&s, "1.0.0").await;
-        tick(&s, &Stub(Some("1.2.0".into()))).await; // minor bump
-        assert!(s.pending_library_update_exists(&pid, &lid, "1.2.0").await.unwrap(),
+        tick(&s, &q, &Stub(Some("1.2.0".into()))).await; // minor bump
+        assert!(s.pending_library_update_exists(&pid, &lid, "1.2.0", false).await.unwrap(),
             "a real bump writes a library_update recommendation");
         // Second pass is idempotent — no duplicate rec for the same to_version.
-        tick(&s, &Stub(Some("1.2.0".into()))).await;
+        tick(&s, &q, &Stub(Some("1.2.0".into()))).await;
         let n: (i64,) = sqlx_core::query_as::query_as(
             "SELECT count(*) FROM inference.recommendations WHERE project_id=$1 AND action_type='library_update' AND based_on->'library_update'->>'to_version'='1.2.0'")
             .bind(pid).fetch_one(s.pool()).await.unwrap();
@@ -170,14 +174,59 @@ mod tests {
     #[tokio::test]
     async fn tick_is_fail_closed_on_range_pin_and_no_latest() {
         let Ok(s) = PgStore::connect_test().await else { return };
+        let q = TaskQueue::new();
         // A range pin already accepts the latest → Unknown → no notice.
         let (pid, lid) = seed_pin(&s, "^1.0.0").await;
-        tick(&s, &Stub(Some("1.9.0".into()))).await;
-        assert!(!s.pending_library_update_exists(&pid, &lid, "1.9.0").await.unwrap(),
+        tick(&s, &q, &Stub(Some("1.9.0".into()))).await;
+        assert!(!s.pending_library_update_exists(&pid, &lid, "1.9.0", false).await.unwrap(),
             "a range pin must NOT produce a spurious update recommendation");
         // No latest resolved → no notice.
         let (pid2, lid2) = seed_pin(&s, "1.0.0").await;
-        tick(&s, &Stub(None)).await;
-        assert!(!s.pending_library_update_exists(&pid2, &lid2, "9.9.9").await.unwrap());
+        tick(&s, &q, &Stub(None)).await;
+        assert!(!s.pending_library_update_exists(&pid2, &lid2, "9.9.9", false).await.unwrap());
+    }
+
+    // ── Step-2 plumbing: props apply-marker, mode-aware dedup, pins source ──
+
+    #[tokio::test]
+    async fn docs_applied_marker_round_trips() {
+        let Ok(s) = PgStore::connect_test().await else { return };
+        let lib = format!("_fmark_{}", uuid::Uuid::new_v4());
+        let lid = s.upsert_library(&lib, "cargo", Some("1.0.0"), None, None, None).await.unwrap();
+        assert_eq!(s.get_library_docs_applied(&lid).await.unwrap(), None, "unset → None");
+        s.set_library_docs_applied(&lid, "1.2.3", 111).await.unwrap();
+        assert_eq!(
+            s.get_library_docs_applied(&lid).await.unwrap().as_deref(),
+            Some("1.2.3"),
+            "marker round-trips the applied version"
+        );
+    }
+
+    #[tokio::test]
+    async fn pending_update_dedup_is_security_aware() {
+        let Ok(s) = PgStore::connect_test().await else { return };
+        let (pid, lid) = seed_pin(&s, "1.0.0").await;
+        // A NON-security notify for to_version 2.0.0.
+        let based_on = serde_json::json!({ "library_update": {
+            "library_id": lid.to_string(), "to_version": "2.0.0", "is_security": false } });
+        s.create_recommendation_full(&pid, "t", "w", None, "library_update", "low", &based_on, None, None).await.unwrap();
+        // Same-tier query sees it; the security-tier query does NOT — so a prior
+        // non-security notify can't suppress a later security flag.
+        assert!(s.pending_library_update_exists(&pid, &lid, "2.0.0", false).await.unwrap(),
+            "non-security query matches the non-security row");
+        assert!(!s.pending_library_update_exists(&pid, &lid, "2.0.0", true).await.unwrap(),
+            "security query must NOT be suppressed by a non-security row");
+    }
+
+    #[tokio::test]
+    async fn pins_include_base_url_and_source_type() {
+        let Ok(s) = PgStore::connect_test().await else { return };
+        let (_pid, lid) = seed_pin(&s, "1.0.0").await;
+        // Give the seeded library a resolvable source pointer.
+        s.update_library_source(&lid, "llms.txt", Some("https://x/llms.txt")).await.unwrap();
+        let pins = s.list_library_project_pins().await.unwrap();
+        let row = pins.iter().find(|p| p.0 == lid).expect("seeded pin present");
+        assert_eq!(row.6.as_deref(), Some("https://x/llms.txt"), "base_url in pins");
+        assert_eq!(row.7.as_deref(), Some("llms.txt"), "source_type in pins");
     }
 }

@@ -278,7 +278,7 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
     // configured window (default 30d, daily). First tick prunes on startup.
     crate::tasks::log_pruner::spawn(Arc::new(state.pg.clone()));
     // Workstream F: daily library-update detection → 'library_update' recommendations.
-    crate::tasks::library_update_scheduler::spawn(Arc::new(state.pg.clone()));
+    crate::tasks::library_update_scheduler::spawn(task_queue.clone(), Arc::new(state.pg.clone()));
 
     // Activity-data retention (#74): periodically prune raw activity older
     // than `activity.retention_days` (default 30d, daily), guarded by
