@@ -43,6 +43,11 @@ pub struct ProvidedTool {
 
 /// A parsed `sensei.library.json`. `library` + `version` are required (serde errors if
 /// absent — never fabricated); the capability arrays default to empty.
+///
+/// `allow(dead_code)`: `library` enforces the required-field schema, `ecosystem` and
+/// `tools` are deserialize schema reserved for D's capability provisioning; not all
+/// are consumed by `load_manifest_from_root` yet.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct LibraryManifest {
     pub library: String,
