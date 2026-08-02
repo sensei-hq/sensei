@@ -168,6 +168,27 @@ async fn resolve_index_library_id(
         .map_err(|e| format!("upsert_library failed: {}", e))
 }
 
+/// Stamp the "docs applied at version" marker after a re-index (F v1a). The
+/// target version is the scheduler's cached `latest` (single source of truth) —
+/// so `should_reindex` reads false only once the docs actually caught up. No-op
+/// when nothing was stored (`pages_stored == 0`, a failed/empty re-ingest) or no
+/// latest is known (e.g. `add_library` first-index): never fabricates "applied".
+pub(crate) async fn stamp_docs_applied_if_indexed(
+    pg: &crate::db::pg_store::PgStore,
+    lib_id: &uuid::Uuid,
+    pages_stored: u32,
+    now_unix: i64,
+) {
+    if pages_stored == 0 {
+        return;
+    }
+    if let Some((latest, _)) = pg.get_library_latest_cache(lib_id).await.ok().flatten() {
+        if let Err(e) = pg.set_library_docs_applied(lib_id, &latest, now_unix).await {
+            tracing::warn!(error = %e, %lib_id, "index_library: set_library_docs_applied failed");
+        }
+    }
+}
+
 /// Fetch a library's llms docs, split into PER-COMPONENT pages, and store each.
 ///
 /// `task.url` may be a local directory, a `github.com/.../tree/...` URL, or a
@@ -228,6 +249,10 @@ pub async fn index_library(ctx: &TaskContext, task: &Task) -> Result<u32, String
     if let Err(e) = ctx.pg().update_library_page_count(&lib_id).await {
         tracing::warn!(error = %e, lib = %lib_name, "index_library: update_library_page_count failed");
     }
+
+    // F v1a: stamp the applied marker after a CONFIRMED, non-empty re-index so the
+    // update scheduler's should_reindex gate stops re-enqueuing this library.
+    stamp_docs_applied_if_indexed(ctx.pg(), &lib_id, pages_stored, chrono::Utc::now().timestamp()).await;
 
     // Workstream D: ingest the library's own sensei.library.json (local sources only
     // in v1 — a manifest read needs the files on disk) so its declared skills/agents
@@ -745,6 +770,24 @@ mod tests {
                 .unwrap();
         let lib = pg.get_library(&id).await.unwrap().expect("first-index created the row");
         assert_eq!(lib["name"].as_str(), Some(name.as_str()));
+    }
+
+    #[tokio::test]
+    async fn stamp_docs_applied_only_on_nonempty_index() {
+        let Ok(pg) = PgStore::connect_test().await else { return };
+        let lib = format!("_fstamp_{}", uuid::Uuid::new_v4());
+        let lid = pg.upsert_library(&lib, "cargo", Some("1.0.0"), None, None, None).await.unwrap();
+        pg.set_library_latest_cache(&lid, "1.2.4", 10).await.unwrap();
+        // pages_stored == 0 → NO stamp (a failed/empty re-ingest must not claim applied).
+        stamp_docs_applied_if_indexed(&pg, &lid, 0, 99).await;
+        assert_eq!(pg.get_library_docs_applied(&lid).await.unwrap(), None, "empty index does not stamp");
+        // pages_stored > 0 → stamp the scheduler's cached latest.
+        stamp_docs_applied_if_indexed(&pg, &lid, 3, 99).await;
+        assert_eq!(
+            pg.get_library_docs_applied(&lid).await.unwrap().as_deref(),
+            Some("1.2.4"),
+            "a confirmed non-empty re-index stamps the cached latest"
+        );
     }
 
     #[tokio::test]
