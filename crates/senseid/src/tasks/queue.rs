@@ -343,6 +343,17 @@ impl TaskQueue {
             || state.running.values().any(|t| t.kind == kind && t.path == path)
     }
 
+    /// True if a task of `kind` AND `folder_path` is pending, blocked, or running.
+    /// The per-(kind, folder_path) variant — the library-update scheduler guards
+    /// `IndexLibrary` on the library id (which rides in `task.folder_path`), NOT the
+    /// name in `task.path` (names aren't unique across ecosystems).
+    pub async fn has_pending_kind_folder(&self, kind: super::TaskKind, folder_path: &str) -> bool {
+        let state = self.inner.lock().await;
+        state.pending.iter().any(|t| t.kind == kind && t.folder_path == folder_path)
+            || state.blocked.iter().any(|t| t.kind == kind && t.folder_path == folder_path)
+            || state.running.values().any(|t| t.kind == kind && t.folder_path == folder_path)
+    }
+
     /// Test-only: a snapshot of every task the queue has seen (pending, blocked,
     /// running, completed) as `(kind, folder_path, path)`. Lets a test assert
     /// the enqueue GRAPH — which kinds were enqueued for which owner
@@ -593,6 +604,19 @@ mod tests {
         // Once completed, it's gone from the active set.
         q.complete(t.id).await;
         assert!(!q.has_pending_kind_path(TaskKind::AdvanceRun, run_a).await);
+    }
+
+    #[tokio::test]
+    async fn has_pending_kind_folder_matches_kind_and_folder() {
+        let q = TaskQueue::new();
+        let lib_a = "aaaaaaaa-1111-1111-1111-111111111111";
+        let lib_b = "bbbbbbbb-1111-1111-1111-111111111111";
+        // IndexLibrary carries the lib id in folder_path, the name in path.
+        q.enqueue(Task::new(TaskKind::IndexLibrary, lib_a, "some-lib")).await;
+        assert!(q.has_pending_kind_folder(TaskKind::IndexLibrary, lib_a).await, "same kind + folder → pending");
+        assert!(!q.has_pending_kind_folder(TaskKind::IndexLibrary, lib_b).await, "different lib id → not pending");
+        // Keyed on folder_path (the lib id), NOT the name in path.
+        assert!(!q.has_pending_kind_folder(TaskKind::IndexLibrary, "some-lib").await, "the name is not the key");
     }
 
     #[tokio::test]
