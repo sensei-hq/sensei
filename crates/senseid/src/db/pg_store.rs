@@ -3733,6 +3733,27 @@ impl PgStore {
         Ok(row.0)
     }
 
+    /// Refresh a library's source pointer (`source_type` + `base_url`) BY id — for
+    /// a re-index that resolves the row via its uuid rather than by
+    /// `(ecosystem, name)`. NEVER changes `ecosystem`: that is half the
+    /// `upsert_library` conflict key and the row's identity, and clobbering it is
+    /// exactly the phantom-row bug this avoids. `base_url` is COALESCE'd so a
+    /// missing value doesn't wipe the stored one.
+    pub async fn update_library_source(
+        &self, id: &uuid::Uuid, source_type: &str, base_url: Option<&str>,
+    ) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE sensei.libraries
+                SET source_type = $2::sensei.library_source_type,
+                    base_url = COALESCE($3, base_url),
+                    modified_at = now()
+              WHERE id = $1",
+        )
+        .bind(id).bind(source_type).bind(base_url)
+        .execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     // ── Library capabilities (workstream D): skills/agents a library provides ──
     // Two writers coexist in one table, keyed by `source` ('manifest' | 'generated').
 
