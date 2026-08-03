@@ -447,6 +447,27 @@ export async function createDojo(
 	return sendJson(youUrl('/dojos'), 'POST', { name, kind }, opts);
 }
 
+/** `POST /v1/t/{tenant}/invites` — an admin issues a magic-link invite (F3b).
+ *  Returns the invite incl. the single-use `token` for the accept link. Throws
+ *  `ClientApiError` on a non-2xx (403 below admin, 400 invalid). */
+export async function createInvite(
+	tenantKey: string,
+	input: { email: string; role?: string; kind: string },
+	opts: DojoCallOpts = {}
+): Promise<{ id: string; token: string; email: string; role: string; expires_at: string }> {
+	return sendJson(clientUrl(tenantKey, '/invites'), 'POST', input, opts);
+}
+
+/** `POST /v1/you/invites/accept` — the invitee redeems an invite by its token
+ *  (F3b). Returns `{ tenant_id, role }` on success. Throws `ClientApiError` on a
+ *  gate rejection (403 email-mismatch, 410 expired, 409 used, 404 unknown). */
+export async function acceptInvite(
+	token: string,
+	opts: DojoCallOpts = {}
+): Promise<{ tenant_id: string; role: string }> {
+	return sendJson(youUrl('/invites/accept'), 'POST', { token }, opts);
+}
+
 /** `GET /v1/you/projects/{slug}/constitution` — the daemon-resolved constitution
  *  for one of the caller's projects (F4 drill-in). `slug` may contain slashes (a
  *  dereferenced identity); each segment is encoded, slashes preserved, to match
