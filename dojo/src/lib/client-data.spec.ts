@@ -18,6 +18,8 @@ import {
 	listContributions,
 	adoptContribution,
 	createDojo,
+	createInvite,
+	acceptInvite,
 	updateEngagement,
 	updateIncident
 } from '$lib/client-data';
@@ -110,6 +112,22 @@ describe('listProjects / listUserProjects — tenant vs user-wide reads', () => 
 		expect(calls[0].url).toBe(`${dojoApiUrl}/v1/you/dojos`);
 		expect(calls[0].init?.method).toBe('POST');
 		expect(JSON.parse(String(calls[0].init?.body))).toEqual({ name: 'Acme', kind: 'employer' });
+	});
+
+	it('createInvite POSTs to the tenant invites path (F3b issue)', async () => {
+		const { fn, calls } = fakeFetch(201, { id: 'inv1', token: 'tok', email: 'a@b.co', role: 'contributor', expires_at: 'x' });
+		const out = await createInvite('github/acme', { email: 'a@b.co', kind: 'client' }, { fetch: fn });
+		expect(out).toMatchObject({ id: 'inv1', token: 'tok' });
+		expect(calls[0].url).toBe(`${dojoApiUrl}/v1/t/github/acme/invites`);
+		expect(JSON.parse(String(calls[0].init?.body))).toEqual({ email: 'a@b.co', kind: 'client' });
+	});
+
+	it('acceptInvite POSTs the token to /v1/you/invites/accept (F3b accept)', async () => {
+		const { fn, calls } = fakeFetch(200, { tenant_id: 't1', role: 'contributor' });
+		const out = await acceptInvite('tok', { fetch: fn });
+		expect(out).toEqual({ tenant_id: 't1', role: 'contributor' });
+		expect(calls[0].url).toBe(`${dojoApiUrl}/v1/you/invites/accept`);
+		expect(JSON.parse(String(calls[0].init?.body))).toEqual({ token: 'tok' });
 	});
 });
 

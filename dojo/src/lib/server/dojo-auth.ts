@@ -85,12 +85,14 @@ function tokenFrom(request: Request, locals: App.Locals): string | null {
  * scoped to one dōjō (e.g. the personal `/you/projects` list, whose read is
  * authorized purely by a `user_id` filter). Throws a Response (401) on a missing
  * or invalid token, like `resolveTenantAccess`. Returns the service-role `db`
- * too so the caller reuses one client for the ownership-filtered read.
+ * too so the caller reuses one client for the ownership-filtered read, and the
+ * caller's verified `email` (the authorization gate for invite-accept — Supabase
+ * has proven the caller owns it).
  */
 export async function resolveCaller(
 	request: Request,
 	locals: App.Locals
-): Promise<{ userId: string; db: ReturnType<typeof dojoDb> }> {
+): Promise<{ userId: string; email: string | null; db: ReturnType<typeof dojoDb> }> {
 	const token = tokenFrom(request, locals);
 	if (!token) throw apiError(401, 'unauthenticated');
 
@@ -98,7 +100,7 @@ export async function resolveCaller(
 	// Verify the JWT via Supabase Auth; user.id is the token `sub`.
 	const { data: userData, error: userErr } = await db.auth.getUser(token);
 	if (userErr || !userData?.user) throw apiError(401, 'invalid token');
-	return { userId: userData.user.id, db };
+	return { userId: userData.user.id, email: userData.user.email ?? null, db };
 }
 
 /**

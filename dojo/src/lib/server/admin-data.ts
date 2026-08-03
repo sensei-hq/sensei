@@ -295,7 +295,7 @@ export interface NewMemberInput {
 }
 
 /** The membership kinds — `dojo.membership_kind`. */
-const MEMBERSHIP_KINDS = ['employer', 'client', 'community', 'personal'] as const;
+export const MEMBERSHIP_KINDS = ['employer', 'client', 'community', 'personal'] as const;
 
 /**
  * Validate an untrusted `POST …/members` body into a {@link NewMemberInput}, or
