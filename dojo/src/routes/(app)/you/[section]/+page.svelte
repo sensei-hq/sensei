@@ -6,8 +6,8 @@
 	import ScrRulePacks from '$lib/components/screens/ScrRulePacks.svelte';
 	import ScrMyDojos from '$lib/components/screens/ScrMyDojos.svelte';
 	import ScrContributions from '$lib/components/screens/ScrContributions.svelte';
-	import { youHref } from '$lib/nav';
-	import type { KitProject } from '$lib/components/kit/types';
+	import { youHref, orgHref } from '$lib/nav';
+	import type { KitProject, KitDojo } from '$lib/components/kit/types';
 
 	// The personal-zone section screen — the non-inbox destinations (projects ·
 	// rules · packs · dojos · contributions). The relay surfaces (approve · decide
@@ -22,6 +22,11 @@
 	function goPacks() {
 		goto(youHref('packs'));
 	}
+	// A dōjō row steps into that dōjō's org console (my-dojos resolved design Q3);
+	// the slug is the org id, which /org/[slug] resolves via orgBySlug.
+	function openDojo(d: KitDojo) {
+		goto(orgHref(d.slug));
+	}
 </script>
 
 <svelte:head><title>{data.title} · Dōjō</title></svelte:head>
@@ -33,7 +38,7 @@
 {:else if data.section === 'packs'}
 	<ScrRulePacks packs={data.rulePacks} />
 {:else if data.section === 'dojos'}
-	<ScrMyDojos dojos={data.dojos} />
+	<ScrMyDojos dojos={data.dojos} onOpen={openDojo} />
 {:else if data.section === 'contributions'}
 	<ScrContributions
 		mine={data.contributionsMine}
