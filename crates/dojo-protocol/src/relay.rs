@@ -314,12 +314,13 @@ pub struct RelayProjectInfo {
     pub constitution: Option<RelayConstitution>,
 }
 
-/// A project's resolved governing constitution, composed by the daemon (the
-/// authority resolution — dedup, mandatory locks, discarded duplicates — is
-/// server-side per the resolved design; the dōjō only displays it). `rules` are
-/// the effective set, strongest-first, each tagged with its ladder level;
-/// `conflicts` are the discards the ladder made (a weaker duplicate that lost to
-/// a higher-authority scope); `locks` counts the ★ non-negotiable rules.
+/// A project's resolved governing constitution, composed by the daemon. The
+/// AUTHORITY resolution — which rules apply, dedup, mandatory locks, the discards
+/// the ladder made — is server-side (resolved design Q2/Q3); the dōjō only maps
+/// each rule's `scope_key`/`namespace` to a display rung and renders. `rules` are
+/// the effective set, strongest-first; `conflicts` are the discards (a weaker
+/// duplicate that lost to a higher-authority scope); `locks` counts the ★
+/// (mandatory) rules.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RelayConstitution {
     pub rules: Vec<RelayConstitutionRule>,
@@ -328,24 +329,27 @@ pub struct RelayConstitution {
     pub locks: u32,
 }
 
-/// One effective rule on a project's constitution, tagged with the ladder level
-/// it entered from (`company | client | personal | project | stack`).
+/// One effective rule on a project's constitution — carried in the daemon's own
+/// resolution vocabulary (`scope_key` from `sensei.scopes`, the rule `title`, its
+/// `enforcement`, and the owning `namespace` name). The dōjō maps `scope_key` to
+/// a ladder rung + glyph for display (it does not re-resolve).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RelayConstitutionRule {
-    pub level: String,
-    pub text: String,
-    /// ★ non-negotiable — `enforcement == mandatory`; no narrower scope relaxes it.
-    pub hard: bool,
+    pub scope_key: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
+    pub title: String,
+    pub enforcement: String,
 }
 
-/// A rule the ladder discarded: a weaker-authority duplicate (`loser_level`) that
-/// lost to the same rule stated at a higher-authority scope (`winner_level`).
+/// A rule the ladder discarded: a weaker-authority duplicate (`loser_scope`) that
+/// lost to the same rule stated at a higher-authority scope (`winner_scope`).
 /// `topic` is the shared rule text; `locked` = the winner is mandatory.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RelayConstitutionConflict {
     pub topic: String,
-    pub loser_level: String,
-    pub winner_level: String,
+    pub loser_scope: String,
+    pub winner_scope: String,
     pub why: String,
     pub locked: bool,
 }
