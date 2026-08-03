@@ -1,4 +1,4 @@
-// Route-level tests for GET /v1/me/projects — the USER-WIDE personal projects
+// Route-level tests for GET /v1/you/projects — the USER-WIDE personal projects
 // read (every dōjō the caller belongs to). Unlike the tenant-scoped
 // /v1/t/{origin}/{org}/projects, there is NO tenant and NO role floor: the
 // caller is resolved from the JWT and the read is authorized by a user_id
@@ -43,7 +43,7 @@ beforeEach(() => {
 	mocks.listUserProjects.mockClear().mockResolvedValue([]);
 });
 
-describe('GET /v1/me/projects', () => {
+describe('GET /v1/you/projects', () => {
 	it('returns { projects } for the resolved caller (user-wide, no tenant)', async () => {
 		mocks.listUserProjects.mockResolvedValueOnce([{ id: 'p1', slug: 'me/x' }]);
 		const res = await route.GET(ev());

@@ -10,7 +10,7 @@ import { stance, ladder, rulePacks } from '$lib/components/kit/fixtures';
 // The personal-zone section loader — the non-inbox destinations (projects ·
 // rules · packs · dojos · contributions). `dojos` binds REAL memberships (from
 // the layout); `projects` binds the REAL user-wide `dojo.projects` read (F1,
-// GET /v1/me/projects) — honest-empty on a genuine empty, an error STATE on a
+// GET /v1/you/projects) — honest-empty on a genuine empty, an error STATE on a
 // read failure (never []-as-success masking a failure). Contributions still has
 // no backing route → honest empty (not a fabricated "helped 612"). Your own
 // governance (stance · constitution · rule packs) stays fixture-backed pending

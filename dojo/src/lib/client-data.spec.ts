@@ -53,12 +53,12 @@ describe('listProjects / listUserProjects — tenant vs user-wide reads', () => 
 		expect(calls[0].url).toBe(`${dojoApiUrl}/v1/t/github/globex/projects`);
 	});
 
-	it('listUserProjects GETs the user-wide /v1/me/projects path (no tenant)', async () => {
+	it('listUserProjects GETs the user-wide /v1/you/projects path (no tenant)', async () => {
 		const projects = [{ id: 'p1' }, { id: 'p2' }];
 		const { fn, calls } = fakeFetch(200, { projects });
 		const out = await listUserProjects({ fetch: fn });
 		expect(out).toEqual(projects);
-		expect(calls[0].url).toBe(`${dojoApiUrl}/v1/me/projects`);
+		expect(calls[0].url).toBe(`${dojoApiUrl}/v1/you/projects`);
 		expect(calls[0].init?.method ?? 'GET').toBe('GET');
 	});
 
