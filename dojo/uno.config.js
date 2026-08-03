@@ -17,6 +17,16 @@ import config from './rokkit.config.js';
 // (docs/mockups/Zen-Sumi Design System/colors_and_type.css).
 export default defineConfig({
 	presets: [presetRokkit(config)],
+	// kavach's AuthProvider renders `i-auth-{provider}` icon classes (github ·
+	// magic · email). They live in node_modules (unscanned), so alias each to a
+	// real icon and safelist so UnoCSS generates them: GitHub → the brand logo,
+	// magic-link/email → a Solar envelope.
+	shortcuts: [
+		['i-auth-github', 'i-simple-icons-github'],
+		['i-auth-magic', 'i-solar-letter-linear'],
+		['i-auth-email', 'i-solar-letter-linear']
+	],
+	safelist: ['i-auth-github', 'i-auth-magic', 'i-auth-email'],
 	theme: {
 		// UnoCSS tuple-short form `[fontSize, lineHeight]` — the object form emits
 		// the JS key `lineHeight:` literally into CSS (invalid property) and floods
