@@ -306,6 +306,48 @@ pub struct RelayProjectInfo {
     pub name: String,
     pub classification: String,
     pub phase: String,
+    /// The project's resolved constitution (the daemon composes it locally from
+    /// the folder's namespaces + packs). Federated so the dōjō can DISPLAY the
+    /// "before you start" preview without re-resolving. Optional + backward-
+    /// compatible: absent → the dōjō shows its "resolves in your editor" state.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub constitution: Option<RelayConstitution>,
+}
+
+/// A project's resolved governing constitution, composed by the daemon (the
+/// authority resolution — dedup, mandatory locks, discarded duplicates — is
+/// server-side per the resolved design; the dōjō only displays it). `rules` are
+/// the effective set, strongest-first, each tagged with its ladder level;
+/// `conflicts` are the discards the ladder made (a weaker duplicate that lost to
+/// a higher-authority scope); `locks` counts the ★ non-negotiable rules.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RelayConstitution {
+    pub rules: Vec<RelayConstitutionRule>,
+    #[serde(default)]
+    pub conflicts: Vec<RelayConstitutionConflict>,
+    pub locks: u32,
+}
+
+/// One effective rule on a project's constitution, tagged with the ladder level
+/// it entered from (`company | client | personal | project | stack`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RelayConstitutionRule {
+    pub level: String,
+    pub text: String,
+    /// ★ non-negotiable — `enforcement == mandatory`; no narrower scope relaxes it.
+    pub hard: bool,
+}
+
+/// A rule the ladder discarded: a weaker-authority duplicate (`loser_level`) that
+/// lost to the same rule stated at a higher-authority scope (`winner_level`).
+/// `topic` is the shared rule text; `locked` = the winner is mandatory.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RelayConstitutionConflict {
+    pub topic: String,
+    pub loser_level: String,
+    pub winner_level: String,
+    pub why: String,
+    pub locked: bool,
 }
 
 /// One node of the phone-renderable outline — mirrors `dojo.relay_segments`. A

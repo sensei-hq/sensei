@@ -8064,6 +8064,42 @@ impl PgStore {
         }).collect())
     }
 
+    /// The LOCAL authoritative raw ruleset for a folder — resolved memories
+    /// ([`Self::resolve_rules_raw`]) plus adopted LOCAL rule-pack rules
+    /// ([`Self::resolve_local_pack_raws`]), memories strongest-first then packs.
+    /// This is the offline constitution the editor resolves; the dōjō
+    /// constitution federation composes it into a preview. Fails closed on either
+    /// read — a DB error must never silently drop governance. The remote Dōjō pack
+    /// fold-in is layered by the api-handler resolver (needs `AppState` + network),
+    /// not here, so a task-context federation stays offline.
+    pub async fn resolve_repo_raw_local(
+        &self,
+        folder_id: &uuid::Uuid,
+    ) -> Result<Vec<crate::governance::RawRule>, String> {
+        let mut raw = self.resolve_rules_raw(folder_id).await?;
+        raw.extend(self.resolve_local_pack_raws(Some(folder_id)).await?);
+        Ok(raw)
+    }
+
+    /// The folder (repo) a run's project maps to
+    /// (`sensei.folders.project_id = activity.runs.project_id`). Lets the
+    /// constitution federation resolve the run's ruleset. `None` when the run has
+    /// no project or no folder is indexed for it.
+    pub async fn run_folder_id(&self, run_id: &uuid::Uuid) -> Result<Option<uuid::Uuid>, String> {
+        let row: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
+            "SELECT f.id
+               FROM activity.runs r
+               JOIN sensei.folders f ON f.project_id = r.project_id
+              WHERE r.id = $1
+              LIMIT 1",
+        )
+        .bind(run_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(row.map(|(id,)| id))
+    }
+
     /// The rules of rule packs adopted at a folder's namespaces (or at the
     /// always-on general/user scopes) resolved from the LOCAL `sensei.rule_packs`
     /// replica (D-LOCAL-PACKS) — offline, in tandem with the remote Dōjō fold-in.
