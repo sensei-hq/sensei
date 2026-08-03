@@ -12,7 +12,7 @@ import { dojoDb } from '$lib/server/dojo-supabase';
 import { resolveApiKeyAccess, apiError, ACCESS } from '$lib/server/dojo-auth';
 import {
 	parseNamespacePairs,
-	resolveNamespaceIds,
+	resolveNamespaces,
 	resolveAdoptedPackRules,
 	RulesError
 } from '$lib/server/rules-data';
@@ -21,8 +21,8 @@ export const GET: RequestHandler = async ({ params, request, url }) => {
 	try {
 		await resolveApiKeyAccess(params.origin, params.org, request, ACCESS.member);
 		const db = dojoDb();
-		const nsIds = await resolveNamespaceIds(db, parseNamespacePairs(url.searchParams.get('ns')));
-		const rules = await resolveAdoptedPackRules(db, nsIds);
+		const namespaces = await resolveNamespaces(db, parseNamespacePairs(url.searchParams.get('ns')));
+		const rules = await resolveAdoptedPackRules(db, namespaces);
 		return Response.json({ rules });
 	} catch (e) {
 		if (e instanceof Response) return e;
