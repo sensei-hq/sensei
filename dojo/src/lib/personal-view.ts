@@ -38,12 +38,14 @@ export function splitPacks(packs: KitRulePack[]): {
 /* ── my dōjōs ─────────────────────────────────────────────────────────────── */
 
 /** The membership groups shown on My dōjōs, in mockup order — employer, then
- *  clients, then communities. A group with no members is dropped so the screen
- *  never renders an empty section (mockup `ScrMyDojos` `groups.map`+`if`). */
+ *  clients, then communities, then the user's own Personal dōjō (my-dojos
+ *  resolved design Q5). A group with no members is dropped so the screen never
+ *  renders an empty section (mockup `ScrMyDojos` `groups.map`+`if`). */
 export const DOJO_GROUPS: readonly { kind: string; label: string; icon: string }[] = [
 	{ kind: 'employer', label: 'Employer', icon: 'buildings-2' },
 	{ kind: 'client', label: 'Clients', icon: 'case-round' },
-	{ kind: 'community', label: 'Communities', icon: 'users-group-two-rounded' }
+	{ kind: 'community', label: 'Communities', icon: 'users-group-two-rounded' },
+	{ kind: 'personal', label: 'Personal', icon: 'user' }
 ];
 
 /** A rendered membership group — its label/icon and the dōjōs in it. */

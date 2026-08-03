@@ -88,8 +88,23 @@ describe('groupDojos — membership groups', () => {
 		expect(groupDojos([])).toEqual([]);
 	});
 
-	it('exposes the three canonical groups', () => {
-		expect(DOJO_GROUPS.map((g) => g.kind)).toEqual(['employer', 'client', 'community']);
+	it('exposes the four canonical groups incl. Personal', () => {
+		expect(DOJO_GROUPS.map((g) => g.kind)).toEqual([
+			'employer',
+			'client',
+			'community',
+			'personal'
+		]);
+	});
+
+	it('puts a personal-kind dōjō in its own Personal group (my-dojos resolved design Q5)', () => {
+		const personal: KitDojo[] = [
+			{ slug: 'me', kanji: '己', name: 'Personal', kind: 'personal', role: 'owner', route: 'gh/me' }
+		];
+		const groups = groupDojos(personal);
+		expect(groups.map((g) => g.kind)).toEqual(['personal']);
+		expect(groups[0].label).toBe('Personal');
+		expect(groups[0].items.map((d) => d.slug)).toEqual(['me']);
 	});
 });
 
