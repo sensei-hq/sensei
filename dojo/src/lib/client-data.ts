@@ -436,6 +436,17 @@ export async function adoptContribution(artifactId: string, opts: DojoCallOpts =
 	await sendJson(youUrl('/contributions/adopt'), 'POST', { artifactId }, opts);
 }
 
+/** `POST /v1/you/dojos` — self-serve create a dōjō (F3a); the caller becomes its
+ *  admin. Returns the new `{ id, key, name }`. Throws `ClientApiError` on a
+ *  non-2xx (e.g. 409 name collision, 400 invalid). */
+export async function createDojo(
+	name: string,
+	kind: string,
+	opts: DojoCallOpts = {}
+): Promise<{ id: string; key: string; name: string }> {
+	return sendJson(youUrl('/dojos'), 'POST', { name, kind }, opts);
+}
+
 /** `GET /v1/you/projects/{slug}/constitution` — the daemon-resolved constitution
  *  for one of the caller's projects (F4 drill-in). `slug` may contain slashes (a
  *  dereferenced identity); each segment is encoded, slashes preserved, to match
