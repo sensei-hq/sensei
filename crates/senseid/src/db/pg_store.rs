@@ -1614,11 +1614,12 @@ impl PgStore {
     /// `crates/foo/src/x.rs` and `crates/bar/src/y.rs` (both inside the
     /// same project) surfaces even though they don't share a folder_id.
     ///
-    /// Pairs are restricted to a.id < b.id so each dyad appears once; the
-    /// unlike `find_duplicates` this variant also requires
-    /// `a.folder_id != b.folder_id` on top of that, so intra-folder pairs
-    /// keep flowing through the older folder-scoped path and don't get
-    /// double-counted when a caller uses both.
+    /// Pairs are restricted to `a.id < b.id` so each dyad appears once. It does
+    /// NOT require `a.folder_id != b.folder_id`: in a monorepo the indexer rolls
+    /// every function node up to the single repo-root folder, so a cross-folder-only
+    /// filter made this always return `count:0` (masking every real duplicate).
+    /// The handler uses either this OR `find_duplicates` per call (never both), so
+    /// there is no double-count to guard against.
     pub async fn find_duplicates_scoped(
         &self,
         folder_ids: &[uuid::Uuid],
@@ -1637,7 +1638,6 @@ impl PgStore {
                    FROM sensei.nodes a
                    JOIN sensei.nodes b
                      ON a.id < b.id
-                    AND a.folder_id != b.folder_id
                     AND b.folder_id = ANY($1::uuid[])
                     AND b.kind IN ('function'::sensei.node_kind, 'method'::sensei.node_kind)
                     AND b.embedding IS NOT NULL
@@ -4500,10 +4500,17 @@ impl PgStore {
     pub async fn complete_session(
         &self, id: &uuid::Uuid, outcome: &str, ftr: bool,
         turns: i32, corrections: i32,
+        summary: Option<&str>, tokens_in: Option<i32>, tokens_out: Option<i32>,
     ) -> Result<(), String> {
+        // summary/tokens are COALESCE'd so a caller that omits them doesn't wipe a
+        // previously-set value; these columns exist on activity.sessions and were
+        // being silently dropped (the MCP schema advertised them).
         sqlx_core::query::query(
-            "UPDATE activity.sessions SET outcome = $2::sensei.session_outcome, ftr = $3, turns = $4, corrections = $5, completed_at = now() WHERE id = $1"
+            "UPDATE activity.sessions SET outcome = $2::sensei.session_outcome, ftr = $3, turns = $4, corrections = $5, \
+             summary = COALESCE($6, summary), tokens_in = COALESCE($7, tokens_in), tokens_out = COALESCE($8, tokens_out), \
+             completed_at = now() WHERE id = $1"
         ).bind(id).bind(outcome).bind(ftr).bind(turns).bind(corrections)
+            .bind(summary).bind(tokens_in).bind(tokens_out)
             .execute(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(())
     }
@@ -10004,11 +10011,15 @@ impl PgStore {
     /// Accept a §9 learned-rule proposal: flip it `enabled=true` so the resolver's
     /// `list_playbook_rules` (which filters `WHERE enabled`) picks it up. Scoped to
     /// `source='learned'` — never flips a builtin/manual rule via this path.
-    pub async fn accept_playbook_rule(&self, id: &uuid::Uuid) -> Result<(), String> {
-        sqlx_core::query::query(
+    ///
+    /// Returns `Ok(true)` only when a row actually flipped; `Ok(false)` when no
+    /// matching learned proposal exists (unknown id, or a builtin/manual rule) — so
+    /// the caller can 404 instead of fabricating `{accepted}` for a no-op UPDATE.
+    pub async fn accept_playbook_rule(&self, id: &uuid::Uuid) -> Result<bool, String> {
+        let res = sqlx_core::query::query(
             "UPDATE sensei.playbook_rules SET enabled=true WHERE id=$1 AND source='learned'"
         ).bind(id).execute(&self.pool).await.map_err(|e| e.to_string())?;
-        Ok(())
+        Ok(res.rows_affected() > 0)
     }
 
     /// FTR by `classified_by` (+ `model_fallback`) — measures whether the local
@@ -12556,12 +12567,19 @@ mod tests {
         let s = pg_store().await;
         let fid = create_test_folder(&s, "sess_complete").await;
         let sid = s.create_session(&fid, "add feature", None).await.unwrap();
-        s.complete_session(&sid, "completed", true, 5, 0).await.unwrap();
+        s.complete_session(&sid, "completed", true, 5, 0, Some("shipped it"), Some(1200), Some(3400)).await.unwrap();
         let sess = s.get_session(&sid).await.unwrap().unwrap();
         assert_eq!(sess["outcome"], "completed");
         assert_eq!(sess["ftr"], true);
         assert_eq!(sess["turns"], 5);
         assert!(sess["completed_at"].as_str().is_some());
+        // summary + tokens actually PERSIST (were previously advertised-but-dropped).
+        let meta: (Option<String>, Option<i32>, Option<i32>) = sqlx_core::query_as::query_as(
+            "SELECT summary, tokens_in, tokens_out FROM activity.sessions WHERE id=$1")
+            .bind(sid).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(meta.0.as_deref(), Some("shipped it"), "summary persists");
+        assert_eq!(meta.1, Some(1200), "tokens_in persists");
+        assert_eq!(meta.2, Some(3400), "tokens_out persists");
     }
 
     #[tokio::test]
@@ -14649,9 +14667,38 @@ mod playbook_tests {
             playbook: "spec_driven".into(), priority: 205, rationale: "t".into() }] }).await.unwrap();
         let props = pg.list_playbook_rule_proposals().await.unwrap();
         let id = props.iter().find(|p| p["playbook"]=="spec_driven").unwrap()["id"].as_str().unwrap().to_string();
-        pg.accept_playbook_rule(&id.parse().unwrap()).await.unwrap();
-        // now enabled → visible to the resolver-facing list
+        // A real learned proposal flips → returns true AND persists (visible to the resolver list).
+        assert!(pg.accept_playbook_rule(&id.parse().unwrap()).await.unwrap(), "accepting a real learned proposal returns true");
         assert!(pg.list_playbook_rules().await.unwrap().iter().any(|r| r.id == Some(id.parse().unwrap())));
+        // A nonexistent id flips NOTHING → returns false (never a fabricated success).
+        assert!(!pg.accept_playbook_rule(&uuid::Uuid::new_v4()).await.unwrap(),
+            "accepting an unknown id returns false, not a fabricated accept");
+    }
+
+    #[tokio::test]
+    async fn find_duplicates_scoped_surfaces_same_folder_pairs() {
+        let Ok(pg) = PgStore::connect_test().await else { return; };
+        let u = uuid::Uuid::new_v4();
+        let pid = pg.create_project(&format!("_dupproj_{u}"), None, None).await.unwrap();
+        pg.execute_raw("INSERT INTO sensei.folders_to_watch(id, path, name, status) VALUES('00000000-0000-0000-0000-000000000002','/_dup','_dup','watching'::sensei.watch_status) ON CONFLICT DO NOTHING").await.unwrap();
+        let fid = uuid::Uuid::new_v4();
+        pg.execute_raw(&format!(
+            "INSERT INTO sensei.folders(id, root_id, kind, name, path, abs_path, project_id) VALUES('{fid}','00000000-0000-0000-0000-000000000002','git'::sensei.folder_kind,'_dup_{u}','_dup','/_dup/{u}','{pid}')"
+        )).await.unwrap();
+        // Two near-identical function nodes in the SAME folder (identical 384-dim
+        // embedding → similarity 1.0). The old cross-folder-only predicate hid these.
+        let emb = "(select '['||string_agg('0.1',',')||']' from generate_series(1,384))::vector";
+        for n in ["_dupfn_a", "_dupfn_b"] {
+            pg.execute_raw(&format!(
+                "INSERT INTO sensei.nodes(folder_id, kind, name, file_path, line_start, line_end, embedding) \
+                 VALUES('{fid}','function'::sensei.node_kind,'{n}','/_dup/{u}/x.rs',1,10,{emb})"
+            )).await.unwrap();
+        }
+        let dups = pg.find_duplicates_scoped(&[fid], 0.9, 50).await.unwrap();
+        assert!(dups.iter().any(|d| {
+            let names = (d["a"]["name"].as_str(), d["b"]["name"].as_str());
+            names == (Some("_dupfn_a"), Some("_dupfn_b")) || names == (Some("_dupfn_b"), Some("_dupfn_a"))
+        }), "same-folder near-duplicate functions must surface (regression: the cross-folder-only predicate masked all monorepo dupes)");
     }
 
     #[tokio::test]

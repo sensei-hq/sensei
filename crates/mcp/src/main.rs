@@ -2,9 +2,9 @@ use serde_json::{json, Value};
 use std::io::{BufRead, Write};
 
 use sensei_mcp::{
-    daemon_request_for, handle_initialize, handle_list_tools, resolve_active_project_in,
-    resolve_default_project, resolve_from_cwd_in, resolve_project_in, ActiveProject, DaemonRequest,
-    HttpMethod, ProjectResolution,
+    build_log_event_body, daemon_request_for, handle_initialize, handle_list_tools,
+    resolve_active_project_in, resolve_default_project, resolve_from_cwd_in, resolve_project_in,
+    ActiveProject, DaemonRequest, HttpMethod, ProjectResolution,
 };
 
 /// The active-project pin for THIS MCP session, held in memory — NOT a file.
@@ -392,11 +392,16 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
         }
 
         "log_event" => {
-            // The activity.events sink was retired (#68) — nothing consumed it, and
-            // the session analyzer derives its signals from the hook stream
-            // (activity.assistant_events) instead. Kept as a success no-op so the
-            // workflow skills that call log_event as a mandatory step don't error.
-            json!({"content": [{"type": "text", "text": "{\"ok\":true,\"noop\":\"events sink retired (#68)\"}"}]})
+            // Route the event into the hook-event sink (activity.assistant_events)
+            // via the EXISTING /hook/event ingest — the same table Claude hooks
+            // write to and the analyzer reads. This is the assistant-agnostic
+            // capture path: any MCP-connected assistant emits here, family-tagged,
+            // so its tool-calls + workflow milestones feed the same analyzer.
+            // The `data` object (if any) is the base payload; the routing fields
+            // are overlaid by build_log_event_body (the pure, tested mapper).
+            let body = build_log_event_body(&args, cwd);
+            let result = client.post(format!("{}/hook/event", daemon_url())).json(&body).send();
+            daemon_result(result)
         }
 
         "get_layered_context" => {

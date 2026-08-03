@@ -140,13 +140,20 @@ pub(crate) async fn mcp_call_tool(
                 let ftr = outcome == "completed";
                 let turns = params["turns"].as_i64().unwrap_or(0) as i32;
                 let corrections = params["corrections"].as_i64().unwrap_or(0) as i32;
-                // A failed write is a 500, not a fabricated `{"ok": true}`.
+                // A failed write is a 500, not a fabricated `{"ok": true}`. summary +
+                // tokensIn/tokensOut are persisted (were previously advertised but dropped).
+                let summary = params["summary"].as_str().filter(|s| !s.is_empty());
+                let tokens_in = params["tokensIn"].as_str().and_then(|s| s.trim().parse::<i32>().ok());
+                let tokens_out = params["tokensOut"].as_str().and_then(|s| s.trim().parse::<i32>().ok());
                 state.pg.complete_session(
                     &session_id,
                     outcome,
                     ftr,
                     turns,
                     corrections,
+                    summary,
+                    tokens_in,
+                    tokens_out,
                 ).await.map_err(|e| { tracing::warn!(error = %e, %session_id, outcome, "mcp update_session: complete_session failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
                 serde_json::json!({"ok": true})
             } else {
