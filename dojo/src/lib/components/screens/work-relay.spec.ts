@@ -32,6 +32,16 @@ describe('ScrProjects — the full project list', () => {
 		expect(getByText('No projects yet.')).toBeTruthy();
 		expect(queryByText('lumen-auth')).toBeNull();
 	});
+
+	it('shows an ERROR state (distinct from empty) when the read failed', () => {
+		const { getByText, queryByText } = render(ScrProjects, {
+			props: { projects: [], error: 'could not reach the dojo service' }
+		});
+		// The failure surfaces — never the honest-empty state masking a read error.
+		expect(getByText("Couldn't load your projects.")).toBeTruthy();
+		expect(getByText(/could not reach the dojo service/)).toBeTruthy();
+		expect(queryByText('No projects yet.')).toBeNull();
+	});
 });
 
 describe('ScrProjectPreview — the resolved-constitution drill-in', () => {

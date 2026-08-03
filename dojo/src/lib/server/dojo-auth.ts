@@ -80,6 +80,28 @@ function tokenFrom(request: Request, locals: App.Locals): string | null {
 }
 
 /**
+ * Authenticate the caller on the Supabase-JWT plane and return their user id —
+ * no tenant, no role floor. For USER-WIDE (user-primary) reads that aren't
+ * scoped to one dōjō (e.g. the personal `/you/projects` list, whose read is
+ * authorized purely by a `user_id` filter). Throws a Response (401) on a missing
+ * or invalid token, like `resolveTenantAccess`. Returns the service-role `db`
+ * too so the caller reuses one client for the ownership-filtered read.
+ */
+export async function resolveCaller(
+	request: Request,
+	locals: App.Locals
+): Promise<{ userId: string; db: ReturnType<typeof dojoDb> }> {
+	const token = tokenFrom(request, locals);
+	if (!token) throw apiError(401, 'unauthenticated');
+
+	const db = dojoDb();
+	// Verify the JWT via Supabase Auth; user.id is the token `sub`.
+	const { data: userData, error: userErr } = await db.auth.getUser(token);
+	if (userErr || !userData?.user) throw apiError(401, 'invalid token');
+	return { userId: userData.user.id, db };
+}
+
+/**
  * Resolve the `{origin}/{org}` tenant and authenticate the caller to at least
  * `floor` access. Throws a Response (401 / 403 / 404) on failure — handlers
  * `try { … } catch (e) { if (e instanceof Response) return e; throw e }`.
@@ -91,15 +113,8 @@ export async function resolveTenantAccess(
 	locals: App.Locals,
 	floor: AccessLevel
 ): Promise<Caller> {
-	const token = tokenFrom(request, locals);
-	if (!token) throw apiError(401, 'unauthenticated');
-
-	const db = dojoDb();
-
-	// Verify the JWT via Supabase Auth; user.id is the token `sub`.
-	const { data: userData, error: userErr } = await db.auth.getUser(token);
-	if (userErr || !userData?.user) throw apiError(401, 'invalid token');
-	const userId = userData.user.id;
+	// Same JWT-plane identity step as a user-wide caller, then tenant + role.
+	const { userId, db } = await resolveCaller(request, locals);
 
 	// Resolve the tenant by its `{origin}/{org}` key.
 	const tenantId = await resolveTenantId(db, origin, org);

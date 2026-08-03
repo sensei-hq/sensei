@@ -37,6 +37,25 @@ export async function listOrgProjects(db: DojoClient, tenantId: string): Promise
 }
 
 /**
+ * List ALL the caller's projects across every dōjō (user-primary) — their
+ * `dojo.projects` rows regardless of tenant, most-recently-run first. Backs the
+ * personal `/you/projects` list. The `user_id` filter IS the authorization (a
+ * caller only ever sees their own rows), mirroring `listUserOrgs`; the row's
+ * `user_id` is set by `upsertProjectFromRun` from the authenticated caller,
+ * never the payload. Fails closed (AdminError 500) — never a fabricated empty
+ * list on a query error.
+ */
+export async function listUserProjects(db: DojoClient, userId: string): Promise<ProjectRow[]> {
+	const { data, error } = await db
+		.from('projects')
+		.select(PROJECT_COLS)
+		.eq('user_id', userId)
+		.order('last_run_at', { ascending: false, nullsFirst: false });
+	if (error) throw new AdminError(500, error.message);
+	return (data ?? []) as unknown as ProjectRow[];
+}
+
+/**
  * Count the tenant's projects (for the org-home / my-dojos project count). One
  * head/count query; fails closed.
  */

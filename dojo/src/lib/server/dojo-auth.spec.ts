@@ -29,7 +29,7 @@ vi.mock('./dojo-supabase', async (importOriginal) => {
 });
 
 // Imported after the mock is registered.
-const { resolveTenantAccess } = await import('./dojo-auth');
+const { resolveTenantAccess, resolveCaller } = await import('./dojo-auth');
 const { ACCESS } = await import('./dojo-supabase');
 
 const AUTH_OK: Terminal = { data: { user: { id: 'u1' } }, error: null };
@@ -82,6 +82,29 @@ describe('resolveTenantAccess — fail closed on the membership lookup', () => {
 		const err = await resolveTenantAccess('gh', 'acme', bearerReq(), locals, ACCESS.member).catch(
 			(e) => e
 		);
+		expect(err).toBeInstanceOf(Response);
+		expect((err as Response).status).toBe(401);
+	});
+});
+
+describe('resolveCaller — user-wide JWT identity (no tenant, no role floor)', () => {
+	it('returns the token subject (user id) on a valid JWT', async () => {
+		stub = makeDb(AUTH_OK);
+		const { userId } = await resolveCaller(bearerReq(), locals);
+		expect(userId).toBe('u1');
+	});
+
+	it('throws 401 when unauthenticated (no bearer token)', async () => {
+		stub = makeDb(AUTH_OK);
+		const noAuth = new Request('https://dojo.test/v1');
+		const err = await resolveCaller(noAuth, locals).catch((e) => e);
+		expect(err).toBeInstanceOf(Response);
+		expect((err as Response).status).toBe(401);
+	});
+
+	it('throws 401 when the JWT is invalid (no user)', async () => {
+		stub = makeDb({ data: { user: null }, error: { message: 'bad jwt' } });
+		const err = await resolveCaller(bearerReq(), locals).catch((e) => e);
 		expect(err).toBeInstanceOf(Response);
 		expect((err as Response).status).toBe(401);
 	});

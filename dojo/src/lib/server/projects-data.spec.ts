@@ -1,7 +1,14 @@
 // Unit tests for the org Projects read (`projects-data.ts`): the tenant filter +
 // envelope, and the count query. Fail-closed on error.
 import { describe, it, expect } from 'vitest';
-import { listOrgProjects, countOrgProjects, upsertProjectFromRun, AdminError, type DojoClient } from './projects-data';
+import {
+	listOrgProjects,
+	listUserProjects,
+	countOrgProjects,
+	upsertProjectFromRun,
+	AdminError,
+	type DojoClient
+} from './projects-data';
 
 function makeListDb(result: { data: unknown; error: unknown }) {
 	const captured: { tenantEq?: unknown } = {};
@@ -38,6 +45,40 @@ describe('listOrgProjects', () => {
 	it('fails closed (500) on a query error — never a fixture', async () => {
 		const { db } = makeListDb({ data: null, error: { message: 'boom' } });
 		await expect(listOrgProjects(db, 't1')).rejects.toBeInstanceOf(AdminError);
+	});
+});
+
+// Captures the column+value of the `.eq` filter so the user-wide read can assert
+// it scopes by `user_id` (the filter IS the authorization), not by tenant.
+function makeUserDb(result: { data: unknown; error: unknown }) {
+	const captured: { col?: string; val?: unknown } = {};
+	const b: Record<string, unknown> = {};
+	b.from = () => b;
+	b.select = () => b;
+	b.eq = (c: string, v: unknown) => {
+		captured.col = c;
+		captured.val = v;
+		return b;
+	};
+	b.order = () => Promise.resolve(result);
+	return { db: b as unknown as DojoClient, captured };
+}
+
+describe('listUserProjects — user-wide (every dōjō the caller belongs to)', () => {
+	it('returns the caller rows, scoped by user_id (the authz), not a tenant', async () => {
+		const rows = [{ id: 'p1' }, { id: 'p2' }];
+		const { db, captured } = makeUserDb({ data: rows, error: null });
+		expect(await listUserProjects(db, 'u1')).toEqual(rows);
+		expect(captured.col).toBe('user_id');
+		expect(captured.val).toBe('u1');
+	});
+	it('honest-empty [] when data is null (genuine empty, not a mask)', async () => {
+		const { db } = makeUserDb({ data: null, error: null });
+		expect(await listUserProjects(db, 'u1')).toEqual([]);
+	});
+	it('fails closed (AdminError 500) on a query error — never a fabricated list', async () => {
+		const { db } = makeUserDb({ data: null, error: { message: 'boom' } });
+		await expect(listUserProjects(db, 'u1')).rejects.toBeInstanceOf(AdminError);
 	});
 });
 

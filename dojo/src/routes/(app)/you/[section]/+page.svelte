@@ -32,7 +32,12 @@
 <svelte:head><title>{data.title} · Dōjō</title></svelte:head>
 
 {#if data.section === 'projects'}
-	<ScrProjects projects={data.projects} showDojo={false} onOpenProject={openProject} />
+	<ScrProjects
+		projects={data.projects}
+		error={data.projectsError}
+		showDojo={false}
+		onOpenProject={openProject}
+	/>
 {:else if data.section === 'rules'}
 	<ScrConstitution stance={data.stance} ladder={data.ladder} onGoPacks={goPacks} />
 {:else if data.section === 'packs'}

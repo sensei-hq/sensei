@@ -9,6 +9,7 @@
 	// the stacked phone rows. Degrades to an honest empty state (DJ1).
 	let {
 		projects = [],
+		error = null,
 		showDojo = true,
 		mobile = false,
 		eyebrow = 'You · every project you touch',
@@ -16,6 +17,10 @@
 		onOpenProject
 	}: {
 		projects?: KitProject[];
+		/** A read-failure message — when set, the screen shows an error state
+		 *  instead of the honest-empty one, so a failure is never masked as "no
+		 *  projects" (F1 honesty: error ≠ empty). */
+		error?: string | null;
 		showDojo?: boolean;
 		mobile?: boolean;
 		eyebrow?: string;
@@ -31,7 +36,12 @@
 		{/snippet}
 	</SectionHead>
 
-	{#if projects.length}
+	{#if error}
+		<EmptyState kanji="断" title="Couldn't load your projects.">
+			{error}. This is a read error, not an empty list — retry in a moment. Nothing has been hidden
+			or invented.
+		</EmptyState>
+	{:else if projects.length}
 		<div class="bg-paper-soft border-paper-edge overflow-hidden rounded-lg border">
 			{#each projects as p (p.id)}
 				<ProjectRow {p} onopen={onOpenProject} showDojo={showDojo && !mobile} compact={mobile} />
