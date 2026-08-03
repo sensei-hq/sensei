@@ -24,7 +24,13 @@ BEGIN
     INSERT INTO auth.users (
       id, instance_id, aud, role, email, encrypted_password,
       email_confirmed_at, created_at, updated_at,
-      raw_app_meta_data, raw_user_meta_data, is_super_admin
+      raw_app_meta_data, raw_user_meta_data, is_super_admin,
+      -- GoTrue scans these token columns into Go `string` (not sql.NullString),
+      -- so a NULL — the column default when omitted — makes every sign-in 500
+      -- with "Database error querying schema". Seed them empty, as GoTrue does.
+      confirmation_token, recovery_token, email_change,
+      email_change_token_new, email_change_token_current,
+      phone_change, phone_change_token, reauthentication_token
     ) VALUES (
       u.id,
       '00000000-0000-0000-0000-000000000000',
@@ -34,7 +40,10 @@ BEGIN
       now(), now(), now(),
       jsonb_build_object('provider', 'email', 'providers', ARRAY['email'], 'role', u.role),
       jsonb_build_object('email_verified', true),
-      false
+      false,
+      '', '', '',
+      '', '',
+      '', '', ''
     ) ON CONFLICT (id) DO NOTHING;
 
     INSERT INTO auth.identities (
