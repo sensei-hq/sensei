@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { goto, invalidateAll } from '$app/navigation';
-	import { adoptContribution, createDojo, ClientApiError } from '$lib/client-data';
+	import { adoptContribution, createDojo, syncGithubOrgs, ClientApiError } from '$lib/client-data';
 	import ScrPlaceholder from '$lib/components/screens/ScrPlaceholder.svelte';
 	import ScrProjects from '$lib/components/screens/ScrProjects.svelte';
 	import ScrConstitution from '$lib/components/screens/ScrConstitution.svelte';
@@ -65,6 +65,29 @@
 			cBusy = false;
 		}
 	}
+
+	// ── Auto-join GitHub-org dōjōs (F3c) — resolve the caller's GitHub orgs from
+	// their OAuth session server-side and join any matching github/{org} dōjō.
+	let ghBusy = $state(false);
+	let ghMsg = $state<string | null>(null);
+	async function syncGithub() {
+		if (ghBusy) return;
+		ghBusy = true;
+		ghMsg = null;
+		try {
+			const r = await syncGithubOrgs();
+			ghMsg = !r.synced
+				? 'Sign in with GitHub to auto-join your org dōjōs.'
+				: r.joined.length
+					? `Joined ${r.joined.length} dōjō${r.joined.length > 1 ? 's' : ''} from GitHub.`
+					: 'No new GitHub org dōjōs to join.';
+			if (r.joined.length) await invalidateAll();
+		} catch {
+			ghMsg = 'Could not sync from GitHub — try again.';
+		} finally {
+			ghBusy = false;
+		}
+	}
 </script>
 
 <svelte:head><title>{data.title} · Dōjō</title></svelte:head>
@@ -81,6 +104,17 @@
 {:else if data.section === 'packs'}
 	<ScrRulePacks packs={data.rulePacks} />
 {:else if data.section === 'dojos'}
+	<div class="flex items-center justify-end gap-3" style="padding: 12px 32px 0">
+		{#if ghMsg}<span class="text-ink-mute text-xs">{ghMsg}</span>{/if}
+		<button
+			type="button"
+			onclick={syncGithub}
+			disabled={ghBusy}
+			class="border-paper-edge text-ink-soft cursor-pointer rounded-lg border bg-transparent px-3 py-1.5 text-xs disabled:cursor-default disabled:opacity-50"
+		>
+			{ghBusy ? 'Syncing…' : 'Sync from GitHub'}
+		</button>
+	</div>
 	<ScrMyDojos dojos={data.dojos} onOpen={openDojo} onCreateOrJoin={openCreate} />
 	{#if creating}
 		<div class="fixed inset-0 z-50 flex items-center justify-center p-4">
