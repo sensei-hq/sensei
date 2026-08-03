@@ -131,6 +131,21 @@ pub async fn publish_run(ctx: &TaskContext, task: &Task) -> Result<u32, String> 
         None => None,
     };
 
+    // The project's resolved constitution → federated so the dōjō can DISPLAY the
+    // "before you start" preview without re-resolving (F4). Composed ONCE from the
+    // run's folder (identical for every recipient). Best-effort: a missing folder
+    // or a resolve error just leaves it absent (the dōjō falls back to its
+    // "resolves in your editor" state), never fails federation.
+    let constitution = match ctx.pg().run_folder_id(&run_id).await.ok().flatten() {
+        Some(folder_id) => ctx
+            .pg()
+            .resolve_repo_raw_local(&folder_id)
+            .await
+            .ok()
+            .map(crate::dojo::relay_constitution::compose_constitution),
+        None => None,
+    };
+
     let mut published = 0u32;
     // Persist the cloud session id once — from the first membership that acks it.
     let mut persisted = run.dojo_session_id.is_some();
@@ -146,6 +161,7 @@ pub async fn publish_run(ctx: &TaskContext, task: &Task) -> Result<u32, String> 
                 name: name.clone(),
                 classification: classification.to_string(),
                 phase: "watch".to_string(),
+                constitution: constitution.clone(),
             }
         });
         let client = DojoClient::for_membership(m);
