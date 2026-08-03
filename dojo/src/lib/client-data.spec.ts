@@ -17,6 +17,7 @@ import {
 	getUserProjectConstitution,
 	listContributions,
 	adoptContribution,
+	createDojo,
 	updateEngagement,
 	updateIncident
 } from '$lib/client-data';
@@ -100,6 +101,15 @@ describe('listProjects / listUserProjects — tenant vs user-wide reads', () => 
 		expect(calls[0].url).toBe(`${dojoApiUrl}/v1/you/contributions/adopt`);
 		expect(calls[0].init?.method).toBe('POST');
 		expect(JSON.parse(String(calls[0].init?.body))).toEqual({ artifactId: 'art-1' });
+	});
+
+	it('createDojo POSTs { name, kind } to /v1/you/dojos and returns the new row', async () => {
+		const { fn, calls } = fakeFetch(201, { id: 't-new', key: 'org/acme', name: 'Acme' });
+		const out = await createDojo('Acme', 'employer', { fetch: fn });
+		expect(out).toEqual({ id: 't-new', key: 'org/acme', name: 'Acme' });
+		expect(calls[0].url).toBe(`${dojoApiUrl}/v1/you/dojos`);
+		expect(calls[0].init?.method).toBe('POST');
+		expect(JSON.parse(String(calls[0].init?.body))).toEqual({ name: 'Acme', kind: 'employer' });
 	});
 });
 
