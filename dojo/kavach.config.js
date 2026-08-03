@@ -24,7 +24,10 @@ export default {
 	//    `user:email` keeps the email Supabase resolves the profile from.
 	providers: [
 		{ mode: 'oauth', name: 'github', label: 'Continue with GitHub', scopes: ['read:org', 'user:email'] },
-		{ mode: 'otp', name: 'magic', label: 'Email me a magic link' }
+		{ mode: 'otp', name: 'magic', label: 'Email me a magic link' },
+		// Email + password. `name: 'email'` is the field key AuthProvider passes to
+		// signIn ({ email, password }) → the adapter's signInWithPassword.
+		{ mode: 'password', name: 'email', label: 'Sign in with password' }
 	],
 
 	logging: { level: 'error', table: 'audit.logs' },
