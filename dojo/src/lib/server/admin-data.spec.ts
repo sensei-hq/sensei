@@ -24,6 +24,9 @@ import {
 	updateIdentity,
 	parsePatchIdentity,
 	deleteIdentity,
+	slugify,
+	parseNewDojo,
+	createDojo,
 	AdminError,
 	type DojoClient
 } from './admin-data';
@@ -288,5 +291,71 @@ describe('identities write', () => {
 	it('deleteIdentity is true/false by rows removed', async () => {
 		expect(await deleteIdentity(makeMutDb({ data: [{ id: 'x' }], error: null }).db, 't1', 'x')).toBe(true);
 		expect(await deleteIdentity(makeMutDb({ data: [], error: null }).db, 't1', 'y')).toBe(false);
+	});
+});
+
+// A two-insert stub for createDojo: `.single()` shifts the next queued result
+// (tenant insert, then the addMember membership insert). Captures each insert's
+// table + payload so the tenant shape + creator admin membership can be asserted.
+function makeCreateDb(...results: { data?: unknown; error: unknown }[]) {
+	const queue = [...results];
+	const inserts: { table?: string; payload?: Record<string, unknown> }[] = [];
+	let table: string | undefined;
+	const b: Record<string, unknown> = {};
+	b.from = (t: string) => {
+		table = t;
+		return b;
+	};
+	b.insert = (payload: Record<string, unknown>) => {
+		inserts.push({ table, payload });
+		return b;
+	};
+	b.select = () => b;
+	b.single = () => Promise.resolve(queue.shift() ?? { data: null, error: null });
+	return { db: b as unknown as DojoClient, inserts };
+}
+
+describe('slugify', () => {
+	it('lowercases, hyphenates non-alphanumerics, trims edges', () => {
+		expect(slugify('Acme Corp!')).toBe('acme-corp');
+		expect(slugify('  Hello  World  ')).toBe('hello-world');
+		expect(slugify('已经 rust')).toBe('rust');
+	});
+	it('is empty when nothing survives', () => {
+		expect(slugify('!!!')).toBe('');
+	});
+});
+
+describe('parseNewDojo', () => {
+	it('requires a name that slugifies + a valid kind', () => {
+		expect(() => parseNewDojo({})).toThrow();
+		expect(() => parseNewDojo({ name: '!!!', kind: 'client' })).toThrow();
+		expect(() => parseNewDojo({ name: 'Acme', kind: 'wizard' })).toThrow();
+		expect(parseNewDojo({ name: 'Acme', kind: 'client' })).toEqual({ name: 'Acme', kind: 'client' });
+	});
+});
+
+describe('createDojo', () => {
+	it('inserts an org tenant (key org/{slug}) and makes the creator admin', async () => {
+		const { db, inserts } = makeCreateDb(
+			{ data: { id: 't-new', key: 'org/acme', name: 'Acme' }, error: null }, // tenant insert
+			{ data: { id: 'm-new', role: 'admin' }, error: null } // addMember insert
+		);
+		const out = await createDojo(db, 'u1', { name: 'Acme', kind: 'employer' });
+		expect(out).toEqual({ id: 't-new', key: 'org/acme', name: 'Acme' });
+		// tenant shape
+		expect(inserts[0]).toMatchObject({
+			table: 'tenants',
+			payload: { key: 'org/acme', origin: 'org', org: 'acme', name: 'Acme', scope: 'private' }
+		});
+		// creator admin membership
+		expect(inserts[1]).toMatchObject({
+			table: 'memberships',
+			payload: { tenant_id: 't-new', user_id: 'u1', role: 'admin', kind: 'employer' }
+		});
+	});
+	it('maps a key collision (23505) to 409', async () => {
+		const { db } = makeCreateDb({ data: null, error: { code: '23505', message: 'dup key' } });
+		await expect(createDojo(db, 'u1', { name: 'Acme', kind: 'client' })).rejects.toMatchObject({ status: 409 });
 	});
 });

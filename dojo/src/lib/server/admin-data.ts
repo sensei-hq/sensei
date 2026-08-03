@@ -359,6 +359,80 @@ export async function addMember(
 	return data as { id: string; role: string };
 }
 
+// ── self-serve dōjō create (F3a) ─────────────────────────────────────────────
+
+/** A validated `POST /v1/you/dojos` body — the self-serve create. */
+export interface NewDojoInput {
+	name: string;
+	kind: string;
+}
+
+/** A URL-clean slug from a display name: lowercase, non-alphanumerics → single
+ *  hyphens, trimmed. `"Acme Corp!" → "acme-corp"`. Pure. */
+export function slugify(name: string): string {
+	return name
+		.toLowerCase()
+		.trim()
+		.replace(/[^a-z0-9]+/g, '-')
+		.replace(/^-+|-+$/g, '');
+}
+
+/** Validate a create-dōjō body into a {@link NewDojoInput}, or throw
+ *  AdminError(400). `name` must slugify to something non-empty; `kind` must be a
+ *  `dojo.membership_kind`. */
+export function parseNewDojo(body: Record<string, unknown>): NewDojoInput {
+	const name = typeof body.name === 'string' ? body.name.trim() : '';
+	if (!name) throw new AdminError(400, 'name is required');
+	if (!slugify(name)) throw new AdminError(400, 'name must contain a letter or digit');
+	const kind = typeof body.kind === 'string' ? body.kind : '';
+	if (!(MEMBERSHIP_KINDS as readonly string[]).includes(kind)) {
+		throw new AdminError(400, 'kind must be employer, client, community, or personal');
+	}
+	return { name, kind };
+}
+
+/**
+ * Create a dōjō the caller owns (F3a). The tenant is a custom-registered `org`
+ * origin with key `org/{slug}`; the creator becomes its `admin`. A key collision
+ * (someone already registered that name) is a 409. The creator's admin membership
+ * reuses {@link addMember} (its own duplicate guard). Fails closed.
+ */
+export async function createDojo(
+	db: DojoClient,
+	userId: string,
+	input: NewDojoInput
+): Promise<{ id: string; key: string; name: string }> {
+	const slug = slugify(input.name);
+	const key = `org/${slug}`;
+	const { data, error } = await db
+		.from('tenants')
+		.insert({
+			key,
+			origin: 'org',
+			org: slug,
+			name: input.name,
+			dojo_url: `dojo.sensei-hq.org/${key}`,
+			scope: 'private'
+		})
+		.select('id, key, name')
+		.single();
+	if (error) {
+		if (error.code === '23505') throw new AdminError(409, 'a dōjō with that name already exists');
+		throw new AdminError(500, error.message);
+	}
+	const tenant = data as { id: string; key: string; name: string };
+	// The creator becomes admin — reuse addMember (shares the membership insert +
+	// its own duplicate guard). authenticated_via = `sso` (the web/JWT console
+	// auth plane; `dojo.auth_method` is sso | github_oauth | device_code).
+	await addMember(db, tenant.id, {
+		user_id: userId,
+		kind: input.kind,
+		authenticated_via: 'sso',
+		role: 'admin'
+	});
+	return tenant;
+}
+
 // ── policies: upsert / patch / delete ────────────────────────────────────────
 
 /** A validated `POST …/policies` body — the port of dojo-mind's `UpsertPolicy`. */
