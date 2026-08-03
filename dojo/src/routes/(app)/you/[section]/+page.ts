@@ -2,9 +2,10 @@ import { redirect } from '@sveltejs/kit';
 import type { PageLoad } from './$types';
 import { YOU_SECTIONS, labelForSection } from '$lib/nav';
 import { toKitDojos } from '$lib/chrome';
-import { listUserProjects, ClientApiError } from '$lib/client-data';
+import { listUserProjects, listContributions, ClientApiError } from '$lib/client-data';
 import { toKitProjects } from '$lib/projects-map';
-import type { KitProject } from '$lib/components/kit/types';
+import { toKitContributions, toKitDownstreams } from '$lib/contributions-map';
+import type { KitProject, KitContribution, KitDownstream } from '$lib/components/kit/types';
 import { stance, ladder, rulePacks } from '$lib/components/kit/fixtures';
 
 // The personal-zone section loader — the non-inbox destinations (projects ·
@@ -32,6 +33,21 @@ export const load: PageLoad = async ({ params, parent, fetch }) => {
 		}
 	}
 
+	// Real contributions (F5) — user-wide across every dōjō, only on this section.
+	// Honest-empty until the contribute pipeline federates; a transient read error
+	// degrades to empty (a read-only informational surface).
+	let contributionsMine: KitContribution[] = [];
+	let contributionsDownstream: KitDownstream[] = [];
+	if (section === 'contributions') {
+		try {
+			const c = await listContributions({ fetch, accessToken });
+			contributionsMine = toKitContributions(c.mine);
+			contributionsDownstream = toKitDownstreams(c.downstream);
+		} catch {
+			// honest-empty — the sections render their empty state.
+		}
+	}
+
 	return {
 		section,
 		title: labelForSection(section, 'you'),
@@ -44,9 +60,8 @@ export const load: PageLoad = async ({ params, parent, fetch }) => {
 		// Projects — real user-wide read; error ≠ empty (F1).
 		projects,
 		projectsError,
-		// No backing route yet → honest empty, never fabricated (F4).
-		contributionsMine: [],
-		contributionsDownstream: [],
-		contributionsStat: { approved: 0, pending: 0, helped: 0 }
+		// Contributions — real user-wide read (F5); honest-empty until federated.
+		contributionsMine,
+		contributionsDownstream
 	};
 };

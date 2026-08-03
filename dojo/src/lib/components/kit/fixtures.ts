@@ -502,7 +502,7 @@ export const contributionsMine: KitContribution[] = [
 		status: 'approved',
 		when: '1d',
 		note: 'anonymized · shared safely',
-		client: true
+		anonymous: true
 	},
 	{
 		kanji: '問',
