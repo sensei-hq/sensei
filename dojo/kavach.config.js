@@ -23,8 +23,8 @@ export default {
 	//    PRIVATE orgs — for the F3c GitHub-org auto-join (GET /user/orgs);
 	//    `user:email` keeps the email Supabase resolves the profile from.
 	providers: [
-		{ mode: 'otp', name: 'magic', label: 'Email me a magic link' },
-		{ mode: 'oauth', name: 'github', label: 'Continue with GitHub', scopes: ['read:org', 'user:email'] }
+		{ mode: 'oauth', name: 'github', label: 'Continue with GitHub', scopes: ['read:org', 'user:email'] },
+		{ mode: 'otp', name: 'magic', label: 'Email me a magic link' }
 	],
 
 	logging: { level: 'error', table: 'audit.logs' },
