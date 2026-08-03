@@ -4,6 +4,7 @@ import { describe, it, expect } from 'vitest';
 import {
 	listOrgProjects,
 	listUserProjects,
+	getUserProjectConstitution,
 	countOrgProjects,
 	upsertProjectFromRun,
 	AdminError,
@@ -94,6 +95,43 @@ describe('countOrgProjects', () => {
 	});
 });
 
+// A `.maybeSingle()`-terminal stub capturing the two `.eq` filters, for the
+// single-project constitution read.
+function makeSingleDb(result: { data: unknown; error: unknown }) {
+	const captured: { eqs: [string, unknown][] } = { eqs: [] };
+	const b: Record<string, unknown> = {};
+	b.from = () => b;
+	b.select = () => b;
+	b.eq = (c: string, v: unknown) => {
+		captured.eqs.push([c, v]);
+		return b;
+	};
+	b.maybeSingle = () => Promise.resolve(result);
+	return { db: b as unknown as DojoClient, captured };
+}
+
+describe('getUserProjectConstitution — the per-project drill-in read', () => {
+	it('returns the stored constitution jsonb, scoped by user_id + slug', async () => {
+		const constitution = { rules: [{ scope_key: 'organization', title: 'x', enforcement: 'mandatory' }], conflicts: [], locks: 1 };
+		const { db, captured } = makeSingleDb({ data: { constitution }, error: null });
+		expect(await getUserProjectConstitution(db, 'u1', 'acme/x')).toEqual(constitution);
+		expect(captured.eqs).toContainEqual(['user_id', 'u1']);
+		expect(captured.eqs).toContainEqual(['slug', 'acme/x']);
+	});
+	it('returns null when the project has no federated constitution yet (honest-empty)', async () => {
+		const { db } = makeSingleDb({ data: { constitution: null }, error: null });
+		expect(await getUserProjectConstitution(db, 'u1', 's')).toBeNull();
+	});
+	it('returns null on a genuine miss (no row for this user+slug)', async () => {
+		const { db } = makeSingleDb({ data: null, error: null });
+		expect(await getUserProjectConstitution(db, 'u1', 's')).toBeNull();
+	});
+	it('fails closed (AdminError 500) on a query error — never a fabricated constitution', async () => {
+		const { db } = makeSingleDb({ data: null, error: { message: 'boom' } });
+		await expect(getUserProjectConstitution(db, 'u1', 's')).rejects.toBeInstanceOf(AdminError);
+	});
+});
+
 function makeUpsertDb(error: unknown) {
 	const captured: { payload?: Record<string, unknown>; conflict?: unknown } = {};
 	const b: Record<string, unknown> = {};
@@ -129,6 +167,17 @@ describe('upsertProjectFromRun', () => {
 		const { db, captured } = makeUpsertDb(null);
 		await upsertProjectFromRun(db, CALLER, { slug: 's', name: 'n', classification: 'personal', phase: 'watch' });
 		expect(typeof captured.payload?.last_run_at).toBe('string');
+	});
+	it('writes the constitution when the daemon federated one', async () => {
+		const { db, captured } = makeUpsertDb(null);
+		const constitution = { rules: [{ level: 'company', text: 'x', hard: true }], conflicts: [], locks: 1 };
+		await upsertProjectFromRun(db, CALLER, { slug: 's', name: 'n', classification: 'company', phase: 'watch', constitution });
+		expect(captured.payload?.constitution).toEqual(constitution);
+	});
+	it('OMITS constitution when absent (preserved on conflict, like phase — not nulled)', async () => {
+		const { db, captured } = makeUpsertDb(null);
+		await upsertProjectFromRun(db, CALLER, { slug: 's', name: 'n', classification: 'personal', phase: 'watch' });
+		expect(captured.payload).not.toHaveProperty('constitution');
 	});
 	it('throws AdminError on a DB error (the caller swallows it fire-and-forget)', async () => {
 		const { db } = makeUpsertDb({ message: 'boom' });

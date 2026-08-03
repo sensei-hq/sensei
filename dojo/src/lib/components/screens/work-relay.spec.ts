@@ -76,6 +76,12 @@ describe('ScrProjectPreview — the resolved-constitution drill-in', () => {
 		expect(queryByText('Discarded by the ladder')).toBeNull();
 	});
 
+	it('client banner uses the universal (always-on) dereference wording (F4 Q4)', () => {
+		const client = { ...company, classification: 'client' };
+		const { getByText } = render(ScrProjectPreview, { props: { project: client, ladder, conflicts } });
+		expect(getByText(/dereferenced, as they always are/)).toBeTruthy();
+	});
+
 	it('shows an honest "resolves in your editor" state (no fabricated ladder) when the ladder is not federated', () => {
 		const { getByText, queryByText } = render(ScrProjectPreview, {
 			props: { project: company, ladder: [], conflicts: [] }

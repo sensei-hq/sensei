@@ -78,7 +78,7 @@
 			kanji="観"
 			tone={project.classification === 'client' ? 'accent' : 'neutral'}
 			title={project.classification === 'client'
-				? 'Client engagement — sources are dereferenced.'
+				? 'Client engagement — sources are dereferenced, as they always are.'
 				: 'These rules resolve here, most-specific wins.'}
 		>
 			{preview.rungs.length} scopes compose this constitution · {preview.effective.length} rules apply

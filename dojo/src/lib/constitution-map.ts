@@ -10,7 +10,12 @@
 // Stack) and section groups (社 Company · 組 Teams · 技 Stacks). See
 // docs/blueprints/2026-07-27-dojo-w1-wiring-slice-pattern.md.
 
-import type { KitLadderRung, KitRule, KitConstitutionSection } from './components/kit/types';
+import type {
+	KitLadderRung,
+	KitRule,
+	KitConstitutionSection,
+	KitConflict
+} from './components/kit/types';
 
 /** A rule row as the constitution read route returns it — the display subset of the
  *  `shared_rules ⋈ namespaces` join. */
@@ -93,6 +98,55 @@ export function rulesToLadder(rules: ConstitutionRule[]): KitLadderRung[] {
 			rules: rs.map(toKitRule)
 		};
 	});
+}
+
+// ── Per-project resolved constitution (F4) ────────────────────────────────────
+// The daemon federates the folder's RESOLVED constitution (authority resolution,
+// dedup + mandatory locks + the discards the ladder made — all server-side) as
+// `dojo.projects.constitution`. Here we map that wire shape onto the SAME kit
+// ladder + conflicts the shipped `ScrProjectPreview` renders, reusing
+// `rulesToLadder` for the rungs (the dōjō only DISPLAYS; it never re-resolves).
+
+/** The `RelayConstitution` wire shape the daemon federates (mirrors
+ *  `dojo_protocol::relay::RelayConstitution`). Rules carry the daemon's own
+ *  `scope_key`/`enforcement`; conflicts are the discards, winner/loser decided
+ *  server-side. */
+export interface RelayConstitution {
+	rules: { scope_key: string; namespace?: string | null; title: string; enforcement: string }[];
+	conflicts: {
+		topic: string;
+		loser_scope: string;
+		winner_scope: string;
+		why: string;
+		locked: boolean;
+	}[];
+	locks: number;
+}
+
+/** Federated constitution rules → the `ConstitutionRule[]` `rulesToLadder` takes,
+ *  so the per-project ladder reuses the shared scope→rung mapping. A rule with no
+ *  namespace falls back to its scope label (honest, never a blank rung name). */
+export function relayRules(c: RelayConstitution): ConstitutionRule[] {
+	return c.rules.map((r) => ({
+		scope_key: r.scope_key,
+		namespace_name: r.namespace ?? meta(r.scope_key).label,
+		title: r.title,
+		enforcement: r.enforcement
+	}));
+}
+
+/** The discards the ladder made → `KitConflict[]` for the "Discarded by the
+ *  ladder" section. The winner/loser scopes are the daemon's decision (the dōjō
+ *  only labels them); both sides share the discarded rule's `topic` text. */
+export function relayToKitConflicts(c: RelayConstitution): KitConflict[] {
+	return c.conflicts.map((x, i) => ({
+		id: `conflict-${i}`,
+		topic: x.topic,
+		loser: { level: meta(x.loser_scope).label, text: x.topic },
+		winner: { level: meta(x.winner_scope).label, text: x.topic },
+		why: x.why,
+		locked: x.locked
+	}));
 }
 
 /**
