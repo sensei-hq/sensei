@@ -1,18 +1,19 @@
 import { redirect } from '@sveltejs/kit';
 import type { PageLoad } from './$types';
 import { youHref } from '$lib/nav';
-import { listUserProjects } from '$lib/client-data';
+import { listUserProjects, getUserProjectConstitution } from '$lib/client-data';
 import { toKitProjects } from '$lib/projects-map';
-import type { KitProject } from '$lib/components/kit/types';
+import { rulesToLadder, relayRules, relayToKitConflicts } from '$lib/constitution-map';
+import type { KitProject, KitLadderRung, KitConflict } from '$lib/components/kit/types';
 
-// The project-constitution drill-in loader. Resolves the REAL project from the
-// user-wide read (F1's GET /v1/you/projects) by id — never a fixture, never a
-// fabricated project. The composed constitution ladder is resolved by the daemon
-// and NOT yet federated to the dōjō, so the screen renders an honest "resolves in
-// your editor" state (empty ladder) rather than a fabricated one; F4 wires the
-// real GET /v1/you/projects/{slug}/constitution. A no-membership viewer, an
-// unknown id, or a read error redirects to the projects list so the drill never
-// dead-ends on a fabricated project (the list surfaces a read error itself).
+// The project-constitution drill-in loader (F4). Resolves the REAL project from
+// the user-wide read (GET /v1/you/projects) by id, then reads its daemon-resolved
+// constitution (GET /v1/you/projects/{slug}/constitution) and maps it to the kit
+// ladder + conflicts the preview renders. The daemon OWNS the resolution; the dōjō
+// only displays it (never re-resolves). No federated constitution yet → an empty
+// ladder, and the screen shows its honest "resolves in your editor" state — never
+// a fabricated ladder. A no-membership viewer, an unknown id, or a projects-read
+// error redirects to the list so the drill never dead-ends on a fabricated project.
 export const load: PageLoad = async ({ params, parent, fetch }) => {
 	const { hasMembership, accessToken } = await parent();
 	if (!hasMembership) redirect(307, youHref('projects'));
@@ -26,7 +27,20 @@ export const load: PageLoad = async ({ params, parent, fetch }) => {
 	}
 	if (!project) redirect(307, youHref('projects'));
 
-	// Honest-empty ladder/conflicts — the dōjō has no federated resolution yet
-	// (F4). The screen shows a "resolves in your editor" state, not a fake ladder.
-	return { project, ladder: [], conflicts: [] };
+	// The real resolved constitution. Best-effort: a read error just leaves the
+	// ladder empty (honest "resolves in your editor" state), never fails the drill
+	// — the real project header still renders.
+	let ladder: KitLadderRung[] = [];
+	let conflicts: KitConflict[] = [];
+	try {
+		const c = await getUserProjectConstitution(project.repo, { fetch, accessToken });
+		if (c) {
+			ladder = rulesToLadder(relayRules(c));
+			conflicts = relayToKitConflicts(c);
+		}
+	} catch {
+		// honest-empty — the screen degrades to "resolves in your editor".
+	}
+
+	return { project, ladder, conflicts };
 };
