@@ -27,6 +27,7 @@
 
 import { DojoApiError, authHeaders, dojoApiUrl, encodeTenant, parseJson } from './dojo-api';
 import type { RelayConstitution } from './constitution-map';
+import type { ContributionRow, DownstreamRow } from './contributions-map';
 import type { DojoCallOpts } from './dojo-api';
 
 // Re-export the shared error under the client name so lead screens
@@ -413,6 +414,26 @@ export async function listProjects(tenantKey: string, opts: DojoCallOpts = {}): 
 export async function listUserProjects(opts: DojoCallOpts = {}): Promise<ProjectRow[]> {
 	const data = await getJson<{ projects?: ProjectRow[] }>(youUrl('/projects'), opts);
 	return data.projects ?? [];
+}
+
+/** `GET /v1/you/contributions` — the caller's contributions across every dōjō:
+ *  `mine` (artifacts they contributed) + `downstream` (approved for them). Both
+ *  honest-empty on a missing key (never []-as-success masking a failure — a
+ *  non-2xx throws `ClientApiError`). */
+export async function listContributions(
+	opts: DojoCallOpts = {}
+): Promise<{ mine: ContributionRow[]; downstream: DownstreamRow[] }> {
+	const data = await getJson<{ mine?: ContributionRow[]; downstream?: DownstreamRow[] }>(
+		youUrl('/contributions'),
+		opts
+	);
+	return { mine: data.mine ?? [], downstream: data.downstream ?? [] };
+}
+
+/** `POST /v1/you/contributions/adopt` — Pin (adopt) an approved-for-you artifact
+ *  by its id. Throws `ClientApiError` on a non-2xx. */
+export async function adoptContribution(artifactId: string, opts: DojoCallOpts = {}): Promise<void> {
+	await sendJson(youUrl('/contributions/adopt'), 'POST', { artifactId }, opts);
 }
 
 /** `GET /v1/you/projects/{slug}/constitution` — the daemon-resolved constitution

@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { goto } from '$app/navigation';
+	import { goto, invalidateAll } from '$app/navigation';
+	import { adoptContribution } from '$lib/client-data';
 	import ScrPlaceholder from '$lib/components/screens/ScrPlaceholder.svelte';
 	import ScrProjects from '$lib/components/screens/ScrProjects.svelte';
 	import ScrConstitution from '$lib/components/screens/ScrConstitution.svelte';
@@ -7,7 +8,7 @@
 	import ScrMyDojos from '$lib/components/screens/ScrMyDojos.svelte';
 	import ScrContributions from '$lib/components/screens/ScrContributions.svelte';
 	import { youHref, orgHref } from '$lib/nav';
-	import type { KitProject, KitDojo } from '$lib/components/kit/types';
+	import type { KitProject, KitDojo, KitDownstream } from '$lib/components/kit/types';
 
 	// The personal-zone section screen — the non-inbox destinations (projects ·
 	// rules · packs · dojos · contributions). The relay surfaces (approve · decide
@@ -26,6 +27,13 @@
 	// the slug is the org id, which /org/[slug] resolves via orgBySlug.
 	function openDojo(d: KitDojo) {
 		goto(orgHref(d.slug));
+	}
+	// Pin an approved-for-you contribution → the real adopt write, then re-load so
+	// the row flips to "adopted" from the source of truth (no fabricated state).
+	async function pinContribution(item: KitDownstream) {
+		if (!item.id) return;
+		await adoptContribution(item.id);
+		await invalidateAll();
 	}
 </script>
 
@@ -48,7 +56,7 @@
 	<ScrContributions
 		mine={data.contributionsMine}
 		downstream={data.contributionsDownstream}
-		stat={data.contributionsStat}
+		onPin={pinContribution}
 	/>
 {:else}
 	<ScrPlaceholder title={data.title} eyebrow="You" />
