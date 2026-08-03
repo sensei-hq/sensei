@@ -15,54 +15,36 @@
 	let status = $state<'idle' | 'sending' | 'sent' | 'error'>('idle');
 	let message = $state('');
 
-	// GitHub OAuth. kavach maps a non-magic provider to signInWithOAuth; the
-	// redirect returns to this origin. Requires the GitHub provider enabled on
-	// the cloud Supabase project (client id/secret + callback) to complete —
-	// without it the provider surfaces an error here instead of silently failing.
-	// `read:org` is requested at sign-on so the session's GitHub token can read
-	// the user's org memberships (incl. PRIVATE ones) for the F3c auto-join
-	// (GET /user/orgs); `user:email` keeps the email Supabase resolves the profile
-	// from. kavach forwards `scopes` to signInWithOAuth's options.
-	async function signInGithub() {
+	// One generic sign-in for every provider — kavach's whole purpose. It resolves
+	// each provider (oauth / magic-link / password) by name from the kavach.config
+	// `providers` entry, applying that entry's `scopes` (github requests `read:org`
+	// for the F3c org auto-join). No per-provider function: the GitHub button and
+	// the magic-link form both call this. OAuth redirects away; OTP stays and
+	// confirms "check your email".
+	async function signIn(provider: string, opts: Record<string, unknown> = {}) {
 		if (status === 'sending') return;
-		const signIn = kavach?.signIn as
-			| ((c: {
-					provider: string;
-					redirectTo?: string;
-					scopes?: string[];
-			  }) => Promise<{ error?: { message?: string } }>)
+		const fn = kavach?.signIn as
+			| ((c: Record<string, unknown>) => Promise<{ error?: { message?: string } }>)
 			| undefined;
-		if (!signIn) return;
+		if (!fn) return;
 		status = 'sending';
 		message = '';
-		const result = await signIn({
-			provider: 'github',
-			redirectTo: window.location.origin,
-			scopes: ['read:org', 'user:email']
-		});
+		const result = await fn({ provider, ...opts });
 		if (result?.error) {
 			status = 'error';
-			message = result.error.message ?? 'Could not start GitHub sign-in.';
+			message = result.error.message ?? 'Could not sign in.';
+			return;
 		}
-	}
-
-	async function sendMagicLink(event: SubmitEvent) {
-		event.preventDefault();
-		if (!email || status === 'sending') return;
-		const signIn = kavach?.signIn as
-			| ((c: { provider: string; email: string }) => Promise<{ error?: { message?: string } }>)
-			| undefined;
-		if (!signIn) return;
-		status = 'sending';
-		message = '';
-		const result = await signIn({ provider: 'magic', email });
-		if (result?.error) {
-			status = 'error';
-			message = result.error.message ?? 'Could not send the magic link.';
-		} else {
+		if (provider === 'magic') {
 			status = 'sent';
 			message = 'Check your email for the sign-in link.';
 		}
+	}
+
+	function submitMagicLink(event: SubmitEvent) {
+		event.preventDefault();
+		if (!email) return;
+		void signIn('magic', { email });
 	}
 
 	const adoptionLift = $derived(Math.round(m.adoptionLift * 100));
@@ -172,7 +154,7 @@
 			<!-- primary · GitHub OAuth -->
 			<button
 				type="button"
-				onclick={signInGithub}
+				onclick={() => signIn('github', { redirectTo: window.location.origin })}
 				disabled={status === 'sending'}
 				class="bg-primary text-on-primary flex w-full cursor-pointer items-center justify-center gap-3 rounded-lg px-4 py-3 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-55"
 			>
@@ -191,7 +173,7 @@
 			</div>
 
 			<!-- magic link -->
-			<form onsubmit={sendMagicLink}>
+			<form onsubmit={submitMagicLink}>
 				<label
 					for="dojo-email"
 					class="text-ink-mute mb-2 block font-semibold uppercase text-xs" style="letter-spacing: 0.1em">Work email</label

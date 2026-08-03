@@ -15,9 +15,17 @@ export default {
 	adapter: 'supabase',
 	env: { url: 'PUBLIC_SUPABASE_URL', anonKey: 'PUBLIC_SUPABASE_ANON_KEY' },
 
-	// Magic link (email OTP) — for organizations not on GitHub. The email is
-	// delivered by the local supabase stack's Inbucket during dev.
-	providers: [{ mode: 'otp', name: 'magic', label: 'Email me a magic link' }],
+	// Sign-in providers. kavach's generic signIn handles each by name from this
+	// config (one flow for oauth / magic-link / password — no per-provider code):
+	//  - `magic` (email OTP), delivered by the local supabase Inbucket in dev.
+	//  - `github` (OAuth). `scopes` are requested at sign-on so the session's
+	//    GitHub token can read the user's org memberships — `read:org` covers
+	//    PRIVATE orgs — for the F3c GitHub-org auto-join (GET /user/orgs);
+	//    `user:email` keeps the email Supabase resolves the profile from.
+	providers: [
+		{ mode: 'otp', name: 'magic', label: 'Email me a magic link' },
+		{ mode: 'oauth', name: 'github', label: 'Continue with GitHub', scopes: ['read:org', 'user:email'] }
+	],
 
 	logging: { level: 'error', table: 'audit.logs' },
 
