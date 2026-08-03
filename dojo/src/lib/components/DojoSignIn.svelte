@@ -134,7 +134,7 @@
 			<!-- Sign-in providers — kavach's AuthProvider renders each from the config
 			     (github OAuth with read:org scopes · magic-link email); one component,
 			     no per-provider code. -->
-			<div class="flex flex-col gap-3">
+			<div class="signin-auth flex flex-col gap-3">
 				{#each providers as provider (provider.name)}
 					<AuthProvider
 						{...provider}
@@ -202,3 +202,62 @@
 		</div>
 	</div>
 </div>
+
+<style>
+	/* Restyle kavach's AuthProvider (rokkit Button/InputField) to the sign-in
+	   mockup. Overriding a third-party component's rendered DOM is the one place we
+	   reach for token CSS vars instead of uno utilities; scoped by `.signin-auth`,
+	   `:global()` reaches the child components. Hooks: `data-auth-mode` (oauth /
+	   otp / password), `data-item-icon`, rokkit `data-field-root`. */
+	.signin-auth :global([data-auth]) {
+		gap: 0.5rem;
+	}
+	.signin-auth :global([data-auth] button) {
+		width: 100%;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 0.5rem;
+		border-radius: 0.5rem;
+		padding: 0.75rem 1rem;
+		font-size: 0.875rem;
+		font-weight: 500;
+		cursor: pointer;
+		border: 1px solid var(--paper-edge);
+		background: var(--paper);
+		color: var(--ink);
+	}
+	.signin-auth :global([data-auth-mode='oauth'] button) {
+		background: var(--primary);
+		color: var(--on-primary);
+		border-color: transparent;
+	}
+	.signin-auth :global([data-item-icon]) {
+		width: 18px;
+		height: 18px;
+		flex-shrink: 0;
+	}
+	.signin-auth :global([data-field-root]) {
+		width: 100%;
+	}
+	.signin-auth :global([data-field] label) {
+		display: block;
+		font-size: 0.6875rem;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.1em;
+		color: var(--ink-mute);
+		margin-bottom: 0.375rem;
+	}
+	.signin-auth :global([data-field] input) {
+		width: 100%;
+		box-sizing: border-box;
+		background: var(--paper);
+		color: var(--ink);
+		border: 1px solid var(--paper-edge);
+		border-radius: 0.5rem;
+		padding: 0.75rem;
+		font-size: 0.875rem;
+		margin-bottom: 0.5rem;
+	}
+</style>
