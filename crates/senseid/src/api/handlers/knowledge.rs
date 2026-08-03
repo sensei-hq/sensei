@@ -1030,7 +1030,16 @@ fn pack_rule_to_raw(w: crate::dojo::client::PackRuleWire) -> crate::governance::
         content: w.body,
         impact: w.rationale,
         enforcement: w.enforcement,
-        scope: w.area,
+        // The GOVERNANCE scope the pack was adopted at, NOT the pack's own
+        // area/category — so a remote pack rule lands on the same ladder rung a
+        // memory would (parity with the LOCAL `resolve_local_pack_raws` fix). A
+        // stale Worker sends no `scope_key` → fall back to the broad `general`
+        // scope (mirrors that resolver's `COALESCE(n.scope_key, 'general')`).
+        scope: if w.scope_key.trim().is_empty() {
+            "general".to_string()
+        } else {
+            w.scope_key
+        },
         namespace: if w.source.is_empty() { None } else { Some(w.source) },
     }
 }
@@ -1232,14 +1241,15 @@ mod tests {
             rationale: Some("leaks are a top breach vector".into()),
             enforcement: "mandatory".into(),
             source: "OWASP".into(),
-            area: "security".into(),
+            scope_key: "organization".into(),
         };
         let r = pack_rule_to_raw(w);
         assert_eq!(r.title, "Never log tokens");
         assert_eq!(r.content, "Applies at any log level.");
         assert_eq!(r.impact.as_deref(), Some("leaks are a top breach vector"));
         assert_eq!(r.enforcement, "mandatory");
-        assert_eq!(r.scope, "security");
+        // scope = the ADOPTION scope (a governance scope), NOT the pack area 'security'.
+        assert_eq!(r.scope, "organization", "adoption scope_key → scope (not pack area)");
         assert_eq!(r.namespace.as_deref(), Some("OWASP"));
     }
 
@@ -1252,9 +1262,13 @@ mod tests {
             rationale: None,
             enforcement: "advisory".into(),
             source: String::new(),
-            area: "process".into(),
+            scope_key: String::new(),
         };
-        assert!(pack_rule_to_raw(w).namespace.is_none());
+        let r = pack_rule_to_raw(w);
+        assert!(r.namespace.is_none());
+        // A stale Worker that sends no scope_key falls back to the broad 'general'
+        // scope (never the pack area) — mirrors resolve_local_pack_raws' COALESCE.
+        assert_eq!(r.scope, "general", "empty wire scope_key → general fallback");
     }
 
     // ── generalise (project-agnostic rewrite) pure helpers ──────────────────

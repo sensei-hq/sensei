@@ -496,8 +496,14 @@ pub struct PackRuleWire {
     pub enforcement: String,
     #[serde(default)]
     pub source: String,
+    /// The GOVERNANCE scope the pack was ADOPTED at (the adoption namespace's
+    /// `scope_key`), NOT the pack's own area/category — so a federated pack rule
+    /// groups on the same scope axis as a memory. Empty from a stale Worker →
+    /// the daemon falls back to `general` (see `pack_rule_to_raw`). The Worker
+    /// still sends `area` (the category) but the daemon no longer reads it —
+    /// serde ignores the unknown field.
     #[serde(default)]
-    pub area: String,
+    pub scope_key: String,
 }
 
 /// The `rules/resolved` response envelope: `{ rules: [...] }`.

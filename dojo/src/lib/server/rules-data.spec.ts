@@ -25,6 +25,7 @@ import {
 	maxTier,
 	effectivePackRuleTier,
 	parseNamespacePairs,
+	composeAdoptedPackRules,
 	type DojoClient
 } from './rules-data';
 
@@ -410,5 +411,65 @@ describe('rule-pack tier precedence', () => {
 		]);
 		expect(parseNamespacePairs('')).toEqual([]);
 		expect(parseNamespacePairs('garbage,,:x,y:')).toEqual([]);
+	});
+});
+
+describe('composeAdoptedPackRules — pack rules carry their ADOPTION scope', () => {
+	const packs = [{ id: 'pk1', area: 'security', source: 'OWASP' }];
+	const rules = [
+		{ id: 'r1', pack_id: 'pk1', ordinal: 1, statement: 'S1', body: 'B1', rationale: 'why', enforcement: 'advisory', verification: 'manual', checker_ref: null, remediation: null, skill_ref: null, applies_to: null },
+		{ id: 'r2', pack_id: 'pk1', ordinal: 2, statement: 'S2', body: 'B2', rationale: null, enforcement: 'mandatory', verification: 'manual', checker_ref: null, remediation: null, skill_ref: null, applies_to: null }
+	];
+
+	it('scopes a rule by the adoption namespace scope_key, NOT the pack area', () => {
+		const out = composeAdoptedPackRules(
+			[{ pack_id: 'pk1', namespace_id: 'ns-org', enforcement: null }],
+			[{ id: 'ns-org', scope_key: 'organization' }],
+			packs,
+			rules
+		);
+		expect(out.map((r) => r.scope_key)).toEqual(['organization', 'organization']);
+		expect(out.every((r) => r.scope_key !== 'security')).toBe(true); // never the pack area
+		expect(out.map((r) => r.statement)).toEqual(['S1', 'S2']); // ordinal order
+		expect(out[0].source).toBe('OWASP');
+	});
+
+	it('applies the adoption override never-weaken (raises advisory, keeps mandatory)', () => {
+		const out = composeAdoptedPackRules(
+			[{ pack_id: 'pk1', namespace_id: 'ns-org', enforcement: 'required' }],
+			[{ id: 'ns-org', scope_key: 'organization' }],
+			packs,
+			rules
+		);
+		expect(out.find((r) => r.statement === 'S1')?.enforcement).toBe('required'); // advisory → required
+		expect(out.find((r) => r.statement === 'S2')?.enforcement).toBe('mandatory'); // not weakened
+	});
+
+	it('emits a rule per adopting namespace, each at its own scope (daemon dedups downstream)', () => {
+		const out = composeAdoptedPackRules(
+			[
+				{ pack_id: 'pk1', namespace_id: 'ns-org', enforcement: null },
+				{ pack_id: 'pk1', namespace_id: 'ns-proj', enforcement: null }
+			],
+			[
+				{ id: 'ns-org', scope_key: 'organization' },
+				{ id: 'ns-proj', scope_key: 'project' }
+			],
+			packs,
+			rules
+		);
+		// r1 + r2 at organization, r1 + r2 at project.
+		expect(out.filter((r) => r.scope_key === 'organization').length).toBe(2);
+		expect(out.filter((r) => r.scope_key === 'project').length).toBe(2);
+	});
+
+	it('skips an adoption whose namespace is not in the resolved set', () => {
+		const out = composeAdoptedPackRules(
+			[{ pack_id: 'pk1', namespace_id: 'ns-unknown', enforcement: null }],
+			[{ id: 'ns-org', scope_key: 'organization' }],
+			packs,
+			rules
+		);
+		expect(out).toEqual([]);
 	});
 });
