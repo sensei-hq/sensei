@@ -3537,6 +3537,42 @@ impl PgStore {
         }).collect())
     }
 
+    /// Patterns a symbol participates in — FILE-level membership. `detected_patterns`
+    /// records file `instances`, not per-symbol members, so we match the symbol's
+    /// file: resolve nodes named `symbol` in the project's folders, then return the
+    /// project's patterns whose `instances[].file` is that node's file. `nodes.file_path`
+    /// is repo-RELATIVE and `instances[].file` is ABSOLUTE, so the match is an
+    /// equality-or-path-suffix. `[]` when the symbol's file is in no pattern
+    /// (honest-empty, NOT the old always-null mask that read a nonexistent `members`).
+    pub async fn patterns_for_symbol(
+        &self, project_id: &uuid::Uuid, folder_ids: &[uuid::Uuid], symbol: &str,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        if folder_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let rows: Vec<(uuid::Uuid, String, Option<String>, String, bool, Option<f64>, i32)> =
+            sqlx_core::query_as::query_as(
+                "SELECT DISTINCT p.id, p.name, p.family, p.lifecycle::text, p.is_anti_pattern, p.confidence::float8, p.instance_count
+                   FROM inference.detected_patterns p
+                  WHERE p.project_id = $1
+                    AND EXISTS (
+                        SELECT 1 FROM sensei.nodes n
+                        JOIN jsonb_array_elements(p.instances) e
+                          ON (e->>'file' = n.file_path OR e->>'file' LIKE '%/' || n.file_path)
+                        WHERE n.folder_id = ANY($2::uuid[]) AND n.name = $3 AND n.file_path <> ''
+                    )
+                  ORDER BY p.instance_count DESC",
+            )
+            .bind(project_id).bind(folder_ids).bind(symbol)
+            .fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id, name, family, lc, anti, conf, count)| {
+            serde_json::json!({
+                "id": id, "name": name, "family": family, "lifecycle": lc,
+                "is_anti_pattern": anti, "confidence": conf, "instance_count": count,
+            })
+        }).collect())
+    }
+
     /// Read a project's detected patterns for the L2 generator: `(id, folder_id,
     /// folder_label, name, is_anti_pattern, instance_count, instances_json_text)`.
     /// `instances` is returned as text (parsed by the caller) to avoid a sqlx
@@ -14699,6 +14735,26 @@ mod playbook_tests {
             let names = (d["a"]["name"].as_str(), d["b"]["name"].as_str());
             names == (Some("_dupfn_a"), Some("_dupfn_b")) || names == (Some("_dupfn_b"), Some("_dupfn_a"))
         }), "same-folder near-duplicate functions must surface (regression: the cross-folder-only predicate masked all monorepo dupes)");
+    }
+
+    #[tokio::test]
+    async fn patterns_for_symbol_matches_by_file_and_is_honest_empty() {
+        let Ok(pg) = PgStore::connect_test().await else { return; };
+        let u = uuid::Uuid::new_v4();
+        let pid = pg.create_project(&format!("_pfsproj_{u}"), None, None).await.unwrap();
+        pg.execute_raw("INSERT INTO sensei.folders_to_watch(id, path, name, status) VALUES('00000000-0000-0000-0000-000000000003','/_pfs','_pfs','watching'::sensei.watch_status) ON CONFLICT DO NOTHING").await.unwrap();
+        let fid = uuid::Uuid::new_v4();
+        pg.execute_raw(&format!("INSERT INTO sensei.folders(id, root_id, kind, name, path, abs_path, project_id) VALUES('{fid}','00000000-0000-0000-0000-000000000003','git'::sensei.folder_kind,'_pfs_{u}','_pfs','/_pfs/{u}','{pid}')")).await.unwrap();
+        // A node 'my_handler' at a repo-RELATIVE path; a project pattern whose instance is its ABSOLUTE form.
+        pg.execute_raw(&format!("INSERT INTO sensei.nodes(folder_id, kind, name, file_path, line_start, line_end) VALUES('{fid}','function'::sensei.node_kind,'my_handler','src/routes/x.rs',1,10)")).await.unwrap();
+        pg.execute_raw(&format!("INSERT INTO inference.detected_patterns(project_id, name, family, instance_count, instances) VALUES('{pid}','route-handler','route',1,'[{{\"file\":\"/_pfs/{u}/src/routes/x.rs\",\"line\":1}}]'::jsonb)")).await.unwrap();
+        // The symbol's file IS in the pattern's instances (abs↔rel reconciled) → match.
+        let hit = pg.patterns_for_symbol(&pid, &[fid], "my_handler").await.unwrap();
+        assert!(hit.iter().any(|p| p["name"] == "route-handler"),
+            "symbol's file matches the pattern instance (was always-null against a nonexistent members field)");
+        // A symbol in no pattern → honest empty, never a fabricated null.
+        let miss = pg.patterns_for_symbol(&pid, &[fid], "not_a_symbol").await.unwrap();
+        assert!(miss.is_empty(), "no file membership → honest empty");
     }
 
     #[tokio::test]
