@@ -76,6 +76,19 @@ describe('ScrProjectPreview — the resolved-constitution drill-in', () => {
 		expect(queryByText('Discarded by the ladder')).toBeNull();
 	});
 
+	it('shows an honest "resolves in your editor" state (no fabricated ladder) when the ladder is not federated', () => {
+		const { getByText, queryByText } = render(ScrProjectPreview, {
+			props: { project: company, ladder: [], conflicts: [] }
+		});
+		// Real project header still renders.
+		expect(getByText(company.name)).toBeTruthy();
+		// The honest-empty constitution state — NOT a fabricated ladder/toggle.
+		expect(getByText(/resolves in your editor/i)).toBeTruthy();
+		expect(queryByText('By layer')).toBeNull();
+		expect(queryByText('The ladder — broad → specific')).toBeNull();
+		expect(queryByText('Discarded by the ladder')).toBeNull();
+	});
+
 	it('toggles between by-layer and consolidated views', async () => {
 		const { getByText, queryByText } = render(ScrProjectPreview, {
 			props: { project: company, ladder, conflicts }
