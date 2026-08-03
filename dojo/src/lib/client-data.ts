@@ -189,6 +189,12 @@ function clientUrl(tenantKey: string, path: string): string {
 	return `${dojoApiUrl}/v1/t/${encodeTenant(tenantKey)}${path}`;
 }
 
+/** User-wide (non-tenant-scoped) `/v1/me` path — the caller's own cross-dōjō
+ *  reads, authorized by the JWT alone (no `{origin}/{org}` segment). */
+function meUrl(path: string): string {
+	return `${dojoApiUrl}/v1/me${path}`;
+}
+
 /** A GET returning a JSON envelope, with the bearer header. */
 async function getJson<T>(url: string, opts: DojoCallOpts): Promise<T> {
 	const f = opts.fetch ?? fetch;
@@ -395,6 +401,15 @@ export interface ProjectRow {
 /** `GET …/projects` — the org's projects (dojo.projects, tenant-scoped). */
 export async function listProjects(tenantKey: string, opts: DojoCallOpts = {}): Promise<ProjectRow[]> {
 	const data = await getJson<{ projects?: ProjectRow[] }>(clientUrl(tenantKey, '/projects'), opts);
+	return data.projects ?? [];
+}
+
+/** `GET /v1/me/projects` — the caller's projects across EVERY dōjō they belong
+ *  to (user-primary). Backs the personal `/you/projects` list. Not tenant-scoped
+ *  — authorized by the JWT + a `user_id` filter server-side. Honest-empty on a
+ *  missing key; a non-2xx throws `ClientApiError` (never []-as-success). */
+export async function listUserProjects(opts: DojoCallOpts = {}): Promise<ProjectRow[]> {
+	const data = await getJson<{ projects?: ProjectRow[] }>(meUrl('/projects'), opts);
 	return data.projects ?? [];
 }
 

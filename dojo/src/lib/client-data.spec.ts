@@ -12,6 +12,8 @@ import {
 	listAuditArtifacts,
 	listEngagements,
 	listIncidents,
+	listProjects,
+	listUserProjects,
 	updateEngagement,
 	updateIncident
 } from '$lib/client-data';
@@ -40,6 +42,29 @@ function headersOf(init?: RequestInit): Record<string, string> {
 describe('client-data reuses the shared dojo base url', () => {
 	it('defaults to same-origin (empty base)', () => {
 		expect(dojoApiUrl).toBe('');
+	});
+});
+
+describe('listProjects / listUserProjects — tenant vs user-wide reads', () => {
+	it('listProjects GETs the tenant-scoped projects path', async () => {
+		const projects = [{ id: 'p1' }];
+		const { fn, calls } = fakeFetch(200, { projects });
+		expect(await listProjects('github/globex', { fetch: fn })).toEqual(projects);
+		expect(calls[0].url).toBe(`${dojoApiUrl}/v1/t/github/globex/projects`);
+	});
+
+	it('listUserProjects GETs the user-wide /v1/me/projects path (no tenant)', async () => {
+		const projects = [{ id: 'p1' }, { id: 'p2' }];
+		const { fn, calls } = fakeFetch(200, { projects });
+		const out = await listUserProjects({ fetch: fn });
+		expect(out).toEqual(projects);
+		expect(calls[0].url).toBe(`${dojoApiUrl}/v1/me/projects`);
+		expect(calls[0].init?.method ?? 'GET').toBe('GET');
+	});
+
+	it('listUserProjects unwraps to [] on a missing envelope key (honest-empty)', async () => {
+		const { fn } = fakeFetch(200, {});
+		expect(await listUserProjects({ fetch: fn })).toEqual([]);
 	});
 });
 
