@@ -15,6 +15,8 @@ import {
 	listProjects,
 	listUserProjects,
 	getUserProjectConstitution,
+	listContributions,
+	adoptContribution,
 	updateEngagement,
 	updateIncident
 } from '$lib/client-data';
@@ -78,6 +80,26 @@ describe('listProjects / listUserProjects — tenant vs user-wide reads', () => 
 	it('getUserProjectConstitution returns null when none is federated (honest-empty)', async () => {
 		const { fn } = fakeFetch(200, { constitution: null });
 		expect(await getUserProjectConstitution('s', { fetch: fn })).toBeNull();
+	});
+
+	it('listContributions GETs /v1/you/contributions and unwraps { mine, downstream }', async () => {
+		const { fn, calls } = fakeFetch(200, { mine: [{ title: 'a' }], downstream: [{ title: 'b' }] });
+		const out = await listContributions({ fetch: fn });
+		expect(out).toEqual({ mine: [{ title: 'a' }], downstream: [{ title: 'b' }] });
+		expect(calls[0].url).toBe(`${dojoApiUrl}/v1/you/contributions`);
+	});
+
+	it('listContributions unwraps missing keys to [] (honest-empty)', async () => {
+		const { fn } = fakeFetch(200, {});
+		expect(await listContributions({ fetch: fn })).toEqual({ mine: [], downstream: [] });
+	});
+
+	it('adoptContribution POSTs the artifactId to the adopt path', async () => {
+		const { fn, calls } = fakeFetch(200, { ok: true });
+		await adoptContribution('art-1', { fetch: fn });
+		expect(calls[0].url).toBe(`${dojoApiUrl}/v1/you/contributions/adopt`);
+		expect(calls[0].init?.method).toBe('POST');
+		expect(JSON.parse(String(calls[0].init?.body))).toEqual({ artifactId: 'art-1' });
 	});
 });
 

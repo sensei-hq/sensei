@@ -36,13 +36,14 @@
 	import { tallyContributions } from '$lib/personal-view';
 
 	// Contributions (mockup ScrContributions) — merges the old "contributions +
-	// downstream" into one screen. The stat row (approved · in triage · devs
-	// helped), then what you've shared upstream with its per-destination status,
-	// then what's been approved for you downstream (never silently merged — you
-	// pin it in). You propose; a maintainer decides — nothing publishes without
-	// their named approval, and client work is anonymized before it leaves.
-	// Presentational: the page supplies the rows + stat (kit fixtures this
-	// chunk); `onPin` fires for a downstream item you pin locally.
+	// downstream" into one screen. The stat row (approved · in triage — the
+	// "devs helped" tile is dropped, F5 Q4: no real metric, no fabricated number),
+	// then what you've shared upstream with its per-destination status, then
+	// what's been approved for you downstream (never silently merged — you pin it
+	// in). You propose; a maintainer decides — nothing publishes without their
+	// named approval; every source is dereferenced before it leaves (universal,
+	// always-on — the `anonymous` marker is credit-only). Presentational: the page
+	// supplies the rows; `onPin` fires the real adopt write for a pinned item.
 	let {
 		mine = [],
 		downstream = [],
@@ -66,7 +67,6 @@
 			<div class="flex items-center gap-4">
 				<StatBadge n={tally.approved} label="approved" toneClass="text-success" />
 				<StatBadge n={tally.pending} label="in triage" toneClass="text-accent" />
-				<StatBadge n={tally.helped} label="devs helped" sub="lifetime" />
 			</div>
 		{/snippet}
 	</SectionHead>
@@ -77,7 +77,7 @@
 		title="You propose; a maintainer decides — nothing publishes without their named approval."
 	>
 		You share from a session's ready-to-share lane; it lands in the bound dōjō's triage queue.
-		Client work is anonymized before it leaves — the lesson travels, the client never does.
+		Every source is dereferenced before it leaves — the lesson travels, the source never does.
 	</Banner>
 
 	<ListSection icon="upload-square" title="What you've shared" count={mine.length}>
@@ -88,12 +88,12 @@
 				<div class="flex-1" style="min-width: 0">
 					<div class="text-ink text-sm" style="line-height: 1.3">{c.title}</div>
 					<div class="flex flex-wrap items-center gap-2" style="margin-top: 2px">
-						{#if c.client}
+						{#if c.anonymous}
 							<Chip
-								icon="shield-check"
+								icon="eye-closed"
 								toneClass="text-accent"
 								softClass="bg-accent-soft"
-								edgeClass="border-accent-soft">{c.dest}</Chip
+								edgeClass="border-accent-soft">{c.dest} · anonymous</Chip
 							>
 						{:else}
 							<Chip>{c.dest}</Chip>

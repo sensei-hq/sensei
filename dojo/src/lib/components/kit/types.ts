@@ -346,13 +346,17 @@ export interface KitContribution {
 	when: string;
 	/** A short line on the outcome / where it sits. */
 	note: string;
-	/** Client work — anonymized before it left; carries a shield marker. */
-	client?: boolean;
+	/** Contributed without credit (`attribution_mode = anonymous`) — carries an
+	 *  anonymity marker. Dereference is universal/always-on (canon Rule B); this
+	 *  is credit-only, not a client-vs-non-client flag. */
+	anonymous?: boolean;
 }
 
 /** A downstream item approved for you from a dōjō (dojo2-data
  *  `contributions.downstream[]`). Never silently merged — you pin it in. */
 export interface KitDownstream {
+	/** The artifact id — the key the Pin/adopt write targets (absent in fixtures). */
+	id?: string;
 	kanji: string;
 	title: string;
 	/** The dōjō it came from. */
