@@ -26,6 +26,7 @@
 // render off an injected/empty fixture until Jerry wires a real lead session.
 
 import { DojoApiError, authHeaders, dojoApiUrl, encodeTenant, parseJson } from './dojo-api';
+import type { RelayConstitution } from './constitution-map';
 import type { DojoCallOpts } from './dojo-api';
 
 // Re-export the shared error under the client name so lead screens
@@ -412,6 +413,21 @@ export async function listProjects(tenantKey: string, opts: DojoCallOpts = {}): 
 export async function listUserProjects(opts: DojoCallOpts = {}): Promise<ProjectRow[]> {
 	const data = await getJson<{ projects?: ProjectRow[] }>(youUrl('/projects'), opts);
 	return data.projects ?? [];
+}
+
+/** `GET /v1/you/projects/{slug}/constitution` — the daemon-resolved constitution
+ *  for one of the caller's projects (F4 drill-in). `slug` may contain slashes (a
+ *  dereferenced identity); each segment is encoded, slashes preserved, to match
+ *  the route's rest param. `null` when none is federated yet (honest-empty). */
+export async function getUserProjectConstitution(
+	slug: string,
+	opts: DojoCallOpts = {}
+): Promise<RelayConstitution | null> {
+	const data = await getJson<{ constitution?: RelayConstitution | null }>(
+		youUrl(`/projects/${encodeTenant(slug)}/constitution`),
+		opts
+	);
+	return data.constitution ?? null;
 }
 
 /** `POST …/incidents` — open a confidentiality incident (lead). */

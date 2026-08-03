@@ -10,6 +10,7 @@ create table if not exists dojo.projects (
 , phase          dojo.project_phase            not null default 'watch'
 , last_run_at    timestamptz
 , runs_week      integer                       not null default 0
+, constitution   jsonb
 , created_at     timestamptz                   not null default now()
 , updated_at     timestamptz                   not null default now()
 , constraint projects_user_slug_unique unique (user_id, slug)
@@ -41,6 +42,13 @@ comment on column dojo.projects.phase
      is 'watch | notice | adopt — adoption phase in the loop. Semantic order, but the enum deploys alphabetically; rank in code.';
 comment on column dojo.projects.runs_week
      is 'Relay runs against this project in the trailing week (mirrored from the daemon for the projects list).';
+comment on column dojo.projects.constitution
+     is 'The daemon-resolved governing constitution for the per-project drill-in
+(F4), as the RelayConstitution wire shape: {rules:[{level,text,hard}],
+conflicts:[{topic,loser_level,winner_level,why,locked}],locks}. The daemon OWNS
+resolution (dedup + mandatory locks + discards); the dōjō only displays it, never
+re-resolves. Null until the daemon federates it → the dōjō shows its "resolves in
+your editor" state (honest-empty, never a fabricated ladder).';
 
 -- Row-level security — the client-direct read path connects as `authenticated`;
 -- RLS narrows to the user's own projects. A table-level GRANT is still required

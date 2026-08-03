@@ -1,5 +1,13 @@
 import { describe, it, expect } from 'vitest';
-import { rulesToLadder, rulesToSections, isHardRule, type ConstitutionRule } from './constitution-map';
+import {
+	rulesToLadder,
+	rulesToSections,
+	relayRules,
+	relayToKitConflicts,
+	isHardRule,
+	type ConstitutionRule,
+	type RelayConstitution
+} from './constitution-map';
 
 const rule = (scope_key: string, title: string, enforcement = 'required'): ConstitutionRule => ({
 	scope_key,
@@ -51,6 +59,55 @@ describe('rulesToLadder', () => {
 	it('routes an unknown scope to the fallback rung, sorted last', () => {
 		const rungs = rulesToLadder([rule('wildcard', 'x'), rule('user', 'u')]);
 		expect(rungs.map((r) => r.scope)).toEqual(['Personal', 'Other']);
+	});
+});
+
+const CONSTITUTION: RelayConstitution = {
+	rules: [
+		{ scope_key: 'organization', namespace: 'Acme', title: 'never log secrets', enforcement: 'mandatory' },
+		{ scope_key: 'project', namespace: null, title: 'prefer early returns', enforcement: 'recommended' }
+	],
+	conflicts: [
+		{
+			topic: 'never log secrets',
+			loser_scope: 'repository',
+			winner_scope: 'organization',
+			why: 'a higher-authority scope already states this rule',
+			locked: true
+		}
+	],
+	locks: 1
+};
+
+describe('relayRules — federated constitution → ConstitutionRule[] (reuses rulesToLadder)', () => {
+	it('maps scope_key/title/enforcement through and uses the namespace as the rung name', () => {
+		const rungs = rulesToLadder(relayRules(CONSTITUTION));
+		expect(rungs.map((r) => r.scope)).toEqual(['Company', 'Project']);
+		const company = rungs.find((r) => r.scope === 'Company')!;
+		expect(company.name).toBe('Acme'); // real namespace name, not a stub
+		expect(company.rules?.[0]).toMatchObject({ text: 'never log secrets', hard: true });
+	});
+
+	it('falls back to the scope label when a rule has no namespace (honest, not blank)', () => {
+		const rungs = rulesToLadder(relayRules(CONSTITUTION));
+		expect(rungs.find((r) => r.scope === 'Project')!.name).toBe('Project');
+	});
+});
+
+describe('relayToKitConflicts — discards → KitConflict[] (daemon-computed winner/loser)', () => {
+	it('maps each discard to both sides with the shared topic + the ★ lock', () => {
+		const conflicts = relayToKitConflicts(CONSTITUTION);
+		expect(conflicts).toHaveLength(1);
+		expect(conflicts[0]).toMatchObject({
+			topic: 'never log secrets',
+			loser: { level: 'Repository', text: 'never log secrets' },
+			winner: { level: 'Company', text: 'never log secrets' },
+			locked: true
+		});
+	});
+
+	it('is empty when nothing was discarded', () => {
+		expect(relayToKitConflicts({ rules: [], conflicts: [], locks: 0 })).toEqual([]);
 	});
 });
 

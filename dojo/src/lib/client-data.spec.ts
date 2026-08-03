@@ -14,6 +14,7 @@ import {
 	listIncidents,
 	listProjects,
 	listUserProjects,
+	getUserProjectConstitution,
 	updateEngagement,
 	updateIncident
 } from '$lib/client-data';
@@ -65,6 +66,18 @@ describe('listProjects / listUserProjects — tenant vs user-wide reads', () => 
 	it('listUserProjects unwraps to [] on a missing envelope key (honest-empty)', async () => {
 		const { fn } = fakeFetch(200, {});
 		expect(await listUserProjects({ fetch: fn })).toEqual([]);
+	});
+
+	it('getUserProjectConstitution GETs the per-project constitution path (slug slashes preserved)', async () => {
+		const constitution = { rules: [], conflicts: [], locks: 0 };
+		const { fn, calls } = fakeFetch(200, { constitution });
+		expect(await getUserProjectConstitution('acme/ledger', { fetch: fn })).toEqual(constitution);
+		expect(calls[0].url).toBe(`${dojoApiUrl}/v1/you/projects/acme/ledger/constitution`);
+	});
+
+	it('getUserProjectConstitution returns null when none is federated (honest-empty)', async () => {
+		const { fn } = fakeFetch(200, { constitution: null });
+		expect(await getUserProjectConstitution('s', { fetch: fn })).toBeNull();
 	});
 });
 

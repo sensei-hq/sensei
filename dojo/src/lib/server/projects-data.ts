@@ -56,6 +56,29 @@ export async function listUserProjects(db: DojoClient, userId: string): Promise<
 }
 
 /**
+ * The daemon-resolved constitution jsonb for one of the caller's projects (the
+ * F4 drill-in read), scoped by `user_id` + `slug` (the filter IS the authz).
+ * Returns the stored `RelayConstitution` shape, or `null` when the project has no
+ * federated constitution yet OR there is no such row for this user (both → the
+ * dōjō shows its honest "resolves in your editor" state). Fails closed on a query
+ * error (AdminError 500) — never a fabricated constitution.
+ */
+export async function getUserProjectConstitution(
+	db: DojoClient,
+	userId: string,
+	slug: string
+): Promise<unknown | null> {
+	const { data, error } = await db
+		.from('projects')
+		.select('constitution')
+		.eq('user_id', userId)
+		.eq('slug', slug)
+		.maybeSingle();
+	if (error) throw new AdminError(500, error.message);
+	return (data as { constitution?: unknown } | null)?.constitution ?? null;
+}
+
+/**
  * Count the tenant's projects (for the org-home / my-dojos project count). One
  * head/count query; fails closed.
  */
@@ -74,6 +97,11 @@ export interface RunProjectInput {
 	name: string;
 	classification: string;
 	phase: string;
+	/** The daemon-resolved constitution (the `RelayConstitution` jsonb) for the
+	 *  drill-in preview (F4). Written when present; OMITTED when absent so an
+	 *  existing resolution is preserved on conflict (like `phase`), never nulled
+	 *  by a heartbeat that didn't carry one. */
+	constitution?: unknown;
 }
 
 /**
@@ -93,17 +121,21 @@ export async function upsertProjectFromRun(
 	p: RunProjectInput
 ): Promise<void> {
 	const nowIso = new Date().toISOString();
-	const { error } = await db.from('projects').upsert(
-		{
-			user_id: caller.userId,
-			tenant_id: p.classification === 'personal' ? null : caller.tenantId,
-			slug: p.slug,
-			name: p.name,
-			classification: p.classification,
-			last_run_at: nowIso,
-			updated_at: nowIso
-		},
-		{ onConflict: 'user_id,slug' }
-	);
+	const row: Record<string, unknown> = {
+		user_id: caller.userId,
+		tenant_id: p.classification === 'personal' ? null : caller.tenantId,
+		slug: p.slug,
+		name: p.name,
+		classification: p.classification,
+		last_run_at: nowIso,
+		updated_at: nowIso
+	};
+	// Write the constitution only when the daemon federated one — omitting the key
+	// leaves any existing resolution untouched on conflict (never nulled), the same
+	// preserve-on-conflict discipline as `phase`.
+	if (p.constitution !== undefined && p.constitution !== null) {
+		row.constitution = p.constitution;
+	}
+	const { error } = await db.from('projects').upsert(row, { onConflict: 'user_id,slug' });
 	if (error) throw new AdminError(500, error.message);
 }

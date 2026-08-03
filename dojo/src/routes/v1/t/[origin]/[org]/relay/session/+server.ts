@@ -115,7 +115,10 @@ export const POST: RequestHandler = async ({ params, request, platform }) => {
 					slug: str(project.slug) as string,
 					name: str(project.name) as string,
 					classification: str(project.classification) ?? 'personal',
-					phase: str(project.phase) ?? 'watch'
+					phase: str(project.phase) ?? 'watch',
+					// The daemon-resolved constitution (F4) — a nested object, passed
+					// through to the jsonb column; absent → preserved on conflict.
+					constitution: project.constitution
 				}
 			).catch(() => {});
 			if (platform?.context?.waitUntil) platform.context.waitUntil(projWork);
