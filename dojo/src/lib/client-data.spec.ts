@@ -20,6 +20,7 @@ import {
 	createDojo,
 	createInvite,
 	acceptInvite,
+	syncGithubOrgs,
 	updateEngagement,
 	updateIncident
 } from '$lib/client-data';
@@ -128,6 +129,14 @@ describe('listProjects / listUserProjects — tenant vs user-wide reads', () => 
 		expect(out).toEqual({ tenant_id: 't1', role: 'contributor' });
 		expect(calls[0].url).toBe(`${dojoApiUrl}/v1/you/invites/accept`);
 		expect(JSON.parse(String(calls[0].init?.body))).toEqual({ token: 'tok' });
+	});
+
+	it('syncGithubOrgs POSTs to /v1/you/github/sync (F3c) and returns joined', async () => {
+		const { fn, calls } = fakeFetch(200, { joined: ['github/acme'], synced: true });
+		const out = await syncGithubOrgs({ fetch: fn });
+		expect(out).toEqual({ joined: ['github/acme'], synced: true });
+		expect(calls[0].url).toBe(`${dojoApiUrl}/v1/you/github/sync`);
+		expect(calls[0].init?.method).toBe('POST');
 	});
 });
 

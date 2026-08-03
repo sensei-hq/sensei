@@ -447,6 +447,15 @@ export async function createDojo(
 	return sendJson(youUrl('/dojos'), 'POST', { name, kind }, opts);
 }
 
+/** `POST /v1/you/github/sync` — auto-join the caller into the github/{org} dōjōs
+ *  they belong to (F3c), using their GitHub OAuth session token server-side.
+ *  Returns the tenant keys joined this pass + whether a GitHub sync ran. */
+export async function syncGithubOrgs(
+	opts: DojoCallOpts = {}
+): Promise<{ joined: string[]; synced: boolean }> {
+	return sendJson(youUrl('/github/sync'), 'POST', {}, opts);
+}
+
 /** `POST /v1/t/{tenant}/invites` — an admin issues a magic-link invite (F3b).
  *  Returns the invite incl. the single-use `token` for the accept link. Throws
  *  `ClientApiError` on a non-2xx (403 below admin, 400 invalid). */
