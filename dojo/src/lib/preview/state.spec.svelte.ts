@@ -26,10 +26,11 @@ describe('createProjectPreview — reactive drill-in state', () => {
 
 	it('exposes the resolved rungs, effective rules, discards and counts', () => {
 		const p = createProjectPreview(company, ladder, conflicts);
-		expect(p.rungs.length).toBe(4); // company + personal + project + stack
+		// every composed scope (company · client · personal · stack) + the synth project anchor
+		expect(p.rungs.length).toBe(5);
 		expect(p.effective.length).toBeGreaterThan(0);
 		expect(p.discarded.length).toBe(conflicts.length);
-		expect(p.locks).toBe(3);
+		expect(p.locks).toBe(4); // company (3) + client (1)
 		expect(p.showConflicts).toBe(true);
 	});
 

@@ -5,9 +5,10 @@
 //
 // This is deliberately SEPARATE from the shipped `preview-view.ts` (which the
 // (console) group's deeper resolution engine owns): the mockup's model is the
-// simpler one — a project's classification picks which rung ids compose, the
-// ladder discards the losing side of each fixture conflict, and the
-// consolidated view is those rungs' rules minus the discarded copy. Pure over
+// simpler one — the daemon composed the ladder (it owns scoping), so we render
+// every rung it resolved broad→specific, the ladder discards the losing side of
+// each conflict, and the consolidated view is those rungs' rules minus the
+// discarded copy. `classification` only gates whether conflicts show. Pure over
 // plain data so it unit-tests without a DOM.
 
 import type { KitConflict, KitLadderRung, KitProject, KitRule } from '../components/kit/types';
@@ -16,29 +17,20 @@ import type { KitConflict, KitLadderRung, KitProject, KitRule } from '../compone
  *  entered from attached (drives the "by layer" jump + the level chip). */
 export type EffectiveRule = KitRule & { level: string };
 
-/** The rung ids a classification composes, broad → specific (mockup
- *  `previewRungs`): a personal project stands on its own ladder; a client
- *  engagement layers the company baseline + the client rung under it; anything
- *  else (company/community) layers the company baseline. */
-export function scopeIdsFor(classification: string): string[] {
-	if (classification === 'personal') return ['personal', 'project', 'stack'];
-	if (classification === 'client') return ['company', 'client', 'personal', 'project', 'stack'];
-	return ['company', 'personal', 'project', 'stack'];
-}
-
-/** The ladder rungs that compose a project's constitution, in broad → specific
- *  order. Rungs the fixtures define carry their rules; a scope with no fixture
- *  rung (project · stack) synthesizes a stub so the ladder is always complete.
- *  The `project` rung is relabelled to the project's own name (mockup). */
+/** The ladder rungs that compose a project's constitution, broad → specific.
+ *  The daemon OWNS scoping — it resolves exactly the scopes that apply to this
+ *  repo (memories + adopted packs at their adoption scope) — so the dōjō renders
+ *  that ladder faithfully and never re-filters by classification. Re-filtering
+ *  (the old mockup scaffold) silently dropped every composed scope whose key
+ *  wasn't one of a hardcoded few (e.g. `general`, `organization`, `team`), so a
+ *  real 30-rule constitution showed as one rule. The `project` rung is relabelled
+ *  to the project's own name; when the daemon composed no project-scoped rung, an
+ *  empty one is synthesized as the most-specific anchor so the ladder always ends
+ *  at the repository (honest empty, never a fabricated rule). */
 export function previewRungs(project: KitProject, ladder: KitLadderRung[]): KitLadderRung[] {
-	const byId = new Map(ladder.map((r) => [r.id, r]));
-	return scopeIdsFor(project.classification).map((id) => {
-		const rung = byId.get(id);
-		if (rung) return id === 'project' ? { ...rung, name: project.name } : rung;
-		// A scope the fixtures don't define — synthesize an empty rung so the
-		// ladder still shows it (honest empty rather than a gap).
-		return synthRung(id, project);
-	});
+	const rungs = ladder.map((r) => (r.id === 'project' ? { ...r, name: project.name } : r));
+	if (!rungs.some((r) => r.id === 'project')) rungs.push(projectAnchor(project));
+	return rungs;
 }
 
 /** Whether the ladder shows its discarded conflicts — only non-personal work
@@ -74,29 +66,16 @@ export function lockCount(rungs: KitLadderRung[]): number {
 
 // ── internals ────────────────────────────────────────────────────────────────
 
-/** Human scope label + kanji + caption for a synthesized rung (a scope the
- *  fixtures don't carry). Keeps the ladder complete without fabricating rules. */
-function synthRung(id: string, project: KitProject): KitLadderRung {
-	switch (id) {
-		case 'project':
-			return {
-				id,
-				kanji: '件',
-				scope: 'Project',
-				name: project.name,
-				caption: 'this repository · most specific',
-				rules: []
-			};
-		case 'stack':
-			return {
-				id,
-				kanji: '技',
-				scope: 'Stack',
-				name: 'toolchain',
-				caption: 'the stack this project runs on',
-				rules: []
-			};
-		default:
-			return { id, kanji: '·', scope: id, name: id, caption: '', rules: [] };
-	}
+/** The most-specific "this repository" anchor rung — synthesized empty when the
+ *  daemon composed no project-scoped rule, so the ladder always ends at the repo
+ *  (honest empty, never a fabricated rule). */
+function projectAnchor(project: KitProject): KitLadderRung {
+	return {
+		id: 'project',
+		kanji: '件',
+		scope: 'Project',
+		name: project.name,
+		caption: 'this repository · most specific',
+		rules: []
+	};
 }

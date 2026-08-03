@@ -8108,8 +8108,11 @@ impl PgStore {
     /// clause match nothing, leaving only the general/user adoptions.
     /// Effective tier is never-weaken: an adoption override can only RAISE a rule's
     /// enforcement, never lower it (ranked in SQL so the enum's storage order does
-    /// not matter). Maps to `RawRule` like the remote `pack_rule_to_raw`: scope =
-    /// the pack area, namespace = the pack source.
+    /// not matter). Maps to `RawRule`: scope = the GOVERNANCE scope the pack was
+    /// ADOPTED at (the adoption namespace's `scope_key` — general/user/project/…, as
+    /// `resolve_rules_raw` does for memories), NOT the pack's own area/category, so
+    /// the constitution ladder groups pack rules on the same scope axis as memories;
+    /// namespace = the pack source.
     pub async fn resolve_local_pack_raws(
         &self,
         folder_id: Option<&uuid::Uuid>,
@@ -8121,11 +8124,12 @@ impl PgStore {
                              WHEN (CASE a.enforcement::text WHEN 'advisory' THEN 1 WHEN 'recommended' THEN 2 WHEN 'required' THEN 3 WHEN 'mandatory' THEN 4 ELSE 0 END)
                                 > (CASE r.enforcement::text WHEN 'advisory' THEN 1 WHEN 'recommended' THEN 2 WHEN 'required' THEN 3 WHEN 'mandatory' THEN 4 ELSE 0 END)
                              THEN a.enforcement::text ELSE r.enforcement::text END,
-                        p.area::text,
+                        COALESCE(n.scope_key, 'general'),
                         p.source
                    FROM sensei.rule_pack_adoptions a
                    JOIN sensei.rule_packs p      ON p.id = a.pack_id
                    JOIN sensei.rule_pack_rules r ON r.pack_id = p.id
+                   LEFT JOIN sensei.namespaces n ON n.id = a.namespace_id
                   WHERE a.namespace_id IN (
                             SELECT namespace_id FROM sensei.folder_namespaces WHERE folder_id = $1)
                      OR a.namespace_id IN (
@@ -14826,7 +14830,8 @@ mod pack_resolution_tests {
     //! DB-backed: `resolve_local_pack_raws` folds ADOPTED rule-pack rules into the
     //! local governance ladder (D-LOCAL-PACKS) — the offline half of the two-plane
     //! resolution. Proves the field mapping (statement→title, body→content,
-    //! rationale→impact, area→scope, source→namespace), never-weaken effective
+    //! rationale→impact, adoption-namespace scope_key→scope, source→namespace),
+    //! never-weaken effective
     //! enforcement (an adoption tier LIFTS a weaker rule but never LOWERS a stronger
     //! one), and that an UN-adopted pack governs nothing. Self-skips when the test DB
     //! is absent, like the neighbouring pg_store tests.
@@ -14893,7 +14898,11 @@ mod pack_resolution_tests {
         let r1 = raws.iter().find(|r| r.title == "S1").unwrap();
         assert_eq!(r1.content, "B1", "body → content");
         assert_eq!(r1.impact.as_deref(), Some("R1"), "rationale → impact");
-        assert_eq!(r1.scope, "principles", "area → scope");
+        // scope = the GOVERNANCE scope the pack was ADOPTED at (this pack is adopted
+        // at the 'general' namespace), NOT the pack's own area/category ('principles').
+        // The constitution ladder groups by governance scope, so a rule must carry the
+        // scope it entered at — mirrors `resolve_rules_raw` (memories use n.scope_key).
+        assert_eq!(r1.scope, "general", "adoption namespace scope_key → scope (not pack area)");
         assert_eq!(r1.namespace.as_deref(), Some("TestSource"), "source → namespace");
         assert_eq!(r1.enforcement, "recommended",
             "an advisory rule is LIFTED to the stronger 'recommended' adoption tier");
@@ -14947,18 +14956,21 @@ mod pack_resolution_tests {
 
         let raws = pg.resolve_local_pack_raws(Some(&uuid::Uuid::new_v4())).await.unwrap();
 
-        // A mandatory principle resolves, mapped by area→scope.
+        // A mandatory principle resolves, scoped by the ADOPTION (the three
+        // constitution packs auto-adopt at the 'general' namespace), NOT the pack area.
         let measure = raws.iter().find(|r| r.title == "Measure, then keep what helps")
             .expect("constitution principle resolves offline");
         assert_eq!(measure.enforcement, "mandatory");
-        assert_eq!(measure.scope, "principles", "pack area → rule scope");
+        assert_eq!(measure.scope, "general", "adopted at general → scope 'general' (not pack area)");
 
         // The 21 adopted constitution rules resolve (4 + 5 + 12); stack templates do not.
+        // All three packs are adopted at the SAME 'general' namespace, so every rule
+        // now carries scope 'general' (the adoption scope) regardless of its pack area.
         let constitution = raws.iter()
-            .filter(|r| r.scope == "principles" || r.scope == "architecture" || r.scope == "process")
+            .filter(|r| r.scope == "general")
             .filter(|r| r.namespace.as_deref() == Some("sensei default constitution (DORA · XP/CD · Core Protocols)"))
             .count();
-        assert_eq!(constitution, 21, "all constitution rules resolve (idempotent re-seed did not duplicate)");
+        assert_eq!(constitution, 21, "all constitution rules resolve at the adoption scope (idempotent re-seed did not duplicate)");
         assert!(!raws.iter().any(|r| r.title.contains("[stack:")),
             "stack-templates is seeded but NOT adopted — its rules must not resolve");
 

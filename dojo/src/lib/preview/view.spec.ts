@@ -1,14 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import {
-	previewRungs,
-	discardedTexts,
-	effectiveRules,
-	showsConflicts,
-	lockCount,
-	scopeIdsFor
-} from './view';
+import { previewRungs, discardedTexts, effectiveRules, showsConflicts, lockCount } from './view';
 import { ladder, conflicts } from '../components/kit/fixtures';
-import type { KitProject } from '../components/kit/types';
+import type { KitLadderRung, KitProject } from '../components/kit/types';
 
 // Pure derivations behind the dojo project-constitution preview (mockup
 // ScrProjectPreview `previewRungs` / `showConflicts` / `effective`). Kept as a
@@ -37,38 +30,40 @@ const client: KitProject = {
 	phase: 'adopt'
 };
 
-describe('scopeIdsFor — the rung ids a classification composes', () => {
-	it('personal composes personal → project → stack', () => {
-		expect(scopeIdsFor('personal')).toEqual(['personal', 'project', 'stack']);
-	});
-
-	it('client composes company → client → personal → project → stack', () => {
-		expect(scopeIdsFor('client')).toEqual(['company', 'client', 'personal', 'project', 'stack']);
-	});
-
-	it('company (default) composes company → personal → project → stack', () => {
-		expect(scopeIdsFor('company')).toEqual(['company', 'personal', 'project', 'stack']);
-	});
-});
-
 describe('previewRungs — the ladder for a project', () => {
 	it('renames the project rung to the project name', () => {
-		const rungs = previewRungs(personal, ladder);
+		const withProject: KitLadderRung[] = [
+			{ id: 'general', kanji: '全', scope: 'General', name: 'General', caption: '', rules: [] },
+			{ id: 'project', kanji: '件', scope: 'Project', name: 'placeholder', caption: '', rules: [] }
+		];
+		const rungs = previewRungs(personal, withProject);
 		const project = rungs.find((r) => r.id === 'project');
 		expect(project?.name).toBe('personal-site');
+		// A composed project rung is reused (relabelled), never duplicated by a synth anchor.
+		expect(rungs.filter((r) => r.id === 'project').length).toBe(1);
 	});
 
-	it('only includes rungs the fixtures define (unknown ids are dropped)', () => {
-		// the kit fixture ladder defines company / client / personal only — the
-		// project / stack ids have no fixture rung, so they synthesize a stub.
+	it('renders EVERY scope the daemon composed — never drops one the old scaffold omitted', () => {
+		// The regression: the daemon federates rules at governance scopes the mockup
+		// scaffold never listed (general · organization · team). previewRungs must
+		// render them all, or a real 30-rule constitution shows as one rule.
+		const composed: KitLadderRung[] = [
+			{ id: 'general', kanji: '全', scope: 'General', name: 'General', caption: '', rules: [
+				{ kanji: '守', text: 'g1', hard: true }, { kanji: '守', text: 'g2', hard: false }] },
+			{ id: 'organization', kanji: '社', scope: 'Company', name: 'Acme', caption: '', rules: [
+				{ kanji: '守', text: 'o1', hard: false }] },
+			{ id: 'project', kanji: '件', scope: 'Project', name: 'x', caption: '', rules: [
+				{ kanji: '守', text: 'p1', hard: false }] }
+		];
+		const ids = previewRungs(personal, composed).map((r) => r.id);
+		expect(ids).toEqual(['general', 'organization', 'project']);
+	});
+
+	it('synthesizes an empty project anchor when the daemon composed no project rung', () => {
+		// the kit fixture ladder is company / client / personal / stack — no project.
 		const rungs = previewRungs(client, ladder);
-		expect(rungs.map((r) => r.id)).toEqual(['company', 'client', 'personal', 'project', 'stack']);
-	});
-
-	it('a personal project omits the company + client rungs', () => {
-		const ids = previewRungs(personal, ladder).map((r) => r.id);
-		expect(ids).not.toContain('company');
-		expect(ids).not.toContain('client');
+		expect(rungs.map((r) => r.id)).toEqual(['company', 'client', 'personal', 'stack', 'project']);
+		expect(rungs.at(-1)?.rules).toEqual([]); // the anchor is honest-empty
 	});
 });
 
@@ -116,21 +111,25 @@ describe('effectiveRules — the consolidated constitution', () => {
 
 	it('a personal project keeps every rule (nothing discarded)', () => {
 		const rules = effectiveRules(personal, ladder, conflicts);
-		// personal ladder = personal + project + stack; only personal has fixtures.
+		// A personal project settles no conflicts, so every composed rung rule survives.
 		expect(rules.length).toBeGreaterThan(0);
 		expect(discardedTexts(personal, conflicts)).toEqual([]);
 	});
 });
 
 describe('lockCount — the non-negotiable (★) rules across the ladder', () => {
-	it('counts the hard rules in the composed rungs', () => {
+	it('counts the hard rules across every composed rung', () => {
 		const rungs = previewRungs(company, ladder);
-		// company rung has 3 hard rules in the fixture; personal/project/stack none.
-		expect(lockCount(rungs)).toBe(3);
+		// The fixture ladder carries 4 hard rules: company (3) + client (1);
+		// personal / stack / the synth project anchor add none.
+		expect(lockCount(rungs)).toBe(4);
 	});
 
-	it('is zero when no rung has a hard rule (personal-only ladder)', () => {
-		const rungs = previewRungs(personal, ladder);
-		expect(lockCount(rungs)).toBe(0);
+	it('is zero when no composed rung has a hard rule', () => {
+		const soft: KitLadderRung[] = [
+			{ id: 'general', kanji: '全', scope: 'General', name: 'General', caption: '', rules: [
+				{ kanji: '守', text: 's1', hard: false }] }
+		];
+		expect(lockCount(previewRungs(personal, soft))).toBe(0);
 	});
 });
