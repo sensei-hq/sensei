@@ -19,18 +19,27 @@
 	// redirect returns to this origin. Requires the GitHub provider enabled on
 	// the cloud Supabase project (client id/secret + callback) to complete —
 	// without it the provider surfaces an error here instead of silently failing.
+	// `read:org` is requested at sign-on so the session's GitHub token can read
+	// the user's org memberships (incl. PRIVATE ones) for the F3c auto-join
+	// (GET /user/orgs); `user:email` keeps the email Supabase resolves the profile
+	// from. kavach forwards `scopes` to signInWithOAuth's options.
 	async function signInGithub() {
 		if (status === 'sending') return;
 		const signIn = kavach?.signIn as
 			| ((c: {
 					provider: string;
 					redirectTo?: string;
+					scopes?: string[];
 			  }) => Promise<{ error?: { message?: string } }>)
 			| undefined;
 		if (!signIn) return;
 		status = 'sending';
 		message = '';
-		const result = await signIn({ provider: 'github', redirectTo: window.location.origin });
+		const result = await signIn({
+			provider: 'github',
+			redirectTo: window.location.origin,
+			scopes: ['read:org', 'user:email']
+		});
 		if (result?.error) {
 			status = 'error';
 			message = result.error.message ?? 'Could not start GitHub sign-in.';
