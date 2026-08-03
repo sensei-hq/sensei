@@ -6,7 +6,7 @@
 // service-role client (dojo-supabase.ts).
 import { error } from '@sveltejs/kit';
 import { dojoDb } from './dojo-supabase';
-import type { DojoOrg, OrgKind } from '$lib/dojo-data';
+import { membershipKindToOrgKind, orgKindKanji, type DojoOrg } from '$lib/dojo-data';
 
 export type SessionUser = { id?: string; email?: string; user_metadata?: Record<string, unknown> };
 export type OrgUser = { name: string; handle: string; initials: string };
@@ -45,19 +45,22 @@ export function userProfile(su: SessionUser | undefined): OrgUser {
 	return { name, handle: su?.email ?? '', initials: initials(name) };
 }
 
-/** Map a tenant row + the caller's role to the app's DojoOrg view-model. */
-export function tenantToOrg(t: TenantRow, role: string): DojoOrg {
+/** Map a tenant row + the caller's membership (role + kind) to the app's DojoOrg
+ *  view-model. `kind` is the REAL `dojo.membership_kind` (was hardcoded 'Community',
+ *  which collapsed every dōjō into the Communities group). Counts are left
+ *  undefined — not yet computed here — so the row omits the chip rather than
+ *  showing a fabricated 0 (computing real members/projects/pending is a follow-on). */
+export function tenantToOrg(t: TenantRow, role: string, kind?: string | null): DojoOrg {
+	const orgKind = membershipKindToOrgKind(kind);
 	return {
 		id: t.id,
-		kanji: '群',
+		kanji: orgKindKanji(orgKind),
 		name: t.name ?? t.org,
-		kind: 'Community' as OrgKind,
+		kind: orgKind,
 		host: t.self_hosted ? 'self' : 'saas',
 		url: t.key,
 		role: ROLE_LABEL[role] ?? role,
-		from: `member · ${role}`,
-		members: 0,
-		pending: 0
+		from: `member · ${role}`
 	};
 }
 
@@ -72,7 +75,7 @@ function firstTenant(row: unknown): TenantRow | null {
 export async function listUserOrgs(userId: string): Promise<DojoOrg[]> {
 	const { data, error: qErr } = await dojoDb()
 		.from('memberships')
-		.select(`role, tenant:tenants(${TENANT_COLS})`)
+		.select(`role, kind, tenant:tenants(${TENANT_COLS})`)
 		.eq('user_id', userId)
 		.is('disabled_at', null);
 	// Fail CLOSED: a memberships-query failure must surface as an error, never a
@@ -81,7 +84,8 @@ export async function listUserOrgs(userId: string): Promise<DojoOrg[]> {
 	if (qErr) throw error(500, 'memberships lookup failed');
 	return (data ?? []).flatMap((row) => {
 		const t = firstTenant(row);
-		return t ? [tenantToOrg(t, (row as { role: string }).role)] : [];
+		const m = row as { role: string; kind?: string | null };
+		return t ? [tenantToOrg(t, m.role, m.kind)] : [];
 	});
 }
 
@@ -101,12 +105,13 @@ export async function getUserOrg(userId: string, tenantKey: string): Promise<Doj
 	if (!tenant) return undefined;
 	const { data: membership, error: me } = await db
 		.from('memberships')
-		.select('role')
+		.select('role, kind')
 		.eq('user_id', userId)
 		.eq('tenant_id', (tenant as TenantRow).id)
 		.is('disabled_at', null)
 		.maybeSingle();
 	if (me) throw error(500, 'membership lookup failed');
 	if (!membership) return undefined;
-	return tenantToOrg(tenant as TenantRow, (membership as { role: string }).role);
+	const m = membership as { role: string; kind?: string | null };
+	return tenantToOrg(tenant as TenantRow, m.role, m.kind);
 }

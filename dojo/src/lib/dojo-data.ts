@@ -34,9 +34,45 @@ export interface DojoOrg {
 	url: string;
 	role: string;
 	from: string;
-	members: number;
-	pending: number;
+	// Counts are OPTIONAL — undefined when not (yet) computed. The row omits the
+	// chip rather than showing a fabricated 0 (honest-empty, not a masked zero).
+	members?: number;
+	projects?: number;
+	pending?: number;
 	last?: boolean;
+}
+
+/** Map the `dojo.membership_kind` enum (lowercase) to the app's `OrgKind`.
+ *  Unknown/missing → `Community` (the safe generic bucket), never a fabricated
+ *  employer/client claim. */
+export function membershipKindToOrgKind(kind: string | null | undefined): OrgKind {
+	switch ((kind ?? '').toLowerCase()) {
+		case 'employer':
+			return 'Employer';
+		case 'client':
+			return 'Client';
+		case 'personal':
+			return 'Personal';
+		case 'community':
+			return 'Community';
+		default:
+			return 'Community';
+	}
+}
+
+/** The identity glyph per kind (社 employer · 客 client · 群 community · 己 personal),
+ *  matching the ladder kanji in `constitution-map`. Replaces the constant 群. */
+export function orgKindKanji(kind: OrgKind): string {
+	switch (kind) {
+		case 'Employer':
+			return '社';
+		case 'Client':
+			return '客';
+		case 'Personal':
+			return '己';
+		case 'Community':
+			return '群';
+	}
 }
 
 export const orgs: DojoOrg[] = [

@@ -37,9 +37,11 @@ export interface KitDojo {
 	role: string;
 	/** The dōjō's public route (e.g. "sensei-hq.com/acme"). */
 	route: string;
-	members: number;
-	projects: number;
-	/** Count of things in this dōjō that need the viewer; 0 = none. */
+	/** Counts are optional — omitted (undefined) when not computed, so the row
+	 *  shows no chip rather than a fabricated 0. */
+	members?: number;
+	projects?: number;
+	/** Count of things in this dōjō that need the viewer; 0/undefined = none. */
 	needs?: number;
 }
 
@@ -165,10 +167,12 @@ export interface KitConstitutionSection {
 /** The org-context stat row for the org home (dojo2-data `dojos[]` counts). The
  *  jurisdiction summary — members, items needing a maintainer, projects in flight. */
 export interface KitOrgStats {
-	members: number;
-	/** Items across this jurisdiction that need a maintainer; 0 = none. */
-	needs: number;
-	/** Projects in flight under this dōjō. */
+	/** Optional — omitted (undefined) when the per-tenant count isn't computed,
+	 *  so the badge is hidden rather than showing a fabricated 0. */
+	members?: number;
+	/** Items across this jurisdiction that need a maintainer; undefined = not computed. */
+	needs?: number;
+	/** Projects in flight under this dōjō (always real — the loaded project count). */
 	projects: number;
 }
 

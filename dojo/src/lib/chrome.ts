@@ -44,7 +44,7 @@ export function toKitDojo(o: DojoOrg): KitDojo {
 		role: roleKey(o.role),
 		route: o.url,
 		members: o.members,
-		projects: 0,
+		projects: o.projects,
 		needs: o.pending
 	};
 }

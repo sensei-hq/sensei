@@ -28,7 +28,8 @@
 			<Chip mono>{dojo.kind}</Chip>
 		</div>
 		<div class="mono text-ink-faint text-xs" style="margin-top: 2px">
-			{dojo.route} · {dojo.members} members · {dojo.projects} projects
+			{dojo.route}{#if dojo.members != null} · {dojo.members} members{/if}{#if dojo.projects != null}
+				· {dojo.projects} projects{/if}
 		</div>
 	</div>
 	{#if (dojo.needs ?? 0) > 0}
