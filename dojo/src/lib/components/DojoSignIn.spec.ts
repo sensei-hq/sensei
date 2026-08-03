@@ -2,19 +2,20 @@ import { render, cleanup } from '@testing-library/svelte';
 import { afterEach, describe, expect, it } from 'vitest';
 import DojoSignIn from './DojoSignIn.svelte';
 
-// Renders the magic-link sign-in with NO kavach context (getContext returns
-// undefined) — proving the screen static-renders without a live auth session.
+// DojoSignIn renders the marketing chrome + one kavach AuthProvider per configured
+// provider (github OAuth · magic-link). The sign-in mechanics + scopes live in
+// kavach's AuthProvider (stubbed here — see vitest.config.ts), not this screen, so
+// these specs assert what DojoSignIn owns: the heading, the provider options, and
+// the insight cards. They render with NO kavach context (static-render safe).
 describe('DojoSignIn', () => {
 	afterEach(cleanup);
 
-	it('renders the sign-in heading and magic-link form without a kavach session', () => {
-		const { getByText, getByPlaceholderText, getByLabelText } = render(DojoSignIn);
-
+	it('renders the heading and one option per configured provider', () => {
+		const { getByText } = render(DojoSignIn);
 		expect(getByText('Sign in to continue')).toBeTruthy();
-		// Magic-link is the primary R6 auth path.
+		// Both providers from the config render (via AuthProvider).
+		expect(getByText('Continue with GitHub')).toBeTruthy();
 		expect(getByText('Email me a magic link')).toBeTruthy();
-		expect(getByLabelText('Work email')).toBeTruthy();
-		expect(getByPlaceholderText('you@company.com')).toBeTruthy();
 	});
 
 	it('renders the welcome-back insight cards from the metrics', () => {
@@ -23,18 +24,8 @@ describe('DojoSignIn', () => {
 		expect(getByText('approved & distributed')).toBeTruthy();
 	});
 
-	it('GitHub button is enabled and starts GitHub OAuth via kavach on click', async () => {
-		const calls: Array<{ provider: string; redirectTo?: string }> = [];
-		const signIn = async (c: { provider: string; redirectTo?: string }) => {
-			calls.push(c);
-			return {};
-		};
-		const { getByRole } = render(DojoSignIn, { context: new Map([['kavach', { signIn }]]) });
-		const btn = getByRole('button', { name: /Continue with GitHub/ }) as HTMLButtonElement;
-		expect(btn.disabled).toBe(false);
-		btn.click();
-		await Promise.resolve();
-		expect(calls).toHaveLength(1);
-		expect(calls[0].provider).toBe('github');
+	it('offers the self-hosted-Dōjō entry point', () => {
+		const { getByText } = render(DojoSignIn);
+		expect(getByText(/Connecting to a self-hosted/i)).toBeTruthy();
 	});
 });

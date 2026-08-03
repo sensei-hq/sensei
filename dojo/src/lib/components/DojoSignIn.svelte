@@ -1,50 +1,30 @@
 <script lang="ts">
-	import { getContext } from 'svelte';
+	import { AuthProvider } from '@kavach/ui';
+	import { providers } from '$kavach/providers';
 	import { metrics } from '$lib/dojo-data';
 	import Spark from './Spark.svelte';
 
-	// The browser kavach instance (hydrated in +layout.svelte). Undefined during
-	// SSR/prerender, so every use is guarded — the form must render without it.
-	const kavach = getContext<Record<string, unknown>>('kavach');
-
 	const m = metrics;
 
-	let email = $state('');
 	let selfHost = $state(false);
 	let selfHostUrl = $state('dojo.acme.internal');
-	let status = $state<'idle' | 'sending' | 'sent' | 'error'>('idle');
-	let message = $state('');
+	let authMsg = $state<string | null>(null);
+	let authError = $state(false);
 
-	// One generic sign-in for every provider — kavach's whole purpose. It resolves
-	// each provider (oauth / magic-link / password) by name from the kavach.config
-	// `providers` entry, applying that entry's `scopes` (github requests `read:org`
-	// for the F3c org auto-join). No per-provider function: the GitHub button and
-	// the magic-link form both call this. OAuth redirects away; OTP stays and
-	// confirms "check your email".
-	async function signIn(provider: string, opts: Record<string, unknown> = {}) {
-		if (status === 'sending') return;
-		const fn = kavach?.signIn as
-			| ((c: Record<string, unknown>) => Promise<{ error?: { message?: string } }>)
-			| undefined;
-		if (!fn) return;
-		status = 'sending';
-		message = '';
-		const result = await fn({ provider, ...opts });
-		if (result?.error) {
-			status = 'error';
-			message = result.error.message ?? 'Could not sign in.';
-			return;
-		}
-		if (provider === 'magic') {
-			status = 'sent';
-			message = 'Check your email for the sign-in link.';
-		}
+	// kavach's AuthProvider owns the whole sign-in per provider — an OAuth redirect
+	// (applying the provider's configured `scopes`, e.g. github → read:org for the
+	// F3c org auto-join) or a magic-link email — driven by the `$kavach/providers`
+	// list generated from kavach.config. We only surface the outcome message; no
+	// per-provider code.
+	function onAuthError(e: { message?: string } | undefined) {
+		authError = true;
+		authMsg = e?.message ?? 'Could not sign in.';
 	}
-
-	function submitMagicLink(event: SubmitEvent) {
-		event.preventDefault();
-		if (!email) return;
-		void signIn('magic', { email });
+	function onAuthSuccess(provider: { mode?: string }) {
+		if (provider.mode === 'otp') {
+			authError = false;
+			authMsg = 'Check your email for the sign-in link.';
+		}
 	}
 
 	const adoptionLift = $derived(Math.round(m.adoptionLift * 100));
@@ -151,59 +131,28 @@
 				GitHub brings your organizations and roles automatically. No GitHub? Use a magic link.
 			</p>
 
-			<!-- primary · GitHub OAuth -->
-			<button
-				type="button"
-				onclick={() => signIn('github', { redirectTo: window.location.origin })}
-				disabled={status === 'sending'}
-				class="bg-primary text-on-primary flex w-full cursor-pointer items-center justify-center gap-3 rounded-lg px-4 py-3 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-55"
-			>
-				<span class="i-simple-icons:github h-[18px] w-[18px]" aria-hidden="true"></span>
-				Continue with GitHub
-			</button>
-			<div class="text-ink-faint mt-2 text-center text-xs">
-				Derives your orgs &amp; roles from GitHub — and matches your repos.
+			<!-- Sign-in providers — kavach's AuthProvider renders each from the config
+			     (github OAuth with read:org scopes · magic-link email); one component,
+			     no per-provider code. -->
+			<div class="flex flex-col gap-3">
+				{#each providers as provider (provider.name)}
+					<AuthProvider
+						{...provider}
+						onerror={onAuthError}
+						onsuccess={() => onAuthSuccess(provider)}
+					/>
+				{/each}
 			</div>
-
-			<!-- divider -->
-			<div class="my-5 flex items-center gap-3">
-				<span class="bg-paper-edge h-px flex-1"></span>
-				<span class="mono text-ink-faint text-xs" style="letter-spacing: 0.1em">OR</span>
-				<span class="bg-paper-edge h-px flex-1"></span>
-			</div>
-
-			<!-- magic link -->
-			<form onsubmit={submitMagicLink}>
-				<label
-					for="dojo-email"
-					class="text-ink-mute mb-2 block font-semibold uppercase text-xs" style="letter-spacing: 0.1em">Work email</label
-				>
-				<input
-					id="dojo-email"
-					type="email"
-					bind:value={email}
-					placeholder="you@company.com"
-					class="bg-paper border-paper-edge text-ink mb-3 box-border w-full rounded-lg border px-3 py-3 text-sm"
-				/>
-				<button
-					type="submit"
-					disabled={status === 'sending'}
-					class="bg-paper border-paper-edge text-ink flex w-full cursor-pointer items-center justify-center gap-2 rounded-lg border px-4 py-3 text-sm"
-				>
-					<span class="kanji text-accent text-sm">鍵</span>
-					{status === 'sending' ? 'Sending…' : status === 'sent' ? 'Link sent' : 'Email me a magic link'}
-				</button>
-			</form>
-			{#if message}
+			{#if authMsg}
 				<div
-					class="mt-2 text-center text-xs {status === 'error' ? 'text-danger' : 'text-success'}"
+					class="mt-3 text-center text-xs {authError ? 'text-danger' : 'text-success'}"
 					role="status"
 				>
-					{message}
+					{authMsg}
 				</div>
 			{:else}
-				<div class="text-ink-faint mt-2 text-center text-xs">
-					For organizations not on GitHub.
+				<div class="text-ink-faint mt-3 text-center text-xs">
+					GitHub brings your orgs &amp; roles; magic link is for orgs not on GitHub.
 				</div>
 			{/if}
 
