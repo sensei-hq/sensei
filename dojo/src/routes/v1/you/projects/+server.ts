@@ -1,6 +1,7 @@
-// GET /v1/me/projects — the caller's projects across EVERY dōjō they belong to
-// (user-primary). The personal `/you/projects` read. Unlike the tenant-scoped
-// /v1/t/{origin}/{org}/projects (LEAD-floor), this has no tenant and no role
+// GET /v1/you/projects — the caller's projects across EVERY dōjō they belong to
+// (user-primary). Backs the personal `/you/projects` list; the `/v1/you` plane
+// mirrors the `/you` UI namespace (vs the tenant `/v1/t/{origin}/{org}`). Unlike
+// the tenant-scoped /v1/t/…/projects (LEAD-floor), this has no tenant and no role
 // floor: the caller is resolved from the JWT and the read is authorized by a
 // `user_id` filter (a caller only ever sees their own rows). Read-only — the
 // daemon upserts rows via the service_role on relay runs. Fails closed, honest-
