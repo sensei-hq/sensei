@@ -77,25 +77,33 @@ pub(crate) async fn index_lib(
 #[derive(Deserialize)]
 pub(crate) struct LibDocsQuery {
     q: Option<String>,
+    component: Option<String>,
 }
 
 pub(crate) async fn search_lib_docs(
     State(state): State<AppState>,
     Query(q): Query<LibDocsQuery>,
 ) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
+    // Search library DOC PAGES (what the app's Libraries screen expects), mirroring
+    // the MCP search_lib_docs — was returning the LIBRARY LIST (all libraries) which
+    // is a different shape. Empty query → empty, never a fabricated all-libraries dump.
     let query = q.q.unwrap_or_default();
-    if query.is_empty() {
-        state.pg.list_libraries().await
-    } else {
-        state.pg.search_libraries(&query).await
-    }.map(Json).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+    if query.trim().is_empty() {
+        return Ok(Json(Vec::new()));
+    }
+    state.pg.search_library_pages(&query).await
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 pub(crate) async fn get_lib_docs(
     State(state): State<AppState>,
     Path(name): Path<String>,
+    Query(q): Query<LibDocsQuery>,
 ) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
-    state.pg.get_library_by_name(&name).await
+    // Return the library's DOC PAGES (optionally one component), mirroring the MCP
+    // get_lib_docs — was returning bare library metadata and ignoring `component`.
+    state.pg.get_library_pages(&name, q.component.as_deref().filter(|s| !s.is_empty())).await
         .map(Json)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }

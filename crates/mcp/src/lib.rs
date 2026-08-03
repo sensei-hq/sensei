@@ -1104,6 +1104,28 @@ pub fn resolve_from_cwd_in(projects: &[Value], cwd: &str) -> String {
         }
     }
 
+    // #109: cwd sits ABOVE the repos (a container/parent dir) → no prefix match.
+    // If EXACTLY ONE registered repo is under cwd, that's unambiguous → pick it.
+    // If several are, it's genuinely ambiguous → leave empty so the caller falls
+    // back to the pin / an explicit project= (never guess a wrong project).
+    if best_name.is_empty() && !cwd.trim().is_empty() {
+        let prefix = if cwd.ends_with('/') { cwd.to_string() } else { format!("{cwd}/") };
+        let mut under: Vec<String> = projects
+            .iter()
+            .filter(|p| {
+                p["folders"].as_array().is_some_and(|fs| {
+                    fs.iter().any(|f| f["abs_path"].as_str().is_some_and(|a| a.starts_with(&prefix)))
+                })
+            })
+            .filter_map(|p| p["name"].as_str().map(str::to_string))
+            .collect();
+        under.sort_unstable();
+        under.dedup();
+        if under.len() == 1 {
+            best_name = under.remove(0);
+        }
+    }
+
     best_name
 }
 
@@ -1143,6 +1165,21 @@ mod tests {
             "sensei".to_string()
         );
         assert_eq!(resolve_from_cwd_in(&sample(), "/tmp/other"), "".to_string());
+    }
+
+    #[test]
+    fn resolve_from_cwd_auto_picks_single_repo_under_parent_else_ambiguous() {
+        // #109: cwd is the PARENT of exactly one repo → unambiguous → auto-pick it.
+        let one = vec![json!({"id":"a","name":"only","folders":[{"abs_path":"/wrap/only","name":"only"}]})];
+        assert_eq!(resolve_from_cwd_in(&one, "/wrap"), "only", "single repo under cwd → auto-pick");
+        // Deep cwd INSIDE the repo still resolves via longest-prefix (unchanged).
+        assert_eq!(resolve_from_cwd_in(&one, "/wrap/only/src"), "only");
+        // cwd is the parent of MANY repos → genuinely ambiguous → empty (never guess).
+        let many = vec![
+            json!({"id":"a","name":"one","folders":[{"abs_path":"/wrap/one"}]}),
+            json!({"id":"b","name":"two","folders":[{"abs_path":"/wrap/two"}]}),
+        ];
+        assert_eq!(resolve_from_cwd_in(&many, "/wrap"), "", "ambiguous parent → no guess (pass project=/pin)");
     }
 
     #[test]

@@ -258,19 +258,20 @@ pub(crate) async fn pattern_for_symbol(
     State(state): State<AppState>,
     Path((project, symbol)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    // Search patterns by folder, then filter by symbol
-    if let Some(folder_id) = repo_folder_id(&state, &project).await? {
-        let patterns = state.pg.list_patterns_by_folder(&folder_id).await
-            .map_err(|e| { tracing::warn!(error = %e, project = %project, "pattern_for_symbol: list_patterns_by_folder failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
-        // Find pattern whose members include this symbol
-        for p in &patterns {
-            if let Some(members) = p.get("members").and_then(|m| m.as_array())
-                && members.iter().any(|m| m.as_str() == Some(&symbol)) {
-                    return Ok(Json(p.clone()));
-                }
-        }
-    }
-    Ok(Json(serde_json::json!({"pattern": null, "message": "symbol does not belong to any detected pattern"})))
+    // File-level membership: the pattern(s) whose file instances include the
+    // symbol's file. Scoped to the project (patterns are project-attributed) with
+    // node lookup across all the project's folders. Genuinely empty when the
+    // symbol's file is in no detected pattern — NOT the old always-null mask.
+    let scope = state.pg.scope_folder_ids(&project).await
+        .map_err(|e| { tracing::warn!(error = %e, project = %project, "pattern_for_symbol: scope_folder_ids failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    let project_id = crate::api::util::resolve_project_uuid(&state, &project).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let patterns = match project_id {
+        Some(pid) if !scope.is_empty() => state.pg.patterns_for_symbol(&pid, &scope, &symbol).await
+            .map_err(|e| { tracing::warn!(error = %e, project = %project, "pattern_for_symbol: patterns_for_symbol failed"); StatusCode::INTERNAL_SERVER_ERROR })?,
+        _ => Vec::new(),
+    };
+    Ok(Json(serde_json::json!({ "symbol": symbol, "count": patterns.len(), "patterns": patterns })))
 }
 
 #[derive(Deserialize)]
