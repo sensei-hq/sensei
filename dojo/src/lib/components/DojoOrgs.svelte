@@ -97,16 +97,20 @@
 								<div class="mono text-ink-faint mt-1 text-xs">{o.from}</div>
 							</div>
 							<div class="min-w-[64px] text-right">
-								<div class="mono text-ink-soft text-xs">
-									{o.members}
-									{o.members === 1 ? 'member' : 'members'}
-								</div>
-								{#if o.pending > 0}
-									<div class="mono text-accent mt-1 text-xs">
-										{o.pending} to triage
+								{#if o.members != null}
+									<div class="mono text-ink-soft text-xs">
+										{o.members}
+										{o.members === 1 ? 'member' : 'members'}
 									</div>
-								{:else}
-									<div class="mono text-ink-faint mt-1 text-xs">up to date</div>
+								{/if}
+								{#if o.pending != null}
+									{#if o.pending > 0}
+										<div class="mono text-accent mt-1 text-xs">
+											{o.pending} to triage
+										</div>
+									{:else}
+										<div class="mono text-ink-faint mt-1 text-xs">up to date</div>
+									{/if}
 								{/if}
 							</div>
 							<button

@@ -52,15 +52,19 @@
 			class="bg-paper-soft border-paper-edge flex items-center rounded-lg border"
 			style="padding: 16px 32px; gap: 48px"
 		>
-			<StatBadge n={stats.members} label="members" />
-			<span class="bg-paper-edge flex-shrink-0" style="width: 1px; height: 34px"></span>
-			<StatBadge
-				n={stats.needs}
-				label="need a maintainer"
-				sub="across this jurisdiction"
-				toneClass="text-accent"
-			/>
-			<span class="bg-paper-edge flex-shrink-0" style="width: 1px; height: 34px"></span>
+			{#if stats.members != null}
+				<StatBadge n={stats.members} label="members" />
+				<span class="bg-paper-edge flex-shrink-0" style="width: 1px; height: 34px"></span>
+			{/if}
+			{#if stats.needs != null}
+				<StatBadge
+					n={stats.needs}
+					label="need a maintainer"
+					sub="across this jurisdiction"
+					toneClass="text-accent"
+				/>
+				<span class="bg-paper-edge flex-shrink-0" style="width: 1px; height: 34px"></span>
+			{/if}
 			<StatBadge n={stats.projects} label="projects" sub="in flight" />
 		</div>
 	{/if}
