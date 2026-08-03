@@ -309,11 +309,16 @@ pub(crate) async fn list_rule_proposals(
 pub(crate) async fn accept_rule(
     State(state): State<AppState>,
     axum::extract::Path(id): axum::extract::Path<String>,
-) -> Json<serde_json::Value> {
-    let uid = match id.parse() { Ok(u) => u, Err(_) => return Json(serde_json::json!({"error":"invalid id"})) };
+) -> (StatusCode, Json<serde_json::Value>) {
+    let uid = match id.parse() {
+        Ok(u) => u,
+        Err(_) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "invalid id"}))),
+    };
     match state.pg.accept_playbook_rule(&uid).await {
-        Ok(()) => Json(serde_json::json!({"accepted": id})),
-        Err(e) => Json(serde_json::json!({"error": e})),
+        Ok(true) => (StatusCode::OK, Json(serde_json::json!({"accepted": id}))),
+        // No matching learned proposal — 404, never a fabricated {accepted}.
+        Ok(false) => (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": format!("no learned playbook proposal with id {id}")}))),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e}))),
     }
 }
 

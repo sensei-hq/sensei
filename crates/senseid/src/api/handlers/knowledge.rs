@@ -21,42 +21,38 @@ async fn resolve_target_namespace(
     namespace_id: Option<&str>,
     gov_scope: Option<&str>,
     folder: Option<&str>,
+    project: Option<&str>,
 ) -> Result<Option<uuid::Uuid>, (StatusCode, Json<serde_json::Value>)> {
     if let Some(ns) = namespace_id.filter(|s| !s.is_empty()) {
         return Ok(Some(uuid::Uuid::parse_str(ns).map_err(|_| err(StatusCode::BAD_REQUEST, "bad namespace_id"))?));
     }
-    if let (Some(scope), Some(folder)) =
-        (gov_scope.filter(|s| !s.is_empty()), folder.filter(|s| !s.is_empty()))
-    {
-        // `general`/`user` are always-on rungs with no namespace row — a NULL
-        // namespace_id is the CORRECT resolution for them.
-        if matches!(scope, "general" | "user") {
-            return Ok(None);
-        }
-        // FAIL CLOSED (issue #109): a *specific* gov_scope was requested but its
-        // namespace can't be resolved from `folder`. Do NOT fall back to NULL —
-        // that silently widens the rule to the always-on `general` rung
-        // (governing every project, at the caller's enforcement — up to
-        // `mandatory`). Error so the caller passes a folder inside the target
-        // repo, or an explicit namespace_id, instead of over-broadening.
-        let fid = state.pg.get_repo_by_path(folder).await
-            .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
-            .and_then(|f| crate::api::util::json_uuid(&f["id"]));
-        let Some(fid) = fid else {
-            return Err(err(StatusCode::BAD_REQUEST, &format!(
-                "cannot resolve gov_scope '{scope}': folder '{folder}' is not an indexed repo — pass a folder inside the target repo, or an explicit namespace_id"
-            )));
-        };
-        return match state.pg.namespace_for_folder_scope(&fid, scope).await
-            .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
-        {
-            Some(ns) => Ok(Some(ns)),
-            None => Err(err(StatusCode::BAD_REQUEST, &format!(
-                "cannot resolve gov_scope '{scope}': repo at '{folder}' is not a member of any '{scope}'-scoped namespace — bind it to one, or pass an explicit namespace_id"
-            ))),
-        };
+    let Some(scope) = gov_scope.filter(|s| !s.is_empty()) else {
+        return Ok(None);
+    };
+    // `general`/`user` are always-on rungs with no namespace row — a NULL
+    // namespace_id is the CORRECT resolution for them.
+    if matches!(scope, "general" | "user") {
+        return Ok(None);
     }
-    Ok(None)
+    // No target at all → preserve the historical NULL resolution (the caller gave
+    // a scope but nothing to resolve it against).
+    if folder.filter(|s| !s.is_empty()).is_none() && project.filter(|s| !s.is_empty()).is_none() {
+        return Ok(None);
+    }
+    // Resolve the target repo from folder OR project (#109: the MCP forwards a cwd
+    // `folder` that mis-resolves to the container; an explicit `project` resolves
+    // server-side via resolve_folder). FAIL CLOSED: a *specific* gov_scope whose
+    // namespace can't be resolved errors rather than falling back to the always-on
+    // `general` rung (which would govern every project at the caller's enforcement).
+    let (_path, fid) = resolve_folder(state, folder, project).await?;
+    match state.pg.namespace_for_folder_scope(&fid, scope).await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
+    {
+        Some(ns) => Ok(Some(ns)),
+        None => Err(err(StatusCode::BAD_REQUEST, &format!(
+            "cannot resolve gov_scope '{scope}': the target repo is not a member of any '{scope}'-scoped namespace — bind it to one, or pass an explicit namespace_id"
+        ))),
+    }
 }
 
 // ============================================================================
@@ -427,6 +423,7 @@ async fn insert_with_status(
     // against the repo's namespace memberships.
     let namespace_id = resolve_target_namespace(
         &state, body.namespace_id.as_deref(), body.gov_scope.as_deref(), body.folder.as_deref(),
+        body.project_id.as_deref(),
     ).await?;
     let id = state.pg.insert_memory(&InsertMemory {
         project_id:    pid,
@@ -480,6 +477,9 @@ pub(crate) struct PromoteBody {
     pub namespace_id: Option<String>,
     pub gov_scope:    Option<String>,
     pub folder:       Option<String>,
+    /// #109: resolve the gov_scope's repo from a project when the MCP can't send a
+    /// valid folder (its cwd mis-resolves to the container).
+    pub project:      Option<String>,
     pub enforcement:  Option<String>,
 }
 
@@ -494,6 +494,7 @@ pub(crate) async fn promote_memory(
     let sid = uuid::Uuid::parse_str(&id).map_err(|_| err(StatusCode::BAD_REQUEST, "bad memory id"))?;
     let target = resolve_target_namespace(
         &state, body.namespace_id.as_deref(), body.gov_scope.as_deref(), body.folder.as_deref(),
+        body.project.as_deref(),
     ).await?;
     let new_id = state.pg.promote_memory(sid, target, body.enforcement.as_deref().filter(|s| !s.is_empty())).await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?

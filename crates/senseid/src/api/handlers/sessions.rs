@@ -227,13 +227,16 @@ pub(crate) async fn update_session_handler(
         Err(_) => return Json(serde_json::json!({"ok": false, "error": "invalid session id (expected UUID)"})),
     };
 
-    // PgStore complete_session expects: outcome, ftr (bool), turns (i32), corrections (i32)
+    // PgStore complete_session: outcome, ftr, turns, corrections + optional summary/tokens.
     let outcome = body["outcome"].as_str().unwrap_or("completed");
     let ftr = body["ftr"].as_bool().unwrap_or(false);
     let turns = body["turns"].as_i64().unwrap_or(0) as i32;
     let corrections = body["corrections"].as_i64().unwrap_or(0) as i32;
+    let summary = body["summary"].as_str().filter(|s| !s.is_empty());
+    let tokens_in = body["tokensIn"].as_i64().or_else(|| body["tokens_in"].as_i64()).map(|n| n as i32);
+    let tokens_out = body["tokensOut"].as_i64().or_else(|| body["tokens_out"].as_i64()).map(|n| n as i32);
 
-    match state.pg.complete_session(&session_id, outcome, ftr, turns, corrections).await {
+    match state.pg.complete_session(&session_id, outcome, ftr, turns, corrections, summary, tokens_in, tokens_out).await {
         Ok(_) => {
             // Fire-and-forget: enqueue verdict measurement after session ends
             let task = crate::tasks::Task::new(

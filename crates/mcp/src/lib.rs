@@ -275,10 +275,15 @@ pub fn daemon_request_for(
         // `run_checkers` (D-CHECKER) runs the repo's adopted checker-backed rules
         // (their `checker_ref` command) and returns pass/fail verdicts.
         "run_checkers" => {
-            let folder = args["folder"].as_str().filter(|s| !s.is_empty()).unwrap_or(cwd);
-            let mut body = json!({ "folder": folder });
+            // #109: only fall back to the cwd `folder` when NO project is given.
+            // Sending folder=cwd alongside a project let the daemon prefer the
+            // (container-mis-resolved) folder and 404 even with project:'sensei'.
+            let mut body = json!({});
             if let Some(p) = args["project"].as_str().filter(|s| !s.is_empty()) {
                 body["project"] = json!(p);
+            } else {
+                let folder = args["folder"].as_str().filter(|s| !s.is_empty()).unwrap_or(cwd);
+                body["folder"] = json!(folder);
             }
             Some(DaemonRequest::post_json("/api/checkers/run", body))
         }
@@ -463,13 +468,54 @@ fn build_governance_body(args: &Value, cwd: &str) -> Value {
 fn attach_governance(body: &mut Value, args: &Value, cwd: &str) {
     if let Some(gs) = args["gov_scope"].as_str().filter(|s| !s.is_empty()) {
         body["gov_scope"] = json!(gs);
-        if !cwd.is_empty() {
+        // #109: prefer an explicit project (the daemon resolves the gov_scope's
+        // repo from it server-side); only forward the cwd `folder` when no project
+        // is given. Sending folder=cwd unconditionally shadowed a passed project
+        // and mis-resolved to the container → a 400 "folder is not an indexed repo".
+        if let Some(p) = args["project"].as_str().filter(|s| !s.is_empty()) {
+            body["project"] = json!(p);
+        } else if !cwd.is_empty() {
             body["folder"] = json!(cwd);
         }
     }
     if let Some(enf) = args["enforcement"].as_str().filter(|s| !s.is_empty()) {
         body["enforcement"] = json!(enf);
     }
+}
+
+/// Build the `/hook/event` ingest body for `log_event` — the assistant-agnostic
+/// capture path into `activity.assistant_events`. The `data` JSON (if an object)
+/// is the base payload; the routing keys `hook_event_fields` reads
+/// (`hook_event_name`/`assistant_family`/`session_id`/`tool_name`/`cwd`/`exit_code`)
+/// are overlaid. `cwd` falls back to the MCP working dir so the event attributes
+/// to a project. Pure so it's unit-testable without a daemon.
+pub fn build_log_event_body(args: &Value, cwd: &str) -> Value {
+    let mut body = match args["data"].as_str() {
+        Some(s) => match serde_json::from_str::<Value>(s) {
+            Ok(Value::Object(m)) => Value::Object(m),
+            Ok(v) => json!({ "data": v }),
+            Err(_) => json!({ "data": s }),
+        },
+        None => json!({}),
+    };
+    body["hook_event_name"] = json!(args["type"].as_str().unwrap_or("unknown"));
+    body["assistant_family"] = json!(args["family"].as_str().filter(|s| !s.is_empty()).unwrap_or("claude"));
+    if let Some(sid) = args["session_id"].as_str().filter(|s| !s.is_empty()) {
+        body["session_id"] = json!(sid);
+    }
+    if let Some(t) = args["tool_name"].as_str().filter(|s| !s.is_empty()) {
+        body["tool_name"] = json!(t);
+    }
+    let event_cwd = args["cwd"].as_str().filter(|s| !s.is_empty()).unwrap_or(cwd);
+    if !event_cwd.is_empty() {
+        body["cwd"] = json!(event_cwd);
+    }
+    match args["success"].as_str() {
+        Some("true") => { body["exit_code"] = json!(0); }
+        Some("false") => { body["exit_code"] = json!(1); }
+        _ => {}
+    }
+    body
 }
 
 pub fn handle_initialize() -> Value {
@@ -558,7 +604,6 @@ pub fn handle_list_tools() -> Value {
                 ("outcome", "string", "completed, partial, or blocked"),
             ], &[
                 ("summary", "string", "What was accomplished"),
-                ("cost", "string", "Cost in USD"),
                 ("tokensIn", "string", "Input tokens used"),
                 ("tokensOut", "string", "Output tokens used"),
             ]),
@@ -635,11 +680,15 @@ pub fn handle_list_tools() -> Value {
                 ("n", "string", "Number of images to generate (default 1)"),
             ]),
             // Event logging
-            tool("log_event", "Log a workflow event. Call this to record phase transitions, locate steps, issue lifecycle, review findings. MANDATORY in commands — do not skip.", &[
-                ("type", "string", "Event type: phase_transition, command_invoked, locate, issue_started, issue_completed, review_finding, rework, checkpoint, context_loaded, files_modified"),
+            tool("log_event", "Record an activity/workflow event into the capture stream (activity.assistant_events) — the same sink Claude Code hooks write to and the analyzer reads for tool-usage + working-pattern signals. This is the assistant-AGNOSTIC capture path: assistants without a hook system (Cursor/Codex/etc.) call this to emit their tool-calls and workflow milestones so their activity is analyzed too. For tool-call capture set type=PreToolUse|PostToolUse + tool_name; for workflow milestones use phase_transition|command_invoked|review_finding|rework|checkpoint.", &[
+                ("type", "string", "Event type — a hook name (PreToolUse, PostToolUse, Stop, SessionStart) for raw capture, or a workflow milestone (phase_transition, command_invoked, review_finding, rework, checkpoint, files_modified)"),
             ], &[
-                ("data", "string", "JSON string with event-specific data"),
-                ("session_id", "string", "Session ID if known"),
+                ("data", "string", "JSON string with event-specific detail (stored as the event payload)"),
+                ("session_id", "string", "Assistant session id (groups events into a session)"),
+                ("family", "string", "Assistant family emitting the event (claude, cursor, codex, copilot, zed). Defaults to claude."),
+                ("tool_name", "string", "The tool, for PreToolUse/PostToolUse events — required for tool-usage analysis"),
+                ("cwd", "string", "Working directory (used to attribute the event to a project). Defaults to the MCP working directory."),
+                ("success", "string", "'true'/'false' for a tool/turn outcome"),
             ]),
             // ── Knowledge plane ───────────────────────────────────────
             tool("propose_memory",
@@ -689,7 +738,8 @@ pub fn handle_list_tools() -> Value {
                  Creates a proposal at the new scope for the user to accept; it never auto-applies.",
                 &[("id", "string", "Memory id (UUID) to promote")],
                 &[
-                    ("gov_scope",   "string", "Target scope: organization|client|technology|team|project (resolved against the current repo)"),
+                    ("gov_scope",   "string", "Target scope: organization|client|technology|team|project (resolved against the project's repo)"),
+                    ("project",     "string", "Project the gov_scope resolves against (e.g. 'sensei'). Prefer this over the working directory."),
                     ("enforcement", "string", "Authority at the new scope: advisory|recommended|required|mandatory"),
                 ]),
             tool("accept_proposal",
@@ -1399,6 +1449,48 @@ mod tests {
     }
 
     #[test]
+    fn log_event_body_maps_capture_fields_for_any_assistant() {
+        // Tool-call capture from a NON-Claude assistant → the hook-event shape the
+        // ingest reads, tagged with its family, so the analyzer treats it like a hook.
+        let b = build_log_event_body(&json!({
+            "type": "PostToolUse", "family": "cursor", "tool_name": "Edit",
+            "session_id": "s1", "success": "true", "data": "{\"file\":\"x.rs\"}"
+        }), "/mcp/cwd");
+        assert_eq!(b["hook_event_name"], "PostToolUse");
+        assert_eq!(b["assistant_family"], "cursor", "family carries through (was always 'claude')");
+        assert_eq!(b["tool_name"], "Edit", "tool_name present → tally_tool_usage can count it");
+        assert_eq!(b["session_id"], "s1");
+        assert_eq!(b["exit_code"], 0, "success:true → exit_code 0 (hook_event_fields → success)");
+        assert_eq!(b["file"], "x.rs", "data object is merged into the stored payload");
+        assert_eq!(b["cwd"], "/mcp/cwd", "cwd falls back to the MCP working dir for attribution");
+
+        // Workflow milestone with defaults: family→claude, explicit cwd, failure.
+        let d = build_log_event_body(&json!({ "type": "phase_transition", "cwd": "/repo", "success": "false" }), "/mcp/cwd");
+        assert_eq!(d["assistant_family"], "claude");
+        assert_eq!(d["hook_event_name"], "phase_transition");
+        assert_eq!(d["cwd"], "/repo");
+        assert_eq!(d["exit_code"], 1);
+        assert!(d.get("session_id").is_none(), "no session_id key when absent");
+        assert!(d.get("tool_name").is_none(), "no tool_name key when absent");
+    }
+
+    #[test]
+    fn run_checkers_omits_cwd_folder_when_project_is_given() {
+        // #109: an explicit project must NOT also carry folder=cwd — the daemon
+        // prefers the folder, and the MCP cwd mis-resolves to the container.
+        let req = daemon_request_for("run_checkers", &json!({ "project": "sensei" }), "/mcp/cwd", Some("sensei")).unwrap();
+        assert_eq!(req.path, "/api/checkers/run");
+        let body = req.body.clone().unwrap();
+        assert_eq!(body["project"], json!("sensei"));
+        assert!(body.get("folder").is_none(), "no folder shadow when project is explicit");
+        // No project → fall back to the cwd folder (historical contract).
+        let fb = daemon_request_for("run_checkers", &json!({}), "/mcp/cwd", Some("sensei")).unwrap();
+        let fbody = fb.body.clone().unwrap();
+        assert_eq!(fbody["folder"], json!("/mcp/cwd"));
+        assert!(fbody.get("project").is_none());
+    }
+
+    #[test]
     fn commands_request_targets_project_path_with_optional_category() {
         let req = daemon_request_for("get_commands", &json!({}), "/cwd", Some("sensei")).unwrap();
         assert_eq!(req.method, HttpMethod::Get);
@@ -1684,6 +1776,29 @@ mod tests {
         let prom = daemon_request_for("promote_memory", &json!({ "id": "xyz", "gov_scope": "team" }), "/cwd", None).unwrap();
         assert_eq!(prom.path, "/api/knowledge/memories/xyz/promote");
         assert_eq!(prom.body.unwrap()["gov_scope"], "team");
+    }
+
+    #[test]
+    fn promote_memory_prefers_project_over_cwd_folder() {
+        // #109: an explicit project carries {project} into the gov overlay and NO
+        // folder=cwd (which mis-resolved to the container → 400 "not an indexed repo").
+        let req = daemon_request_for(
+            "promote_memory",
+            &json!({ "id": "m1", "gov_scope": "team", "project": "sensei" }),
+            "/mcp/cwd", None).unwrap();
+        assert_eq!(req.path, "/api/knowledge/memories/m1/promote");
+        let body = req.body.clone().unwrap();
+        assert_eq!(body["project"], json!("sensei"));
+        assert_eq!(body["gov_scope"], json!("team"));
+        assert!(body.get("folder").is_none(), "no cwd folder shadow when project is explicit");
+        // No project → fall back to the cwd folder (historical contract).
+        let fb = daemon_request_for(
+            "promote_memory",
+            &json!({ "id": "m1", "gov_scope": "team" }),
+            "/mcp/cwd", None).unwrap();
+        let fbody = fb.body.clone().unwrap();
+        assert_eq!(fbody["folder"], json!("/mcp/cwd"));
+        assert!(fbody.get("project").is_none());
     }
 
     #[test]
