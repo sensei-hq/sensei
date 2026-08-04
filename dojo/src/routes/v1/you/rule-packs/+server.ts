@@ -6,13 +6,16 @@
 // endpoint, not here.
 import type { RequestHandler } from './$types';
 import { resolveCaller, apiError } from '$lib/server/dojo-auth';
-import { listLibraryPacks, RulePacksError } from '$lib/server/rulepacks-data';
+import { listLibraryPacks, listAdoptedPackSlugs, RulePacksError } from '$lib/server/rulepacks-data';
 
 export const GET: RequestHandler = async ({ request, locals }) => {
 	try {
-		const { db } = await resolveCaller(request, locals);
-		const packs = await listLibraryPacks(db);
-		return Response.json({ packs });
+		const { userId, db } = await resolveCaller(request, locals);
+		const [packs, adopted] = await Promise.all([
+			listLibraryPacks(db),
+			listAdoptedPackSlugs(db, userId)
+		]);
+		return Response.json({ packs, adopted });
 	} catch (e) {
 		if (e instanceof Response) return e;
 		if (e instanceof RulePacksError) return apiError(e.status, e.message);

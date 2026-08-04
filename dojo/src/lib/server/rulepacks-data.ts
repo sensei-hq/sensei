@@ -51,6 +51,46 @@ export async function listLibraryPacks(db: DojoClient): Promise<LibraryPackWire[
 	return shapeLibraryPacks((data ?? []) as unknown as LibraryPackRow[]);
 }
 
+/**
+ * The slugs of library packs the caller has adopted — read from the
+ * `dojo.pack_adoption` view (a dojo-schema view over the sensei adoption tables,
+ * owner privileges → no sensei grant), filtered to the caller's USER-scoped
+ * namespace (scope_key 'user', slug = user id). Honest-empty `[]` on none; a read
+ * error throws (the route maps it to 500).
+ */
+export async function listAdoptedPackSlugs(db: DojoClient, userId: string): Promise<string[]> {
+	const { data, error } = await db
+		.from('pack_adoption')
+		.select('pack_slug')
+		.eq('scope_key', 'user')
+		.eq('namespace_slug', userId);
+	if (error) throw new RulePacksError(500, error.message);
+	return ((data ?? []) as { pack_slug: string }[]).map((r) => r.pack_slug);
+}
+
+/**
+ * Adopt (or drop) a library pack for the caller's USER-scoped namespace, via the
+ * `dojo.set_pack_adoption` SECURITY DEFINER function (writes sensei.* with owner
+ * privileges — no sensei grant). Returns whether the pack existed (false → the
+ * route 404s an unknown/unavailable slug). A call error throws (→ 500).
+ */
+export async function setPackAdoption(
+	db: DojoClient,
+	slug: string,
+	userId: string,
+	userName: string | null,
+	adopt: boolean
+): Promise<boolean> {
+	const { data, error } = await db.rpc('set_pack_adoption', {
+		p_pack_slug: slug,
+		p_user_id: userId,
+		p_user_name: userName ?? '',
+		p_adopt: adopt
+	});
+	if (error) throw new RulePacksError(500, error.message);
+	return data === true;
+}
+
 /** A domain error carrying the HTTP status the route should return. */
 export class RulePacksError extends Error {
 	constructor(

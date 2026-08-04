@@ -12,12 +12,12 @@
 	// "N rules" chip is a disclosure that reveals the pack's actual rules, so a
 	// viewer can read what a pack contains before adopting it. Presentational: the
 	// page supplies the packs (kit fixtures this chunk); adopting/dropping is local
-	// state this chunk (a later chunk wires it to a /v1 mutation) and also
-	// forwards `onToggle(pack)` so a caller can observe the change.
+	// state (optimistic) and forwards `onToggle(pack, adopt)` — `adopt` is the DESIRED
+	// state (captured before the local flip) — so the page persists it to /v1.
 	let {
 		packs = [],
 		onToggle
-	}: { packs?: KitRulePack[]; onToggle?: (pack: KitRulePack) => void } = $props();
+	}: { packs?: KitRulePack[]; onToggle?: (pack: KitRulePack, adopt: boolean) => void } = $props();
 
 	// Seed the adopt-toggle state ONCE from the page-load props (a navigation
 	// re-mounts the screen), so the adopted/available split persists as the
@@ -33,8 +33,9 @@
 	}
 
 	function adopt(pack: KitRulePack) {
+		const desired = !pack.adopted; // captured before the optimistic flip
 		packState.toggle(pack.id);
-		onToggle?.(pack);
+		onToggle?.(pack, desired);
 	}
 </script>
 
