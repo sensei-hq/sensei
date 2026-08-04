@@ -128,7 +128,7 @@
   <div class="flex items-center gap-5 pt-5 pb-4 px-6 border-b border-paper-edge">
     <span class="kanji text-[40px] text-accent leading-none">図</span>
     <div class="flex-1 min-w-0">
-      <p class="m-0 mb-1"><Eyebrow>Observatory · Atlas</Eyebrow></p>
+      <p class="m-0 mb-1"><Eyebrow>This project · Atlas</Eyebrow></p>
       <h1 class="display text-[22px] font-normal m-0">Code graph</h1>
       <p class="text-[13px] text-ink-mute mt-1 mb-0 max-w-[640px] leading-relaxed">
         The call graph the daemon indexed for

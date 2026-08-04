@@ -9990,16 +9990,22 @@ impl PgStore {
 
     /// Confirmed+attributed sample size + FTR rate for one exact (lifecycle, intent,
     /// risk, playbook) combo — the auto-select-on-trust gate's evidence lookup.
+    /// Auto-select trust for a `(lifecycle, intent, risk, playbook)` combo,
+    /// scoped to ONE project. A playbook run always happens in a project, so
+    /// trust is "does this playbook earn FTR in THIS project" — never a global
+    /// average across unrelated projects (which would auto-select on the wrong
+    /// signal). Returns `(n confirmed+attributed runs, avg FTR)` for the combo
+    /// within `project_id`.
     pub async fn playbook_combo_trust(
-        &self, lifecycle: &str, intent: &str, risk: &str, playbook: &str,
+        &self, lifecycle: &str, intent: &str, risk: &str, playbook: &str, project_id: &uuid::Uuid,
     ) -> Result<(i64, f64), String> {
         let row: (i64, f64) = sqlx_core::query_as::query_as(
             "SELECT count(*)::int8, coalesce(avg(outcome_ftr::int)::float8, 0.0)
                FROM sensei.playbook_run
               WHERE confirmed AND outcome_ftr IS NOT NULL
                 AND lifecycle=$1::sensei.chunk_lifecycle AND intent=$2::sensei.chunk_intent
-                AND risk=$3::sensei.chunk_risk AND playbook=$4"
-        ).bind(lifecycle).bind(intent).bind(risk).bind(playbook)
+                AND risk=$3::sensei.chunk_risk AND playbook=$4 AND project_id=$5"
+        ).bind(lifecycle).bind(intent).bind(risk).bind(playbook).bind(project_id)
          .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(row)
     }
@@ -10013,17 +10019,17 @@ impl PgStore {
         &self, session_id: Option<uuid::Uuid>, feature: Option<&str>,
         lifecycle: &str, intent: &str, risk: &str,
         rule_id: Option<uuid::Uuid>, playbook: &str, rationale: &str, confirmed: bool,
-        classified_by: Option<&str>, model_fallback: bool,
+        classified_by: Option<&str>, model_fallback: bool, project_id: uuid::Uuid,
     ) -> Result<uuid::Uuid, String> {
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.playbook_run
                (session_id, feature, lifecycle, intent, risk, rule_id, playbook, rationale, confirmed,
-                classified_by, model_fallback)
-             VALUES ($1,$2,$3::sensei.chunk_lifecycle,$4::sensei.chunk_intent,$5::sensei.chunk_risk,$6,$7,$8,$9,$10,$11)
+                classified_by, model_fallback, project_id)
+             VALUES ($1,$2,$3::sensei.chunk_lifecycle,$4::sensei.chunk_intent,$5::sensei.chunk_risk,$6,$7,$8,$9,$10,$11,$12)
              RETURNING id"
         ).bind(session_id).bind(feature).bind(lifecycle).bind(intent).bind(risk)
          .bind(rule_id).bind(playbook).bind(rationale).bind(confirmed)
-         .bind(classified_by).bind(model_fallback)
+         .bind(classified_by).bind(model_fallback).bind(project_id)
          .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(row.0)
     }
@@ -14602,10 +14608,11 @@ mod playbook_tests {
         let guide = pg.list_intake_guide().await.unwrap();
         assert!(guide.iter().any(|g| g["kind"] == "frame"));
 
+        let (proj, _) = pg.get_or_create_project_by_name("_test:playbook_roundtrip").await.unwrap();
         let run_id = pg.insert_playbook_run(
             None, None, "greenfield", "feature", "high",
             None, "spec_driven", "hi", true,
-            Some("manual"), false,
+            Some("manual"), false, proj,
         ).await.unwrap();
 
         let row: (String, String, String, String, bool) = sqlx_core::query_as::query_as(
@@ -14655,10 +14662,11 @@ mod playbook_tests {
         let sid = pg.create_session(&fid, "intake test", None).await.unwrap();
         assert!(!pg.session_has_confirmed_run(&sid).await.unwrap());
 
+        let (proj, _) = pg.get_or_create_project_by_name("_test:nudge_gate").await.unwrap();
         pg.insert_playbook_run(
             Some(sid), None, "stable", "bug", "low",
             None, "debug_flow", "r", true,
-            None, false,
+            None, false, proj,
         ).await.unwrap();
         assert!(pg.session_has_confirmed_run(&sid).await.unwrap());
         // clean slate — shared test DB; this combo is also asserted exactly by
@@ -14693,9 +14701,10 @@ mod playbook_tests {
         pg.execute_raw(&format!(
             "update activity.sessions set outcome='completed', ftr=true where id='{sid}'"
         )).await.unwrap();
+        let (proj, _) = pg.get_or_create_project_by_name("_test:attrib").await.unwrap();
         pg.insert_playbook_run(
             Some(sid), None, "stable", "bug", "low",
-            None, "debug_flow", "r", true, Some("manual"), false,
+            None, "debug_flow", "r", true, Some("manual"), false, proj,
         ).await.unwrap();
 
         let n = pg.attribute_playbook_outcomes().await.unwrap();
@@ -14798,20 +14807,32 @@ mod playbook_tests {
     }
 
     #[tokio::test]
-    async fn playbook_combo_trust_counts_ftr() {
+    async fn playbook_combo_trust_is_project_scoped() {
         let Ok(pg) = PgStore::connect_test().await else { return; };
+        let (proj_a, _) = pg.get_or_create_project_by_name("_test:trust_a").await.unwrap();
+        let (proj_b, _) = pg.get_or_create_project_by_name("_test:trust_b").await.unwrap();
         pg.execute_raw("delete from sensei.playbook_run where feature = 'trust-test'").await.ok();
-        // two confirmed+attributed runs for (stable,bug,low, debug_flow): one ftr, one not → n=2, ftr=0.5
+        // project A: two confirmed+attributed runs for (stable,bug,low, debug_flow): one ftr, one not → n=2, ftr=0.5
         for ftr in ["true", "false"] {
             pg.execute_raw(&format!(
-                "insert into sensei.playbook_run (feature, lifecycle, intent, risk, playbook, rationale, confirmed, outcome_ftr) \
-                 values ('trust-test','stable','bug','low','debug_flow','t', true, {ftr})")).await.unwrap();
+                "insert into sensei.playbook_run (feature, lifecycle, intent, risk, playbook, rationale, confirmed, outcome_ftr, project_id) \
+                 values ('trust-test','stable','bug','low','debug_flow','t', true, {ftr}, '{proj_a}')")).await.unwrap();
         }
-        let (n, ftr) = pg.playbook_combo_trust("stable","bug","low","debug_flow").await.unwrap();
-        assert_eq!(n, 2);
-        assert!((ftr - 0.5).abs() < 1e-9);
-        // empty combo → (0, 0.0)
-        let (n0, f0) = pg.playbook_combo_trust("greenfield","ux","high","vibe").await.unwrap();
+        // project B: one confirmed run, ftr true — must NOT bleed into A's trust
+        pg.execute_raw(&format!(
+            "insert into sensei.playbook_run (feature, lifecycle, intent, risk, playbook, rationale, confirmed, outcome_ftr, project_id) \
+             values ('trust-test','stable','bug','low','debug_flow','t', true, true, '{proj_b}')")).await.unwrap();
+
+        // scoped to A: only A's 2 runs → n=2, ftr=0.5 (B's run excluded — trust is per-project, never global)
+        let (na, fa) = pg.playbook_combo_trust("stable","bug","low","debug_flow", &proj_a).await.unwrap();
+        assert_eq!(na, 2, "trust must count only the in-scope project's runs");
+        assert!((fa - 0.5).abs() < 1e-9);
+        // scoped to B: only B's run → n=1, ftr=1.0
+        let (nb, fb) = pg.playbook_combo_trust("stable","bug","low","debug_flow", &proj_b).await.unwrap();
+        assert_eq!(nb, 1);
+        assert!((fb - 1.0).abs() < 1e-9);
+        // empty combo in A → (0, 0.0)
+        let (n0, f0) = pg.playbook_combo_trust("greenfield","ux","high","vibe", &proj_a).await.unwrap();
         assert_eq!(n0, 0); assert_eq!(f0, 0.0);
         pg.execute_raw("delete from sensei.playbook_run where feature = 'trust-test'").await.ok();
     }
