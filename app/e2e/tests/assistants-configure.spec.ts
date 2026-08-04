@@ -156,7 +156,7 @@ test.describe('Assistants — per-family configure', () => {
     // marker write + navigate.
     const card = tauriPage.locator('[data-testid="assistant-card-claude"]');
     await expect(card).toBeVisible({ timeout: 10_000 });
-    await tauriPage.locator('.btn-primary').click();
+    await tauriPage.locator('[data-action="next"]').click();
     await waitForPath(tauriPage, '/setup/roots', 20_000);
 
     const config = await fetch(`${DAEMON_URL}/api/config`).then(r => r.json()) as Record<string, string>;

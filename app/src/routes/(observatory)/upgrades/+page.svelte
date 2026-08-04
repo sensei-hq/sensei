@@ -3,6 +3,7 @@
   import { appState } from '$lib/appstate.svelte.js';
   import { senseiApi } from '$lib/api.js';
   import { PageHeader, EmptyState } from '$lib/components';
+  import { Button } from '@rokkit/ui';
   import type { DojoUpgrade } from '$lib/types.js';
   import { KIND_META, type Upgrade, type UpgradeKind } from './buckets.js';
   import {
@@ -89,27 +90,29 @@
 
     <!-- one-decision-default: Apply · then Pin / Mute -->
     <div class="flex items-center gap-2 mt-3 pt-3 border-t border-paper-edge">
-      <button
-        type="button"
+      <Button
+        variant="primary"
+        size="sm"
         data-action="apply"
         disabled={actions.isBusy(up.id)}
         onclick={() => actions.apply(up.id)}
-        class="px-3 py-1.5 rounded-md border-none bg-primary text-on-primary text-xs cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-      >Apply</button>
-      <button
-        type="button"
+      >Apply</Button>
+      <Button
+        variant="secondary"
+        style="outline"
+        size="sm"
         data-action="pin"
         disabled={actions.isBusy(up.id)}
         onclick={() => actions.pin(up.id)}
-        class="px-3 py-1.5 rounded-md border border-paper-edge bg-transparent text-ink-soft text-xs cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-      >Pin</button>
-      <button
-        type="button"
+      >Pin</Button>
+      <Button
+        variant="secondary"
+        style="outline"
+        size="sm"
         data-action="mute"
         disabled={actions.isBusy(up.id)}
         onclick={() => actions.mute(up.id)}
-        class="px-3 py-1.5 rounded-md border border-paper-edge bg-transparent text-ink-mute text-xs cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-      >Mute</button>
+      >Mute</Button>
     </div>
   </article>
 {/snippet}
