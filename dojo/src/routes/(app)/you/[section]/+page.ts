@@ -55,7 +55,8 @@ export const load: PageLoad = async ({ params, parent, fetch }) => {
 	let rulePacks: KitRulePack[] = [];
 	if (section === 'packs') {
 		try {
-			rulePacks = toKitRulePacks(await listLibraryPacks({ fetch, accessToken }));
+			const { packs, adopted } = await listLibraryPacks({ fetch, accessToken });
+			rulePacks = toKitRulePacks(packs, new Set(adopted));
 		} catch {
 			// honest-empty — the screen renders its empty state.
 		}

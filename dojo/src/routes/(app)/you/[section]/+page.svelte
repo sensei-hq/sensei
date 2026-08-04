@@ -1,6 +1,12 @@
 <script lang="ts">
 	import { goto, invalidateAll } from '$app/navigation';
-	import { adoptContribution, createDojo, syncGithubOrgs, ClientApiError } from '$lib/client-data';
+	import {
+		adoptContribution,
+		createDojo,
+		syncGithubOrgs,
+		setPackAdoption,
+		ClientApiError
+	} from '$lib/client-data';
 	import ScrPlaceholder from '$lib/components/screens/ScrPlaceholder.svelte';
 	import ScrProjects from '$lib/components/screens/ScrProjects.svelte';
 	import ScrConstitution from '$lib/components/screens/ScrConstitution.svelte';
@@ -8,7 +14,7 @@
 	import ScrMyDojos from '$lib/components/screens/ScrMyDojos.svelte';
 	import ScrContributions from '$lib/components/screens/ScrContributions.svelte';
 	import { youHref, orgHref } from '$lib/nav';
-	import type { KitProject, KitDojo, KitDownstream } from '$lib/components/kit/types';
+	import type { KitProject, KitDojo, KitDownstream, KitRulePack } from '$lib/components/kit/types';
 
 	// The personal-zone section screen — the non-inbox destinations (projects ·
 	// rules · packs · dojos · contributions). Opening a project routes to the
@@ -32,6 +38,13 @@
 	async function pinContribution(item: KitDownstream) {
 		if (!item.id) return;
 		await adoptContribution(item.id);
+		await invalidateAll();
+	}
+
+	// Adopt / drop a rule pack → persist to /v1 (the screen flips optimistically),
+	// then re-load so the adopted/available split reflects the source of truth.
+	async function onPackToggle(pack: KitRulePack, adopt: boolean) {
+		await setPackAdoption(pack.id, adopt);
 		await invalidateAll();
 	}
 
@@ -102,7 +115,7 @@
 {:else if data.section === 'rules'}
 	<ScrConstitution stance={data.stance} ladder={data.ladder} onGoPacks={goPacks} />
 {:else if data.section === 'packs'}
-	<ScrRulePacks packs={data.rulePacks} />
+	<ScrRulePacks packs={data.rulePacks} onToggle={onPackToggle} />
 {:else if data.section === 'dojos'}
 	<div class="flex items-center justify-end gap-3" style="padding: 12px 32px 0">
 		{#if ghMsg}<span class="text-ink-mute text-xs">{ghMsg}</span>{/if}
