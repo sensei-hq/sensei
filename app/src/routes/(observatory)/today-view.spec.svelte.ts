@@ -58,11 +58,11 @@ describe('ftrBars', () => {
 
 describe('insightToneClasses', () => {
   it('maps warn to warning tokens', () => {
-    expect(insightToneClasses('warn')).toEqual({ glyph: 'text-warning', tag: 'bg-warning-soft text-warning' });
+    expect(insightToneClasses('warn')).toEqual({ glyph: 'text-warning', tag: 'bg-paper-mute text-warning border border-warning' });
   });
 
   it('maps good to success tokens', () => {
-    expect(insightToneClasses('good')).toEqual({ glyph: 'text-success', tag: 'bg-success-soft text-success' });
+    expect(insightToneClasses('good')).toEqual({ glyph: 'text-success', tag: 'bg-paper-mute text-success border border-success' });
   });
 
   it('maps mute to neutral ink tokens', () => {
