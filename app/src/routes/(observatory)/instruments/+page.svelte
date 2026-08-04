@@ -7,6 +7,7 @@
     import EmptyState from "$lib/components/EmptyState.svelte";
     import SignalCard from "$lib/components/SignalCard.svelte";
     import { Eyebrow, PageHeader } from "$lib/components";
+    import { Button } from "@rokkit/ui";
     import { mcp, toolVerdict } from "$lib/state/mcp.svelte.js";
     import ToolHealthCard from "./ToolHealthCard.svelte";
     import type {
@@ -653,14 +654,15 @@
                         {/if}
 
                         <div class="flex items-center gap-2 mt-3 pt-2 border-t border-paper-mute">
-                            <button
-                                class="py-1 px-3 text-sm bg-ink text-paper border-none rounded cursor-pointer tracking-tight"
+                            <Button
+                                variant="primary"
+                                size="sm"
                                 onclick={executeTool}
                                 disabled={running || !selectedTool}
                                 data-testid="tool-execute"
                             >
                                 {isAction ? 'Run →' : 'Query →'}
-                            </button>
+                            </Button>
                             <div class="flex-1"></div>
                             {#if running}
                                 <span class="font-mono text-xs text-ink-mute">calling …</span>

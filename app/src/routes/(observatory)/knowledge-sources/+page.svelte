@@ -4,6 +4,7 @@
     import { senseiApi } from "$lib/api.js";
     import EmptyState from "$lib/components/EmptyState.svelte";
     import { PageHeader } from "$lib/components";
+    import { Button } from "@rokkit/ui";
     import { KnowledgeSourcesState } from "$lib/knowledge-sources.svelte.js";
 
     const state = new KnowledgeSourcesState();
@@ -40,12 +41,13 @@
                 placeholder="Name (optional)"
                 bind:value={state.name}
             />
-            <button
-                class="ks-add px-4 py-2 rounded-md border border-ink bg-ink text-paper-soft text-sm cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            <Button
+                variant="primary"
+                size="sm"
                 data-testid="add-source"
                 disabled={state.adding}
                 onclick={() => state.add(api())}
-            >Add</button>
+            >Add</Button>
         </div>
         {#if state.addError}
             <p class="text-xs text-error m-0 mt-2.5">{state.addError}</p>
@@ -108,9 +110,5 @@
     }
     .ks-btn:hover {
         background: var(--paper-mute);
-    }
-    .ks-add:hover {
-        background: var(--ink-mute);
-        border-color: var(--ink-mute);
     }
 </style>

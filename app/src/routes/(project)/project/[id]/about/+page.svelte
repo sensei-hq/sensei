@@ -1,5 +1,6 @@
 <script lang="ts">
     import { PageHeader, Kanji } from '$lib/components';
+    import { Button } from '@rokkit/ui';
     import { appState } from '$lib/appstate.svelte.js';
     import { senseiApi } from '$lib/api.js';
     import { page } from '$app/state';
@@ -91,13 +92,13 @@
             <div class="font-mono text-xs text-ink-mute truncate mt-0.5">{b.tenantKey}</div>
         </div>
         {@render bindingChip(inferredChip().bg, inferredChip().text, inferredChip().label, 'inferred')}
-        <button
-            type="button"
+        <Button
+            variant="primary"
+            size="sm"
             data-testid="binding-confirm"
             disabled={bindAction.pending}
             onclick={() => confirmBinding(b)}
-            class="px-3 py-1.5 rounded-md border-none bg-primary text-on-primary text-xs cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-        >{bindAction.pending ? 'Confirming…' : 'Confirm'}</button>
+        >{bindAction.pending ? 'Confirming…' : 'Confirm'}</Button>
     </div>
 {/snippet}
 

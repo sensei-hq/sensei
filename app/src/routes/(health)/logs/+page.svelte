@@ -18,6 +18,7 @@
     } from "./helpers.js";
     import { LogsPageState } from "./state.svelte.js";
     import { Eyebrow, Kanji, StatusDot } from "$lib/components";
+    import { Button } from "@rokkit/ui";
 
     let { data }: { data: PageData } = $props();
 
@@ -143,12 +144,14 @@
                         </div>
                     </div>
 
-                    <button
-                        class="report-btn shrink-0 mt-1 text-sm font-medium border-none px-4 py-2 rounded-md cursor-pointer bg-ink text-paper-soft"
+                    <Button
+                        variant="primary"
+                        size="sm"
+                        class="shrink-0 mt-1"
                         onclick={() => state.openModal()}
                     >
                         Report this session ↗
-                    </button>
+                    </Button>
                 </div>
 
                 <!-- Stats row -->
@@ -440,11 +443,6 @@
     }
     .session-row.selected .session-time {
         color: var(--ink);
-    }
-
-    /* Report button hover */
-    .report-btn:hover {
-        opacity: 0.85;
     }
 
     /* Detail label variants */

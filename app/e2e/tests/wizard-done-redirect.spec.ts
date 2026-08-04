@@ -38,9 +38,9 @@ test.describe('Wizard done → observatory', () => {
     const beforeClick = await tauriPage.evaluate(`window.location.pathname`) as string;
     expect(beforeClick, 'expected to be on /setup/done before the click').toBe('/setup/done');
 
-    // Click the Continue button — `.btn-primary` in (config)/+layout.svelte.
+    // Click the Continue button — `[data-action="next"]` in (config)/+layout.svelte.
     // On the done stage it reads "Enter observatory →".
-    await tauriPage.click('.btn-primary');
+    await tauriPage.click('[data-action="next"]');
 
     // Wait for the daemon write + invalidateAll + goto + reroute to settle.
     await new Promise(r => setTimeout(r, 4000));
