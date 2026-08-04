@@ -436,6 +436,25 @@ export async function adoptContribution(artifactId: string, opts: DojoCallOpts =
 	await sendJson(youUrl('/contributions/adopt'), 'POST', { artifactId }, opts);
 }
 
+/** One global library pack as it crosses the /v1/you wire (browse). The wire
+ *  boundary lives here (client-reachable) so the map + loader never import a
+ *  `$lib/server/*` module. Produced by `rulepacks-data.shapeLibraryPacks`. */
+export interface LibraryPackWire {
+	slug: string;
+	kanji: string | null;
+	name: string;
+	by: string;
+	note: string;
+	rules: string[];
+}
+
+/** `GET /v1/you/rule-packs` — the global rule-pack library (curated, adoptable).
+ *  Honest-empty `[]` on a missing key (a non-2xx throws `ClientApiError`). */
+export async function listLibraryPacks(opts: DojoCallOpts = {}): Promise<LibraryPackWire[]> {
+	const data = await getJson<{ packs?: LibraryPackWire[] }>(youUrl('/rule-packs'), opts);
+	return data.packs ?? [];
+}
+
 /** `POST /v1/you/dojos` — self-serve create a dōjō (F3a); the caller becomes its
  *  admin. Returns the new `{ id, key, name }`. Throws `ClientApiError` on a
  *  non-2xx (e.g. 409 name collision, 400 invalid). */
