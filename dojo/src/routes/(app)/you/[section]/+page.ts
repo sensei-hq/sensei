@@ -2,11 +2,12 @@ import { redirect } from '@sveltejs/kit';
 import type { PageLoad } from './$types';
 import { YOU_SECTIONS, labelForSection } from '$lib/nav';
 import { toKitDojos } from '$lib/chrome';
-import { listUserProjects, listContributions, ClientApiError } from '$lib/client-data';
+import { listUserProjects, listContributions, listLibraryPacks, ClientApiError } from '$lib/client-data';
 import { toKitProjects } from '$lib/projects-map';
 import { toKitContributions, toKitDownstreams } from '$lib/contributions-map';
-import type { KitProject, KitContribution, KitDownstream } from '$lib/components/kit/types';
-import { stance, ladder, rulePacks } from '$lib/components/kit/fixtures';
+import { toKitRulePacks } from '$lib/rulepacks-map';
+import type { KitProject, KitContribution, KitDownstream, KitRulePack } from '$lib/components/kit/types';
+import { stance, ladder } from '$lib/components/kit/fixtures';
 
 // The personal-zone section loader — the non-inbox destinations (projects ·
 // rules · packs · dojos · contributions). `dojos` binds REAL memberships (from
@@ -48,12 +49,25 @@ export const load: PageLoad = async ({ params, parent, fetch }) => {
 		}
 	}
 
+	// Real rule-pack library (browse) — the user-wide global catalog (GET
+	// /v1/you/rule-packs), only on this section. Honest-empty on a read failure
+	// (read-only informational surface), never the old fixture.
+	let rulePacks: KitRulePack[] = [];
+	if (section === 'packs') {
+		try {
+			rulePacks = toKitRulePacks(await listLibraryPacks({ fetch, accessToken }));
+		} catch {
+			// honest-empty — the screen renders its empty state.
+		}
+	}
+
 	return {
 		section,
 		title: labelForSection(section, 'you'),
-		// Your own governance — always yours (still fixture-backed pending its route).
+		// Your own governance — stance/constitution still fixture-backed pending their routes.
 		stance,
 		ladder,
+		// Rule packs — real global library read (browse); honest-empty on failure.
 		rulePacks,
 		// Memberships — real, from the layout's `listUserOrgs`, mapped to KitDojo.
 		dojos: toKitDojos(memberships),
