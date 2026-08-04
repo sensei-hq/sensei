@@ -39,10 +39,16 @@
 </PageHeader>
 
 <div class="px-6 py-6">
-    <!-- Version conflicts banner — the T1a signal. Users decide before browsing rows. -->
+    <!-- Version conflicts banner — the T1a signal. Users decide before browsing rows.
+         A paper surface (flips for dark mode) with a warning left-accent + heading — NOT a
+         bg-warning-soft fill. warning-soft is a single-pole tint that stays pale (0.95) in dark
+         mode, so ink body text (flips to ~0.94) would sit near-white-on-near-white and vanish.
+         Paper-soft flips to dark, keeping the ink body text high-contrast in both modes. -->
     {#if data.conflicts.length > 0}
-        <section class="mb-6 border border-warning-edge bg-warning-soft rounded-md p-3" data-testid="library-conflicts-banner">
-            <h3 class="text-sm font-medium m-0 mb-2 text-warning">Version conflicts</h3>
+        <section class="mb-6 rounded-md p-3 bg-paper-soft border border-paper-edge border-l-2 border-l-warning" data-testid="library-conflicts-banner">
+            <h3 class="text-sm font-medium m-0 mb-2 text-warning flex items-center gap-1.5">
+                <span aria-hidden="true">⚠</span> Version conflicts
+            </h3>
             <p class="text-xs text-ink-soft m-0 mb-3">
                 These libraries are pinned to different versions across folders in this project.
             </p>
