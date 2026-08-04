@@ -30,7 +30,9 @@ create table if not exists rule_pack_rules (
 , updated_at    timestamptz not null default now()
 );
 
-create index if not exists rule_pack_rules_pack_idx on rule_pack_rules(pack_id, ordinal);
+-- Unique so the staging seed (staging.import_rule_pack_rules) can guarded-upsert on
+-- (pack_id, ordinal); ordinal is the pack-local display order, one row per position.
+create unique index if not exists rule_pack_rules_pack_idx on rule_pack_rules(pack_id, ordinal);
 
 comment on table rule_pack_rules is
 'A pack''s owned rules, with their full text + enforcement structure. The authored
