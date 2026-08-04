@@ -1,5 +1,6 @@
 <script lang="ts">
   import { PageHeader, EmptyState } from '$lib/components';
+  import { Button } from '@rokkit/ui';
   import { typePill, attributionSummary, type ChipClasses } from '$lib/dojo-artifacts.js';
   import type { ShareReviewBatch, ShareReviewItem, PublishBatchOutcome } from '$lib/types.js';
   import {
@@ -209,31 +210,30 @@
         <span class="text-xs text-ink-soft" data-confirm-prompt>
           Publish {nShip} items to your Dōjō? A maintainer approves before distribution.
         </span>
-        <button
-          type="button"
+        <Button
+          variant="primary"
+          size="sm"
           data-action="confirm-publish"
           onclick={onPublish}
           disabled={actions.busy}
-          class="px-3 py-1.5 rounded-md border-none bg-primary text-on-primary text-xs cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-          >Confirm</button
-        >
-        <button
-          type="button"
+        >Confirm</Button>
+        <Button
+          variant="secondary"
+          style="outline"
+          size="sm"
           data-action="cancel-publish"
           onclick={() => (confirming = false)}
-          class="px-3 py-1.5 rounded-md border border-paper-edge bg-transparent text-ink-soft text-xs cursor-pointer"
-          >Cancel</button
-        >
+        >Cancel</Button>
       {:else}
-        <button
-          type="button"
+        <Button
+          variant="primary"
+          size="sm"
           data-action="publish"
           onclick={onPublish}
           disabled={!canPublish}
-          class="inline-flex items-center gap-1 px-3 py-1.5 rounded-md border-none bg-primary text-on-primary text-xs cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <span class="kanji">共</span>{publishButtonLabel(nShip)}
-        </button>
+        </Button>
       {/if}
     </div>
 

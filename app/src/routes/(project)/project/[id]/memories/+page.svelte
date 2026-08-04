@@ -12,6 +12,7 @@
         type ScopeRung,
     } from './memories-state.svelte.js';
     import MemoryChip from './MemoryChip.svelte';
+    import { Button } from '@rokkit/ui';
 
     let { data } = $props();
 
@@ -139,12 +140,12 @@
                     <h2 class="display text-lg font-normal m-0 text-ink">{h.headline}</h2>
                     <p class="text-sm text-ink-mute leading-normal m-0 mt-2 max-w-[640px]">{h.body}</p>
                     <div class="flex items-center gap-3 mt-4">
-                        <button
-                            type="button"
-                            class="px-3 py-1.5 rounded-md text-xs bg-primary text-on-primary border-none cursor-pointer"
+                        <Button
+                            variant="primary"
+                            size="sm"
                             data-testid="hero-review-batch"
                             onclick={reviewNextBatch}
-                        >{h.action}</button>
+                        >{h.action}</Button>
                         <span class="text-xs text-ink-soft">{h.meta}</span>
                     </div>
                 </div>
@@ -167,20 +168,21 @@
                             {#if batch.note} · <span class="opacity-70">{batch.note}</span>{/if}
                         </span>
                         <span class="text-xs text-ink-soft">{new Date(batch.createdAt).toLocaleDateString()}</span>
-                        <button
-                            type="button"
-                            class="px-2 py-1 rounded-md text-xs bg-primary text-on-primary border-none cursor-pointer"
+                        <Button
+                            variant="primary"
+                            size="sm"
                             disabled={deciding[batch.id]}
                             data-testid={`batch-approve-${batch.id}`}
                             onclick={() => decide(batch.id, 'approved')}
-                        >Approve</button>
-                        <button
-                            type="button"
-                            class="px-2 py-1 rounded-md text-xs bg-transparent text-ink-soft border border-paper-edge cursor-pointer"
+                        >Approve</Button>
+                        <Button
+                            variant="secondary"
+                            style="outline"
+                            size="sm"
                             disabled={deciding[batch.id]}
                             data-testid={`batch-reject-${batch.id}`}
                             onclick={() => decide(batch.id, 'rejected')}
-                        >Reject</button>
+                        >Reject</Button>
                     </li>
                 {/each}
             </ul>
@@ -196,13 +198,13 @@
             <span class="text-xs text-ink-faint font-mono">{memState.countLabel}</span>
         </div>
         <div class="flex items-center justify-end mb-3">
-            <button
-                type="button"
-                class="px-3 py-1.5 rounded-md text-xs bg-primary text-on-primary border-none cursor-pointer"
+            <Button
+                variant="primary"
+                size="sm"
                 disabled={selected.size === 0 || creating}
                 data-testid="propose-batch-button"
                 onclick={proposeBatch}
-            >{creating ? 'Proposing…' : 'Propose batch'}</button>
+            >{creating ? 'Proposing…' : 'Propose batch'}</Button>
         </div>
 
         <div class="grid gap-6" class:grid-cols-1={!openedMemory} class:grid-cols-[280px_1fr]={openedMemory}>
@@ -368,19 +370,20 @@
                                                     {memState.governanceNote(memState.pendingScope)}
                                                 </p>
                                                 <div class="flex items-center gap-2">
-                                                    <button
-                                                        type="button"
-                                                        class="px-2.5 py-1 rounded-md text-xs bg-primary text-on-primary border-none cursor-pointer"
+                                                    <Button
+                                                        variant="primary"
+                                                        size="sm"
                                                         disabled={memState.isPromoting(openedMemory.id)}
                                                         data-testid="widen-confirm"
                                                         onclick={() => confirmWiden(openedMemory.id)}
-                                                    >{memState.isPromoting(openedMemory.id) ? 'widening…' : `confirm widen to ${memState.pendingScope}`}</button>
-                                                    <button
-                                                        type="button"
-                                                        class="px-2.5 py-1 rounded-md text-xs bg-transparent text-ink-soft border border-paper-edge cursor-pointer"
+                                                    >{memState.isPromoting(openedMemory.id) ? 'widening…' : `confirm widen to ${memState.pendingScope}`}</Button>
+                                                    <Button
+                                                        variant="secondary"
+                                                        style="outline"
+                                                        size="sm"
                                                         data-testid="widen-cancel"
                                                         onclick={() => memState.closeWiden()}
-                                                    >cancel</button>
+                                                    >cancel</Button>
                                                 </div>
                                             </div>
                                         {/if}
@@ -395,13 +398,13 @@
                             <p class="text-sm text-ink-soft leading-normal m-0 mb-3">
                                 sensei can rewrite this stack-agnostic so it can widen up the scope ladder.
                             </p>
-                            <button
-                                type="button"
-                                class="px-3 py-1.5 rounded-md text-xs bg-primary text-on-primary border-none cursor-pointer"
+                            <Button
+                                variant="primary"
+                                size="sm"
                                 disabled={memState.isGeneralising(openedMemory.id)}
                                 data-testid="generalise-button"
                                 onclick={() => generalise(openedMemory.id)}
-                            >{memState.isGeneralising(openedMemory.id) ? 'generalising…' : 'generalise'}</button>
+                            >{memState.isGeneralising(openedMemory.id) ? 'generalising…' : 'generalise'}</Button>
                             {#if memState.generaliseError(openedMemory.id)}
                                 <p class="text-xs text-danger m-0 mt-2" data-testid="generalise-error">
                                     {memState.generaliseError(openedMemory.id)}
