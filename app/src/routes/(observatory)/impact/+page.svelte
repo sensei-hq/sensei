@@ -121,13 +121,15 @@
         <!-- Verdict pill -->
         {#if openVm}
           <div class="flex items-center gap-3 mb-5">
+            <!-- Outline chip on a paper surface (which flips for dark mode) + a
+                 tone-coloured border and text. A `*-soft` fill can't be used here:
+                 the status softs are single-pole (stay pale ~0.94L in BOTH modes),
+                 so tone-coloured text on them is near-invisible in dark mode. Paper
+                 flips dark, keeping the coloured text high-contrast either way. -->
             <div
-              class="inline-flex items-center gap-2 py-1 px-3 rounded-full border"
-              class:bg-success-soft={openVm.tone === 'success'}
+              class="inline-flex items-center gap-2 py-1 px-3 rounded-full border bg-paper-soft"
               class:border-success={openVm.tone === 'success'}
-              class:bg-warning-soft={openVm.tone === 'warning'}
               class:border-warning={openVm.tone === 'warning'}
-              class:bg-paper-mute={openVm.tone === 'ink'}
               class:border-paper-edge={openVm.tone === 'ink'}
             >
               <span class="kanji text-[13px] {toneClass(openVm.tone)}">{openVm.glyph}</span>

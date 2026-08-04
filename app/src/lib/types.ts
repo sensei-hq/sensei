@@ -696,6 +696,9 @@ export interface InsightProjectRef {
   id: string;
   name: string;
   kanji: string;
+  /** MAX(sessions.started_at), ISO — drives the Insights filter's "recent 3"
+   *  chips. Null when the project has never run a session. */
+  last_session_at?: string | null;
 }
 
 /** A pending recommendation, pre-bucketed. `name` is the project name;
