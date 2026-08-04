@@ -78,11 +78,28 @@ export default {
     primary:      { light: "kami.900", dark: "sumi.900" },
     "on-primary": { light: "kami.100", dark: "sumi.50"  },
 
-    // ── Status — lighten for legibility in dark mode (shade 400 vs 500) ─
+    // ── Status (solid/text) — lighten for legibility in dark mode (shade 400 vs 500) ─
     success:      { light: "hisui.500",  dark: "hisui.400"  },
     warning:      { light: "kohaku.500", dark: "kohaku.400" },
     danger:       { light: "beni.500",   dark: "beni.400"   },
+    error:        { light: "beni.500",   dark: "beni.400"   },  // parity with danger (skin error:beni was single-pole)
     info:         { light: "ai.500",     dark: "ai.400"     },
+
+    // ── Status/accent SOFT (tinted callout backgrounds) — MUST flip per mode ─────
+    // The status palettes are single-pole (50→950), so the preset derives every
+    // `-soft` from the pale shade-100 (~0.94L) and emits the SAME value in the dark
+    // block — a pale tint that stays pale in dark mode. `text-<status>` (shade 400,
+    // ~0.72–0.79L) on it is then near-invisible in dark mode (every pill/card
+    // contrast bug traces here). Give each soft a real dark tint (shade 900, ~0.25–
+    // 0.38L) so coloured text/icons contrast in BOTH modes. Light keeps shade-100
+    // (identical to today — no light-mode regression). This is the SYSTEMIC fix that
+    // makes `bg-*-soft text-*` dark-safe everywhere, not per-component.
+    "accent-soft":  { light: "shu.100",    dark: "shu.900"    },
+    "success-soft": { light: "hisui.100",  dark: "hisui.900"  },
+    "warning-soft": { light: "kohaku.100", dark: "kohaku.900" },
+    "danger-soft":  { light: "beni.100",   dark: "beni.900"   },
+    "error-soft":   { light: "beni.100",   dark: "beni.900"   },
+    "info-soft":    { light: "ai.100",     dark: "ai.900"     },
   },
 
   typography: {
