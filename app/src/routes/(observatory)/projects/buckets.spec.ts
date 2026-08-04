@@ -66,23 +66,26 @@ describe('bucketProjects', () => {
     expect(b.active).toEqual([]);
   });
 
-  it('active is sorted by FTR desc, ties by name asc', () => {
+  it('active is sorted by most-recent session first, ties by name asc', () => {
     const b = bucketProjects([
-      p({ id: '1', name: 'zulu', sessions7d: 1, ftr14d: 0.5 }),
-      p({ id: '2', name: 'alpha', sessions7d: 1, ftr14d: 0.9 }),
-      p({ id: '3', name: 'mike', sessions7d: 1, ftr14d: 0.9 }),
+      p({ id: '1', name: 'zulu', sessions7d: 1, last_session_at: '2026-08-04T00:00:00Z' }),
+      p({ id: '2', name: 'alpha', sessions7d: 1, last_session_at: '2026-08-02T00:00:00Z' }),
+      p({ id: '3', name: 'mike', sessions7d: 1, last_session_at: '2026-08-02T00:00:00Z' }),
     ]);
-    expect(b.active.map((x) => x.name)).toEqual(['alpha', 'mike', 'zulu']);
+    // zulu is newest; alpha & mike share the older timestamp → tie broken by name asc
+    expect(b.active.map((x) => x.name)).toEqual(['zulu', 'alpha', 'mike']);
   });
 
-  it('dormant and archived are sorted alphabetically', () => {
+  it('dormant and archived are sorted most-recent first; a null last-session sorts last', () => {
     const b = bucketProjects([
-      p({ id: '1', name: 'zulu' }),
-      p({ id: '2', name: 'alpha' }),
-      p({ id: '3', name: 'delta', maturity: 'archived' }),
-      p({ id: '4', name: 'bravo', maturity: 'archived' }),
+      p({ id: '1', name: 'zulu', last_session_at: '2026-07-01T00:00:00Z' }),
+      p({ id: '2', name: 'alpha', last_session_at: null }),
+      p({ id: '3', name: 'delta', maturity: 'archived', last_session_at: '2026-06-01T00:00:00Z' }),
+      p({ id: '4', name: 'bravo', maturity: 'archived', last_session_at: '2026-08-01T00:00:00Z' }),
     ]);
-    expect(b.dormant.map((x) => x.name)).toEqual(['alpha', 'zulu']);
+    // dormant: zulu (has a session) before alpha (never ran → sorts last)
+    expect(b.dormant.map((x) => x.name)).toEqual(['zulu', 'alpha']);
+    // archived: bravo (Aug) before delta (Jun)
     expect(b.archived.map((x) => x.name)).toEqual(['bravo', 'delta']);
   });
 });
