@@ -75,6 +75,23 @@ pub(crate) async fn recommend_playbook(
     };
     let rec = recommend(&axes, &rules);
 
+    // A playbook run always happens IN a project — there is no global run (no cwd,
+    // no repo, no code graph, no rules scope to compute trust against). Require a
+    // resolvable project and NEVER fabricate one on a miss (no-fabrication rule);
+    // both persist and the auto-select trust query scope to it.
+    let project_ident = body["project"].as_str().or_else(|| body["project_id"].as_str())
+        .map(str::trim).filter(|s| !s.is_empty());
+    let Some(ident) = project_ident else {
+        return Json(serde_json::json!({
+            "error": "project (id or name) is required — a playbook run always happens in a project"
+        }));
+    };
+    let project_id = match crate::api::util::resolve_project_uuid(&state, ident).await {
+        Ok(Some(pid)) => pid,
+        Ok(None) => return Json(serde_json::json!({ "error": format!("unknown project: {ident}") })),
+        Err(_) => return Json(serde_json::json!({ "error": "failed to resolve project" })),
+    };
+
     // Persist the run unless this is a preview call. Recommend-and-confirm
     // defaults confirmed=false until the caller confirms; the app intake form's
     // recommend leg passes preview=true (classify + recommend, no row written).
@@ -95,6 +112,7 @@ pub(crate) async fn recommend_playbook(
                 confirmed,
                 Some(classified_by.as_str()),
                 model_fallback,
+                project_id,
             )
             .await
     {
@@ -110,7 +128,7 @@ pub(crate) async fn recommend_playbook(
     // Auto-select-on-trust: only low-risk chunks, only with proven FTR history.
     let (auto_select, trust_n, trust_ftr) = if matches!(axes.risk, crate::playbook::Risk::Low) {
         match state.pg.playbook_combo_trust(
-            axes.lifecycle.as_str(), axes.intent.as_str(), axes.risk.as_str(), &rec.playbook).await {
+            axes.lifecycle.as_str(), axes.intent.as_str(), axes.risk.as_str(), &rec.playbook, &project_id).await {
             Ok((n, ftr)) => (crate::playbook::is_trusted(axes.risk, n, ftr), n, ftr),
             Err(e) => { tracing::warn!(error=%e, "recommend_playbook: trust query failed — no auto-select"); (false, 0, 0.0) }
         }
@@ -134,19 +152,18 @@ pub(crate) async fn recommend_playbook(
         "auto_select": auto_select,
         "trust": { "n": trust_n, "ftr": trust_ftr },
     });
-    let project_ident = body["project"].as_str().or_else(|| body["project_id"].as_str()).filter(|s| !s.is_empty());
-    if let Some(ident) = project_ident
-        && let Ok(Some(pid)) = crate::api::util::resolve_project_uuid(&state, ident).await
-    {
-        match state.pg.list_project_library_capabilities(&pid).await {
-            Ok(caps) => {
-                if let Some(obj) = resp.as_object_mut() {
-                    obj.insert("suggested_skills".into(), caps["suggested_skills"].clone());
-                    obj.insert("suggested_agents".into(), caps["suggested_agents"].clone());
-                }
+    // Suggest the skills/agents provided by the libraries this project depends on
+    // ("this repo uses rokkit → load its styling skill"). Reuses the project_id
+    // resolved above. FAIL CLOSED — on a query error, OMIT the keys entirely; an
+    // empty `[]` (present keys) means "resolved, genuinely none", never a masked failure.
+    match state.pg.list_project_library_capabilities(&project_id).await {
+        Ok(caps) => {
+            if let Some(obj) = resp.as_object_mut() {
+                obj.insert("suggested_skills".into(), caps["suggested_skills"].clone());
+                obj.insert("suggested_agents".into(), caps["suggested_agents"].clone());
             }
-            Err(e) => tracing::warn!(error = %e, "recommend_playbook: library-capability suggestion failed — omitting"),
         }
+        Err(e) => tracing::warn!(error = %e, "recommend_playbook: library-capability suggestion failed — omitting"),
     }
     Json(resp)
 }

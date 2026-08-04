@@ -22,9 +22,14 @@ export class IntakeState {
   phase = $state<IntakePhase>('describe');
   rec = $state<PlaybookRecommendation | null>(null);
   error = $state('');
+  /** The project this intake runs in. A playbook run always happens in a project
+   *  (no global run) — carried on every recommend/confirm so the daemon scopes
+   *  trust to this project and records the run against it. */
+  readonly projectId: string;
 
-  constructor(guide: IntakeGuide) {
+  constructor(guide: IntakeGuide, projectId: string) {
     this.guide = guide;
+    this.projectId = projectId;
   }
 
   /** Human title for the recommended playbook, from the guide catalog. */
@@ -39,7 +44,7 @@ export class IntakeState {
     if (!chunk) return;
     this.phase = 'loading';
     this.error = '';
-    const res = await api.recommendPlaybook({ chunk, preview: true });
+    const res = await api.recommendPlaybook({ chunk, preview: true, project_id: this.projectId });
     if (!res.ok) {
       this.phase = 'error';
       this.error = res.error.message || 'Could not classify the chunk.';
@@ -60,6 +65,7 @@ export class IntakeState {
       intent: r.intent,
       risk: r.risk,
       confirm: true,
+      project_id: this.projectId,
     });
     if (!res.ok) {
       this.phase = 'error';

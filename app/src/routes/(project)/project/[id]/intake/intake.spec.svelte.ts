@@ -34,46 +34,46 @@ function fakeApi(result: PlaybookRecommendation, opts: { ok?: boolean } = {}): I
 
 describe('IntakeState', () => {
   it('resolves the playbook title from the guide catalog', () => {
-    const s = new IntakeState(GUIDE);
+    const s = new IntakeState(GUIDE, 'proj-1');
     s.rec = rec({ playbook: 'gsd' });
     expect(s.playbookTitle).toBe('Get Stuff Done');
   });
 
   it('falls back to the raw name when the catalog lacks the playbook', () => {
-    const s = new IntakeState(GUIDE);
+    const s = new IntakeState(GUIDE, 'proj-1');
     s.rec = rec({ playbook: 'unknown_pb' });
     expect(s.playbookTitle).toBe('unknown_pb');
   });
 
   it('preview previews without confirming, then confirm records', async () => {
-    const s = new IntakeState(GUIDE);
+    const s = new IntakeState(GUIDE, 'proj-1');
     s.chunk = 'fix the crash';
     const api = fakeApi(rec());
     await s.recommend(api);
     expect(s.phase).toBe('recommended');
     expect(s.rec?.playbook).toBe('debug_flow');
-    // First call is the preview leg.
-    expect(api.calls[0]).toEqual({ chunk: 'fix the crash', preview: true });
+    // First call is the preview leg — scoped to the project (a run is never global).
+    expect(api.calls[0]).toEqual({ chunk: 'fix the crash', preview: true, project_id: 'proj-1' });
 
     await s.confirm(api);
     expect(s.phase).toBe('recorded');
-    // Confirm reuses the classified axes (no re-classify) with confirm:true.
-    expect(api.calls[1]).toEqual({ lifecycle: 'stable', intent: 'bug', risk: 'low', confirm: true });
+    // Confirm reuses the classified axes (no re-classify) with confirm:true, still project-scoped.
+    expect(api.calls[1]).toEqual({ lifecycle: 'stable', intent: 'bug', risk: 'low', confirm: true, project_id: 'proj-1' });
   });
 
   it('auto-selects (auto-confirms) when the daemon says trusted', async () => {
-    const s = new IntakeState(GUIDE);
+    const s = new IntakeState(GUIDE, 'proj-1');
     s.chunk = 'tweak a low-risk thing';
     const api = fakeApi(rec({ auto_select: true, trust: { n: 12, ftr: 0.9 } }));
     await s.recommend(api);
     // Preview then an automatic confirm — no manual confirm() call.
     expect(api.calls.length).toBe(2);
-    expect(api.calls[1]).toEqual({ lifecycle: 'stable', intent: 'bug', risk: 'low', confirm: true });
+    expect(api.calls[1]).toEqual({ lifecycle: 'stable', intent: 'bug', risk: 'low', confirm: true, project_id: 'proj-1' });
     expect(s.phase).toBe('recorded');
   });
 
   it('ignores an empty chunk', async () => {
-    const s = new IntakeState(GUIDE);
+    const s = new IntakeState(GUIDE, 'proj-1');
     s.chunk = '   ';
     const api = fakeApi(rec());
     await s.recommend(api);
@@ -82,7 +82,7 @@ describe('IntakeState', () => {
   });
 
   it('surfaces a recommend error', async () => {
-    const s = new IntakeState(GUIDE);
+    const s = new IntakeState(GUIDE, 'proj-1');
     s.chunk = 'fix the crash';
     const api = fakeApi(rec(), { ok: false });
     await s.recommend(api);
@@ -91,7 +91,7 @@ describe('IntakeState', () => {
   });
 
   it('reset returns to the describe phase', async () => {
-    const s = new IntakeState(GUIDE);
+    const s = new IntakeState(GUIDE, 'proj-1');
     s.chunk = 'x'; s.rec = rec(); s.phase = 'recorded';
     s.reset();
     expect(s.phase).toBe('describe');
