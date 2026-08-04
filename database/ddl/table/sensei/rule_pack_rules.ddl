@@ -32,7 +32,13 @@ create table if not exists rule_pack_rules (
 
 -- Unique so the staging seed (staging.import_rule_pack_rules) can guarded-upsert on
 -- (pack_id, ordinal); ordinal is the pack-local display order, one row per position.
-create unique index if not exists rule_pack_rules_pack_idx on rule_pack_rules(pack_id, ordinal);
+-- NB the name is …_uq, NOT the former non-unique …_idx: `create unique index if not
+-- exists` is a silent no-op when an index of the SAME name already exists, so on a DB
+-- that already had the non-unique rule_pack_rules_pack_idx the uniqueness would never
+-- take and the import's ON CONFLICT (pack_id, ordinal) fails with "no unique or
+-- exclusion constraint matching". A fresh name is always created; any leftover old
+-- index is a harmless duplicate until reconcile prunes it.
+create unique index if not exists rule_pack_rules_pack_uq on rule_pack_rules(pack_id, ordinal);
 
 comment on table rule_pack_rules is
 'A pack''s owned rules, with their full text + enforcement structure. The authored
