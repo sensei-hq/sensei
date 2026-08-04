@@ -448,11 +448,28 @@ export interface LibraryPackWire {
 	rules: string[];
 }
 
-/** `GET /v1/you/rule-packs` — the global rule-pack library (curated, adoptable).
- *  Honest-empty `[]` on a missing key (a non-2xx throws `ClientApiError`). */
-export async function listLibraryPacks(opts: DojoCallOpts = {}): Promise<LibraryPackWire[]> {
-	const data = await getJson<{ packs?: LibraryPackWire[] }>(youUrl('/rule-packs'), opts);
-	return data.packs ?? [];
+/** `GET /v1/you/rule-packs` — the global rule-pack library (curated, adoptable) +
+ *  the slugs the caller has adopted. Honest-empty on a missing key (a non-2xx
+ *  throws `ClientApiError`). */
+export async function listLibraryPacks(
+	opts: DojoCallOpts = {}
+): Promise<{ packs: LibraryPackWire[]; adopted: string[] }> {
+	const data = await getJson<{ packs?: LibraryPackWire[]; adopted?: string[] }>(
+		youUrl('/rule-packs'),
+		opts
+	);
+	return { packs: data.packs ?? [], adopted: data.adopted ?? [] };
+}
+
+/** `POST /v1/you/rule-packs/{slug}/adopt` — adopt (or drop) a library pack for the
+ *  caller's user-scoped namespace. Throws `ClientApiError` on a non-2xx (e.g. 404
+ *  unknown slug). */
+export async function setPackAdoption(
+	slug: string,
+	adopt: boolean,
+	opts: DojoCallOpts = {}
+): Promise<void> {
+	await sendJson(youUrl(`/rule-packs/${encodeTenant(slug)}/adopt`), 'POST', { adopt }, opts);
 }
 
 /** `POST /v1/you/dojos` — self-serve create a dōjō (F3a); the caller becomes its
