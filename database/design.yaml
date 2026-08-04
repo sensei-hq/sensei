@@ -40,6 +40,16 @@ scopes:
     # gets them here — but nothing in the `dojo` schema references them anymore (they left
     # dojo), so deps:include can't reach them → list them explicitly (the two enums are
     # column types too).
+    #
+    # Governance scopes (sensei.scopes) seed the constitution ladder and gate
+    # seed_default_constitution (it skips unless the 'general' scope exists). The
+    # dojo DB gets the sensei.scopes TABLE free via deps (dojo.shared_rules →
+    # sensei.namespaces → sensei.scopes), but not its DATA: scopes load through the
+    # staging import path, which the daemon's default scope owns. Pull just the
+    # scopes staging table + its import proc (both reference only staging.scopes →
+    # sensei.scopes — no FK deps, so no other staging tables come with them) so
+    # `dbd deploy/import --scope dojo` seeds sensei.scopes here too, declaratively —
+    # never a hand-rolled INSERT that would drift on the next reset+deploy.
     includes:
       - dojo
       - sensei.enforcement
@@ -51,6 +61,8 @@ scopes:
       - sensei.rule_pack_adoptions
       - sensei.seed_ponytail_pack
       - sensei.seed_default_constitution
+      - staging.scopes
+      - staging.import_scopes
     deps: include
     extensions: []      # vector-free: the embedded Dōjō PG lacks pgvector
   default:
