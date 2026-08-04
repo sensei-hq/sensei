@@ -63,6 +63,14 @@ scopes:
       - sensei.seed_default_constitution
       - staging.scopes
       - staging.import_scopes
+      # Global rule-pack LIBRARY seed (staging-file model, like scopes): the staging
+      # tables + import procs land the curated library packs (owner_namespace_id NULL,
+      # library-only — never adopted) into sensei.rule_packs/rule_pack_rules on
+      # `deploy/import --scope dojo`. Timestamp-guarded → incremental, not a reload.
+      - staging.rule_packs
+      - staging.rule_pack_rules
+      - staging.import_rule_packs
+      - staging.import_rule_pack_rules
     deps: include
     extensions: []      # vector-free: the embedded Dōjō PG lacks pgvector
   default:
