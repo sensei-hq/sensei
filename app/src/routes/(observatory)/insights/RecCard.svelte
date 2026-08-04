@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Button } from '@rokkit/ui';
   import { RECOMMENDED_VERB, type RecCardVm } from './insights-board.svelte.js';
 
   let {
@@ -50,33 +51,19 @@
     <p class="text-xs text-ink-faint mt-2 m-0 leading-snug" data-rec-impact>{rec.impact}</p>
   {/if}
 
-  <!-- one consistent action row — Apply highlighted as recommended -->
+  <!-- one consistent action row — Apply highlighted as recommended. Rokkit Button
+       (theme-driven data-variant/data-style) instead of hand-rolled bg-ink/text-paper
+       so the contrast adapts in dark mode. -->
   <div class="flex items-center gap-2 mt-2">
-    <button
-      type="button"
-      data-verb="apply"
-      data-recommended
-      class="text-xs bg-ink text-paper rounded-sm py-1 px-3 border-none cursor-pointer"
-      onclick={onApply}
-    >
+    <Button variant="primary" size="sm" data-verb="apply" data-recommended onclick={onApply}>
       {RECOMMENDED_VERB}
-    </button>
-    <button
-      type="button"
-      data-verb="review"
-      class="text-xs text-ink-soft bg-transparent border border-paper-edge rounded-sm py-1 px-3 cursor-pointer"
-      onclick={onReview}
-    >
+    </Button>
+    <Button variant="secondary" style="outline" size="sm" data-verb="review" onclick={onReview}>
       Review
-    </button>
+    </Button>
     <span class="flex-1"></span>
-    <button
-      type="button"
-      data-verb="dismiss"
-      class="text-xs text-ink-faint bg-transparent border-none py-1 px-1 cursor-pointer"
-      onclick={onDismiss}
-    >
+    <Button variant="default" style="ghost" size="sm" data-verb="dismiss" onclick={onDismiss}>
       Dismiss
-    </button>
+    </Button>
   </div>
 </article>
