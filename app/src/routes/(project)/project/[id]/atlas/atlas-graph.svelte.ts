@@ -12,7 +12,6 @@
 // KIND, because the communities endpoint carries no per-node membership.
 
 import type {
-  ProjectListItem,
   GraphSymbolNode,
   GraphCallEdge,
   CommunityInfo,
@@ -269,7 +268,9 @@ export interface AtlasPageData {
 
 export interface BuildAtlasInput {
   repoId: string;
-  projects: ProjectListItem[];
+  /** The selectable scopes — THIS project's repo roots (graph is keyed by repo
+   *  name). The project window scopes to its own repos, not every project. */
+  scopes: AtlasScope[];
   communities: CommunityInfo[];
   callFlow: { moduleCount: number; exportCount: number; callCount: number };
   graph: { nodes: GraphSymbolNode[]; edges: GraphCallEdge[] };
@@ -286,9 +287,7 @@ export function buildAtlasPage(input: BuildAtlasInput): AtlasPageData {
 
   return {
     repoId: input.repoId,
-    scopes: input.projects
-      .map((p) => ({ id: p.id, name: p.name }))
-      .sort((a, b) => a.name.localeCompare(b.name)),
+    scopes: [...input.scopes].sort((a, b) => a.name.localeCompare(b.name)),
     communities,
     communityNodeTotal: communities.reduce((s, c) => s + c.nodeCount, 0),
     symbols: sym.symbols,

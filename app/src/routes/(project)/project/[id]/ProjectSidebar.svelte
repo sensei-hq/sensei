@@ -9,10 +9,12 @@
     let { projectId, ftr14d }: Props = $props();
 
     const SECTIONS = [
+        { id: 'intake',       kanji: '門', label: 'Intake' },
         { id: 'overview',     kanji: '見', label: 'Overview' },
         { id: 'sessions',     kanji: '録', label: 'Sessions' },
         { id: 'memories',     kanji: '憶', label: 'Memories' },
         { id: 'traceability', kanji: '跡', label: 'Traceability' },
+        { id: 'atlas',        kanji: '図', label: 'Atlas' },
         { id: 'libraries',    kanji: '蔵', label: 'Libraries' },
         { id: 'instruments',  kanji: '器', label: 'Instruments' },
         { id: 'patterns',     kanji: '型', label: 'Patterns' },
