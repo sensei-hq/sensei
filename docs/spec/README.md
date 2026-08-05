@@ -165,7 +165,9 @@ Every spec must honour these. If a spec pushes against one, call it out.
 ## The index — every doc, current status
 
 Status legend: **draft** = written and reviewed, **stub** = frontmatter
-only, **todo** = not started.
+only, **todo** = not started, **roadmap** = describes an intended system
+not yet built (verify against the code before relying on it — see
+[`analysis/2026-08-05-indexer-capability-coverage.md`](../analysis/2026-08-05-indexer-capability-coverage.md)).
 
 ### Screen specs — personal Sensei
 
@@ -234,9 +236,10 @@ only, **todo** = not started.
 |---|---|---|
 | [pipeline/capture.md](pipeline/capture.md) | **draft** | Hook events + scanner + multi-repo project detection |
 | [pipeline/analyzer.md](pipeline/analyzer.md) | **draft** | Scheduler + L0 enrichment + L1 signal derivation |
+| [pipeline/code-graph.md](pipeline/code-graph.md) | **draft** | Idempotent node/edge/community indexing + retrieval contract; fixes the Atlas regression (dedup, incremental re-runs, restored kinds) |
 | [pipeline/ftr.md](pipeline/ftr.md) | **draft** | Correction-signal detection, 14d roll-up, north-star metric |
 | [pipeline/memory.md](pipeline/memory.md) | **draft** | LLM-primary consumer + human promotion ladder |
-| [pipeline/traceability.md](pipeline/traceability.md) | **draft** | Doc-drift scanner, confidence scoring, auto-fix policy |
+| [pipeline/traceability.md](pipeline/traceability.md) | **roadmap** | Doc-drift scanner, confidence scoring, auto-fix policy — **only deletion-of-symbol drift is built; `traces_to`=0, drift is file-level, no signature diff** |
 | [pipeline/impact.md](pipeline/impact.md) | **draft** | MeasureVerdicts + regression alerts |
 | [pipeline/libraries.md](pipeline/libraries.md) | **draft** | Detect → wrap → query → watch + lib-docs ingestion |
 | [pipeline/insights.md](pipeline/insights.md) | **draft** | Generator + apply/review/dismiss + follow-up to impact |
@@ -247,10 +250,10 @@ only, **todo** = not started.
 | [pipeline/mcp-surface.md](pipeline/mcp-surface.md) | **draft** | Tool declarations + defaults contract + third-party discovery |
 | [pipeline/governance.md](pipeline/governance.md) | **draft** | Priority ladders + scope precedence + rule promotion path |
 | [pipeline/dojo-lifecycle.md](pipeline/dojo-lifecycle.md) | **draft** | Memberships + routing + attribution + upstream/downstream loop; SaaS+self-hosted modes |
-| [pipeline/patterns.md](pipeline/patterns.md) | **draft** | 5 sources (codebase/library/registry/option/derived) + anti-patterns + optimization opportunities |
+| [pipeline/patterns.md](pipeline/patterns.md) | **roadmap** | 5 sources + anti-patterns + optimization — **not built: `crates/senseid/src/patterns/` absent; `detected_patterns` is behavioral churn, `family` NULL** |
 | [pipeline/inferencing.md](pipeline/inferencing.md) | **draft** | Gateway + adapters + MOE consensus + fallback / budget / circuit |
 | [pipeline/context-delivery.md](pipeline/context-delivery.md) | **draft** | Resolution levels L0-L3 + token budget + BFS ranking + session dedup |
-| [pipeline/semantic-search.md](pipeline/semantic-search.md) | **draft** | Hybrid FTS+semantic+structural + grep fallback + optional hook routing |
+| [pipeline/semantic-search.md](pipeline/semantic-search.md) | **roadmap** | Hybrid FTS+semantic+structural — **partial: semantic+structural+RRF real, but no FTS, `search` is a keyword router, `node_fts`/`hybrid.rs` absent** |
 | [pipeline/bootstrap-resolution.md](pipeline/bootstrap-resolution.md) | **draft** | 5-phase startup + Tauri sidecar + hardware tiers + ollama-as-soft-dep |
 | [pipeline/agent-execution.md](pipeline/agent-execution.md) | **draft** | Focused specialist agents + isolation + tool restriction + reporting |
 | [pipeline/library-intelligence.md](pipeline/library-intelligence.md) | **draft** | Doc ingestion + version pinning + custom-lib + skill gen + drift |
