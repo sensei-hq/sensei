@@ -127,7 +127,9 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
         }
         let process_task = Task::new(TaskKind::ProcessGitFolder, &path_str, &path_str)
             .with_parent(task.id);
-        ctx.queue.enqueue(process_task).await;
+        // Single-writer (D6e/W5): skip if this folder is already being scanned,
+        // so a concurrent ScanRoot can't fan out a second ProcessGitFolder for it.
+        let _ = ctx.queue.enqueue_unique(process_task).await;
     }
 
     // 4.5 Reconcile: self-heal the index the scan can't fix additively.
@@ -474,6 +476,11 @@ pub async fn branch_switch(ctx: &TaskContext, task: &Task) -> Result<u32, String
     let git_task = Task::new(TaskKind::ProcessGitFolder, &task.folder_path, &task.path)
         .with_parent(task.id)
         .with_branch(new_branch);
+    // NOTE: branch_switch deliberately uses plain `enqueue`, NOT the single-writer
+    // `enqueue_unique`. The dedup identity (kind, folder_path, path) omits the
+    // branch, so guarding here could silently drop a branch switch that races an
+    // in-flight plain scan — leaving props.branch stale. Proper single-writer +
+    // branch handling for branch_switch is a tracked follow-up (docs/backlog.md).
     ctx.queue.enqueue(git_task).await;
 
     tracing::info!("branch_switch: {} → {} (incremental)", folder_name, new_branch);
@@ -806,6 +813,31 @@ mod tests {
         assert!(pgf[0].ends_with("/mono"), "the ProcessGitFolder targets the repo root, got {pgf:?}");
         let member = root.join("mono/crates/mycrate").to_string_lossy().to_string();
         assert!(!pgf.iter().any(|p| p == &member), "no ProcessGitFolder for a workspace member, got {pgf:?}");
+    }
+
+    #[tokio::test]
+    async fn scan_root_does_not_double_enqueue_a_folder_already_scanning() {
+        // Single-writer (D6e/W5): if a git folder is already being scanned, the
+        // ScanRoot fan-out must not enqueue a second ProcessGitFolder for it.
+        // Without the guard the repo shows two ProcessGitFolder tasks.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("repo/.git")).unwrap();
+        std::fs::write(root.join("repo/Cargo.toml"), "[package]\nname=\"repo\"").unwrap();
+
+        let ctx = make_ctx().await;
+        let repo_path = root.join("repo").to_string_lossy().to_string();
+        // Pre-seed: this repo is already being scanned.
+        ctx.queue.enqueue(Task::new(TaskKind::ProcessGitFolder, &repo_path, &repo_path)).await;
+
+        let task = Task::new(TaskKind::ScanRoot, "", &root.to_string_lossy());
+        scan_root(&ctx, &task).await.unwrap();
+
+        let pgf: Vec<String> = ctx.queue.snapshot().await.into_iter()
+            .filter(|(k, _, p)| *k == TaskKind::ProcessGitFolder && *p == repo_path)
+            .map(|(_, _, p)| p)
+            .collect();
+        assert_eq!(pgf.len(), 1, "the already-scanning repo is not double-enqueued, got {pgf:?}");
     }
 
     #[tokio::test]
