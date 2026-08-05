@@ -1,5 +1,7 @@
 //! Shared helpers used by process and other handler modules.
 
+use super::super::executor::TaskContext;
+
 /// Check if a file extension indicates a binary (non-text) file. This is a
 /// fast first pass; `is_probably_binary` (content sniff) is the robust net for
 /// anything not on this list.
@@ -98,6 +100,37 @@ pub(crate) fn build_walker(path: &std::path::Path) -> ignore::WalkBuilder {
         .git_exclude(true)
         .require_git(false);
     b
+}
+
+/// Mark a folder `indexed` UNLESS a fatal failure was recorded for it (D6d
+/// fail-closed). If the status is already `failed` — or the status read itself
+/// fails, so we cannot certify the folder clean — leave it as-is for
+/// boot-reconcile / bounded-retry to re-drive, rather than advancing it to
+/// `indexed`. Shared by BOTH barrier writers (`resolve_libs` and
+/// `build_connections`, which run in sequence): if either marked `indexed`
+/// unconditionally it would defeat the other's guard, so the guard lives here.
+pub(crate) async fn mark_folder_indexed_fail_closed(
+    ctx: &TaskContext,
+    folder_id: &uuid::Uuid,
+    folder_name: &str,
+    libs: &[String],
+) {
+    match ctx.pg().get_folder_status(folder_id).await {
+        Ok(Some(status)) if status == "failed" => {
+            tracing::warn!(folder = %folder_name,
+                "fail-closed (D6d): folder has a recorded fatal failure — not marking indexed");
+            return;
+        }
+        Ok(_) => {}
+        Err(e) => {
+            tracing::warn!(error = %e, folder = %folder_name,
+                "fail-closed (D6d): get_folder_status failed — not marking indexed");
+            return;
+        }
+    }
+    if let Err(e) = ctx.pg().mark_folder_indexed(folder_id, libs).await {
+        tracing::warn!(error = %e, folder = %folder_name, "mark_folder_indexed failed");
+    }
 }
 
 #[cfg(test)]
