@@ -54,7 +54,7 @@
   </p>
 
   {#if loading}
-    <div class="text-center p-12 bg-paper-mute rounded-lg border border-paper-mute">
+    <div class="text-center p-12 bg-paper-mute rounded-lg border border-paper-edge">
       <span class="kanji text-4xl text-accent opacity-20 block mb-4">組</span>
       <p class="text-sm text-ink-soft">Loading projects…</p>
     </div>
@@ -66,7 +66,7 @@
       </div>
     </div>
   {:else if projects.length === 0}
-    <div class="text-center p-12 bg-paper-mute rounded-lg border border-paper-mute">
+    <div class="text-center p-12 bg-paper-mute rounded-lg border border-paper-edge">
       <span class="kanji text-4xl text-accent opacity-20 block mb-4">組</span>
       <p class="text-sm text-ink-soft">No projects detected yet. Run the scan stage first.</p>
     </div>
@@ -85,14 +85,14 @@
         <div
           data-testid={`project-card-${project.id}`}
           data-confirmed={isConfirmed}
-          class="rounded-lg p-4 border border-paper-mute transition-opacity duration-fast"
+          class="rounded-lg p-4 border border-paper-edge transition-opacity duration-fast"
           class:bg-paper-mute={isConfirmed}
           class:bg-paper-soft={!isConfirmed}
           class:opacity-55={!isConfirmed}
         >
           <div class="grid grid-cols-[auto_1fr_auto_auto] gap-3 items-center">
             <!-- Kanji avatar -->
-            <div class="kanji text-2xl text-accent w-10 h-10 flex items-center justify-center rounded-full bg-paper-soft border border-paper-mute">
+            <div class="kanji text-2xl text-accent w-10 h-10 flex items-center justify-center rounded-full bg-paper-soft border border-paper-edge">
               {project.icon?.value ?? '組'}
             </div>
 
@@ -153,7 +153,7 @@
           {#if project.folders.length > 0}
             <div class="flex flex-wrap gap-2 mt-3 pl-13">
               {#each project.folders as folder (folder.id)}
-                <span class="font-mono inline-flex items-center gap-2 text-[11px] py-1 pl-2 pr-1 bg-paper-soft border border-paper-mute rounded-sm">
+                <span class="font-mono inline-flex items-center gap-2 text-[11px] py-1 pl-2 pr-1 bg-paper-soft border border-paper-edge rounded-sm">
                   <!-- The visible {folder.name} labels this row; the Select trigger
                        takes its accessible name from its value text. (rokkit Select
                        v1.3.1 drops aria-*/data-* — only `class` reaches the DOM.) -->

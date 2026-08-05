@@ -31,7 +31,7 @@
 
 <aside
     data-component="project-sidebar"
-    class="w-[180px] shrink-0 border-r border-paper-mute flex flex-col py-3"
+    class="w-[180px] shrink-0 border-r border-paper-edge flex flex-col py-3"
 >
     <div class="px-4 pb-4 pt-2">
         <span class="text-2xl font-bold block">{ftrPct}%</span>

@@ -439,7 +439,7 @@
      gap the user hit). Sticky top-0 keeps them visible while the body
      scrolls. -->
 <div class="sticky top-0 z-20 bg-paper">
-    <div class="flex items-end gap-4 pt-5 pb-4 px-7 border-b border-paper-mute" data-testid="instruments-hero">
+    <div class="flex items-end gap-4 pt-5 pb-4 px-7 border-b border-paper-edge" data-testid="instruments-hero">
         <div class="kanji text-4xl text-accent leading-none">{currentTab.kanji}</div>
         <div class="flex-1 min-w-0">
             <div class="text-xs uppercase tracking-[0.18em] text-ink-mute mb-1">
@@ -451,7 +451,7 @@
             </p>
         </div>
     </div>
-    <div class="flex px-7 border-b border-paper-mute" role="tablist" aria-label="Instruments tabs" data-testid="instrument-tabs">
+    <div class="flex px-7 border-b border-paper-edge" role="tablist" aria-label="Instruments tabs" data-testid="instrument-tabs">
         {#each instrumentTabs as t}
             {@const on = t.id === tab}
             <button
@@ -484,11 +484,11 @@
              group; every discovered MCP server (Slice A) is its own group
              with tools hydrated lazily on expand via Slice B's probe. -->
         {@const running = executing}
-        <div class="grid grid-cols-[300px_1fr] min-h-[600px] border-t border-paper-mute" data-testid="playground-body">
+        <div class="grid grid-cols-[300px_1fr] min-h-[600px] border-t border-paper-edge" data-testid="playground-body">
             <!-- ── Left rail — search + MCP tree ────────────────────────────── -->
-            <aside class="bg-paper-soft border-r border-paper-mute flex flex-col overflow-hidden">
+            <aside class="bg-paper-soft border-r border-paper-edge flex flex-col overflow-hidden">
                 <!-- Search box -->
-                <div class="flex items-center gap-2 py-3 px-3 border-b border-paper-mute">
+                <div class="flex items-center gap-2 py-3 px-3 border-b border-paper-edge">
                     <span class="kanji text-xs text-ink-mute">探</span>
                     <input
                         type="text"
@@ -568,7 +568,7 @@
                 </div>
 
                 <!-- Footer — MCP + tool counts + refresh -->
-                <div class="border-t border-paper-mute flex justify-between items-center gap-2 py-2 px-3 text-xs text-ink-faint">
+                <div class="border-t border-paper-edge flex justify-between items-center gap-2 py-2 px-3 text-xs text-ink-faint">
                     <span>{playgroundGroups.length} MCPs · {playgroundGroups.reduce((s, g) => s + g.tools.length, 0)} tools</span>
                     <button
                         class="text-xs text-ink-mute bg-transparent border-none cursor-pointer"
@@ -612,7 +612,7 @@
                     </div>
 
                     <!-- Inputs panel -->
-                    <div class="bg-paper-soft border border-paper-mute rounded-lg py-3 px-4 mb-3">
+                    <div class="bg-paper-soft border border-paper-edge rounded-lg py-3 px-4 mb-3">
                         <div class="flex items-baseline justify-between mb-2">
                             <span class="text-xs uppercase tracking-wide text-ink-mute">Inputs</span>
                             <span class="text-xs text-ink-faint">{kindHint}</span>
@@ -650,7 +650,7 @@
                             </div>
                         {/if}
 
-                        <div class="flex items-center gap-2 mt-3 pt-2 border-t border-paper-mute">
+                        <div class="flex items-center gap-2 mt-3 pt-2 border-t border-paper-edge">
                             <Button
                                 variant="primary"
                                 size="sm"
@@ -675,7 +675,7 @@
                             Response{!toolResult ? ' · preview' : ''}
                         </div>
                         <pre
-                            class="font-mono text-xs leading-normal py-3 px-3 m-0 bg-paper-soft border border-paper-mute rounded whitespace-pre-wrap overflow-auto max-h-[360px]"
+                            class="font-mono text-xs leading-normal py-3 px-3 m-0 bg-paper-soft border border-paper-edge rounded whitespace-pre-wrap overflow-auto max-h-[360px]"
                             class:text-ink={toolResult}
                             class:text-ink-soft={!toolResult}
                             class:opacity-70={!toolResult}
@@ -706,9 +706,9 @@
                 description="Tool calls from your assistant sessions appear here once sensei has captured at least one session."
             />
         {:else}
-            <div class="grid grid-cols-[300px_1fr] min-h-[600px] border-t border-paper-mute">
+            <div class="grid grid-cols-[300px_1fr] min-h-[600px] border-t border-paper-edge">
                 <!-- ── Left rail — session picker ─────────────────── -->
-                <aside class="bg-paper-soft border-r border-paper-mute overflow-auto">
+                <aside class="bg-paper-soft border-r border-paper-edge overflow-auto">
                     <div class="text-xs uppercase tracking-wide text-ink-mute pt-3 pb-2 px-3">
                         sessions
                     </div>
@@ -754,7 +754,7 @@
                         <p class="text-sm text-ink-soft">Loading timeline…</p>
                     {:else}
                         <!-- Session summary strip -->
-                        <div class="grid grid-cols-[auto_auto_auto_auto_1fr] items-baseline gap-5 mb-4 pb-3 border-b border-paper-mute">
+                        <div class="grid grid-cols-[auto_auto_auto_auto_1fr] items-baseline gap-5 mb-4 pb-3 border-b border-paper-edge">
                             <div>
                                 <div class="display text-base mb-1">
                                     {replaySessions.find((s) => s.id === selectedSessionId)?.task ?? selectedSessionId}
@@ -821,7 +821,7 @@
                                     {@const call = selectedCall}
                                     {@const kindGlyph = call.verdict === 'used' ? '用' : call.verdict === 'partial' ? '部' : call.verdict === 'ignored' ? '無' : call.success === false ? '✗' : '問'}
                                     {@const kindColor = call.verdict === 'used' ? 'text-success' : call.verdict === 'partial' ? 'text-warning' : call.verdict === 'ignored' ? 'text-ink-mute' : 'text-accent'}
-                                    <div class="flex items-baseline justify-between pb-3 border-b border-paper-mute">
+                                    <div class="flex items-baseline justify-between pb-3 border-b border-paper-edge">
                                         <div>
                                             <div class="text-xs uppercase tracking-wide text-ink-mute mb-1">
                                                 call #{call.callId} · {fmtDuration(call.durationMs)}
@@ -836,7 +836,7 @@
 
                                     <div>
                                         <div class="text-xs uppercase tracking-wide text-ink-mute mb-1">request</div>
-                                        <pre class="font-mono text-xs leading-normal py-3 px-3 m-0 bg-paper-soft border border-paper-mute rounded whitespace-pre-wrap overflow-auto max-h-[220px] text-ink-soft">{fmtPayload(call.request)}</pre>
+                                        <pre class="font-mono text-xs leading-normal py-3 px-3 m-0 bg-paper-soft border border-paper-edge rounded whitespace-pre-wrap overflow-auto max-h-[220px] text-ink-soft">{fmtPayload(call.request)}</pre>
                                     </div>
 
                                     <div>
@@ -847,7 +847,7 @@
                                             <p class="text-xs text-ink-soft m-0 italic">No response captured yet.</p>
                                         {:else}
                                             <pre
-                                                class="font-mono text-xs leading-normal py-3 px-3 m-0 bg-paper-soft border border-paper-mute rounded whitespace-pre-wrap overflow-auto max-h-[220px] text-ink"
+                                                class="font-mono text-xs leading-normal py-3 px-3 m-0 bg-paper-soft border border-paper-edge rounded whitespace-pre-wrap overflow-auto max-h-[220px] text-ink"
                                                 style="border-left-width: 2px; border-left-color: {call.verdict === 'used' ? 'var(--success)' : call.verdict === 'partial' ? 'var(--warning)' : call.verdict === 'ignored' ? 'var(--ink-mute)' : 'var(--accent)'};"
                                             >{fmtPayload(call.response)}</pre>
                                         {/if}
@@ -892,7 +892,7 @@
 </div>
 
 {#snippet KpiCard(kanji: string, label: string, value: string, hint: string)}
-    <div class="py-3 px-3 bg-paper-soft border border-paper-mute rounded-md">
+    <div class="py-3 px-3 bg-paper-soft border border-paper-edge rounded-md">
         <div class="flex items-center gap-1 mb-1">
             <span class="kanji text-sm text-accent">{kanji}</span>
             <span class="text-xs uppercase tracking-wide text-ink-mute">{label}</span>
@@ -987,7 +987,7 @@
 
         <!-- ── KPI row — 4 cards, one per key metric ────────────────── -->
         <div class="grid grid-cols-4 gap-3 mb-5">
-            <div class="py-3 px-3 bg-paper-soft border border-paper-mute rounded-md">
+            <div class="py-3 px-3 bg-paper-soft border border-paper-edge rounded-md">
                 <div class="flex items-center gap-1 mb-1">
                     <span class="kanji text-sm text-accent">計</span>
                     <span class="text-xs uppercase tracking-wide text-ink-mute">total calls</span>
@@ -995,7 +995,7 @@
                 <div class="display text-xl" style='font-feature-settings: "tnum";'>{totalCalls.toLocaleString()}</div>
                 <div class="text-xs text-ink-mute mt-1">{toolStats.length} tools</div>
             </div>
-            <div class="py-3 px-3 bg-paper-soft border border-paper-mute rounded-md">
+            <div class="py-3 px-3 bg-paper-soft border border-paper-edge rounded-md">
                 <div class="flex items-center gap-1 mb-1">
                     <span class="kanji text-sm text-accent">誤</span>
                     <span class="text-xs uppercase tracking-wide text-ink-mute">errors</span>
@@ -1007,7 +1007,7 @@
                     {totalCalls > 0 ? `${((totalErrors / totalCalls) * 100).toFixed(1)}% rate` : '—'}
                 </div>
             </div>
-            <div class="py-3 px-3 bg-paper-soft border border-paper-mute rounded-md">
+            <div class="py-3 px-3 bg-paper-soft border border-paper-edge rounded-md">
                 <div class="flex items-center gap-1 mb-1">
                     <span class="kanji text-sm text-accent">警</span>
                     <span class="text-xs uppercase tracking-wide text-ink-mute">signals</span>
@@ -1019,7 +1019,7 @@
                     {warnTools} need attention
                 </div>
             </div>
-            <div class="py-3 px-3 bg-paper-soft border border-paper-mute rounded-md">
+            <div class="py-3 px-3 bg-paper-soft border border-paper-edge rounded-md">
                 <div class="flex items-center gap-1 mb-1">
                     <span class="kanji text-sm text-accent">眠</span>
                     <span class="text-xs uppercase tracking-wide text-ink-mute">dormant</span>
@@ -1061,7 +1061,7 @@
             <h3 class="display text-base font-normal m-0">Per-tool usage</h3>
             <span class="font-mono text-xs text-ink-mute">{toolStats.length} tools · sorted by calls</span>
         </div>
-        <div class="flex flex-col gap-1 border border-paper-mute rounded-md overflow-hidden bg-paper" data-testid="insights-table">
+        <div class="flex flex-col gap-1 border border-paper-edge rounded-md overflow-hidden bg-paper" data-testid="insights-table">
             <div class="grid grid-cols-[1fr_80px_80px_100px_120px_90px] gap-3 px-3 py-2 text-xs text-ink-soft tracking-wide uppercase">
                 <span>Tool</span>
                 <span class="text-right">Calls</span>
@@ -1076,7 +1076,7 @@
                 {@const verdict = toolVerdict(stat.call_count, stat.error_count)}
                 <button
                     type="button"
-                    class="w-full text-left grid grid-cols-[1fr_80px_80px_100px_120px_90px] gap-3 px-3 py-2.5 border-b border-paper-mute text-sm items-center bg-transparent border-l-0 border-r-0 border-t-0 cursor-pointer"
+                    class="w-full text-left grid grid-cols-[1fr_80px_80px_100px_120px_90px] gap-3 px-3 py-2.5 border-b border-paper-edge text-sm items-center bg-transparent border-l-0 border-r-0 border-t-0 cursor-pointer"
                     class:bg-paper-mute={expanded}
                     data-testid={`insights-row-${stat.tool_name}`}
                     aria-expanded={expanded}
@@ -1110,7 +1110,7 @@
                 </button>
                 {#if expanded}
                     {@const insight = selectedInsight}
-                    <div class="px-3 pb-3 pt-1 border-b border-paper-mute bg-paper-soft" data-testid={`insights-detail-${stat.tool_name}`}>
+                    <div class="px-3 pb-3 pt-1 border-b border-paper-edge bg-paper-soft" data-testid={`insights-detail-${stat.tool_name}`}>
                         {#if insight}
                             <div class="flex items-center gap-3 mb-2">
                                 <span class="text-xs uppercase tracking-wide text-ink-mute">Snapshot</span>
@@ -1148,7 +1148,7 @@
                                      the window has at least one classified
                                      verdict; unused tools would otherwise
                                      show a zero-bar. -->
-                                <div class="mt-3 pt-3 border-t border-paper-mute">
+                                <div class="mt-3 pt-3 border-t border-paper-edge">
                                     <div class="flex items-baseline justify-between mb-1.5">
                                         <span class="text-xs uppercase tracking-wide text-ink-mute">
                                             Usage split · {insight.metrics.verdictWindowDays ?? 14}d

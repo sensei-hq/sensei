@@ -65,7 +65,7 @@
 
         <!-- Stats bar -->
         <div
-            class="grid grid-cols-4 gap-4 mb-6 pb-6 border-b border-paper-mute"
+            class="grid grid-cols-4 gap-4 mb-6 pb-6 border-b border-paper-edge"
         >
             {#each [{ value: scanState.rootCount, label: "ROOTS" }, { value: activities.discovered, label: "DISCOVERED" }, { value: projects.pendingFolders, label: "QUEUED" }, { value: projects.readyFolders, label: "PROCESSED" }] as stat}
                 <div class="text-center">
@@ -98,7 +98,7 @@
                     )}
 
                     <div
-                        class="bg-paper-mute rounded-lg p-5 border border-paper-mute"
+                        class="bg-paper-mute rounded-lg p-5 border border-paper-edge"
                     >
                         <div class="flex justify-between items-start mb-3">
                             <div>
@@ -168,12 +168,12 @@
 
             <!-- Right: Task list while scanning, summary card once done (#9) -->
             <div
-                class="bg-paper-mute rounded-lg p-4 border border-paper-mute max-h-[600px] flex flex-col"
+                class="bg-paper-mute rounded-lg p-4 border border-paper-edge max-h-[600px] flex flex-col"
                 data-testid="scan-tasks-panel"
             >
                 {#if scanState.completed}
                     <div
-                        class="flex justify-between pb-3 border-b border-paper-mute mb-3 text-xs text-ink-soft"
+                        class="flex justify-between pb-3 border-b border-paper-edge mb-3 text-xs text-ink-soft"
                     >
                         <span class="font-mono">SUMMARY</span>
                         <span class="font-mono text-success">complete</span>
@@ -201,7 +201,7 @@
                     </div>
                 {:else}
                     <div
-                        class="flex justify-between pb-3 border-b border-paper-mute mb-3 text-xs text-ink-soft"
+                        class="flex justify-between pb-3 border-b border-paper-edge mb-3 text-xs text-ink-soft"
                     >
                         <span class="font-mono">TASKS</span>
                         <span class="font-mono text-ink-mute"
@@ -213,7 +213,7 @@
                     <div class="flex-1 overflow-y-auto flex flex-col gap-0.5">
                         {#each projects.allFolders as f (f.id)}
                             <div
-                                class="flex gap-3 text-xs py-1 items-baseline border-b border-paper-mute last:border-b-0"
+                                class="flex gap-3 text-xs py-1 items-baseline border-b border-paper-edge last:border-b-0"
                             >
                                 <span
                                     class="font-medium flex-1 min-w-0 truncate"

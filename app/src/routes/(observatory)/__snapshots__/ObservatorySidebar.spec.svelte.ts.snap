@@ -34,7 +34,7 @@ exports[`ObservatorySidebar > hides the Review group and Settings when Focus is 
       class="flex items-center gap-2 px-2"
     >
       <span
-        class="text-xs tracking-wide uppercase text-ink-mute"
+        class="text-xs tracking-[0.18em] uppercase text-ink-mute"
         data-component="eyebrow"
       >
         Observatory

@@ -62,13 +62,14 @@ export default {
     //   ink-faint light 0.750  ↔ kami.500 ✓ / dark 0.420 ↔ sumi.600 ✓
     ink:          { light: "kami.900", dark: "sumi.900" },
     "ink-soft":   { light: "kami.700", dark: "sumi.800" },
-    // ink-mute / ink-faint retuned for WCAG 2.1 AA (4.5:1) on card surfaces —
-    // measured: old light kami.600 (0.58L) = 4.0:1 and dark sumi.600 (0.42L) =
-    // 2.3:1 both FAILED for small labels (eyebrows, captions, timestamps). Raw
-    // oklch keeps the ink hue (light ~50 / dark ~85) at contrasts ≥4.5:1 while
-    // preserving the soft > mute > faint prominence order. See /tmp/contrast.mjs.
-    "ink-mute":   { light: "oklch(0.500 0.010 50)", dark: "oklch(0.740 0.009 85)" },
-    "ink-faint":  { light: "oklch(0.500 0.010 50)", dark: "oklch(0.680 0.009 85)" },
+    // ink-mute / ink-faint retuned for WCAG 2.1 AA (4.5:1) on card surfaces AND to
+    // keep a 4-STEP ramp (soft > mute > faint, distinct in BOTH modes). The mockup's
+    // own muted inks fail AA on small text (mute 4.0:1, faint 2.07:1), so we keep the
+    // darkened values (see docs/spec/2026-08-05-mockup-drift-audit.md F1). Measured:
+    //   ink-mute  light 0.470 (6.37:1) / dark 0.760 (7.47:1)
+    //   ink-faint light 0.545 (4.62:1) / dark 0.660 (5.16:1)   — distinct from mute both modes.
+    "ink-mute":   { light: "oklch(0.470 0.010 50)", dark: "oklch(0.760 0.009 85)" },
+    "ink-faint":  { light: "oklch(0.545 0.010 50)", dark: "oklch(0.660 0.009 85)" },
 
     // ── Accent — vermillion (design system: --accent: var(--shu-500)) ─
     // accent-soft is omitted: skin is now `accent: "shu"` so the canonical
@@ -96,21 +97,20 @@ export default {
     error:        { light: "oklch(0.520 0.178 25)",  dark: "beni.400"   },
     info:         { light: "oklch(0.520 0.150 254)", dark: "ai.400"     },
 
-    // ── Status/accent SOFT (tinted callout backgrounds) — MUST flip per mode ─────
-    // The status palettes are single-pole (50→950), so the preset derives every
-    // `-soft` from the pale shade-100 (~0.94L) and emits the SAME value in the dark
-    // block — a pale tint that stays pale in dark mode. `text-<status>` (shade 400,
-    // ~0.72–0.79L) on it is then near-invisible in dark mode (every pill/card
-    // contrast bug traces here). Give each soft a real dark tint (shade 900, ~0.25–
-    // 0.38L) so coloured text/icons contrast in BOTH modes. Light keeps shade-100
-    // (identical to today — no light-mode regression). This is the SYSTEMIC fix that
-    // makes `bg-*-soft text-*` dark-safe everywhere, not per-component.
-    "accent-soft":  { light: "shu.100",    dark: "shu.900"    },
-    "success-soft": { light: "hisui.100",  dark: "hisui.900"  },
-    "warning-soft": { light: "kohaku.100", dark: "kohaku.900" },
-    "danger-soft":  { light: "beni.100",   dark: "beni.900"   },
-    "error-soft":   { light: "beni.100",   dark: "beni.900"   },
-    "info-soft":    { light: "ai.100",     dark: "ai.900"     },
+    // ── Status/accent SOFT (tinted callout backgrounds) — ALPHA-COMPOSITE model ──
+    // The mockup (WCAG-clean source of truth) defines each `-soft` as a TRANSLUCENT
+    // tint of its base — oklch(<base> / 0.10–0.20) — so it composites over whatever
+    // paper surface it sits on and is dark-safe BY CONSTRUCTION (no per-mode pale-vs-
+    // dark shade juggling). We match that with color-mix over the (mode-correct)
+    // named base token, at the mockup alphas (a touch higher in dark). This replaces
+    // the earlier solid two-pole shades (.100/.900) that couldn't composite and forced
+    // the hardcoded dark workaround. See mockup-drift-audit F2.
+    "accent-soft":  { light: "color-mix(in oklch, var(--accent) 14%, transparent)",  dark: "color-mix(in oklch, var(--accent) 20%, transparent)"  },
+    "success-soft": { light: "color-mix(in oklch, var(--success) 14%, transparent)", dark: "color-mix(in oklch, var(--success) 20%, transparent)" },
+    "warning-soft": { light: "color-mix(in oklch, var(--warning) 15%, transparent)", dark: "color-mix(in oklch, var(--warning) 22%, transparent)" },
+    "danger-soft":  { light: "color-mix(in oklch, var(--danger) 12%, transparent)",  dark: "color-mix(in oklch, var(--danger) 18%, transparent)"  },
+    "error-soft":   { light: "color-mix(in oklch, var(--error) 12%, transparent)",   dark: "color-mix(in oklch, var(--error) 18%, transparent)"   },
+    "info-soft":    { light: "color-mix(in oklch, var(--info) 14%, transparent)",    dark: "color-mix(in oklch, var(--info) 20%, transparent)"    },
   },
 
   typography: {

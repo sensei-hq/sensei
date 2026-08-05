@@ -68,6 +68,21 @@ button {
     user-select: none;
 }
 
+/* F9 — the design system's primary CTA is INK-on-paper, not the vermillion accent.
+ * rokkit's skin maps primary→shu (vermillion), so <Button variant="primary"> renders
+ * vermillion. Override it globally to ink to match the mockup btnPrimary; reach for
+ * variant="accent" on the rare vermillion button. These rules sit after the theme
+ * @imports so they win at equal specificity. (docs/spec/2026-08-05-mockup-drift-audit.md F9) */
+[data-button][data-variant="primary"] {
+    background: var(--ink);
+    color: var(--on-primary);
+    border-color: var(--ink);
+}
+[data-button][data-variant="primary"]:hover:not(:disabled) {
+    background: var(--ink-soft);
+    border-color: var(--ink-soft);
+}
+
 /* Sidebar vibrancy */
 .sidebar-vibrancy {
     background: color-mix(

@@ -58,7 +58,7 @@
         <a
           data-session-row={s.id}
           href={`/sessions#${s.id}`}
-          class="grid grid-cols-[8px_120px_1fr_auto_auto_auto] gap-4 py-3 px-1 items-center text-left border-b border-paper-mute hover:bg-paper-soft"
+          class="grid grid-cols-[8px_120px_1fr_auto_auto_auto] gap-4 py-3 px-1 items-center text-left border-b border-paper-edge hover:bg-paper-soft"
         >
           <span
             data-ftr-dot

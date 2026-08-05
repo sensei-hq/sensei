@@ -136,7 +136,7 @@
   onMount(loadChains);
 </script>
 
-<div class="px-7 py-7 bg-paper-mute border border-paper-mute rounded-lg" data-testid="settings-inference">
+<div class="px-7 py-7 bg-paper-mute border border-paper-edge rounded-lg" data-testid="settings-inference">
   <h3 class="text-base m-0 mb-1">Inference</h3>
   <p class="text-sm text-ink-soft m-0 mb-5">
     Which model chain handles each reasoning role. Chains carry an ordered

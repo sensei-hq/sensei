@@ -65,7 +65,7 @@
     class="grid grid-cols-2 gap-3 mb-10"
   >
     {#each summary as s}
-      <div class="flex items-start gap-3 bg-paper-mute border border-paper-mute rounded-md p-4">
+      <div class="flex items-start gap-3 bg-paper-mute border border-paper-edge rounded-md p-4">
         <span class="kanji text-2xl text-accent leading-none mt-1">{s.kanji}</span>
         <div class="min-w-0">
           <div class="text-sm text-ink font-medium">{s.label}</div>
@@ -79,7 +79,7 @@
   <div class="text-xs uppercase tracking-wider text-ink-soft mb-3">
     What happens next
   </div>
-  <div class="grid grid-cols-3 gap-4 py-5 border-t border-b border-paper-mute">
+  <div class="grid grid-cols-3 gap-4 py-5 border-t border-b border-paper-edge">
     {#each [
       { kanji: '観', label: 'Observing', sub: 'sessions tracked in real time' },
       { kanji: '師', label: 'Teaching', sub: 'after ~3 sessions per project' },

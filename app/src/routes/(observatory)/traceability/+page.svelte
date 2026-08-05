@@ -20,7 +20,7 @@
     type="button"
     data-drift-row={r.id}
     onclick={() => { void openProjectWindow(r.projectId, r.projectName); }}
-    class="w-full text-left flex items-center gap-3 py-2 px-3 text-inherit bg-transparent border-0 border-b border-paper-mute last:border-b-0 cursor-pointer hover:bg-paper-mute"
+    class="w-full text-left flex items-center gap-3 py-2 px-3 text-inherit bg-transparent border-0 border-b border-paper-edge last:border-b-0 cursor-pointer hover:bg-paper-mute"
   >
     <span class="flex-1 text-sm text-ink leading-snug">{r.detail}</span>
     <span class="font-mono text-xs uppercase tracking-wide px-2 py-0.5 rounded {chip.bg} {chip.text}">
