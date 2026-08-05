@@ -3,7 +3,7 @@
   import { appState } from '$lib/appstate.svelte.js';
   import { senseiApi } from '$lib/api.js';
   import { PageHeader, EmptyState, Kanji } from '$lib/components';
-  import { Button } from '@rokkit/ui';
+  import { Button, Select } from '@rokkit/ui';
   import type { DojoMembership } from '$lib/types.js';
   import {
     ConnectForm,
@@ -12,6 +12,7 @@
     connectionsHeadline,
     kindPill,
     syncChip,
+    type MembershipKind,
   } from './dojo-connections-state.svelte.js';
 
   let { data } = $props();
@@ -139,11 +140,12 @@
         </label>
         <label class="flex flex-col gap-1">
           {@render field('Kind')}
-          <select class={inputClass} bind:value={form.kind}>
-            {#each KIND_OPTIONS as opt (opt.value)}
-              <option value={opt.value}>{opt.label}</option>
-            {/each}
-          </select>
+          <Select
+            class="w-full"
+            items={KIND_OPTIONS}
+            value={form.kind}
+            onchange={(v) => (form.kind = v as MembershipKind)}
+          />
         </label>
         <label class="flex flex-col gap-1">
           {@render field('Org slugs (optional)')}

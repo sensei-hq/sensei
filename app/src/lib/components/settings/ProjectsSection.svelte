@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { Select } from '@rokkit/ui';
   import { wizardState } from '$lib/wizard-state.svelte.js';
   import { ROLES } from '$lib/setup/types.js';
   import { commonParent } from '$lib/scan-state.svelte.js';
@@ -39,14 +40,11 @@
     folder.role = role;
   }
 
-  function roleClass(role: string | null): string {
-    switch (role) {
-      case 'frontend': return 'text-accent bg-accent-soft';
-      case 'backend':  return 'text-success bg-success-soft';
-      case 'library':  return 'text-warning bg-warning-soft';
-      default:         return 'text-ink-mute bg-paper-mute';
-    }
-  }
+  // Static role picker options (label → wire value); '' == unassigned.
+  const roleOptions = [
+    { label: 'Unassigned', value: '' },
+    ...ROLES.map((r) => ({ label: r.label, value: r.id })),
+  ];
 </script>
 
 <div class="max-w-[940px]">
@@ -156,18 +154,16 @@
             <div class="flex flex-wrap gap-2 mt-3 pl-13">
               {#each project.folders as folder (folder.id)}
                 <span class="font-mono inline-flex items-center gap-2 text-[11px] py-1 pl-2 pr-1 bg-paper-soft border border-paper-mute rounded-sm">
-                  <span class="text-ink-mute">{folder.name}</span>
-                  <select
+                  <!-- The visible {folder.name} labels this row; the Select trigger
+                       takes its accessible name from its value text. (rokkit Select
+                       v1.3.1 drops aria-*/data-* — only `class` reaches the DOM.) -->
+                  <span class="text-ink-mute" id={`role-lbl-${folder.id}`}>{folder.name}</span>
+                  <Select
+                    size="sm"
+                    items={roleOptions}
                     value={folder.role ?? ''}
-                    onchange={(e) => setRole(folder, (e.target as HTMLSelectElement).value)}
-                    aria-label={`Role for ${folder.name}`}
-                    class="role-select font-mono text-[11px] py-0.5 px-1.5 rounded-sm border-none outline-none cursor-pointer font-semibold {roleClass(folder.role)}"
-                  >
-                    <option value="">Unassigned</option>
-                    {#each ROLES as r}
-                      <option value={r.id}>{r.label}</option>
-                    {/each}
-                  </select>
+                    onchange={(v) => setRole(folder, v as string)}
+                  />
                 </span>
               {/each}
             </div>
@@ -181,10 +177,3 @@
     </p>
   {/if}
 </div>
-
-<style>
-  .role-select {
-    appearance: none;
-    -webkit-appearance: none;
-  }
-</style>

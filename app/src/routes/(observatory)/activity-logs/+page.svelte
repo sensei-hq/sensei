@@ -2,6 +2,7 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { EmptyState, Eyebrow } from '$lib/components';
+  import { Select } from '@rokkit/ui';
   import {
     LEVELS,
     SINCE_OPTIONS,
@@ -106,33 +107,25 @@
     <!-- source -->
     <label class="flex items-center gap-2 text-xs text-ink-mute">
       <span class="uppercase tracking-wider">Source</span>
-      <select
-        class="font-mono text-xs bg-paper-soft text-ink border border-paper-edge rounded py-1 px-2 cursor-pointer max-w-[160px]"
-        value={data.filters.source}
-        onchange={(e) => apply({ source: e.currentTarget.value })}
-        data-log-filter-source
-      >
-        <option value="">All sources</option>
-        {#each sources as source (source)}
-          <option value={source}>{source}</option>
-        {/each}
-      </select>
+      <div class="max-w-[160px]" data-log-filter-source>
+        <Select
+          items={[{ label: 'All sources', value: '' }, ...sources.map((s) => ({ label: s, value: s }))]}
+          value={data.filters.source}
+          onchange={(v) => apply({ source: v as string })}
+        />
+      </div>
     </label>
 
     <!-- module -->
     <label class="flex items-center gap-2 text-xs text-ink-mute">
       <span class="uppercase tracking-wider">Module</span>
-      <select
-        class="font-mono text-xs bg-paper-soft text-ink border border-paper-edge rounded py-1 px-2 cursor-pointer max-w-[160px]"
-        value={data.filters.module}
-        onchange={(e) => apply({ module: e.currentTarget.value })}
-        data-log-filter-module
-      >
-        <option value="">All modules</option>
-        {#each modules as mod (mod)}
-          <option value={mod}>{mod}</option>
-        {/each}
-      </select>
+      <div class="max-w-[160px]" data-log-filter-module>
+        <Select
+          items={[{ label: 'All modules', value: '' }, ...modules.map((m) => ({ label: m, value: m }))]}
+          value={data.filters.module}
+          onchange={(v) => apply({ module: v as string })}
+        />
+      </div>
     </label>
 
     <span class="flex-1"></span>
@@ -170,16 +163,13 @@
     <!-- limit -->
     <label class="flex items-center gap-2 text-xs text-ink-mute">
       <span class="uppercase tracking-wider">Limit</span>
-      <select
-        class="font-mono text-xs bg-paper-soft text-ink border border-paper-edge rounded py-1 px-2 cursor-pointer"
-        value={data.filters.limit}
-        onchange={(e) => apply({ limit: Number(e.currentTarget.value) })}
-        data-log-filter-limit
-      >
-        {#each LIMIT_OPTIONS as n (n)}
-          <option value={n}>{n}</option>
-        {/each}
-      </select>
+      <div data-log-filter-limit>
+        <Select
+          items={[...LIMIT_OPTIONS]}
+          value={data.filters.limit}
+          onchange={(v) => apply({ limit: Number(v) })}
+        />
+      </div>
     </label>
   </div>
 

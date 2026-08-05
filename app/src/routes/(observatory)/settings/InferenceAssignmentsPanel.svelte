@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { Select } from '@rokkit/ui';
   import { appState } from '$lib/appstate.svelte.js';
   import { senseiApi } from '$lib/api.js';
   import { SENSEI_ROLES, type DaemonChain, type SenseiRole } from '$lib/setup/contracts.js';
@@ -228,18 +229,19 @@
               {:else if status === 'error'}error
               {/if}
             </span>
-            <select
-              class="text-xs px-2.5 py-1.5 border border-paper-edge rounded-md bg-paper-soft text-ink cursor-pointer font-mono min-w-[160px]"
-              data-testid={`inference-role-picker-${role}`}
-              value={currentId ?? ''}
-              onchange={(e) => pick(role, e.currentTarget.value || null)}
-              disabled={status === 'saving'}
-            >
-              <option value="">— none —</option>
-              {#each options as opt (opt.id)}
-                <option value={opt.id}>{opt.name}</option>
-              {/each}
-            </select>
+            <!-- data-testid on a wrapper: rokkit Select (v1.3.1) doesn't forward
+                 arbitrary data-* to the DOM (only `class` reaches the root), so the
+                 e2e/test selector must live on the wrapper, not the component. -->
+            <div data-testid={`inference-role-picker-${role}`} class="min-w-[160px]">
+              <Select
+                size="sm"
+                items={[{ id: '', name: '— none —' }, ...options]}
+                fields={{ label: 'name', value: 'id' }}
+                value={currentId ?? ''}
+                onchange={(v) => pick(role, (v as string) || null)}
+                disabled={status === 'saving'}
+              />
+            </div>
           </div>
         </div>
       {/each}
