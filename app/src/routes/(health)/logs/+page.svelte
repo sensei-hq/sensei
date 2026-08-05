@@ -478,13 +478,13 @@
         background: var(--paper-mute);
     }
 
-    /* Modal overlay backdrop */
+    /* Modal overlay backdrop — semantic scrim token (no hardcoded rgba). */
     .modal-overlay {
-        background: rgba(0, 0, 0, 0.3);
+        background: var(--scrim);
     }
 
-    /* Modal drop shadow */
+    /* Modal drop shadow — semantic shadow token (no hardcoded rgba). */
     .modal {
-        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.18);
+        box-shadow: 0 24px 60px color-mix(in oklch, var(--shadow-tint) 40%, transparent);
     }
 </style>
