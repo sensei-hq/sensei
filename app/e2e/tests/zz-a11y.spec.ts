@@ -61,7 +61,15 @@ async function runAxe(tauriPage: any): Promise<Violation[]> {
       return JSON.stringify((r.violations || []).map(function (v) {
         return {
           id: v.id, impact: v.impact, help: v.help, n: v.nodes.length,
-          targets: v.nodes.slice(0, 4).map(function (nd) { return nd.target.join(' '); }),
+          targets: v.nodes.slice(0, 8).map(function (nd) {
+            // For color-contrast, capture axe's measured fg/bg/ratio so a fix is
+            // precise (not guessed). The data lives on the failing check under any[].
+            var d = (nd.any && nd.any[0] && nd.any[0].data) || {};
+            var c = d.contrastRatio != null
+              ? ' [' + d.contrastRatio + ':1 fg=' + d.fgColor + ' bg=' + d.bgColor + ']'
+              : '';
+            return nd.target.join(' ') + c;
+          }),
         };
       }));
     })()
