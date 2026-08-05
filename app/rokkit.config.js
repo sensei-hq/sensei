@@ -62,8 +62,13 @@ export default {
     //   ink-faint light 0.750  ↔ kami.500 ✓ / dark 0.420 ↔ sumi.600 ✓
     ink:          { light: "kami.900", dark: "sumi.900" },
     "ink-soft":   { light: "kami.700", dark: "sumi.800" },
-    "ink-mute":   { light: "kami.600", dark: "sumi.700" },
-    "ink-faint":  { light: "kami.500", dark: "sumi.600" },
+    // ink-mute / ink-faint retuned for WCAG 2.1 AA (4.5:1) on card surfaces —
+    // measured: old light kami.600 (0.58L) = 4.0:1 and dark sumi.600 (0.42L) =
+    // 2.3:1 both FAILED for small labels (eyebrows, captions, timestamps). Raw
+    // oklch keeps the ink hue (light ~50 / dark ~85) at contrasts ≥4.5:1 while
+    // preserving the soft > mute > faint prominence order. See /tmp/contrast.mjs.
+    "ink-mute":   { light: "oklch(0.500 0.010 50)", dark: "oklch(0.740 0.009 85)" },
+    "ink-faint":  { light: "oklch(0.545 0.010 50)", dark: "oklch(0.680 0.009 85)" },
 
     // ── Accent — vermillion (design system: --accent: var(--shu-500)) ─
     // accent-soft is omitted: skin is now `accent: "shu"` so the canonical
