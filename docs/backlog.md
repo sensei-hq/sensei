@@ -129,3 +129,16 @@ Surfaced while verifying the app intake form end-to-end. The feature itself is f
 | **e2e standard `globalSetup` lacked `SENSEI_DDL_DIR`** | Unlike `globalSetup-cold`, it applied the *released* bundle → stale schema for new columns. **Fixed** (`SENSEI_DDL_DIR` + boot-wait 120→240s). |
 | **~~Daemon binds `:7744` only after warmup~~ — CORRECTED: non-issue** | Measured a fresh boot: HEALTH 200 in **3.6s**, GUIDE 200 in 3.7s, **0 model-load lines at boot**. The release build's `embedded-llama-cpp` adapter loads models **lazily on first inference** (not at boot); `fastembed`/`ort` (which do block) aren't in the release build + are env-gated. So the service already comes up fast — the earlier "binds after warmup" note was a misread of a stale log. Optional future nicety: a background pre-warm at boot so the *first* inference call isn't slow. |
 | **Classifier under-reads `ux`** | Dogfood: "produce UI mockups/screens…" classified as `intent=feature` (→ `gsd`), not `ux` (→ `mockup_first`). The classifier (LLM + heuristic) doesn't treat design/mockup work as UX. Tighten the `classify_chunk` prompt + `heuristic_axes` (design/mockup/screen/UI/wireframe → `ux`). Good candidate for the §9 learning loop once real runs accrue. |
+
+---
+
+## Code graph — indexer idempotency follow-ups (2026-08-05)
+
+Spec [`spec/pipeline/code-graph.md`](spec/pipeline/code-graph.md) + plan
+[`plan/2026-08-05-code-graph-idempotency-plan.md`](plan/2026-08-05-code-graph-idempotency-plan.md)
+cover D1–D6 (idempotent indexing). Deferred out of that plan:
+
+| Item | Detail |
+|---|---|
+| **D5c — `package` + sub-symbol nodes** | Emit `package`/`module` containers above `file` (Cargo/npm/Python packages) and the sub-symbol kinds `property`/`field`/`parameter`/`enum_variant`. P2 — **cut from the code-graph plan** (not required by any P1 Done-gate; Atlas nests on the folder tree + `nodes.parent_id` until then). Pick up after the idempotency plan lands. |
+| **Capability roadmap (patterns / search / traceability)** | Pattern-intelligence, LLM-search (FTS), and requirement-level traceability are audited + sequenced in [`analysis/2026-08-05-indexer-capability-coverage.md`](analysis/2026-08-05-indexer-capability-coverage.md) — all gated on the code-graph fixes (embedding survival, deterministic ids, `section` nodes). Roadmap item 0 there: reconcile the three `roadmap`-marked specs (patterns/semantic-search/traceability) to reality. |

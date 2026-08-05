@@ -40,43 +40,90 @@ pub fn check_traced(app_version: &str) -> (HealthPayload, Vec<BootstrapTrace>) {
     (payload, recorder.drain())
 }
 
-/// Streaming resolve — runs resolvers covering any failed components in
-/// `current`, re-checks affected deps, returns terminal payload. Emits
-/// HealthEvent values throughout.
-///
-/// Internal helper for `check_and_resolve`. Callers outside this module
-/// should use `check_and_resolve` so the initial `Phase(Checking)` and
-/// `Report` events always precede the resolve walk.
-///
-/// `emit` is `&dyn Fn` (not generic) to keep PlatformProvider dyn-compatible.
-pub(crate) fn resolve(current: &HealthPayload, app_version: &str, emit: &dyn Fn(HealthEvent)) -> HealthPayload {
-    detect_provider().resolve(current, app_version, emit)
-}
-
 /// Full pipeline: emit Phase(Checking) → run `check_streaming()` which
 /// emits a Component event after each probe finishes → emit
-/// Report(initial) → if not Ok, run `resolve()` which emits its own
-/// Phase(Resolving), per-component patches, optional Remedy, and a final
-/// Report(terminal).
+/// Report(initial) → if not Ok, run the provider's `resolve()` which emits
+/// its own Phase(Resolving), per-component patches, optional Remedy, and a
+/// final Report(terminal).
 ///
 /// This is the single entry point every transport (Tauri sidecar, CLI
 /// `doctor`, daemon HTTP) should use when it wants the full
 /// check-and-fix flow. The transport's only responsibility is the `emit`
 /// closure.
 pub fn check_and_resolve(app_version: &str, emit: &dyn Fn(HealthEvent)) -> HealthPayload {
+    let provider = detect_provider();
+    check_and_resolve_with(&*provider, app_version, emit)
+}
+
+/// [`check_and_resolve`] against an explicit provider — the injection seam
+/// that lets unit tests drive the check→report→resolve orchestration against
+/// a mock instead of probing the real machine (which is non-deterministic:
+/// the live provider can report NeedsAction with no derivable remedy, which
+/// would panic the terminal `validate()`). Production passes `detect_provider()`.
+///
+/// `emit` is `&dyn Fn` (not generic) to keep `PlatformProvider` dyn-compatible.
+pub(crate) fn check_and_resolve_with(
+    provider: &dyn PlatformProvider,
+    app_version: &str,
+    emit: &dyn Fn(HealthEvent),
+) -> HealthPayload {
     emit(HealthEvent::Phase { phase: HealthStatus::Checking });
-    let state = detect_provider().check_streaming(app_version, emit);
+    let state = provider.check_streaming(app_version, emit);
     emit(HealthEvent::Report { payload: state.clone() });
     if state.status == HealthStatus::Ok {
         return state;
     }
-    resolve(&state, app_version, emit)
+    provider.resolve(&state, app_version, emit)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::Mutex;
+
+    // ── Hermetic provider (de-flakes the orchestration tests) ────────────
+    // The real provider probes the live machine, so the orchestration tests
+    // could hit a transient NeedsAction-without-remedy state and panic in
+    // `validate()`. This mock fails one required component (Daemon) on the
+    // initial probe and recovers it on the post-resolve recheck, so
+    // check→report→resolve runs deterministically with a valid terminal.
+    struct StubChecker(CheckOutcome);
+    impl Checker for StubChecker {
+        fn check(&self) -> CheckOutcome { self.0.clone() }
+    }
+
+    struct RecoveringDaemonResolver;
+    impl Resolver for RecoveringDaemonResolver {
+        fn id(&self) -> &'static str { "mock-daemon" }
+        fn resolves(&self) -> &'static [ComponentId] { &[ComponentId::Daemon] }
+        fn resolve(&self, _targets: &[ComponentId]) -> ResolveOutcome { ResolveOutcome::Resolved }
+        fn fallback_remedy(&self) -> Remedy {
+            Remedy { message: "start the daemon".into(), script: "brew services start sensei".into(), url: None }
+        }
+    }
+
+    /// Daemon fails on the initial probe (`retry=false`) and is ready on the
+    /// post-resolve recheck (`retry=true`); every other component is ready.
+    struct HermeticProvider;
+    impl PlatformProvider for HermeticProvider {
+        fn platform(&self) -> Platform { Platform::Macos }
+        fn package_manager_id(&self) -> PackageManagerId { PackageManagerId::Homebrew }
+        fn package_manager_checker(&self) -> Box<dyn Checker> {
+            Box::new(StubChecker(CheckOutcome::ready("brew 4.0")))
+        }
+        fn checker_for(&self, id: ComponentId, retry: bool) -> Box<dyn Checker> {
+            let outcome = if id == ComponentId::Daemon && !retry {
+                CheckOutcome::failed("daemon not running")
+            } else {
+                CheckOutcome::ready("ok")
+            };
+            Box::new(StubChecker(outcome))
+        }
+        fn resolvers(&self) -> Vec<Box<dyn Resolver>> { vec![Box::new(RecoveringDaemonResolver)] }
+        fn default_remedy(&self) -> Remedy {
+            Remedy { message: "m".into(), script: "s".into(), url: None }
+        }
+    }
 
     #[test]
     fn check_returns_validated_payload() {
@@ -107,42 +154,45 @@ mod tests {
 
     #[test]
     fn check_and_resolve_emits_initial_report_before_resolving() {
+        // Hermetic mock (not the real machine) so the orchestration is
+        // deterministic and the resolve path always runs.
         let events = Mutex::new(Vec::<HealthEvent>::new());
-        let _final = check_and_resolve("0.0.0-test", &|e| events.lock().unwrap().push(e));
+        let _final = check_and_resolve_with(&HermeticProvider, "0.0.0-test",
+            &|e| events.lock().unwrap().push(e));
         let evs = events.lock().unwrap();
 
         // Phase(Checking) is always first.
         assert!(matches!(evs.first(), Some(HealthEvent::Phase { phase: HealthStatus::Checking })));
 
-        // A Report event arrives before any Phase(Resolving) — that's the
-        // initial broadcast so the UI never goes blank.
+        // The initial Report broadcasts before any Phase(Resolving) — so the
+        // UI never goes blank. With this mock the resolve path always fires.
         let first_report = evs.iter().position(|e| matches!(e, HealthEvent::Report { .. }));
         let phase_resolving = evs.iter().position(|e| matches!(
             e, HealthEvent::Phase { phase: HealthStatus::Resolving }
         ));
         assert!(first_report.is_some(), "must emit at least one Report");
-        if let Some(pr) = phase_resolving {
-            assert!(first_report.unwrap() < pr,
-                "initial Report must precede Phase(Resolving)");
-        }
+        assert!(phase_resolving.is_some(), "the mock's failed Daemon forces the resolve path");
+        assert!(first_report.unwrap() < phase_resolving.unwrap(),
+            "initial Report must precede Phase(Resolving)");
     }
 
     #[test]
     fn resolve_emits_phase_and_terminal_report_when_not_ok() {
-        let initial = check("0.0.0-test");
+        // Hermetic mock: initial check is NeedsAction (daemon down), resolve
+        // recovers it → a valid terminal, no real-machine probing.
+        let provider = HermeticProvider;
+        let initial = provider.check("0.0.0-test");
+        assert_eq!(initial.status, HealthStatus::NeedsAction,
+            "the mock's initial check must be not-ok to exercise resolve");
+
         let events = Mutex::new(Vec::<HealthEvent>::new());
-        let terminal = resolve(&initial, "0.0.0-test", &|e| events.lock().unwrap().push(e));
+        let terminal = provider.resolve(&initial, "0.0.0-test",
+            &|e| events.lock().unwrap().push(e));
         terminal.validate().expect("terminal must validate");
 
         let evs = events.lock().unwrap();
-        if initial.status == HealthStatus::Ok {
-            // System is already healthy: resolve returns without doing real work.
-            // It still emits Phase(Resolving) and a final Report — that's the contract.
-            assert!(matches!(evs.first(), Some(HealthEvent::Phase { phase: HealthStatus::Resolving })));
-        } else {
-            // Not ok: must emit at least Phase + Report.
-            assert!(matches!(evs.first(), Some(HealthEvent::Phase { phase: HealthStatus::Resolving })));
-            assert!(matches!(evs.last(),  Some(HealthEvent::Report { .. })));
-        }
+        // Not ok: must emit Phase(Resolving) first and a final Report.
+        assert!(matches!(evs.first(), Some(HealthEvent::Phase { phase: HealthStatus::Resolving })));
+        assert!(matches!(evs.last(),  Some(HealthEvent::Report { .. })));
     }
 }
