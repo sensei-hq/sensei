@@ -113,6 +113,10 @@ export default {
     "danger-soft":  { light: "color-mix(in oklch, var(--danger) 12%, transparent)",  dark: "color-mix(in oklch, var(--danger) 18%, transparent)"  },
     "error-soft":   { light: "color-mix(in oklch, var(--error) 12%, transparent)",   dark: "color-mix(in oklch, var(--error) 18%, transparent)"   },
     "info-soft":    { light: "color-mix(in oklch, var(--info) 14%, transparent)",    dark: "color-mix(in oklch, var(--info) 20%, transparent)"    },
+
+    // Modal/dialog backdrop scrim — a semantic token so components never hardcode
+    // rgba(0,0,0,…). A scrim dims the backdrop, so it's a dark veil in both modes.
+    "scrim":        { light: "oklch(0.150 0.008 50 / 0.45)", dark: "oklch(0.120 0.008 50 / 0.55)" },
   },
 
   typography: {
