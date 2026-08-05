@@ -1,10 +1,23 @@
 <script lang="ts">
     import { PageHeader } from '$lib/components';
+    import { Toggle } from '@rokkit/ui';
+    import type { ProxyItem } from '@rokkit/states';
     let { data } = $props();
 
     // Local search + filter — libraries can grow to hundreds on a monorepo.
     let query = $state('');
     let filter = $state<'all' | 'wrapped' | 'local' | 'conflict'>('all');
+
+    // rokkit Toggle options. `disabled` disables the Conflicts pill when the
+    // project has no version conflicts (mirrors the old hand-rolled guard). The
+    // per-option `data-testid` is emitted in the itemContent snippet since the
+    // Toggle owns its option button; the click delegates up to it.
+    const filterOptions = $derived([
+        { value: 'all', label: 'All' },
+        { value: 'wrapped', label: 'Wrapped' },
+        { value: 'local', label: 'Local' },
+        { value: 'conflict', label: 'Conflicts', disabled: data.conflicts.length === 0 },
+    ]);
 
     // Set of library names known to have a version conflict, for badge lookup.
     const conflictSet = $derived(new Set(data.conflicts.map(c => c.library_name)));
@@ -75,27 +88,16 @@
             class="px-3 py-1.5 border border-paper-edge rounded-md bg-paper text-ink text-sm outline-none flex-1 min-w-[200px]"
             data-testid="library-search"
         />
-        <div class="flex gap-2" role="tablist" aria-label="Library filter">
-            {#each [['all','All'],['wrapped','Wrapped'],['local','Local'],['conflict','Conflicts']] as [id, label]}
-                {@const active = filter === id}
-                {@const disabled = id === 'conflict' && data.conflicts.length === 0}
-                <button
-                    type="button"
-                    class="px-3 py-1 rounded-full border text-xs cursor-pointer transition-colors duration-fast disabled:opacity-40 disabled:cursor-not-allowed"
-                    class:bg-primary={active}
-                    class:text-on-primary={active}
-                    class:border-primary={active}
-                    class:bg-transparent={!active}
-                    class:text-ink-soft={!active}
-                    class:border-paper-mute={!active}
-                    role="tab"
-                    aria-selected={active}
-                    {disabled}
-                    data-testid={`library-filter-${id}`}
-                    onclick={() => (filter = id as typeof filter)}
-                >{label}</button>
-            {/each}
-        </div>
+        <Toggle
+            options={filterOptions}
+            value={filter}
+            onchange={(v: unknown) => (filter = v as typeof filter)}
+            label="Library filter"
+        >
+            {#snippet itemContent(proxy: ProxyItem)}
+                <span data-testid={`library-filter-${String(proxy.value)}`}>{proxy.label}</span>
+            {/snippet}
+        </Toggle>
     </div>
 
     {#if filtered.length === 0}

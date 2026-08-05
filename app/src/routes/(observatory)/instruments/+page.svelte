@@ -7,7 +7,7 @@
     import EmptyState from "$lib/components/EmptyState.svelte";
     import SignalCard from "$lib/components/SignalCard.svelte";
     import { Eyebrow, PageHeader } from "$lib/components";
-    import { Button } from "@rokkit/ui";
+    import { Button, Select } from "@rokkit/ui";
     import { mcp, toolVerdict } from "$lib/state/mcp.svelte.js";
     import ToolHealthCard from "./ToolHealthCard.svelte";
     import type {
@@ -632,14 +632,11 @@
                                             <span class="font-mono text-xs text-ink-faint">{input.kind}</span>
                                         </span>
                                         {#if input.kind === 'enum' && input.options}
-                                            <select
-                                                class="py-1 px-2 text-sm border border-paper-edge rounded bg-paper text-ink font-mono outline-none"
-                                                bind:value={toolParams[input.key]}
-                                            >
-                                                {#each input.options as option}
-                                                    <option value={option}>{option}</option>
-                                                {/each}
-                                            </select>
+                                            <Select
+                                                items={input.options}
+                                                value={toolParams[input.key]}
+                                                onchange={(v) => (toolParams[input.key] = v as string)}
+                                            />
                                         {:else}
                                             <input
                                                 type={input.kind === 'number' ? 'number' : 'text'}
