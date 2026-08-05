@@ -48,8 +48,11 @@ pub async fn resume_pending_scans(queue: &TaskQueue, pg: &PgStore) -> u32 {
             continue;
         }
         let task = Task::new(TaskKind::ProcessGitFolder, abs_path, abs_path);
-        queue.enqueue(task).await;
-        enqueued += 1;
+        // Single-writer (D6e/W5): only count a folder as re-enqueued if it wasn't
+        // already in flight — resume must not stack a duplicate scan.
+        if queue.enqueue_unique(task).await.is_some() {
+            enqueued += 1;
+        }
     }
 
     if enqueued > 0 {
@@ -135,6 +138,35 @@ mod tests {
             // scan_root sets folder_path = path for git roots; resume mirrors that.
             assert_eq!(t.folder_path, t.path, "folder_path should equal path for resumed git roots");
         }
+
+        pg.remove_watch_root(&rid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn resume_skips_a_folder_already_scanning() {
+        // Single-writer (D6e/W5): a folder already being scanned must not be
+        // re-enqueued by resume (which would give it two writers). Without the
+        // guard, folder "a" would appear twice — the pre-seed + resume's enqueue.
+        let pg = PgStore::connect_test().await.unwrap();
+        let queue = TaskQueue::new();
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path();
+        let root_path = base.to_string_lossy().to_string();
+        let rid = pg.add_watch_root(&root_path, "resume_dedup_root", &serde_json::json!([])).await.unwrap();
+
+        let a = seed(&pg, &rid, base, "a", "discovered", true).await;
+        let b = seed(&pg, &rid, base, "b", "discovered", true).await;
+
+        // Pre-seed: folder "a" is already being scanned.
+        queue.enqueue(Task::new(TaskKind::ProcessGitFolder, &a, &a)).await;
+
+        resume_pending_scans(&queue, &pg).await;
+
+        let tasks = drain(&queue).await;
+        let a_count = tasks.iter().filter(|t| t.path == a).count();
+        let b_count = tasks.iter().filter(|t| t.path == b).count();
+        assert_eq!(a_count, 1, "an already-scanning folder is not double-enqueued");
+        assert_eq!(b_count, 1, "a not-yet-scanning folder is still resumed");
 
         pg.remove_watch_root(&rid).await.unwrap();
     }
