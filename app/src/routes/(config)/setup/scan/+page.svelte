@@ -57,7 +57,7 @@
             </div>
         {:else if !scanState.daemonReachable}
             <div
-                class="mb-4 p-2.5 rounded-md bg-paper-mute text-xs text-warning"
+                class="mb-4 p-2.5 rounded-md bg-warning-soft text-xs text-warning"
             >
                 Daemon unreachable — retrying…
             </div>
