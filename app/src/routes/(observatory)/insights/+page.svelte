@@ -83,7 +83,16 @@
         class:text-success={tone === 'settled'}
       >{count}</span>
     </div>
-    <div class="flex-1 overflow-auto flex flex-col gap-2 py-3 px-4">
+    <!-- Keyboard-focusable so a keyboard user can scroll the column (a11y:
+         scrollable-region-focusable). role/aria-label give it an accessible name.
+         The Svelte no-noninteractive-tabindex heuristic is wrong for scroll regions. -->
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+    <div
+      class="flex-1 overflow-auto flex flex-col gap-2 py-3 px-4"
+      tabindex="0"
+      role="group"
+      aria-label={`${title} column`}
+    >
       {@render body()}
     </div>
   </section>

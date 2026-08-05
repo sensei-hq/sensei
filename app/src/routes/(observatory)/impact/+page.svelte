@@ -106,7 +106,11 @@
         {/each}
       </aside>
 
-      <main class="overflow-auto pt-5 pb-6 px-7">
+      <!-- tabindex so keyboard users can scroll the detail pane (a11y:
+           scrollable-region-focusable — axe requires it; the Svelte heuristic
+           that bans tabindex on non-interactive elements is wrong for scroll regions). -->
+      <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+      <main class="overflow-auto pt-5 pb-6 px-7" tabindex="0">
         <!-- Eyebrow line — project · verdict metadata -->
         <div class="flex items-center gap-3 text-xs uppercase tracking-wider text-ink-soft mb-3">
           <span class="font-mono normal-case tracking-normal">{open.projectName}</span>
