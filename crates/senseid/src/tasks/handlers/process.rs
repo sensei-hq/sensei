@@ -863,7 +863,7 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
 
         // Unresolved import edges.
         for import in &result.unresolved_imports {
-            ctx.pg().insert_edge(&folder_id, &file_node_id, None, Some(import), "imports").await
+            ctx.pg().insert_edge(&folder_id, &file_node_id, None, Some(import), None, "imports").await
                 .map_err(|e| format!("insert_edge (imports): {e}"))?;
         }
 
@@ -874,24 +874,24 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
                 .get(&(call.caller_name.clone(), call.caller_line as i32))
                 .copied()
                 .unwrap_or(file_node_id);
-            ctx.pg().insert_edge(&folder_id, &source, None, Some(&call.callee_name), "calls").await
+            ctx.pg().insert_edge(&folder_id, &source, None, Some(&call.callee_name), None, "calls").await
                 .map_err(|e| format!("insert_edge (calls): {e}"))?;
         }
 
         // Parent refs (HAS_METHOD: type → method).
         for pref in &result.parent_refs {
-            ctx.pg().insert_edge(&folder_id, &file_node_id, None, Some(&pref.parent_name), "extends").await
+            ctx.pg().insert_edge(&folder_id, &file_node_id, None, Some(&pref.parent_name), None, "extends").await
                 .map_err(|e| format!("insert_edge (extends): {e}"))?;
         }
 
         // Doc references (file_refs → covers, fn_mentions → references).
         if result.kind == "doc" {
             for file_ref in &result.file_refs {
-                ctx.pg().insert_edge(&folder_id, &file_node_id, None, Some(file_ref), "covers").await
+                ctx.pg().insert_edge(&folder_id, &file_node_id, None, Some(file_ref), None, "covers").await
                     .map_err(|e| format!("insert_edge (covers): {e}"))?;
             }
             for fn_ref in &result.fn_mentions {
-                ctx.pg().insert_edge(&folder_id, &file_node_id, None, Some(fn_ref), "references").await
+                ctx.pg().insert_edge(&folder_id, &file_node_id, None, Some(fn_ref), None, "references").await
                     .map_err(|e| format!("insert_edge (references): {e}"))?;
             }
         }
@@ -1363,10 +1363,13 @@ mod tests {
         let root_id = ctx.pg().add_watch_root(&repo_path, "ur", &serde_json::json!([])).await.unwrap();
         let fid = ctx.pg().upsert_repo(&root_id, "ur-repo", &repo_path).await.unwrap();
 
-        // funcA lives in a.rs; funcB in b.rs calls it (resolved edge B → A).
+        // funcA lives in a.rs; funcB in b.rs calls it. A call starts UNRESOLVED
+        // (target_name only); resolve_edge points it at funcA — the production
+        // path that preserves target_name for later re-resolution (D1).
         let node_a = ctx.pg().upsert_node(&fid, "function", "funcA", "a.rs", None, None, None, None).await.unwrap();
         let node_b = ctx.pg().upsert_node(&fid, "function", "funcB", "b.rs", None, None, None, None).await.unwrap();
-        ctx.pg().insert_edge(&fid, &node_b, Some(&node_a), Some("funcA"), "calls").await.unwrap();
+        let edge = ctx.pg().insert_edge(&fid, &node_b, None, Some("funcA"), None, "calls").await.unwrap();
+        ctx.pg().resolve_edge(&edge, &node_a).await.unwrap();
 
         // Re-indexing a.rs un-resolves inbound edges instead of letting the
         // cascade delete them: target_id cleared, target_name preserved.
