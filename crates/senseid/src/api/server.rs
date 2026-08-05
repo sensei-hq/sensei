@@ -195,6 +195,20 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
         _graph_path: None,
         logger: task_logger,
     });
+    // Boot reconcile (D6b/W2): before any worker can create a new
+    // task_execution row, terminate rows left `running` by a dead prior
+    // session — their in-memory tasks vanished with the process, so they can
+    // never complete. `task_id` resets per session, so every `running` row
+    // that predates this session start is orphaned. Runs BEFORE spawn_workers
+    // so this session's own in-flight rows (all started >= session_start) are
+    // never swept. Non-fatal: a failure here must not block startup.
+    let session_start = chrono::Utc::now();
+    match state.pg.reconcile_orphaned_task_executions(session_start).await {
+        Ok(0) => {}
+        Ok(n) => tracing::info!("startup: reconciled {n} orphaned task execution(s) from a prior session"),
+        Err(e) => tracing::warn!(error = %e, "startup: reconcile_orphaned_task_executions failed"),
+    }
+
     spawn_workers(task_ctx, DEFAULT_WORKERS);
 
     crate::tasks::progress_emitter::spawn(
