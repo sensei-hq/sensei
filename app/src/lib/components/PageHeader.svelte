@@ -26,10 +26,11 @@
   const titleSize = $derived(
     ({ h1: 'text-2xl', h2: 'text-xl', h3: 'text-lg' })[variant],
   );
+  // Screen headers use the mockup's signature 40px kanji (`screen`) for h1/h2 (the
+  // common case); h3 stays a compact sub-header glyph. (mockup-drift-audit F5)
   const kanjiSize = $derived(
-    ({ h1: '3xl', h2: '2xl', h3: 'xl' })[variant] as
-      | '3xl'
-      | '2xl'
+    ({ h1: 'screen', h2: 'screen', h3: 'xl' })[variant] as
+      | 'screen'
       | 'xl',
   );
 </script>

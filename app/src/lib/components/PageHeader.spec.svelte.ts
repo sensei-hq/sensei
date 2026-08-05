@@ -61,8 +61,9 @@ describe('PageHeader', () => {
   });
 
   it.each([
-    ['h1', /\btext-2xl\b/, /\btext-3xl\b/],
-    ['h2', /\btext-xl\b/,  /\btext-2xl\b/],
+    // F5: h1/h2 screen headers use the mockup's 40px signature kanji; h3 stays compact.
+    ['h1', /\btext-2xl\b/, /text-\[40px\]/],
+    ['h2', /\btext-xl\b/,  /text-\[40px\]/],
     ['h3', /\btext-lg\b/,  /\btext-xl\b/],
   ] as const)('variant %s sizes title + kanji per spec', (variant, titleRe, kanjiRe) => {
     const m = mountComponent(PageHeaderHarness, { title: 'X', kanji: '刻', variant });

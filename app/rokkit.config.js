@@ -67,9 +67,11 @@ export default {
     // own muted inks fail AA on small text (mute 4.0:1, faint 2.07:1), so we keep the
     // darkened values (see docs/spec/2026-08-05-mockup-drift-audit.md F1). Measured:
     //   ink-mute  light 0.470 (6.37:1) / dark 0.760 (7.47:1)
-    //   ink-faint light 0.545 (4.62:1) / dark 0.660 (5.16:1)   — distinct from mute both modes.
+    //   ink-faint light 0.510 (5.37:1) / dark 0.660 (5.16:1)   — distinct from mute both modes.
+    // (faint light is 0.510 not 0.545: 0.545 measured 4.62 and axe's stricter calc
+    //  tipped it under 4.5 on ~10 screens; 0.510 keeps margin AND stays > mute 0.470.)
     "ink-mute":   { light: "oklch(0.470 0.010 50)", dark: "oklch(0.760 0.009 85)" },
-    "ink-faint":  { light: "oklch(0.545 0.010 50)", dark: "oklch(0.660 0.009 85)" },
+    "ink-faint":  { light: "oklch(0.510 0.010 50)", dark: "oklch(0.660 0.009 85)" },
 
     // ── Accent — vermillion (design system: --accent: var(--shu-500)) ─
     // accent-soft is omitted: skin is now `accent: "shu"` so the canonical
