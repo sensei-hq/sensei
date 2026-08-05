@@ -1,6 +1,7 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import { goto } from '$app/navigation';
+  import { Select } from '@rokkit/ui';
   import { EmptyState, Eyebrow } from '$lib/components';
   import {
     kindColor,
@@ -117,9 +118,19 @@
     total: view.level === 'symbols' ? data.totalSymbols : undefined,
   });
 
-  function onScopeChange(event: Event) {
-    const name = (event.currentTarget as HTMLSelectElement).value;
-    goto(`?repo=${encodeURIComponent(name)}`, { invalidateAll: true });
+  // Scope options for the rokkit Select. When the active repo isn't among the
+  // project's recorded git roots (a graph indexed under a name we don't list),
+  // surface it as a synthetic first entry so the trigger shows the real value.
+  const scopeItems = $derived.by(() => {
+    const items = data.scopes.map((s) => ({ value: s.name, label: s.name }));
+    if (!data.scopes.some((s) => s.name === data.repoId)) {
+      items.unshift({ value: data.repoId, label: data.repoId });
+    }
+    return items;
+  });
+
+  function onScopeSelect(value: unknown) {
+    goto(`?repo=${encodeURIComponent(String(value))}`, { invalidateAll: true });
   }
 </script>
 
@@ -155,22 +166,15 @@
   <!-- Controls -->
   <div class="flex items-center gap-3 flex-wrap px-6 py-3 border-b border-paper-edge">
     <!-- scope -->
-    <label class="flex items-center gap-2 text-xs text-ink-mute">
+    <div class="flex items-center gap-2 text-xs text-ink-mute" data-atlas-scope>
       <span class="uppercase tracking-wider">Scope</span>
-      <select
-        class="font-mono text-xs bg-paper-soft text-ink border border-paper-edge rounded py-1 px-2 cursor-pointer max-w-[220px]"
+      <Select
+        class="font-mono text-xs max-w-[220px]"
+        items={scopeItems}
         value={data.repoId}
-        onchange={onScopeChange}
-        data-atlas-scope
-      >
-        {#if !data.scopes.some((s) => s.name === data.repoId)}
-          <option value={data.repoId}>{data.repoId}</option>
-        {/if}
-        {#each data.scopes as s (s.id)}
-          <option value={s.name}>{s.name}</option>
-        {/each}
-      </select>
-    </label>
+        onchange={onScopeSelect}
+      />
+    </div>
 
     <span class="flex-1"></span>
 

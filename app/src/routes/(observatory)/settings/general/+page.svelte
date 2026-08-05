@@ -3,12 +3,25 @@
     import { appState } from "$lib/appstate.svelte.js";
     import { senseiApi } from "$lib/api.js";
     import { PageHeader, Switch } from "$lib/components";
+    import { Select } from "@rokkit/ui";
     import type { PreferencesData } from "$lib/setup/contracts.js";
     import {
         DEFAULT_PREFERENCES,
         fromPreferencesForm,
         toPreferencesForm,
     } from "../preferences-form.js";
+
+    // Static option lists for the preference pickers (label → wire value).
+    const DIGEST_OPTIONS = [
+        { label: "Off", value: "off" },
+        { label: "Daily", value: "daily" },
+        { label: "Weekly", value: "weekly" },
+    ];
+    const TONE_OPTIONS = [
+        { label: "Gentle", value: "gentle" },
+        { label: "Balanced", value: "balanced" },
+        { label: "Direct", value: "direct" },
+    ];
 
     let prefs = $state<PreferencesData>({ ...DEFAULT_PREFERENCES });
     let loading = $state(true);
@@ -113,19 +126,18 @@
                             The Today view cadence. Off keeps the dashboard quiet.
                         </div>
                     </div>
-                    <select
-                        class="text-xs px-2.5 py-1.5 border border-paper-mute rounded-md bg-paper-soft text-ink cursor-pointer"
-                        data-testid="pref-digest-cadence"
-                        value={prefs.digestCadence}
-                        onchange={(e) => {
-                            prefs.digestCadence = e.currentTarget.value;
-                            void persist();
-                        }}
-                    >
-                        <option value="off">Off</option>
-                        <option value="daily">Daily</option>
-                        <option value="weekly">Weekly</option>
-                    </select>
+                    <!-- testid on wrapper: rokkit Select doesn't forward data-* to the DOM. -->
+                    <div data-testid="pref-digest-cadence">
+                        <Select
+                            size="sm"
+                            items={DIGEST_OPTIONS}
+                            value={prefs.digestCadence}
+                            onchange={(v) => {
+                                prefs.digestCadence = v as string;
+                                void persist();
+                            }}
+                        />
+                    </div>
                 </div>
 
                 <div class="row grid grid-cols-[1fr_auto] gap-6 items-center py-3">
@@ -135,20 +147,17 @@
                             How direct sensei is when something repeats.
                         </div>
                     </div>
-                    <select
-                        class="text-xs px-2.5 py-1.5 border border-paper-mute rounded-md bg-paper-soft text-ink cursor-pointer"
-                        data-testid="pref-correction-aggressiveness"
-                        value={prefs.correctionAggressiveness}
-                        onchange={(e) => {
-                            prefs.correctionAggressiveness =
-                                e.currentTarget.value;
-                            void persist();
-                        }}
-                    >
-                        <option value="gentle">Gentle</option>
-                        <option value="balanced">Balanced</option>
-                        <option value="direct">Direct</option>
-                    </select>
+                    <div data-testid="pref-correction-aggressiveness">
+                        <Select
+                            size="sm"
+                            items={TONE_OPTIONS}
+                            value={prefs.correctionAggressiveness}
+                            onchange={(v) => {
+                                prefs.correctionAggressiveness = v as string;
+                                void persist();
+                            }}
+                        />
+                    </div>
                 </div>
 
                 <div class="row grid grid-cols-[1fr_auto] gap-6 items-center py-3">

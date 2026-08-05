@@ -1,6 +1,6 @@
 <script lang="ts">
     import { PageHeader, Kanji } from '$lib/components';
-    import { Button } from '@rokkit/ui';
+    import { Button, Select } from '@rokkit/ui';
     import { appState } from '$lib/appstate.svelte.js';
     import { senseiApi } from '$lib/api.js';
     import { page } from '$app/state';
@@ -44,6 +44,8 @@
     // mirroring the settings-general form. `persist` fires only from the field
     // handlers (never during hydrate), so no "initial load" guard is needed.
     const form = new ProjectMetadataForm();
+    // Mutable copy of the readonly enum list for rokkit Select's `items` prop.
+    const maturityItems = [...MATURITY_OPTIONS];
     let saveTimer: ReturnType<typeof setTimeout> | null = null;
 
     // Re-seed the form whenever a fresh project loads.
@@ -128,20 +130,18 @@
                         Lifecycle stage — from discovery through to archived.
                     </div>
                 </div>
-                <select
-                    class="text-xs px-2.5 py-1.5 border border-paper-mute rounded-md bg-paper-soft text-ink cursor-pointer"
-                    data-testid="metadata-maturity"
-                    disabled={!p}
-                    value={form.maturity}
-                    onchange={(e) => {
-                        form.maturity = e.currentTarget.value;
-                        void persist();
-                    }}
-                >
-                    {#each MATURITY_OPTIONS as opt (opt.value)}
-                        <option value={opt.value}>{opt.label}</option>
-                    {/each}
-                </select>
+                <div data-testid="metadata-maturity" class="min-w-[140px]">
+                    <Select
+                        class="text-xs"
+                        items={maturityItems}
+                        value={form.maturity}
+                        disabled={!p}
+                        onchange={(v) => {
+                            form.maturity = v as string;
+                            void persist();
+                        }}
+                    />
+                </div>
             </div>
 
             <div class="grid grid-cols-[1fr_auto] gap-6 items-center py-3">
