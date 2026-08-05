@@ -84,12 +84,14 @@ pub async fn resolve_libs(ctx: &TaskContext, task: &Task) -> Result<u32, String>
         .filter_map(|p| p["name"].as_str().map(|s| s.to_lowercase()))
         .collect();
 
-    // Update folder libs via PgStore (reusing the folder row from above)
+    // Update folder libs + mark indexed, fail-closed (D6d): resolve_libs runs
+    // BEFORE build_connections in the barrier chain, so it must honour the same
+    // fail-closed guard — otherwise a `failed` folder would be flipped to
+    // `indexed` here and build_connections' guard would never see it.
     if let Some(folder) = folder.as_ref()
-        && let Some(folder_id) = crate::api::util::json_uuid(&folder["id"])
-            && let Err(e) = ctx.pg().mark_folder_indexed(&folder_id, &libs).await {
-                tracing::warn!(error = %e, folder = %folder_name, "resolve_libs: mark_folder_indexed failed");
-            }
+        && let Some(folder_id) = crate::api::util::json_uuid(&folder["id"]) {
+            super::helpers::mark_folder_indexed_fail_closed(ctx, &folder_id, folder_name, &libs).await;
+        }
 
     // Enqueue ExtractDeps to parse manifest files and populate referenced_libraries
     let extract_task = super::super::Task::new(

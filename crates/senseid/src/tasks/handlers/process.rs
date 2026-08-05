@@ -379,12 +379,28 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
     // switch elsewhere) the folder's edges + embeddings are already valid, so we
     // skip the barriers entirely. This keeps a no-op re-scan cheap.
     let has_changes = !all_file_task_ids.is_empty() || !plan.removed.is_empty();
-    if has_changes {
-        // D6a: mark the scan in-flight only when we will actually re-index — a
-        // crash then leaves a recoverable `indexing` state, and the barrier
-        // flips it to `indexed` on success. Gated on has_changes (symmetric
-        // with that write) so an unchanged already-indexed folder is never
-        // downgraded to `indexing`.
+    // Recovery (D6b/D6d): also re-drive the barrier for a folder left in a
+    // NON-TERMINAL state — `failed` (a prior fatal file, D6c-trigger, possibly
+    // since healed by a bounded retry) or `indexing` (a crash mid-scan). Without
+    // this, a healed transient failure whose scan_state is now complete
+    // (has_changes=false) would strand the folder at `failed` forever, since the
+    // terminal barrier that flips it to `indexed` only runs when there are
+    // changes. An `indexed`/`archived`/`discovered` folder with no changes is
+    // left as-is (no spurious downgrade — the inc2 invariant).
+    let non_terminal = if let Some(fid) = this_folder_id {
+        matches!(
+            ctx.pg().get_folder_status(&fid).await.ok().flatten().as_deref(),
+            Some("failed") | Some("indexing")
+        )
+    } else {
+        false
+    };
+    if has_changes || non_terminal {
+        // D6a: mark the scan in-flight — a crash then leaves a recoverable
+        // `indexing` state, and the barrier flips it to `indexed` on success.
+        // Gated on has_changes||non_terminal so an unchanged already-`indexed`
+        // folder is never downgraded to `indexing`, but a `failed`/`indexing`
+        // folder is re-driven to recovery.
         if let Some(fid) = this_folder_id
             && let Err(e) = ctx.pg().update_folder_status(&fid, "indexing").await
         {
@@ -700,6 +716,32 @@ pub async fn process_folder(ctx: &TaskContext, task: &Task) -> Result<u32, Strin
 // ── Process File ──────────────────────────────────────────────────────────
 
 /// Parse a single file using file_processor, then write results to graph.
+/// Test-only fault seam (D6c-trigger): lets a test force a fatal DB-write
+/// failure for a specific file path, so the fatal path (folder → `failed`,
+/// `Err`, no `scan_state` advance) is exercised without needing a live DB fault.
+#[cfg(test)]
+pub(super) mod fault {
+    use std::collections::HashSet;
+    use std::sync::Mutex;
+
+    static FAIL_PATHS: Mutex<Option<HashSet<String>>> = Mutex::new(None);
+
+    /// Force the next `process_file` on `abs_path` to hit the fatal path.
+    pub fn fail_for(abs_path: &str) {
+        FAIL_PATHS.lock().unwrap().get_or_insert_with(HashSet::new).insert(abs_path.to_string());
+    }
+    /// Stop forcing failure for `abs_path`.
+    pub fn clear(abs_path: &str) {
+        if let Some(set) = FAIL_PATHS.lock().unwrap().as_mut() {
+            set.remove(abs_path);
+        }
+    }
+    /// Whether `abs_path` is currently marked to fail.
+    pub fn should_fail(abs_path: &str) -> bool {
+        FAIL_PATHS.lock().unwrap().as_ref().is_some_and(|s| s.contains(abs_path))
+    }
+}
+
 pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     let abs_path = &task.path;
 
@@ -769,105 +811,125 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
         }
     };
 
-    // Write parsed symbols to PG
+    // Write parsed symbols to PG. A DB-write failure here is FATAL (D6c-trigger):
+    // the file isn't correctly indexed, so we must NOT advance its scan_state and
+    // must surface it — mark the folder `failed` (the fail-closed barrier D6d
+    // checks this) and propagate `Err` (recorded to task_executions and
+    // bounded-retried, D6c). Parse/read errors were TOLERATED above (Ok). A
+    // folder row that doesn't exist yet is a no-op.
     let symbols_count = result.symbols.len();
-    if let Some(folder) = folder
-        && let Some(folder_id) = crate::api::util::json_uuid(&folder["id"]) {
-            // Re-indexing this file: un-resolve inbound edges (preserve their
-            // target_name so resolve_edges re-points them to the new nodes) and
-            // drop the file's prior nodes (cascading their outgoing edges) so the
-            // rewrite is clean. No-op for a brand-new file.
-            if let Err(e) = ctx.pg().unresolve_edges_to_file(&folder_id, &result.rel_path).await {
-                tracing::warn!(folder_id = %folder_id, file = %result.rel_path, error = %e, "unresolve_edges_to_file (reindex) failed");
-            }
-            if let Err(e) = ctx.pg().delete_nodes_by_file(&folder_id, &result.rel_path).await {
-                tracing::warn!(folder_id = %folder_id, file = %result.rel_path, error = %e, "delete_nodes_by_file (reindex) failed");
-            }
+    let Some(folder_id) = folder_id else {
+        return Ok(symbols_count as u32);
+    };
 
-            // Write file node
-            let file_node_id = match ctx.pg().upsert_node(
-                &folder_id, &result.kind, &result.rel_path, &result.rel_path, None, None, None, None
-            ).await {
-                Ok(id) => Some(id),
-                Err(e) => {
-                    tracing::warn!(kind = %result.kind, file = %result.rel_path, error = %e, "upsert file node failed; skipping file");
-                    None
-                }
-            };
+    // Test seam (D6c-trigger): exercise the fatal path without a live DB fault.
+    #[cfg(test)]
+    if fault::should_fail(abs_path) {
+        return fail_folder(ctx, &folder_id, &result.rel_path,
+            "injected fatal DB-write failure (test fault seam)".to_string()).await;
+    }
 
-            // Write symbol nodes (functions, classes, types, etc.), capturing
-            // each id keyed by (name, line_start) so call edges can be sourced
-            // from the caller node — not the file. Generic graph-wiring; reused
-            // by any symbol-sourced edge kind. Keyed on line because same-named
-            // methods across impl blocks are legal in Rust.
-            let mut sym_ids: std::collections::HashMap<(String, i32), uuid::Uuid> =
-                std::collections::HashMap::new();
-            for sym in &result.symbols {
-                let parent_uuid = file_node_id; // symbols are children of the file
-                match ctx.pg().upsert_node(
-                    &folder_id, &sym.kind, &sym.name, &result.rel_path,
-                    parent_uuid.as_ref(), sym.signature.as_deref(),
-                    Some(sym.line as i32), Some(sym.line_end as i32),
-                ).await {
-                    Ok(id) => { sym_ids.insert((sym.name.clone(), sym.line as i32), id); }
-                    Err(e) => tracing::warn!(kind = %sym.kind, name = %sym.name, file = %result.rel_path, error = %e, "upsert symbol node failed; skipping symbol"),
-                }
+    // Any DB write in here failing is fatal — `?` propagates it out of the async
+    // block and we handle it uniformly below (no partial "success").
+    let write_result: Result<(), String> = async {
+        // Re-indexing this file: un-resolve inbound edges (preserve their
+        // target_name so resolve_edges re-points them to the new nodes) and drop
+        // the file's prior nodes (cascading their outgoing edges) so the rewrite
+        // is clean. No-op for a brand-new file.
+        ctx.pg().unresolve_edges_to_file(&folder_id, &result.rel_path).await
+            .map_err(|e| format!("unresolve_edges_to_file: {e}"))?;
+        ctx.pg().delete_nodes_by_file(&folder_id, &result.rel_path).await
+            .map_err(|e| format!("delete_nodes_by_file: {e}"))?;
+
+        // File node.
+        let file_node_id = ctx.pg().upsert_node(
+            &folder_id, &result.kind, &result.rel_path, &result.rel_path, None, None, None, None
+        ).await.map_err(|e| format!("upsert file node: {e}"))?;
+
+        // Symbol nodes (functions, classes, types, …), captured by (name,
+        // line_start) so call edges can be sourced from the caller node — not the
+        // file. Keyed on line because same-named methods across impl blocks are
+        // legal in Rust.
+        let mut sym_ids: std::collections::HashMap<(String, i32), uuid::Uuid> =
+            std::collections::HashMap::new();
+        for sym in &result.symbols {
+            let id = ctx.pg().upsert_node(
+                &folder_id, &sym.kind, &sym.name, &result.rel_path,
+                Some(&file_node_id), sym.signature.as_deref(),
+                Some(sym.line as i32), Some(sym.line_end as i32),
+            ).await.map_err(|e| format!("upsert symbol node {}: {e}", sym.name))?;
+            sym_ids.insert((sym.name.clone(), sym.line as i32), id);
+        }
+
+        // Unresolved import edges.
+        for import in &result.unresolved_imports {
+            ctx.pg().insert_edge(&folder_id, &file_node_id, None, Some(import), "imports").await
+                .map_err(|e| format!("insert_edge (imports): {e}"))?;
+        }
+
+        // Unresolved call edges, sourced from the caller function node (falling
+        // back to the file node when the call has no enclosing named symbol).
+        for call in &result.unresolved_calls {
+            let source = sym_ids
+                .get(&(call.caller_name.clone(), call.caller_line as i32))
+                .copied()
+                .unwrap_or(file_node_id);
+            ctx.pg().insert_edge(&folder_id, &source, None, Some(&call.callee_name), "calls").await
+                .map_err(|e| format!("insert_edge (calls): {e}"))?;
+        }
+
+        // Parent refs (HAS_METHOD: type → method).
+        for pref in &result.parent_refs {
+            ctx.pg().insert_edge(&folder_id, &file_node_id, None, Some(&pref.parent_name), "extends").await
+                .map_err(|e| format!("insert_edge (extends): {e}"))?;
+        }
+
+        // Doc references (file_refs → covers, fn_mentions → references).
+        if result.kind == "doc" {
+            for file_ref in &result.file_refs {
+                ctx.pg().insert_edge(&folder_id, &file_node_id, None, Some(file_ref), "covers").await
+                    .map_err(|e| format!("insert_edge (covers): {e}"))?;
             }
-
-            // Write unresolved import edges
-            for import in &result.unresolved_imports {
-                if let Some(ref fid) = file_node_id
-                    && let Err(e) = ctx.pg().insert_edge(&folder_id, fid, None, Some(import), "imports").await {
-                        tracing::warn!(folder_id = %folder_id, import = %import, error = %e, "insert_edge (imports) failed");
-                    }
+            for fn_ref in &result.fn_mentions {
+                ctx.pg().insert_edge(&folder_id, &file_node_id, None, Some(fn_ref), "references").await
+                    .map_err(|e| format!("insert_edge (references): {e}"))?;
             }
+        }
+        Ok::<(), String>(())
+    }.await;
 
-            // Write unresolved call edges, sourced from the caller function node
-            // (falling back to the file node when the call has no enclosing named
-            // symbol). target stays unresolved for resolve_edges to point.
-            for call in &result.unresolved_calls {
-                let source = sym_ids
-                    .get(&(call.caller_name.clone(), call.caller_line as i32))
-                    .copied()
-                    .or(file_node_id);
-                if let Some(src_id) = source
-                    && let Err(e) = ctx.pg().insert_edge(&folder_id, &src_id, None, Some(&call.callee_name), "calls").await {
-                        tracing::warn!(folder_id = %folder_id, callee = %call.callee_name, error = %e, "insert_edge (calls) failed");
-                    }
-            }
+    if let Err(e) = write_result {
+        return fail_folder(ctx, &folder_id, &result.rel_path, e).await;
+    }
 
-            // Write parent refs (HAS_METHOD: type → method)
-            for pref in &result.parent_refs {
-                if let Some(ref fid) = file_node_id
-                    && let Err(e) = ctx.pg().insert_edge(&folder_id, fid, None, Some(&pref.parent_name), "extends").await {
-                        tracing::warn!(folder_id = %folder_id, parent = %pref.parent_name, error = %e, "insert_edge (extends) failed");
-                    }
-            }
-
-            // Write doc references (file_refs → COVERS, fn_mentions → references)
-            if result.kind == "doc"
-                && let Some(ref fid) = file_node_id {
-                    for file_ref in &result.file_refs {
-                        if let Err(e) = ctx.pg().insert_edge(&folder_id, fid, None, Some(file_ref), "covers").await {
-                            tracing::warn!(folder_id = %folder_id, file_ref = %file_ref, error = %e, "insert_edge (covers) failed");
-                        }
-                    }
-                    for fn_ref in &result.fn_mentions {
-                        if let Err(e) = ctx.pg().insert_edge(&folder_id, fid, None, Some(fn_ref), "references").await {
-                            tracing::warn!(folder_id = %folder_id, fn_ref = %fn_ref, error = %e, "insert_edge (references) failed");
-                        }
-                    }
-                }
-
-            // Record this file's fingerprint so the next scan skips it when
-            // unchanged. Written last so a row exists only for a fully-indexed file.
-            if let Some((mtime, hash)) = super::helpers::file_fingerprint(fpath) {
-                ctx.pg().upsert_scan_state(&folder_id, &result.rel_path, mtime, &hash).await
-                    .unwrap_or_else(|e| tracing::warn!(folder_id = %folder_id, file = %result.rel_path, error = %e, "upsert_scan_state failed"));
-            }
+    // Record this file's fingerprint LAST — only a fully-written file is "seen",
+    // so a fatal failure above leaves scan_state unadvanced and the next scan
+    // retries it. A scan_state write failure is itself fatal.
+    if let Some((mtime, hash)) = super::helpers::file_fingerprint(fpath)
+        && let Err(e) = ctx.pg().upsert_scan_state(&folder_id, &result.rel_path, mtime, &hash).await {
+            return fail_folder(ctx, &folder_id, &result.rel_path, format!("upsert_scan_state: {e}")).await;
         }
 
     Ok(symbols_count as u32)
+}
+
+/// Mark a folder `failed` and return the fatal error (D6c-trigger / D6a): a DB
+/// write for one of its files failed, so the folder must not advance to
+/// `indexed` (the fail-closed barrier D6d checks this status) and boot-reconcile
+/// / bounded-retry re-drives it. Marking the status is best-effort — if THAT
+/// write also fails we still surface the original fatal error, never swallow it.
+async fn fail_folder(
+    ctx: &TaskContext,
+    folder_id: &uuid::Uuid,
+    rel_path: &str,
+    err: String,
+) -> Result<u32, String> {
+    if let Err(se) = ctx.pg().update_folder_status(folder_id, "failed").await {
+        tracing::warn!(error = %se, folder_id = %folder_id, "process_file: marking folder failed also failed");
+    }
+    tracing::warn!(folder_id = %folder_id, file = %rel_path, error = %err,
+        "process_file: fatal DB write — folder left `failed`, scan_state not advanced");
+    Err(format!("process_file fatal DB write ({rel_path}): {err}"))
 }
 
 // ── Delete File / Folder ──────────────────────────────────────────────────
@@ -1138,6 +1200,140 @@ mod tests {
             "an unchanged already-indexed folder must not be downgraded to indexing");
 
         ctx.pg().remove_watch_root(&rid).await.unwrap();
+    }
+
+    /// Register a repo folder on disk + in the DB, mark it `indexing`, and
+    /// return (watch_root_id, folder_id, repo_abs_path). Mirrors what
+    /// scan_root/process_git_folder set up before ProcessFile runs.
+    async fn seed_indexing_repo(ctx: &TaskContext, root: &std::path::Path, name: &str) -> (uuid::Uuid, uuid::Uuid, String) {
+        let repo_path = root.join("repo").to_string_lossy().to_string();
+        let rid = ctx.pg().add_watch_root(&root.to_string_lossy(), name, &serde_json::json!([])).await.unwrap();
+        ctx.pg().upsert_repo_kind(&rid, "git", "repo", &repo_path).await.unwrap();
+        let (fid,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "SELECT id FROM sensei.folders WHERE abs_path = $1"
+        ).bind(&repo_path).fetch_one(ctx.pg().pool()).await.unwrap();
+        ctx.pg().update_folder_status(&fid, "indexing").await.unwrap();
+        (rid, fid, repo_path)
+    }
+
+    #[tokio::test]
+    async fn process_file_fatal_db_write_marks_folder_failed_and_skips_scan_state() {
+        // D6c-trigger: a fatal DB-write failure (simulated via the test fault
+        // seam) propagates as Err, marks the folder `failed` (so the fail-closed
+        // barrier D6d won't mark it indexed), and does NOT advance the file's
+        // scan_state — so the next scan retries it.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("repo/src")).unwrap();
+        let file = root.join("repo/src/lib.rs");
+        std::fs::write(&file, "pub fn a() {}").unwrap();
+
+        let ctx = make_ctx().await;
+        let (rid, fid, repo_path) = seed_indexing_repo(&ctx, root, "d6c_fatal").await;
+
+        let abs = file.to_string_lossy().to_string();
+        super::fault::fail_for(&abs);
+        let task = Task::new(TaskKind::ProcessFile, &repo_path, &abs);
+        let res = process_file(&ctx, &task).await;
+        super::fault::clear(&abs);
+
+        assert!(res.is_err(), "a fatal DB write propagates as Err, not Ok");
+        assert_eq!(ctx.pg().get_folder_status(&fid).await.unwrap().as_deref(), Some("failed"),
+            "the folder is left `failed` (fail-closed)");
+        assert!(ctx.pg().list_scan_state(&fid).await.unwrap().is_empty(),
+            "scan_state is NOT advanced for a fatally-failed file");
+
+        ctx.pg().remove_watch_root(&rid).await.ok();
+    }
+
+    #[tokio::test]
+    async fn process_file_success_advances_scan_state_and_keeps_folder_status() {
+        // The success counterpart: a fully-written file advances scan_state and
+        // does NOT spuriously mark the folder failed (it stays `indexing` for the
+        // barrier to flip to `indexed`).
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("repo/src")).unwrap();
+        let file = root.join("repo/src/lib.rs");
+        std::fs::write(&file, "pub fn a() {}").unwrap();
+
+        let ctx = make_ctx().await;
+        let (rid, fid, repo_path) = seed_indexing_repo(&ctx, root, "d6c_ok").await;
+
+        let abs = file.to_string_lossy().to_string();
+        let task = Task::new(TaskKind::ProcessFile, &repo_path, &abs);
+        process_file(&ctx, &task).await.unwrap();
+
+        assert_eq!(ctx.pg().list_scan_state(&fid).await.unwrap().len(), 1,
+            "a fully-written file advances scan_state");
+        assert_eq!(ctx.pg().get_folder_status(&fid).await.unwrap().as_deref(), Some("indexing"),
+            "a successful file does not spuriously mark the folder failed");
+
+        ctx.pg().remove_watch_root(&rid).await.ok();
+    }
+
+    #[tokio::test]
+    async fn process_file_fatal_on_one_file_does_not_block_a_sibling() {
+        // The fatal path is per-file: a sibling file still indexes (its scan_state
+        // is written) even though another file in the same folder failed fatally.
+        // The folder ends `failed` (fail-closed), but the healthy file's work is
+        // durable.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("repo/src")).unwrap();
+        let bad = root.join("repo/src/bad.rs");
+        let good = root.join("repo/src/good.rs");
+        std::fs::write(&bad, "pub fn a() {}").unwrap();
+        std::fs::write(&good, "pub fn b() {}").unwrap();
+
+        let ctx = make_ctx().await;
+        let (rid, fid, repo_path) = seed_indexing_repo(&ctx, root, "d6c_sibling").await;
+
+        let bad_abs = bad.to_string_lossy().to_string();
+        super::fault::fail_for(&bad_abs);
+        let bad_res = process_file(&ctx, &Task::new(TaskKind::ProcessFile, &repo_path, &bad_abs)).await;
+        super::fault::clear(&bad_abs);
+        // The sibling processes independently and succeeds.
+        let good_abs = good.to_string_lossy().to_string();
+        process_file(&ctx, &Task::new(TaskKind::ProcessFile, &repo_path, &good_abs)).await.unwrap();
+
+        assert!(bad_res.is_err(), "the bad file fails fatally");
+        assert_eq!(ctx.pg().get_folder_status(&fid).await.unwrap().as_deref(), Some("failed"),
+            "the folder is `failed` because one of its files failed");
+        let scan = ctx.pg().list_scan_state(&fid).await.unwrap();
+        assert_eq!(scan.len(), 1, "only the healthy sibling advanced scan_state");
+        assert!(scan.iter().any(|(p, _)| p.ends_with("good.rs")), "the sibling's fingerprint is recorded");
+        assert!(!scan.iter().any(|(p, _)| p.ends_with("bad.rs")), "the failed file did NOT advance scan_state");
+
+        ctx.pg().remove_watch_root(&rid).await.ok();
+    }
+
+    #[tokio::test]
+    async fn process_git_folder_recovers_a_failed_folder_with_no_changes() {
+        // Recovery (D6b/D6d): a transient fatal failure a bounded retry later
+        // heals leaves the folder `failed` with scan_state complete (no changes).
+        // The next scan must RE-DRIVE the barrier — not skip it on
+        // has_changes=false — so the folder can reach `indexed`. Here an empty
+        // repo marked `failed` is reset to `indexing` and the terminal
+        // BuildConnections barrier is re-enqueued.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("repo")).unwrap(); // empty → has_changes=false
+
+        let ctx = make_ctx().await;
+        let (rid, fid, repo_path) = seed_indexing_repo(&ctx, root, "d6d_recover").await;
+        ctx.pg().update_folder_status(&fid, "failed").await.unwrap();
+
+        let task = Task::new(TaskKind::ProcessGitFolder, &repo_path, &repo_path);
+        process_git_folder(&ctx, &task).await.unwrap();
+
+        assert_eq!(ctx.pg().get_folder_status(&fid).await.unwrap().as_deref(), Some("indexing"),
+            "a `failed` folder is re-driven (reset to `indexing`) even with no changes");
+        let has_barrier = ctx.queue.snapshot().await.iter()
+            .any(|(kind, fp, _)| *kind == TaskKind::BuildConnections && fp == &repo_path);
+        assert!(has_barrier, "the terminal barrier is re-enqueued so recovery can reach `indexed`");
+
+        ctx.pg().remove_watch_root(&rid).await.ok();
     }
 
     #[tokio::test]
