@@ -127,7 +127,7 @@ pub async fn build_connections(ctx: &TaskContext, task: &Task) -> Result<u32, St
                 .file_stem().and_then(|s| s.to_str()).unwrap_or("");
             if file_stem == doc_stem && file_path != &doc_path
                 && let Some(file_id) = crate::api::util::json_uuid(&file_node["id"]) {
-                    if let Err(e) = ctx.pg().insert_edge(&folder_id, &doc_id, Some(&file_id), None, "covers").await {
+                    if let Err(e) = ctx.pg().insert_edge(&folder_id, &doc_id, Some(&file_id), None, None, "covers").await {
                         tracing::warn!(error = %e, doc_id = %doc_id, file_id = %file_id, "build_connections: insert covers edge failed");
                     }
                     edges_created += 1;
@@ -191,7 +191,7 @@ pub async fn reconcile_connections(ctx: &TaskContext, task: &Task) -> Result<u32
                     .file_stem().and_then(|s| s.to_str()).unwrap_or("");
                 if !doc_stem.is_empty() && doc_stem == code_stem
                     && let Some(code_id) = crate::api::util::json_uuid(&code["id"]) {
-                        if let Err(e) = ctx.pg().insert_edge(fid, &doc_id, Some(&code_id), None, "covers").await {
+                        if let Err(e) = ctx.pg().insert_edge(fid, &doc_id, Some(&code_id), None, None, "covers").await {
                             tracing::warn!(error = %e, doc_id = %doc_id, code_id = %code_id, "reconcile_connections: insert covers edge failed");
                         }
                         edges += 1;

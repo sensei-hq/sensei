@@ -1021,7 +1021,7 @@ mod tests {
         let sub_fid = ctx.pg().upsert_subfolder(&root_id, "sub", "gone/sub", &gone_sub.to_string_lossy(), Some(&gone_fid), None).await.unwrap();
         let ghost_a = ctx.pg().upsert_node(&gone_fid, "struct", "HiveConfig", "gone/config.rs", None, None, None, None).await.unwrap();
         let ghost_b = ctx.pg().upsert_node(&sub_fid, "struct", "HiveStore", "gone/sub/store.rs", None, None, None, None).await.unwrap();
-        let ghost_edge = ctx.pg().insert_edge(&gone_fid, &ghost_a, Some(&ghost_b), None, "references").await.unwrap();
+        let ghost_edge = ctx.pg().insert_edge(&gone_fid, &ghost_a, Some(&ghost_b), None, None, "references").await.unwrap();
         ctx.pg().upsert_scan_state(&gone_fid, "gone/config.rs", 1, "h").await.unwrap();
 
         // Prune: both ghost folder rows go, the live one stays.

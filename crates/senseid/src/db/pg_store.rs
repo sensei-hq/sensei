@@ -1731,15 +1731,36 @@ impl PgStore {
 
     // ── Edges ────────────────────────────────────────────────────────
 
+    /// Insert (or upsert) an edge (D1). Edges carry an identity via two partial
+    /// unique indexes, so a repeated identical insert returns the SAME row
+    /// instead of duplicating. Branches on `target_id`: a resolved edge is keyed
+    /// by its target node; an unresolved edge by `(target_name, target_file)`.
+    /// `DO UPDATE SET modified_at = now()` (not `DO NOTHING`) so `RETURNING id`
+    /// is always the surviving row's id.
     pub async fn insert_edge(
         &self, folder_id: &uuid::Uuid, source_id: &uuid::Uuid,
         target_id: Option<&uuid::Uuid>, target_name: Option<&str>,
-        kind: &str,
+        target_file: Option<&str>, kind: &str,
     ) -> Result<uuid::Uuid, String> {
-        let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
-            "INSERT INTO sensei.edges(folder_id, source_id, target_id, target_name, kind) VALUES($1, $2, $3, $4, $5::sensei.edge_kind) RETURNING id"
-        ).bind(folder_id).bind(source_id).bind(target_id).bind(target_name).bind(kind)
-            .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        let row: (uuid::Uuid,) = if let Some(tid) = target_id {
+            sqlx_core::query_as::query_as(
+                "INSERT INTO sensei.edges(folder_id, source_id, target_id, kind)
+                 VALUES($1, $2, $3, $4::sensei.edge_kind)
+                 ON CONFLICT (folder_id, source_id, target_id, kind) WHERE target_id IS NOT NULL
+                   DO UPDATE SET modified_at = now()
+                 RETURNING id"
+            ).bind(folder_id).bind(source_id).bind(tid).bind(kind)
+                .fetch_one(&self.pool).await.map_err(|e| e.to_string())?
+        } else {
+            sqlx_core::query_as::query_as(
+                "INSERT INTO sensei.edges(folder_id, source_id, target_name, target_file, kind)
+                 VALUES($1, $2, $3, $4, $5::sensei.edge_kind)
+                 ON CONFLICT (folder_id, source_id, target_name, target_file, kind) WHERE target_id IS NULL
+                   DO UPDATE SET modified_at = now()
+                 RETURNING id"
+            ).bind(folder_id).bind(source_id).bind(target_name).bind(target_file).bind(kind)
+                .fetch_one(&self.pool).await.map_err(|e| e.to_string())?
+        };
         Ok(row.0)
     }
 
@@ -1761,11 +1782,37 @@ impl PgStore {
         }).collect())
     }
 
-    /// Update an unresolved edge with a resolved target_id.
+    /// Promote an unresolved edge to a resolved `target_id` (D1) — conflict-safe
+    /// against `edges_unique_resolved`. If a resolved edge with the same
+    /// `(folder_id, source_id, target_id, kind)` already exists, updating this
+    /// row into it would violate the unique index; instead we MERGE — the UPDATE
+    /// is guarded by a `NOT EXISTS`, and when it changes 0 rows (a dup exists, or
+    /// the edge is already gone) we delete this now-redundant unresolved edge.
+    ///
+    /// The guard-then-delete is not one transaction, which is safe under the
+    /// single-writer-per-folder invariant (W5/D6e): `resolve_edges` runs as one
+    /// barrier task per folder and calls this sequentially, and the unique index
+    /// is folder-scoped — so no concurrent resolve can race the `NOT EXISTS`.
     pub async fn resolve_edge(&self, edge_id: &uuid::Uuid, target_id: &uuid::Uuid) -> Result<(), String> {
-        sqlx_core::query::query("UPDATE sensei.edges SET target_id = $2, modified_at = now() WHERE id = $1")
-            .bind(edge_id).bind(target_id)
-            .execute(&self.pool).await.map_err(|e| e.to_string())?;
+        let res = sqlx_core::query::query(
+            "UPDATE sensei.edges e
+                SET target_id = $2, modified_at = now()
+              WHERE e.id = $1
+                AND NOT EXISTS (
+                    SELECT 1 FROM sensei.edges d
+                     WHERE d.folder_id = e.folder_id
+                       AND d.source_id = e.source_id
+                       AND d.target_id = $2
+                       AND d.kind = e.kind
+                       AND d.id <> e.id)"
+        ).bind(edge_id).bind(target_id).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        if res.rows_affected() == 0 {
+            // A resolved edge to the same target already exists (or this edge is
+            // already gone): this unresolved edge is redundant — drop it so the
+            // graph converges to the single resolved edge.
+            sqlx_core::query::query("DELETE FROM sensei.edges WHERE id = $1")
+                .bind(edge_id).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        }
         Ok(())
     }
 
@@ -10750,7 +10797,7 @@ mod tests {
         let fid = create_test_folder(&s, &format!("edge_{}", uuid::Uuid::new_v4())).await;
         let fn_a = s.upsert_node(&fid, "function", "a", "a.rs", None, None, Some(1), Some(5)).await.unwrap();
         let fn_b = s.upsert_node(&fid, "function", "b", "b.rs", None, None, Some(1), Some(5)).await.unwrap();
-        s.insert_edge(&fid, &fn_a, Some(&fn_b), None, "calls").await.unwrap();
+        s.insert_edge(&fid, &fn_a, Some(&fn_b), None, None, "calls").await.unwrap();
         let callers = s.get_callers(&fn_b).await.unwrap();
         assert_eq!(callers.len(), 1);
         assert_eq!(callers[0]["caller_id"], fn_a.to_string());
@@ -10759,6 +10806,120 @@ mod tests {
         let by_kind = s.get_edges_by_kind(&fid, "calls").await.unwrap();
         assert_eq!(by_kind.len(), 1);
         s.delete_nodes_by_folder(&fid).await.unwrap(); // cascades edges
+    }
+
+    #[tokio::test]
+    async fn insert_edge_is_idempotent() {
+        // D1: edges have identity — inserting the same edge twice returns the
+        // SAME id and adds no second row, for both resolved and unresolved edges.
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("edgeidem_{}", uuid::Uuid::new_v4())).await;
+        let a = s.upsert_node(&fid, "function", "a", "a.rs", None, None, Some(1), Some(5)).await.unwrap();
+        let b = s.upsert_node(&fid, "function", "b", "b.rs", None, None, Some(1), Some(5)).await.unwrap();
+
+        // Resolved edge: a repeated identical insert upserts to the same row.
+        let e1 = s.insert_edge(&fid, &a, Some(&b), None, None, "calls").await.unwrap();
+        let e2 = s.insert_edge(&fid, &a, Some(&b), None, None, "calls").await.unwrap();
+        assert_eq!(e1, e2, "a repeated resolved edge returns the same id");
+        assert_eq!(s.get_edges_by_kind(&fid, "calls").await.unwrap().len(), 1, "no duplicate resolved edge");
+
+        // Unresolved edge: a repeated insert (same source, target_name, kind)
+        // upserts to the same row (nulls-not-distinct target_file).
+        let u1 = s.insert_edge(&fid, &a, None, Some("ext_fn"), None, "calls").await.unwrap();
+        let u2 = s.insert_edge(&fid, &a, None, Some("ext_fn"), None, "calls").await.unwrap();
+        assert_eq!(u1, u2, "a repeated unresolved edge returns the same id");
+        assert_eq!(s.get_edges_by_kind(&fid, "calls").await.unwrap().len(), 2,
+            "one resolved (a→b) + one unresolved (a→ext_fn), no dupes");
+
+        s.delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn resolve_edge_merges_into_existing_resolved_edge() {
+        // D1: promoting an unresolved edge to a target that already has a resolved
+        // edge from the same (source, kind) must MERGE (delete the loser), not
+        // throw a unique violation against edges_unique_resolved.
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("resolvemerge_{}", uuid::Uuid::new_v4())).await;
+        let a = s.upsert_node(&fid, "function", "a", "a.rs", None, None, Some(1), Some(5)).await.unwrap();
+        let b = s.upsert_node(&fid, "function", "b", "b.rs", None, None, Some(1), Some(5)).await.unwrap();
+
+        s.insert_edge(&fid, &a, Some(&b), None, None, "calls").await.unwrap(); // resolved a→b
+        let u = s.insert_edge(&fid, &a, None, Some("b"), None, "calls").await.unwrap(); // unresolved a→"b"
+        // The resolved and unresolved partial indexes are DISJOINT: both edges
+        // coexist (no collision on insert) until resolution merges them.
+        assert_eq!(s.get_edges_by_kind(&fid, "calls").await.unwrap().len(), 2,
+            "resolved a→b and unresolved a→\"b\" coexist as two rows");
+
+        s.resolve_edge(&u, &b).await.unwrap(); // collides with a→b → merge
+
+        assert_eq!(s.get_edges_by_kind(&fid, "calls").await.unwrap().len(), 1,
+            "the redundant edge is merged away, not duplicated");
+        let exists: (bool,) = query_as("SELECT EXISTS(SELECT 1 FROM sensei.edges WHERE id=$1)")
+            .bind(u).fetch_one(s.pool()).await.unwrap();
+        assert!(!exists.0, "the loser unresolved edge is deleted");
+
+        s.delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn insert_edge_unresolved_dedups_by_target_file() {
+        // D1: the unresolved identity is (folder, source, target_name, target_file,
+        // kind). Same target_name in DIFFERENT files are distinct edges; same
+        // name + same file (incl. nulls-not-distinct) upserts to one row. This is
+        // the whole point of the target_file column — a same-named symbol in two
+        // files must not collapse to one edge.
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("edgetf_{}", uuid::Uuid::new_v4())).await;
+        let a = s.upsert_node(&fid, "function", "a", "a.rs", None, None, Some(1), Some(5)).await.unwrap();
+
+        let e1 = s.insert_edge(&fid, &a, None, Some("helper"), Some("x.rs"), "calls").await.unwrap();
+        let e2 = s.insert_edge(&fid, &a, None, Some("helper"), Some("y.rs"), "calls").await.unwrap();
+        assert_ne!(e1, e2, "same target_name in different files are distinct unresolved edges");
+        assert_eq!(s.get_edges_by_kind(&fid, "calls").await.unwrap().len(), 2, "two distinct rows");
+
+        let e3 = s.insert_edge(&fid, &a, None, Some("helper"), Some("x.rs"), "calls").await.unwrap();
+        assert_eq!(e1, e3, "same (target_name, target_file) upserts to the same row");
+        assert_eq!(s.get_edges_by_kind(&fid, "calls").await.unwrap().len(), 2, "no new row on re-insert");
+
+        s.delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn resolve_edge_second_call_is_safe() {
+        // resolve_edges loops over unresolved edges every scan, so an already-
+        // resolved edge can be re-fed. Resolving the same edge to the same target
+        // twice must be a safe no-op (one edge), not a unique-violation throw.
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("resolve2x_{}", uuid::Uuid::new_v4())).await;
+        let a = s.upsert_node(&fid, "function", "a", "a.rs", None, None, Some(1), Some(5)).await.unwrap();
+        let b = s.upsert_node(&fid, "function", "b", "b.rs", None, None, Some(1), Some(5)).await.unwrap();
+        let u = s.insert_edge(&fid, &a, None, Some("b"), None, "calls").await.unwrap();
+
+        s.resolve_edge(&u, &b).await.unwrap();
+        s.resolve_edge(&u, &b).await.unwrap(); // second call — must not throw
+
+        assert_eq!(s.get_edges_by_kind(&fid, "calls").await.unwrap().len(), 1,
+            "resolving twice keeps exactly one edge");
+        s.delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn resolve_edge_updates_in_place_when_no_conflict() {
+        // The common case: no existing resolved dup → the unresolved edge is
+        // updated in place to the resolved target (not deleted).
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("resolveok_{}", uuid::Uuid::new_v4())).await;
+        let a = s.upsert_node(&fid, "function", "a", "a.rs", None, None, Some(1), Some(5)).await.unwrap();
+        let b = s.upsert_node(&fid, "function", "b", "b.rs", None, None, Some(1), Some(5)).await.unwrap();
+        let u = s.insert_edge(&fid, &a, None, Some("b"), None, "calls").await.unwrap();
+
+        s.resolve_edge(&u, &b).await.unwrap();
+
+        let (tid,): (Option<uuid::Uuid>,) = query_as("SELECT target_id FROM sensei.edges WHERE id=$1")
+            .bind(u).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(tid, Some(b), "the edge is resolved in place to the target");
+        s.delete_nodes_by_folder(&fid).await.unwrap();
     }
 
     // ── Extensions tests ───────────────────────────────────────────────
@@ -13881,7 +14042,7 @@ mod tests {
         // Insert a callee node (target) in child folder.
         let tgt_id = s.upsert_node(&child_id, "function", "render_widget", "src/widget.rs", None, Some("fn render_widget()"), Some(12), Some(20)).await.unwrap();
         // Insert resolved edge: widget_builder calls render_widget.
-        s.insert_edge(&child_id, &fn_id, Some(&tgt_id), Some("render_widget"), "calls").await.unwrap();
+        s.insert_edge(&child_id, &fn_id, Some(&tgt_id), Some("render_widget"), None, "calls").await.unwrap();
 
         // Resolve scope.
         let ids = s.scope_folder_ids(&proj_name).await.unwrap();
