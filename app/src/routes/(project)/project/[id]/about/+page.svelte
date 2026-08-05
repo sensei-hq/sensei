@@ -107,7 +107,7 @@
 <PageHeader title={p?.name ?? "—"} description={p?.goal ?? p?.vision ?? undefined} />
 <div class="px-6 py-6 max-w-[600px]">
     <section
-        class="px-7 py-7 bg-paper-mute border border-paper-mute rounded-lg"
+        class="px-7 py-7 bg-paper-mute border border-paper-edge rounded-lg"
         data-testid="project-metadata"
     >
         <div class="flex items-baseline justify-between mb-4">
@@ -153,7 +153,7 @@
                 </div>
                 <input
                     type="text"
-                    class="w-[220px] px-3 py-2 text-sm border border-paper-mute rounded-md bg-paper-soft text-ink outline-none text-right"
+                    class="w-[220px] px-3 py-2 text-sm border border-paper-edge rounded-md bg-paper-soft text-ink outline-none text-right"
                     data-testid="metadata-client"
                     disabled={!p}
                     value={form.client}
@@ -174,7 +174,7 @@
                 </div>
                 <textarea
                     rows="2"
-                    class="w-[260px] px-3 py-2 text-sm border border-paper-mute rounded-md bg-paper-soft text-ink outline-none resize-y"
+                    class="w-[260px] px-3 py-2 text-sm border border-paper-edge rounded-md bg-paper-soft text-ink outline-none resize-y"
                     data-testid="metadata-goal"
                     disabled={!p}
                     value={form.goal}
@@ -195,7 +195,7 @@
                 </div>
                 <textarea
                     rows="3"
-                    class="w-[260px] px-3 py-2 text-sm border border-paper-mute rounded-md bg-paper-soft text-ink outline-none resize-y"
+                    class="w-[260px] px-3 py-2 text-sm border border-paper-edge rounded-md bg-paper-soft text-ink outline-none resize-y"
                     data-testid="metadata-description"
                     disabled={!p}
                     value={form.description}
@@ -237,7 +237,7 @@
         </h3>
         <ul class="list-none m-0 p-0">
             {#each data.repos as repo (repo.id)}
-                <li class="repo-row flex gap-3 py-1.5 text-sm border-b border-paper-mute">
+                <li class="repo-row flex gap-3 py-1.5 text-sm border-b border-paper-edge">
                     <span class="font-semibold">{repo.name}</span>
                     <span class="opacity-50 text-xs font-mono overflow-hidden text-ellipsis">{repo.path}</span>
                 </li>

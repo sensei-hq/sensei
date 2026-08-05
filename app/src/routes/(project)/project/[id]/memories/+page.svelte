@@ -162,7 +162,7 @@
             </h3>
             <ul class="list-none m-0 p-0 flex flex-col gap-2">
                 {#each proposedBatches as batch (batch.id)}
-                    <li class="border border-paper-mute rounded-md px-3 py-2 flex items-center gap-3">
+                    <li class="border border-paper-edge rounded-md px-3 py-2 flex items-center gap-3">
                         <span class="text-sm flex-1">
                             {batch.memberCount} memor{batch.memberCount === 1 ? 'y' : 'ies'}
                             {#if batch.note} · <span class="opacity-70">{batch.note}</span>{/if}
@@ -213,7 +213,7 @@
                     {@const checked = selected.has(m.id)}
                     {@const opened = openedMemoryId === m.id}
                     {@const chip = memState.chipFor(m)}
-                    <li class="memory-row flex items-center gap-3 py-2 border-b border-paper-mute text-sm"
+                    <li class="memory-row flex items-center gap-3 py-2 border-b border-paper-edge text-sm"
                         class:bg-paper-mute={opened}
                         class:border-l-2={m.generalised}
                         class:border-l-success={m.generalised}

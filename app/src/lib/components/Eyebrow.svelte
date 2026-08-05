@@ -11,7 +11,7 @@
 
 <span
   data-component="eyebrow"
-  class="text-xs tracking-wide uppercase {tone}"
+  class="text-xs tracking-[0.18em] uppercase {tone}"
 >
   {@render children()}
 </span>
