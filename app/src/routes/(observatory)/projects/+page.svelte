@@ -83,7 +83,10 @@
       {#snippet itemContent(proxy: ProxyItem)}
         <span class="kanji text-[11px]">{proxy.get('kanji')}</span>
         <span>{proxy.label}</span>
-        <span class="font-mono text-[11px] text-ink-mute">{proxy.get('count')}</span>
+        <!-- Inherit the option's text colour (rokkit sets a contrast-correct colour
+             per selected/unselected state) instead of a hardcoded text-ink-mute,
+             which failed contrast on the SELECTED pill's background (a11y). -->
+        <span class="font-mono text-[11px]">{proxy.get('count')}</span>
       {/snippet}
     </Toggle>
     <span class="flex-1"></span>
