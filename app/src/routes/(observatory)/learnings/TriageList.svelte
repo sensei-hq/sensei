@@ -27,12 +27,15 @@
 {/if}
 
 <style>
-    .memory-row { padding: 0.75rem; border: 1px solid var(--paper-mute); border-radius: 4px; margin-bottom: 0.5rem; }
+    /* Semantic tokens only — no hardcoded colours. (was #553/#fff literals + the
+       non-existent --warning-bg/--warning-fg/--text-muted vars; paper-mute border
+       → paper-edge per the border rule.) */
+    .memory-row { padding: 0.75rem; border: 1px solid var(--paper-edge); border-radius: 4px; margin-bottom: 0.5rem; }
     .memory-row.selected { border-color: var(--accent); }
-    .title-btn { background: none; border: none; padding: 0; margin: 0.25rem 0; font-size: inherit; font-weight: 600; cursor: pointer; text-align: left; display: block; width: 100%; }
+    .title-btn { background: none; border: none; padding: 0; margin: 0.25rem 0; font-size: inherit; font-weight: 600; cursor: pointer; text-align: left; display: block; width: 100%; color: var(--ink); }
     .meta { display: flex; gap: 0.25rem; flex-wrap: wrap; }
-    .chip { padding: 0.1rem 0.5rem; border-radius: 99px; font-size: 0.75rem; background: var(--paper-mute); }
-    .chip.signal { background: var(--warning-bg, #553); color: var(--warning-fg, #fff); }
+    .chip { padding: 0.1rem 0.5rem; border-radius: 99px; font-size: 0.75rem; background: var(--paper-mute); color: var(--ink-mute); }
+    .chip.signal { background: var(--warning-soft); color: var(--warning); }
     .actions { display: flex; gap: 0.5rem; margin-top: 0.5rem; }
-    .empty { color: var(--text-muted); padding: 1rem; }
+    .empty { color: var(--ink-mute); padding: 1rem; }
 </style>
