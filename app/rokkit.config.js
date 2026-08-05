@@ -68,13 +68,15 @@ export default {
     // oklch keeps the ink hue (light ~50 / dark ~85) at contrasts ≥4.5:1 while
     // preserving the soft > mute > faint prominence order. See /tmp/contrast.mjs.
     "ink-mute":   { light: "oklch(0.500 0.010 50)", dark: "oklch(0.740 0.009 85)" },
-    "ink-faint":  { light: "oklch(0.545 0.010 50)", dark: "oklch(0.680 0.009 85)" },
+    "ink-faint":  { light: "oklch(0.500 0.010 50)", dark: "oklch(0.680 0.009 85)" },
 
     // ── Accent — vermillion (design system: --accent: var(--shu-500)) ─
     // accent-soft is omitted: skin is now `accent: "shu"` so the canonical
     // default resolves to shu.100 / shu.200 — same as the former override.
     // accent override (shade 400 dark shift) is kept for dark-mode legibility.
-    accent:        { light: "shu.500", dark: "shu.400" },
+    // Light value darkened shu.500 (0.58L, 4.27:1) → 0.520L (5.5:1) so vermillion
+    // TEXT (stat numbers, arrows, kanji labels) passes WCAG AA. Dark keeps shu.400.
+    accent:        { light: "oklch(0.520 0.145 35)", dark: "shu.400" },
 
     // ── Primary named token — ink-colored CTA (design system: --primary: var(--ink)) ─
     // Named `bg-primary` / `text-primary` = ink color (for ink-on-paper buttons).
@@ -83,12 +85,16 @@ export default {
     primary:      { light: "kami.900", dark: "sumi.900" },
     "on-primary": { light: "kami.100", dark: "sumi.50"  },
 
-    // ── Status (solid/text) — lighten for legibility in dark mode (shade 400 vs 500) ─
-    success:      { light: "hisui.500",  dark: "hisui.400"  },
-    warning:      { light: "kohaku.500", dark: "kohaku.400" },
-    danger:       { light: "beni.500",   dark: "beni.400"   },
-    error:        { light: "beni.500",   dark: "beni.400"   },  // parity with danger (skin error:beni was single-pole)
-    info:         { light: "ai.500",     dark: "ai.400"     },
+    // ── Status (solid/text) ────────────────────────────────────────────────────
+    // Light values DARKENED for WCAG AA — the .500 shades read as light text on
+    // white and failed 4.5:1 (warning 2.35:1, success 3.26:1, danger 4.55:1). Raw
+    // oklch keeps each hue at ~5:1 for status TEXT (counts, verdicts, deltas). Dark
+    // keeps the lightened .400 shades (dark mode already passes on the dark surface).
+    success:      { light: "oklch(0.510 0.076 160)", dark: "hisui.400"  },
+    warning:      { light: "oklch(0.510 0.100 75)",  dark: "kohaku.400" },
+    danger:       { light: "oklch(0.520 0.178 25)",  dark: "beni.400"   },
+    error:        { light: "oklch(0.520 0.178 25)",  dark: "beni.400"   },
+    info:         { light: "oklch(0.520 0.150 254)", dark: "ai.400"     },
 
     // ── Status/accent SOFT (tinted callout backgrounds) — MUST flip per mode ─────
     // The status palettes are single-pole (50→950), so the preset derives every
