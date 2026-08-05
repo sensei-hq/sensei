@@ -9142,6 +9142,8 @@ impl PgStore {
     // ── Task Executions (activity.task_executions) ──────────────────
 
     /// Insert a running task execution record. Returns the row UUID.
+    /// `retry_number` is the task's attempt count (0 = first attempt), persisted
+    /// so bounded retries (D6c) are observable on the logs/health screen.
     pub async fn start_task_execution(
         &self,
         task_id: i64,
@@ -9149,16 +9151,18 @@ impl PgStore {
         task_kind: &str,
         folder_path: &str,
         path: &str,
+        retry_number: i32,
     ) -> Result<uuid::Uuid, String> {
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
-            "INSERT INTO activity.task_executions(task_id, parent_task_id, task_kind, folder_path, path, status)
-             VALUES($1, $2, $3, $4, $5, 'running') RETURNING id"
+            "INSERT INTO activity.task_executions(task_id, parent_task_id, task_kind, folder_path, path, status, retry_number)
+             VALUES($1, $2, $3, $4, $5, 'running', $6) RETURNING id"
         )
         .bind(task_id)
         .bind(parent_task_id)
         .bind(task_kind)
         .bind(folder_path)
         .bind(path)
+        .bind(retry_number)
         .fetch_one(&self.pool)
         .await
         .map_err(|e| format!("start_task_execution: {}", e))?;
@@ -10285,14 +10289,14 @@ mod tests {
         let fp = format!("/_test/reconcile/{}", uuid::Uuid::new_v4());
 
         // A — orphaned: running, started well before the cutoff (prior session).
-        let a = s.start_task_execution(1, None, "ProcessFile", &fp, "a").await.unwrap();
+        let a = s.start_task_execution(1, None, "ProcessFile", &fp, "a", 0).await.unwrap();
         sqlx_core::query::query(
             "UPDATE activity.task_executions SET started_at = now() - interval '2 hours' WHERE id = $1")
             .bind(a).execute(s.pool()).await.unwrap();
         // B — this session: running, started at now() (after the cutoff).
-        let b = s.start_task_execution(2, None, "ProcessFile", &fp, "b").await.unwrap();
+        let b = s.start_task_execution(2, None, "ProcessFile", &fp, "b", 0).await.unwrap();
         // C — already terminal from a prior session: must not be re-touched.
-        let c = s.start_task_execution(3, None, "ProcessFile", &fp, "c").await.unwrap();
+        let c = s.start_task_execution(3, None, "ProcessFile", &fp, "c", 0).await.unwrap();
         sqlx_core::query::query(
             "UPDATE activity.task_executions SET status = 'completed', started_at = now() - interval '2 hours' WHERE id = $1")
             .bind(c).execute(s.pool()).await.unwrap();
@@ -10302,7 +10306,7 @@ mod tests {
         // D — boundary: running, started EXACTLY at the cutoff. The sweep is
         // exclusive (`started_at < cutoff`), so a row at session_start belongs
         // to this session and must be left running — locks the `<` vs `<=` line.
-        let d = s.start_task_execution(4, None, "ProcessFile", &fp, "d").await.unwrap();
+        let d = s.start_task_execution(4, None, "ProcessFile", &fp, "d", 0).await.unwrap();
         sqlx_core::query::query(
             "UPDATE activity.task_executions SET started_at = $2 WHERE id = $1")
             .bind(d).bind(cutoff).execute(s.pool()).await.unwrap();
@@ -10334,6 +10338,23 @@ mod tests {
         assert_eq!(d_status, "running", "a row exactly at the cutoff is this session's — left running");
 
         // Cleanup.
+        sqlx_core::query::query("DELETE FROM activity.task_executions WHERE folder_path = $1")
+            .bind(&fp).execute(s.pool()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn start_task_execution_records_retry_number() {
+        // D6c: a re-driven task carries its attempt count, and the execution
+        // record must persist it (`task_executions.retry_number`, currently
+        // always 0) so retries are observable on the logs/health screen.
+        let s = pg_store().await;
+        let fp = format!("/_test/retrynum/{}", uuid::Uuid::new_v4());
+        let id = s.start_task_execution(77, None, "ProcessFile", &fp, "a.rs", 2).await.unwrap();
+
+        let (rn,): (i32,) = query_as("SELECT retry_number FROM activity.task_executions WHERE id = $1")
+            .bind(id).fetch_one(s.pool()).await.unwrap();
+        assert_eq!(rn, 2, "the recorded retry_number matches the attempt");
+
         sqlx_core::query::query("DELETE FROM activity.task_executions WHERE folder_path = $1")
             .bind(&fp).execute(s.pool()).await.unwrap();
     }

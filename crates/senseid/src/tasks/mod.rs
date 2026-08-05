@@ -7,6 +7,7 @@
 
 pub mod queue;
 pub mod executor;
+pub mod retry;
 pub mod handlers;
 pub mod progress;
 pub mod progress_emitter;
@@ -262,6 +263,7 @@ pub struct Task {
     pub status: TaskStatus,
     pub depends_on: Vec<u64>,            // won't run until these complete
     pub error: Option<String>,
+    pub retry_number: u32,               // 0 = first attempt; bumped per bounded retry (D6c)
     pub _created_at: Instant,
     pub started_at: Option<Instant>,
     pub completed_at: Option<Instant>,
@@ -281,6 +283,31 @@ impl Task {
             status: TaskStatus::Pending,
             depends_on: Vec::new(),
             error: None,
+            retry_number: 0,
+            _created_at: Instant::now(),
+            started_at: None,
+            completed_at: None,
+        }
+    }
+
+    /// The next retry attempt for a failed task (D6c): same identity
+    /// (kind/paths/module/branch/url/parent), `retry_number` incremented, and
+    /// all runtime state reset — the queue assigns a fresh `id` on re-enqueue,
+    /// and a retry carries no inherited deps (a re-driven leaf runs on its own).
+    pub fn retry(&self) -> Self {
+        Self {
+            id: 0,
+            kind: self.kind.clone(),
+            folder_path: self.folder_path.clone(),
+            path: self.path.clone(),
+            parent_task_id: self.parent_task_id,
+            module_id: self.module_id.clone(),
+            branch: self.branch.clone(),
+            url: self.url.clone(),
+            status: TaskStatus::Pending,
+            depends_on: Vec::new(),
+            error: None,
+            retry_number: self.retry_number + 1,
             _created_at: Instant::now(),
             started_at: None,
             completed_at: None,
@@ -359,6 +386,42 @@ mod tests {
         assert!(!t.is_runnable());
         assert!(t.is_barrier());
         assert_eq!(t.depends_on, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn task_retry_bumps_number_and_resets_runtime() {
+        let mut base = Task::new(TaskKind::ProcessFile, "/code/repo", "/code/repo/src/a.rs")
+            .with_parent(7)
+            .with_module("mod:repo:src")
+            .with_branch("main")
+            .with_url("https://example.test/pkg");
+        base.id = 42;
+        base.retry_number = 1;
+        base.error = Some("boom".into());
+        base.status = TaskStatus::Failed;
+        base.depends_on = vec![1, 2];
+
+        let next = base.retry();
+        // Identity is preserved — every field that names WHAT to run.
+        assert_eq!(next.kind, base.kind);
+        assert_eq!(next.folder_path, base.folder_path);
+        assert_eq!(next.path, base.path);
+        assert_eq!(next.parent_task_id, Some(7));
+        assert_eq!(next.module_id, Some("mod:repo:src".to_string()));
+        assert_eq!(next.branch, Some("main".to_string()), "retry preserves branch identity");
+        assert_eq!(next.url, Some("https://example.test/pkg".to_string()), "retry preserves url identity");
+        // The attempt count advances by exactly one.
+        assert_eq!(next.retry_number, 2, "retry() bumps retry_number");
+        // Runtime state is reset — a fresh, re-enqueueable attempt.
+        assert_eq!(next.id, 0, "queue assigns a new id");
+        assert_eq!(next.status, TaskStatus::Pending);
+        assert!(next.depends_on.is_empty(), "a retry carries no inherited deps");
+        assert!(next.error.is_none());
+    }
+
+    #[test]
+    fn new_task_starts_at_retry_zero() {
+        assert_eq!(Task::new(TaskKind::ProcessFile, "r", "p").retry_number, 0);
     }
 
     #[test]
