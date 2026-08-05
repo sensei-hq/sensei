@@ -100,7 +100,11 @@ export default {
     success:      { light: "oklch(0.510 0.076 160)", dark: "hisui.400"  },
     warning:      { light: "oklch(0.510 0.100 75)",  dark: "kohaku.400" },
     danger:       { light: "oklch(0.490 0.178 25)",  dark: "beni.400"   },
-    error:        { light: "oklch(0.490 0.178 25)",  dark: "beni.400"   },
+    // error is a documented ALIAS of danger (mockup-drift-audit F4) — single-sourced
+    // via var() so it can never drift from danger. Kept because activity-logs uses
+    // text-error / bg-error-soft; every other failure reads danger. Same computed
+    // color as the former literal, so no visual change.
+    error:        { light: "var(--danger)", dark: "var(--danger)" },
     info:         { light: "oklch(0.520 0.150 254)", dark: "ai.400"     },
 
     // ── Status/accent SOFT (tinted callout backgrounds) — ALPHA-COMPOSITE model ──
@@ -115,7 +119,7 @@ export default {
     "success-soft": { light: "color-mix(in oklch, var(--success) 14%, transparent)", dark: "color-mix(in oklch, var(--success) 20%, transparent)" },
     "warning-soft": { light: "color-mix(in oklch, var(--warning) 15%, transparent)", dark: "color-mix(in oklch, var(--warning) 22%, transparent)" },
     "danger-soft":  { light: "color-mix(in oklch, var(--danger) 10%, transparent)",  dark: "color-mix(in oklch, var(--danger) 18%, transparent)"  },
-    "error-soft":   { light: "color-mix(in oklch, var(--error) 10%, transparent)",   dark: "color-mix(in oklch, var(--error) 18%, transparent)"   },
+    "error-soft":   { light: "var(--danger-soft)", dark: "var(--danger-soft)" },
     "info-soft":    { light: "color-mix(in oklch, var(--info) 14%, transparent)",    dark: "color-mix(in oklch, var(--info) 20%, transparent)"    },
 
     // Modal/dialog backdrop scrim — a semantic token so components never hardcode
