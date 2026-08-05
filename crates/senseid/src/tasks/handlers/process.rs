@@ -426,9 +426,14 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
                     // back by handlers via get_repo_by_path.
                     let sub_task = Task::new(TaskKind::ProcessGitFolder, subtree_path, subtree_path)
                         .with_parent(task.id);
-                    ctx.queue.enqueue(sub_task).await;
                     let subtree_folder_name = format!("{}:{}", folder_name, name);
-                    tracing::info!("process_git_folder: enqueued subtree {} at {}", subtree_folder_name, subtree_path);
+                    // Single-writer (D6e/W5): skip if this subtree is already being
+                    // scanned, and log the skip so the guard is observable.
+                    if ctx.queue.enqueue_unique(sub_task).await.is_some() {
+                        tracing::info!("process_git_folder: enqueued subtree {} at {}", subtree_folder_name, subtree_path);
+                    } else {
+                        tracing::debug!("process_git_folder: subtree {} already in flight, skipped", subtree_folder_name);
+                    }
                 }
             }
         }
